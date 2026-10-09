@@ -1,6 +1,7 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { renderApp } from '@/test/renderApp'
+import { findRail, openTicketPanel } from '@/test/ticketPanels'
 import { WordDiff } from './History'
 
 const T = { timeout: 5000 }
@@ -9,8 +10,7 @@ describe('ticket page', () => {
   it('shows DEMO-0043 with tasks T1-T4 and the open question Q2', async () => {
     const { user } = renderApp('/ticket/DEMO-0043')
     expect(await screen.findByRole('heading', { level: 1, name: 'Load tariff tables as dbt seeds' }, T)).toBeInTheDocument()
-    expect(screen.getByTestId('claim-box')).toHaveTextContent(/Claude Code working for Severin/)
-    expect(screen.getByTestId('claim-box')).toHaveTextContent(/T2.*sub1.*T3.*sub2/)
+    expect(screen.getByTestId('agent-status')).toHaveTextContent(/Claude Code is working for Severin/)
     expect(screen.getByTestId('gate-requirements')).toHaveAttribute('data-state', 'approved')
 
     await user.click(screen.getByRole('tab', { name: /Acceptance & tasks/ }))
@@ -50,7 +50,7 @@ describe('ticket page', () => {
   it('shows an invalidated gate with its reason, and epic children', async () => {
     const view = renderApp('/ticket/DEMO-0046')
     expect(await screen.findByTestId('gate-plan', undefined, T)).toHaveAttribute('data-state', 'invalidated')
-    expect(screen.getByTestId('gate-plan')).toHaveTextContent('Plan changed after approval: T2 added')
+    expect(screen.getByTestId('gate-notes')).toHaveTextContent('Plan changed after approval: T2 added')
     view.unmount()
 
     renderApp('/ticket/DEMO-0040')
@@ -63,8 +63,7 @@ describe('ticket page', () => {
     await screen.findByRole('heading', { level: 1, name: /billing reconciliation/ }, T)
     await user.click(screen.getByRole('tab', { name: /Acceptance & tasks/ }))
     expect(within(document.getElementById('ac-AC1')!).getByText('verified by receipt')).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: /Actions/ }))
-    expect(await screen.findByRole('menuitem', { name: /Give verdict/ })).toBeInTheDocument()
+    expect(within(screen.getByTestId('ticket-header')).getByRole('button', { name: 'Give verdict' })).toBeInTheDocument()
   })
 
   it('renders added and removed words in the History changes view', async () => {
@@ -81,8 +80,9 @@ describe('ticket page', () => {
 
 describe('ticket gate policy wording', () => {
   it('uses the same sentence as Settings, not the raw approver value', async () => {
-    renderApp('/ticket/DEMO-0043', { setup: (s) => s.appendWs(s.workspaces[0].id, { type: 'gate.policy_set', gate: 'plan', approvers: 'maintainer', count: 1, not: null }) })
-    const plan = await screen.findByTestId('gate-plan')
+    const { user } = renderApp('/ticket/DEMO-0043', { setup: (s) => s.appendWs(s.workspaces[0].id, { type: 'gate.policy_set', gate: 'plan', approvers: 'maintainer', count: 1, not: null }) })
+    await user.click(await screen.findByTestId('gate-plan'))
+    const plan = await screen.findByRole('dialog', { name: /Plan/ })
     expect(within(plan).getByText('Plan needs 1 approval from owners or maintainers.')).toBeInTheDocument()
     expect(screen.queryByText(/maintainer, 1 of 1/)).toBeNull()
   })
@@ -97,14 +97,146 @@ describe('WordDiff', () => {
     expect(screen.getByTestId('diff-summary')).toHaveTextContent(/\+2 words.*−1 words/)
   })
 
-  it('Tom sees a disabled Claim button with the viewer reason as tooltip', async () => {
+  it('Tom gets no Claim button, and Start agent in Actions is disabled with the viewer reason', async () => {
     const { user } = renderApp('/ticket/DEMO-0043', { viewer: 'p_tom' })
     await screen.findByRole('heading', { level: 1, name: /Load tariff tables/ }, T)
-    const claim = await screen.findByRole('button', { name: 'Claim' })
-    expect(claim).toBeDisabled()
-    expect(claim).toHaveAttribute('aria-disabled', 'true')
-    expect(claim).toHaveAccessibleDescription('Viewers cannot change tickets.')
-    await user.hover(claim.parentElement!)
-    expect(await screen.findByRole('tooltip')).toHaveTextContent('Viewers cannot change tickets.')
+    expect(screen.queryByRole('button', { name: /^Claim/ })).toBeNull()
+    await user.click(screen.getByRole('button', { name: /Actions/ }))
+    const item = await screen.findByRole('menuitem', { name: /Start agent/ })
+    expect(item).toHaveAttribute('aria-disabled', 'true')
+    expect(item).toHaveTextContent('Viewers cannot change tickets.')
+  })
+
+})
+
+describe('ticket page structure: next action first, gates as a stepper, a rail that never drops', () => {
+  afterEach(() => vi.unstubAllGlobals())
+  const header = () => screen.getByTestId('ticket-header')
+
+  it('at 1024 the verdict is a header button, there is no rail column, and Panels (N) opens a sheet', async () => {
+    vi.stubGlobal('innerWidth', 1024)
+    const { user } = renderApp('/ticket/DEMO-0041')
+    await screen.findByRole('heading', { level: 1, name: /billing reconciliation/ }, T)
+    expect(within(header()).getByRole('button', { name: 'Give verdict' })).toBeInTheDocument()
+    expect(screen.queryByRole('complementary', { name: 'Ticket details' })).toBeNull()
+    expect(screen.getByTestId('ticket-properties')).toHaveTextContent(/Size/)
+    await user.click(screen.getByRole('button', { name: /^Panels \(\d+\)$/ }))
+    const sheet = await screen.findByRole('dialog', { name: /Panels/ })
+    expect(within(sheet).getByRole('heading', { name: 'Details' })).toBeInTheDocument()
+  })
+
+  it('at 1440 the rail is a column next to the content, without "Needs you"', async () => {
+    vi.stubGlobal('innerWidth', 1440)
+    renderApp('/ticket/DEMO-0041')
+    const rail = await findRail()
+    expect(within(header()).getByRole('button', { name: 'Give verdict' })).toBeInTheDocument()
+    expect(within(rail).queryByText(/Needs you/)).toBeNull()
+    expect(within(rail).queryByText(/^Head$/)).toBeNull()
+    expect(screen.queryByTestId('ticket-properties')).toBeNull()
+  })
+
+  it('the primary action follows what the viewer has to do: Answer Q2 first', async () => {
+    vi.stubGlobal('innerWidth', 1440)
+    const { user } = renderApp('/ticket/DEMO-0043')
+    await screen.findByRole('heading', { level: 1, name: /Load tariff tables/ }, T)
+    await user.click(within(header()).getByRole('button', { name: 'Answer Q2' }))
+    expect(await screen.findByRole('tab', { name: /Questions/, selected: true })).toBeInTheDocument()
+  })
+
+  it('a viewer gets no primary action', async () => {
+    renderApp('/ticket/DEMO-0041', { viewer: 'p_tom' })
+    await screen.findByRole('heading', { level: 1, name: /billing reconciliation/ }, T)
+    expect(within(header()).queryByRole('button', { name: /Give verdict|Answer|Approve/ })).toBeNull()
+  })
+
+  it('gates are one stepper of 3 buttons; a step opens its policy, signer and folded details', async () => {
+    const { user } = renderApp('/ticket/DEMO-0043')
+    const gates = await screen.findByRole('group', { name: 'Gates' }, T)
+    const steps = within(gates).getAllByRole('button')
+    expect(steps).toHaveLength(3)
+    expect(steps[0]).toHaveAccessibleName(/Requirements.*Approved/)
+    await user.click(steps[1])
+    const pop = await screen.findByRole('dialog', { name: /Plan/ })
+    expect(within(pop).getByText('Plan needs 1 approval from owners.')).toBeInTheDocument()
+    expect(within(pop).getByText(/Approved by Severin, 8 Oct/)).toHaveTextContent('Approved by Severin, 8 Oct · verified signature')
+    expect(within(pop).getByText('Details')).toBeInTheDocument()
+    expect(within(pop).getByText(/a7ee20379eb5/)).toBeInTheDocument()
+  })
+
+  it('an invalidated gate keeps its reason visible under the stepper', async () => {
+    renderApp('/ticket/DEMO-0046')
+    expect(await screen.findByTestId('gate-plan', undefined, T)).toHaveAttribute('data-state', 'invalidated')
+    expect(screen.getByTestId('gate-notes')).toHaveTextContent('Plan changed after approval: T2 added')
+  })
+
+  it('shows no signature, hash or head jargon on the first level', async () => {
+    renderApp('/ticket/DEMO-0043')
+    await screen.findByRole('heading', { level: 1, name: /Load tariff tables/ }, T)
+    const text = document.body.textContent ?? ''
+    expect(text).not.toMatch(/sig ok/)
+    expect(text).not.toMatch(/hash [0-9a-f]{6}/)
+    expect(text).not.toMatch(/seq \d+ ·/)
+  })
+
+  it('the agent is one status line, without Claim or Release buttons', async () => {
+    renderApp('/ticket/DEMO-0043')
+    await screen.findByRole('heading', { level: 1, name: /Load tariff tables/ }, T)
+    expect(screen.getByTestId('agent-status')).toHaveTextContent('Claude Code is working for Severin · since 08:05 · 2 subagents')
+    expect(screen.queryByRole('button', { name: /^Claim/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Release/ })).toBeNull()
+  })
+
+  it('a ticket nobody works on says so', async () => {
+    renderApp('/ticket/DEMO-0041')
+    await screen.findByRole('heading', { level: 1, name: /billing reconciliation/ }, T)
+    expect(screen.getByTestId('agent-status')).toHaveTextContent('No agent is working on this ticket')
+  })
+
+  it('a pull request appears once in the rail: the GitHub panel when it is active, core otherwise', async () => {
+    vi.stubGlobal('innerWidth', 1440)
+    const { user, unmount } = renderApp('/ticket/DEMO-0043', { viewer: 'p_sev' })
+    const panel = await openTicketPanel(user, 'Pull request')
+    expect(await within(panel).findByText('#31', {}, T)).toBeInTheDocument()
+    expect(within(await findRail()).getAllByText(/#31/)).toHaveLength(1)
+    unmount()
+
+    renderApp('/ticket/DEMO-0043', { viewer: 'p_sev', setup: (s) => s.appendWs(s.workspaces[0].id, { type: 'addon.disabled', name: 'github' }) })
+    const rail = await findRail()
+    expect(await within(rail).findAllByText(/#31/, {}, T)).toHaveLength(1)
+  })
+
+  it('shows at most 3 labels and "+n"', async () => {
+    renderApp('/ticket/DEMO-0046', { setup: (s) => void s.append('DEMO-0046', { type: 'labels.changed', add: ['alpha', 'beta', 'gamma'] }) })
+    await screen.findByRole('heading', { level: 1 }, T)
+    expect(within(header()).getAllByTestId('ticket-label')).toHaveLength(3)
+    expect(within(header()).getByText('+3')).toBeInTheDocument()
+  })
+})
+
+describe('Start agent from the ticket', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('is in the Actions menu with the addon marker', async () => {
+    const { user } = renderApp('/ticket/DEMO-0044', { viewer: 'p_sev' })
+    await screen.findByRole('heading', { level: 1 }, T)
+    await user.click(screen.getByRole('button', { name: /Actions/ }))
+    const item = await screen.findByRole('menuitem', { name: /Start agent/ })
+    expect(within(item).getByRole('img', { name: /Start agent addon/ })).toBeInTheDocument()
+    await user.click(item)
+    expect(await screen.findByRole('dialog', { name: 'Start Claude Code on DEMO-0044' }, T)).toBeInTheDocument()
+  })
+
+  it('on a claimed ticket Start is disabled with the reason, and no dialog opens', async () => {
+    vi.stubGlobal('innerWidth', 1440)
+    const { user } = renderApp('/ticket/DEMO-0037', { viewer: 'p_sev' })
+    const panel = await openTicketPanel(user, 'Start agent')
+    const start = await within(panel).findByRole('button', { name: 'Start' }, T)
+    expect(start).toBeDisabled()
+    expect(start).toHaveAccessibleDescription(/DEMO-0037 is claimed by Codex for Mara\. Stop that session on Agents first\./)
+    expect(within(panel).getByRole('alert')).toHaveTextContent(/claimed by Codex for Mara/)
+    await user.click(screen.getByRole('button', { name: /Actions/ }))
+    const item = await screen.findByRole('menuitem', { name: /Start agent/ })
+    expect(item).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.queryByRole('dialog', { name: /Start/ })).toBeNull()
   })
 })

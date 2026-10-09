@@ -338,7 +338,7 @@ describe('state per ticket (?ticket=)', () => {
     return { store, ws, api: createApi(createMockTransport(store, { latency: false })) }
   }
   const size = (v: unknown) => JSON.stringify(v).length
-  it('busy day: a ticket panel gets that ticket only, and the page gets no per-ticket maps (was ~184 KB each)', async () => {
+  it('busy day: a ticket panel gets that ticket only, and the page gets no per-ticket maps, only its preselected ticket (was ~184 KB each)', async () => {
     const s = busy()
     const panel = (await s.api.getAddonState(s.ws, 'start-agent', 'DEMO-0044')) as unknown as State
     expect(Object.keys(panel.previews)).toEqual(['DEMO-0044'])
@@ -346,7 +346,8 @@ describe('state per ticket (?ticket=)', () => {
     expect(size(panel)).toBeLessThan(10_000)
     const page = (await s.api.getAddonState(s.ws, 'start-agent')) as unknown as State
     expect(page.byTicket).toEqual({})
-    expect(Object.keys(page.previews)).toEqual([])
+    // Only the ticket the page preselects (the first open one) gets a preview; no per-ticket map.
+    expect(Object.keys(page.previews)).toEqual([(page as unknown as { selected: string }).selected])
     expect(size(page)).toBeLessThan(30_000)
   })
   it('the page still gets the preview of the ticket picked there', async () => {

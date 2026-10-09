@@ -48,6 +48,24 @@ export function availableActions(t: TicketDocument, viewer: Viewer): Available {
   return { approve, requestChanges, verdict, answer: t.questions_state.filter((q) => canAnswer(q, viewer)) }
 }
 
+/** The one thing the viewer should do next on this ticket, shown as the header's primary button (null: nothing). */
+export type Primary = { kind: 'answer'; question: string } | { kind: 'verdict' } | { kind: 'approve'; gate: 'requirements' | 'plan' }
+
+/** Answer a question > give the verdict > approve requirements > approve the plan. A blocking question goes first. */
+export function primaryAction(av: Available): Primary | null {
+  const q = av.answer.find((x) => x.blocking) ?? av.answer[0]
+  if (q) return { kind: 'answer', question: q.id }
+  if (av.verdict) return { kind: 'verdict' }
+  if (av.approve.length) return { kind: 'approve', gate: av.approve[0] }
+  return null
+}
+
+export function primaryLabel(p: Primary): string {
+  if (p.kind === 'answer') return `Answer ${p.question}`
+  if (p.kind === 'verdict') return 'Give verdict'
+  return p.gate === 'requirements' ? 'Approve requirements' : 'Approve plan'
+}
+
 export const GATE_LABEL: Record<GateName, string> = { requirements: 'Requirements', plan: 'Plan', verify: 'Verification' }
 
 /** The gate's policy in the same words as Settings: "Plan needs 1 approval from owners or maintainers." */

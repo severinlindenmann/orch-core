@@ -1,8 +1,9 @@
 import { screen, waitFor, within } from '@testing-library/react'
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mockStore } from '@/api/client'
 import type { MockStore } from '@/mocks/store'
 import { renderApp } from '@/test/renderApp'
+import { openTicketPanel } from '@/test/ticketPanels'
 
 const T = { timeout: 4000 }
 /** The first wait of a test also covers the lazy page chunks and a cold worker. */
@@ -26,14 +27,18 @@ beforeAll(async () => {
   await Promise.all([import('@/app/pages/ticket'), import('@/app/pages/today'), import('@/app/pages/agents'), import('@/app/pages/AddonPage'), import('@/addon-ui/AddonForm')])
 }, 30_000)
 
+// The rail is a column from 1280 px; below it is the Panels sheet.
+beforeEach(() => vi.stubGlobal('innerWidth', 1440))
 afterEach(() => {
   vi.useRealTimers()
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
 })
 
 describe('start agent on the ticket rail', { timeout: 20_000 }, () => {
   it('shows the exact command; Start opens orch\'s own dialog, and confirming there starts the run', async () => {
     const { user } = renderApp('/ticket/DEMO-0044', { viewer: 'p_sev' })
+    await openTicketPanel(user, 'Start agent')
     expect(await screen.findByText(code(COMMAND), {}, FIRST)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Start' }))
     const dialog = await screen.findByRole('dialog', { name: 'Start Claude Code on DEMO-0044' }, T)
@@ -65,6 +70,7 @@ describe('start agent on the ticket rail', { timeout: 20_000 }, () => {
         })
       },
     })
+    await openTicketPanel(user, 'Start agent')
     await user.click(await screen.findByRole('button', { name: 'Start' }, FIRST))
     const dialog = await screen.findByRole('dialog', { name: 'Start Codex on DEMO-0044' }, T)
     const facts = within(dialog).getByLabelText('What orch will start')
@@ -92,6 +98,7 @@ describe('start agent on the ticket rail', { timeout: 20_000 }, () => {
         })
       },
     })
+    await openTicketPanel(user, 'Start agent')
     await user.click(await screen.findByRole('button', { name: 'Start' }, FIRST))
     const dialog = await screen.findByRole('dialog', {}, T)
     expect(await within(dialog).findByText(/orch cannot start what this addon asked for/, {}, T)).toBeInTheDocument()
@@ -99,6 +106,7 @@ describe('start agent on the ticket rail', { timeout: 20_000 }, () => {
   })
   it('Cancel starts nothing', async () => {
     const { user } = renderApp('/ticket/DEMO-0044', { viewer: 'p_sev' })
+    await openTicketPanel(user, 'Start agent')
     await user.click(await screen.findByRole('button', { name: 'Start' }, FIRST))
     await user.click(within(await screen.findByRole('dialog', {}, T)).getByRole('button', { name: 'Cancel' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull(), T)
@@ -109,6 +117,7 @@ describe('start agent on the ticket rail', { timeout: 20_000 }, () => {
       viewer: 'p_sev',
       setup: (s) => void s.revokeGrant(wsOf(s), 'gr_01J9Z8', { kind: 'person', id: 'p_sev' }),
     })
+    await openTicketPanel(user, 'Start agent')
     await user.click(await screen.findByRole('button', { name: 'Start' }, FIRST))
     const dialog = await screen.findByRole('dialog', { name: 'Sign a grant and start Claude Code on DEMO-0044' }, T)
     expect(within(dialog).getByText(/Issues you a grant: all tickets in this workspace, 8 h/)).toBeInTheDocument()
@@ -125,17 +134,20 @@ describe('start agent on the ticket rail', { timeout: 20_000 }, () => {
         s.setViewer('p_lea')
       },
     })
+    await openTicketPanel(user, 'Start agent')
     await user.click(await screen.findByRole('button', { name: 'Start' }, FIRST))
     const dialog = await screen.findByRole('dialog', { name: 'Start Claude Code on DEMO-0048' }, T)
     expect(within(dialog).getByText(/You have no active grant in this workspace/)).toBeInTheDocument()
     expect(within(dialog).getByRole('button', { name: 'Start agent' })).toBeDisabled()
   })
   it('a viewer sees the panel read only', async () => {
-    renderApp('/ticket/DEMO-0048', { viewer: 'p_tom' })
+    const { user } = renderApp('/ticket/DEMO-0048', { viewer: 'p_tom' })
+    await openTicketPanel(user, 'Start agent')
     expect(await screen.findByRole('button', { name: 'Start' }, FIRST)).toBeDisabled()
   })
   it('while a run is on, the rail shows it and Stop ends it and releases the claim', async () => {
     const { user } = renderApp('/ticket/DEMO-0044', { viewer: 'p_sev', setup: playRun(4000) })
+    await openTicketPanel(user, 'Start agent')
     expect(await screen.findByText(/T1 Create new service principal/, {}, FIRST)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Stop' }))
     await waitFor(() => expect(mockStore.ticket('DEMO-0044')!.claim).toBeNull(), T)
@@ -162,5 +174,35 @@ describe('the run is visible live across the app', { timeout: 20_000 }, () => {
     expect(within(table).getByText('DEMO-0044')).toBeInTheDocument()
     expect(within(table).getByRole('button', { name: 'Stop' })).toBeInTheDocument()
     expect(screen.getByRole('combobox', { name: /Ticket/ })).toBeInTheDocument()
+  })
+})
+
+describe('start agent: precheck and a calmer confirm (G3)', { timeout: 20_000 }, () => {
+  it('the panel previews with "Preview command", and Refine runs /orch:refine', async () => {
+    const { user } = renderApp('/ticket/DEMO-0044', { viewer: 'p_sev' })
+    const panel = await openTicketPanel(user, 'Start agent')
+    await user.selectOptions(await within(panel).findByLabelText(/Mode/, {}, FIRST), 'Refine')
+    await user.click(within(panel).getByRole('button', { name: 'Preview command' }))
+    expect(await within(panel).findByText(code("orch session start --in background DEMO-0044 -- claude '/orch:refine DEMO-0044'"), {}, T)).toBeInTheDocument()
+  })
+
+  it('the confirm warns when gates are not approved and folds the grant id and command under Details', async () => {
+    const { user } = renderApp('/ticket/DEMO-0044', { viewer: 'p_sev' })
+    const panel = await openTicketPanel(user, 'Start agent')
+    await user.click(await within(panel).findByRole('button', { name: 'Start' }, FIRST))
+    const dialog = await screen.findByRole('dialog', { name: 'Start Claude Code on DEMO-0044' }, T)
+    expect(within(dialog).getByRole('note')).toHaveTextContent('The plan is not approved yet. The agent starts by refining it.')
+    const details = within(dialog).getByText('Details').closest('details')!
+    expect(details).not.toHaveAttribute('open')
+    expect(within(details).getByText(/gr_01J9Z8/)).toBeInTheDocument()
+    expect(within(details).getByLabelText('Command')).toBeInTheDocument()
+    expect(within(within(dialog).getByLabelText('What orch will start')).queryByText(/gr_01J9Z8/)).toBeNull()
+  })
+
+  it('the Start agent page preselects a ticket and never says "Pick a ticket" next to it', async () => {
+    renderApp('/addon/start-agent/start', { viewer: 'p_sev' })
+    expect(await screen.findByRole('combobox', { name: /Ticket/ }, FIRST)).not.toHaveValue('')
+    expect(screen.queryByText(/Pick a ticket/)).toBeNull()
+    expect(screen.getByRole('button', { name: 'Preview command' })).toBeInTheDocument()
   })
 })

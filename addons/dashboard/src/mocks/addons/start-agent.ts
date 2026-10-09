@@ -118,7 +118,8 @@ registerAddon({
     const live = runs.filter((r) => r.state !== 'stopped')
     const previews: Record<string, LaunchPreview> = {}
     const byTicket: Record<string, unknown> = {}
-    const pickedOnPage = !c.ticket ? tickets.find((t) => t.key === nav.selected) : undefined
+    // The page preselects the first open ticket, so the form and the preview always agree on one ticket.
+    const pickedOnPage = !c.ticket ? (tickets.find((t) => t.key === nav.selected) ?? tickets[0]) : undefined
     if (pickedOnPage) previews[pickedOnPage.key] = preview(c, state, pickedOnPage.key, pickedOnPage.title)
     for (const t of c.ticket ? tickets : []) {
       const p = (previews[t.key] = preview(c, state, t.key, t.title))
@@ -145,12 +146,16 @@ registerAddon({
               ],
             }
           : EMPTY,
+        // A ticket another session holds gets no form: core disables Start and says why (its precheck), so only
+        // the command is left to read.
         setup: run
           ? EMPTY
-          : {
+          : t.claim
+            ? previewNode(p)
+            : {
               type: 'stack',
               children: [
-                { type: 'form', schema: { type: 'object', properties: SCHEMA_PROPS }, formData: choiceOf(state, c.viewer, t.key), action: 'configure', submitLabel: 'Update command' },
+                { type: 'form', schema: { type: 'object', properties: SCHEMA_PROPS }, formData: choiceOf(state, c.viewer, t.key), action: 'configure', submitLabel: 'Preview command' },
                 previewNode(p),
               ],
             },
@@ -165,7 +170,7 @@ registerAddon({
       ticketOptions: c.ticket ? [] : tickets.length ? tickets.map((t) => ({ const: t.key, title: `${t.key} · ${t.title}` })) : [{ const: '', title: 'No open tickets' }],
       page: {
         form: { ...(selected ? { ticket: selected, ...choiceOf(state, c.viewer, selected) } : {}) },
-        preview: selected ? previewNode(previews[selected]) : { type: 'markdown', text: 'Pick a ticket and press **Update command** to see what will run.' },
+        preview: selected ? previewNode(previews[selected]) : { type: 'markdown', text: 'There is no open ticket to start an agent on.' },
       },
       runs: live.map((r) => ({
         session: r.s.session,

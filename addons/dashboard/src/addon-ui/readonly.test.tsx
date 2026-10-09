@@ -1,14 +1,21 @@
 import { screen, waitFor, within } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { renderApp } from '@/test/renderApp'
+import { openTicketPanel } from '@/test/ticketPanels'
+
+// Ticket-rail tests render at 1440 px (the rail is a column from 1280 px; below, the Panels sheet).
+afterEach(() => vi.unstubAllGlobals())
 
 // Tom is a viewer in DEMO (the default workspace) and a member in CLI.
 const rail = () => screen.getByRole('complementary', { name: 'Ticket details' })
 
 describe('addon contributions follow the viewer role', () => {
   it('a viewer gets the ticket rail addon controls disabled', async () => {
-    renderApp('/ticket/DEMO-0043', { viewer: 'p_tom' })
+    vi.stubGlobal('innerWidth', 1440)
+    const { user } = renderApp('/ticket/DEMO-0043', { viewer: 'p_tom' })
     await screen.findByRole('heading', { level: 1 })
+    await openTicketPanel(user, 'Shares')
+    await openTicketPanel(user, 'Estimate')
     const share = await within(rail()).findByRole('button', { name: 'Share report…' })
     const save = await within(rail()).findByRole('button', { name: 'Save estimate' })
     // Give the workspace time to load: the controls must stay disabled for a viewer, not just while loading.
@@ -19,8 +26,10 @@ describe('addon contributions follow the viewer role', () => {
   })
 
   it('an owner gets them enabled', async () => {
-    renderApp('/ticket/DEMO-0043')
+    vi.stubGlobal('innerWidth', 1440)
+    const { user } = renderApp('/ticket/DEMO-0043')
     await screen.findByRole('heading', { level: 1 })
+    await openTicketPanel(user, 'Shares')
     const share = await within(rail()).findByRole('button', { name: 'Share report…' })
     await waitFor(() => expect(share).toBeEnabled())
   })

@@ -5,6 +5,10 @@ import type { MockStore } from '@/mocks/store'
 import { getAddon } from '@/mocks/addons/registry'
 import { installAndGrant } from '@/test/installAddon'
 import { renderApp } from '@/test/renderApp'
+import { openTicketPanel } from '@/test/ticketPanels'
+
+// Ticket-rail tests render at 1440 px (the rail is a column from 1280 px; below, the Panels sheet).
+afterEach(() => vi.unstubAllGlobals())
 
 const T = { timeout: 4000 }
 const wsOf = (s: MockStore) => s.workspaces.find((w) => w.prefix === 'DEMO')!.id
@@ -18,12 +22,16 @@ const invalid = (s: MockStore) => {
 
 describe('model routing in the start-agent panel', () => {
   it('shows the model line and --model in the command', async () => {
-    renderApp('/ticket/DEMO-0044', { viewer: 'p_sev', setup: on })
+    vi.stubGlobal('innerWidth', 1440)
+    const { user } = renderApp('/ticket/DEMO-0044', { viewer: 'p_sev', setup: on })
+    await openTicketPanel(user, 'Start agent')
     expect(await screen.findByText('Model · work runs on standard: Standard (sonnet); subagents on haiku', {}, T)).toBeInTheDocument()
     expect(await screen.findByText(code("CLAUDE_CODE_SUBAGENT_MODEL=haiku orch session start --in background DEMO-0044 -- claude --model sonnet '/orch:work DEMO-0044'"), {}, T)).toBeInTheDocument()
   })
   it('an invalid model name shows the sentence and blocks Start in core\'s dialog', async () => {
+    vi.stubGlobal('innerWidth', 1440)
     const { user } = renderApp('/ticket/DEMO-0044', { viewer: 'p_sev', setup: invalid })
+    await openTicketPanel(user, 'Start agent')
     expect(await screen.findByText(SENTENCE, {}, T)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Start' }))
     const dialog = await screen.findByRole('dialog', { name: 'Start Claude Code on DEMO-0044' }, T)
@@ -43,7 +51,9 @@ afterEach(() => vi.restoreAllMocks())
 
 describe('core\'s dialog renders the model fact itself', () => {
   it('shows the validated model and tier as fact, and the addon\'s line only under From addon', async () => {
+    vi.stubGlobal('innerWidth', 1440)
     const { user } = renderApp('/ticket/DEMO-0044', { viewer: 'p_sev', setup: on })
+    await openTicketPanel(user, 'Start agent')
     await user.click(await screen.findByRole('button', { name: 'Start' }, T))
     let dialog = await screen.findByRole('dialog', { name: 'Start Claude Code on DEMO-0044' }, T)
     expect(within(dialog).getByLabelText('What orch will start').textContent).toContain('sonnet (standard tier); subagents on haiku')

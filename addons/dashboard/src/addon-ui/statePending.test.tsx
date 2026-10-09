@@ -3,7 +3,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
 import { ApiError } from '@/api/types'
 import { renderApp } from '@/test/renderApp'
+import { openTicketPanel } from '@/test/ticketPanels'
 import { resolveBindings } from './bindings'
+
+// Ticket-rail tests render at 1440 px (the rail is a column from 1280 px; below, the Panels sheet).
+afterEach(() => vi.unstubAllGlobals())
 
 const T = { timeout: 8000 }
 
@@ -46,7 +50,9 @@ describe('addon surfaces wait for their state', () => {
 
   it('a ticket panel that binds addon state waits for it too', async () => {
     const release = holdState('start-agent')
-    renderApp('/ticket/DEMO-0044', { viewer: 'p_sev' })
+    vi.stubGlobal('innerWidth', 1440)
+    const { user } = renderApp('/ticket/DEMO-0044', { viewer: 'p_sev' })
+    await openTicketPanel(user, 'Start agent')
     expect(await screen.findByRole('status', { name: 'Loading Start agent' }, T)).toBeInTheDocument()
     expect(screen.queryByText(/could not be (drawn|shown)/)).toBeNull()
     release()
@@ -78,7 +84,9 @@ describe('state requests per surface', () => {
   }, 30_000)
   it('a ticket panel that binds addon state asks for its ticket', async () => {
     const spy = vi.spyOn(api, 'getAddonState')
-    renderApp('/ticket/DEMO-0044', { viewer: 'p_sev' })
+    vi.stubGlobal('innerWidth', 1440)
+    const { user } = renderApp('/ticket/DEMO-0044', { viewer: 'p_sev' })
+    await openTicketPanel(user, 'Start agent')
     expect(await screen.findByRole('button', { name: 'Start' }, T)).toBeInTheDocument()
     expect(spy.mock.calls.some((c) => c[1] === 'start-agent' && c[2] === 'DEMO-0044')).toBe(true)
   })

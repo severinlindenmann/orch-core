@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { beforeEach, afterEach, vi } from 'vitest'
 import { api } from '@/api/client'
 import { renderApp } from '@/test/renderApp'
+import { openTicketPanel } from '@/test/ticketPanels'
 
 const T = { timeout: 8000 }
 beforeEach(() => {
@@ -122,12 +123,14 @@ describe('terminals ticket panel', () => {
   it('Open terminal in this ticket\'s worktree shows the session inline in the panel', async () => {
     const { user } = renderApp('/ticket/DEMO-0041', { viewer: 'p_sev' })
     const panel = await screen.findByRole('complementary', { name: 'Ticket details' }, T)
+    await openTicketPanel(user, 'Terminal')
     const frame = await waitFor(() => {
       const f = panel.querySelector('[data-addon="terminals"]')
       expect(f).not.toBeNull()
       return f as HTMLElement
     }, T)
     await user.click(within(frame).getByRole('button', { name: "Open terminal in this ticket's worktree" }))
+    await openTicketPanel(user, 'Terminal session') // the live session is its own panel, collapsed until opened
     await waitFor(() => expect(panel.querySelector('[data-terminal-session]')).not.toBeNull(), T)
     const rail = panel.querySelector('[data-terminal-session]') as HTMLElement
     expect(rail.dataset.terminalRows).toBe('12') // rail sizing

@@ -3,6 +3,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api, mockStore } from '@/api/client'
 import { moreAction } from '@/test/rowActions'
 import { renderApp } from '@/test/renderApp'
+import { openTicketPanel } from '@/test/ticketPanels'
+
+// Ticket-rail tests render at 1440 px (the rail is a column from 1280 px; below, the Panels sheet).
+afterEach(() => vi.unstubAllGlobals())
 
 const T = { timeout: 4000 }
 const ws = () => mockStore.workspaces.find((w) => w.prefix === 'DEMO')!.id
@@ -43,15 +47,18 @@ describe('github code reviews page', () => {
 
 describe('github ticket panel', () => {
   it('shows the PR on a ticket that has one and Refresh flips pending checks', async () => {
+    vi.stubGlobal('innerWidth', 1440)
     const { user } = renderApp('/ticket/DEMO-0043', { viewer: 'p_sev' })
     const panel = await screen.findByRole('complementary', { name: 'Ticket details' }, T)
     await within(panel).findByText('Pull request', {}, T)
+    await openTicketPanel(user, 'Pull request')
     expect(await within(panel).findByText('#31', {}, T)).toBeInTheDocument()
     expect(within(panel).getAllByText('pending').length).toBeGreaterThan(0)
     await user.click(within(panel).getByRole('button', { name: 'Refresh' }))
     await waitFor(() => expect(within(panel).queryAllByText('pending')).toHaveLength(0), T)
   })
   it('is hidden on a ticket without a PR', async () => {
+    vi.stubGlobal('innerWidth', 1440)
     renderApp('/ticket/DEMO-0045', { viewer: 'p_sev' })
     const panel = await screen.findByRole('complementary', { name: 'Ticket details' }, T)
     await waitFor(() => expect(within(panel).getByText(/Usage/i)).toBeInTheDocument(), T).catch(() => undefined)

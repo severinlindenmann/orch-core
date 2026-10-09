@@ -1013,7 +1013,7 @@
               },
               "formData": { "$ref": "addon.page.form" },
               "action": "configure",
-              "submitLabel": "Update command"
+              "submitLabel": "Preview command"
             },
             { "$ref": "addon.page.preview" },
             { "type": "markdown", "text": "### Running" },
@@ -1021,7 +1021,7 @@
               "type": "table",
               "columns": [{ "key": "ticket", "label": "Ticket" }, { "key": "title", "label": "Title" }, { "key": "harness", "label": "Harness" }, { "key": "model", "label": "Model" }, { "key": "state", "label": "State" }, { "key": "started", "label": "Started" }],
               "rows": { "$ref": "addon.runs" },
-              "empty": "Nothing is running. Pick a ticket above and press Start.",
+              "empty": "Nothing is running.",
               "rowActions": [{ "label": "Stop", "action": "stop", "args": { "session": "$row.session" }, "variant": "danger" }]
             },
             { "type": "markdown", "text": "### Ended" },

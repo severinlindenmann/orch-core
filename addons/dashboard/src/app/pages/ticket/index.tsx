@@ -18,9 +18,9 @@ import { History } from './History'
 import { Overview } from './Overview'
 import { Questions } from './Questions'
 import { Raw } from './Raw'
-import { Rail } from './Rail'
+import { PropertiesStrip, Rail } from './Rail'
 import { SignDialog } from './SignDialog'
-import { useViewer, type HumanAction, type Jump, type TabId, type TabProps } from './shared'
+import { useViewer, useWideLayout, type HumanAction, type Jump, type TabId, type TabProps } from './shared'
 
 function TicketSkeleton() {
   return (
@@ -34,7 +34,7 @@ function TicketSkeleton() {
           <Skeleton key={i} className="h-28 flex-1" />
         ))}
       </div>
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
         <Skeleton className="h-96" />
         <Skeleton className="h-96" />
       </div>
@@ -97,6 +97,7 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
   const [tab, setTab] = useState<TabId>('overview')
   const [focus, setFocus] = useState<string | undefined>()
   const [signing, setSigning] = useState<HumanAction | null>(null)
+  const wide = useWideLayout()
 
   const breadcrumb = useMemo(
     () => (
@@ -146,11 +147,13 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
   const provenCount = ticket.acceptance_state.filter((a) => a.state === 'proven').length
 
   return (
-    <div className="mx-auto max-w-[1280px] space-y-5 pb-12">
+    <div className="mx-auto min-w-0 max-w-[1280px] space-y-4 pb-12">
       <TicketHeader ticket={ticket} viewer={viewer} sign={setSigning} jump={jump} />
       <GatesStrip ticket={ticket} viewer={viewer} />
+      {!wide && <PropertiesStrip ticket={ticket} viewer={viewer} />}
 
-      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+      {/* From 1280 px the rail is a 320 px column; below, it is the Panels sheet (it never drops under the content). */}
+      <div className={wide ? 'grid min-w-0 grid-cols-[minmax(0,1fr)_320px] items-start gap-6' : 'min-w-0'}>
         <Tabs
           value={tab}
           onValueChange={(v) => {
@@ -197,7 +200,7 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
             <Raw {...props} />
           </TabsContent>
         </Tabs>
-        <Rail ticket={ticket} viewer={viewer} sign={setSigning} jump={jump} />
+        {wide && <Rail ticket={ticket} viewer={viewer} />}
       </div>
 
       <SignDialog ticket={ticket} action={signing} onClose={() => setSigning(null)} />

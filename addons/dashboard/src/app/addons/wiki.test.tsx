@@ -1,6 +1,10 @@
 import { screen, waitFor, within } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { renderApp } from '@/test/renderApp'
+import { openTicketPanel } from '@/test/ticketPanels'
+
+// Ticket-rail tests render at 1440 px (the rail is a column from 1280 px; below, the Panels sheet).
+afterEach(() => vi.unstubAllGlobals())
 
 const T = { timeout: 4000 }
 
@@ -71,8 +75,10 @@ describe('wiki viewer actions follow the installed version', () => {
 
 describe('wiki ticket panel', () => {
   it('shows the pages linked to DEMO-0043 and links another one', async () => {
+    vi.stubGlobal('innerWidth', 1440)
     const { user } = renderApp('/ticket/DEMO-0043', { viewer: 'p_sev' })
     const panel = await screen.findByRole('complementary', { name: 'Ticket details' }, T)
+    await openTicketPanel(user, 'Related pages')
     const frame = await waitFor(() => {
       const f = panel.querySelector('[data-addon="wiki"]')
       expect(f).not.toBeNull()

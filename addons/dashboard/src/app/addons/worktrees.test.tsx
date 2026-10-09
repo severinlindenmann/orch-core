@@ -4,7 +4,11 @@ import { toast } from 'sonner'
 import { api, mockStore } from '@/api/client'
 import { moreAction } from '@/test/rowActions'
 import { renderApp } from '@/test/renderApp'
+import { openTicketPanel } from '@/test/ticketPanels'
 import { installAndGrant } from '@/test/installAddon'
+
+// Ticket-rail tests render at 1440 px (the rail is a column from 1280 px; below, the Panels sheet).
+afterEach(() => vi.unstubAllGlobals())
 
 const T = { timeout: 4000 }
 const ws = () => mockStore.workspaces.find((w) => w.prefix === 'DEMO')!.id
@@ -71,8 +75,10 @@ describe('worktrees page', () => {
 
 describe('worktrees ticket panel', () => {
   it('shows this ticket worktrees and adds one for this ticket', async () => {
+    vi.stubGlobal('innerWidth', 1440)
     const { user } = renderApp('/ticket/DEMO-0043', { viewer: 'p_sev', setup })
     const panel = await screen.findByRole('complementary', { name: 'Ticket details' }, T)
+    await openTicketPanel(user, 'Worktrees')
     expect(await within(panel).findByText('wt/DEMO-0043-energy-dbt', {}, T)).toBeInTheDocument()
     await user.selectOptions(within(panel).getByLabelText(/^Repository/), 'acme-energy/ingest')
     await user.click(within(panel).getByRole('button', { name: 'Add worktree for this ticket' }))

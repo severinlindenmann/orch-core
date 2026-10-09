@@ -4,7 +4,8 @@ import type { ReactNode } from 'react'
 import { api } from '@/api/client'
 import { activeGrantOf } from '@/api/grants'
 import { can } from '@/api/permissions'
-import type { CoreLaunch, LaunchPreview } from '@/api/types'
+import type { CoreLaunch, LaunchPreview, TicketDocument } from '@/api/types'
+import { agentName } from '@/app/pages/ticket/shared'
 import { useRole } from '@/app/useRole'
 import { useWorkspace } from '@/app/workspace'
 import { SignPrompt, useSignedAction } from '@/components/sign/SignPrompt'
@@ -22,6 +23,26 @@ const hhmm = (iso: string) => `${iso.slice(11, 16)} UTC`
 const cap = (v: unknown) => {
   const t = typeof v === 'string' ? v : ''
   return t.length > ADDON_TEXT_MAX ? `${t.slice(0, ADDON_TEXT_MAX)}…` : t
+}
+
+/**
+ * Core's precheck before any start dialog: a ticket an agent already holds cannot get a second one. Computed from the
+ * ticket document (core), never from an addon. Null when nothing stands in the way.
+ */
+export function claimedReason(ticket: { key: string; claim: { agent: string; for: string } | null }, name: (id: string) => string): string | null {
+  const c = ticket.claim
+  if (!c) return null
+  return `${ticket.key} is claimed by ${agentName(c.agent)} for ${name(c.for)}. Stop that session on Agents first.`
+}
+
+/** Core's warning when gates before the work are open: the run begins with them. */
+function gateWarning(t: TicketDocument): string | null {
+  const req = t.gates.requirements.state !== 'approved'
+  const plan = t.gates.plan.state !== 'approved'
+  if (req && plan) return 'Requirements and plan are not approved yet. The agent starts by refining them.'
+  if (req) return 'Requirements are not approved yet. The agent starts by refining them.'
+  if (plan) return 'The plan is not approved yet. The agent starts by refining it.'
+  return null
 }
 
 /** What core starts after the person confirms: the ticket and the validated choice, as core computed them. */
@@ -70,6 +91,8 @@ export function SpawnConfirm({ addon, ticketKey, onStart, onClose }: { addon: st
     enabled: !!ws && !!request,
     retry: false,
   })
+  // The ticket as core reads it (the same query as the ticket page): the claim precheck and the gate warning.
+  const doc = useQuery({ queryKey: ['ticket', request?.ticket], queryFn: () => api.getTicket(request!.ticket), enabled: !!request, retry: false })
   const allowed = canSpawnAgent(addons?.find((a) => a.name === addon), workspace?.addons[addon])
 
   const plain = (title: string, text: string) => (
@@ -90,8 +113,10 @@ export function SpawnConfirm({ addon, ticketKey, onStart, onClose }: { addon: st
 
   if (!allowed) return plain('Start agent', 'This addon may not start agents in this workspace.')
   if (state.isSuccess && !request) return plain('Start agent', 'Pick a ticket first.')
-  if (core.isError) return plain('Start agent', 'orch cannot start what this addon asked for (unknown ticket, mode, harness or place).')
-  if (!ws || !me.data || !today.data || !grants.data || !core.data) {
+  if (core.isError || doc.isError) return plain('Start agent', 'orch cannot start what this addon asked for (unknown ticket, mode, harness or place).')
+  const claimed = doc.data ? claimedReason(doc.data, (id) => workspace?.members.find((m) => m.person === id)?.name ?? id) : null
+  if (claimed) return plain('Start agent', claimed)
+  if (!ws || !me.data || !today.data || !grants.data || !core.data || !doc.data) {
     return (
       <Dialog open onOpenChange={(o) => !o && onClose()}>
         <DialogContent className="max-w-lg border-border bg-surface" aria-busy="true">
@@ -118,8 +143,9 @@ export function SpawnConfirm({ addon, ticketKey, onStart, onClose }: { addon: st
     ['Where', c.where],
     // Rendered by core from the validated plan, never from the addon's text.
     ['Model', `${c.model ? `${c.model}${c.tier ? ` (${c.tier} tier)` : ''}` : 'the harness default'}${c.subagent_model ? `; subagents on ${c.subagent_model}` : ''}`],
-    ['Grant', grant ? `${grant.id} until ${hhmm(grant.until)}; revoking it stops this run` : `none yet: signing issues you one for all tickets here, ${GRANT_HOURS} h, until ${hhmm(until)}`],
+    ['Grant', grant ? `active until ${hhmm(grant.until)}; revoking it stops this run` : `none yet: signing issues you one for all tickets here, ${GRANT_HOURS} h, until ${hhmm(until)}`],
   ]
+  const warning = gateWarning(doc.data)
   // What the addon displayed, where it differs from what orch will start.
   const differs = shown && (shown.command !== c.command || shown.title !== c.title || shown.mode !== c.mode || shown.harness !== c.harness || shown.where !== c.where)
 
@@ -133,10 +159,26 @@ export function SpawnConfirm({ addon, ticketKey, onStart, onClose }: { addon: st
           </div>
         ))}
       </dl>
-      {/* The exact command core runs, wrapped so all of it is visible. */}
-      <pre aria-label="Command" className="whitespace-pre-wrap break-all rounded-md border border-border bg-bg p-3 font-mono text-[12px] leading-5 text-text">
-        <code>{c.command}</code>
-      </pre>
+      {warning && (
+        <p role="note" className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning-soft px-3 py-2 text-[13px] text-text">
+          <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
+          {warning}
+        </p>
+      )}
+      <details className="text-[12px] text-text-muted">
+        <summary className="cursor-pointer select-none hover:text-text">Details</summary>
+        <div className="mt-2 space-y-2">
+          {grant && (
+            <p>
+              Grant <span className="font-mono text-text">{grant.id}</span>
+            </p>
+          )}
+          {/* The exact command core runs, wrapped so all of it is visible. */}
+          <pre aria-label="Command" className="whitespace-pre-wrap break-all rounded-md border border-border bg-bg p-3 font-mono text-[12px] leading-5 text-text">
+            <code>{c.command}</code>
+          </pre>
+        </div>
+      </details>
       {c.blocked && (
         <div role="alert" className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning-soft px-3 py-2 text-[13px] text-text">
           <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />

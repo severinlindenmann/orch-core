@@ -1,6 +1,9 @@
 import { screen, waitFor, within } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { renderApp } from '@/test/renderApp'
+
+// Ticket-rail tests render at 1440 px (the rail is a column from 1280 px; below, the Panels sheet).
+afterEach(() => vi.unstubAllGlobals())
 
 describe('app shell', () => {
   it('renders nav links, the addon group with badges, and the Today placeholder', async () => {
@@ -179,6 +182,7 @@ describe('app shell', () => {
     })
 
     it('leaves a ticket page for the list when switching, with a toast naming the ticket workspace', async () => {
+      vi.stubGlobal('innerWidth', 1440)
       const { user } = renderApp('/ticket/DEMO-0043')
       await screen.findByRole('heading', { level: 1 })
       await user.keyboard('{Meta>}2{/Meta}')
@@ -187,6 +191,7 @@ describe('app shell', () => {
     })
 
     it('opening a ticket of another workspace (palette Recent) switches to its home workspace', async () => {
+      vi.stubGlobal('innerWidth', 1440)
       const { user } = renderApp('/ticket/DEMO-0043')
       await screen.findByRole('heading', { level: 1 })
       await user.keyboard('{Meta>}2{/Meta}')

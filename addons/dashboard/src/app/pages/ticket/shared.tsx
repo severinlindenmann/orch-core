@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { Bot, Cpu, User } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { api } from '@/api/client'
 import { roleOf } from '@/api/permissions'
 import { workspaceOfTicket } from '@/api/workspaces'
@@ -79,6 +79,27 @@ export function fmtTime(iso: string): string {
   const d = new Date(iso)
   const mon = d.toLocaleString('en-GB', { month: 'short', timeZone: 'UTC' })
   return `${d.getUTCDate()} ${mon} ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`
+}
+
+/** "8 Oct" (UTC), for who-signed-when lines. */
+export function fmtDay(iso: string): string {
+  const d = new Date(iso)
+  return `${d.getUTCDate()} ${d.toLocaleString('en-GB', { month: 'short', timeZone: 'UTC' })}`
+}
+
+/** "08:05" (UTC). */
+export const fmtClock = (iso: string): string => iso.slice(11, 16)
+
+/** Viewport at least `min` px wide (the ticket rail sits next to the content from 1280 px; below it is a sheet). */
+export function useWideLayout(min = 1280): boolean {
+  const read = () => typeof window !== 'undefined' && window.innerWidth >= min
+  const [wide, setWide] = useState(read)
+  useEffect(() => {
+    const on = () => setWide(read())
+    window.addEventListener('resize', on)
+    return () => window.removeEventListener('resize', on)
+  }, [min])
+  return wide
 }
 
 export function fmtDuration(ms: number): string {

@@ -1,4 +1,4 @@
-import { createContext, lazy, Suspense, useContext, type ReactNode } from 'react'
+import { createContext, lazy, Suspense, useContext, useId, type ReactNode } from 'react'
 import { Ellipsis, ExternalLink, TriangleAlert } from 'lucide-react'
 import { useWorkspace } from '@/app/workspace'
 import { Badge } from '@/components/ui/badge'
@@ -17,6 +17,7 @@ import { MAX_DEPTH, parseNode, type ItemAction, type NodeOf } from './nodes'
 import { SafeMarkdown } from './SafeMarkdown'
 import { useAddons, type SlotContext } from './slots'
 import { useRunAddonAction } from './useRunAddonAction'
+import { claimedReason } from './SpawnConfirm'
 
 // rjsf (with ajv) loads on first form, so it stays out of the main bundle.
 const ThemedForm = lazy(() => import('./AddonForm'))
@@ -206,20 +207,39 @@ function Stat({ node }: { node: NodeOf<'stat'> }) {
  * `blocked`: no workspace yet, the viewer's role is below the manifest's minRole, or core says read-only (a read-only
  * surface still runs the actions the package declares with minRole 'viewer', e.g. navigation).
  */
-function useAddonAction(action?: string): { run: (action: string, extra?: Record<string, unknown>) => void; pending: boolean; blocked: boolean; blockedFor: (action: string) => boolean; dialog: ReactNode } {
+function useAddonAction(action?: string): { run: (action: string, extra?: Record<string, unknown>) => void; pending: boolean; blocked: boolean; blockedFor: (action: string) => boolean; dialog: ReactNode; precheck: string | null } {
   const { addon, ctx, readOnly } = useContext(RuntimeCtx)
+  const { workspace } = useWorkspace()
   const r = useRunAddonAction(ctx.ticket?.key)
   const blockedFor = (a?: string) => !a || !r.allowed(addon, a) || (readOnly && r.meta(addon, a)?.minRole !== 'viewer')
-  return { run: (a, extra) => r.run(addon, a, extra), pending: r.pending, blocked: action ? blockedFor(action) : readOnly, blockedFor, dialog: r.dialog }
+  // Core's precheck before its start dialog: a claimed ticket gets no second agent (from the ticket, not the addon).
+  const precheck =
+    action && r.meta(addon, action)?.confirm === 'spawn_agent' && ctx.ticket
+      ? claimedReason(ctx.ticket, (id) => workspace?.members.find((m) => m.person === id)?.name ?? id)
+      : null
+  return { run: (a, extra) => r.run(addon, a, extra), pending: r.pending, blocked: action ? blockedFor(action) : readOnly, blockedFor, dialog: r.dialog, precheck }
 }
 
 const BUTTON_VARIANT = { primary: 'default', secondary: 'secondary', ghost: 'ghost', danger: 'destructive' } as const
 
 function ButtonNode({ node }: { node: NodeOf<'button'> }) {
-  const { run, pending, blocked, dialog } = useAddonAction(node.action)
+  const { run, pending, blocked, dialog, precheck } = useAddonAction(node.action)
+  const reasonId = useId()
   return (
-    <div>
-      <Button size="sm" variant={BUTTON_VARIANT[node.variant]} disabled={pending || blocked} onClick={() => run(node.action)}>
+    <div className="space-y-2">
+      {precheck && (
+        <p id={reasonId} role="alert" className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning-soft px-2.5 py-1.5 text-[12px] text-text">
+          <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden />
+          {precheck}
+        </p>
+      )}
+      <Button
+        size="sm"
+        variant={BUTTON_VARIANT[node.variant]}
+        disabled={pending || blocked || !!precheck}
+        aria-describedby={precheck ? reasonId : undefined}
+        onClick={() => run(node.action)}
+      >
         {node.label}
       </Button>
       {dialog}

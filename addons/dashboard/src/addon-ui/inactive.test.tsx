@@ -4,6 +4,9 @@ import { api, mockStore } from '@/api/client'
 import type { MockStore } from '@/mocks/store'
 import { renderApp } from '@/test/renderApp'
 
+// Ticket-rail tests render at 1440 px (the rail is a column from 1280 px; below, the Panels sheet).
+afterEach(() => vi.unstubAllGlobals())
+
 const disable = (name: string) => (s: MockStore) => s.appendWs(s.workspaces[0].id, { type: 'addon.disabled', name })
 
 afterEach(() => vi.restoreAllMocks())
@@ -26,6 +29,7 @@ describe('inactive addons', () => {
   })
 
   it('shows inactive addon data on a ticket', async () => {
+    vi.stubGlobal('innerWidth', 1440)
     const { user } = renderApp('/ticket/DEMO-0043', { setup: disable('estimate') })
     const item = await screen.findByRole('button', { name: /Estimate · inactive/ })
     await user.click(item)

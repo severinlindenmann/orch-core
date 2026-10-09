@@ -60,6 +60,8 @@ export const skillInfo = z.object({
   grants: z.array(skillGrant),
   /** Tickets (visible to the viewer) that use this skill. */
   tickets: z.array(z.string().max(40)),
+  /** needs `invalid`: why orch.skill.json does not validate. */
+  sidecar_problem: z.string().max(300).optional(),
   /** Where a reference that waits for a grant came from (a commit, an agent). */
   pending_note: z.string().max(400).optional(),
 })
@@ -158,9 +160,11 @@ export type SecretsFileInfo = z.output<typeof secretsFileInfo>
 export const doctorReport = z.object({
   at: iso,
   checks: z.array(z.object({ name, status: z.enum(CHECK_STATUSES), summary: line })),
-  unknown_skills: z.array(z.object({ name, scope: z.enum(SKILL_SCOPES), path: z.string().max(200) })),
+  unknown_skills: z.array(z.object({ name, scope: z.enum(SKILL_SCOPES), path: z.string().max(200), needs: z.enum(['unknown', 'invalid']) })),
   ungranted: z.array(z.object({ skill: name, refs: z.array(z.string().max(64)) })),
   secrets_permissions_ok: z.boolean(),
+  /** Refused lines of the secrets file (number and reason). */
+  secrets_problems: z.array(z.object({ line: z.number(), reason: line })),
   stale_sessions: z.array(staleSession),
 })
 export type DoctorReport = z.output<typeof doctorReport>

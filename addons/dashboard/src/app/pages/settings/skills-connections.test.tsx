@@ -22,6 +22,7 @@ describe('Settings › Skills', () => {
     const workspace = await screen.findByRole('table', { name: 'Workspace skills' }, T)
     expect(within(workspace).getByRole('row', { name: /meter-notes/ })).toHaveTextContent('unknown needs')
     expect(within(workspace).getByRole('row', { name: /dbt-seeds/ })).toHaveTextContent('orch.skill.json')
+    expect(within(workspace).getByRole('row', { name: /naming-conventions/ })).toHaveTextContent('invalid sidecar')
     expect(within(workspace).getByRole('row', { name: /tariff-feed/ })).toHaveTextContent('TARIFF_WEBHOOK_SECRET· needs grant')
     expect(screen.getByRole('table', { name: 'Built in skills' })).toHaveTextContent('github-prs')
     expect(screen.getByText('P6 · Preview')).toBeInTheDocument()
@@ -43,7 +44,9 @@ describe('Settings › Skills', () => {
     const drawer = await screen.findByRole('dialog', { name: /tariff-feed/ }, T)
     await user.click(within(drawer).getByRole('button', { name: 'Grant TARIFF_WEBHOOK_SECRET…' }))
     const sign = await screen.findByRole('dialog', { name: 'Grant credentials to tariff-feed' }, T)
-    expect(sign).toHaveTextContent('Env TARIFF_WEBHOOK_SECRET (not in the secrets file yet)')
+    // Plain about exposure (spec §4): a session-wide env value is readable by the agent.
+    expect(sign).toHaveTextContent('TARIFF_WEBHOOK_SECRET: the agent session gets this value in its environment — the agent can read it (not in the secrets file yet)')
+    expect(sign).not.toHaveTextContent('per invocation')
     expect(sign).toHaveTextContent("Edits to the skill's prose need no signature")
     await user.click(within(sign).getByRole('button', { name: 'Sign grant' }))
     await vi.waitFor(() => expect(mockStore.wsEventsOf(DEMO).at(-1)).toMatchObject({ type: 'skill.credentials_granted', skill: 'tariff-feed', env: ['TARIFF_WEBHOOK_SECRET'], presence: 'touchid' }), T)
@@ -90,6 +93,7 @@ describe('Settings › Connections', () => {
     expect(panel).toHaveTextContent('directory 0700, file 0600, owner orch-agent')
     expect(panel).toHaveTextContent('DATABRICKS_TOKEN')
     expect(panel).toHaveTextContent('Line 8 ignored: "export" is not allowed')
+    expect(panel).toHaveTextContent('Line 9 ignored: LEGACY_PIN is shorter than 8 characters')
     expect(panel).toHaveTextContent(/s_77c2.*DEMO-0043/)
     for (const v of VALUES) expect(document.body.textContent).not.toContain(v)
   })
@@ -98,7 +102,8 @@ describe('Settings › Connections', () => {
     const { user } = renderApp('/settings/connections')
     await user.click(await screen.findByRole('button', { name: 'Run doctor' }, T))
     const report = await screen.findByTestId('doctor-report', {}, T)
-    expect(report).toHaveTextContent('6 checks · 4 not ok · 1 skill with unknown needs')
+    expect(report).toHaveTextContent('6 checks · 4 not ok · 2 skills with unknown or invalid needs')
+    expect(report).toHaveTextContent('naming-conventions · invalid sidecar')
     expect(report).toHaveTextContent('meter-notes')
     expect(report).toHaveTextContent('tariff-feed: TARIFF_WEBHOOK_SECRET')
   })
@@ -152,8 +157,12 @@ describe('Today: re-login', () => {
     await user.click(within(row).getByRole('button', { name: 'Re-login needed: databricks-prod' }))
     expect(within(row).getByText(/^databricks auth login --profile prod/)).toBeInTheDocument()
     expect(within(row).getByRole('button', { name: 'Copy the login command for databricks-prod' })).toBeInTheDocument()
+    // The mock cannot log in: the row says so before the click.
+    expect(row).toHaveTextContent('Demo')
+    expect(row).toHaveTextContent('Demo: this check assumes you logged in again.')
     await user.click(within(row).getByRole('button', { name: 'Run check again' }))
     await vi.waitFor(() => expect(screen.queryByTestId('relogin-databricks-prod')).toBeNull(), T)
+    expect(await screen.findByText('Demo: this check assumes you logged in again.', {}, T)).toBeInTheDocument() // the result toast
     expect(mockStore.ticket('DEMO-0053')!.needs?.blocked).toBeNull()
   })
 
@@ -182,5 +191,16 @@ describe('output filtering in a terminal transcript', () => {
     const agent = state.sessions.find((s) => s.id === 'agent1')!
     expect(agent.ctx.secrets).toEqual(['DATABRICKS_HOST', 'DATABRICKS_TOKEN'])
     expect(replay(agent.ctx, agent.transcript)).toContain('•••• (DATABRICKS_TOKEN)')
+  })
+})
+
+describe('a check produced by the re-login trigger', () => {
+  it('shows the Demo chip and note on Connections', async () => {
+    const { user } = renderApp('/settings/connections', { setup: (s) => void s.conn.check(DEMO, 'databricks-prod', 'relogin', { kind: 'person', id: 'p_sev' }) })
+    const row = await screen.findByTestId('connection-databricks-prod', {}, T)
+    expect(within(row).getByTestId('check-status')).toHaveTextContent('ok')
+    expect(row).toHaveTextContent('Demo')
+    await user.click(screen.getByRole('button', { name: 'Details databricks-prod' }))
+    expect(screen.getByTestId('details-databricks-prod')).toHaveTextContent('Demo: this check assumes you logged in again.')
   })
 })

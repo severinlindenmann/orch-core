@@ -210,6 +210,22 @@
         "description": "House rules for meter ids and reading timestamps. Use when touching dim_meter or fct_readings.",
         "sidecar": null,
         "skill_md": "---\nname: meter-notes\ndescription: House rules for meter ids and reading timestamps. Use when touching dim_meter or fct_readings.\n---\n\n# Meter notes\n\n- Meter ids are strings; keep leading zeros.\n- Readings are stored in UTC; convert at the edge.\n- A meter swap keeps the old id with `valid_to` set.\n\n"
+      },
+      {
+        "name": "naming-conventions",
+        "path": "skills/naming-conventions/SKILL.md",
+        "description": "Warehouse naming rules for models, columns and seeds. Use when adding or renaming a model.",
+        "sidecar": {
+          "schema_version": 1,
+          "skill_version": "1.0",
+          "scope": "workspace",
+          "connections": [],
+          "env": [],
+          "secrets": [
+            "WAREHOUSE_KEY"
+          ]
+        },
+        "skill_md": "---\nname: naming-conventions\ndescription: Warehouse naming rules for models, columns and seeds. Use when adding or renaming a model.\n---\n\n# Naming conventions\n\n- Staging models: `stg_<source>__<entity>`.\n- Facts `fct_`, dimensions `dim_`, one grain per model.\n- Columns in snake_case; timestamps end in `_at`, dates in `_on`.\n"
       }
     ]
   }

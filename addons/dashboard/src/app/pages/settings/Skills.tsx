@@ -25,6 +25,13 @@ export const GRANT_OWNER_ONLY = 'Only owners grant credentials to skills.'
 /** The sidecar status: ok, or the doctor's "unknown needs" warning. */
 export function SidecarStatus({ skill }: { skill: SkillInfo }) {
   if (skill.needs === 'declared') return <Pill tone="success">orch.skill.json</Pill>
+  if (skill.needs === 'invalid')
+    return (
+      <Pill tone="danger">
+        <TriangleAlert />
+        invalid sidecar
+      </Pill>
+    )
   return (
     <Pill tone="warning">
       <TriangleAlert />
@@ -36,6 +43,7 @@ export function SidecarStatus({ skill }: { skill: SkillInfo }) {
 /** Connection references and env names of a skill; one not granted yet says so. */
 function Refs({ skill }: { skill: SkillInfo }) {
   const refs = [...skill.connections.map((r) => ({ ...r, env: false })), ...skill.env.map((r) => ({ ...r, env: true }))]
+  if (skill.needs === 'invalid') return <span className="text-text-faint">nothing until orch.skill.json validates</span>
   if (skill.needs !== 'declared') return <span className="text-text-faint">not declared</span>
   if (refs.length === 0) return <span className="text-text-faint">none</span>
   return (
@@ -69,7 +77,7 @@ export function Skills({ workspace, canEdit }: { workspace: Workspace; canEdit: 
         <h2 className="text-base font-semibold">Skills</h2>
         <p className="mt-1 text-[13px] text-text-muted">
           Instructions agents load, in the Claude Code SKILL.md format. What a skill may use (connections and env names) lives in its orch.skill.json sidecar.
-          {unknown > 0 && ` ${unknown} ${unknown === 1 ? 'skill has' : 'skills have'} no sidecar: their needs are unknown and the doctor warns.`}
+          {unknown > 0 && ` ${unknown} ${unknown === 1 ? 'skill has' : 'skills have'} no valid sidecar: their needs are unknown and the doctor warns.`}
         </p>
       </div>
       {SKILL_SCOPES.map((scope) => {
@@ -150,7 +158,13 @@ function SkillDetail({ skill, workspace, canEdit }: { skill: SkillInfo; workspac
   const [conn, setConn] = useState('')
   const [env, setEnv] = useState('')
   const workspaceSkill = skill.scope === 'workspace'
-  const reason = !canEdit ? GRANT_OWNER_ONLY : !workspaceSkill ? 'Built-in skills change with a release; their needs come with it.' : null
+  const reason = !canEdit
+    ? GRANT_OWNER_ONLY
+    : !workspaceSkill
+      ? 'Built-in skills change with a release; their needs come with it.'
+      : skill.needs === 'invalid'
+        ? 'Fix orch.skill.json in the workspace repo before granting.'
+        : null
   const pendingConns = skill.connections.filter((r) => !r.granted).map((r) => r.name)
   const pendingEnv = skill.env.filter((r) => !r.granted).map((r) => r.name)
   const referenced = new Set(skill.connections.map((r) => r.name))
@@ -164,8 +178,9 @@ function SkillDetail({ skill, workspace, canEdit }: { skill: SkillInfo; workspac
   const covers = (a: GrantAsk) => [
     `Skill ${skill.name} (workspace, ${skill.path})`,
     ...a.connections.map(describeConn),
-    ...a.env.map((n) => `Env ${n}${secrets.data ? (inFile(n) ? ' (in the secrets file)' : ' (not in the secrets file yet)') : ''}`),
-    'Agents on tickets that use this skill get these, per invocation where orch runs the tool',
+    ...a.env.map((n) => `${n}: the agent session gets this value in its environment — the agent can read it${secrets.data ? (inFile(n) ? '' : ' (not in the secrets file yet)') : ''}`),
+    ...(a.connections.length ? ['When orch runs a connection check or a tool itself, it passes values per invocation only'] : []),
+    'Only sessions on tickets that use this skill get them',
     'Edits to the skill\'s prose need no signature',
   ]
 
@@ -204,7 +219,12 @@ function SkillDetail({ skill, workspace, canEdit }: { skill: SkillInfo; workspac
         </dl>
 
         <Section title="What it may use">
-          {skill.needs !== 'declared' ? (
+          {skill.needs === 'invalid' ? (
+            <p className="flex items-start gap-2 text-[13px] text-text-muted" data-testid="sidecar-problem">
+              <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-danger" aria-hidden />
+              orch.skill.json does not validate ({skill.sidecar_problem}). Agents get no connection or env from this skill until the file is fixed in the workspace repo; grants wait for that.
+            </p>
+          ) : skill.needs !== 'declared' ? (
             <p className="flex items-start gap-2 text-[13px] text-text-muted">
               <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden />
               No orch.skill.json: the needs are unknown, not "none". Agents get no connection or env from this skill, and the doctor warns until a sidecar is added (a grant below writes one).

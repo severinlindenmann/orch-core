@@ -3,6 +3,9 @@
 // And the output filter: known secret values are replaced before text reaches logs, events or transcripts.
 import { ENV_RE } from './connections'
 
+/** Shorter values are refused by the parser and never filtered (masking them would hide ordinary words). */
+export const MIN_SECRET = 8
+
 export interface ParsedSecrets {
   entries: { name: string; value: string; line: number }[]
   /** Refused lines: number and reason only (a refused line may hold a secret; its text is never repeated). */
@@ -25,6 +28,7 @@ export function parseSecretsFile(text: string): ParsedSecrets {
     if (!ENV_RE.test(key)) return problems.push({ line: n, reason: 'the name must be upper case letters, digits and _' })
     if (seen.has(key)) return problems.push({ line: n, reason: `${key} is set twice; the first one counts` })
     if (!value) return problems.push({ line: n, reason: `${key} has no value` })
+    if (value.length < MIN_SECRET) return problems.push({ line: n, reason: `${key} is shorter than ${MIN_SECRET} characters: output filtering could not hide it` })
     seen.add(key)
     // Taken literally: "$HOME" stays the five characters $HOME, `$(cmd)` is never run.
     entries.push({ name: key, value, line: n })
@@ -35,8 +39,6 @@ export function parseSecretsFile(text: string): ParsedSecrets {
 /** How a filtered secret value reads in output: `•••• (DATABRICKS_TOKEN)`. */
 export const maskOf = (name: string) => `•••• (${name})`
 
-/** Values shorter than this are not filtered (they would mask ordinary words); the parser's values are tokens. */
-const MIN_SECRET = 8
 
 /**
  * Replace every occurrence of a known secret value with its mask. Longer values first, so a value that contains

@@ -61,7 +61,7 @@ function sessionEnv(c: ShellCtx): { name: string; value: string }[] {
 export function runCommand(line: string, c: ShellCtx): CommandResult {
   const r = run(line, c)
   const env = sessionEnv(c)
-  return { ...r, lines: r.lines.flatMap((l) => l.split(/\r\n|\r|\n/)).map((l) => clean(maskSecrets(l, env))) }
+  return { ...r, lines: r.lines.flatMap((l) => l.split(/\r\n|\r|\n/)).map((l) => maskSecrets(clean(maskSecrets(l, env)), env)) }
 }
 
 function run(line: string, c: ShellCtx): CommandResult {

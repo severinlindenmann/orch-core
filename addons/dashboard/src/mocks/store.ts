@@ -696,13 +696,14 @@ export class MockStore {
     const pending = this.startedSessions(wsId).find((x) => x.ticket === req.ticket && !x.stopped && this.sim.running().includes(x.session))
     if (doc.claim || pending)
       return refuse(409, 'claim.held', `${req.ticket} is claimed by ${doc.claim ? `${doc.claim.agent} (${doc.claim.session})` : `${pending!.name} (${pending!.session})`}.`, 'Stop that session first.')
-    // D57: the checks of the connections this ticket needs run before the start; auth or identity failures refuse.
-    const blockedBy = this.conn.precheck(wsId, req.ticket, 'session_start')
-    if (blockedBy) return blockedBy
     const grant = this.activeGrant(wsId, actor.id)
     if (!grant) return refuse(409, 'grant.none', 'You have no active grant in this workspace.', 'Sign one in the start dialog, or ask an owner or maintainer to issue one.')
     const blocked = this.resolveLaunch(wsId, req).plan.error
     if (blocked) return refuse(409, 'launch.invalid_model', blocked, 'Fix the model names in the launch addon\'s settings.')
+    // D57: last of the refusals (so a start refused for another reason records no check): the checks of the
+    // connections this ticket needs run before the start; auth or identity failures refuse.
+    const blockedBy = this.conn.precheck(wsId, req.ticket, 'session_start')
+    if (blockedBy) return blockedBy
     // The committing resolve is the one that counts: refuse if it blocks too (nothing is recorded or started then).
     const { plan, spec, command } = this.resolveLaunch(wsId, req, true)
     if (plan.error) return refuse(409, 'launch.invalid_model', plan.error, 'Fix the model names in the launch addon\'s settings.')

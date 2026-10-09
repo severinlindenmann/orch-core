@@ -50,12 +50,21 @@ describe('skills', () => {
     expect(names.every((n) => ['orch', 'orch-evidence', 'github-prs'].includes(n))).toBe(true)
   })
   it('lists only tickets the viewer can see', async () => {
-    const sev = await setup('p_sev').api.getSkills(DEMO)
-    const mara = await setup('p_mara').api.getSkills(DEMO)
-    const t = (list: typeof sev) => list.find((s) => s.name === 'warehouse-admin')!.tickets
-    const restricted = setup().store.ticket('DEMO-0044')!.visibility as { restricted: string[] }
-    expect(t(sev)).toEqual(restricted.restricted.includes('p_sev') ? ['DEMO-0044'] : [])
-    expect(t(mara)).toEqual(restricted.restricted.includes('p_mara') ? ['DEMO-0044'] : [])
+    // DEMO-0044 is restricted to Severin and Mara; Tom (viewer) may not see it.
+    expect(setup().store.ticket('DEMO-0044')!.visibility).toEqual({ restricted: ['p_sev', 'p_mara'] })
+    const t = async (who: string) => (await setup(who).api.getSkills(DEMO)).find((s) => s.name === 'warehouse-admin')!.tickets
+    const c = async (who: string) => (await setup(who).api.getConnections(DEMO)).find((s) => s.name === 'az-storage')!.tickets
+    expect(await t('p_sev')).toEqual(['DEMO-0044'])
+    expect(await t('p_tom')).toEqual([])
+    expect(await c('p_mara')).toEqual(['DEMO-0044'])
+    expect(await c('p_tom')).toEqual([])
+  })
+  it('a sidecar that does not validate gives "invalid" needs, uses nothing and refuses grants', async () => {
+    const { api } = setup()
+    const s = (await api.getSkills(DEMO)).find((x) => x.name === 'naming-conventions')!
+    expect(s).toMatchObject({ needs: 'invalid', version: null, connections: [], env: [] })
+    expect(s.sidecar_problem).toMatch(/skill_version|secrets/)
+    expect(await refusal(api.grantSkillCredentials(DEMO, 'naming-conventions', { connections: ['gh'], env: [], confirmed: true }))).toMatchObject({ status: 409, code: 'skill.invalid_sidecar' })
   })
 })
 
@@ -105,13 +114,32 @@ describe('connections and checks', () => {
     expect(c.last_check!.output).toContain('> * Authorization: Bearer •••• (DATABRICKS_TOKEN)')
     expect(store.wsEventsOf(DEMO).at(-1)).toMatchObject({ type: 'connection.checked', name: 'databricks-ci', actor: { kind: 'host' } })
   })
-  it('no answer and no recorded event ever carries a secret value', async () => {
-    const { api, store } = setup()
-    await api.runDoctor(DEMO)
+  it.each(['p_sev', 'p_mara'])('no answer and no recorded event ever carries a secret value (%s)', async (who) => {
+    const { api, store } = setup(who)
+    const doctor = await api.runDoctor(DEMO)
     await api.runConnectionCheck(DEMO, 'tariff-api')
-    const answers = JSON.stringify([await api.getSkills(DEMO), await api.getConnections(DEMO), await api.getSecretsFile(DEMO), await api.getTicket('DEMO-0043'), store.wsEventsOf(DEMO)])
+    await api.runConnectionCheck(DEMO, 'databricks-ci')
+    const answers = JSON.stringify([
+      doctor,
+      await api.getSkills(DEMO),
+      await api.getConnections(DEMO),
+      await api.getSecretsFile(DEMO),
+      await api.getTicket('DEMO-0043'),
+      await api.getAddonState(DEMO, 'terminals'),
+      await api.getAddonState(DEMO, 'terminals', 'DEMO-0043'),
+      store.wsEventsOf(DEMO),
+    ])
+    // Every parsed value, and the value on the refused `export` line.
+    const all = [...VALUES, 'https://hooks.slack.example/T000/B000/abcdefgh']
     expect(VALUES.length).toBeGreaterThan(3)
-    for (const v of VALUES) expect(answers).not.toContain(v)
+    for (const v of all) expect(answers).not.toContain(v)
+  })
+  it('viewers cannot run the doctor', async () => {
+    expect(await refusal(setup('p_tom').api.runDoctor(DEMO))).toMatchObject({ status: 403, code: 'forbidden' })
+  })
+  it('a check from the re-login item is marked as such (the demo assumes the owner logged in)', async () => {
+    const c = await setup().api.runConnectionCheck(DEMO, 'gcloud-billing', 'relogin')
+    expect(c.last_check).toMatchObject({ status: 'ok', trigger: 'relogin' })
   })
   it('viewers cannot run checks; re-login is the owner\'s and only for CLI logins', async () => {
     expect(await refusal(setup('p_tom').api.runConnectionCheck(DEMO, 'gh'))).toMatchObject({ status: 403 })
@@ -158,7 +186,17 @@ describe('ticket needs and the claim / start precheck', () => {
     expect(await refusal(api.postAction('DEMO-0053', { action: 'claim' }))).toMatchObject({ status: 409, code: 'connection.blocked', message: 'DEMO-0053 is blocked: databricks-prod auth expired.' })
     expect(store.eventsOf('DEMO-0053').length).toBe(before)
   })
-  it('starting an agent is refused the same way (core, before the grant check)', () => {
+  it('a start refused for another reason (no grant) runs no check and records nothing', () => {
+    const { store } = setup('p_mara')
+    for (const g of store.grants(DEMO).filter((x) => x.person === 'p_mara' && !x.revoked)) store.revokeGrant(DEMO, g.id, { kind: 'person', id: 'p_mara' })
+    const before = store.wsEventsOf(DEMO).length
+    const res = store.startSession(DEMO, { ticket: 'DEMO-0052', mode: 'work', harness: 'claude-code', where: 'background', addon: 'start-agent' }, { kind: 'person', id: 'p_mara' })
+    expect(res).toMatchObject({ code: 'grant.none' })
+    expect(res).toMatchObject({ ok: false })
+    expect((res as { code: string }).code).not.toBe('connection.blocked')
+    expect(store.wsEventsOf(DEMO).length).toBe(before)
+  })
+  it('starting an agent is refused the same way (core, after the other refusals)', () => {
     const { store } = setup()
     const res = store.startSession(DEMO, { ticket: 'DEMO-0052', mode: 'work', harness: 'claude-code', where: 'background', addon: 'start-agent' }, { kind: 'person', id: 'p_sev' })
     expect(res).toMatchObject({ ok: false, status: 409, code: 'connection.blocked' })
@@ -173,7 +211,11 @@ describe('the secrets file and the doctor', () => {
     expect(f.path).toMatch(new RegExp(`/secrets/${DEMO}\\.env$`))
     expect(f.names.map((n) => n.name)).toEqual(['DATABRICKS_HOST', 'DATABRICKS_TOKEN', 'TARIFF_API_TOKEN', 'OLD_WAREHOUSE_KEY'])
     expect(f.names.find((n) => n.name === 'DATABRICKS_TOKEN')).toMatchObject({ skills: ['dbt-seeds'], connections: ['databricks-ci'] })
-    expect(f.problems).toEqual([{ line: 8, reason: '"export" is not allowed: the file is parsed, not sourced' }])
+    expect(f.problems).toEqual([
+      { line: 8, reason: '"export" is not allowed: the file is parsed, not sourced' },
+      { line: 9, reason: 'LEGACY_PIN is shorter than 8 characters: output filtering could not hide it' },
+    ])
+    expect(f.names.some((n) => n.name === 'SLACK_WEBHOOK' || n.name === 'LEGACY_PIN')).toBe(false)
     // The seeded agent on DEMO-0043 started before the 10:05 rotation and gets DATABRICKS_TOKEN.
     expect(f.stale_sessions).toEqual([{ session: 's_77c2', agent: 'Claude Code', ticket: 'DEMO-0043', started: '2026-10-09T08:05:30Z' }])
   })
@@ -184,7 +226,11 @@ describe('the secrets file and the doctor', () => {
     const { api } = setup()
     const r = await api.runDoctor(DEMO)
     expect(r.checks.map((c) => `${c.name}:${c.status}`)).toEqual(['gh:ok', 'databricks-prod:auth_expired', 'gcloud-billing:wrong_identity', 'databricks-ci:ok', 'tariff-api:service_down', 'az-storage:unknown'])
-    expect(r.unknown_skills).toEqual([{ name: 'meter-notes', scope: 'workspace', path: 'skills/meter-notes/SKILL.md' }])
+    expect(r.unknown_skills).toEqual([
+      { name: 'meter-notes', scope: 'workspace', path: 'skills/meter-notes/SKILL.md', needs: 'unknown' },
+      { name: 'naming-conventions', scope: 'workspace', path: 'skills/naming-conventions/SKILL.md', needs: 'invalid' },
+    ])
+    expect(r.secrets_problems.map((p) => p.line)).toEqual([8, 9])
     expect(r.ungranted).toEqual([{ skill: 'tariff-feed', refs: ['TARIFF_WEBHOOK_SECRET'] }])
     expect(r.stale_sessions).toHaveLength(1)
   })
@@ -192,12 +238,24 @@ describe('the secrets file and the doctor', () => {
 
 describe('the secrets file parser', () => {
   it('parses NAME=value literally: no sourcing, no expansion, no export', () => {
-    const p = parseSecretsFile('# c\nA_TOKEN=$(rm -rf ~)\nB=$HOME\nexport C=1\nlower=1\nnot a line\nA_TOKEN=again\nD=\n')
+    const p = parseSecretsFile('# c\nA_TOKEN=$(rm -rf ~)\nB=$HOME/.x/yy\nexport C=1\nlower=1\nnot a line\nA_TOKEN=again\nD=\n')
     expect(p.entries).toEqual([
       { name: 'A_TOKEN', value: '$(rm -rf ~)', line: 2 },
-      { name: 'B', value: '$HOME', line: 3 },
+      { name: 'B', value: '$HOME/.x/yy', line: 3 },
     ])
     expect(p.problems.map((x) => x.line)).toEqual([4, 5, 6, 7, 8])
     expect(JSON.stringify(p.problems)).not.toContain('again')
+  })
+})
+
+describe('the busy day background script', () => {
+  it('never takes a claim on a ticket blocked by a connection', async () => {
+    const { claimable } = await import('./busy/live')
+    const { store } = setup()
+    const doc = store.ticket('DEMO-0053')!
+    const open = { ...doc, status: 'open' as const, claim: null, gates: { ...doc.gates, plan: { ...doc.gates.plan, state: 'approved' as const } }, tasks: doc.tasks.length ? doc.tasks : [{ id: 'T1', text: 't' }] } as typeof doc
+    expect(open.needs?.blocked).not.toBeNull()
+    expect(claimable(open)).toBe(false)
+    expect(claimable({ ...open, needs: { ...open.needs!, blocked: null } })).toBe(true)
   })
 })

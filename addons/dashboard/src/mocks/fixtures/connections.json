@@ -180,7 +180,7 @@
       "dir_mode": "0700",
       "file_mode": "0600",
       "modified_at": "2026-10-09T10:05:00Z",
-      "text": "# orch secrets for Acme energy data (6f1c0d2e-8b4a-4e1f-9c3d-2a7b5e9f0c11)\n# NAME=value lines. Parsed by orch, never sourced.\nDATABRICKS_HOST=https://adb-4417926513240.12.azuredatabricks.net\n# rotated 9 Oct 2026, 10:05\nDATABRICKS_TOKEN=demo-not-a-real-databricks-token-0001\nTARIFF_API_TOKEN=demo-not-a-real-tariff-token-0002\nOLD_WAREHOUSE_KEY=demo-not-a-real-warehouse-key-0003\nexport SLACK_WEBHOOK=https://hooks.slack.example/T000/B000/abcdefgh\n"
+      "text": "# orch secrets for Acme energy data (6f1c0d2e-8b4a-4e1f-9c3d-2a7b5e9f0c11)\n# NAME=value lines. Parsed by orch, never sourced.\nDATABRICKS_HOST=https://adb-4417926513240.12.azuredatabricks.net\n# rotated 9 Oct 2026, 10:05\nDATABRICKS_TOKEN=demo-not-a-real-databricks-token-0001\nTARIFF_API_TOKEN=demo-not-a-real-tariff-token-0002\nOLD_WAREHOUSE_KEY=demo-not-a-real-warehouse-key-0003\nexport SLACK_WEBHOOK=https://hooks.slack.example/T000/B000/abcdefgh\nLEGACY_PIN=4711\n"
     },
     "ticket_skills": {
       "DEMO-0043": [

@@ -6,6 +6,7 @@ import { makeRng, type Rng } from './rng'
 import { GRANT_OF, ROOTS, SESSIONS, actorOf } from './roster'
 import { BUSY_SEED } from './generate'
 import type { MockStore } from '../store'
+import type { TicketDocument } from '@/api/types'
 
 export const LIVE_ID = 'busy:live'
 export const LIVE_CAP_PER_HOUR = 300
@@ -28,6 +29,12 @@ export function startLive(store: MockStore): void {
     ])
   tick()
 }
+
+/**
+ * May the background script take a claim on this ticket? Open, unclaimed, plan approved, with tasks, and not blocked by
+ * a connection (D57): its claim writes bypass the router, so core's connection precheck is honoured here.
+ */
+export const claimable = (d: TicketDocument): boolean => d.status === 'open' && !d.claim && d.gates.plan.state === 'approved' && d.tasks.length > 0 && !d.needs?.blocked
 
 /** Plays one step; returns one entry per event appended. */
 function liveStep(st: MockStore, rng: Rng): number[] {
@@ -69,7 +76,7 @@ function liveStep(st: MockStore, rng: Rng): number[] {
       return [1]
     }
   } else if (isDemo && kind >= 0.82) {
-    const t = rng.shuffle(docs).find((d) => d.status === 'open' && !d.claim && d.gates.plan.state === 'approved' && d.tasks.length)
+    const t = rng.shuffle(docs).find(claimable)
     // A session takes up to five claims at a time.
     const free = ROOTS.filter((s) => docs.filter((d) => d.claim?.session === s.id).length < 5)
     if (t && free.length) {

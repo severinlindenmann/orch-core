@@ -10,7 +10,7 @@ import { useWorkspace } from '@/app/workspace'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { CopyButton } from '../ticket/Header'
-import { checkTime, PhaseChip, useConnections } from '../settings/connectionUi'
+import { checkTime, DEMO_RELOGIN, DemoChip, PhaseChip, useConnections } from '../settings/connectionUi'
 import { useRunCheck } from '../settings/Connections'
 import { RowShell } from './rows'
 
@@ -29,10 +29,13 @@ function ReloginRow({ c, ws, now, expanded, onToggle }: { c: ConnectionInfo; ws:
       onToggle={onToggle}
       action={
         c.kind === 'cli_login' ? (
-          <Button size="xs" variant="outline" disabled={check.isPending} onClick={() => check.mutate({ name: c.name, trigger: 'relogin' })}>
-            {check.isPending ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-            Run check again
-          </Button>
+          <>
+            <DemoChip />
+            <Button size="xs" variant="outline" disabled={check.isPending} onClick={() => check.mutate({ name: c.name, trigger: 'relogin' })}>
+              {check.isPending ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+              Run check again
+            </Button>
+          </>
         ) : (
           <Button size="xs" variant="outline" disabled={check.isPending} onClick={() => check.mutate({ name: c.name })}>
             <RefreshCw />
@@ -50,6 +53,10 @@ function ReloginRow({ c, ws, now, expanded, onToggle }: { c: ConnectionInfo; ws:
             <code className="min-w-0 break-all rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[12px]">{c.login_hint}</code>
             <CopyButton text={c.login_hint} label={`Copy the login command for ${c.name}`} />
           </span>
+          <p className="flex items-center gap-2 text-[12px] text-text-muted">
+            <DemoChip />
+            {DEMO_RELOGIN} No login happens in this mockup.
+          </p>
         </>
       ) : (
         <p className="text-[13px] text-text-muted">Update {c.env.join(', ')} in the secrets file on the host, then run the check again. Running sessions keep the old value until restarted.</p>

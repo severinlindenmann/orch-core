@@ -11,6 +11,8 @@ import {
   BLOCKING,
   CHECK_LABEL,
   ENV_RE,
+  skillSidecar,
+  type SkillSidecar,
   isBlocking,
   type CheckResult,
   type CheckStatus,
@@ -69,7 +71,8 @@ interface FixtureSkill {
   source?: string
   addon?: string
   skill_md: string
-  sidecar: { schema_version: number; skill_version: string; scope: string; connections: string[]; env: string[] } | null
+  /** As on disk: validated with `skillSidecar` (strict) when the host reads it. */
+  sidecar: unknown
   grants?: SkillGrant[]
   pending_note?: string
 }
@@ -88,7 +91,11 @@ interface HostSkill {
   path: string
   source: string
   skill_md: string
-  sidecar: FixtureSkill['sidecar']
+  /** The sidecar when it is valid; null when there is none or it does not validate. */
+  sidecar: SkillSidecar | null
+  /** What is on disk (shown as is), and why it does not validate. */
+  raw: unknown
+  problem?: string
   grants: SkillGrant[]
   pending_note?: string
 }
@@ -151,7 +158,8 @@ export class ConnectionsHost {
         ]
         // A grant of a name the sidecar does not list yet adds it there (orch writes orch.skill.json).
         let sidecar = b.sidecar ? structuredClone(b.sidecar) : null
-        for (const e of mine) {
+        // An invalid sidecar is never rewritten (the grant path refuses it): fix the file first.
+        if (!b.problem) for (const e of mine) {
           sidecar ??= { schema_version: 1, skill_version: '0.1.0', scope: 'workspace', connections: [], env: [] }
           sidecar.connections = uniq([...sidecar.connections, ...((e.connections as string[]) ?? [])])
           sidecar.env = uniq([...sidecar.env, ...((e.env as string[]) ?? [])])
@@ -161,15 +169,32 @@ export class ConnectionsHost {
     ]
   }
   private base(s: FixtureSkill, scope: SkillScope): HostSkill {
-    return { name: s.name, description: s.description, scope, path: s.path, source: '', skill_md: s.skill_md, sidecar: s.sidecar ? structuredClone(s.sidecar) : null, grants: structuredClone(s.grants ?? []), pending_note: s.pending_note }
+    const parsed = s.sidecar == null ? null : skillSidecar.safeParse(s.sidecar)
+    const problem = parsed && !parsed.success ? parsed.error.issues.map((i) => `${i.path.join('.') || 'file'}: ${i.message}`).join('; ').slice(0, 300) : undefined
+    return {
+      name: s.name,
+      description: s.description,
+      scope,
+      path: s.path,
+      source: '',
+      skill_md: s.skill_md,
+      sidecar: parsed?.success ? structuredClone(parsed.data) : null,
+      raw: s.sidecar ?? null,
+      ...(problem ? { problem } : {}),
+      grants: structuredClone(s.grants ?? []),
+      pending_note: s.pending_note,
+    }
   }
   /** A reference is in effect once granted; a built-in skill's references come with the release (or its addon's grant). */
   private grantedRefs(s: HostSkill): { connections: Set<string>; env: Set<string> } {
-    if (s.scope === 'built_in') return { connections: new Set(s.sidecar?.connections ?? []), env: new Set(s.sidecar?.env ?? []) }
-    return { connections: new Set(s.grants.flatMap((g) => g.connections)), env: new Set(s.grants.flatMap((g) => g.env)) }
+    const listed = { connections: s.sidecar?.connections ?? [], env: s.sidecar?.env ?? [] }
+    if (s.scope === 'built_in') return { connections: new Set(listed.connections), env: new Set(listed.env) }
+    // In effect: granted AND still in the sidecar (a reference removed from orch.skill.json stops counting).
+    const granted = { connections: new Set(s.grants.flatMap((g) => g.connections)), env: new Set(s.grants.flatMap((g) => g.env)) }
+    return { connections: new Set(listed.connections.filter((n) => granted.connections.has(n))), env: new Set(listed.env.filter((n) => granted.env.has(n))) }
   }
-  private needsOf(s: HostSkill): 'declared' | 'unknown' {
-    return s.sidecar ? 'declared' : 'unknown'
+  private needsOf(s: HostSkill): 'declared' | 'unknown' | 'invalid' {
+    return s.problem ? 'invalid' : s.sidecar ? 'declared' : 'unknown'
   }
 
   /** Skill keys used by a ticket (its `skills` list). */
@@ -192,7 +217,8 @@ export class ConnectionsHost {
         path: s.path,
         source: s.source,
         skill_md: s.skill_md,
-        sidecar: s.sidecar ? JSON.stringify(s.sidecar, null, 2) : null,
+        sidecar: s.sidecar ? JSON.stringify(s.sidecar, null, 2) : s.raw != null ? JSON.stringify(s.raw, null, 2) : null,
+        ...(s.problem ? { sidecar_problem: s.problem } : {}),
         needs: this.needsOf(s),
         version: s.sidecar?.skill_version ?? null,
         connections: (s.sidecar?.connections ?? []).map((n) => ({ name: n, granted: g.connections.has(n) })),
@@ -213,6 +239,7 @@ export class ConnectionsHost {
     const skill = this.hostSkills(wsId).find((s) => s.name === skillName)
     if (!skill) return refuse(404, 'not_found', `No skill ${skillName}`)
     if (skill.scope === 'built_in') return refuse(409, 'skill.built_in', `${skillName} is built in: its needs change with a release.`, 'Copy it into the workspace repo to change what it uses.')
+    if (skill.problem) return refuse(409, 'skill.invalid_sidecar', `${skillName}'s orch.skill.json does not validate.`, 'Fix the file in the workspace repo first.')
     const conns = Array.isArray(b.connections) ? b.connections : []
     const env = Array.isArray(b.env) ? b.env : []
     const known = new Set((this.config(wsId)?.connections ?? []).map((c) => c.name))
@@ -325,12 +352,13 @@ export class ConnectionsHost {
       report: {
         at: this.store.now(),
         checks,
-        unknown_skills: skills.filter((s) => s.needs !== 'declared').map((s) => ({ name: s.name, scope: s.scope, path: s.path })),
+        unknown_skills: skills.flatMap((s) => (s.needs === 'declared' ? [] : [{ name: s.name, scope: s.scope, path: s.path, needs: s.needs }])),
         ungranted: skills.flatMap((s) => {
           const refs = [...s.connections.filter((r) => !r.granted).map((r) => r.name), ...s.env.filter((r) => !r.granted).map((r) => r.name)]
           return refs.length ? [{ skill: s.name, refs }] : []
         }),
         secrets_permissions_ok: secrets.permissions_ok,
+        secrets_problems: secrets.problems,
         stale_sessions: secrets.stale_sessions,
       },
     }

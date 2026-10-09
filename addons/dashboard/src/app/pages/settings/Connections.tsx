@@ -17,7 +17,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { cn } from '@/lib/utils'
 import { CopyButton } from '../ticket/Header'
 import { Mono, Pill, Section } from '../ticket/shared'
-import { CheckChip, checkTime, KIND_LABEL, PhaseChip, useConnections } from './connectionUi'
+import { toast } from 'sonner'
+import { CheckChip, checkTime, DEMO_RELOGIN, DemoChip, invalidateConnectionData, KIND_LABEL, PhaseChip, useConnections } from './connectionUi'
 
 const TRIGGER_LABEL = { on_demand: 'run by hand', doctor: 'doctor', session_start: 'session start', claim: 'before a claim', relogin: 'after re-login' } as const
 export const VIEWER_CHECK_REASON = 'Viewers cannot run checks.'
@@ -27,7 +28,10 @@ export function useRunCheck(ws: string) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ name, trigger }: { name: string; trigger?: 'on_demand' | 'relogin' }) => api.runConnectionCheck(ws, name, trigger),
-    onSuccess: () => qc.invalidateQueries(),
+    onSuccess: (c, v) => {
+      if (v.trigger === 'relogin' && c.last_check) toast.success(`${c.name}: ${CHECK_LABEL[c.last_check.status]}`, { description: DEMO_RELOGIN })
+      return invalidateConnectionData(qc)
+    },
     onError: (e) => toastApiError(e, 'Check failed to run'),
   })
 }
@@ -48,7 +52,7 @@ export function Connections({ workspace, canEdit }: { workspace: Workspace; canE
     mutationFn: () => api.runDoctor(ws),
     onSuccess: (r) => {
       setReport(r)
-      void qc.invalidateQueries()
+      void invalidateConnectionData(qc)
     },
     onError: (e) => toastApiError(e, 'The doctor could not run'),
   })
@@ -112,6 +116,7 @@ export function Connections({ workspace, canEdit }: { workspace: Workspace; canE
                             <span className="text-[11px] tabular-nums text-text-muted">
                               {checkTime(last.at, now)} · {TRIGGER_LABEL[last.trigger]}
                             </span>
+                            {last.trigger === 'relogin' && <DemoChip />}
                           </span>
                         ) : (
                           <CheckChip status="unknown" />
@@ -230,6 +235,12 @@ export function ConnectionDetails({ c }: { c: ConnectionInfo }) {
       </dl>
       {last && (
         <div>
+          {last.trigger === 'relogin' && (
+            <p className="mb-1 flex items-center gap-2 text-[12px] text-text-muted">
+              <DemoChip />
+              {DEMO_RELOGIN}
+            </p>
+          )}
           <p className="mb-1 text-[12px] text-text-muted">
             Output ({CHECK_LABEL[last.status]}, filtered for secret values{last.truncated ? ', cut' : ''})
           </p>
@@ -255,7 +266,7 @@ function DoctorPanel({ report, onClose }: { report: DoctorReport; onClose: () =>
     >
       <div className="space-y-3 text-[13px]" data-testid="doctor-report">
         <p className="text-text-muted">
-          {report.checks.length} checks · {failing === 0 ? 'all ok' : `${failing} not ok`} · {report.unknown_skills.length} {report.unknown_skills.length === 1 ? 'skill' : 'skills'} with unknown needs · secrets file{' '}
+          {report.checks.length} checks · {failing === 0 ? 'all ok' : `${failing} not ok`} · {report.unknown_skills.length} {report.unknown_skills.length === 1 ? 'skill' : 'skills'} with unknown or invalid needs · secrets file{' '}
           {report.secrets_permissions_ok ? 'permissions ok' : 'permissions wrong'}
         </p>
         <ul className="space-y-1">
@@ -271,11 +282,11 @@ function DoctorPanel({ report, onClose }: { report: DoctorReport; onClose: () =>
         </ul>
         {report.unknown_skills.length > 0 && (
           <div>
-            <p className="font-medium">Warning: skills without orch.skill.json (unknown needs)</p>
+            <p className="font-medium">Warning: skills without a valid orch.skill.json</p>
             <ul className="mt-1 list-disc pl-5 text-text-muted">
               {report.unknown_skills.map((s) => (
                 <li key={s.name}>
-                  <Mono className="text-text">{s.name}</Mono> · {s.path}
+                  <Mono className="text-text">{s.name}</Mono> · {s.needs === 'invalid' ? 'invalid sidecar' : 'no sidecar (unknown needs)'} · {s.path}
                 </li>
               ))}
             </ul>
@@ -288,6 +299,18 @@ function DoctorPanel({ report, onClose }: { report: DoctorReport; onClose: () =>
               {report.ungranted.map((u) => (
                 <li key={u.skill}>
                   <Mono className="text-text">{u.skill}</Mono>: {u.refs.join(', ')}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {report.secrets_problems.length > 0 && (
+          <div>
+            <p className="font-medium">Secrets file lines ignored</p>
+            <ul className="mt-1 list-disc pl-5 text-text-muted">
+              {report.secrets_problems.map((p) => (
+                <li key={p.line}>
+                  Line {p.line}: {p.reason}
                 </li>
               ))}
             </ul>

@@ -1,5 +1,5 @@
 // Shared bits of the Skills and Connections tabs, the ticket rail and Today (D55–D57).
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, type QueryClient } from '@tanstack/react-query'
 import { CircleCheck, CircleHelp, CloudOff, KeyRound, UserX } from 'lucide-react'
 import { api } from '@/api/client'
 import { CHECK_LABEL, type CheckStatus } from '@/api/connections'
@@ -32,6 +32,21 @@ export function PhaseChip({ phase, className }: { phase: string; className?: str
       {phase} · Preview
     </span>
   )
+}
+
+/** The mock's re-login path: a check from the re-login item assumes the owner logged in again. Said on screen. */
+export const DEMO_RELOGIN = 'Demo: this check assumes you logged in again.'
+export function DemoChip({ className }: { className?: string }) {
+  return (
+    <span title={DEMO_RELOGIN} className={cn('inline-flex shrink-0 select-none items-center rounded-full border border-info/40 bg-info-soft px-1.5 py-px text-[10px] font-medium leading-4 text-info', className)}>
+      Demo
+    </span>
+  )
+}
+
+/** What a check, the doctor or a grant can change: connections, skills, the secrets file, tickets (needs) and Today. */
+export function invalidateConnectionData(qc: QueryClient) {
+  return Promise.all(['connections', 'skills', 'secrets', 'ticket', 'today'].map((k) => qc.invalidateQueries({ queryKey: [k] })))
 }
 
 export const KIND_LABEL = { cli_login: 'CLI login', api_token: 'API token' } as const

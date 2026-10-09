@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   DndContext,
   DragOverlay,
@@ -16,7 +16,10 @@ import {
 } from '@dnd-kit/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
-import { Lock } from 'lucide-react'
+import { ChevronsLeft, ChevronsRight, Lock } from 'lucide-react'
+import { toast } from 'sonner'
+import { can } from '@/api/permissions'
+import { useRole } from '@/app/useRole'
 import { api } from '@/api/client'
 import { STATUSES, type Status, type TicketSummary } from '@/api/types'
 import { Button } from '@/components/ui/button'
@@ -24,12 +27,13 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { cn } from '@/lib/utils'
 import { useWorkspace } from '@/app/workspace'
 import { usePageHeader } from '@/app/shell/ShellUi'
+import { useSlot } from '@/addon-ui'
 import { AddonLanes } from './AddonLane'
 import { ColumnSums } from './ColumnSum'
 import { ListView } from './ListView'
 import { TicketCard, TicketCardBody, type BoardPeople } from './TicketCard'
 import { Toolbar, type View } from './Toolbar'
-import { applyFilters, NO_FILTERS, STATUS_LABEL, type Filters } from './lib'
+import { applyFilters, NO_FILTERS, STATUS_LABEL, useBoardDisplay, type BoardDisplay, type Filters } from './lib'
 import { toastApiError } from '@/app/toast'
 
 const DONE_LIMIT = 5
@@ -71,6 +75,11 @@ function Column({
   onOpen,
   draggingFrom,
   filtering,
+  display,
+  collapsedRail,
+  canMove,
+  onMove,
+  onCollapse,
 }: {
   status: Status
   tickets: TicketSummary[]
@@ -81,28 +90,72 @@ function Column({
   onOpen: (key: string) => void
   draggingFrom: Status | null
   filtering: boolean
+  display: BoardDisplay
+  collapsedRail: boolean
+  canMove: boolean
+  onMove: (key: string, status: Status) => void
+  onCollapse: (collapse: boolean) => void
 }) {
-  const { setNodeRef, isOver } = useDroppable({ id: status })
+  // A collapsed Done rail is not a drop target: Done is reached by a verdict, never by a drop.
+  const { setNodeRef, isOver } = useDroppable({ id: status, disabled: collapsedRail && status === 'done' })
   const [showAll, setShowAll] = useState(false)
-  const collapsed = status === 'done' && !showAll && tickets.length > DONE_LIMIT
-  const visible = collapsed ? tickets.slice(0, DONE_LIMIT) : tickets
+  const limited = status === 'done' && !showAll && tickets.length > DONE_LIMIT
+  const visible = limited ? tickets.slice(0, DONE_LIMIT) : tickets
   const humanOnly = status === 'done'
+  if (collapsedRail) {
+    return (
+      <section
+        ref={setNodeRef}
+        aria-label={`${STATUS_LABEL[status]} (collapsed)`}
+        data-status={status}
+        className={cn(
+          'flex min-h-0 w-10 flex-col rounded-lg border bg-bg/40 transition-colors',
+          isOver && draggingFrom !== status ? 'border-brand bg-brand-soft' : 'border-border',
+        )}
+      >
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              aria-label={`Expand ${STATUS_LABEL[status]}, ${total} tickets`}
+              onClick={() => onCollapse(false)}
+              className="flex h-full min-h-[120px] w-full flex-col items-center gap-2 rounded-lg py-2 text-text-muted outline-none hover:bg-accent hover:text-text focus-visible:ring-2 focus-visible:ring-brand"
+            >
+              <ChevronsRight className="size-3.5" aria-hidden />
+              <span className="rounded-full bg-surface-3 px-1.5 font-mono text-[11px]">{total}</span>
+              <span className="text-[13px] font-semibold [writing-mode:vertical-rl]">{STATUS_LABEL[status]}</span>
+              {humanOnly && <Lock className="size-3 text-text-faint" aria-hidden />}
+            </button>
+          </TooltipTrigger>
+          {humanOnly && <TooltipContent side="left">Human-only: Done is reached by a verdict in Testing.</TooltipContent>}
+        </Tooltip>
+      </section>
+    )
+  }
   return (
     <section
       aria-label={STATUS_LABEL[status]}
       data-status={status}
       className={cn(
-        'flex min-h-0 w-[300px] shrink-0 flex-col rounded-lg border bg-bg/40 transition-colors',
+        'flex min-h-0 min-w-0 flex-col rounded-lg border bg-bg/40 transition-colors',
         isOver && draggingFrom !== status ? 'border-brand bg-brand-soft' : 'border-border',
       )}
     >
-      <header className="flex items-center gap-2 px-3 py-2">
-        <h2 className="text-[13px] font-semibold text-text">{STATUS_LABEL[status]}</h2>
-        <span className="rounded-full bg-surface-3 px-1.5 font-mono text-[11px] text-text-muted" aria-label={`${total} tickets`}>
+      <header className="@container flex items-center gap-1.5 px-2.5 py-2">
+        <h2 className="shrink-0 whitespace-nowrap text-[13px] font-semibold text-text">{STATUS_LABEL[status]}</h2>
+        <span className="shrink-0 rounded-full bg-surface-3 px-1.5 font-mono text-[11px] text-text-muted" aria-label={`${total} tickets`}>
           {total}
         </span>
         <ColumnSums tickets={tickets} />
-        <span className="flex-1" />
+        <span className="min-w-0 flex-1" />
+        <button
+          type="button"
+          aria-label={`Collapse ${STATUS_LABEL[status]}`}
+          onClick={() => onCollapse(true)}
+          className="shrink-0 rounded p-0.5 text-text-faint outline-none hover:text-text focus-visible:ring-2 focus-visible:ring-brand"
+        >
+          <ChevronsLeft className="size-3.5" aria-hidden />
+        </button>
         {humanOnly && (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -121,9 +174,9 @@ function Column({
             {filtering ? <p>No {STATUS_LABEL[status].toLowerCase()} tickets match the filters.</p> : status === 'backlog' && <p>Create a ticket (c)</p>}
           </div>
         ) : (
-          visible.map((t) => <TicketCard key={t.key} ticket={t} people={people} me={me} task={tasks.get(t.key)} canMove onOpen={onOpen} />)
+          visible.map((t) => <TicketCard key={t.key} ticket={t} people={people} me={me} task={tasks.get(t.key)} canMove={canMove} display={display} onOpen={onOpen} onMove={onMove} />)
         )}
-        {collapsed && (
+        {limited && (
           <Button variant="ghost" size="sm" className="h-7 text-[12px] text-text-muted" onClick={() => setShowAll(true)}>
             Show all {tickets.length}
           </Button>
@@ -147,6 +200,13 @@ export function BoardPage() {
   const [view, setView] = useState<View>('board')
   const [filters, setFilters] = useState<Filters>(NO_FILTERS)
   const [dragging, setDragging] = useState<TicketSummary | null>(null)
+  const [display, setDisplay] = useBoardDisplay()
+  const role = useRole()
+  const canMove = can(role, 'ticket.move')
+  const boardRef = useRef<HTMLDivElement>(null)
+  const lanes = useSlot('board.lane')
+  const refocus = useRef<{ key: string; status: Status } | null>(null)
+  const [overlayWidth, setOverlayWidth] = useState<number | undefined>()
 
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.getMe })
   const ticketsKey = ['board', wsId] as const
@@ -187,7 +247,14 @@ export function BoardPage() {
   )
 
   const move = useMutation({
-    mutationFn: ({ key, status }: { key: string; status: Status }) => api.postAction(key, { action: 'set_status', status }),
+    mutationFn: ({ key, status }: { key: string; status: Status; from?: Status }) => api.postAction(key, { action: 'set_status', status }),
+    onSuccess: (_r, { key, status, from }) => {
+      if (!from) return
+      toast.success(`Moved ${key} to ${STATUS_LABEL[status]}`, {
+        duration: 8000,
+        action: { label: 'Undo', onClick: () => move.mutate({ key, status: from }) },
+      })
+    },
     onMutate: async ({ key, status }) => {
       await qc.cancelQueries({ queryKey: ticketsKey })
       const prev = qc.getQueryData<TicketSummary[]>(ticketsKey)
@@ -205,6 +272,17 @@ export function BoardPage() {
     },
   })
 
+  // After a move from the menu, keep the keyboard on the card it moved.
+  useEffect(() => {
+    const r = refocus.current
+    if (!r) return
+    const el = boardRef.current?.querySelector<HTMLElement>(`[data-status="${r.status}"] [data-testid="card-${r.key}"]`)
+    if (el) {
+      refocus.current = null
+      el.focus()
+    }
+  }, [tickets])
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, {
@@ -216,6 +294,7 @@ export function BoardPage() {
   const open = (key: string) => void navigate({ to: '/ticket/$key', params: { key } })
 
   function onDragStart(e: DragStartEvent) {
+    setOverlayWidth(e.active.rect.current.initial?.width)
     setDragging((e.active.data.current?.ticket as TicketSummary | undefined) ?? null)
   }
   function onDragEnd(e: DragEndEvent) {
@@ -225,7 +304,18 @@ export function BoardPage() {
     if (!t || !to || !STATUSES.includes(to)) return
     const current = qc.getQueryData<TicketSummary[]>(ticketsKey)?.find((x) => x.key === t.key)
     if ((current?.status ?? t.status) === to) return
-    move.mutate({ key: t.key, status: to })
+    move.mutate({ key: t.key, status: to, from: current?.status ?? t.status })
+  }
+  function moveFromMenu(key: string, to: Status) {
+    const from = qc.getQueryData<TicketSummary[]>(ticketsKey)?.find((x) => x.key === key)?.status
+    if (from && from !== to) {
+      refocus.current = { key, status: to }
+      move.mutate({ key, status: to, from })
+    }
+  }
+  function jump(target: string) {
+    const sel = STATUSES.includes(target as Status) ? `[data-status="${target}"]` : `[data-lane="${target}"]`
+    boardRef.current?.querySelector<HTMLElement>(sel)?.scrollIntoView({ behavior: 'smooth', inline: 'start', block: 'nearest' })
   }
 
   return (
@@ -242,6 +332,18 @@ export function BoardPage() {
         epics={options.epics}
         shown={filtered.length}
         total={tickets.length}
+        display={display}
+        onDisplay={setDisplay}
+        moveLimit={!role || canMove ? null : role === 'viewer' ? 'viewer' : 'cannot-move'}
+        columns={
+          view === 'board'
+            ? [
+                ...STATUSES.map((s) => ({ key: s as string, label: STATUS_LABEL[s], count: byStatus.get(s)?.length ?? 0 })),
+                ...lanes.map((l) => ({ key: `${l.addon}/${l.id}`, label: l.title, addon: l.addon })),
+              ]
+            : null
+        }
+        onJump={jump}
       />
       {isPending ? (
         <p className="text-[13px] text-text-faint">Loading board…</p>
@@ -255,7 +357,14 @@ export function BoardPage() {
           onDragEnd={onDragEnd}
           onDragCancel={() => setDragging(null)}
         >
-          <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto pb-2">
+          <div
+            ref={boardRef}
+            className="grid min-h-0 min-w-0 flex-1 grid-flow-col gap-2 overflow-x-auto pb-2"
+            style={{
+              gridTemplateColumns: STATUSES.map((s) => (display.collapsed.includes(s) ? '40px' : 'minmax(216px, 1fr)')).join(' '),
+              gridAutoColumns: 'minmax(216px, 1fr)',
+            }}
+          >
             {STATUSES.map((s) => (
               <Column
                 key={s}
@@ -268,14 +377,19 @@ export function BoardPage() {
                 tasks={tasks}
                 onOpen={open}
                 draggingFrom={dragging?.status ?? null}
+                display={display}
+                collapsedRail={display.collapsed.includes(s)}
+                canMove={canMove}
+                onMove={moveFromMenu}
+                onCollapse={(c) => setDisplay({ collapsed: c ? [...display.collapsed, s] : display.collapsed.filter((x) => x !== s) })}
               />
             ))}
             <AddonLanes />
           </div>
           <DragOverlay dropAnimation={null}>
             {dragging ? (
-              <div className="w-[284px]">
-                <TicketCardBody ticket={dragging} people={people} me={me?.person} task={tasks.get(dragging.key)} overlay />
+              <div style={{ width: overlayWidth }}>
+                <TicketCardBody ticket={dragging} people={people} me={me?.person} task={tasks.get(dragging.key)} display={display} overlay />
               </div>
             ) : null}
           </DragOverlay>

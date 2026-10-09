@@ -1,5 +1,6 @@
+import { useCallback, useState } from 'react'
 import { Bug, ChevronDown, ChevronUp, ChevronsUp, Equal, FlaskConical, Layers, Sparkles, Wrench, type LucideIcon } from 'lucide-react'
-import type { Priority, Status, TicketSummary, TicketType } from '@/api/types'
+import { STATUSES, type Priority, type Status, type TicketSummary, type TicketType } from '@/api/types'
 import { cn } from '@/lib/utils'
 
 export const STATUS_LABEL: Record<Status, string> = {
@@ -22,7 +23,7 @@ export const TYPE_ICON: Record<TicketType, LucideIcon> = {
 const PRIORITY: Record<Priority, { icon: LucideIcon; cls: string }> = {
   low: { icon: ChevronDown, cls: 'text-text-faint' },
   medium: { icon: Equal, cls: 'text-text-muted' },
-  high: { icon: ChevronUp, cls: 'text-warning' },
+  high: { icon: ChevronUp, cls: 'text-text-muted' },
   urgent: { icon: ChevronsUp, cls: 'text-danger' },
 }
 export const PRIORITY_RANK: Record<Priority, number> = { low: 0, medium: 1, high: 2, urgent: 3 }
@@ -71,3 +72,47 @@ export const initials = (name: string) =>
     .join('')
     .slice(0, 2)
     .toUpperCase()
+
+
+export interface BoardDisplay {
+  density: 'comfortable' | 'compact'
+  labels: boolean
+  estimate: boolean
+  progress: boolean
+  collapsed: Status[]
+}
+export const DEFAULT_DISPLAY: BoardDisplay = { density: 'comfortable', labels: true, estimate: true, progress: false, collapsed: ['done'] }
+const DISPLAY_KEY = 'orch.board.display'
+
+function loadDisplay(): BoardDisplay {
+  try {
+    const raw = JSON.parse(localStorage.getItem(DISPLAY_KEY) ?? 'null') as Partial<BoardDisplay> | null
+    if (!raw || typeof raw !== 'object') return DEFAULT_DISPLAY
+    return {
+      density: raw.density === 'compact' ? 'compact' : 'comfortable',
+      labels: raw.labels ?? DEFAULT_DISPLAY.labels,
+      estimate: raw.estimate ?? DEFAULT_DISPLAY.estimate,
+      progress: raw.progress ?? DEFAULT_DISPLAY.progress,
+      collapsed: Array.isArray(raw.collapsed) ? raw.collapsed.filter((s): s is Status => STATUSES.includes(s)) : DEFAULT_DISPLAY.collapsed,
+    }
+  } catch {
+    return DEFAULT_DISPLAY
+  }
+}
+
+/** The board's Display options, remembered per browser. */
+export function useBoardDisplay() {
+  const [display, setDisplay] = useState<BoardDisplay>(loadDisplay)
+  const update = useCallback((patch: Partial<BoardDisplay>) => {
+    setDisplay((d) => {
+      const next = { ...d, ...patch }
+      try {
+        localStorage.setItem(DISPLAY_KEY, JSON.stringify(next))
+      } catch {
+        /* storage unavailable: the choice lasts for this visit */
+      }
+      return next
+    })
+  }, [])
+  return [display, update] as const
+}

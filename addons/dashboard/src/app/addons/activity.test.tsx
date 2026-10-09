@@ -55,6 +55,9 @@ describe('activity page', () => {
   it('a comment made elsewhere is offered as "Show 1 new event" and no row moves until it is taken', async () => {
     const { user } = renderApp(PATH, { viewer: 'p_sev', setup })
     await screen.findByRole('heading', { name: 'Timeline' }, T)
+    // the first navigation action takes the viewer's reading position
+    await user.click(screen.getByRole('button', { name: 'By ticket' }))
+    await user.click(await screen.findByRole('button', { name: 'Timeline' }, T))
     await waitFor(() => expect(rows().length).toBeGreaterThan(0), T)
     const before = rowTexts()
     await api.postAction('DEMO-0043', { action: 'comment', text: 'Ship it' })

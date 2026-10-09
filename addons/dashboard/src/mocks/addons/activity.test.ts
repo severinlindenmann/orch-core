@@ -61,7 +61,7 @@ interface State {
 }
 const ALL = { type: 'all', person: 'everyone', q: '' }
 const everything = async (s: S) => {
-  await run(s, 'set_period', { period: 'all' })
+  await apply(s, {})
   return state(s)
 }
 const apply = (s: S, f: Record<string, string>) => run(s, 'apply', { formData: { period: 'all', ...ALL, ...f } })
@@ -150,6 +150,7 @@ describe('activity timeline', () => {
   })
   it('a comment elsewhere is offered as "Show 1 new event"; the rows stay put until it is taken', async () => {
     const s = setup()
+    await run(s, 'show_new') // takes the viewer's position
     const before = await state(s)
     const cursor = await s.api.getCursor(s.ws)
     tick()
@@ -168,9 +169,9 @@ describe('activity timeline', () => {
   })
   it('new events are per viewer and respect the filters', async () => {
     const s = setup()
-    await state(s)
+    await run(s, 'show_new')
     s.store.setViewer('p_mara')
-    await state(s)
+    await run(s, 'show_new')
     tick()
     await comment(s, 'DEMO-0043', 'late')
     expect((await state(s)).newEvents).toBe(1)
@@ -210,7 +211,7 @@ describe('activity filter bar (per viewer)', () => {
     expect(JSON.stringify(st.page.children![0])).toContain(st.headline)
     const sum = (x: State) => x.typeOptions.slice(1).reduce((n, o) => n + countOf(x, o.const), 0)
     expect(sum(st)).toBe(st.counts.period)
-    await run(s, 'set_period', { period: 'week' })
+    await apply(s, { period: 'week' })
     const week = await state(s)
     expect(week.headline).toMatch(/in the last 7 days/)
     expect(sum(week)).toBe(week.counts.period)
@@ -218,7 +219,8 @@ describe('activity filter bar (per viewer)', () => {
     expect(st.headline).toMatch(/in total/)
     expect(sum(st)).toBe(st.counts.period)
     expect(st.counts.period).toBeGreaterThanOrEqual(week.counts.period)
-    expect(week.counts.period).toBeGreaterThanOrEqual((await (async () => { await run(s, 'set_period', { period: 'today' }); return state(s) })()).counts.period)
+    await apply(s, { period: 'today' })
+    expect(week.counts.period).toBeGreaterThanOrEqual((await state(s)).counts.period)
   })
   it('choosing a type shows exactly the count its option promised, in the period', async () => {
     const s = setup()
@@ -289,14 +291,12 @@ describe('activity filter bar (per viewer)', () => {
     expect((await run(s, 'show_new')).ok).toBe(true)
     expect((await run(s, 'clear_filters')).ok).toBe(true)
   })
-  it('refuses an unknown type, person, agent, period or view', async () => {
+  it('refuses an unknown type, person, agent or period', async () => {
     const s = setup()
     expect(await refused(apply(s, { type: 'nope' }))).toMatchObject({ status: 404 })
     expect(await refused(apply(s, { person: 'p:p_nobody' }))).toMatchObject({ status: 404 })
     expect(await refused(apply(s, { person: 'a:ghost' }))).toMatchObject({ status: 404 })
     expect(await refused(apply(s, { period: 'decade' }))).toMatchObject({ status: 400 })
-    expect(await refused(run(s, 'set_period', { period: 'decade' }))).toMatchObject({ status: 400 })
-    expect(await refused(run(s, 'set_view', { view: 'grid' }))).toMatchObject({ status: 400 })
     expect((await state(s)).filters).toEqual(ALL)
   })
   it('an empty result is told apart from no events at all', async () => {
@@ -305,6 +305,47 @@ describe('activity filter bar (per viewer)', () => {
     const st = await state(s)
     expect(st.timeline).toEqual([])
     expect(JSON.stringify(st.page)).toMatch(/No events match/)
+  })
+})
+
+describe('activity reading position', () => {
+  it('a state GET is read-only: the addon state is byte-identical before and after', async () => {
+    const s = setup()
+    const snap = () => JSON.stringify(s.store.addonState(s.ws, 'activity'))
+    const before = snap()
+    await state(s)
+    await state(s)
+    s.store.setViewer('p_mara')
+    await state(s)
+    expect(snap()).toBe(before)
+  })
+  it('on a first visit nothing is new, however many events arrive', async () => {
+    const s = setup()
+    tick()
+    await comment(s, 'DEMO-0043', 'before the first visit')
+    const st = await state(s)
+    expect(st.newEvents).toBe(0)
+    tick()
+    await comment(s, 'DEMO-0043', 'while on the page, before any action')
+    expect((await state(s)).newEvents).toBe(0)
+    expect(JSON.stringify((await state(s)).page)).not.toMatch(/new events?/)
+  })
+  it('the first navigation action takes the position; later events are new', async () => {
+    const s = setup()
+    await run(s, 'view_ticket')
+    tick()
+    await comment(s, 'DEMO-0043', 'after the first action')
+    expect((await state(s)).newEvents).toBe(1)
+  })
+  it('a position taken in another dataset (switch or reset) counts for nothing', async () => {
+    const s = setup()
+    await run(s, 'show_new')
+    tick()
+    await comment(s, 'DEMO-0043', 'new in this dataset')
+    expect((await state(s)).newEvents).toBe(1)
+    s.store.dataset = 'busy'
+    expect((await state(s)).newEvents).toBe(0)
+    s.store.dataset = 'normal'
   })
 })
 
@@ -320,7 +361,7 @@ describe('activity views', () => {
     st = await state(s)
     expect(has(st, 'table')).toBe(true)
     expect(has(st, 'list')).toBe(false)
-    await run(s, 'set_view', { view: 'timeline' })
+    await run(s, 'view_timeline')
     expect(has(await state(s), 'table')).toBe(false)
   })
   it('the Timeline heading comes before any table', async () => {
@@ -522,6 +563,6 @@ describe('activity review follow-ups (Task 26 minors)', () => {
     const row = st.timeline.find((r) => r.summary.includes('approval rule'))!
     expect(row.group).toBe('workspace')
     await apply(s, { type: 'gates' })
-    expect((await everything(s)).timeline.some((r) => r.summary.includes('approval rule'))).toBe(false)
+    expect((await state(s)).timeline.some((r) => r.summary.includes('approval rule'))).toBe(false)
   })
 })

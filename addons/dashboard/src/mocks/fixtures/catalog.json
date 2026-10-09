@@ -380,7 +380,7 @@
     "update": null,
     "contributions": [{"slot": "nav", "id": "activity", "title": "Activity", "icon": "Activity", "node": {"$ref": "addon.page"}}, {"slot": "today.card", "id": "today", "title": "Activity", "icon": "Activity", "node": {"type": "stat", "label": "Today", "value": "${addon.todaySummary}", "hint": "${addon.todayHint}"}}],
     "commands": [{ "id": "clear", "title": "Clear activity filters", "action": "clear_filters" }],
-    "actions": { "apply": { "minRole": "viewer", "kind": "navigation" }, "set_period": { "minRole": "viewer", "kind": "navigation" }, "set_view": { "minRole": "viewer", "kind": "navigation" }, "view_timeline": { "minRole": "viewer", "kind": "navigation" }, "view_ticket": { "minRole": "viewer", "kind": "navigation" }, "show_new": { "minRole": "viewer", "kind": "navigation" }, "clear_filters": { "minRole": "viewer", "kind": "navigation" }, "show_older": { "minRole": "viewer", "kind": "navigation" } }
+    "actions": { "apply": { "minRole": "viewer", "kind": "navigation" }, "view_timeline": { "minRole": "viewer", "kind": "navigation" }, "view_ticket": { "minRole": "viewer", "kind": "navigation" }, "show_new": { "minRole": "viewer", "kind": "navigation" }, "clear_filters": { "minRole": "viewer", "kind": "navigation" }, "show_older": { "minRole": "viewer", "kind": "navigation" } }
   },
   {
     "name": "models",

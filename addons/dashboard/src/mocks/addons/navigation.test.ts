@@ -19,8 +19,8 @@ const manifest = (name: string) => ([...addons, ...catalog].find((a) => a.name =
 /** Per-viewer navigation actions: they only move what this viewer is looking at. */
 const NAVIGATION: [addon: string, action: string, body: Record<string, unknown>][] = [
   ['activity', 'apply', { formData: { period: 'week', type: 'gates', person: 'p:p_mara', q: 'tariff' } }],
-  ['activity', 'set_period', { period: 'all' }],
-  ['activity', 'set_view', { view: 'ticket' }],
+  ['activity', 'view_ticket', {}],
+  ['activity', 'view_timeline', {}],
   ['activity', 'show_new', {}],
   ['activity', 'clear_filters', {}],
   ['activity', 'show_older', {}],

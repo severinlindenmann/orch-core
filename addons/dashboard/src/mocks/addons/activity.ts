@@ -12,9 +12,10 @@ import { canSeeTicket, invalid, notFound, registerAddon, type AddonCtx } from '.
 //  - The whole page is `view().page`: a headline, ONE filter bar (period, type, person, search), a Timeline / By ticket switch
 //    and the chosen view. Period, filters, view and page size are the viewer's own (`state.nav[viewer]`). Every count on the
 //    page uses the chosen period; type and person counts are faceted (they respect the other filters), the headline does not.
-//  - Live: the first read of a viewer remembers, per source, the newest event seen (`nav.seen`). Later events are not
-//    listed; they are offered as "Show N new events" (`show_new`), so rows never shift while someone reads. (A read that
-//    records the viewer's own position is a mock convenience; a real addon would record it on the first request.)
+//  - Live: view() is read-only. A viewer's position (`nav.seen`: newest seq per source, plus the dataset it was taken in)
+//    is recorded by their first navigation action (apply, switching view, Show older, ...) and by `show_new`. From then on
+//    later events are not listed; they are offered as "Show N new events", so rows never shift while someone reads.
+//    Without a position (first visit, after a dataset switch or reset) everything counts as seen: nothing is new.
 //  - The Today card is a roll-up of everything the viewer can see; filters and the freeze do not narrow it.
 
 const PAGE = 30
@@ -76,8 +77,10 @@ interface Nav {
   q: string
   pages: number
   view: 'timeline' | 'ticket'
-  /** Newest seq seen per source when the viewer last looked; a missing source has seen nothing. */
-  seen: Record<string, number>
+  /** Newest seq seen per source when the viewer last took a position; null: none taken, so nothing is new. */
+  seen: Record<string, number> | null
+  /** The demo dataset `seen` was taken in; a position from another dataset is no position. */
+  seenIn: string | null
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -116,7 +119,8 @@ const navOf = (state: Record<string, unknown>, viewer: string): Nav => {
     q: n.q ?? '',
     pages: n.pages && n.pages > 0 ? n.pages : 1,
     view: n.view === 'ticket' ? 'ticket' : 'timeline',
-    seen: n.seen ?? {},
+    seen: n.seen ?? null,
+    seenIn: n.seenIn ?? null,
   }
 }
 function setNav(state: Record<string, unknown>, viewer: string, patch: Partial<Nav>): void {
@@ -131,7 +135,14 @@ function positionOf(list: Entry[]): Record<string, number> {
   for (const e of list) seen[sourceKey(e)] = Math.max(seen[sourceKey(e)] ?? 0, e.seq)
   return seen
 }
-const isNew = (e: Entry, seen: Record<string, number>) => e.seq > (seen[sourceKey(e)] ?? 0)
+const isNew = (e: Entry, seen: Record<string, number> | null) => !!seen && e.seq > (seen[sourceKey(e)] ?? 0)
+/** The position to record now (actions only). */
+const takePosition = (c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>) => ({ seen: positionOf(entriesOf(c)), seenIn: c.store.dataset })
+/** Keep a position the viewer already has; take one if they have none (or from another dataset). */
+const ensurePosition = (ctx: AddonCtx) => {
+  const n = navOf(ctx.state, ctx.viewer)
+  if (!n.seen || n.seenIn !== ctx.store.dataset) setNav(ctx.state, ctx.viewer, takePosition(ctx))
+}
 
 /** Every event the viewer may see, newest first. */
 function entriesOf(c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>): Entry[] {
@@ -221,9 +232,8 @@ registerAddon({
   view(state, c) {
     const today = c.store.now().slice(0, 10)
     const everything = entriesOf(c)
-    // First read of this viewer: remember where they are (see the header comment).
-    if (!((state.nav ?? {}) as Record<string, Partial<Nav>>)[c.viewer]?.seen) setNav(state, c.viewer, { seen: positionOf(everything) })
-    const nav = navOf(state, c.viewer)
+    const stored = navOf(state, c.viewer)
+    const nav = stored.seenIn === c.store.dataset ? stored : { ...stored, seen: null, seenIn: null }
     const titles = new Map<string, string>()
     const titleOf = (k: string) => {
       if (!titles.has(k)) titles.set(k, c.store.ticket(k)?.title ?? '')
@@ -269,27 +279,21 @@ registerAddon({
           q: { type: 'string', title: 'Search', maxLength: 80 },
         },
       },
-      uiSchema: { 'ui:options': { layout: 'row' } },
+      uiSchema: { 'ui:options': { layout: 'row' }, 'ui:globalOptions': { layout: 'row' } },
       formData: { period: nav.period, type: nav.type, person: nav.person, q: nav.q },
       action: 'apply',
       submitLabel: 'Apply',
     }
     const clear = filtered(nav) ? [{ type: 'button', label: 'Clear filters', action: 'clear_filters', variant: 'ghost' }] : []
-    // One line: the headline on the left, the view switch (and Clear filters) on the right.
+    // One line: the headline and the view switch. (Core row stacks give each child an equal share; the buttons cannot sit adjacent.)
     const switcher = {
       type: 'stack',
       direction: 'row',
       children: [
         { type: 'markdown', text: headline },
-        {
-          type: 'stack',
-          direction: 'row',
-          children: [
-            { type: 'button', label: 'Timeline', action: 'view_timeline', variant: nav.view === 'timeline' ? 'primary' : 'secondary' },
-            { type: 'button', label: 'By ticket', action: 'view_ticket', variant: nav.view === 'ticket' ? 'primary' : 'secondary' },
-            ...clear,
-          ],
-        },
+        { type: 'button', label: 'Timeline', action: 'view_timeline', variant: nav.view === 'timeline' ? 'primary' : 'secondary' },
+        { type: 'button', label: 'By ticket', action: 'view_ticket', variant: nav.view === 'ticket' ? 'primary' : 'secondary' },
+        ...clear,
       ],
     }
 
@@ -402,39 +406,31 @@ registerAddon({
         if (!ok) return notFound('No such person.')
       }
       const q = typeof f.q === 'string' ? f.q.replace(/[\r\n]+/g, ' ').trim().slice(0, 80) : ''
-      setNav(ctx.state, ctx.viewer, { period: period as Period, type, person, q, pages: 1, seen: positionOf(entriesOf(ctx)) })
+      setNav(ctx.state, ctx.viewer, { period: period as Period, type, person, q, pages: 1, ...takePosition(ctx) })
       return { ok: true, message: 'Filters applied.', changed: true }
     },
-    set_period(ctx) {
-      const period = String(ctx.body.period ?? '')
-      if (!PERIODS.some((p) => p.id === period)) return invalid('Pick Today, 7 days or All.')
-      setNav(ctx.state, ctx.viewer, { period: period as Period, pages: 1, seen: positionOf(entriesOf(ctx)) })
-      return { ok: true, message: 'Period changed.', changed: true }
-    },
-    set_view(ctx) {
-      const view = ctx.body.view
-      if (view !== 'timeline' && view !== 'ticket') return invalid('Pick Timeline or By ticket.')
-      setNav(ctx.state, ctx.viewer, { view })
-      return { ok: true, message: 'View changed.', changed: true }
-    },
-    // Buttons cannot carry arguments, so each view has its own action; set_view is the general form.
+    // Buttons cannot carry arguments, so each view has its own action.
     view_timeline(ctx) {
+      ensurePosition(ctx)
       setNav(ctx.state, ctx.viewer, { view: 'timeline' })
       return { ok: true, message: 'Showing the timeline.', changed: true }
     },
     view_ticket(ctx) {
+      ensurePosition(ctx)
       setNav(ctx.state, ctx.viewer, { view: 'ticket' })
       return { ok: true, message: 'Showing events by ticket.', changed: true }
     },
     show_new(ctx) {
-      setNav(ctx.state, ctx.viewer, { pages: 1, seen: positionOf(entriesOf(ctx)) })
+      setNav(ctx.state, ctx.viewer, { pages: 1, ...takePosition(ctx) })
       return { ok: true, message: 'Showing new events.', changed: true }
     },
     clear_filters(ctx) {
+      ensurePosition(ctx)
       setNav(ctx.state, ctx.viewer, { type: 'all', person: 'everyone', q: '', pages: 1 })
       return { ok: true, message: 'Filters cleared.', changed: true }
     },
     show_older(ctx) {
+      ensurePosition(ctx)
       const n = navOf(ctx.state, ctx.viewer)
       setNav(ctx.state, ctx.viewer, { pages: n.pages + 1 })
       return { ok: true, message: 'Showing older events.', changed: true }

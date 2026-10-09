@@ -516,7 +516,7 @@
         "action": "refresh"
       }
     ],
-    "actions": { "save_settings": { "minRole": "owner" } },
+    "actions": { "save_settings": { "minRole": "owner" }, "open": { "minRole": "member", "kind": "navigation" } },
     "package_sha256": "0f33d256eae57ec0f00baba48552b229d04f5fb2bfe277ce02667cf7196f6fa9",
     "update": {
       "version": "0.6.0",
@@ -787,7 +787,7 @@
         "action": "open"
       }
     ],
-    "actions": { "save_settings": { "minRole": "owner" }, "open": { "minRole": "viewer", "label": "Open terminal" } },
+    "actions": { "save_settings": { "minRole": "owner" }, "open": { "minRole": "viewer", "label": "Open terminal", "kind": "navigation" } },
     "package_sha256": "cf469c979452d209a452ce4f693679a3bb9e21c7e555c97843d25269dcfcd81c",
     "update": null
   },
@@ -865,7 +865,7 @@
         }
       }
     ],
-    "actions": { "save_settings": { "minRole": "owner" }, "open": { "minRole": "viewer", "label": "Open page" }, "search": { "minRole": "viewer", "label": "Search" } },
+    "actions": { "save_settings": { "minRole": "owner" }, "open": { "minRole": "viewer", "label": "Open page", "kind": "navigation" }, "search": { "minRole": "viewer", "label": "Search", "kind": "navigation" } },
     "package_sha256": "b7d76fb138a9d11a83fee724900e7badb09ac744fe7b9c703017da4039ee5639",
     "update": null
   },
@@ -1082,7 +1082,7 @@
       }
     ],
     "actions": {
-      "open": { "minRole": "viewer", "label": "Open page" }
+      "open": { "minRole": "viewer", "label": "Open page", "kind": "navigation" }
     },
     "package_sha256": "5d1c7e0a93b46f28c0e9a7b1d4f63a82e5b09c17d2a84f6e3b7c05a91d8e4f26",
     "update": null

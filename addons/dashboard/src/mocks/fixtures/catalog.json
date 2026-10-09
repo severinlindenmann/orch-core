@@ -288,7 +288,9 @@
     ],
     "actions": {
       "save_settings": { "minRole": "owner" },
-      "decide": { "minRole": "maintainer" }
+      "decide": { "minRole": "maintainer" },
+      "start_close": { "minRole": "member", "kind": "navigation" },
+      "cancel_close": { "minRole": "member", "kind": "navigation" }
     }
   },
   {
@@ -374,7 +376,7 @@
     "update": null,
     "contributions": [{"slot": "nav", "id": "activity", "title": "Activity", "icon": "Activity", "node": {"type": "stack", "children": [{"type": "stack", "direction": "row", "children": [{"type": "stat", "label": "Today", "value": "${addon.todaySummary}", "hint": "${addon.todayHint}"}]}, {"type": "markdown", "text": "### By ticket, today"}, {"type": "table", "columns": [{"key": "ticket", "label": "Ticket"}, {"key": "title", "label": "Title"}, {"key": "today", "label": "Events today"}, {"key": "last_actor", "label": "Last actor"}, {"key": "last", "label": "At"}], "rows": {"$ref": "addon.ticketRows"}}, {"type": "markdown", "text": "### Filters"}, {"type": "stack", "direction": "row", "children": [{"type": "stack", "children": [{"type": "markdown", "text": "**Type**"}, {"type": "list", "items": {"$ref": "addon.typeFilters"}, "empty": "None yet."}]}, {"type": "stack", "children": [{"type": "markdown", "text": "**People**"}, {"type": "list", "items": {"$ref": "addon.peopleFilters"}, "empty": "None yet."}]}, {"type": "stack", "children": [{"type": "markdown", "text": "**Agents**"}, {"type": "list", "items": {"$ref": "addon.agentFilters"}, "empty": "None yet."}]}]}, {"type": "form", "schema": {"type": "object", "properties": {"q": {"type": "string", "title": "Search the timeline", "maxLength": 80}}}, "formData": {"$ref": "addon.searchData"}, "action": "search", "submitLabel": "Search"}, {"$ref": "addon.clear"}, {"type": "markdown", "text": "### Timeline"}, {"$ref": "addon.view"}, {"type": "markdown", "text": "${addon.olderHint}"}, {"$ref": "addon.older"}]}}, {"slot": "today.card", "id": "today", "title": "Activity", "icon": "Activity", "node": {"type": "stat", "label": "Today", "value": "${addon.todaySummary}", "hint": "${addon.todayHint}"}}],
     "commands": [{ "id": "clear", "title": "Clear activity filters", "action": "clear_filters" }],
-    "actions": {"toggle_group": {"minRole": "viewer"}, "toggle_person": {"minRole": "viewer"}, "toggle_agent": {"minRole": "viewer"}, "search": {"minRole": "viewer"}, "clear_filters": {"minRole": "viewer"}, "show_older": {"minRole": "viewer"}}
+    "actions": { "toggle_group": { "minRole": "viewer", "kind": "navigation" }, "toggle_person": { "minRole": "viewer", "kind": "navigation" }, "toggle_agent": { "minRole": "viewer", "kind": "navigation" }, "search": { "minRole": "viewer", "kind": "navigation" }, "clear_filters": { "minRole": "viewer", "kind": "navigation" }, "show_older": { "minRole": "viewer", "kind": "navigation" } }
   },
   {
     "name": "models",
@@ -630,24 +632,10 @@
       }
     ],
     "actions": {
-      "arm": {
-        "minRole": "maintainer",
-        "confirm": "sign",
-        "label": "Arm a schedule"
-      },
-      "disarm": {
-        "minRole": "maintainer",
-        "confirm": "sign",
-        "label": "Disarm a schedule"
-      },
-      "run_now": {
-        "minRole": "member",
-        "label": "Run now"
-      },
-      "open_run": {
-        "minRole": "viewer",
-        "label": "Open run"
-      }
+      "arm": { "minRole": "maintainer", "confirm": "sign", "label": "Arm a schedule" },
+      "disarm": { "minRole": "maintainer", "confirm": "sign", "label": "Disarm a schedule" },
+      "run_now": { "minRole": "member", "label": "Run now" },
+      "open_run": { "minRole": "viewer", "label": "Open run", "kind": "navigation" }
     }
   }
 ]

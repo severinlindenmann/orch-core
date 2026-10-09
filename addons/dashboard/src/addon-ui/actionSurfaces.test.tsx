@@ -1,6 +1,8 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { toast } from 'sonner'
 import { api } from '@/api/client'
+import { installAndGrant } from '@/test/installAddon'
 import type { ActionMeta } from '@/api/types'
 import type { MockStore } from '@/mocks/store'
 import { renderApp } from '@/test/renderApp'
@@ -74,5 +76,31 @@ describe('palette addon commands use the manifest', () => {
     await user.click(await screen.findByRole('option', { name: /Refresh pull requests/ }, T))
     expect(await screen.findByRole('dialog', { name: 'Sign: refresh · GitHub' }, T)).toBeInTheDocument()
     expect(post).not.toHaveBeenCalled()
+  })
+})
+
+describe('navigation actions are quiet', () => {
+  it('a filter on the activity page shows no toast and refetches only that addon\'s state', async () => {
+    const { user } = renderApp('/addon/activity/activity', { viewer: 'p_sev', setup: (s) => installAndGrant(s, s.workspaces[0].id, 'activity') })
+    const row = await waitFor(() => {
+      const li = screen.getAllByText(/^Gates\b/).find((h) => h.closest('li'))?.closest('li')
+      if (!li) throw new Error('no Gates filter')
+      return li
+    }, T)
+    const success = vi.spyOn(toast, 'success')
+    const states = vi.spyOn(api, 'getAddonState')
+    const today = vi.spyOn(api, 'getToday')
+    await user.click(within(row).getByRole('button', { name: 'Only show' }))
+    await waitFor(() => expect(within(row).getByRole('button', { name: 'Remove filter' })).toBeInTheDocument(), T)
+    expect(success).not.toHaveBeenCalled()
+    expect(new Set(states.mock.calls.map((c) => c[1]))).toEqual(new Set(['activity']))
+    expect(today).not.toHaveBeenCalled()
+  })
+  it('a navigation command in the palette opens the addon page, without a toast', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const { user } = await openPalette('/', 'p_sev')
+    await user.click(await screen.findByRole('option', { name: /Open terminal/ }, T))
+    expect(await screen.findByRole('heading', { level: 1, name: /Terminals/ }, T)).toBeInTheDocument()
+    expect(success).not.toHaveBeenCalled()
   })
 })

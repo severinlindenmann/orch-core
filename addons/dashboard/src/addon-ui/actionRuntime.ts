@@ -1,5 +1,5 @@
 // Used by the one action hook (useRunAddonAction: addon nodes, board lanes, the palette): what core lets an action carry
-// in, and what core opens out. One place, so the two cannot drift.
+// in, and what core opens out.
 
 /**
  * The workspace and `ticket` come from core's render context only, and `confirmed` only from core's own confirmation

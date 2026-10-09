@@ -496,6 +496,12 @@ export interface ActionMeta {
    * refuses the action without core's `confirmed` flag. Use it for switches only a human may flip (arm, pause).
    */
   confirm?: 'spawn_agent' | 'sign'
+  /**
+   * 'navigation': the action only changes what this viewer is looking at (`state.nav[viewer]`: current item, filters,
+   * search, page size) or opens something. Core shows no success toast, refetches only this addon's state, and the
+   * host does not move the workspace cursor (other clients do not refetch).
+   */
+  kind?: 'navigation'
 }
 
 export interface AddonUpdate {

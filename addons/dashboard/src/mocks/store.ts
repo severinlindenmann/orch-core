@@ -903,7 +903,8 @@ export class MockStore {
       }
       this.appendWs(ws, { type: 'addon.action_signed', name, action: id, args, changed: !!res.changed, presence: 'touchid' })
     }
-    this.bump(ws) // addon actions change state without events; let live pages refresh
+    // Addon actions change state without events; let live pages refresh. Navigation is one viewer's own: no refresh for others.
+    if (meta?.kind !== 'navigation') this.bump(ws)
     this.save()
     return res
   }

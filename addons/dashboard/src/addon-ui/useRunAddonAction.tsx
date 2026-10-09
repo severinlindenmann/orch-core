@@ -1,6 +1,7 @@
 // The one way the dashboard runs an addon action (addon nodes, board lanes, the command palette). It applies the
 // manifest of the installed version: who may run it (minRole), core's own dialogs (`confirm: 'sign'` and
-// `'spawn_agent'`), reserved-key stripping, toasts, refetching and opening a result url. The host checks it all again.
+// `'spawn_agent'`), navigation (`kind: 'navigation'`: quiet), reserved-key stripping, toasts, refetching and
+// opening a result url. The host checks it all again.
 import { useState, type ReactNode } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
@@ -15,7 +16,7 @@ import { useSignedAction } from '@/components/sign/SignPrompt'
 import { openResultUrl, withoutReservedKeys } from './actionRuntime'
 import { SignConfirm, signTitle } from './SignConfirm'
 import { SpawnConfirm, type ConfirmedLaunch } from './SpawnConfirm'
-import { useAddons } from './slots'
+import { addonStateKey, useAddons } from './slots'
 
 interface Pending {
   addon: string
@@ -71,9 +72,14 @@ export function useRunAddonAction(ticket?: string): RunAddonAction {
       const core = confirmed ? { confirmed: true, ticket: confirmed.ticket, launch: { mode: confirmed.mode, harness: confirmed.harness, where: confirmed.where } } : {}
       return api.runAddonAction(workspace.id, addon, action, { ...body(extra), ...core })
     },
-    onSuccess: (res) => {
-      toast.success(res.message)
+    onSuccess: (res, { addon, action }) => {
       openResultUrl(res)
+      // Navigation moves only this viewer's view: no toast, and only this addon's state is read again.
+      if (meta(addon, action)?.kind === 'navigation') {
+        void qc.invalidateQueries({ queryKey: addonStateKey(workspace?.id, addon) })
+        return
+      }
+      toast.success(res.message)
       void qc.invalidateQueries({ queryKey: ['addon-state'] })
       void qc.invalidateQueries({ queryKey: ['ticket'] })
       void qc.invalidateQueries({ queryKey: ['today'] })

@@ -161,6 +161,9 @@ export function CommandPalette() {
       run: () => {
         close()
         runAddon.run(c.addon, c.action)
+        // A navigation command is quiet (no toast): take the person to the addon's page, where its effect shows.
+        const page = addonNav.find((n) => n.addon === c.addon)
+        if (runAddon.meta(c.addon, c.action)?.kind === 'navigation' && page) go(`/addon/${page.addon}/${page.id}`)
       },
     }))
 

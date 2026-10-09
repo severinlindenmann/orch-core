@@ -8,13 +8,15 @@ import { toast } from 'sonner'
 import { manifestFor } from '@/api/addons'
 import { api } from '@/api/client'
 import { atLeast } from '@/api/permissions'
-import type { ActionMeta, AddonDecision, Role } from '@/api/types'
+import { ApiError, type ActionMeta, type AddonActionResult, type AddonDecision, type Role } from '@/api/types'
 import { toastApiError } from '@/app/toast'
 import { useRole } from '@/app/useRole'
 import { useWorkspace } from '@/app/workspace'
 import { useSignedAction } from '@/components/sign/SignPrompt'
 import { openResultUrl, withoutReservedKeys } from './actionRuntime'
 import { DecisionSignPrompt, decisionBody } from './DecisionSignPrompt'
+import { DestructiveConfirm } from './DestructiveConfirm'
+import { SecretDialog } from './SecretDialog'
 import { SignConfirm, signTitle } from './SignConfirm'
 import { SpawnConfirm, type ConfirmedLaunch } from './SpawnConfirm'
 import { addonStateKey, useAddons } from './slots'
@@ -23,18 +25,36 @@ interface Pending {
   addon: string
   action: string
   extra?: Record<string, unknown>
+  /** What the action is about, in the surface's words (the row's title): core's signing prompt shows it instead of raw ids. */
+  subject?: string
 }
 
 export interface RunAddonAction {
-  /** Runs `action` of `addon`; opens core's dialog first when the manifest says so. */
-  run: (addon: string, action: string, extra?: Record<string, unknown>) => void
+  /** Runs `action` of `addon`; opens core's dialog first when the manifest says so. `subject`: what it is about, as the row names it. */
+  run: (addon: string, action: string, extra?: Record<string, unknown>, subject?: string) => void
   /** May the viewer run it (role in this workspace meets the installed manifest's minRole)? */
   allowed: (addon: string, action: string) => boolean
   /** The manifest entry of an action (installed version). */
   meta: (addon: string, action: string) => ActionMeta | undefined
   pending: boolean
-  /** Core's confirm or signing dialog; render it next to the trigger. */
+  /** The last refusal of this hook's own action (when `inlineErrors`): the surface shows it under the trigger until the next success. */
+  error: ActionError | null
+  dismissError: () => void
+  /** Core's confirm, signing or show-once dialog; render it next to the trigger. */
   dialog: ReactNode
+}
+
+export interface ActionError {
+  message: string
+  hint?: string
+}
+
+export interface RunOptions {
+  /**
+   * The surface shows a refusal itself (an addon node: a persistent alert under the trigger), so the hook does not
+   * toast it. Surfaces without room for that (the palette, lanes, the ticket header) leave this off and get an error toast.
+   */
+  inlineErrors?: boolean
 }
 
 /** Why an action is not allowed for `role`, in plain words (null when it is). */
@@ -47,7 +67,7 @@ export function roleReason(role: Role | undefined, min: Role): string | null {
 }
 
 /** `ticket`: the ticket in core's render context (sent as `ticket`); addon args can never set it. */
-export function useRunAddonAction(ticket?: string): RunAddonAction {
+export function useRunAddonAction(ticket?: string, opts: RunOptions = {}): RunAddonAction {
   const qc = useQueryClient()
   const { workspace } = useWorkspace()
   const role = useRole()
@@ -56,6 +76,9 @@ export function useRunAddonAction(ticket?: string): RunAddonAction {
   const [confirming, setConfirming] = useState<Pending | null>(null)
   const [signing, setSigning] = useState<Pending | null>(null)
   const [signPending, setSignPending] = useState(false)
+  const [error, setError] = useState<ActionError | null>(null)
+  const [secret, setSecret] = useState<{ addon: string; secret: NonNullable<AddonActionResult['secret']> } | null>(null)
+  const [destroying, setDestroying] = useState<Pending | null>(null)
 
   const meta = (addon: string, action: string): ActionMeta | undefined => {
     const pkg = packages?.find((a) => a.name === addon)
@@ -63,6 +86,12 @@ export function useRunAddonAction(ticket?: string): RunAddonAction {
     return pkg ? manifestFor(pkg, workspace?.addons[addon]?.version ?? pkg.version).actions?.[action] : undefined
   }
   const allowed = (addon: string, action: string) => !!workspace && atLeast(role, meta(addon, action)?.minRole ?? 'member')
+  /** Undo only for the pair the manifest declares, and only when the target is a plain action this viewer may run. */
+  const undoAllowed = (addon: string, action: string, target: string) => {
+    if (meta(addon, action)?.undo !== target) return false
+    const t = meta(addon, target)
+    return !t?.confirm && !t?.decision && t?.kind !== 'navigation' && allowed(addon, target)
+  }
   const titleOf = (addon: string) => packages?.find((p) => p.name === addon)?.title ?? addon
   const body = (extra?: Record<string, unknown>) => ({ ...withoutReservedKeys(extra), ...(ticket ? { ticket } : {}) })
 
@@ -73,6 +102,7 @@ export function useRunAddonAction(ticket?: string): RunAddonAction {
       const core = confirmed ? { confirmed: true, ticket: confirmed.ticket, launch: { mode: confirmed.mode, harness: confirmed.harness, where: confirmed.where } } : {}
       return api.runAddonAction(workspace.id, addon, action, { ...body(extra), ...core })
     },
+    onMutate: () => setError(null),
     onSuccess: (res, { addon, action }) => {
       openResultUrl(res)
       // Navigation moves only this viewer's view: no toast, and only this addon's state is read again.
@@ -80,7 +110,12 @@ export function useRunAddonAction(ticket?: string): RunAddonAction {
         void qc.invalidateQueries({ queryKey: addonStateKey(workspace?.id, addon) })
         return
       }
-      toast.success(res.message)
+      // A value shown once never rides in a toast: core's modal holds it until the person says they saved it.
+      if (res.secret) setSecret({ addon, secret: res.secret })
+      else if (res.undo && undoAllowed(addon, action, res.undo.action)) {
+        const undo = res.undo
+        toast.success(res.message, { action: { label: 'Undo', onClick: () => run(addon, undo.action, undo.args) } })
+      } else toast.success(res.message)
       void qc.invalidateQueries({ queryKey: ['addon-state'] })
       void qc.invalidateQueries({ queryKey: ['ticket'] })
       void qc.invalidateQueries({ queryKey: ['today'] })
@@ -88,7 +123,8 @@ export function useRunAddonAction(ticket?: string): RunAddonAction {
     },
     // A refusal can still have been recorded in the addon's state (e.g. a rejected push): read it again.
     onError: (err, { addon }) => {
-      toastApiError(err, 'Action failed')
+      if (opts.inlineErrors) setError(err instanceof ApiError ? { message: err.message, hint: err.hint } : { message: 'That did not work.' })
+      else toastApiError(err, 'Action failed')
       void qc.invalidateQueries({ queryKey: addonStateKey(workspace?.id, addon) })
     },
   })
@@ -110,12 +146,13 @@ export function useRunAddonAction(ticket?: string): RunAddonAction {
     }
   }
 
-  const run = (addon: string, action: string, extra?: Record<string, unknown>) => {
+  const run = (addon: string, action: string, extra?: Record<string, unknown>, subject?: string) => {
     const m0 = meta(addon, action)
     const confirm = m0?.confirm
     if (m0?.decision) void openDecision(addon, action, extra)
     else if (confirm === 'spawn_agent') setConfirming({ addon, action, extra })
-    else if (confirm === 'sign') setSigning({ addon, action, extra })
+    else if (confirm === 'sign') setSigning({ addon, action, extra, subject })
+    else if (confirm === 'destructive') setDestroying({ addon, action, extra })
     else m.mutate({ addon, action, extra })
   }
 
@@ -128,6 +165,7 @@ export function useRunAddonAction(ticket?: string): RunAddonAction {
       workspace={{ prefix: workspace.prefix, name: workspace.name }}
       label={meta(signing.addon, signing.action)?.label}
       args={withoutReservedKeys(signing.extra)}
+      subject={signing.subject}
       onClose={() => setSigning(null)}
       onSign={() => {
         const s = signing
@@ -158,8 +196,21 @@ export function useRunAddonAction(ticket?: string): RunAddonAction {
       }}
     />
   )
-  const dialog = decisionDialog || signDialog || (confirming && (
+  const destroyDialog = destroying && (
+    <DestructiveConfirm
+      label={meta(destroying.addon, destroying.action)?.confirmLabel ?? meta(destroying.addon, destroying.action)?.label ?? 'Confirm'}
+      text={meta(destroying.addon, destroying.action)?.confirmText}
+      onClose={() => setDestroying(null)}
+      onConfirm={() => {
+        const d = destroying
+        setDestroying(null)
+        m.mutate(d)
+      }}
+    />
+  )
+  const secretDialog = secret && <SecretDialog addon={secret.addon} secret={secret.secret} onDone={() => setSecret(null)} />
+  const dialog = secretDialog || decisionDialog || signDialog || destroyDialog || (confirming && (
     <SpawnConfirm addon={confirming.addon} ticketKey={ticket} onClose={() => setConfirming(null)} onStart={(launch) => m.mutate({ ...confirming, confirmed: launch })} />
   ))
-  return { run, allowed, meta, pending: m.isPending || signPending, dialog }
+  return { run, allowed, meta, pending: m.isPending || signPending, error, dismissError: () => setError(null), dialog }
 }

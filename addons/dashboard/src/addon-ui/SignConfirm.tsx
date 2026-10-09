@@ -20,6 +20,7 @@ export function SignConfirm({
   workspace,
   label,
   args,
+  subject,
   onSign,
   onClose,
 }: {
@@ -29,6 +30,8 @@ export function SignConfirm({
   workspace: { prefix: string; name: string }
   label?: string
   args?: Record<string, unknown>
+  /** What the action is about as the row names it ("Check inbox"). The addon wrote it: shown as extra context, labelled, never instead of the args that are signed. */
+  subject?: string
   onSign: () => void
   onClose: () => void
 }) {
@@ -47,6 +50,11 @@ export function SignConfirm({
           From addon <span className="font-mono">{addon}</span>
         </p>
         {label && <p className="break-words text-text">{cap(label)}</p>}
+        {subject && (
+          <p className="break-words text-text-muted">
+            Addon says: <span className="text-text">{cap(subject)}</span>
+          </p>
+        )}
         {sent.map(([k, v]) => (
           <p key={k} className="break-all font-mono text-[12px] text-text">
             {cap(k)} = {cap(v)}

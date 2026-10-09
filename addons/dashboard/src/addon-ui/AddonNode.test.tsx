@@ -137,6 +137,7 @@ describe('new node types', () => {
     const post = vi.spyOn(api, 'runAddonAction').mockResolvedValue({ ok: true, message: 'done' })
     renderNode({ type: 'list', items: [{ title: 'share/a', actions: [{ label: 'Revoke', action: 'revoke', args: { id: 'a' }, variant: 'danger' }] }] }, { addon: 'publish', withWorkspace: true })
     await clickWhenEnabled('Revoke')
+    await userEvent.click(await screen.findByRole('button', { name: 'Revoke link' })) // core's destructive confirm
     expect(post).toHaveBeenCalledWith(WS, 'publish', 'revoke', expect.objectContaining({ id: 'a' }))
   })
   it('resolves $row.<key> in table row action args', async () => {

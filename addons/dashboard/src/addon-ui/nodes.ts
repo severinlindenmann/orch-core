@@ -35,6 +35,8 @@ const itemAction = z.object({
   /** Values of the form "$row.<key>" (table rowActions only) resolve to that row's cell value. */
   args: z.record(z.string(), scalar).optional(),
   variant: z.enum(['primary', 'secondary', 'ghost', 'danger']).default('ghost'),
+  /** "$row.<key>": the action is offered only when that cell is truthy (a table row's, evaluated by core). "!$row.<key>" for the opposite. */
+  when: z.string().regex(/^!?\$row\.[A-Za-z0-9_]{1,64}$/).optional(),
 })
 export type ItemAction = z.output<typeof itemAction>
 
@@ -98,6 +100,8 @@ export const frameNode = z.object({
   html: z.string().max(200_000),
   height: z.number().int().min(80).max(1200).default(320),
 })
+/** One open decision of this addon (by id), rendered and signed by core in place. The id is looked up in core's list. */
+export const decisionNode = z.object({ type: z.literal('decision'), id: z.string().min(1).max(200) })
 export const terminalNode = z.object({ type: z.literal('terminal'), session: z.string().regex(/^[a-z0-9_-]{1,40}$/) })
 
 export const nodeSchema = z.discriminatedUnion('type', [
@@ -116,6 +120,7 @@ export const nodeSchema = z.discriminatedUnion('type', [
   progressNode,
   frameNode,
   terminalNode,
+  decisionNode,
 ])
 
 export type AddonNodeData = z.output<typeof nodeSchema>

@@ -1,5 +1,6 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { toast } from 'sonner'
 import { renderApp } from '@/test/renderApp'
 
 // Ticket-rail tests render at 1440 px (the rail is a column from 1280 px; below, the Panels sheet).
@@ -14,6 +15,17 @@ describe('app shell', () => {
     expect(await screen.findByRole('link', { name: /Apps & shares/ })).toBeInTheDocument()
     expect((await screen.findAllByRole('img', { name: /From addon:/ })).length).toBeGreaterThanOrEqual(5)
     expect(await screen.findByText('agents granted until 18:00')).toBeInTheDocument()
+  })
+
+  it('dismisses toasts when the route changes, and not before', async () => {
+    const dismiss = vi.spyOn(toast, 'dismiss')
+    const { user } = renderApp('/')
+    await screen.findByRole('heading', { name: 'Today' })
+    expect(dismiss).not.toHaveBeenCalled()
+    await user.click(await screen.findByRole('link', { name: /Board/ }))
+    await screen.findByRole('heading', { name: 'Board' })
+    expect(dismiss).toHaveBeenCalled()
+    dismiss.mockRestore()
   })
 
   it('opens the command palette with Ctrl+K and lists actions and addon commands', async () => {

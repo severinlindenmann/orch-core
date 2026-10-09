@@ -55,7 +55,7 @@ describe('quick tasks seed', () => {
     expect(o.subtitle).toMatch(/limit of 1 commit and 3 files/)
     expect(o.actions!.map((a) => a.label)).toEqual(['Make a ticket'])
     const labels = (needle: string) => st.list.find((i) => i.title.includes(needle))!.actions?.map((a) => a.label)
-    expect(labels('Q-001')).toEqual(['Claim', 'Make a ticket'])
+    expect(labels('Q-001')).toEqual(['Make a ticket']) // no Claim button for people
     expect(labels('Q-003')).toEqual(['Close with proof'])
     expect(labels('Q-005')).toBeUndefined()
   })

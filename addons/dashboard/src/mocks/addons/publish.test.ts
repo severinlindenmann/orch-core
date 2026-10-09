@@ -100,16 +100,18 @@ describe('publish shares', () => {
     await s.api.runAddonAction(s.ws, 'publish', 'extend', { id: sh.id })
     expect((await state(s)).shares.find((x) => x.id === sh.id)!.expires_in_days).toBe(before + 7)
     const c = await s.api.runAddonAction(s.ws, 'publish', 'copy_link', { id: sh.id })
-    expect(c.message).toMatch(/https:\/\/p\.acme\.example\/s\//)
+    expect(c.secret?.value).toMatch(/https:\/\/p\.acme\.example\/s\//)
+    expect(c.message).not.toMatch(/https:/) // never in a toast
   })
-  it('share_once returns the full link in the message and keeps it hidden after', async () => {
+  it('share_once returns the full link as a secret (not in the message) and keeps it hidden after', async () => {
     const s = setup()
     const r = await s.api.runAddonAction(s.ws, 'publish', 'share_once', { ticket: 'DEMO-0041' })
-    expect(r.message).toMatch(/^Link copied, shown once: https:\/\/p\.acme\.example\/s\/[A-Za-z0-9]{8,}$/)
+    expect(r.secret!.value).toMatch(/^https:\/\/p\.acme\.example\/s\/[A-Za-z0-9]{8,}$/)
+    expect(r.message).not.toMatch(/https:/)
     const st = await state(s)
     const once = st.shares[0]
     expect(once.kind).toBe('show-once')
-    expect(JSON.stringify(st)).not.toContain(r.message!.split(': ')[1])
+    expect(JSON.stringify(st)).not.toContain(r.secret!.value.split('/s/')[1])
     const again = await refused(s.api.runAddonAction(s.ws, 'publish', 'copy_link', { id: once.id }))
     expect(again).toMatchObject({ status: 409, code: 'publish.shown_once' })
     expect(again.message).toMatch(/shown once/i)
@@ -187,6 +189,6 @@ describe('reads are viewer-level; secret tokens never ride in the state', () => 
     for (const t of tokens) expect(json).not.toContain(t)
     if (viewer === 'p_tom') return
     const withToken = raw.find((x) => x.token)!
-    expect((await s.api.runAddonAction(s.ws, 'publish', 'copy_link', { id: withToken.id })).message).toContain(withToken.token)
+    expect((await s.api.runAddonAction(s.ws, 'publish', 'copy_link', { id: withToken.id })).secret?.value).toContain(withToken.token)
   })
 })

@@ -15,9 +15,10 @@ import { canSeeTicket, conflict, notFound, registerAddon, type AddonCtx } from '
 //    epic as itself. Children are auto-approved through core (store.autoApprove, the charter hook). A grant for the epic is standing:
 //    the same command asked again is answered at once and never reaches Today.
 //  - Pause and Resume are declared `confirm: 'sign'` (core's signing prompt) and maintainer-only.
-//  - "Watch live" plays a simulator script (one child and one permit request about every 20 s). Nodes cannot tell that
+//  - "Run demo activity" (action `watch`) plays a simulator script (one child and one permit request about every 20 s). Nodes cannot tell that
 //    someone has the page open, so watching is an explicit per-viewer action; the script stops when the last watcher
 //    stops, when the factory is paused or stopped, and after WATCH_STEPS steps, so the demo never floods.
+//  - Open permits are answered in place: the page carries `decision` nodes for them (core draws and signs), as well as Today.
 
 const EPIC_TITLE = 'Monthly billing v2'
 const MAX_CHILDREN = 25
@@ -25,6 +26,7 @@ const MAX_HOURS = 72
 const MAX_SIZE = 'm'
 const WATCH_STEPS = 10 // simulated steps per workspace per hour
 const STEP_MS = 20_000
+const MAX_PERMITS_SHOWN = 5
 const SIZES = ['xs', 's', 'm', 'l', 'xl']
 const WATCH_WINDOW_MS = 3_600_000 // the cap below counts per workspace over this window
 const HOUR = 3_600_000
@@ -129,11 +131,11 @@ function readyReport(c: Ctx, epic: string, keys: string[]): string {
   ].join('\n')
 }
 
-/** Simulated steps in the last hour (the cap is per workspace, so pressing Watch live again cannot go past it). */
+/** Simulated steps in the last hour (the cap is per workspace, so pressing Run demo activity again cannot go past it). */
 const recentSteps = (state: Record<string, unknown>, now: string) => ((state.simTimes as string[]) ?? []).filter((t) => Date.parse(now) - Date.parse(t) < WATCH_WINDOW_MS)
 
 /**
- * One simulated step: an agent working for the person who pressed Watch live writes a child (through core's
+ * One simulated step: an agent working for the person who pressed Run demo activity writes a child (through core's
  * createFromRequest, so ticket.create applies), auto-approves it, and asks for a permission.
  * Returns false when nothing was added (addon off, factory not running, cap used, or the person may no longer create).
  */
@@ -145,7 +147,7 @@ function simulateStep(store: MockStore, ws: string): boolean {
   const now = store.now()
   if (!epic || modeOf(state, now) !== 'running' || recentSteps(state, now).length >= WATCH_STEPS) return false
   const person = state.simBy as string
-  const agent = `claude-code:s_demo:${person}` // a simulated agent that belongs to the person who pressed Watch live
+  const agent = `claude-code:s_demo:${person}` // a simulated agent that belongs to the person who pressed Run demo activity
   const n = (state.simSteps as number) ?? 0
   const [title, size] = TITLES[n % TITLES.length]
   const made = store.createFromRequest(
@@ -262,6 +264,7 @@ registerAddon({
     })
     const permits = permitsOf(state).filter((p) => canSeeTicket(c, p.ticket))
     const open = permits.filter((p) => p.state === 'open').length
+    const canAnswer = atLeast(c.store.roleIn(c.ws, c.viewer), 'maintainer')
     const paused = state.paused as { at: string; by: string } | null
     const watching = !!navOf(state, c.viewer).watching && c.store.sim.running().includes(scriptId(c.ws))
 
@@ -282,6 +285,14 @@ registerAddon({
             ? { type: 'alert', tone: 'info', title: `Paused by ${nameOf(c, paused!.by)} at ${hhmm(paused!.at)}`, text: 'Agents hold their work and nothing new starts. The time budget stops while paused. Resume when you are ready.' }
             : { type: 'stack', children: [] }
 
+    const demoAlert = watching
+      ? { type: 'alert', tone: 'info', title: `Demo activity is running: a new child and permit about every ${STEP_MS / 1000} s, at most ${WATCH_STEPS} an hour.` }
+      : { type: 'stack', children: [] }
+    // Near the child budget: say so before the factory stops (a stopped factory has its own alert).
+    const budgetAlert =
+      epic && mode !== 'stopped' && used >= Math.ceil(MAX_CHILDREN * 0.8)
+        ? { type: 'alert', tone: 'warn', title: `${used} of ${MAX_CHILDREN} children used. The factory pauses at ${MAX_CHILDREN}.` }
+        : { type: 'stack', children: [] }
     const button = (label: string, action: string, variant: 'primary' | 'secondary' | 'ghost') => ({ type: 'button', label, action, variant })
     const controls = {
       type: 'stack',
@@ -292,7 +303,7 @@ registerAddon({
           ? []
           : mode === 'paused'
             ? [button('Resume', 'resume', 'primary')]
-            : [button('Pause factory', 'pause', 'secondary'), watching ? button('Stop watching', 'stop_watching', 'ghost') : button('Watch live', 'watch', 'ghost')],
+            : [button('Pause factory', 'pause', 'secondary'), watching ? button('Stop demo activity', 'stop_watching', 'ghost') : button('Run demo activity', 'watch', 'ghost')],
     }
     const report = epic ? readyReport(c, epic, childKeys(c.store, c.ws, epic)) : ''
     const permitRows = permits.slice(0, 6).map((p) => ({ id: p.id, command: p.command, child: p.ticket, state: p.state }))
@@ -314,7 +325,15 @@ registerAddon({
       children,
       permits,
       permitRows,
-      permitsLine: open ? `${open} waiting for you. Answer on Today, where core asks: Grant once, Grant for this epic or Refuse.` : 'Nothing waiting. Agents ask here when they need a permission they do not hold.',
+      permitsLine: open
+        ? canAnswer
+          ? `${open} waiting for you: Grant once, Grant for this epic or Refuse.`
+          : `${open} waiting for an owner or maintainer to answer.`
+        : 'Nothing waiting. Agents ask here when they need a permission they do not hold.',
+      // Core draws and signs each open permit in place (decision nodes); Today lists the same decisions.
+      permitNodes: { type: 'stack', children: canAnswer ? permits.filter((p) => p.state === 'open').slice(0, MAX_PERMITS_SHOWN).map((p) => ({ type: 'decision', id: `factory.permit:${p.id}` })) : [] },
+      demoAlert,
+      budgetAlert,
       report,
       readyNode: report ? { type: 'markdown', text: report } : { type: 'markdown', text: 'The Ready report appears here once every child is in testing or done.' },
       watching,
@@ -408,14 +427,14 @@ registerAddon({
         state.simBy = viewer
         startScript(store, ws)
       }
-      return { ok: true, message: `Watching live: a new child and permit request about every ${STEP_MS / 1000} s, ${WATCH_STEPS} at most per hour.`, changed: true }
+      return { ok: true, message: `Demo activity started: a new child and permit request about every ${STEP_MS / 1000} s, ${WATCH_STEPS} at most per hour.`, changed: true }
     },
 
     stop_watching({ state, store, viewer, ws }) {
       setNav(state, viewer, { watching: false })
       const others = Object.values((state.nav ?? {}) as Record<string, Nav>).some((n) => n.watching)
       if (!others) store.sim.stop(scriptId(ws))
-      return { ok: true, message: 'Stopped watching.', changed: true }
+      return { ok: true, message: 'Demo activity stopped.', changed: true }
     },
   },
 })

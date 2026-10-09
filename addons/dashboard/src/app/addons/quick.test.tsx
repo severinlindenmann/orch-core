@@ -1,7 +1,6 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { api, mockStore } from '@/api/client'
-import { moreAction } from '@/test/rowActions'
 import { renderApp } from '@/test/renderApp'
 import { installAndGrant } from '@/test/installAddon'
 
@@ -35,10 +34,11 @@ describe('quick tasks page', () => {
     await rowOf('Q-007')
     expect((await items()).at(-1)!.status).toBe('open')
   })
-  it('Claim moves an open task to claimed', async () => {
-    const { user } = renderApp('/addon/quick/quick', { viewer: 'p_sev', setup })
-    await user.click(within(await rowOf('Q-001')).getByRole('button', { name: 'Claim' }))
-    await waitFor(async () => expect((await items()).find((q) => q.id === 'Q-001')!.status).toBe('claimed'), T)
+  it('an open task has no Claim button for people (agents claim)', async () => {
+    renderApp('/addon/quick/quick', { viewer: 'p_sev', setup })
+    const row = await rowOf('Q-001')
+    expect(within(row).queryByRole('button', { name: 'Claim' })).not.toBeInTheDocument()
+    expect(within(row).getByRole('button', { name: 'Make a ticket' })).toBeInTheDocument()
   })
   it('Close with proof opens a one-line form and closes the task', async () => {
     const { user } = renderApp('/addon/quick/quick', { viewer: 'p_sev', setup })
@@ -49,12 +49,12 @@ describe('quick tasks page', () => {
   })
   it('Make a ticket converts the task', async () => {
     const { user } = renderApp('/addon/quick/quick', { viewer: 'p_sev', setup })
-    await user.click(await moreAction(user, await rowOf('Q-002'), 'Make a ticket'))
+    await user.click(within(await rowOf('Q-002')).getByRole('button', { name: 'Make a ticket' }))
     await waitFor(async () => expect((await items()).find((q) => q.id === 'Q-002')!.status).toBe('converted'), T)
   })
   it('viewer sees disabled actions', async () => {
     renderApp('/addon/quick/quick', { viewer: 'p_tom', setup })
-    expect(within(await rowOf('Q-001')).getByRole('button', { name: 'Claim' })).toBeDisabled()
+    expect(within(await rowOf('Q-001')).getByRole('button', { name: 'Make a ticket' })).toBeDisabled()
   })
 })
 

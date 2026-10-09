@@ -2,7 +2,6 @@ import { Suspense } from 'react'
 import { Outlet, useRouterState } from '@tanstack/react-router'
 import { ErrorBoundary, PageProblem } from '@/components/ErrorBoundary'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { retryFailedPageLoads } from '../pages/lazyPage'
 import { useLiveUpdates } from '../live'
@@ -11,6 +10,7 @@ import { HelpSheet } from './HelpSheet'
 import { CommandPalette } from './palette'
 import { ShellUiProvider } from './ShellUi'
 import { useShortcuts } from './shortcuts'
+import { ShellToaster } from './ShellToaster'
 import { Sidebar } from './Sidebar'
 import { Topbar } from './Topbar'
 
@@ -65,7 +65,7 @@ export function Shell() {
           </div>
           <CommandPalette />
           <HelpSheet />
-          <Toaster position="bottom-right" />
+          <ShellToaster />
         </TooltipProvider>
       </ShellUiProvider>
     </WorkspaceProvider>

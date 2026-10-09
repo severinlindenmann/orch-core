@@ -10,7 +10,7 @@ import { canSeeTicket, conflict, invalid, notFound, registerAddon, type AddonCtx
 //  - Seeded for DEMO tickets only; other workspaces start empty.
 //  - "Open terminal here" runs the terminals addon's own `open_ticket` action through the registry (no access to its
 //    state internals) and is offered only while terminals is active (view() exposes `terminalsActive`).
-//  - Remove is refused while the worktree has changed files.
+//  - Remove is refused while the worktree has changed files (the row shows why, in place); a clean one is confirmed first (confirm: 'destructive').
 
 interface Worktree {
   id: string
@@ -115,10 +115,13 @@ registerAddon({
       byTicket,
       total: all.length,
       dirty: all.filter((w) => w.dirty).length,
+      // Labels for the Ticket select, in the order of its enum (the node's uiSchema binds them): "ID · title".
+      ticketNames: open.map((t) => `${t.key} · ${t.title}`),
       addSchema: {
         type: 'object',
         required: ['ticket', 'repo'],
         properties: {
+          // "ID · title" so the person picks by name, not by number.
           ticket: { type: 'string', title: 'Ticket', enum: open.map((t) => t.key) },
           repo: { type: 'string', title: 'Repository', enum: REPOS },
           base: { type: 'string', title: 'Base branch', default: 'main' },
@@ -148,7 +151,7 @@ registerAddon({
       const { state, body } = ctx
       const w = list(state).find((x) => x.id === body.id)
       if (!w || !canSee(ctx, w)) return notFound('No such worktree.')
-      if (w.dirty > 0) return conflict('worktrees.dirty', `${plural(w.dirty)}.`, 'Commit or stash first.')
+      if (w.dirty > 0) return conflict('worktrees.dirty', `Worktree ${w.ticket} has ${plural(w.dirty)}.`, 'Commit or stash them first.')
       state.worktrees = list(state).filter((x) => x !== w)
       return { ok: true, message: `Removed ${w.path}.`, changed: true }
     },

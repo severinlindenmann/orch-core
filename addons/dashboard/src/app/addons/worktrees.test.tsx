@@ -25,13 +25,18 @@ describe('worktrees page', () => {
     expect(within(row).getByText(/3 changed files/)).toBeInTheDocument()
     expect(within(row).getByText(/ahead 2/)).toBeInTheDocument()
   })
-  it('Remove on the dirty worktree is refused: an error toast with the message and the hint, never a success', async () => {
+  it('Remove on the dirty worktree is refused in place: an alert in the row names the ticket, no toast', async () => {
     const error = vi.spyOn(toast, 'error')
     const success = vi.spyOn(toast, 'success')
     const { user } = renderApp('/addon/worktrees/worktrees', { viewer: 'p_sev', setup })
     const row = (await screen.findByText('wt/DEMO-0043-energy-dbt', {}, T)).closest('tr')!
     await user.click(await moreAction(user, row, 'Remove'))
-    await waitFor(() => expect(error).toHaveBeenCalledWith('3 changed files.', expect.objectContaining({ description: 'Commit or stash first.' })), T)
+    await user.click(await screen.findByRole('button', { name: 'Remove worktree' }))
+    const alert = await screen.findByRole('alert', {}, T)
+    expect(alert).toHaveTextContent(/DEMO-0043 has 3 changed files/)
+    expect(alert).toHaveTextContent(/Commit or stash them first/)
+    expect(alert.closest('tr')!.previousElementSibling).toBe(row)
+    expect(error).not.toHaveBeenCalled()
     expect(success).not.toHaveBeenCalled()
     expect((await wts()).some((w) => w.path === 'wt/DEMO-0043-energy-dbt')).toBe(true)
   })
@@ -39,16 +44,26 @@ describe('worktrees page', () => {
     const { user } = renderApp('/addon/worktrees/worktrees', { viewer: 'p_sev', setup })
     const row = (await screen.findByText('wt/DEMO-0041-energy-dbt', {}, T)).closest('tr')!
     await user.click(await moreAction(user, row, 'Remove'))
+    // A destructive confirm whose button names the consequence.
+    expect(await screen.findByRole('alertdialog')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Remove worktree' }))
     await waitFor(() => expect(screen.queryByText('wt/DEMO-0041-energy-dbt')).not.toBeInTheDocument(), T)
   })
   it('the add form creates a worktree', async () => {
     const { user } = renderApp('/addon/worktrees/worktrees', { viewer: 'p_sev', setup })
     const sel = await screen.findByLabelText(/^Ticket\b/, {}, T)
-    await waitFor(() => expect(within(sel).getByRole('option', { name: 'DEMO-0044' })).toBeInTheDocument(), T)
+    await waitFor(() => expect(within(sel).getByRole('option', { name: /^DEMO-0044 · \S/ })).toBeInTheDocument(), T)
     await user.selectOptions(sel, 'DEMO-0044')
     await user.selectOptions(screen.getByLabelText(/^Repository/), 'acme-energy/billing-api')
     await user.click(screen.getByRole('button', { name: 'Add worktree' }))
     await screen.findByText('wt/DEMO-0044-billing-api', {}, T)
+  })
+  it('an empty Add worktree focuses Ticket and says Fill in Ticket', async () => {
+    const { user } = renderApp('/addon/worktrees/worktrees', { viewer: 'p_sev', setup })
+    await screen.findByLabelText(/^Ticket\b/, {}, T)
+    await user.click(screen.getByRole('button', { name: 'Add worktree' }))
+    expect(await screen.findByText('Fill in Ticket')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('combobox', { name: /^Ticket\b/ })).toHaveFocus())
   })
   it('Open terminal here is offered while terminals is active', async () => {
     renderApp('/addon/worktrees/worktrees', { viewer: 'p_sev', setup })

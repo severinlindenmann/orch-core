@@ -27,7 +27,7 @@ interface Share {
   expires_in_days: number
   views: number
   last_viewer: string | null
-  /** Token of the link; null for a show-once link (only ever shown in the toast) and for a sealed share. */
+  /** Token of the link; null for a show-once link (only ever shown in core's "Copy this link now" dialog) and for a sealed share. */
   token: string | null
 }
 interface Settings {
@@ -95,7 +95,8 @@ const shareItem = (x: Share) => ({
   subtitle: subtitle(x),
   badge: x.ticket ?? 'workspace',
   actions: [
-    { label: 'Copy link', action: 'copy_link', args: { id: x.id }, variant: 'ghost' as const },
+    // A show-once link cannot be copied again: the row says so; pressing it explains (copy_link answers 409).
+    { label: x.kind === 'show-once' ? 'Shown once' : 'Copy link', action: 'copy_link', args: { id: x.id }, variant: 'ghost' as const },
     { label: 'Extend 7 days', action: 'extend', args: { id: x.id }, variant: 'ghost' as const },
     { label: 'Revoke', action: 'revoke', args: { id: x.id }, variant: 'danger' as const },
   ],
@@ -176,7 +177,8 @@ registerAddon({
       views: sh.reduce((n, x) => n + x.views, 0),
       appCount: a.length,
       runningCount: running,
-      appRows: a.map((x) => ({ id: x.id, name: x.name, kind: x.kind, folder: x.folder, status: x.status, recipients: x.recipients })),
+      // canStart/canStop drive the rows' `when`: Start only while stopped, Stop only while running.
+      appRows: a.map((x) => ({ id: x.id, name: x.name, kind: x.kind, folder: x.folder, status: x.status, recipients: x.recipients, canStart: x.status === 'stopped', canStop: x.status === 'running' })),
       shareItems: sh.map(shareItem),
       // The ticket panel binds `addon.sharesByTicket.$ticket`; generated from state here and nowhere else.
       sharesByTicket: byTicket,
@@ -205,9 +207,14 @@ registerAddon({
       const { store, ticket, state } = ctx
       if (!ticket || !canSeeTicket(ctx, ticket)) return invalid('Pick a ticket first.')
       const days = settingsOf(state).default_expiry_days
-      newShare(state, ticket, 'secret link', `share/${ticket.toLowerCase()}`, token(state))
+      const x = newShare(state, ticket, 'secret link', `share/${ticket.toLowerCase()}`, token(state))
       store.append(ticket, { type: 'publish.shared', actor: { kind: 'addon', id: 'publish' } })
-      return { ok: true, message: `Shared ${ticket} as a secret link for ${plural(days, 'day', 'days')}.`, changed: true }
+      return {
+        ok: true,
+        message: `Shared ${ticket} as a secret link for ${plural(days, 'day', 'days')}.`,
+        changed: true,
+        secret: { label: `Secret link for ${ticket}`, value: linkOf(settingsOf(state), x.token!), note: `Anyone with the link can read it for ${plural(days, 'day', 'days')}. You can copy it again from the Shares list.` },
+      }
     },
     share_once(ctx) {
       const { store, ticket, state } = ctx
@@ -215,7 +222,12 @@ registerAddon({
       const label = canSeeTicket(ctx, ticket) ? ticket : undefined
       newShare(state, label, 'show-once', label ? `${label} one-time link` : 'One-time link', null)
       if (label) store.append(label, { type: 'publish.shared', actor: { kind: 'addon', id: 'publish' } })
-      return { ok: true, message: `Link copied, shown once: ${linkOf(settingsOf(state), tok)}`, changed: true }
+      return {
+        ok: true,
+        message: 'Created a one-time link.',
+        changed: true,
+        secret: { label: label ? `One-time link for ${label}` : 'One-time link', value: linkOf(settingsOf(state), tok), note: 'This link is shown once and cannot be copied again. Revoke it and make a new one if you lose it.' },
+      }
     },
     copy_link(ctx) {
       const { state, body } = ctx
@@ -223,7 +235,7 @@ registerAddon({
       if (!x) return notFound('That share no longer exists.')
       if (x.kind === 'show-once') return conflict('publish.shown_once', 'This link was shown once and cannot be copied again.', 'Revoke it and make a new one.')
       if (!x.token) return conflict('publish.sealed', `Sealed to ${x.recipient}: it opens only for them, so there is no link to copy.`)
-      return { ok: true, message: `Link copied: ${linkOf(settingsOf(state), x.token)}` }
+      return { ok: true, message: `Link for ${x.title} ready.`, secret: { label: x.title, value: linkOf(settingsOf(state), x.token), note: `Expires in ${plural(x.expires_in_days, 'day', 'days')}.` } }
     },
     extend(ctx) {
       const { body } = ctx
@@ -254,7 +266,8 @@ registerAddon({
       if (!x) return notFound('No such app.')
       x.status = 'stopped'
       x.log.push('Stopped')
-      return { ok: true, message: `${x.name} stopped.`, changed: true }
+      // Acts at once; the toast carries Undo, which starts it again.
+      return { ok: true, message: `${x.name} stopped.`, changed: true, undo: { action: 'start', args: { id: x.id } } }
     },
     logs({ state, body }) {
       const x = apps(state).find((a) => a.id === body.id)

@@ -1,5 +1,6 @@
+import type { RJSFValidationError } from '@rjsf/utils'
 import { createContext, lazy, Suspense, useContext, useId, type ReactNode } from 'react'
-import { Ellipsis, ExternalLink, TriangleAlert } from 'lucide-react'
+import { Ellipsis, ExternalLink, TriangleAlert, X } from 'lucide-react'
 import { useWorkspace } from '@/app/workspace'
 import { Badge } from '@/components/ui/badge'
 import { STATUS_LABEL } from '@/app/pages/ticket/shared'
@@ -16,12 +17,13 @@ import { CodeBlock } from './CodeBlock'
 import { MAX_DEPTH, parseNode, type ItemAction, type NodeOf } from './nodes'
 import { SafeMarkdown } from './SafeMarkdown'
 import { useAddons, type SlotContext } from './slots'
-import { useRunAddonAction } from './useRunAddonAction'
+import { useRunAddonAction, type ActionError } from './useRunAddonAction'
 import { claimedReason } from './SpawnConfirm'
 
 // rjsf (with ajv) loads on first form, so it stays out of the main bundle.
 const ThemedForm = lazy(() => import('./AddonForm'))
 // The whole terminal module (xterm included) loads on first use, so the main bundle does not grow.
+const DecisionNode = lazy(() => import('./DecisionNode'))
 const TerminalView = lazy(() => import('@/app/terminal/TerminalView'))
 
 interface Runtime {
@@ -89,25 +91,7 @@ function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
       ) : (
         <ul className="divide-y divide-border">
           {n.items.map((it, i) => (
-            <li key={i} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 py-1.5 first:pt-0 last:pb-0">
-              <div className="flex min-w-0 items-start gap-2">
-                {it.status && <StatusDot status={it.status} className="mt-1.5" />}
-                <div className="min-w-0">
-                  <div className="break-words text-[13px] text-text">{it.title}</div>
-                  {it.subtitle && <div className="line-clamp-2 break-words text-[12px] text-text-muted">{it.subtitle}</div>}
-                </div>
-              </div>
-              {(it.badge || it.actions) && (
-                <div className="flex shrink-0 items-center gap-2">
-                  {it.badge && (
-                    <Badge variant="outline" className="shrink-0 font-normal text-text-muted">
-                      {it.badge}
-                    </Badge>
-                  )}
-                  {it.actions && <ItemActions actions={it.actions} label={it.title} />}
-                </div>
-              )}
-            </li>
+            it.actions ? <ActionListItem key={i} it={it} /> : <ListItemView key={i} it={it} />
           ))}
         </ul>
       )
@@ -131,18 +115,7 @@ function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
           </TableHeader>
           <TableBody>
             {n.rows.map((r, i) => (
-              <TableRow key={i}>
-                {n.columns.map((c) => (
-                  <TableCell key={c.key} className="whitespace-normal break-words py-1.5 text-[13px]">
-                    {cellText(c.key, r[c.key])}
-                  </TableCell>
-                ))}
-                {n.rowActions && (
-                  <TableCell className="whitespace-nowrap py-1.5 text-right">
-                    <ItemActions actions={n.rowActions} row={r} label={rowLabel(n.columns[0]?.key, r)} />
-                  </TableCell>
-                )}
-              </TableRow>
+              n.rowActions ? <ActionDataRow key={i} columns={n.columns} row={r} rowActions={n.rowActions} /> : <DataRowView key={i} columns={n.columns} row={r} />
             ))}
           </TableBody>
         </Table>
@@ -173,6 +146,12 @@ function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
       )
     case 'terminal':
       return <TerminalNode session={n.session} />
+    case 'decision':
+      return (
+        <Suspense fallback={<Skeleton className="h-12 w-full" />}>
+          <DecisionNode addon={addon} id={n.id} />
+        </Suspense>
+      )
     case 'link':
       return (
         <a href={n.href} target="_blank" rel="noopener noreferrer nofollow" className="inline-flex items-center gap-1 text-[13px] text-brand hover:underline">
@@ -207,17 +186,28 @@ function Stat({ node }: { node: NodeOf<'stat'> }) {
  * `blocked`: no workspace yet, the viewer's role is below the manifest's minRole, or core says read-only (a read-only
  * surface still runs the actions the package declares with minRole 'viewer', e.g. navigation).
  */
-function useAddonAction(action?: string): { run: (action: string, extra?: Record<string, unknown>) => void; pending: boolean; blocked: boolean; blockedFor: (action: string) => boolean; dialog: ReactNode; precheck: string | null } {
+interface AddonAction {
+  run: (action: string, extra?: Record<string, unknown>, subject?: string) => void
+  pending: boolean
+  blocked: boolean
+  blockedFor: (action: string) => boolean
+  dialog: ReactNode
+  precheck: string | null
+  error: ActionError | null
+  dismissError: () => void
+}
+function useAddonAction(action?: string): AddonAction {
   const { addon, ctx, readOnly } = useContext(RuntimeCtx)
   const { workspace } = useWorkspace()
-  const r = useRunAddonAction(ctx.ticket?.key)
+  // A refusal shows as a persistent alert under the node or row that asked (no toast).
+  const r = useRunAddonAction(ctx.ticket?.key, { inlineErrors: true })
   const blockedFor = (a?: string) => !a || !r.allowed(addon, a) || (readOnly && r.meta(addon, a)?.minRole !== 'viewer')
   // Core's precheck before its start dialog: a claimed ticket gets no second agent (from the ticket, not the addon).
   const precheck =
     action && r.meta(addon, action)?.confirm === 'spawn_agent' && ctx.ticket
       ? claimedReason(ctx.ticket, (id) => workspace?.members.find((m) => m.person === id)?.name ?? id)
       : null
-  return { run: (a, extra) => r.run(addon, a, extra), pending: r.pending, blocked: action ? blockedFor(action) : readOnly, blockedFor, dialog: r.dialog, precheck }
+  return { run: (a, extra, subject) => r.run(addon, a, extra, subject), pending: r.pending, blocked: action ? blockedFor(action) : readOnly, blockedFor, dialog: r.dialog, precheck, error: r.error, dismissError: r.dismissError }
 }
 
 const BUTTON_VARIANT = { primary: 'default', secondary: 'secondary', ghost: 'ghost', danger: 'destructive' } as const
@@ -232,8 +222,24 @@ function PrecheckAlert({ id, text }: { id?: string; text: string }) {
   )
 }
 
+/** Why an action was refused, in place of a toast: stays until the next success or until the person dismisses it. */
+function ErrorAlert({ error, onDismiss, className }: { error: ActionError; onDismiss: () => void; className?: string }) {
+  return (
+    <div role="alert" className={cn('flex items-start gap-2 rounded-md border border-danger/40 bg-danger-soft px-2.5 py-1.5 text-left text-[12px] text-text', className)}>
+      <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-danger" aria-hidden />
+      <p className="min-w-0 flex-1 whitespace-normal break-words">
+        {error.message}
+        {error.hint && <span className="text-text-muted"> {error.hint}</span>}
+      </p>
+      <button type="button" aria-label="Dismiss" onClick={onDismiss} className="shrink-0 rounded-sm text-text-muted hover:text-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring">
+        <X className="size-3.5" aria-hidden />
+      </button>
+    </div>
+  )
+}
+
 function ButtonNode({ node }: { node: NodeOf<'button'> }) {
-  const { run, pending, blocked, dialog, precheck } = useAddonAction(node.action)
+  const { run, pending, blocked, dialog, precheck, error, dismissError } = useAddonAction(node.action)
   const reasonId = useId()
   return (
     <div className="space-y-2">
@@ -247,13 +253,35 @@ function ButtonNode({ node }: { node: NodeOf<'button'> }) {
       >
         {node.label}
       </Button>
+      {error && <ErrorAlert error={error} onDismiss={dismissError} />}
       {dialog}
     </div>
   )
 }
 
+/**
+ * Focus the first field with an error. rjsf's own focus does `field.length ? field[0]`, and a native select has a
+ * `length` (its options), so it focuses an option and nothing happens: look the element up by id here.
+ */
+function focusField(error: RJSFValidationError) {
+  const id = `root_${(error.property ?? '').replace(/^\./, '').replace(/\./g, '_')}`
+  document.getElementById(id)?.focus()
+}
+
+/** "Fill in Ticket" for a missing required field, in the field's own title (rjsf says "must have required property"). */
+function formErrors(errors: RJSFValidationError[], schema: Record<string, unknown>): RJSFValidationError[] {
+  return errors.map((raw) => {
+    // rjsf names the field ".ticket"; its focusOnFirstError builds the element id from that and would look for "root__ticket" and focus nothing; drop the dot.
+    const e = raw.property?.startsWith('.') ? { ...raw, property: raw.property.slice(1) } : raw
+    if (e.name !== 'required') return e
+    const field = e.params?.missingProperty as string | undefined
+    const title = (schema as { properties?: Record<string, { title?: string }> }).properties?.[field ?? '']?.title ?? field ?? 'this field'
+    return { ...e, message: `Fill in ${title}` }
+  })
+}
+
 function FormNode({ node }: { node: NodeOf<'form'> }) {
-  const { run, pending, blocked: roleBlocked, dialog, precheck } = useAddonAction(node.action)
+  const { run, pending, blocked: roleBlocked, dialog, precheck, error, dismissError } = useAddonAction(node.action)
   // Core's spawn_agent precheck applies to a form that starts an agent as it does to a button.
   const blocked = roleBlocked || !!precheck
   const readOnly = blocked
@@ -270,9 +298,12 @@ function FormNode({ node }: { node: NodeOf<'form'> }) {
           formData={node.formData ?? undefined}
           noHtml5Validate
           showErrorList={false}
+          focusOnFirstError={focusField}
+          transformErrors={(errors) => formErrors(errors, node.schema)}
           onSubmit={({ formData }) => run(node.action, { formData })}
         />
       </Suspense>
+      {error && <ErrorAlert error={error} onDismiss={dismissError} className="mt-2" />}
     </>
   )
 }
@@ -318,13 +349,86 @@ function resolveRowArgs(args: ItemAction['args'], row?: Record<string, unknown>)
   return out
 }
 
+/** "$row.<key>" / "!$row.<key>": is the action offered for this row? A cell is false when null, empty, false, 0 or "false". */
+function offered(when: string | undefined, row?: Record<string, unknown>): boolean {
+  if (!when || !row) return true
+  const neg = when.startsWith('!')
+  const v = row[when.replace(/^!?\$row\./, '')]
+  const truthy = !(v === null || v === undefined || v === '' || v === false || v === 0 || v === 'false')
+  return neg ? !truthy : truthy
+}
+
+type ListEntry = NodeOf<'list'>['items'][number]
+
+function ActionListItem({ it }: { it: ListEntry }) {
+  return <ListItemView it={it} act={useAddonAction()} />
+}
+
+function ListItemView({ it, act }: { it: ListEntry; act?: AddonAction }) {
+  return (
+    <li className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 py-1.5 first:pt-0 last:pb-0">
+      <div className="flex min-w-0 items-start gap-2">
+        {it.status && <StatusDot status={it.status} className="mt-1.5" />}
+        <div className="min-w-0">
+          <div className="break-words text-[13px] text-text">{it.title}</div>
+          {it.subtitle && <div className="line-clamp-2 break-words text-[12px] text-text-muted">{it.subtitle}</div>}
+        </div>
+      </div>
+      {(it.badge || it.actions) && (
+        <div className="flex shrink-0 items-center gap-2">
+          {it.badge && (
+            <Badge variant="outline" className="shrink-0 font-normal text-text-muted">
+              {it.badge}
+            </Badge>
+          )}
+          {it.actions && act && <ItemActions act={act} actions={it.actions} label={it.title} />}
+        </div>
+      )}
+      {act?.error && <ErrorAlert error={act.error} onDismiss={act.dismissError} className="col-span-2" />}
+    </li>
+  )
+}
+
+function ActionDataRow({ columns, row, rowActions }: { columns: NodeOf<'table'>['columns']; row: Record<string, unknown>; rowActions: ItemAction[] }) {
+  return <DataRowView columns={columns} row={row} rowActions={rowActions} act={useAddonAction()} />
+}
+
+function DataRowView({ columns, row, rowActions, act }: { columns: NodeOf<'table'>['columns']; row: Record<string, unknown>; rowActions?: ItemAction[]; act?: AddonAction }) {
+  return (
+    <>
+      <TableRow>
+        {columns.map((c) => (
+          <TableCell key={c.key} className="whitespace-normal break-words py-1.5 text-[13px]">
+            {cellText(c.key, row[c.key])}
+          </TableCell>
+        ))}
+        {rowActions && act && (
+          <TableCell className="whitespace-nowrap py-1.5 text-right">
+            <ItemActions act={act} actions={rowActions} row={row} label={rowLabel(columns[0]?.key, row)} />
+          </TableCell>
+        )}
+      </TableRow>
+      {act?.error && (
+        <TableRow className="hover:bg-transparent">
+          <TableCell colSpan={columns.length + 1} className="py-1.5">
+            <ErrorAlert error={act.error} onDismiss={act.dismissError} />
+          </TableCell>
+        </TableRow>
+      )}
+    </>
+  )
+}
+
 /**
  * Row/item actions that fit: the first non-danger action stays a button, the rest go into a "⋯" menu named
- * "More actions for {title}", danger last and in the danger colour. A single action is just its button.
+ * "More actions for {title}", danger last and in the danger colour. A single action is just its button. An action
+ * with `when` is offered only while that cell of the row says so (core evaluates it).
  */
-function ItemActions({ actions, row, label }: { actions: ItemAction[]; row?: Record<string, unknown>; label: string }) {
-  const { run, pending, blockedFor, dialog } = useAddonAction()
-  const start = (a: ItemAction) => run(a.action, resolveRowArgs(a.args, row))
+function ItemActions({ act, actions: all, row, label }: { act: AddonAction; actions: ItemAction[]; row?: Record<string, unknown>; label: string }) {
+  const { run, pending, blockedFor, dialog } = act
+  const actions = all.filter((a) => offered(a.when, row))
+  if (actions.length === 0) return <>{dialog}</>
+  const start = (a: ItemAction) => run(a.action, resolveRowArgs(a.args, row), label)
   const lead = actions.length === 1 ? actions[0] : (actions.find((a) => a.variant !== 'danger') ?? actions[0])
   const more = actions.filter((a) => a !== lead)
   const menu = [...more.filter((a) => a.variant !== 'danger'), ...more.filter((a) => a.variant === 'danger')]

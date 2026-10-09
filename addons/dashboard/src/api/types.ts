@@ -499,7 +499,20 @@ export interface ActionMeta {
    * 'sign': core's own signing prompt (what is covered, then Touch ID). The dialog title is `label`; the host
    * refuses the action without core's `confirmed` flag. Use it for switches only a human may flip (arm, pause).
    */
-  confirm?: 'spawn_agent' | 'sign'
+  confirm?: 'spawn_agent' | 'sign' | 'destructive'
+  /**
+   * 'destructive': core's own confirm dialog (not a signature) whose button names the consequence ("Revoke link").
+   * `confirmLabel` is that button's text, `confirmText` the sentence above it. Both are the package's words, shown
+   * as plain text; the dialog's title and Cancel are core's. It is a confirmation, not a signature: the host sets no flag.
+   */
+  confirmLabel?: string
+  confirmText?: string
+  /**
+   * The action that reverses this one (e.g. stop -> start). Core shows "Undo" on the success toast only when the
+   * response's `undo.action` is exactly this, and the target is a plain action (no confirm, no decision, not navigation)
+   * the viewer's role may run. It then runs through the normal path. The pair is read from the manifest, never the response.
+   */
+  undo?: string
   /**
    * 'navigation': the action only changes what this viewer is looking at (`state.nav[viewer]`: current item, filters,
    * search, page size) or opens something. Core shows no success toast, refetches only this addon's state, and the
@@ -555,6 +568,13 @@ export interface AddonActionResult {
   changed?: boolean
   /** An https address the client opens in a new tab (e.g. github's Open). */
   url?: string
+  /** Reversible: the toast carries "Undo", which posts `undo.action` with `undo.args` (same addon). */
+  undo?: { action: string; args?: Record<string, string | number | boolean> }
+  /**
+   * A value shown once (a share link). Core shows it in a modal with Copy and "I saved it", never in a toast,
+   * and the message must not contain it.
+   */
+  secret?: { label: string; value: string; note?: string }
 }
 
 // ---------------------------------------------------------------- actions & errors

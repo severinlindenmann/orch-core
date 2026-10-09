@@ -31,7 +31,7 @@ interface Item {
   badge?: string
   actions?: { action: string; label: string; args?: Record<string, unknown> }[]
 }
-type State = { worktrees: Wt[]; rowsByRepo: Record<string, { id: string; path: string }[]>; rowActions: { label: string; args?: Record<string, unknown> }[]; byTicket: Record<string, Item[]>; terminalsActive: boolean; addSchema: { properties: { ticket: { enum: string[] }; repo: { enum: string[] } } } }
+type State = { ticketNames: string[]; worktrees: Wt[]; rowsByRepo: Record<string, { id: string; path: string }[]>; rowActions: { label: string; args?: Record<string, unknown> }[]; byTicket: Record<string, Item[]>; terminalsActive: boolean; addSchema: { properties: { ticket: { enum: string[] }; repo: { enum: string[] } } } }
 const state = async (s: S) => (await s.api.getAddonState(s.ws, 'worktrees')) as unknown as State
 const run = (s: S, id: string, body: Record<string, unknown> = {}) => s.api.runAddonAction(s.ws, 'worktrees', id, body)
 
@@ -53,9 +53,11 @@ describe('worktrees state', () => {
   it('lists the add form choices: open DEMO tickets and the repos', async () => {
     const s = setup()
     const p = (await state(s)).addSchema.properties
-    expect(p.ticket.enum).toContain('DEMO-0043')
-    expect(p.ticket.enum).not.toContain('DEMO-0042') // done
-    expect(p.ticket.enum.every((k) => k.startsWith('DEMO-'))).toBe(true)
+    const keys = p.ticket.enum
+    expect(keys).toContain('DEMO-0043')
+    expect(keys).not.toContain('DEMO-0042') // done
+    expect(keys.every((k) => k.startsWith('DEMO-'))).toBe(true)
+    expect((await state(s)).ticketNames[keys.indexOf('DEMO-0043')]).toMatch(/^DEMO-0043 · \S/)
     expect(p.repo.enum).toContain('acme-energy/energy-dbt')
   })
   it('groups rows per repo and per ticket for the page and the ticket panel', async () => {
@@ -119,7 +121,7 @@ describe('worktrees remove', () => {
     const s = setup()
     const dirty = (await state(s)).worktrees.find((w) => w.dirty === 3)!
     const r = await refused(run(s, 'remove', { id: dirty.id }))
-    expect(r).toMatchObject({ status: 409, code: 'worktrees.dirty', message: '3 changed files.', hint: 'Commit or stash first.' })
+    expect(r).toMatchObject({ status: 409, code: 'worktrees.dirty', message: 'Worktree DEMO-0043 has 3 changed files.', hint: 'Commit or stash them first.' })
     expect((await state(s)).worktrees.some((w) => w.id === dirty.id)).toBe(true)
   })
   it('removes a clean worktree', async () => {

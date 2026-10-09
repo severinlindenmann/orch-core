@@ -132,8 +132,8 @@ registerAddon({
       const actions =
         q.status === 'open'
           ? [
-              { label: 'Claim', action: 'claim', args: { id: q.id }, variant: 'secondary' as const },
-              { label: 'Make a ticket', action: 'make_ticket', args: { id: q.id }, variant: 'ghost' as const },
+              // No Claim button: agents claim a task (the `claim` action stays for them); a person makes a ticket or waits.
+              { label: 'Make a ticket', action: 'make_ticket', args: { id: q.id }, variant: 'secondary' as const },
             ]
           : q.status === 'claimed'
             ? [{ label: 'Close with proof', action: 'start_close', args: { id: q.id }, variant: 'secondary' as const }]

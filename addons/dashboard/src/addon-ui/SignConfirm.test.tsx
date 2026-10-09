@@ -26,6 +26,19 @@ describe('SignConfirm', () => {
     expect(region.className).toMatch(/dashed/)
   })
 
+  it('always shows every sent arg; the addon-written subject is extra, labelled context in the From-addon region', () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <SignConfirm addon="publish" addonTitle="Publish" action="revoke" workspace={{ prefix: 'DEMO', name: 'Acme Energy' }} args={{ share: 'B' }} subject="Revoke share A" onSign={() => {}} onClose={() => {}} />
+      </QueryClientProvider>,
+    )
+    const dialog = screen.getByRole('dialog')
+    const region = within(dialog).getByRole('region', { name: 'From addon publish' })
+    expect(region.textContent).toContain('share = B')
+    expect(region.textContent).toMatch(/Addon says:\s*Revoke share A/)
+    expect(within(dialog).getByText('Covers').nextElementSibling!.textContent).not.toContain('Revoke share A')
+  })
+
   it('names its verb, says how you confirm, starts on Cancel and has no repeated line', () => {
     draw()
     const dialog = screen.getByRole('dialog')

@@ -158,6 +158,13 @@
               "schema": {
                 "$ref": "addon.addSchema"
               },
+              "uiSchema": {
+                "ticket": {
+                  "ui:enumNames": {
+                    "$ref": "addon.ticketNames"
+                  }
+                }
+              },
               "formData": {
                 "base": "main"
               },
@@ -220,6 +227,12 @@
       "open_terminal": {
         "minRole": "member",
         "label": "Open terminal here"
+      },
+      "remove": {
+        "minRole": "member",
+        "confirm": "destructive",
+        "confirmLabel": "Remove worktree",
+        "confirmText": "The worktree folder is deleted from disk. The branch stays in the repository."
       }
     }
   },
@@ -456,6 +469,12 @@
               "$ref": "addon.stateAlert"
             },
             {
+              "$ref": "addon.demoAlert"
+            },
+            {
+              "$ref": "addon.budgetAlert"
+            },
+            {
               "type": "kv",
               "pairs": [
                 {
@@ -490,6 +509,9 @@
             {
               "type": "markdown",
               "text": "${addon.permitsLine}"
+            },
+            {
+              "$ref": "addon.permitNodes"
             },
             {
               "type": "table",
@@ -557,7 +579,7 @@
     "commands": [
       {
         "id": "watch",
-        "title": "Watch the AI Factory live",
+        "title": "Run AI Factory demo activity",
         "action": "watch"
       }
     ],
@@ -565,8 +587,8 @@
       "pause": { "minRole": "maintainer", "confirm": "sign", "label": "Pause the AI Factory" },
       "resume": { "minRole": "maintainer", "confirm": "sign", "label": "Resume the AI Factory" },
       "permit": { "minRole": "maintainer", "decision": true },
-      "watch": { "minRole": "member", "label": "Watch live" },
-      "stop_watching": { "minRole": "member", "label": "Stop watching" }
+      "watch": { "minRole": "member", "label": "Run demo activity" },
+      "stop_watching": { "minRole": "member", "label": "Stop demo activity" }
     }
   },
   {
@@ -593,6 +615,9 @@
             {
               "type": "markdown",
               "text": "${addon.findingsLine}"
+            },
+            {
+              "$ref": "addon.findingNodes"
             },
             {
               "type": "list",

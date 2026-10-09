@@ -135,3 +135,38 @@ describe('decision actions from addon surfaces go through core\'s prompt', () =>
     expect(mockStore.wsEventsOf(ws).some((e) => e.type === 'addon.decided')).toBe(false)
   })
 })
+
+describe('Undo on a success toast follows the manifest', () => {
+  const stopApp = async (setup?: (s: MockStore) => void) => {
+    const success = vi.spyOn(toast, 'success')
+    const { user } = renderApp('/addon/publish/shares', { viewer: 'p_sev', setup })
+    const row = (await screen.findByText('Billing explorer', {}, T)).closest('tr')!
+    await user.click(within(row).getByRole('button', { name: 'Stop' }))
+    await waitFor(() => expect(success.mock.calls.some((c) => c[0] === 'Billing explorer stopped.')).toBe(true), T)
+    return success.mock.calls.find((c) => c[0] === 'Billing explorer stopped.')![1] as { action?: unknown } | undefined
+  }
+  it('an undo the manifest does not declare gets no Undo button', async () => {
+    const opts = await stopApp(manifest('publish', 'stop', { minRole: 'member' }))
+    expect(opts?.action).toBeUndefined()
+  })
+  it('a declared undo that points at a confirm action gets no Undo button', async () => {
+    const opts = await stopApp((s) => {
+      manifest('publish', 'stop', { minRole: 'member', undo: 'start' })(s)
+      manifest('publish', 'start', { minRole: 'member', confirm: 'sign', label: 'Start' })(s)
+    })
+    expect(opts?.action).toBeUndefined()
+  })
+  it('a response naming another action than the declared pair gets no Undo button', async () => {
+    const post = vi.spyOn(api, 'runAddonAction').mockResolvedValue({ ok: true, message: 'Billing explorer stopped.', undo: { action: 'revoke', args: { id: 'sh_report' } } })
+    const opts = await stopApp()
+    expect(opts?.action).toBeUndefined()
+    expect(post).toHaveBeenCalledTimes(1)
+  })
+  it('a valid declared undo shows Undo, and pressing it runs the undo action through the normal path', async () => {
+    const opts = (await stopApp()) as { action: { label: string; onClick: () => void } }
+    expect(opts.action.label).toBe('Undo')
+    const post = vi.spyOn(api, 'runAddonAction')
+    opts.action.onClick()
+    await waitFor(() => expect(post).toHaveBeenCalledWith(expect.anything(), 'publish', 'start', expect.objectContaining({ id: 'app_billing' })), T)
+  })
+})

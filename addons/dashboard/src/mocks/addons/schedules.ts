@@ -5,7 +5,7 @@ import { canSeeTicket, registerAddon } from './registry'
 
 // schedules (later, preview; v1 docs/schedules.md): agent work that starts without anyone typing.
 //  - Three kinds. `schedule`: a skill on a clock. `listener`: a skill when an orch event happens. `recurring`: no
-//    session, a ticket template whose finding lands on Today, where the person files it with one click.
+//    session, a ticket template whose finding is a core decision, answered in place on the page (and listed on Today).
 //  - Times are UTC and computed from the mock clock (store.now()); nothing runs by itself in the mockup. "Run now" is
 //    the only thing that starts a run, and adds one with a short markdown report (shown through SafeMarkdown).
 //  - Arm and Disarm are `confirm: 'sign'` (core's signing prompt), maintainer-only. Run now needs an armed schedule.
@@ -61,6 +61,7 @@ const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct
 const KIND_LABEL: Record<Kind, string> = { schedule: 'schedule', listener: 'listener', recurring: 'recurring ticket' }
 const KEEP_RUNS = 200
 const SHOWN_RUNS = 8
+const MAX_FINDINGS_SHOWN = 5
 const pad = (n: number) => String(n).padStart(2, '0')
 const minutes = (hhmm: string) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5))
 
@@ -130,7 +131,7 @@ function reportFor(s: Schedule, at: string, n: number): Pick<Run, 'result' | 'su
     return {
       result: 'finding',
       summary: `${s.name}: 1 finding`,
-      report: `Prepared the ticket for **week ${isoWeek(at)}**.\n\n- Title: ${finding.title}\n- Ask: ${finding.ask}\n\nFile it from Today, or dismiss it.`,
+      report: `Prepared the ticket for **week ${isoWeek(at)}**.\n\n- Title: ${finding.title}\n- Ask: ${finding.ask}\n\nFile it in the backlog below, or dismiss it.`,
       finding,
       findingState: 'open',
     }
@@ -258,7 +259,9 @@ registerAddon({
       reportNode: selected ? { type: 'markdown', text: `### ${reportTitle}\n\n${report}` } : { type: 'markdown', text: 'No runs yet. Arm a schedule, or press Run now.' },
       openFindings: open,
       armedCount: schedules.filter((s) => s.armed).length,
-      findingsLine: open ? `${open} finding${open === 1 ? '' : 's'} waiting for you on Today.` : 'No findings waiting.',
+      findingsLine: open ? `${open} finding${open === 1 ? '' : 's'} to file or dismiss.` : 'No findings waiting.',
+      // Core draws and signs each open finding in place (decision nodes); Today lists the same decisions.
+      findingNodes: { type: 'stack', children: runs.filter((r) => r.findingState === 'open' && r.finding).slice(0, MAX_FINDINGS_SHOWN).map((r) => ({ type: 'decision', id: decisionId(r) })) },
       schedules: undefined,
       seq: undefined,
     }

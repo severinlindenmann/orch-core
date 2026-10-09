@@ -42,6 +42,30 @@ describe('AI Factory page', () => {
     await user.click(within(await screen.findByRole('dialog', { name: /Sign: resume · AI Factory/ }, T)).getByRole('button', { name: /Sign and run/ }))
     await waitFor(() => expect(mockStore.addonStateView(wsOf(mockStore), 'factory')!.mode).toBe('running'), T)
   })
+  it('Run demo activity shows a persistent info alert, and Stop demo activity ends it', async () => {
+    const { user } = renderApp('/addon/factory/factory', { viewer: 'p_sev', setup: on })
+    await user.click(await screen.findByRole('button', { name: 'Run demo activity' }, T))
+    expect(await screen.findByText(/Demo activity is running: a new child and permit about every 20 s, at most 10 an hour\./, {}, T)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Stop demo activity' }))
+    await waitFor(() => expect(screen.queryByText(/Demo activity is running/)).not.toBeInTheDocument(), T)
+  })
+  it('warns at 80% of the child budget', async () => {
+    renderApp('/addon/factory/factory', {
+      viewer: 'p_sev',
+      setup: (s) => {
+        on(s)
+        ;(s.addonState(wsOf(s), 'factory') as { used: number }).used = 22
+      },
+    })
+    expect(await screen.findByText('22 of 25 children used. The factory pauses at 25.', {}, T)).toBeInTheDocument()
+  })
+  it('an open permit is answered in place, with the same signing prompt as Today', async () => {
+    const { user } = renderApp('/addon/factory/factory', { viewer: 'p_sev', setup: on })
+    expect(screen.queryByText(/Answer on Today/)).not.toBeInTheDocument()
+    await user.click(await screen.findByRole('button', { name: 'Grant once' }, T))
+    await user.click(await screen.findByRole('button', { name: 'Send answer' }, T))
+    await waitFor(() => expect(mockStore.eventsOf('DEMO-0050').some((e) => e.type === 'factory.permit_granted')).toBe(true), T)
+  })
   it('cancelling the signing dialog changes nothing', async () => {
     const { user } = renderApp('/addon/factory/factory', { viewer: 'p_sev', setup: on })
     await user.click(await screen.findByRole('button', { name: 'Pause factory' }, T))
@@ -51,11 +75,11 @@ describe('AI Factory page', () => {
     expect(mockStore.addonStateView(wsOf(mockStore), 'factory')!.mode).toBe('running')
     expect(mockStore.eventsOf('DEMO-0050').some((e) => e.type === 'factory.paused')).toBe(false)
   })
-  it('a viewer sees Pause and Watch live disabled', async () => {
+  it('a viewer sees Pause and Run demo activity disabled', async () => {
     renderApp('/addon/factory/factory', { viewer: 'p_tom', setup: on })
     const pause = await screen.findByRole('button', { name: 'Pause factory' }, T)
     await waitFor(() => expect(pause).toBeDisabled(), T)
-    expect(screen.getByRole('button', { name: 'Watch live' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Run demo activity' })).toBeDisabled()
   })
 })
 

@@ -71,13 +71,13 @@ describe('Addon manager', () => {
 })
 
 describe('Grant and update dialogs list what viewers can run', () => {
-  it('the grant dialog says "Viewers can: Open page, Search" for the wiki', async () => {
+  it('the grant dialog says "Viewers can: Open page, Search, All pages, Clear search" for the wiki', async () => {
     const { user } = renderApp('/settings/addons', {
       setup: (s) => s.appendWs(s.workspaces[0].id, { type: 'addon.updated', name: 'wiki', version: '0.1.4', package_sha256: 'c'.repeat(64), capabilities: [] }),
     })
     await user.click(within(await screen.findByRole('row', { name: /Wiki/ })).getByRole('button', { name: 'Grant…' }))
     const dialog = await screen.findByRole('dialog')
-    expect(within(dialog).getAllByText('Viewers can: Open page, Search').length).toBeGreaterThan(0)
+    expect(within(dialog).getAllByText('Viewers can: Open page, Search, All pages, Clear search').length).toBeGreaterThan(0)
   })
   it('an addon without viewer actions says viewers can only read', async () => {
     const { user } = renderApp('/settings/addons', {

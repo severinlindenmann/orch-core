@@ -65,7 +65,7 @@ describe('signed grant payload covers the viewer-level actions', () => {
   it('lists the viewer actions of a package with their labels', () => {
     const { store } = setup()
     const wiki = store.addons.find((a) => a.name === 'wiki')!
-    expect(viewerActions(wiki)).toEqual([{ id: 'open', label: 'Open page' }, { id: 'search', label: 'Search' }])
+    expect(viewerActions(wiki)).toEqual([{ id: 'open', label: 'Open page' }, { id: 'search', label: 'Search' }, { id: 'close', label: 'All pages' }, { id: 'clear_search', label: 'Clear search' }])
   })
   it('refuses a grant that omits or changes the viewer actions (409 addon.changed)', async () => {
     const { store, api, ws } = setup()
@@ -74,7 +74,7 @@ describe('signed grant payload covers the viewer-level actions', () => {
     const g = { op: 'grant' as const, version: st.version, package_sha256: st.package_sha256, capabilities: st.capabilities }
     expect(await fail(api.postAddonOp(ws, 'wiki', { ...g, viewer_actions: [] }))).toMatchObject({ status: 409, code: 'addon.changed' })
     expect(await fail(api.postAddonOp(ws, 'wiki', { ...g, viewer_actions: ['open'] }))).toMatchObject({ status: 409, code: 'addon.changed' })
-    expect(await api.postAddonOp(ws, 'wiki', { ...g, viewer_actions: ['search', 'open'] })).toMatchObject({ name: 'wiki' })
+    expect(await api.postAddonOp(ws, 'wiki', { ...g, viewer_actions: ['search', 'open', 'close', 'clear_search'] })).toMatchObject({ name: 'wiki' })
   })
   it('refuses an update that does not list the new viewer action it adds', async () => {
     const { store, api, ws } = setup()
@@ -131,7 +131,7 @@ describe('the signed manifest is the one enforced after an update', () => {
     const w = store.addons.find((a) => a.name === 'wiki')!
     store.appendWs(ws, { type: 'addon.updated', name: 'wiki', version: '0.1.4', package_sha256: 'c'.repeat(64), capabilities: [] })
     await api.postAddonOp(ws, 'wiki', { op: 'grant', version: '0.1.4', package_sha256: 'c'.repeat(64), capabilities: [], viewer_actions: viewerActions(w).map((a) => a.id) })
-    expect(store.wsEventsOf(ws).filter((e) => e.type === 'addon.granted').at(-1)!.viewer_actions).toEqual(['open', 'search'])
+    expect(store.wsEventsOf(ws).filter((e) => e.type === 'addon.granted').at(-1)!.viewer_actions).toEqual(['open', 'search', 'close', 'clear_search'])
   })
 })
 

@@ -8,6 +8,10 @@ const scalar = z.union([z.string().max(4000), z.number(), z.boolean()])
 const cell = scalar.nullable()
 // Ends up as a URL path segment (.../actions/<id>): never `.`/`..` or a leading dot or dash.
 const actionId = z.string().regex(/^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,63}$/)
+/** Plain values sent with an action: a few, short keys. */
+const argsRecord = z
+  .record(z.string().max(64), scalar)
+  .refine((o) => Object.keys(o).length <= 16, 'at most 16 args')
 const orEmpty = <T extends z.ZodType>(t: T) => z.array(t).max(500).nullish().transform((v) => v ?? [])
 
 export const MAX_DEPTH = 6
@@ -15,6 +19,8 @@ export const MAX_DEPTH = 6
 export const stackNode = z.object({
   type: z.literal('stack'),
   direction: z.enum(['col', 'row']).default('col'),
+  /** Row only: children keep their own width and sit on one line (a breadcrumb, a search box and its button) instead of sharing the width. */
+  fit: z.boolean().optional(),
   children: z.array(z.unknown()).max(50),
 })
 export const statNode = z.object({
@@ -33,8 +39,10 @@ const itemAction = z.object({
   label: z.string().max(40),
   action: actionId,
   /** Values of the form "$row.<key>" (table rowActions only) resolve to that row's cell value. */
-  args: z.record(z.string(), scalar).optional(),
+  args: argsRecord.optional(),
   variant: z.enum(['primary', 'secondary', 'ghost', 'danger']).default('ghost'),
+  /** The one action shown as a button when a row has several; without it the first non-danger action is. The rest go into the "More" menu. */
+  primary: z.boolean().optional(),
   /** "$row.<key>": the action is offered only when that cell is truthy (a table row's, evaluated by core). "!$row.<key>" for the opposite. */
   when: z.string().regex(/^!?\$row\.[A-Za-z0-9_]{1,64}$/).optional(),
 })
@@ -57,13 +65,20 @@ export const listNode = z.object({
 })
 export const tableNode = z.object({
   type: z.literal('table'),
-  columns: z.array(z.object({ key: z.string().max(64), label: text })).min(1).max(12),
+  columns: z.array(z.object({ key: z.string().max(64), label: text, /** How core draws the cell: `state` = a status chip with a dot; `ticket` = a link to that ticket (the value must be a ticket key). */ cell: z.enum(['state', 'ticket']).optional(), /** Numbers read right-aligned; columns of real numbers are right-aligned without this. */ align: z.enum(['left', 'right']).optional() })).min(1).max(12),
   rows: orEmpty(z.record(z.string(), cell)),
-  rowActions: z.array(itemAction).max(3).optional(),
+  // At most 4 declared. A row shows one button (the `primary` one, else the first non-danger) and the rest in a "More"
+  // menu; `when` hides an action per row, so a Start / Stop pair leaves one visible. Core enforces nothing else here.
+  rowActions: z.array(itemAction).max(4).optional(),
+  /** Clicking the first column's text runs this action for the row (a title that opens the item); args as in rowActions. */
+  rowOpen: z.object({ action: actionId, args: argsRecord.optional() }).optional(),
+  /** The last row is a total: drawn bold with a rule above it. */
+  totalRow: z.boolean().optional(),
   /** Shown instead of the table when there are no rows (like a list's `empty`). */
   empty: text.optional(),
 })
-export const markdownNode = z.object({ type: z.literal('markdown'), text: z.string().max(20000) })
+/** `toc`: core gives the headings its own ids and shows "On this page" links to them. */
+export const markdownNode = z.object({ type: z.literal('markdown'), text: z.string().max(20000), toc: z.boolean().optional() })
 export const codeNode = z.object({ type: z.literal('code'), language: z.string().max(32).default('text'), text: z.string().max(20000) })
 export const chartNode = z.object({
   type: z.literal('chart'),
@@ -71,6 +86,14 @@ export const chartNode = z.object({
   xKey: z.string().max(64).default('x'),
   series: z.array(z.object({ key: z.string().max(64), label: text })).min(1).max(5),
   points: z.array(z.record(z.string(), z.union([z.string(), z.number()]))).max(366),
+  /** Heading above the chart; also its accessible name. */
+  title: z.string().max(120).optional(),
+  /** Bars only: `horizontal` draws one bar per row, labels on the left. */
+  layout: z.enum(['vertical', 'horizontal']).optional(),
+  /** Written before values on the value axis and the bar labels, e.g. "CHF". */
+  unit: z.string().max(12).optional(),
+  /** Bars only: print each value at the end of its bar. */
+  valueLabels: z.boolean().optional(),
 })
 export const formNode = z.object({
   type: z.literal('form'),
@@ -81,12 +104,18 @@ export const formNode = z.object({
   formData: z.record(z.string(), z.unknown()).nullish(),
   action: actionId,
   submitLabel: z.string().max(60).optional(),
+  /** A Cancel button next to submit. The form then also shows "Unsaved changes" once edited, and core asks before any other action of this addon discards them. */
+  cancel: z.object({ label: z.string().max(40), action: actionId }).optional(),
 })
 export const buttonNode = z.object({
   type: z.literal('button'),
   label: z.string().max(60),
   action: actionId,
   variant: z.enum(['primary', 'secondary', 'ghost', 'danger']).default('secondary'),
+  /** Plain values sent with the action (a filter chip says which filter it sets). */
+  args: argsRecord.optional(),
+  /** A toggle or filter chip that is on right now (drawn pressed, exposed as aria-pressed). */
+  pressed: z.boolean().optional(),
 })
 export const linkNode = z.object({
   type: z.literal('link'),
@@ -123,6 +152,53 @@ export const widgetIndexNode = z
   })
   .strict()
 
+/**
+ * Tabs: one panel at a time, chosen by the viewer. The choice is core's own per-viewer UI state (never sent to the
+ * addon). Every tab's node is untrusted and validated again when it is rendered (depth and size limits as for stack);
+ * only the open tab is rendered. Unknown keys are refused.
+ */
+export const tabsNode = z
+  .object({
+    type: z.literal('tabs'),
+    id: z.string().regex(/^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,63}$/),
+    tabs: z
+      .array(
+        z
+          .object({
+            id: z.string().regex(/^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,63}$/),
+            label: z.string().min(1).max(40),
+            /** A number next to the label ("Pending 3"); a missing or null count shows nothing. */
+            count: z.number().int().min(0).max(1_000_000).nullish(),
+            node: z.unknown(),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(12)
+      .refine((t) => new Set(t.map((x) => x.id)).size === t.length, 'tab ids must be unique'),
+  })
+  .strict()
+
+/** A closed-by-default section ("Recently merged 3"): its node is rendered only while it is open. */
+export const foldNode = z
+  .object({
+    type: z.literal('fold'),
+    label: z.string().min(1).max(60),
+    count: z.number().int().min(0).max(1_000_000).nullish(),
+    node: z.unknown(),
+  })
+  .strict()
+
+/** A button that opens a small panel holding one node (e.g. an "Add worktree" form). The panel renders only while open. */
+export const popoverNode = z
+  .object({
+    type: z.literal('popover'),
+    label: z.string().min(1).max(60),
+    variant: z.enum(['primary', 'secondary', 'ghost']).default('secondary'),
+    node: z.unknown(),
+  })
+  .strict()
+
 export const nodeSchema = z.discriminatedUnion('type', [
   stackNode,
   statNode,
@@ -142,6 +218,9 @@ export const nodeSchema = z.discriminatedUnion('type', [
   decisionNode,
   widgetNode,
   widgetIndexNode,
+  tabsNode,
+  foldNode,
+  popoverNode,
 ])
 
 export type AddonNodeData = z.output<typeof nodeSchema>

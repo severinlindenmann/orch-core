@@ -19,12 +19,31 @@ const rowOf = async (key: string) => {
 
 describe('quick tasks page', () => {
   it('lists the tasks with status chips and the outgrew limits', async () => {
-    renderApp('/addon/quick/quick', { viewer: 'p_sev', setup })
+    const { user } = renderApp('/addon/quick/quick', { viewer: 'p_sev', setup })
+    expect(await screen.findByRole('tab', { name: /^Active\s*\d+/ }, T)).toHaveAttribute('aria-selected', 'true')
     const o = await rowOf('Q-004')
     expect(within(o).getByText('outgrew')).toBeInTheDocument()
     expect(within(o).getByText(/4 commits, 7 files/)).toBeInTheDocument()
+    expect(await screen.findByText('3 waiting for an agent · 1 in progress · 1 should become a ticket', {}, T)).toBeInTheDocument()
+    expect(await screen.findByText('An agent picks up quick tasks on its own.')).toBeInTheDocument()
+    // The oversized task comes first and Make a ticket is its button; on the others it is the quiet one.
+    const rows = screen.getAllByText(/^Q-00\d\b/).filter((h) => !h.closest('[data-sonner-toaster]')).map((h) => h.closest('li')!)
+    expect(rows[0]).toBe(o)
+    expect(within(o).getByRole('button', { name: 'Make a ticket' }).className).toMatch(/secondary/)
+    expect(within(await rowOf('Q-001')).getByRole('button', { name: 'Make a ticket' }).className).not.toMatch(/secondary/)
     expect(within(await rowOf('Q-003')).getByText('claimed')).toBeInTheDocument()
+    expect(screen.queryByText(/^Q-005\b/)).not.toBeInTheDocument() // done tasks are on the Done tab
+    await user.click(screen.getByRole('tab', { name: /^Completed/ }))
     expect(within(await rowOf('Q-005')).getByText('done')).toBeInTheDocument()
+  })
+  it('Active and Completed tabs split the tasks and carry their counts', async () => {
+    const { user } = renderApp('/addon/quick/quick', { viewer: 'p_sev', setup })
+    expect(await screen.findByRole('tab', { name: /^Active\s*5/ }, T)).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /^Completed\s*1/ })).toBeInTheDocument()
+    await rowOf('Q-001')
+    await user.click(screen.getByRole('tab', { name: /^Completed/ }))
+    await rowOf('Q-005')
+    expect(screen.queryByText(/^Q-001\b/)).not.toBeInTheDocument()
   })
   it('the add form appends Q-007', async () => {
     const { user } = renderApp('/addon/quick/quick', { viewer: 'p_sev', setup })

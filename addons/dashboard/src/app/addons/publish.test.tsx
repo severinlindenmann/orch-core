@@ -28,7 +28,8 @@ describe('publish page', () => {
   })
   it('revoking a share removes it from the page', async () => {
     const { user } = renderApp('/addon/publish/shares', { viewer: 'p_sev' })
-    const item = (await screen.findByText('Tariff API notes', {}, T)).closest('li')!
+    await user.click(await screen.findByRole('tab', { name: /Shares/ }, T))
+    const item = (await screen.findByText('Tariff API notes', {}, T)).closest('tr')!
     await user.click(await moreAction(user, item, 'Revoke'))
     expect(await screen.findByRole('alertdialog')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Revoke link' }))
@@ -70,9 +71,10 @@ describe('publish page', () => {
   })
   it('a show-once row says "Shown once" instead of Copy link', async () => {
     const { user } = renderApp('/addon/publish/shares', { viewer: 'p_sev' })
+    await user.click(await screen.findByRole('tab', { name: /Shares/ }, T))
     await user.click(await screen.findByRole('button', { name: 'New show-once link' }, T))
     await user.click(await screen.findByRole('button', { name: 'I saved it' }, T))
-    const item = (await screen.findByText('One-time link', {}, T)).closest('li')!
+    const item = (await screen.findByText('One-time link', {}, T)).closest('tr')!
     expect(within(item).getByRole('button', { name: 'Shown once' })).toBeInTheDocument()
     expect(within(item).queryByRole('button', { name: 'Copy link' })).not.toBeInTheDocument()
   })
@@ -80,6 +82,42 @@ describe('publish page', () => {
     renderApp('/addon/publish/shares', { viewer: 'p_tom' })
     const row = (await screen.findByText('Energy dashboard', {}, T)).closest('tr')!
     expect(within(row).getByRole('button', { name: 'Start' })).toBeDisabled()
+  })
+})
+
+describe('publish tabs', () => {
+  it('opens on Apps, counts both tabs, and remembers Shares for this viewer', async () => {
+    const first = renderApp('/addon/publish/shares', { viewer: 'p_sev' })
+    expect(await screen.findByRole('tab', { name: /Apps\s*3/ }, T)).toHaveAttribute('aria-selected', 'true')
+    expect(screen.queryByText('Tariff API notes')).not.toBeInTheDocument() // the Shares tab is not rendered
+    await first.user.click(screen.getByRole('tab', { name: /Shares/ }))
+    expect(await screen.findByText('Tariff API notes')).toBeInTheDocument()
+    expect(screen.queryByText('Billing explorer')).not.toBeInTheDocument()
+  })
+})
+
+describe('publish failed builds', () => {
+  it('a failed build is said once, above the tabs, on both tabs: one line, Redeploy, Show log', async () => {
+    const { user } = renderApp('/addon/publish/shares', { viewer: 'p_sev' })
+    expect(await screen.findByText('Ops notebook failed to build', {}, T)).toBeInTheDocument()
+    expect(screen.getByText(/Redeploy rebuilds it from its folder/)).toBeInTheDocument()
+    expect(screen.getAllByText(/ModuleNotFoundError/)).toHaveLength(1) // the error line is in the app's row only
+    expect(screen.getAllByText('Ops notebook failed to build')).toHaveLength(1)
+    expect(screen.queryByText(/Traceback/)).not.toBeInTheDocument() // the log is behind Show log
+    await user.click(screen.getByRole('button', { name: 'Show log' }))
+    expect(await screen.findByText(/Traceback \(most recent call last\)/)).toBeInTheDocument() // the whole log, not three lines
+    expect(screen.getByText(/Installing requirements\.txt/)).toBeInTheDocument()
+    // The app row has a short note instead of a second copy of the alert.
+    const row = screen.getByText('Ops notebook').closest('tr')!
+    expect(within(row).getByText(/ModuleNotFoundError/)).toBeInTheDocument()
+    await user.click(screen.getByRole('tab', { name: /Shares/ }))
+    expect(await screen.findByText('Tariff API notes')).toBeInTheDocument()
+    expect(screen.getByText('Ops notebook failed to build')).toBeInTheDocument() // still there on the Shares tab
+  })
+  it('Redeploy rebuilds and the alert goes away', async () => {
+    const { user } = renderApp('/addon/publish/shares', { viewer: 'p_sev' })
+    await user.click(await screen.findByRole('button', { name: 'Redeploy' }, T))
+    await waitFor(() => expect(screen.queryByText('Ops notebook failed to build')).not.toBeInTheDocument(), T)
   })
 })
 

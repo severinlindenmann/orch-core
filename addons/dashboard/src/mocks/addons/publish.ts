@@ -63,6 +63,8 @@ const shares = (state: Record<string, unknown>) => state.shares as Share[]
 const linkOf = (s: Settings, token: string) => `https://p.${s.namespace}.example/s/${token}`
 /** A share by id, unless it belongs to a ticket the caller cannot see. */
 const visibleShare = (c: AddonCtx, id: unknown) => shares(c.state).find((s) => s.id === id && (!s.ticket || canSeeTicket(c, s.ticket)))
+/** The one line that says why a build failed (the last error-looking log line). */
+const failedLine = (x: App) => [...x.log].reverse().find((l) => /error/i.test(l)) ?? x.log[x.log.length - 2] ?? 'Build failed'
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
 
 /** Deterministic 10-character token (mock only), so tests and screenshots are stable. */
@@ -180,20 +182,41 @@ registerAddon({
       appCount: a.length,
       runningCount: running,
       // canStart/canStop drive the rows' `when`: Start only while stopped, Stop only while running.
-      appRows: a.map((x) => ({ id: x.id, name: x.name, kind: x.kind, folder: x.folder, status: x.status, recipients: x.recipients, canStart: x.status === 'stopped', canStop: x.status === 'running' })),
-      shareItems: sh.map(shareItem),
+      appRows: a.map((x) => ({ id: x.id, name: x.name, kind: x.kind, folder: x.folder, status: x.status, recipients: x.recipients, canStart: x.status === 'stopped', canStop: x.status === 'running', note: x.status === 'failed' ? failedLine(x) : '' })),
+      // The Shares tab: one compact row per share (kind and expiry as plain cells; `when` picks Copy link or Shown once).
+      shareRows: sh.map((x) => ({
+        id: x.id,
+        title: x.title,
+        kind: x.kind === 'sealed' ? `sealed to ${x.recipient}` : x.kind,
+        ticket: x.ticket ?? 'workspace',
+        expires: `${plural(x.expires_in_days, 'day', 'days')}`,
+        views: x.views,
+        last: x.last_viewer ?? '–',
+        canCopy: x.kind !== 'show-once',
+        shownOnce: x.kind === 'show-once',
+      })),
+      // Failed builds, once, above the tabs (it needs a person). Empty while nothing failed. The full log is behind "Show log".
+      attentionNode: failed.length
+        ? {
+            type: 'stack',
+            children: [
+              {
+                type: 'list',
+                items: failed.map((x) => ({
+                  id: x.id,
+                  title: `${x.name} failed to build`,
+                  subtitle: 'Redeploy rebuilds it from its folder. Show log has the details.',
+                  status: 'error' as const,
+                  actions: [{ label: 'Redeploy', action: 'redeploy', args: { id: x.id }, variant: 'secondary' as const, primary: true }],
+                })),
+              },
+              // The whole build log, closed: it is what "Show log" opens (the `logs` action only toasts the last lines).
+              ...failed.map((x) => ({ type: 'fold', label: failed.length > 1 ? `Show log · ${x.name}` : 'Show log', node: { type: 'code', language: 'text', text: x.log.join('\n') } })),
+            ],
+          }
+        : { type: 'stack', children: [] },
       // The ticket panel binds `addon.sharesByTicket.$ticket`; generated from state here and nowhere else.
       sharesByTicket: byTicket,
-      attention: failed.map((x) => ({
-        title: x.name,
-        subtitle: x.log[x.log.length - 2] ?? 'Build failed',
-        status: 'error' as const,
-        actions: [
-          { label: 'Logs', action: 'logs', args: { id: x.id }, variant: 'ghost' as const },
-          { label: 'Redeploy', action: 'redeploy', args: { id: x.id }, variant: 'secondary' as const },
-        ],
-      })),
-      failedLog: failed.length ? failed.map((x) => `${x.name}\n${x.log.join('\n')}`).join('\n\n') : 'No failed builds.',
     }
   },
 

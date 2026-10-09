@@ -4,11 +4,14 @@ import { canSeeTicket, registerAddon } from './registry'
 // page, the ticket panel and the Today card always agree. Money is whole cents. No Math.random / Date.now: the
 // series is a seeded LCG, so tests and screenshots are stable.
 
-const MODELS = ['opus', 'sonnet', 'haiku'] as const
+const MODELS = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-4-5', 'gpt-5-codex'] as const
 type Model = (typeof MODELS)[number]
-const MODEL_LABEL: Record<Model, string> = { opus: 'Opus', sonnet: 'Sonnet', haiku: 'Haiku' }
+const MODEL_LABEL: Record<Model, string> = { 'claude-opus-5-5': 'claude-opus-5-5', 'claude-sonnet-5-5': 'claude-sonnet-5-5', 'claude-haiku-4-5': 'claude-haiku-4-5', 'gpt-5-codex': 'gpt-5-codex' }
 /** Tokens per cent: the cheaper the model, the more tokens a cent buys. */
-const TOKENS_PER_CENT: Record<Model, number> = { opus: 250, sonnet: 900, haiku: 3000 }
+const TOKENS_PER_CENT: Record<Model, number> = { 'claude-opus-5-5': 250, 'claude-sonnet-5-5': 900, 'claude-haiku-4-5': 3000, 'gpt-5-codex': 700 }
+/** Share of a model's tokens that are output, and cache-read tokens per token in + out (cache reads are extra, never in the total). */
+const OUT_SHARE: Record<Model, number> = { 'claude-opus-5-5': 0.16, 'claude-sonnet-5-5': 0.19, 'claude-haiku-4-5': 0.22, 'gpt-5-codex': 0.14 }
+const CACHE_PER_TOKEN: Record<Model, number> = { 'claude-opus-5-5': 3.1, 'claude-sonnet-5-5': 2.6, 'claude-haiku-4-5': 1.4, 'gpt-5-codex': 1.9 }
 
 const END_DAY = Date.UTC(2026, 9, 9) // mock "now" is 2026-10-09
 const DAY_MS = 86_400_000
@@ -74,17 +77,18 @@ function seedDays(): Day[] {
     const weekend = [0, 6].includes(new Date(t).getUTCDay())
     const f = weekend ? 0.4 : 1
     const cents = {
-      opus: Math.round((150 + rand() * 180) * f),
-      sonnet: Math.round((90 + rand() * 100) * f),
-      haiku: Math.round((20 + rand() * 40) * f),
+      'claude-opus-5-5': Math.round((120 + rand() * 140) * f),
+      'claude-sonnet-5-5': Math.round((70 + rand() * 80) * f),
+      'claude-haiku-4-5': Math.round((15 + rand() * 30) * f),
+      'gpt-5-codex': Math.round((50 + rand() * 70) * f),
     }
-    days.push({ date: isoDay(t), cents, tokens: { opus: 0, sonnet: 0, haiku: 0 } })
+    days.push({ date: isoDay(t), cents, tokens: { 'claude-opus-5-5': 0, 'claude-sonnet-5-5': 0, 'claude-haiku-4-5': 0, 'gpt-5-codex': 0 } })
   }
   // Pin the last 7 days to exactly WEEK_CENTS (scale, then put the rounding remainder on today's opus).
   const week = days.slice(-7)
   const raw = week.reduce((n, d) => n + sum(d), 0)
   for (const d of week) for (const m of MODELS) d.cents[m] = Math.round((d.cents[m] * WEEK_CENTS) / raw)
-  week[6].cents.opus += WEEK_CENTS - week.reduce((n, d) => n + sum(d), 0)
+  week[6].cents['claude-opus-5-5'] += WEEK_CENTS - week.reduce((n, d) => n + sum(d), 0)
   for (const d of days) for (const m of MODELS) d.tokens[m] = d.cents[m] * TOKENS_PER_CENT[m]
   return days
 }
@@ -126,6 +130,12 @@ const hm = (ms: number) => {
   const min = Math.round(ms / 60000)
   return min >= 60 ? `${Math.floor(min / 60)} h ${String(min % 60).padStart(2, '0')} min` : `${min} min`
 }
+/** Millions with two decimals, the one unit of every token column on the page. */
+const mtok = (n: number) => (n / 1_000_000).toFixed(2)
+/** The same, from whole 10k-token units. */
+const mUnits = (u: number) => (u / 100).toFixed(2)
+/** Whole cents as a plain amount; the column header carries the unit (CHF). */
+const cents2 = (cents: number) => (cents / 100).toFixed(2)
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const dayLabel = (iso: string) => `${Number(iso.slice(8))} ${MONTHS[Number(iso.slice(5, 7)) - 1]}`
 
@@ -147,6 +157,25 @@ registerAddon({
     const ratio = month / (budget * 100)
     const pct = Math.round(ratio * 100)
     const tokens30 = days.reduce((n, d) => n + sumTokens(d), 0)
+    const sessionsTotal = AGENT_SEED.reduce((n, a) => n + a.sessions, 0)
+    const modelCents = MODELS.map((m) => days.reduce((n, d) => n + d.cents[m], 0))
+    const modelTokens = MODELS.map((m) => days.reduce((n, d) => n + d.tokens[m], 0))
+    const modelSessions = allocate(sessionsTotal, modelCents)
+    const modelShare = allocate(1000, modelCents)
+    const cost30 = modelCents.reduce((a, b) => a + b, 0)
+    const pctText = (tenths: number) => `${(tenths / 10).toFixed(1)} %`
+    const byModel = MODELS.map((m, i) => {
+      const out = Math.round(modelTokens[i] * OUT_SHARE[m])
+      return { model: MODEL_LABEL[m], sessions: modelSessions[i], tokensIn: modelTokens[i] - out, tokensOut: out, cacheRead: Math.round(modelTokens[i] * CACHE_PER_TOKEN[m]), cents: modelCents[i], share: modelShare[i] }
+    }).sort((a, b) => b.cents - a.cents)
+    // The table's token cells are rounded so the rows add up to the Total row (largest remainder, in 10k-token units).
+    const unitsOf = (xs: number[]) => allocate(Math.round(xs.reduce((a, b) => a + b, 0) / 10_000), xs)
+    const inU = unitsOf(byModel.map((r) => r.tokensIn))
+    const outU = unitsOf(byModel.map((r) => r.tokensOut))
+    const cacheU = unitsOf(byModel.map((r) => r.cacheRead))
+    const sum1 = (xs: number[]) => xs.reduce((a, b) => a + b, 0)
+    const agents = state.agents as Agent[]
+    const agentShare = allocate(1000, agents.map((a) => a.cents))
     const byTicket: Record<string, Omit<Row, 'key'>> = {}
     for (const t of tickets) byTicket[t.key] = { cents: t.cents, tokens: t.tokens, sessions: t.sessions, ms: t.ms }
     return {
@@ -163,7 +192,18 @@ registerAddon({
           ? { type: 'alert', tone: 'warn', title: `Budget ${pct}% used`, text: `${chf(month)} of ${chf(budget * 100)} this month. Raise the budget in Settings or slow the agents down.` }
           : { type: 'stack', children: [] },
       perDay: days.map((d) => ({ day: dayLabel(d.date), chf: sum(d) / 100 })),
-      perModel: MODELS.map((m) => ({ model: MODEL_LABEL[m], chf: days.reduce((n, d) => n + d.cents[m], 0) / 100 })),
+      cost30Cents: cost30,
+      perModel: [...MODELS.map((m, i) => ({ model: MODEL_LABEL[m], chf: modelCents[i] / 100 }))].sort((a, b) => b.chf - a.chf),
+      // The By model tab: last 30 days, so its totals are the Overview's "Last 30 days" cost and Tokens (in + out).
+      // Cache reads are extra and not part of "Tokens".
+      modelRows: [
+        ...byModel.map((r, i) => ({ model: r.model, cost: cents2(r.cents), share: pctText(r.share), sessions: r.sessions, input: mUnits(inU[i]), output: mUnits(outU[i]), cache: mUnits(cacheU[i]) })),
+        { model: 'Total', cost: cents2(cost30), share: '100.0 %', sessions: sessionsTotal, input: mUnits(sum1(inU)), output: mUnits(sum1(outU)), cache: mUnits(sum1(cacheU)) },
+      ],
+      // Raw numbers behind the By model rows (the formatted cells round).
+      modelTotals: byModel.map((r) => ({ model: r.model, sessions: r.sessions, tokensIn: r.tokensIn, tokensOut: r.tokensOut, cacheRead: r.cacheRead, cents: r.cents, shareTenths: r.share })),
+      ticketRows: [...tickets].sort((a, b) => b.cents - a.cents).map((t) => ({ ticket: t.key, cost: cents2(t.cents), tokens: mtok(t.tokens), sessions: t.sessions, time: hm(t.ms) })),
+      agentRows: agents.map((a, i) => ({ agent: a.name, cost: cents2(a.cents), share: pctText(agentShare[i]), sessions: a.sessions, tokens: mtok(a.tokens) })),
       topTickets: [...tickets]
         .sort((a, b) => b.cents - a.cents)
         .slice(0, 5)

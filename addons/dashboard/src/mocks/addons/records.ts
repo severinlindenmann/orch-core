@@ -119,7 +119,6 @@ registerAddon({
       last: p.last.slice(0, 16).replace('T', ' ') + ' UTC',
     }))
     const events = rows.reduce((n, r) => n + r.events, 0)
-    const summary = rows.length ? `${plural(events, 'event', 'events')} on ${plural(rows.length, 'ticket', 'tickets')} not recorded yet` : 'Everything is recorded'
     const err = state.pushError as string | null
     const ok = state.pushOk as string | null
     const pushAlert = err
@@ -128,6 +127,11 @@ registerAddon({
         ? { type: 'alert', tone: 'success', title: ok }
         : { type: 'stack', children: [] }
     const last = state.lastPush as LastPush | null
+    const all = history(state)
+    const pushedAt = last ? all.findIndex((h) => h.hash === last.commit) : -1
+    const unpushed = pushedAt < 0 ? all.length : pushedAt // commits newer than the last push (newest first)
+    const toRecord = rows.length ? `${plural(events, 'event', 'events')} to record` : 'Everything is recorded'
+    const summary = unpushed || rows.length ? `${toRecord} · ${plural(unpushed, 'commit', 'commits')} waiting to push` : 'Everything is recorded and pushed'
     // Each entry as this viewer sees it: counts over the visible tickets only; an entry with none of them is left out.
     const hist = history(state)
       .map((h) => {
@@ -142,14 +146,17 @@ registerAddon({
       remote: s.remote,
       rows,
       pendingEvents: events,
+      unpushed,
+      commitLine: rows.length ? `Saves the ${plural(events, 'pending event', 'pending events')} as one record commit.` : 'Nothing pending to save.',
       pendingTickets: rows.length,
       summary,
       pushAlert,
+      historyCount: hist.length,
       history: hist, // overrides the raw entries, which carry the per-ticket breakdown
       lastPush: last,
       lastPushText: last ? `Last push ${last.commit} to ${last.remote}, ${last.at.slice(0, 16).replace('T', ' ')} UTC` : 'Not pushed yet',
       historyItems: hist.map((h, i) => ({
-        title: `${h.hash} ${plural(h.tickets, 'ticket', 'tickets')}, ${plural(h.events, 'event', 'events')}`,
+        title: `${plural(h.tickets, 'ticket', 'tickets')}, ${plural(h.events, 'event', 'events')}`,
         subtitle: `${h.at.slice(0, 16).replace('T', ' ')} UTC by ${h.by}`,
         badge: last && h.hash === last.commit ? 'pushed' : i === 0 ? 'latest' : undefined,
         status: last && h.hash === last.commit ? ('ok' as const) : ('idle' as const),

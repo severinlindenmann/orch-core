@@ -58,7 +58,7 @@ describe('addon state hides tickets the viewer cannot see', () => {
   it('aggregates that name no ticket stay (usage totals, publish workspace shares)', async () => {
     const s = setup('p_mara')
     expect((await stateOf(s, 'usage')).weekCents).toBe(3140)
-    expect(JSON.stringify((await stateOf(s, 'publish')).shareItems)).toContain('Energy data portal')
+    expect(JSON.stringify((await stateOf(s, 'publish')).shareRows)).toContain('Energy data portal')
   })
   it('a hidden ticket drops out of the publish counts too', async () => {
     const hidden = (await stateOf(setup('p_mara'), 'publish')).liveShares as number

@@ -1,3 +1,4 @@
+import { atLeast } from '@/api/permissions'
 import { briefs, dayIso } from '../busy/helpers'
 import type { Rng } from '../busy/rng'
 import type { MockStore } from '../store'
@@ -178,14 +179,36 @@ const ago = (iso: string) => {
 }
 
 const pagesOf = (state: Record<string, unknown>) => state.pages as Page[]
-const navOf = (state: Record<string, unknown>) => (state.nav ??= {}) as Record<string, { current?: string; query?: string }>
+interface Nav {
+  /** Slug of the page this person has open; none = the list. */
+  current?: string
+  query?: string
+  /** Editing in place (only ever true for someone who may edit). */
+  edit?: boolean
+}
+const navOf = (state: Record<string, unknown>) => (state.nav ??= {}) as Record<string, Nav>
+
+/** Headings of a page for its table of contents: `##` and `###`, never inside a code fence. */
+function headings(markdown: string): { level: 2 | 3; text: string }[] {
+  const out: { level: 2 | 3; text: string }[] = []
+  let fence = false
+  for (const line of markdown.split('\n')) {
+    if (/^\s*```/.test(line)) fence = !fence
+    const m = !fence && /^(#{2,3})\s+(.+?)\s*#*\s*$/.exec(line)
+    if (m) out.push({ level: m[1].length as 2 | 3, text: m[2].replace(/[`*_]/g, '') })
+  }
+  return out
+}
+const shortAgo = (iso: string) => ago(iso).replace('updated ', '')
+const row = (p: Page) => ({ slug: p.slug, page: p.title, updated: shortAgo(p.updated), by: p.by, tickets: p.tickets.length })
+const RECENT_DAYS = 14
+
 const bySlug = (state: Record<string, unknown>, slug: unknown) => (typeof slug === 'string' ? pagesOf(state).find((p) => p.slug === slug) : undefined)
 
-const item = (p: Page, open: boolean) => ({
+const item = (p: Page) => ({
   title: p.title,
   subtitle: `by ${p.by} · wiki/${p.slug}.md`,
   badge: ago(p.updated),
-  ...(open ? { actions: [{ action: 'open', label: 'Open', args: { slug: p.slug } }] } : {}),
 })
 
 const TOPICS = ['Tariff data', 'Meter readings', 'Billing runs', 'Reconciliation', 'dbt seeds', 'Ingestion', 'Invoices', 'Credit notes', 'Daylight saving', 'Warehouse access', 'Finance export', 'Smart meters', 'Heat pumps', 'Solar feed-in', 'Outage events', 'Customer segments']
@@ -228,21 +251,107 @@ registerAddon({
     const { viewer } = c
     // Pages are shared; which tickets they link to is shown only for tickets this viewer can see.
     const pages = pagesOf(state).map((p) => ({ ...p, tickets: p.tickets.filter((t) => canSeeTicket(c, t)) }))
-    const nav = ((state.nav ?? {}) as ReturnType<typeof navOf>)[viewer] ?? {} // read-only: never create state.nav here
+    const nav = ((state.nav ?? {}) as Record<string, Nav>)[viewer] ?? {} // read-only: never create state.nav here
     const query = nav.query ?? ''
     const q = query.trim().toLowerCase()
     const shown = q ? pages.filter((p) => `${p.title}\n${p.markdown}`.toLowerCase().includes(q)) : pages
-    const cur = bySlug(state, nav.current) ?? pages[0]
+    const cur = pages.find((p) => p.slug === nav.current)
     const byTicket: Record<string, ReturnType<typeof item>[]> = {}
-    for (const p of pages) for (const t of p.tickets) (byTicket[t] ??= []).push(item(p, false))
+    for (const p of pages) for (const t of p.tickets) (byTicket[t] ??= []).push(item(p))
+    // A page title is the way in: clicking it opens the page (no separate Open button).
+    const rowOpen = { action: 'open', args: { slug: '$row.slug' } }
+    const age = (p: Page) => Math.floor((EPOCH - Date.parse(p.updated)) / DAY_MS) // whole days, as `ago` says them
+    const recent = pages.filter((p) => age(p) <= RECENT_DAYS).sort((a, b) => Date.parse(b.updated) - Date.parse(a.updated))
+    const linked = pages.flatMap((p) => p.tickets.map((t) => ({ slug: p.slug, ticket: t, title: c.store.ticket(t)?.title ?? '', page: p.title, updated: shortAgo(p.updated) }))).sort((a, b) => a.ticket.localeCompare(b.ticket) || a.page.localeCompare(b.page))
+    const pageCols = [{ key: 'page', label: 'Page' }, { key: 'updated', label: 'Updated' }, { key: 'by', label: 'By' }, { key: 'tickets', label: 'Linked tickets', align: 'right' as const }]
+    const search = {
+      type: 'form',
+      schema: { type: 'object', properties: { query: { type: 'string', title: 'Search pages' } } },
+      uiSchema: { 'ui:options': { layout: 'row' }, 'ui:globalOptions': { layout: 'row' }, query: { 'ui:placeholder': 'Search titles and text' } },
+      formData: { query },
+      action: 'search',
+      submitLabel: 'Search',
+    }
+    const newPage = {
+      type: 'popover',
+      label: 'New page',
+      variant: 'secondary',
+      node: { type: 'form', schema: { type: 'object', required: ['title'], properties: { title: { type: 'string', title: 'Page title' } } }, action: 'create', submitLabel: 'Create page' },
+    }
+    const pagesTable = shown.length
+      ? { type: 'table', columns: pageCols, rows: shown.map(row), rowOpen }
+      : q
+        ? { type: 'stack', children: [{ type: 'markdown', text: `No pages match "${query.trim().replace(/[`*_[\]]/g, '')}".` }, { type: 'button', label: 'Clear search', action: 'clear_search', variant: 'secondary' }] }
+        : { type: 'markdown', text: 'No pages yet. Create the first one with New page.' }
+    const listView = {
+      type: 'stack',
+      children: [
+        { type: 'stack', direction: 'row', children: atLeast(c.store.roleIn(c.ws, viewer), 'member') ? [search, newPage] : [search] },
+        {
+          type: 'tabs',
+          id: 'wiki',
+          tabs: [
+            { id: 'pages', label: 'Pages', count: pages.length, node: pagesTable },
+            {
+              id: 'recent',
+              label: 'Recently updated',
+              count: recent.length,
+              node: {
+                type: 'stack',
+                children: [
+                  { type: 'markdown', text: `${recent.length} of ${pages.length} pages changed in the last ${RECENT_DAYS} days. Every page is on the Pages tab.` },
+                  { type: 'table', columns: pageCols, rows: recent.map(row), empty: `Nothing changed in the last ${RECENT_DAYS} days.`, rowOpen },
+                ],
+              },
+            },
+            {
+              id: 'linked',
+              label: 'Linked to tickets',
+              count: new Set(linked.map((l) => l.ticket)).size,
+              node: { type: 'table', columns: [{ key: 'page', label: 'Page' }, { key: 'ticket', label: 'Ticket', cell: 'ticket' }, { key: 'title', label: 'Ticket title' }, { key: 'updated', label: 'Updated' }], rows: linked, empty: 'No page is linked to a ticket you can see. Link one from the ticket\'s Related pages panel.', rowOpen: { action: 'open', args: { slug: '$row.slug' } } },
+            },
+          ],
+        },
+      ],
+    }
+    let pageView: Record<string, unknown> = { type: 'stack', children: [] }
+    if (cur) {
+      const editing = !!nav.edit
+      // The page's own first "# Title" line is shown as the title above the meta line, not twice.
+      const body = cur.markdown.replace(new RegExp(`^# ${cur.title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\n+`), '')
+      const back = [
+        { type: 'button', label: 'All pages', action: 'close', variant: 'ghost' },
+        { type: 'markdown', text: `/ **${cur.title.replace(/[`*_[\]]/g, '')}**` },
+        ...(editing ? [] : [{ type: 'button', label: 'Edit page', action: 'edit', variant: 'secondary' }]),
+      ]
+      const backlinks = cur.tickets.length
+        ? [{ type: 'table', columns: [{ key: 'ticket', label: 'Linked from', cell: 'ticket' }, { key: 'title', label: 'Ticket' }], rows: cur.tickets.map((t) => ({ ticket: t, title: c.store.ticket(t)?.title ?? '' })) }]
+        : []
+      pageView = {
+        type: 'stack',
+        children: [
+          { type: 'stack', direction: 'row', fit: true, children: back },
+          editing
+            ? {
+                type: 'form',
+                schema: { type: 'object', required: ['title'], properties: { slug: { type: 'string' }, title: { type: 'string', title: 'Title' }, markdown: { type: 'string', title: 'Markdown' } } },
+                uiSchema: { slug: { 'ui:widget': 'hidden' }, markdown: { 'ui:widget': 'textarea' } },
+                formData: { slug: cur.slug, title: cur.title, markdown: cur.markdown },
+                action: 'save',
+                submitLabel: 'Save changes',
+                cancel: { label: 'Cancel', action: 'done' },
+              }
+            : { type: 'stack', children: [{ type: 'markdown', text: `# ${cur.title}\n\n*by ${cur.by} · ${ago(cur.updated)}*` }, ...backlinks, { type: 'markdown', text: body, toc: true }] },
+        ],
+      }
+    }
     return {
       pages, // overrides the raw list
-      items: shown.map((p) => item(p, true)),
-      current: cur
-        ? { slug: cur.slug, title: cur.title, markdown: cur.markdown, updated: cur.updated, by: cur.by, meta: `by ${cur.by} · ${ago(cur.updated)}` }
-        : { slug: '', title: '', markdown: 'No page selected.', updated: '', by: '', meta: '' },
-      editForm: cur ? { slug: cur.slug, title: cur.title, markdown: cur.markdown } : null,
-      searchForm: { query },
+      pageRows: shown.map(row),
+      pageView,
+      listView: cur ? { type: 'stack', children: [] } : listView,
+      current: cur ? { slug: cur.slug, title: cur.title, markdown: cur.markdown, updated: cur.updated, by: cur.by, meta: `by ${cur.by} · ${ago(cur.updated)}`, toc: headings(cur.markdown) } : null,
+      editing: !!cur && !!nav.edit,
       pageOptions: pages.map((p) => ({ const: p.slug, title: p.title })),
       byTicket,
     }
@@ -251,8 +360,37 @@ registerAddon({
     open({ state, body, viewer }) {
       const p = bySlug(state, body.slug)
       if (!p) return notFound('That page no longer exists.')
-      navOf(state)[viewer] = { ...navOf(state)[viewer], current: p.slug }
+      navOf(state)[viewer] = { ...navOf(state)[viewer], current: p.slug, edit: false }
       return { ok: true, message: `Opened ${p.title}.`, changed: true }
+    },
+    clear_search({ state, viewer }) {
+      navOf(state)[viewer] = { ...navOf(state)[viewer], query: '' }
+      return { ok: true, message: 'Showing all pages.', changed: true }
+    },
+    create({ state, body, store, ws, viewer }) {
+      const title = typeof (body.formData as { title?: unknown } | undefined)?.title === 'string' ? ((body.formData as { title: string }).title).trim() : ''
+      if (!title) return invalid('A page needs a title.')
+      if (pagesOf(state).some((p) => p.title.toLowerCase() === title.toLowerCase())) return conflict('wiki.title_taken', `A page called "${title}" already exists.`, 'Pick another title.')
+      let slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'page'
+      while (pagesOf(state).some((p) => p.slug === slug)) slug += '-2'
+      const by = store.workspaces.find((w) => w.id === ws)?.members.find((m) => m.person === viewer)?.name ?? viewer
+      pagesOf(state).unshift({ slug, title, markdown: `# ${title}\n\n`, updated: store.now(), by, tickets: [] })
+      navOf(state)[viewer] = { ...navOf(state)[viewer], current: slug, edit: true }
+      return { ok: true, message: `Created ${title}.`, changed: true }
+    },
+    close({ state, viewer }) {
+      navOf(state)[viewer] = { ...navOf(state)[viewer], current: undefined, edit: false }
+      return { ok: true, message: 'Showing all pages.', changed: true }
+    },
+    edit({ state, viewer }) {
+      const nav = navOf(state)[viewer]
+      if (!bySlug(state, nav?.current)) return notFound('Open a page first.')
+      navOf(state)[viewer] = { ...nav, edit: true }
+      return { ok: true, message: 'Editing.', changed: true }
+    },
+    done({ state, viewer }) {
+      navOf(state)[viewer] = { ...navOf(state)[viewer], edit: false }
+      return { ok: true, message: 'Done editing.', changed: true }
     },
     search({ state, body, viewer }) {
       const data = (body.formData ?? {}) as { query?: unknown }
@@ -270,6 +408,7 @@ registerAddon({
       p.title = title
       p.markdown = data.markdown
       p.updated = store.now()
+      navOf(state)[viewer] = { ...navOf(state)[viewer], edit: false } // saved: back to reading
       p.by = store.workspaces.find((w) => w.id === ws)?.members.find((m) => m.person === viewer)?.name ?? viewer
       return { ok: true, message: `Saved ${p.title}.`, changed: true }
     },

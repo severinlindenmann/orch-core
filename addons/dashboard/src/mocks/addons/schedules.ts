@@ -8,7 +8,7 @@ import { canSeeTicket, registerAddon } from './registry'
 //    session, a ticket template whose finding is a core decision, answered in place on the page (and listed on Today).
 //  - Times are UTC and computed from the mock clock (store.now()); nothing runs by itself in the mockup. "Run now" is
 //    the only thing that starts a run, and adds one with a short markdown report (shown through SafeMarkdown).
-//  - Arm and Disarm are `confirm: 'sign'` (core's signing prompt), maintainer-only. Run now needs an armed schedule.
+//  - Enable and Disable (action ids `arm` / `disarm`, kept) are `confirm: 'sign'` (core's signing prompt), maintainer-only. Run now needs an enabled schedule.
 //  - A recurring finding is a core decision on Today ("Dependency update · Monday: file it?"). Filing creates a backlog
 //    ticket through store.createFromRequest, as the person who decides. Dismiss closes it.
 //  - A filed ticket is named in the run history only to people who can see it.
@@ -58,6 +58,7 @@ interface Run {
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const DOW_LONG = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
 const KIND_LABEL: Record<Kind, string> = { schedule: 'schedule', listener: 'listener', recurring: 'recurring ticket' }
 const KEEP_RUNS = 200
 const SHOWN_RUNS = 8
@@ -101,7 +102,7 @@ function nextSlot(s: Schedule, now: string): string | null {
   return null
 }
 const nextText = (s: Schedule, now: string): string => {
-  if (!s.armed) return 'not armed'
+  if (!s.armed) return 'disabled'
   if (s.kind === 'listener') return `on the next ticket moved to ${s.to}`
   const n = nextSlot(s, now)
   return n ? `${DOW[new Date(n).getUTCDay()]} ${n.slice(11, 16)} UTC` : 'no slot in the next 8 days'
@@ -223,19 +224,22 @@ registerAddon({
       last: lastText(state, s.id),
       next: nextText(s, now),
     }))
-    const items = rows.map((r) => {
-      const s = schedules.find((x) => x.id === r.id)!
-      return {
-        title: r.name,
-        subtitle: `${KIND_LABEL[s.kind]} · ${r.trigger}${s.skill ? ` · skill ${s.skill}` : ''} · last: ${r.last}`,
-        badge: s.armed ? `next: ${r.next}` : 'not armed',
-        status: s.armed ? ('ok' as const) : ('idle' as const),
-        actions: [
-          ...(s.armed ? [{ label: 'Run now', action: 'run_now', args: { id: s.id }, variant: 'ghost' as const }] : []),
-          s.armed ? { label: 'Disarm', action: 'disarm', args: { id: s.id }, variant: 'ghost' as const } : { label: 'Arm', action: 'arm', args: { id: s.id }, variant: 'secondary' as const },
-        ],
-      }
-    })
+    const lastOutcome = (id: string) => lastRun(state, id)?.result ?? '–'
+    const lastAt = (id: string) => {
+      const r = lastRun(state, id)
+      return r ? stamp(r.at) : 'never'
+    }
+    // One row per schedule: state, timing, next run, and the last run's time and outcome as their own columns.
+    const scheduleRows = schedules.map((s) => ({
+      id: s.id,
+      name: s.name,
+      state: s.armed ? 'Enabled' : 'Disabled',
+      timing: `${KIND_LABEL[s.kind]}: ${triggerText(s)}${s.skill ? ` · skill ${s.skill}` : ''}`,
+      next: s.armed ? nextText(s, now).replace('on the next ticket moved to', 'next ticket moved to') : '–',
+      last: lastAt(s.id),
+      outcome: lastOutcome(s.id),
+      enabled: s.armed,
+    }))
     const nameFor = (id: string) => schedules.find((s) => s.id === id)?.name ?? id
     const shown = runs.slice(0, SHOWN_RUNS)
     const selected = runs.find((r) => r.id === selectedOf(state, c.viewer)) ?? runs[0]
@@ -244,9 +248,11 @@ registerAddon({
     const open = runs.filter((r) => r.findingState === 'open').length
     return {
       rows,
-      items,
+      scheduleRows,
       // The raw runs carry the filed ticket's key: replace them with this viewer's version.
       runs: runs.map((r) => ({ id: r.id, schedule: r.schedule, at: r.at, result: r.result, summary: r.summary })),
+      runsNote: runs.length > shown.length ? `Showing the latest ${shown.length} of ${runs.length} runs.` : `${plural(runs.length, 'run', 'runs')}.`,
+      shownRunCount: shown.length,
       runItems: shown.map((r) => ({
         title: `${stamp(r.at)} · ${nameFor(r.schedule)}`,
         subtitle: r.filed && canSeeTicket(c, r.filed) ? `${r.summary} Filed as ${r.filed}.` : r.findingState === 'dismissed' ? `${r.summary} Dismissed.` : r.summary,
@@ -256,7 +262,9 @@ registerAddon({
       })),
       report,
       reportTitle,
-      reportNode: selected ? { type: 'markdown', text: `### ${reportTitle}\n\n${report}` } : { type: 'markdown', text: 'No runs yet. Arm a schedule, or press Run now.' },
+      reportNode: selected ? { type: 'markdown', text: `### ${reportTitle}\n\n${report}` } : { type: 'markdown', text: 'No runs yet. Enable a schedule, or press Run now.' },
+      scheduleCount: schedules.length,
+      runCount: runs.length,
       openFindings: open,
       armedCount: schedules.filter((s) => s.armed).length,
       findingsLine: open ? `${open} finding${open === 1 ? '' : 's'} to file or dismiss.` : 'No findings waiting.',
@@ -290,24 +298,24 @@ registerAddon({
     arm(ctx) {
       const s = schedulesOf(ctx.state).find((x) => x.id === ctx.body.id)
       if (!s) return fail(404, 'not_found', 'No such schedule.')
-      if (s.armed) return { ok: true, message: `${s.name} is already armed.` }
+      if (s.armed) return { ok: true, message: `${s.name} is already enabled.` }
       Object.assign(s, { armed: true, armedBy: ctx.viewer, armedAt: ctx.store.now() })
-      return { ok: true, message: `Armed ${s.name}. Next run: ${nextText(s, ctx.store.now())}.`, changed: true }
+      return { ok: true, message: `Enabled ${s.name}. Next run: ${nextText(s, ctx.store.now())}.`, changed: true }
     },
 
     disarm(ctx) {
       const s = schedulesOf(ctx.state).find((x) => x.id === ctx.body.id)
       if (!s) return fail(404, 'not_found', 'No such schedule.')
-      if (!s.armed) return { ok: true, message: `${s.name} was already disarmed.` }
+      if (!s.armed) return { ok: true, message: `${s.name} was already disabled.` }
       Object.assign(s, { armed: false, disarmedBy: ctx.viewer, disarmedAt: ctx.store.now() })
-      return { ok: true, message: `Disarmed ${s.name}.`, changed: true }
+      return { ok: true, message: `Disabled ${s.name}.`, changed: true }
     },
 
     run_now(ctx) {
       const { state, store, viewer } = ctx
       const s = schedulesOf(state).find((x) => x.id === ctx.body.id)
       if (!s) return fail(404, 'not_found', 'No such schedule.')
-      if (!s.armed) return fail(409, 'schedule.not_armed', `${s.name} is not armed.`)
+      if (!s.armed) return fail(409, 'schedule.not_armed', `${s.name} is disabled.`)
       const seq = ((state.seq as number) ?? 0) + 1
       state.seq = seq
       const at = store.now()

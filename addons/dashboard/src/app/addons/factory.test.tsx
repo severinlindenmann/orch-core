@@ -17,7 +17,10 @@ describe('AI Factory page', () => {
     expect(await screen.findByText(/Monthly billing v2/, {}, T)).toBeInTheDocument()
     expect(screen.getByText(/25 children or 72 hours/)).toBeInTheDocument()
     expect(screen.getAllByRole('progressbar').length).toBeGreaterThanOrEqual(2)
-    expect(screen.getByRole('columnheader', { name: 'Approval' })).toBeInTheDocument()
+    for (const name of ['Overview', /^Children/, /^Permits/]) expect(screen.getByRole('tab', { name })).toBeInTheDocument()
+    expect(screen.queryByRole('columnheader', { name: 'Approval' })).not.toBeInTheDocument() // the Children tab is not open
+    await user.click(screen.getByRole('tab', { name: /^Children/ }))
+    expect(await screen.findByRole('columnheader', { name: 'Approval' })).toBeInTheDocument()
     expect(screen.getAllByText('auto-approved by agent', { selector: 'td' }).length).toBeGreaterThan(0)
     await user.click(screen.getByRole('button', { name: 'Expand sidebar' }))
     await user.click(await screen.findByRole('button', { name: /More addons/ }))
@@ -63,6 +66,9 @@ describe('AI Factory page', () => {
   it('an open permit is answered in place, with the same signing prompt as Today', async () => {
     const { user } = renderApp('/addon/factory/factory', { viewer: 'p_sev', setup: on })
     expect(screen.queryByText(/Answer on Today/)).not.toBeInTheDocument()
+    // What waits for a person is above the tabs: no tab click needed, and it says how many.
+    expect(await screen.findByText('1 permission request needs your decision', {}, T)).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /^Overview/ })).toHaveAttribute('aria-selected', 'true')
     await user.click(await screen.findByRole('button', { name: 'Grant once' }, T))
     await user.click(await screen.findByRole('button', { name: 'Send answer' }, T))
     await waitFor(() => expect(mockStore.eventsOf('DEMO-0050').some((e) => e.type === 'factory.permit_granted')).toBe(true), T)
@@ -81,6 +87,21 @@ describe('AI Factory page', () => {
     const pause = await screen.findByRole('button', { name: 'Pause factory' }, T)
     await waitFor(() => expect(pause).toBeDisabled(), T)
     expect(screen.getByRole('button', { name: 'Run demo activity' })).toBeDisabled()
+  })
+})
+
+describe('permits on the page', () => {
+  it('the Permits tab keeps the history and the open request is not drawn twice', async () => {
+    const { user } = renderApp('/addon/factory/factory', { viewer: 'p_sev', setup: on })
+    await screen.findByRole('button', { name: 'Grant once' }, T)
+    await user.click(await screen.findByRole('tab', { name: /^Permits\s*\d+/ }, T))
+    expect(await screen.findByRole('columnheader', { name: 'Command' }, T)).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'Grant once' })).toHaveLength(1)
+  })
+  it('a viewer sees no decision above the tabs (they cannot answer)', async () => {
+    renderApp('/addon/factory/factory', { viewer: 'p_tom', setup: on })
+    await screen.findByRole('tab', { name: /^Overview/ }, T)
+    expect(screen.queryByText(/needs your decision|need your decision/)).not.toBeInTheDocument()
   })
 })
 

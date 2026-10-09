@@ -49,7 +49,8 @@ export function RowShell({
   addon,
 }: {
   testId: string
-  icon: ReactNode
+  /** Without it no icon column is drawn. */
+  icon?: ReactNode
   ask: string
   sub: ReactNode
   blocking?: boolean
@@ -65,7 +66,7 @@ export function RowShell({
   return (
     <li data-testid={testId} className={cn('border-b border-border last:border-b-0', addon && addonEdge)}>
       <div className="flex min-h-14 items-center gap-3 px-3 py-2">
-        <span className="flex w-4 shrink-0 justify-center text-text-muted">{icon}</span>
+        {icon && <span className="flex w-4 shrink-0 justify-center text-text-muted">{icon}</span>}
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-2">
             {onToggle ? (
@@ -84,7 +85,7 @@ export function RowShell({
         {age && <span className="shrink-0 text-xs tabular-nums text-text-faint">{age}</span>}
         <div className="flex shrink-0 items-center gap-1">{action}</div>
       </div>
-      {expanded && children && <div className="space-y-3 pb-3 pl-10 pr-3">{children}</div>}
+      {expanded && children && <div className={cn('space-y-3 pb-3 pr-3', icon ? 'pl-10' : 'pl-3')}>{children}</div>}
     </li>
   )
 }
@@ -337,6 +338,7 @@ export function DecisionRow({
   onToggle,
   decider,
   inlineErrors,
+  inline = false,
 }: {
   d: AddonDecision
   readOnly: boolean
@@ -347,6 +349,8 @@ export function DecisionRow({
   expanded?: boolean
   onToggle?: () => void
   decider?: string
+  /** On an addon's own page (already framed with [A]): no second badge or hairline, always open, no Decide button. */
+  inline?: boolean
 }) {
   const [own, setOwn] = useState(false)
   const expanded = controlled ?? own
@@ -354,14 +358,14 @@ export function DecisionRow({
   return (
     <RowShell
       testId={`card-addon:${d.id}`}
-      addon
-      icon={<AddonBadge name={addonTitle ?? d.addon} className="size-3.5 text-[9px]" />}
+      addon={!inline}
+      icon={inline ? undefined : <AddonBadge name={addonTitle ?? d.addon} className="size-3.5 text-[9px]" />}
       ask={d.question}
       sub={d.ticket ? <TicketLine ticket={d.ticket} title={ticketTitle ?? d.title} /> : <span>{d.title}</span>}
-      expanded={expanded}
-      onToggle={readOnly ? undefined : toggle}
+      expanded={inline || expanded}
+      onToggle={readOnly || inline ? undefined : toggle}
       action={
-        readOnly ? (
+        inline && !readOnly ? null : readOnly ? (
           decider ? <Decides who={decider} /> : null
         ) : (
           <Button size="sm" variant="outline" aria-expanded={expanded} onClick={toggle}>

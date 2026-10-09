@@ -103,34 +103,62 @@ registerAddon({
       ...(terminalsActive ? [{ label: 'Open terminal here', action: 'open_terminal', args: { id: '$row.id' }, variant: 'secondary' as const }] : []),
       { label: 'Remove', action: 'remove', args: { id: '$row.id' }, variant: 'danger' as const },
     ]
+    const nav = ((state.nav ?? {}) as Record<string, { repo?: string; changes?: boolean }>)[c.viewer] ?? {}
+    const repoFilter = REPOS.some((r) => short(r) === nav.repo) ? nav.repo : ''
+    const changesOnly = !!nav.changes
     const rowsByRepo: Record<string, ReturnType<typeof row>[]> = {}
     const byTicket: Record<string, ReturnType<typeof item>[]> = {}
     for (const r of REPOS) rowsByRepo[short(r)] = all.filter((w) => w.repo === r).map(row)
     for (const w of all) (byTicket[w.ticket] ??= []).push(item(w))
     const open = c.store.listTickets(c.ws).filter((t) => t.status !== 'done')
+    // Labels for the Ticket select, in the order of its enum (the node's uiSchema binds them): "ID · title".
+    const ticketNames = open.map((t) => `${t.key} · ${t.title}`)
+    const addSchema = {
+      type: 'object',
+      required: ['ticket', 'repo'],
+      properties: {
+        ticket: { type: 'string', title: 'Ticket', enum: open.map((t) => t.key) },
+        repo: { type: 'string', title: 'Repository', enum: REPOS },
+        base: { type: 'string', title: 'Base branch', default: 'main' },
+      },
+    }
     return {
       worktrees: all, // overrides the raw list: only what this viewer may see
       terminalsActive,
       rowsByRepo,
       rowActions,
+      // The one list: filter chips (per viewer: a repository and/or "with changes"), then the rows.
+      filterBar: {
+        type: 'stack',
+        direction: 'row',
+        children: [
+          { type: 'button', label: 'All repositories', action: 'filter', args: { repo: '' }, variant: 'ghost', pressed: !repoFilter },
+          ...REPOS.map((r) => ({ type: 'button', label: short(r), action: 'filter', args: { repo: short(r) }, variant: 'ghost', pressed: repoFilter === short(r) })),
+          { type: 'button', label: 'With changes', action: 'filter', args: { changes: !changesOnly }, variant: 'ghost', pressed: changesOnly },
+          { type: 'popover', label: 'Add worktree', variant: 'secondary', node: { type: 'form', schema: addSchema, uiSchema: { ticket: { 'ui:enumNames': ticketNames } }, formData: { base: 'main', ...(repoFilter ? { repo: REPOS.find((r) => short(r) === repoFilter) } : {}) }, action: 'add', submitLabel: 'Add worktree' } },
+        ],
+      },
+      shownRows: all.filter((w) => (!repoFilter || short(w.repo) === repoFilter) && (!changesOnly || w.dirty > 0)).map((w) => ({ ...row(w), repo: short(w.repo), changes: w.dirty ? plural(w.dirty) : 'none' })),
       byTicket,
       total: all.length,
       dirty: all.filter((w) => w.dirty).length,
-      // Labels for the Ticket select, in the order of its enum (the node's uiSchema binds them): "ID · title".
-      ticketNames: open.map((t) => `${t.key} · ${t.title}`),
-      addSchema: {
-        type: 'object',
-        required: ['ticket', 'repo'],
-        properties: {
-          // "ID · title" so the person picks by name, not by number.
-          ticket: { type: 'string', title: 'Ticket', enum: open.map((t) => t.key) },
-          repo: { type: 'string', title: 'Repository', enum: REPOS },
-          base: { type: 'string', title: 'Base branch', default: 'main' },
-        },
-      },
+      ticketNames,
+      addSchema,
     }
   },
   actions: {
+    // What this viewer filters the list by. Navigation: it changes nobody else's view.
+    filter({ state, body, viewer }) {
+      const nav = ((state.nav ??= {}) as Record<string, { repo?: string; changes?: boolean }>)
+      const cur = nav[viewer] ?? {}
+      if (typeof body.repo === 'string') {
+        if (body.repo && !REPOS.some((r) => short(r) === body.repo)) return invalid('That is not a repository of this workspace.')
+        cur.repo = body.repo
+      }
+      if (typeof body.changes === 'boolean') cur.changes = body.changes
+      nav[viewer] = cur
+      return { ok: true, message: 'Filtered.', changed: true }
+    },
     add(ctx) {
       const { store, state } = ctx
       const f = (ctx.body.formData ?? {}) as { ticket?: unknown; repo?: unknown; base?: unknown }

@@ -91,3 +91,16 @@ describe('the factory writes its own events as itself', () => {
     expect(store.wsEventsOf(ws).find((e) => e.type === 'addon.action_signed')).toMatchObject({ actor: { kind: 'person', id: 'p_sev' }, action: 'pause' })
   })
 })
+
+describe('permit decisions name only what the person can see', () => {
+  it('the detail leaves out the epic key when the epic is hidden from the person', async () => {
+    const { store, ws, api } = setup()
+    ;(store as unknown as { defs: Map<string, { visibility: unknown }> }).defs.get(EPIC)!.visibility = { restricted: ['p_sev'] }
+    store.setViewer('p_mara')
+    const permits = (await api.getAddonDecisions(ws)).filter((d) => d.addon === 'factory')
+    expect(permits.length).toBeGreaterThan(0)
+    for (const d of permits) expect(JSON.stringify(d)).not.toContain(EPIC)
+    store.setViewer('p_sev')
+    expect((await api.getAddonDecisions(ws)).find((d) => d.addon === 'factory')!.detail).toContain(`Epic ${EPIC}.`)
+  })
+})

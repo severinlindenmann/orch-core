@@ -336,7 +336,8 @@ registerAddon({
   decisions(state, _pkg, c): AddonDecision[] {
     // Answering a permit lets a command run: owners and maintainers only.
     if (!atLeast(c.store.roleIn(c.ws, c.viewer), 'maintainer')) return []
-    const epic = state.epic as string | null
+    // The epic is named only to people who can see it (a child can be visible while its epic is not).
+    const epic = epicOf(c, state)
     return permitsOf(state)
       .filter((p) => p.state === 'open' && canSeeTicket(c, p.ticket))
       .map((p) => ({
@@ -346,7 +347,7 @@ registerAddon({
         ticket: p.ticket,
         title: 'AI Factory permit',
         question: `${p.ticket} asks to run: ${p.command}`,
-        detail: `Reason: ${p.reason} Epic ${epic}. A grant for the epic answers this exact command until the epic ends.`,
+        detail: `Reason: ${p.reason}${epic ? ` Epic ${epic}.` : ''} A grant for the epic answers this exact command until the epic ends.`,
         options: [
           { key: 'once', label: 'Grant once', primary: true },
           { key: 'epic', label: 'Grant for this epic' },

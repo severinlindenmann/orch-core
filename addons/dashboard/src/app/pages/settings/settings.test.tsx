@@ -194,7 +194,7 @@ describe('Settings', () => {
   })
   it('/settings/addons/<name> redirects to the addon drawer route', async () => {
     renderApp('/settings/addons/estimate')
-    expect(await screen.findByRole('link', { name: /Back to Addons/ })).toBeInTheDocument()
+    expect(await screen.findByRole('dialog', { name: /Estimate settings/ })).toBeInTheDocument()
   })
   it('saves an addon settings form and the value is in the addon state', async () => {
     const { user } = renderApp('/settings/addon/estimate')

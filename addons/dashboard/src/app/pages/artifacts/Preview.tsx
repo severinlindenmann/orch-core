@@ -17,7 +17,7 @@ export function ArtifactPreview({ item, members, onClose, opener }: { item: Arti
   const full = item && ticket.data?.artifacts.find((a) => a.name === item.name && a.sha256 === item.sha256)
   const agentHtml = !!item && addonActive(workspaceOfTicket(item.ticket, workspaces.data ?? []), 'widgets')
   // Until the ticket arrives the drawer shows the listed facts without content.
-  const shown = item ? (full ?? { ...item, added_by: item.by.id }) : null
+  const shown = item ? (full ?? { ...item, added_by: byLabel(item.by, members) }) : null
   return (
     <ArtifactDrawer
       artifact={shown}

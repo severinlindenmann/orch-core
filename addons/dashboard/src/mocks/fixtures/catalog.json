@@ -972,7 +972,7 @@
             },
             {
               "type": "markdown",
-              "text": "### Share a file\nPick a file (a simulated upload), who gets it and for how long."
+              "text": "### Share a file\nPick a file (a simulated upload), who gets it and for how long. A link opens only in the orch app (iPhone or Mac). The relay has no download page — seal it to a person or a workspace instead."
             },
             {
               "type": "form",

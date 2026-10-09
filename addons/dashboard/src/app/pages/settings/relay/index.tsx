@@ -129,7 +129,7 @@ export function Relay({ workspace, canEdit, viewer }: { workspace: Workspace; ca
         </dl>
         <p className="mt-2 text-[12px] text-text-faint">The key rotates every 90 days and whenever a device is removed. Devices that are offline pick up the new key at their next connect.</p>
         <p className="mt-1 text-[12px] text-text-faint">Who may use this relay (an organisation admin view) comes later, as a dashboard addon (P6).</p>
-        {r.link === 'online' && (
+        {canEdit && r.link === 'online' && (
           <div className="mt-3 flex items-center gap-2 rounded-md border border-dashed border-border px-3 py-2">
             <span className="flex-1 text-[12px] text-text-muted">Simulation: see how the page behaves when the network drops.</span>
             <Button

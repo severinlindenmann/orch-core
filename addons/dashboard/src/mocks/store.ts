@@ -793,6 +793,14 @@ export class MockStore {
     return (this.addonStates[key] = seeded)
   }
 
+  /**
+   * State an addon shares across workspaces (e.g. Drop's claim-once records: one claim per object, whichever workspace
+   * makes it). Persisted with the per-workspace states under the key "*" + "/" + name; the addon's own actions write it.
+   */
+  sharedAddonState(name: string): Record<string, unknown> {
+    return (this.addonStates[`*/${name}`] ??= {})
+  }
+
   // ------------------------------------------------------------ addon manager
 
   /** Addons installed in `wsId`: the package plus that workspace's version, grant and status under `ws`. */

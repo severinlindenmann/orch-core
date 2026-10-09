@@ -130,7 +130,8 @@ export function relayState(store: MockStore, wsId: string): RelayState {
   // The queue drains in order, one item every 1.5 s, from the moment the link is online.
   const visible = (i: Omit<RelayQueueItem, 'state'>) => !i.ticket || (store.hasTicket(i.ticket) && store.workspaceOf(i.ticket)?.id === wsId && store.isVisible(i.ticket))
   const deviceIds = new Set(f.devices.map((d) => d.id))
-  const all = [...SEED_QUEUE.filter((i) => ws.prefix === 'DEMO' && deviceIds.has(i.device!)), ...f.seals].sort((a, b) => a.queued_at.localeCompare(b.queued_at))
+  // Hidden items are left out before the timing, so the gaps in what is sent say nothing about them.
+  const all = [...SEED_QUEUE.filter((i) => ws.prefix === 'DEMO' && deviceIds.has(i.device!)), ...f.seals].filter(visible).sort((a, b) => a.queued_at.localeCompare(b.queued_at))
   let cursor = onlineFrom ?? Infinity
   const delivered = new Map<string, number>()
   for (const i of all) {
@@ -138,7 +139,7 @@ export function relayState(store: MockStore, wsId: string): RelayState {
     cursor = Math.max(cursor, Date.parse(i.queued_at)) + SEND_STEP_MS
     if (cursor <= now) delivered.set(i.id, cursor)
   }
-  const queue: RelayQueueItem[] = all.filter(visible).map((i) => (delivered.has(i.id) ? { ...i, state: 'sent', sent_at: iso(delivered.get(i.id)!) } : { ...i, state: 'queued' }))
+  const queue: RelayQueueItem[] = all.map((i) => (delivered.has(i.id) ? { ...i, state: 'sent', sent_at: iso(delivered.get(i.id)!) } : { ...i, state: 'queued' }))
 
   // A device holds the current epoch once its sealed key is delivered; until then the one before (0: none yet).
   const devices: RelayDevice[] = f.devices.map((d) => {
@@ -197,6 +198,8 @@ export function relayRequest(store: MockStore, wsId: string, req: RelayRequest |
     case 'pair.confirm': {
       const p = cur.pairing
       if (!p || p.id !== req.pairing) return fail(404, 'not_found', 'That pairing code is no longer open.', 'Make a new code.')
+      if (cur.link !== 'online') return fail(409, 'relay.offline', 'The relay is not online, so the new device cannot get its key.', 'Wait until it is online again.')
+      if (sim.pairing!.person !== store.viewer) return fail(403, 'forbidden', 'Only the person who made this code can confirm it.')
       if (p.state === 'expired') return fail(409, 'pairing.expired', 'The pairing code expired.', 'Make a new code; each one is valid for 10 minutes.')
       if (p.state !== 'confirm') return fail(409, 'pairing.waiting', 'No device has joined with this code yet.')
       if (req.fingerprint !== p.fingerprint) return fail(409, 'pairing.mismatch', 'The code does not match the one this workspace shows.', 'Cancel and start again if the codes differ.')
@@ -223,7 +226,9 @@ export function relayRequest(store: MockStore, wsId: string, req: RelayRequest |
 export function relaySim(store: MockStore, wsId: string, req: RelaySimRequest | null): { ok: true; relay: RelayState } | StoreFailure {
   const ws = store.workspaces.find((w) => w.id === wsId)
   if (!ws) return fail(404, 'not_found', 'No such workspace')
-  if (!store.roleIn(wsId, store.viewer)) return fail(403, 'forbidden', 'You are not a member of this workspace.')
+  const role = store.roleIn(wsId, store.viewer)
+  if (!role) return fail(403, 'forbidden', 'You are not a member of this workspace.')
+  if (!can(role, 'settings')) return fail(403, 'forbidden', 'Only owners run the relay simulation.')
   const cur = relayState(store, wsId)
   const sim = simOf(store, wsId)
   if (req?.op === 'drop') {

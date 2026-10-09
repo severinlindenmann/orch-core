@@ -32,7 +32,7 @@ describe('Drop page (Preview)', () => {
     await user.click(screen.getByRole('button', { name: 'Share file' }))
     const dialog = await screen.findByRole('dialog', { name: /Copy this link now/ }, T)
     expect((within(dialog).getByRole('textbox') as HTMLInputElement).value).toMatch(/^https:\/\/relay\.dev\.severin\.io\/d\//)
-    expect(within(dialog).getByText(/shown once/)).toBeInTheDocument()
+    expect(within(dialog).getByText(/shown once/)).toHaveTextContent('Opens only in the orch app (iPhone or Mac). The relay has no download page')
   })
   it('a viewer reads but cannot claim or share', async () => {
     renderApp('/addon/drop/drop', { viewer: 'p_tom', setup: on })

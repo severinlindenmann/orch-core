@@ -101,6 +101,27 @@ describe('pairing a device', () => {
     expect(s.store.workspaces.find((w) => w.id === s.ws)!.members.find((m) => m.person === 'p_sev')!.devices).toBe(3)
     expect(await fail(s.api.postRelay(s.ws, { op: 'pair.confirm', pairing: p.id, fingerprint: r2.pairing!.fingerprint! }))).toBe('404 not_found')
   })
+  it('confirming needs the link online; only owners run the simulation', async () => {
+    const s = setup()
+    await online(s)
+    const p = (await s.api.postRelay(s.ws, { op: 'pair.start' })).pairing!
+    const code = (await s.api.simulateRelay(s.ws, { op: 'scan' })).pairing!.fingerprint!
+    await s.api.simulateRelay(s.ws, { op: 'drop' })
+    expect(await fail(s.api.postRelay(s.ws, { op: 'pair.confirm', pairing: p.id, fingerprint: code }))).toBe('409 relay.offline')
+    vi.advanceTimersByTime(4100)
+    expect((await s.api.postRelay(s.ws, { op: 'pair.confirm', pairing: p.id, fingerprint: code })).pairing).toBeNull()
+    s.store.setViewer('p_mara')
+    expect(await fail(s.api.simulateRelay(s.ws, { op: 'drop' }))).toBe('403 forbidden')
+  })
+  it('only the owner who made the code confirms it', async () => {
+    const s = setup()
+    s.store.appendWs(s.ws, { type: 'member.role_changed', person: 'p_mara', role: 'owner' })
+    await online(s)
+    const p = (await s.api.postRelay(s.ws, { op: 'pair.start' })).pairing!
+    const code = (await s.api.simulateRelay(s.ws, { op: 'scan' })).pairing!.fingerprint!
+    s.store.setViewer('p_mara')
+    expect(await fail(s.api.postRelay(s.ws, { op: 'pair.confirm', pairing: p.id, fingerprint: code }))).toBe('403 forbidden')
+  })
   it('an expired code cannot be scanned or confirmed', async () => {
     const s = setup()
     await online(s)

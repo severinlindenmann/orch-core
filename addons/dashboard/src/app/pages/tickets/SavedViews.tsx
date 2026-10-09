@@ -8,6 +8,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 import { onSaveViewRequest, takeSaveViewRequest } from './saveViewRequest'
 import type { TicketsSearch } from './search'
@@ -22,6 +23,9 @@ const norm = (p: object) =>
       .sort(([a], [b]) => a.localeCompare(b)),
   )
 
+/** The "All tickets" entry of the compact select. */
+const ALL = '__all'
+
 const tab = (on: boolean) =>
   cn(
     'inline-flex h-7 items-center rounded-md border px-2.5 text-[12px] outline-none focus-visible:ring-2 focus-visible:ring-brand',
@@ -35,6 +39,7 @@ export function SavedViews({
   canShare,
   onApply,
   onClear,
+  compact = false,
 }: {
   wsId: string
   search: TicketsSearch
@@ -42,6 +47,8 @@ export function SavedViews({
   canShare: boolean
   onApply: (params: TicketsSearch) => void
   onClear: () => void
+  /** A narrow page area (N11): the views are a select instead of a row of tabs. */
+  compact?: boolean
 }) {
   const qc = useQueryClient()
   const { data: views = [] } = useQuery({ queryKey: ['views', wsId], queryFn: () => api.listViews(wsId) })
@@ -90,36 +97,61 @@ export function SavedViews({
 
   return (
     <div className="flex flex-wrap items-center gap-1.5">
-      <div role="tablist" aria-label="Saved views" className="flex flex-wrap items-center gap-1">
-        <button
-          role="tab"
-          type="button"
-          aria-selected={nothingActive}
-          className={tab(nothingActive)}
-          onClick={() => {
-            setActiveId(null)
-            onClear()
+      {compact ? (
+        <Select
+          value={active?.id ?? ALL}
+          onValueChange={(id) => {
+            const v = views.find((x) => x.id === id)
+            setActiveId(v?.id ?? null)
+            if (v) onApply(v.params)
+            else onClear()
           }}
         >
-          All tickets
-        </button>
-        {views.map((v) => (
+          <SelectTrigger size="sm" aria-label="Saved view" className="h-7 min-w-[10rem] gap-1.5 text-[12px]">
+            <span className="text-text-faint">View</span>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL}>All tickets</SelectItem>
+            {views.map((v) => (
+              <SelectItem key={v.id} value={v.id}>
+                {v.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      ) : (
+        <div role="tablist" aria-label="Saved views" className="flex flex-wrap items-center gap-1">
           <button
-            key={v.id}
             role="tab"
             type="button"
-            aria-selected={active?.id === v.id}
-            title={v.shared ? 'Shared with the workspace' : 'Personal'}
-            className={tab(active?.id === v.id)}
+            aria-selected={nothingActive}
+            className={tab(nothingActive)}
             onClick={() => {
-              setActiveId(v.id)
-              onApply(v.params)
+              setActiveId(null)
+              onClear()
             }}
           >
-            {v.name}
+            All tickets
           </button>
-        ))}
-      </div>
+          {views.map((v) => (
+            <button
+              key={v.id}
+              role="tab"
+              type="button"
+              aria-selected={active?.id === v.id}
+              title={v.shared ? 'Shared with the workspace' : 'Personal'}
+              className={tab(active?.id === v.id)}
+              onClick={() => {
+                setActiveId(v.id)
+                onApply(v.params)
+              }}
+            >
+              {v.name}
+            </button>
+          ))}
+        </div>
+      )}
       <Button variant="ghost" size="sm" className="h-7 text-[12px] text-text-muted" onClick={() => openDialog('')}>
         Save view…
       </Button>

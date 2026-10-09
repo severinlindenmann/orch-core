@@ -77,7 +77,7 @@ export const listNode = z.object({
 })
 export const tableNode = z.object({
   type: z.literal('table'),
-  columns: z.array(z.object({ key: z.string().max(64), label: text, /** How core draws the cell: `state` = a status chip with a dot; `ticket` = a link to that ticket (the value must be a ticket key). */ cell: z.enum(['state', 'ticket']).optional(), /** Numbers read right-aligned; columns of real numbers are right-aligned without this. */ align: z.enum(['left', 'right']).optional() })).min(1).max(12),
+  columns: z.array(z.object({ key: z.string().max(64), label: text, /** How core draws the cell: `state` = a status chip with a dot; `ticket` = a link to that ticket (the value must be a ticket key). */ cell: z.enum(['state', 'ticket']).optional(), /** Numbers read right-aligned; columns of real numbers are right-aligned without this. */ align: z.enum(['left', 'right']).optional(), /** Below this table width (px) the column folds into the row's second line. Core also folds columns from the right (those without hideBelow first) when they no longer get about 100 px each; the first two columns and the actions always stay. */ hideBelow: z.number().int().min(0).max(4000).optional() })).min(1).max(12),
   rows: orEmpty(z.record(z.string(), cell)),
   // At most 4 declared. A row shows one button (the `primary` one, else the first non-danger) and the rest in a "More"
   // menu; `when` hides an action per row, so a Start / Stop pair leaves one visible. Core enforces nothing else here.

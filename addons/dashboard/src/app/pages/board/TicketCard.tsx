@@ -140,7 +140,8 @@ interface CardProps {
 /** Two lines for a child under its epic: key, state, priority; then the title with the estimate at its end. The epic is the lane, so no chip. */
 function LaneCardBody({ ticket, people, me, task, overlay, showEstimate, showProgress }: { ticket: TicketSummary; people: BoardPeople; me: string | undefined; task?: string; overlay?: boolean; showEstimate: boolean; showProgress: boolean }) {
   return (
-    <div className={cn('flex flex-col gap-0.5 rounded-md border border-border bg-surface px-2 py-1.5 text-left', overlay && 'border-brand shadow-lift')}>
+    // In a narrow column (under 12.5rem, N11) the title takes two lines and the estimate chips get their own line.
+    <div className={cn('@container/card flex flex-col gap-0.5 rounded-md border border-border bg-surface px-2 py-1.5 text-left', overlay && 'border-brand shadow-lift')}>
       <div className="flex items-center gap-1.5">
         <TypeIcon type={ticket.type} />
         <span className="shrink-0 whitespace-nowrap font-mono text-[11px] text-text-muted">{ticket.key}</span>
@@ -149,8 +150,8 @@ function LaneCardBody({ ticket, people, me, task, overlay, showEstimate, showPro
         <span className="min-w-0 flex-1" />
         <PriorityMarker priority={ticket.priority} />
       </div>
-      <div className="flex min-w-0 items-center gap-1.5">
-        <div className="min-w-0 flex-1 truncate text-[12px] leading-snug text-text" title={ticket.title}>
+      <div className="flex min-w-0 flex-col items-start gap-1 @[12.5rem]/card:flex-row @[12.5rem]/card:items-center @[12.5rem]/card:gap-1.5">
+        <div className="line-clamp-2 min-w-0 flex-1 text-[12px] leading-snug text-text @[12.5rem]/card:line-clamp-1" title={ticket.title}>
           {ticket.title}
         </div>
         {showEstimate && <CardFields ticket={ticket} />}
@@ -186,7 +187,7 @@ export function TicketCardBody({
   return (
     <div
       className={cn(
-        'flex flex-col rounded-lg border border-border bg-surface text-left',
+        '@container/card flex flex-col rounded-lg border border-border bg-surface text-left',
         compact ? 'gap-1 p-2' : 'gap-1.5 p-2.5',
         overlay && 'border-brand shadow-lift',
       )}
@@ -201,7 +202,8 @@ export function TicketCardBody({
       </div>
       <div className={cn('text-[13px] leading-snug text-text', compact ? 'line-clamp-1' : 'line-clamp-2')}>{ticket.title}</div>
       {d.progress && <ProgressBar ticket={ticket} />}
-      <div className="flex min-w-0 items-center gap-1.5">
+      {/* Under 12.5rem (a narrow column, N11) the estimate chips wrap to their own line instead of squeezing the label. */}
+      <div className="flex min-w-0 flex-wrap items-center gap-1.5 @[12.5rem]/card:flex-nowrap">
         <People ticket={ticket} people={people} max={2} />
         <span className="flex min-w-0 flex-1 items-center gap-1">
           {d.labels && chip && (
@@ -220,7 +222,11 @@ export function TicketCardBody({
             </Tooltip>
           )}
         </span>
-        {d.estimate && <CardFields ticket={ticket} />}
+        {d.estimate && (
+          <span className="flex w-full flex-wrap items-center gap-1 empty:hidden @[12.5rem]/card:w-auto @[12.5rem]/card:flex-nowrap">
+            <CardFields ticket={ticket} />
+          </span>
+        )}
       </div>
     </div>
   )

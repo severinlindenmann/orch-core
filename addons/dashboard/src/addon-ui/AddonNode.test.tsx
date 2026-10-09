@@ -234,3 +234,33 @@ describe('table empty text', () => {
     expect(screen.queryByText('none')).toBeNull()
   })
 })
+
+describe('table node in a narrow page area (N11)', () => {
+  const columns = [
+    { key: 'repo', label: 'Repository' },
+    { key: 'pr', label: 'PR' },
+    { key: 'title', label: 'Title' },
+    { key: 'checks', label: 'Checks' },
+    { key: 'note', label: 'Note', hideBelow: 900 },
+  ]
+  const rows = [{ repo: 'energy-dbt', pr: '#31', title: 'Load tariffs', checks: 'pending', note: 'rebase first' }]
+  it('shows every column when the width is not known', () => {
+    show({ type: 'table', columns, rows })
+    expect(screen.getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['Repository', 'PR', 'Title', 'Checks', 'Note'])
+  })
+  it('folds what does not fit into the first cell, keeping the first two columns', () => {
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ width: 300, height: 100, top: 0, left: 0, right: 300, bottom: 100, x: 0, y: 0, toJSON: () => ({}) })
+    show({ type: 'table', columns, rows })
+    // 300 px: three columns fit; Note folds by its hideBelow, Checks by the budget.
+    expect(screen.getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['Repository', 'PR', 'Title'])
+    const line = document.querySelector('[data-fold-line]')!
+    expect(line.closest('td')).toHaveTextContent(/^energy-dbt/)
+    expect(line).toHaveTextContent('Checkspending')
+    expect(line).toHaveTextContent('Noterebase first')
+    rect.mockRestore()
+  })
+  it('accepts hideBelow on a column and rejects nonsense', () => {
+    show({ type: 'table', columns: [{ key: 'a', label: 'A', hideBelow: -3 }], rows: [{ a: 1 }] })
+    expect(screen.queryByRole('table')).not.toBeInTheDocument()
+  })
+})

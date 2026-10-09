@@ -1,7 +1,7 @@
 import type { RJSFValidationError } from '@rjsf/utils'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useBlocker } from '@tanstack/react-router'
-import { createContext, lazy, Suspense, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { ChevronRight, Ellipsis, ExternalLink, TriangleAlert } from 'lucide-react'
 import { api } from '@/api/client'
 import { useWorkspace } from '@/app/workspace'
@@ -30,6 +30,8 @@ import { useRole } from '@/app/useRole'
 import { precheckReason } from './SpawnConfirm'
 import { DestructiveConfirm } from './DestructiveConfirm'
 import { Collapse } from '@/components/Collapse'
+import { foldedColumns } from '@/lib/columnFold'
+import { useElementWidth } from '@/lib/useElementWidth'
 
 // rjsf (with ajv) loads on first form, so it stays out of the main bundle.
 const ThemedForm = lazy(() => import('./AddonForm'))
@@ -105,8 +107,9 @@ function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
   const n = parsed.node
   switch (n.type) {
     case 'stack':
+      // A row shares the width; in a narrow page area its children wrap once each would get under 12rem (N11).
       return (
-        <div className={cn('flex gap-3', n.direction === 'row' ? (n.fit ? 'flex-row flex-wrap items-center [&>*]:min-w-0' : 'flex-row [&>*]:min-w-0 [&>*]:flex-1') : 'flex-col')}>
+        <div className={cn('flex gap-3', n.direction === 'row' ? (n.fit ? 'flex-row flex-wrap items-center [&>*]:min-w-0' : 'flex-row flex-wrap [&>*]:min-w-0 [&>*]:flex-[1_1_12rem]') : 'flex-col')}>
           {n.children.filter((c) => !isEmptyStack(c)).map((c, i) => (
             <NodeView key={i} node={c} depth={depth + 1} />
           ))}
@@ -137,29 +140,7 @@ function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
       )
     case 'table':
       if (n.rows.length === 0) return <p className="text-[13px] text-text-faint">{n.empty ?? 'Nothing here.'}</p>
-      return (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              {n.columns.map((c) => (
-                <TableHead key={c.key} className={cn('h-8 text-[12px] text-text-muted', numericKeys(n).has(c.key) && 'text-right')}>
-                  {c.label}
-                </TableHead>
-              ))}
-              {n.rowActions && (
-                <TableHead className="h-8">
-                  <span className="sr-only">Actions</span>
-                </TableHead>
-              )}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {stableKeys(n.rows.map((r) => r.id ?? r[n.columns[0].key])).map((k, i) => (
-              n.rowActions || n.rowOpen ? <ActionDataRow key={k} columns={n.columns} row={n.rows[i]} rowActions={n.rowActions} rowOpen={n.rowOpen} numeric={numericKeys(n)} total={!!n.totalRow && i === n.rows.length - 1} /> : <DataRowView key={k} columns={n.columns} row={n.rows[i]} numeric={numericKeys(n)} total={!!n.totalRow && i === n.rows.length - 1} />
-            ))}
-          </TableBody>
-        </Table>
-      )
+      return <TableNodeView n={n} />
     case 'markdown':
       return (
         <div className={n.toc ? undefined : 'max-w-[72ch]'}>
@@ -801,8 +782,68 @@ function StateChip({ text }: { text: string }) {
   )
 }
 
-function ActionDataRow({ columns, row, rowActions, rowOpen, numeric, total }: { total?: boolean; columns: NodeOf<'table'>['columns']; row: Record<string, unknown>; rowActions?: ItemAction[]; rowOpen?: NodeOf<'table'>['rowOpen']; numeric: Set<string> }) {
-  return <DataRowView columns={columns} row={row} rowActions={rowActions} rowOpen={rowOpen} numeric={numeric} total={total} act={useAddonAction()} />
+/**
+ * A table node. Core folds columns by the table's own width (N11, src/lib/columnFold.ts): what does not fit moves into
+ * the row's second line under the first column, so the table never scrolls sideways in a narrow page area.
+ */
+function TableNodeView({ n }: { n: NodeOf<'table'> }) {
+  const [ref, width] = useElementWidth<HTMLDivElement>()
+  // Still wider than its box after the rule (unbreakable cells): fold one more column until it fits; start over when
+  // the width changes.
+  const [extra, setExtra] = useState({ width, n: 0 })
+  const more = extra.width === width ? extra.n : 0
+  const folded = new Set(foldedColumns(n.columns, width, { actions: !!n.rowActions, extra: more }))
+  const box = useRef<HTMLDivElement | null>(null)
+  // One stable ref for both: an inline callback would detach and re-attach the observer on every commit.
+  const attach = useCallback(
+    (el: HTMLDivElement | null) => {
+      ref(el)
+      box.current = el
+    },
+    [ref],
+  )
+  useLayoutEffect(() => {
+    const scroller = box.current?.querySelector<HTMLElement>('[data-slot="table-container"]')
+    if (!scroller || width === 0 || scroller.scrollWidth <= scroller.clientWidth + 1 || more >= n.columns.length) return
+    setExtra({ width, n: more + 1 })
+  })
+  const shown = n.columns.filter((c) => !folded.has(c.key))
+  const fold = n.columns.filter((c) => folded.has(c.key))
+  const numeric = numericKeys(n)
+  return (
+    <div ref={attach} data-folded={fold.length || undefined}>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            {shown.map((c) => (
+              <TableHead key={c.key} className={cn('h-8 whitespace-normal text-[12px] text-text-muted', numeric.has(c.key) && 'text-right')}>
+                {c.label}
+              </TableHead>
+            ))}
+            {n.rowActions && (
+              <TableHead className="h-8">
+                <span className="sr-only">Actions</span>
+              </TableHead>
+            )}
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {stableKeys(n.rows.map((r) => r.id ?? r[n.columns[0].key])).map((k, i) => {
+            const props = { columns: n.columns, shown, fold, row: n.rows[i], numeric, total: !!n.totalRow && i === n.rows.length - 1 }
+            return n.rowActions || n.rowOpen ? <ActionDataRow key={k} {...props} rowActions={n.rowActions} rowOpen={n.rowOpen} /> : <DataRowView key={k} {...props} />
+          })}
+        </TableBody>
+      </Table>
+    </div>
+  )
+}
+
+type TableColumn = NodeOf<'table'>['columns'][number]
+
+type DataRowProps = { total?: boolean; columns: TableColumn[]; shown: TableColumn[]; fold: TableColumn[]; row: Record<string, unknown>; rowActions?: ItemAction[]; rowOpen?: NodeOf<'table'>['rowOpen']; numeric: Set<string> }
+
+function ActionDataRow(props: DataRowProps) {
+  return <DataRowView {...props} act={useAddonAction()} />
 }
 
 const TICKET_KEY = /^[A-Z][A-Z0-9]*-\d+$/
@@ -820,31 +861,46 @@ function Cell({ column, row, open, act, label }: { column: NodeOf<'table'>['colu
   if (column.cell === 'state' && typeof v === 'string' && v !== '') return <StateChip text={text} />
   if (column.cell === 'ticket' && typeof v === 'string' && TICKET_KEY.test(v))
     return (
-      <Link to="/ticket/$key" params={{ key: v }} className="font-mono text-[12px] text-text hover:underline">
+      <Link to="/ticket/$key" params={{ key: v }} className="whitespace-nowrap font-mono text-[12px] text-text hover:underline">
         {v}
       </Link>
     )
+  // A short single token (a key, an id, "#31", a number) never breaks inside; long ones (paths, branches) may (N11).
+  if (SHORT_TOKEN.test(text)) return <span className="whitespace-nowrap">{text}</span>
   return <>{text}</>
 }
 
-function DataRowView({ columns, row, rowActions, rowOpen, act, numeric, total }: { total?: boolean; columns: NodeOf<'table'>['columns']; row: Record<string, unknown>; rowActions?: ItemAction[]; rowOpen?: NodeOf<'table'>['rowOpen']; act?: AddonAction; numeric: Set<string> }) {
+const SHORT_TOKEN = /^\S{1,24}$/
+
+function DataRowView({ columns, shown, fold, row, rowActions, rowOpen, act, numeric, total }: DataRowProps & { act?: AddonAction }) {
+  const label = rowLabel(columns[0]?.key, row)
   return (
     <>
       <TableRow className={total ? 'border-t-2 border-border-strong bg-surface-2/60 font-semibold' : undefined}>
-        {columns.map((c, i) => (
-          <TableCell key={c.key} className={cn('whitespace-normal break-words py-1.5 text-[13px]', numeric.has(c.key) && 'text-right tabular-nums')}>
-            <Cell column={c} row={row} open={i === 0 ? rowOpen : undefined} act={act} label={rowLabel(columns[0]?.key, row)} />
+        {shown.map((c, i) => (
+          <TableCell key={c.key} className={cn('whitespace-normal break-words py-1.5 text-[13px] [overflow-wrap:anywhere]', numeric.has(c.key) && 'text-right tabular-nums')}>
+            <Cell column={c} row={row} open={c === columns[0] ? rowOpen : undefined} act={act} label={label} />
+            {i === 0 && fold.length > 0 && (
+              <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[12px] font-normal text-text-muted" data-fold-line>
+                {fold.map((f) => (
+                  <span key={f.key} className="inline-flex min-w-0 items-center gap-1">
+                    <span className="text-text-faint">{f.label}</span>
+                    <Cell column={f} row={row} act={act} label={label} />
+                  </span>
+                ))}
+              </div>
+            )}
           </TableCell>
         ))}
         {rowActions && act && (
           <TableCell className="whitespace-nowrap py-1.5 text-right">
-            <ItemActions act={act} actions={rowActions} row={row} label={rowLabel(columns[0]?.key, row)} />
+            <ItemActions act={act} actions={rowActions} row={row} label={label} />
           </TableCell>
         )}
       </TableRow>
       {act?.error && (
         <TableRow className="hover:bg-transparent">
-          <TableCell colSpan={columns.length + 1} className="py-1.5">
+          <TableCell colSpan={shown.length + 1} className="py-1.5">
             <ErrorAlert error={act.error} onDismiss={act.dismissError} />
           </TableCell>
         </TableRow>

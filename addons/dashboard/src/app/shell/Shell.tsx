@@ -61,7 +61,7 @@ export function Shell() {
             <div className="flex min-w-0 flex-1 flex-col">
               <Topbar />
               <DockArea>
-              <main id="main" tabIndex={-1} className="min-h-0 flex-1 overflow-y-auto p-6 outline-none">
+              <main id="main" tabIndex={-1} className="min-h-0 flex-1 overflow-y-auto p-4 outline-none @[60rem]/page:p-6">
                 <ErrorBoundary resetKey={path} fallback={(retry) => (
                     <PageProblem
                       retry={() => {

@@ -44,7 +44,7 @@ export function NewSessionForm({ ticket, lastHarness, canStart, onStart }: {
       <fieldset disabled={!canStart} className="space-y-2">
         <label className="flex items-center gap-2">
           <span className="w-12 text-text-muted">Harness</span>
-          <select value={harness} onChange={(e) => setHarness(e.target.value)} className="h-7 flex-1 rounded-md border border-border bg-bg px-2 text-xs">
+          <select name={`${id}-harness`} id={`${id}-harness`} value={harness} onChange={(e) => setHarness(e.target.value)} className="h-7 flex-1 rounded-md border border-border bg-bg px-2 text-xs">
             {STARTABLE.map((x) => (
               <option key={x.id} value={x.id}>{x.label}</option>
             ))}
@@ -65,7 +65,7 @@ export function NewSessionForm({ ticket, lastHarness, canStart, onStart }: {
         )}
         {where && h.capabilities.contextInjection && (
           <label className="flex items-center gap-2">
-            <input type="checkbox" checked={summary} onChange={(e) => setSummary(e.target.checked)} className="accent-brand" />
+            <input type="checkbox" name={`${id}-summary`} id={`${id}-summary`} checked={summary} onChange={(e) => setSummary(e.target.checked)} className="accent-brand" />
             Include the ticket's current-state summary
           </label>
         )}
@@ -90,7 +90,7 @@ export function NewSessionButton({ open, onOpenChange, ...form }: Parameters<typ
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger asChild>
-        <Button variant="secondary" size="xs"><Plus />New session</Button>
+        <Button variant="secondary" size="xs" aria-label="New session" title="New session"><Plus /><span className="hidden @[26rem]/dock:inline">New session</span></Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-80 p-3">
         <NewSessionForm {...form} onStart={(c) => { onOpenChange(false); form.onStart(c) }} />

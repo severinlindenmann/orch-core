@@ -51,6 +51,7 @@ describe('estimate on the board and the ticket', () => {
     await user.selectOptions(await screen.findByLabelText(/Scale/), 't-shirt')
     await user.click(screen.getByRole('button', { name: 'Save' }))
     await screen.findByText(/Settings saved/)
+    await user.click(screen.getByRole('button', { name: 'Cancel' })) // saved: closes without asking
     await user.click(screen.getAllByRole('link', { name: 'Board' })[0])
     const w0 = Number(mockStore.ticket('DEMO-0043')!.addons.estimate?.points ?? 0)
     const before = await sumNow()

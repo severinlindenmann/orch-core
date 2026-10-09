@@ -10,6 +10,8 @@ import type { Workspace } from '@/api/types'
 interface SwitchOptions {
   /** Open this ticket in the target workspace instead of keeping the current page. */
   ticket?: string
+  /** Set by a switch guard when it lets the switch through. */
+  guarded?: boolean
 }
 
 interface WorkspaceCtx {
@@ -32,6 +34,20 @@ function readStored(): string | null {
   } catch {
     return null
   }
+}
+
+/**
+ * A screen with unsaved work can ask before the workspace changes under it: while a guard is set, switchWorkspace
+ * calls it with the switch as `proceed` and does nothing until the guard runs it.
+ */
+let switchGuard: ((proceed: () => void) => void) | null = null
+export function useSwitchGuard(guard: ((proceed: () => void) => void) | null) {
+  useEffect(() => {
+    switchGuard = guard
+    return () => {
+      if (switchGuard === guard) switchGuard = null
+    }
+  }, [guard])
 }
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
@@ -64,6 +80,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       const { data: all, workspace: current } = latest.current
       const target = all.find((w) => w.id === next)
       if (!target) return
+      if (next === current?.id && !opts.ticket) return
+      if (switchGuard && !opts.guarded) {
+        switchGuard(() => switchWorkspace(next, { ...opts, guarded: true }))
+        return
+      }
       const path = router.state.location.pathname
       if (opts.ticket) {
         setWorkspaceId(next)

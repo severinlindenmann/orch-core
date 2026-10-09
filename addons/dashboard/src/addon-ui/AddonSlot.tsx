@@ -6,7 +6,7 @@ import { ErrorBoundary, BlockProblem } from '@/components/ErrorBoundary'
 import { AddonBadge } from './AddonBadge'
 import { AddonFrame } from './AddonFrame'
 import { Skeleton } from '@/components/ui/skeleton'
-import { AddonNode } from './AddonNode'
+import { AddonNode, type FormControl } from './AddonNode'
 import { useSlot, type AddonStateWait, type ResolvedContribution, type SlotContext } from './slots'
 
 /** What core draws while an addon's state is loading, or after it failed to load (with Retry). */
@@ -28,11 +28,11 @@ export function AddonStatePlaceholder({ title, waiting, compact = false }: { tit
 }
 
 /** The body of a contribution: its node, or core's placeholder while the addon's state loads. */
-function ContributionBody({ c, ctx, compact, readOnly }: { c: ResolvedContribution; ctx: SlotContext; compact: boolean; readOnly: boolean }) {
+function ContributionBody({ c, ctx, compact, readOnly, formControl }: { c: ResolvedContribution; ctx: SlotContext; compact: boolean; readOnly: boolean; formControl?: FormControl }) {
   if (c.waiting) return <AddonStatePlaceholder title={c.addonTitle} waiting={c.waiting} compact={compact} />
   return (
     <ErrorBoundary resetKey={c.node} fallback={() => <BlockProblem what={`This ${c.addon} panel`} />}>
-      <AddonNode node={c.node} addon={c.addon} ctx={ctx} compact={compact} readOnly={readOnly} />
+      <AddonNode node={c.node} addon={c.addon} ctx={ctx} compact={compact} readOnly={readOnly} formControl={formControl} />
     </ErrorBoundary>
   )
 }
@@ -50,6 +50,7 @@ export function AddonContributionView({
   readOnly,
   bare = false,
   level,
+  formControl,
 }: {
   c: ResolvedContribution
   ctx?: SlotContext
@@ -57,8 +58,10 @@ export function AddonContributionView({
   readOnly: boolean
   bare?: boolean
   level?: 2 | 3
+  /** A form node here draws no submit button of its own; see FormControl. */
+  formControl?: FormControl
 }) {
-  const body = <ContributionBody c={c} ctx={ctx} compact={compact} readOnly={readOnly} />
+  const body = <ContributionBody c={c} ctx={ctx} compact={compact} readOnly={readOnly} formControl={formControl} />
   if (bare) return <div data-addon={c.addon}>{body}</div>
   return (
     <AddonFrame addon={c.addon} addonTitle={c.addonTitle} title={c.title} slot={c.slot} compact={compact} level={level}>

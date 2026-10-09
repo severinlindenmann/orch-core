@@ -1,4 +1,3 @@
-import { Link } from '@tanstack/react-router'
 import { TriangleAlert } from 'lucide-react'
 import { AddonBadge } from '@/addon-ui/AddonBadge'
 import { PreviewChip } from '@/addon-ui/PreviewChip'
@@ -21,6 +20,7 @@ export interface RowActions {
   update: () => void
   uninstall: () => void
   setEnabled: (on: boolean) => void
+  openSettings: () => void
 }
 
 /** The callout under a row whose installed version has no grant. Warning tone (orange is for addons only). */
@@ -76,10 +76,8 @@ export function AddonRow({ addon, active, canEdit, hasSettings, actions }: { add
             </Button>
           )}
           {hasSettings && active && (
-            <Button size="sm" variant="outline" asChild>
-              <Link to="/settings/addon/$name" params={{ name: addon.name }}>
-                Settings
-              </Link>
+            <Button size="sm" variant="outline" data-settings-for={addon.name} onClick={actions.openSettings}>
+              Settings
             </Button>
           )}
           {canEdit && update && (

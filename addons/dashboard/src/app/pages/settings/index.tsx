@@ -1,5 +1,4 @@
 import { useQuery } from '@tanstack/react-query'
-import { ChevronLeft } from 'lucide-react'
 import { Link } from '@tanstack/react-router'
 import { api } from '@/api/client'
 import { can, roleOf } from '@/api/permissions'
@@ -7,7 +6,6 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import { useWorkspace } from '../../workspace'
 import { usePageHeader } from '../../shell/ShellUi'
-import { AddonSettings } from './AddonSettings'
 import { General } from './General'
 import { AddonManager } from './addons'
 import { Gates } from './Gates'
@@ -19,7 +17,7 @@ export const ONLY_OWNERS = 'Only owners change settings.'
 const link = 'flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] text-text-muted hover:bg-surface-2 hover:text-text'
 const active = 'bg-surface-2 text-text'
 
-/** /settings/$tab (general | members | gates | addons) and /settings/addon/$name (opened from the addon's row in Addons). */
+/** /settings/$tab (general | members | gates | addons) and /settings/addon/$name (Addons with that addon's settings drawer open). */
 export function SettingsPage({ tab, addon }: { tab?: string; addon?: string }) {
   usePageHeader('Settings')
   const { workspace } = useWorkspace()
@@ -53,14 +51,7 @@ export function SettingsPage({ tab, addon }: { tab?: string; addon?: string }) {
         {current === 'general' && <General workspace={workspace} canEdit={isOwner} />}
         {current === 'members' && <Members workspace={workspace} viewer={me.data.person} canEdit={isOwner} />}
         {current === 'gates' && <Gates workspace={workspace} canEdit={isOwner} />}
-        {current === 'addons' && !addon && <AddonManager workspace={workspace} canEdit={isOwner} />}
-        {addon && (
-          <Link to="/settings/$tab" params={{ tab: 'addons' }} className="inline-flex items-center gap-1 text-[13px] text-text-muted hover:text-text">
-            <ChevronLeft aria-hidden className="size-3.5" />
-            Back to Addons
-          </Link>
-        )}
-        {addon && <AddonSettings name={addon} workspace={workspace} canEdit={isOwner} />}
+        {current === 'addons' && <AddonManager workspace={workspace} canEdit={isOwner} settingsOf={addon} />}
       </div>
     </div>
   )

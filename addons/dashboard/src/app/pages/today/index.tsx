@@ -8,10 +8,11 @@ import { AddonSlotStack } from '@/addon-ui'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useWorkspace } from '../../workspace'
 import { useRole } from '../../useRole'
+import { useAttention } from '../../attention'
 import { usePageHeader } from '../../shell/ShellUi'
 import { AddonDecisionCard, ApprovalCard, QuestionCard, VerdictCard } from './cards'
 import { AgentsAtWork, Recently } from './side'
-import { ResolveProvider, type Directory } from './shared'
+import { displayName, ResolveProvider, type Directory } from './shared'
 
 const itemId = (i: NeedsYouItem) => (i.kind === 'verdict' ? `verdict:${i.ticket}` : `${i.kind === 'approval' ? 'approval' : 'question'}:${i.ticket}:${i.ref}`)
 
@@ -28,6 +29,7 @@ export function TodayPage() {
   const me = useQuery({ queryKey: ['me'], queryFn: api.getMe })
   const decisionsQ = useQuery({ queryKey: ['addon-decisions', ws], queryFn: () => api.getAddonDecisions(ws!), enabled: !!ws })
 
+  const attention = useAttention(ws)
   const role = useRole()
   const readOnly = !can(role, 'ticket.act')
 
@@ -47,6 +49,7 @@ export function TodayPage() {
 
   const ordered = [...items].sort((a, b) => Number(!!b.blocking) - Number(!!a.blocking))
   const agentsWorking = (agentsQ.data ?? []).filter((a) => a.claims.length > 0).length
+  const sessions = attention.agents.sessions
 
   if (!today.data || !agentsQ.data || !me.data) {
     return (
@@ -72,7 +75,7 @@ export function TodayPage() {
             <div className="space-y-1">
               <h1 className="text-xl font-semibold tracking-tight">Today</h1>
               <p className="text-[13px] tabular-nums text-text-muted">
-                {dateLine(now)} · {count} decision{count === 1 ? '' : 's'} {readOnly ? 'open' : 'need you'} · {agentsWorking} agent{agentsWorking === 1 ? '' : 's'} at work
+                {dateLine(now)} · {count} decision{count === 1 ? '' : 's'} {readOnly ? 'open' : 'need you'} · {sessions} agent session{sessions === 1 ? '' : 's'}
               </p>
             </div>
 
@@ -111,6 +114,13 @@ export function TodayPage() {
                 {visibleDecisions.map((d) => (
                   <AddonDecisionCard key={d.id} d={d} readOnly={readOnly} />
                 ))}
+
+                {!readOnly && attention.waitingOnOthers.count > 0 && (
+                  <p className="text-xs text-text-muted">
+                    {attention.waitingOnOthers.count} more {attention.waitingOnOthers.count === 1 ? 'is' : 'are'} waiting on{' '}
+                    {attention.waitingOnOthers.who.map((p) => displayName(dir, p)).join(', ') || 'other people'}.
+                  </p>
+                )}
 
                 {count === 0 && (
                   <div className="rounded-lg border border-dashed border-border px-6 py-10 text-center">

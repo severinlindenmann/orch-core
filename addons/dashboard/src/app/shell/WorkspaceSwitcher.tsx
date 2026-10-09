@@ -7,6 +7,7 @@ import type { Workspace } from '@/api/types'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+import { useAttention } from '../attention'
 import { useWorkspace } from '../workspace'
 import { SHORTCUTS } from './shortcuts'
 
@@ -26,6 +27,7 @@ function RelayDot() {
 
 function WorkspaceRow({ w, index, current, viewer, onPick }: { w: Workspace; index: number; current: boolean; viewer: string | undefined; onPick: (ticket?: string) => void }) {
   const [today] = useQueries({ queries: [{ queryKey: ['today', w.id], queryFn: () => api.getToday(w.id) }] })
+  const needs = useAttention(w.id).needsYou.total
   const previews = (today.data?.needs_you ?? []).slice(0, PREVIEWS)
   const keys = SHORTCUTS.find((s) => s.id === `workspace.${index + 1}`)?.keys
   return (
@@ -40,9 +42,9 @@ function WorkspaceRow({ w, index, current, viewer, onPick }: { w: Workspace; ind
           <span className="min-w-0 flex-1 truncate">{w.name}</span>
           {current && <Check className="size-3.5 text-text-muted" aria-label="Current workspace" />}
         </button>
-        {w.needs_you > 0 && (
-          <span aria-label={`${w.needs_you} need you`} className="rounded-full bg-brand px-1.5 text-[11px] font-semibold text-on-brand">
-            {w.needs_you}
+        {needs > 0 && (
+          <span aria-label={`${needs} need you`} className="rounded-full bg-brand px-1.5 text-[11px] font-semibold text-on-brand">
+            {needs}
           </span>
         )}
         <RelayDot />

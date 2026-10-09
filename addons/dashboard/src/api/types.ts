@@ -410,6 +410,8 @@ export interface TodayDocument {
   needs_you: NeedsYouItem[]
   /** Viewers get an empty needs_you; this lists what is open in the workspace, read only. */
   read_only_open: NeedsYouItem[]
+  /** Open items the viewer cannot act on: how many, and the people (ids) who can. */
+  waiting_on_others: { count: number; people: string[] }
   working: TicketSummary[]
   recent: (Pick<OrchEvent, 'seq' | 'at' | 'type' | 'actor'> & { ticket: string; title: string; summary: string })[]
   counts: Partial<Record<Status, number>>

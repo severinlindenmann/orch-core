@@ -281,3 +281,57 @@ describe('addon action route', () => {
     })
   })
 })
+
+describe('stable ages and the attention count', () => {
+  it('an item keeps its age when another item is decided', async () => {
+    const { api, store } = setup()
+    const ws = store.workspaces[0].id
+    const before = (await api.getToday(ws)).needs_you
+    const answered = before.find((i) => i.kind === 'question')!
+    await api.postAction(answered.ticket, { action: 'answer', question: answered.ref!, option: 'date' }).catch(() => undefined)
+    store.append(answered.ticket, { type: 'comment.added', actor: 'p_sev', text: 'noted' })
+    const after = (await api.getToday(ws)).needs_you
+    const key = (i: { kind: string; ticket: string; ref?: string }) => `${i.kind}:${i.ticket}:${i.ref}`
+    for (const i of after) expect(i.since, key(i)).toBe(before.find((b) => key(b) === key(i))!.since)
+    expect(after.length).toBeLessThan(before.length)
+  })
+
+  it('a verdict item is as old as the move to Testing, not the last event', () => {
+    const store = createMockStore({ persist: false, dataset: 'busy' })
+    const ws = store.workspaces[0].id
+    const v = store.needsYou(ws).find((i) => i.kind === 'verdict')!
+    const moved = store.eventsOf(v.ticket).filter((e) => e.type === 'status.changed' && e.to === 'testing').at(-1)!.at
+    expect(v.since).toBe(moved)
+    store.append(v.ticket, { type: 'comment.added', actor: 'p_sev', text: 'later' })
+    expect(store.needsYou(ws).find((i) => i.kind === 'verdict' && i.ticket === v.ticket)!.since).toBe(moved)
+  })
+
+  it('workspace needs_you counts open addon decisions the viewer can decide', async () => {
+    const { api, store } = setup()
+    const ws = store.workspaces[0].id
+    const core = (await api.getToday(ws)).needs_you.length
+    const addon = (await api.getAddonDecisions(ws)).length
+    expect(addon).toBeGreaterThan(0)
+    expect((await api.getWorkspaces()).find((w) => w.id === ws)!.needs_you).toBe(core + addon)
+    store.setViewer('p_tom')
+    expect((await api.getWorkspaces()).find((w) => w.id === ws)!.needs_you).toBe(0)
+  })
+
+  it('Today says what waits on other people, and who', async () => {
+    const { api, store } = setup()
+    const ws = store.workspaces[0].id
+    const today = await api.getToday(ws)
+    expect(today.waiting_on_others.count).toBeGreaterThan(0)
+    expect(today.waiting_on_others.people).toContain('p_mara')
+    expect(today.waiting_on_others.people).not.toContain('p_sev')
+  })
+
+  it('resetting or switching dataset keeps the viewer when asked', () => {
+    const { store } = setup()
+    store.setViewer('p_mara')
+    store.reset('busy', true)
+    expect(store.viewer).toBe('p_mara')
+    store.reset('normal')
+    expect(store.viewer).toBe('p_sev')
+  })
+})

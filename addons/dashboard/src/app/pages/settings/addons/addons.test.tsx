@@ -57,7 +57,7 @@ describe('Addon manager', () => {
     await user.click(await screen.findByRole('link', { name: 'Settings' }))
     await user.click(await screen.findByRole('link', { name: 'Addons' }))
     await user.click(within(await screen.findByRole('row', { name: /Publish/ })).getByRole('switch', { name: /Enable/ }))
-    await user.click(await screen.findByRole('link', { name: 'Today' }))
+    await user.click(await screen.findByRole('link', { name: /^Today/ }))
     await screen.findByRole('heading', { name: 'Today' })
     await waitFor(() => expect(screen.queryByText(/Publish report/)).toBeNull())
   })

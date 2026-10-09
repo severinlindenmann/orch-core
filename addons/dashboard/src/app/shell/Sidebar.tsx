@@ -15,6 +15,8 @@ import {
 } from 'lucide-react'
 import { api } from '@/api/client'
 import { activeGrantOf } from '@/api/grants'
+import { roleOf } from '@/api/permissions'
+import { useAttention } from '../attention'
 import { useRole } from '../useRole'
 import { AddonBadge } from '@/addon-ui/AddonBadge'
 import { PreviewChip } from '@/addon-ui/PreviewChip'
@@ -131,6 +133,7 @@ export function Sidebar() {
   const { data: packages } = useAddons()
   const previews = new Set(packages?.filter((a) => a.preview).map((a) => a.name))
   const role = useRole() ?? me?.role
+  const attention = useAttention(workspace?.id)
   // The viewer's own active grant in the current workspace (revoke, re-issue and switching all show).
   const ws = workspace?.id
   const grants = useQuery({ queryKey: ['grants', ws], queryFn: () => api.listGrants(ws!), enabled: !!ws })
@@ -176,16 +179,16 @@ export function Sidebar() {
         <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-2 py-2" aria-label="Main">
           {CORE_NAV.map(({ to, label: text, icon: Icon }) => (
             <RailTip key={to} label={text}>
-              <Link to={to} className={link} activeProps={activeProps} activeOptions={{ exact: to === '/' }} aria-label={text}>
+              <Link to={to} className={link} activeProps={activeProps} activeOptions={{ exact: to === '/' }} aria-label={to === '/' && attention.badge > 0 ? `${text}, ${attention.badge} need you` : text}>
                 <span className="relative">
                   <Icon className="size-4" />
-                  {collapsed && to === '/' && workspace && workspace.needs_you > 0 && (
+                  {collapsed && to === '/' && attention.badge > 0 && (
                     <span className="absolute -right-1.5 -top-1.5 size-2 rounded-full bg-brand" aria-hidden />
                   )}
                 </span>
                 <span className={cn('flex-1', label)}>{text}</span>
-                {!collapsed && to === '/' && workspace && workspace.needs_you > 0 && (
-                  <span className="rounded-full bg-brand px-1.5 text-[11px] font-semibold text-on-brand">{workspace.needs_you}</span>
+                {!collapsed && to === '/' && attention.badge > 0 && (
+                  <span className="rounded-full bg-brand px-1.5 text-[11px] font-semibold text-on-brand">{attention.badge}</span>
                 )}
               </Link>
             </RailTip>
@@ -283,7 +286,7 @@ export function Sidebar() {
               >
                 {PEOPLE.map((p) => (
                   <DropdownMenuRadioItem key={p.id} value={p.id}>
-                    {p.name}
+                    {p.name} · {roleOf(workspace, p.id) ?? 'not a member'}
                   </DropdownMenuRadioItem>
                 ))}
               </DropdownMenuRadioGroup>

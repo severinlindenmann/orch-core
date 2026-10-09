@@ -114,6 +114,8 @@ function fillDefinition(d: FixtureTicket['definition']): TicketDefinition {
   } as TicketDefinition
 }
 
+const itemKey = (i: NeedsYouItem) => `${i.kind}:${i.ticket}:${i.ref ?? ''}`
+
 export class MockStore {
   /** Workspaces with the workspace log folded in (derived; rebuilt by `refoldWorkspaces`). */
   workspaces: Workspace[] = []
@@ -271,15 +273,15 @@ export class MockStore {
   }
 
   /** Back to the seed. `dataset` switches the demo to that dataset; without it the current one is reloaded. */
-  reset(dataset: Dataset = this.dataset) {
+  reset(dataset: Dataset = this.dataset, keepViewer = false) {
     this.sim.stopAll()
     this.dataset = dataset
     this.seed()
-    this.viewer = meFixture.person
+    if (!keepViewer) this.viewer = meFixture.person
     this.startedAt = Date.now()
     this.clockBase = Date.parse(MOCK_EPOCH)
     clearPersisted()
-    if (dataset !== 'normal') this.save() // the mode survives a reload
+    if (dataset !== 'normal' || this.viewer !== meFixture.person) this.save() // the mode and the viewer survive a reload
     this.startLiveIfBusy()
   }
 
@@ -989,6 +991,13 @@ export class MockStore {
     }
   }
 
+  /** When the latest event matching `is` happened on `key`; `fallback` when none did. */
+  private lastEventAt(key: string, is: (e: OrchEvent) => boolean, fallback: string): string {
+    const list = this.eventsOf(key)
+    for (let i = list.length - 1; i >= 0; i--) if (is(list[i])) return list[i].at
+    return fallback
+  }
+
   /** Open questions, pending gates and verdicts on the workspace's tickets; `eligible` filters to what that person can act on. */
   private openItems(workspaceId: string, eligible?: string): NeedsYouItem[] {
     const items: NeedsYouItem[] = []
@@ -1000,12 +1009,12 @@ export class MockStore {
           items.push({ kind: 'question', ticket: t.key, title: t.title, text: q.text, since: q.asked_at, ref: q.id, blocking: q.blocking })
       }
       if (t.status === 'testing' && !t.verdict && can('verify'))
-        items.push({ kind: 'verdict', ticket: t.key, title: t.title, text: 'Verdict needed: all evidence is attached.', since: t.updated_at, ref: 'verify' })
+        items.push({ kind: 'verdict', ticket: t.key, title: t.title, text: 'Verdict needed: all evidence is attached.', since: this.lastEventAt(t.key, (e) => e.type === 'status.changed' && e.to === 'testing', t.created_at), ref: 'verify' })
       const req = t.body.requirements
       if (t.status === 'backlog' && t.gates.requirements.state === 'pending' && req && !/not refined/i.test(req) && can('requirements'))
-        items.push({ kind: 'approval', ticket: t.key, title: t.title, text: 'Approve the requirements.', since: t.created_at, ref: 'requirements', hash: t.gates.requirements.hash })
+        items.push({ kind: 'approval', ticket: t.key, title: t.title, text: 'Approve the requirements.', since: this.lastEventAt(t.key, (e) => (e.type === 'section.edited' && e.section === 'requirements') || ((e.type === 'gate.invalidated' || e.type === 'gate.changes_requested') && e.gate === 'requirements'), t.created_at), ref: 'requirements', hash: t.gates.requirements.hash })
       if (t.status === 'open' && t.gates.plan.state === 'pending' && t.tasks.length > 0 && can('plan'))
-        items.push({ kind: 'approval', ticket: t.key, title: t.title, text: 'Approve the plan.', since: t.updated_at, ref: 'plan', hash: t.gates.plan.hash })
+        items.push({ kind: 'approval', ticket: t.key, title: t.title, text: 'Approve the plan.', since: this.lastEventAt(t.key, (e) => (e.type === 'status.changed' && e.to === 'open') || (e.type === 'section.edited' && e.section === 'plan') || ((e.type === 'gate.invalidated' || e.type === 'gate.changes_requested') && e.gate === 'plan'), t.created_at), ref: 'plan', hash: t.gates.plan.hash })
     }
     return items.sort((a, b) => b.since.localeCompare(a.since))
   }
@@ -1019,6 +1028,24 @@ export class MockStore {
   /** Everything open in the workspace, for the read-only view (viewers only). */
   readOnlyOpen(workspaceId: string, person = this.viewer): NeedsYouItem[] {
     return can(this.roleIn(workspaceId, person), 'ticket.act') ? [] : this.openItems(workspaceId)
+  }
+
+  /** Open items the viewer cannot act on, and the people who can (ids). */
+  waitingOnOthers(workspaceId: string, person = this.viewer): NonNullable<TodayDocument['waiting_on_others']> {
+    const mine = new Set(this.needsYou(workspaceId, person).map(itemKey))
+    const w = this.workspaces.find((x) => x.id === workspaceId)
+    const others = this.openItems(workspaceId).filter((i) => !mine.has(itemKey(i)))
+    const people = new Set<string>()
+    for (const i of others) {
+      const t = this.ticket(i.ticket)
+      if (!t || !w) continue
+      for (const m of w.members) {
+        if (m.person === person || !can(this.roleIn(workspaceId, m.person), 'ticket.act')) continue
+        const ok = i.kind === 'question' ? this.addressedTo(t, t.questions_state.find((q) => q.id === i.ref)?.to ?? '', m.person) : this.canApprove(t, (i.ref === 'verify' ? 'verify' : i.ref) as GateName, m.person) === null
+        if (ok) people.add(m.person)
+      }
+    }
+    return { count: others.length, people: [...people] }
   }
 
   /** May the current viewer decide addon decisions in `wsId`? */
@@ -1054,6 +1081,7 @@ export class MockStore {
       workspace: workspaceId,
       needs_you: this.needsYou(workspaceId),
       read_only_open: this.readOnlyOpen(workspaceId),
+      waiting_on_others: this.waitingOnOthers(workspaceId),
       working: tickets.filter((t) => t.claim).map((t) => this.summary(t)),
       recent: recent.slice(0, 15),
       counts,
@@ -1064,7 +1092,7 @@ export class MockStore {
     return this.workspaces.map((w) => {
       const counts: Partial<Record<Status, number>> = {}
       for (const t of this.listTickets(w.id)) counts[t.status] = (counts[t.status] ?? 0) + 1
-      return { ...w, counts, needs_you: this.needsYou(w.id).length }
+      return { ...w, counts, needs_you: this.needsYou(w.id).length + this.addonDecisions(w.id).length }
     })
   }
 

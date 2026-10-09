@@ -437,7 +437,7 @@ export function buildRouter(): MockRouter {
   r.add('POST', '/api/dev/reset', (s, c) => {
     const dataset = (c.body as { dataset?: unknown } | null)?.dataset
     if (dataset !== undefined && dataset !== 'normal' && dataset !== 'busy') return fail(400, 'validation', 'dataset must be "normal" or "busy"')
-    s.reset(dataset)
+    s.reset(dataset, true)
     return ok({ ok: true })
   })
   r.add('GET', '/api/dev/dataset', (s) => ok({ dataset: s.dataset }))

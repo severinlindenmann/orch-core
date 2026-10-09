@@ -9,10 +9,11 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { useWorkspace } from '../../workspace'
 import { usePageHeader } from '../../shell/ShellUi'
 import { Section } from '../ticket/shared'
+import { groupOf, type SessionGroupId, useAttention } from '../../attention'
 import { AgentActivity } from './AgentActivity'
 import { GrantDialog, useSignGrant, type GrantAction } from './GrantDialog'
 import { Grants } from './Grants'
-import { Sessions } from './Sessions'
+import { SessionGroup, type SessionContext } from './Sessions'
 
 export function AgentsPage() {
   usePageHeader('Agents')
@@ -22,6 +23,8 @@ export function AgentsPage() {
   const today = useQuery({ queryKey: ['today', ws], queryFn: () => api.getToday(ws!), enabled: !!ws })
   const sessions = useQuery({ queryKey: ['agents', ws], queryFn: () => api.getAgents(ws!), enabled: !!ws })
   const grants = useQuery({ queryKey: ['grants', ws], queryFn: () => api.listGrants(ws!), enabled: !!ws })
+  const attention = useAttention(ws)
+  const tickets = useQuery({ queryKey: ['tickets', ws, 'all'], queryFn: () => api.listTickets(ws!), enabled: !!ws })
   const activity = useQuery({ queryKey: ['agent-activity', ws], queryFn: () => api.getAgentActivity(ws!), enabled: !!ws })
   const [action, setAction] = useState<GrantAction | null>(null)
   const sign = useSignGrant(ws ?? '')
@@ -43,13 +46,19 @@ export function AgentsPage() {
   const name = (id: string) => workspace?.members.find((m) => m.person === id)?.name ?? id
   const canRevoke = (g: GrantInfo) => canRevokeGrant(role, g.person, viewer)
 
-  const working = sessions.data.filter((s) => s.state === 'working').length
-  const waiting = sessions.data.filter((s) => s.state === 'waiting' && s.for === viewer).length
+  const { sessions: n, waitingOnYou, stopped } = attention.agents
   const mine = activeGrantOf(grants.data, viewer, Date.parse(now))
-  const summary = [`${working} session${working === 1 ? '' : 's'} working`, ...(canAct ? [`${waiting} waiting on you`] : []), ...(mine ? [`grant until ${mine.until.slice(11, 16)}`] : [])].join(' · ')
+  const summary = [`${n} agent session${n === 1 ? '' : 's'}`, ...(canAct || waitingOnYou > 0 ? [`${waitingOnYou} waiting on you`] : []), ...(stopped > 0 ? [`${stopped} stopped`] : []), ...(mine ? [`your grant until ${mine.until.slice(11, 16)}`] : [])].join(' · ')
+  const titles = new Map((tickets.data ?? []).map((t) => [t.key, t.title]))
+  const ctx: SessionContext = { sessions: sessions.data, viewer, name, now, title: (k) => titles.get(k) }
+  const roots = sessions.data.filter((s) => !s.parent)
+  const group = (g: SessionGroupId) => roots.filter((s) => groupOf(s, sessions.data, viewer) === g)
+  const waiting = group('waiting')
+  const stoppedList = group('stopped')
+  const working = group('working')
 
   return (
-    <div className="max-w-5xl space-y-5">
+    <div className="max-w-[1040px] space-y-5">
       <div className="flex items-center gap-3">
         <div className="flex-1">
           <h1 className="text-xl font-semibold tracking-tight">Agents</h1>
@@ -58,15 +67,15 @@ export function AgentsPage() {
         {canAct && <Button onClick={() => setAction({ kind: 'issue' })}>Issue grant…</Button>}
       </div>
 
-      <Section title="Sessions" className="[&>div]:p-0">
-        <Sessions sessions={sessions.data} viewer={viewer} name={name} now={now} />
-      </Section>
+      <div className="space-y-3">
+        {waiting.length > 0 && <SessionGroup id="waiting-h" title="Waiting on you" list={waiting} ctx={ctx} />}
+        <SessionGroup id="working-h" title="Working" list={working} ctx={ctx} empty="No agent session is working." />
+        {stoppedList.length > 0 && <SessionGroup id="stopped-h" title="Stopped" list={stoppedList} ctx={ctx} defaultOpen={false} />}
+      </div>
       <Section title="Grants" className="[&>div]:p-0">
         <Grants grants={grants.data} now={now} name={name} canRevoke={canRevoke} onRevoke={(grant) => setAction({ kind: 'revoke', grant })} />
       </Section>
-      <Section title="Agent activity" className="[&>div]:p-0">
-        <AgentActivity items={activity.data} name={name} />
-      </Section>
+      <AgentActivity items={activity.data} sessions={sessions.data} />
 
       <GrantDialog
         action={action}

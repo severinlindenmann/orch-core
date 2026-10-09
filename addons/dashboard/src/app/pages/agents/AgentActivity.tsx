@@ -1,61 +1,62 @@
 import { Link } from '@tanstack/react-router'
-import { useState } from 'react'
-import type { AgentActivityItem } from '@/api/types'
-import { Checkbox } from '@/components/ui/checkbox'
-import { Label } from '@/components/ui/label'
-import { FilterSelect } from '../board/Toolbar'
-import { Mono, Pill } from '../ticket/shared'
+import type { AgentActivityItem, AgentSession } from '@/api/types'
+import { useSlot } from '@/addon-ui/slots'
 
-/** Feed of what agents did, with filters (person, ticket, refusals only). Refusals show their code and the stop rule. */
-export function AgentActivity({ items, name }: { items: AgentActivityItem[]; name: (id: string) => string }) {
-  const [person, setPerson] = useState('all')
-  const [ticket, setTicket] = useState('all')
-  const [refusals, setRefusals] = useState(false)
-  const shown = items.filter((i) => (person === 'all' || i.for === person) && (ticket === 'all' || i.ticket === ticket) && (!refusals || i.refusal))
-  const people = [...new Set(items.map((i) => i.for))].map((p) => ({ value: p, label: name(p) }))
-  const tickets = [...new Set(items.map((i) => i.ticket))].sort().map((t) => ({ value: t, label: t }))
+const MAX = 5
+
+/** The refusal in plain words: who tried what, and why it did not happen. */
+export function refusalSentence(i: AgentActivityItem, who: string): string {
+  switch (i.refusal?.code) {
+    case 'human_only':
+      return `${who} tried to approve a plan. Only people can approve.`
+    case 'claim.held':
+      return `${who} tried to take ${i.ticket}, but another session already holds it.`
+    case 'lease.held':
+      return `${who} tried to take a task of ${i.ticket} that another session holds.`
+    case 'gate.not_approved':
+      return `${who} tried to start ${i.ticket} before its plan was approved.`
+    case 'verify.failed':
+      return `${who}'s check on ${i.ticket} failed. It can try again.`
+    case 'grant.scope':
+      return `${who} tried to do something its grant does not cover.`
+    default:
+      return `${who} was refused on ${i.ticket}: ${i.refusal?.message ?? 'not allowed'}`
+  }
+}
+
+const pretty = (id: string) => id.replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase())
+
+/** The last few things agents were refused, in plain words; the full feed lives in the Activity addon. */
+export function AgentActivity({ items, sessions }: { items: AgentActivityItem[]; sessions: AgentSession[] }) {
+  const nav = useSlot('nav').find((n) => n.addon === 'activity')
+  const refusals = items.filter((i) => i.refusal).slice(0, MAX)
   return (
-    <div>
-      <div className="flex flex-wrap items-center gap-3 border-b border-border px-3 py-2">
-        <FilterSelect label="Person" value={person} onChange={setPerson} options={people} />
-        <FilterSelect label="Ticket" value={ticket} onChange={setTicket} options={tickets} />
-        <div className="flex items-center gap-2">
-          <Checkbox id="refusals-only" checked={refusals} onCheckedChange={(v) => setRefusals(v === true)} />
-          <Label htmlFor="refusals-only" className="text-[12px] font-normal">
-            Refusals only
-          </Label>
-        </div>
-        <span className="ml-auto text-xs tabular-nums text-text-faint">{shown.length} shown</span>
-      </div>
-      {shown.length === 0 ? (
-        <p className="px-4 py-3 text-[13px] text-text-muted">Nothing matches these filters.</p>
+    <section aria-labelledby="refusals-h" className="rounded-lg border border-border bg-surface">
+      <header className="flex items-center gap-2 border-b border-border px-3 py-2">
+        <h2 id="refusals-h" className="flex-1 text-[13px] font-semibold text-text">
+          Recent refusals
+        </h2>
+        {nav && (
+          <Link to="/addon/$name/$page" params={{ name: nav.addon, page: nav.id }} className="rounded text-xs text-text-muted outline-none hover:text-text focus-visible:ring-2 focus-visible:ring-ring">
+            All activity →
+          </Link>
+        )}
+      </header>
+      {refusals.length === 0 ? (
+        <p className="px-3 py-3 text-[13px] text-text-muted">No agent has been refused lately.</p>
       ) : (
         <ul className="divide-y divide-border">
-          {shown.map((i, n) => (
-            <li key={`${i.ticket}-${i.at}-${n}`} className="flex items-start gap-3 px-3 py-2 text-[13px]">
-              <span className="w-12 shrink-0 pt-px text-xs tabular-nums text-text-faint">{i.at.slice(11, 16)}</span>
-              <div className="min-w-0 flex-1">
-                <p className="text-text">
-                  <span className="font-medium">{i.agent}</span> <Mono className="text-text-muted">{i.session}</Mono>
-                  <span className="text-text-muted"> for {name(i.for)} · </span>
-                  <Link to="/ticket/$key" params={{ key: i.ticket }} className="rounded font-mono text-xs text-text-muted outline-none hover:text-text focus-visible:ring-2 focus-visible:ring-ring">
-                    {i.ticket}
-                  </Link>
-                </p>
-                {i.refusal ? (
-                  <p className="mt-0.5 flex flex-wrap items-center gap-2">
-                    <Mono className="text-danger">{i.refusal.code}</Mono>
-                    <span className="text-text-muted">{i.refusal.message}</span>
-                    {i.refusal.stop && <Pill tone="danger">stopped after 3 refusals</Pill>}
-                  </p>
-                ) : (
-                  <p className="mt-0.5 text-text-muted">{i.summary}</p>
-                )}
-              </div>
+          {refusals.map((i, n) => (
+            <li key={`${i.ticket}-${i.at}-${n}`} className="flex items-baseline gap-3 px-3 py-2 text-[13px]">
+              <span className="w-12 shrink-0 text-xs tabular-nums text-text-faint">{i.at.slice(11, 16)}</span>
+              <span className="min-w-0 flex-1 text-text-muted">{refusalSentence(i, sessions.find((s) => s.session === i.session)?.name ?? pretty(i.agent))}</span>
+              <Link to="/ticket/$key" params={{ key: i.ticket }} className="shrink-0 rounded font-mono text-xs text-text-muted outline-none hover:text-text focus-visible:ring-2 focus-visible:ring-ring">
+                {i.ticket}
+              </Link>
             </li>
           ))}
         </ul>
       )}
-    </div>
+    </section>
   )
 }

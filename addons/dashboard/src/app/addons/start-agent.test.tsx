@@ -152,11 +152,8 @@ describe('the run is visible live across the app', { timeout: 20_000 }, () => {
   })
   it('Agents: the session is listed, waiting on you', async () => {
     renderApp('/agents', { viewer: 'p_sev', setup: playRun(15_000) })
-    const session = started()[0]?.session as string
-    const tree = await screen.findByRole('tree', { name: 'Sessions' }, FIRST)
-    const item = within(tree).getByRole('treeitem', { name: new RegExp(session) })
-    expect(within(item).getByText('waiting')).toBeInTheDocument()
-    expect(within(item).getByText('waiting on you')).toBeInTheDocument()
+    const waiting = await screen.findByRole('region', { name: /Waiting on you/ }, FIRST)
+    expect(within(waiting).getByText('DEMO-0044')).toBeInTheDocument()
   })
   it('the Start agent page lists the run with Stop, and the ticket form', async () => {
     renderApp('/addon/start-agent/start', { viewer: 'p_sev', setup: playRun(2000) })

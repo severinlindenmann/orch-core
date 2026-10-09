@@ -246,3 +246,17 @@ describe('app shell', () => {
     })
   })
 })
+
+describe('viewer menu', () => {
+  it('names each person with their role, and the choice survives a dataset switch', async () => {
+    const { user } = renderApp('/')
+    await user.click(await screen.findByRole('button', { name: 'Viewing as' }))
+    expect(await screen.findByRole('menuitemradio', { name: 'Severin · owner' })).toBeInTheDocument()
+    expect(screen.getByRole('menuitemradio', { name: 'Tom · viewer' })).toBeInTheDocument()
+    await user.click(screen.getByRole('menuitemradio', { name: 'Mara · maintainer' }))
+    await user.click(await screen.findByRole('button', { name: 'Busy day' }))
+    await user.click(await screen.findByRole('button', { name: 'Switch to busy day' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Busy day' })).toHaveAttribute('aria-pressed', 'true'))
+    expect(await screen.findByRole('button', { name: 'Viewing as' })).toHaveTextContent('Mara')
+  })
+})

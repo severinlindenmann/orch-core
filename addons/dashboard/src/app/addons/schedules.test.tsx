@@ -29,7 +29,8 @@ describe('Schedules page', () => {
     expect(within(dialog).getByText(/smoke-on-testing/)).toBeInTheDocument()
     await user.click(within(dialog).getByRole('button', { name: /Sign with Touch ID/ }))
     await waitFor(() => expect(within(itemOf('Smoke test on testing')).getByText(/on the next ticket moved to testing/)).toBeInTheDocument(), T)
-    expect(within(itemOf('Smoke test on testing')).getByRole('button', { name: 'Disarm' })).toBeInTheDocument()
+    await user.click(within(itemOf('Smoke test on testing')).getByRole('button', { name: /^More actions for / }))
+    expect(await screen.findByRole('menuitem', { name: 'Disarm' })).toBeInTheDocument()
   })
   it('Run now adds a run and shows its report as markdown', async () => {
     const { user, container } = renderApp('/addon/schedules/schedules', { viewer: 'p_sev', setup: on })

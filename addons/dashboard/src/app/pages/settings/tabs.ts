@@ -1,7 +1,7 @@
 export const TABS = [
   { id: 'general', label: 'General' },
-  { id: 'members', label: 'Members & roles' },
-  { id: 'gates', label: 'Gate policies' },
+  { id: 'members', label: 'Members' },
+  { id: 'gates', label: 'Gates' },
   { id: 'addons', label: 'Addons' },
 ] as const
 

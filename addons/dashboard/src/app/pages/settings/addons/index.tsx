@@ -64,7 +64,9 @@ export function AddonManager({ workspace, canEdit }: { workspace: Workspace; can
                 <TableHead>Capabilities</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>On</TableHead>
-                <TableHead />
+                <TableHead>
+                  <span className="sr-only">Actions</span>
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

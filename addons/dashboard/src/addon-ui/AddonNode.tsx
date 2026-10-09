@@ -1,14 +1,15 @@
 import { createContext, lazy, Suspense, useContext, type ReactNode } from 'react'
-import { ExternalLink, TriangleAlert } from 'lucide-react'
+import { Ellipsis, ExternalLink, TriangleAlert } from 'lucide-react'
 import { useWorkspace } from '@/app/workspace'
 import { Badge } from '@/components/ui/badge'
+import { STATUS_LABEL } from '@/app/pages/ticket/shared'
 import { Button } from '@/components/ui/button'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { cn } from '@/lib/utils'
 import { AddonBadge } from './AddonBadge'
 import { AddonChart } from './AddonChart'
-import { AddonFrame } from './AddonFrame'
 import { canUsePty } from './capabilities'
 import { FrameNode } from './FrameNode'
 import { CodeBlock } from './CodeBlock'
@@ -87,18 +88,24 @@ function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
       ) : (
         <ul className="divide-y divide-border">
           {n.items.map((it, i) => (
-            <li key={i} className="flex items-center gap-2 py-1.5 first:pt-0 last:pb-0">
-              {it.status && <StatusDot status={it.status} />}
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-[13px] text-text">{it.title}</div>
-                {it.subtitle && <div className="truncate text-[12px] text-text-faint">{it.subtitle}</div>}
+            <li key={i} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 py-1.5 first:pt-0 last:pb-0">
+              <div className="flex min-w-0 items-start gap-2">
+                {it.status && <StatusDot status={it.status} className="mt-1.5" />}
+                <div className="min-w-0">
+                  <div className="break-words text-[13px] text-text">{it.title}</div>
+                  {it.subtitle && <div className="line-clamp-2 break-words text-[12px] text-text-muted">{it.subtitle}</div>}
+                </div>
               </div>
-              {it.badge && (
-                <Badge variant="outline" className="shrink-0 font-normal text-text-muted">
-                  {it.badge}
-                </Badge>
+              {(it.badge || it.actions) && (
+                <div className="flex shrink-0 items-center gap-2">
+                  {it.badge && (
+                    <Badge variant="outline" className="shrink-0 font-normal text-text-muted">
+                      {it.badge}
+                    </Badge>
+                  )}
+                  {it.actions && <ItemActions actions={it.actions} label={it.title} />}
+                </div>
               )}
-              {it.actions && <ItemActions actions={it.actions} />}
             </li>
           ))}
         </ul>
@@ -114,20 +121,24 @@ function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
                   {c.label}
                 </TableHead>
               ))}
-              {n.rowActions && <TableHead className="h-8" />}
+              {n.rowActions && (
+                <TableHead className="h-8">
+                  <span className="sr-only">Actions</span>
+                </TableHead>
+              )}
             </TableRow>
           </TableHeader>
           <TableBody>
             {n.rows.map((r, i) => (
               <TableRow key={i}>
                 {n.columns.map((c) => (
-                  <TableCell key={c.key} className="py-1.5 text-[13px]">
-                    {r[c.key] === null || r[c.key] === undefined ? '–' : String(r[c.key])}
+                  <TableCell key={c.key} className="whitespace-normal break-words py-1.5 text-[13px]">
+                    {cellText(c.key, r[c.key])}
                   </TableCell>
                 ))}
                 {n.rowActions && (
-                  <TableCell className="py-1.5 text-right">
-                    <ItemActions actions={n.rowActions} row={r} />
+                  <TableCell className="whitespace-nowrap py-1.5 text-right">
+                    <ItemActions actions={n.rowActions} row={r} label={rowLabel(n.columns[0]?.key, r)} />
                   </TableCell>
                 )}
               </TableRow>
@@ -136,7 +147,11 @@ function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
         </Table>
       )
     case 'markdown':
-      return <SafeMarkdown text={n.text} />
+      return (
+        <div className="max-w-[72ch]">
+          <SafeMarkdown text={n.text} />
+        </div>
+      )
     case 'code':
       return <CodeBlock language={n.language} text={n.text} />
     case 'chart':
@@ -151,9 +166,9 @@ function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
       return <ProgressNode node={n} />
     case 'frame':
       return (
-        <AddonFrame addon={addon} title={n.title}>
+        <SandboxedFrame addon={addon}>
           <FrameNode node={n} fallback={<AddonUnavailable addon={addon} />} />
-        </AddonFrame>
+        </SandboxedFrame>
       )
     case 'terminal':
       return <TerminalNode session={n.session} />
@@ -237,8 +252,31 @@ function FormNode({ node }: { node: NodeOf<'form'> }) {
 
 const STATUS_DOT = { ok: 'bg-success', warn: 'bg-warning', error: 'bg-danger', idle: 'bg-text-faint', running: 'bg-info animate-pulse' } as const
 
-function StatusDot({ status }: { status: keyof typeof STATUS_DOT }) {
-  return <span role="img" aria-label={status} className={cn('size-2 shrink-0 rounded-full', STATUS_DOT[status])} />
+function StatusDot({ status, className }: { status: keyof typeof STATUS_DOT; className?: string }) {
+  return <span role="img" aria-label={status} className={cn('size-2 shrink-0 rounded-full', STATUS_DOT[status], className)} />
+}
+
+/** A `frame` node sits inside a contribution that is already framed: a hairline and a "Sandboxed" chip, no second frame. */
+function SandboxedFrame({ addon, children }: { addon: string; children: ReactNode }) {
+  return (
+    <div data-addon={addon} className="rounded-md border border-addon-border p-1.5">
+      <span className="mb-1 inline-flex items-center rounded-full border border-border px-1.5 py-px text-[10px] font-medium leading-4 text-text-muted">Sandboxed</span>
+      {children}
+    </div>
+  )
+}
+
+/** Cells in a column keyed `status`/`state` use core's status words ("in-progress" is "In progress"); others are shown as written. */
+function cellText(key: string, v: unknown): string {
+  if (v === null || v === undefined) return '–'
+  const s = String(v)
+  return key === 'status' || key === 'state' ? ((STATUS_LABEL as Record<string, string>)[s] ?? s) : s
+}
+
+/** What a row is called in "More actions for …": its first column's cell. */
+function rowLabel(key: string | undefined, row: Record<string, unknown>): string {
+  const v = key ? row[key] : undefined
+  return v === null || v === undefined || v === '' ? 'row' : String(v)
 }
 
 /** "$row.<key>" args take that row's cell value; a null or missing cell leaves the arg out. */
@@ -252,16 +290,38 @@ function resolveRowArgs(args: ItemAction['args'], row?: Record<string, unknown>)
   return out
 }
 
-function ItemActions({ actions, row }: { actions: ItemAction[]; row?: Record<string, unknown> }) {
+/**
+ * Row/item actions that fit: the first non-danger action stays a button, the rest go into a "⋯" menu named
+ * "More actions for {title}", danger last and in the danger colour. A single action is just its button.
+ */
+function ItemActions({ actions, row, label }: { actions: ItemAction[]; row?: Record<string, unknown>; label: string }) {
   const { run, pending, blockedFor, dialog } = useAddonAction()
+  const start = (a: ItemAction) => run(a.action, resolveRowArgs(a.args, row))
+  const lead = actions.length === 1 ? actions[0] : (actions.find((a) => a.variant !== 'danger') ?? actions[0])
+  const more = actions.filter((a) => a !== lead)
+  const menu = [...more.filter((a) => a.variant !== 'danger'), ...more.filter((a) => a.variant === 'danger')]
   return (
     <div className="flex shrink-0 items-center gap-1">
       {dialog}
-      {actions.map((a, i) => (
-        <Button key={i} size="sm" variant={BUTTON_VARIANT[a.variant]} disabled={pending || blockedFor(a.action)} onClick={() => run(a.action, resolveRowArgs(a.args, row))}>
-          {a.label}
-        </Button>
-      ))}
+      <Button size="sm" variant={BUTTON_VARIANT[lead.variant]} disabled={pending || blockedFor(lead.action)} onClick={() => start(lead)}>
+        {lead.label}
+      </Button>
+      {menu.length > 0 && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button size="sm" variant="ghost" aria-label={`More actions for ${label}`} className="px-2">
+              <Ellipsis aria-hidden className="size-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {menu.map((a, i) => (
+              <DropdownMenuItem key={i} disabled={pending || blockedFor(a.action)} onSelect={() => start(a)} className={a.variant === 'danger' ? 'text-danger focus:text-danger' : undefined}>
+                {a.label}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
     </div>
   )
 }

@@ -2,6 +2,7 @@ import { screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { toast } from 'sonner'
 import { api, mockStore } from '@/api/client'
+import { moreAction } from '@/test/rowActions'
 import { renderApp } from '@/test/renderApp'
 import { installAndGrant } from '@/test/installAddon'
 
@@ -25,7 +26,7 @@ describe('worktrees page', () => {
     const success = vi.spyOn(toast, 'success')
     const { user } = renderApp('/addon/worktrees/worktrees', { viewer: 'p_sev', setup })
     const row = (await screen.findByText('wt/DEMO-0043-energy-dbt', {}, T)).closest('tr')!
-    await user.click(within(row).getByRole('button', { name: 'Remove' }))
+    await user.click(await moreAction(user, row, 'Remove'))
     await waitFor(() => expect(error).toHaveBeenCalledWith('3 changed files.', expect.objectContaining({ description: 'Commit or stash first.' })), T)
     expect(success).not.toHaveBeenCalled()
     expect((await wts()).some((w) => w.path === 'wt/DEMO-0043-energy-dbt')).toBe(true)
@@ -33,7 +34,7 @@ describe('worktrees page', () => {
   it('Remove on a clean worktree removes it from the page', async () => {
     const { user } = renderApp('/addon/worktrees/worktrees', { viewer: 'p_sev', setup })
     const row = (await screen.findByText('wt/DEMO-0041-energy-dbt', {}, T)).closest('tr')!
-    await user.click(within(row).getByRole('button', { name: 'Remove' }))
+    await user.click(await moreAction(user, row, 'Remove'))
     await waitFor(() => expect(screen.queryByText('wt/DEMO-0041-energy-dbt')).not.toBeInTheDocument(), T)
   })
   it('the add form creates a worktree', async () => {
@@ -62,9 +63,9 @@ describe('worktrees page', () => {
     expect(within(row).queryByRole('button', { name: 'Open terminal here' })).not.toBeInTheDocument()
   })
   it('viewer sees disabled actions', async () => {
-    renderApp('/addon/worktrees/worktrees', { viewer: 'p_tom', setup })
+    const { user } = renderApp('/addon/worktrees/worktrees', { viewer: 'p_tom', setup })
     const row = (await screen.findByText('wt/DEMO-0043-energy-dbt', {}, T)).closest('tr')!
-    expect(within(row).getByRole('button', { name: 'Remove' })).toBeDisabled()
+    expect(await moreAction(user, row, 'Remove')).toHaveAttribute('aria-disabled', 'true')
   })
 })
 

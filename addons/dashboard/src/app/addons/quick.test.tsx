@@ -1,6 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { api, mockStore } from '@/api/client'
+import { moreAction } from '@/test/rowActions'
 import { renderApp } from '@/test/renderApp'
 import { installAndGrant } from '@/test/installAddon'
 
@@ -48,7 +49,7 @@ describe('quick tasks page', () => {
   })
   it('Make a ticket converts the task', async () => {
     const { user } = renderApp('/addon/quick/quick', { viewer: 'p_sev', setup })
-    await user.click(within(await rowOf('Q-002')).getByRole('button', { name: 'Make a ticket' }))
+    await user.click(await moreAction(user, await rowOf('Q-002'), 'Make a ticket'))
     await waitFor(async () => expect((await items()).find((q) => q.id === 'Q-002')!.status).toBe('converted'), T)
   })
   it('viewer sees disabled actions', async () => {

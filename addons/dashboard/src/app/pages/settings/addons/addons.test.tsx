@@ -3,6 +3,12 @@ import { describe, expect, it } from 'vitest'
 import { renderApp } from '@/test/renderApp'
 
 describe('Addon manager', () => {
+  it('every column header of the addons table has a name', async () => {
+    renderApp('/settings/addons')
+    await screen.findByRole('row', { name: /Publish/ })
+    const heads = screen.getAllByRole('columnheader')
+    expect(heads.map((h) => h.textContent)).toEqual(['Addon', 'Capabilities', 'Status', 'On', 'Actions'])
+  })
   it('installs from the catalog, requires a signed grant, then enables', async () => {
     const { user } = renderApp('/settings/addons')
     await user.click(await screen.findByRole('button', { name: 'Browse addons' }))

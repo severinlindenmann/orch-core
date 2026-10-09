@@ -13,8 +13,9 @@ Element.prototype.scrollIntoView ??= () => {}
 configure({ asyncUtilTimeout: 4000 })
 
 // xterm.js asks the window for matchMedia (device pixel ratio changes); jsdom has none.
+// Tests run with reduced motion: no animation to wait for (src/lib/motion.ts reads this query).
 window.matchMedia ??= ((query: string) => ({
-  matches: false,
+  matches: query.includes('prefers-reduced-motion: reduce'),
   media: query,
   onchange: null,
   addEventListener() {},

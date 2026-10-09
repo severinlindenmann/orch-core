@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils'
 import { ErrorBoundary, BlockProblem } from '@/components/ErrorBoundary'
 import { AddonBadge } from './AddonBadge'
 import { AddonFrame } from './AddonFrame'
+import { Collapse } from '@/components/Collapse'
 import { Skeleton } from '@/components/ui/skeleton'
 import { AddonNode, type FormControl } from './AddonNode'
 import { useSlot, type AddonStateWait, type ResolvedContribution, type SlotContext } from './slots'
@@ -159,11 +160,11 @@ export function CollapsibleStack({ items, ctx = {}, readOnly, className, level =
                 <ChevronRight aria-hidden className={cn('size-4 shrink-0 text-text-muted transition-transform', isOpen && 'rotate-90')} />
               </button>
             </Heading>
-            {isOpen && (
-              <div id={id} className="border-t border-addon-border p-3">
+            <Collapse open={isOpen} id={id}>
+              <div className="border-t border-addon-border p-3">
                 <ContributionBody c={c} ctx={ctx} compact={false} readOnly={readOnly} />
               </div>
-            )}
+            </Collapse>
           </section>
         )
       })}

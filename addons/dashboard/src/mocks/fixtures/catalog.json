@@ -1,0 +1,1194 @@
+[
+  {
+    "name": "worktrees",
+    "title": "Worktrees",
+    "version": "0.1.0",
+    "description": "Give each ticket its own git worktree, created and cleaned up for you.",
+    "capabilities": [],
+    "first_party": true,
+    "package_sha256": "e160706069101712e0d86be0baaf7a2f93b0217beb27013e01a771a76fce5930",
+    "update": null,
+    "contributions": [
+      {
+        "slot": "nav",
+        "id": "worktrees",
+        "title": "Worktrees",
+        "icon": "GitBranch",
+        "node": {
+          "type": "stack",
+          "children": [
+            {
+              "$ref": "addon.filterBar"
+            },
+            {
+              "type": "table",
+              "columns": [
+                {
+                  "key": "path",
+                  "label": "Path"
+                },
+                {
+                  "key": "repo",
+                  "label": "Repository"
+                },
+                {
+                  "key": "branch",
+                  "label": "Branch"
+                },
+                {
+                  "key": "ticket",
+                  "label": "Ticket",
+                  "cell": "ticket"
+                },
+                {
+                  "key": "changes",
+                  "label": "Changed files"
+                },
+                {
+                  "key": "sync",
+                  "label": "Ahead / behind"
+                },
+                {
+                  "key": "by",
+                  "label": "Created by"
+                }
+              ],
+              "rows": {
+                "$ref": "addon.shownRows"
+              },
+              "empty": "No worktrees match. Clear the filter, or add one for a ticket.",
+              "rowActions": {
+                "$ref": "addon.rowActions"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "slot": "ticket.panel",
+        "id": "ticket",
+        "title": "Worktrees",
+        "icon": "GitBranch",
+        "node": {
+          "type": "stack",
+          "children": [
+            {
+              "type": "list",
+              "items": {
+                "$ref": "addon.byTicket.$ticket"
+              },
+              "empty": "No worktree for this ticket."
+            },
+            {
+              "type": "form",
+              "schema": {
+                "type": "object",
+                "required": [
+                  "repo"
+                ],
+                "properties": {
+                  "repo": {
+                    "type": "string",
+                    "title": "Repository",
+                    "enum": [
+                      "acme-energy/energy-dbt",
+                      "acme-energy/billing-api",
+                      "acme-energy/ingest"
+                    ]
+                  },
+                  "base": {
+                    "type": "string",
+                    "title": "Base branch",
+                    "default": "main"
+                  }
+                }
+              },
+              "formData": {
+                "base": "main"
+              },
+              "action": "add",
+              "submitLabel": "Add worktree for this ticket"
+            }
+          ]
+        }
+      }
+    ],
+    "actions": {
+      "open_terminal": {
+        "minRole": "member",
+        "label": "Open terminal here"
+      },
+      "filter": {
+        "minRole": "viewer",
+        "kind": "navigation",
+        "label": "Filter worktrees"
+      },
+      "remove": {
+        "minRole": "member",
+        "confirm": "destructive",
+        "confirmLabel": "Remove worktree",
+        "confirmText": "The worktree folder is deleted from disk and the branch stays in the repository. A worktree with changed files is not removed: commit or stash them first."
+      }
+    }
+  },
+  {
+    "name": "quick",
+    "title": "Quick tasks",
+    "version": "0.1.0",
+    "description": "Jot a task in one line; an agent claims it and closes it with a line of proof, or you make it a ticket.",
+    "capabilities": [],
+    "first_party": true,
+    "package_sha256": "54a93267b64f1a580a0efaa1b5649db3a75ee4530769da54202cc720d982ce02",
+    "update": null,
+    "contributions": [
+      {
+        "slot": "nav",
+        "id": "quick",
+        "title": "Quick tasks",
+        "icon": "ListChecks",
+        "node": {
+          "type": "stack",
+          "children": [
+            {
+              "type": "markdown",
+              "text": "${addon.summaryLine}"
+            },
+            {
+              "type": "form",
+              "schema": {
+                "$ref": "addon.addSchema"
+              },
+              "action": "add",
+              "submitLabel": "Add quick task"
+            },
+            {
+              "type": "markdown",
+              "text": "An agent picks up quick tasks on its own."
+            },
+            {
+              "$ref": "addon.closePanel"
+            },
+            {
+              "type": "tabs",
+              "id": "quick",
+              "tabs": [
+                {
+                  "id": "open",
+                  "label": "Active",
+                  "count": {
+                    "$ref": "addon.openTotal"
+                  },
+                  "node": {
+                    "type": "list",
+                    "items": {
+                      "$ref": "addon.openList"
+                    },
+                    "empty": "No active quick tasks. Add a one-line task above and an agent will pick it up."
+                  }
+                },
+                {
+                  "id": "done",
+                  "label": "Completed",
+                  "count": {
+                    "$ref": "addon.doneTotal"
+                  },
+                  "node": {
+                    "type": "list",
+                    "items": {
+                      "$ref": "addon.doneList"
+                    },
+                    "empty": "Nothing completed yet. Finished tasks, with their proof, are listed here."
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "slot": "settings",
+        "id": "quick.settings",
+        "title": "Quick tasks",
+        "icon": "ListChecks",
+        "node": {
+          "type": "form",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "agents_add": { "type": "boolean", "title": "Agents may add quick tasks", "default": false },
+              "max_commits": { "type": "integer", "title": "Most commits", "minimum": 0, "default": 1 },
+              "max_files": { "type": "integer", "title": "Most files", "minimum": 0, "default": 3 }
+            }
+          },
+          "formData": { "$ref": "addon.settings" },
+          "action": "save_settings",
+          "submitLabel": "Save"
+        }
+      }
+    ],
+    "actions": {
+      "save_settings": { "minRole": "owner" },
+      "decide": { "minRole": "maintainer", "decision": true },
+      "start_close": { "minRole": "member", "kind": "navigation" },
+      "cancel_close": { "minRole": "member", "kind": "navigation" }
+    }
+  },
+  {
+    "name": "records",
+    "title": "Records",
+    "version": "0.1.0",
+    "description": "Commit and push the ticket records to git, so the history lives next to your code.",
+    "capabilities": [],
+    "first_party": true,
+    "package_sha256": "02749a91b9e031f5dd09fca28091eadc437565deab515f89e26e40edd7f0a7d6",
+    "update": null,
+    "contributions": [
+      {
+        "slot": "nav",
+        "id": "records",
+        "title": "Records",
+        "icon": "GitCommitHorizontal",
+        "node": {
+          "type": "stack",
+          "children": [
+            {
+              "type": "markdown",
+              "text": "**${addon.summary}**"
+            },
+            {
+              "$ref": "addon.pushAlert"
+            },
+            {
+              "type": "stack",
+              "direction": "row",
+              "children": [
+                {
+                  "type": "stack",
+                  "children": [
+                    {
+                      "type": "button",
+                      "label": "Record changes",
+                      "action": "commit",
+                      "variant": "primary"
+                    },
+                    {
+                      "type": "markdown",
+                      "text": "${addon.commitLine}"
+                    }
+                  ]
+                },
+                {
+                  "type": "stack",
+                  "children": [
+                    {
+                      "type": "button",
+                      "label": "Push to remote",
+                      "action": "push",
+                      "variant": "secondary"
+                    },
+                    {
+                      "type": "markdown",
+                      "text": "Sends the record commits to the shared remote."
+                    }
+                  ]
+                },
+                {
+                  "type": "stack",
+                  "children": [
+                    {
+                      "type": "button",
+                      "label": "Pull",
+                      "action": "pull",
+                      "variant": "ghost"
+                    },
+                    {
+                      "type": "markdown",
+                      "text": "Brings in commits another clone pushed."
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "tabs",
+              "id": "records",
+              "tabs": [
+                {
+                  "id": "pending",
+                  "label": "Pending",
+                  "count": {
+                    "$ref": "addon.pendingTickets"
+                  },
+                  "node": {
+                    "type": "table",
+                    "columns": [
+                      {
+                        "key": "ticket",
+                        "label": "Ticket",
+                        "cell": "ticket"
+                      },
+                      {
+                        "key": "title",
+                        "label": "Title"
+                      },
+                      {
+                        "key": "events",
+                        "label": "Events",
+                        "align": "right"
+                      },
+                      {
+                        "key": "last",
+                        "label": "Latest"
+                      }
+                    ],
+                    "rows": {
+                      "$ref": "addon.rows"
+                    },
+                    "empty": "Everything is recorded. New ticket events appear here until they are saved."
+                  }
+                },
+                {
+                  "id": "history",
+                  "label": "History",
+                  "count": {
+                    "$ref": "addon.historyCount"
+                  },
+                  "node": {
+                    "type": "list",
+                    "items": {
+                      "$ref": "addon.historyItems"
+                    },
+                    "empty": "No record commits yet. Press Record changes to save the first one."
+                  }
+                }
+              ]
+            },
+            {
+              "type": "fold",
+              "label": "Details",
+              "node": {
+                "type": "markdown",
+                "text": "Remote: `${addon.remote}`\n\n${addon.lastPushText}"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "slot": "settings",
+        "id": "records.settings",
+        "title": "Records",
+        "icon": "GitCommitHorizontal",
+        "node": {
+          "type": "form",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "auto_commit_minutes": { "type": "integer", "title": "Auto-commit every N minutes", "minimum": 1, "maximum": 1440, "default": 30 },
+              "push": { "type": "boolean", "title": "Push after committing", "default": true },
+              "remote": { "type": "string", "title": "Remote", "maxLength": 200 }
+            }
+          },
+          "formData": { "$ref": "addon.settings" },
+          "action": "save_settings",
+          "submitLabel": "Save"
+        }
+      }
+    ],
+    "commands": [
+      { "id": "commit", "title": "Commit records", "action": "commit" },
+      { "id": "push", "title": "Push records", "action": "push" }
+    ],
+    "actions": { "save_settings": { "minRole": "owner" } }
+  },
+  {
+    "name": "activity",
+    "title": "Activity",
+    "version": "0.1.0",
+    "description": "A workspace-wide timeline of who did what, with filters.",
+    "capabilities": [],
+    "first_party": true,
+    "package_sha256": "57ba3d3fd04fdcdbf5166164a769ac4780ffa35c86d70c2f39aeb607803ce86c",
+    "update": null,
+    "contributions": [{"slot": "nav", "id": "activity", "title": "Activity", "icon": "Activity", "node": {"$ref": "addon.page"}}, {"slot": "today.card", "id": "today", "title": "Activity", "icon": "Activity", "node": {"type": "stat", "label": "Today", "value": "${addon.todaySummary}", "hint": "${addon.todayHint}"}}],
+    "commands": [{ "id": "clear", "title": "Clear activity filters", "action": "clear_filters" }],
+    "actions": { "apply": { "minRole": "viewer", "kind": "navigation" }, "view_timeline": { "minRole": "viewer", "kind": "navigation" }, "view_ticket": { "minRole": "viewer", "kind": "navigation" }, "show_new": { "minRole": "viewer", "kind": "navigation" }, "clear_filters": { "minRole": "viewer", "kind": "navigation" }, "show_older": { "minRole": "viewer", "kind": "navigation" } }
+  },
+  {
+    "name": "models",
+    "title": "Model routing",
+    "version": "0.1.0",
+    "description": "Start each agent session on a model chosen by its Start agent mode, give its subagents a model, and offer Strong when a task keeps failing its check.",
+    "capabilities": [
+      "launch"
+    ],
+    "first_party": true,
+    "package_sha256": "ad96d9b164b51e92b576dbae14dad1c4d015f1af4e9d340834a22caa9c8a3beb",
+    "update": null,
+    "contributions": [
+      {
+        "slot": "settings",
+        "id": "models.settings",
+        "title": "Model routing",
+        "icon": "Gauge",
+        "node": {
+          "type": "stack",
+          "children": [
+            { "$ref": "addon.settingsAlert" },
+            {
+              "type": "form",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "light": { "type": "string", "title": "Light model", "maxLength": 80 },
+                  "standard": { "type": "string", "title": "Standard model", "maxLength": 80 },
+                  "strong": { "type": "string", "title": "Strong model", "maxLength": 80 },
+                  "refine": { "type": "string", "title": "Refine runs on", "oneOf": [{ "const": "light", "title": "Light" }, { "const": "standard", "title": "Standard" }, { "const": "strong", "title": "Strong" }, { "const": "none", "title": "Harness default" }] },
+                  "work": { "type": "string", "title": "Work on ticket runs on", "oneOf": [{ "const": "light", "title": "Light" }, { "const": "standard", "title": "Standard" }, { "const": "strong", "title": "Strong" }, { "const": "none", "title": "Harness default" }] },
+                  "fix": { "type": "string", "title": "Fix failing checks runs on", "oneOf": [{ "const": "light", "title": "Light" }, { "const": "standard", "title": "Standard" }, { "const": "strong", "title": "Strong" }, { "const": "none", "title": "Harness default" }] },
+                  "continue": { "type": "string", "title": "Continue after feedback runs on", "oneOf": [{ "const": "same", "title": "Same as the last start" }, { "const": "light", "title": "Light" }, { "const": "standard", "title": "Standard" }, { "const": "strong", "title": "Strong" }, { "const": "none", "title": "Harness default" }] },
+                  "subagent": { "type": "string", "title": "Subagent model", "maxLength": 80 }
+                }
+              },
+              "formData": { "$ref": "addon.settings" },
+              "action": "save_settings",
+              "submitLabel": "Save"
+            }
+          ]
+        }
+      }
+    ],
+    "actions": {
+      "save_settings": { "minRole": "owner" },
+      "escalate": { "minRole": "maintainer", "decision": true }
+    }
+  },
+  {
+    "name": "factory",
+    "title": "AI Factory",
+    "version": "0.1.0",
+    "preview": true,
+    "description": "Preview: one epic in, finished work out. Agents split, specify and build its children within a signed charter.",
+    "capabilities": [
+      "spawn_agent"
+    ],
+    "first_party": true,
+    "package_sha256": "0ad0db68f941e070652de5c0e942fdf847b32899b110fb155e9fff63296dcaa8",
+    "update": null,
+    "contributions": [
+      {
+        "slot": "nav",
+        "id": "factory",
+        "title": "AI Factory",
+        "icon": "Factory",
+        "node": {
+          "type": "stack",
+          "children": [
+            {
+              "$ref": "addon.stateAlert"
+            },
+            {
+              "$ref": "addon.demoAlert"
+            },
+            {
+              "$ref": "addon.budgetAlert"
+            },
+            {
+              "$ref": "addon.controls"
+            },
+            {
+              "$ref": "addon.attentionNode"
+            },
+            {
+              "type": "tabs",
+              "id": "factory",
+              "tabs": [
+                {
+                  "id": "overview",
+                  "label": "Overview",
+                  "node": {
+                    "type": "stack",
+                    "children": [
+                      {
+                        "type": "kv",
+                        "pairs": [
+                          {
+                            "label": "Epic",
+                            "value": "${addon.epicLine}"
+                          },
+                          {
+                            "label": "Charter",
+                            "value": "${addon.charter}"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "stack",
+                        "direction": "row",
+                        "children": [
+                          {
+                            "$ref": "addon.usedProgress"
+                          },
+                          {
+                            "$ref": "addon.timeProgress"
+                          }
+                        ]
+                      },
+                      {
+                        "$ref": "addon.readyNode"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "id": "children",
+                  "label": "Children",
+                  "count": {
+                    "$ref": "addon.childCount"
+                  },
+                  "node": {
+                    "type": "table",
+                    "columns": [
+                      {
+                        "key": "ticket",
+                        "label": "Child",
+                        "cell": "ticket"
+                      },
+                      {
+                        "key": "title",
+                        "label": "Title"
+                      },
+                      {
+                        "key": "status",
+                        "label": "Status",
+                        "cell": "state"
+                      },
+                      {
+                        "key": "approval",
+                        "label": "Approval"
+                      },
+                      {
+                        "key": "size",
+                        "label": "Size"
+                      }
+                    ],
+                    "rows": {
+                      "$ref": "addon.children"
+                    },
+                    "empty": "No children yet."
+                  }
+                },
+                {
+                  "id": "permits",
+                  "label": "Permits",
+                  "count": {
+                    "$ref": "addon.permitCount"
+                  },
+                  "node": {
+                    "type": "stack",
+                    "children": [
+                      {
+                        "type": "markdown",
+                        "text": "Every permission an agent asked for. Open requests are above, where you answer them."
+                      },
+                      {
+                        "type": "table",
+                        "columns": [
+                          {
+                            "key": "id",
+                            "label": "Permit"
+                          },
+                          {
+                            "key": "command",
+                            "label": "Command"
+                          },
+                          {
+                            "key": "child",
+                            "label": "Asked by",
+                            "cell": "ticket"
+                          },
+                          {
+                            "key": "state",
+                            "label": "State",
+                            "cell": "state"
+                          }
+                        ],
+                        "rows": {
+                          "$ref": "addon.permitRows"
+                        },
+                        "empty": "No permits asked yet. Agents ask here when they need a permission they do not hold."
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "commands": [
+      {
+        "id": "watch",
+        "title": "Run AI Factory demo activity",
+        "action": "watch"
+      }
+    ],
+    "actions": {
+      "pause": { "minRole": "maintainer", "confirm": "sign", "label": "Pause the AI Factory" },
+      "resume": { "minRole": "maintainer", "confirm": "sign", "label": "Resume the AI Factory" },
+      "permit": { "minRole": "maintainer", "decision": true },
+      "watch": { "minRole": "member", "label": "Run demo activity" },
+      "stop_watching": { "minRole": "member", "label": "Stop demo activity" }
+    }
+  },
+  {
+    "name": "schedules",
+    "title": "Schedules",
+    "version": "0.1.0",
+    "preview": true,
+    "description": "Preview: agent work that starts without anyone typing. A skill on a clock, on an event, or a recurring ticket.",
+    "capabilities": [
+      "spawn_agent"
+    ],
+    "first_party": true,
+    "package_sha256": "4211d991c66141d1f3871f1fbc2392eadf9942efa5a6c6d301831b56f650ed28",
+    "update": null,
+    "contributions": [
+      {
+        "slot": "nav",
+        "id": "schedules",
+        "title": "Schedules",
+        "icon": "CalendarClock",
+        "node": {
+          "type": "stack",
+          "children": [
+            {
+              "type": "markdown",
+              "text": "${addon.findingsLine}"
+            },
+            {
+              "$ref": "addon.findingNodes"
+            },
+            {
+              "type": "tabs",
+              "id": "schedules",
+              "tabs": [
+                {
+                  "id": "schedules",
+                  "label": "Schedules",
+                  "count": {
+                    "$ref": "addon.scheduleCount"
+                  },
+                  "node": {
+                    "type": "table",
+                    "columns": [
+                      {
+                        "key": "name",
+                        "label": "Schedule"
+                      },
+                      {
+                        "key": "state",
+                        "label": "State",
+                        "cell": "state"
+                      },
+                      {
+                        "key": "timing",
+                        "label": "Timing"
+                      },
+                      {
+                        "key": "next",
+                        "label": "Next run"
+                      },
+                      {
+                        "key": "last",
+                        "label": "Last run"
+                      },
+                      {
+                        "key": "outcome",
+                        "label": "Result"
+                      }
+                    ],
+                    "rows": {
+                      "$ref": "addon.scheduleRows"
+                    },
+                    "empty": "No schedules yet. A schedule starts agent work on a clock or when an event happens.",
+                    "rowActions": [
+                      {
+                        "label": "Run now",
+                        "action": "run_now",
+                        "args": {
+                          "id": "$row.id"
+                        },
+                        "variant": "secondary",
+                        "primary": true,
+                        "when": "$row.enabled"
+                      },
+                      {
+                        "label": "Disable",
+                        "action": "disarm",
+                        "args": {
+                          "id": "$row.id"
+                        },
+                        "variant": "ghost",
+                        "when": "$row.enabled"
+                      },
+                      {
+                        "label": "Enable",
+                        "action": "arm",
+                        "args": {
+                          "id": "$row.id"
+                        },
+                        "variant": "secondary",
+                        "when": "!$row.enabled"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "id": "runs",
+                  "label": "Runs",
+                  "count": {
+                    "$ref": "addon.shownRunCount"
+                  },
+                  "node": {
+                    "type": "stack",
+                    "children": [
+                      {
+                        "type": "markdown",
+                        "text": "${addon.runsNote}"
+                      },
+                      {
+                        "type": "list",
+                        "items": {
+                          "$ref": "addon.runItems"
+                        },
+                        "empty": "No runs yet. Enable a schedule, or press Run now."
+                      },
+                      {
+                        "$ref": "addon.reportNode"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "actions": {
+      "arm": { "minRole": "maintainer", "confirm": "sign", "label": "Enable a schedule" },
+      "disarm": { "minRole": "maintainer", "confirm": "sign", "label": "Disable a schedule" },
+      "run_now": { "minRole": "member", "label": "Run now" },
+      "open_run": { "minRole": "viewer", "label": "Open run", "kind": "navigation" },
+      "finding": { "minRole": "maintainer", "decision": true }
+    }
+  },
+  {
+    "name": "drop",
+    "title": "Drop",
+    "version": "0.1.0",
+    "preview": true,
+    "description": "Preview: files between your devices, people and workspaces. An inbox of received files, sealed drops and links with an expiry. Simulated.",
+    "capabilities": [
+      "network"
+    ],
+    "first_party": true,
+    "update": null,
+    "contributions": [
+      {
+        "slot": "nav",
+        "id": "drop",
+        "title": "Drop",
+        "icon": "Inbox",
+        "node": {
+          "type": "stack",
+          "children": [
+            {
+              "type": "alert",
+              "tone": "info",
+              "title": "Simulated",
+              "text": "Uploads, downloads and links on this page are simulated: nothing leaves this machine. In orch v2 every file is sealed end to end, and the relay stores only ciphertext."
+            },
+            {
+              "type": "stack",
+              "direction": "row",
+              "children": [
+                {
+                  "type": "stat",
+                  "label": "To claim",
+                  "value": {
+                    "$ref": "addon.toClaim"
+                  },
+                  "hint": "inbox files several workspaces got"
+                },
+                {
+                  "type": "stat",
+                  "label": "Live drops",
+                  "value": {
+                    "$ref": "addon.liveCount"
+                  },
+                  "hint": "sent, not expired"
+                },
+                {
+                  "type": "stat",
+                  "label": "Views",
+                  "value": {
+                    "$ref": "addon.views"
+                  },
+                  "hint": "all sent files"
+                }
+              ]
+            },
+            {
+              "type": "markdown",
+              "text": "### Inbox\nFiles sent to this workspace. A file marked **to claim** went to several workspaces: the first one to claim it handles it."
+            },
+            {
+              "type": "table",
+              "columns": [
+                {
+                  "key": "file",
+                  "label": "File"
+                },
+                {
+                  "key": "from",
+                  "label": "From"
+                },
+                {
+                  "key": "size",
+                  "label": "Size"
+                },
+                {
+                  "key": "received",
+                  "label": "Received"
+                },
+                {
+                  "key": "expires",
+                  "label": "Expires"
+                },
+                {
+                  "key": "ticket",
+                  "label": "Ticket"
+                },
+                {
+                  "key": "state",
+                  "label": "State"
+                }
+              ],
+              "rows": {
+                "$ref": "addon.inboxRows"
+              },
+              "empty": "Nothing received.",
+              "rowActions": [
+                {
+                  "label": "Claim",
+                  "action": "claim",
+                  "args": {
+                    "id": "$row.id"
+                  },
+                  "variant": "secondary",
+                  "when": "$row.canClaim"
+                },
+                {
+                  "label": "Download",
+                  "action": "download",
+                  "args": {
+                    "id": "$row.id"
+                  },
+                  "variant": "ghost"
+                },
+                {
+                  "label": "Remove",
+                  "action": "remove",
+                  "args": {
+                    "id": "$row.id"
+                  },
+                  "variant": "danger"
+                }
+              ]
+            },
+            {
+              "type": "markdown",
+              "text": "### Sent\nSealed to a person: only their devices open it, there is no link. A link is shown once when you make it; revoke it to stop it."
+            },
+            {
+              "type": "table",
+              "columns": [
+                {
+                  "key": "file",
+                  "label": "File"
+                },
+                {
+                  "key": "to",
+                  "label": "To"
+                },
+                {
+                  "key": "by",
+                  "label": "By"
+                },
+                {
+                  "key": "expires",
+                  "label": "Expires"
+                },
+                {
+                  "key": "views",
+                  "label": "Views"
+                },
+                {
+                  "key": "ticket",
+                  "label": "Ticket"
+                },
+                {
+                  "key": "state",
+                  "label": "State"
+                }
+              ],
+              "rows": {
+                "$ref": "addon.sentRows"
+              },
+              "empty": "Nothing sent yet.",
+              "rowActions": [
+                {
+                  "label": "Extend 7 days",
+                  "action": "extend",
+                  "args": {
+                    "id": "$row.id"
+                  },
+                  "variant": "ghost",
+                  "when": "$row.canExtend"
+                },
+                {
+                  "label": "Revoke",
+                  "action": "revoke",
+                  "args": {
+                    "id": "$row.id"
+                  },
+                  "variant": "danger",
+                  "when": "$row.canChange"
+                }
+              ]
+            },
+            {
+              "type": "markdown",
+              "text": "### Share a file\nPick a file (a simulated upload), who gets it and for how long. A link opens only in the orch app (iPhone or Mac). The relay has no download page — seal it to a person or a workspace instead."
+            },
+            {
+              "type": "form",
+              "schema": {
+                "$ref": "addon.shareSchema"
+              },
+              "uiSchema": {
+                "file": {
+                  "ui:enumNames": {
+                    "$ref": "addon.fileNames"
+                  }
+                },
+                "to": {
+                  "ui:enumNames": {
+                    "$ref": "addon.sendToNames"
+                  }
+                },
+                "ticket": {
+                  "ui:enumNames": {
+                    "$ref": "addon.ticketNames"
+                  }
+                }
+              },
+              "formData": {
+                "days": 7,
+                "ticket": ""
+              },
+              "action": "share",
+              "submitLabel": "Share file"
+            }
+          ]
+        }
+      },
+      {
+        "slot": "today.card",
+        "id": "drop.today",
+        "title": "Drop",
+        "icon": "Inbox",
+        "node": {
+          "type": "stat",
+          "label": "Drop",
+          "value": "${addon.summary}",
+          "hint": "simulated"
+        }
+      }
+    ],
+    "commands": [],
+    "actions": {
+      "share": {
+        "minRole": "member",
+        "label": "Share a file"
+      },
+      "claim": {
+        "minRole": "member",
+        "label": "Claim a file"
+      },
+      "download": {
+        "minRole": "viewer",
+        "label": "Download a file"
+      },
+      "remove": {
+        "minRole": "member",
+        "confirm": "destructive",
+        "confirmLabel": "Remove from inbox",
+        "confirmText": "The file leaves this workspace's inbox. Whoever sent it keeps it."
+      },
+      "extend": {
+        "minRole": "member",
+        "label": "Extend a drop"
+      },
+      "revoke": {
+        "minRole": "member",
+        "confirm": "destructive",
+        "confirmLabel": "Revoke drop",
+        "confirmText": "It stops opening for everyone, now. Copies already downloaded stay where they are."
+      }
+    },
+    "package_sha256": "9ab7f2f0df9ca08b7c99dad68338474f256cec63e6ae54788071129c13697556"
+  },
+  {
+    "name": "land",
+    "title": "Landing",
+    "version": "0.1.0",
+    "preview": true,
+    "description": "Preview: lands approved tickets on their target branch one at a time, checked on the exact commit that merges.",
+    "capabilities": [
+      "network",
+      "git_push"
+    ],
+    "first_party": true,
+    "package_sha256": "f8ffaede032daab41656c9858bc19e75b45fede20357a93c6608237b369bc716",
+    "update": null,
+    "contributions": [
+      {
+        "slot": "nav",
+        "id": "landing",
+        "title": "Landing",
+        "icon": "GitMerge",
+        "node": {
+          "type": "stack",
+          "children": [
+            {
+              "$ref": "addon.workerAlert"
+            },
+            {
+              "$ref": "addon.controls"
+            },
+            {
+              "$ref": "addon.body"
+            }
+          ]
+        }
+      },
+      {
+        "slot": "ticket.panel",
+        "id": "landing.ticket",
+        "title": "Landing",
+        "icon": "GitMerge",
+        "when": "addon.byTicket.$ticket",
+        "node": {
+          "$ref": "addon.byTicket.$ticket"
+        }
+      },
+      {
+        "slot": "board.card_field",
+        "id": "landing.card",
+        "title": "Landing",
+        "icon": "GitMerge",
+        "when": "addon.cards.$ticket",
+        "node": {
+          "type": "stat",
+          "label": "",
+          "value": "${addon.cards.$ticket}"
+        }
+      },
+      {
+        "slot": "settings",
+        "id": "land.settings",
+        "title": "Landing",
+        "icon": "GitMerge",
+        "node": {
+          "type": "stack",
+          "children": [
+            {
+              "type": "markdown",
+              "text": "Tickets land only on these branches. `main` is never a landing target (D33): people merge to main by hand."
+            },
+            {
+              "type": "form",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "targets": {
+                    "type": "string",
+                    "title": "Allowed targets (comma separated)",
+                    "maxLength": 300
+                  },
+                  "timeout_minutes": {
+                    "type": "integer",
+                    "title": "Check timeout (minutes)",
+                    "minimum": 5,
+                    "maximum": 120,
+                    "default": 30
+                  }
+                }
+              },
+              "formData": {
+                "$ref": "addon.settings"
+              },
+              "action": "save_settings",
+              "submitLabel": "Save"
+            }
+          ]
+        }
+      }
+    ],
+    "commands": [
+      {
+        "id": "run_worker",
+        "title": "Run the landing worker (demo)",
+        "action": "run_worker"
+      }
+    ],
+    "actions": {
+      "save_settings": {
+        "minRole": "owner"
+      },
+      "enqueue": {
+        "minRole": "member",
+        "label": "Add to the landing queue"
+      },
+      "dequeue": {
+        "minRole": "member",
+        "label": "Take off the landing queue"
+      },
+      "resolve": {
+        "minRole": "maintainer",
+        "decision": true
+      },
+      "run_worker": {
+        "minRole": "member",
+        "label": "Run the worker (demo)"
+      },
+      "stop_worker": {
+        "minRole": "member",
+        "label": "Stop the worker (demo)"
+      },
+      "mark_resolved": {
+        "minRole": "member",
+        "label": "Mark the landing resolution done"
+      },
+      "open_checks": {
+        "minRole": "viewer",
+        "kind": "navigation",
+        "label": "Open checks"
+      }
+    }
+  }
+]

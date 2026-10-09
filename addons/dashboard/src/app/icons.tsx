@@ -1,0 +1,53 @@
+import {
+  Activity,
+  Bot,
+  BookOpen,
+  CalendarClock,
+  CircleHelp,
+  Factory,
+  Gauge,
+  GitBranch,
+  GitCommitHorizontal,
+  GitMerge,
+  GitPullRequest,
+  Inbox,
+  LayoutDashboard,
+  LayoutPanelTop,
+  ListChecks,
+  Puzzle,
+  Ruler,
+  Settings,
+  Share2,
+  SquareKanban,
+  SquareTerminal,
+  type LucideIcon,
+} from 'lucide-react'
+
+// Addons name icons as strings in their manifests; only a fixed set is renderable.
+const ICONS: Record<string, LucideIcon> = {
+  Activity,
+  Bot,
+  BookOpen,
+  CalendarClock,
+  Factory,
+  Gauge,
+  Github: GitBranch,
+  GitBranch,
+  GitCommitHorizontal,
+  GitMerge,
+  GitPullRequest,
+  Inbox,
+  LayoutDashboard,
+  LayoutPanelTop,
+  ListChecks,
+  Puzzle,
+  Ruler,
+  Settings,
+  Share2,
+  SquareKanban,
+  SquareTerminal,
+}
+
+export function iconByName(name?: string): LucideIcon {
+  return (name && ICONS[name]) || CircleHelp
+}

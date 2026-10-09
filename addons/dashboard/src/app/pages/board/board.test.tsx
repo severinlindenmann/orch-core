@@ -1,0 +1,33 @@
+import { screen, within } from '@testing-library/react'
+import { describe, expect, it } from 'vitest'
+import { renderApp } from '@/test/renderApp'
+
+describe('board page', () => {
+  it('renders status columns with DEMO-0043 under in-progress', async () => {
+    renderApp('/board')
+    await screen.findByRole('region', { name: 'In progress' })
+    // Grouped by epic (the default): DEMO-0043 is a child of DEMO-0040, so it sits in that lane's In progress cell.
+    const cell = await screen.findByRole('group', { name: 'DEMO-0040 · In progress' })
+    expect(await within(cell).findByTestId('card-DEMO-0043')).toBeInTheDocument()
+    for (const name of ['Backlog', 'Open', 'Waiting', 'Testing']) expect(screen.getByRole('region', { name })).toBeInTheDocument()
+    // Done starts collapsed to a rail (Display > Collapsed columns).
+    expect(screen.getByRole('button', { name: /Expand Done/ })).toBeInTheDocument()
+  })
+
+  it('filter Mine reduces the cards', async () => {
+    const { user } = renderApp('/board')
+    await screen.findByTestId('card-DEMO-0043')
+    const before = screen.getAllByTestId(/^card-/).length
+    await user.click(screen.getByRole('button', { name: 'Mine' }))
+    const after = screen.getAllByTestId(/^card-/).length
+    expect(after).toBeGreaterThan(0)
+    expect(after).toBeLessThan(before)
+  })
+
+  it('shows the github lane with the addon badge and import buttons', async () => {
+    renderApp('/board')
+    const lane = await screen.findByRole('region', { name: /GitHub issues/ })
+    expect(within(lane).getByRole('img', { name: 'From addon: github' })).toBeInTheDocument()
+    expect(await within(lane).findAllByRole('button', { name: /Import as ticket/ })).toHaveLength(8)
+  })
+})

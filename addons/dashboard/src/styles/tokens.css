@@ -1,0 +1,225 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.dark *));
+
+/* ---------------------------------------------------------------------------
+   Orbit brand tokens. DARK ONLY: there is no light theme and no toggle.
+   Raw values live on :root; Tailwind (@theme inline) and shadcn names map to them.
+   --------------------------------------------------------------------------- */
+:root {
+  color-scheme: dark;
+
+  --bg: #0e1014;
+  --sidebar: #0a0c0f;
+  --surface: #15181d;
+  --surface-2: #1c2027;
+  --surface-3: #242a32;
+  --border: #2a3038;
+  --border-strong: #3a424d;
+  --text: #e8eaed;
+  --text-muted: #9aa3ad;
+  --text-faint: #8b949e; /* 4.5:1 or better on bg, surface, surface-2 and the sidebar */
+
+  /* teal accent: actions */
+  --brand: #2fc6a3;
+  --on-brand: #06231c;
+  --brand-strong: #1fa98a;
+  --brand-soft: rgba(47, 198, 163, 0.14);
+
+  /* addon orange */
+  --addon: #f07a2e;
+  --on-addon: #1a0b02;
+  --addon-soft: rgba(240, 122, 46, 0.12);
+  --addon-border: rgba(240, 122, 46, 0.45);
+
+  /* semantic */
+  --success: #4ade80;
+  --success-soft: rgba(74, 222, 128, 0.14);
+  --warning: #fbbf24;
+  --warning-soft: rgba(251, 191, 36, 0.14);
+  --danger: #f87171;
+  --danger-soft: rgba(248, 113, 113, 0.14);
+  --info: #60a5fa;
+  --info-soft: rgba(96, 165, 250, 0.14);
+
+  /* motion: short, ease-out, never more than 200 ms (see src/lib/motion.ts) */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --lift-shadow: 0 10px 24px -6px rgb(0 0 0 / 0.55), 0 2px 6px rgb(0 0 0 / 0.4);
+
+  --radius: 0.5rem; /* 8px controls */
+  --radius-card: 10px;
+
+  /* shadcn variable names */
+  --background: var(--bg);
+  --foreground: var(--text);
+  --card: var(--surface);
+  --card-foreground: var(--text);
+  --popover: var(--surface-2);
+  --popover-foreground: var(--text);
+  --primary: var(--brand);
+  --primary-foreground: var(--on-brand);
+  --secondary: var(--surface-2);
+  --secondary-foreground: var(--text);
+  --muted: var(--surface-2);
+  --muted-foreground: var(--text-muted);
+  --accent: var(--surface-3); /* shadcn "accent" = hover surface, not the brand teal */
+  --accent-foreground: var(--text);
+  --destructive: var(--danger);
+  --input: var(--border-strong);
+  --ring: var(--brand);
+  --chart-1: var(--brand);
+  --chart-2: var(--info);
+  --chart-3: var(--warning);
+  --chart-4: #b392f0; /* violet: charts never use the addon orange */
+  --chart-5: var(--danger);
+  --sidebar-background: var(--sidebar);
+  --sidebar-foreground: var(--text);
+  --sidebar-primary: var(--brand);
+  --sidebar-primary-foreground: var(--on-brand);
+  --sidebar-accent: var(--surface-2);
+  --sidebar-accent-foreground: var(--text);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--brand);
+}
+
+@theme inline {
+  --font-sans: 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+  /* brand utilities: bg-surface, text-text-muted, border-border-strong, bg-brand ... */
+  --color-bg: var(--bg);
+  --color-sidebar: var(--sidebar);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-border-strong: var(--border-strong);
+  --color-text: var(--text);
+  --color-text-muted: var(--text-muted);
+  --color-text-faint: var(--text-faint);
+  --color-brand: var(--brand);
+  --color-on-brand: var(--on-brand);
+  --color-brand-strong: var(--brand-strong);
+  --color-brand-soft: var(--brand-soft);
+  --color-addon: var(--addon);
+  --color-on-addon: var(--on-addon);
+  --color-addon-soft: var(--addon-soft);
+  --color-addon-border: var(--addon-border);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+
+  /* shadcn names */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --shadow-lift: var(--lift-shadow);
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: var(--radius);
+  --radius-lg: var(--radius-card);
+  --radius-xl: calc(var(--radius-card) + 4px);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-bg font-sans text-text antialiased;
+    min-width: 1024px;
+  }
+  code,
+  kbd,
+  pre {
+    font-family: var(--font-mono);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Motion. Calm and helpful: it shows where something went or came from, never decorates.
+   Every transform animation lives behind no-preference; the reduce block below is the safety net for the rest.
+   --------------------------------------------------------------------------- */
+@keyframes orch-lift {
+  to {
+    transform: scale(1.02) rotate(0.8deg);
+  }
+}
+@keyframes orch-pill-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+@keyframes orch-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* The card in the drag overlay: picked up (scale 1.02, tilt under 1 degree). */
+  .orch-lift {
+    animation: orch-lift 120ms var(--ease-out) forwards;
+  }
+  /* The "N new" pill slides in from just above its resting place. */
+  .orch-pill-in {
+    animation: orch-pill-in 160ms var(--ease-out) both;
+  }
+  .orch-fade-in {
+    animation: orch-fade-in 160ms var(--ease-out) both;
+  }
+  /* Toasts: sonner's 400 ms is slow for a status line. Coupled to sonner's own attribute (sonner 2.x): if an upgrade renames it, this rule silently stops applying. */
+  [data-sonner-toast] {
+    transition-duration: 200ms !important;
+    transition-timing-function: var(--ease-out) !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -1,0 +1,455 @@
+[
+  {
+    "id": "6f1c0d2e-8b4a-4e1f-9c3d-2a7b5e9f0c11",
+    "prefix": "DEMO",
+    "name": "Acme energy data",
+    "demo": true,
+    "members": [
+      {
+        "person": "p_sev",
+        "name": "Severin",
+        "role": "owner",
+        "devices": 2,
+        "last_seen": "2026-10-09T11:28:00Z"
+      },
+      {
+        "person": "p_mara",
+        "name": "Mara",
+        "role": "maintainer",
+        "devices": 1,
+        "last_seen": "2026-10-09T09:12:00Z"
+      },
+      {
+        "person": "p_tom",
+        "name": "Tom",
+        "role": "viewer",
+        "devices": 1,
+        "last_seen": "2026-10-08T16:40:00Z"
+      }
+    ],
+    "gates": {
+      "requirements": {
+        "approvers": "owner",
+        "count": 1
+      },
+      "plan": {
+        "approvers": "owner",
+        "count": 1
+      },
+      "verify": {
+        "approvers": "reviewers",
+        "count": 1,
+        "not": "assignees"
+      }
+    },
+    "addons": {
+      "guide": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "0.1.0",
+          "capabilities": [],
+          "package_sha256": "5d1c7e0a93b46f28c0e9a7b1d4f63a82e5b09c17d2a84f6e3b7c05a91d8e4f26",
+          "at": "2026-09-02T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "0.1.0",
+        "package_sha256": "5d1c7e0a93b46f28c0e9a7b1d4f63a82e5b09c17d2a84f6e3b7c05a91d8e4f26",
+        "capabilities": []
+      },
+      "dashboard": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "1.0.0",
+          "capabilities": [],
+          "package_sha256": "0606c8241f281a716a58fd0b33eea70441edeb6b98266664a38f012b43de6bc0",
+          "at": "2026-09-02T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "1.0.0",
+        "package_sha256": "0606c8241f281a716a58fd0b33eea70441edeb6b98266664a38f012b43de6bc0",
+        "capabilities": []
+      },
+      "start-agent": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "0.1.0",
+          "capabilities": [
+            "spawn_agent"
+          ],
+          "package_sha256": "12ff88fdfa0f1bfe8349844b93d13e2c2fe13bdaf2161cd82d77b386f3a8d722",
+          "at": "2026-09-02T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "0.1.0",
+        "package_sha256": "12ff88fdfa0f1bfe8349844b93d13e2c2fe13bdaf2161cd82d77b386f3a8d722",
+        "capabilities": [
+          "spawn_agent"
+        ]
+      },
+      "widgets": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "0.1.0",
+          "capabilities": [],
+          "package_sha256": "c96f33c3cfe80db8ff103fec603c664cc2fd0961ece692e4627965aa9668d335",
+          "at": "2026-09-02T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "0.1.0",
+        "package_sha256": "c96f33c3cfe80db8ff103fec603c664cc2fd0961ece692e4627965aa9668d335",
+        "capabilities": []
+      },
+      "estimate": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "0.2.0",
+          "capabilities": [],
+          "package_sha256": "ddf14dd22f808f71dd0499e40807cbcbcdd25c018d6cdda6b2143e691d9a822d",
+          "at": "2026-09-02T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "0.2.0",
+        "package_sha256": "ddf14dd22f808f71dd0499e40807cbcbcdd25c018d6cdda6b2143e691d9a822d",
+        "capabilities": []
+      },
+      "publish": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "0.3.0",
+          "capabilities": [
+            "serve_http",
+            "network"
+          ],
+          "package_sha256": "5bff517d9651da29e7bb20407bede9b158b27f279f9e828b1854749b364b8919",
+          "at": "2026-09-02T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "0.3.0",
+        "package_sha256": "5bff517d9651da29e7bb20407bede9b158b27f279f9e828b1854749b364b8919",
+        "capabilities": [
+          "serve_http",
+          "network"
+        ]
+      },
+      "github": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "0.5.2",
+          "capabilities": [
+            "network"
+          ],
+          "package_sha256": "0f33d256eae57ec0f00baba48552b229d04f5fb2bfe277ce02667cf7196f6fa9",
+          "at": "2026-09-02T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "0.5.2",
+        "package_sha256": "0f33d256eae57ec0f00baba48552b229d04f5fb2bfe277ce02667cf7196f6fa9",
+        "capabilities": [
+          "network"
+        ]
+      },
+      "usage": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "0.2.1",
+          "capabilities": [],
+          "package_sha256": "cee112f07556821db82c7e88c0557e3a55b686921e33baef1ac29eec1c3ad78e",
+          "at": "2026-09-02T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "0.2.1",
+        "package_sha256": "cee112f07556821db82c7e88c0557e3a55b686921e33baef1ac29eec1c3ad78e",
+        "capabilities": []
+      },
+      "terminals": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "0.4.0",
+          "capabilities": [
+            "pty"
+          ],
+          "package_sha256": "cf469c979452d209a452ce4f693679a3bb9e21c7e555c97843d25269dcfcd81c",
+          "at": "2026-09-02T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "0.4.0",
+        "package_sha256": "cf469c979452d209a452ce4f693679a3bb9e21c7e555c97843d25269dcfcd81c",
+        "capabilities": [
+          "pty"
+        ]
+      },
+      "wiki": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "0.1.5",
+          "capabilities": [],
+          "package_sha256": "12b9025be128bb7a6b74b9a1b80bb948db8d186a0ab470110811d0cbe4ccef19",
+          "at": "2026-09-02T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "0.1.5",
+        "package_sha256": "12b9025be128bb7a6b74b9a1b80bb948db8d186a0ab470110811d0cbe4ccef19",
+        "capabilities": []
+      },
+      "land": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "0.1.0",
+          "capabilities": [
+            "network",
+            "git_push"
+          ],
+          "package_sha256": "f8ffaede032daab41656c9858bc19e75b45fede20357a93c6608237b369bc716",
+          "at": "2026-10-08T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "0.1.0",
+        "package_sha256": "f8ffaede032daab41656c9858bc19e75b45fede20357a93c6608237b369bc716",
+        "capabilities": [
+          "network",
+          "git_push"
+        ]
+      }
+    }
+  },
+  {
+    "id": "0a5e7c31-2d9f-4b68-8e1a-5c3f7d9b2e44",
+    "prefix": "INT",
+    "name": "Internal",
+    "members": [
+      {
+        "person": "p_sev",
+        "name": "Severin",
+        "role": "owner",
+        "devices": 2,
+        "last_seen": "2026-10-09T11:28:00Z"
+      },
+      {
+        "person": "p_mara",
+        "name": "Mara",
+        "role": "maintainer",
+        "devices": 1,
+        "last_seen": "2026-10-09T09:12:00Z"
+      }
+    ],
+    "gates": {
+      "requirements": {
+        "approvers": "owner",
+        "count": 1
+      },
+      "plan": {
+        "approvers": "owner",
+        "count": 1
+      },
+      "verify": {
+        "approvers": "reviewers",
+        "count": 1,
+        "not": "assignees"
+      }
+    },
+    "addons": {
+      "guide": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "0.1.0",
+          "capabilities": [],
+          "package_sha256": "5d1c7e0a93b46f28c0e9a7b1d4f63a82e5b09c17d2a84f6e3b7c05a91d8e4f26",
+          "at": "2026-09-02T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "0.1.0",
+        "package_sha256": "5d1c7e0a93b46f28c0e9a7b1d4f63a82e5b09c17d2a84f6e3b7c05a91d8e4f26",
+        "capabilities": []
+      },
+      "dashboard": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "1.0.0",
+          "capabilities": [],
+          "package_sha256": "0606c8241f281a716a58fd0b33eea70441edeb6b98266664a38f012b43de6bc0",
+          "at": "2026-09-02T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "1.0.0",
+        "package_sha256": "0606c8241f281a716a58fd0b33eea70441edeb6b98266664a38f012b43de6bc0",
+        "capabilities": []
+      },
+      "estimate": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "0.2.0",
+          "capabilities": [],
+          "package_sha256": "ddf14dd22f808f71dd0499e40807cbcbcdd25c018d6cdda6b2143e691d9a822d",
+          "at": "2026-09-02T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "0.2.0",
+        "package_sha256": "ddf14dd22f808f71dd0499e40807cbcbcdd25c018d6cdda6b2143e691d9a822d",
+        "capabilities": []
+      },
+      "github": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "0.5.2",
+          "capabilities": [
+            "network"
+          ],
+          "package_sha256": "0f33d256eae57ec0f00baba48552b229d04f5fb2bfe277ce02667cf7196f6fa9",
+          "at": "2026-09-02T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "0.5.2",
+        "package_sha256": "0f33d256eae57ec0f00baba48552b229d04f5fb2bfe277ce02667cf7196f6fa9",
+        "capabilities": [
+          "network"
+        ]
+      },
+      "wiki": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "0.1.5",
+          "capabilities": [],
+          "package_sha256": "12b9025be128bb7a6b74b9a1b80bb948db8d186a0ab470110811d0cbe4ccef19",
+          "at": "2026-09-02T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "0.1.5",
+        "package_sha256": "12b9025be128bb7a6b74b9a1b80bb948db8d186a0ab470110811d0cbe4ccef19",
+        "capabilities": []
+      }
+    }
+  },
+  {
+    "id": "c7d2b9e4-6f13-4a85-b0c8-1e9a3d5f7b66",
+    "prefix": "CLI",
+    "name": "Client VM",
+    "members": [
+      {
+        "person": "p_sev",
+        "name": "Severin",
+        "role": "owner",
+        "devices": 2,
+        "last_seen": "2026-10-09T11:28:00Z"
+      },
+      {
+        "person": "p_tom",
+        "name": "Tom",
+        "role": "member",
+        "devices": 1,
+        "last_seen": "2026-10-08T16:40:00Z"
+      }
+    ],
+    "gates": {
+      "requirements": {
+        "approvers": "owner",
+        "count": 1
+      },
+      "plan": {
+        "approvers": "owner",
+        "count": 1
+      },
+      "verify": {
+        "approvers": "owner",
+        "count": 1
+      }
+    },
+    "addons": {
+      "guide": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "0.1.0",
+          "capabilities": [],
+          "package_sha256": "5d1c7e0a93b46f28c0e9a7b1d4f63a82e5b09c17d2a84f6e3b7c05a91d8e4f26",
+          "at": "2026-09-02T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "0.1.0",
+        "package_sha256": "5d1c7e0a93b46f28c0e9a7b1d4f63a82e5b09c17d2a84f6e3b7c05a91d8e4f26",
+        "capabilities": []
+      },
+      "dashboard": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "1.0.0",
+          "capabilities": [],
+          "package_sha256": "0606c8241f281a716a58fd0b33eea70441edeb6b98266664a38f012b43de6bc0",
+          "at": "2026-09-02T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "1.0.0",
+        "package_sha256": "0606c8241f281a716a58fd0b33eea70441edeb6b98266664a38f012b43de6bc0",
+        "capabilities": []
+      },
+      "estimate": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "0.2.0",
+          "capabilities": [],
+          "package_sha256": "ddf14dd22f808f71dd0499e40807cbcbcdd25c018d6cdda6b2143e691d9a822d",
+          "at": "2026-09-02T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "0.2.0",
+        "package_sha256": "ddf14dd22f808f71dd0499e40807cbcbcdd25c018d6cdda6b2143e691d9a822d",
+        "capabilities": []
+      },
+      "terminals": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "0.4.0",
+          "capabilities": [
+            "pty"
+          ],
+          "package_sha256": "cf469c979452d209a452ce4f693679a3bb9e21c7e555c97843d25269dcfcd81c",
+          "at": "2026-09-02T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "0.4.0",
+        "package_sha256": "cf469c979452d209a452ce4f693679a3bb9e21c7e555c97843d25269dcfcd81c",
+        "capabilities": [
+          "pty"
+        ]
+      }
+    }
+  }
+]

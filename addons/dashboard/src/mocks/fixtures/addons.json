@@ -1,0 +1,1401 @@
+[
+  {
+    "name": "publish",
+    "title": "Publish",
+    "version": "0.3.0",
+    "description": "Share a read-only view of a ticket or artifact through a signed link.",
+    "capabilities": [
+      "serve_http",
+      "network"
+    ],
+    "first_party": true,
+    "contributions": [
+      {
+        "slot": "nav",
+        "id": "shares",
+        "title": "Apps & shares",
+        "icon": "Share2",
+        "node": {
+          "type": "stack",
+          "children": [
+            {
+              "type": "stack",
+              "direction": "row",
+              "children": [
+                {
+                  "type": "stat",
+                  "label": "Live shares",
+                  "value": {
+                    "$ref": "addon.liveShares"
+                  },
+                  "hint": "read-only links"
+                },
+                {
+                  "type": "stat",
+                  "label": "Views",
+                  "value": {
+                    "$ref": "addon.views"
+                  },
+                  "hint": "all shares"
+                },
+                {
+                  "type": "stat",
+                  "label": "Apps running",
+                  "value": {
+                    "$ref": "addon.runningCount"
+                  },
+                  "hint": "of ${addon.appCount}"
+                }
+              ]
+            },
+            {
+              "$ref": "addon.attentionNode"
+            },
+            {
+              "type": "tabs",
+              "id": "publish",
+              "tabs": [
+                {
+                  "id": "apps",
+                  "label": "Apps",
+                  "count": {
+                    "$ref": "addon.appCount"
+                  },
+                  "node": {
+                    "type": "stack",
+                    "children": [
+                      {
+                        "type": "table",
+                        "columns": [
+                          {
+                            "key": "name",
+                            "label": "App"
+                          },
+                          {
+                            "key": "kind",
+                            "label": "Type"
+                          },
+                          {
+                            "key": "status",
+                            "label": "State",
+                            "cell": "state"
+                          },
+                          {
+                            "key": "note",
+                            "label": "Note"
+                          },
+                          {
+                            "key": "recipients",
+                            "label": "Recipients"
+                          },
+                          {
+                            "key": "folder",
+                            "label": "Folder"
+                          }
+                        ],
+                        "rows": {
+                          "$ref": "addon.appRows"
+                        },
+                        "empty": "No apps yet. Put a small app in a workspace folder and it appears here.",
+                        "rowActions": [
+                          {
+                            "label": "Start",
+                            "action": "start",
+                            "args": {
+                              "id": "$row.id"
+                            },
+                            "variant": "ghost",
+                            "when": "$row.canStart"
+                          },
+                          {
+                            "label": "Stop",
+                            "action": "stop",
+                            "args": {
+                              "id": "$row.id"
+                            },
+                            "variant": "ghost",
+                            "when": "$row.canStop"
+                          },
+                          {
+                            "label": "Logs",
+                            "action": "logs",
+                            "args": {
+                              "id": "$row.id"
+                            },
+                            "variant": "ghost"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                },
+                {
+                  "id": "shares",
+                  "label": "Shares",
+                  "count": {
+                    "$ref": "addon.liveShares"
+                  },
+                  "node": {
+                    "type": "stack",
+                    "children": [
+                      {
+                        "type": "table",
+                        "columns": [
+                          {
+                            "key": "title",
+                            "label": "Share"
+                          },
+                          {
+                            "key": "kind",
+                            "label": "Kind"
+                          },
+                          {
+                            "key": "ticket",
+                            "label": "Ticket"
+                          },
+                          {
+                            "key": "expires",
+                            "label": "Expires in"
+                          },
+                          {
+                            "key": "views",
+                            "label": "Views"
+                          },
+                          {
+                            "key": "last",
+                            "label": "Last viewed"
+                          }
+                        ],
+                        "rows": {
+                          "$ref": "addon.shareRows"
+                        },
+                        "empty": "No shares yet. Share a report from a ticket, or make a one-time link below.",
+                        "rowActions": [
+                          {
+                            "label": "Copy link",
+                            "action": "copy_link",
+                            "args": {
+                              "id": "$row.id"
+                            },
+                            "variant": "ghost",
+                            "when": "$row.canCopy"
+                          },
+                          {
+                            "label": "Shown once",
+                            "action": "copy_link",
+                            "args": {
+                              "id": "$row.id"
+                            },
+                            "variant": "ghost",
+                            "when": "$row.shownOnce"
+                          },
+                          {
+                            "label": "Extend 7 days",
+                            "action": "extend",
+                            "args": {
+                              "id": "$row.id"
+                            },
+                            "variant": "ghost"
+                          },
+                          {
+                            "label": "Revoke",
+                            "action": "revoke",
+                            "args": {
+                              "id": "$row.id"
+                            },
+                            "variant": "danger"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "button",
+                        "label": "New show-once link",
+                        "action": "share_once",
+                        "variant": "secondary"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "slot": "today.card",
+        "id": "shares.today",
+        "title": "Apps & shares",
+        "icon": "Share2",
+        "node": {
+          "type": "stat",
+          "label": "Apps",
+          "value": "${addon.summary}",
+          "hint": "${addon.liveShares} live shares · ${addon.views} views"
+        }
+      },
+      {
+        "slot": "ticket.panel",
+        "id": "shares.ticket",
+        "title": "Shares",
+        "icon": "Share2",
+        "node": {
+          "type": "stack",
+          "children": [
+            {
+              "type": "list",
+              "items": {
+                "$ref": "addon.sharesByTicket.$ticket"
+              },
+              "empty": "Not shared yet."
+            },
+            {
+              "type": "button",
+              "label": "Share report…",
+              "action": "share",
+              "variant": "secondary"
+            }
+          ]
+        }
+      },
+      {
+        "slot": "settings",
+        "id": "publish.settings",
+        "title": "Publish",
+        "icon": "Share2",
+        "node": {
+          "type": "form",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "default_expiry_days": {
+                "type": "integer",
+                "title": "Link expiry (days)"
+              },
+              "allow_artifacts": {
+                "type": "boolean",
+                "title": "Include artifacts"
+              },
+              "namespace": {
+                "type": "string",
+                "title": "Namespace (link host p.<namespace>.example)"
+              }
+            }
+          },
+          "formData": {
+            "$ref": "addon.settings"
+          },
+          "action": "save_settings",
+          "submitLabel": "Save"
+        }
+      }
+    ],
+    "decisions": [
+      {
+        "kind": "decision",
+        "id": "dec_publish_report",
+        "addon": "publish",
+        "ticket": "DEMO-0041",
+        "title": "Publish report",
+        "question": "Publish Before/after report as secret link for 7 days?",
+        "detail": "The link is read-only and unlisted. 3 screenshots and the reconciliation table are included.",
+        "options": [
+          {
+            "key": "yes",
+            "label": "Publish",
+            "primary": true
+          },
+          {
+            "key": "no",
+            "label": "Not now"
+          }
+        ],
+        "action": "decide"
+      },
+      {
+        "kind": "decision",
+        "id": "dec_publish_failed_build",
+        "addon": "publish",
+        "title": "Retry failed build",
+        "question": "Ops notebook failed to build: retry with the last good version?",
+        "detail": "The last build failed on a missing module (meter_utils). The last good version is from 2 days ago; retrying rebuilds the notebook from it and keeps the newer files.",
+        "options": [
+          {
+            "key": "retry",
+            "label": "Retry last good version",
+            "primary": true
+          },
+          {
+            "key": "no",
+            "label": "Leave it"
+          }
+        ],
+        "action": "decide"
+      }
+    ],
+    "commands": [
+      {
+        "id": "share",
+        "title": "Share current ticket",
+        "action": "share"
+      },
+      {
+        "id": "share_once",
+        "title": "Create a show-once link",
+        "action": "share_once"
+      }
+    ],
+    "actions": { "save_settings": { "minRole": "owner" }, "decide": { "minRole": "maintainer", "decision": true }, "logs": { "minRole": "viewer", "label": "Show app logs" }, "stop": { "minRole": "member", "undo": "start" }, "revoke": { "minRole": "member", "confirm": "destructive", "confirmLabel": "Revoke link", "confirmText": "The link stops working for everyone who has it. This cannot be undone." } },
+    "package_sha256": "5bff517d9651da29e7bb20407bede9b158b27f279f9e828b1854749b364b8919",
+    "update": null
+  },
+  {
+    "name": "github",
+    "title": "GitHub",
+    "version": "0.5.2",
+    "description": "Links branches and pull requests to tickets and shows their check status.",
+    "capabilities": [
+      "network"
+    ],
+    "first_party": true,
+    "contributions": [
+      {
+        "slot": "nav",
+        "id": "reviews",
+        "title": "Code reviews",
+        "icon": "GitPullRequest",
+        "node": {
+          "type": "stack",
+          "children": [
+            {
+              "type": "stack",
+              "direction": "row",
+              "children": [
+                {
+                  "type": "stat",
+                  "label": "Open PRs",
+                  "value": "${addon.openPrs}"
+                },
+                {
+                  "type": "stat",
+                  "label": "Need review",
+                  "value": "${addon.needReview}"
+                },
+                {
+                  "type": "stat",
+                  "label": "Checks failing",
+                  "value": "${addon.checksFailing}"
+                }
+              ]
+            },
+            {
+              "type": "tabs",
+              "id": "github",
+              "tabs": [
+                {
+                  "id": "prs",
+                  "label": "Pull requests",
+                  "count": {
+                    "$ref": "addon.openPrs"
+                  },
+                  "node": {
+                    "type": "stack",
+                    "children": [
+                      {
+                        "type": "table",
+                        "columns": [
+                          {
+                            "key": "repo",
+                            "label": "Repository"
+                          },
+                          {
+                            "key": "pr",
+                            "label": "PR"
+                          },
+                          {
+                            "key": "title",
+                            "label": "Title"
+                          },
+                          {
+                            "key": "ticket",
+                            "label": "Ticket",
+                            "cell": "ticket"
+                          },
+                          {
+                            "key": "checks",
+                            "label": "Checks",
+                            "cell": "state"
+                          },
+                          {
+                            "key": "review",
+                            "label": "Review",
+                            "cell": "state"
+                          },
+                          {
+                            "key": "updated",
+                            "label": "Updated"
+                          }
+                        ],
+                        "rows": {
+                          "$ref": "addon.prRows"
+                        },
+                        "empty": "No open pull requests. Agents open one when a ticket is ready for review.",
+                        "rowActions": [
+                          {
+                            "label": "Review on GitHub ↗",
+                            "action": "open",
+                            "args": {
+                              "id": "$row.id"
+                            },
+                            "variant": "secondary",
+                            "primary": true
+                          },
+                          {
+                            "label": "Approve on GitHub",
+                            "action": "approve",
+                            "args": {
+                              "id": "$row.id"
+                            },
+                            "variant": "ghost",
+                            "when": "$row.canApprove"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "fold",
+                        "label": "Recently merged",
+                        "count": {
+                          "$ref": "addon.mergedCount"
+                        },
+                        "node": {
+                          "type": "table",
+                          "columns": [
+                            {
+                              "key": "repo",
+                              "label": "Repository"
+                            },
+                            {
+                              "key": "pr",
+                              "label": "PR"
+                            },
+                            {
+                              "key": "title",
+                              "label": "Title"
+                            },
+                            {
+                              "key": "ticket",
+                              "label": "Ticket",
+                              "cell": "ticket"
+                            },
+                            {
+                              "key": "updated",
+                              "label": "Merged"
+                            }
+                          ],
+                          "rows": {
+                            "$ref": "addon.mergedRows"
+                          },
+                          "empty": "Nothing merged yet."
+                        }
+                      },
+                      {
+                        "type": "button",
+                        "label": "Refresh from GitHub",
+                        "action": "refresh",
+                        "variant": "secondary"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "id": "issues",
+                  "label": "Issues",
+                  "count": {
+                    "$ref": "addon.issueCount"
+                  },
+                  "node": {
+                    "type": "table",
+                    "columns": [
+                      {
+                        "key": "repo",
+                        "label": "Repository"
+                      },
+                      {
+                        "key": "issue",
+                        "label": "Issue"
+                      },
+                      {
+                        "key": "title",
+                        "label": "Title"
+                      },
+                      {
+                        "key": "label",
+                        "label": "Label"
+                      }
+                    ],
+                    "rows": {
+                      "$ref": "addon.issueRows"
+                    },
+                    "empty": "No open issues. New issues from GitHub appear here to import as tickets.",
+                    "rowActions": [
+                      {
+                        "label": "Import as ticket",
+                        "action": "import",
+                        "args": {
+                          "id": "$row.id"
+                        },
+                        "variant": "secondary"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "slot": "today.card",
+        "id": "reviews.today",
+        "title": "PRs needing review",
+        "icon": "GitPullRequest",
+        "node": {
+          "type": "list",
+          "items": {
+            "$ref": "addon.todayItems"
+          },
+          "empty": "No pull requests need a review."
+        }
+      },
+      {
+        "slot": "board.lane",
+        "id": "issues",
+        "title": "External \u00b7 GitHub issues",
+        "icon": "Github",
+        "node": {
+          "type": "list",
+          "items": {
+            "$ref": "addon.issueItems"
+          },
+          "empty": "No open issues."
+        }
+      },
+      {
+        "slot": "ticket.panel",
+        "id": "pr",
+        "title": "Pull request",
+        "icon": "GitPullRequest",
+        "when": "addon.prByTicket.$ticket",
+        "node": {
+          "type": "stack",
+          "children": [
+            {
+              "type": "kv",
+              "pairs": [
+                {
+                  "label": "Repository",
+                  "value": {
+                    "$ref": "addon.prByTicket.$ticket.repo"
+                  },
+                  "mono": true
+                },
+                {
+                  "label": "Branch",
+                  "value": {
+                    "$ref": "addon.prByTicket.$ticket.branch"
+                  },
+                  "mono": true
+                },
+                {
+                  "label": "PR",
+                  "value": "#${addon.prByTicket.$ticket.number}"
+                },
+                {
+                  "label": "Author",
+                  "value": {
+                    "$ref": "addon.prByTicket.$ticket.author"
+                  }
+                },
+                {
+                  "label": "Diff",
+                  "value": {
+                    "$ref": "addon.prByTicket.$ticket.diff"
+                  }
+                },
+                {
+                  "label": "Review",
+                  "value": {
+                    "$ref": "addon.prByTicket.$ticket.review"
+                  }
+                }
+              ]
+            },
+            {
+              "type": "kv",
+              "pairs": {
+                "$ref": "addon.prByTicket.$ticket.checkPairs"
+              }
+            },
+            {
+              "type": "link",
+              "label": "Open on GitHub",
+              "href": "${addon.prByTicket.$ticket.url}"
+            },
+            {
+              "type": "button",
+              "label": "Refresh",
+              "action": "refresh",
+              "variant": "secondary"
+            }
+          ]
+        }
+      },
+      {
+        "slot": "settings",
+        "id": "github.settings",
+        "title": "GitHub",
+        "icon": "Github",
+        "node": {
+          "type": "form",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "org": {
+                "type": "string",
+                "title": "Organisation"
+              },
+              "repos": {
+                "type": "string",
+                "title": "Repositories (comma separated)"
+              },
+              "poll_minutes": {
+                "type": "integer",
+                "title": "Poll interval (minutes)",
+                "enum": [
+                  1,
+                  5,
+                  15,
+                  30
+                ]
+              },
+              "link_prs": {
+                "type": "boolean",
+                "title": "Link PRs from branch names"
+              }
+            }
+          },
+          "formData": {
+            "$ref": "addon.settings"
+          },
+          "action": "save_settings",
+          "submitLabel": "Save"
+        }
+      }
+    ],
+    "commands": [
+      {
+        "id": "refresh",
+        "title": "Refresh pull requests",
+        "action": "refresh"
+      }
+    ],
+    "actions": { "save_settings": { "minRole": "owner" }, "open": { "minRole": "viewer", "kind": "navigation", "label": "Open pull request" } },
+    "package_sha256": "0f33d256eae57ec0f00baba48552b229d04f5fb2bfe277ce02667cf7196f6fa9",
+    "update": {
+      "version": "0.6.0",
+      "capabilities": [
+        "network",
+        "spawn_agent"
+      ],
+      "package_sha256": "59332aa879d44085369f04919255e071d27e293b4c2d5f000fcd478e507684ee",
+      "changelog": "Review requests can now start an agent session that opens a fix branch. Adds the spawn_agent capability."
+    }
+  },
+  {
+    "name": "usage",
+    "title": "Usage",
+    "version": "0.2.1",
+    "description": "Tracks agent time and cost per ticket. Money is stored in cents.",
+    "capabilities": [],
+    "first_party": true,
+    "contributions": [
+      {
+        "slot": "nav",
+        "id": "overview",
+        "title": "Usage",
+        "icon": "Gauge",
+        "node": {
+          "type": "stack",
+          "children": [
+            {
+              "$ref": "addon.budgetNotice"
+            },
+            {
+              "type": "stack",
+              "direction": "row",
+              "children": [
+                {
+                  "type": "stat",
+                  "label": "Last 7 days",
+                  "value": "${addon.weekCents|chf}",
+                  "hint": "cost"
+                },
+                {
+                  "type": "stat",
+                  "label": "Month to date",
+                  "value": "${addon.monthCents|chf}",
+                  "hint": "${addon.budgetPct}% of the CHF ${addon.budgetChf} monthly budget"
+                },
+                {
+                  "type": "stat",
+                  "label": "Last 30 days",
+                  "value": "${addon.cost30Cents|chf}",
+                  "hint": "cost, all models"
+                },
+                {
+                  "type": "stat",
+                  "label": "Tokens, last 30 days",
+                  "value": "${addon.tokens30Text}",
+                  "hint": "input + output, without cache reads"
+                }
+              ]
+            },
+            {
+              "type": "tabs",
+              "id": "usage",
+              "tabs": [
+                {
+                  "id": "overview",
+                  "label": "Overview",
+                  "node": {
+                    "type": "stack",
+                    "children": [
+                      {
+                        "type": "progress",
+                        "label": "Monthly budget used (CHF)",
+                        "value": {
+                          "$ref": "addon.monthChf"
+                        },
+                        "max": {
+                          "$ref": "addon.budgetChf"
+                        }
+                      },
+                      {
+                        "type": "stack",
+                        "direction": "row",
+                        "children": [
+                          {
+                            "type": "chart",
+                            "kind": "bar",
+                            "layout": "horizontal",
+                            "title": "Cost by model · last 30 days",
+                            "xKey": "model",
+                            "unit": "CHF",
+                            "valueLabels": true,
+                            "series": [
+                              {
+                                "key": "chf",
+                                "label": "Cost (CHF)"
+                              }
+                            ],
+                            "points": {
+                              "$ref": "addon.perModel"
+                            }
+                          },
+                          {
+                            "type": "chart",
+                            "kind": "line",
+                            "title": "Cost per day · last 30 days (CHF/day)",
+                            "xKey": "day",
+                            "unit": "CHF",
+                            "series": [
+                              {
+                                "key": "chf",
+                                "label": "CHF per day"
+                              }
+                            ],
+                            "points": {
+                              "$ref": "addon.perDay"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                },
+                {
+                  "id": "model",
+                  "label": "By model",
+                  "node": {
+                    "type": "stack",
+                    "children": [
+                      {
+                        "type": "markdown",
+                        "text": "**Last 30 days.** Input and output tokens exclude cache reads; cache-read tokens are counted separately."
+                      },
+                      {
+                        "type": "table",
+                        "totalRow": true,
+                        "columns": [
+                          {
+                            "key": "model",
+                            "label": "Model"
+                          },
+                          {
+                            "key": "cost",
+                            "label": "Cost (CHF)",
+                            "align": "right"
+                          },
+                          {
+                            "key": "share",
+                            "label": "Share of cost",
+                            "align": "right"
+                          },
+                          {
+                            "key": "sessions",
+                            "label": "Sessions",
+                            "align": "right"
+                          },
+                          {
+                            "key": "input",
+                            "label": "Input (M tokens)",
+                            "align": "right"
+                          },
+                          {
+                            "key": "output",
+                            "label": "Output (M tokens)",
+                            "align": "right"
+                          },
+                          {
+                            "key": "cache",
+                            "label": "Cache-read (M tokens)",
+                            "align": "right"
+                          }
+                        ],
+                        "rows": {
+                          "$ref": "addon.modelRows"
+                        },
+                        "empty": "No usage yet. Costs appear after the first agent session."
+                      }
+                    ]
+                  }
+                },
+                {
+                  "id": "ticket",
+                  "label": "By ticket",
+                  "node": {
+                    "type": "stack",
+                    "children": [
+                      {
+                        "type": "markdown",
+                        "text": "**Last 30 days**, tickets you can see."
+                      },
+                      {
+                        "type": "table",
+                        "columns": [
+                          {
+                            "key": "ticket",
+                            "label": "Ticket",
+                            "cell": "ticket"
+                          },
+                          {
+                            "key": "cost",
+                            "label": "Cost (CHF)",
+                            "align": "right"
+                          },
+                          {
+                            "key": "tokens",
+                            "label": "Tokens (M)",
+                            "align": "right"
+                          },
+                          {
+                            "key": "sessions",
+                            "label": "Sessions",
+                            "align": "right"
+                          },
+                          {
+                            "key": "time",
+                            "label": "Agent time",
+                            "align": "right"
+                          }
+                        ],
+                        "rows": {
+                          "$ref": "addon.ticketRows"
+                        },
+                        "empty": "No agent work yet. Cost per ticket appears after an agent has worked on one."
+                      }
+                    ]
+                  }
+                },
+                {
+                  "id": "agent",
+                  "label": "By agent",
+                  "node": {
+                    "type": "stack",
+                    "children": [
+                      {
+                        "type": "markdown",
+                        "text": "**Last 30 days**, all tickets."
+                      },
+                      {
+                        "type": "table",
+                        "columns": [
+                          {
+                            "key": "agent",
+                            "label": "Agent"
+                          },
+                          {
+                            "key": "cost",
+                            "label": "Cost (CHF)",
+                            "align": "right"
+                          },
+                          {
+                            "key": "share",
+                            "label": "Share of cost",
+                            "align": "right"
+                          },
+                          {
+                            "key": "sessions",
+                            "label": "Sessions",
+                            "align": "right"
+                          },
+                          {
+                            "key": "tokens",
+                            "label": "Tokens (M)",
+                            "align": "right"
+                          }
+                        ],
+                        "rows": {
+                          "$ref": "addon.agentRows"
+                        },
+                        "empty": "No agent work yet."
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "slot": "today.card",
+        "id": "week",
+        "title": "Agent spend",
+        "icon": "Gauge",
+        "node": {
+          "type": "stat",
+          "label": "Last 7 days",
+          "value": "${addon.weekCents|chf}",
+          "hint": "${addon.monthCents|chf} this month"
+        }
+      },
+      {
+        "slot": "ticket.panel",
+        "id": "ticket",
+        "title": "Usage",
+        "icon": "Gauge",
+        "when": "addon.byTicket.$ticket",
+        "node": {
+          "type": "kv",
+          "pairs": [
+            {
+              "label": "Cost",
+              "value": "${addon.byTicket.$ticket.cents|chf}"
+            },
+            {
+              "label": "Tokens",
+              "value": "${addon.byTicket.$ticket.tokens|ktok}"
+            },
+            {
+              "label": "Sessions",
+              "value": {
+                "$ref": "addon.byTicket.$ticket.sessions"
+              }
+            },
+            {
+              "label": "Agent time",
+              "value": "${addon.byTicket.$ticket.ms|duration}"
+            }
+          ]
+        }
+      },
+      {
+        "slot": "settings",
+        "id": "usage.settings",
+        "title": "Usage",
+        "icon": "Gauge",
+        "node": {
+          "type": "form",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "budget_chf": {
+                "type": "number",
+                "title": "Monthly budget (CHF)"
+              }
+            }
+          },
+          "formData": {
+            "$ref": "addon.settings"
+          },
+          "action": "save_settings",
+          "submitLabel": "Save"
+        }
+      }
+    ],
+    "actions": { "save_settings": { "minRole": "owner" } },
+    "package_sha256": "cee112f07556821db82c7e88c0557e3a55b686921e33baef1ac29eec1c3ad78e",
+    "update": null
+  },
+  {
+    "name": "terminals",
+    "title": "Terminals",
+    "version": "0.4.0",
+    "description": "Interactive terminals next to a ticket. Never granted to agents.",
+    "capabilities": [
+      "pty"
+    ],
+    "first_party": true,
+    "contributions": [
+      {
+        "slot": "nav",
+        "id": "sessions",
+        "title": "Terminals",
+        "icon": "SquareTerminal",
+        "node": {
+          "type": "stack",
+          "children": [
+            { "type": "markdown", "text": "Your shells are private to you. Agent sessions are view-only mirrors; agents never get a terminal." },
+            { "type": "button", "label": "New terminal", "action": "new", "variant": "secondary" },
+            { "type": "terminal", "session": "${addon.current.id}" }
+          ]
+        }
+      },
+      {
+        "slot": "ticket.panel",
+        "id": "ticket",
+        "title": "Terminal",
+        "icon": "SquareTerminal",
+        "node": {
+          "type": "button",
+          "label": "Open terminal in this ticket's worktree",
+          "action": "open_ticket",
+          "variant": "secondary"
+        }
+      },
+      {
+        "slot": "ticket.panel",
+        "id": "ticket-terminal",
+        "title": "Terminal session",
+        "icon": "SquareTerminal",
+        "when": "addon.sessionByTicket.$ticket",
+        "node": { "type": "terminal", "session": "${addon.sessionByTicket.$ticket}" }
+      },
+      {
+        "slot": "settings",
+        "id": "terminals.settings",
+        "title": "Terminals",
+        "icon": "SquareTerminal",
+        "node": {
+          "type": "form",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "shell": {
+                "type": "string",
+                "title": "Shell"
+              },
+              "font_size": {
+                "type": "integer",
+                "title": "Font size",
+                "minimum": 10,
+                "maximum": 20
+              }
+            }
+          },
+          "formData": { "$ref": "addon.settings" },
+          "action": "save_settings",
+          "submitLabel": "Save"
+        }
+      }
+    ],
+    "commands": [
+      {
+        "id": "open",
+        "title": "Open terminal",
+        "action": "open"
+      }
+    ],
+    "actions": { "save_settings": { "minRole": "owner" }, "open": { "minRole": "viewer", "label": "Open terminal", "kind": "navigation" }, "start": { "minRole": "member", "label": "Start a terminal session" }, "resume": { "minRole": "member", "label": "Continue from a session summary" } },
+    "package_sha256": "cf469c979452d209a452ce4f693679a3bb9e21c7e555c97843d25269dcfcd81c",
+    "update": null
+  },
+  {
+    "name": "wiki",
+    "title": "Wiki",
+    "version": "0.1.5",
+    "description": "Markdown knowledge base in the workspace repo, linked from tickets.",
+    "capabilities": [],
+    "first_party": true,
+    "contributions": [
+      {
+        "slot": "nav",
+        "id": "pages",
+        "title": "Wiki",
+        "icon": "BookOpen",
+        "node": {
+          "type": "stack",
+          "children": [
+            {
+              "$ref": "addon.pageView"
+            },
+            {
+              "$ref": "addon.listView"
+            }
+          ]
+        }
+      },
+      {
+        "slot": "ticket.panel",
+        "id": "related",
+        "title": "Related pages",
+        "icon": "BookOpen",
+        "when": "addon.pageOptions",
+        "node": {
+          "type": "stack",
+          "children": [
+            { "type": "list", "items": { "$ref": "addon.byTicket.$ticket" }, "empty": "No linked pages." },
+            {
+              "type": "form",
+              "schema": {
+                "type": "object",
+                "properties": { "page": { "type": "string", "title": "Page", "oneOf": { "$ref": "addon.pageOptions" } } }
+              },
+              "action": "link",
+              "submitLabel": "Link page"
+            }
+          ]
+        }
+      }
+    ],
+    "actions": { "save_settings": { "minRole": "owner" }, "open": { "minRole": "viewer", "label": "Open page", "kind": "navigation" }, "search": { "minRole": "viewer", "label": "Search", "kind": "navigation" }, "close": { "minRole": "viewer", "label": "All pages", "kind": "navigation" }, "clear_search": { "minRole": "viewer", "label": "Clear search", "kind": "navigation" }, "edit": { "minRole": "member", "label": "Edit page", "kind": "navigation" }, "done": { "minRole": "member", "label": "Cancel editing", "kind": "navigation" }, "create": { "minRole": "member", "label": "Create a page" } },
+    "package_sha256": "12b9025be128bb7a6b74b9a1b80bb948db8d186a0ab470110811d0cbe4ccef19",
+    "update": null
+  },
+  {
+    "name": "estimate",
+    "title": "Estimate",
+    "version": "0.2.0",
+    "description": "Story points on tickets, rolled up on epics.",
+    "capabilities": [],
+    "first_party": true,
+    "contributions": [
+      {
+        "slot": "ticket.panel",
+        "id": "points",
+        "title": "Estimate",
+        "icon": "Ruler",
+        "node": {
+          "type": "form",
+          "schema": { "$ref": "addon.pointsSchema" },
+          "uiSchema": {
+            "points": {
+              "ui:placeholder": "Choose"
+            }
+          },
+          "formData": {
+            "$ref": "ticket.addons.estimate"
+          },
+          "action": "set",
+          "submitLabel": "Save estimate"
+        }
+      },
+      {
+        "slot": "board.card_field",
+        "id": "points",
+        "title": "Points",
+        "icon": "Ruler",
+        "node": {
+          "type": "stat",
+          "label": "pt",
+          "value": {
+            "$ref": "ticket.addons.estimate.points"
+          },
+          "sum": {
+            "$ref": "ticket.addons.estimate.weight"
+          }
+        }
+      },
+      {
+        "slot": "settings",
+        "id": "estimate.settings",
+        "title": "Estimate",
+        "icon": "Ruler",
+        "node": {
+          "type": "form",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "scale": {
+                "type": "string",
+                "title": "Scale",
+                "enum": [
+                  "linear",
+                  "fibonacci",
+                  "t-shirt"
+                ]
+              }
+            }
+          },
+          "formData": { "$ref": "addon.settings" },
+          "action": "save_settings",
+          "submitLabel": "Save"
+        }
+      }
+    ],
+    "actions": { "save_settings": { "minRole": "owner" } },
+    "package_sha256": "ddf14dd22f808f71dd0499e40807cbcbcdd25c018d6cdda6b2143e691d9a822d",
+    "update": null
+  },
+  {
+    "name": "widgets",
+    "title": "Widgets",
+    "version": "0.1.0",
+    "description": "Rich ticket sections: charts, check tables and sandboxed pages that agents write into a ticket.",
+    "capabilities": [],
+    "first_party": true,
+    "contributions": [
+      {
+        "slot": "nav",
+        "id": "widgets",
+        "title": "Widgets",
+        "icon": "LayoutPanelTop",
+        "node": {
+          "type": "stack",
+          "children": [
+            { "type": "markdown", "text": "Agents can put small charts, tables and interactive pages into the Context, Current state and Verification sections of a ticket. Pages run in a locked sandbox that cannot reach this dashboard, the network or your files, and a block that breaks a rule is shown as plain words instead of being half-drawn." },
+            { "type": "stack", "children": { "$ref": "addon.gallery" } }
+          ]
+        }
+      }
+    ],
+    "package_sha256": "c96f33c3cfe80db8ff103fec603c664cc2fd0961ece692e4627965aa9668d335",
+    "update": null
+  },
+  {
+    "name": "start-agent",
+    "title": "Start agent",
+    "version": "0.1.0",
+    "description": "Start an agent session on a ticket: pick the mode, the harness and where it runs, see the exact command, and confirm. orch runs it under your grant.",
+    "capabilities": ["spawn_agent"],
+    "first_party": true,
+    "contributions": [
+      {
+        "slot": "ticket.panel",
+        "id": "start-agent.ticket",
+        "title": "Start agent",
+        "icon": "Bot",
+        "when": "addon.byTicket.$ticket",
+        "node": {
+          "type": "stack",
+          "children": [{ "$ref": "addon.byTicket.$ticket.run" }, { "$ref": "addon.byTicket.$ticket.setup" }]
+        }
+      },
+      {
+        "slot": "nav",
+        "id": "start",
+        "title": "Start agent",
+        "icon": "Bot",
+        "node": {
+          "type": "stack",
+          "children": [
+            { "type": "markdown", "text": "Start an agent session on a ticket. orch confirms every start in its own dialog and runs it under your grant; revoking the grant stops it." },
+            {
+              "type": "form",
+              "schema": {
+                "type": "object",
+                "required": ["ticket"],
+                "properties": {
+                  "ticket": { "type": "string", "title": "Ticket", "oneOf": { "$ref": "addon.ticketOptions" } },
+                  "mode": { "type": "string", "title": "Mode", "default": "work", "oneOf": [{ "const": "refine", "title": "Refine" }, { "const": "work", "title": "Work on ticket" }, { "const": "fix", "title": "Fix failing checks" }, { "const": "continue", "title": "Continue after feedback" }] },
+                  "harness": { "type": "string", "title": "Harness", "default": "claude-code", "oneOf": [{ "const": "claude-code", "title": "Claude Code" }, { "const": "codex", "title": "Codex" }] },
+                  "where": { "type": "string", "title": "Where", "default": "background", "oneOf": [{ "const": "terminals", "title": "Terminals" }, { "const": "background", "title": "Background" }] }
+                }
+              },
+              "formData": { "$ref": "addon.page.form" },
+              "action": "configure",
+              "submitLabel": "Preview command"
+            },
+            { "$ref": "addon.page.preview" },
+            { "type": "markdown", "text": "### Running" },
+            {
+              "type": "table",
+              "columns": [{ "key": "ticket", "label": "Ticket" }, { "key": "title", "label": "Title" }, { "key": "harness", "label": "Harness" }, { "key": "model", "label": "Model" }, { "key": "state", "label": "State" }, { "key": "started", "label": "Started" }],
+              "rows": { "$ref": "addon.runs" },
+              "empty": "Nothing is running.",
+              "rowActions": [{ "label": "Stop", "action": "stop", "args": { "session": "$row.session" }, "variant": "danger" }]
+            },
+            { "type": "markdown", "text": "### Ended" },
+            { "type": "list", "items": { "$ref": "addon.ended" }, "empty": "No run has ended yet." }
+          ]
+        }
+      },
+      {
+        "slot": "settings",
+        "id": "start-agent.settings",
+        "title": "Start agent",
+        "icon": "Bot",
+        "node": {
+          "type": "form",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "harness": { "type": "string", "title": "Default harness", "oneOf": [{ "const": "claude-code", "title": "Claude Code" }, { "const": "codex", "title": "Codex" }] },
+              "where": { "type": "string", "title": "Default place to run", "oneOf": [{ "const": "terminals", "title": "Terminals" }, { "const": "background", "title": "Background" }] }
+            }
+          },
+          "formData": { "$ref": "addon.settings" },
+          "action": "save_settings",
+          "submitLabel": "Save"
+        }
+      }
+    ],
+    "commands": [],
+    "actions": {
+      "configure": { "minRole": "member" },
+      "start": { "minRole": "member", "confirm": "spawn_agent" },
+      "stop": { "minRole": "member" },
+      "save_settings": { "minRole": "owner" }
+    },
+    "package_sha256": "12ff88fdfa0f1bfe8349844b93d13e2c2fe13bdaf2161cd82d77b386f3a8d722",
+    "update": null
+  },
+  {
+    "name": "guide",
+    "title": "Guide",
+    "version": "0.1.0",
+    "description": "How to use the dashboard: short pages for first-time users, and the help sheet on ?.",
+    "capabilities": [],
+    "first_party": true,
+    "contributions": [
+      {
+        "slot": "nav",
+        "id": "guide",
+        "title": "Guide",
+        "icon": "CircleHelp",
+        "node": {
+          "type": "stack",
+          "children": [
+            { "type": "list", "items": { "$ref": "addon.items" }, "empty": "No pages." },
+            { "type": "markdown", "text": { "$ref": "addon.current.markdown" } }
+          ]
+        }
+      }
+    ],
+    "actions": {
+      "open": { "minRole": "viewer", "label": "Open page", "kind": "navigation" }
+    },
+    "package_sha256": "5d1c7e0a93b46f28c0e9a7b1d4f63a82e5b09c17d2a84f6e3b7c05a91d8e4f26",
+    "update": null
+  }
+]

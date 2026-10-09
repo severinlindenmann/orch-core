@@ -1,0 +1,85 @@
+{
+  "INT": [
+    {
+      "definition": {
+        "uid": "01J9Y1A2B3C4D5E6F7G8H9J0K1",
+        "key": "INT-0007",
+        "title": "Rotate shared Slack webhook",
+        "type": "chore",
+        "priority": "medium",
+        "size": "xs",
+        "labels": ["security"],
+        "acceptance": [{ "id": "AC1", "text": "Old webhook revoked, alerts still arrive" }],
+        "tasks": [{ "id": "T1", "text": "Create the new webhook and store it in the secret store", "verify": null, "proves": ["AC1"] }],
+        "addons": { "estimate": { "points": 1 } }
+      },
+      "body": { "summary": "The webhook was pasted into a public gist by mistake. Rotate it.", "requirements": "New webhook in the secret store, old one revoked." },
+      "events": [
+        { "at": "2026-10-08T12:00:00Z", "type": "ticket.created", "actor": "p_sev", "status": "backlog" },
+        { "at": "2026-10-08T12:00:01Z", "type": "people.set", "actor": "p_sev", "owner": "p_sev", "assignees": ["p_sev"], "reviewers": [], "watchers": [] },
+        { "at": "2026-10-08T12:05:00Z", "type": "gate.approved", "actor": "p_sev", "gate": "requirements" },
+        { "at": "2026-10-08T12:06:00Z", "type": "status.changed", "actor": "host", "to": "open" }
+      ]
+    },
+    {
+      "definition": {
+        "uid": "01J9Y2B3C4D5E6F7G8H9J0K1L2",
+        "key": "INT-0008",
+        "title": "Quarterly access review",
+        "type": "chore",
+        "priority": "medium",
+        "size": "m",
+        "labels": ["compliance"],
+        "acceptance": [{ "id": "AC1", "text": "Every system has a reviewed and signed access list" }],
+        "tasks": [
+          { "id": "T1", "text": "Export access lists", "verify": null, "proves": [] },
+          { "id": "T2", "text": "Review and sign", "verify": null, "proves": ["AC1"], "assignee": "p_sev" }
+        ],
+        "addons": { "estimate": { "points": 5 } }
+      },
+      "body": { "summary": "Quarterly review of who has access to what.", "current_state": "Exports done, review pending." },
+      "events": [
+        { "at": "2026-10-05T09:00:00Z", "type": "ticket.created", "actor": "p_sev", "status": "backlog" },
+        { "at": "2026-10-05T09:00:01Z", "type": "people.set", "actor": "p_sev", "owner": "p_sev", "assignees": ["p_sev"], "reviewers": [], "watchers": [] },
+        { "at": "2026-10-06T09:00:00Z", "type": "status.changed", "actor": "p_sev", "to": "in-progress" },
+        { "at": "2026-10-06T10:00:00Z", "type": "task.done", "actor": "p_sev", "task": "T1", "receipt": { "exit": 0, "ms": 0 } }
+      ]
+    }
+  ],
+  "CLI": [
+    {
+      "definition": {
+        "uid": "01J9X1C2D3E4F5G6H7J8K9L0M1",
+        "key": "CLI-0003",
+        "title": "Provision VM for client sandbox",
+        "type": "feature",
+        "priority": "medium",
+        "size": "m",
+        "labels": ["infra"],
+        "acceptance": [{ "id": "AC1", "text": "Client can SSH into a sandbox VM with the agreed image" }],
+        "tasks": [{ "id": "T1", "text": "Create VM from golden image", "verify": null, "proves": ["AC1"] }],
+        "questions": [
+          {
+            "id": "Q1",
+            "to": "p_sev",
+            "text": "Which region should the sandbox VM run in?",
+            "options": [
+              { "key": "ch", "label": "Switzerland North" },
+              { "key": "eu", "label": "West Europe", "cost": "-12 % cost" }
+            ],
+            "recommended": "ch",
+            "blocking": true
+          }
+        ],
+        "addons": { "estimate": { "points": 3 } }
+      },
+      "body": { "summary": "The client needs a sandbox VM for the pilot.", "current_state": "Waiting for the region decision." },
+      "events": [
+        { "at": "2026-10-07T13:00:00Z", "type": "ticket.created", "actor": "p_sev", "status": "backlog" },
+        { "at": "2026-10-07T13:00:01Z", "type": "people.set", "actor": "p_sev", "owner": "p_sev", "assignees": ["p_sev"], "reviewers": [], "watchers": [] },
+        { "at": "2026-10-07T13:10:00Z", "type": "question.asked", "actor": "claude-code:s_90ff:p_sev", "question": "Q1" },
+        { "at": "2026-10-07T13:10:01Z", "type": "status.changed", "actor": "host", "to": "waiting" }
+      ]
+    }
+  ]
+}

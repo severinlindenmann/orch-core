@@ -327,7 +327,8 @@ registerAddon({
     finding(ctx) {
       // A decision action: core checked who decides, that it is open and that the option is one of its options.
       const { state, store, ws, body } = ctx
-      const run = runsOf(state).find((r) => decisionId(r) === ctx.decision!.id)!
+      const run = ctx.decision && runsOf(state).find((r) => decisionId(r) === ctx.decision!.id)
+      if (!run?.finding) return fail(409, 'decision.closed', 'That decision is closed.') // only when the manifest lacks `decision: true`
       if (body.option === 'dismiss') {
         run.findingState = 'dismissed'
         return { ok: true, message: 'Dismissed.', changed: true }

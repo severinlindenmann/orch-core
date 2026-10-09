@@ -13,7 +13,8 @@ import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { ago, displayName, shortHash, useAct, type Directory } from './shared'
 import { addonRule } from '@/addon-ui/addonClasses'
-import { SignPrompt, TOUCH_ID_MS } from '@/components/sign/SignPrompt'
+import { TOUCH_ID_MS } from '@/components/sign/SignPrompt'
+import { DecisionSignPrompt, decisionBody } from '@/addon-ui/DecisionSignPrompt'
 
 interface CommonProps {
   dir: Directory
@@ -403,14 +404,21 @@ export function AddonDecisionCard({ d, readOnly }: { d: AddonDecision; readOnly:
   const id = `addon:${d.id}`
   // Every answer goes through core's signing prompt first (presence), then core records it (addon.decided).
   const [signing, setSigning] = useState<AddonDecision['options'][number] | null>(null)
+  // From the click until the post resolves the options are off: no second prompt, no second post.
+  const [pending, setPending] = useState(false)
   const sign = async (o: AddonDecision['options'][number]) => {
     setSigning(null)
     if (!workspace) return
-    await new Promise((r) => setTimeout(r, TOUCH_ID_MS))
-    await act(id, () => api.runAddonAction(workspace.id, d.addon, d.action, { option: o.key, id: d.id, ticket: d.ticket }), {
-      toast: `${d.title}: ${o.label}`,
-      note: { text: `${d.title} · ${o.label}`, detail: `${d.addon}${d.ticket ? ` · ${d.ticket}` : ''} · signed with Touch ID` },
-    })
+    setPending(true)
+    try {
+      await new Promise((r) => setTimeout(r, TOUCH_ID_MS))
+      await act(id, () => api.runAddonAction(workspace.id, d.addon, d.action, decisionBody(d, o.key)), {
+        toast: `${d.title}: ${o.label}`,
+        note: { text: `${d.title} · ${o.label}`, detail: `${d.addon}${d.ticket ? ` · ${d.ticket}` : ''} · signed with Touch ID` },
+      })
+    } finally {
+      setPending(false)
+    }
   }
   return (
     <div data-testid={`card-${id}`}>
@@ -425,9 +433,11 @@ export function AddonDecisionCard({ d, readOnly }: { d: AddonDecision; readOnly:
                 size="sm"
                 variant={o.primary ? 'default' : 'outline'}
                 className={cn(o.primary && PRIMARY)}
-                disabled={readOnly}
+                disabled={readOnly || pending || !!signing}
+                aria-busy={pending || undefined}
                 onClick={() => setSigning(o)}
               >
+                {pending && <Loader2 className="animate-spin" />}
                 {o.label}
               </Button>
               </DisabledReason>
@@ -447,16 +457,7 @@ export function AddonDecisionCard({ d, readOnly }: { d: AddonDecision; readOnly:
           </p>
         </div>
       </AddonFrame>
-      {signing && (
-        <SignPrompt
-          title={`Decide: ${d.title}`}
-          covers={[`Your answer: ${signing.label}`, `Requested by the addon ${d.addon}${d.ticket ? ` about ${d.ticket}` : ''}`, `In workspace ${workspace?.prefix ?? ''}`, 'Signed as you, with your own key']}
-          onClose={() => setSigning(null)}
-          onSign={() => void sign(signing)}
-        >
-          <p className="text-[13px] text-text">{d.question}</p>
-        </SignPrompt>
-      )}
+      {signing && <DecisionSignPrompt d={d} option={signing} workspacePrefix={workspace?.prefix ?? ''} onClose={() => setSigning(null)} onSign={() => void sign(signing)} />}
     </div>
   )
 }

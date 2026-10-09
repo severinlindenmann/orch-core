@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useRouterState } from '@tanstack/react-router'
 import { addonActive } from '@/api/addons'
 import { api } from '@/api/client'
 import { helpPageFor, type HelpRoute } from '@/api/guide'
 import { AddonFrame } from '@/addon-ui/AddonFrame'
+import { addonStateKey } from '@/addon-ui/slots'
 import { SafeMarkdown } from '@/addon-ui/SafeMarkdown'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -22,6 +23,7 @@ interface GuideState {
  */
 export function HelpSheet() {
   const [open, setOpen] = useState(false)
+  const qc = useQueryClient()
   const { workspace } = useWorkspace()
   const path = useRouterState({ select: (s) => s.location.pathname })
   const active = !!workspace && addonActive(workspace, 'guide')
@@ -49,7 +51,12 @@ export function HelpSheet() {
   const openPage = () => {
     setOpen(false)
     // Only remembers which guide page to show; if it fails (offline, role) the full guide simply opens on its last page.
-    if (workspace && slug) void api.runAddonAction(workspace.id, 'guide', 'open', { slug }).catch(() => undefined)
+    // A navigation action: no cursor bump, so the guide's (shared, cached) state is read again here.
+    if (workspace && slug)
+      void api.runAddonAction(workspace.id, 'guide', 'open', { slug }).then(
+        () => qc.invalidateQueries({ queryKey: addonStateKey(workspace.id, 'guide') }),
+        () => undefined,
+      )
   }
 
   return (

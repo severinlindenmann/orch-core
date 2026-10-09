@@ -22,7 +22,8 @@ const setup = (viewer = 'p_sev') => {
 }
 type S = ReturnType<typeof setup>
 const decisionOf = async (s: S, addon: string) => (await s.api.getAddonDecisions(s.ws)).find((d) => d.addon === addon)!
-const decide = (s: S, d: AddonDecision, option: string) => s.api.runAddonAction(s.ws, d.addon, d.action, { id: d.id, option, ...(d.ticket ? { ticket: d.ticket } : {}) })
+/** As core's Today prompt posts it: after signing, with core's `confirmed` flag. */
+const decide = (s: S, d: AddonDecision, option: string, confirmed = true) => s.api.runAddonAction(s.ws, d.addon, d.action, { id: d.id, option, ...(d.ticket ? { ticket: d.ticket } : {}), ...(confirmed ? { confirmed: true } : {}) })
 const decided = (s: S) => s.store.wsEventsOf(s.ws).filter((e) => e.type === 'addon.decided')
 const manifest = (name: string) => ([...addons, ...catalog].find((a) => a.name === name) as unknown as { actions?: Record<string, ActionMeta> }).actions ?? {}
 
@@ -61,9 +62,32 @@ describe('addon decisions: one rule in core', () => {
     })
   })
 
+  it('a decision posted without core\'s signing prompt (an addon node\'s own args) is 409 confirm.required: no event, no change, no refresh', async () => {
+    for (const addon of DECIDING) {
+      const s = setup()
+      const d = await decisionOf(s, addon)
+      const before = JSON.stringify(s.store.addonState(s.ws, addon))
+      const cursor = s.store.cursor(s.ws)
+      expect(await refused(decide(s, d, d.options[0].key, false)), addon).toMatchObject({ status: 409, code: 'confirm.required' })
+      expect(decided(s), addon).toHaveLength(0)
+      expect(JSON.stringify(s.store.addonState(s.ws, addon)), addon).toBe(before)
+      expect(s.store.cursor(s.ws), addon).toBe(cursor)
+    }
+  })
+
+  it('a manifest that lost the decision flag (e.g. in update.actions) answers 409 decision.closed, never a 500', async () => {
+    for (const addon of DECIDING) {
+      const s = setup()
+      const d = await decisionOf(s, addon)
+      const pkg = s.store.addons.find((a) => a.name === addon)!
+      pkg.actions = { ...pkg.actions, [d.action]: { minRole: 'maintainer' } }
+      expect(await refused(decide(s, d, d.options[0].key)), addon).toMatchObject({ status: 409, code: 'decision.closed' })
+    }
+  })
+
   it('a made-up decision id is closed', async () => {
     const s = setup()
-    expect(await refused(s.api.runAddonAction(s.ws, 'publish', 'decide', { id: 'nope', option: 'yes' }))).toMatchObject({ status: 409, code: 'decision.closed' })
+    expect(await refused(s.api.runAddonAction(s.ws, 'publish', 'decide', { id: 'nope', confirmed: true, option: 'yes' }))).toMatchObject({ status: 409, code: 'decision.closed' })
   })
 
   it('addon.decided shows in Activity for owners and maintainers only, and not when its ticket is hidden', async () => {

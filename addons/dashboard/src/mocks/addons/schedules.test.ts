@@ -152,7 +152,7 @@ describe('a recurring finding lands on Today', () => {
   it('filing creates a backlog ticket through core and closes the decision', async () => {
     const s = setup()
     const [d] = await decisions(s)
-    const res = await run(s, 'finding', { id: d.id, option: 'file' })
+    const res = await run(s, 'finding', { id: d.id, confirmed: true, option: 'file' })
     expect(res.message).toMatch(/DEMO-\d{4}/)
     const key = /DEMO-\d{4}/.exec(res.message)![0]
     expect(s.store.ticket(key)).toMatchObject({ title: 'Update dependencies, week 41', status: 'backlog', type: 'chore' })
@@ -163,15 +163,15 @@ describe('a recurring finding lands on Today', () => {
     const s = setup()
     const n = s.store.ticketKeys(s.ws).length
     const [d] = await decisions(s)
-    await run(s, 'finding', { id: d.id, option: 'dismiss' })
+    await run(s, 'finding', { id: d.id, confirmed: true, option: 'dismiss' })
     expect(await decisions(s)).toEqual([])
     expect(s.store.ticketKeys(s.ws)).toHaveLength(n)
   })
   it('Run now on the recurring schedule files a new finding; a closed decision does nothing; viewers get none', async () => {
     const s = setup()
     const [d] = await decisions(s)
-    await run(s, 'finding', { id: d.id, option: 'dismiss' })
-    expect(await refused(run(s, 'finding', { id: d.id, option: 'file' }))).toMatchObject({ status: 409, code: 'decision.closed', message: 'That decision is closed.' })
+    await run(s, 'finding', { id: d.id, confirmed: true, option: 'dismiss' })
+    expect(await refused(run(s, 'finding', { id: d.id, confirmed: true, option: 'file' }))).toMatchObject({ status: 409, code: 'decision.closed', message: 'That decision is closed.' })
     await run(s, 'run_now', { id: 'deps-weekly' })
     const next = await decisions(s)
     expect(next).toHaveLength(1)
@@ -181,7 +181,7 @@ describe('a recurring finding lands on Today', () => {
   it('a filed ticket the viewer cannot see is not named in the run history', async () => {
     const s = setup()
     const [d] = await decisions(s)
-    const key = /DEMO-\d{4}/.exec((await run(s, 'finding', { id: d.id, option: 'file' })).message)![0]
+    const key = /DEMO-\d{4}/.exec((await run(s, 'finding', { id: d.id, confirmed: true, option: 'file' })).message)![0]
     ;(s.store as unknown as { defs: Map<string, { visibility: unknown }> }).defs.get(key)!.visibility = { restricted: ['p_sev'] }
     s.store.setViewer('p_mara')
     const json = JSON.stringify(await state(s))
@@ -208,7 +208,7 @@ describe('review fixes', () => {
     const s = setup()
     const [d] = await decisions(s)
     const n = s.store.ticketKeys(s.ws).length
-    expect(await fail(run(s, 'finding', { id: d.id, option: 'maybe' }))).toBe('400 validation.option')
+    expect(await fail(run(s, 'finding', { id: d.id, confirmed: true, option: 'maybe' }))).toBe('400 validation.option')
     expect(s.store.ticketKeys(s.ws)).toHaveLength(n)
     expect(await decisions(s)).toHaveLength(1)
   })

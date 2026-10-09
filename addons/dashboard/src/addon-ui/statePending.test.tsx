@@ -64,3 +64,22 @@ describe('resolveBindings defaults', () => {
     expect(resolveBindings({ value: { $ref: 'addon.nope' } }, {})).toEqual({ value: null })
   })
 })
+
+describe('state requests per surface', () => {
+  it('the busy board asks each addon for its state at most once, and never per card', async () => {
+    const spy = vi.spyOn(api, 'getAddonState')
+    renderApp('/board', { viewer: 'p_sev', setup: (s) => s.reset('busy') })
+    await waitFor(() => expect(screen.getAllByTestId(/^card-DEMO-/).length).toBeGreaterThan(50), { timeout: 15_000 })
+    await new Promise((r) => setTimeout(r, 300))
+    expect(spy.mock.calls.filter((c) => c[2] !== undefined)).toEqual([])
+    const perAddon = new Map<string, number>()
+    for (const c of spy.mock.calls) perAddon.set(c[1], (perAddon.get(c[1]) ?? 0) + 1)
+    for (const [name, n] of perAddon) expect(n, name).toBeLessThanOrEqual(1)
+  }, 30_000)
+  it('a ticket panel that binds addon state asks for its ticket', async () => {
+    const spy = vi.spyOn(api, 'getAddonState')
+    renderApp('/ticket/DEMO-0044', { viewer: 'p_sev' })
+    expect(await screen.findByRole('button', { name: 'Start' }, T)).toBeInTheDocument()
+    expect(spy.mock.calls.some((c) => c[1] === 'start-agent' && c[2] === 'DEMO-0044')).toBe(true)
+  })
+})

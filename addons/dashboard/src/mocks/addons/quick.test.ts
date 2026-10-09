@@ -131,7 +131,7 @@ describe('quick tasks outgrew decision', () => {
     const s = setup()
     const d = (await decisions(s))[0]
     expect(d.options.map((o) => o.key)).toEqual(['ticket', 'more'])
-    const r = await run(s, d.action, { id: d.id, option: 'ticket' })
+    const r = await run(s, d.action, { id: d.id, confirmed: true, option: 'ticket' })
     expect(r.changed).toBe(true)
     expect((await state(s)).items.find((q) => q.id === 'Q-004')!.status).toBe('converted')
     expect(await decisions(s)).toEqual([])
@@ -139,7 +139,7 @@ describe('quick tasks outgrew decision', () => {
   it('allow 3 more files reopens the task with a higher limit and the decision disappears', async () => {
     const s = setup()
     const d = (await decisions(s))[0]
-    await run(s, d.action, { id: d.id, option: 'more' })
+    await run(s, d.action, { id: d.id, confirmed: true, option: 'more' })
     const q = (await state(s)).items.find((x) => x.id === 'Q-004')!
     expect(q.status).toBe('open')
     expect(await decisions(s)).toEqual([])
@@ -147,8 +147,8 @@ describe('quick tasks outgrew decision', () => {
   it('deciding twice is refused the second time', async () => {
     const s = setup()
     const d = (await decisions(s))[0]
-    await run(s, d.action, { id: d.id, option: 'ticket' })
-    expect(await refused(run(s, d.action, { id: d.id, option: 'ticket' }))).toMatchObject({ status: 409, code: 'decision.closed', message: 'That decision is closed.' })
+    await run(s, d.action, { id: d.id, confirmed: true, option: 'ticket' })
+    expect(await refused(run(s, d.action, { id: d.id, confirmed: true, option: 'ticket' }))).toMatchObject({ status: 409, code: 'decision.closed', message: 'That decision is closed.' })
   })
   it('Make a ticket on the outgrew task removes its decision too', async () => {
     const s = setup()
@@ -158,7 +158,7 @@ describe('quick tasks outgrew decision', () => {
   it('a maintainer decides, a plain member cannot', async () => {
     const s = setup('p_mara')
     const d = (await decisions(s))[0]
-    expect((await run(s, d.action, { id: d.id, option: 'more' })).changed).toBe(true)
+    expect((await run(s, d.action, { id: d.id, confirmed: true, option: 'more' })).changed).toBe(true)
   })
   it('a plain member is refused and nothing changes', async () => {
     // CLI has a plain member (Tom); DEMO has none. An outgrown task is seeded only where state has one, so use a decision-shaped call.
@@ -169,10 +169,10 @@ describe('quick tasks outgrew decision', () => {
     items.find((q) => q.id === 'Q-004')!.status = 'outgrew'
     store.setViewer('p_tom')
     const api = createApi(createMockTransport(store, { latency: false }))
-    await expect(api.runAddonAction(cli, 'quick', 'decide', { id: 'dec_quick_Q-004', option: 'more' })).rejects.toMatchObject({ status: 403 })
+    await expect(api.runAddonAction(cli, 'quick', 'decide', { id: 'dec_quick_Q-004', confirmed: true, option: 'more' })).rejects.toMatchObject({ status: 403 })
     expect(items.find((q) => q.id === 'Q-004')!.status).toBe('outgrew')
     store.setViewer('p_sev') // an owner is above maintainer
-    expect((await api.runAddonAction(cli, 'quick', 'decide', { id: 'dec_quick_Q-004', option: 'more' })).changed).toBe(true)
+    expect((await api.runAddonAction(cli, 'quick', 'decide', { id: 'dec_quick_Q-004', confirmed: true, option: 'more' })).changed).toBe(true)
   })
 })
 

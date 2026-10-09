@@ -262,8 +262,9 @@ registerAddon({
     },
     // A decision action: core checked who decides, that it is open and that the option is one of its options.
     decide(ctx) {
-      const id = ctx.decision!.id
-      const q = outgrew(ctx.state).find((x) => decisionId(x) === id)!
+      const id = ctx.decision?.id
+      const q = id ? outgrew(ctx.state).find((x) => decisionId(x) === id) : undefined
+      if (!id || !q) return conflict('decision.closed', 'That decision is closed.') // only when the manifest lacks `decision: true`
       if (ctx.body.option === 'ticket') return makeTicket(ctx, q)
       q.extra_files = (q.extra_files ?? 0) + MORE_FILES
       q.status = 'open'

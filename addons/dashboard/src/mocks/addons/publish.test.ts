@@ -127,26 +127,26 @@ describe('publish decisions', () => {
   })
   it('deciding removes it, and retry rebuilds the app', async () => {
     const s = setup()
-    const r = await s.api.runAddonAction(s.ws, 'publish', 'decide', { id: 'dec_publish_failed_build', option: 'retry' })
+    const r = await s.api.runAddonAction(s.ws, 'publish', 'decide', { id: 'dec_publish_failed_build', confirmed: true, option: 'retry' })
     expect(r.changed).toBe(true)
     expect(await ids(s)).toEqual(['dec_publish_report'])
     expect((await state(s)).apps.find((a) => a.id === 'app_ops')!.status).toBe('running')
   })
   it('"not now" removes the decision and leaves the app failed', async () => {
     const s = setup()
-    await s.api.runAddonAction(s.ws, 'publish', 'decide', { id: 'dec_publish_failed_build', option: 'no' })
+    await s.api.runAddonAction(s.ws, 'publish', 'decide', { id: 'dec_publish_failed_build', confirmed: true, option: 'no' })
     expect(await ids(s)).toEqual(['dec_publish_report'])
     expect((await state(s)).apps.find((a) => a.id === 'app_ops')!.status).toBe('failed')
   })
   it('publishing the report creates a share on its ticket', async () => {
     const s = setup()
-    await s.api.runAddonAction(s.ws, 'publish', 'decide', { id: 'dec_publish_report', option: 'yes', ticket: 'DEMO-0041' })
+    await s.api.runAddonAction(s.ws, 'publish', 'decide', { id: 'dec_publish_report', confirmed: true, option: 'yes', ticket: 'DEMO-0041' })
     expect(await ids(s)).toEqual(['dec_publish_failed_build'])
     expect((await state(s)).shares.some((x) => x.ticket === 'DEMO-0041' && x.title === 'Before/after report' && x.id !== 'sh_report')).toBe(true)
   })
   it('does not remove the package decisions (state-driven, package untouched)', async () => {
     const s = setup()
-    await s.api.runAddonAction(s.ws, 'publish', 'decide', { id: 'dec_publish_failed_build', option: 'no' })
+    await s.api.runAddonAction(s.ws, 'publish', 'decide', { id: 'dec_publish_failed_build', confirmed: true, option: 'no' })
     expect(s.store.addons.find((a) => a.name === 'publish')!.decisions!.map((d) => d.id)).toContain('dec_publish_failed_build')
   })
 })
@@ -154,16 +154,16 @@ describe('publish decisions', () => {
 describe('closed decisions are refused by the store, for any addon', () => {
   it('deciding the same decision twice is refused the second time and does nothing', async () => {
     const s = setup()
-    await s.api.runAddonAction(s.ws, 'publish', 'decide', { id: 'dec_publish_report', option: 'yes', ticket: 'DEMO-0041' })
+    await s.api.runAddonAction(s.ws, 'publish', 'decide', { id: 'dec_publish_report', confirmed: true, option: 'yes', ticket: 'DEMO-0041' })
     const shares = (await state(s)).shares.length
-    const again = await refused(s.api.runAddonAction(s.ws, 'publish', 'decide', { id: 'dec_publish_report', option: 'yes', ticket: 'DEMO-0041' }))
+    const again = await refused(s.api.runAddonAction(s.ws, 'publish', 'decide', { id: 'dec_publish_report', confirmed: true, option: 'yes', ticket: 'DEMO-0041' }))
     expect(again).toMatchObject({ status: 409, code: 'decision.closed', message: 'That decision is closed.' })
     expect((await state(s)).shares).toHaveLength(shares)
   })
   it('a decision that is not currently open (failed-build once the app runs) is closed', async () => {
     const s = setup()
     await s.api.runAddonAction(s.ws, 'publish', 'redeploy', { id: 'app_ops' })
-    const r = await refused(s.api.runAddonAction(s.ws, 'publish', 'decide', { id: 'dec_publish_failed_build', option: 'retry' }))
+    const r = await refused(s.api.runAddonAction(s.ws, 'publish', 'decide', { id: 'dec_publish_failed_build', confirmed: true, option: 'retry' }))
     expect(r).toMatchObject({ status: 409, code: 'decision.closed', message: 'That decision is closed.' })
   })
 })

@@ -68,6 +68,22 @@ describe('Today page', () => {
     spy.mockRestore()
   })
 
+  it('a decision card\'s options are off from the click until the post resolves (no second prompt or post)', async () => {
+    let release: () => void = () => {}
+    const spy = vi.spyOn(api, 'runAddonAction').mockImplementation(() => new Promise((r) => (release = () => r({ ok: true, message: 'done' }))))
+    const { user } = renderApp('/', { viewer: 'p_sev' })
+    const card = await screen.findByTestId('card-addon:dec_publish_failed_build', {}, { timeout: 4000 })
+    const options = await within(card).findAllByRole('button')
+    await user.click(options[0])
+    for (const b of within(card).getAllByRole('button', { hidden: true })) expect(b).toBeDisabled() // the modal prompt hides the page from assistive tech
+    await user.click(within(await screen.findByRole('dialog', { name: /^Decide: / })).getByRole('button', { name: 'Sign with Touch ID' }))
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(1))
+    for (const b of within(card).queryAllByRole('button')) expect(b).toBeDisabled()
+    release()
+    expect(spy).toHaveBeenCalledTimes(1)
+    spy.mockRestore()
+  })
+
   it('cancelling the signing prompt posts nothing', async () => {
     const spy = vi.spyOn(api, 'runAddonAction')
     const { user } = renderApp('/', { viewer: 'p_sev' })

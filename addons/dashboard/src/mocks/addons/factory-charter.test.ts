@@ -77,7 +77,7 @@ describe('the factory writes its own events as itself', () => {
   it('answering a permit logs factory.permit_granted / factory.permit_refused by the addon; no permit.* or host-acted addon event', async () => {
     const { store, ws, api } = setup()
     const [d] = (await api.getAddonDecisions(ws)).filter((x) => x.addon === 'factory')
-    await api.runAddonAction(ws, 'factory', 'permit', { id: d.id, option: 'epic', ticket: d.ticket })
+    await api.runAddonAction(ws, 'factory', 'permit', { id: d.id, confirmed: true, option: 'epic', ticket: d.ticket })
     const ev = store.eventsOf(EPIC).filter((e) => e.type.startsWith('factory.permit_'))
     expect(ev).toEqual([expect.objectContaining({ type: 'factory.permit_granted', scope: 'epic', actor: { kind: 'addon', id: 'factory' } })])
     expect(store.eventsOf(EPIC).some((e) => e.type.startsWith('permit.'))).toBe(false)
@@ -102,5 +102,25 @@ describe('permit decisions name only what the person can see', () => {
     for (const d of permits) expect(JSON.stringify(d)).not.toContain(EPIC)
     store.setViewer('p_sev')
     expect((await api.getAddonDecisions(ws)).find((d) => d.addon === 'factory')!.detail).toContain(`Epic ${EPIC}.`)
+  })
+})
+
+describe('no double approval, no budget for a refused step', () => {
+  it('a gate already approved (or already approved under the charter) is refused, with no second gate.approved', () => {
+    const { store, ws } = setup()
+    const key = child(store, ws)
+    expect(store.autoApprove(key, 'requirements', { charter: 'factory', by: AGENT }).ok).toBe(true)
+    expect(store.autoApprove(key, 'requirements', { charter: 'factory', by: AGENT })).toMatchObject({ ok: false, status: 409, code: 'gate.already_approved' })
+    expect(approvals(store, key)).toHaveLength(1)
+  })
+  it('a simulated step whose approval core refuses does not use up the budget', async () => {
+    const { store, ws, api } = setup()
+    const used = () => store.addonState(ws, 'factory').used as number
+    await api.runAddonAction(ws, 'factory', 'watch')
+    const before = used()
+    vi.spyOn(store, 'autoApprove').mockReturnValue({ ok: false, status: 409, code: 'charter.inactive', message: 'no' })
+    vi.advanceTimersByTime(20_000)
+    expect(used()).toBe(before)
+    vi.restoreAllMocks()
   })
 })

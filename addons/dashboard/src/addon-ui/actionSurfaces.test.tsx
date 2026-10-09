@@ -104,3 +104,37 @@ describe('navigation actions are quiet', () => {
     expect(success).not.toHaveBeenCalled()
   })
 })
+
+describe('decision actions from addon surfaces go through core\'s prompt', () => {
+  /** The publish page's attention list carries an addon-authored item action that answers a decision. */
+  const decideFromNode = () => {
+    const real = api.getAddonState
+    vi.spyOn(api, 'getAddonState').mockImplementation(async (ws, name, ...rest) => {
+      const st = await real(ws, name, ...rest)
+      if (name !== 'publish') return st
+      const attention = (st.attention as { actions: unknown[] }[]).map((a) => ({ ...a, actions: [{ label: 'Roll back now', action: 'decide', args: { id: 'dec_publish_failed_build', option: 'retry', confirmed: true }, variant: 'secondary' }] }))
+      return { ...st, attention }
+    })
+  }
+  it('an item action that posts decide opens "Decide: …" with core\'s facts; nothing is posted until signed, then addon.decided is recorded', async () => {
+    decideFromNode()
+    const post = vi.spyOn(api, 'runAddonAction')
+    const { user } = renderApp('/addon/publish/shares', { viewer: 'p_sev' })
+    await user.click(await screen.findByRole('button', { name: 'Roll back now' }, T))
+    const prompt = await screen.findByRole('dialog', { name: 'Decide: Retry failed build' }, T)
+    expect(prompt).toHaveTextContent('Your answer: Retry last good version')
+    expect(prompt).toHaveTextContent('Ops notebook failed to build: retry with the last good version?')
+    expect(post).not.toHaveBeenCalled()
+    await user.click(within(prompt).getByRole('button', { name: 'Sign with Touch ID' }))
+    await waitFor(() => expect(post).toHaveBeenCalledWith(expect.any(String), 'publish', 'decide', { id: 'dec_publish_failed_build', option: 'retry', confirmed: true }), T)
+    const { mockStore } = await import('@/api/client')
+    await waitFor(() => expect(mockStore.wsEventsOf(mockStore.workspaces[0].id).filter((e) => e.type === 'addon.decided')).toEqual([expect.objectContaining({ id: 'dec_publish_failed_build', option: 'retry', presence: 'touchid' })]), T)
+  })
+  it('the host refuses a decision an addon node posts by itself (no core confirmation): 409, no event', async () => {
+    const { mockStore } = await import('@/api/client')
+    renderApp('/', { viewer: 'p_sev' })
+    const ws = mockStore.workspaces[0].id
+    await expect(api.runAddonAction(ws, 'publish', 'decide', { id: 'dec_publish_failed_build', option: 'retry' })).rejects.toMatchObject({ status: 409, code: 'confirm.required' })
+    expect(mockStore.wsEventsOf(ws).some((e) => e.type === 'addon.decided')).toBe(false)
+  })
+})

@@ -74,14 +74,18 @@ export function useAddons() {
 }
 
 /**
- * Contributions for a slot in the current workspace. Pass the ticket in `ctx` for ticket-bound slots: the addon
- * state is then asked for that ticket only (`?ticket=`), which keeps per-ticket payloads small.
+ * Contributions for a slot in the current workspace. Pass the ticket in `ctx` for ticket-bound slots.
+ * State is fetched only for addons whose contributions here read it (`addon.*`). A `ticket.panel` asks for that
+ * ticket only (`?ticket=`, small per-ticket payloads); every other slot (board card fields on each card, lanes,
+ * Today) shares the addon's one state query, so a board of 150 cards makes one request per addon, not one per card.
  */
 export function useSlot(name: AddonSlot, ctx: Omit<SlotContext, 'workspace' | 'addon'> = {}): ResolvedContribution[] {
   const { data = [] } = useAddons()
   const { workspace } = useWorkspace()
-  const names = data.filter((a) => addonActive(workspace, a.name) && a.contributions.some((c) => c.slot === name)).map((a) => a.name)
-  const states = useAddonStateEntries(workspace?.id, names, ctx.ticket?.key)
+  const names = data
+    .filter((a) => addonActive(workspace, a.name) && (a.contributions as AddonContribution[]).some((c) => c.slot === name && bindsAddonState(c)))
+    .map((a) => a.name)
+  const states = useAddonStateEntries(workspace?.id, names, name === 'ticket.panel' ? ctx.ticket?.key : undefined)
   const out: ResolvedContribution[] = []
   for (const a of data) {
     const st = states[a.name]
@@ -103,6 +107,9 @@ export function useAddonStateEntries(ws: string | undefined, names: string[], ti
       queryFn: () => api.getAddonState(ws as string, name, ticket),
       enabled: !!ws,
       retry: false,
+      // Many surfaces read the same state (sidebar, lanes, every card): a newly mounted one reuses it. Changes arrive
+      // by invalidation (actions, the live cursor), not by refetch-on-mount.
+      staleTime: 10_000,
     })),
   })
   return Object.fromEntries(

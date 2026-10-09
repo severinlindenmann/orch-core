@@ -905,12 +905,16 @@ export class MockStore {
       if (!decision) return refuse(409, 'decision.closed', 'That decision is closed.')
       if (!decision.options.some((o) => o.key === body.option))
         return refuse(400, 'validation.option', `Choose ${decision.options.map((o) => o.label).join(', ')}.`)
+      // Only core's signing prompt sets `confirmed` (addon args cannot: actionRuntime strips it), so addon.decided's presence is true.
+      if (body.confirmed !== true) return refuse(409, 'confirm.required', 'A decision is answered in orch\'s own signing prompt.', 'Answer it on Today, or press the option and sign in the dialog.')
     }
     const res = action({ store: this, ws, viewer: this.viewer, ticket, body, state: this.addonState(ws, name), decision })
+    // A refusal changes nothing others need to see: no record, no refresh for other clients, nothing saved.
+    if (!res.ok) return res
     // Core's own record of a decision (presence step done in core's prompt): who decided what, never the addon's words.
-    if (decision && res.ok) this.appendWs(ws, { type: 'addon.decided', name, id: decision.id, option: String(body.option), ...(decision.ticket ? { ticket: decision.ticket } : {}), presence: 'touchid' })
+    if (decision) this.appendWs(ws, { type: 'addon.decided', name, id: decision.id, option: String(body.option), ...(decision.ticket ? { ticket: decision.ticket } : {}), presence: 'touchid' })
     // Core's own record of a signed action (the addon cannot write or hide it): who signed which action, with scalar args only, whether or not the addon says it changed anything.
-    if (meta?.confirm === 'sign' && res.ok) {
+    if (meta?.confirm === 'sign') {
       const args: Record<string, string | number | boolean> = {}
       for (const [k, v] of Object.entries(body).slice(0, 12)) {
         if (k === 'confirmed') continue
@@ -942,6 +946,7 @@ export class MockStore {
     const ch = mod?.charter && addonActive(w, opts.charter) ? mod.charter(this.addonState(w.id, opts.charter), { store: this, ws: w.id, viewer: actor.for }) : null
     if (!ch || !ch.active) return refuse(409, 'charter.inactive', 'No charter is in force for this epic (not started, paused or stopped).')
     if (t.parent !== ch.epic) return refuse(409, 'charter.out_of_scope', `${key} is not a child of ${ch.epic}.`)
+    if (t.gates[gate].state === 'approved' || t.gates[gate].approvals.some((a) => a.via === 'factory_charter')) return refuse(409, 'gate.already_approved', `The ${gate} of ${key} is already approved.`)
     const event = this.append(key, { type: 'gate.approved', actor: opts.by, gate, via: 'factory_charter', charter: ch.epic, charter_signed_by: ch.signedBy })
     if (gate === 'plan' && this.ticket(key)!.status === 'backlog') this.append(key, { type: 'status.changed', actor: 'host', to: 'open' })
     return { ok: true, event }

@@ -271,7 +271,8 @@ registerAddon({
     // A decision action: core checked who decides, that it is open and that the option is one of its options.
     decide(ctx) {
       const { store, state, body } = ctx
-      const open = ctx.decision!
+      const open = ctx.decision
+      if (!open) return conflict('decision.closed', 'That decision is closed.') // only when the manifest lacks `decision: true`
       const id = open.id
       const option = String(body.option)
       markDecided(state, id)

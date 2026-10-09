@@ -8,12 +8,13 @@ import { toast } from 'sonner'
 import { manifestFor } from '@/api/addons'
 import { api } from '@/api/client'
 import { atLeast } from '@/api/permissions'
-import type { ActionMeta, Role } from '@/api/types'
+import type { ActionMeta, AddonDecision, Role } from '@/api/types'
 import { toastApiError } from '@/app/toast'
 import { useRole } from '@/app/useRole'
 import { useWorkspace } from '@/app/workspace'
 import { useSignedAction } from '@/components/sign/SignPrompt'
 import { openResultUrl, withoutReservedKeys } from './actionRuntime'
+import { DecisionSignPrompt, decisionBody } from './DecisionSignPrompt'
 import { SignConfirm, signTitle } from './SignConfirm'
 import { SpawnConfirm, type ConfirmedLaunch } from './SpawnConfirm'
 import { addonStateKey, useAddons } from './slots'
@@ -92,9 +93,28 @@ export function useRunAddonAction(ticket?: string): RunAddonAction {
     },
   })
 
+  // A decision action is never posted from an addon surface as it stands: core looks the decision up itself (the
+  // addon's args only say which one), shows its own prompt with core's facts, and posts core's body after signing.
+  const [deciding, setDeciding] = useState<{ addon: string; action: string; d: AddonDecision; option: AddonDecision['options'][number] } | null>(null)
+  const openDecision = async (addon: string, action: string, extra?: Record<string, unknown>) => {
+    if (!workspace) return
+    try {
+      const open = await qc.fetchQuery({ queryKey: ['addon-decisions', workspace.id], queryFn: () => api.getAddonDecisions(workspace.id) })
+      const d = open.find((x) => x.addon === addon && x.action === action && x.id === extra?.id)
+      const option = d?.options.find((o) => o.key === extra?.option)
+      if (!d) return void toast.error('That decision is closed.')
+      if (!option) return void toast.error(`Choose ${d.options.map((o) => o.label).join(', ')}.`)
+      setDeciding({ addon, action, d, option })
+    } catch (e) {
+      toastApiError(e, 'Could not open the decision')
+    }
+  }
+
   const run = (addon: string, action: string, extra?: Record<string, unknown>) => {
-    const confirm = meta(addon, action)?.confirm
-    if (confirm === 'spawn_agent') setConfirming({ addon, action, extra })
+    const m0 = meta(addon, action)
+    const confirm = m0?.confirm
+    if (m0?.decision) void openDecision(addon, action, extra)
+    else if (confirm === 'spawn_agent') setConfirming({ addon, action, extra })
     else if (confirm === 'sign') setSigning({ addon, action, extra })
     else m.mutate({ addon, action, extra })
   }
@@ -121,7 +141,24 @@ export function useRunAddonAction(ticket?: string): RunAddonAction {
       }}
     />
   )
-  const dialog = signDialog || (confirming && (
+  const decisionDialog = deciding && workspace && (
+    <DecisionSignPrompt
+      d={deciding.d}
+      option={deciding.option}
+      workspacePrefix={workspace.prefix}
+      onClose={() => setDeciding(null)}
+      onSign={() => {
+        const x = deciding
+        setDeciding(null)
+        setSignPending(true)
+        void signed(`Decide: ${x.d.title}`, async () => {
+          const res = await api.runAddonAction(workspace.id, x.addon, x.action, decisionBody(x.d, x.option.key))
+          return res.message
+        }).finally(() => setSignPending(false))
+      }}
+    />
+  )
+  const dialog = decisionDialog || signDialog || (confirming && (
     <SpawnConfirm addon={confirming.addon} ticketKey={ticket} onClose={() => setConfirming(null)} onStart={(launch) => m.mutate({ ...confirming, confirmed: launch })} />
   ))
   return { run, allowed, meta, pending: m.isPending || signPending, dialog }

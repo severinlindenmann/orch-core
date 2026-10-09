@@ -168,8 +168,9 @@ function simulateStep(store: MockStore, ws: string): boolean {
   if (!made.ok) return false
   const child = made.ticket
   // Auto-approval is core's (store.autoApprove checks the charter is in force); the addon never writes gate events.
-  store.autoApprove(child.key, 'requirements', { charter: 'factory', by: agent })
-  store.autoApprove(child.key, 'plan', { charter: 'factory', by: agent })
+  // A refused approval is not a step: the budget (`used`) counts only children core approved under the charter.
+  if (!store.autoApprove(child.key, 'requirements', { charter: 'factory', by: agent }).ok) return false
+  if (!store.autoApprove(child.key, 'plan', { charter: 'factory', by: agent }).ok) return false
   state.used = (state.used as number) + 1
   state.simSteps = n + 1
   state.simTimes = [...recentSteps(state, now), now]
@@ -361,7 +362,8 @@ registerAddon({
     permit(ctx) {
       // A decision action: core checked who decides, that it is open and that the option is one of its options.
       const { state, store, body } = ctx
-      const permit = permitsOf(state).find((p) => `factory.permit:${p.id}` === ctx.decision!.id)!
+      const permit = ctx.decision && permitsOf(state).find((p) => `factory.permit:${p.id}` === ctx.decision!.id)
+      if (!permit) return conflict('decision.closed', 'That decision is closed.') // only when the manifest lacks `decision: true`
       const epic = state.epic as string
       if (body.option === 'refuse') {
         permit.state = 'refused'

@@ -20,27 +20,27 @@ const manifest = (name: string) => ([...addons, ...catalog].find((a) => a.name =
 const NAVIGATION: [addon: string, action: string, body: Record<string, unknown>][] = [
   ['activity', 'toggle_group', { group: 'gates' }],
   ['activity', 'toggle_person', { id: 'p_mara' }],
-  ['activity', 'toggle_agent', { id: 'nobody' }],
+  ['activity', 'toggle_agent', { id: 'claude-code' }],
   ['activity', 'search', { formData: { q: 'tariff' } }],
   ['activity', 'clear_filters', {}],
   ['activity', 'show_older', {}],
   ['wiki', 'open', { slug: 'glossary' }],
   ['wiki', 'search', { formData: { q: 'dbt' } }],
-  ['guide', 'open', { slug: 'board' }],
-  ['schedules', 'open_run', { id: 'r1' }],
+  ['guide', 'open', { slug: 'getting-around' }],
+  ['schedules', 'open_run', { run: 'R-4' }],
   ['terminals', 'open', {}],
   ['quick', 'cancel_close', {}],
-  ['github', 'open', { id: 'pr_1' }],
+  ['github', 'open', { id: 'acme-energy/energy-dbt#29' }],
 ]
 
 describe('navigation actions (manifest kind "navigation")', () => {
   it.each(NAVIGATION)('%s.%s is declared navigation', (addon, action) => {
     expect(manifest(addon)[action]?.kind).toBe('navigation')
   })
-  it.each(NAVIGATION)('%s.%s does not move the workspace cursor, so other clients do not refetch', async (addon, action, body) => {
+  it.each(NAVIGATION)('%s.%s is honoured and does not move the workspace cursor, so other clients do not refetch', async (addon, action, body) => {
     const { store, api, ws } = setup()
     const before = store.cursor(ws)
-    await api.runAddonAction(ws, addon, action, body).catch(() => undefined)
+    expect((await api.runAddonAction(ws, addon, action, body)).ok).toBe(true)
     expect(store.cursor(ws)).toBe(before)
   })
   it('a shared-state action still moves the cursor', async () => {
@@ -57,5 +57,23 @@ describe('navigation actions (manifest kind "navigation")', () => {
     tom.store.setViewer('p_sev')
     const theirs = (await tom.api.getAddonState(tom.ws, 'wiki')) as { current?: { slug?: string } }
     expect(theirs.current?.slug).not.toBe('glossary')
+  })
+})
+
+describe('refused actions', () => {
+  it('a refused action (StoreFailure) neither moves the cursor nor saves', async () => {
+    const { store, api, ws } = setup()
+    const before = store.cursor(ws)
+    let saves = 0
+    const s = store as unknown as { save: () => void }
+    const real = s.save.bind(store)
+    s.save = () => {
+      saves++
+      real()
+    }
+    await api.runAddonAction(ws, 'publish', 'start', { id: 'nope' }).catch(() => undefined)
+    await api.runAddonAction(ws, 'worktrees', 'remove', { id: 'nope' }).catch(() => undefined)
+    expect(store.cursor(ws)).toBe(before)
+    expect(saves).toBe(0)
   })
 })

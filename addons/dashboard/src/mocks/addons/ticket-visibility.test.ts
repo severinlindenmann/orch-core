@@ -99,7 +99,7 @@ describe('ticket-scoped actions on a hidden ticket are refused', () => {
   it('publish: the decision about a hidden ticket is not on Today and cannot be decided by id', async () => {
     const s = setup('p_mara')
     expect((await s.api.getAddonDecisions(s.ws)).some((d) => d.ticket === 'DEMO-0041')).toBe(false)
-    expect(await refusal(run(s, 'publish', 'decide', { id: 'dec_publish_report', option: 'yes' }))).toMatchObject({ status: 409, code: 'decision.closed' })
+    expect(await refusal(run(s, 'publish', 'decide', { id: 'dec_publish_report', confirmed: true, option: 'yes' }))).toMatchObject({ status: 409, code: 'decision.closed' })
     expect(s.store.addonState(s.ws, 'publish').shares).toHaveLength(5) // no share was created
     // Severin still sees and can decide it.
     const t = setup('p_sev')

@@ -28,7 +28,7 @@ describe('addon registry', () => {
   it('keeps the six iteration-1 actions working', async () => {
     const { api, ws } = setup()
     const calls = [
-      ['publish', 'decide', { id: 'dec_publish_failed_build', option: 'no' }],
+      ['publish', 'decide', { id: 'dec_publish_failed_build', confirmed: true, option: 'no' }],
       ['estimate', 'save_settings', {}],
       ['github', 'refresh', {}],
       ['terminals', 'save_settings', {}],

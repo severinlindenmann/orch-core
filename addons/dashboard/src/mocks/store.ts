@@ -439,11 +439,17 @@ export class MockStore {
     this.seeded.set(def.key, 0)
   }
 
-  /** The next free key of a workspace: max(number) + 1, zero-padded to 4. */
+  /**
+   * The next key of a workspace, zero-padded to 4: one past the highest key ever used. Keys are never reused: a
+   * discarded ticket (undo of a create) stays counted through its `ticket.discarded` workspace event, which is
+   * persisted with the workspace log, so recents, links, toasts and addon state never point at a different ticket.
+   */
   nextKey(wsId: string): string {
     const prefix = this.workspaces.find((w) => w.id === wsId)!.prefix
-    const nums = [...this.defs.keys()].filter((k) => k.startsWith(prefix + '-')).map((k) => Number(k.slice(prefix.length + 1)))
-    return `${prefix}-${String(Math.max(0, ...nums) + 1).padStart(4, '0')}`
+    const num = (k: unknown) => (typeof k === 'string' && k.startsWith(prefix + '-') ? Number(k.slice(prefix.length + 1)) || 0 : 0)
+    const live = [...this.defs.keys()].map(num)
+    const discarded = this.wsEventsOf(wsId).filter((e) => e.type === 'ticket.discarded').map((e) => num(e.key))
+    return `${prefix}-${String(Math.max(0, ...live, ...discarded) + 1).padStart(4, '0')}`
   }
 
   /** Creates a backlog ticket. `ticket.created` is its first event, then `people.set` when people were chosen. */
@@ -529,8 +535,8 @@ export class MockStore {
     this.events.delete(key)
     this.seeded.delete(key)
     delete this.created[key]
-    this.bump(wsId)
-    this.save()
+    // Recorded so the key is never handed out again and the workspace log shows what happened.
+    this.appendWs(wsId, { type: 'ticket.discarded', key, by: person, actor: person })
     return { ok: true }
   }
 

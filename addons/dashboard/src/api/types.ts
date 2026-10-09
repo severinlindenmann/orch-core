@@ -739,6 +739,7 @@ export type WorkspaceEventType =
   | 'grant.issued' | 'grant.revoked'
   | 'agent.started' | 'agent.stopped'
   | 'view.saved' | 'view.deleted'
+  | 'ticket.discarded'
   | 'workspace.renamed'
   | 'relay.connected' | 'relay.stopped' | 'device.paired' | 'device.removed' | 'epoch.rotated'
   | 'skill.credentials_granted' | 'connection.checked'

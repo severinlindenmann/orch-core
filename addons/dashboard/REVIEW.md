@@ -1,0 +1,305 @@
+# Review: orch Mission Control mockup
+
+For the owner. State on 9 Oct 2026: iterations 1–3, the UX rounds and the owner's wave-3 input (terminal dock, epics,
+tabs, widgets, drawers, quick ticket, Artifacts, Relay, Drop, Landing, Skills and Connections, motion, 13" notebook)
+are in. Branch `feat/dashboard-mockup`. Everything runs on simulated data in the browser; nothing reaches a server.
+
+## Open the preview
+
+- Hosted preview: (added on publish)
+- Local dev server: http://127.0.0.1:5180/ (live; it may be stale for a minute while branches are merged)
+- Stable snapshot: http://127.0.0.1:5181/ (refreshed after each tested merge; use this one for a calm review)
+- On your own machine: `cd addons/dashboard && npm install && npm run dev`, then open the address it prints.
+
+Things to know before you start:
+
+- The app always starts on **Today**. It uses in-memory routing (it also runs inside the claude.ai viewer, where the
+  address bar carries nothing), so a pasted `/ticket/…` address does not open that page. Navigate by clicking, by
+  ⌘K, or with the review tour's **Go** buttons.
+- Desktop only, 1024 px and wider. The target is a 13" notebook (1440×900) with the terminal docked on the right.
+- Dark theme only (your decision).
+- What you change is kept in this browser (localStorage) until you reset the demo.
+
+## The review tour
+
+The **Demo data** pill in the top bar has a **Review tour** button (it shows how many steps you ticked). It opens a
+sheet with the scenarios below as checklists:
+
+- **Go** sets up the step and opens its page: it switches the person you look as (Severin, Mara or Tom), the workspace
+  (DEMO unless the step says otherwise), and — after asking, because it discards your demo changes — the demo data
+  (Normal or Busy day). Without a person named, Go puts you back as Severin, so no step inherits the one before.
+- Tick each step when you checked it. Ticks stay in this browser; the button and each scenario show the count.
+- **Reset demo data and ticks** (bottom of the sheet) starts over: the demo data go back to the seed of the current
+  dataset and every tick is cleared.
+
+Also in the pill: **Normal / Busy day** (switch the dataset, asks first) and **Reset demo** (keeps your ticks). The
+person you look as is at the bottom of the sidebar ("viewing as"); the workspace switcher is at the top.
+
+Per step, look for: the page answers your next question without hunting; feedback within about 300 ms; no sideways
+scrolling; a visible focus; no cut-off text without a tooltip; empty, loading and error states; orange only on addon
+UI; one name per thing; calm on the Busy day.
+
+## Scenarios
+
+### 1. Owner morning
+
+Severin starts the day: read, answer, approve, decide, move a card.
+
+- [ ] **Read what needs you** — Today: the groups, the oldest and blocking items first, the Agents column. Page: `/`.
+- [ ] **Answer a question on DEMO-0043** — Questions tab: pick an option, Send answer, sign. Page: `/ticket/DEMO-0043`.
+- [ ] **Approve a plan gate** — Approvals group on Today: Review, read what you sign, Approve plan. Page: `/`.
+- [ ] **Decide an addon decision** — From addons group: the failed build of Publish. Core asks you to sign. Page: `/`.
+- [ ] **Move a card on the Board** — Drag a card or press m on it. Done is refused: only a verdict gets there. Page: `/board`.
+- [ ] **Back to Today: the items are gone** — What you answered and approved has left the list; the count went down. Page: `/`.
+
+### 2. New work
+
+Create a bug, find it, start an agent and answer its question.
+
+- [ ] **Create a bug** — Press c, choose Bug, fill Title and Requirements, Create. Page: `/tickets`.
+- [ ] **Find it with ⌘K** — Type its key or a word of the title; Enter opens it.
+- [ ] **Start an agent on it** — Actions → Start agent… on the new ticket; core shows what starts, then Start agent.
+- [ ] **Watch it work** — Within about 15 s it claims the ticket, finishes T1 and asks you a question. Page: `/agents`.
+- [ ] **Answer from Today** — The question is at the top of Questions; answer it there. Page: `/`.
+
+### 3. Verdict
+
+Read the evidence of a ticket in testing and send it back.
+
+- [ ] **Open a ticket in testing** — DEMO-0041 waits for a verdict. Page: `/ticket/DEMO-0041`.
+- [ ] **Read the evidence** — Acceptance & tasks (evidence per criterion), Artifacts (log, CSV, code, screenshot). Page: `/ticket/DEMO-0041`.
+- [ ] **Look at widgets** — DEMO-0046 shows charts, a flow and an image compare in its text. Page: `/ticket/DEMO-0046`.
+- [ ] **Fail the verdict with a reason** — Give verdict → Send back, write why. The ticket returns to In progress. Page: `/ticket/DEMO-0041`.
+
+### 4. Maintainer (Mara)
+
+The same workspace as Mara: what she may and may not do.
+
+- [ ] **Today as Mara** — Her own queue; items waiting for an owner are named as such. Page: `/` as Mara.
+- [ ] **Owner-only gates** — DEMO-0044: "Approve plan (owners only)" is disabled with the reason. Page: `/ticket/DEMO-0044` as Mara.
+- [ ] **Settings are read-only** — Every control is off and says "Only owners can …". Page: `/settings/gates` as Mara.
+- [ ] **Approve what she may** — Approvals and verdicts that maintainers may sign. Page: `/` as Mara.
+- [ ] **Decide a factory permit** — AI Factory → the permission request above the tabs (Busy day: the factory is installed there). Page: `/addon/factory/factory` as Mara, Busy day.
+
+### 5. Viewer (Tom)
+
+Everything read-only, with reasons, and no dead ends.
+
+- [ ] **Today as Tom** — One line per person who decides; opens into read-only rows. Page: `/` as Tom.
+- [ ] **A ticket page** — Disabled controls say why ("Viewers cannot change tickets."). Page: `/ticket/DEMO-0043` as Tom.
+- [ ] **Board and Tickets** — No New ticket button; c says viewers cannot create tickets. Page: `/board` as Tom.
+- [ ] **Wiki and Guide** — Open pages and search; Edit page is off with the reason. Page: `/addon/wiki/pages` as Tom.
+- [ ] **Activity filters** — Filters apply as you choose them (Busy day: Activity is installed there). Page: `/addon/activity/activity` as Tom, Busy day.
+- [ ] **No error toasts from normal use** — Click around; nothing should answer with a red toast. Page: `/settings/members` as Tom.
+
+### 6. Owner admin
+
+Severin runs the workspace: people, gates, addons, grants.
+
+- [ ] **Add a member** — Members → Add member: pick a person (Enter picks, a second Enter adds). Page: `/settings/members`.
+- [ ] **Change a role** — The Role of a member; the last owner cannot be demoted. Page: `/settings/members`.
+- [ ] **Change a gate policy** — Gates: count, approvers, "Affects N open tickets"; each change is signed. Page: `/settings/gates`.
+- [ ] **Install quick tasks** — Addons → Browse addons → Quick tasks → Install → Grant and turn on (one signature). Page: `/settings/addons`.
+- [ ] **Update GitHub** — The update shows what changes; one signature grants the new version. Page: `/settings/addons`.
+- [ ] **Revoke an agent grant** — Agents → Grants → Revoke grant; the agent sessions on it stop. Page: `/agents`.
+
+### 7. Addons tour
+
+Every addon page, panel and Today card, each marked with the orange A.
+
+- [ ] **Publish** — Start and stop an app (Undo), revoke a share, a show-once link (asks first, then "Copy this link now"). Page: `/addon/publish/shares`.
+- [ ] **GitHub** — Review on GitHub, Approve; the issues lane on the Board imports an issue as a ticket. Page: `/addon/github/reviews`.
+- [ ] **Usage** — Overview and By model; every number says its period. Page: `/addon/usage/overview`.
+- [ ] **Wiki** — Open a page, edit it, link it to a ticket. Page: `/addon/wiki/pages`.
+- [ ] **Terminals** — Run `orch status`, `git log`, arrow-up history; an agent mirror is read-only. Page: `/addon/terminals/sessions`.
+- [ ] **Estimate** — Estimate a card in its ticket panel; the Board column shows the sum. Page: `/board`.
+- [ ] **Worktrees** — Add a worktree, Remove is refused on a dirty one, Open terminal here. Page: `/addon/worktrees/worktrees`, Busy day.
+- [ ] **Quick tasks** — Add, close with proof, make a ticket, the outgrew decision. Page: `/addon/quick/quick`, Busy day.
+- [ ] **Records** — Record changes, push twice (rejected: pull first), pull, push. Page: `/addon/records/records`, Busy day.
+- [ ] **Activity** — Filters and Show older. Page: `/addon/activity/activity`, Busy day.
+- [ ] **Widgets in tickets** — DEMO-0043, DEMO-0046 and DEMO-0047 (the last one has refused blocks). Page: `/ticket/DEMO-0047`.
+- [ ] **Start agent and model routing** — The model line in the start dialog; an invalid model name in Model routing blocks starts. Page: `/addon/start-agent/start`, Busy day.
+- [ ] **Guide** — Press ? on several pages: the help follows the page. Page: `/addon/guide/guide`.
+- [ ] **AI Factory** — Run demo activity, a permit, Pause and Resume (signed). Page: `/addon/factory/factory`, Busy day.
+- [ ] **Schedules** — Enable a schedule (signed), Run now, file the finding. Page: `/addon/schedules/schedules`, Busy day.
+
+### 8. Workspace hopping
+
+Switching workspaces keeps you on the page where that makes sense.
+
+- [ ] **Switcher previews** — Open the workspace switcher: each workspace shows what needs you there. Page: `/`.
+- [ ] **⌘2 on the Board** — The Board stays; it shows INT now. Page: `/board`.
+- [ ] **Switch on a ticket page** — You land on Tickets with a toast naming the ticket's workspace. Page: `/ticket/DEMO-0043`.
+- [ ] **Switch on an addon page** — Publish is not in INT: you land on Today with a toast. Page: `/addon/publish/shares`.
+
+### 9. Keyboard only
+
+Scenarios 1 and 2 without the mouse.
+
+- [ ] **Today and the ticket page** — Tab, g b / g t / g a, Enter, Esc; the focus is always visible. Page: `/`.
+- [ ] **Tickets with j and k** — j/k move, Enter opens. Page: `/tickets`.
+- [ ] **⌘K and ?** — ⌘K finds tickets and commands; ? opens help.
+- [ ] **New ticket with ⌘↵** — c, type, ⌘↵ creates. Page: `/tickets`.
+
+### 10. Terminal dock
+
+The terminal beside any page, bottom or right.
+
+- [ ] **Open the dock** — Ctrl+` on a ticket page: sessions for this ticket. Page: `/ticket/DEMO-0043`.
+- [ ] **Bottom, then right** — The menu moves it; the page keeps at least 720 px. Page: `/ticket/DEMO-0043`.
+- [ ] **Watch an agent** — An agent session is read-only and ends on what it waits for.
+- [ ] **Start your own Claude Code session** — New session, with and without the ticket context.
+- [ ] **Continue an earlier session** — Sessions → Earlier → Continue from summary.
+- [ ] **Collapse, reopen, resize** — Drag the edge or use the arrow keys on it.
+
+### 11. Epics
+
+Board and Tickets grouped by epic on a busy day.
+
+- [ ] **Board grouped by epic** — Epic lanes first (a 40-child epic folded), No epic last, 5 cards per cell then "+N more". Page: `/board`, Busy day.
+- [ ] **Tickets grouped by epic** — Epic rows with progress; children indented. Page: `/tickets`, Busy day.
+- [ ] **Search a child** — A folded lane opens when its child matches. Page: `/board`, Busy day.
+- [ ] **Drag within a lane** — Drop in another column of the same lane; the epic never changes by drag. Page: `/board`, Busy day.
+- [ ] **Group: None** — Display → Group: None gives the flat board. Page: `/board`, Busy day.
+
+### 12. Addon pages with tabs
+
+Compact addon pages; what needs you sits above the tabs.
+
+- [ ] **Publish** — Apps | Shares. Page: `/addon/publish/shares`.
+- [ ] **Usage by model** — The By model total equals the Overview tokens. Page: `/addon/usage/overview`.
+- [ ] **Wiki page view** — On this page, Linked from, Edit page and the unsaved-changes guard. Page: `/addon/wiki/pages`.
+- [ ] **GitHub** — Pull requests | Issues; Recently merged folded. Page: `/addon/github/reviews`.
+- [ ] **Records** — Pending | History; one headline that says the next step. Page: `/addon/records/records`, Busy day.
+- [ ] **Schedules** — Schedules | Runs; the finding above the tabs. Page: `/addon/schedules/schedules`, Busy day.
+- [ ] **AI Factory** — The permit above the tabs. Page: `/addon/factory/factory`, Busy day.
+- [ ] **Quick tasks** — Active | Completed. Page: `/addon/quick/quick`, Busy day.
+- [ ] **Worktrees** — Filters, then Add worktree. Page: `/addon/worktrees/worktrees`, Busy day.
+
+### 13. Widgets
+
+Every widget type, and widgets inside tickets.
+
+- [ ] **Widgets gallery** — Core types and templates, each with its source. Page: `/addon/widgets/widgets`.
+- [ ] **DEMO-0043** — Stats, a series chart and checks. Page: `/ticket/DEMO-0043`.
+- [ ] **DEMO-0045** — Timeline and diff in Current state. Page: `/ticket/DEMO-0045`.
+- [ ] **DEMO-0046** — Flow diagram, callout, image compare; Expand one. Page: `/ticket/DEMO-0046`.
+- [ ] **An error widget** — DEMO-0047: refused blocks say why in plain words. Page: `/ticket/DEMO-0047`.
+
+### 14. New ticket
+
+The overlay and the quick ticket.
+
+- [ ] **Open the overlay** — Press c on any page. Page: `/tickets`.
+- [ ] **Quick ticket** — Type one line, Enter: a backlog ticket; the toast has Open and Undo.
+- [ ] **Dictate (simulated)** — The mic fills a sample text; nothing is recorded.
+- [ ] **Open full page** — The draft goes with you.
+- [ ] **Unsaved prompt** — Type, then Esc: "Discard unsaved changes?".
+
+### 15. Settings
+
+The other settings tabs.
+
+- [ ] **Addon settings drawer** — Addons → Settings on a row opens a drawer; Save closes it. Page: `/settings/addons`.
+- [ ] **Members** — The combobox; an unknown email is refused inline. Page: `/settings/members`.
+- [ ] **Gates** — Policy and "Affects N open tickets". Page: `/settings/gates`.
+- [ ] **Relay & devices** — Pair a device (simulated QR and code). Page: `/settings/relay`.
+- [ ] **Skills** — Grant credentials to a skill (signed). Page: `/settings/skills`.
+- [ ] **Connections** — Run check, Run doctor, the secrets file (names only). Page: `/settings/connections`.
+
+### 16. Landing (D53)
+
+The merge lane: approval, checks and merge bind to one candidate.
+
+- [ ] **Landing page** — Queues | Needs | History. Page: `/addon/land/landing`.
+- [ ] **A voided approval** — DEMO-0053: a conflict resolution voided the verify approval; back to review. Page: `/ticket/DEMO-0053`.
+- [ ] **Resolve it yourself** — Today → From addons → "I will resolve it", then Mark resolved on the Landing page. Page: `/`.
+- [ ] **Board chips** — Landing state on cards (landing, checking, conflict); no extra column. Page: `/board`.
+
+### 17. Artifacts and Drop
+
+All artifacts in one place; files shared through the relay.
+
+- [ ] **Artifacts** — List and grid, filters, preview in the drawer. Page: `/artifacts`.
+- [ ] **Install Drop** — Drop starts in the catalog: Browse addons → Drop → Install. Page: `/settings/addons`.
+- [ ] **Claim a file** — Drop → Inbox → Claim. Page: `/addon/drop/drop`.
+- [ ] **Share a file** — Share a file; a link is shown once. Page: `/addon/drop/drop`.
+
+### 18. Blocked by a connection
+
+A ticket that needs a login that expired.
+
+- [ ] **Blocked tickets** — DEMO-0053 (databricks-prod auth expired) and DEMO-0054 (gcloud-billing wrong identity). Page: `/ticket/DEMO-0054`.
+- [ ] **Start agent is refused** — Actions → Start agent… is off with the reason. Page: `/ticket/DEMO-0053`.
+- [ ] **Re-login from Today** — Connections group: copy the login hint, Run check again (Demo). Page: `/`.
+- [ ] **Unblocked** — The ticket no longer says Blocked; Start agent works. Page: `/ticket/DEMO-0053`.
+
+## What is simulated
+
+Nothing here talks to a real system. Each simulation says so where you meet it (a "Simulated" or "Demo" chip).
+
+| Thing | In the mockup |
+|---|---|
+| Touch ID and signatures | Every human signature shows core's sign dialog with what you sign; "Touch ID" is a 600 ms pause. Signatures, hashes and key fingerprints are made up. No OS prompt. |
+| Terminals (PTY) | A scripted fake shell in xterm.js. `orch status`, `orch show`, `orch wait`, `git status`, `git log`, `ls`, `help` and a few more answer from the demo state; nothing runs on your machine. |
+| Claude Code and Codex in the dock | Scripted CLI screens. Your own session answers each prompt with a short canned reply marked simulated; agent sessions are replayed transcripts that end on the ticket's real blocker. |
+| Agent runs | "Start agent" plays a script on a timer: claim after 1.5 s, a task lease, a log line, T1 done, then a question to you. The Busy day adds a live script (an event every 4–8 s). AI Factory "Run demo activity" and the Landing "Run the worker (demo)" are scripts too. |
+| GitHub | Pull requests and issues live in the addon's demo state. "Review on GitHub" opens a github.com address; approve and import change only the demo. |
+| Relay and devices | No network. Link states, pairing codes, the QR (it encodes nothing) and the sync queue are simulated; owners get buttons to simulate a dropped link or a phone scanning. |
+| Drop and Publish | Uploads are sample files; apps "start" and "stop" in the demo state; share links are made up and shown once. |
+| Records | A pretend git remote: the second push without a pull is rejected on purpose. |
+| Connections and the secrets file | Checks return seeded results (one expired login, one wrong identity, one service down). "Run check again" on Today assumes you logged in again. Secret values never appear; masked output reads `•••• (NAME)`. |
+| Dictation | Always simulated: the microphone is never used; Stop fills in a sample sentence. |
+| Time | The demo clock starts at Friday 9 Oct 2026, 11:30 UTC when the demo loads or resets, then runs in real time. "5 min ago" is measured against that clock, not your computer's date. |
+| Usage and costs | Generated numbers (last 7 days pinned to CHF 31.40). |
+
+## Known polish items
+
+Being worked on now (round R4, in a parallel branch): ticket page density (first 2 widgets, then "N more"; one
+Terminal panel; addon panels in one section), the prototype widget caption, widgets gallery details, breadcrumb from
+where you came, Usage tiles with one period each, Size vs Points, Publish vs Drop wording, and a richer Busy day
+(every widget type, every artifact kind, Usage that scales).
+
+Known and left for later:
+
+- A pasted deep link (`/ticket/DEMO-0043`) opens Today, because of the in-memory routing (see above).
+- The addon settings drawer resets your unsaved edits if someone else saves the same settings meanwhile; it needs an
+  "Updated elsewhere — Reload / Keep mine" design.
+- In a very narrow terminal the simulated Claude welcome box is cut with "…" (terminal content, allowed to clip).
+
+## Open questions for you
+
+Decisions the mockup made that need your yes or no. Each is cheap to change.
+
+1. **Landing (D53): which approval binds to the code.** The mockup binds the **verify approval** (your verdict) to
+   the candidate SHA; "back to review" means the ticket goes from Done back to Testing and the verdict is cleared.
+   Keep this, or add a separate code-review gate?
+2. **Widgets beyond orch.widgets.v1.** The mockup accepts `ok` as another name for `pass` in `gates`, `note` for
+   `info` in `callout`, a multi-series form of `series` (shared x, up to 4 named series), and two proposed types,
+   `timeline` and `progress` (widgets.md says "progress is not a type"). Put them into v1, or drop them? The Python
+   renderer refuses all of them today.
+3. **Drop links without the app (D54).** Drop links open only in the orch app; the relay has no download page. Should
+   the static fallback page and apple-app-site-association cover `/d/` the way they cover `/pair`?
+4. **Connections.** Who may run checks and the doctor (here: members and up; viewers read only)? Who sees the secrets
+   file's path and unreferenced names (here: owners and maintainers)? Referenced env names are shown to every member
+   (they are not secret; values are).
+5. **Starting agents.** Members cannot issue grants, so a member without one cannot start an agent. Is that right,
+   or should members get their own grants?
+6. **AI Factory charter approvals.** The factory auto-approves its children's gates under the signed charter (v1
+   behaviour), shown as "via the factory charter". Keep, or make every factory approval a person's?
+7. **AI Factory "Watch live"** is an explicit button (an addon page cannot tell whether someone has it open). Fine?
+8. **Schedules "Run now"** is member-level and unsigned in this preview (it only reads and reports). A real host would
+   also check `spawn_agent` and the person's grant. Fine for now?
+
+Calls made for you (each logged in DECISIONS-LOG.md with how to revert):
+
+- Board: epic lanes first, "No epic" last, at most 5 cards per cell then "+N more"; Group by epic is the default.
+- Dense addon items (board card chips, table cells) show the addon once per surface, not an A on every chip.
+- Quick ticket: Enter creates at once (at least two words), with Undo on the toast; dictation is always simulated.
+- Addon install is one signed step ("Grant and turn on"); an update is one signature showing the diff.
+- An unknown email in Add member is refused ("inviting by email comes later").
+- Usage has no date-range picker; every number names its period.
+- Any member may revoke a Drop link; only the sender or an owner may extend one.
+- The terminal dock docks right only when the page keeps at least 720 px; beside the dock the sidebar becomes the rail.
+- The sidebar shows at most 6 addon pages; the pin choice is kept per browser (a stand-in for a workspace setting).
+- Addon settings open in a right-hand drawer (you asked for "a drawer below"; a right drawer fits forms better).

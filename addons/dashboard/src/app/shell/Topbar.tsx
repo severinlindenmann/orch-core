@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { cn } from '@/lib/utils'
 import { restartToday } from '../todayRestart'
 import { useRole } from '../useRole'
+import { ReviewTour } from '../review/ReviewTour'
 import { useShellActions, useShellState } from './ShellUi'
 import { toastApiError } from '@/app/toast'
 
@@ -98,6 +99,7 @@ export function Topbar() {
             <RotateCcw className="size-3" />
             Reset demo
           </button>
+          <ReviewTour />
         </Badge>
       </div>
       {pending && (

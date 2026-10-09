@@ -411,6 +411,22 @@ async function main() {
             await check(config, 'new-ticket-overlay', open ? undefined : ['the New ticket overlay ([role=dialog]) did not open'])
             await evaluate(() => document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
           }
+
+          // The review tour sheet (Demo data pill), one scenario open.
+          if (!ONLY || ONLY.test('review-tour')) {
+            await go('/')
+            await evaluate(async () => {
+              ;[...document.querySelectorAll('header button')].find((b) => /^Review tour/.test(b.textContent.trim()))?.click()
+              await new Promise((r) => setTimeout(r, 300))
+              const sheet = document.querySelector('[role="dialog"]')
+              const head = sheet && [...sheet.querySelectorAll('button[aria-expanded="false"]')].find((b) => /^7\. /.test(b.textContent.trim()))
+              head?.click()
+            })
+            await settle()
+            const open = await evaluate(() => !!document.querySelector('[role="dialog"] [aria-expanded="true"]'))
+            await check(config, 'review-tour', open ? undefined : ['the Review tour sheet did not open'])
+            await evaluate(() => document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+          }
           shotsTaken = true
         }
       }

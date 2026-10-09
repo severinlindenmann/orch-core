@@ -33,7 +33,7 @@ describe('publish page', () => {
     const item = (await screen.findByText('Tariff API notes', {}, T)).closest('tr')!
     await user.click(await moreAction(user, item, 'Revoke'))
     expect(await screen.findByRole('alertdialog')).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Revoke link' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm: Revoke (revoke)' }))
     await waitFor(() => expect(screen.queryByText('Tariff API notes')).not.toBeInTheDocument(), T)
   })
   it('a running app has no Start and a stopped one has no Stop', async () => {
@@ -52,13 +52,13 @@ describe('publish page', () => {
     await user.click(within(row).getByRole('button', { name: 'Stop' }))
     const ask = await screen.findByRole('alertdialog')
     expect(ask).toHaveTextContent(/Anyone using the app loses it/)
-    expect(within(ask).getByTestId('consequence')).toHaveTextContent('You can undo this right after.') // core's line: stop declares undo
+    expect(within(ask).getByTestId('consequence')).toHaveTextContent('The addon offers an undo right after.') // core's line: stop declares a plain undo (start)
     expect((await apps()).find((a) => a.id === 'app_billing')!.status).toBe('running') // nothing yet
     // While it runs only this action's button says "Stopping…" (the row's other buttons keep their names).
     let release: () => void = () => {}
     const real = api.runAddonAction.bind(api)
     vi.spyOn(api, 'runAddonAction').mockImplementationOnce((...a) => new Promise((res) => (release = () => void real(...a).then(res))))
-    await user.click(within(ask).getByRole('button', { name: 'Stop app' }))
+    await user.click(within(ask).getByRole('button', { name: 'Confirm: Stop (stop)' }))
     expect(await within(row).findByRole('button', { name: 'Stopping…' })).toBeDisabled()
     expect(within(row).queryByRole('button', { name: 'Stop' })).toBeNull() // only the pressed button changed its text
     release()
@@ -171,7 +171,7 @@ describe('publish ticket panel', () => {
     expect(within(panel).queryByText('UTC migration summary')).not.toBeInTheDocument()
     expect(within(panel).getByRole('button', { name: 'Share report…' })).toBeInTheDocument()
     await user.click(await moreAction(user, item, 'Revoke'))
-    await user.click(await screen.findByRole('button', { name: 'Revoke link' }))
+    await user.click(await screen.findByRole('button', { name: 'Confirm: Revoke (revoke)' }))
     await waitFor(() => expect(within(panel).queryByText('Before/after report')).not.toBeInTheDocument(), T)
   })
 })

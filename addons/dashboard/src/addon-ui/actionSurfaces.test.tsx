@@ -190,7 +190,7 @@ describe('Undo on a success toast follows the manifest', () => {
     const row = (await screen.findByText('Billing explorer', {}, T)).closest('tr')!
     await user.click(within(row).getByRole('button', { name: 'Stop' }))
     // Stopping a shared app asks first (core's confirm, named for the consequence); a manifest without it posts at once.
-    const confirm = screen.queryByRole('button', { name: 'Stop app' })
+    const confirm = screen.queryByRole('button', { name: 'Confirm: Stop (stop)' })
     if (confirm) await user.click(confirm)
     await waitFor(() => expect(success.mock.calls.some((c) => c[0] === 'Billing explorer stopped.')).toBe(true), T)
     return success.mock.calls.find((c) => c[0] === 'Billing explorer stopped.')![1] as { action?: unknown } | undefined

@@ -43,7 +43,7 @@ describe('publish app actions', () => {
     const s = setup()
     await s.api.runAddonAction(s.ws, 'publish', 'start', { id: 'app_energy' })
     expect((await state(s)).apps.find((a) => a.id === 'app_energy')!.status).toBe('running')
-    await s.api.runAddonAction(s.ws, 'publish', 'stop', { id: 'app_energy' })
+    await s.api.runAddonAction(s.ws, 'publish', 'stop', { confirmed: true, id: 'app_energy' })
     expect((await state(s)).apps.find((a) => a.id === 'app_energy')!.status).toBe('stopped')
   })
   it('logs returns the last lines; redeploy rebuilds a failed app', async () => {
@@ -89,7 +89,7 @@ describe('publish shares', () => {
     }
     expect(await panel()).toContain('Before/after report')
     const sh = (await state(s)).shares.find((x) => x.title === 'Before/after report')!
-    await s.api.runAddonAction(s.ws, 'publish', 'revoke', { id: sh.id })
+    await s.api.runAddonAction(s.ws, 'publish', 'revoke', { confirmed: true, id: sh.id })
     expect((await state(s)).shares.find((x) => x.id === sh.id)).toBeUndefined()
     expect(await panel()).not.toContain('Before/after report')
   })
@@ -105,7 +105,7 @@ describe('publish shares', () => {
   })
   it('share_once returns the full link as a secret (not in the message) and keeps it hidden after', async () => {
     const s = setup()
-    const r = await s.api.runAddonAction(s.ws, 'publish', 'share_once', { ticket: 'DEMO-0041' })
+    const r = await s.api.runAddonAction(s.ws, 'publish', 'share_once', { confirmed: true, ticket: 'DEMO-0041' })
     expect(r.secret!.value).toMatch(/^https:\/\/p\.acme\.example\/s\/[A-Za-z0-9]{8,}$/)
     expect(r.message).not.toMatch(/https:/)
     const st = await state(s)
@@ -117,25 +117,33 @@ describe('publish shares', () => {
     expect(again.message).toMatch(/shown once/i)
     expect(again.message).not.toMatch(/https:/)
   })
+  it('destructive and options actions need core\'s confirmed flag (409 confirm.required), nothing changes without it', async () => {
+    const s = setup()
+    const before = JSON.stringify(await state(s))
+    expect(await refused(s.api.runAddonAction(s.ws, 'publish', 'stop', { id: 'app_billing' }))).toMatchObject({ status: 409, code: 'confirm.required' })
+    expect(await refused(s.api.runAddonAction(s.ws, 'publish', 'revoke', { id: 'sh_report' }))).toMatchObject({ status: 409, code: 'confirm.required' })
+    expect(await refused(s.api.runAddonAction(s.ws, 'publish', 'share_once', { ticket: 'DEMO-0041' }))).toMatchObject({ status: 409, code: 'confirm.required' })
+    expect(JSON.stringify(await state(s))).toBe(before)
+  })
   it('share_once outside a ticket refuses like share ("Pick a ticket first"), makes no share', async () => {
     const s = setup()
     const before = (await state(s)).shares.length
     for (const action of ['share', 'share_once']) {
-      const r = await refused(s.api.runAddonAction(s.ws, 'publish', action, {}))
+      const r = await refused(s.api.runAddonAction(s.ws, 'publish', action, { confirmed: true }))
       expect(r, action).toMatchObject({ status: 400, code: 'validation', message: 'Pick a ticket first.' })
     }
     expect((await state(s)).shares).toHaveLength(before)
   })
   it('share_once takes the dialog\'s choices (what, expiry, view limit) and refuses values outside them', async () => {
     const s = setup()
-    const r = await s.api.runAddonAction(s.ws, 'publish', 'share_once', { ticket: 'DEMO-0041', what: 'report', expires_days: 3, view_limit: 3 })
+    const r = await s.api.runAddonAction(s.ws, 'publish', 'share_once', { confirmed: true, ticket: 'DEMO-0041', what: 'report', expires_days: 3, view_limit: 3 })
     expect(r.message).toMatch(/opens 3 times, works for 3 days/)
     expect(r.secret!.note).toMatch(/before\/after report/i)
     const once = (await state(s)).shares[0] as Share & { view_limit?: number }
     expect(once).toMatchObject({ kind: 'show-once', expires_in_days: 3, view_limit: 3 })
-    expect(await refused(s.api.runAddonAction(s.ws, 'publish', 'share_once', { ticket: 'DEMO-0041', expires_days: 99 }))).toMatchObject({ status: 400, code: 'validation' })
-    expect(await refused(s.api.runAddonAction(s.ws, 'publish', 'share_once', { ticket: 'DEMO-0041', view_limit: 7 }))).toMatchObject({ status: 400, code: 'validation' })
-    expect(await refused(s.api.runAddonAction(s.ws, 'publish', 'share_once', { ticket: 'DEMO-0041', what: 'everything' }))).toMatchObject({ status: 400, code: 'validation' })
+    expect(await refused(s.api.runAddonAction(s.ws, 'publish', 'share_once', { confirmed: true, ticket: 'DEMO-0041', expires_days: 99 }))).toMatchObject({ status: 400, code: 'validation' })
+    expect(await refused(s.api.runAddonAction(s.ws, 'publish', 'share_once', { confirmed: true, ticket: 'DEMO-0041', view_limit: 7 }))).toMatchObject({ status: 400, code: 'validation' })
+    expect(await refused(s.api.runAddonAction(s.ws, 'publish', 'share_once', { confirmed: true, ticket: 'DEMO-0041', what: 'everything' }))).toMatchObject({ status: 400, code: 'validation' })
   })
 })
 

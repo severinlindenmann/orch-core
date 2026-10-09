@@ -42,7 +42,7 @@ describe('row feedback follows the row', () => {
     const row = () => screen.getByText('Beta').closest('tr')!
     await waitFor(() => expect(within(row()).getByRole('button', { name: 'Stop' })).toBeEnabled(), T)
     await userEvent.click(within(row()).getByRole('button', { name: 'Stop' }))
-    await userEvent.click(await screen.findByRole('button', { name: 'Stop app' })) // stopping asks first
+    await userEvent.click(await screen.findByRole('button', { name: 'Confirm: Stop (stop)' })) // stopping asks first
     const alert = await screen.findByRole('alert')
     expect(alert.closest('tr')!.previousElementSibling).toBe(row())
     rerender(table([{ id: 'z', name: 'Zed' }, { id: 'a', name: 'Alpha' }, { id: 'b', name: 'Beta' }]))
@@ -72,7 +72,17 @@ describe('list items with equal titles', () => {
 })
 
 describe('destructive confirm', () => {
-  it('core writes the title; the row\'s name, the manifest label and sentence and the args sit in the From-addon region; the button is the label', async () => {
+  it('says the addon offers an undo only when the undo target is a plain action the viewer may run', async () => {
+    const pkg = mockStore.addons.find((a) => a.name === 'publish')!
+    const before = pkg.actions
+    // revoke's "undo" points at another destructive action: core does not promise an undo.
+    pkg.actions = { ...pkg.actions, revoke: { ...pkg.actions!.revoke, undo: 'stop' } }
+    draw({ type: 'list', items: [{ title: 'A', actions: [{ label: 'Revoke', action: 'revoke', args: { id: 'x' }, variant: 'danger' }] }] })
+    await press('Revoke')
+    expect(within(await screen.findByRole('alertdialog')).getByTestId('consequence')).toHaveTextContent('This cannot be undone.')
+    pkg.actions = before
+  })
+  it('core writes the title, the button and the args it sends; the row\'s name and the manifest label sit in the From-addon region', async () => {
     draw({ type: 'list', items: [{ title: 'Tariff API notes', actions: [{ label: 'Revoke', action: 'revoke', args: { id: 'x' }, variant: 'danger' }] }] })
     await press('Revoke')
     const dialog = await screen.findByRole('alertdialog')
@@ -80,8 +90,12 @@ describe('destructive confirm', () => {
     const region = within(dialog).getByRole('region', { name: 'From addon publish' })
     expect(region).toHaveTextContent(/Addon says:\s*Tariff API notes/)
     expect(region).toHaveTextContent('Revoke link')
-    expect(region).toHaveTextContent('Id (id): x')
-    expect(within(dialog).getByRole('button', { name: 'Revoke link' })).toBeInTheDocument()
+    // The arg it sends is core's line, outside the addon's region.
+    const arg = dialog.querySelector('[data-arg-key="id"]')!
+    expect(arg).toHaveTextContent('Id (id): x')
+    expect(region).not.toContainElement(arg as HTMLElement)
+    expect(within(dialog).getByRole('button', { name: 'Confirm: Revoke (revoke)' })).toBeInTheDocument()
+    expect(within(dialog).queryByRole('button', { name: 'Revoke link' })).toBeNull()
     // Core's consequence line (revoke declares no undo), outside the addon's region.
     expect(within(dialog).getByTestId('consequence')).toHaveTextContent('This cannot be undone.')
     expect(region).not.toContainElement(within(dialog).getByTestId('consequence'))
@@ -135,6 +149,18 @@ describe('a signed action shows everything the host receives, or posts nothing',
     expect(await screen.findByRole('alert')).toHaveTextContent(/a value core cannot show/)
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(post).not.toHaveBeenCalled()
+    restore()
+  })
+  it('a value with a bidi override, a zero-width space, newlines or edge spaces is posted exactly as given', async () => {
+    const restore = signShare()
+    const post = vi.spyOn(api, 'runAddonAction').mockResolvedValue({ ok: true, message: 'Done.' })
+    const args = { a: 'ab\u202Ecd', b: 'ab\u200Bcd', c: 'a\n\nb', d: ' x ', e: '' }
+    draw({ type: 'button', label: 'Share it', action: 'share', args })
+    await press('Share it')
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog.querySelector('[data-arg-key="a"]')).toHaveTextContent('ab\\u{202e}cd')
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Sign and run' }))
+    await waitFor(() => expect(post).toHaveBeenCalledWith(expect.anything(), 'publish', 'share', { ...args, confirmed: true }), T)
     restore()
   })
   it('the confirmation toast: core\'s sentence as the title, the addon\'s message as the labelled description', async () => {

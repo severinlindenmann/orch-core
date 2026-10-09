@@ -71,7 +71,7 @@ describe('refused actions', () => {
       real()
     }
     await api.runAddonAction(ws, 'publish', 'start', { id: 'nope' }).catch(() => undefined)
-    await api.runAddonAction(ws, 'worktrees', 'remove', { id: 'nope' }).catch(() => undefined)
+    await api.runAddonAction(ws, 'worktrees', 'remove', { confirmed: true, id: 'nope' }).catch(() => undefined)
     expect(store.cursor(ws)).toBe(before)
     expect(saves).toBe(0)
   })

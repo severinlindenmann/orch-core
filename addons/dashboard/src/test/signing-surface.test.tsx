@@ -1,8 +1,9 @@
 // The signing and core-confirm paths of the mock, in one table (the list is exactly the CASES below):
 //  (a) the dialog's title and its Covers hold core's words only: nothing the addon wrote, except its name as
 //      "Title (package id)"; what the addon wrote is shown, in full, in a labelled "From the addon" region instead;
-//  (b) the body that is posted equals what the dialog showed, as key + value pairs: an addon-picked arg is the
-//      region's line for that exact key with that exact value; a core field is the line core renders for it.
+//  (b) the body that is posted equals what the dialog showed, as key + value pairs: an addon-picked arg is core's
+//      line for that exact key with that exact value (in the covers or core's "Sends" list, never inside the addon's
+//      region); a core field is the line core renders for it.
 import { screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { wordsAndId } from '@/addon-ui/SignConfirm'
@@ -39,7 +40,7 @@ interface Case {
   addon?: string[]
   /** Body keys that are core's protocol (the verb the title already says) or plumbing (`confirmed`). */
   skip?: string[]
-  /** Addon-picked args: each must be the region's line for that key (data-arg-key/value); `ticket` is "About <ticket>". */
+  /** Addon-picked args: each must be core's line for that key (data-arg-key/value), outside the addon region; `ticket` is "About <ticket>". */
   args?: boolean
   /** Core's rendering of each other posted field. Every posted field needs one. */
   shown?: Record<string, Shown>
@@ -160,6 +161,7 @@ const CASES: Case[] = [
     method: 'runAddonAction',
     arg: 3,
     addon: ['Create show-once link', 'The link is shown once'],
+    skip: ['confirmed'],
     args: true,
   },
   {
@@ -170,10 +172,11 @@ const CASES: Case[] = [
       await user.click(within(row).getByRole('button', { name: 'Stop' }))
       return screen.findByRole('alertdialog', {}, T)
     },
-    confirm: press('Stop app'),
+    confirm: press('Confirm: Stop (stop)'),
     method: 'runAddonAction',
     arg: 3,
     addon: ['Stop app', 'Anyone using the app loses it', 'Billing explorer'],
+    skip: ['confirmed'],
     args: true,
   },
   {
@@ -399,6 +402,7 @@ describe('signing surface: these dialogs show exactly what is signed, in core\'s
     const texts = textsOf(dialog)
     const regions = [...dialog.querySelectorAll('[aria-label^="From addon"], [aria-label^="From the addon"]')]
     const args = new Map([...dialog.querySelectorAll('[data-arg-key]')].map((e) => [e.getAttribute('data-arg-key')!, e.getAttribute('data-arg-value')!]))
+    for (const r of regions) expect(r.querySelector('[data-arg-key]'), 'an arg line sits inside the addon region').toBeNull()
 
     // (a) Core's words only in the title and covers; the addon's words are shown, inside a labelled region.
     for (const s of c.addon ?? []) {

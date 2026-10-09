@@ -2,7 +2,8 @@ import { useId, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import type { ParsedOptions } from './optionsSchema'
-import { addonName, FromAddon, wordsAndId } from './SignConfirm'
+import { addonName, argLines, FromAddon, wordsAndId } from './SignConfirm'
+import { SentArgs } from './SentArgs'
 
 const MAX = 120
 const cap = (v: string) => (v.length > MAX ? `${v.slice(0, MAX)}…` : v)
@@ -55,7 +56,8 @@ export function OptionsConfirm({
           <DialogTitle>{chooseTitle(action, addonTitle, addon)}</DialogTitle>
           <DialogDescription>{ticket ? `About ${ticket}. ` : ''}Choose, then continue: the choices are sent with the action.</DialogDescription>
         </DialogHeader>
-        <FromAddon addon={addon} addonTitle={addonTitle} label={label} text={options.note} subject={subject} args={{ ...args, ...values }} />
+        <SentArgs lines={argLines({ ...args, ...values })} />
+        <FromAddon addon={addon} addonTitle={addonTitle} label={label} text={options.note} subject={subject} />
         <form
           className="space-y-3"
           onSubmit={(e) => {

@@ -1,7 +1,8 @@
 import { useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { addonName, FromAddon, wordsAndId } from './SignConfirm'
+import { addonName, argLines, FromAddon, wordsAndId } from './SignConfirm'
+import { SentArgs } from './SentArgs'
 
 const MAX = 160
 const cap = (v: string) => (v.length > MAX ? `${v.slice(0, MAX)}…` : v)
@@ -9,8 +10,8 @@ const cap = (v: string) => (v.length > MAX ? `${v.slice(0, MAX)}…` : v)
 /**
  * Core's confirm for an action the manifest marks `confirm: 'destructive'`. It is not a signature. Trust split (as
  * SignConfirm): the title and the lines above the region are core's words (the action id, the addon's name, the
- * ticket); the package's words (label, sentence, the row's name) and the args it sends sit in the dashed "From the
- * addon" region. The button names the consequence with the manifest label ("Revoke link"), not "OK"; Cancel has focus.
+ * ticket, every arg that is sent, the consequence); the package's words (label, sentence, the row's name) sit in the
+ * dashed "From the addon" region. The button is core's ("Confirm: Revoke (revoke)"), not "OK"; Cancel has focus.
  */
 export function DestructiveConfirm({
   addon,
@@ -34,7 +35,7 @@ export function DestructiveConfirm({
   subject?: string
   args?: Record<string, unknown>
   ticket?: string
-  /** The manifest declares an undo for it (`undo`): core says so instead of "This cannot be undone." */
+  /** The manifest's undo target is a plain action this viewer may run (core's static check): core says the addon offers an undo. */
   undoable?: boolean
   onConfirm: () => void
   onClose: () => void
@@ -57,7 +58,7 @@ export function DestructiveConfirm({
               <DialogDescription>
                 {ticket ? `About ${ticket}. ` : ''}
                 {/* Core's consequence line, from the manifest's undo pair (not from the addon's sentence). */}
-                <span data-testid="consequence">{undoable ? 'You can undo this right after.' : 'This cannot be undone.'}</span>
+                <span data-testid="consequence">{undoable ? 'The addon offers an undo right after.' : 'This cannot be undone.'}</span>
               </DialogDescription>
             </>
           ) : (
@@ -67,13 +68,19 @@ export function DestructiveConfirm({
             </>
           )}
         </DialogHeader>
-        {addon && action && <FromAddon addon={addon} addonTitle={addonTitle ?? addon} label={label} text={text} subject={subject} args={args} />}
+        {addon && action && (
+          <>
+            <SentArgs lines={argLines(args)} />
+            <FromAddon addon={addon} addonTitle={addonTitle ?? addon} label={label} text={text} subject={subject} />
+          </>
+        )}
         <DialogFooter className="gap-2">
           <Button ref={cancel} variant="ghost" onClick={onClose}>
             Cancel
           </Button>
+          {/* Core's only confirm control: core's words for the action, never the addon's label (that is in its region). */}
           <Button variant="destructive" onClick={onConfirm}>
-            {cap(label)}
+            {addon && action ? `Confirm: ${wordsAndId(action)}` : cap(label)}
           </Button>
         </DialogFooter>
       </DialogContent>

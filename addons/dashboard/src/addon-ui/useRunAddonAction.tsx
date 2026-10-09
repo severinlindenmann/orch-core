@@ -116,6 +116,16 @@ export function useRunAddonAction(ticket?: string, opts: RunOptions = {}): RunAd
     const t = meta(addon, target)
     return !t?.confirm && !t?.decision && t?.kind !== 'navigation' && allowed(addon, target)
   }
+  /**
+   * The static half of undoAllowed: the manifest names an undo target, and that target is a plain action this viewer
+   * may run (no manifest entry means a plain member action, as for every action).
+   */
+  const undoOffered = (addon: string, action: string) => {
+    const target = meta(addon, action)?.undo
+    if (!target || target === action) return false
+    const t = meta(addon, target)
+    return !t?.confirm && !t?.decision && t?.kind !== 'navigation' && allowed(addon, target)
+  }
   const titleOf = (addon: string) => packages?.find((p) => p.name === addon)?.title ?? addon
   /** The confirmation of a signed action: core's sentence as the title, the addon's own message below it, labelled. */
   const signedToast = (action: string, addon: string, message?: string): SignedToast => ({
@@ -132,10 +142,11 @@ export function useRunAddonAction(ticket?: string, opts: RunOptions = {}): RunAd
   }
 
   const m = useMutation({
-    mutationFn: ({ addon, action, extra, confirmed }: Pending & { confirmed?: ConfirmedLaunch }) => {
+    mutationFn: ({ addon, action, extra, confirmed, asked }: Pending & { confirmed?: ConfirmedLaunch; asked?: boolean }) => {
       if (!workspace) throw new Error('No workspace')
       // After core's dialog: the ticket and choice core validated and showed, never the addon's own args for them.
-      const core = confirmed ? { confirmed: true, ticket: confirmed.ticket, launch: { mode: confirmed.mode, harness: confirmed.harness, where: confirmed.where } } : {}
+      // `asked`: core's destructive or options confirm was answered (the host requires `confirmed` for those too).
+      const core = confirmed ? { confirmed: true, ticket: confirmed.ticket, launch: { mode: confirmed.mode, harness: confirmed.harness, where: confirmed.where } } : asked ? { confirmed: true } : {}
       return api.runAddonAction(workspace.id, addon, action, { ...body(extra), ...core }).then(({ secret: shown, ...res }) => {
         // The value lives only in this component's state while the modal is open; it is never kept in the mutation cache.
         if (shown) setSecret({ addon, secret: shown })
@@ -198,8 +209,8 @@ export function useRunAddonAction(ticket?: string, opts: RunOptions = {}): RunAd
     if (m0?.decision) void openDecision(addon, action, extra)
     else if (confirm === 'spawn_agent') setConfirming({ addon, action, extra })
     else if ((confirm === 'sign' || confirm === 'destructive' || confirm === 'options') && signArgsProblem(withoutReservedKeys(extra))) {
-      // Fails closed: core's dialog shows every arg it sends, so args it cannot show exactly (not a plain value, or
-      // longer than the dialog shows) are never signed, confirmed or posted.
+      // Fails closed: core's dialog shows every arg it sends, so args it cannot show exactly (not a plain finite value,
+      // or more than core signs at once) are never signed, confirmed or posted.
       const problem = signArgsProblem(withoutReservedKeys(extra))!
       fail(new Error(problem), problem)
     } else if (confirm === 'sign') setSigning({ addon, action, extra, subject })
@@ -261,7 +272,7 @@ export function useRunAddonAction(ticket?: string, opts: RunOptions = {}): RunAd
       action={destroying.action}
       args={withoutReservedKeys(destroying.extra)}
       ticket={ticket}
-      undoable={!!meta(destroying.addon, destroying.action)?.undo}
+      undoable={undoOffered(destroying.addon, destroying.action)}
       label={meta(destroying.addon, destroying.action)?.confirmLabel ?? meta(destroying.addon, destroying.action)?.label ?? 'Confirm'}
       text={meta(destroying.addon, destroying.action)?.confirmText}
       subject={destroying.subject}
@@ -269,7 +280,7 @@ export function useRunAddonAction(ticket?: string, opts: RunOptions = {}): RunAd
       onConfirm={() => {
         const d = destroying
         setDestroying(null)
-        m.mutate(d)
+        m.mutate({ ...d, asked: true })
       }}
     />
   )
@@ -289,7 +300,7 @@ export function useRunAddonAction(ticket?: string, opts: RunOptions = {}): RunAd
       onConfirm={(values) => {
         const c = choosing
         setChoosing(null)
-        m.mutate({ ...c, extra: { ...c.extra, ...values } })
+        m.mutate({ ...c, extra: { ...c.extra, ...values }, asked: true })
       }}
     />
   )

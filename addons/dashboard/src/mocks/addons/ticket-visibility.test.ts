@@ -82,7 +82,7 @@ describe('ticket-scoped actions on a hidden ticket are refused', () => {
   it('publish share, share_once', async () => {
     const s = setup('p_mara')
     await refused(run(s, 'publish', 'share', { ticket: 'DEMO-0041' }))
-    await refused(run(s, 'publish', 'share_once', { ticket: 'DEMO-0041' }))
+    await refused(run(s, 'publish', 'share_once', { confirmed: true, ticket: 'DEMO-0041' }))
   })
   it('wiki link, terminals open_ticket, estimate set', async () => {
     const s = setup('p_mara')
@@ -93,7 +93,7 @@ describe('ticket-scoped actions on a hidden ticket are refused', () => {
   it('publish: copy_link, extend and revoke by id do nothing for a hidden ticket share', async () => {
     const s = setup('p_mara')
     const before = JSON.stringify(s.store.addonState(s.ws, 'publish').shares)
-    for (const id of ['copy_link', 'extend', 'revoke']) expect(await refusal(run(s, 'publish', id, { id: 'sh_report' }))).toMatchObject({ status: 404, message: 'That share no longer exists.' })
+    for (const id of ['copy_link', 'extend', 'revoke']) expect(await refusal(run(s, 'publish', id, { confirmed: true, id: 'sh_report' }))).toMatchObject({ status: 404, message: 'That share no longer exists.' })
     expect(JSON.stringify(s.store.addonState(s.ws, 'publish').shares)).toBe(before)
   })
   it('publish: the decision about a hidden ticket is not on Today and cannot be decided by id', async () => {

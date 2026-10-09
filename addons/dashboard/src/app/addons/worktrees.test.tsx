@@ -70,7 +70,7 @@ describe('worktrees page', () => {
     await user.click(await moreAction(user, row, 'Remove'))
     // A destructive confirm whose button names the consequence.
     expect(await screen.findByRole('alertdialog')).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Remove worktree' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm: Remove (remove)' }))
     await waitFor(() => expect(screen.queryByText('wt/DEMO-0041-energy-dbt')).not.toBeInTheDocument(), T)
   })
   it('the add form creates a worktree', async () => {

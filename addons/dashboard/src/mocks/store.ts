@@ -1026,6 +1026,14 @@ export class MockStore {
     // Starting an agent goes through core's own dialog first; only core sets `confirmed` (addon nodes cannot, see actionRuntime).
     if (meta?.confirm === 'spawn_agent' && (body.confirmed !== true || typeof body.launch !== 'object' || body.launch === null)) return refuse(409, 'confirm.required', 'Starting an agent needs your confirmation in orch\'s own dialog.', 'Press Start and confirm in the dialog.')
     if (meta?.confirm === 'sign' && body.confirmed !== true) return refuse(409, 'confirm.required', 'This needs your signature in orch\'s own dialog.', 'Press the button and sign in the dialog.')
+    // A signature covers exactly what core showed: plain finite values only, at most 12 besides core's flag and ticket.
+    if (meta?.confirm === 'sign') {
+      const signedArgs = Object.entries(body).filter(([k]) => k !== 'confirmed' && k !== 'ticket')
+      if (signedArgs.length > 12 || signedArgs.some(([, v]) => !(typeof v === 'string' || typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v)))))
+        return refuse(400, 'validation', 'A signed action carries at most 12 plain values.', 'Nothing was signed.')
+    }
+    // Core's confirm (destructive) and choice (options) dialogs come first too; addon args cannot set `confirmed`.
+    if ((meta?.confirm === 'destructive' || meta?.confirm === 'options') && body.confirmed !== true) return refuse(409, 'confirm.required', 'This asks first in orch\'s own dialog.', 'Press the button and confirm in the dialog.')
     // A decision action (`decision: true`) is decided by core's one rule, for every addon: owners and maintainers only,
     // the decision must be open for this caller now (runtime decisions included) and about a ticket they can see, and
     // the option must be one of its options. The addon then only applies the answer; core records it (addon.decided).
@@ -1046,14 +1054,10 @@ export class MockStore {
     const res = this.checkedResult(ws, raw)
     // Core's own record of a decision (presence step done in core's prompt): who decided what, never the addon's words.
     if (decision) this.appendWs(ws, { type: 'addon.decided', name, id: decision.id, option: String(body.option), ...(decision.ticket ? { ticket: decision.ticket } : {}), presence: 'touchid' })
-    // Core's own record of a signed action (the addon cannot write or hide it): who signed which action, with scalar args only, whether or not the addon says it changed anything.
+    // Core's own record of a signed action (the addon cannot write or hide it): who signed which action with exactly the
+    // body that was signed (every arg, uncut; only core's `confirmed` flag left out), whether or not the addon changed anything.
     if (meta?.confirm === 'sign') {
-      const args: Record<string, string | number | boolean> = {}
-      for (const [k, v] of Object.entries(body).slice(0, 12)) {
-        if (k === 'confirmed') continue
-        if (typeof v === 'string') args[k.slice(0, 40)] = v.slice(0, 120)
-        else if (typeof v === 'number' || typeof v === 'boolean') args[k.slice(0, 40)] = v
-      }
+      const { confirmed: _confirmed, ...args } = body
       this.appendWs(ws, { type: 'addon.action_signed', name, action: id, args, changed: !!res.changed, presence: 'touchid' })
     }
     // Addon actions change state without events; let live pages refresh. Navigation is one viewer's own: no refresh for others.

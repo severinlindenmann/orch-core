@@ -1,6 +1,6 @@
 import type { RJSFValidationError } from '@rjsf/utils'
 import { useQuery } from '@tanstack/react-query'
-import { Link } from '@tanstack/react-router'
+import { Link, useBlocker } from '@tanstack/react-router'
 import { createContext, lazy, Suspense, useContext, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { ChevronRight, Ellipsis, ExternalLink, TriangleAlert } from 'lucide-react'
 import { api } from '@/api/client'
@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge'
 import { STATUS_LABEL } from '@/app/pages/ticket/shared'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -235,9 +236,9 @@ function TabsView({ node, depth }: { node: NodeOf<'tabs'>; depth: number }) {
   const { addon } = useContext(RuntimeCtx)
   const { workspace } = useWorkspace()
   const me = useQuery({ queryKey: ['me'], queryFn: api.getMe })
-  // The remembered tab is read once we know who is looking (the viewer is cached after the first load).
-  if (!me.data) return <Skeleton className="h-8 w-full" />
-  const key = tabKey(workspace?.id ?? '', me.data.person, addon, node.id)
+  // The remembered tab is read once we know who is looking (the viewer is cached after the first load); if that fails, nobody in particular.
+  if (!me.data && !me.isError) return <Skeleton className="h-8 w-full" />
+  const key = tabKey(workspace?.id ?? '', me.data?.person ?? '', addon, node.id)
   // Keyed: another person (or workspace) starts from their own remembered tab.
   return <TabsBody key={key} storageKey={key} node={node} depth={depth} />
 }
@@ -276,9 +277,10 @@ const ClosePopoverCtx = createContext<(() => void) | null>(null)
 function PopoverView({ node, depth }: { node: NodeOf<'popover'>; depth: number }) {
   const [open, setOpen] = useState(false)
   return (
+    <div className="flex h-full items-end">
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button size="sm" variant={BUTTON_VARIANT[node.variant]} className="flex-none! self-end">
+        <Button size="sm" variant={BUTTON_VARIANT[node.variant]}>
           {node.label}
         </Button>
       </PopoverTrigger>
@@ -288,6 +290,7 @@ function PopoverView({ node, depth }: { node: NodeOf<'popover'>; depth: number }
         </ClosePopoverCtx.Provider>
       </PopoverContent>
     </Popover>
+    </div>
   )
 }
 
@@ -439,6 +442,30 @@ function formErrors(errors: RJSFValidationError[], schema: Record<string, unknow
   })
 }
 
+/** While a form holds unsaved edits, leaving the page by the router (links, palette, shortcuts, Back) asks first. Mounted only then. */
+function LeaveGuard() {
+  const blocker = useBlocker({ shouldBlockFn: () => true, withResolver: true, enableBeforeUnload: false })
+  if (blocker.status !== 'blocked') return null
+  return (
+    <Dialog open onOpenChange={(o) => !o && blocker.reset()}>
+      <DialogContent className="max-w-md border-border bg-surface">
+        <DialogHeader>
+          <DialogTitle>Discard unsaved changes?</DialogTitle>
+          <DialogDescription>This page has changes that are not saved.</DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => blocker.reset()}>
+            Keep editing
+          </Button>
+          <Button variant="destructive" onClick={() => blocker.proceed()}>
+            Discard changes
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 function FormNode({ node }: { node: NodeOf<'form'> }) {
   const closePopover = useContext(ClosePopoverCtx)
   // In a popover the form closes it once its action went through (a refusal leaves it open, with the error in it).
@@ -482,6 +509,7 @@ function FormNode({ node }: { node: NodeOf<'form'> }) {
   return (
     <>
       {dialog}
+      {guarded && edited && <LeaveGuard />}
       {precheck && <PrecheckAlert text={precheck} />}
       <Suspense fallback={<Skeleton className="h-24 w-full" />}>
         <ThemedForm

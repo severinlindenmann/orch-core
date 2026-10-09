@@ -117,3 +117,34 @@ describe('charts', () => {
     expect(parseNode({ ...chart, layout: 'diagonal' }).ok).toBe(false)
   })
 })
+
+describe('round 2 hardening', () => {
+  it('args are capped: at most 16 keys, keys up to 64 characters', () => {
+    const many = Object.fromEntries(Array.from({ length: 17 }, (_, i) => [`k${i}`, 1]))
+    expect(parseNode({ type: 'button', label: 'x', action: 'a', args: many }).ok).toBe(false)
+    expect(parseNode({ type: 'button', label: 'x', action: 'a', args: { ['k'.repeat(65)]: 1 } }).ok).toBe(false)
+    expect(parseNode({ type: 'button', label: 'x', action: 'a', args: { ok: 1 } }).ok).toBe(true)
+    expect(parseNode({ type: 'table', columns: [{ key: 'a', label: 'A' }], rows: [], rowOpen: { action: 'o', args: many } }).ok).toBe(false)
+    expect(parseNode({ type: 'list', items: [{ title: 't', actions: [{ label: 'l', action: 'a', args: many }] }] }).ok).toBe(false)
+  })
+  it('an id from addon text (a footnote) never survives, with or without toc', async () => {
+    const text = 'Claim[^1]\n\n[^1]: the note\n\n## Rules\n\n## Other'
+    const a = show(md(text))
+    await screen.findByText(/the note/)
+    expect(a.container.querySelectorAll('[id]')).toHaveLength(0)
+    a.unmount()
+    const b = show(md(text, { toc: true }))
+    await screen.findByText(/the note/)
+    const ids = [...b.container.querySelectorAll('[id]')]
+    expect(ids.every((e) => /^H[1-6]$/.test(e.tagName) && e.id.startsWith('addon-h-'))).toBe(true) // only core's heading ids
+    expect(ids.map((e) => e.id)).toEqual(expect.arrayContaining(['addon-h-rules', 'addon-h-other']))
+  })
+  it('two toc nodes on one page do not share heading ids', async () => {
+    const both = show({ type: 'stack', children: [md('## Rules\n\n## Two', { toc: true }), md('## Rules\n\n## Two', { toc: true })] })
+    await waitFor(() => expect(both.container.querySelectorAll('h2')).toHaveLength(4))
+    await waitFor(() => {
+      const ids = [...both.container.querySelectorAll('h2')].map((h) => h.id)
+      expect(new Set(ids).size).toBe(4)
+    })
+  })
+})

@@ -198,16 +198,21 @@ registerAddon({
       // Failed builds, once, above the tabs (it needs a person). Empty while nothing failed. The full log is behind "Show log".
       attentionNode: failed.length
         ? {
-            type: 'list',
-            items: failed.map((x) => ({
-              title: `${x.name} failed to build`,
-              subtitle: 'Redeploy rebuilds it from its folder. Show log has the details.',
-              status: 'error' as const,
-              actions: [
-                { label: 'Redeploy', action: 'redeploy', args: { id: x.id }, variant: 'secondary' as const, primary: true },
-                { label: 'Show log', action: 'logs', args: { id: x.id }, variant: 'ghost' as const },
-              ],
-            })),
+            type: 'stack',
+            children: [
+              {
+                type: 'list',
+                items: failed.map((x) => ({
+                  id: x.id,
+                  title: `${x.name} failed to build`,
+                  subtitle: 'Redeploy rebuilds it from its folder. Show log has the details.',
+                  status: 'error' as const,
+                  actions: [{ label: 'Redeploy', action: 'redeploy', args: { id: x.id }, variant: 'secondary' as const, primary: true }],
+                })),
+              },
+              // The whole build log, closed: it is what "Show log" opens (the `logs` action only toasts the last lines).
+              ...failed.map((x) => ({ type: 'fold', label: failed.length > 1 ? `Show log · ${x.name}` : 'Show log', node: { type: 'code', language: 'text', text: x.log.join('\n') } })),
+            ],
           }
         : { type: 'stack', children: [] },
       // The ticket panel binds `addon.sharesByTicket.$ticket`; generated from state here and nowhere else.

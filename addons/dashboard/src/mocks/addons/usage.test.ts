@@ -102,6 +102,11 @@ describe('usage by model', () => {
     const total = st.modelRows[4]
     expect(total).toMatchObject({ model: 'Total', cost: (st.cost30Cents / 100).toFixed(2), share: '100.0 %' })
     expect(total.sessions).toBe(18)
+    // What is printed adds up: every token column's rows sum to the Total cell.
+    for (const col of ['cost', 'input', 'output', 'cache']) {
+      const rows = st.modelRows.slice(0, 4).map((r) => Math.round(Number(r[col]) * 100))
+      expect(rows.reduce((a, b) => a + b, 0), col).toBe(Math.round(Number(total[col]) * 100))
+    }
     expect(st.ticketRows.length).toBeGreaterThan(0)
     expect(st.agentRows).toHaveLength(3)
   })

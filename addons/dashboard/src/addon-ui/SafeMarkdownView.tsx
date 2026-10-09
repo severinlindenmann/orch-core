@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import rehypeSanitize from 'rehype-sanitize'
 import remarkGfm from 'remark-gfm'
@@ -30,19 +30,28 @@ export function slugOf(text: string): string {
  * Gives every heading an id made by core (`addon-h-<slug>`, de-duplicated) and records the headings. Runs after the
  * sanitizer, so an id or anchor in the addon's markdown can never survive: only these ids exist.
  */
-function headingIds(into: Heading[]) {
+function headingIds(into: Heading[], opts: { toc: boolean; prefix: string }) {
   return () => (tree: HastNode) => {
     into.length = 0 // a re-render (or React's double render) starts the list again
     const seen = new Map<string, number>()
     const walk = (n: HastNode) => {
-      if (n.type === 'element' && n.tagName && /^h[1-6]$/.test(n.tagName)) {
+      if (n.type !== 'element') {
+        n.children?.forEach(walk)
+        return
+      }
+      const isHeading = !!n.tagName && /^h[1-6]$/.test(n.tagName)
+      if (n.properties && 'id' in n.properties) {
+        const { id: _id, ...rest } = n.properties // an id the addon's text produced (footnotes, anchors) never survives
+        n.properties = rest
+      }
+      if (isHeading && opts.toc) {
         const text = textOf(n).trim()
-        const base = `addon-h-${slugOf(text)}`
+        const base = `${opts.prefix}${slugOf(text)}`
         const count = (seen.get(base) ?? 0) + 1
         seen.set(base, count)
         const id = count === 1 ? base : `${base}-${count}`
         n.properties = { ...n.properties, id }
-        into.push({ id, level: Number(n.tagName[1]), text })
+        into.push({ id, level: Number(n.tagName![1]), text })
         return
       }
       n.children?.forEach(walk)
@@ -50,6 +59,9 @@ function headingIds(into: Heading[]) {
     walk(tree)
   }
 }
+
+/** Several markdown nodes with a toc on one page must not share ids: the first live one is `addon-h-`, the next `addon-h2-`, ... */
+const liveToc: string[] = []
 
 const tocItems = (headings: Heading[]) => headings.filter((h) => h.level >= 2 && h.level <= 3)
 
@@ -101,18 +113,27 @@ function TocColumn({ items }: { items: Heading[] }) {
 export function SafeMarkdownView({ text, toc = false }: { text: string; toc?: boolean }) {
   const found = useRef<Heading[]>([])
   const [headings, setHeadings] = useState<Heading[]>([])
-  const plugin = useMemo(() => headingIds(found.current), [])
+  const owner = useId()
+  const [slot, setSlot] = useState(0)
+  useEffect(() => {
+    if (!toc) return
+    liveToc.push(owner)
+    setSlot(liveToc.indexOf(owner))
+    return () => void liveToc.splice(liveToc.indexOf(owner), 1)
+  }, [toc, owner])
+  const prefix = slot === 0 ? 'addon-h-' : `addon-h${slot + 1}-`
+  const plugin = useMemo(() => headingIds(found.current, { toc, prefix }), [toc, prefix])
   found.current.length = 0
   useEffect(() => {
     if (!toc) return
     const next = [...found.current]
     setHeadings((cur) => (JSON.stringify(cur) === JSON.stringify(next) ? cur : next))
-  }, [text, toc])
+  }, [text, toc, prefix])
   const body = (
     <div className="addon-md text-[13px] leading-relaxed text-text [&_blockquote]:border-l-2 [&_blockquote]:border-border-strong [&_blockquote]:pl-3 [&_blockquote]:text-text-muted [&_code]:rounded [&_code]:bg-surface-3 [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-[12px] [&_h1]:mb-2 [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:mb-1.5 [&_h2]:mt-4 [&_h2]:scroll-mt-4 [&_h2]:text-[15px] [&_h2]:font-semibold [&_h3]:mb-1 [&_h3]:mt-3 [&_h3]:scroll-mt-4 [&_h3]:font-semibold [&_li]:my-0.5 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-2 [&_pre]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-md [&_pre]:border [&_pre]:border-border [&_pre]:bg-surface-3 [&_pre]:p-3 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_table]:my-2 [&_table]:w-full [&_td]:border [&_td]:border-border [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:border-border [&_th]:bg-surface-2 [&_th]:px-2 [&_th]:py-1 [&_th]:text-left [&_ul]:list-disc [&_ul]:pl-5">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        rehypePlugins={toc ? [rehypeSanitize, plugin] : [rehypeSanitize]}
+        rehypePlugins={[rehypeSanitize, plugin]}
         urlTransform={(url) => (isHttp(url) ? url : '')}
         components={{
           a: ({ href, children }) =>

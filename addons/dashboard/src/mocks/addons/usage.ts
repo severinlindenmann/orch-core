@@ -132,6 +132,8 @@ const hm = (ms: number) => {
 }
 /** Millions with two decimals, the one unit of every token column on the page. */
 const mtok = (n: number) => (n / 1_000_000).toFixed(2)
+/** The same, from whole 10k-token units. */
+const mUnits = (u: number) => (u / 100).toFixed(2)
 /** Whole cents as a plain amount; the column header carries the unit (CHF). */
 const cents2 = (cents: number) => (cents / 100).toFixed(2)
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -166,7 +168,13 @@ registerAddon({
       const out = Math.round(modelTokens[i] * OUT_SHARE[m])
       return { model: MODEL_LABEL[m], sessions: modelSessions[i], tokensIn: modelTokens[i] - out, tokensOut: out, cacheRead: Math.round(modelTokens[i] * CACHE_PER_TOKEN[m]), cents: modelCents[i], share: modelShare[i] }
     }).sort((a, b) => b.cents - a.cents)
-        const agents = state.agents as Agent[]
+    // The table's token cells are rounded so the rows add up to the Total row (largest remainder, in 10k-token units).
+    const unitsOf = (xs: number[]) => allocate(Math.round(xs.reduce((a, b) => a + b, 0) / 10_000), xs)
+    const inU = unitsOf(byModel.map((r) => r.tokensIn))
+    const outU = unitsOf(byModel.map((r) => r.tokensOut))
+    const cacheU = unitsOf(byModel.map((r) => r.cacheRead))
+    const sum1 = (xs: number[]) => xs.reduce((a, b) => a + b, 0)
+    const agents = state.agents as Agent[]
     const agentShare = allocate(1000, agents.map((a) => a.cents))
     const byTicket: Record<string, Omit<Row, 'key'>> = {}
     for (const t of tickets) byTicket[t.key] = { cents: t.cents, tokens: t.tokens, sessions: t.sessions, ms: t.ms }
@@ -189,8 +197,8 @@ registerAddon({
       // The By model tab: last 30 days, so its totals are the Overview's "Last 30 days" cost and Tokens (in + out).
       // Cache reads are extra and not part of "Tokens".
       modelRows: [
-        ...byModel.map((r) => ({ model: r.model, cost: cents2(r.cents), share: pctText(r.share), sessions: r.sessions, input: mtok(r.tokensIn), output: mtok(r.tokensOut), cache: mtok(r.cacheRead) })),
-        { model: 'Total', cost: cents2(cost30), share: '100.0 %', sessions: sessionsTotal, input: mtok(byModel.reduce((n, r) => n + r.tokensIn, 0)), output: mtok(byModel.reduce((n, r) => n + r.tokensOut, 0)), cache: mtok(byModel.reduce((n, r) => n + r.cacheRead, 0)) },
+        ...byModel.map((r, i) => ({ model: r.model, cost: cents2(r.cents), share: pctText(r.share), sessions: r.sessions, input: mUnits(inU[i]), output: mUnits(outU[i]), cache: mUnits(cacheU[i]) })),
+        { model: 'Total', cost: cents2(cost30), share: '100.0 %', sessions: sessionsTotal, input: mUnits(sum1(inU)), output: mUnits(sum1(outU)), cache: mUnits(sum1(cacheU)) },
       ],
       // Raw numbers behind the By model rows (the formatted cells round).
       modelTotals: byModel.map((r) => ({ model: r.model, sessions: r.sessions, tokensIn: r.tokensIn, tokensOut: r.tokensOut, cacheRead: r.cacheRead, cents: r.cents, shareTenths: r.share })),

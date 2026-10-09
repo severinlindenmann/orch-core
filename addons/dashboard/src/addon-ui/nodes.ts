@@ -8,6 +8,10 @@ const scalar = z.union([z.string().max(4000), z.number(), z.boolean()])
 const cell = scalar.nullable()
 // Ends up as a URL path segment (.../actions/<id>): never `.`/`..` or a leading dot or dash.
 const actionId = z.string().regex(/^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,63}$/)
+/** Plain values sent with an action: a few, short keys. */
+const argsRecord = z
+  .record(z.string().max(64), scalar)
+  .refine((o) => Object.keys(o).length <= 16, 'at most 16 args')
 const orEmpty = <T extends z.ZodType>(t: T) => z.array(t).max(500).nullish().transform((v) => v ?? [])
 
 export const MAX_DEPTH = 6
@@ -35,7 +39,7 @@ const itemAction = z.object({
   label: z.string().max(40),
   action: actionId,
   /** Values of the form "$row.<key>" (table rowActions only) resolve to that row's cell value. */
-  args: z.record(z.string(), scalar).optional(),
+  args: argsRecord.optional(),
   variant: z.enum(['primary', 'secondary', 'ghost', 'danger']).default('ghost'),
   /** The one action shown as a button when a row has several; without it the first non-danger action is. The rest go into the "More" menu. */
   primary: z.boolean().optional(),
@@ -67,7 +71,7 @@ export const tableNode = z.object({
   // menu; `when` hides an action per row, so a Start / Stop pair leaves one visible. Core enforces nothing else here.
   rowActions: z.array(itemAction).max(4).optional(),
   /** Clicking the first column's text runs this action for the row (a title that opens the item); args as in rowActions. */
-  rowOpen: z.object({ action: actionId, args: z.record(z.string(), scalar).optional() }).optional(),
+  rowOpen: z.object({ action: actionId, args: argsRecord.optional() }).optional(),
   /** The last row is a total: drawn bold with a rule above it. */
   totalRow: z.boolean().optional(),
   /** Shown instead of the table when there are no rows (like a list's `empty`). */
@@ -109,7 +113,7 @@ export const buttonNode = z.object({
   action: actionId,
   variant: z.enum(['primary', 'secondary', 'ghost', 'danger']).default('secondary'),
   /** Plain values sent with the action (a filter chip says which filter it sets). */
-  args: z.record(z.string(), scalar).optional(),
+  args: argsRecord.optional(),
   /** A toggle or filter chip that is on right now (drawn pressed, exposed as aria-pressed). */
   pressed: z.boolean().optional(),
 })

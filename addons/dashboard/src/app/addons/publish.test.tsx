@@ -104,6 +104,9 @@ describe('publish failed builds', () => {
     expect(screen.getAllByText(/ModuleNotFoundError/)).toHaveLength(1) // the error line is in the app's row only
     expect(screen.getAllByText('Ops notebook failed to build')).toHaveLength(1)
     expect(screen.queryByText(/Traceback/)).not.toBeInTheDocument() // the log is behind Show log
+    await user.click(screen.getByRole('button', { name: 'Show log' }))
+    expect(await screen.findByText(/Traceback \(most recent call last\)/)).toBeInTheDocument() // the whole log, not three lines
+    expect(screen.getByText(/Installing requirements\.txt/)).toBeInTheDocument()
     // The app row has a short note instead of a second copy of the alert.
     const row = screen.getByText('Ops notebook').closest('tr')!
     expect(within(row).getByText(/ModuleNotFoundError/)).toBeInTheDocument()

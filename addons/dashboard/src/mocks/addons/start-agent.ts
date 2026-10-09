@@ -109,13 +109,18 @@ registerAddon({
   name: 'start-agent',
   seed: () => ({ settings: { ...DEFAULTS }, nav: {} }),
 
+  // Per-ticket data (previews, the rail panel) is costly (one launch resolution each). A ticket panel asks with
+  // `?ticket=` and gets that ticket only; the page (no ticket) gets the preview of the ticket picked there, no maps.
   view(state, c) {
-    const tickets = startable(c)
+    const nav = navOf(state, c.viewer)
+    const tickets = c.ticket ? startable(c).filter((t) => t.key === c.ticket) : startable(c)
     const runs = runsOf(c)
     const live = runs.filter((r) => r.state !== 'stopped')
     const previews: Record<string, LaunchPreview> = {}
     const byTicket: Record<string, unknown> = {}
-    for (const t of tickets) {
+    const pickedOnPage = !c.ticket ? tickets.find((t) => t.key === nav.selected) : undefined
+    if (pickedOnPage) previews[pickedOnPage.key] = preview(c, state, pickedOnPage.key, pickedOnPage.title)
+    for (const t of c.ticket ? tickets : []) {
       const p = (previews[t.key] = preview(c, state, t.key, t.title))
       const run = live.find((r) => r.s.ticket === t.key)
       byTicket[t.key] = {
@@ -151,14 +156,13 @@ registerAddon({
             },
       }
     }
-    const nav = navOf(state, c.viewer)
-    const selected = nav.selected && previews[nav.selected] ? nav.selected : null
+    const selected = pickedOnPage ? pickedOnPage.key : null
     return {
       settings: settingsOf(state),
       previews,
       byTicket,
       selected,
-      ticketOptions: tickets.length ? tickets.map((t) => ({ const: t.key, title: `${t.key} · ${t.title}` })) : [{ const: '', title: 'No open tickets' }],
+      ticketOptions: c.ticket ? [] : tickets.length ? tickets.map((t) => ({ const: t.key, title: `${t.key} · ${t.title}` })) : [{ const: '', title: 'No open tickets' }],
       page: {
         form: { ...(selected ? { ticket: selected, ...choiceOf(state, c.viewer, selected) } : {}) },
         preview: selected ? previewNode(previews[selected]) : { type: 'markdown', text: 'Pick a ticket and press **Update command** to see what will run.' },

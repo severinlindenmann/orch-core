@@ -20,7 +20,8 @@ interface State {
   runs: { session: string; ticket: string; state: string; mode: string; harness: string }[]
   byTicket: Record<string, { running: boolean; session?: string }>
 }
-const state = async (s: S) => (await s.api.getAddonState(s.ws, 'start-agent')) as unknown as State
+/** The state as the page sees it, or (with `ticket`) as that ticket's panel sees it. */
+const state = async (s: S, ticket?: string) => (await s.api.getAddonState(s.ws, 'start-agent', ticket)) as unknown as State
 const run = (s: S, id: string, body: Record<string, unknown> = {}) => s.api.runAddonAction(s.ws, 'start-agent', id, body)
 const fail = (p: Promise<unknown>) => p.then(() => 'ok', (e: { status: number; code: string }) => `${e.status} ${e.code}`)
 const LAUNCH = { mode: 'work', harness: 'claude-code', where: 'background' }
@@ -41,7 +42,7 @@ describe('start-agent package', () => {
     expect(inst.granted?.capabilities).toEqual(['spawn_agent'])
   })
   it('previews the exact command for the viewer\'s choice (default: work on ticket, Claude Code, background)', async () => {
-    const p = (await state(setup())).previews['DEMO-0044']
+    const p = (await state(setup(), 'DEMO-0044')).previews['DEMO-0044']
     expect(p).toMatchObject({ ticket: 'DEMO-0044', mode: 'Work on ticket', harness: 'Claude Code', where: 'Background' })
     expect(p.command).toBe("orch session start --in background DEMO-0044 -- claude '/orch:work DEMO-0044'")
     expect(p.blocked).toBeUndefined()
@@ -49,12 +50,12 @@ describe('start-agent package', () => {
   it('configure stores the choice per viewer and per ticket', async () => {
     const s = setup()
     await run(s, 'configure', { ticket: 'DEMO-0044', formData: { mode: 'fix', harness: 'codex', where: 'terminals' } })
-    const p = (await state(s)).previews['DEMO-0044']
+    const p = (await state(s, 'DEMO-0044')).previews['DEMO-0044']
     expect(p).toMatchObject({ mode: 'Fix failing checks', harness: 'Codex', where: 'Terminals' })
     expect(p.command).toBe("orch session start --in terminals DEMO-0044 -- codex '/orch:fix DEMO-0044'")
-    expect((await state(s)).previews['DEMO-0048'].mode).toBe('Work on ticket')
+    expect((await state(s, 'DEMO-0048')).previews['DEMO-0048'].mode).toBe('Work on ticket')
     s.store.setViewer('p_mara')
-    expect((await state(s)).previews['DEMO-0044'].mode).toBe('Work on ticket')
+    expect((await state(s, 'DEMO-0044')).previews['DEMO-0044'].mode).toBe('Work on ticket')
   })
 })
 
@@ -201,7 +202,7 @@ describe('stop', () => {
     vi.advanceTimersByTime(60_000)
     expect(s.store.eventsOf('DEMO-0044').length).toBe(n)
     expect((await s.api.getAgents(s.ws)).find((a) => a.session === session)!.state).toBe('stopped')
-    expect((await state(s)).byTicket['DEMO-0044'].running).toBe(false)
+    expect((await state(s, 'DEMO-0044')).byTicket['DEMO-0044'].running).toBe(false)
   })
   it('stop by session id from the runs table works too; a viewer cannot stop', async () => {
     const s = setup()
@@ -216,7 +217,7 @@ describe('stop', () => {
     const s = setup()
     await start(s)
     expect((await state(s)).runs.map((r) => r.ticket)).toEqual(['DEMO-0044'])
-    expect((await state(s)).byTicket['DEMO-0044'].running).toBe(true)
+    expect((await state(s, 'DEMO-0044')).byTicket['DEMO-0044'].running).toBe(true)
     s.store.setViewer('p_tom')
     const json = JSON.stringify(await state(s))
     expect(json).not.toContain('DEMO-0044')
@@ -327,5 +328,40 @@ describe('review fixes: the run stops when it may no longer work', () => {
     expect(t1).toMatchObject({ state: 'doing', lease: { session: 's_other' } })
     expect(t2.state).toBe('done')
     expect(s.store.eventsOf('DEMO-0044').filter((e) => e.type === 'task.done').map((e) => [e.task, (e.actor as { session: string }).session])).toEqual([['T2', session]])
+  })
+})
+
+describe('state per ticket (?ticket=)', () => {
+  const busy = () => {
+    const store = createMockStore({ persist: false, dataset: 'busy' })
+    const ws = store.workspaces.find((w) => w.prefix === 'DEMO')!.id
+    return { store, ws, api: createApi(createMockTransport(store, { latency: false })) }
+  }
+  const size = (v: unknown) => JSON.stringify(v).length
+  it('busy day: a ticket panel gets that ticket only, and the page gets no per-ticket maps (was ~184 KB each)', async () => {
+    const s = busy()
+    const panel = (await s.api.getAddonState(s.ws, 'start-agent', 'DEMO-0044')) as unknown as State
+    expect(Object.keys(panel.previews)).toEqual(['DEMO-0044'])
+    expect(Object.keys(panel.byTicket)).toEqual(['DEMO-0044'])
+    expect(size(panel)).toBeLessThan(10_000)
+    const page = (await s.api.getAddonState(s.ws, 'start-agent')) as unknown as State
+    expect(page.byTicket).toEqual({})
+    expect(Object.keys(page.previews)).toEqual([])
+    expect(size(page)).toBeLessThan(30_000)
+  })
+  it('the page still gets the preview of the ticket picked there', async () => {
+    const s = setup()
+    await run(s, 'configure', { formData: { ticket: 'DEMO-0045', mode: 'fix', harness: 'codex', where: 'terminals' } })
+    const page = (await s.api.getAddonState(s.ws, 'start-agent')) as unknown as State & { selected: string }
+    expect(page.selected).toBe('DEMO-0045')
+    expect(Object.keys(page.previews)).toEqual(['DEMO-0045'])
+  })
+  it('a hidden ticket answers like the ticket routes (404 not_visible); an unknown or foreign one 404 not_found', async () => {
+    const s = setup('p_mara')
+    ;(s.store as unknown as { defs: Map<string, { visibility: unknown }> }).defs.get('DEMO-0044')!.visibility = { restricted: ['p_sev'] }
+    expect(await fail(s.api.getAddonState(s.ws, 'start-agent', 'DEMO-0044'))).toBe('404 not_visible')
+    expect(await fail(s.api.getTicket('DEMO-0044'))).toBe('404 not_visible')
+    expect(await fail(s.api.getAddonState(s.ws, 'start-agent', 'NOPE-1'))).toBe('404 not_found')
+    expect(await fail(s.api.getAddonState(s.ws, 'start-agent', 'INT-0001'))).toBe('404 not_found')
   })
 })

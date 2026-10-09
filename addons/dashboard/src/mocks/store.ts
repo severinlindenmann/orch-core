@@ -850,13 +850,16 @@ export class MockStore {
     return done()
   }
 
-  /** GET .../addons/:name/state: state with the addon's derived view merged over it. Null when unknown or disabled. */
-  addonStateView(ws: string, name: string): Record<string, unknown> | null {
+  /**
+   * GET .../addons/:name/state: state with the addon's derived view merged over it. Null when unknown or disabled.
+   * `ticket` (`?ticket=`, checked by the router): view() computes per-ticket data for that ticket only.
+   */
+  addonStateView(ws: string, name: string, ticket?: string): Record<string, unknown> | null {
     const addon = getAddon(name)
     const w = this.workspaces.find((x) => x.id === ws)
     if (!addon || !addonActive(w, name)) return null
     const state = this.addonState(ws, name)
-    const { nav: _perViewer, ...shared } = { ...state, ...(addon.view?.(state, { store: this, ws, viewer: this.viewer }) ?? {}) } // `nav` is the per-viewer map (convention): never sent raw
+    const { nav: _perViewer, ...shared } = { ...state, ...(addon.view?.(state, { store: this, ws, viewer: this.viewer, ...(ticket ? { ticket } : {}) }) ?? {}) } // `nav` is the per-viewer map (convention): never sent raw
     return shared
   }
 

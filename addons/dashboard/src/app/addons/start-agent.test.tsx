@@ -50,9 +50,9 @@ describe('start agent on the ticket rail', { timeout: 20_000 }, () => {
       viewer: 'p_sev',
       setup: (s) => {
         const real = s.addonStateView.bind(s)
-        vi.spyOn(s, 'addonStateView').mockImplementation((ws, name) => {
-          const v = real(ws, name)
-          if (name !== 'start-agent' || !v) return v
+        vi.spyOn(s, 'addonStateView').mockImplementation((ws, name, ticket) => {
+          const v = real(ws, name, ticket)
+          if (name !== 'start-agent' || !v || !(v.previews as Record<string, unknown>)['DEMO-0044']) return v
           const previews = v.previews as Record<string, Record<string, unknown>>
           previews['DEMO-0044'] = {
             ...previews['DEMO-0044'],
@@ -84,9 +84,10 @@ describe('start agent on the ticket rail', { timeout: 20_000 }, () => {
       viewer: 'p_sev',
       setup: (s) => {
         const real = s.addonStateView.bind(s)
-        vi.spyOn(s, 'addonStateView').mockImplementation((ws, name) => {
-          const v = real(ws, name)
-          if (name === 'start-agent' && v) (v.previews as Record<string, Record<string, unknown>>)['DEMO-0044'].request = { mode: 'rm -rf', harness: 'codex', where: 'terminals' }
+        vi.spyOn(s, 'addonStateView').mockImplementation((ws, name, ticket) => {
+          const v = real(ws, name, ticket)
+          const p = name === 'start-agent' && v ? (v.previews as Record<string, Record<string, unknown>>)['DEMO-0044'] : undefined
+          if (p) p.request = { mode: 'rm -rf', harness: 'codex', where: 'terminals' }
           return v
         })
       },

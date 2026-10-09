@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { AddonBadge } from './AddonBadge'
 import { canSpawnAgent } from './capabilities'
-import { useAddons } from './slots'
+import { addonStateKey, useAddons } from './slots'
 
 /** Hours of the grant a person signs here when they have none. */
 const GRANT_HOURS = 8
@@ -53,7 +53,8 @@ export function SpawnConfirm({ addon, ticketKey, onStart, onClose }: { addon: st
   const me = useQuery({ queryKey: ['me'], queryFn: api.getMe })
   const today = useQuery({ queryKey: ['today', ws], queryFn: () => api.getToday(ws!), enabled: !!ws })
   const grants = useQuery({ queryKey: ['grants', ws], queryFn: () => api.listGrants(ws!), enabled: !!ws })
-  const state = useQuery({ queryKey: ['addon-state', ws, addon], queryFn: () => api.getAddonState(ws!, addon), enabled: !!ws, retry: false })
+  // The same request as the ticket panel (per ticket), or the page's (the ticket picked there).
+  const state = useQuery({ queryKey: addonStateKey(ws, addon, ticketKey), queryFn: () => api.getAddonState(ws!, addon, ticketKey), enabled: !!ws, retry: false })
 
   // The request, from the addon (untrusted): a ticket key and three ids. Core validates them below.
   const previews = (state.data?.previews ?? {}) as Record<string, LaunchPreview>

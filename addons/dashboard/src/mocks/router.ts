@@ -413,7 +413,13 @@ export function buildRouter(): MockRouter {
     ok(s.addonDecisions(c.params.ws)),
   )
   readOf('/api/workspaces/:ws/addons/:name/state', (s, c) => {
-    const v = s.addonStateView(c.params.ws, c.params.name)
+    // `?ticket=KEY`: per-ticket data for that ticket only (ticket panels). Same answers as the ticket routes.
+    const ticket = c.query.get('ticket') ?? undefined
+    if (ticket !== undefined) {
+      if (!s.hasTicket(ticket) || s.workspaceOf(ticket)?.id !== c.params.ws) return fail(404, 'not_found', `No ticket ${ticket}`)
+      if (!s.isVisible(ticket)) return fail(404, 'not_visible', `No ticket ${ticket}`, 'The ticket is restricted to other people.')
+    }
+    const v = s.addonStateView(c.params.ws, c.params.name, ticket)
     return v ? ok(v) : fail(404, 'not_found', 'Addon is not enabled in this workspace')
   })
   r.add('POST', '/api/workspaces/:ws/addons/:name/actions/:id', (s, c) => {

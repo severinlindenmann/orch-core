@@ -17,7 +17,7 @@ const setup = (viewer = 'p_sev', install = true) => {
   return { store, ws, api: createApi(createMockTransport(store, { latency: false })) }
 }
 type S = ReturnType<typeof setup>
-const preview = async (s: S, key = 'DEMO-0044') => ((await s.api.getAddonState(s.ws, 'start-agent')) as unknown as { previews: Record<string, LaunchPreview> }).previews[key]
+const preview = async (s: S, key = 'DEMO-0044') => ((await s.api.getAddonState(s.ws, 'start-agent', key)) as unknown as { previews: Record<string, LaunchPreview> }).previews[key]
 const models = async (s: S) => (await s.api.getAddonState(s.ws, 'models')) as unknown as { settings: Record<string, string>; settingsAlert: { type: string; tone?: string; title?: string; text?: string }; nextStrong: string[] }
 const choose = (s: S, key: string, formData: Record<string, string>) => s.api.runAddonAction(s.ws, 'start-agent', 'configure', { ticket: key, formData })
 const save = (s: S, formData: Record<string, string>) => s.api.runAddonAction(s.ws, 'models', 'save_settings', { formData })

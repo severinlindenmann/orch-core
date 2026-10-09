@@ -8,6 +8,7 @@ import { can } from '@/api/permissions'
 import { api } from '@/api/client'
 import { STATUSES, type ActionRequest } from '@/api/types'
 import { useAddons, useSlot } from '@/addon-ui/slots'
+import { useRunAddonAction } from '@/addon-ui/useRunAddonAction'
 import { CommandDialog, CommandEmpty, CommandInput, CommandList } from '@/components/ui/command'
 import { iconByName } from '../../icons'
 import { useWorkspace } from '../../workspace'
@@ -52,6 +53,7 @@ export function CommandPalette() {
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.getMe })
   const person = me?.person
   const role = useRole()
+  const runAddon = useRunAddonAction(ticketKey)
 
   // Recent items: every visited ticket and page, per viewer.
   const [recent, setRecent] = useState<RecentItem[]>([])
@@ -144,25 +146,21 @@ export function CommandPalette() {
     },
   ]
 
-  // Viewers run no addon actions (the host refuses them too), so they get no addon commands.
+  // Addon commands go through the one action hook: the installed manifest decides who may run each (a viewer gets the
+  // viewer-level ones), and signed or agent-starting actions open core's dialog first.
   const addonCommands: Entry[] = addons
-    .filter((a) => can(role, 'addon.action') && addonActive(workspace, a.name))
+    .filter((a) => addonActive(workspace, a.name))
     .flatMap((a) => (a.commands ?? []).map((c) => ({ addon: a.name, ...c })))
+    .filter((c) => runAddon.allowed(c.addon, c.action))
     .map((c) => ({
       id: `${c.addon}/${c.id}`,
       label: c.title,
       icon: <Zap />,
       hint: c.addon,
       addon: c.addon,
-      run: async () => {
+      run: () => {
         close()
-        try {
-          const res = await api.runAddonAction(workspace!.id, c.addon, c.action, ticketKey ? { ticket: ticketKey } : {})
-          toast.success(res.message)
-          if (res.changed) void qc.invalidateQueries()
-        } catch (e) {
-          fail(e)
-        }
+        runAddon.run(c.addon, c.action)
       },
     }))
 
@@ -304,6 +302,7 @@ export function CommandPalette() {
         </CommandList>
       </CommandDialog>
       {ticket.data && <SignDialog ticket={ticket.data} action={signing} onClose={() => setSigning(null)} />}
+      {runAddon.dialog}
     </>
   )
 }

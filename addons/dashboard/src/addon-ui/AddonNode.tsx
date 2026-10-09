@@ -1,10 +1,5 @@
-import { createContext, lazy, Suspense, useContext, useState, type ReactNode } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { createContext, lazy, Suspense, useContext, type ReactNode } from 'react'
 import { ExternalLink, TriangleAlert } from 'lucide-react'
-import { toast } from 'sonner'
-import { toastApiError } from '@/app/toast'
-import { manifestFor } from '@/api/addons'
-import { api } from '@/api/client'
 import { useWorkspace } from '@/app/workspace'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -14,16 +9,13 @@ import { cn } from '@/lib/utils'
 import { AddonBadge } from './AddonBadge'
 import { AddonChart } from './AddonChart'
 import { AddonFrame } from './AddonFrame'
-import { openResultUrl, withoutReservedKeys } from './actionRuntime'
 import { canUsePty } from './capabilities'
 import { FrameNode } from './FrameNode'
 import { CodeBlock } from './CodeBlock'
 import { MAX_DEPTH, parseNode, type ItemAction, type NodeOf } from './nodes'
 import { SafeMarkdown } from './SafeMarkdown'
-import { SignConfirm, signTitle } from './SignConfirm'
-import { SpawnConfirm, type ConfirmedLaunch } from './SpawnConfirm'
-import { useSignedAction } from '@/components/sign/SignPrompt'
 import { useAddons, type SlotContext } from './slots'
+import { useRunAddonAction } from './useRunAddonAction'
 
 // rjsf (with ajv) loads on first form, so it stays out of the main bundle.
 const ThemedForm = lazy(() => import('./AddonForm'))
@@ -194,95 +186,15 @@ function Stat({ node }: { node: NodeOf<'stat'> }) {
 }
 
 /**
- * Is this action enabled for the viewer? A read-only viewer (core says so) may still run the actions the package
- * declares with minRole 'viewer' (navigation). The server stays the authority; this only decides what looks clickable.
- */
-function useActionAllowed(): (action?: string) => boolean {
-  const { readOnly } = useContext(RuntimeCtx)
-  const actions = useManifestActions()
-  return (action) => !readOnly || (!!action && actions?.[action]?.minRole === 'viewer')
-}
-
-/** The action manifest this workspace runs for the current addon (the installed version's). */
-function useManifestActions() {
-  const { addon } = useContext(RuntimeCtx)
-  const { data } = useAddons()
-  const { workspace } = useWorkspace()
-  const pkg = data?.find((a) => a.name === addon)
-  // Same manifest the server enforces: the installed version's, so an update that removed a viewer action disables it here.
-  return pkg ? manifestFor(pkg, workspace?.addons[addon]?.version ?? pkg.version).actions : undefined
-}
-
-/**
- * Runs an action of this addon in the current workspace. `blocked`: no workspace yet, or core says read-only.
- * An action the manifest marks `confirm: 'spawn_agent'` is not posted directly: core's start dialog (`dialog`, render
- * it) opens first and posts it with `confirmed` only when the person confirms there.
+ * Runs an action of this addon in the current workspace, through the one action hook (`useRunAddonAction`).
+ * `blocked`: no workspace yet, the viewer's role is below the manifest's minRole, or core says read-only (a read-only
+ * surface still runs the actions the package declares with minRole 'viewer', e.g. navigation).
  */
 function useAddonAction(action?: string): { run: (action: string, extra?: Record<string, unknown>) => void; pending: boolean; blocked: boolean; blockedFor: (action: string) => boolean; dialog: ReactNode } {
-  const { addon, ctx } = useContext(RuntimeCtx)
-  const allowed = useActionAllowed()
-  const actions = useManifestActions()
-  const qc = useQueryClient()
-  const { workspace } = useWorkspace()
-  const [confirming, setConfirming] = useState<{ action: string; extra?: Record<string, unknown> } | null>(null)
-  const m = useMutation({
-    mutationFn: ({ action, extra, confirmed }: { action: string; extra?: Record<string, unknown>; confirmed?: ConfirmedLaunch }) => {
-      if (!workspace) throw new Error('No workspace')
-      // After core's dialog: the ticket and choice core validated and showed, never the addon's own args for them.
-      const core = confirmed ? { confirmed: true, ticket: confirmed.ticket, launch: { mode: confirmed.mode, harness: confirmed.harness, where: confirmed.where } } : {}
-      return api.runAddonAction(workspace.id, addon, action, {
-        ...withoutReservedKeys(extra),
-        ...(ctx.ticket ? { ticket: ctx.ticket.key } : {}),
-        ...core,
-      })
-    },
-    onSuccess: (res) => {
-      toast.success(res.message)
-      openResultUrl(res)
-      void qc.invalidateQueries({ queryKey: ['addon-state'] })
-      void qc.invalidateQueries({ queryKey: ['ticket'] })
-      void qc.invalidateQueries({ queryKey: ['today'] })
-      if (res.changed) void qc.invalidateQueries()
-    },
-    onError: (err) => toastApiError(err, 'Action failed'),
-  })
-  const run = (action: string, extra?: Record<string, unknown>) => {
-    const confirm = actions?.[action]?.confirm
-    if (confirm === 'spawn_agent') setConfirming({ action, extra })
-    else if (confirm === 'sign') setSigning({ action, extra })
-    else m.mutate({ action, extra })
-  }
-  // `confirm: 'sign'`: core's signing prompt first; only after Touch ID is the action posted, with core's `confirmed` flag.
-  const [signing, setSigning] = useState<{ action: string; extra?: Record<string, unknown> } | null>(null)
-  const [signPending, setSignPending] = useState(false)
-  const signed = useSignedAction()
-  const { data: packages } = useAddons()
-  const addonTitle = packages?.find((p) => p.name === addon)?.title ?? addon
-  const signDialog = signing && workspace && (
-    <SignConfirm
-      addon={addon}
-      addonTitle={addonTitle}
-      action={signing.action}
-      workspace={{ prefix: workspace.prefix, name: workspace.name }}
-      label={actions?.[signing.action]?.label}
-      args={withoutReservedKeys(signing.extra)}
-      onClose={() => setSigning(null)}
-      onSign={() => {
-        const s = signing
-        setSigning(null)
-        setSignPending(true)
-        void signed(signTitle(s.action, addonTitle), async () => {
-          const res = await api.runAddonAction(workspace.id, addon, s.action, { ...withoutReservedKeys(s.extra), ...(ctx.ticket ? { ticket: ctx.ticket.key } : {}), confirmed: true })
-          openResultUrl(res)
-          return res.message
-        }).finally(() => setSignPending(false))
-      }}
-    />
-  )
-  const dialog = signDialog || (confirming && (
-    <SpawnConfirm addon={addon} ticketKey={ctx.ticket?.key} onClose={() => setConfirming(null)} onStart={(launch) => m.mutate({ ...confirming, confirmed: launch })} />
-  ))
-  return { run, pending: m.isPending || signPending, blocked: !workspace || !allowed(action), blockedFor: (a) => !workspace || !allowed(a), dialog }
+  const { addon, ctx, readOnly } = useContext(RuntimeCtx)
+  const r = useRunAddonAction(ctx.ticket?.key)
+  const blockedFor = (a?: string) => !a || !r.allowed(addon, a) || (readOnly && r.meta(addon, a)?.minRole !== 'viewer')
+  return { run: (a, extra) => r.run(addon, a, extra), pending: r.pending, blocked: action ? blockedFor(action) : readOnly, blockedFor, dialog: r.dialog }
 }
 
 const BUTTON_VARIANT = { primary: 'default', secondary: 'secondary', ghost: 'ghost', danger: 'destructive' } as const
@@ -301,7 +213,7 @@ function ButtonNode({ node }: { node: NodeOf<'button'> }) {
 
 function FormNode({ node }: { node: NodeOf<'form'> }) {
   const { run, pending, blocked, dialog } = useAddonAction(node.action)
-  const readOnly = !useActionAllowed()(node.action)
+  const readOnly = blocked
   return (
     <>
       {dialog}

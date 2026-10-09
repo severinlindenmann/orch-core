@@ -1,19 +1,13 @@
-import { useState } from 'react'
 import { cn } from '@/lib/utils'
-import { useQueryClient } from '@tanstack/react-query'
 import { Download } from 'lucide-react'
-import { toast } from 'sonner'
-import { api } from '@/api/client'
-import { AddonBadge, openResultUrl, parseNode, useSlot, withoutReservedKeys, type ResolvedContribution } from '@/addon-ui'
+import { AddonBadge, parseNode, useSlot, type ResolvedContribution } from '@/addon-ui'
+import { roleReason, useRunAddonAction } from '@/addon-ui/useRunAddonAction'
 import type { ItemAction } from '@/addon-ui/nodes'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { DisabledReason, VIEWER_REASON } from '@/components/DisabledReason'
+import { DisabledReason } from '@/components/DisabledReason'
 import { iconByName } from '@/app/icons'
-import { useWorkspace } from '@/app/workspace'
 import { useRole } from '@/app/useRole'
-import { can } from '@/api/permissions'
-import { toastApiError } from '@/app/toast'
 import { addonLane } from '@/addon-ui/addonClasses'
 import { AddonStatePlaceholder } from '@/addon-ui/AddonSlot'
 
@@ -31,24 +25,9 @@ function laneItems(c: ResolvedContribution): LaneItem[] {
 }
 
 function LaneCard({ c, item }: { c: ResolvedContribution; item: LaneItem }) {
-  const { workspace } = useWorkspace()
-  const qc = useQueryClient()
-  const canRun = can(useRole(), 'addon.action')
-  const [busy, setBusy] = useState(false)
-  async function run(a: ItemAction) {
-    if (!workspace) return
-    setBusy(true)
-    try {
-      const res = await api.runAddonAction(workspace.id, c.addon, a.action, withoutReservedKeys(a.args))
-      toast.success(res.message)
-      openResultUrl(res)
-      void qc.invalidateQueries()
-    } catch (e) {
-      toastApiError(e, 'Action failed')
-    } finally {
-      setBusy(false)
-    }
-  }
+  const r = useRunAddonAction()
+  const role = useRole()
+  const reasonFor = (a: ItemAction) => roleReason(role, r.meta(c.addon, a.action)?.minRole ?? 'member')
   return (
     <li className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-2.5" data-testid="lane-card">
       <div className="flex items-start gap-2">
@@ -63,16 +42,17 @@ function LaneCard({ c, item }: { c: ResolvedContribution; item: LaneItem }) {
         )}
       </div>
       {item.actions && item.actions.length > 0 && (
-        <DisabledReason reason={canRun ? null : VIEWER_REASON}>
-          <div className="flex gap-1.5">
-            {item.actions.map((a, i) => (
-              <Button key={i} size="sm" variant="secondary" className="h-7 self-start text-[12px]" disabled={busy || !canRun} onClick={() => run(a)}>
+        <div className="flex gap-1.5">
+          {r.dialog}
+          {item.actions.map((a, i) => (
+            <DisabledReason key={i} reason={reasonFor(a)}>
+              <Button size="sm" variant="secondary" className="h-7 self-start text-[12px]" disabled={r.pending || !r.allowed(c.addon, a.action)} onClick={() => r.run(c.addon, a.action, a.args)}>
                 {a.action === 'import' && <Download className="size-3.5" />}
                 {a.label}
               </Button>
-            ))}
-          </div>
-        </DisabledReason>
+            </DisabledReason>
+          ))}
+        </div>
       )}
     </li>
   )

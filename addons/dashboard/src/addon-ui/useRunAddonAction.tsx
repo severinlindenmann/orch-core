@@ -1,0 +1,118 @@
+// The one way the dashboard runs an addon action (addon nodes, board lanes, the command palette). It applies the
+// manifest of the installed version: who may run it (minRole), core's own dialogs (`confirm: 'sign'` and
+// `'spawn_agent'`), reserved-key stripping, toasts, refetching and opening a result url. The host checks it all again.
+import { useState, type ReactNode } from 'react'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { toast } from 'sonner'
+import { manifestFor } from '@/api/addons'
+import { api } from '@/api/client'
+import { atLeast } from '@/api/permissions'
+import type { ActionMeta, Role } from '@/api/types'
+import { toastApiError } from '@/app/toast'
+import { useRole } from '@/app/useRole'
+import { useWorkspace } from '@/app/workspace'
+import { useSignedAction } from '@/components/sign/SignPrompt'
+import { openResultUrl, withoutReservedKeys } from './actionRuntime'
+import { SignConfirm, signTitle } from './SignConfirm'
+import { SpawnConfirm, type ConfirmedLaunch } from './SpawnConfirm'
+import { useAddons } from './slots'
+
+interface Pending {
+  addon: string
+  action: string
+  extra?: Record<string, unknown>
+}
+
+export interface RunAddonAction {
+  /** Runs `action` of `addon`; opens core's dialog first when the manifest says so. */
+  run: (addon: string, action: string, extra?: Record<string, unknown>) => void
+  /** May the viewer run it (role in this workspace meets the installed manifest's minRole)? */
+  allowed: (addon: string, action: string) => boolean
+  /** The manifest entry of an action (installed version). */
+  meta: (addon: string, action: string) => ActionMeta | undefined
+  pending: boolean
+  /** Core's confirm or signing dialog; render it next to the trigger. */
+  dialog: ReactNode
+}
+
+/** Why an action is not allowed for `role`, in plain words (null when it is). */
+export function roleReason(role: Role | undefined, min: Role): string | null {
+  if (atLeast(role, min)) return null
+  if (!role) return 'You are not a member of this workspace.'
+  if (min === 'owner') return 'Only owners can do this.'
+  if (min === 'maintainer') return 'Only owners and maintainers can do this.'
+  return 'Viewers cannot do this.'
+}
+
+/** `ticket`: the ticket in core's render context (sent as `ticket`); addon args can never set it. */
+export function useRunAddonAction(ticket?: string): RunAddonAction {
+  const qc = useQueryClient()
+  const { workspace } = useWorkspace()
+  const role = useRole()
+  const { data: packages } = useAddons()
+  const signed = useSignedAction()
+  const [confirming, setConfirming] = useState<Pending | null>(null)
+  const [signing, setSigning] = useState<Pending | null>(null)
+  const [signPending, setSignPending] = useState(false)
+
+  const meta = (addon: string, action: string): ActionMeta | undefined => {
+    const pkg = packages?.find((a) => a.name === addon)
+    // Same manifest the server enforces: the installed version's, so an update that removed a viewer action disables it here.
+    return pkg ? manifestFor(pkg, workspace?.addons[addon]?.version ?? pkg.version).actions?.[action] : undefined
+  }
+  const allowed = (addon: string, action: string) => !!workspace && atLeast(role, meta(addon, action)?.minRole ?? 'member')
+  const titleOf = (addon: string) => packages?.find((p) => p.name === addon)?.title ?? addon
+  const body = (extra?: Record<string, unknown>) => ({ ...withoutReservedKeys(extra), ...(ticket ? { ticket } : {}) })
+
+  const m = useMutation({
+    mutationFn: ({ addon, action, extra, confirmed }: Pending & { confirmed?: ConfirmedLaunch }) => {
+      if (!workspace) throw new Error('No workspace')
+      // After core's dialog: the ticket and choice core validated and showed, never the addon's own args for them.
+      const core = confirmed ? { confirmed: true, ticket: confirmed.ticket, launch: { mode: confirmed.mode, harness: confirmed.harness, where: confirmed.where } } : {}
+      return api.runAddonAction(workspace.id, addon, action, { ...body(extra), ...core })
+    },
+    onSuccess: (res) => {
+      toast.success(res.message)
+      openResultUrl(res)
+      void qc.invalidateQueries({ queryKey: ['addon-state'] })
+      void qc.invalidateQueries({ queryKey: ['ticket'] })
+      void qc.invalidateQueries({ queryKey: ['today'] })
+      if (res.changed) void qc.invalidateQueries()
+    },
+    onError: (err) => toastApiError(err, 'Action failed'),
+  })
+
+  const run = (addon: string, action: string, extra?: Record<string, unknown>) => {
+    const confirm = meta(addon, action)?.confirm
+    if (confirm === 'spawn_agent') setConfirming({ addon, action, extra })
+    else if (confirm === 'sign') setSigning({ addon, action, extra })
+    else m.mutate({ addon, action, extra })
+  }
+
+  // `confirm: 'sign'`: core's signing prompt first; only after Touch ID is the action posted, with core's `confirmed` flag.
+  const signDialog = signing && workspace && (
+    <SignConfirm
+      addon={signing.addon}
+      addonTitle={titleOf(signing.addon)}
+      action={signing.action}
+      workspace={{ prefix: workspace.prefix, name: workspace.name }}
+      label={meta(signing.addon, signing.action)?.label}
+      args={withoutReservedKeys(signing.extra)}
+      onClose={() => setSigning(null)}
+      onSign={() => {
+        const s = signing
+        setSigning(null)
+        setSignPending(true)
+        void signed(signTitle(s.action, titleOf(s.addon)), async () => {
+          const res = await api.runAddonAction(workspace.id, s.addon, s.action, { ...body(s.extra), confirmed: true })
+          openResultUrl(res)
+          return res.message
+        }).finally(() => setSignPending(false))
+      }}
+    />
+  )
+  const dialog = signDialog || (confirming && (
+    <SpawnConfirm addon={confirming.addon} ticketKey={ticket} onClose={() => setConfirming(null)} onStart={(launch) => m.mutate({ ...confirming, confirmed: launch })} />
+  ))
+  return { run, allowed, meta, pending: m.isPending || signPending, dialog }
+}

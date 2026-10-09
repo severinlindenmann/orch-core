@@ -1,4 +1,4 @@
-// Shared by every surface that runs an addon action (AddonNode, the board lane): what core lets an action carry
+// Used by the one action hook (useRunAddonAction: addon nodes, board lanes, the palette): what core lets an action carry
 // in, and what core opens out. One place, so the two cannot drift.
 
 /**

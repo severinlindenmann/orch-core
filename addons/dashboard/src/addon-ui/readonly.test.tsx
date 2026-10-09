@@ -32,12 +32,12 @@ describe('addon contributions follow the viewer role', () => {
     expect(refresh).toBeDisabled()
   })
 
-  it('the palette lists no addon commands for a viewer', async () => {
+  it('the palette lists only viewer-level addon commands for a viewer', async () => {
     const { user } = renderApp('/ticket/DEMO-0043', { viewer: 'p_tom' })
     await screen.findByRole('heading', { level: 1 })
     await user.keyboard('{Control>}k{/Control}')
     await screen.findByRole('group', { name: 'Go to' })
-    expect(screen.queryByRole('group', { name: 'Addon commands' })).toBeNull()
+    expect(await screen.findByRole('option', { name: /Open terminal/ })).toBeInTheDocument()
     expect(screen.queryByRole('option', { name: /Share current ticket/ })).toBeNull()
   })
 

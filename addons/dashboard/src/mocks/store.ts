@@ -398,7 +398,11 @@ export class MockStore {
     return doc
   }
 
-  summary(doc: TicketDocument): TicketSummary {
+  /**
+   * The ticket as a list row. `blocks` is the workspace's `blockingCheck` (pass one per list; made here when omitted):
+   * "blocking" counts by the same rule as Today and the ticket page, never by the raw seed flag alone.
+   */
+  summary(doc: TicketDocument, blocks?: (ticket: string, ref: string) => boolean): TicketSummary {
     const open = doc.questions_state.filter((q) => q.state === 'open')
     return {
       key: doc.key,
@@ -421,7 +425,11 @@ export class MockStore {
         ac_total: doc.acceptance_state.length,
       },
       open_questions: open.length,
-      blocking_questions: open.filter((q) => q.blocking).length,
+      blocking_questions: open.filter((q) => {
+        if (!q.blocking) return false
+        blocks ??= this.blockingCheck(this.workspaceOf(doc.key)?.id ?? '')
+        return blocks(doc.key, q.id)
+      }).length,
       restricted: doc.restricted,
       awaiting_gate: awaitingGate(doc),
       addons: doc.addons,
@@ -1267,6 +1275,7 @@ export class MockStore {
 
   today(workspaceId: string): TodayDocument {
     const tickets = this.listTickets(workspaceId)
+    const blocks = this.blockingCheck(workspaceId)
     const counts: Partial<Record<Status, number>> = {}
     for (const t of tickets) counts[t.status] = (counts[t.status] ?? 0) + 1
     const recent: TodayDocument['recent'] = []
@@ -1283,7 +1292,7 @@ export class MockStore {
       needs_you: this.needsYou(workspaceId),
       read_only_open: this.readOnlyOpen(workspaceId),
       waiting_on_others: this.waitingOnOthers(workspaceId),
-      working: tickets.filter((t) => t.claim).map((t) => this.summary(t)),
+      working: tickets.filter((t) => t.claim).map((t) => this.summary(t, blocks)),
       recent: recent.slice(0, 15),
       counts,
     }

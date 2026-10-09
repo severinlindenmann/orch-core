@@ -99,6 +99,17 @@ describe('wiki seed', () => {
 })
 
 describe('wiki actions', () => {
+  it('says how long ago a page changed against the store\'s now, like every other view', async () => {
+    const s = setup()
+    const target = (await state(s)).pages[0]
+    await run(s, 'open', { slug: target.slug })
+    const before = (await state(s)).current!.meta
+    const days = Number(/updated (\d+) days? ago/.exec(before)![1])
+    // The demo clock moves on three days: the page is three days older.
+    const later = new Date(Date.parse(s.store.now()) + 3 * 86_400_000).toISOString()
+    s.store.now = () => later
+    expect((await state(s)).current!.meta).toBe(`by Mara · updated ${days + 3} days ago`)
+  })
   it('open shows the page: title first, one meta line, ticket backlinks, and "On this page" from core (toc)', async () => {
     const s = setup()
     const target = (await state(s)).pages[0]

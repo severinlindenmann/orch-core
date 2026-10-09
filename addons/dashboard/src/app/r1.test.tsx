@@ -169,6 +169,11 @@ it('review: "blocking" agrees on Today and the ticket page: only while an agent 
   })
   expect((await api.getTicket('DEMO-0044')).questions_state.find((q) => q.id === 'Q9')!.blocking).toBe(false)
   expect((await api.getTicket('DEMO-0043')).questions_state.find((q) => q.id === 'Q2')!.blocking).toBe(true) // Claude Code waits on Q2
+  // Board cards read the list rows: the same rule there (the seed flag alone does not count).
+  const ws = mockStore.workspaces.find((w) => w.prefix === 'DEMO')!.id
+  const rows = await api.listTickets(ws)
+  expect(rows.find((t) => t.key === 'DEMO-0044')!.blocking_questions).toBe(0)
+  expect(rows.find((t) => t.key === 'DEMO-0043')!.blocking_questions).toBe(1)
   const row = await screen.findByTestId('card-question:DEMO-0044:Q9')
   expect(within(row).queryByText('blocking')).toBeNull()
   expect(within(screen.getByTestId('card-question:DEMO-0043:Q2')).getByText('blocking')).toBeInTheDocument()

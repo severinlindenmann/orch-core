@@ -7,6 +7,8 @@ import { CardFields, type BoardPeople } from './TicketCard'
 import { PRIORITY_RANK, PriorityMarker, TypeIcon } from './lib'
 import { fmtWhen } from '@/lib/time'
 import { statusLabel } from '@/app/pages/ticket/shared'
+import { addonActive } from '@/api/addons'
+import { useWorkspace } from '@/app/workspace'
 
 type SortKey = 'key' | 'title' | 'status' | 'priority' | 'size' | 'owner' | 'updated_at'
 const SIZES = ['xs', 's', 'm', 'l', 'xl']
@@ -23,6 +25,10 @@ const COLUMNS: { key: SortKey; label: string }[] = [
 
 export function ListView({ tickets, people, onOpen }: { tickets: TicketSummary[]; people: BoardPeople; onOpen: (key: string) => void }) {
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'updated_at', dir: -1 })
+  // Size or Points, never both (B m14): with Estimate on, its points show in the Addons column and Size steps back.
+  const { workspace } = useWorkspace()
+  const showSize = !addonActive(workspace, 'estimate')
+  const columns = showSize ? COLUMNS : COLUMNS.filter((c) => c.key !== 'size')
 
   const rows = useMemo(() => {
     const val = (t: TicketSummary): string | number => {
@@ -51,7 +57,7 @@ export function ListView({ tickets, people, onOpen }: { tickets: TicketSummary[]
       <Table>
         <TableHeader className="sticky top-0 bg-surface-2">
           <TableRow>
-            {COLUMNS.map((c) => (
+            {columns.map((c) => (
               <TableHead key={c.key} aria-sort={sort.key === c.key ? (sort.dir === 1 ? 'ascending' : 'descending') : 'none'} className="h-8 p-0">
                 <button
                   type="button"
@@ -92,7 +98,7 @@ export function ListView({ tickets, people, onOpen }: { tickets: TicketSummary[]
                   {t.priority}
                 </span>
               </TableCell>
-              <TableCell className={cn('py-1.5 font-mono text-[11px] uppercase text-text-muted')}>{t.size ?? '–'}</TableCell>
+              {showSize && <TableCell className={cn('py-1.5 font-mono text-[11px] uppercase text-text-muted')}>{t.size ?? '–'}</TableCell>}
               <TableCell className="py-1.5 text-[12px] text-text-muted">{t.owner ? people.name(t.owner) : '–'}</TableCell>
               <TableCell className="py-1.5 font-mono text-[11px] text-text-faint">{fmtWhen(t.updated_at)}</TableCell>
               <TableCell className="py-1.5">

@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { Link, useRouterState } from '@tanstack/react-router'
+import { Link, useRouter, useRouterState } from '@tanstack/react-router'
 import { ChevronRight, Lock, TriangleAlert } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -10,7 +10,7 @@ import { useWorkspace } from '@/app/workspace'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { usePageHeader } from '../../shell/ShellUi'
+import { usePageHeader, useTicketOrigin } from '../../shell/ShellUi'
 import { AcceptanceTasks } from './AcceptanceTasks'
 import { Artifacts } from './Artifacts'
 import { GatesStrip } from './Gates'
@@ -110,16 +110,27 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
   const [signPending, setSignPending] = useState(false)
   const wide = useWideLayout()
 
+  // Back to where the ticket was opened from (Today, Board, Tickets, Artifacts, an addon page), filters included.
+  const origin = useTicketOrigin()
+  const router = useRouter()
   const breadcrumb = useMemo(
     () => (
       <>
-        <Link to="/board" className="text-text-muted hover:text-text">
-          Board
-        </Link>
+        <a
+          href={origin.href}
+          onClick={(e) => {
+            if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return
+            e.preventDefault()
+            router.history.push(origin.href)
+          }}
+          className="text-text-muted hover:text-text"
+        >
+          {origin.label}
+        </a>
         <ChevronRight className="size-3.5 text-text-faint" aria-hidden />
       </>
     ),
-    [],
+    [origin, router],
   )
   usePageHeader(ticketKey, breadcrumb)
 

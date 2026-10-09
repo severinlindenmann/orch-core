@@ -1,3 +1,7 @@
+import type { MockStore } from '../store'
+import { briefs, isDemo } from '../busy/helpers'
+import type { Rng } from '../busy/rng'
+import { SESSIONS } from '../busy/roster'
 import { canSeeTicket, registerAddon } from './registry'
 
 // usage: cost and tokens per day, model, ticket and agent. Everything derives from ONE generator (`seedDays`) so the
@@ -69,13 +73,14 @@ function allocate(total: number, weights: number[]): number[] {
 
 const isoDay = (t: number) => new Date(t).toISOString().slice(0, 10)
 
-function seedDays(): Day[] {
+/** `weekCents`: what the last 7 days add up to; `scale` multiplies every day before that pin (the Busy day). */
+function seedDays(weekCents = WEEK_CENTS, scale = 1): Day[] {
   const rand = rng(20261009)
   const days: Day[] = []
   for (let i = 0; i < DAYS; i++) {
     const t = END_DAY - (DAYS - 1 - i) * DAY_MS
     const weekend = [0, 6].includes(new Date(t).getUTCDay())
-    const f = weekend ? 0.4 : 1
+    const f = (weekend ? 0.4 : 1) * scale
     const cents = {
       'claude-opus-5-5': Math.round((120 + rand() * 140) * f),
       'claude-sonnet-5-5': Math.round((70 + rand() * 80) * f),
@@ -87,8 +92,8 @@ function seedDays(): Day[] {
   // Pin the last 7 days to exactly WEEK_CENTS (scale, then put the rounding remainder on today's opus).
   const week = days.slice(-7)
   const raw = week.reduce((n, d) => n + sum(d), 0)
-  for (const d of week) for (const m of MODELS) d.cents[m] = Math.round((d.cents[m] * WEEK_CENTS) / raw)
-  week[6].cents['claude-opus-5-5'] += WEEK_CENTS - week.reduce((n, d) => n + sum(d), 0)
+  for (const d of week) for (const m of MODELS) d.cents[m] = Math.round((d.cents[m] * weekCents) / raw)
+  week[6].cents['claude-opus-5-5'] += weekCents - week.reduce((n, d) => n + sum(d), 0)
   for (const d of days) for (const m of MODELS) d.tokens[m] = d.cents[m] * TOKENS_PER_CENT[m]
   return days
 }
@@ -112,17 +117,47 @@ const AGENT_SEED = [
   { id: 'claude-code-sub', name: 'Claude Code (subagents)', weight: 15, sessions: 2 },
 ]
 
-function seedState(): Record<string, unknown> {
-  const days = seedDays()
+function seedState(days = seedDays(), ticketSeed = TICKET_SEED, agentSeed = AGENT_SEED, budget = DEFAULT_BUDGET_CHF): Record<string, unknown> {
   const cents = days.reduce((n, d) => n + sum(d), 0)
   const tokens = days.reduce((n, d) => n + sumTokens(d), 0)
-  const tc = allocate(cents, TICKET_SEED.map((t) => t.weight))
-  const tt = allocate(tokens, TICKET_SEED.map((t) => t.weight))
-  const ac = allocate(cents, AGENT_SEED.map((t) => t.weight))
-  const at = allocate(tokens, AGENT_SEED.map((t) => t.weight))
-  const tickets: Row[] = TICKET_SEED.map((t, i) => ({ key: t.key, cents: tc[i], tokens: tt[i], sessions: t.sessions, ms: t.ms }))
-  const agents: Agent[] = AGENT_SEED.map((a, i) => ({ id: a.id, name: a.name, cents: ac[i], tokens: at[i], sessions: a.sessions }))
-  return { days, tickets, agents, settings: { budget_chf: DEFAULT_BUDGET_CHF } satisfies Settings }
+  const tc = allocate(cents, ticketSeed.map((t) => t.weight))
+  const tt = allocate(tokens, ticketSeed.map((t) => t.weight))
+  const ac = allocate(cents, agentSeed.map((t) => t.weight))
+  const at = allocate(tokens, agentSeed.map((t) => t.weight))
+  const tickets: Row[] = ticketSeed.map((t, i) => ({ key: t.key, cents: tc[i], tokens: tt[i], sessions: t.sessions, ms: t.ms }))
+  const agents: Agent[] = agentSeed.map((a, i) => ({ id: a.id, name: a.name, cents: ac[i], tokens: at[i], sessions: a.sessions }))
+  return { days, tickets, agents, settings: { budget_chf: budget } satisfies Settings }
+}
+
+/**
+ * The Busy day (R-g): usage grows with the work. The normal demo has 18 agent sessions over 30 days; the busy day adds
+ * the generated sessions (19 working now, with their subagents) and the generated tickets agents worked on, so cost
+ * and tokens scale by the share of extra sessions, the busy tickets join By ticket and the sessions join By agent.
+ * The monthly budget is raised so the page reads as a busy month, not an overrun (the alert stays for real overruns).
+ */
+export const BUSY_BUDGET_CHF = 600
+
+function seedBusyState(ws: string, store: MockStore, r: Rng): Record<string, unknown> {
+  const normalSessions = AGENT_SEED.reduce((n, a) => n + a.sessions, 0)
+  const demo = isDemo(store, ws)
+  // DEMO has the generated agent sessions; the other workspaces get a share of the work by their generated tickets.
+  const extraSessions = demo ? SESSIONS.length * 3 : 6
+  const scale = (normalSessions + extraSessions) / normalSessions
+  const days = seedDays(Math.round(WEEK_CENTS * scale), scale)
+  const worked = briefs(store, ws).filter((b) => !b.restricted && (b.claimed || ['in-progress', 'waiting', 'testing', 'done'].includes(b.status)))
+  const busyTickets = r.sample(worked, Math.min(worked.length, demo ? 36 : 8)).map((b) => {
+    const sessions = r.int(1, 6)
+    return { key: b.key, weight: r.int(30, 420), sessions, ms: sessions * r.int(12, 55) * 60_000 }
+  })
+  const bySession = (agent: 'claude-code' | 'codex', sub: boolean) => SESSIONS.filter((x) => x.agent === agent && !!x.parent === sub).length * 3
+  const agents = demo
+    ? [
+        { id: 'claude-code', name: 'Claude Code', weight: 58, sessions: AGENT_SEED[0].sessions + bySession('claude-code', false) },
+        { id: 'codex', name: 'Codex', weight: 31, sessions: AGENT_SEED[1].sessions + bySession('codex', false) + bySession('codex', true) },
+        { id: 'claude-code-sub', name: 'Claude Code (subagents)', weight: 21, sessions: AGENT_SEED[2].sessions + bySession('claude-code', true) },
+      ]
+    : AGENT_SEED.map((a) => ({ ...a, sessions: a.sessions + Math.round((extraSessions * a.weight) / 100) }))
+  return seedState(days, [...TICKET_SEED, ...busyTickets], agents, BUSY_BUDGET_CHF)
 }
 
 const chf = (cents: number) => `CHF ${(cents / 100).toFixed(2)}`
@@ -139,6 +174,14 @@ const cents2 = (cents: number) => (cents / 100).toFixed(2)
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const dayLabel = (iso: string) => `${Number(iso.slice(8))} ${MONTHS[Number(iso.slice(5, 7)) - 1]}`
 
+function monthRangeOf(days: Day[]): string {
+  const inMonth = days.filter((d) => d.date.startsWith(MONTH_PREFIX))
+  if (inMonth.length === 0) return ''
+  const first = Number(inMonth[0].date.slice(8))
+  const last = dayLabel(inMonth[inMonth.length - 1].date)
+  return first === Number(last.split(' ')[0]) ? last : `${first}–${last}`
+}
+
 function budgetOf(state: Record<string, unknown>): number {
   const b = Number((state.settings as Partial<Settings> | undefined)?.budget_chf)
   return b > 0 ? b : DEFAULT_BUDGET_CHF
@@ -147,6 +190,7 @@ function budgetOf(state: Record<string, unknown>): number {
 registerAddon({
   name: 'usage',
   seed: () => seedState(),
+  seedBusy: (ws, store, r) => seedBusyState(ws, store, r),
 
   view(state, c) {
     const days = state.days as Day[]
@@ -157,7 +201,7 @@ registerAddon({
     const ratio = month / (budget * 100)
     const pct = Math.round(ratio * 100)
     const tokens30 = days.reduce((n, d) => n + sumTokens(d), 0)
-    const sessionsTotal = AGENT_SEED.reduce((n, a) => n + a.sessions, 0)
+    const sessionsTotal = (state.agents as Agent[]).reduce((n, a) => n + a.sessions, 0)
     const modelCents = MODELS.map((m) => days.reduce((n, d) => n + d.cents[m], 0))
     const modelTokens = MODELS.map((m) => days.reduce((n, d) => n + d.tokens[m], 0))
     const modelSessions = allocate(sessionsTotal, modelCents)
@@ -188,6 +232,8 @@ registerAddon({
       budgetChf: budget,
       budgetPct: pct,
       monthChf: month / 100,
+      // The one period of the "this month" tile, in words: "1–9 Oct".
+      monthRange: monthRangeOf(days),
       // Shown only past 80% of the monthly budget; an empty stack renders nothing otherwise.
       budgetNotice:
         ratio > ALERT_AT

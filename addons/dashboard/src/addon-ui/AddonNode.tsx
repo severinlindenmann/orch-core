@@ -2,7 +2,7 @@ import type { RJSFValidationError } from '@rjsf/utils'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useBlocker } from '@tanstack/react-router'
 import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import { ChevronRight, Ellipsis, ExternalLink, TriangleAlert } from 'lucide-react'
+import { ArrowRight, ChevronRight, Ellipsis, ExternalLink, TriangleAlert } from 'lucide-react'
 import { api } from '@/api/client'
 import { useWorkspace } from '@/app/workspace'
 import { Badge } from '@/components/ui/badge'
@@ -21,7 +21,7 @@ import { AddonChart } from './AddonChart'
 import { canUsePty } from './capabilities'
 import { FrameNode } from './FrameNode'
 import { CodeBlock } from './CodeBlock'
-import { MAX_DEPTH, parseNode, type ItemAction, type NodeOf } from './nodes'
+import { INTERNAL_LINK, MAX_DEPTH, parseNode, type ItemAction, type NodeOf } from './nodes'
 import { SafeMarkdown } from './SafeMarkdown'
 import { useAddons, type SlotContext } from './slots'
 import { ErrorAlert } from './ErrorAlert'
@@ -192,6 +192,15 @@ function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
     case 'popover':
       return <PopoverView node={n} depth={depth} />
     case 'link':
+      if (INTERNAL_LINK.test(n.href)) {
+        const [, , name, page] = n.href.split('/')
+        return (
+          <Link to="/addon/$name/$page" params={{ name, page }} className="inline-flex items-center gap-1 text-[13px] text-brand hover:underline">
+            {n.label}
+            <ArrowRight className="size-3" aria-hidden />
+          </Link>
+        )
+      }
       return (
         <a href={n.href} target="_blank" rel="noopener noreferrer nofollow" className="inline-flex items-center gap-1 text-[13px] text-brand hover:underline">
           {n.label}
@@ -992,6 +1001,8 @@ function TerminalNode({ session }: { session: string }) {
   const { data } = useAddons()
   const { workspace } = useWorkspace()
   if (!canUsePty(data?.find((a) => a.name === addon), workspace?.addons[addon])) return <AddonUnavailable addon={addon} />
+  // No session yet (e.g. the ticket panel before "Open terminal"): nothing to draw.
+  if (!session) return null
   return (
     <Suspense fallback={<Skeleton className="h-64 w-full" />}>
       <TerminalView addon={addon} session={session} placement={ctx.ticket ? 'rail' : 'page'} fallback={<AddonUnavailable addon={addon} />} />

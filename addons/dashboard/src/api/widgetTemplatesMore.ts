@@ -134,15 +134,16 @@ button{font:inherit;font-size:11px;color:CanvasText;background:Canvas;border:1px
 </script>`
 
 export const FLOW = `<style>
-svg{display:block;width:100%;height:auto}
+svg{display:block;height:auto;max-height:none}
+body{overflow-x:auto}
 .box{fill:Canvas;stroke:GrayText;stroke-width:1}
 .box.done{stroke:CanvasText}
 .box.current{stroke:Highlight;stroke-width:2.5}
 .box.blocked{stroke-dasharray:4 3}
 .lbl{font:600 11px ui-sans-serif,system-ui,sans-serif;fill:CanvasText}
-.st{font:10px ui-sans-serif,system-ui,sans-serif;fill:GrayText}
+.st{font:11px ui-sans-serif,system-ui,sans-serif;fill:GrayText}
 .edge{fill:none;stroke:GrayText;stroke-width:1.2}
-.el{font:10px ui-sans-serif,system-ui,sans-serif;fill:GrayText;paint-order:stroke;stroke:Canvas;stroke-width:3px;stroke-linejoin:round}
+.el{font:11px ui-sans-serif,system-ui,sans-serif;fill:GrayText;paint-order:stroke;stroke:Canvas;stroke-width:3px;stroke-linejoin:round}
 .head{fill:GrayText}
 </style>
 <svg id="c" role="img"></svg>
@@ -171,7 +172,8 @@ svg{display:block;width:100%;height:auto}
   cols.forEach(function (c, ci) { c.forEach(function (id, ri) { pos[id] = { x: P + ci * (W + GX), y: P + ri * (H + GY) + ((rows - c.length) * (H + GY)) / 2 } }) })
   var vw = P * 2 + cols.length * (W + GX) - GX, vh = P * 2 + rows * (H + GY) - GY
   svg.setAttribute('viewBox', '0 0 ' + vw + ' ' + vh)
-  svg.style.maxWidth = vw * 1.4 + 'px'
+  // Never drawn smaller than its own units, so labels stay at 11 px; a wide flow scrolls inside the frame.
+  svg.style.width = vw + 'px'
   svg.appendChild(el('title', {}, 'Flow: ' + edges.map(function (e) { return byId[e.from].label + ' to ' + byId[e.to].label + (e.label ? ' (' + e.label + ')' : '') }).join(', ')))
   edges.forEach(function (e) {
     var a = pos[e.from], b = pos[e.to], x1 = a.x + W, y1 = a.y + H / 2, x2 = b.x - 6, y2 = b.y + H / 2, mx = (x1 + x2) / 2

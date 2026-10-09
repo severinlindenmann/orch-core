@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRouterState } from '@tanstack/react-router'
 import { api } from '@/api/client'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { BOARD_ORIGIN, originOf, type PageOrigin } from './origin'
 import { railCollapsed, railToggle, type RailPref } from './railRule'
 
 interface ShellUi {
@@ -22,6 +23,8 @@ interface ShellUi {
   setNewTicketOpen: (open: boolean) => void
   /** What had the focus when the overlay was asked for; it gets the focus back on close. */
   newTicketOpener: { current: HTMLElement | null }
+  /** The last page that was not a ticket: where a ticket's breadcrumb leads back to. */
+  origin: PageOrigin
 }
 
 /** The usual sidebar choice and the one made while the right-hand dock squeezes the page (N11), per viewer. */
@@ -128,9 +131,17 @@ export function ShellUiProvider({ children }: { children: ReactNode }) {
   const rail = useRailState()
   const [newTicketOpen, setNewTicketOpen] = useState(false)
   const newTicketOpener = useRef<HTMLElement | null>(null)
+  const [origin, setOrigin] = useState<PageOrigin>(BOARD_ORIGIN)
+  const loc = useRouterState({ select: (s) => `${s.location.pathname}\n${s.location.href}` })
+  useEffect(() => {
+    const [pathname, href] = loc.split('\n')
+    const next = originOf(pathname, href, header.title)
+    if (next === undefined) return
+    setOrigin((cur) => (next === null ? BOARD_ORIGIN : cur.href === next.href && cur.label === next.label ? cur : next))
+  }, [loc, header.title])
   const value = useMemo(
-    () => ({ paletteOpen, setPaletteOpen, paletteSeed, setPaletteSeed, header, setHeader, railCollapsed: rail.collapsed, toggleRail: rail.toggle, setDockSqueeze: rail.setSqueezed, newTicketOpen, setNewTicketOpen, newTicketOpener }),
-    [paletteOpen, paletteSeed, header, rail.collapsed, rail.toggle, rail.setSqueezed, newTicketOpen],
+    () => ({ paletteOpen, setPaletteOpen, paletteSeed, setPaletteSeed, header, setHeader, railCollapsed: rail.collapsed, toggleRail: rail.toggle, setDockSqueeze: rail.setSqueezed, newTicketOpen, setNewTicketOpen, newTicketOpener, origin }),
+    [paletteOpen, paletteSeed, header, rail.collapsed, rail.toggle, rail.setSqueezed, newTicketOpen, origin],
   )
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }
@@ -168,4 +179,9 @@ export function usePageHeader(title?: ReactNode, breadcrumb?: ReactNode) {
     setHeader({ title, breadcrumb })
     return () => setHeader({})
   }, [setHeader, title, breadcrumb])
+}
+
+/** Where the current ticket was opened from (the last page that was not a ticket); the Board when unknown. */
+export function useTicketOrigin(): PageOrigin {
+  return useShellUi().origin
 }

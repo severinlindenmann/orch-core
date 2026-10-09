@@ -31,8 +31,19 @@ describe('busy day: addons are installed and filled', () => {
     expect((raw('github').prs as Rows).length).toBe(30)
     expect((raw('github').issues as Rows).length).toBe(25)
   })
-  it('usage stays as in the normal demo', () => {
-    expect(JSON.stringify(raw('usage'))).toBe(JSON.stringify(raw('usage', make('normal'))))
+  it('usage grows with the busy day: more cost, busy tickets in By ticket, more sessions (R-g)', async () => {
+    type Usage = { weekCents: number; cost30Cents: number; ticketRows: { ticket: string }[]; agentRows: { sessions: number }[]; budgetChf: number; budgetPct: number }
+    const busy = (await s.api.getAddonState(s.ws, 'usage')) as unknown as Usage
+    const n = make('normal')
+    const normal = (await n.api.getAddonState(n.ws, 'usage')) as unknown as Usage
+    expect(busy.weekCents).toBeGreaterThan(normal.weekCents * 3)
+    expect(busy.cost30Cents).toBeGreaterThan(normal.cost30Cents * 3)
+    expect(busy.ticketRows.length).toBeGreaterThan(normal.ticketRows.length + 30)
+    expect(busy.ticketRows.some((r) => Number(r.ticket.slice(5)) >= 100)).toBe(true)
+    const sessions = (u: Usage) => u.agentRows.reduce((t, r) => t + r.sessions, 0)
+    expect(sessions(busy)).toBeGreaterThan(sessions(normal) * 3)
+    // A busy month, not an overrun: under the 80 % alert.
+    expect(busy.budgetPct).toBeLessThan(80)
   })
   it('wiki: 30 pages with unique slugs and titles', () => {
     const pages = raw('wiki').pages as { slug: string; title: string }[]

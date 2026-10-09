@@ -23,9 +23,9 @@ export const SAMPLE_BEFORE_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA
 export const SAMPLE_AFTER_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAUAAAAC0CAIAAABqhmJGAAACPElEQVR42u3dsQmAMBBAUacQG3sLwcaBnMrGMriKQ1k5gqKCOfPgTRDud0eu6voRCKryBCBgQMCAgEHAgIABAQMCBgEDQQOel5UbjBoCFjAIWMAIGAEjYAGDgAWMgAUsYASMgLHIAQgYBAwIGBAwIGAQMCBgQMAgYCBKwHXTAkEJGAQMCBgQMAgYEDAgYEDAIGBAwICAQcCAgAEBAwIGAV81bInMGXcBC1jACBgBI2AELGABCxgBK0TACBgBPxHl4LuAEbCABSxgAQtYwAIWsIARsIAFjIAFLGABC1jACFjAAkbACFjACFjAAkbACBgBI2ABC1jA+NQOEDAgYBAwIGBAwICAQcCAgAEBg4ABAQMCBgQMAgYEDAgYEDAIGBAw8GXA07rD6yQqYAQsYAEjYAGDgAWMgBEwAhawgMknYAe+BYyABQwCFjACFrCAEbCABYyABQwCFjACFrCAschhkUPACFjAIGABI2ABCxgBCxgE7FM7QMAgYEDAgIBBwICAAQEDAgYBAwIGBAwIGAQMCBgQMAgYEDAgYEDAIOBzw5aKYnQQsIBBwAJGwAIWMAIWMAhYwCBgAZfGgW8BC1jAAhYwAhawgBGwgAUsYAELWMACFrCAEbCABYyABSxgLHIIGAQsYBCwgBGwgAWMgAUMEQIGBAwIGAQMCBgQMCBgEDAgYEDAIGBAwICAAQGDgAEBAwIGBAwCBgQMCBgEDAgYEDAgYBAwIGBAwICAQcCAgAEBg4ABAQMCBgQMv3MAYnCZGlqwlTsAAAAASUVORK5CYII='
 
 export const PROPOSED_NOTE = 'Proposed — not in orch.widgets.v1 yet'
-const CORE_ALLOWED = 'Context, Current state and Verification. Refused in Summary, Requirements, Out of scope, Plan and Decisions: a gate signs that text.'
+export const CORE_ALLOWED = 'Context, Current state and Verification. Refused in Summary, Requirements, Out of scope, Plan and Decisions: a gate signs that text.'
 const CHECKS_ALLOWED = 'Verification, where the evidence lives; Context and Current state draw it too. Refused in Summary, Requirements, Out of scope, Plan and Decisions: a gate signs that text.'
-const TEMPLATE_ALLOWED = 'The same sections as core types, and only while the Widgets addon is on in the workspace. Agent HTML runs in a sandboxed frame: no network, no navigation, no access to this dashboard. The block pins the template by sha256.'
+export const TEMPLATE_ALLOWED = 'The same sections as core types, and only while the Widgets addon is on in the workspace. Agent HTML runs in a sandboxed frame: no network, no navigation, no access to this dashboard. The block pins the template by sha256.'
 
 export const CATALOG: CatalogEntry[] = [
   { kind: 'core', ref: 'stats', title: 'Stats', shows: 'Headline numbers with an optional change and a role (ok, info, warn, err, neu).', allowed: CORE_ALLOWED,

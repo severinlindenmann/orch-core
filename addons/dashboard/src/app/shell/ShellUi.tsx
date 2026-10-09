@@ -1,4 +1,6 @@
+import { useQuery } from '@tanstack/react-query'
 import { useRouterState } from '@tanstack/react-router'
+import { api } from '@/api/client'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { railCollapsed, railToggle, type RailPref } from './railRule'
 
@@ -22,23 +24,43 @@ interface ShellUi {
   newTicketOpener: { current: HTMLElement | null }
 }
 
-const RAIL_KEY = 'orch.sidebar'
-/** The choice made while the right-hand dock squeezes the page (N11), kept apart from the usual one. */
-const RAIL_DOCK_KEY = 'orch.sidebar.docked'
+/** The usual sidebar choice and the one made while the right-hand dock squeezes the page (N11), per viewer. */
+const railKey = (viewer: string) => `orch.sidebar.${viewer}`
+const railDockKey = (viewer: string) => `orch.sidebar.docked.${viewer}`
+/** The earlier, browser-wide key: moved to the first viewer who loads the app, then removed. */
+const LEGACY_RAIL_KEY = 'orch.sidebar'
 
-function readRailPref(key: string): RailPref {
+function readPref(key: string, legacy?: string): RailPref {
   try {
-    const v = localStorage.getItem(key)
+    let v = localStorage.getItem(key)
+    if (v === null && legacy) {
+      const old = localStorage.getItem(legacy)
+      if (old !== null) {
+        localStorage.setItem(key, old)
+        localStorage.removeItem(legacy)
+        v = old
+      }
+    }
     return v === 'wide' || v === 'narrow' ? v : 'auto'
   } catch {
     return 'auto'
   }
 }
 
+function readRailPrefs(viewer: string | undefined): { viewer: string | undefined; pref: RailPref; dockPref: RailPref } {
+  if (!viewer) return { viewer, pref: 'auto', dockPref: 'auto' }
+  return { viewer, pref: readPref(railKey(viewer), LEGACY_RAIL_KEY), dockPref: readPref(railDockKey(viewer)) }
+}
+
 /** Wide or narrow (icon rail). Lives in the shell so the sidebar, the toaster and the dock agree on the rail width. */
 function useRailState() {
-  const [pref, setPref] = useState<RailPref>(() => readRailPref(RAIL_KEY))
-  const [dockPref, setDockPref] = useState<RailPref>(() => readRailPref(RAIL_DOCK_KEY))
+  const viewer = useQuery({ queryKey: ['me'], queryFn: api.getMe }).data?.person
+  const [stored, setStored] = useState(() => readRailPrefs(viewer))
+  const current = stored.viewer === viewer ? stored : readRailPrefs(viewer)
+  useEffect(() => {
+    if (stored.viewer !== viewer) setStored(readRailPrefs(viewer))
+  }, [viewer, stored.viewer])
+  const { pref, dockPref } = current
   // Set by the terminal dock: open on the right and squeezing the page (see dockSqueezesSidebar).
   const [squeezed, setSqueezed] = useState(false)
   const [windowWidth, setWindowWidth] = useState(() => (typeof window === 'undefined' ? 1440 : window.innerWidth))
@@ -51,11 +73,14 @@ function useRailState() {
   const collapsed = railCollapsed(inputs)
   const latest = useRef(inputs)
   latest.current = inputs
+  const latestViewer = useRef(viewer)
+  latestViewer.current = viewer
   const toggle = useCallback(() => {
     const { which, value } = railToggle(latest.current)
-    ;(which === 'pref' ? setPref : setDockPref)(value)
+    const who = latestViewer.current
+    setStored((cur) => ({ ...cur, viewer: who, [which]: value }))
     try {
-      localStorage.setItem(which === 'pref' ? RAIL_KEY : RAIL_DOCK_KEY, value)
+      if (who) localStorage.setItem(which === 'pref' ? railKey(who) : railDockKey(who), value)
     } catch {
       /* storage unavailable: the choice lasts for this page only */
     }

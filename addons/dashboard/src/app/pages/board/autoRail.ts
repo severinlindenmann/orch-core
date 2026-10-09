@@ -7,6 +7,10 @@ export const BOARD_COL_MIN = 168
 /** A rail's width and the gap between columns (px). */
 export const BOARD_RAIL = 40
 export const BOARD_GAP = 8
+/** What the board's width leaves for its columns: the page frame minus room for the board's vertical scrollbar (px). */
+export const BOARD_SCROLLBAR = 16
+/** The columns' width inside a page frame of `frame` px (0 = not measured). */
+export const boardColumnsWidth = (frame: number) => (frame > 0 ? Math.max(1, frame - BOARD_SCROLLBAR) : 0)
 
 export interface BoardColumn {
   id: string

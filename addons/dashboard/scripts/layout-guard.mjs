@@ -14,7 +14,7 @@
 //   npm run layout:guard -- --only tickets --shots ./shots         # routes matching /tickets/, with screenshots
 //
 // Options: --url <base> (default http://127.0.0.1:5201), --quick, --only <regex>, --dataset normal|busy, --docks min,default,max,
-// --shots <dir> (a PNG per page of the first configuration), --prefix <name> (screenshot file prefix),
+// --selftest (plants overflow on a page and checks the detector finds it), --shots <dir> (a PNG per page of the first configuration), --prefix <name> (screenshot file prefix),
 // --chrome <path> (or CHROME_PATH). Needs the dev build: it moves between routes through `window.__orchRouter` (main.tsx). jsdom cannot lay out, so this runs against the real dev server.
 
 import { spawn } from 'node:child_process'
@@ -35,6 +35,8 @@ const ONLY = opt('only') ? new RegExp(opt('only')) : null
 const SHOTS = opt('shots')
 const PREFIX = opt('prefix', 'page')
 const QUICK = flag('quick')
+/** DEMO-0043's tabs: Overview, Acceptance & tasks, Questions, Artifacts, History, Raw. */
+const TICKET_TABS = 6
 
 const VIEWPORTS = QUICK ? [[1440, 900]] : [[1440, 900], [1470, 956]]
 const DOCKS = opt('docks') ? opt('docks').split(',') : QUICK ? ['default'] : ['min', 'default', 'max']
@@ -142,7 +144,7 @@ function makePage(send) {
     evaluate(async () => {
       const loadingText = () => [...document.querySelectorAll('main p')].some((p) => /^Loading\b.*…$/.test(p.textContent.trim()))
       const still = () => document.querySelector('[aria-label="Loading page"], main [data-slot="skeleton"]') || !document.querySelector('main#main') || loadingText()
-      for (let i = 0; i < 80 && still(); i++) await new Promise((r) => setTimeout(r, 100))
+      for (let i = 0; i < 150 && still(); i++) await new Promise((r) => setTimeout(r, 100))
       let last = ''
       for (let i = 0; i < 20; i++) {
         await new Promise((r) => setTimeout(r, 150))
@@ -150,11 +152,19 @@ function makePage(send) {
         if (now === last) break
         last = now
       }
+      // What is still loading, for the report ('' = nothing).
+      if (!still()) return ''
+      const sk = document.querySelector('main [data-slot="skeleton"]')
+      return document.querySelector('[aria-label="Loading page"]') ? 'the page chunk' : sk ? `a skeleton (${sk.getAttribute('aria-label') ?? sk.parentElement?.className ?? ''})` : loadingText() ? 'a "Loading…" text' : 'no main'
     })
   return { evaluate, settle }
 }
 
-/** In the page: everything that scrolls sideways where it should not. */
+/**
+ * In the page: everything that scrolls sideways where it should not (problems), and content cut off without saying so
+ * (clipped: overflow-x hidden/clip with wider content that is not an ellipsis or a line clamp by design). A clipped
+ * box that cuts off a button or a link is a problem too; other clipping is a warning.
+ */
 function findOverflow(allowed) {
   const describe = (el) => {
     const cls = typeof el.className === 'string' ? el.className.trim().split(/\s+/).slice(0, 6).join('.') : ''
@@ -179,8 +189,24 @@ function findOverflow(allowed) {
     if (ox !== 'auto' && ox !== 'scroll') continue
     out.push(`${describe(el)} scrolls sideways (${el.scrollWidth} > ${el.clientWidth})`)
   }
+  const warnings = []
+  for (const el of document.querySelectorAll('body *')) {
+    if (el.scrollWidth <= el.clientWidth + 1 || el.clientWidth <= 2) continue
+    if (el.closest(allowed) || el.closest('[aria-hidden="true"], [inert]')) continue
+    const cs = getComputedStyle(el)
+    if (cs.overflowX !== 'hidden' && cs.overflowX !== 'clip') continue
+    // By design: an ellipsis, a line clamp, a screen-reader-only text, a progress bar track.
+    if (cs.textOverflow === 'ellipsis' || cs.webkitLineClamp !== 'none' || cs.position === 'absolute' || el.getAttribute('role') === 'progressbar') continue
+    const box = el.getBoundingClientRect()
+    const cut = [...el.querySelectorAll('a, button, [role="button"], [role="tab"]')].filter((c) => {
+      const r = c.getBoundingClientRect()
+      return r.width > 0 && (r.right > box.right + 1 || r.left < box.left - 1)
+    })
+    if (cut.length) out.push(`${describe(el)} cuts off ${cut.length} button/link(s), e.g. ${describe(cut[0])}`)
+    else warnings.push(`${describe(el)} clips its content (${el.scrollWidth} > ${el.clientWidth})`)
+  }
   const main = document.querySelector('main#main')
-  return { problems: out, pageWidth: main ? Math.round(main.getBoundingClientRect().width) : 0 }
+  return { problems: out, warnings, pageWidth: main ? Math.round(main.getBoundingClientRect().width) : 0 }
 }
 
 // ------------------------------------------------------------------ the run
@@ -206,6 +232,7 @@ async function main() {
   await send('Runtime.enable')
   const failures = []
   let checked = 0
+  let warned = 0
   let shotsTaken = false
 
   const shoot = async (name) => {
@@ -215,19 +242,59 @@ async function main() {
     writeFileSync(join(SHOTS, `${PREFIX}-${name}.png`), Buffer.from(data, 'base64'))
   }
 
+  // Set when the last navigation was still loading after the wait: its check fails rather than passing an empty page.
+  let stillLoading = ''
   const go = async (path) => {
     await evaluate((p) => window.__orchRouter.history.push(p), path)
-    await settle()
+    // A loaded machine can be slow: one more round before calling it stuck.
+    stillLoading = (await settle()) && (await settle())
   }
 
-  const check = async (config, name) => {
+  const check = async (config, name, expect) => {
     checked++
-    const { problems, pageWidth } = await evaluate(findOverflow, ALLOWED)
-    const status = problems.length ? 'FAIL' : 'ok'
+    const { problems, warnings, pageWidth } = await evaluate(findOverflow, ALLOWED)
+    // A step that did not reach its page (missing tabs, no overlay) fails instead of passing on the wrong page.
+    if (expect) problems.unshift(...expect)
+    if (stillLoading) problems.unshift(`the page was still loading after 30 s: ${stillLoading}`)
+    const status = problems.length ? 'FAIL' : warnings.length ? 'warn' : 'ok'
     console.log(`  ${status.padEnd(4)} ${name} (page ${pageWidth}px)`)
     for (const p of problems) console.log(`         ${p}`)
+    for (const w of warnings) console.log(`         warning: ${w}`)
+    warned += warnings.length
     if (problems.length) failures.push({ config, name, problems })
     await shoot(name)
+  }
+
+  if (flag('selftest')) {
+    // Proves the detector: plants a sideways scroller, a cut-off button, silent clipping and an ellipsis on Today.
+    await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false })
+    await send('Page.navigate', { url: BASE })
+    await sleep(1500)
+    await settle()
+    const r = await evaluate((find, allowed) => {
+      const m = document.querySelector('main')
+      const plant = (css, html) => {
+        const d = document.createElement('div')
+        d.style.cssText = `width:100px;white-space:nowrap;${css}`
+        d.innerHTML = html
+        m.prepend(d)
+        return d
+      }
+      const planted = [
+        plant('overflow-x:auto', 'SCROLLER a very long line that scrolls'),
+        plant('overflow:hidden', '<button style="width:300px">CUTBUTTON</button>'),
+        plant('overflow:hidden', 'SILENTCLIP a very long line that is cut off'),
+        plant('overflow:hidden;text-overflow:ellipsis', 'ELLIPSIS a very long line with an ellipsis'),
+      ]
+      const res = new Function(`return (${find})`)()(allowed)
+      planted.forEach((d) => d.remove())
+      const has = (list, word) => list.some((x) => x.includes(word))
+      return { scroller: has(res.problems, 'SCROLLER'), cut: has(res.problems, 'CUTBUTTON'), clip: has(res.warnings, 'SILENTCLIP'), ellipsis: has([...res.problems, ...res.warnings], 'ELLIPSIS') }
+    }, findOverflow.toString(), ALLOWED)
+    close()
+    const ok = r.scroller && r.cut && r.clip && !r.ellipsis
+    console.log(`selftest: ${JSON.stringify(r)} → ${ok ? 'ok' : 'FAIL'}`)
+    process.exit(ok ? 0 : 1)
   }
 
   for (const dataset of DATASETS) {
@@ -245,8 +312,8 @@ async function main() {
               localStorage.setItem('orch-mock-v2', JSON.stringify({ v: 2, ticketEvents: {}, created: {}, wsEvents: {}, addonState: {}, dataset: ds }))
               localStorage.setItem('orch.dock.p_sev', JSON.stringify({ side: 'right', open: true, bottom: 280, right: dockW, harness: 'claude' }))
               if (sidebar !== 'auto') {
-                localStorage.setItem('orch.sidebar', sidebar === 'rail' ? 'narrow' : 'wide')
-                localStorage.setItem('orch.sidebar.docked', sidebar === 'rail' ? 'narrow' : 'wide')
+                localStorage.setItem('orch.sidebar.p_sev', sidebar === 'rail' ? 'narrow' : 'wide')
+                localStorage.setItem('orch.sidebar.docked.p_sev', sidebar === 'rail' ? 'narrow' : 'wide')
               }
             },
             dataset,
@@ -289,20 +356,23 @@ async function main() {
           }
 
           // The ticket page, tab by tab.
-          if (!ONLY || ONLY.test('ticket-')) {
+          if (!ONLY || ONLY.source.includes('ticket-')) {
             await go('/ticket/DEMO-0043')
-            const tabs = await evaluate(() => [...document.querySelectorAll('main [role="tablist"]:first-of-type [role="tab"]')].map((t) => t.textContent.trim()))
+            // The ticket's own tab row: the first tablist in the page.
+            const tabs = await evaluate(() => [...(document.querySelector('main [role="tablist"]')?.querySelectorAll('[role="tab"]') ?? [])].map((t) => t.textContent.trim()))
+            if (tabs.length < TICKET_TABS && (!ONLY || ONLY.test('ticket-tabs'))) await check(config, 'ticket-tabs', [`expected ${TICKET_TABS} ticket tabs on DEMO-0043, found ${tabs.length}`])
             for (let i = 0; i < tabs.length; i++) {
               const name = `ticket-${tabs[i].toLowerCase().replace(/[^a-z]+.*$/, '')}`
               if (ONLY && !ONLY.test(name)) continue
               await evaluate(async (n) => {
-                const tab = document.querySelectorAll('main [role="tablist"]:first-of-type [role="tab"]')[n]
+                const tab = document.querySelector('main [role="tablist"]').querySelectorAll('[role="tab"]')[n]
                 tab.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }))
                 tab.focus()
                 tab.click()
               }, i)
               await settle()
-              await check(config, name)
+              const selected = await evaluate((n) => document.querySelector('main [role="tablist"]')?.querySelectorAll('[role="tab"]')[n]?.getAttribute('aria-selected') === 'true', i)
+              await check(config, name, selected ? undefined : [`the ${tabs[i]} tab did not open`])
             }
           }
 
@@ -314,7 +384,8 @@ async function main() {
               window.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', bubbles: true }))
             })
             await settle()
-            await check(config, 'new-ticket-overlay')
+            const open = await evaluate(() => !!document.querySelector('[role="dialog"]'))
+            await check(config, 'new-ticket-overlay', open ? undefined : ['the New ticket overlay ([role=dialog]) did not open'])
             await evaluate(() => document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
           }
           shotsTaken = true
@@ -323,7 +394,7 @@ async function main() {
     }
   }
   close()
-  console.log(`\n${checked} pages checked, ${failures.length} with horizontal overflow.`)
+  console.log(`\n${checked} pages checked, ${failures.length} failing (overflow, cut-off controls or a step that did not open), ${warned} clipping warnings.`)
   if (failures.length) process.exit(1)
 }
 

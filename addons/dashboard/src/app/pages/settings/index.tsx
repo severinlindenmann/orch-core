@@ -42,7 +42,7 @@ export function SettingsPage({ tab, addon }: { tab?: string; addon?: string }) {
     // A narrow page area (the terminal docked on the right): the sections sit in a row above the content (N11).
     <div className="flex max-w-5xl flex-col gap-4 @[60rem]/page:flex-row @[60rem]/page:gap-8">
       <nav aria-label="Settings" className="flex flex-wrap items-center gap-0.5 @[60rem]/page:block @[60rem]/page:w-48 @[60rem]/page:shrink-0 @[60rem]/page:space-y-0.5">
-        <h1 className="mb-2 w-full px-2.5 text-xl font-semibold tracking-tight">Settings</h1>
+        <h1 className="mb-1 w-full text-xl font-semibold tracking-tight @[60rem]/page:mb-2 @[60rem]/page:px-2.5">Settings</h1>
         {TABS.map((t) => (
           <Link key={t.id} to="/settings/$tab" params={{ tab: t.id }} className={cn(link, current === t.id && active)} aria-current={current === t.id ? 'page' : undefined}>
             <span className="flex-1">{t.label}</span>

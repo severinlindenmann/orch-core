@@ -165,7 +165,15 @@ export function TicketsTable({
                   {turn}
                 </span>
               )}
-              {folded.has('progress') && <ProgressBar ticket={t} />}
+              {folded.has('progress') && (t.progress.tasks_total > 0 || t.progress.ac_total > 0) && (
+                // Folded under the title it says what it is, also to a screen reader (the column header is gone).
+                <span className="flex w-28 items-center gap-1.5">
+                  <span className="text-text-faint">Progress</span>
+                  <span className="min-w-0 flex-1">
+                    <ProgressBar ticket={t} />
+                  </span>
+                </span>
+              )}
               {folded.has('addon') && hasAddon && (
                 <span className="flex gap-1">
                   <CardFields ticket={t} />

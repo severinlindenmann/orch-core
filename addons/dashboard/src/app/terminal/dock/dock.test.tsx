@@ -273,23 +273,26 @@ describe('terminal dock on a ticket page', () => {
 describe('the sidebar beside a right-hand dock (N11)', () => {
   const sidebar = () => document.querySelector('aside[data-collapsed]')!
   afterEach(() => {
-    localStorage.removeItem('orch.sidebar')
-    localStorage.removeItem('orch.sidebar.docked')
+    localStorage.removeItem('orch.sidebar.p_sev')
+    localStorage.removeItem('orch.sidebar.docked.p_sev')
   })
   it('becomes the rail while the dock squeezes the page; expanding it there is remembered for that situation only', async () => {
     withPrefs({ open: true, side: 'right' })
+    // The old browser-wide key moves to the viewer's own key on first load.
     localStorage.setItem('orch.sidebar', 'wide')
     const { user } = renderApp('/', { viewer: 'p_sev' })
     const d = await dock()
     await waitFor(() => expect(sidebar()).toHaveAttribute('data-collapsed', 'true'), T)
     await user.click(screen.getByRole('button', { name: 'Expand sidebar' }))
     expect(sidebar()).toHaveAttribute('data-collapsed', 'false')
-    expect(localStorage.getItem('orch.sidebar.docked')).toBe('wide')
-    expect(localStorage.getItem('orch.sidebar')).toBe('wide')
+    expect(localStorage.getItem('orch.sidebar.docked.p_sev')).toBe('wide')
+    expect(localStorage.getItem('orch.sidebar.p_sev')).toBe('wide')
+    expect(localStorage.getItem('orch.sidebar')).toBeNull()
     // Collapsing it on the wide screen (dock moved to the bottom) is the usual choice and does not touch the docked one.
     await user.click(await menu(user, d, 'Move to the bottom'))
     await user.click(screen.getByRole('button', { name: 'Collapse sidebar' }))
-    expect(localStorage.getItem('orch.sidebar')).toBe('narrow')
-    expect(localStorage.getItem('orch.sidebar.docked')).toBe('wide')
+    expect(localStorage.getItem('orch.sidebar.p_sev')).toBe('narrow')
+    expect(localStorage.getItem('orch.sidebar.docked.p_sev')).toBe('wide')
+    expect(localStorage.getItem('orch.sidebar.docked.p_mara')).toBeNull()
   })
 })

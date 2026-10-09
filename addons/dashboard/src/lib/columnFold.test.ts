@@ -26,16 +26,24 @@ describe('foldedColumns (N11 column priority rule)', () => {
     expect(foldedColumns([{ key: 'a', hideBelow: 9999 }, { key: 'b', hideBelow: 9999 }, { key: 'c', hideBelow: 9999 }], 500)).toEqual(['c'])
   })
 
-  it('a declared hideBelow folds below its width and is not folded by the budget', () => {
+  it('a declared hideBelow folds below its width; the budget folds undeclared columns before it', () => {
     const c = [{ key: 'a' }, { key: 'b' }, { key: 'note', hideBelow: 800 }, { key: 'd' }, { key: 'e' }]
     expect(foldedColumns(c, 900)).toEqual([])
     expect(foldedColumns(c, 700)).toEqual(['note'])
     // 350 px fits three: 'note' is folded by its threshold, then 'e' by the budget.
     expect(foldedColumns(c, 350)).toEqual(['note', 'e'])
+    // Still too many after the undeclared ones: the declared column folds too, whatever its threshold.
+    const d = [{ key: 'a' }, { key: 'b' }, { key: 'c', hideBelow: 100 }, { key: 'd' }]
+    expect(foldedColumns(d, 250)).toEqual(['c', 'd'])
   })
 
   it('a kept column stays; the next one to its left folds instead', () => {
     const c = [{ key: 'a' }, { key: 'b' }, { key: 'c' }, { key: 'd', keep: true }]
     expect(foldedColumns(c, 300)).toEqual(['c'])
+  })
+
+  it('extra folds that many more from the right (a table still wider than its box)', () => {
+    expect(foldedColumns(cols(6), 600, { extra: 2 })).toEqual(['c4', 'c5'])
+    expect(foldedColumns(cols(4), 600, { extra: 9 })).toEqual(['c2', 'c3'])
   })
 })

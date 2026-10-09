@@ -186,11 +186,11 @@ function LaneHeader({
               type="button"
               onClick={() => onOpen(epic.key)}
               aria-label={`Open ${epic.key}`}
-              className="rounded font-mono text-[12px] font-semibold text-text-muted outline-none hover:text-text focus-visible:ring-2 focus-visible:ring-brand"
+              className="shrink-0 whitespace-nowrap rounded font-mono text-[12px] font-semibold text-text-muted outline-none hover:text-text focus-visible:ring-2 focus-visible:ring-brand"
             >
               {epic.key}
             </button>
-            <h3 className="max-w-[420px] truncate text-[13px] font-semibold text-text" title={epic.title}>
+            <h3 className="min-w-0 max-w-[420px] truncate text-[13px] font-semibold text-text" title={epic.title}>
               {epic.title}
             </h3>
           </>
@@ -199,8 +199,8 @@ function LaneHeader({
         )}
         {progress && (
           <>
-            <span className="font-mono text-[11px] text-text-muted">{progressLabel(progress)}</span>
-            <div role="img" aria-label={`${name}: ${progressLabel(progress)}`} className="h-1 w-20 overflow-hidden rounded-full bg-surface-3"
+            <span className="shrink-0 whitespace-nowrap font-mono text-[11px] text-text-muted">{progressLabel(progress)}</span>
+            <div role="img" aria-label={`${name}: ${progressLabel(progress)}`} className="h-1 w-20 shrink overflow-hidden rounded-full bg-surface-3"
             >
               <div className={cn('h-full rounded-full', progress.total > 0 && progress.done === progress.total ? 'bg-success' : 'bg-brand')} style={{ width: `${progress.total ? (progress.done / progress.total) * 100 : 0}%` }} />
             </div>

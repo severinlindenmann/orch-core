@@ -788,12 +788,28 @@ function StateChip({ text }: { text: string }) {
  */
 function TableNodeView({ n }: { n: NodeOf<'table'> }) {
   const [ref, width] = useElementWidth<HTMLDivElement>()
-  const folded = new Set(foldedColumns(n.columns, width, { actions: !!n.rowActions }))
+  // Still wider than its box after the rule (unbreakable cells): fold one more column until it fits; start over when
+  // the width changes.
+  const [extra, setExtra] = useState({ width, n: 0 })
+  const more = extra.width === width ? extra.n : 0
+  const folded = new Set(foldedColumns(n.columns, width, { actions: !!n.rowActions, extra: more }))
+  const box = useRef<HTMLDivElement | null>(null)
+  useLayoutEffect(() => {
+    const scroller = box.current?.querySelector<HTMLElement>('[data-slot="table-container"]')
+    if (!scroller || width === 0 || scroller.scrollWidth <= scroller.clientWidth + 1 || more >= n.columns.length) return
+    setExtra({ width, n: more + 1 })
+  })
   const shown = n.columns.filter((c) => !folded.has(c.key))
   const fold = n.columns.filter((c) => folded.has(c.key))
   const numeric = numericKeys(n)
   return (
-    <div ref={ref} data-folded={fold.length || undefined}>
+    <div
+      ref={(el) => {
+        ref(el)
+        box.current = el
+      }}
+      data-folded={fold.length || undefined}
+    >
       <Table>
         <TableHeader>
           <TableRow>
@@ -843,12 +859,16 @@ function Cell({ column, row, open, act, label }: { column: NodeOf<'table'>['colu
   if (column.cell === 'state' && typeof v === 'string' && v !== '') return <StateChip text={text} />
   if (column.cell === 'ticket' && typeof v === 'string' && TICKET_KEY.test(v))
     return (
-      <Link to="/ticket/$key" params={{ key: v }} className="font-mono text-[12px] text-text hover:underline">
+      <Link to="/ticket/$key" params={{ key: v }} className="whitespace-nowrap font-mono text-[12px] text-text hover:underline">
         {v}
       </Link>
     )
+  // A short single token (a key, an id, "#31", a number) never breaks inside; long ones (paths, branches) may (N11).
+  if (SHORT_TOKEN.test(text)) return <span className="whitespace-nowrap">{text}</span>
   return <>{text}</>
 }
+
+const SHORT_TOKEN = /^\S{1,24}$/
 
 function DataRowView({ columns, shown, fold, row, rowActions, rowOpen, act, numeric, total }: DataRowProps & { act?: AddonAction }) {
   const label = rowLabel(columns[0]?.key, row)

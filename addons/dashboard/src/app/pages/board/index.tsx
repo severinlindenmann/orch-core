@@ -29,7 +29,7 @@ import { useWorkspace } from '@/app/workspace'
 import { usePageHeader } from '@/app/shell/ShellUi'
 import { useSlot } from '@/addon-ui'
 import { AddonLanes, laneId } from './AddonLane'
-import { BOARD_COL_MIN, BOARD_RAIL, railedColumns } from './autoRail'
+import { BOARD_COL_MIN, BOARD_RAIL, boardColumnsWidth, railedColumns } from './autoRail'
 import { ColumnHeader, ExpandRail } from './ColumnHead'
 import { EpicLanes, statusOfDrop } from './EpicLanes'
 import { groupByEpic, hasEpics, laneOf, movedAt } from './grouping'
@@ -213,7 +213,7 @@ export function BoardPage() {
   const [opened, setOpened] = useState<string[]>([])
   const laneIds = lanes.map(laneId)
   const railed = new Set(
-    railedColumns([...STATUSES.map((s) => ({ id: s as string, empty: (byStatus.get(s)?.length ?? 0) === 0 })), ...laneIds.map((id) => ({ id, empty: false }))], frameWidth > 0 ? frameWidth - 16 : 0, {
+    railedColumns([...STATUSES.map((s) => ({ id: s as string, empty: (byStatus.get(s)?.length ?? 0) === 0 })), ...laneIds.map((id) => ({ id, empty: false }))], boardColumnsWidth(frameWidth), {
       collapsed: display.collapsed,
       order: [...laneIds, 'done', 'backlog', 'testing', 'waiting', 'open', 'in-progress'],
       opened,

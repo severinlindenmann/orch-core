@@ -1,7 +1,8 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Bug, ChevronDown, ChevronUp, ChevronsUp, Equal, FlaskConical, Layers, Sparkles, Wrench, type LucideIcon } from 'lucide-react'
 import { STATUSES, type Priority, type Status, type TicketSummary, type TicketType } from '@/api/types'
 import { cn } from '@/lib/utils'
+import type { GroupBy } from './grouping'
 
 export const STATUS_LABEL: Record<Status, string> = {
   backlog: 'Backlog',
@@ -11,6 +12,9 @@ export const STATUS_LABEL: Record<Status, string> = {
   testing: 'Testing',
   done: 'Done',
 }
+
+/** Done lists its latest tickets only, until "Show all". */
+export const DONE_LIMIT = 5
 
 export const TYPE_ICON: Record<TicketType, LucideIcon> = {
   feature: Sparkles,
@@ -80,13 +84,19 @@ export interface BoardDisplay {
   estimate: boolean
   progress: boolean
   collapsed: Status[]
+  /** Swimlanes per epic (default) or one flat set of columns. */
+  group: GroupBy
+  /** Lanes the person folded (true) or unfolded (false) themselves; absent = the default for that epic. */
+  lanes: Record<string, boolean>
 }
-export const DEFAULT_DISPLAY: BoardDisplay = { density: 'comfortable', labels: true, estimate: true, progress: false, collapsed: ['done'] }
-const DISPLAY_KEY = 'orch.board.display'
+export const DEFAULT_DISPLAY: BoardDisplay = { density: 'comfortable', labels: true, estimate: true, progress: false, collapsed: ['done'], group: 'epic', lanes: {} }
+/** Remembered per viewer: Tom does not inherit what Severin chose. */
+export const displayKey = (person: string) => `orch.board.display.${person}`
 
-function loadDisplay(): BoardDisplay {
+function loadDisplay(person: string | undefined): BoardDisplay {
+  if (!person) return DEFAULT_DISPLAY
   try {
-    const raw = JSON.parse(localStorage.getItem(DISPLAY_KEY) ?? 'null') as Partial<BoardDisplay> | null
+    const raw = JSON.parse(localStorage.getItem(displayKey(person)) ?? 'null') as Partial<BoardDisplay> | null
     if (!raw || typeof raw !== 'object') return DEFAULT_DISPLAY
     return {
       density: raw.density === 'compact' ? 'compact' : 'comfortable',
@@ -94,25 +104,36 @@ function loadDisplay(): BoardDisplay {
       estimate: raw.estimate ?? DEFAULT_DISPLAY.estimate,
       progress: raw.progress ?? DEFAULT_DISPLAY.progress,
       collapsed: Array.isArray(raw.collapsed) ? raw.collapsed.filter((s): s is Status => STATUSES.includes(s)) : DEFAULT_DISPLAY.collapsed,
+      group: raw.group === 'none' ? 'none' : 'epic',
+      lanes: raw.lanes && typeof raw.lanes === 'object' ? Object.fromEntries(Object.entries(raw.lanes).filter(([, v]) => typeof v === 'boolean')) : {},
     }
   } catch {
     return DEFAULT_DISPLAY
   }
 }
 
-/** The board's Display options, remembered per browser. */
-export function useBoardDisplay() {
-  const [display, setDisplay] = useState<BoardDisplay>(loadDisplay)
-  const update = useCallback((patch: Partial<BoardDisplay>) => {
-    setDisplay((d) => {
-      const next = { ...d, ...patch }
-      try {
-        localStorage.setItem(DISPLAY_KEY, JSON.stringify(next))
-      } catch {
-        /* storage unavailable: the choice lasts for this visit */
-      }
-      return next
-    })
-  }, [])
+/** The board's Display options, remembered per viewer (nothing is stored until we know who is viewing). */
+export function useBoardDisplay(person: string | undefined) {
+  const [state, setState] = useState<{ person: string | undefined; display: BoardDisplay }>(() => ({ person, display: loadDisplay(person) }))
+  useEffect(() => {
+    setState((s) => (s.person === person ? s : { person, display: loadDisplay(person) }))
+  }, [person])
+  const display = state.person === person ? state.display : loadDisplay(person)
+  const update = useCallback(
+    (patch: Partial<BoardDisplay>) => {
+      setState((s) => {
+        const next = { person, display: { ...(s.person === person ? s.display : loadDisplay(person)), ...patch } }
+        if (person) {
+          try {
+            localStorage.setItem(displayKey(person), JSON.stringify(next.display))
+          } catch {
+            /* storage unavailable: the choice lasts for this visit */
+          }
+        }
+        return next
+      })
+    },
+    [person],
+  )
   return [display, update] as const
 }

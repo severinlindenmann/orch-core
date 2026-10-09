@@ -6,12 +6,13 @@ import { mockStore, resetMockStoreForTests } from '@/api/client'
 import { createAppRouter } from '@/app/router'
 import type { MockStore } from '@/mocks/store'
 
-export function renderApp(path = '/', opts: { viewer?: string; setup?: (store: MockStore) => void } = {}) {
+export function renderApp(path = '/', opts: { viewer?: string; setup?: (store: MockStore) => void; /** localStorage entries set after the usual clear (a viewer's remembered choices). */ storage?: Record<string, string> } = {}) {
   resetMockStoreForTests()
   if (opts.viewer) mockStore.setViewer(opts.viewer)
   opts.setup?.(mockStore)
   try {
     localStorage.clear()
+    for (const [k, v] of Object.entries(opts.storage ?? {})) localStorage.setItem(k, v)
   } catch {
     /* jsdom */
   }

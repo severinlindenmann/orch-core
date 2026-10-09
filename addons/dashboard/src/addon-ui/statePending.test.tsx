@@ -74,8 +74,21 @@ describe('resolveBindings defaults', () => {
 describe('state requests per surface', () => {
   it('the busy board asks each addon for its state at most once, and never per card', async () => {
     const spy = vi.spyOn(api, 'getAddonState')
-    renderApp('/board', { viewer: 'p_sev', setup: (s) => s.reset('busy') })
+    // Flat: every card is on screen (grouped, the big epics start folded).
+    renderApp('/board', { viewer: 'p_sev', setup: (s) => s.reset('busy'), storage: { 'orch.board.display.p_sev': JSON.stringify({ group: 'none' }) } })
     await waitFor(() => expect(screen.getAllByTestId(/^card-DEMO-/).length).toBeGreaterThan(50), { timeout: 15_000 })
+    await new Promise((r) => setTimeout(r, 300))
+    expect(spy.mock.calls.filter((c) => c[2] !== undefined)).toEqual([])
+    const perAddon = new Map<string, number>()
+    for (const c of spy.mock.calls) perAddon.set(c[1], (perAddon.get(c[1]) ?? 0) + 1)
+    for (const [name, n] of perAddon) expect(n, name).toBeLessThanOrEqual(1)
+  }, 30_000)
+  it('the grouped busy board (every lane unfolded) asks each addon for its state at most once, and never per ticket', async () => {
+    const spy = vi.spyOn(api, 'getAddonState')
+    const lanes = Object.fromEntries(['DEMO-0040', 'DEMO-0050', 'DEMO-0100', 'DEMO-0101', 'DEMO-0102', '_none'].map((k) => [k, false]))
+    renderApp('/board', { viewer: 'p_sev', setup: (s) => s.reset('busy'), storage: { 'orch.board.display.p_sev': JSON.stringify({ group: 'epic', lanes }) } })
+    await waitFor(() => expect(screen.getAllByTestId(/^card-DEMO-/).length).toBeGreaterThan(50), { timeout: 15_000 })
+    expect(document.querySelector('[data-grouped="epic"]')).not.toBeNull()
     await new Promise((r) => setTimeout(r, 300))
     expect(spy.mock.calls.filter((c) => c[2] !== undefined)).toEqual([])
     const perAddon = new Map<string, number>()

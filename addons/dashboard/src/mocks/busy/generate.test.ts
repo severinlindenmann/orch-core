@@ -103,7 +103,7 @@ describe('busy store: counts and mix', () => {
     expect([...generated].filter((l) => l.length >= 30).length).toBeGreaterThanOrEqual(2)
   })
 
-  it('has 3 to 4 epics of 8 to 20 children, and the factory epic has 20', () => {
+  it('has 3 to 4 epics of 8 to 20 children, one big epic of 40, and the factory epic has 20', () => {
     const t = demo()
     const epics = t.filter((x) => x.type === 'epic' && x.key !== 'DEMO-0040' && x.key !== 'DEMO-0050')
     expect(epics.length).toBeGreaterThanOrEqual(3)
@@ -111,8 +111,11 @@ describe('busy store: counts and mix', () => {
     for (const e of epics) {
       const n = s.store.ticket(e.key)!.children!.length
       expect(n, e.key).toBeGreaterThanOrEqual(8)
-      expect(n, e.key).toBeLessThanOrEqual(20)
+      expect(n, e.key).toBeLessThanOrEqual(e.key === 'DEMO-0100' ? 40 : 20)
     }
+    expect(new Set(epics.map((e) => e.title)).size).toBe(epics.length)
+    // The big one shadows the board unless it is grouped (N2): 40 children.
+    expect(s.store.ticket('DEMO-0100')!.children).toHaveLength(40)
     expect(s.store.ticket('DEMO-0050')!.children).toHaveLength(20)
   })
 

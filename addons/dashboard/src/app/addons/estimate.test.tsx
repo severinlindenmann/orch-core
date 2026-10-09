@@ -24,7 +24,7 @@ describe('estimate on the board and the ticket', () => {
     renderApp('/board')
     const ws = mockStore.workspaces[0].id
     const tickets = await api.listTickets(ws)
-    const want = tickets.filter((t) => t.status === 'in-progress').reduce((n, t) => n + (Number((t.addons?.estimate as { points?: number } | undefined)?.points) || 0), 0)
+    const want = tickets.filter((t) => t.status === 'in-progress' && t.type !== 'epic').reduce((n, t) => n + (Number((t.addons?.estimate as { points?: number } | undefined)?.points) || 0), 0)
     expect(want).toBeGreaterThan(0)
     const col = await screen.findByRole('region', { name: 'In progress' })
     const sum = await within(col).findByLabelText(/^Sum of /)

@@ -30,7 +30,7 @@ export const WORKSPACES: WsCfg[] = [
   {
     prefix: 'DEMO', first: 100, count: 131, owner: 'p_sev', other: 'p_mara', agents: true,
     restricted: [['p_sev'], ['p_sev'], ['p_sev'], ['p_sev'], ['p_sev', 'p_mara'], ['p_sev', 'p_mara'], ['p_sev', 'p_mara'], ['p_sev', 'p_mara']],
-    epics: [18, 12, 9], extraEpic: { key: 'DEMO-0050', children: 16 },
+    epics: [18, 12, 9], extraEpic: { key: 'DEMO-0050', children: 16 }, bigEpic: { index: 0, extra: 22 },
   },
   { prefix: 'INT', first: 100, count: 58, owner: 'p_sev', other: 'p_mara', agents: false, restricted: [['p_sev'], ['p_sev'], ['p_sev']], epics: [7] },
   { prefix: 'CLI', first: 100, count: 29, owner: 'p_sev', other: 'p_tom', agents: false, restricted: [['p_sev'], ['p_sev']], epics: [] },
@@ -58,6 +58,11 @@ function planFor(cfg: WsCfg, rng: Rng): Plan[] {
   if (cfg.extraEpic)
     for (const p of free.splice(0, cfg.extraEpic.children)) {
       p.parent = cfg.extraEpic.key
+      p.small = true
+    }
+  if (cfg.bigEpic)
+    for (const p of free.splice(0, cfg.bigEpic.extra)) {
+      p.parent = key(cfg.first + cfg.bigEpic.index)
       p.small = true
     }
   return plans

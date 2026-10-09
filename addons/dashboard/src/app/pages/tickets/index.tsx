@@ -16,11 +16,15 @@ import { useRole } from '@/app/useRole'
 import { usePageHeader } from '@/app/shell/ShellUi'
 import type { BoardPeople } from '../board/TicketCard'
 import { STATUS_LABEL } from '../board/lib'
+import { groupByEpic, hasEpics, isCollapsed, NO_EPIC } from '../board/grouping'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { useTicketsGroup } from './group'
 import { Filters } from './Filters'
 import { SavedViews } from './SavedViews'
 import { TicketsTable, type AddonColumn } from './TicketsTable'
 import { hasFilters, type SortKey, type TicketsSearch } from './search'
 import { toastApiError } from '@/app/toast'
+import { LoadFailed } from '@/components/LoadFailed'
 
 const CLI_HINT = 'orch list --status open'
 
@@ -112,7 +116,8 @@ export function TicketsPage() {
   const wsId = workspace?.id
   const { data: addons = [] } = useAddons()
 
-  const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.getMe })
+  const meQ = useQuery({ queryKey: ['me'], queryFn: api.getMe })
+  const me = meQ.data
   const role = useRole()
   const canBulk = can(role, 'ticket.move')
 
@@ -131,6 +136,19 @@ export function TicketsPage() {
   const { data: everything = [] } = useQuery({ queryKey: ['tickets', wsId, 'all'], queryFn: () => api.listTickets(wsId!), enabled: !!wsId })
 
   const rows = useMemo(() => (all ?? []).filter((t) => !search.status?.length || search.status.includes(t.status)), [all, search.status])
+  const [grouping, setGrouping] = useTicketsGroup(me?.person)
+  const dirty = hasFilters(search)
+  const grouped = grouping.group === 'epic' && hasEpics(everything)
+  const filtering = dirty || !!search.status?.length
+  const groups = useMemo(() => (grouped ? groupByEpic(everything, rows, filtering) : null), [grouped, everything, rows, filtering])
+  // What j/k walks and what bulk actions act on: the rows on screen ("No epic" first, as in the table).
+  const navRows = useMemo(
+    () =>
+      groups
+        ? [...(grouping.sections[NO_EPIC] ? [] : groups.none), ...groups.lanes.filter((l) => !isCollapsed(l, grouping.sections, filtering)).flatMap((l) => l.children)]
+        : rows,
+    [groups, grouping.sections, rows, filtering],
+  )
   const counts = useMemo(() => {
     const c = Object.fromEntries(STATUSES.map((s) => [s, 0])) as Record<Status, number>
     for (const t of all ?? []) c[t.status]++
@@ -194,12 +212,12 @@ export function TicketsPage() {
   const [focusKey, setFocusKey] = useState<string | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const toggle = useCallback((key: string) => setSelected((s) => (s.has(key) ? new Set([...s].filter((k) => k !== key)) : new Set(s).add(key))), [])
-  const visibleKeys = useMemo(() => new Set(rows.map((r) => r.key)), [rows])
+  const visibleKeys = useMemo(() => new Set(navRows.map((r) => r.key)), [navRows])
   const picked = [...selected].filter((k) => visibleKeys.has(k))
 
   const searchRef = useRef<HTMLInputElement>(null)
-  const state = useRef({ rows, focusKey, canBulk })
-  state.current = { rows, focusKey, canBulk }
+  const state = useRef({ rows: navRows, focusKey, canBulk })
+  state.current = { rows: navRows, focusKey, canBulk }
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented) return
@@ -236,15 +254,32 @@ export function TicketsPage() {
   }, [navigate, toggle])
 
   const sort: SortKey = search.sort ?? 'updated'
-  const dirty = hasFilters(search)
   const shown: TicketSummary[] = rows
+  // Grouped, epics are headers and not tickets: "150 tickets · 6 epics".
+  const cardRows = groups ? rows.filter((t) => t.type !== 'epic').length : rows.length
+  const allCards = groups ? everything.filter((t) => t.type !== 'epic').length : everything.length
+  const countLabel = cardRows === (allCards || cardRows) ? `${cardRows} tickets${groups ? ` · ${groups.lanes.length} epics` : ''}` : `${cardRows} of ${allCards}`
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
       <div className="flex items-baseline gap-3">
         <h1 className="text-xl font-semibold tracking-tight">Tickets</h1>
         <span className="font-mono text-[11px] text-text-faint" aria-live="polite">
-          {shown.length === (everything.length || shown.length) ? `${shown.length} tickets` : `${shown.length} of ${everything.length}`}
+          {countLabel}
         </span>
+        <span className="flex-1" />
+        {hasEpics(everything) && (
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] text-text-faint">Group</span>
+            <ToggleGroup type="single" variant="outline" size="sm" value={grouping.group} onValueChange={(v) => v && setGrouping({ group: v as 'epic' | 'none' })} aria-label="Group by">
+              <ToggleGroupItem value="epic" className="h-7 px-2.5 text-[12px] data-[state=on]:bg-brand-soft data-[state=on]:text-brand">
+                Epic
+              </ToggleGroupItem>
+              <ToggleGroupItem value="none" className="h-7 px-2.5 text-[12px] data-[state=on]:bg-brand-soft data-[state=on]:text-brand">
+                None
+              </ToggleGroupItem>
+            </ToggleGroup>
+          </div>
+        )}
       </div>
       {wsId && (
         <SavedViews
@@ -268,7 +303,9 @@ export function TicketsPage() {
         onClear={clear}
       />
       {canBulk && picked.length > 0 && <BulkBar keys={picked} onDone={() => setSelected(new Set())} />}
-      {isPending ? (
+      {meQ.isError ? (
+        <LoadFailed what="tickets" onRetry={() => void meQ.refetch()} />
+      ) : isPending || !me ? (
         <p className="text-[13px] text-text-faint">Loading tickets…</p>
       ) : shown.length === 0 ? (
         <div className="rounded-lg border border-border bg-surface p-8 text-center" role="status">
@@ -284,6 +321,10 @@ export function TicketsPage() {
         <>
           <TicketsTable
             tickets={shown}
+            groups={groups}
+            filtering={filtering}
+            sections={grouping.sections}
+            onSection={(key, collapse) => setGrouping({ sections: { ...grouping.sections, [key]: collapse } })}
             people={people}
             me={me?.person}
             selected={selected}

@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { screen, waitFor, within } from '@testing-library/react'
+import { api, mockStore } from '@/api/client'
 import { renderApp } from '@/test/renderApp'
 
 describe('Tickets page', () => {
@@ -16,7 +17,7 @@ describe('Tickets page', () => {
   it('filters by status and clears', async () => {
     const { user } = renderApp('/tickets')
     await user.click(await screen.findByRole('button', { name: /^testing/i }))
-    const rows = within(screen.getByRole('table', { name: 'Tickets' })).getAllByRole('row').slice(1)
+    const rows = within(screen.getByRole('table', { name: 'Tickets' })).getAllByRole('row').slice(1).filter((r) => !r.hasAttribute('data-group'))
     rows.forEach((r) => expect(r).toHaveTextContent(/testing/i))
     await user.click(screen.getByRole('button', { name: 'Clear filters' }))
   })
@@ -71,7 +72,7 @@ describe('Tickets page', () => {
       await user.click(await screen.findByRole('tab', { name: 'Release blockers' }))
       await waitFor(() => expect(screen.getByRole('tab', { name: 'Release blockers' })).toHaveAttribute('aria-selected', 'true'))
       await waitFor(() => {
-        const rows = within(screen.getByRole('table', { name: 'Tickets' })).getAllByRole('row').slice(1)
+        const rows = within(screen.getByRole('table', { name: 'Tickets' })).getAllByRole('row').slice(1).filter((r) => !r.hasAttribute('data-group'))
         expect(rows.length).toBeGreaterThan(0)
         rows.forEach((r) => expect(within(r).getByRole('img', { name: /^Priority (urgent|high)$/ })).toBeInTheDocument())
       })
@@ -101,5 +102,91 @@ describe('Tickets page', () => {
       await screen.findByRole('tab', { name: 'Release blockers' })
       expect(screen.queryByRole('tab', { name: 'My open work' })).toBeNull()
     })
+  })
+})
+
+describe('Tickets grouped by epic (N2)', () => {
+  const groupRows = (t: HTMLElement) => within(t).getAllByRole('row').filter((r) => r.hasAttribute('data-group'))
+  const ticketRows = (t: HTMLElement) => within(t).queryAllByRole('row').filter((r) => r.hasAttribute('data-key'))
+
+  it('groups by epic by default: epic rows with progress, indented children, a No epic section', async () => {
+    renderApp('/tickets')
+    const table = await screen.findByRole('table', { name: 'Tickets' })
+    await within(table).findByText('DEMO-0043')
+    const groups = groupRows(table)
+    const epic = groups.find((r) => r.getAttribute('data-group') === 'DEMO-0040')!
+    expect(epic).toHaveTextContent(/\d\/4 done/)
+    expect(groups.some((r) => r.getAttribute('data-group') === '_none')).toBe(true)
+    // the epic is its group row, not also a ticket row; its children are rows below it
+    expect(ticketRows(table).some((r) => r.dataset.key === 'DEMO-0040')).toBe(false)
+    const order = within(table).getAllByRole('row').map((r) => r.getAttribute('data-group') ?? r.getAttribute('data-key'))
+    expect(order.indexOf('DEMO-0043')).toBeGreaterThan(order.indexOf('DEMO-0040'))
+    // single tickets come first, so a big epic never pushes them out of sight
+    expect(order.indexOf('_none')).toBeLessThan(order.indexOf('DEMO-0040'))
+    expect(screen.getByText(/^\d+ tickets · 2 epics$/)).toBeInTheDocument()
+  })
+
+  it('Group: None restores the flat list and is remembered', async () => {
+    const { user } = renderApp('/tickets')
+    const table = await screen.findByRole('table', { name: 'Tickets' })
+    await within(table).findByText('DEMO-0043')
+    await user.click(screen.getByRole('radio', { name: 'None' }))
+    await waitFor(() => expect(within(table).queryAllByRole('row').some((r) => r.hasAttribute('data-group'))).toBe(false))
+    expect(ticketRows(table).some((r) => r.dataset.key === 'DEMO-0040')).toBe(true)
+    expect(JSON.parse(localStorage.getItem('orch.tickets.group.p_sev')!).group).toBe('none')
+  })
+
+  it('a 40-child epic starts folded to one row; the chevron opens it with Enter and the arrows fold and unfold', async () => {
+    const { user } = renderApp('/tickets', { viewer: 'p_sev', setup: (s) => s.reset('busy') })
+    const table = await screen.findByRole('table', { name: 'Tickets' })
+    const toggle = await within(table).findByRole('button', { name: /^Expand DEMO-0100 /, expanded: false }, { timeout: 8000 })
+    expect(groupRows(table).find((r) => r.getAttribute('data-group') === 'DEMO-0100')).toHaveTextContent(/\d+\/40 done/)
+    const kids = mockStore.ticket('DEMO-0100')!.children!
+    expect(ticketRows(table).filter((r) => kids.includes(r.dataset.key!))).toHaveLength(0)
+    toggle.focus()
+    await user.keyboard('{Enter}')
+    await waitFor(() => expect(ticketRows(table).filter((r) => kids.includes(r.dataset.key!)).length).toBe(40))
+    within(table).getByRole('button', { name: /^Collapse DEMO-0100 / }).focus()
+    await user.keyboard('{ArrowLeft}')
+    await waitFor(() => expect(ticketRows(table).filter((r) => kids.includes(r.dataset.key!))).toHaveLength(0))
+    mockStore.sim.stopAll()
+  }, 30_000)
+
+  it('j/k skip the children of a folded epic', async () => {
+    const { user } = renderApp('/tickets', { viewer: 'p_sev', setup: (s) => s.reset('busy') })
+    const table = await screen.findByRole('table', { name: 'Tickets' })
+    await within(table).findByRole('button', { name: /^Expand DEMO-0100 /, expanded: false }, { timeout: 8000 })
+    const kids = mockStore.ticket('DEMO-0100')!.children!
+    await user.keyboard('jjjjj')
+    expect(kids).not.toContain((document.activeElement as HTMLElement | null)?.dataset.key)
+    mockStore.sim.stopAll()
+  }, 30_000)
+
+  it('a search hit inside a big epic is shown and j reaches it', async () => {
+    const { user } = renderApp('/tickets', { viewer: 'p_sev', setup: (st) => st.reset('busy') })
+    const table = await screen.findByRole('table', { name: 'Tickets' })
+    await within(table).findByRole('button', { name: /^Expand DEMO-0100 /, expanded: false }, { timeout: 8000 })
+    const kid = mockStore.ticket(mockStore.ticket('DEMO-0100')!.children![7])!
+    await user.type(screen.getByRole('searchbox', { name: 'Search tickets' }), kid.title)
+    await waitFor(() => expect(ticketRows(table).some((r) => r.dataset.key === kid.key)).toBe(true), { timeout: 8000 })
+    await user.click(document.body)
+    for (let i = 0; i < 25 && (document.activeElement as HTMLElement | null)?.dataset.key !== kid.key; i++) await user.keyboard('j')
+    expect((document.activeElement as HTMLElement | null)?.dataset.key).toBe(kid.key)
+    mockStore.sim.stopAll()
+  }, 30_000)
+
+  it('is remembered per viewer: Tom does not inherit Severin\'s choice', async () => {
+    renderApp('/tickets', { viewer: 'p_tom', storage: { 'orch.tickets.group.p_sev': JSON.stringify({ group: 'none' }) } })
+    const table = await screen.findByRole('table', { name: 'Tickets' })
+    await within(table).findByText('DEMO-0043')
+    expect(groupRows(table).length).toBeGreaterThan(0)
+  })
+
+  it('if the viewer cannot be loaded the list shows an error with Retry', async () => {
+    vi.spyOn(api, 'getMe').mockRejectedValueOnce(new Error('down'))
+    renderApp('/tickets')
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Could not load tickets/)
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+    vi.restoreAllMocks()
   })
 })

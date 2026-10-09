@@ -37,8 +37,24 @@ export interface BuildState {
   claimer: number
   /** Next pull request number per repo. */
   pr: Record<string, number>
+  /** Epic titles used so far in this workspace: two epics never share one. */
+  epicTitles: Set<string>
 }
-export const newBuildState = (rng: Rng, cfg: WsCfg): BuildState => ({ rng, cfg, claimer: 0, pr: { 'acme-energy-dbt': 210, 'acme-energy-billing-api': 140, 'acme-energy-ingest': 60 } })
+export const newBuildState = (rng: Rng, cfg: WsCfg): BuildState => ({ rng, cfg, claimer: 0, pr: { 'acme-energy-dbt': 210, 'acme-energy-billing-api': 140, 'acme-energy-ingest': 60 }, epicTitles: new Set() })
+
+const EPIC_WHEN = ['Monthly', 'Quarterly', 'Regional', 'Customer', 'Finance']
+const EPIC_WHAT = ['billing', 'reporting', 'metering', 'tariff', 'data quality']
+const EPIC_HOW = ['overhaul', 'programme', 'migration', 'clean-up']
+/** Same three picks as always (so nothing else moves); a title already taken in this workspace steps on to the next noun. */
+function epicTitle(st: BuildState, rng: Rng): string {
+  const when = rng.pick(EPIC_WHEN)
+  let what = EPIC_WHAT.indexOf(rng.pick(EPIC_WHAT))
+  const how = rng.pick(EPIC_HOW)
+  const make = () => `${when} ${EPIC_WHAT[what]} ${how}`
+  while (st.epicTitles.has(make())) what = (what + 1) % EPIC_WHAT.length
+  st.epicTitles.add(make())
+  return make()
+}
 
 const keyOf = (cfg: WsCfg, n: number) => `${cfg.prefix}-${String(n).padStart(4, '0')}`
 const bullet = (lines: string[]) => lines.map((l) => `- ${l}`).join('\n')
@@ -107,7 +123,7 @@ export function buildTicket(st: BuildState, plan: Plan): Built {
   const type = isEpic ? 'epic' : (plan.type ?? wpick<GenDefinition['type']>(rng, [['feature', 40], ['bug', 22], ['chore', 26], ['spike', 8]]))
   const repo = rng.pick(REPOS)
   const base = pickTitle(rng, type)
-  const title = isEpic ? `${rng.pick(['Monthly', 'Quarterly', 'Regional', 'Customer', 'Finance'])} ${rng.pick(['billing', 'reporting', 'metering', 'tariff', 'data quality'])} ${rng.pick(['overhaul', 'programme', 'migration', 'clean-up'])}` : plan.longTitle ? longTitle(rng, base) : base
+  const title = isEpic ? epicTitle(st, rng) : plan.longTitle ? longTitle(rng, base) : base
   const priority = wpick<GenDefinition['priority']>(rng, [['low', 20], ['medium', 45], ['high', 25], ['urgent', 10]])
   const size = isEpic ? null : plan.small ? rng.pick(['xs', 's', 'm'] as const) : wpick<GenDefinition['size']>(rng, [[null, 12], ['xs', 15], ['s', 25], ['m', 25], ['l', 15], ['xl', 8]])
   const labels = rng.sample(LABELS, wpick(rng, [[0, 15], [1, 40], [2, 30], [3, 15]]))

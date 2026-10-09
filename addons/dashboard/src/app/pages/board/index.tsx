@@ -16,27 +16,26 @@ import {
 } from '@dnd-kit/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
-import { ChevronsLeft, ChevronsRight, Lock } from 'lucide-react'
 import { toast } from 'sonner'
 import { can } from '@/api/permissions'
 import { useRole } from '@/app/useRole'
 import { api } from '@/api/client'
 import { STATUSES, type Status, type TicketSummary } from '@/api/types'
 import { Button } from '@/components/ui/button'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { useWorkspace } from '@/app/workspace'
 import { usePageHeader } from '@/app/shell/ShellUi'
 import { useSlot } from '@/addon-ui'
 import { AddonLanes } from './AddonLane'
-import { ColumnSums } from './ColumnSum'
+import { ColumnHeader, ExpandRail } from './ColumnHead'
+import { EpicLanes, statusOfDrop } from './EpicLanes'
+import { groupByEpic, hasEpics, laneOf } from './grouping'
 import { ListView } from './ListView'
 import { TicketCard, TicketCardBody, type BoardPeople } from './TicketCard'
 import { Toolbar, type View } from './Toolbar'
-import { applyFilters, NO_FILTERS, STATUS_LABEL, useBoardDisplay, type BoardDisplay, type Filters } from './lib'
+import { applyFilters, DONE_LIMIT, NO_FILTERS, STATUS_LABEL, useBoardDisplay, type BoardDisplay, type Filters } from './lib'
 import { toastApiError } from '@/app/toast'
-
-const DONE_LIMIT = 5
+import { LoadFailed } from '@/components/LoadFailed'
 
 /** Left/right jump to the neighbouring column; up/down nudge. Without this the keyboard moves 25px per press. */
 const columnJump: KeyboardCoordinateGetter = (event, { context, currentCoordinates }) => {
@@ -47,16 +46,23 @@ const columnJump: KeyboardCoordinateGetter = (event, { context, currentCoordinat
   }
   if ((event.code !== 'ArrowLeft' && event.code !== 'ArrowRight') || !collisionRect) return undefined
   event.preventDefault()
-  const cols = droppableContainers
+  // The lane grid has several cells per column: pick the column by its left edge, then the cell nearest to the dragged card.
+  const cells = droppableContainers
     .getEnabled()
     .map((c) => ({ id: c.id, rect: droppableRects.get(c.id) }))
     .filter((c): c is { id: typeof c.id; rect: NonNullable<typeof c.rect> } => !!c.rect)
-    .sort((a, b) => a.rect.left - b.rect.left)
-  if (cols.length === 0) return undefined
+  const lefts = [...new Set(cells.map((c) => Math.round(c.rect.left)))].sort((a, b) => a - b)
+  if (lefts.length === 0) return undefined
   const cx = collisionRect.left + collisionRect.width / 2
-  let idx = cols.findIndex((c) => cx >= c.rect.left && cx <= c.rect.left + c.rect.width)
+  const colOf = (left: number) => cells.filter((c) => Math.round(c.rect.left) === left)
+  let idx = lefts.findIndex((l) => cx >= l && cx <= l + colOf(l)[0].rect.width)
   if (idx < 0) idx = 0
-  const next = cols[Math.max(0, Math.min(cols.length - 1, idx + (event.code === 'ArrowRight' ? 1 : -1)))]
+  const column = colOf(lefts[Math.max(0, Math.min(lefts.length - 1, idx + (event.code === 'ArrowRight' ? 1 : -1)))])
+  const cy = collisionRect.top + collisionRect.height / 2
+  const next = column.reduce((best, c) => {
+    const d = (r: typeof c.rect) => (cy < r.top ? r.top - cy : cy > r.top + r.height ? cy - r.top - r.height : 0)
+    return d(c.rect) < d(best.rect) ? c : best
+  })
   return { x: next.rect.left + 12, y: next.rect.top + 56 }
 }
 
@@ -101,7 +107,6 @@ function Column({
   const [showAll, setShowAll] = useState(false)
   const limited = status === 'done' && !showAll && tickets.length > DONE_LIMIT
   const visible = limited ? tickets.slice(0, DONE_LIMIT) : tickets
-  const humanOnly = status === 'done'
   if (collapsedRail) {
     return (
       <section
@@ -113,22 +118,7 @@ function Column({
           isOver && draggingFrom !== status ? 'border-brand bg-brand-soft' : 'border-border',
         )}
       >
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              aria-label={`Expand ${STATUS_LABEL[status]}, ${total} tickets`}
-              onClick={() => onCollapse(false)}
-              className="flex h-full min-h-[120px] w-full flex-col items-center gap-2 rounded-lg py-2 text-text-muted outline-none hover:bg-accent hover:text-text focus-visible:ring-2 focus-visible:ring-brand"
-            >
-              <ChevronsRight className="size-3.5" aria-hidden />
-              <span className="rounded-full bg-surface-3 px-1.5 font-mono text-[11px]">{total}</span>
-              <span className="text-[13px] font-semibold [writing-mode:vertical-rl]">{STATUS_LABEL[status]}</span>
-              {humanOnly && <Lock className="size-3 text-text-faint" aria-hidden />}
-            </button>
-          </TooltipTrigger>
-          {humanOnly && <TooltipContent side="left">Human-only: Done is reached by a verdict in Testing.</TooltipContent>}
-        </Tooltip>
+        <ExpandRail status={status} total={total} vertical onExpand={() => onCollapse(false)} />
       </section>
     )
   }
@@ -141,32 +131,7 @@ function Column({
         isOver && draggingFrom !== status ? 'border-brand bg-brand-soft' : 'border-border',
       )}
     >
-      <header className="@container flex items-center gap-1.5 px-2.5 py-2">
-        <h2 className="shrink-0 whitespace-nowrap text-[13px] font-semibold text-text">{STATUS_LABEL[status]}</h2>
-        <span className="shrink-0 rounded-full bg-surface-3 px-1.5 font-mono text-[11px] text-text-muted" aria-label={`${total} tickets`}>
-          {total}
-        </span>
-        <ColumnSums tickets={tickets} />
-        <span className="min-w-0 flex-1" />
-        <button
-          type="button"
-          aria-label={`Collapse ${STATUS_LABEL[status]}`}
-          onClick={() => onCollapse(true)}
-          className="shrink-0 rounded p-0.5 text-text-faint outline-none hover:text-text focus-visible:ring-2 focus-visible:ring-brand"
-        >
-          <ChevronsLeft className="size-3.5" aria-hidden />
-        </button>
-        {humanOnly && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span tabIndex={0} role="img" aria-label="Human-only" className="rounded outline-none focus-visible:ring-2 focus-visible:ring-brand">
-                <Lock className="size-3.5 text-text-faint" />
-              </span>
-            </TooltipTrigger>
-            <TooltipContent>Done is reached by a human verdict in Testing.</TooltipContent>
-          </Tooltip>
-        )}
-      </header>
+      <ColumnHeader status={status} tickets={tickets} total={total} onCollapse={() => onCollapse(true)} />
       <div ref={setNodeRef} className="flex min-h-[80px] flex-1 flex-col gap-2 overflow-y-auto px-2 pb-2">
         {visible.length === 0 ? (
           <div className="flex flex-col items-center gap-1 px-2 py-8 text-center text-[12px] text-text-faint">
@@ -200,7 +165,6 @@ export function BoardPage() {
   const [view, setView] = useState<View>('board')
   const [filters, setFilters] = useState<Filters>(NO_FILTERS)
   const [dragging, setDragging] = useState<TicketSummary | null>(null)
-  const [display, setDisplay] = useBoardDisplay()
   const role = useRole()
   const canMove = can(role, 'ticket.move')
   const boardRef = useRef<HTMLDivElement>(null)
@@ -208,7 +172,9 @@ export function BoardPage() {
   const refocus = useRef<{ key: string; status: Status } | null>(null)
   const [overlayWidth, setOverlayWidth] = useState<number | undefined>()
 
-  const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.getMe })
+  const meQ = useQuery({ queryKey: ['me'], queryFn: api.getMe })
+  const me = meQ.data
+  const [display, setDisplay] = useBoardDisplay(me?.person)
   const ticketsKey = ['board', wsId] as const
   const { data: tickets = [], isPending } = useQuery({
     queryKey: ticketsKey,
@@ -226,13 +192,17 @@ export function BoardPage() {
   const tasks = useMemo(() => new Map(agents.flatMap((a) => a.leases.map((l) => [l.ticket, l.task] as const))), [agents])
 
   const filtered = useMemo(() => applyFilters(tickets, filters, me?.person), [tickets, filters, me])
+  const filtering = JSON.stringify(filters) !== JSON.stringify(NO_FILTERS)
+  // Grouped by epic (the default) when this workspace has epics: epics are lane headers, not cards.
+  const grouped = display.group === 'epic' && hasEpics(tickets)
+  const epicKeys = useMemo(() => new Set(tickets.filter((t) => t.type === 'epic').map((t) => t.key)), [tickets])
+  const groups = useMemo(() => groupByEpic(tickets, filtered, filtering), [tickets, filtered, filtering])
   const byStatus = useMemo(() => {
     const m = new Map<Status, TicketSummary[]>(STATUSES.map((s) => [s, []]))
-    for (const t of filtered) m.get(t.status)?.push(t)
+    for (const t of filtered) if (!grouped || t.type !== 'epic') m.get(t.status)?.push(t)
     for (const list of m.values()) list.sort((a, b) => b.updated_at.localeCompare(a.updated_at))
     return m
-  }, [filtered])
-
+  }, [filtered, grouped])
   const options = useMemo(
     () => ({
       types: [...new Set(tickets.map((t) => t.type))].sort(),
@@ -300,9 +270,12 @@ export function BoardPage() {
   function onDragEnd(e: DragEndEvent) {
     setDragging(null)
     const t = e.active.data.current?.ticket as TicketSummary | undefined
-    const to = e.over?.id as Status | undefined
-    if (!t || !to || !STATUSES.includes(to)) return
+    const to = e.over ? statusOfDrop(e.over.id) : undefined
+    if (!t || !to) return
     const current = qc.getQueryData<TicketSummary[]>(ticketsKey)?.find((x) => x.key === t.key)
+    // A lane cell only takes its own lane's cards: the status changes, the epic never does by a drop.
+    const dropLane = e.over ? String(e.over.id).split('|')[0] : ''
+    if (e.over && String(e.over.id).includes('|') && grouped && dropLane !== laneOf(current ?? t, epicKeys)) return
     if ((current?.status ?? t.status) === to) return
     move.mutate({ key: t.key, status: to, from: current?.status ?? t.status })
   }
@@ -330,8 +303,8 @@ export function BoardPage() {
         labels={options.labels}
         people={options.people}
         epics={options.epics}
-        shown={filtered.length}
-        total={tickets.length}
+        shown={grouped ? filtered.filter((t) => t.type !== 'epic').length : filtered.length}
+        total={grouped ? tickets.filter((t) => t.type !== 'epic').length : tickets.length}
         display={display}
         onDisplay={setDisplay}
         moveLimit={!role || canMove ? null : role === 'viewer' ? 'viewer' : 'cannot-move'}
@@ -345,7 +318,9 @@ export function BoardPage() {
         }
         onJump={jump}
       />
-      {isPending ? (
+      {meQ.isError ? (
+        <LoadFailed what="the board" onRetry={() => void meQ.refetch()} />
+      ) : isPending || !me ? (
         <p className="text-[13px] text-text-faint">Loading board…</p>
       ) : view === 'list' ? (
         <ListView tickets={filtered} people={people} onOpen={open} />
@@ -357,39 +332,59 @@ export function BoardPage() {
           onDragEnd={onDragEnd}
           onDragCancel={() => setDragging(null)}
         >
-          <div
-            ref={boardRef}
-            className="grid min-h-0 min-w-0 flex-1 grid-flow-col gap-2 overflow-x-auto pb-2"
-            style={{
-              gridTemplateColumns: STATUSES.map((s) => (display.collapsed.includes(s) ? '40px' : 'minmax(216px, 1fr)')).join(' '),
-              gridAutoColumns: 'minmax(216px, 1fr)',
-            }}
-          >
-            {STATUSES.map((s) => (
-              <Column
-                key={s}
-                status={s}
-                tickets={byStatus.get(s) ?? []}
-                total={(byStatus.get(s) ?? []).length}
-                filtering={JSON.stringify(filters) !== JSON.stringify(NO_FILTERS)}
-                me={me?.person}
-                people={people}
-                tasks={tasks}
-                onOpen={open}
+          {grouped ? (
+            <div ref={boardRef} data-grouped="epic" className="flex min-h-0 min-w-0 flex-1 items-start gap-2 overflow-x-auto overflow-y-auto pb-2">
+              <EpicLanes
+                groups={groups}
+                byStatus={byStatus}
+                filtering={filtering}
+                dragLane={dragging ? laneOf(dragging, epicKeys) : null}
                 draggingFrom={dragging?.status ?? null}
-                display={display}
-                collapsedRail={display.collapsed.includes(s)}
+                setDisplay={setDisplay}
+                people={people}
+                me={me?.person}
+                tasks={tasks}
                 canMove={canMove}
+                display={display}
+                onOpen={open}
                 onMove={moveFromMenu}
-                onCollapse={(c) => setDisplay({ collapsed: c ? [...display.collapsed, s] : display.collapsed.filter((x) => x !== s) })}
               />
-            ))}
-            <AddonLanes />
-          </div>
+            </div>
+          ) : (
+            <div
+              ref={boardRef}
+              className="grid min-h-0 min-w-0 flex-1 grid-flow-col gap-2 overflow-x-auto pb-2"
+              style={{
+                gridTemplateColumns: STATUSES.map((s) => (display.collapsed.includes(s) ? '40px' : 'minmax(216px, 1fr)')).join(' '),
+                gridAutoColumns: 'minmax(216px, 1fr)',
+              }}
+            >
+              {STATUSES.map((s) => (
+                <Column
+                  key={s}
+                  status={s}
+                  tickets={byStatus.get(s) ?? []}
+                  total={(byStatus.get(s) ?? []).length}
+                  filtering={filtering}
+                  me={me?.person}
+                  people={people}
+                  tasks={tasks}
+                  onOpen={open}
+                  draggingFrom={dragging?.status ?? null}
+                  display={display}
+                  collapsedRail={display.collapsed.includes(s)}
+                  canMove={canMove}
+                  onMove={moveFromMenu}
+                  onCollapse={(c) => setDisplay({ collapsed: c ? [...display.collapsed, s] : display.collapsed.filter((x) => x !== s) })}
+                />
+              ))}
+              <AddonLanes />
+            </div>
+          )}
           <DragOverlay dropAnimation={null}>
             {dragging ? (
               <div style={{ width: overlayWidth }}>
-                <TicketCardBody ticket={dragging} people={people} me={me?.person} task={tasks.get(dragging.key)} display={display} overlay />
+                <TicketCardBody ticket={dragging} people={people} me={me?.person} task={tasks.get(dragging.key)} display={display} overlay variant={grouped && dragging.parent && groups.lanes.some((l) => l.epic.key === dragging.parent) ? 'lane' : 'card'} />
               </div>
             ) : null}
           </DragOverlay>

@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 import { api } from '@/api/client'
 import { addonActive, manifestFor, pendingUpdate, viewerActions } from '@/api/addons'
@@ -9,12 +10,14 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { AddonRow } from './AddonRow'
+import { AddonSettingsDrawer } from './AddonSettingsDrawer'
 import { Catalog } from './Catalog'
 import { GrantDialog, type GrantAsk } from './GrantDialog'
 import { toastApiError } from '@/app/toast'
 
 /** Settings > Addons: installed addons with signed capability grants, and the catalog. */
-export function AddonManager({ workspace, canEdit }: { workspace: Workspace; canEdit: boolean }) {
+export function AddonManager({ workspace, canEdit, settingsOf }: { workspace: Workspace; canEdit: boolean; settingsOf?: string }) {
+  const navigate = useNavigate()
   const ws = workspace.id
   const qc = useQueryClient()
   const signed = useSignedAction()
@@ -81,6 +84,7 @@ export function AddonManager({ workspace, canEdit }: { workspace: Workspace; can
                     grant: () => setAsk({ kind: 'grant', addon: a }),
                     update: () => setAsk({ kind: 'update', addon: a }),
                     uninstall: () => setRemoving(a),
+                    openSettings: () => void navigate({ to: '/settings/addon/$name', params: { name: a.name } }),
                     setEnabled: (on) => void run(a.name, { op: on ? 'enable' : 'disable' }),
                   }}
                 />
@@ -100,6 +104,7 @@ export function AddonManager({ workspace, canEdit }: { workspace: Workspace; can
           void run(name, { op: 'install' })
         }}
       />
+      {settingsOf && <AddonSettingsDrawer name={settingsOf} workspace={workspace} canEdit={canEdit} onClose={() => void navigate({ to: '/settings/$tab', params: { tab: 'addons' } })} />}
       {ask && <GrantDialog ask={ask} onSign={() => sign(ask)} onClose={() => setAsk(null)} />}
       {removing && (
         <Dialog open onOpenChange={(o) => !o && setRemoving(null)}>

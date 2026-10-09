@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api, mockStore } from '@/api/client'
 import { ApiError } from '@/api/types'
@@ -46,12 +46,38 @@ describe('Settings', () => {
     expect(within(nav).getAllByRole('link').map((l) => l.textContent)).toEqual(['General', 'Members', 'Gates', 'Addons'])
     expect(within(nav).queryByRole('img', { name: /From addon/ })).toBeNull()
   })
-  it("an addon's settings open from its row in Addons, with Addons marked as the current section", async () => {
+  it("an addon's settings open in a drawer over the list, with Addons marked as the current section", async () => {
     const { user } = renderApp('/settings/addons')
     const row = await screen.findByRole('row', { name: /Publish/ })
-    await user.click(within(row).getByRole('link', { name: 'Settings' }))
-    expect(await screen.findByRole('link', { name: /Back to Addons/ })).toHaveAttribute('href', '/settings/addons')
-    expect(within(screen.getByRole('navigation', { name: 'Settings' })).getByRole('link', { name: 'Addons' })).toHaveAttribute('aria-current', 'page')
+    await user.click(within(row).getByRole('button', { name: 'Settings' }))
+    const drawer = await screen.findByRole('dialog', { name: /Publish settings/ })
+    expect(await within(drawer).findByRole('button', { name: 'Save' })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Back to Addons/ })).toBeNull()
+    expect(within(screen.getByRole('navigation', { name: 'Settings', hidden: true })).getByRole('link', { name: 'Addons', hidden: true })).toHaveAttribute('aria-current', 'page')
+    await user.click(within(drawer).getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /Publish settings/ })).toBeNull())
+    await waitFor(() => expect(within(screen.getByRole('row', { name: /Publish/ })).getByRole('button', { name: 'Settings' })).toHaveFocus())
+  })
+  it('the deep link opens the Addons tab with the drawer open', async () => {
+    renderApp('/settings/addon/estimate')
+    expect(await screen.findByRole('dialog', { name: /Estimate settings/ })).toBeInTheDocument()
+    expect(await screen.findByRole('row', { name: /Publish/, hidden: true })).toBeInTheDocument() // the list is behind it
+  })
+  it('asks before closing with unsaved changes, and keeps editing on request', async () => {
+    const { user } = renderApp('/settings/addon/estimate')
+    await user.selectOptions(await screen.findByLabelText(/Scale/), 't-shirt')
+    expect(await screen.findByText('Unsaved changes')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(await screen.findByRole('dialog', { name: 'Discard unsaved changes?' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Keep editing' }))
+    expect(screen.getByLabelText(/Scale/)).toHaveValue('t-shirt')
+    expect(screen.getByRole('dialog', { name: /Estimate settings/ })).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    await user.click(await screen.findByRole('button', { name: 'Discard changes' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(within(await screen.findByRole('row', { name: /Estimate/ })).getByRole('button', { name: 'Settings' })).toHaveFocus()
+    const state = await api.getAddonState(mockStore.workspaces[0].id, 'estimate')
+    expect((state.settings as { scale: string }).scale).toBe('fibonacci')
   })
   it('shows the workspace identity', async () => {
     renderApp('/settings/general')
@@ -81,6 +107,7 @@ describe('Settings', () => {
     await user.selectOptions(await screen.findByLabelText(/Scale/), 'fibonacci')
     await user.click(screen.getByRole('button', { name: 'Save' }))
     expect(await screen.findByText(/Settings saved/)).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByText('Unsaved changes')).toBeNull()) // saved: nothing to discard
     const state = await api.getAddonState(mockStore.workspaces[0].id, 'estimate')
     expect((state.settings as { scale: string }).scale).toBe('fibonacci')
   })
@@ -92,6 +119,7 @@ describe('Settings', () => {
     renderApp('/settings/addon/estimate', { viewer: 'p_mara' })
     expect(await screen.findByLabelText(/Scale/)).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+    expect(within(screen.getByRole('dialog')).getByText('Only owners change settings.')).toBeInTheDocument() // the reason, in the drawer
   })
   it('the mock refuses save_settings from a non-owner', async () => {
     mockStore.setViewer('p_mara')

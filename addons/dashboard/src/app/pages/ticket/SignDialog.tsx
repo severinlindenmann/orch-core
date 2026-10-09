@@ -1,4 +1,5 @@
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { workspaceOfTicket } from '@/api/workspaces'
 import { useNavigate } from '@tanstack/react-router'
 import { Fingerprint, Loader2, ShieldCheck } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
@@ -35,8 +36,8 @@ function describe(ticket: TicketDocument, a: HumanAction): Described {
 }
 
 /** What an approval signs, from the same fields the gate hash covers (api/gates.ts). Type and size are shown but never count as content. */
-function signedSections(ticket: TicketDocument, gate: GateName): SignedSection[] | null {
-  return gate === 'verify' ? null : gateSignedContent(gate, ticket).sections
+function signedSections(ticket: TicketDocument, gate: GateName, personName: (id: string) => string): SignedSection[] | null {
+  return gate === 'verify' ? null : gateSignedContent(gate, ticket, personName).sections
 }
 
 const written = (sections: SignedSection[]) => sections.filter((s) => s.text && !s.meta)
@@ -68,6 +69,9 @@ export function SignDialog({ ticket, action, onClose, onOpenEvidence }: { ticket
   const [text, setText] = useState('')
   const [result, setResult] = useState<'pass' | 'fail' | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const workspaces = useQuery({ queryKey: ['workspaces'], queryFn: api.getWorkspaces })
+  const members = workspaceOfTicket(ticket.key, workspaces.data ?? [])?.members ?? []
+  const personName = (id: string) => members.find((m) => m.person === id)?.name ?? id
   const cancel = useRef<HTMLButtonElement>(null)
   const firstRadio = useRef<HTMLInputElement>(null)
 
@@ -80,7 +84,7 @@ export function SignDialog({ ticket, action, onClose, onOpenEvidence }: { ticket
 
   if (!action) return null
   const d = describe(ticket, action)
-  const sections = action.kind === 'approve' || action.kind === 'request_changes' ? (d.gate ? signedSections(ticket, d.gate) : null) : null
+  const sections = action.kind === 'approve' || action.kind === 'request_changes' ? (d.gate ? signedSections(ticket, d.gate, personName) : null) : null
   const hasContent = !!sections && written(sections).length > 0
   const nothing = action.kind === 'approve' && !!sections && !hasContent
   const needsText = action.kind === 'request_changes' || (action.kind === 'verdict' && result === 'fail')
@@ -88,7 +92,9 @@ export function SignDialog({ ticket, action, onClose, onOpenEvidence }: { ticket
   const verb =
     action.kind === 'answer' ? 'Send answer' : action.kind === 'approve' ? d.title : action.kind === 'request_changes' ? 'Request changes' : result === 'pass' ? 'Pass' : result === 'fail' ? 'Send back' : 'Give verdict'
   const hint = nothing
-    ? `Nothing to approve yet: the ${GATE_LABEL[d.gate!].toLowerCase()} has no text or tasks.`
+    ? d.gate === 'requirements'
+      ? 'Nothing to approve yet: the requirements have no text or acceptance criteria.'
+      : 'Nothing to approve yet: the plan has no text or tasks.'
     : action.kind === 'verdict' && !result
       ? 'Choose Pass or Send back'
       : needsText && !text.trim()

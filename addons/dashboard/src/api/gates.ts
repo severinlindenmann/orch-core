@@ -33,7 +33,7 @@ export interface SignedSection {
  * the sections the dialog shows. One function feeds both the hash (mocks/derive.ts) and the signing dialog, so what is
  * shown cannot drift from what is signed.
  */
-export function gateSignedContent(gate: 'requirements' | 'plan', t: GateSource): { covers: string[]; material: string; sections: SignedSection[] } {
+export function gateSignedContent(gate: 'requirements' | 'plan', t: GateSource, personName: (id: string) => string = (id) => id): { covers: string[]; material: string; sections: SignedSection[] } {
   const text = (k: keyof BodySections) => t.body[k]?.trim() ?? ''
   if (gate === 'requirements')
     return {
@@ -47,14 +47,14 @@ export function gateSignedContent(gate: 'requirements' | 'plan', t: GateSource):
       ],
     }
   return {
-    covers: ['Section: Plan', `Tasks (${t.tasks.length}): ids, text, verify, proves`, 'Section: Decisions'],
+    covers: ['Section: Plan', `Tasks (${t.tasks.length}): ids, text, assignee, verify, proves`, 'Section: Decisions'],
     material: JSON.stringify([t.body.plan, t.tasks, t.body.decisions]),
     sections: [
       { label: 'Plan', text: text('plan') },
       {
         label: 'Tasks',
         text: t.tasks
-          .map((k) => [`${k.id}  ${k.text}`, k.verify ? `    Verify: ${k.verify.cmd}` : '    Verify: by a person', k.proves.length ? `    Proves: ${k.proves.join(', ')}` : ''].filter(Boolean).join('\n'))
+          .map((k) => [`${k.id}  ${k.text}`, `    Assignee: ${k.assignee ? personName(k.assignee) : 'not assigned'}`, k.verify ? `    Verify: ${k.verify.cmd}` : '    Verify: by a person', k.proves.length ? `    Proves: ${k.proves.join(', ')}` : ''].filter(Boolean).join('\n'))
           .join('\n'),
       },
       { label: 'Decisions', text: text('decisions') },

@@ -174,6 +174,8 @@ describe('G4 the dialog shows everything the gate hash covers', () => {
   })
   it('plan: shows the verify command and what a task proves', async () => {
     const dialog = await renderDialog((t) => t, { kind: 'approve', gate: 'plan' })
+    await waitFor(() => expect(dialog).toHaveTextContent('Assignee: Severin'), T)
+    expect(dialog).toHaveTextContent('Assignee: Mara')
     expect(dialog).toHaveTextContent('Verify: gh workflow run nightly')
     expect(dialog).toHaveTextContent('Proves: AC1')
   })
@@ -182,6 +184,11 @@ describe('G4 the dialog shows everything the gate hash covers', () => {
     expect(dialog).toHaveTextContent('No vault migration.')
     expect(dialog).toHaveTextContent('Old credentials are revoked')
     expect(dialog).toHaveTextContent(/Type: chore · Size: xs/)
+  })
+  it('requirements with no text and no criteria say so in their own words', async () => {
+    const dialog = await renderDialog((t) => ({ ...t, body: { ...t.body, requirements: '', out_of_scope: '' }, acceptance: [], acceptance_state: [] }), { kind: 'approve', gate: 'requirements' })
+    expect(dialog).toHaveTextContent('Nothing to approve yet: the requirements have no text or acceptance criteria.')
+    expect(within(dialog).getByRole('button', { name: 'Approve requirements' })).toBeDisabled()
   })
   it('request changes on an empty section shows no empty box', async () => {
     const dialog = await renderDialog((t) => ({ ...t, body: { ...t.body, plan: '' }, tasks: [], tasks_state: [] }), { kind: 'request_changes', gate: 'plan' })
@@ -256,15 +263,26 @@ describe('G4 artifact drawer stays closed to stale state', () => {
 })
 
 describe('G4 every SignPrompt names its verb', () => {
-  it('each usage except SpawnConfirm passes confirmLabel', async () => {
+  it('each <SignPrompt> element except SpawnConfirm carries confirmLabel', async () => {
     const fs = await import('node:fs')
     const path = await import('node:path')
     const walk = (d: string): string[] => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]))
     const files = walk(path.resolve(__dirname, '../../..')).filter((f) => /\.tsx$/.test(f) && !/\.test\.|SignPrompt\.tsx|SpawnConfirm/.test(f))
-    const bad = files.filter((f) => {
+    const bad: string[] = []
+    for (const f of files) {
       const src = fs.readFileSync(f, 'utf8')
-      return /<SignPrompt\b/.test(src) && !/confirmLabel/.test(src)
-    })
+      // Each opening tag, up to its closing `>` outside braces.
+      for (const m of src.matchAll(/<SignPrompt\b/g)) {
+        let i = m.index! + m[0].length
+        let depth = 0
+        while (i < src.length && !(src[i] === '>' && depth === 0)) {
+          if (src[i] === '{') depth++
+          if (src[i] === '}') depth--
+          i++
+        }
+        if (!/\bconfirmLabel\b/.test(src.slice(m.index!, i))) bad.push(`${path.basename(f)}:${src.slice(0, m.index!).split('\n').length}`)
+      }
+    }
     expect(bad).toEqual([])
   })
 })

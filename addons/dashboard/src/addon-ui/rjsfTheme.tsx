@@ -91,7 +91,38 @@ function FieldTemplate({ id, label, children, errors, help, description, hidden,
   )
 }
 
-function ObjectFieldTemplate({ properties, title, description }: ObjectFieldTemplateProps) {
+/**
+ * `ui:options.layout: 'row'` on the root object: a one-line filter bar (auto-fit grid) with the submit button inline.
+ * rjsf draws its SubmitButton outside the root field and hands it only the submit options, so the form also sets
+ * `ui:globalOptions.layout: 'row'` (rjsf puts that on `registry.globalUiOptions`, which the SubmitButton can read).
+ */
+const isRow = (uiSchema?: Record<string, unknown>) => (uiSchema?.['ui:options'] as Record<string, unknown> | undefined)?.layout === 'row'
+type SubmitOptions = { submitText?: string; props?: { disabled?: boolean } }
+const submitOptions = (uiSchema?: Record<string, unknown>) =>
+  (uiSchema?.['ui:submitButtonOptions'] ?? (uiSchema?.['ui:options'] as Record<string, unknown> | undefined)?.submitButtonOptions) as SubmitOptions | undefined
+
+function ObjectFieldTemplate({ properties, title, description, uiSchema, fieldPathId, registry }: ObjectFieldTemplateProps) {
+  if ((isRow(uiSchema) || registry.globalUiOptions?.layout === 'row') && fieldPathId.path.length === 0) {
+    const o = submitOptions(uiSchema)
+    return (
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(160px,1fr))] items-start gap-x-3 gap-y-2">
+        {properties.map((p) => (
+          <div key={p.name} className="min-w-0">
+            {p.content}
+          </div>
+        ))}
+        {/* Same shape as a field (label row, then the control) so the button lines up with the inputs. */}
+        <div className="space-y-1.5">
+          <Label aria-hidden className="invisible text-[12px]">
+            .
+          </Label>
+          <Button type="submit" size="sm" className="h-8" disabled={o?.props?.disabled}>
+            {o?.submitText ?? 'Save'}
+          </Button>
+        </div>
+      </div>
+    )
+  }
   return (
     <div className="space-y-3">
       {title && <div className="text-[13px] font-semibold">{title}</div>}
@@ -103,8 +134,9 @@ function ObjectFieldTemplate({ properties, title, description }: ObjectFieldTemp
   )
 }
 
-function SubmitButton({ uiSchema }: SubmitButtonProps) {
-  const o = (uiSchema?.['ui:options'] as Record<string, unknown> | undefined)?.submitButtonOptions as { submitText?: string; props?: { disabled?: boolean } } | undefined
+function SubmitButton({ uiSchema, registry }: SubmitButtonProps) {
+  if (registry.globalUiOptions?.layout === 'row') return null // the row layout draws it inline
+  const o = submitOptions(uiSchema)
   const label = o?.submitText ?? 'Save'
   return (
     <Button type="submit" size="sm" disabled={o?.props?.disabled}>

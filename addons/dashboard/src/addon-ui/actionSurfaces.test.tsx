@@ -82,16 +82,13 @@ describe('palette addon commands use the manifest', () => {
 describe('navigation actions are quiet', () => {
   it('a filter on the activity page shows no toast and refetches only that addon\'s state', async () => {
     const { user } = renderApp('/addon/activity/activity', { viewer: 'p_sev', setup: (s) => installAndGrant(s, s.workspaces[0].id, 'activity') })
-    const row = await waitFor(() => {
-      const li = screen.getAllByText(/^Gates\b/).find((h) => h.closest('li'))?.closest('li')
-      if (!li) throw new Error('no Gates filter')
-      return li
-    }, T)
+    const type = await screen.findByRole('combobox', { name: 'Type' }, T)
     const success = vi.spyOn(toast, 'success')
     const states = vi.spyOn(api, 'getAddonState')
     const today = vi.spyOn(api, 'getToday')
-    await user.click(within(row).getByRole('button', { name: 'Only show' }))
-    await waitFor(() => expect(within(row).getByRole('button', { name: 'Remove filter' })).toBeInTheDocument(), T)
+    await user.selectOptions(type, within(type).getAllByRole('option').find((o) => /^Gates \(/.test(o.textContent ?? ''))!)
+    await user.click(screen.getByRole('button', { name: 'Apply' }))
+    await screen.findByRole('button', { name: 'Clear filters' }, T)
     expect(success).not.toHaveBeenCalled()
     expect(new Set(states.mock.calls.map((c) => c[1]))).toEqual(new Set(['activity']))
     expect(today).not.toHaveBeenCalled()

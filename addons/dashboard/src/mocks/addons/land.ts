@@ -390,7 +390,8 @@ function decisions(state0: Record<string, unknown>, _pkg: AddonDecision[], c: Ct
           : n.person
             ? [
                 { key: 'self', label: 'I will resolve it', primary: true },
-                { key: 'agent', label: 'Hand it to an agent' },
+                // Only when the ticket has an agent to hand it to; otherwise that option would lead nowhere.
+                ...(n.agent ? [{ key: 'agent', label: 'Hand it to an agent' }] : []),
                 { key: 'drop', label: 'Take it off the queue' },
               ]
             : [
@@ -489,6 +490,13 @@ registerAddon({
       const cur = attemptOf(state, state.worker.current)
       if (cur?.ticket === ticket && !cur.outcome) return conflict('land.checking', `${ticket} is being checked now (attempt #${cur.n}).`, 'Wait for the attempt to end.')
       const q = state.queues.find((x) => x.entries.some((e) => e.ticket === ticket))
+      // Taking a failed ticket off the queue also closes its open need (it is not landing any more).
+      const need = openNeedOf(state, ticket)
+      if (!q && need) {
+        need.open = false
+        store.append(ticket, { type: 'land.dequeued', actor: ADDON, by: viewer, need: need.id })
+        return { ok: true, message: `${ticket} taken off the queue; its failed attempt #${need.attempt} is closed.`, changed: true }
+      }
       if (!q) return { ok: true, message: `${ticket} was not queued.` }
       q.entries = q.entries.filter((e) => e.ticket !== ticket)
       store.append(ticket, { type: 'land.dequeued', actor: ADDON, by: viewer })

@@ -270,6 +270,8 @@ function postSettings(store: MockStore, ctx: RouteContext): TransportResponse {
       const person = String(b.person ?? '').trim()
       const name = String(b.name ?? '').trim()
       if (!person || !name) return fail(400, 'validation', 'Give the person an id and a name.')
+      // A person id is `p_` plus lowercase letters, digits or _: never an actor spelling such as `addon:land` or `agent:s:p`.
+      if (!/^p_[a-z0-9_]{1,40}$/.test(person)) return fail(400, 'validation.person', 'A person id is p_ followed by lowercase letters, digits or _ (at most 40).', 'For example p_ida.')
       if (!ROLES.includes(b.role) || b.role === 'owner') return fail(400, 'validation.role', 'New members can be maintainer, member or viewer.', 'Promote to owner afterwards.')
       if (member(person)) return fail(409, 'member.exists', `${person} is already a member.`)
       store.appendWs(wsId, { type: 'member.added', person, name, role: b.role })

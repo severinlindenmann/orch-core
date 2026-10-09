@@ -1005,6 +1005,10 @@ export class MockStore {
     const resolved = evs.find((e) => e.type === 'land.resolved' && byAddon(e) && e.attempt === opts.attempt && e.seq > failed.seq)
     if (!resolved) return refuse(409, 'land.not_resolved', `Attempt #${opts.attempt} of ${key} has no recorded resolution.`)
     if (evs.some((e) => e.type === 'land.attempt' && e.outcome === 'merged' && e.seq > failed.seq)) return refuse(409, 'land.already_merged', `${key} merged after attempt #${opts.attempt}.`)
+    // No replay: an attempt voids once, and only a resolution recorded after the approval standing now can void it.
+    if (evs.some((e) => e.type === 'gate.invalidated' && e.gate === 'verify' && e.addon === opts.addon && e.attempt === opts.attempt)) return refuse(409, 'land.already_voided', `Attempt #${opts.attempt} of ${key} already voided an approval.`)
+    const approvedAt = [...evs].reverse().find((e) => e.type === 'gate.approved' && e.gate === 'verify')
+    if (approvedAt && resolved.seq < approvedAt.seq) return refuse(409, 'land.already_voided', `The resolution of attempt #${opts.attempt} predates the approval of ${key} standing now.`)
     const reason = `Landing attempt #${opts.attempt}: a resolution changed the code (${opts.addon}).`
     const event = this.append(key, { type: 'gate.invalidated', actor: 'host', gate: 'verify', reason, addon: opts.addon, attempt: opts.attempt })
     if (t.status === 'done') this.append(key, { type: 'status.changed', actor: 'host', to: 'testing' })

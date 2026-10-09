@@ -37,6 +37,8 @@ describe('workspace settings API', () => {
     expect(await status(api.postSettings(ws, { op: 'member.role', person: 'p_sev', role: 'member' }))).toBe(409)
     expect(await status(api.postSettings(ws, { op: 'member.remove', person: 'p_sev' }))).toBe(409)
     expect(await status(api.postSettings(ws, { op: 'member.add', person: 'p_x', name: 'X', role: 'owner' }))).toBe(400)
+    // Person ids never look like other actors (an addon or an agent).
+    for (const person of ['addon:land', 'x:y:z', 'P_Up', 'p_', 'ida']) expect(await status(api.postSettings(ws, { op: 'member.add', person, name: 'X', role: 'member' })), person).toBe(400)
   })
   it('validates gate counts and applies a policy', async () => {
     const { api, ws } = setup()

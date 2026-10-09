@@ -237,14 +237,27 @@ describe('the serial worker', () => {
     expect(s.store.wsEventsOf(s.ws).some((e) => e.type === 'addon.decided' && e.name === 'land')).toBe(true)
   })
 
-  it('"Hand it to an agent" names the ticket\'s agent and invents no session', async () => {
+  it('a need without an agent offers no agent option, and can be dropped or taken off the queue', async () => {
     const s = setup()
     land(s).needs.push({ id: 'N-90', ticket: 'DEMO-0053', kind: 'conflict', attempt: 13, agent: null, person: true, open: true, at: s.store.now(), file: 'x.sql' })
     const d = (await s.api.getAddonDecisions(s.ws)).find((x) => x.id === 'land.need:N-90')!
-    const res = await run(s, 'resolve', { id: d.id, option: 'agent', confirmed: true })
-    expect(res.message).toBe("Handed to the ticket's agent. Its resolution will void the approval.")
-    expect(land(s).needs.find((n) => n.id === 'N-90')!.agent).toBeNull()
+    expect(d.options.map((o) => o.key)).toEqual(['self', 'drop'])
+    expect((await refused(run(s, 'resolve', { id: d.id, option: 'agent', confirmed: true }))).code).toBe('validation.option')
+    await run(s, 'resolve', { id: d.id, option: 'drop', confirmed: true })
+    expect(land(s).needs.find((n) => n.id === 'N-90')!.open).toBe(false)
+    // "Take off the queue" closes an open need too.
+    land(s).needs.push({ id: 'N-92', ticket: 'DEMO-0053', kind: 'red_checks', attempt: 13, agent: null, person: true, open: true, at: s.store.now(), file: 'x.sql' })
+    expect(await run(s, 'dequeue', { ticket: 'DEMO-0053' })).toMatchObject({ ok: true, changed: true })
+    expect(land(s).needs.find((n) => n.id === 'N-92')!.open).toBe(false)
     expect(text(await view(s))).not.toContain('s_land')
+  })
+
+  it('"Hand it to an agent" hands a person-needed conflict back to the ticket\'s agent', async () => {
+    const s = setup()
+    land(s).needs.push({ id: 'N-93', ticket: 'DEMO-0053', kind: 'conflict', attempt: 13, agent: 'claude-code:s_f101:p_sev', person: true, open: true, at: s.store.now(), file: 'x.sql' })
+    const d = (await s.api.getAddonDecisions(s.ws)).find((x) => x.id === 'land.need:N-93')!
+    expect(d.options.map((o) => o.key)).toEqual(['self', 'agent', 'drop'])
+    expect((await run(s, 'resolve', { id: d.id, option: 'agent', confirmed: true })).message).toBe('Handed to Claude Code for Severin. Its resolution will void the approval.')
   })
 
   it('red checks: the failing check is shown, the approval stands, and "Re-run the checks" queues the same code again', async () => {
@@ -425,8 +438,23 @@ describe('core landingResolved', () => {
     const r = s.store.landingResolved(k, { addon: 'land', attempt: 22 })
     expect(r).toMatchObject({ ok: true, event: { type: 'gate.invalidated', gate: 'verify', addon: 'land', attempt: 22, reason: 'Landing attempt #22: a resolution changed the code (land).', actor: { kind: 'host' } } })
     expect(s.store.ticket(k)!.status).toBe('testing')
+    expect(s.store.landingResolved(k, { addon: 'land', attempt: 22 })).toMatchObject({ ok: false, code: 'gate.not_approved' }) // voided now; replay: see below
     s.store.addonOp(s.ws, 'land', { op: 'disable' }, { kind: 'person', id: 'p_sev' })
     expect(s.store.landingResolved('DEMO-0042', { addon: 'land', attempt: 22 })).toMatchObject({ ok: false, code: 'addon.inactive' })
+  })
+})
+
+describe('landingResolved replay', () => {
+  it('after a new verdict on DEMO-0053, citing attempt 13 again is refused', async () => {
+    const s = setup()
+    await verdict(s, 'DEMO-0053')
+    expect(s.store.ticket('DEMO-0053')!.gates.verify.state).toBe('approved')
+    expect(s.store.landingResolved('DEMO-0053', { addon: 'land', attempt: 13 })).toMatchObject({ ok: false, code: 'land.already_voided' })
+    // Even with the earlier void out of the way, a resolution recorded before the approval standing now cannot void it.
+    const evs = s.store.eventsOf('DEMO-0053') as { type: string; attempt?: number }[]
+    for (const e of evs) if (e.type === 'gate.invalidated') e.attempt = 99
+    expect(s.store.landingResolved('DEMO-0053', { addon: 'land', attempt: 13 })).toMatchObject({ ok: false, code: 'land.already_voided' })
+    expect(s.store.ticket('DEMO-0053')!.gates.verify.state).toBe('approved')
   })
 })
 

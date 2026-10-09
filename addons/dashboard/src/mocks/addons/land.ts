@@ -24,7 +24,8 @@ import {
   type Need,
   type Queue,
 } from './land-worker'
-import { seedLand, seedLandBusy } from './land-seed'
+import { landSeedLog, seedLand, seedLandBusy } from './land-seed'
+import { fmtClock, fmtWhen } from '@/lib/time'
 
 // land (Landing, D53, Phase 2 preview): the merge lane. Approved tickets land on their target branch one at a time.
 //  - One queue per (canonical remote, target branch). In the real host the queue is shared by the workspaces on this
@@ -56,8 +57,9 @@ type Node = Record<string, unknown>
 const nameOf = (c: Ctx, person: string) => c.store.workspaces.find((w) => w.id === c.ws)?.members.find((m) => m.person === person)?.name ?? person
 /** "Claude Code for Severin", or a person's name. */
 const whoLabel = (c: Ctx, actor: string) => (actor.includes(':') ? `${agentLabel(actor)} for ${nameOf(c, actor.split(':')[2])}` : nameOf(c, actor))
-const hhmm = (iso: string) => `${iso.slice(11, 16)} UTC`
-const when = (iso?: string) => (iso ? (iso.startsWith('2026-10-09') ? hhmm(iso) : `${iso.slice(5, 10)} ${iso.slice(11, 16)}`) : '–')
+/** A deadline (a time of day) and when something happened (the one formatter). */
+const timeOfDay = (iso: string) => fmtClock(iso)
+const when = (c: Ctx, iso?: string) => (iso ? fmtWhen(iso, c.store.now()) : '–')
 const repo = (remote: string) => remote.split('/').slice(-1)[0]
 const queueName = (q: Pick<Queue, 'remote' | 'target'>) => `${q.remote} → ${q.target}`
 const titleOf = (c: Ctx, key: string) => c.store.ticket(key)?.title ?? ''
@@ -126,7 +128,7 @@ function ticketPanel(c: Ctx, state: LandState, key: string): Node | null {
       { label: 'Source', value: cur.source_sha, mono: true },
       { label: 'Target', value: cur.target_sha, mono: true },
       { label: 'Rebase', value: 'Clean: the approval stands' },
-      { label: 'Times out', value: hhmm(cur.timeout_at) },
+      { label: 'Times out', value: timeOfDay(cur.timeout_at) },
     ])
     children.push(checksWidget(cur))
   } else if (queued) {
@@ -170,7 +172,7 @@ function ticketPanel(c: Ctx, state: LandState, key: string): Node | null {
     kv([
       { label: 'State', value: `Merged into ${merged.target}` },
       { label: 'Queue', value: `${repo(merged.remote)} → ${merged.target}` },
-      { label: 'Attempt', value: `#${merged.n} · ${when(merged.ended)}` },
+      { label: 'Attempt', value: `#${merged.n} · ${when(c, merged.ended)}` },
       { label: 'Checks', value: checksLine(merged) },
     ])
     children.push({ type: 'alert', tone: 'success', title: `Approved, tested and merged: the same candidate ${merged.candidate_sha}`, text: `Source ${merged.source_sha} rebased cleanly onto ${merged.target_sha}; the checks ran on ${merged.candidate_sha} and that commit is what merged.` })
@@ -195,7 +197,7 @@ function entryRow(c: Ctx, state: LandState, q: Queue, i: number) {
     `source ${e.source_sha}`,
     e.stacked_on && !block ? `stacked on ${parentName(c, e.stacked_on)}` : '',
     block ? `waits for ${parentName(c, block.parent)}${block.why === 'failed' ? ' (its landing failed)' : ' (ahead in the queue)'}` : '',
-    checking ? `checking now (attempt #${cur!.n})` : `queued ${when(e.enqueued)} by ${nameOf(c, e.by)}`,
+    checking ? `checking now (attempt #${cur!.n})` : `queued ${when(c, e.enqueued)} by ${nameOf(c, e.by)}`,
   ].filter(Boolean)
   return {
     id: `entry:${e.ticket}`,
@@ -233,7 +235,7 @@ function queueSection(c: Ctx, state: LandState, q: Queue): Node[] {
           { label: 'Now', value: `Attempt #${mine.n} · ${mine.ticket} ${titleOf(c, mine.ticket)}` },
           { label: 'Candidate', value: `${mine.candidate_sha} (source ${mine.source_sha} on target ${mine.target_sha})`, mono: true },
           { label: 'Rebase', value: 'Clean: the approval stands' },
-          { label: 'Times out', value: hhmm(mine.timeout_at) },
+          { label: 'Times out', value: timeOfDay(mine.timeout_at) },
         ],
       })
       out.push(checksWidget(mine))
@@ -278,14 +280,14 @@ function historyRows(c: Ctx, state: LandState) {
       candidate: a.candidate_sha,
       checks: checksLine(a),
       outcome: a.outcome === 'failed' ? `failed: ${a.reason === 'conflict' ? 'conflict' : a.reason === 'timeout' ? 'timed out' : 'red checks'}` : a.outcome === 'requeued' ? 'requeued: target moved' : (a.outcome ?? 'checking'),
-      when: when(a.ended ?? a.started),
+      when: when(c, a.ended ?? a.started),
       has_checks: a.checks.length > 0,
     }))
 }
 
 function workerAlert(c: Ctx, state: LandState): Node {
   const cur = attemptOf(state, state.worker.current)
-  const resumed = state.worker.resumed ? ` Restarted at ${when(state.worker.resumed.at)}: resumed from attempt #${state.worker.resumed.from}, no repeat merge.` : ''
+  const resumed = state.worker.resumed ? ` Restarted at ${when(c, state.worker.resumed.at)}: resumed from attempt #${state.worker.resumed.from}, no repeat merge.` : ''
   const demo = c.store.sim.running().includes(scriptId(c.ws)) ? ` Demo worker running: a step every ${STEP_MS / 1000} s.` : ''
   if (cur && !cur.outcome) {
     const q = queueOfAttempt(state, cur)
@@ -447,6 +449,7 @@ registerAddon({
   name: 'land',
   seed: (ws, store) => seedLand(ws, store),
   seedBusy: (ws, store, rng) => seedLandBusy(ws, store, rng),
+  seedLog: (state) => landSeedLog(asLand(state)),
   view,
   decisions,
   actions: {
@@ -549,8 +552,12 @@ registerAddon({
       const need = openNeedOf(state, ticket)
       if (!need?.owner) return conflict('land.not_taken', `Nobody took ${ticket} to resolve by hand.`, 'Choose "I will resolve it" on Today first.')
       if (need.owner !== viewer && !atLeast(store.roleIn(ws, viewer), 'maintainer')) return refusal(403, 'forbidden', `${nameOf(c, need.owner)} took this one.`, 'Ask them, or an owner or maintainer.')
+      // Core voids the approval only for a failed attempt it finds in the ticket's log: never tell a person it did otherwise.
+      const recorded = store.eventsOf(ticket).some((e) => e.type === 'land.attempt' && e.actor.kind === 'addon' && e.actor.id === 'land' && e.attempt === need.attempt && e.outcome === 'failed')
+      if (!recorded) return conflict('land.no_record', `Attempt #${need.attempt} of ${ticket} has no landing record, so orch cannot void its approval.`, 'Take it off the queue on Today instead.')
       resolve(store, state, need, viewer)
-      return { ok: true, message: `Resolution recorded. The approval is void: ${ticket} is back in review.`, changed: true }
+      const t = store.ticket(ticket)
+      return { ok: true, message: t?.gates.verify.state === 'invalidated' ? `Resolution recorded. orch voided the verify approval: ${ticket} is back in Testing for a new verdict.` : `Resolution recorded for ${ticket}.`, changed: true }
     },
 
     run_worker({ store, ws }) {

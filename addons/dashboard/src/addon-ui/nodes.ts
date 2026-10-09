@@ -120,6 +120,8 @@ export const formNode = z.object({
   cancel: z.object({ label: z.string().max(40), action: actionId }).optional(),
   /** After the action went through, the fields are emptied and the first one is focused again (an "add another" bar). */
   reset: z.boolean().optional(),
+  /** Filters: the action runs on each change (a choice at once, typed text after a short pause) and there is no submit button. */
+  live: z.boolean().optional(),
 })
 export const buttonNode = z.object({
   type: z.literal('button'),
@@ -130,6 +132,8 @@ export const buttonNode = z.object({
   args: argsRecord.optional(),
   /** A toggle or filter chip that is on right now (drawn pressed, exposed as aria-pressed). */
   pressed: z.boolean().optional(),
+  /** Why it cannot be used now: core disables the button and shows this reason with it. */
+  disabled: z.string().max(160).optional(),
 })
 export const linkNode = z.object({
   type: z.literal('link'),

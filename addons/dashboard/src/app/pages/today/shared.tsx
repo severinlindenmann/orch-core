@@ -1,14 +1,8 @@
 import { useEffect, useState } from 'react'
 import type { AgentInfo, Workspace } from '@/api/types'
 
-/** Elapsed time between two ISO instants, as "14m", "2h 05m" or "3d". */
-export function ago(from: string, now: string) {
-  const mins = Math.max(0, Math.round((Date.parse(now) - Date.parse(from)) / 60_000))
-  if (mins < 1) return 'just now'
-  if (mins < 60) return `${mins}m`
-  if (mins < 60 * 24) return `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, '0')}m`
-  return `${Math.floor(mins / 1440)}d`
-}
+/** How long an item has waited ("14 min", "2 h", "3 days"): the one formatter, src/lib/time.ts. */
+export { fmtAge as ago } from '@/lib/time'
 
 export interface Directory {
   workspace?: Workspace

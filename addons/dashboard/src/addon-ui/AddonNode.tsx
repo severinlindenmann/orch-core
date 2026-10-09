@@ -362,6 +362,8 @@ interface AddonAction {
   onCancelAsk?: () => void
   /** Why this action is off for the viewer, in plain words (null when it can run or only waits for the host). */
   reasonFor: (action: string) => string | null
+  /** A form may apply on change only for a navigation action with no core dialog (no sign, start or decision step). */
+  liveAllowed: (action: string) => boolean
 }
 function useAddonAction(action?: string, onDone?: () => void): AddonAction {
   const { addon, ctx, readOnly, dirty } = useContext(RuntimeCtx)
@@ -400,7 +402,11 @@ function useAddonAction(action?: string, onDone?: () => void): AddonAction {
       )}
     </>
   )
-  return { run, pending: r.pending, pendingAction: r.pendingAction, blocked: action ? blockedFor(action) : readOnly, blockedFor, reasonFor, dialog, precheck, error: r.error, dismissError: r.dismissError }
+  const liveAllowed = (a: string) => {
+    const m = r.meta(addon, a)
+    return m?.kind === 'navigation' && !m.confirm && !m.decision
+  }
+  return { run, pending: r.pending, pendingAction: r.pendingAction, blocked: action ? blockedFor(action) : readOnly, blockedFor, reasonFor, dialog, precheck, error: r.error, dismissError: r.dismissError, liveAllowed }
 }
 
 const BUTTON_VARIANT = { primary: 'default', secondary: 'secondary', ghost: 'ghost', danger: 'destructive' } as const
@@ -424,12 +430,13 @@ function ButtonNode({ node }: { node: NodeOf<'button'> }) {
     // `flex-none!`: in a row stack a button keeps its own width instead of stretching like a panel does.
     <div className="space-y-2 flex-none!">
       {precheck && <PrecheckAlert id={reasonId} text={precheck} />}
-      <span title={why ?? undefined} className="inline-flex">
+      <span title={why ?? (!precheck ? node.disabled : undefined)} className="inline-flex">
         <Button
           size="sm"
           variant={BUTTON_VARIANT[node.variant]}
-          disabled={pending || blocked || !!precheck}
-          aria-describedby={precheck ? reasonId : why ? `${reasonId}-why` : undefined}
+          disabled={pending || blocked || !!precheck || !!node.disabled}
+          aria-describedby={precheck ? reasonId : why ? `${reasonId}-why` : node.disabled ? `${reasonId}-off` : undefined}
+          title={!precheck && !why ? node.disabled : undefined}
           aria-pressed={node.pressed}
           className={node.pressed ? 'border border-border-strong bg-surface-3' : undefined}
           onClick={() => run(node.action, node.args)}
@@ -442,6 +449,7 @@ function ButtonNode({ node }: { node: NodeOf<'button'> }) {
           </span>
         )}
       </span>
+      {node.disabled && !precheck && !why && <p id={`${reasonId}-off`} className="text-[12px] text-text-muted">{node.disabled}</p>}
       {error && <ErrorAlert error={error} onDismiss={dismissError} />}
       {dialog}
     </div>
@@ -493,6 +501,13 @@ function LeaveGuard() {
   )
 }
 
+const initial0 = (node: NodeOf<'form'>) => JSON.stringify(node.formData ?? {})
+/** A free-text field of a form schema (no choices): typing in it waits for a pause before a live form runs. */
+const isTextField = (schema: Record<string, unknown>, key: string) => {
+  const p = ((schema.properties ?? {}) as Record<string, Record<string, unknown>>)[key]
+  return !!p && p.type === 'string' && !p.enum && !p.oneOf
+}
+
 function FormNode({ node }: { node: NodeOf<'form'> }) {
   const closePopover = useContext(ClosePopoverCtx)
   // In a popover the form closes it once its action went through (a refusal leaves it open, with the error in it).
@@ -500,7 +515,7 @@ function FormNode({ node }: { node: NodeOf<'form'> }) {
   const [round, setRound] = useState(0)
   const box = useRef<HTMLDivElement>(null)
   const saved = useRef<(() => void) | undefined>(undefined)
-  const { run, pending, blocked: roleBlocked, blockedFor, dialog, precheck, error, dismissError } = useAddonAction(node.action, () => {
+  const { run, pending, blocked: roleBlocked, blockedFor, dialog, precheck, error, dismissError, liveAllowed } = useAddonAction(node.action, () => {
     closePopover?.()
     if (node.reset) setRound((n) => n + 1)
     saved.current?.()
@@ -508,6 +523,8 @@ function FormNode({ node }: { node: NodeOf<'form'> }) {
   useEffect(() => {
     if (round > 0) box.current?.querySelector<HTMLElement>('input:not([type=hidden]),select,textarea')?.focus()
   }, [round])
+  // `live` is honoured only for a navigation action without a core dialog; otherwise the form keeps its submit button.
+  const live = !!node.live && liveAllowed(node.action)
   const { dirty } = useContext(RuntimeCtx)
   // Core's spawn_agent precheck applies to a form that starts an agent as it does to a button.
   const blocked = roleBlocked || !!precheck
@@ -546,11 +563,25 @@ function FormNode({ node }: { node: NodeOf<'form'> }) {
   saved.current = formControl?.onSaved
   const report = formControl?.onState
   useEffect(() => report?.({ pending, blocked }), [report, pending, blocked])
-  const submitOptions = formControl ? { norender: true } : { submitText: node.submitLabel ?? 'Save', props: { disabled: pending || blocked } }
+  const submitOptions = formControl || live ? { norender: true } : { submitText: node.submitLabel ?? 'Save', props: { disabled: pending || blocked } }
+  // A live form (filters) runs its action on each change: a choice at once, typed text after a pause.
+  const liveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const liveLast = useRef(initial0(node))
+  useEffect(() => () => void (liveTimer.current && clearTimeout(liveTimer.current)), [])
+  const onLive = (formData: Record<string, unknown> | undefined) => {
+    const next = formData ?? {}
+    const prev = JSON.parse(liveLast.current) as Record<string, unknown>
+    if (JSON.stringify(next) === liveLast.current) return
+    const typed = Object.keys(next).some((k) => next[k] !== prev[k] && isTextField(node.schema, k))
+    liveLast.current = JSON.stringify(next)
+    if (liveTimer.current) clearTimeout(liveTimer.current)
+    liveTimer.current = setTimeout(() => run(node.action, { formData: next }), typed ? 400 : 0)
+  }
   const guarded = !!node.cancel
   const initial = JSON.stringify(node.formData ?? {})
   const [edited, setEdited] = useState(false)
   useEffect(() => setEdited(false), [initial]) // new data from the addon (e.g. after a save): nothing unsaved any more
+  useEffect(() => void (liveLast.current = initial), [initial]) // the addon's answer is the new starting point for a live form
   // A form with Cancel tracks unsaved edits: this page's other actions ask before they discard them, and closing the tab does too.
   useEffect(() => {
     if (!guarded) return
@@ -574,7 +605,8 @@ function FormNode({ node }: { node: NodeOf<'form'> }) {
         <ThemedForm
           id={formControl?.id}
           disabled={readOnly}
-          key={`${round}|${JSON.stringify(node.formData ?? null)}`}
+          // A live form keeps its fields mounted (typing goes on while results update); others start over with new data.
+          key={live ? `${round}|live` : `${round}|${JSON.stringify(node.formData ?? null)}`}
           schema={node.schema}
           uiSchema={{ ...node.uiSchema, 'ui:submitButtonOptions': submitOptions }}
           formData={node.formData ?? undefined}
@@ -582,7 +614,7 @@ function FormNode({ node }: { node: NodeOf<'form'> }) {
           showErrorList={false}
           focusOnFirstError={focusField}
           transformErrors={(errors) => formErrors(errors, node.schema)}
-          onChange={guarded ? ({ formData }) => setEdited(JSON.stringify(formData ?? {}) !== initial) : undefined}
+          onChange={guarded ? ({ formData }) => setEdited(JSON.stringify(formData ?? {}) !== initial) : live ? ({ formData }) => onLive(formData as Record<string, unknown> | undefined) : undefined}
           onSubmit={({ formData }) => run(node.action, { formData })}
         >
           {node.cancel && !formControl ? (

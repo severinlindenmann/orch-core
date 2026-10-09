@@ -25,6 +25,7 @@ import { TicketsTable, type AddonColumn } from './TicketsTable'
 import { hasFilters, type SortKey, type TicketsSearch } from './search'
 import { toastApiError } from '@/app/toast'
 import { LoadFailed } from '@/components/LoadFailed'
+import { plural } from '@/lib/time'
 
 const CLI_HINT = 'orch list --status open'
 
@@ -258,7 +259,7 @@ export function TicketsPage() {
   // Grouped, epics are headers and not tickets: "150 tickets · 6 epics".
   const cardRows = groups ? rows.filter((t) => t.type !== 'epic').length : rows.length
   const allCards = groups ? everything.filter((t) => t.type !== 'epic').length : everything.length
-  const countLabel = cardRows === (allCards || cardRows) ? `${cardRows} tickets${groups ? ` · ${groups.lanes.length} epics` : ''}` : `${cardRows} of ${allCards}`
+  const countLabel = cardRows === (allCards || cardRows) ? `${plural(cardRows, 'ticket')}${groups ? ` · ${plural(groups.lanes.length, 'epic')}` : ''}` : `${cardRows} of ${allCards}`
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
       <div className="flex items-baseline gap-3">

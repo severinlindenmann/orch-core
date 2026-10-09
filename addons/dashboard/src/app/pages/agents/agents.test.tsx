@@ -48,7 +48,10 @@ describe('Agents page', () => {
     const row = await screen.findByRole('row', { name: /gr_01J9Z8/ })
     const stopped = () => Number(/Stopped \((\d+)\)/.exec(screen.queryByRole('button', { name: /Stopped/ })?.textContent ?? '(0)')?.[1] ?? 0)
     const before = stopped()
+    // Grants are named by person, scope and end; the id is only the fine print.
+    expect(within(row).getByText("Severin's grant (all tickets · until 18:00)")).toBeInTheDocument()
     await user.click(within(row).getByRole('button', { name: 'Revoke' }))
+    expect(await screen.findByRole('heading', { name: "Revoke Severin's grant (all tickets · until 18:00)" })).toBeInTheDocument()
     await user.click(await screen.findByRole('button', { name: /Revoke grant/ }))
     expect(await within(screen.getByRole('row', { name: /gr_01J9Z8/ })).findByText('revoked')).toBeInTheDocument()
     await waitFor(() => expect(stopped()).toBeGreaterThan(before))

@@ -4,6 +4,7 @@ import { CircleCheck, CircleHelp, CloudOff, KeyRound, UserX } from 'lucide-react
 import { api } from '@/api/client'
 import { CHECK_LABEL, type CheckStatus } from '@/api/connections'
 import { cn } from '@/lib/utils'
+import { fmtWhen } from '@/lib/time'
 
 const TONE: Record<CheckStatus, string> = {
   ok: 'border-success/40 bg-success-soft text-success',
@@ -54,10 +55,7 @@ export const KIND_LABEL = { cli_login: 'CLI login', api_token: 'API token' } as 
 export const useConnections = (ws: string | undefined) => useQuery({ queryKey: ['connections', ws], queryFn: () => api.getConnections(ws!), enabled: !!ws })
 export const useSkills = (ws: string | undefined) => useQuery({ queryKey: ['skills', ws], queryFn: () => api.getSkills(ws!), enabled: !!ws })
 
-/** "10:47 UTC" for today, "8 Oct 10:47 UTC" otherwise. */
+/** When a check ran, in the one format (src/lib/time.ts): "5 min ago", or "2 Oct 10:47" when older than a week. */
 export function checkTime(iso: string, now?: string): string {
-  const hm = `${iso.slice(11, 16)} UTC`
-  if (now && iso.slice(0, 10) === now.slice(0, 10)) return hm
-  const d = new Date(iso)
-  return `${d.getUTCDate()} ${d.toLocaleString('en-GB', { month: 'short', timeZone: 'UTC' })} ${hm}`
+  return fmtWhen(iso, now)
 }

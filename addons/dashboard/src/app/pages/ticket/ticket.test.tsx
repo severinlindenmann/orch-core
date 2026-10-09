@@ -199,7 +199,7 @@ describe('ticket page structure: next action first, gates as a stepper, a rail t
   it('the agent is one status line, without Claim or Release buttons', async () => {
     renderApp('/ticket/DEMO-0043')
     await screen.findByRole('heading', { level: 1, name: /Load tariff tables/ }, T)
-    expect(screen.getByTestId('agent-status')).toHaveTextContent('Claude Code is working for Severin · since 08:05 UTC · 2 subagents')
+    expect(screen.getByTestId('agent-status')).toHaveTextContent('Claude Code is working for Severin · since 08:05 · 2 subagents')
     expect(screen.queryByRole('button', { name: /^Claim/ })).toBeNull()
     expect(screen.queryByRole('button', { name: /^Release/ })).toBeNull()
   })

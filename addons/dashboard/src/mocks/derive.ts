@@ -19,6 +19,7 @@ import type {
   TaskStatus,
   TicketDefinition,
   TicketDocument,
+  TicketLanding,
   Turn,
   Workspace,
 } from '@/api/types'
@@ -89,6 +90,9 @@ export function deriveTicket(
   const extraQuestions: QuestionDef[] = []
   let created = events[0]?.at ?? ''
   let labels = def.labels
+  // Landing records (D53) count only when written by the addon the event type names (`land.*` by addon land).
+  let landing: TicketLanding | undefined
+  const landingAddon = (e: OrchEvent) => (e.actor.kind === 'addon' && e.type.startsWith(`${e.actor.id}.`) ? e.actor.id : null)
 
   for (const e of events) {
     switch (e.type) {
@@ -98,6 +102,8 @@ export function deriveTicket(
         break
       case 'status.changed':
         status = e.to as Status
+        // Leaving done ends the landing story; a later verdict starts a new one.
+        if (status !== 'done') landing = undefined
         break
       case 'labels.changed':
         labels = [...new Set([...labels, ...((e.add as string[] | undefined) ?? [])])].filter((l) => !((e.remove as string[] | undefined) ?? []).includes(l))
@@ -197,6 +203,23 @@ export function deriveTicket(
         if (g === 'verify') verdict = null
         break
       }
+      case 'land.queued': {
+        const addon = landingAddon(e)
+        if (addon) landing = { state: 'queued', addon, at: e.at }
+        break
+      }
+      case 'land.attempt': {
+        const addon = landingAddon(e)
+        if (!addon) break
+        if (e.outcome === 'failed') landing = { state: 'failed', addon, attempt: e.attempt as number, reason: ((e.reason as TicketLanding['reason']) ?? 'conflict'), at: e.at }
+        else if (e.outcome === 'requeued') landing = { state: 'queued', addon, attempt: e.attempt as number, at: e.at }
+        else landing = undefined // merged: landed
+        break
+      }
+      case 'land.dequeued':
+      case 'land.resolved':
+        if (landingAddon(e)) landing = undefined
+        break
       case 'section.edited': {
         const sec = e.section as keyof BodySections
         const list = (history[sec] ??= [])
@@ -304,7 +327,15 @@ export function deriveTicket(
   if (claim && claim.expires <= ctx.now) claim = null // lapsed: nobody holds the ticket any more
 
   const openBlocking = questions_state.find((q) => q.state === 'open' && q.blocking)
-  const turn = computeTurn(status, people, claim, openBlocking, verdict, gates.plan.state, gates.requirements.state, gates.plan.approvers, def.tasks.length)
+  // Landing only applies to a done ticket (a resolution sends it back to testing).
+  if (status !== 'done') landing = undefined
+  const turn = computeTurn(status, people, claim, openBlocking, verdict, {
+    landing,
+    plan: gates.plan.state,
+    requirements: gates.requirements.state,
+    planApprovers: gates.plan.approvers,
+    taskCount: def.tasks.length,
+  })
 
   const last = events[events.length - 1]
   return {
@@ -326,6 +357,7 @@ export function deriveTicket(
     created_at: created,
     updated_at: last?.at ?? created,
     restricted: def.visibility !== 'workspace',
+    ...(landing ? { landing } : {}),
   }
 }
 
@@ -351,11 +383,21 @@ export function computeTurn(
   claim: Claim | null,
   openBlocking: QuestionStatus | undefined,
   verdict: TicketDocument['verdict'],
-  plan: GateStatus['state'] = 'approved',
-  requirements: GateStatus['state'] = 'approved',
-  planApprovers: GateStatus['approvers'] = 'maintainer',
-  taskCount = 1,
+  {
+    landing,
+    plan = 'approved',
+    requirements = 'approved',
+    planApprovers = 'maintainer',
+    taskCount = 1,
+  }: {
+    landing?: TicketLanding
+    plan?: GateStatus['state']
+    requirements?: GateStatus['state']
+    planApprovers?: GateStatus['approvers']
+    taskCount?: number
+  } = {},
 ): Turn {
+  if (status === 'done' && landing) return { who: 'nobody', why: landing.state === 'failed' ? 'Landing failed' : 'Landing' }
   if (status === 'done') return { who: 'nobody', why: 'Done' }
   if (openBlocking) return { who: openBlocking.to, why: `Answer ${openBlocking.id}` }
   if (status === 'testing' && !verdict) return { who: people.reviewers[0] ?? people.owner ?? 'nobody', why: 'Verdict needed' }
@@ -366,6 +408,18 @@ export function computeTurn(
   if (status === 'open') return { who: people.owner ?? 'nobody', why: 'Ready to claim' }
   if (status === 'waiting') return { who: people.owner ?? 'nobody', why: 'Waiting' }
   return { who: people.owner ?? 'nobody', why: 'Next step' }
+}
+
+/** Why core refused an agent, in plain words (agent.refused codes). */
+const REFUSAL_WORDS: Record<string, string> = {
+  human_only: 'only people approve',
+  'claim.held': 'another session holds the ticket',
+  'lease.held': 'another session holds that task',
+  'gate.not_approved': 'the plan is not approved yet',
+  'verify.failed': "the task's check failed",
+  'grant.scope': 'its grant does not cover that',
+  'grant.expired': 'its grant has ended',
+  'grant.revoked': 'its grant was revoked',
 }
 
 /** One-line description of an event for feeds. */
@@ -394,7 +448,8 @@ export function describeEvent(e: Pick<OrchEvent, 'type'> & Record<string, unknow
     case 'lease.released':
       return e.reason ? `released ${t(e.task, 'a task')} (${t(e.reason, '')})` : `released ${t(e.task, 'a task')}`
     case 'agent.refused':
-      return `was refused: ${t(e.code, 'no reason given')}`
+      // In plain words, never the code: the code stays in the event (Raw) for tools.
+      return `was refused: ${REFUSAL_WORDS[String(e.code)] ?? t(e.message, 'no reason given')}`
     case 'lease.taken':
       return `started ${t(e.task, 'a task')}`
     case 'task.done':
@@ -452,10 +507,6 @@ export function describeEvent(e: Pick<OrchEvent, 'type'> & Record<string, unknow
       return e.points !== undefined ? `estimated ${t(e.points, '?')} points` : 'set an estimate'
     case 'usage.recorded':
       return 'recorded usage'
-    case 'records.committed':
-      return 'committed the records'
-    case 'records.pushed':
-      return 'pushed the records'
     case 'quick.made_ticket':
       return 'made a quick task into a ticket'
     case 'addon.decided':
@@ -470,6 +521,12 @@ export function describeEvent(e: Pick<OrchEvent, 'type'> & Record<string, unknow
       return 'paused the AI Factory'
     case 'factory.resumed':
       return 'resumed the AI Factory'
+    case 'records.committed':
+      return `recorded the ticket records as ${t(e.commit, 'a commit')} (${who})`
+    case 'records.pushed':
+      return `pushed ${t(e.commit, 'the record commits')} to the remote (${who})`
+    case 'records.pulled':
+      return `pulled the remote's record commits (${who})`
     case 'wiki.linked':
       return 'linked a wiki page'
     case 'land.queued':

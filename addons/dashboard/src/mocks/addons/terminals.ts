@@ -6,6 +6,7 @@ import { briefs } from '../busy/helpers'
 import type { Rng } from '../busy/rng'
 import type { MockStore } from '../store'
 import { canSeeTicket, invalid, notFound, refusal, registerAddon, type AddonCtx } from './registry'
+import { fmtWhen } from '@/lib/time'
 
 // terminals: a fake PTY per session (the shell itself is src/app/terminal/fakePty.ts and runs in the browser).
 // This module owns the sessions and who may see and type in them.
@@ -53,20 +54,19 @@ const SESSIONS: Session[] = [
     summary: 'Reviewed the DEMO-0043 plan: tariff seeds before the billing join is the right order. Flagged VAT rounding on mixed tariffs (answered since). No code changes.',
   },
 ]
-/** What the agent typed: its commands name the ticket it works on. */
-/** When the session got DATABRICKS_TOKEN, its run includes a tool that prints it in debug output: the host's filter shows `•••• (DATABRICKS_TOKEN)`. */
-const agentTranscript = (s: Session, ctx: ShellCtx) => [
+/** What the agent typed. When the session got DATABRICKS_TOKEN, its run includes a tool that prints it in debug output: the host's filter shows `•••• (DATABRICKS_TOKEN)`. */
+const agentTranscript = (ctx: ShellCtx) => [
   'orch status',
   'orch task next',
   ...(ctx.secrets?.includes('DATABRICKS_TOKEN') ? ['databricks current-user me --debug'] : []),
-  ...(s.ticket ? [`orch approve ${s.ticket} plan`] : []),
 ]
+// The mirror's last step (what the agent waits on now) is not in the transcript: the CLI view scripts it from the
+// ticket's live state (src/app/terminal/cli.ts, blockerOf), so it never claims a wait that is over.
 const STOPPED_TRANSCRIPT = ['git status', 'exit']
-const withTranscript = (s: Session, ctx: ShellCtx) => ({ ctx, transcript: s.kind === 'agent' ? (s.transcript ?? agentTranscript(s, ctx)) : s.status === 'stopped' ? STOPPED_TRANSCRIPT : [] })
+const withTranscript = (s: Session, ctx: ShellCtx) => ({ ctx, transcript: s.kind === 'agent' ? (s.transcript ?? agentTranscript(ctx)) : s.status === 'stopped' ? STOPPED_TRANSCRIPT : [] })
 
 const sessionsOf = (state: Record<string, unknown>) => state.sessions as Session[]
 const navOf = (state: Record<string, unknown>) => (state.nav ??= {}) as Record<string, { current?: string }>
-const hhmm = (iso: string) => iso.slice(11, 16)
 
 const harnessOfSession = (s: Session): string => s.harness ?? (s.kind === 'agent' ? harnessForAgent(s.owner.slice('agent:'.length)) : 'shell')
 const contextOf = (s: Session) => !!s.ticket && (s.context ?? true)
@@ -101,7 +101,7 @@ function shellCtx(c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>, s: Session): She
           status: doc.status,
           current_state: doc.body.current_state ?? '',
           next_task: next ? { id: next.id, text: next.text } : null,
-          move: { who: doc.turn.who, why: doc.turn.why },
+          move: { who: doc.turn.who, why: doc.turn.why, ...(doc.turn.who.startsWith('p_') ? { name: nameOf(c, doc.turn.who) } : {}) },
           gates: (['requirements', 'plan', 'verify'] as const).map((name) => ({ name, state: doc.gates[name].state })),
           questions: { open: doc.questions_state.filter((q) => q.state === 'open').length, total: doc.questions_state.length },
           tasks: { done: doc.tasks_state.filter((t) => t.state === 'done').length, total: doc.tasks_state.length, doing: doc.tasks_state.find((t) => t.state === 'doing')?.id ?? null },
@@ -176,7 +176,7 @@ registerAddon({
       sessionByTicket,
       items: shown.map((s) => ({
         title: sessionTitle(s),
-        subtitle: `${findHarness(harnessOfSession(s))?.short ?? harnessOfSession(s)} · ${s.branch}${s.ticket ? ` · ${s.ticket}` : ''} · started ${hhmm(s.started)} UTC`,
+        subtitle: `${findHarness(harnessOfSession(s))?.short ?? harnessOfSession(s)} · ${s.branch}${s.ticket ? ` · ${s.ticket}` : ''} · started ${fmtWhen(s.started, c.store.now())}`,
         badge: s.kind === 'agent' ? 'read only' : s.status,
         actions: [{ action: 'open', label: 'Open', args: { session: s.id } }, ...(mine(s) && s.status === 'running' ? [{ action: 'close', label: 'Close', args: { session: s.id } }] : [])],
       })),
@@ -213,7 +213,7 @@ registerAddon({
       if (!ticket || !canSeeTicket(ctx, ticket)) return invalid('Pick a ticket first.')
       const s = sessionsOf(state).find((x) => x.kind === 'person' && x.owner === viewer && x.status === 'running' && x.ticket === ticket) ?? newShell(state, store, viewer, ticket)
       navOf(state)[viewer] = { current: s.id }
-      return { ok: true, message: `Terminal open in the ${ticket} worktree.`, changed: true }
+      return { ok: true, message: `Terminal open in the ${ticket} worktree.`, changed: true, terminal: s.id }
     },
     /**
      * Start the viewer's own session of a harness: in the ticket's worktree when `ticket` is given, else in the

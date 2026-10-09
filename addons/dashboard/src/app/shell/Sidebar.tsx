@@ -45,6 +45,7 @@ import { useWorkspace } from '../workspace'
 import { useShellState } from './ShellUi'
 import { WorkspaceSwitcher } from './WorkspaceSwitcher'
 import { PIN_ADDON_EVENT } from './pinEvent'
+import { fmtClock } from '@/lib/time'
 
 const RailContext = createContext(false)
 
@@ -164,7 +165,7 @@ export function Sidebar() {
   const grants = useQuery({ queryKey: ['grants', ws], queryFn: () => api.listGrants(ws!), enabled: !!ws })
   const today = useQuery({ queryKey: ['today', ws], queryFn: () => api.getToday(ws!), enabled: !!ws })
   const grant = grants.data && today.data ? activeGrantOf(grants.data, me?.person, Date.parse(today.data.now)) : undefined
-  const grantTime = grant?.until.slice(11, 16)
+  const grantTime = grant ? fmtClock(grant.until) : undefined
   const { railCollapsed: collapsed, toggleRail: toggle } = useShellState()
   const itemKey = (i: { addon: string; id: string }) => `${i.addon}/${i.id}`
   const { pinned, toggle: togglePin, full } = usePinnedAddons(me?.person, ws, navItems.map(itemKey))

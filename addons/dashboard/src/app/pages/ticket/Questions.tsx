@@ -7,7 +7,7 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { canAnswer } from './actions'
-import { fmtTime, Mono, Pill, shortHash, type TabProps, type Viewer } from './shared'
+import { ago, Mono, Pill, shortHash, type TabProps, type Viewer } from './shared'
 
 const VIA: Record<string, string> = { cli: 'CLI', dashboard: 'dashboard', phone: 'phone' }
 const PRESENCE: Record<string, string> = { touchid: 'Touch ID', passkey: 'passkey', password: 'password' }
@@ -80,7 +80,7 @@ function QuestionCard({ q, viewer, sign }: { q: QuestionStatus; viewer: Viewer; 
           </Pill>
         )}
         <span className="text-[12px] text-text-muted">
-          to <span className="text-text">{viewer.name(q.to)}</span> · asked by {viewer.name(q.asked_by)} · {fmtTime(q.asked_at)}
+          to <span className="text-text">{viewer.name(q.to)}</span> · asked by {viewer.name(q.asked_by)} · {ago(q.asked_at)}
         </span>
         {q.hash && (
           <Mono className="ml-auto text-[11px] text-text-faint" >
@@ -109,7 +109,7 @@ function QuestionCard({ q, viewer, sign }: { q: QuestionStatus; viewer: Viewer; 
           <p className="font-medium text-text">{chosen ? chosen.label : answered.text}</p>
           {chosen && answered.text && <p className="mt-0.5 text-text-muted">{answered.text}</p>}
           <p className="mt-1 text-[12px] text-text-muted">
-            {viewer.name(answered.by)} · {fmtTime(answered.at)} · via {VIA[answered.via ?? 'dashboard']} · {PRESENCE[answered.presence ?? 'touchid']}
+            {viewer.name(answered.by)} · {ago(answered.at)} · via {VIA[answered.via ?? 'dashboard']} · {PRESENCE[answered.presence ?? 'touchid']}
           </p>
         </div>
       )}

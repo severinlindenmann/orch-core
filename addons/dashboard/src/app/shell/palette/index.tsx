@@ -16,7 +16,7 @@ import { useRole } from '../../useRole'
 import { STATUS_LABEL } from '../../pages/board/lib'
 import { availableActions, GATE_LABEL } from '../../pages/ticket/actions'
 import { SignDialog } from '../../pages/ticket/SignDialog'
-import { useViewer, type HumanAction } from '../../pages/ticket/shared'
+import { statusLabel, useViewer, type HumanAction } from '../../pages/ticket/shared'
 import { requestSaveView } from '../../pages/tickets/saveViewRequest'
 import { useShellActions, useShellState } from '../ShellUi'
 import { guessType, quickProblem, quickTitle } from '../../pages/new-ticket/quickRules'
@@ -303,7 +303,7 @@ export function CommandPalette() {
       <>
         <span className="w-24 shrink-0 font-mono text-[12px] text-text-faint">{t.key}</span>
         <span className="flex-1 truncate">{t.title}</span>
-        <span className="text-[11px] text-text-faint">{STATUS_LABEL[t.status]}</span>
+        <span className="text-[11px] text-text-faint">{statusLabel(t.status, t.landing)}</span>
       </>
     ),
     run: () => go(`/ticket/${t.key}`),
@@ -371,7 +371,7 @@ export function CommandPalette() {
             <>
               <span className="w-24 shrink-0 font-mono text-[12px] text-text-faint">{t.key}</span>
               <span className="flex-1 truncate">{t.title}</span>
-              <span className="text-[11px] text-text-faint">{STATUS_LABEL[t.status]}</span>
+              <span className="text-[11px] text-text-faint">{statusLabel(t.status, t.landing)}</span>
             </>
           ),
           run: () => (setQ(''), setMoveTarget({ key: t.key, status: t.status }), setMode('move')),

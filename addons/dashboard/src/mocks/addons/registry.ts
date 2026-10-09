@@ -18,6 +18,11 @@ export interface AddonCtx {
   decision?: AddonDecision
 }
 
+export interface SeedRecord {
+  ticket: string
+  event: { type: string; actor: string; at: string; [k: string]: unknown }
+}
+
 export interface Charter {
   epic: string
   signedBy: string
@@ -42,6 +47,11 @@ export interface MockAddon {
    * pages, ...). `rng` is seeded per workspace and addon, so the data is the same every time. Omitted: the normal seed.
    */
   seedBusy?(ws: string, store: MockStore, rng: Rng): Record<string, unknown>
+  /**
+   * Records the seeded state implies in the tickets' logs (e.g. the landing attempts of generated tickets), written into
+   * the seed itself when the store seeds: `at` orders them among the seeded events. Fixture tickets carry their own.
+   */
+  seedLog?(state: Record<string, unknown>, ws: string, store: MockStore): SeedRecord[]
   /** Optional derived fields merged into GET .../state (e.g. counts). */
   view?(state: Record<string, unknown>, ctx: Omit<AddonCtx, 'body' | 'state'>): Record<string, unknown>
   /**

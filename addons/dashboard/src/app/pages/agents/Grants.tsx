@@ -1,17 +1,18 @@
-import { grantState } from '@/api/grants'
+import { grantLabel, grantState } from '@/api/grants'
 import type { GrantInfo } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Mono, Pill } from '../ticket/shared'
+import { fmtClock, fmtDay, fmtSpan } from '@/lib/time'
 
 
 const TONE = { active: 'brand', expired: 'neutral', revoked: 'danger' } as const
-const hm = (iso: string) => iso.slice(11, 16)
-const day = (iso: string, now: number) => (iso.slice(0, 10) === new Date(now).toISOString().slice(0, 10) ? '' : `${iso.slice(5, 10)} `)
+const hm = (iso: string) => fmtClock(iso)
+/** Today's times are a time of day; other days carry their date ("8 Oct 17:00"). */
+const day = (iso: string, now: number) => (iso.slice(0, 10) === new Date(now).toISOString().slice(0, 10) ? '' : `${fmtDay(iso)} `)
 
 function countdown(until: string, now: number) {
-  const mins = Math.round((Date.parse(until) - now) / 60_000)
-  return `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, '0')}m left`
+  return `${fmtSpan(Date.parse(until) - now)} left`
 }
 
 export function Grants({ grants, now, name, canRevoke, onRevoke }: { grants: GrantInfo[]; now: string; name: (id: string) => string; canRevoke: (g: GrantInfo) => boolean; onRevoke: (g: GrantInfo) => void }) {
@@ -36,7 +37,8 @@ export function Grants({ grants, now, name, canRevoke, onRevoke }: { grants: Gra
           return (
             <TableRow key={g.id}>
               <TableCell>
-                <Mono>{g.id}</Mono>
+                <span className="block">{grantLabel(g, name(g.person), at)}</span>
+                <Mono className="text-[11px] text-text-faint">{g.id}</Mono>
               </TableCell>
               <TableCell>{name(g.person)}</TableCell>
               <TableCell>

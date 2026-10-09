@@ -4,7 +4,9 @@ import { STATUSES, type TicketSummary } from '@/api/types'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { cn } from '@/lib/utils'
 import { CardFields, type BoardPeople } from './TicketCard'
-import { PRIORITY_RANK, PriorityMarker, STATUS_LABEL, TypeIcon } from './lib'
+import { PRIORITY_RANK, PriorityMarker, TypeIcon } from './lib'
+import { fmtWhen } from '@/lib/time'
+import { statusLabel } from '@/app/pages/ticket/shared'
 
 type SortKey = 'key' | 'title' | 'status' | 'priority' | 'size' | 'owner' | 'updated_at'
 const SIZES = ['xs', 's', 'm', 'l', 'xl']
@@ -83,7 +85,7 @@ export function ListView({ tickets, people, onOpen }: { tickets: TicketSummary[]
                 </span>
               </TableCell>
               <TableCell className="max-w-[420px] truncate py-1.5 text-[13px] text-text">{t.title}</TableCell>
-              <TableCell className="py-1.5 text-[12px] text-text-muted">{STATUS_LABEL[t.status]}</TableCell>
+              <TableCell className="py-1.5 text-[12px] text-text-muted">{statusLabel(t.status, t.landing)}</TableCell>
               <TableCell className="py-1.5">
                 <span className="inline-flex items-center gap-1 text-[12px] text-text-muted">
                   <PriorityMarker priority={t.priority} />
@@ -92,7 +94,7 @@ export function ListView({ tickets, people, onOpen }: { tickets: TicketSummary[]
               </TableCell>
               <TableCell className={cn('py-1.5 font-mono text-[11px] uppercase text-text-muted')}>{t.size ?? '–'}</TableCell>
               <TableCell className="py-1.5 text-[12px] text-text-muted">{t.owner ? people.name(t.owner) : '–'}</TableCell>
-              <TableCell className="py-1.5 font-mono text-[11px] text-text-faint">{t.updated_at.slice(0, 16).replace('T', ' ')}</TableCell>
+              <TableCell className="py-1.5 font-mono text-[11px] text-text-faint">{fmtWhen(t.updated_at)}</TableCell>
               <TableCell className="py-1.5">
                 <span className="flex gap-1">
                   <CardFields ticket={t} />

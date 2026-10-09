@@ -15,12 +15,13 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { AddonBadge } from './AddonBadge'
 import { canSpawnAgent } from './capabilities'
 import { addonStateKey, useAddons } from './slots'
+import { fmtClock } from '@/lib/time'
 
 /** Hours of the grant a person signs here when they have none. */
 const GRANT_HOURS = 8
 /** Longest addon-supplied text shown in the dialog. */
 const ADDON_TEXT_MAX = 300
-const hhmm = (iso: string) => `${iso.slice(11, 16)} UTC`
+const timeOfDay = (iso: string) => fmtClock(iso)
 const cap = (v: unknown) => {
   const t = typeof v === 'string' ? v : ''
   return t.length > ADDON_TEXT_MAX ? `${t.slice(0, ADDON_TEXT_MAX)}…` : t
@@ -156,10 +157,15 @@ export function SpawnConfirm({ addon, ticketKey, onStart, onClose }: { addon: st
     ['Where', c.where],
     // Rendered by core from the validated plan, never from the addon's text.
     ['Model', `${c.model ? `${c.model}${c.tier ? ` (${c.tier} tier)` : ''}` : 'the harness default'}${c.subagent_model ? `; subagents on ${c.subagent_model}` : ''}`],
-    ['Grant', grant ? `active until ${hhmm(grant.until)}; revoking it stops this run` : `none yet: signing issues you one for all tickets here, ${GRANT_HOURS} h, until ${hhmm(until)}`],
+    ['Grant', grant ? `active until ${timeOfDay(grant.until)}; revoking it stops this run` : `none yet: signing issues you one for all tickets here, ${GRANT_HOURS} h, until ${timeOfDay(until)}`],
   ]
   const warning = gateWarning(doc.data)
   // What the addon displayed, where it differs from what orch will start.
+  // Display name (manifest-written) plus the package id, so no addon passes as another or as core.
+  const titleOf = (name: string) => {
+    const t = addons?.find((p) => p.name === name)?.title
+    return t && t !== name ? `${t} (${name})` : name
+  }
   const differs = shown && (shown.command !== c.command || shown.title !== c.title || shown.mode !== c.mode || shown.harness !== c.harness || shown.where !== c.where)
 
   const body: ReactNode = (
@@ -205,7 +211,7 @@ export function SpawnConfirm({ addon, ticketKey, onStart, onClose }: { addon: st
         <section aria-label={`From addon ${addon}`} className="rounded-md border border-dashed border-addon-border px-3 py-2 text-[12px] text-text-muted">
           <p className="mb-1 flex items-center gap-1.5">
             <AddonBadge name={addon} />
-            From addon <span className="font-mono">{addon}</span>: its panel shows something else; orch starts only what is listed above.
+            From the addon {titleOf(addon)}: its panel shows something else; orch starts only what is listed above.
           </p>
           <p className="whitespace-pre-wrap break-all font-mono">{[shown.title, shown.mode, shown.harness, shown.where, shown.command].map(cap).filter(Boolean).join(' · ')}</p>
         </section>
@@ -214,7 +220,7 @@ export function SpawnConfirm({ addon, ticketKey, onStart, onClose }: { addon: st
         <section aria-label={`From addon ${c.line_by ?? 'launch'}`} className="rounded-md border border-dashed border-addon-border px-3 py-2 text-[12px] text-text-muted">
           <p className="mb-1 flex items-center gap-1.5">
             <AddonBadge name={c.line_by ?? 'launch'} />
-            From addon <span className="font-mono">{c.line_by ?? 'launch'}</span>:
+            From the addon {titleOf(c.line_by ?? 'launch')}:
           </p>
           <p className="whitespace-pre-wrap break-all">{cap(c.line)}</p>
         </section>
@@ -226,7 +232,7 @@ export function SpawnConfirm({ addon, ticketKey, onStart, onClose }: { addon: st
     return (
       <SignPrompt
         title={`Sign a grant and start ${c.harness} on ${c.ticket}`}
-        covers={[`Issues you a grant: all tickets in this workspace, ${GRANT_HOURS} h, until ${hhmm(until)}`, `Starts ${c.harness} on ${c.ticket} under it`]}
+        covers={[`Issues you a grant: all tickets in this workspace, ${GRANT_HOURS} h, until ${timeOfDay(until)}`, `Starts ${c.harness} on ${c.ticket} under it`]}
         confirmLabel="Sign and start"
         disabled={!!c.blocked}
         onClose={onClose}

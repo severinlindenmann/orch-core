@@ -4,6 +4,7 @@
 // opening a result url. The host checks it all again.
 import { useState, type ReactNode } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useRouter } from '@tanstack/react-router'
 import { toast } from 'sonner'
 import { manifestFor } from '@/api/addons'
 import { api } from '@/api/client'
@@ -22,6 +23,8 @@ import { SecretDialog } from './SecretDialog'
 import { SignConfirm, signTitle } from './SignConfirm'
 import { SpawnConfirm, type ConfirmedLaunch } from './SpawnConfirm'
 import { addonStateKey, useAddons } from './slots'
+
+const TICKET_KEY = /^[A-Z][A-Z0-9]{0,9}-\d{1,6}$/
 
 interface Pending {
   addon: string
@@ -82,6 +85,8 @@ export function roleReason(role: Role | undefined, min: Role): string | null {
 
 /** `ticket`: the ticket in core's render context (sent as `ticket`); addon args can never set it. */
 export function useRunAddonAction(ticket?: string, opts: RunOptions = {}): RunAddonAction {
+  // Outside the app's router (isolated node tests) there is simply no Open on the toast.
+  const router = useRouter({ warn: false })
   const qc = useQueryClient()
   const { workspace } = useWorkspace()
   const role = useRole()
@@ -147,6 +152,10 @@ export function useRunAddonAction(ticket?: string, opts: RunOptions = {}): RunAd
       } else if (res.undo && undoAllowed(addon, action, res.undo.action, extra, res.undo.args)) {
         const undo = res.undo
         toast.success(res.message, { action: { label: 'Undo', onClick: () => run(addon, undo.action, undo.args) } })
+      } else if (typeof res.ticket === 'string' && TICKET_KEY.test(res.ticket) && router) {
+        // A ticket the action created: the confirmation carries the way to it.
+        const key = res.ticket
+        toast.success(res.message, { action: { label: 'Open', onClick: () => void router.navigate({ to: '/ticket/$key', params: { key } }) } })
       } else toast.success(res.message)
       void qc.invalidateQueries({ queryKey: ['addon-state'] })
       void qc.invalidateQueries({ queryKey: ['ticket'] })
@@ -207,7 +216,7 @@ export function useRunAddonAction(ticket?: string, opts: RunOptions = {}): RunAd
         const s = signing
         setSigning(null)
         setSignPending(true)
-        void signed(signTitle(s.action, titleOf(s.addon)), async () => {
+        void signed(signTitle(s.action, titleOf(s.addon), s.addon), async () => {
           const { secret: shown, ...res } = await api.runAddonAction(workspace.id, s.addon, s.action, { ...body(s.extra), confirmed: true })
           openResultUrl(res)
           if (shown) setSecret({ addon: s.addon, secret: shown })

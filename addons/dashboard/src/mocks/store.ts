@@ -209,6 +209,36 @@ export class MockStore {
         this.seeded.set(def.key, evs.length)
       }
     }
+    this.seedAddonLogs()
+  }
+
+  /** Records an active addon's seed implies (MockAddon.seedLog) join the seeded events, in time order. */
+  private seedAddonLogs() {
+    for (const ws of this.workspaces) {
+      for (const name of Object.keys(ws.addons)) {
+        const mod = getAddon(name)
+        if (!mod?.seedLog || !addonActive(ws, name)) continue
+        const touched = new Set<string>()
+        for (const { ticket, event } of mod.seedLog(this.addonState(ws.id, name), ws.id, this)) {
+          const def = this.defs.get(ticket)
+          if (!def || this.wsOfKey.get(ticket) !== ws.id) continue
+          // An addon seeds only its own records, as itself: never core events or another addon's, never as a person.
+          if (typeof event.type !== 'string' || !event.type.startsWith(`${name}.`) || typeof event.at !== 'string') continue
+          this.events.get(ticket)!.push(this.expand(def, { ...event, actor: `addon:${name}` } as FixtureEvent, 0))
+          touched.add(ticket)
+        }
+        for (const key of touched) {
+          const def = this.defs.get(key)!
+          const evs = this.events
+            .get(key)!
+            .map((e, i) => ({ e, i }))
+            .sort((a, b) => a.e.at.localeCompare(b.e.at) || a.i - b.i)
+            .map(({ e }, idx) => ({ ...e, seq: idx + 1, id: def.uid.slice(0, 14) + String(idx + 1).padStart(12, '0') }) as OrchEvent)
+          this.events.set(key, evs)
+          this.seeded.set(key, evs.length)
+        }
+      }
+    }
   }
 
   /** Busy day: the catalog addons that fill the pages are installed, granted and on in DEMO. */
@@ -360,6 +390,11 @@ export class MockStore {
     }
     const needs = this.conn.needs(ws.id, key)
     if (needs) doc.needs = needs
+    // Landing records only mean something while their addon runs here: a turned-off lane shows the ticket as done.
+    if (doc.landing && !addonActive(ws, doc.landing.addon)) {
+      delete doc.landing
+      if (doc.status === 'done') doc.turn = { who: 'nobody', why: 'Done' }
+    }
     return doc
   }
 
@@ -391,6 +426,7 @@ export class MockStore {
       awaiting_gate: awaitingGate(doc),
       addons: doc.addons,
       updated_at: doc.updated_at,
+      ...(doc.landing ? { landing: doc.landing } : {}),
     }
   }
 
@@ -833,7 +869,7 @@ export class MockStore {
     this.append(key, { type: 'ticket.created', actor, status: 'backlog' })
     this.append(key, { type: 'people.set', owner: this.viewer, assignees: [], reviewers: [], watchers: [] })
     this.append(key, { type: 'github.imported', actor, external })
-    return { ok: true, message: `Imported ${external} as ${key}`, changed: true }
+    return { ok: true, message: `Imported ${external} as ${key} (Backlog).`, changed: true, ticket: key }
   }
 
   /** Per-workspace state of an addon (lazily seeded, persisted). */
@@ -993,9 +1029,10 @@ export class MockStore {
       // Only core's signing prompt sets `confirmed` (addon args cannot: actionRuntime strips it), so addon.decided's presence is true.
       if (body.confirmed !== true) return refuse(409, 'confirm.required', 'A decision is answered in orch\'s own signing prompt.', 'Answer it on Today, or press the option and sign in the dialog.')
     }
-    const res = action({ store: this, ws, viewer: this.viewer, ticket, body, state: this.addonState(ws, name), decision })
+    const raw = action({ store: this, ws, viewer: this.viewer, ticket, body, state: this.addonState(ws, name), decision })
     // A refusal changes nothing others need to see: no record, no refresh for other clients, nothing saved.
-    if (!res.ok) return res
+    if (!raw.ok) return raw
+    const res = this.checkedResult(ws, raw)
     // Core's own record of a decision (presence step done in core's prompt): who decided what, never the addon's words.
     if (decision) this.appendWs(ws, { type: 'addon.decided', name, id: decision.id, option: String(body.option), ...(decision.ticket ? { ticket: decision.ticket } : {}), presence: 'touchid' })
     // Core's own record of a signed action (the addon cannot write or hide it): who signed which action, with scalar args only, whether or not the addon says it changed anything.
@@ -1012,6 +1049,25 @@ export class MockStore {
     if (meta?.kind !== 'navigation') this.bump(ws)
     this.save()
     return res
+  }
+
+  /**
+   * What core lets an action's answer point the client at: a `ticket` (the toast's Open) only when it is a ticket of
+   * this workspace the viewer can see; a `terminal` (the dock opens on it) only while terminals is active here and the
+   * session is in this viewer's terminals view. Anything else is dropped, never passed on.
+   */
+  private checkedResult(ws: string, res: AddonActionResult): AddonActionResult {
+    const { ticket, terminal, ...rest } = res
+    const out: AddonActionResult = rest
+    if (typeof ticket === 'string' && this.wsOfKey.get(ticket) === ws && this.isVisible(ticket)) out.ticket = ticket
+    if (typeof terminal === 'string') {
+      const w = this.workspaces.find((x) => x.id === ws)
+      const mod = getAddon('terminals')
+      const view = addonActive(w, 'terminals') && mod?.view ? mod.view(this.addonState(ws, 'terminals'), { store: this, ws, viewer: this.viewer }) : null
+      const sessions = (view?.sessions ?? []) as { id: string }[]
+      if (sessions.some((x) => x.id === terminal)) out.terminal = terminal
+    }
+    return out
   }
 
   /**

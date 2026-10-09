@@ -105,12 +105,12 @@ describe('wiki actions', () => {
     await run(s, 'open', { slug: target.slug })
     const st = await state(s)
     expect(st.current!.slug).toBe(target.slug)
-    expect(st.current!.meta).toMatch(/^by Mara · updated \d+d ago$/)
+    expect(st.current!.meta).toMatch(/^by Mara · updated \d+ days? ago$/)
     expect(st.current!.toc.map((h) => h.text)).toEqual(['Rules', 'Checks', 'Loader query'])
     expect(st.listView.children).toEqual([]) // the list gives way to the page
     const [crumbs, body] = st.pageView.children as unknown as { children: { type: string; label?: string; text?: string; toc?: boolean; rows?: { ticket: string; title: string }[] }[] }[]
     expect(crumbs.children.map((c) => c.label ?? c.text)).toEqual(['All pages', '/ **Tariff data conventions**', 'Edit page'])
-    expect(body.children[0].text).toBe('# Tariff data conventions\n\n*by Mara · updated 2d ago*')
+    expect(body.children[0].text).toBe('# Tariff data conventions\n\n*by Mara · updated 2 days ago*')
     const back = body.children.find((c) => c.type === 'table')!
     expect(back.rows!.map((r) => r.ticket)).toEqual(['DEMO-0041', 'DEMO-0043'])
     expect(back.rows!.every((r) => r.title)).toBe(true)

@@ -4,6 +4,7 @@ import type { AddonDecision } from '@/api/types'
 import type { MockStore } from '../store'
 import type { Rng } from '../busy/rng'
 import { canSeeTicket, conflict, notFound, registerAddon, type AddonCtx } from './registry'
+import { fmtDateTime, fmtWhen } from '@/lib/time'
 
 // factory (AI Factory, Phase 2 preview; v1 docs/factory.md): one factory epic, DEMO-0050 "Monthly billing v2".
 //  - The charter (25 children or 72 hours, children of size m or smaller) was signed when the epic started. The
@@ -66,8 +67,7 @@ const TITLES = [
 ] as const
 
 const nameOf = (c: Ctx, person: string) => c.store.workspaces.find((w) => w.id === c.ws)?.members.find((m) => m.person === person)?.name ?? person
-const utc = (iso: string) => `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`
-const hhmm = (iso: string) => `${iso.slice(11, 16)} UTC`
+const utc = (iso: string) => fmtDateTime(iso)
 const scriptId = (ws: string) => `factory:${ws}`
 /** The addon writes its own events (`factory.*`) as itself; who answered or signed is in core's addon.decided / addon.action_signed. */
 const ADDON = { kind: 'addon', id: 'factory' } as const
@@ -282,7 +282,7 @@ registerAddon({
                   : `The time budget is used up (${MAX_HOURS} hours). Agents make no new auto-approvals, start no tasks and no grant answers anything until you decide again.`,
             }
           : mode === 'paused'
-            ? { type: 'alert', tone: 'info', title: `Paused by ${nameOf(c, paused!.by)} at ${hhmm(paused!.at)}`, text: 'Agents hold their work and nothing new starts. The time budget stops while paused. Resume when you are ready.' }
+            ? { type: 'alert', tone: 'info', title: `Paused by ${nameOf(c, paused!.by)} ${fmtWhen(paused!.at, c.store.now())}`, text: 'Agents hold their work and nothing new starts. The time budget stops while paused. Resume when you are ready.' }
             : { type: 'stack', children: [] }
 
     // Everyone sees that demo activity is running, not only the person who started it.

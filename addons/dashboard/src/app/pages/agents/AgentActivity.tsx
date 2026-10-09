@@ -1,6 +1,7 @@
 import { Link } from '@tanstack/react-router'
 import type { AgentActivityItem, AgentSession } from '@/api/types'
 import { useSlot } from '@/addon-ui/slots'
+import { fmtExact, fmtWhen } from '@/lib/time'
 
 const MAX = 5
 
@@ -48,7 +49,7 @@ export function AgentActivity({ items, sessions }: { items: AgentActivityItem[];
         <ul className="divide-y divide-border">
           {refusals.map((i, n) => (
             <li key={`${i.ticket}-${i.at}-${n}`} className="flex items-baseline gap-3 px-3 py-2 text-[13px]">
-              <span className="w-12 shrink-0 text-xs tabular-nums text-text-faint">{i.at.slice(11, 16)}</span>
+              <span className="w-20 shrink-0 text-xs tabular-nums text-text-faint" title={fmtExact(i.at)}>{fmtWhen(i.at)}</span>
               <span className="min-w-0 flex-1 text-text-muted">{refusalSentence(i, sessions.find((s) => s.session === i.session)?.name ?? pretty(i.agent))}</span>
               <Link to="/ticket/$key" params={{ key: i.ticket }} className="shrink-0 rounded font-mono text-xs text-text-muted outline-none hover:text-text focus-visible:ring-2 focus-visible:ring-ring">
                 {i.ticket}

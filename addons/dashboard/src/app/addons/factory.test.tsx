@@ -35,7 +35,7 @@ describe('AI Factory page', () => {
   it('Pause factory is signed in core\'s dialog; the paused state is calm (info), and Resume brings it back', async () => {
     const { user } = renderApp('/addon/factory/factory', { viewer: 'p_sev', setup: on })
     await user.click(await screen.findByRole('button', { name: 'Pause factory' }, T))
-    const dialog = await screen.findByRole('dialog', { name: /Sign: pause · AI Factory/ }, T)
+    const dialog = await screen.findByRole('dialog', { name: /Sign: Pause \(pause\) · AI Factory \(factory\)/ }, T)
     expect(mockStore.addonStateView(wsOf(mockStore), 'factory')!.mode).toBe('running')
     await user.click(within(dialog).getByRole('button', { name: /Sign and run/ }))
     const alert = (await screen.findByText(/^Paused by/, {}, T)).closest('[role="status"]')!
@@ -43,7 +43,7 @@ describe('AI Factory page', () => {
     expect(alert.className).not.toMatch(/warning|danger/)
     await waitFor(() => expect(mockStore.addonStateView(wsOf(mockStore), 'factory')!.mode).toBe('paused'), T)
     await user.click(await screen.findByRole('button', { name: 'Resume' }, T))
-    await user.click(within(await screen.findByRole('dialog', { name: /Sign: resume · AI Factory/ }, T)).getByRole('button', { name: /Sign and run/ }))
+    await user.click(within(await screen.findByRole('dialog', { name: /Sign: Resume \(resume\) · AI Factory \(factory\)/ }, T)).getByRole('button', { name: /Sign and run/ }))
     await waitFor(() => expect(mockStore.addonStateView(wsOf(mockStore), 'factory')!.mode).toBe('running'), T)
   })
   it('Run demo activity shows a persistent info alert, and Stop demo activity ends it', async () => {
@@ -76,7 +76,7 @@ describe('AI Factory page', () => {
   it('cancelling the signing dialog changes nothing', async () => {
     const { user } = renderApp('/addon/factory/factory', { viewer: 'p_sev', setup: on })
     await user.click(await screen.findByRole('button', { name: 'Pause factory' }, T))
-    const dialog = await screen.findByRole('dialog', { name: /Sign: pause · AI Factory/ }, T)
+    const dialog = await screen.findByRole('dialog', { name: /Sign: Pause \(pause\) · AI Factory \(factory\)/ }, T)
     await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument(), T)
     expect(mockStore.addonStateView(wsOf(mockStore), 'factory')!.mode).toBe('running')

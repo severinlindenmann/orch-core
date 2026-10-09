@@ -17,6 +17,7 @@ import { PageWidthContext } from '../../pageWidth'
 import { useWorkspace } from '../../workspace'
 import { DOCK_ADDON, DOCK_KEYS, sessionsIn, useDockTicket, type DockMemory } from './context'
 import { clampDock, DOCK_BAR, rightFits, useDockPrefs, useViewport } from './prefs'
+import { onDockRequest } from './request'
 
 const TerminalDock = lazy(() => import('./TerminalDock'))
 
@@ -74,6 +75,15 @@ export function DockArea({ children }: { children: ReactNode }) {
   const focus = useRef<'dock' | 'bar' | null>(null)
   // What the dock had selected, per workspace and ticket scope: survives collapse and navigation.
   const memory = useRef<DockMemory>(new Map())
+  // An action opened a session (Worktrees' "Open terminal here"): open the dock on it until the dock selected it.
+  const [request, setRequest] = useState<string | null>(null)
+  useEffect(() => {
+    if (!allowed) return
+    return onDockRequest((id) => {
+      setRequest(id)
+      setPrefs((p) => (p.open ? p : { ...p, open: true }))
+    })
+  }, [allowed, setPrefs])
   useDockShortcut(allowed, () => {
     setPrefs((p) => {
       focus.current = p.open ? 'bar' : 'dock'
@@ -101,6 +111,7 @@ export function DockArea({ children }: { children: ReactNode }) {
         (prefs.open ? (
           <Suspense fallback={<div aria-hidden="true" className={cn('shrink-0 bg-surface', addonHairline, right ? 'border-l' : 'border-t')} style={right ? { width: size } : { height: size }} />}>
             <TerminalDock prefs={prefs} side={side} size={size} view={view} area={area} rightFits={fits} setPrefs={setPrefs} focus={focus} memory={memory.current}
+              request={request} requestDone={() => setRequest(null)}
               collapse={() => {
                 focus.current = 'bar'
                 setPrefs((p) => ({ ...p, open: false }))

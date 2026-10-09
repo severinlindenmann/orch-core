@@ -221,7 +221,7 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-        <StatusChip status={ticket.status} />
+        <StatusChip status={ticket.status} landing={ticket.landing} />
         <span className="text-[13px] text-text-muted">
           Turn: <span className="text-text">{viewer.name(ticket.turn.who)}</span> · {ticket.turn.why.charAt(0).toLowerCase() + ticket.turn.why.slice(1)}
         </span>

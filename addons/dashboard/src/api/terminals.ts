@@ -22,7 +22,7 @@ export interface ShellCtx {
     current_state: string
     next_task: { id: string; text: string } | null
     /** Whose turn it is, and why (the dashboard's own rule). */
-    move: { who: string; why: string }
+    move: { who: string; why: string; /** The person's display name, when `who` is a person. */ name?: string }
     gates: { name: string; state: string }[]
     questions: { open: number; total: number }
     tasks: { done: number; total: number; doing: string | null }

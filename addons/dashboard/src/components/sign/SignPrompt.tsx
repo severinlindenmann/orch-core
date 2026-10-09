@@ -111,7 +111,8 @@ export function SignPrompt({
 }: {
   title: string
   description?: string
-  covers: string[]
+  /** Core's own lines. A line may hold markup (an exact id in mono), never addon-written markup. */
+  covers: ReactNode[]
   children?: ReactNode
   destructive?: boolean
   /** Button text; use a verb for the action being signed; the default is plain Sign. */
@@ -147,8 +148,8 @@ export function SignPrompt({
           <dt className="text-text-muted">Covers</dt>
           <dd>
             <ul className="list-disc space-y-0.5 pl-4">
-              {covers.map((c) => (
-                <li key={c}>{c}</li>
+              {covers.map((c, i) => (
+                <li key={i}>{c}</li>
               ))}
             </ul>
           </dd>

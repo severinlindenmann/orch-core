@@ -19,6 +19,7 @@ import { toastApiError } from '@/app/toast'
 import { useWorkspace } from '@/app/workspace'
 import type { HumanAction } from '../ticket/shared'
 import { ago } from './shared'
+import { plural } from '@/lib/time'
 
 export const NewItemContext = createContext(false)
 export const SigningContext = createContext(false)
@@ -200,7 +201,7 @@ export function ApprovalRow({ item, ticket, now, expanded, onToggle, sign, decid
   const covers =
     gate === 'requirements'
       ? `Requirements · ${ticket?.acceptance.length ?? 0} acceptance criteria`
-      : `Plan · ${ticket?.tasks.length ?? 0} tasks · ${ticket?.acceptance.length ?? 0} acceptance criteria`
+      : `Plan · ${plural(ticket?.tasks.length ?? 0, 'task')} · ${plural(ticket?.acceptance.length ?? 0, 'acceptance criterion', 'acceptance criteria')}`
   return (
     <RowShell
       testId={`card-approval:${item.ticket}:${gate}`}

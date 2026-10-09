@@ -1,6 +1,8 @@
 import { atLeast, roleOf } from '@/api/permissions'
 import type { Actor } from '@/api/types'
 import { describeEvent } from '../derive'
+import { findHarness, harnessForAgent } from '@/api/harnesses'
+import { fmtWhen } from '@/lib/time'
 import { canSeeTicket, invalid, notFound, registerAddon, type AddonCtx } from './registry'
 
 // activity: the workspace-wide timeline (v1 D11).
@@ -86,7 +88,6 @@ interface Nav {
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
-const hhmm = (at: string) => at.slice(11, 16)
 
 function groupOf(type: string, ws: boolean): Group {
   if (type === 'gate.policy_set') return 'workspace' // a workspace rule, not a ticket gate event
@@ -151,7 +152,20 @@ function entriesOf(c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>): Entry[] {
   // Someone removed later is no longer a member: their name is still in the member.added event.
   for (const e of c.store.wsEventsOf(c.ws)) if (e.type === 'member.added' && typeof e.person === 'string' && typeof e.name === 'string' && !names.has(e.person)) names.set(e.person, e.name)
   const sees = atLeast(roleOf(w, c.viewer), 'maintainer')
-  const who = (a: Actor) => (a.kind === 'person' ? (names.get(a.id) ?? a.id) : a.id)
+  // Display names: a member's name, "Claude Code for Severin", an addon's title ("Estimate"), "orch".
+  const who = (a: Actor) => {
+    if (a.kind === 'person') return names.get(a.id) ?? a.id
+    if (a.kind === 'agent') {
+      const label = findHarness(harnessForAgent(a.id))?.label ?? a.id
+      return a.for ? `${label} for ${names.get(a.for) ?? a.for}` : label
+    }
+    if (a.kind === 'addon') {
+      // The title is the addon's own word for itself: its package id goes with it when they differ.
+      const title = c.store.addons.find((p) => p.name === a.id)?.title
+      return title && title !== a.id ? `${title} (${a.id})` : a.id
+    }
+    return 'orch'
+  }
   const out: Entry[] = []
   const push = (e: ReturnType<typeof c.store.eventsOf>[number], src: string, ticket: string | undefined) => {
     const actorId = e.actor.kind === 'person' || e.actor.kind === 'agent' ? e.actor.id : undefined
@@ -178,23 +192,23 @@ const byType = (e: Entry, n: Nav) => n.type === 'all' || e.group === n.type
 const byPerson = (e: Entry, n: Nav) =>
   n.person === 'everyone' || (e.kind === 'person' && n.person === `p:${e.actorId}`) || (e.kind === 'agent' && n.person === `a:${e.actorId}`)
 const bySearch = (e: Entry, n: Nav, titleOf: (k: string) => string) =>
-  !n.q || `${e.actor} ${e.ticket ?? ''} ${e.ticket ? titleOf(e.ticket) : ''} ${e.summary} ${e.type}`.toLowerCase().includes(n.q.toLowerCase())
+  !n.q || `${e.actor} ${e.actorId ?? ''} ${e.ticket ?? ''} ${e.ticket ? titleOf(e.ticket) : ''} ${e.summary} ${e.type}`.toLowerCase().includes(n.q.toLowerCase())
 
 /** Runs of consecutive events by one actor on one ticket (or in the workspace log) on one day become one row. */
-function collapse(list: Entry[], titleOf: (k: string) => string): Row[] {
+function collapse(list: Entry[], titleOf: (k: string) => string, now: string): Row[] {
   const rows: Row[] = []
   let run: Entry[] = []
   const flush = () => {
     if (!run.length) return
     const first = run[0] // newest
-    const last = run[run.length - 1]
     const groups = new Set(run.map((r) => r.group))
     const group = groups.size === 1 ? first.group : 'mixed'
     const noun = group === 'mixed' ? 'updates' : GROUPS.find((g) => g.id === group)!.noun
     const count = run.length
     const summary = count === 1 ? first.summary : `${count} ${noun}`
     const where = first.ticket ?? 'workspace'
-    const time = count === 1 ? hhmm(first.at) : hhmm(last.at) === hhmm(first.at) ? hhmm(first.at) : `${hhmm(last.at)} to ${hhmm(first.at)}`
+    // The one time format: how long ago the newest event of the row was (the count says there were more).
+    const time = fmtWhen(first.at, now)
     const what = count === 1 ? (first.ticket ? titleOf(first.ticket) : '') : `latest: ${first.summary}`
     rows.push({
       id: `${first.src}:${first.seq}`,
@@ -247,7 +261,7 @@ registerAddon({
     const inScope = known.filter((e) => inPeriod(e, nav.period, today))
     const shownEntries = inScope.filter((e) => byType(e, nav) && byPerson(e, nav) && bySearch(e, nav, titleOf))
     const newEntries = everything.filter((e) => isNew(e, nav.seen) && inPeriod(e, nav.period, today) && byType(e, nav) && byPerson(e, nav) && bySearch(e, nav, titleOf))
-    const allRows = collapse(shownEntries, titleOf)
+    const allRows = collapse(shownEntries, titleOf, c.store.now())
     const limit = PAGE * nav.pages
     const timeline = allRows.slice(0, limit)
     const hidden = allRows.length - timeline.length
@@ -266,7 +280,7 @@ registerAddon({
     const forPerson = inScope.filter((e) => byType(e, nav) && bySearch(e, nav, titleOf))
     const people = (w?.members ?? []).map((m) => ({ value: `p:${m.person}`, name: m.name, n: forPerson.filter((e) => e.kind === 'person' && e.actorId === m.person).length }))
     const agentIds = [...new Set(everything.filter((e) => e.kind === 'agent').map((e) => e.actorId!))].sort()
-    const agents = agentIds.map((id) => ({ value: `a:${id}`, name: id, n: forPerson.filter((e) => e.kind === 'agent' && e.actorId === id).length }))
+    const agents = agentIds.map((id) => ({ value: `a:${id}`, name: findHarness(harnessForAgent(id))?.label ?? id, n: forPerson.filter((e) => e.kind === 'agent' && e.actorId === id).length }))
     const personOptions = [
       opt('everyone', 'Everyone'),
       ...[...people, ...agents].filter((p) => p.n > 0 || p.value === nav.person).map((p) => opt(p.value, `${p.name} (${p.n})`)),
@@ -285,7 +299,7 @@ registerAddon({
       uiSchema: { 'ui:options': { layout: 'row' }, 'ui:globalOptions': { layout: 'row' } },
       formData: { period: nav.period, type: nav.type, person: nav.person, q: nav.q },
       action: 'apply',
-      submitLabel: 'Apply',
+      live: true, // filters apply on change: no Apply button
     }
     const clear = filtered(nav) ? [{ type: 'button', label: 'Clear filters', action: 'clear_filters', variant: 'ghost' }] : []
     // One line: the headline, then the view switch. `fit` keeps each child at its own width, so Timeline / By ticket / Clear filters read as a switch, not as equal-width columns.
@@ -351,7 +365,7 @@ registerAddon({
     const ticketRows = [...perTicket]
       .sort((a, b) => b[1].n - a[1].n || b[1].last.at.localeCompare(a[1].last.at))
       .slice(0, TABLE_ROWS)
-      .map(([ticket, v]) => ({ ticket, title: titleOf(ticket), events: v.n, last_actor: v.last.actor, last: hhmm(v.last.at) }))
+      .map(([ticket, v]) => ({ ticket, title: titleOf(ticket), events: v.n, last_actor: v.last.actor, last: fmtWhen(v.last.at, c.store.now()) }))
     const ticketNodes: unknown[] = [
       { type: 'markdown', text: `### By ticket, ${period.word}` },
       {
@@ -397,7 +411,7 @@ registerAddon({
       },
       today: { events: todays.length, byAgents },
       todaySummary,
-      todayHint: last ? `Latest: ${last.actor}, ${hhmm(last.at)}` : 'Nothing has happened yet',
+      todayHint: last ? `Latest: ${last.actor}, ${fmtWhen(last.at, c.store.now())}` : 'Nothing has happened yet',
       ticketRows,
     }
   },

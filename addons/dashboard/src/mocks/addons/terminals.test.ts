@@ -60,7 +60,7 @@ describe('terminals state', () => {
     const [shell, mirror, stopped] = st.sessions
     expect(shell).toMatchObject({ kind: 'person', owner: 'p_sev', ticket: 'DEMO-0043', status: 'running', interactive: true })
     expect(shell.ctx.branch).toBe('feat/billing-join')
-    expect(mirror).toMatchObject({ kind: 'agent', interactive: false, label: 'agent: claude-code (read only, no typing)' })
+    expect(mirror).toMatchObject({ kind: 'agent', interactive: false, label: 'DEMO-0043 · Claude Code' })
     expect(mirror.transcript.some((c) => c.startsWith('orch approve'))).toBe(true)
     expect(stopped).toMatchObject({ status: 'stopped', interactive: false })
     expect(st.settings).toEqual({ shell: '/bin/zsh', font_size: 13 })
@@ -201,5 +201,17 @@ describe('terminals are scoped to their workspace', () => {
     expect(t.gates.map((g) => g.name)).toEqual(['requirements', 'plan', 'verify'])
     expect(t.tasks.total).toBeGreaterThan(0)
     expect(t.questions.total).toBeGreaterThanOrEqual(t.questions.open)
+  })
+})
+
+describe('busy session times', () => {
+  it('pads hours to exactly two digits', async () => {
+    const s = setup('p_sev')
+    s.store.reset('busy')
+    const st = await state(s)
+    expect(st.sessions.length).toBeGreaterThan(3)
+    expect(JSON.stringify(st)).not.toMatch(/\b0\d{2}:/)
+    const sessions = s.store.addonState(s.ws, 'terminals').sessions as { started: string }[]
+    for (const session of sessions) expect(session.started).toMatch(/T\d{2}:\d{2}:\d{2}Z$/)
   })
 })

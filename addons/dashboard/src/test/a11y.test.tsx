@@ -18,8 +18,8 @@ const ADDON_PAGES: [string, RegExp, RegExp][] = [
   ['wiki/pages', /Wiki/, /Tariff data conventions/],
   ['terminals/sessions', /Terminals/, /view-only mirrors/],
   ['worktrees/worktrees', /Worktrees/, /With changes/],
-  ['quick/quick', /Quick tasks/, /Add a quick task/],
-  ['records/records', /Records/, /Commit records/],
+  ['quick/quick', /Quick tasks/, /Quick task \(one line\)/],
+  ['records/records', /Records/, /Record changes/],
   ['activity/activity', /Activity/, /events today/],
   ['widgets/widgets', /Widgets/, /small visual blocks/],
   ['start-agent/start', /Start agent/, /Start an agent session on a ticket/],
@@ -76,7 +76,7 @@ describe('accessibility smoke (axe, no serious or critical violations)', () => {
   })
 
   it('a mistyped addon page id fails the check instead of passing on "Page not found"', async () => {
-    await expect(check('/addon/quick/nope', /Quick tasks/, /Add a quick task/)).rejects.toThrow()
+    await expect(check('/addon/quick/nope', /Quick tasks/, /Quick task \(one line\)/)).rejects.toThrow()
   })
 
   const routes: [string, RegExp, RegExp][] = [

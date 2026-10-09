@@ -5,10 +5,10 @@ import { Skeleton } from '@/components/ui/skeleton'
 const View = lazy(() => import('./SafeMarkdownView').then((m) => ({ default: m.SafeMarkdownView })))
 
 /** Markdown from an addon (sanitized; see SafeMarkdownView). */
-export function SafeMarkdown({ text }: { text: string }) {
+export function SafeMarkdown({ text, toc = false }: { text: string; toc?: boolean }) {
   return (
     <Suspense fallback={<Skeleton className="h-12 w-full" />}>
-      <View text={text} />
+      <View text={text} toc={toc} />
     </Suspense>
   )
 }

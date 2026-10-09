@@ -18,24 +18,7 @@
           "type": "stack",
           "children": [
             {
-              "type": "stack",
-              "direction": "row",
-              "children": [
-                {
-                  "type": "stat",
-                  "label": "Worktrees",
-                  "value": "${addon.total}"
-                },
-                {
-                  "type": "stat",
-                  "label": "With changes",
-                  "value": "${addon.dirty}"
-                }
-              ]
-            },
-            {
-              "type": "markdown",
-              "text": "**acme-energy/energy-dbt**"
+              "$ref": "addon.filterBar"
             },
             {
               "type": "table",
@@ -45,16 +28,21 @@
                   "label": "Path"
                 },
                 {
+                  "key": "repo",
+                  "label": "Repository"
+                },
+                {
                   "key": "branch",
                   "label": "Branch"
                 },
                 {
                   "key": "ticket",
-                  "label": "Ticket"
+                  "label": "Ticket",
+                  "cell": "ticket"
                 },
                 {
                   "key": "changes",
-                  "label": "Changes"
+                  "label": "Changed files"
                 },
                 {
                   "key": "sync",
@@ -66,110 +54,12 @@
                 }
               ],
               "rows": {
-                "$ref": "addon.rowsByRepo.energy-dbt"
+                "$ref": "addon.shownRows"
               },
-              "empty": "No worktrees in this repository.",
+              "empty": "No worktrees match. Clear the filter, or add one for a ticket.",
               "rowActions": {
                 "$ref": "addon.rowActions"
               }
-            },
-            {
-              "type": "markdown",
-              "text": "**acme-energy/billing-api**"
-            },
-            {
-              "type": "table",
-              "columns": [
-                {
-                  "key": "path",
-                  "label": "Path"
-                },
-                {
-                  "key": "branch",
-                  "label": "Branch"
-                },
-                {
-                  "key": "ticket",
-                  "label": "Ticket"
-                },
-                {
-                  "key": "changes",
-                  "label": "Changes"
-                },
-                {
-                  "key": "sync",
-                  "label": "Ahead / behind"
-                },
-                {
-                  "key": "by",
-                  "label": "Created by"
-                }
-              ],
-              "rows": {
-                "$ref": "addon.rowsByRepo.billing-api"
-              },
-              "empty": "No worktrees in this repository.",
-              "rowActions": {
-                "$ref": "addon.rowActions"
-              }
-            },
-            {
-              "type": "markdown",
-              "text": "**acme-energy/ingest**"
-            },
-            {
-              "type": "table",
-              "columns": [
-                {
-                  "key": "path",
-                  "label": "Path"
-                },
-                {
-                  "key": "branch",
-                  "label": "Branch"
-                },
-                {
-                  "key": "ticket",
-                  "label": "Ticket"
-                },
-                {
-                  "key": "changes",
-                  "label": "Changes"
-                },
-                {
-                  "key": "sync",
-                  "label": "Ahead / behind"
-                },
-                {
-                  "key": "by",
-                  "label": "Created by"
-                }
-              ],
-              "rows": {
-                "$ref": "addon.rowsByRepo.ingest"
-              },
-              "empty": "No worktrees in this repository.",
-              "rowActions": {
-                "$ref": "addon.rowActions"
-              }
-            },
-            {
-              "type": "form",
-              "schema": {
-                "$ref": "addon.addSchema"
-              },
-              "uiSchema": {
-                "ticket": {
-                  "ui:enumNames": {
-                    "$ref": "addon.ticketNames"
-                  }
-                }
-              },
-              "formData": {
-                "base": "main"
-              },
-              "action": "add",
-              "submitLabel": "Add worktree"
             }
           ]
         }
@@ -228,6 +118,11 @@
         "minRole": "member",
         "label": "Open terminal here"
       },
+      "filter": {
+        "minRole": "viewer",
+        "kind": "navigation",
+        "label": "Filter worktrees"
+      },
       "remove": {
         "minRole": "member",
         "confirm": "destructive",
@@ -255,28 +150,57 @@
           "type": "stack",
           "children": [
             {
-              "type": "stack",
-              "direction": "row",
-              "children": [
-                { "type": "stat", "label": "Open", "value": "${addon.open}" },
-                { "type": "stat", "label": "Claimed", "value": "${addon.claimed}" },
-                { "type": "stat", "label": "Done", "value": "${addon.done}" },
-                { "type": "stat", "label": "Outgrew", "value": "${addon.outgrew}" }
-              ]
+              "type": "markdown",
+              "text": "${addon.summaryLine}"
             },
-            { "type": "markdown", "text": "### Add a quick task" },
             {
               "type": "form",
-              "schema": { "$ref": "addon.addSchema" },
+              "schema": {
+                "$ref": "addon.addSchema"
+              },
               "action": "add",
               "submitLabel": "Add quick task"
             },
-            { "$ref": "addon.closePanel" },
-            { "type": "markdown", "text": "### Quick tasks" },
             {
-              "type": "list",
-              "items": { "$ref": "addon.list" },
-              "empty": "No quick tasks."
+              "type": "markdown",
+              "text": "An agent picks up quick tasks on its own."
+            },
+            {
+              "$ref": "addon.closePanel"
+            },
+            {
+              "type": "tabs",
+              "id": "quick",
+              "tabs": [
+                {
+                  "id": "open",
+                  "label": "Active",
+                  "count": {
+                    "$ref": "addon.openTotal"
+                  },
+                  "node": {
+                    "type": "list",
+                    "items": {
+                      "$ref": "addon.openList"
+                    },
+                    "empty": "No active quick tasks. Add a one-line task above and an agent will pick it up."
+                  }
+                },
+                {
+                  "id": "done",
+                  "label": "Completed",
+                  "count": {
+                    "$ref": "addon.doneTotal"
+                  },
+                  "node": {
+                    "type": "list",
+                    "items": {
+                      "$ref": "addon.doneList"
+                    },
+                    "empty": "Nothing completed yet. Finished tasks, with their proof, are listed here."
+                  }
+                }
+              ]
             }
           ]
         }
@@ -327,31 +251,126 @@
         "node": {
           "type": "stack",
           "children": [
-            { "type": "stat", "label": "Not recorded yet", "value": "${addon.summary}", "hint": "${addon.lastPushText}" },
-            { "$ref": "addon.pushAlert" },
+            {
+              "type": "markdown",
+              "text": "**${addon.summary}**"
+            },
+            {
+              "$ref": "addon.pushAlert"
+            },
             {
               "type": "stack",
               "direction": "row",
               "children": [
-                { "type": "button", "label": "Commit records", "action": "commit", "variant": "primary" },
-                { "type": "button", "label": "Push", "action": "push", "variant": "secondary" },
-                { "type": "button", "label": "Pull", "action": "pull", "variant": "ghost" }
+                {
+                  "type": "stack",
+                  "children": [
+                    {
+                      "type": "button",
+                      "label": "Record changes",
+                      "action": "commit",
+                      "variant": "primary"
+                    },
+                    {
+                      "type": "markdown",
+                      "text": "${addon.commitLine}"
+                    }
+                  ]
+                },
+                {
+                  "type": "stack",
+                  "children": [
+                    {
+                      "type": "button",
+                      "label": "Push to remote",
+                      "action": "push",
+                      "variant": "secondary"
+                    },
+                    {
+                      "type": "markdown",
+                      "text": "Sends the record commits to the shared remote."
+                    }
+                  ]
+                },
+                {
+                  "type": "stack",
+                  "children": [
+                    {
+                      "type": "button",
+                      "label": "Pull",
+                      "action": "pull",
+                      "variant": "ghost"
+                    },
+                    {
+                      "type": "markdown",
+                      "text": "Brings in commits another clone pushed."
+                    }
+                  ]
+                }
               ]
             },
-            { "type": "markdown", "text": "Remote: `${addon.remote}`" },
             {
-              "type": "table",
-              "columns": [
-                { "key": "ticket", "label": "Ticket" },
-                { "key": "title", "label": "Title" },
-                { "key": "events", "label": "Events" },
-                { "key": "last", "label": "Latest" }
-              ],
-              "rows": { "$ref": "addon.rows" },
-              "empty": "Everything is recorded."
+              "type": "tabs",
+              "id": "records",
+              "tabs": [
+                {
+                  "id": "pending",
+                  "label": "Pending",
+                  "count": {
+                    "$ref": "addon.pendingTickets"
+                  },
+                  "node": {
+                    "type": "table",
+                    "columns": [
+                      {
+                        "key": "ticket",
+                        "label": "Ticket",
+                        "cell": "ticket"
+                      },
+                      {
+                        "key": "title",
+                        "label": "Title"
+                      },
+                      {
+                        "key": "events",
+                        "label": "Events",
+                        "align": "right"
+                      },
+                      {
+                        "key": "last",
+                        "label": "Latest"
+                      }
+                    ],
+                    "rows": {
+                      "$ref": "addon.rows"
+                    },
+                    "empty": "Everything is recorded. New ticket events appear here until they are saved."
+                  }
+                },
+                {
+                  "id": "history",
+                  "label": "History",
+                  "count": {
+                    "$ref": "addon.historyCount"
+                  },
+                  "node": {
+                    "type": "list",
+                    "items": {
+                      "$ref": "addon.historyItems"
+                    },
+                    "empty": "No record commits yet. Press Record changes to save the first one."
+                  }
+                }
+              ]
             },
-            { "type": "markdown", "text": "### Record commits" },
-            { "type": "list", "items": { "$ref": "addon.historyItems" }, "empty": "No record commits yet." }
+            {
+              "type": "fold",
+              "label": "Details",
+              "node": {
+                "type": "markdown",
+                "text": "Remote: `${addon.remote}`\n\n${addon.lastPushText}"
+              }
+            }
           ]
         }
       },
@@ -475,102 +494,134 @@
               "$ref": "addon.budgetAlert"
             },
             {
-              "type": "kv",
-              "pairs": [
-                {
-                  "label": "Epic",
-                  "value": "${addon.epicLine}"
-                },
-                {
-                  "label": "Charter",
-                  "value": "${addon.charter}"
-                }
-              ]
-            },
-            {
-              "type": "stack",
-              "direction": "row",
-              "children": [
-                {
-                  "$ref": "addon.usedProgress"
-                },
-                {
-                  "$ref": "addon.timeProgress"
-                }
-              ]
-            },
-            {
               "$ref": "addon.controls"
             },
             {
-              "type": "markdown",
-              "text": "### Permits"
+              "$ref": "addon.attentionNode"
             },
             {
-              "type": "markdown",
-              "text": "${addon.permitsLine}"
-            },
-            {
-              "$ref": "addon.permitNodes"
-            },
-            {
-              "type": "table",
-              "columns": [
+              "type": "tabs",
+              "id": "factory",
+              "tabs": [
                 {
-                  "key": "id",
-                  "label": "Permit"
+                  "id": "overview",
+                  "label": "Overview",
+                  "node": {
+                    "type": "stack",
+                    "children": [
+                      {
+                        "type": "kv",
+                        "pairs": [
+                          {
+                            "label": "Epic",
+                            "value": "${addon.epicLine}"
+                          },
+                          {
+                            "label": "Charter",
+                            "value": "${addon.charter}"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "stack",
+                        "direction": "row",
+                        "children": [
+                          {
+                            "$ref": "addon.usedProgress"
+                          },
+                          {
+                            "$ref": "addon.timeProgress"
+                          }
+                        ]
+                      },
+                      {
+                        "$ref": "addon.readyNode"
+                      }
+                    ]
+                  }
                 },
                 {
-                  "key": "command",
-                  "label": "Command"
+                  "id": "children",
+                  "label": "Children",
+                  "count": {
+                    "$ref": "addon.childCount"
+                  },
+                  "node": {
+                    "type": "table",
+                    "columns": [
+                      {
+                        "key": "ticket",
+                        "label": "Child",
+                        "cell": "ticket"
+                      },
+                      {
+                        "key": "title",
+                        "label": "Title"
+                      },
+                      {
+                        "key": "status",
+                        "label": "Status",
+                        "cell": "state"
+                      },
+                      {
+                        "key": "approval",
+                        "label": "Approval"
+                      },
+                      {
+                        "key": "size",
+                        "label": "Size"
+                      }
+                    ],
+                    "rows": {
+                      "$ref": "addon.children"
+                    },
+                    "empty": "No children yet."
+                  }
                 },
                 {
-                  "key": "child",
-                  "label": "Asked by"
-                },
-                {
-                  "key": "state",
-                  "label": "State"
+                  "id": "permits",
+                  "label": "Permits",
+                  "count": {
+                    "$ref": "addon.permitCount"
+                  },
+                  "node": {
+                    "type": "stack",
+                    "children": [
+                      {
+                        "type": "markdown",
+                        "text": "Every permission an agent asked for. Open requests are above, where you answer them."
+                      },
+                      {
+                        "type": "table",
+                        "columns": [
+                          {
+                            "key": "id",
+                            "label": "Permit"
+                          },
+                          {
+                            "key": "command",
+                            "label": "Command"
+                          },
+                          {
+                            "key": "child",
+                            "label": "Asked by",
+                            "cell": "ticket"
+                          },
+                          {
+                            "key": "state",
+                            "label": "State",
+                            "cell": "state"
+                          }
+                        ],
+                        "rows": {
+                          "$ref": "addon.permitRows"
+                        },
+                        "empty": "No permits asked yet. Agents ask here when they need a permission they do not hold."
+                      }
+                    ]
+                  }
                 }
-              ],
-              "rows": {
-                "$ref": "addon.permitRows"
-              }
-            },
-            {
-              "type": "markdown",
-              "text": "### Children"
-            },
-            {
-              "type": "table",
-              "columns": [
-                {
-                  "key": "ticket",
-                  "label": "Child"
-                },
-                {
-                  "key": "title",
-                  "label": "Title"
-                },
-                {
-                  "key": "status",
-                  "label": "Status"
-                },
-                {
-                  "key": "approval",
-                  "label": "Approval"
-                },
-                {
-                  "key": "size",
-                  "label": "Size"
-                }
-              ],
-              "rows": {
-                "$ref": "addon.children"
-              }
-            },
-            {
-              "$ref": "addon.readyNode"
+              ]
             }
           ]
         }
@@ -620,33 +671,115 @@
               "$ref": "addon.findingNodes"
             },
             {
-              "type": "list",
-              "items": {
-                "$ref": "addon.items"
-              },
-              "empty": "No schedules yet."
-            },
-            {
-              "type": "markdown",
-              "text": "### Recent runs"
-            },
-            {
-              "type": "list",
-              "items": {
-                "$ref": "addon.runItems"
-              },
-              "empty": "No runs yet."
-            },
-            {
-              "$ref": "addon.reportNode"
+              "type": "tabs",
+              "id": "schedules",
+              "tabs": [
+                {
+                  "id": "schedules",
+                  "label": "Schedules",
+                  "count": {
+                    "$ref": "addon.scheduleCount"
+                  },
+                  "node": {
+                    "type": "table",
+                    "columns": [
+                      {
+                        "key": "name",
+                        "label": "Schedule"
+                      },
+                      {
+                        "key": "state",
+                        "label": "State",
+                        "cell": "state"
+                      },
+                      {
+                        "key": "timing",
+                        "label": "Timing"
+                      },
+                      {
+                        "key": "next",
+                        "label": "Next run"
+                      },
+                      {
+                        "key": "last",
+                        "label": "Last run"
+                      },
+                      {
+                        "key": "outcome",
+                        "label": "Result"
+                      }
+                    ],
+                    "rows": {
+                      "$ref": "addon.scheduleRows"
+                    },
+                    "empty": "No schedules yet. A schedule starts agent work on a clock or when an event happens.",
+                    "rowActions": [
+                      {
+                        "label": "Run now",
+                        "action": "run_now",
+                        "args": {
+                          "id": "$row.id"
+                        },
+                        "variant": "secondary",
+                        "primary": true,
+                        "when": "$row.enabled"
+                      },
+                      {
+                        "label": "Disable",
+                        "action": "disarm",
+                        "args": {
+                          "id": "$row.id"
+                        },
+                        "variant": "ghost",
+                        "when": "$row.enabled"
+                      },
+                      {
+                        "label": "Enable",
+                        "action": "arm",
+                        "args": {
+                          "id": "$row.id"
+                        },
+                        "variant": "secondary",
+                        "when": "!$row.enabled"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "id": "runs",
+                  "label": "Runs",
+                  "count": {
+                    "$ref": "addon.shownRunCount"
+                  },
+                  "node": {
+                    "type": "stack",
+                    "children": [
+                      {
+                        "type": "markdown",
+                        "text": "${addon.runsNote}"
+                      },
+                      {
+                        "type": "list",
+                        "items": {
+                          "$ref": "addon.runItems"
+                        },
+                        "empty": "No runs yet. Enable a schedule, or press Run now."
+                      },
+                      {
+                        "$ref": "addon.reportNode"
+                      }
+                    ]
+                  }
+                }
+              ]
             }
           ]
         }
       }
     ],
     "actions": {
-      "arm": { "minRole": "maintainer", "confirm": "sign", "label": "Arm a schedule" },
-      "disarm": { "minRole": "maintainer", "confirm": "sign", "label": "Disarm a schedule" },
+      "arm": { "minRole": "maintainer", "confirm": "sign", "label": "Enable a schedule" },
+      "disarm": { "minRole": "maintainer", "confirm": "sign", "label": "Disable a schedule" },
       "run_now": { "minRole": "member", "label": "Run now" },
       "open_run": { "minRole": "viewer", "label": "Open run", "kind": "navigation" },
       "finding": { "minRole": "maintainer", "decision": true }

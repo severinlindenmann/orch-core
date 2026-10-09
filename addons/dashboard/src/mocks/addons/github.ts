@@ -163,11 +163,18 @@ registerAddon({
       openPrs: open.length,
       needReview: open.filter((p) => p.review === 'requested').length,
       checksFailing: open.filter((p) => summary(p) === 'fail').length,
-      prRows: list.map((p) => ({ id: p.id, repo: p.repo, pr: `#${p.number}`, title: p.title, ticket: p.ticket, checks: summary(p), review: p.review, updated: ago(p.updated_at, now) })),
+      // Open pull requests only; merged ones are in the "Recently merged" fold. Approve is offered only while it can still help.
+      prRows: list
+        .filter((p) => p.state !== 'merged')
+        .map((p) => ({ id: p.id, repo: p.repo, pr: `#${p.number}`, title: p.title, ticket: p.ticket, checks: summary(p), review: p.review, updated: ago(p.updated_at, now), canApprove: summary(p) !== 'fail' && p.review !== 'approved' })),
+      mergedRows: list.filter((p) => p.state === 'merged').map((p) => ({ id: p.id, repo: p.repo, pr: `#${p.number}`, title: p.title, ticket: p.ticket, updated: ago(p.updated_at, now) })),
+      mergedCount: list.filter((p) => p.state === 'merged').length,
       prByTicket: byTicket,
       todayItems: open
         .filter((p) => p.review === 'requested')
         .map((p) => ({ title: `#${p.number} ${p.title}`, subtitle: `${p.repo} · ${p.ticket}`, badge: `checks ${summary(p)}` })),
+      issueRows: issues(state).map((i) => ({ id: i.id, repo: i.repo, issue: `#${i.number}`, title: i.title, label: i.label })),
+      issueCount: issues(state).length,
       issueItems: issues(state).map((i) => ({
         title: i.title,
         subtitle: i.id,

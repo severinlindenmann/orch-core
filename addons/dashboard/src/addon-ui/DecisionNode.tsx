@@ -29,6 +29,7 @@ export default function DecisionNode({ addon, id }: { addon: string; id: string 
         readOnly={!canDecide}
         inlineErrors
         addonTitle={packages?.find((p) => p.name === addon)?.title ?? addon}
+        inline
         expanded={open}
         onToggle={() => setOpen((o) => !o)}
         decider={!canDecide ? owners.join(', ') || 'The owner' : undefined}

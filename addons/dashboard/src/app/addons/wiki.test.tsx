@@ -8,30 +8,127 @@ afterEach(() => vi.unstubAllGlobals())
 
 const T = { timeout: 4000 }
 
+/** Opens a page from the list: its title is the button. */
+async function openPage(user: ReturnType<typeof renderApp>['user'], title: string) {
+  const open = await screen.findByRole('button', { name: title }, T)
+  await waitFor(() => expect(open).toBeEnabled(), T)
+  await user.click(open)
+}
+
 describe('wiki page', () => {
-  it('lists pages, opens one, edits and saves it', async () => {
+  it('lists pages in tabs: Pages, Recently updated and Linked to tickets; titles open pages, no Open buttons', async () => {
+    const { user } = renderApp('/addon/wiki/pages', { viewer: 'p_sev' })
+    expect(await screen.findByRole('tab', { name: /Pages\s*7/ }, T)).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('button', { name: 'On-call runbook' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Open' })).not.toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: 'Linked tickets' })).toBeInTheDocument()
+    await user.click(screen.getByRole('tab', { name: /^Recently updated/ }))
+    expect(await screen.findByText(/5 of 7 pages changed in the last 14 days/, {}, T)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Reconciliation tolerance' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Imported from old wiki' })).not.toBeInTheDocument() // 30 days old: on the Pages tab only
+    await user.click(screen.getByRole('tab', { name: /Linked to tickets/ }))
+    expect(await screen.findByRole('link', { name: 'DEMO-0042' })).toHaveAttribute('href', '/ticket/DEMO-0042')
+    expect(screen.getByRole('button', { name: 'dbt model naming' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Glossary' })).not.toBeInTheDocument() // linked to no ticket
+  })
+  it('opening a page: breadcrumb, title first, one meta line, ticket backlinks with titles, On this page links', async () => {
+    const { user } = renderApp('/addon/wiki/pages', { viewer: 'p_sev' })
+    await openPage(user, 'Tariff data conventions')
+    expect(await screen.findByRole('heading', { name: 'Tariff data conventions' }, T)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'All pages' })).toBeInTheDocument()
+    expect(await screen.findByText(/^by Mara · updated \d+d ago$/, {}, T)).toBeInTheDocument()
+    expect(screen.queryAllByRole('heading', { name: 'Tariff data conventions' })).toHaveLength(1) // the body does not repeat the title
+    const back = screen.getByRole('link', { name: 'DEMO-0041' })
+    expect(back).toHaveAttribute('href', '/ticket/DEMO-0041')
+    expect(within(back.closest('tr')!).getByText('Add billing reconciliation tests')).toBeInTheDocument()
+    expect(screen.queryByRole('tab')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'All pages' }))
+    expect(await screen.findByRole('tab', { name: /Pages/ }, T)).toBeInTheDocument()
+  })
+  it('On this page: core gives headings their own ids and the links scroll to them', async () => {
     const { user, container } = renderApp('/addon/wiki/pages', { viewer: 'p_sev' })
-    const item = (await screen.findByText('On-call runbook', {}, T)).closest('li')!
-    await user.click(within(item).getByRole('button', { name: 'Open' }))
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'On-call runbook' })).toBeInTheDocument(), T)
+    await openPage(user, 'Tariff data conventions')
+    await screen.findByRole('heading', { name: 'Rules' }, T)
+    expect(container.querySelector('h2#addon-h-rules')).not.toBeNull()
+    expect(container.querySelector('h2#addon-h-loader-query')).not.toBeNull()
+    const scroll = vi.fn()
+    Element.prototype.scrollIntoView = scroll
+    const nav = await screen.findByRole('navigation', { name: 'On this page' }, T)
+    await user.click(within(nav).getByRole('button', { name: 'Checks' }))
+    expect(scroll).toHaveBeenCalled()
+    expect(document.getElementById('addon-h-checks')).not.toBeNull()
+  })
+  it('edits in place: Save changes and Cancel side by side, an unsaved-changes mark, saving returns to reading', async () => {
+    const { user, container } = renderApp('/addon/wiki/pages', { viewer: 'p_sev' })
+    await openPage(user, 'On-call runbook')
+    await screen.findByRole('heading', { name: 'On-call runbook' }, T)
+    expect(screen.queryByLabelText('Markdown')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Edit page' }))
     const body = await screen.findByLabelText('Markdown', {}, T)
+    expect(screen.queryByRole('button', { name: 'Edit page' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Done editing' })).not.toBeInTheDocument()
+    const save = screen.getByRole('button', { name: 'Save changes' })
+    expect(save.parentElement).toBe(screen.getByRole('button', { name: 'Cancel' }).parentElement)
+    expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument()
     await user.clear(body)
     await user.type(body, 'Page the secondary after 15 minutes.')
-    await user.click(screen.getByRole('button', { name: 'Save page' }))
-    await waitFor(() => expect(container.querySelector('.addon-md')).toHaveTextContent('Page the secondary after 15 minutes.'), T)
+    expect(await screen.findByText('Unsaved changes')).toBeInTheDocument()
+    await user.click(save)
+    await waitFor(() => expect(container.textContent).toContain('Page the secondary after 15 minutes.'), T)
+    expect(screen.queryByLabelText('Markdown')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Edit page' })).toBeInTheDocument()
   })
-  it('searches the list', async () => {
+  it('leaving with unsaved edits asks first: All pages and Cancel both do; Keep editing stays', async () => {
+    const { user } = renderApp('/addon/wiki/pages', { viewer: 'p_sev' })
+    await openPage(user, 'Glossary')
+    await user.click(await screen.findByRole('button', { name: 'Edit page' }, T))
+    const body = await screen.findByLabelText('Markdown', {}, T)
+    await user.type(body, ' more')
+    await user.click(screen.getByRole('button', { name: 'All pages' }))
+    const ask = await screen.findByRole('alertdialog', {}, T)
+    expect(ask).toHaveTextContent(/unsaved edits/)
+    await user.click(within(ask).getByRole('button', { name: 'Cancel' }))
+    expect((screen.getByLabelText('Markdown') as HTMLTextAreaElement).value).toContain('more')
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    await user.click(await within(await screen.findByRole('alertdialog')).findByRole('button', { name: 'Discard changes' }))
+    await waitFor(() => expect(screen.queryByLabelText('Markdown')).not.toBeInTheDocument(), T)
+    expect(screen.getByRole('heading', { name: 'Glossary' })).toBeInTheDocument()
+  })
+  it('Cancel without edits leaves at once, without asking', async () => {
+    const { user } = renderApp('/addon/wiki/pages', { viewer: 'p_sev' })
+    await openPage(user, 'Glossary')
+    await user.click(await screen.findByRole('button', { name: 'Edit page' }, T))
+    await screen.findByLabelText('Markdown', {}, T)
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByLabelText('Markdown')).not.toBeInTheDocument(), T)
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  })
+  it('searches in one inline field; a search with no match offers Clear search', async () => {
     const { user } = renderApp('/addon/wiki/pages', { viewer: 'p_sev' })
     await screen.findByText('On-call runbook', {}, T)
-    await user.type(screen.getByLabelText('Search'), 'glossary')
+    await user.type(screen.getByLabelText('Search pages'), 'glossary')
     await user.click(screen.getByRole('button', { name: 'Search' }))
     await waitFor(() => expect(screen.queryByText('On-call runbook')).not.toBeInTheDocument(), T)
     expect(screen.getAllByText('Glossary').length).toBeGreaterThan(0)
+    expect(screen.getByRole('tab', { name: /Pages\s*7/ })).toBeInTheDocument()
+    await user.clear(screen.getByLabelText('Search pages'))
+    await user.type(screen.getByLabelText('Search pages'), 'zzzz')
+    await user.click(screen.getByRole('button', { name: 'Search' }))
+    expect(await screen.findByText('No pages match "zzzz".', {}, T)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Clear search' }))
+    expect(await screen.findByText('On-call runbook', {}, T)).toBeInTheDocument()
   })
-  it('renders the imported page inert: no script, no handlers, no javascript: or data: links', async () => {
+  it('New page (members): a title creates the page and opens it for editing', async () => {
+    const { user } = renderApp('/addon/wiki/pages', { viewer: 'p_sev' })
+    await user.click(await screen.findByRole('button', { name: 'New page' }, T))
+    await user.type(await screen.findByLabelText(/^Page title/, {}, T), 'Release checklist')
+    await user.click(screen.getByRole('button', { name: 'Create page' }))
+    expect(await screen.findByLabelText('Markdown', {}, T)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeInTheDocument()
+  })
+  it('renders the imported page inert: no script, no handlers, no javascript: or data: links, no ids from the addon', async () => {
     const { user, container } = renderApp('/addon/wiki/pages', { viewer: 'p_sev' })
-    const item = (await screen.findByText('Imported from old wiki', {}, T)).closest('li')!
-    await user.click(within(item).getByRole('button', { name: 'Open' }))
+    await openPage(user, 'Imported from old wiki')
     await screen.findByRole('heading', { name: 'Imported from old wiki' }, T)
     await waitFor(() => expect(screen.getByText('x')).toBeInTheDocument(), T)
     const md = container.querySelector('.addon-md')!
@@ -41,25 +138,20 @@ describe('wiki page', () => {
     expect(md.innerHTML).not.toMatch(/javascript:|data:text/i)
     for (const a of md.querySelectorAll('a')) expect(a.getAttribute('href')).toMatch(/^https?:\/\//)
   })
-  it('shows the page title and who edited it last above the text', async () => {
-    renderApp('/addon/wiki/pages', { viewer: 'p_sev' })
-    expect(await screen.findByText(/^by Mara · updated \d+d ago$/, {}, T)).toBeInTheDocument()
-  })
-  it('a viewer can open pages and search, but the edit form is read-only', async () => {
+  it('a viewer can open pages and search, but has no New page and Edit page is disabled', async () => {
     const { user } = renderApp('/addon/wiki/pages', { viewer: 'p_tom' })
-    const item = (await screen.findByText('Glossary', {}, T)).closest('li')!
-    const open = within(item).getByRole('button', { name: 'Open' })
-    await waitFor(() => expect(open).toBeEnabled(), T)
-    await user.click(open)
+    await screen.findByRole('button', { name: 'Glossary' }, T)
+    expect(screen.queryByRole('button', { name: 'New page' })).not.toBeInTheDocument()
+    await openPage(user, 'Glossary')
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Glossary' })).toBeInTheDocument(), T)
-    expect(screen.getByRole('button', { name: 'Search' })).toBeEnabled()
-    expect(screen.getByLabelText('Markdown')).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Save page' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Edit page' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'All pages' })).toBeEnabled()
+    expect(screen.queryByLabelText('Markdown')).not.toBeInTheDocument()
   })
 })
 
 describe('wiki viewer actions follow the installed version', () => {
-  it('an installed update that removed the viewer search action disables Search for a viewer, Open stays enabled', async () => {
+  it('an installed update that removed the viewer search action disables Search for a viewer, opening a page stays enabled', async () => {
     renderApp('/addon/wiki/pages', {
       viewer: 'p_tom',
       setup: (s) => {
@@ -67,8 +159,8 @@ describe('wiki viewer actions follow the installed version', () => {
         w.update = { version: w.version, capabilities: [], package_sha256: w.package_sha256, changelog: 'x', actions: { save_settings: { minRole: 'owner' }, open: { minRole: 'viewer', label: 'Open page' } } }
       },
     })
-    const item = (await screen.findByText('Glossary', {}, T)).closest('li')!
-    await waitFor(() => expect(within(item).getByRole('button', { name: 'Open' })).toBeEnabled(), T)
+    const open = await screen.findByRole('button', { name: 'Glossary' }, T)
+    await waitFor(() => expect(open).toBeEnabled(), T)
     await waitFor(() => expect(screen.getByRole('button', { name: 'Search' })).toBeDisabled(), T)
   })
 })

@@ -55,6 +55,8 @@ export interface RunOptions {
    * toast it. Surfaces without room for that (the palette, lanes, the ticket header) leave this off and get an error toast.
    */
   inlineErrors?: boolean
+  /** Called once an action of this hook went through (a form in a popover closes the popover). */
+  onSuccess?: () => void
 }
 
 /** Why an action is not allowed for `role`, in plain words (null when it is). */
@@ -120,6 +122,7 @@ export function useRunAddonAction(ticket?: string, opts: RunOptions = {}): RunAd
     onMutate: () => setError(null),
     onSuccess: (res, { addon, action, extra }) => {
       openResultUrl(res)
+      opts.onSuccess?.()
       // Navigation moves only this viewer's view: no toast, and only this addon's state is read again.
       if (meta(addon, action)?.kind === 'navigation') {
         void qc.invalidateQueries({ queryKey: addonStateKey(workspace?.id, addon) })

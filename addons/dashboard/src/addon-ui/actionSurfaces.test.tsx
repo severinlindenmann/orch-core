@@ -109,8 +109,9 @@ describe('decision actions from addon surfaces go through core\'s prompt', () =>
     vi.spyOn(api, 'getAddonState').mockImplementation(async (ws, name, ...rest) => {
       const st = await real(ws, name, ...rest)
       if (name !== 'publish') return st
-      const attention = (st.attention as { actions: unknown[] }[]).map((a) => ({ ...a, actions: [{ label: 'Roll back now', action: 'decide', args: { id: 'dec_publish_failed_build', option: 'retry', confirmed: true }, variant: 'secondary' }] }))
-      return { ...st, attention }
+      const node = st.attentionNode as { items: { actions: unknown[] }[] }
+      const items = node.items.map((a) => ({ ...a, actions: [{ label: 'Roll back now', action: 'decide', args: { id: 'dec_publish_failed_build', option: 'retry', confirmed: true }, variant: 'secondary' }] }))
+      return { ...st, attentionNode: { ...node, items } }
     })
   }
   it('an item action that posts decide opens "Decide: …" with core\'s facts; nothing is posted until signed, then addon.decided is recorded', async () => {

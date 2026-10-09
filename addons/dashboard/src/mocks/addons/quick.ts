@@ -133,12 +133,13 @@ registerAddon({
         q.status === 'open'
           ? [
               // No Claim button: agents claim a task (the `claim` action stays for them); a person makes a ticket or waits.
-              { label: 'Make a ticket', action: 'make_ticket', args: { id: q.id }, variant: 'secondary' as const },
+              // An ordinary task is for an agent to pick up; making a ticket of it is the quiet way out.
+              { label: 'Make a ticket', action: 'make_ticket', args: { id: q.id }, variant: 'ghost' as const },
             ]
           : q.status === 'claimed'
             ? [{ label: 'Close with proof', action: 'start_close', args: { id: q.id }, variant: 'secondary' as const }]
             : q.status === 'outgrew'
-              ? [{ label: 'Make a ticket', action: 'make_ticket', args: { id: q.id }, variant: 'secondary' as const }]
+              ? [{ label: 'Make a ticket', action: 'make_ticket', args: { id: q.id }, variant: 'secondary' as const, primary: true }]
               : undefined
       const detail =
         q.status === 'outgrew'
@@ -177,6 +178,13 @@ registerAddon({
       items,
       settings: s,
       list: items.map(row),
+      // The tabs: Open = open, claimed and outgrew; Done = done and made into a ticket.
+      // The oversized one first: it is the one that needs a person.
+      openList: [...items.filter((q) => q.status === 'outgrew'), ...items.filter((q) => q.status === 'open' || q.status === 'claimed')].map(row),
+      summaryLine: `${count('open')} waiting for an agent · ${count('claimed')} in progress · ${count('outgrew')} should become a ticket`,
+      doneList: items.filter((q) => q.status === 'done' || q.status === 'converted').map(row),
+      openTotal: items.filter((q) => q.status === 'open' || q.status === 'claimed' || q.status === 'outgrew').length,
+      doneTotal: items.filter((q) => q.status === 'done' || q.status === 'converted').length,
       closePanel,
       open: count('open'),
       claimed: count('claimed'),

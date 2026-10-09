@@ -326,6 +326,8 @@ registerAddon({
       children,
       permits,
       permitRows,
+      openPermits: open,
+      childCount: children.length,
       permitsLine: open
         ? canAnswer
           ? `${open} waiting for you: Grant once, Grant for this epic or Refuse.`
@@ -333,6 +335,18 @@ registerAddon({
         : 'Nothing waiting. Agents ask here when they need a permission they do not hold.',
       // Core draws and signs each open permit in place (decision nodes); Today lists the same decisions.
       permitNodes: { type: 'stack', children: canAnswer ? permits.filter((p) => p.state === 'open').slice(0, MAX_PERMITS_SHOWN).map((p) => ({ type: 'decision', id: `factory.permit:${p.id}` })) : [] },
+      // What waits for a person sits above the tabs, never behind one: open permits as core's decision rows (core signs).
+      attentionNode:
+        open > 0 && canAnswer
+          ? {
+              type: 'stack',
+              children: [
+                { type: 'markdown', text: `**${open === 1 ? '1 permission request needs' : `${open} permission requests need`} your decision**` },
+                ...permits.filter((p) => p.state === 'open').slice(0, MAX_PERMITS_SHOWN).map((p) => ({ type: 'decision', id: `factory.permit:${p.id}` })),
+              ],
+            }
+          : { type: 'stack', children: [] },
+      permitCount: permits.length,
       demoAlert,
       budgetAlert,
       report,

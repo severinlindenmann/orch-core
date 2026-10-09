@@ -27,7 +27,7 @@ interface Row {
 }
 interface State {
   rows: Row[]
-  items: { title: string; subtitle?: string; badge?: string; actions?: { label: string; action: string; args?: Record<string, unknown> }[] }[]
+  scheduleRows: { id: string; name: string; state: string; timing: string; next: string; last: string; outcome: string; enabled: boolean }[]
   runs: { id: string; schedule: string; result: string }[]
   runItems: { title: string; subtitle?: string }[]
   report: string
@@ -83,7 +83,7 @@ describe('arming', () => {
   it('arming shows the next run; a listener waits for the next event', async () => {
     const s = setup()
     expect((await row(s, 'smoke-on-testing')).armed).toBe(false)
-    expect((await row(s, 'smoke-on-testing')).next).toBe('not armed')
+    expect((await row(s, 'smoke-on-testing')).next).toBe('disabled')
     await run(s, 'arm', { id: 'smoke-on-testing', confirmed: true })
     const r = await row(s, 'smoke-on-testing')
     expect(r.armed).toBe(true)
@@ -92,16 +92,18 @@ describe('arming', () => {
   it('disarming clears the next run, arming again starts from now', async () => {
     const s = setup()
     await run(s, 'disarm', { id: 'check-inbox', confirmed: true })
-    expect(await row(s, 'check-inbox')).toMatchObject({ armed: false, next: 'not armed' })
+    expect(await row(s, 'check-inbox')).toMatchObject({ armed: false, next: 'disabled' })
     vi.advanceTimersByTime(2 * 60 * 60 * 1000)
     await run(s, 'arm', { id: 'check-inbox', confirmed: true })
     expect((await row(s, 'check-inbox')).next).toBe('Fri 14:00 UTC')
   })
-  it('the list shows Arm for an unarmed schedule and Disarm for an armed one, plus Run now', async () => {
-    const { items } = await state(setup())
-    const acts = (title: string) => items.find((i) => i.title.startsWith(title))!.actions!.map((a) => a.label)
-    expect(acts('Smoke test on testing')).toEqual(['Arm'])
-    expect(acts('Check inbox')).toEqual(['Run now', 'Disarm'])
+  it('the table says Enabled or Disabled and keeps timing, next run, last run and result in their own columns', async () => {
+    const { scheduleRows } = await state(setup())
+    const by = (name: string) => scheduleRows.find((r) => r.name === name)!
+    expect(by('Smoke test on testing')).toMatchObject({ state: 'Disabled', enabled: false, next: '–', last: 'never', outcome: '–' })
+    expect(by('Check inbox')).toMatchObject({ state: 'Enabled', enabled: true, last: 'Fri 09 Oct 11:00 UTC', outcome: 'quiet' })
+    expect(by('Check inbox').timing).toContain('every 1 h')
+    expect(by('Check inbox').timing).not.toContain('armed')
   })
   it('an unknown schedule is refused', async () => {
     expect(await fail(run(setup(), 'arm', { id: 'nope', confirmed: true }))).toBe('404 not_found')
@@ -191,9 +193,9 @@ describe('a recurring finding lands on Today', () => {
 
 describe('review fixes', () => {
   it('each schedule shows its last run', async () => {
-    const { items } = await state(setup())
-    expect(items.find((i) => i.title === 'Check inbox')!.subtitle).toContain('last: Fri 09 Oct 11:00 UTC, quiet')
-    expect(items.find((i) => i.title === 'Smoke test on testing')!.subtitle).toContain('last: never')
+    const { scheduleRows } = await state(setup())
+    expect(scheduleRows.find((r) => r.name === 'Check inbox')).toMatchObject({ last: 'Fri 09 Oct 11:00 UTC', outcome: 'quiet' })
+    expect(scheduleRows.find((r) => r.name === 'Smoke test on testing')).toMatchObject({ last: 'never' })
   })
   it('arm and disarm leave a core record, and the schedule remembers who disarmed', async () => {
     const s = setup('p_mara')

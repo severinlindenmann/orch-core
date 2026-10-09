@@ -337,6 +337,7 @@ export function DecisionRow({
   onToggle,
   decider,
   inlineErrors,
+  inline = false,
 }: {
   d: AddonDecision
   readOnly: boolean
@@ -347,6 +348,8 @@ export function DecisionRow({
   expanded?: boolean
   onToggle?: () => void
   decider?: string
+  /** On an addon's own page (already framed with [A]): no second badge or hairline, always open, no Decide button. */
+  inline?: boolean
 }) {
   const [own, setOwn] = useState(false)
   const expanded = controlled ?? own
@@ -354,14 +357,14 @@ export function DecisionRow({
   return (
     <RowShell
       testId={`card-addon:${d.id}`}
-      addon
-      icon={<AddonBadge name={addonTitle ?? d.addon} className="size-3.5 text-[9px]" />}
+      addon={!inline}
+      icon={inline ? null : <AddonBadge name={addonTitle ?? d.addon} className="size-3.5 text-[9px]" />}
       ask={d.question}
       sub={d.ticket ? <TicketLine ticket={d.ticket} title={ticketTitle ?? d.title} /> : <span>{d.title}</span>}
-      expanded={expanded}
-      onToggle={readOnly ? undefined : toggle}
+      expanded={inline || expanded}
+      onToggle={readOnly || inline ? undefined : toggle}
       action={
-        readOnly ? (
+        inline && !readOnly ? null : readOnly ? (
           decider ? <Decides who={decider} /> : null
         ) : (
           <Button size="sm" variant="outline" aria-expanded={expanded} onClick={toggle}>

@@ -2,7 +2,7 @@ import { addonActive } from '@/api/addons'
 import { briefs, scaled, scaleOf } from '../busy/helpers'
 import type { Rng } from '../busy/rng'
 import type { MockStore } from '../store'
-import { conflict, invalid, notFound, registerAddon, type AddonCtx } from './registry'
+import { canSeeTicket, conflict, invalid, notFound, registerAddon, type AddonCtx } from './registry'
 
 // worktrees: one git worktree per ticket and repo (the git commands run in the host; here it is plain state).
 //  - Path `wt/<ticket>-<repo>` (repo = the name after the owner), branch `feat/<ticket-slug>`; the id is the path.
@@ -59,7 +59,8 @@ const seedDemo = (): Worktree[] => [
 const list = (state: Record<string, unknown>) => state.worktrees as Worktree[]
 const plural = (n: number) => `${n} changed file${n === 1 ? '' : 's'}`
 /** A worktree is shown and acted on only when its ticket is in this workspace and visible to the caller. */
-const canSee = (c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>, w: Worktree) => c.store.workspaceOf(w.ticket)?.id === c.ws && c.store.isVisible(w.ticket, c.viewer)
+/** A worktree is shown and acted on only when its ticket is one the viewer can see in this workspace (core's rule). */
+const canSee = (c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>, w: Worktree) => canSeeTicket(c, w.ticket)
 const nameOf = (c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>) => c.store.workspaces.find((w) => w.id === c.ws)?.members.find((m) => m.person === c.viewer)?.name ?? c.viewer
 
 /** Busy day: 20 worktrees in DEMO (16 more, from tickets in progress, in testing or just finished; a third of that elsewhere). */
@@ -127,7 +128,7 @@ registerAddon({
   },
   actions: {
     add(ctx) {
-      const { store, ws, state } = ctx
+      const { store, state } = ctx
       const f = (ctx.body.formData ?? {}) as { ticket?: unknown; repo?: unknown; base?: unknown }
       const ticket = ctx.ticket ?? (typeof f.ticket === 'string' ? f.ticket : undefined)
       const repo = typeof f.repo === 'string' ? f.repo : ''
@@ -135,7 +136,7 @@ registerAddon({
       if (!ticket || !repo) return invalid('Pick a ticket and a repository.')
       if (!REPOS.includes(repo)) return invalid(`${repo} is not a repository of this workspace.`)
       if (!/^[A-Za-z0-9._/-]{1,60}$/.test(base)) return invalid('That is not a valid branch name.')
-      const doc = store.hasTicket(ticket) && store.workspaceOf(ticket)?.id === ws && store.isVisible(ticket) ? store.ticket(ticket) : undefined
+      const doc = canSeeTicket(ctx, ticket) ? store.ticket(ticket) : undefined
       if (!doc) return notFound(`No ticket ${ticket}`)
       const path = `wt/${ticket}-${short(repo)}`
       if (list(state).some((w) => w.id === path)) return conflict('worktrees.exists', `${ticket} already has a worktree in ${short(repo)}.`)

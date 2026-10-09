@@ -47,9 +47,9 @@ const nameOf = (ctx: Pick<AddonCtx, 'store' | 'ws'>, person: string) => ctx.stor
 const visibleTo = (c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>, s: Session) => (s.kind === 'agent' || s.owner === c.viewer) && (!s.ticket || canSeeTicket(c, s.ticket))
 
 function shellCtx(c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>, s: Session): ShellCtx {
-  const { store, ws, viewer } = c
+  const { store, ws } = c
   // A ticket reaches the shell only if it belongs to THIS workspace and the viewer may see it.
-  const doc = s.ticket && store.hasTicket(s.ticket) && store.workspaceOf(s.ticket)?.id === ws && store.isVisible(s.ticket, viewer) ? store.ticket(s.ticket) : undefined
+  const doc = s.ticket && canSeeTicket(c, s.ticket) ? store.ticket(s.ticket) : undefined
   const forPerson = s.kind === 'agent' ? (s.for ?? '') : s.owner
   const g = store.grants(ws).find((x) => x.person === forPerson && !x.revoked && x.until > store.now())
   const next = doc?.tasks_state.find((t) => t.state === 'doing' || t.state === 'todo')

@@ -55,3 +55,16 @@ describe('refusal guard (refusals are 4xx with a code, never a success)', () => 
     expect(hits).toEqual([])
   })
 })
+
+describe('ticket visibility guard (one rule for addon modules)', () => {
+  it('addon modules ask canSeeTicket, never store.isVisible directly', () => {
+    const hits: string[] = []
+    for (const { file, text } of FILES) {
+      if (!file.startsWith('mocks/addons/') || file === 'mocks/addons/registry.ts') continue
+      text.split('\n').forEach((line, i) => {
+        if (/\.isVisible\(/.test(line)) hits.push(`${file}:${i + 1}: ${line.trim().slice(0, 140)}`)
+      })
+    }
+    expect(hits).toEqual([])
+  })
+})

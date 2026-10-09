@@ -146,7 +146,7 @@ function AddMember({ workspaceId, members, onSubmit, onClose }: { workspaceId: s
             />
             {shown && (
               <ul id={listId} role="listbox" aria-label="People" className="absolute inset-x-0 z-10 mt-1 max-h-48 overflow-y-auto rounded-md border border-border bg-surface p-1 shadow-lg">
-                {options.length === 0 && <li className="px-2 py-1.5 text-[13px] text-text-faint">{needle ? 'Nobody known matches. A full email address adds a new person.' : 'Everyone known is already a member.'}</li>}
+                {options.length === 0 && <li className="px-2 py-1.5 text-[13px] text-text-faint">{needle ? 'Nobody in your directory matches.' : 'Everyone known is already a member.'}</li>}
                 {options.map((p, i) => (
                   <li
                     key={p.person}

@@ -61,3 +61,19 @@ export function gateSignedContent(gate: 'requirements' | 'plan', t: GateSource, 
     ],
   }
 }
+
+/** How many people could ever approve under `approvers`, or null when it depends on each ticket (its reviewers). */
+function eligibleCount(members: { role: string }[], approvers: string): number | null {
+  if (approvers === 'owner') return members.filter((m) => m.role === 'owner').length
+  if (approvers === 'maintainer') return members.filter((m) => m.role === 'owner' || m.role === 'maintainer').length
+  return null
+}
+
+/** "Only 1 owner exists; 2 approvals from owners can never be met." or null when the policy can be met. The host applies the same rule. */
+export function unmeetablePolicy(workspace: { members: { role: string }[] }, p: Pick<GatePolicy, 'approvers' | 'count'>): string | null {
+  const n = eligibleCount(workspace.members, p.approvers)
+  if (n === null || p.count <= n) return null
+  const group = approversText(p.approvers)
+  const one = p.approvers === 'owner' ? 'owner' : 'owner or maintainer'
+  return `Only ${n} ${n === 1 ? one : group} ${n === 1 ? 'exists' : 'exist'}; ${p.count} approvals from ${group} can never be met.`
+}

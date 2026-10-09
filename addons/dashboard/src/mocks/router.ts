@@ -4,7 +4,7 @@ import type { ActionRequest, AddonOpRequest, GateName, Role, SettingsRequest, Wo
 import { STATUSES } from '@/api/types'
 import type { MockStore } from './store'
 import { can } from '@/api/permissions'
-import { APPROVER_GROUPS } from '@/api/gates'
+import { APPROVER_GROUPS, unmeetablePolicy } from '@/api/gates'
 import { addonActive } from '@/api/addons'
 import peopleFixture from './fixtures/people.json'
 
@@ -293,6 +293,8 @@ function postSettings(store: MockStore, ctx: RouteContext): TransportResponse {
       if (!APPROVER_GROUPS.some((a) => a.value === b.approvers)) return fail(400, 'validation.approvers', `Unknown approvers ${String(b.approvers)}`)
       if (!Number.isInteger(b.count) || b.count < 1 || b.count > 3) return fail(400, 'validation.count', 'A gate needs 1 to 3 approvals.')
       if (b.not != null && b.not !== 'assignees') return fail(400, 'validation', 'Only "assignees" can be excluded.')
+      const why = unmeetablePolicy(ws, { approvers: b.approvers, count: b.count })
+      if (why) return fail(409, 'gate.unmeetable', why, 'Add people to that group first, or lower the count.')
       store.appendWs(wsId, { type: 'gate.policy_set', gate: b.gate, approvers: b.approvers, count: b.count, not: b.not ?? null })
       return done()
     }
@@ -314,8 +316,14 @@ export function buildRouter(): MockRouter {
       return h(s, c)
     })
   r.add('GET', '/api/me', (s) => ok(s.me()))
-  r.add('GET', '/api/people', () => ok(peopleFixture))
   r.add('GET', '/api/workspaces', (s) => ok(s.workspaceList()))
+  // Who an owner can add: the registry plus the people already in the caller's workspaces. Owners only (names and emails).
+  readOf('/api/workspaces/:ws/people', (s, c) => {
+    if (!can(s.roleIn(c.params.ws, s.viewer), 'settings')) return fail(403, 'forbidden', 'Only owners see the people directory.', 'Ask an owner.')
+    const people = [...peopleFixture]
+    for (const w of s.workspaces) if (s.roleIn(w.id, s.viewer)) for (const m of w.members) if (!people.some((p) => p.person === m.person)) people.push({ person: m.person, name: m.name, email: '' })
+    return ok(people)
+  })
   readOf('/api/workspaces/:ws/today', (s, c) =>
     ok(s.today(c.params.ws)),
   )

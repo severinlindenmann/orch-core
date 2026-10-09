@@ -69,10 +69,24 @@ describe('app shell', () => {
     const more = await within(nav).findByRole('button', { name: /More addons \(\d+\)/ })
     const links = within(nav).getAllByRole('link').filter((l) => l.getAttribute('href')?.startsWith('/addon/'))
     expect(links.length).toBeLessThanOrEqual(6)
-    const icons = links.map((l) => l.querySelector('[data-icon]')?.getAttribute('data-icon'))
+    // The resolved icon component draws a lucide-<name> class: two addons sharing one icon would share it.
+    const icons = links.map((l) => [...(l.querySelector('svg')?.classList ?? [])].find((c) => /^lucide-/.test(c) && c !== 'lucide'))
+    expect(icons.every(Boolean)).toBe(true)
     expect(new Set(icons).size).toBe(icons.length)
     await user.click(more)
     expect((await screen.findAllByRole('img', { name: /From addon:|From the .* addon/ })).length).toBeGreaterThan(links.length)
+  })
+
+  it('Move ticket to… on the board offers the focused card and leaves out its current status', async () => {
+    const { user } = renderApp('/board')
+    const card = await screen.findByTestId('card-DEMO-0043', {}, { timeout: 15000 })
+    card.focus()
+    await user.keyboard('{Control>}k{/Control}')
+    await user.click(await screen.findByText('Move DEMO-0043 to…'))
+    const status = card.getAttribute('data-status')!
+    const labels = (await screen.findAllByRole('option')).map((o) => o.textContent)
+    expect(labels.length).toBeGreaterThan(0)
+    expect(labels).not.toContain({ backlog: 'Backlog', open: 'Open', 'in-progress': 'In progress', waiting: 'Waiting', testing: 'Testing' }[status])
   })
 
   it('Today has an accessible name with its count', async () => {

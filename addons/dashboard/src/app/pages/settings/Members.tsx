@@ -53,15 +53,9 @@ const ADD_ROLE_HELP: Record<Exclude<Role, 'owner'>, string> = {
 const ADD_ROLES = Object.keys(ADD_ROLE_HELP) as Exclude<Role, 'owner'>[]
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
-/** "ida@x.org" has no person id yet: the mock derives one from the part before the @. */
-function fromEmail(email: string): KnownPerson {
-  const local = email.split('@')[0]
-  return { person: `p_${local.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`, name: local.charAt(0).toUpperCase() + local.slice(1), email }
-}
-
 /** Add by name or email: a combobox over the people this device knows. Enter adds the highlighted person (or the one chosen). */
-function AddMember({ members, onSubmit, onClose }: { members: Workspace['members']; onSubmit: (v: { person: string; name: string; email: string; role: Exclude<Role, 'owner'> }) => void; onClose: () => void }) {
-  const known = useQuery({ queryKey: ['people'], queryFn: () => api.listPeople() })
+function AddMember({ workspaceId, members, onSubmit, onClose }: { workspaceId: string; members: Workspace['members']; onSubmit: (v: { person: string; name: string; email: string; role: Exclude<Role, 'owner'> }) => void; onClose: () => void }) {
+  const known = useQuery({ queryKey: ['people', workspaceId], queryFn: () => api.listPeople(workspaceId) })
   const [text, setText] = useState('')
   const [chosen, setChosen] = useState<KnownPerson | null>(null)
   const [open, setOpen] = useState(false)
@@ -84,9 +78,9 @@ function AddMember({ members, onSubmit, onClose }: { members: Workspace['members
   }
   const submit = () => {
     const typed = text.trim()
-    const who = chosen ?? (needle || arrowed.current ? options[active] : null) ?? (EMAIL.test(typed) ? fromEmail(typed) : null)
+    const who = chosen ?? (needle || arrowed.current ? options[active] : null) ?? (known.data ?? []).find((p) => p.email && p.email.toLowerCase() === typed.toLowerCase()) ?? null
     if (!who) {
-      setError(typed ? 'Nobody known matches that. Pick a person from the list or type an email address.' : 'Choose a person, or type an email address.')
+      setError(EMAIL.test(typed) ? 'No one with this email in your directory yet — inviting by email comes later.' : typed ? 'Nobody known matches that. Pick a person from the list or type an email address.' : 'Choose a person, or type an email address.')
       input.current?.focus()
       return
     }
@@ -123,6 +117,7 @@ function AddMember({ members, onSubmit, onClose }: { members: Workspace['members
               aria-expanded={shown}
               aria-controls={listId}
               aria-autocomplete="list"
+              aria-activedescendant={shown && options[active] ? `${listId}-${options[active].person}` : undefined}
               aria-invalid={!!error || undefined}
               aria-describedby={error ? 'member-person-error' : undefined}
               autoComplete="off"
@@ -155,6 +150,7 @@ function AddMember({ members, onSubmit, onClose }: { members: Workspace['members
                 {options.map((p, i) => (
                   <li
                     key={p.person}
+                    id={`${listId}-${p.person}`}
                     role="option"
                     aria-selected={i === active}
                     onMouseDown={(e) => e.preventDefault()}
@@ -313,13 +309,14 @@ export function Members({ workspace, viewer, canEdit }: { workspace: Workspace; 
 
       {adding && (
         <AddMember
+          workspaceId={workspace.id}
           members={workspace.members}
           onClose={() => setAdding(false)}
           onSubmit={(v) => {
             setAdding(false)
             ask({
               title: `Add ${v.name}`,
-              covers: [`Person: ${v.name} (${v.email})`, `Role: ${v.role}`, 'Joins this workspace now'],
+              covers: [`Person: ${v.name} (${v.email}, ${v.person})`, `Role: ${v.role}`, 'Joins this workspace now'],
               req: { op: 'member.add', person: v.person, name: v.name, role: v.role },
             })
           }}

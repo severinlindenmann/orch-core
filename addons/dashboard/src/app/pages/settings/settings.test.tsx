@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { api, mockStore } from '@/api/client'
+import { api, mockStore, resetMockStoreForTests } from '@/api/client'
 import { ApiError } from '@/api/types'
 import { installAndGrant } from '@/test/installAddon'
 import { renderApp } from '@/test/renderApp'
@@ -29,7 +29,7 @@ describe('Settings', () => {
     await user.click(screen.getByRole('button', { name: 'Plan: 2 approvals' }))
     await user.click(await screen.findByRole('button', { name: 'Sign and save' }))
     expect(await screen.findByText(/Plan needs 2 approvals/)).toBeInTheDocument()
-    expect(screen.getByText('Approvals already given stay valid; new approvals use the new policy.')).toBeInTheDocument()
+    expect(screen.getByText(/Approvals already given stay valid; new approvals use the new policy\. To re-review an approved ticket, request changes on it\./)).toBeInTheDocument()
   })
   it('Mara sees settings read-only', async () => {
     renderApp('/settings/members', { viewer: 'p_mara' })
@@ -162,6 +162,51 @@ describe('Settings', () => {
     expect(screen.getByText(/Maintainer: can approve plans and verdicts, cannot change settings/)).toBeInTheDocument()
     await user.keyboard('{Enter}')
     expect(await screen.findByRole('button', { name: 'Sign and save' })).toBeInTheDocument()
+  })
+  it('an email that is not in the directory is refused, a known one is found', async () => {
+    const { user } = renderApp('/settings/members')
+    await user.click(await screen.findByRole('button', { name: 'Add member' }))
+    await user.type(screen.getByRole('combobox', { name: 'Person' }), 'ida@other.org')
+    await user.click(screen.getByRole('button', { name: 'Add' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(/No one with this email in your directory yet/)
+    expect(screen.queryByRole('button', { name: 'Sign and save' })).toBeNull()
+    await user.clear(screen.getByRole('combobox', { name: 'Person' }))
+    await user.type(screen.getByRole('combobox', { name: 'Person' }), 'ida@example.test')
+    await user.click(screen.getByRole('button', { name: 'Add' }))
+    expect(await screen.findByText(/Ida \(ida@example.test, p_ida\)/)).toBeInTheDocument()
+  })
+  it('the people directory is for owners of a workspace they are in', async () => {
+    const ws = mockStore.workspaces[0].id
+    expect((await api.listPeople(ws)).some((p) => p.name === 'Ida')).toBe(true)
+    mockStore.setViewer('p_tom')
+    await expect(api.listPeople(ws)).rejects.toMatchObject({ status: 403 })
+    mockStore.setViewer('p_mara')
+    await expect(api.listPeople(ws)).rejects.toMatchObject({ status: 403 })
+    await expect(api.listPeople('nope')).rejects.toMatchObject({ status: 404 })
+  })
+  it('the host refuses a policy that can never be met, and an approval given before a stricter policy stays', async () => {
+    resetMockStoreForTests()
+    mockStore.setViewer('p_sev')
+    const ws = mockStore.workspaces[0].id
+    await expect(api.postSettings(ws, { op: 'gate.policy', gate: 'plan', approvers: 'owner', count: 2 })).rejects.toMatchObject({ status: 409 })
+    const key = 'DEMO-0044'
+    const t0 = await api.getTicket(key)
+    expect(t0.gates.plan.state).toBe('pending')
+    await api.postAction(key, { action: 'approve', gate: 'plan' })
+    expect((await api.getTicket(key)).gates.plan.state).toBe('approved')
+    await api.postSettings(ws, { op: 'gate.policy', gate: 'plan', approvers: 'maintainer', count: 2 })
+    expect((await api.getTicket(key)).gates.plan.state).toBe('approved')
+  })
+  it('"Affects N" counts tickets waiting at the gate, like Today', async () => {
+    const { user } = renderApp('/settings/gates')
+    const ws = mockStore.workspaces[0].id
+    const today = await api.getToday(ws)
+    const plans = today.needs_you.filter((i) => i.kind === 'approval' && i.ref === 'plan').length
+    expect(plans).toBeGreaterThan(0)
+    const section = (await screen.findByRole('heading', { name: 'Plan' })).closest('section')!
+    await screen.findByText(new RegExp(`Affects ${plans} open ticket`), {}, { timeout: 10000 })
+    expect(section.textContent).toMatch(new RegExp(`Affects ${plans} open ticket`))
+    void user
   })
   it('an empty Add member submit explains itself', async () => {
     const { user } = renderApp('/settings/members')

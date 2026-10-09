@@ -1,8 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api } from '@/api/client'
-import { APPROVER_GROUPS, approversText, policySentence } from '@/api/gates'
-import type { GateName, Status, Workspace } from '@/api/types'
+import { APPROVER_GROUPS, approversText, policySentence, unmeetablePolicy as unmeetable } from '@/api/gates'
+import type { GateName, Workspace } from '@/api/types'
 import { Section } from '../ticket/shared'
 import { cn } from '@/lib/utils'
 import { OwnerNote } from './OwnerNote'
@@ -15,26 +15,6 @@ const GATES: { id: GateName; label: string }[] = [
   { id: 'plan', label: 'Plan' },
   { id: 'verify', label: 'Verify' },
 ]
-
-/** The status a ticket waits in for each gate: backlog for requirements, open for the plan, testing for the verdict. */
-const WAITS_IN: Record<GateName, Status> = { requirements: 'backlog', plan: 'open', verify: 'testing' }
-
-/** How many people could ever approve, or null when the policy depends on each ticket (its reviewers). */
-function eligibleCount(workspace: Workspace, approvers: string): number | null {
-  if (approvers === 'owner') return workspace.members.filter((m) => m.role === 'owner').length
-  if (approvers === 'maintainer') return workspace.members.filter((m) => m.role === 'owner' || m.role === 'maintainer').length
-  return null
-}
-
-/** "Only 1 owner exists; 2 approvals from owners can never be met." or null when the policy can be met. */
-function unmeetable(workspace: Workspace, p: Policy): string | null {
-  const n = eligibleCount(workspace, p.approvers)
-  if (n === null || p.count <= n) return null
-  const group = approversText(p.approvers)
-  const one = p.approvers === 'owner' ? 'owner' : 'owner or maintainer'
-  const many = group
-  return `Only ${n} ${n === 1 ? one : many} ${n === 1 ? 'exists' : 'exist'}; ${p.count} approvals from ${group} can never be met.`
-}
 
 export function Gates({ workspace, canEdit }: { workspace: Workspace; canEdit: boolean }) {
   const { ask, prompt } = useSettingsSign(workspace.id)
@@ -65,11 +45,11 @@ export function Gates({ workspace, canEdit }: { workspace: Workspace; canEdit: b
     <div className="space-y-4">
       <div>
         <h2 className="text-base font-semibold">Gate policies</h2>
-        <p className="mt-1 text-[13px] text-text-muted">Approvals already given stay valid; new approvals use the new policy.</p>
+        <p className="mt-1 text-[13px] text-text-muted">Approvals already given stay valid; new approvals use the new policy. To re-review an approved ticket, request changes on it.</p>
       </div>
       {GATES.map(({ id, label }) => {
         const p = workspace.gates[id]
-        const waiting = tickets.data?.filter((t) => t.status === WAITS_IN[id]).length
+        const waiting = tickets.data?.filter((t) => t.awaiting_gate === id).length
         return (
           <Section key={id} title={label}>
             <p className="text-[13px]">{policySentence(label, p)}</p>

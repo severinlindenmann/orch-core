@@ -47,11 +47,11 @@ const RailContext = createContext(false)
 
 /** At most this many addons sit in the sidebar; the rest are under "More addons". */
 const MAX_PINNED = 6
-const PINS_KEY = (ws: string) => `orch.sidebar.pins.${ws}`
+const PINS_KEY = (person: string, ws: string) => `orch.sidebar.pins.${person}.${ws}`
 
-function readPins(ws: string): string[] | null {
+function readPins(person: string, ws: string): string[] | null {
   try {
-    const v: unknown = JSON.parse(localStorage.getItem(PINS_KEY(ws)) ?? 'null')
+    const v: unknown = JSON.parse(localStorage.getItem(PINS_KEY(person, ws)) ?? 'null')
     return Array.isArray(v) && v.every((x) => typeof x === 'string') ? v : null
   } catch {
     return null
@@ -62,15 +62,15 @@ function readPins(ws: string): string[] | null {
  * Which addon pages sit in the sidebar: the viewer's choice (kept per workspace in this browser), else the first
  * six by install order. The rest are reached through "More addons".
  */
-function usePinnedAddons(ws: string | undefined, all: string[]) {
-  const [stored, setStored] = useState<string[] | null>(() => (ws ? readPins(ws) : null))
-  useEffect(() => setStored(ws ? readPins(ws) : null), [ws])
+function usePinnedAddons(person: string | undefined, ws: string | undefined, all: string[]) {
+  const [stored, setStored] = useState<string[] | null>(() => (ws && person ? readPins(person, ws) : null))
+  useEffect(() => setStored(ws && person ? readPins(person, ws) : null), [person, ws])
   const pinned = (stored ? all.filter((k) => stored.includes(k)) : all).slice(0, MAX_PINNED)
   const toggle = (key: string) => {
     const next = pinned.includes(key) ? pinned.filter((k) => k !== key) : pinned.length < MAX_PINNED ? [...pinned, key] : pinned
     setStored(next)
     try {
-      if (ws) localStorage.setItem(PINS_KEY(ws), JSON.stringify(next))
+      if (ws && person) localStorage.setItem(PINS_KEY(person, ws), JSON.stringify(next))
     } catch {
       /* storage unavailable: the choice lasts for this page only */
     }
@@ -147,7 +147,7 @@ export function Sidebar() {
   const grantTime = grant?.until.slice(11, 16)
   const { railCollapsed: collapsed, toggleRail: toggle } = useShellState()
   const itemKey = (i: { addon: string; id: string }) => `${i.addon}/${i.id}`
-  const { pinned, toggle: togglePin, full } = usePinnedAddons(ws, navItems.map(itemKey))
+  const { pinned, toggle: togglePin, full } = usePinnedAddons(me?.person, ws, navItems.map(itemKey))
   const shown = navItems.filter((i) => pinned.includes(itemKey(i)))
   const [moreOpen, setMoreOpen] = useState(false)
   const pathname = useRouterState({ select: (s) => s.location.pathname })
@@ -165,7 +165,7 @@ export function Sidebar() {
       el.removeEventListener('scroll', read)
       window.removeEventListener('resize', read)
     }
-  })
+  }, [navItems.length, shown.length, collapsed])
 
   const link = cn(
     'flex items-center gap-2.5 rounded-md text-[13px] text-text-muted transition-colors hover:bg-surface-2 hover:text-text',

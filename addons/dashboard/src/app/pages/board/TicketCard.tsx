@@ -319,6 +319,8 @@ export function TicketCard({ ticket, people, me, task, canMove, display, variant
         {...(canMove ? attributes : {})}
         {...(canMove ? listeners : {})}
         data-testid={`card-${ticket.key}`}
+        data-ticket={ticket.key}
+        data-status={ticket.status}
         aria-label={`${ticket.key} ${ticket.title}`}
         tabIndex={0}
         role="button"

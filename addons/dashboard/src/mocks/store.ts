@@ -116,6 +116,14 @@ function fillDefinition(d: FixtureTicket['definition']): TicketDefinition {
 
 const itemKey = (i: NeedsYouItem) => `${i.kind}:${i.ticket}:${i.ref ?? ''}`
 
+/** The gate a ticket waits at: the rule Today's approval and verdict items use. */
+function awaitingGate(t: TicketDocument): GateName | null {
+  if (t.status === 'backlog' && t.gates.requirements.state === 'pending' && t.body.requirements && !/not refined/i.test(t.body.requirements)) return 'requirements'
+  if (t.status === 'open' && t.gates.plan.state === 'pending' && t.tasks.length > 0) return 'plan'
+  if (t.status === 'testing' && !t.verdict) return 'verify'
+  return null
+}
+
 export class MockStore {
   /** Workspaces with the workspace log folded in (derived; rebuilt by `refoldWorkspaces`). */
   workspaces: Workspace[] = []
@@ -370,6 +378,7 @@ export class MockStore {
       open_questions: open.length,
       blocking_questions: open.filter((q) => q.blocking).length,
       restricted: doc.restricted,
+      awaiting_gate: awaitingGate(doc),
       addons: doc.addons,
       updated_at: doc.updated_at,
     }

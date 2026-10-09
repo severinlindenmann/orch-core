@@ -50,7 +50,7 @@ export function CommandPalette() {
   const [signing, setSigning] = useState<HumanAction | null>(null)
   // "Move ticket to…" on the board: the ticket chosen (or the focused card when ⌘K was pressed on one).
   const [moveTarget, setMoveTarget] = useState<{ key: string; status?: Status } | null>(null)
-  const focusedCard = useRef<string | null>(null)
+  const focusedCard = useRef<{ key: string; status: Status } | null>(null)
   const { data: addons = [] } = useAddons()
   const addonNav = useSlot('nav')
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.getMe })
@@ -70,7 +70,8 @@ export function CommandPalette() {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault()
-        focusedCard.current = /^card-(.+)$/.exec((document.activeElement as HTMLElement | null)?.dataset?.testid ?? '')?.[1] ?? null
+        const d = (document.activeElement as HTMLElement | null)?.dataset
+        focusedCard.current = d?.ticket && d.status ? { key: d.ticket, status: d.status as Status } : null
         setPaletteOpen(!paletteOpen)
       }
     }
@@ -195,12 +196,12 @@ export function CommandPalette() {
       ? [
           {
             id: 'board-move',
-            label: focusedCard.current ? `Move ${focusedCard.current} to…` : 'Move ticket to…',
+            label: focusedCard.current ? `Move ${focusedCard.current.key} to…` : 'Move ticket to…',
             icon: <ArrowRightLeft />,
             run: () => {
               setQ('')
               if (focusedCard.current) {
-                setMoveTarget({ key: focusedCard.current })
+                setMoveTarget(focusedCard.current)
                 setMode('move')
               } else setMode('move-pick')
             },

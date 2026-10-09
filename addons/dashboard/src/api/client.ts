@@ -69,7 +69,7 @@ export function createApi(transport: Transport) {
 
   return {
     getMe: () => call<Me>('GET', '/api/me'),
-    listPeople: () => call<KnownPerson[]>('GET', '/api/people'),
+    listPeople: (ws: string) => call<KnownPerson[]>('GET', `/api/workspaces/${ws}/people`),
     getWorkspaces: () => call<Workspace[]>('GET', '/api/workspaces'),
     getToday: (workspaceId: string) => call<TodayDocument>('GET', `/api/workspaces/${workspaceId}/today`),
     getCursor: (workspaceId: string) => call<{ cursor: number }>('GET', `/api/workspaces/${workspaceId}/cursor`),

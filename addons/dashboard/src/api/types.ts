@@ -304,6 +304,8 @@ export interface TicketSummary {
   open_questions: number
   blocking_questions: number
   restricted: boolean
+  /** The gate this ticket waits at right now (same rule as Today's approval items), or null. */
+  awaiting_gate: GateName | null
   addons: Record<string, Record<string, unknown>>
   updated_at: string
   /** Set by list search (`q`) when a body section matched: the hit is wrapped in «». */

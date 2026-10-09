@@ -317,7 +317,7 @@ registerAddon({
       if (!x) return notFound('That drop no longer exists.')
       if (x.revoked) return { ok: true, message: `${x.name} is already revoked.` }
       x.revoked = true
-      event(c, x.ticket, 'drop.revoked', { name: x.name })
+      event(c, x.ticket, 'drop.revoked', { name: x.name, by: c.viewer })
       return { ok: true, message: `Revoked ${x.name}. It stops opening now; copies already downloaded stay where they are.`, changed: true }
     },
   },

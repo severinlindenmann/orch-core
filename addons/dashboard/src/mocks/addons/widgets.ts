@@ -1,25 +1,39 @@
-import { TEMPLATES, templateDigest } from '@/api/widgetTemplates'
+import { blockText, CATALOG, type CatalogEntry } from '@/api/widgetCatalog'
+import { findTemplate, TEMPLATES, templateDigest } from '@/api/widgetTemplates'
 import { registerAddon } from './registry'
 
 // widgets: rich ticket sections. The blocks themselves live in ticket text (format orch.widgets.v1) and are drawn by
-// core on the ticket page: the four core types without a script, templates and one-off pages in the sandboxed frame.
-// This addon is what turns the frame on (enabled and granted), and its page lists the templates with their pins. No state.
+// core on the ticket page: core types without a script, templates and one-off pages in the sandboxed frame. This
+// addon is what turns the frame on (enabled and granted), and its page is the gallery: every type with a rendered
+// example (a core-drawn `widget` node), its copyable source and where it is allowed. No state.
 
-const CORE_ROWS = [
-  { type: 'bars', shows: 'Horizontal labelled bars (label: number)' },
-  { type: 'table', shows: 'A table, scrolling inside its own box when long' },
-  { type: 'checks', shows: 'A verdict per acceptance criterion (the agent\'s check)' },
-  { type: 'kv', shows: 'Facts as label and value' },
-]
+const entry = (c: CatalogEntry) => {
+  const t = c.kind === 'template' ? findTemplate(c.ref) : undefined
+  const pin = t ? `\n\nPin (sha256): \`${templateDigest(t).slice(0, 12)}…\` · moment: ${t.moment}` : ''
+  return {
+    type: 'stack',
+    children: [
+      { type: 'markdown', text: `### ${c.title} · \`${c.ref}\`\n\n${c.shows}\n\n**Where it's allowed:** ${c.allowed}${pin}` },
+      { type: 'widget', block: blockText(c.example), source: true },
+    ],
+  }
+}
+
+const core = CATALOG.filter((c) => c.kind === 'core')
+const templates = CATALOG.filter((c) => c.kind === 'template')
 
 registerAddon({
   name: 'widgets',
   seed: () => ({}),
   view: () => ({
     templates: TEMPLATES.map((t) => ({ name: t.name, version: t.version, title: t.title, moment: t.moment, digest: templateDigest(t) })),
-    coreTypes: CORE_ROWS.map((c) => ({ type: c.type })),
-    templateRows: TEMPLATES.map((t) => ({ ref: `${t.name}@${t.version}`, title: t.title, moment: t.moment, pin: templateDigest(t).slice(0, 12) })),
-    coreRows: CORE_ROWS,
+    coreTypes: core.map((c) => ({ type: c.ref })),
+    gallery: [
+      { type: 'markdown', text: `## Core types (${core.length})\n\nDrawn by core: no script, colours from the dashboard palette, a text alternative behind "Show text".` },
+      ...core.map(entry),
+      { type: 'markdown', text: `## Templates (${templates.length})\n\nAgent HTML, reused: it runs in a sandboxed frame with no network and no navigation, marked with the orange A. Core checks each block's data before the frame gets it.` },
+      ...templates.map(entry),
+    ],
   }),
   actions: {},
 })

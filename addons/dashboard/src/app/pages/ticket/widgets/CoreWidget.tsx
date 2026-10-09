@@ -1,8 +1,9 @@
 import { Check, CircleHelp, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { MoreCoreWidget, moreText } from './CoreViews'
 import { barPairs, type WidgetSpec } from './parse'
 
-// The four core types, drawn by core: server-style HTML and inline SVG, no script, tokens only. Meaning is never by
+// The first four core types, drawn by core (the newer ones are in CoreViews.tsx): server-style HTML and inline SVG, no script, tokens only. Meaning is never by
 // colour alone (a word or glyph as well). Data was validated by parse.ts before it gets here.
 
 type Row = Record<string, unknown>
@@ -30,7 +31,7 @@ export function widgetText(spec: WidgetSpec): string {
     case 'kv':
       return head + Object.entries(f.items as Record<string, unknown>).map(([k, v]) => `${k}: ${fmt(v)}`).join('\n')
   }
-  return head
+  return head + (moreText(spec) ?? '')
 }
 
 export function CoreWidget({ spec }: { spec: WidgetSpec }) {
@@ -73,7 +74,7 @@ export function CoreWidget({ spec }: { spec: WidgetSpec }) {
         </dl>
       )
   }
-  return null
+  return <MoreCoreWidget spec={spec} />
 }
 
 const LABEL_W = 132

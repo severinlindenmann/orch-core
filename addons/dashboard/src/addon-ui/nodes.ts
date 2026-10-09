@@ -99,6 +99,12 @@ export const frameNode = z.object({
   height: z.number().int().min(80).max(1200).default(320),
 })
 export const terminalNode = z.object({ type: z.literal('terminal'), session: z.string().regex(/^[a-z0-9_-]{1,40}$/) })
+/**
+ * A ticket widget (format orch.widgets.v1) drawn by core: `block` is the JSON inside an `orch` fence, read by the same
+ * strict parser as ticket text (fail closed). Templates run in the sandboxed frame only while the widgets addon is
+ * active. `source: true` shows the block beside it with a Copy button (the widgets gallery).
+ */
+export const widgetNode = z.object({ type: z.literal('widget'), block: z.string().max(64 * 1024), source: z.boolean().default(false) })
 
 export const nodeSchema = z.discriminatedUnion('type', [
   stackNode,
@@ -116,6 +122,7 @@ export const nodeSchema = z.discriminatedUnion('type', [
   progressNode,
   frameNode,
   terminalNode,
+  widgetNode,
 ])
 
 export type AddonNodeData = z.output<typeof nodeSchema>

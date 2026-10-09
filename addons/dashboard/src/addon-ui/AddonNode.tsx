@@ -23,6 +23,8 @@ import { claimedReason } from './SpawnConfirm'
 const ThemedForm = lazy(() => import('./AddonForm'))
 // The whole terminal module (xterm included) loads on first use, so the main bundle does not grow.
 const TerminalView = lazy(() => import('@/app/terminal/TerminalView'))
+// Ticket widgets (parser, core types, template frames) load on first use too.
+const WidgetNodeView = lazy(() => import('@/app/pages/ticket/widgets/WidgetNode'))
 
 interface Runtime {
   addon: string
@@ -173,6 +175,12 @@ function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
       )
     case 'terminal':
       return <TerminalNode session={n.session} />
+    case 'widget':
+      return (
+        <Suspense fallback={<Skeleton className="h-24 w-full" />}>
+          <WidgetNodeView block={n.block} source={n.source} />
+        </Suspense>
+      )
     case 'link':
       return (
         <a href={n.href} target="_blank" rel="noopener noreferrer nofollow" className="inline-flex items-center gap-1 text-[13px] text-brand hover:underline">

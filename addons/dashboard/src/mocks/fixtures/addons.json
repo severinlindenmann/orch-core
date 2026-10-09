@@ -959,11 +959,8 @@
         "node": {
           "type": "stack",
           "children": [
-            { "type": "markdown", "text": "Agents put small visual blocks into the **Context**, **Current state** and **Verification** sections of a ticket. Core draws the four core types itself, without a script. Templates and one-off pages run only in a sandboxed frame that cannot reach this dashboard, the network or your files. Turning this addon off keeps the frames closed and shows each widget's text instead." },
-            { "type": "markdown", "text": "### Templates" },
-            { "type": "table", "columns": [{ "key": "ref", "label": "Template" }, { "key": "title", "label": "Shows" }, { "key": "moment", "label": "Moment" }, { "key": "pin", "label": "Pin (sha256)" }], "rows": { "$ref": "addon.templateRows" } },
-            { "type": "markdown", "text": "### Core types" },
-            { "type": "table", "columns": [{ "key": "type", "label": "Type" }, { "key": "shows", "label": "Shows" }], "rows": { "$ref": "addon.coreRows" } }
+            { "type": "markdown", "text": "Agents put small visual blocks into the **Context**, **Current state** and **Verification** sections of a ticket, as a fenced `orch` block of strict JSON. **Core types** are drawn by core itself, without a script. **Templates** run only in a sandboxed frame that cannot reach this dashboard, the network or your files, and only while this addon is on; each block pins its template by sha256. A block that breaks a rule is shown as plain words with Details, never half-drawn. Copy a source block into a ticket section to use it." },
+            { "type": "stack", "children": { "$ref": "addon.gallery" } }
           ]
         }
       }

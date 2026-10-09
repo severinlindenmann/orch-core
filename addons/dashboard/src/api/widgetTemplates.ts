@@ -3,6 +3,7 @@
 // reads its data from `orch.data`, builds its DOM with createElement/textContent only and never navigates. Pure data,
 // part of the API contract: the mock lists them (addon page), the ticket page draws them.
 import { sha256Hex } from './sha256'
+import { checkFlow, checkImageCompare, checkTableExplorer, FLOW, IMAGE_COMPARE, TABLE_EXPLORER } from './widgetTemplatesMore'
 
 export interface WidgetTemplate {
   name: string
@@ -15,6 +16,11 @@ export interface WidgetTemplate {
   libs: string[]
   /** The widget body: markup plus one script. */
   html: string
+  /**
+   * Core's strict check of a block's `data` before the frame gets it: a reason, or undefined when it fits. A template
+   * without one takes any object (its page reads defensively). Not part of the pin, like a schema in widgets.md.
+   */
+  check?: (data: Record<string, unknown>) => string | undefined
 }
 
 const BEFORE_AFTER = `<style>
@@ -136,6 +142,9 @@ export const TEMPLATES: WidgetTemplate[] = [
   { name: 'before-after', version: 1, title: 'Before / after slider', description: 'Two versions of the same text, revealed with a slider.', moment: 'review', minHeight: 200, libs: [], html: BEFORE_AFTER },
   { name: 'line-chart', version: 1, title: 'Line chart', description: 'A small line over x with a value label per point.', moment: 'understand', minHeight: 190, libs: [], html: LINE_CHART },
   { name: 'option-prototype', version: 1, title: 'Option prototype', description: 'Options with cost and risk that the reader can click through.', moment: 'decide', minHeight: 230, libs: [], html: OPTION_PROTOTYPE },
+  { name: 'image-compare', version: 1, title: 'Image compare', description: 'Two screenshots, a slider or side by side. Inline data: images only.', moment: 'review', minHeight: 240, libs: [], html: IMAGE_COMPARE, check: checkImageCompare },
+  { name: 'flow', version: 1, title: 'Flow', description: 'Boxes and arrows from a list of steps and links, left to right.', moment: 'understand', minHeight: 160, libs: [], html: FLOW, check: checkFlow },
+  { name: 'table-explorer', version: 1, title: 'Table explorer', description: 'A table the reader can sort and filter.', moment: 'debug', minHeight: 240, libs: [], html: TABLE_EXPLORER, check: checkTableExplorer },
 ]
 
 /** The pin: sha256 of the page, a NUL byte and the sorted libs as compact JSON (v1 widgets.md, "Pinned templates"). */

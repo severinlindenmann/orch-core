@@ -5,6 +5,7 @@ import { addonActive } from '@/api/addons'
 import { TEMPLATES, templateDigest } from '@/api/widgetTemplates'
 import { sha256Hex } from '@/api/sha256'
 import { createMockStore } from '@/mocks/store'
+import { CORE_TYPES } from '@/app/pages/ticket/widgets/parse'
 
 const setup = () => {
   const store = createMockStore({ persist: false })
@@ -24,7 +25,8 @@ describe('widgets addon (starts installed)', () => {
     const st = (await api.getAddonState(ws, 'widgets')) as unknown as { templates: { name: string; version: number; digest: string }[]; coreTypes: { type: string }[] }
     expect(st.templates.map((t) => `${t.name}@${t.version}`)).toEqual(expect.arrayContaining(['before-after@1', 'line-chart@1', 'option-prototype@1']))
     for (const t of st.templates) expect(t.digest).toMatch(/^[0-9a-f]{64}$/)
-    expect(st.coreTypes.map((c) => c.type)).toEqual(['bars', 'table', 'checks', 'kv'])
+    expect(st.coreTypes.map((c) => c.type).sort()).toEqual([...CORE_TYPES].sort())
+    expect(st.templates.map((t) => t.name)).toEqual(expect.arrayContaining(['image-compare', 'flow', 'table-explorer']))
   })
 })
 
@@ -38,6 +40,22 @@ describe('template registry', () => {
   it('template pages have no network or navigation hooks and use no innerHTML', () => {
     for (const t of TEMPLATES) {
       expect(t.html).not.toMatch(/\bfetch\s*\(|XMLHttpRequest|WebSocket|location\s*[.=]|window\.open|<a\s|<form|innerHTML|document\.write|src\s*=\s*["']?https?:/i)
+    }
+  })
+})
+
+describe('gallery state', () => {
+  it('is a list of nodes: two group headings, then per type a heading and a core-drawn widget node with its source', async () => {
+    const { api, ws } = setup()
+    const st = (await api.getAddonState(ws, 'widgets')) as unknown as { gallery: { type: string; children?: { type: string; block?: string; source?: boolean }[]; text?: string }[] }
+    const heads = st.gallery.filter((n) => n.type === 'markdown').map((n) => n.text!.split('\n')[0])
+    expect(heads).toEqual([`## Core types (${CORE_TYPES.length})`, `## Templates (${TEMPLATES.length})`])
+    const entries = st.gallery.filter((n) => n.type === 'stack')
+    expect(entries).toHaveLength(CORE_TYPES.length + TEMPLATES.length)
+    for (const e of entries) {
+      expect(e.children!.map((c) => c.type)).toEqual(['markdown', 'widget'])
+      expect(e.children![1].source).toBe(true)
+      expect(() => JSON.parse(e.children![1].block!)).not.toThrow()
     }
   })
 })

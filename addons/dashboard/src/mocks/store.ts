@@ -88,6 +88,19 @@ const wellFormed = (e: unknown): boolean => {
   const { kind, id } = actor as { kind?: unknown; id?: unknown }
   return typeof kind === 'string' && typeof id === 'string'
 }
+/**
+ * The saved addon states whose shape is still the module's (`stateVersion`); the rest are dropped and seeded again on
+ * first use. A browser that kept an older demo's state (e.g. usage per day under old model names) would otherwise
+ * feed today's view an old shape: NaN sums, and a Glance item that cannot be shown.
+ */
+function currentAddonStates(p: PersistedV2): PersistedV2['addonState'] {
+  const out: PersistedV2['addonState'] = {}
+  for (const [key, state] of Object.entries(p.addonState)) {
+    const name = key.slice(key.indexOf('/') + 1)
+    if ((getAddon(name)?.stateVersion ?? 1) === (p.addonVersions?.[name] ?? 1)) out[key] = state
+  }
+  return out
+}
 const refuse = (status: number, code: string, message: string, hint?: string): StoreFailure => ({ ok: false, status, code, message, hint })
 
 export type Dataset = 'normal' | 'busy'
@@ -308,7 +321,7 @@ export class MockStore {
       }
     }
     this.created = p.created
-    this.addonStates = p.addonState
+    this.addonStates = currentAddonStates(p)
     this.refoldWorkspaces()
     if (p.viewer) this.viewer = p.viewer
     if (latest) this.clockBase = Math.max(this.clockBase, latest + 1000)
@@ -323,7 +336,12 @@ export class MockStore {
     }
     const wsEvents: PersistedV2['wsEvents'] = {}
     for (const [id, list] of this.wsEvents) if (list.length) wsEvents[id] = list
-    savePersisted({ v: 2, ticketEvents, created: this.created, wsEvents, addonState: this.addonStates, viewer: this.viewer, dataset: this.dataset })
+    const addonVersions: Record<string, number> = {}
+    for (const key of Object.keys(this.addonStates)) {
+      const name = key.slice(key.indexOf('/') + 1)
+      addonVersions[name] = getAddon(name)?.stateVersion ?? 1
+    }
+    savePersisted({ v: 2, ticketEvents, created: this.created, wsEvents, addonState: this.addonStates, addonVersions, viewer: this.viewer, dataset: this.dataset })
   }
 
   /** Back to the seed. `dataset` switches the demo to that dataset; without it the current one is reloaded. */

@@ -302,7 +302,8 @@ function useDecide(d: AddonDecision, onError?: (e: unknown) => void, onDone?: ()
       await new Promise((r) => setTimeout(r, TOUCH_ID_MS))
       const res = await api.runAddonAction(workspace.id, opened.addon, opened.action, decisionBody(opened, o.key))
       // Core's sentence is the title; the addon's own answer rides below it, labelled as the addon's.
-      const t = decisionToast(packages?.find((p) => p.name === d.addon)?.title ?? d.addon, d.addon, o.key, res.message)
+      // The snapshot's addon, like the post: the row may show another decision by now.
+      const t = decisionToast(packages?.find((p) => p.name === opened.addon)?.title ?? opened.addon, opened.addon, o.key, res.message)
       toast.success(t.message, { description: t.description })
       onDone?.()
       // A decision can move a ticket, an approval or the addon's own state; nothing else (not settings, relay, skills ...).

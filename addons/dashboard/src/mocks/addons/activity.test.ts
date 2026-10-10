@@ -94,6 +94,21 @@ describe('activity timeline', () => {
     }
     expect(st.timeline.some((r) => r.ticket === 'DEMO-0043')).toBe(true)
   })
+  it('a shell opened for a re-login (terminal.shell_opened) is shown to maintainers and owners, not to members (F1 N1)', async () => {
+    const s = setup()
+    tick()
+    s.store.appendWs(s.ws, { type: 'member.role_changed', person: 'p_tom', role: 'member' })
+    tick()
+    s.store.appendWs(s.ws, { type: 'terminal.shell_opened', actor: { kind: 'person', id: 'p_sev' }, connection: 'databricks-prod', run_as: 'orch-agent', session: 't_1' })
+    // A run by one actor is one row whose subtitle names the latest line.
+    const shell = (st: State) => st.timeline.some((r) => /opened a shell as orch-agent to log databricks-prod in again/.test(`${r.summary} ${r.subtitle ?? ''}`))
+    expect(shell(await everything(s))).toBe(true) // owner
+    s.store.setViewer('p_mara')
+    expect(shell(await everything(s))).toBe(true) // maintainer
+    s.store.setViewer('p_tom')
+    expect(shell(await everything(s))).toBe(false) // member
+  })
+
   it('R2: actors by display name (addon titles, "Claude Code for Severin"), refusals in plain words, Records events listed', async () => {
     const s = setup()
     installAndGrant(s.store, s.ws, 'records')

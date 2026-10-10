@@ -2,7 +2,7 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { ChevronLeft, ChevronRight, LayoutGrid, List, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '@/api/client'
-import type { ArtifactItem, ArtifactQuery } from '@/api/types'
+import type { ArtifactQuery } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
@@ -14,36 +14,19 @@ import { agentName, displayName } from '../ticket/shared'
 import { useElementWidth } from '@/lib/useElementWidth'
 import { cn } from '@/lib/utils'
 import { useMediaQuery, WIDE_QUERY } from '../today/shared'
-import { ArtifactPane, ArtifactPreview, openMode } from './Preview'
-import { ArtifactGrid, ArtifactList, artifactKey } from './views'
-
-type View = 'list' | 'grid'
-const viewKey = (person: string) => `orch.artifacts.view.${person}`
-function readView(person: string): View {
-  try {
-    return localStorage.getItem(viewKey(person)) === 'grid' ? 'grid' : 'list'
-  } catch {
-    return 'list'
-  }
-}
+import { useAddonPages } from '../ticket/Artifacts'
+import { ArtifactPane, ArtifactPreview, EmptyPane, openMode } from './Preview'
+import { artifactKey, previewTarget, useArtifactSelection, type View } from './selection'
+import { ArtifactGrid, ArtifactList } from './views'
 
 /**
- * The list view previews beside the table on a window of at least 1280 px (the Today rule) whose page area still has
- * SPLIT_MIN_PAGE px (not beside a wide terminal dock); otherwise the drawer opens (owner feedback E, DECISIONS-LOG F2).
+ * The preview sits beside the results on a window of at least 1280 px (the Today rule) whose page area still has
+ * SPLIT_MIN_PAGE px (not beside a wide terminal dock); otherwise it opens as a drawer (DECISIONS-LOG F2, G3). The
+ * same rule for the list and the grid.
  */
 export const SPLIT_MIN_PAGE = 960
-
-/**
- * j/k are for the list: not while typing, not with a modifier, not when another handler took the key, and not while
- * any dialog other than this page's own artifact drawer is open (the shell's keyboardBusy rule, with that one
- * exception so the drawer follows the selection).
- */
-const busy = (e: KeyboardEvent) => {
-  if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return true
-  const t = e.target as HTMLElement | null
-  if (t?.isContentEditable || t?.closest('input, textarea, select, [role="combobox"], [role="listbox"], [role="menu"]')) return true
-  return [...document.querySelectorAll('[role="dialog"], [role="alertdialog"]')].some((d) => !d.hasAttribute('data-artifact-drawer'))
-}
+/** Below this page width the list drops "Added by" and "Size" (the viewer names both). */
+const LIST_FULL_MIN = 900
 
 const SINCE = [
   { value: '24h', label: 'Last 24 hours' },
@@ -61,30 +44,16 @@ export function ArtifactsPage() {
   const [filters, setFilters] = useState<Omit<ArtifactQuery, 'page' | 'per'>>({})
   const [qInput, setQInput] = useState('')
   const [page, setPage] = useState(1)
-  const [view, setView] = useState<View | null>(null)
-  const [open, setOpen] = useState<ArtifactItem | null>(null)
-  // The list view's selected row: the pane (or an open drawer) shows it; j/k move it.
-  const [selected, setSelected] = useState<ArtifactItem | null>(null)
-  const opener = useRef<HTMLElement | null>(null)
   const searchRef = useRef<HTMLInputElement>(null)
   const [pageRef, pageWidth] = useElementWidth<HTMLDivElement>()
   const split = useMediaQuery(WIDE_QUERY) && pageWidth >= SPLIT_MIN_PAGE
 
-  // The list/grid choice is remembered per person; nothing is read until the viewer is known.
-  useEffect(() => {
-    if (person) setView(readView(person))
-  }, [person])
   // A new workspace starts unfiltered.
   useEffect(() => {
     setFilters({})
     setQInput('')
     setPage(1)
-    setSelected(null)
   }, [ws])
-  // Another filter or page: the selection belonged to the old list, so the pane closes.
-  useEffect(() => {
-    setSelected(null)
-  }, [filters, page])
   // Typing narrows after a short pause.
   useEffect(() => {
     const t = setTimeout(() => {
@@ -102,50 +71,52 @@ export function ArtifactsPage() {
     placeholderData: keepPreviousData,
   })
   const data = list.data
+  const items = data?.items
+  // Results from the previous filters stay visible while the new ones load, but cannot be acted on.
+  const updating = list.isPlaceholderData
   const members = useMemo(() => workspace?.members ?? [], [workspace])
+  const addonPage = useAddonPages()
+  const { view, chooseView, current, currentKey, preview, close, lastKey } = useArtifactSelection({
+    person,
+    items,
+    settled: !!data && !updating,
+    context: JSON.stringify([ws, filters, page]),
+  })
 
   const set = (patch: Partial<ArtifactQuery>) => {
     setFilters((f) => ({ ...f, ...patch }))
     setPage(1)
   }
   const dirty = Object.values(filters).some((v) => v !== undefined) || qInput !== ''
-  const chooseView = (v: View) => {
-    setView(v)
-    try {
-      if (person) localStorage.setItem(viewKey(person), v)
-    } catch {
-      /* storage unavailable: the choice lasts for this page only */
+
+  // Close (pane or drawer) puts focus back on the item's Preview button, or the results heading if it is gone.
+  const restore = useMemo(() => ({ get current() { return previewTarget(lastKey.current) } }), [lastKey])
+  const closePane = () => {
+    close()
+    requestAnimationFrame(() => restore.current?.focus())
+  }
+
+  // j / k inside the results: the next / previous artifact with a preview. Focus moves to its Preview button and the
+  // pane follows (a drawer would take the focus away, so beside a narrow page j/k only move the focus).
+  const [said, setSaid] = useState('')
+  const onResultsKey = (e: React.KeyboardEvent) => {
+    if ((e.key !== 'j' && e.key !== 'k') || e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || !items) return
+    const t = e.target as HTMLElement
+    if (t.isContentEditable || t.closest('input, textarea, select, [role="menu"], [role="listbox"]') || document.querySelector('[role="dialog"], [role="alertdialog"]')) return
+    const from = t.closest('[data-artifact]')?.getAttribute('data-artifact') ?? currentKey
+    const at = from ? items.findIndex((a) => artifactKey(a) === from) : -1
+    const step = e.key === 'j' ? 1 : -1
+    let i = at < 0 ? (step > 0 ? 0 : items.length - 1) : at + step
+    while (i >= 0 && i < items.length && openMode(items[i]) !== 'preview') i += step
+    e.preventDefault()
+    const next = items[i]
+    if (!next) return
+    previewTarget(artifactKey(next))?.focus()
+    if (split) {
+      preview(next)
+      setSaid(`Previewing ${next.name}`)
     }
   }
-  const listed = view === 'list'
-  const openItem = (a: ArtifactItem, el: HTMLElement) => {
-    opener.current = el
-    if (listed) setSelected(a)
-    // Beside the table the pane shows it; narrower (and in the grid) the drawer opens.
-    if (!listed || !split) setOpen(a)
-  }
-  // Wider than SPLIT_MIN again: the pane takes over from an open drawer.
-  useEffect(() => {
-    if (split && listed) setOpen(null)
-  }, [split, listed])
-
-  // j / k: the next / previous row; the preview follows (the pane, or the drawer while it is open).
-  const items = data?.items
-  useEffect(() => {
-    if (!listed || !items?.length) return
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.key !== 'j' && e.key !== 'k') || busy(e)) return
-      e.preventDefault()
-      const at = selected ? items.findIndex((x) => artifactKey(x) === artifactKey(selected)) : -1
-      const next = items[at < 0 ? 0 : Math.min(items.length - 1, Math.max(0, at + (e.key === 'j' ? 1 : -1)))]
-      setSelected(next)
-      setOpen((o) => (o && openMode(next) === 'drawer' ? next : o))
-      document.querySelector(`[data-artifact="${CSS.escape(artifactKey(next))}"]`)?.scrollIntoView?.({ block: 'nearest' })
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [listed, items, selected])
-
   const kindOptions: { value: string; label: string }[] = (data?.facets.kinds ?? []).map((k) => ({ value: k.kind, label: `${k.kind} (${k.count})` }))
   if (filters.kind && !kindOptions.some((o) => o.value === filters.kind)) kindOptions.push({ value: filters.kind, label: `${filters.kind} (0)` })
   const ticketOptions = (data?.facets.tickets ?? []).map((t) => ({ value: t.key, label: `${t.key} · ${t.title.length > 40 ? t.title.slice(0, 39) + '…' : t.title} (${t.count})` }))
@@ -159,20 +130,13 @@ export function ArtifactsPage() {
   const from = data ? (data.page - 1) * data.per + 1 : 0
   const to = data ? Math.min(data.total, data.page * data.per) : 0
 
-  const pane = listed && split && selected
-  // Closing the pane puts focus back on its row's name.
-  const closePane = () => {
-    const row = selected && `[data-artifact="${CSS.escape(artifactKey(selected))}"]`
-    setSelected(null)
-    if (row) requestAnimationFrame(() => document.querySelector<HTMLElement>(`${row} button, ${row} a`)?.focus())
-  }
   return (
     <div ref={pageRef} className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-semibold tracking-tight">Artifacts</h1>
         {data && (
           <span className="text-[13px] text-text-muted" aria-live="polite">
-            {data.total === 1 ? '1 artifact' : `${data.total} artifacts`}
+            {updating ? 'Updating…' : data.total === 1 ? '1 artifact' : `${data.total} artifacts`}
           </span>
         )}
         <span className="flex-1" />
@@ -211,26 +175,33 @@ export function ArtifactsPage() {
         )}
       </div>
 
+      <h2 id="artifact-results" tabIndex={-1} className="sr-only">
+        Results
+      </h2>
+      <p className="sr-only" aria-live="polite">
+        {said}
+      </p>
       {!data || !view ? (
         <div aria-busy="true" className="space-y-2">
           <Skeleton className="h-10 w-full" />
           <Skeleton className="h-10 w-full" />
           <Skeleton className="h-10 w-full" />
         </div>
-      ) : data.total === 0 ? (
+      ) : data.total === 0 && !updating ? (
         <p className="rounded-lg border border-dashed border-border px-4 py-8 text-center text-[13px] text-text-faint">
           {dirty ? 'No artifacts match these filters.' : 'No artifacts yet. Agents attach evidence with orch artifact add.'}
         </p>
       ) : (
-        <div className={cn(pane && 'grid grid-cols-[minmax(0,1fr)_minmax(0,44%)] items-start gap-4')}>
-          <div className={list.isPlaceholderData ? 'opacity-60 transition-opacity' : undefined}>
+        <div className={cn(split && 'grid grid-cols-[minmax(0,1fr)_minmax(0,44%)] items-start gap-4')}>
+          {/* The results: a container (the grid's columns follow its width) and the scope of j/k. */}
+          <div className={cn('@container/results min-w-0', updating && 'opacity-60 transition-opacity')} inert={updating} aria-busy={updating || undefined} onKeyDown={onResultsKey}>
             {view === 'grid' ? (
-              <ArtifactGrid items={data.items} members={members} onOpen={openItem} />
+              <ArtifactGrid items={data.items} members={members} current={currentKey} onPreview={preview} addonPage={addonPage} />
             ) : (
-              <ArtifactList items={data.items} members={members} onOpen={openItem} selected={selected && artifactKey(selected)} narrow={!!pane} />
+              <ArtifactList items={data.items} members={members} current={currentKey} onPreview={preview} addonPage={addonPage} compact={split || pageWidth < LIST_FULL_MIN} />
             )}
           </div>
-          {pane && <ArtifactPane item={selected} members={members} onClose={closePane} />}
+          {split && (current ? <ArtifactPane item={current} members={members} onClose={closePane} /> : <EmptyPane />)}
         </div>
       )}
 
@@ -251,7 +222,7 @@ export function ArtifactsPage() {
         </nav>
       )}
 
-      <ArtifactPreview item={open} members={members} onClose={() => setOpen(null)} opener={opener} />
+      <ArtifactPreview item={split ? null : current} members={members} onClose={close} opener={restore} />
     </div>
   )
 }

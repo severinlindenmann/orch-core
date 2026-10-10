@@ -22,12 +22,24 @@ OTHER = "s_01J9ZP0000000000000000000T"
 
 
 class Ws(Env):
-    def __init__(self, tmp_path: Path) -> None:
-        super().__init__(tmp_path)
+    live = False  # True: the clock is the wall clock (the binary under test reads the real one)
+
+    def __init__(self, tmp_path: Path, *, live: bool = False) -> None:
+        import time
+
+        super().__init__(tmp_path, clock_start=int(time.time()) if live else 1_790_000_000)
+        self.live = live
         keys = self.host_state / "hosts" / WS / "keys"
         self.host_backend = FileBackend(keys)
         self.wsk_pub = self.host_backend.create("wsk")
         self.signer = BackendSigner(self.host_backend, "wsk")
+
+    def other(self, **kw: Any):
+        if self.live:
+            import time
+
+            self.clock[0] = int(time.time())
+        return super().other(**kw)
 
     def human(self, method: str, uid: str, *a: Any, **kw: Any) -> Any:
         """``Env.approve`` and friends on a store that has scanned the directory since the CLI created the ticket."""

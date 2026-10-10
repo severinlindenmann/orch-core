@@ -1,4 +1,5 @@
-import { TriangleAlert } from 'lucide-react'
+import { ChevronDown, TriangleAlert } from 'lucide-react'
+import { useEffect, useRef } from 'react'
 import { AddonBadge } from '@/addon-ui/AddonBadge'
 import { PreviewChip } from '@/addon-ui/PreviewChip'
 import { pendingUpdate } from '@/api/addons'
@@ -8,6 +9,7 @@ import { Switch } from '@/components/ui/switch'
 import { TableCell, TableRow } from '@/components/ui/table'
 import { cn } from '@/lib/utils'
 import { CapabilityChips } from './CapabilityChips'
+import { takeSettingsFocus } from './AddonSettingsPanel'
 
 const STATUS: Record<AddonStatus, { label: string; dot: string }> = {
   active: { label: 'Active', dot: 'bg-success' },
@@ -36,10 +38,14 @@ export function NeedsGrantNotice({ addon }: { addon: InstalledAddon }) {
 }
 
 /** One installed addon: everything about this workspace's install comes from `addon.ws`. */
-export function AddonRow({ addon, active, canEdit, hasSettings, actions }: { addon: InstalledAddon; active: boolean; canEdit: boolean; hasSettings: boolean; actions: RowActions }) {
+export function AddonRow({ addon, active, canEdit, hasSettings, settingsOpen, actions }: { addon: InstalledAddon; settingsOpen: boolean; active: boolean; canEdit: boolean; hasSettings: boolean; actions: RowActions }) {
   const s = STATUS[addon.ws.status]
   const needsGrant = addon.ws.status === 'needs_grant'
   const update = pendingUpdate(addon)
+  const settingsButton = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    if (takeSettingsFocus(addon.name)) settingsButton.current?.focus()
+  }, [addon.name])
   return (
     <TableRow aria-label={`${addon.title} ${addon.ws.version}`} className="align-top">
       <TableCell className="whitespace-normal">
@@ -76,8 +82,9 @@ export function AddonRow({ addon, active, canEdit, hasSettings, actions }: { add
             </Button>
           )}
           {hasSettings && active && (
-            <Button size="sm" variant="outline" data-settings-for={addon.name} onClick={actions.openSettings}>
+            <Button ref={settingsButton} size="sm" variant="outline" data-settings-for={addon.name} aria-expanded={settingsOpen} aria-controls={settingsOpen ? `addon-settings-panel-${addon.name}` : undefined} onClick={actions.openSettings}>
               Settings
+              <ChevronDown className={cn('transition-transform', settingsOpen && 'rotate-180')} aria-hidden />
             </Button>
           )}
           {canEdit && update && (

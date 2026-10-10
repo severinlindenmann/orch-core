@@ -90,6 +90,28 @@ describe('app shell', () => {
     expect((await screen.findAllByRole('img', { name: /From addon:|From the .* addon/ })).length).toBeGreaterThan(links.length)
   })
 
+  it('pins are unlimited; "More addons (n)" counts only the addons that are not pinned, and reads "All addons" when none is left', async () => {
+    const { user } = renderApp('/')
+    await screen.findByRole('heading', { name: 'Today' })
+    const nav = await screen.findByRole('navigation', { name: 'Main' })
+    const addonLinks = () => within(nav).getAllByRole('link').filter((l) => l.getAttribute('href')?.startsWith('/addon/'))
+    const more = await within(nav).findByRole('button', { name: /^More addons \(\d+\)$/ })
+    const total = addonLinks().length + Number(/\((\d+)\)/.exec(more.getAttribute('aria-label')!)![1])
+    expect(total).toBeGreaterThan(6)
+    await user.click(more)
+    expect(await screen.findByText(/All addons in this workspace\. Pin as many as you like/)).toBeInTheDocument()
+    // Pin one more: the sidebar holds 7 and the count goes down by one.
+    const pins = () => screen.queryAllByRole('button', { name: /^Pin .* to the sidebar$/ })
+    await user.click(pins()[0])
+    expect(addonLinks()).toHaveLength(7)
+    expect(await screen.findByRole('button', { name: `More addons (${total - 7})` })).toBeInTheDocument()
+    // Pin them all: nothing is "more" any more.
+    while (pins().length) await user.click(pins()[0])
+    expect(addonLinks()).toHaveLength(total)
+    expect(screen.getByRole('button', { name: 'All addons' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /More addons/ })).toBeNull()
+  })
+
   it('Move ticket to… on the board offers the focused card and leaves out its current status', async () => {
     const { user } = renderApp('/board')
     const card = await screen.findByTestId('card-DEMO-0043', {}, { timeout: 15000 })

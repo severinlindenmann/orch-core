@@ -281,4 +281,24 @@ describe('harness sessions (start, resume)', () => {
     expect(await status(run(as(setup(), 'p_mara'), 'resume', { session: 'old1' }))).toBe(404)
     expect(await status(run(as(setup(), 'p_tom'), 'resume', { session: 'codex0' }))).toBe(403)
   })
+  it('login_shell: owners only; a shell as the agents\' OS user with the connection\'s login command typed, not run', async () => {
+    const s = setup('p_sev')
+    const r = (await run(s, 'login_shell', { connection: 'databricks-prod' })) as { terminal?: string }
+    const mine = (await state(s)).sessions.find((x) => x.id === r.terminal) as Sess & { prefill?: string; run_as?: string }
+    expect(mine).toMatchObject({ kind: 'person', owner: 'p_sev', interactive: true, harness: 'shell', run_as: 'orch-agent', label: 'Log in databricks-prod as orch-agent' })
+    expect(mine.prefill).toMatch(/^databricks auth login --profile prod/)
+    expect(mine.ctx.user).toBe('orch-agent')
+    expect(mine.transcript).toEqual([]) // typed, not run
+    // The command is the host's, never the request's; unknown or login-less connections are refused; so are non-owners.
+    expect(await status(run(s, 'login_shell', { connection: 'nope', command: 'rm -rf /' }))).toBe(404)
+    expect(await status(run(s, 'login_shell', { connection: 'tariff-api' }))).toBe(400)
+    expect(await status(run(as(setup(), 'p_mara'), 'login_shell', { connection: 'databricks-prod' }))).toBe(403)
+    expect(await status(run(as(setup(), 'p_tom'), 'login_shell', { connection: 'databricks-prod' }))).toBe(403)
+  })
+  it('login_shell refuses without pty', async () => {
+    const s = setup('p_sev')
+    const w = s.store.workspaces.find((x) => x.id === s.ws)!
+    w.addons.terminals.granted = { ...w.addons.terminals.granted!, capabilities: [] }
+    expect(await refused(run(s, 'login_shell', { connection: 'databricks-prod' }))).toMatchObject({ status: 409, code: 'terminals.no_pty' })
+  })
 })

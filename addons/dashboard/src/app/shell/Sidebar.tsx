@@ -45,12 +45,12 @@ import { useWorkspace } from '../workspace'
 import { useShellState } from './ShellUi'
 import { WorkspaceSwitcher } from './WorkspaceSwitcher'
 import { PIN_ADDON_EVENT } from './pinEvent'
-import { fmtClock } from '@/lib/time'
+import { fmtClock, fmtDateTime } from '@/lib/time'
 
 const RailContext = createContext(false)
 
-/** At most this many addons sit in the sidebar; the rest are under "More addons". */
-const MAX_PINNED = 6
+/** Until the viewer chooses, the first this-many addons sit in the sidebar; there is no upper limit on pins. */
+const DEFAULT_PINNED = 6
 const PINS_KEY = (person: string, ws: string) => `orch.sidebar.pins.${person}.${ws}`
 
 function readPins(person: string, ws: string): string[] | null {
@@ -64,14 +64,14 @@ function readPins(person: string, ws: string): string[] | null {
 
 /**
  * Which addon pages sit in the sidebar: the viewer's choice (kept per workspace in this browser), else the first
- * six by install order. The rest are reached through "More addons".
+ * six by install order. Pins are unlimited; the rest are reached through "More addons".
  */
 function usePinnedAddons(person: string | undefined, ws: string | undefined, all: string[]) {
   const [stored, setStored] = useState<string[] | null>(() => (ws && person ? readPins(person, ws) : null))
   useEffect(() => setStored(ws && person ? readPins(person, ws) : null), [person, ws])
-  const pinned = (stored ? all.filter((k) => stored.includes(k)) : all).slice(0, MAX_PINNED)
+  const pinned = stored ? all.filter((k) => stored.includes(k)) : all.slice(0, DEFAULT_PINNED)
   const toggle = (key: string) => {
-    const next = pinned.includes(key) ? pinned.filter((k) => k !== key) : pinned.length < MAX_PINNED ? [...pinned, key] : pinned
+    const next = pinned.includes(key) ? pinned.filter((k) => k !== key) : [...pinned, key]
     setStored(next)
     try {
       if (ws && person) localStorage.setItem(PINS_KEY(person, ws), JSON.stringify(next))
@@ -79,7 +79,7 @@ function usePinnedAddons(person: string | undefined, ws: string | undefined, all
       /* storage unavailable: the choice lasts for this page only */
     }
   }
-  // "Pin to sidebar" from the toast after an install: add the page unless it is there or the sidebar is full.
+  // "Pin to sidebar" from the toast after an install: add the page unless it is there.
   const latest = useRef({ pinned, toggle })
   latest.current = { pinned, toggle }
   useEffect(() => {
@@ -87,7 +87,6 @@ function usePinnedAddons(person: string | undefined, ws: string | undefined, all
       const key = (e as CustomEvent<string>).detail
       if (typeof key !== 'string') return
       if (latest.current.pinned.includes(key)) toast.message('Already pinned')
-      else if (latest.current.pinned.length >= MAX_PINNED) toast.message('Sidebar is full — unpin one')
       else {
         latest.current.toggle(key)
         toast.success('Pinned to the sidebar')
@@ -96,7 +95,7 @@ function usePinnedAddons(person: string | undefined, ws: string | undefined, all
     window.addEventListener(PIN_ADDON_EVENT, on)
     return () => window.removeEventListener(PIN_ADDON_EVENT, on)
   }, [])
-  return { pinned, toggle, full: pinned.length >= MAX_PINNED }
+  return { pinned, toggle }
 }
 
 /** In the icon rail the label is hidden and a tooltip carries it. */
@@ -165,11 +164,15 @@ export function Sidebar() {
   const grants = useQuery({ queryKey: ['grants', ws], queryFn: () => api.listGrants(ws!), enabled: !!ws })
   const today = useQuery({ queryKey: ['today', ws], queryFn: () => api.getToday(ws!), enabled: !!ws })
   const grant = grants.data && today.data ? activeGrantOf(grants.data, me?.person, Date.parse(today.data.now)) : undefined
-  const grantTime = grant ? fmtClock(grant.until) : undefined
+  // A grant that ends on another day says the date (grants run up to 24 h).
+  const grantTime = grant ? (today.data && grant.until.slice(0, 10) !== today.data.now.slice(0, 10) ? fmtDateTime(grant.until) : fmtClock(grant.until)) : undefined
   const { railCollapsed: collapsed, toggleRail: toggle } = useShellState()
   const itemKey = (i: { addon: string; id: string }) => `${i.addon}/${i.id}`
-  const { pinned, toggle: togglePin, full } = usePinnedAddons(me?.person, ws, navItems.map(itemKey))
+  const { pinned, toggle: togglePin } = usePinnedAddons(me?.person, ws, navItems.map(itemKey))
   const shown = navItems.filter((i) => pinned.includes(itemKey(i)))
+  // Only addons that are not pinned count as "more"; with none left the entry reads "All addons".
+  const moreCount = navItems.length - shown.length
+  const moreLabel = moreCount > 0 ? `More addons (${moreCount})` : 'All addons'
   const [moreOpen, setMoreOpen] = useState(false)
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   // The nav scrolls when the window is short; a fade at the edge says there is more below.
@@ -263,22 +266,22 @@ export function Sidebar() {
                   </Link>
                 </RailTip>
               ))}
-              {navItems.length > shown.length && (
+              {navItems.length > 0 && (
                 <Popover open={moreOpen} onOpenChange={setMoreOpen}>
-                  <RailTip label={`More addons (${navItems.length - shown.length})`}>
+                  <RailTip label={moreLabel}>
                     <PopoverTrigger asChild>
                       <button
                         type="button"
-                        aria-label={`More addons (${navItems.length - shown.length})`}
+                        aria-label={moreLabel}
                         className={cn(link, 'w-full outline-none focus-visible:ring-2 focus-visible:ring-brand', navItems.some((i) => !shown.includes(i) && pathname === `/addon/${i.addon}/${i.id}`) && 'bg-surface-2 text-text')}
                       >
                         <Ellipsis className="size-4" />
-                        <span className={cn('flex-1 text-left', label)}>More addons ({navItems.length - shown.length})</span>
+                        <span className={cn('flex-1 text-left', label)}>{moreLabel}</span>
                       </button>
                     </PopoverTrigger>
                   </RailTip>
                   <PopoverContent side="right" align="end" className="w-72 p-1.5">
-                    <p className="px-2 pb-1 pt-0.5 text-[11px] text-text-faint">All addons in this workspace. Pin up to {MAX_PINNED} to the sidebar.</p>
+                    <p className="px-2 pb-1 pt-0.5 text-[11px] text-text-faint">All addons in this workspace. Pin as many as you like to the sidebar.</p>
                     <ul>
                       {navItems.map((item) => {
                         const isPinned = pinned.includes(itemKey(item))
@@ -300,10 +303,8 @@ export function Sidebar() {
                               type="button"
                               aria-label={`${isPinned ? 'Unpin' : 'Pin'} ${item.title} ${isPinned ? 'from' : 'to'} the sidebar`}
                               aria-pressed={isPinned}
-                              disabled={!isPinned && full}
-                              title={!isPinned && full ? `The sidebar holds ${MAX_PINNED}. Unpin one first.` : undefined}
                               onClick={() => togglePin(itemKey(item))}
-                              className="rounded-md p-1.5 text-text-faint outline-none hover:bg-surface-2 hover:text-text focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40"
+                              className="rounded-md p-1.5 text-text-faint outline-none hover:bg-surface-2 hover:text-text focus-visible:ring-2 focus-visible:ring-brand"
                             >
                               {isPinned ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}
                             </button>

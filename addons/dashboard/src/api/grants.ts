@@ -4,7 +4,7 @@ import { atLeast } from './permissions'
 import { fmtClock, fmtDateTime, nowMs } from '@/lib/time'
 
 /** The longest grant an owner or maintainer signs. */
-export const GRANT_MAX_HOURS = 12
+export const GRANT_MAX_HOURS = 24
 /** The workspace default grant length when the workspace sets none: also the longest grant a member signs. */
 export const DEFAULT_GRANT_HOURS = 8
 
@@ -17,7 +17,7 @@ export const grantDefaultHours = (ws: Pick<Workspace, 'grant_hours'> | undefined
 
 /**
  * What a person may sign for themselves (owner decision 2026-10-10, item 5). Owners and maintainers: all tickets in the
- * workspace, up to 12 h. Members: the tickets they may work on (core checks each claim: the ticket is visible to them
+ * workspace, up to 24 h. Members: the tickets they may work on (core checks each claim: the ticket is visible to them
  * and a member may act on it), up to the workspace default. Viewers: nothing (null). The host applies the same rule.
  */
 export function grantTerms(role: Role | undefined, ws: Pick<Workspace, 'grant_hours'> | undefined): { scope: 'all' | 'workable'; maxHours: number; defaultHours: number } | null {

@@ -183,3 +183,17 @@ describe('createShell: pastes', () => {
     expect(sh.feed('\r')).toContain('On branch')
   })
 })
+
+describe('a re-login shell (prefill)', () => {
+  it('types the login command at the prompt without running it; Enter runs it', async () => {
+    const { openSession } = await import('./harnessView')
+    const c = ctx({ user: 'orch-agent', ticket: null })
+    const session = { id: 'sh9', harness: 'shell', ctx: c, prefill: 'databricks auth login --profile prod', run_as: 'orch-agent', transcript: [], status: 'running', resumedFrom: null } as unknown as Parameters<typeof openSession>[0] extends () => infer S ? S : never
+    const shell = openSession(() => session, () => 80)
+    const first = shell.start()
+    expect(first).toContain('orch-agent@acme')
+    expect(first.endsWith('databricks auth login --profile prod')).toBe(true) // typed, no output after it
+    expect(first).not.toContain('Demo')
+    expect(shell.feed('\r')).toContain('Demo: no login happens in this mockup')
+  })
+})

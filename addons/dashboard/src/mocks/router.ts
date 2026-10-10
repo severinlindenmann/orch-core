@@ -5,6 +5,7 @@ import { STATUSES } from '@/api/types'
 import type { MockStore } from './store'
 import { atLeast, can } from '@/api/permissions'
 import { APPROVER_GROUPS, codeReviewWaits, unmeetablePolicy } from '@/api/gates'
+import { GRANT_MAX_HOURS } from '@/api/grants'
 import { addonActive } from '@/api/addons'
 import peopleFixture from './fixtures/people.json'
 import type { RelayRequest, RelaySimRequest } from '@/api/types'
@@ -298,6 +299,11 @@ function postSettings(store: MockStore, ctx: RouteContext): TransportResponse {
       const name = String(b.name ?? '').trim()
       if (name.length < 1 || name.length > 60) return fail(400, 'validation.name', 'The name needs 1 to 60 characters.')
       store.appendWs(wsId, { type: 'workspace.renamed', name })
+      return done()
+    }
+    case 'grant.hours': {
+      if (!Number.isInteger(b.hours) || b.hours < 1 || b.hours > GRANT_MAX_HOURS) return fail(400, 'validation.hours', `The agent grant length is 1 to ${GRANT_MAX_HOURS} hours.`)
+      store.appendWs(wsId, { type: 'workspace.grant_hours_set', hours: b.hours })
       return done()
     }
     case 'member.add': {

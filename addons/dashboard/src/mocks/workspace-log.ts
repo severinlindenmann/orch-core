@@ -83,6 +83,9 @@ export function foldWorkspace(seed: Workspace, events: WorkspaceEvent[]): Worksp
       case 'workspace.renamed':
         ws.name = String(e.name)
         break
+      case 'workspace.grant_hours_set':
+        ws.grant_hours = Number(e.hours)
+        break
       // Relay & devices (simulated): the link switch and each member's device count.
       case 'relay.connected':
       case 'relay.stopped':

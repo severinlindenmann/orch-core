@@ -5,24 +5,34 @@ import { useAddons } from '@/addon-ui/slots'
 import type { Workspace } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useSwitchGuard } from '@/app/workspace'
 
-// The form (rjsf through AddonNode) loads when the drawer first opens.
+// The form (rjsf through AddonNode) loads when the panel first opens.
 const AddonSettings = lazy(() => import('../AddonSettings').then((m) => ({ default: m.AddonSettings })))
 
-/** The id the row's Settings button carries, so closing the drawer can put focus back on it. */
+/** The id the row's Settings button carries, so closing the panel can put focus back on it. */
 export const settingsButtonAttr = 'data-settings-for'
 /** Where focus goes when the row is not there (after a deep link to an addon without a row). */
 export const addonsHeadingAttr = 'data-addons-heading'
 
+// The route change remounts the Addons list, so the row's Settings button is a new element: which addon's button
+// should take focus there is remembered here (set by whoever navigates, taken once by the row that mounts).
+let focusSettingsOf: string | null = null
+export const requestSettingsFocus = (name: string | null) => void (focusSettingsOf = name)
+export function takeSettingsFocus(name: string): boolean {
+  if (focusSettingsOf !== name) return false
+  focusSettingsOf = null
+  return true
+}
+
 /**
- * A right-side drawer with one addon's settings form, over the Addons list (route /settings/addon/<name>).
- * Unsaved changes are never lost silently: every way out (Cancel, Esc, overlay, X, Back, the palette, a link, a
- * workspace switch) asks first. Focus goes back to the row's Settings button.
+ * One addon's settings form as an accordion panel beneath its row in the Addons table (route /settings/addon/<name>);
+ * one panel is open at a time because the route names one addon. Unsaved changes are never lost silently: every way
+ * out (Cancel, Esc, another row's Settings, Back, the palette, a link, a workspace switch) asks first. Focus goes
+ * back to the row's Settings button; a deep link scrolls the panel into view.
  */
-export function AddonSettingsDrawer({ name, workspace, canEdit }: { name: string; workspace: Workspace; canEdit: boolean }) {
+export function AddonSettingsPanel({ name, workspace, canEdit }: { name: string; workspace: Workspace; canEdit: boolean }) {
   const addons = useAddons()
   const navigate = useNavigate()
   const title = addons.data?.find((a) => a.name === name)?.title ?? name
@@ -52,7 +62,14 @@ export function AddonSettingsDrawer({ name, workspace, canEdit }: { name: string
   )
   useSwitchGuard(guard)
 
-  const close = () => navigate({ to: '/settings/$tab', params: { tab: 'addons' } })
+  const panel = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    panel.current?.scrollIntoView?.({ block: 'nearest' })
+  }, [name])
+  const close = () => {
+    requestSettingsFocus(name) // the row's Settings button takes focus once the list is back (not when the question holds it)
+    return navigate({ to: '/settings/$tab', params: { tab: 'addons' } })
+  }
   const answer = (f: () => void) => {
     setAsking(null)
     f()
@@ -60,39 +77,39 @@ export function AddonSettingsDrawer({ name, workspace, canEdit }: { name: string
 
   return (
     <>
-      <Sheet open onOpenChange={(o) => !o && void close()}>
-        <SheetContent
-          side="right"
-          className="w-[min(90vw,40rem)] gap-0 border-border bg-surface p-0 sm:max-w-none"
-          onCloseAutoFocus={(e) => {
-            e.preventDefault()
-            const rows = Array.from(document.querySelectorAll<HTMLElement>(`[${settingsButtonAttr}]`)).filter((b) => b.getAttribute(settingsButtonAttr) === name)
-            ;(rows[0] ?? document.querySelector<HTMLElement>(`[${addonsHeadingAttr}]`))?.focus()
-          }}
-        >
-          <SheetHeader className="border-b border-border pr-12">
-            <SheetTitle className="flex items-center gap-2 text-base">
-              <AddonBadge name={name} />
-              <span id={titleId}>{title} settings</span>
-            </SheetTitle>
-            <SheetDescription className="sr-only">Change how {title} behaves in this workspace.</SheetDescription>
-          </SheetHeader>
-          <div className="flex min-h-0 flex-1 flex-col pt-4">
-            <Suspense fallback={<Skeleton aria-label="Loading addon settings" className="mx-4 h-40" />}>
-              <AddonSettings key={workspace.id} name={name} workspace={workspace} canEdit={canEdit} labelledBy={titleId} onDirtyChange={onDirtyChange} onClose={close} />
-            </Suspense>
-          </div>
-        </SheetContent>
-      </Sheet>
+      <div
+        ref={panel}
+        role="group"
+        id={`addon-settings-panel-${name}`}
+        aria-labelledby={titleId}
+        className="rounded-md border border-border bg-bg py-3"
+        onKeyDown={(e) => {
+          if (e.key === 'Escape' && !e.defaultPrevented) void close()
+        }}
+      >
+        <h3 className="mb-3 flex items-center gap-2 px-4 text-sm font-semibold">
+          <AddonBadge name={name} />
+          <span id={titleId}>{title} settings</span>
+        </h3>
+        <Suspense fallback={<Skeleton aria-label="Loading addon settings" className="mx-4 h-40" />}>
+          <AddonSettings key={workspace.id} name={name} workspace={workspace} canEdit={canEdit} labelledBy={titleId} onDirtyChange={onDirtyChange} onClose={close} />
+        </Suspense>
+      </div>
       {asking && (
-        <Dialog open onOpenChange={(o) => !o && answer(asking.keep)}>
+        <Dialog open onOpenChange={(o) => !o && answer(() => {
+          requestSettingsFocus(null)
+          asking.keep()
+        })}>
           <DialogContent className="max-w-md border-border bg-surface">
             <DialogHeader>
               <DialogTitle>Discard unsaved changes?</DialogTitle>
               <DialogDescription>The {title} settings have changes that are not saved.</DialogDescription>
             </DialogHeader>
             <DialogFooter>
-              <Button variant="ghost" onClick={() => answer(asking.keep)}>
+              <Button variant="ghost" onClick={() => answer(() => {
+          requestSettingsFocus(null)
+          asking.keep()
+        })}>
                 Keep editing
               </Button>
               <Button variant="destructive" onClick={() => answer(asking.discard)}>

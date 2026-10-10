@@ -41,6 +41,8 @@ interface Session {
   summary?: string
   /** The ended session this one resumed. */
   resumedFrom?: string
+  /** A re-login shell: the OS user that runs the agents (the connection's run_as), the connection, and the login command typed but not run. */
+  login?: { runAs: string; connection: string; command: string }
 }
 
 const SESSIONS: Session[] = [
@@ -84,7 +86,7 @@ function shellCtx(c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>, s: Session): She
   const g = store.grants(ws).find((x) => x.person === forPerson && !x.revoked && x.until > store.now())
   const next = doc?.tasks_state.find((t) => t.state === 'doing' || t.state === 'todo')
   return {
-    user: s.kind === 'agent' ? 'claude' : nameOf(c, s.owner).toLowerCase(),
+    user: s.login ? s.login.runAs : s.kind === 'agent' ? 'claude' : nameOf(c, s.owner).toLowerCase(),
     cwd: '~/energy',
     branch: s.branch,
     owner: s.kind,
@@ -165,6 +167,7 @@ registerAddon({
       context: contextOf(s),
       summary: s.status === 'stopped' ? (s.summary ?? null) : null,
       resumedFrom: resumedFromView(c, state, s),
+      ...(s.login ? { prefill: s.login.command, run_as: s.login.runAs } : {}),
     }))
     const myNav = ((state.nav ?? {}) as ReturnType<typeof navOf>)[viewer] // read-only: view() never creates state.nav
     const cur = shown.find((s) => s.id === myNav?.current) ?? shown.find((s) => mine(s) && s.status === 'running') ?? shown[0]
@@ -248,6 +251,22 @@ registerAddon({
       navOf(state)[viewer] = { current: s.id }
       return { ok: true, message: `Continued from ${sessionTitle(old)} in a new ${h.label} session.`, changed: true }
     },
+    /**
+     * Re-login (owner only): a shell as the OS user that runs the agents, with the connection's login command typed
+     * but not run; the person presses Enter. The command comes from the host's connection, never from the request.
+     */
+    login_shell(ctx) {
+      const { state, store, viewer, ws, body } = ctx
+      if (!ptyGranted(ctx)) return noPty()
+      if (store.roleIn(ws, viewer) !== 'owner') return refusal(403, 'forbidden', 'Only owners log in again.', 'Ask an owner.')
+      const c = store.conn.connections(ws).find((x) => x.name === body.connection)
+      if (!c) return notFound('No such connection.')
+      if (c.kind !== 'cli_login' || !c.login_hint) return invalid('This connection has no login command.')
+      const s = newShell(state, store, viewer, null)
+      s.login = { runAs: c.run_as, connection: c.name, command: c.login_hint }
+      navOf(state)[viewer] = { current: s.id }
+      return { ok: true, message: `Opened a shell as ${c.run_as} with the login command for ${c.name} typed. Press Enter to run it.`, changed: true, terminal: s.id }
+    },
     save_settings: ({ state, body }) => {
       const d = (body.formData ?? {}) as { shell?: unknown; font_size?: unknown }
       const size = typeof d.font_size === 'number' && Number.isFinite(d.font_size) ? Math.min(20, Math.max(10, Math.round(d.font_size))) : 13
@@ -271,7 +290,8 @@ function resumedFromView(c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>, state: Re
 }
 
 /** What the person sees: ticket first ("DEMO-0043 · Claude Code", "DEMO-0043 · Your shell", "Scratch shell"). */
-function sessionTitle(s: Pick<Session, 'kind' | 'owner' | 'ticket' | 'harness'>): string {
+function sessionTitle(s: Pick<Session, 'kind' | 'owner' | 'ticket' | 'harness' | 'login'>): string {
+  if (s.login) return `Log in ${s.login.connection} as ${s.login.runAs}`
   if (s.kind === 'person') {
     const h = s.harness && s.harness !== 'shell' ? (findHarness(s.harness)?.label ?? s.harness) : null
     return h ? (s.ticket ? `${s.ticket} · Your ${h}` : `Your ${h}`) : s.ticket ? `${s.ticket} · Your shell` : 'Scratch shell'

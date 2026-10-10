@@ -47,6 +47,16 @@ describe('terminal dock: open, collapse, resize, side', () => {
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: /^Open terminal dock/ })), T)
     expect(prefs().open).toBe(false)
   })
+  it('has a visible Collapse button at the right end of the toolbar (with its shortcut), besides the menu item', async () => {
+    const { user } = renderApp('/', { viewer: 'p_sev' })
+    const d = await openDock(user)
+    const button = within(d).getByRole('button', { name: 'Collapse the dock' })
+    expect(button).toHaveAttribute('title', 'Collapse · Ctrl+`')
+    expect(d.querySelector('header')!.lastElementChild).toBe(button)
+    await user.click(button)
+    await waitFor(() => expect(prefs().open).toBe(false))
+    await screen.findByRole('button', { name: /^Open terminal dock/ }, T)
+  })
   it('sits beside the page (never over it), resizes by keyboard and drag within its limits, and remembers the size', async () => {
     const { user } = renderApp('/', { viewer: 'p_sev' })
     const d = await openDock(user)

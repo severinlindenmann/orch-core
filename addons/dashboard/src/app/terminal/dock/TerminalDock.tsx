@@ -4,7 +4,7 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { useRouter } from '@tanstack/react-router'
-import { List, MoreHorizontal, SquareTerminal } from 'lucide-react'
+import { List, MoreHorizontal, PanelBottomClose, PanelRightClose, SquareTerminal } from 'lucide-react'
 import { useEffect, useRef, useState, type KeyboardEvent, type MutableRefObject, type PointerEvent } from 'react'
 import { api } from '@/api/client'
 import type { TerminalSessionView } from '@/api/terminals'
@@ -239,6 +239,9 @@ function DockBody({ prefs, side, size, view, area, rightFits, setPrefs, focus, m
             <DropdownMenuItem onSelect={collapse}>Collapse<DropdownMenuShortcut>{DOCK_KEYS}</DropdownMenuShortcut></DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        <Button variant="ghost" size="icon-xs" aria-label="Collapse the dock" title={`Collapse · ${DOCK_KEYS}`} onClick={collapse}>
+          {right ? <PanelRightClose /> : <PanelBottomClose />}
+        </Button>
       </header>
       {right && (
         <div className="flex h-8 shrink-0 items-center border-b border-border bg-surface-2 px-2">

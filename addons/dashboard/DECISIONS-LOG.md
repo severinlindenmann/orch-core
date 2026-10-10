@@ -937,3 +937,39 @@ The owner answered the eight open questions of REVIEW.md. Items 1, 2, 5 and 6 ch
   M3's seeded times still follow the demo clock after a reload (the log is seeded relative to "now" when turned on).
 - **Why:** review M1, controller rulings for fix round 1.
 - **Revert:** revert the M1 fix-round commit.
+
+## Owner decisions 2026-10-10 (evening) — D58–D60 confirmed, D61 full run, D62 wider mandate
+
+- **Decision:** (1) **D58, D59, D60 confirmed**; nothing to build. (2) **D61 full run** (an extra option on the AI
+  Factory; `docs/factory-full-run-proposal.md`): one signed request ("How far may the factory go on its own?" Up to
+  Preview (default) / All the way to Deliver; "What Deliver means" required for Deliver; hold window 15 min / 30 min
+  (default) / 1 h / 4 h; children of size m or smaller). Stage words: **Preview** (made and checked, visible only in
+  the workspace) and **Deliver** (it goes out). The factory goes Plan → per child Requirements, Build and test,
+  Validate, Evidence → Preview → (hold) → Deliver; every decided step reads "via the factory full run you signed on
+  <date> — no person reviewed this step". At Deliver: a core decision with one option, Stop delivery, shown above the
+  factory's tabs, on Today and as a calm shell line (`DeliveryHoldBanner`, new optional `AddonDecision.hold`); Stop is
+  signed by a person and cancels (no `factory.delivered`); after the window: "Delivered: <destination> at <time>".
+  Events and fields in HANDOVER ("Factory full runs"). (3) **D62 wider mandate** (`docs/concept-mandates.md`
+  revision 3): it steers the whole workspace in the owner's name except settings, addons, members/roles, devices,
+  relay pairing, secrets/connections and protected paths; up to 30 days, renewable with one new signature; P2
+  custody and the other prerequisites stay mandatory. Follow-up owner rulings via the coordinator: a mandate **may**
+  start full runs with a Deliver target (the hold notice is the only human checkpoint; the risk is stated in the
+  concept's Summary and §2.16); a mandate may issue grants but **never another mandate** (host refuses
+  mandate → mandate, `mandate.chain_refused`). The mandates preview shows the wide scope: issue dialog with "Steers the
+  whole workspace in your name", the may-do list ("Enable factories and start factory runs, including Deliver (after
+  the hold window)"), the always-yours list and protected paths, a length picker up to 30 days, Renew… in the
+  mandate view (new revision, same scope), and a seeded log mixing gate approvals, a verdict and code review, an
+  unblocked ticket, a factory permit, a factory enabled, a full run started and a grant; refused items now include
+  an addon install (always yours) and a second mandate (no chains). The "one admitted epic" pilot wording is gone.
+- **Choices made here:** a full run to Deliver is owner-only (maintainers may request Preview runs) — open point 1 of
+  the proposal; the run's children are steps in the addon state, not tickets, and its milestones are events on the
+  factory epic (a real host would give a run its own epic); the hold is a core decision so Stop goes through core's
+  one decision path (who decides, terms checked again, `addon.decided`); the mock clock runs in real time, so the demo
+  adds "Fill in a demo request" (prefills the form; it is still signed) and "Skip the wait (demo)"; a paused factory
+  holds the delivery and gives the paused time back. Concept open points left for the owner: the code review gate
+  under a mandate, the old "never" items not named either way (restore/purge treated as settings; first peer send,
+  public publish, landing on `main` as delegable), a ceiling across renewals and a weekly acknowledgement.
+- **Why:** owner answers 10 Oct evening (brief U2) and two coordinator follow-ups the same evening.
+- **Revert:** revert the U2 commits (delete `src/mocks/addons/factory-runs.ts`, `src/app/shell/DeliveryHoldBanner.tsx`,
+  `docs/factory-full-run-proposal.md`; restore the factory manifest, `AddonDecision.hold`, the mandates preview types
+  and pages, concept revision 2).

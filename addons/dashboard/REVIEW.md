@@ -245,17 +245,30 @@ A ticket that needs a login that expired.
 
 ### 19. Mandates (preview)
 
-How the approved Step 1 pilot would look. A non-functional preview: nothing signs.
+How the wide mandate (owner decision 10 Oct evening) would look. A non-functional preview: nothing signs.
 
 - [ ] **Preflight** — Agents → Mandates: the four prerequisites are "not available in this build", so issuing is blocked. Page: `/agents?tab=mandates`.
-- [ ] **Issue a pilot mandate** — Show the pilot anyway (preview), then Issue a pilot mandate…: the fixed scope, the never list and the protected paths; "Sign mandate (preview — nothing is signed)". Page: `/agents?tab=mandates`.
-- [ ] **The banner** — One calm line on every page: Mandate md_3 · for Severin · epic DEMO-0050 · 9 decisions · until Tue. Details opens the tab; × hides it for this session. Page: `/board`.
-- [ ] **Decided for you** — Today, below the real queue: one folded row. Open it for up to 3 decisions (Looks right, Veto), the refused or skipped items and Show all; "Revoke mandate and void…" sits in its header. Page: `/`.
+- [ ] **Issue a mandate** — Show the mandate anyway (preview), then Issue a mandate…: "Steers the whole workspace in your name", what it may do (approve waiting agents and gates, unblock tickets, enable factories and start their runs including Deliver, issue grants), what stays yours (settings, addons, members and roles, devices, relay pairing, secrets and connections, protected paths, another mandate), a length up to 30 days; "Sign mandate (preview — nothing is signed)". Page: `/agents?tab=mandates`.
+- [ ] **Renew** — Renew… in the mandate: pick a new length (up to 30 days) from now; revision 2, same scope. Page: `/agents?tab=mandates`.
+- [ ] **The banner** — One calm line on every page: Mandate md_3 · for Severin · whole workspace · 10 decisions · until Tue. Details opens the tab; × hides it for this session. Page: `/board`.
+- [ ] **Decided for you** — Today, below the real queue: one folded row. Open it for up to 3 decisions (a grant, a factory run, a permit … with Looks right, Veto), the refused items (protected path, your veto, an addon install and a second mandate, both refused) and Show all; "Revoke mandate and void…" sits in its header. Page: `/`.
 - [ ] **Stop** — Stop in the banner (optionally also stop agents): "Stopping…", then "Stopped at #1842". Page: `/agents?tab=mandates`.
-- [ ] **Revoke and void** — Lists the 7 decisions it would void and the 2 on landed work it only lists for review. Page: `/agents?tab=mandates`.
+- [ ] **Revoke and void** — Lists the 8 decisions it would void and the 2 on landed work it only lists for review. Page: `/agents?tab=mandates`.
 - [ ] **Off again** — Demo data → Preview: mandates (or Reset demo): Today and the shell look exactly as before. Page: `/`.
 
 Quickest way in: **Demo data → Preview: mandates** turns the preview on with mandate md_3 already in force (seeded as if it had run for three days). Off by default; Reset demo turns it off.
+
+### 20. Factory full run
+
+Owner decision 10 Oct evening (D61 option): one signed request, the factory goes to Preview or all the way to Deliver, with a hold window and Stop.
+
+- [ ] **A run on hold** — Demo data → Busy day, then AI Factory: "Delivering in 28 min · Publish campaign to the newsletter list" above the tabs with Stop delivery, the same line in the shell, and a needs-you item on Today. Page: `/addon/factory/factory`.
+- [ ] **Stop the delivery** — Stop… in the shell line (or Stop delivery on the page): core's prompt names the run, the destination and the end of the window; Send answer. "Stopped by Severin …: nothing went out." Page: `/addon/factory/factory`.
+- [ ] **Request a full run** — Full runs tab: Goal, "How far may the factory go on its own?" → All the way to Deliver, What Deliver means (required), Hold window → Review request → Sign and start (or Fill in a demo request). The prompt lists every value in core lines. Page: `/addon/factory/factory`.
+- [ ] **Watch the steps** — Plan, then Requirements / Build and test / Validate / Evidence per child, then Preview: each reads "via the factory full run you signed on … — no person reviewed this step". About 30 s later it holds before Deliver. Page: `/addon/factory/factory`.
+- [ ] **Delivered** — Skip the wait (demo) ends the hold now: "Delivered: Deploy to production at …". The epic's History has the run's milestones. Page: `/addon/factory/factory`.
+
+In the normal demo, install AI Factory (Settings → Addons → Browse addons), then Full runs → Fill in a demo request → Sign and start: it reaches the hold in about 30 s. The mock clock runs in real time, so a 30-minute hold really takes 30 minutes; Skip the wait (demo) ends it now. Proposal: `docs/factory-full-run-proposal.md`.
 
 ## What is simulated
 
@@ -328,3 +341,16 @@ Calls made for you (each logged in DECISIONS-LOG.md with how to revert):
 - The terminal dock docks right only when the page keeps at least 720 px; beside the dock the sidebar becomes the rail.
 - The sidebar shows at most 6 addon pages; the pin choice is kept per browser (a stand-in for a workspace setting).
 - Addon settings open in a right-hand drawer (you asked for "a drawer below"; a right drawer fits forms better).
+
+## Decided (owner, 10 Oct 2026, evening)
+
+D58, D59, D60 confirmed. Two changes, both shown in the mockup and logged in DECISIONS-LOG.md ("Owner decisions
+2026-10-10 (evening)"):
+
+- **D61, factory full run** (scenario 20): one signed request; the factory goes up to Preview (made and checked,
+  visible only in the workspace) or all the way to Deliver (it goes out), with a hold window and Stop. Proposal:
+  `docs/factory-full-run-proposal.md`.
+- **D62, wide mandate** (scenario 19): it steers the whole workspace in your name except settings, addons, members
+  and roles, devices, relay pairing, secrets and connections and protected paths; up to 30 days, renewable with one
+  new signature; it may start full runs that Deliver; it never issues another mandate. Concept:
+  `docs/concept-mandates.md` (open points in §6).

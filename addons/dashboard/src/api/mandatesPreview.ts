@@ -111,7 +111,7 @@ export interface PreviewMandate {
 
 export interface MandatesPreviewState {
   preview: true
-  /** The preview is turned on (Demo data "Preview: mandates", or "Show the pilot anyway"). Off: nothing shows. */
+  /** The preview is turned on (Demo data "Preview: mandates", or "Show the mandate anyway"). Off: nothing shows. */
   on: boolean
   preflight: MandatePreflightCheck[]
   /** What the issue dialog offers (the workspace's agents). */

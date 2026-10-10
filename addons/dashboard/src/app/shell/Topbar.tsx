@@ -154,7 +154,7 @@ function MandatesPreviewToggle() {
     <button
       type="button"
       aria-pressed={on}
-      title="A non-functional preview of the proposed mandates pilot. Nothing signs."
+      title="A non-functional preview of the proposed wide mandate. Nothing signs."
       onClick={() => void op(on ? { op: 'disable' } : { op: 'enable', seed: true }, on ? 'Mandates preview off' : 'Mandates preview on')}
       className={cn('rounded-sm px-1 text-[11px]', on ? 'bg-surface-3 text-text' : 'text-text-muted hover:bg-surface-3 hover:text-text')}
     >

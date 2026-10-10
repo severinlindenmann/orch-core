@@ -17,8 +17,22 @@ const seeded = (s: MockStore) => {
 }
 const banner = () => screen.queryByTestId('mandate-banner')
 
-/** Every api method that signs or decides something real. The preview must never call one. */
+/** Every api method that signs or decides something real: the preview must never call one (listed for the record). */
 const SIGNING = ['postAction', 'runAddonAction', 'issueGrant', 'revokeGrant', 'grantSkillCredentials', 'postAddonOp', 'postRelay', 'postSettings'] as const
+/** Spies on every api method; `writes()` names each called method that is not a read (get… / list…). */
+function spyAll() {
+  const spies = (Object.keys(api) as (keyof typeof api)[]).map((k) => [k, vi.spyOn(api, k)] as const)
+  return {
+    writes: () => spies.filter(([k, sp]) => sp.mock.calls.length > 0 && !/^(get|list)/.test(k)).map(([k]) => k),
+    signing: () => spies.filter(([k, sp]) => (SIGNING as readonly string[]).includes(k) && sp.mock.calls.length > 0).map(([k]) => k),
+  }
+}
+/** Opens the folded digest on Today. */
+async function openDigest(user: ReturnType<typeof renderApp>['user']) {
+  const digest = await screen.findByTestId('decided-for-you', {}, T)
+  await user.click(within(digest).getByRole('button', { name: /^Decided for you/ }))
+  return digest
+}
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -66,6 +80,7 @@ describe('Agents → Mandates (preview)', () => {
     expect(covers).toHaveTextContent(/Admits epic DEMO-0050 Monthly billing v2 and its children up to size m/)
     expect(covers).toHaveTextContent(/Duration: 7 days, until .* UTC · no renewal/)
     expect(covers).toHaveTextContent(/Orchestrator: /)
+    expect(covers).toHaveTextContent('Request changes stay yours: the mandate never requests changes')
     // Decision kinds, size and duration are shown, not editable: only the orchestrator and the epic are inputs.
     expect(within(dialog).getAllByRole('combobox').map((c) => c.id)).toEqual(['mandate-orch', 'mandate-epic'])
     expect(within(dialog).queryByRole('textbox')).toBeNull()
@@ -91,7 +106,11 @@ describe('Agents → Mandates (preview)', () => {
     const refused = screen.getByTestId('mandate-refused')
     expect(refused).toHaveTextContent('Protected path')
     expect(refused).toHaveTextContent('Your veto')
-    expect(refused).toHaveTextContent('Limit reached')
+    expect(refused).not.toHaveTextContent('Limit reached')
+    expect(within(refused).getAllByRole('listitem')).toHaveLength(2)
+    // The pilot decides approvals and verdicts only: no rework meter, request changes stay yours.
+    expect(within(limits).queryByRole('progressbar', { name: /Rework/ })).toBeNull()
+    expect(screen.getByText(/request changes stay yours/)).toBeInTheDocument()
     expect(screen.getByText(/Revision 1/)).toBeInTheDocument()
   })
 
@@ -134,7 +153,7 @@ describe('shell banner (preview)', () => {
   it('Stop: "Stopping…" until the host acknowledges, then "Stopped at #1842"', async () => {
     const { user } = renderApp('/agents?tab=mandates', { setup: seeded })
     const b = await screen.findByTestId('mandate-banner', {}, T)
-    await user.click(within(b).getByRole('button', { name: 'Stop' }))
+    await user.click(within(b).getByRole('button', { name: 'Stop…' }))
     const dialog = await screen.findByRole('dialog', { name: 'Stop mandate md_3?' }, T)
     await user.click(within(dialog).getByRole('checkbox', { name: 'Also stop agents' }))
     expect(within(dialog).getByTestId('preview-covers')).toHaveTextContent(/Also stops the agents/)
@@ -146,27 +165,60 @@ describe('shell banner (preview)', () => {
 })
 
 describe('Today: Decided for you (preview)', () => {
-  it('lists the decisions since the last look with Looks right, Veto and Revoke and void, and the refused items as needs-you rows', async () => {
+  it('sits below the real queue, folded to one row; open: at most 3 decisions with Looks right and Veto, the refused items, Show all', async () => {
     const { user } = renderApp('/', { setup: seeded })
     const digest = await screen.findByTestId('decided-for-you', {}, T)
-    expect(digest).toHaveTextContent(/Decided for you · 5 since you last looked · via mandate md_3, epic DEMO-0050/)
+    // Below the real "needs you" groups (the queue section's last child), folded.
+    const queue = screen.getByRole('region', { name: 'Needs you' })
+    const groups = within(queue).getAllByRole('region').filter((r) => r !== digest)
+    expect(groups.length).toBeGreaterThan(0)
+    for (const g of groups) expect(g.compareDocumentPosition(digest) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    const toggle = within(digest).getByRole('button', { name: /^Decided for you/ })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(toggle).toHaveTextContent(/Decided for you · 5 since you last looked · 2 refused or skipped · Review/)
+    expect(within(digest).queryAllByTestId(/^mandate-decision:/)).toHaveLength(0)
+    await user.click(toggle)
     expect(digest).toHaveTextContent(PREVIEW_LINE)
     const rows = () => within(digest).queryAllByTestId(/^mandate-decision:/)
-    expect(rows()).toHaveLength(5)
+    expect(rows()).toHaveLength(3)
     expect(rows()[0]).toHaveTextContent(/DEMO-0054Requirements approved: via mandate md_3, for Severin — no person reviewed this/)
-    await user.click(within(rows()[0]).getByRole('button', { name: 'Looks right' }))
-    await waitFor(() => expect(rows()).toHaveLength(4))
-    await user.click(within(rows()[0]).getByRole('button', { name: 'Veto' }))
-    await waitFor(() => expect(rows()).toHaveLength(3))
+    // No per-row revoke: one mandate-wide button in the header.
+    expect(within(rows()[0]).queryByRole('button', { name: /Revoke/ })).toBeNull()
+    expect(within(digest).getByRole('link', { name: /Show all \(2 more\) on Agents → Mandates/ }).getAttribute('href')).toMatch(/\/agents\?tab=mandates$/)
+    await user.click(within(rows()[0]).getByRole('button', { name: 'Looks right: DEMO-0054 requirements approved' }))
+    await waitFor(() => expect(toggle).toHaveTextContent('4 since you last looked'))
+    await user.click(within(rows()[0]).getByRole('button', { name: /^Veto: / }))
+    await waitFor(() => expect(toggle).toHaveTextContent('3 since you last looked'))
     const refused = screen.getByTestId('mandate-refused-today')
-    expect(within(refused).getAllByTestId(/^mandate-refused:/)).toHaveLength(3)
-    expect(refused).toHaveTextContent(/Protected path:.*package-lock\.json/)
-    await user.click(within(rows()[0]).getByRole('button', { name: 'Revoke and void' }))
+    expect(within(refused).getAllByTestId(/^mandate-refused:/)).toHaveLength(2)
+    // Core's reason in full.
+    expect(refused).toHaveTextContent('Protected path:Verdict refused: the diff touches package-lock.json (a dependency lockfile, protected). A person approves this.')
+    await user.click(within(digest).getByRole('button', { name: 'Revoke mandate and void…' }))
     const dialog = await screen.findByRole('alertdialog', {}, T)
     expect(within(within(dialog).getByTestId('revoke-voids')).getAllByRole('listitem')).toHaveLength(7)
     await user.click(within(dialog).getByRole('button', { name: 'Revoke and void (preview — nothing is signed)' }))
     await waitFor(() => expect(screen.queryByTestId('decided-for-you')).toBeNull())
-    expect(screen.queryByTestId('mandate-refused-today')).toBeNull()
+  })
+})
+
+describe('values through visible.tsx (preview dialogs)', () => {
+  it('an issuer name with a bidi override is shown escaped in the banner, the digest and the Revoke dialog', async () => {
+    const { user } = renderApp('/', {
+      setup: (s) => {
+        s.workspaces.find((w) => w.prefix === 'DEMO')!.members.find((m) => m.person === 'p_sev')!.name = 'Sev\u202Erin'
+        seeded(s)
+      },
+    })
+    const b = await screen.findByTestId('mandate-banner', {}, T)
+    expect(b.textContent).toContain('Sev\\u{202e}rin')
+    expect(b.textContent).not.toContain('\u202E')
+    const digest = await openDigest(user)
+    expect(digest.textContent).toContain('for Sev\\u{202e}rin — no person reviewed this')
+    expect(digest.textContent).not.toContain('\u202E')
+    await user.click(within(digest).getByRole('button', { name: 'Revoke mandate and void…' }))
+    const dialog = await screen.findByRole('alertdialog', {}, T)
+    expect(dialog.textContent).toContain('Sev\\u{202e}rin')
+    expect(dialog.textContent).not.toContain('\u202E')
   })
 })
 
@@ -205,8 +257,8 @@ describe('preview off (the default)', () => {
 })
 
 describe('the preview never signs', () => {
-  it('a full run (on, issue, digest, stop, revoke) posts only to the preview endpoint: no sign or decision call', async () => {
-    const spies = SIGNING.map((m) => vi.spyOn(api, m))
+  it('a full run (on, issue, stop, revoke) posts only to the preview endpoint: no other write at all', async () => {
+    const spy = spyAll()
     const preview = vi.spyOn(api, 'postMandatesPreview')
     const { user } = renderApp('/agents?tab=mandates')
     await user.click(await screen.findByRole('switch', { name: /Show the pilot anyway/ }, T))
@@ -215,28 +267,28 @@ describe('the preview never signs', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Issue a pilot mandate' }, T)
     await user.click(within(dialog).getByRole('button', { name: /Sign mandate/ }))
     await screen.findByTestId('mandate-banner', {}, T)
-    await user.click(within(screen.getByTestId('mandate-banner')).getByRole('button', { name: 'Stop' }))
+    await user.click(within(screen.getByTestId('mandate-banner')).getByRole('button', { name: 'Stop…' }))
     await user.click(within(await screen.findByRole('dialog', { name: /Stop mandate/ }, T)).getByRole('button', { name: /Stop mandate/ }))
     await waitFor(() => expect(screen.getByTestId('mandate-banner')).toHaveTextContent('Stopped at #1842'), T)
     await user.click(screen.getByRole('button', { name: 'Revoke and void…' }))
     await user.click(within(await screen.findByRole('alertdialog', {}, T)).getByRole('button', { name: /Revoke and void/ }))
     await waitFor(() => expect(banner()).toBeNull())
-    for (const s of spies) expect(s, s.getMockName()).not.toHaveBeenCalled()
-    const ops = preview.mock.calls.map((c) => c[1].op)
-    expect(ops).toEqual(['enable', 'issue', 'stop', 'revoke'])
+    expect(spy.signing()).toEqual([])
+    expect(spy.writes()).toEqual(['postMandatesPreview'])
+    expect(preview.mock.calls.map((c) => c[1].op)).toEqual(['enable', 'issue', 'stop', 'revoke'])
     for (const c of preview.mock.calls) expect(JSON.stringify(c[1])).not.toMatch(/"confirm"|sign/)
   })
   it('the digest actions post only to the preview endpoint too', async () => {
-    const spies = SIGNING.map((m) => vi.spyOn(api, m))
-    const preview = vi.spyOn(api, 'postMandatesPreview')
+    const spy = spyAll()
     const { user } = renderApp('/', { setup: seeded })
-    const digest = await screen.findByTestId('decided-for-you', {}, T)
+    const digest = await openDigest(user)
+    const toggle = within(digest).getByRole('button', { name: /^Decided for you/ })
     const first = () => within(digest).getAllByTestId(/^mandate-decision:/)[0]
-    await user.click(within(first()).getByRole('button', { name: 'Looks right' }))
-    await waitFor(() => expect(within(digest).getAllByTestId(/^mandate-decision:/)).toHaveLength(4))
-    await user.click(within(first()).getByRole('button', { name: 'Veto' }))
-    await waitFor(() => expect(within(digest).getAllByTestId(/^mandate-decision:/)).toHaveLength(3))
-    for (const s of spies) expect(s).not.toHaveBeenCalled()
-    expect(preview.mock.calls.map((c) => c[1].op)).toEqual(['review', 'review'])
+    await user.click(within(first()).getByRole('button', { name: /^Looks right/ }))
+    await waitFor(() => expect(toggle).toHaveTextContent('4 since'))
+    await user.click(within(first()).getByRole('button', { name: /^Veto/ }))
+    await waitFor(() => expect(toggle).toHaveTextContent('3 since'))
+    expect(spy.signing()).toEqual([])
+    expect(spy.writes()).toEqual(['postMandatesPreview'])
   })
 })

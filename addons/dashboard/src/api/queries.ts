@@ -39,6 +39,6 @@ export const queries = {
   addonState: (ws: string, name: string, ticket?: string) =>
     queryOptions({ queryKey: addonStateKey(ws, name, ticket), queryFn: () => api.getAddonState(ws, name, ticket), staleTime: 10_000, retry: false }),
   /** Mandates, PREVIEW ONLY: the shell banner, Today's digest and Agents → Mandates read this one entry. */
-  mandatesPreview: (ws: string) => queryOptions({ queryKey: ['mandates-preview', ws], queryFn: () => api.getMandatesPreview(ws) }),
+  mandatesPreview: (ws: string) => queryOptions({ queryKey: ['mandates-preview', ws], queryFn: () => api.getMandatesPreview(ws), retry: false }),
   artifacts: (ws: string, query: ArtifactQuery) => queryOptions({ queryKey: ['artifacts', ws, query], queryFn: () => api.listArtifacts(ws, query) }),
 }

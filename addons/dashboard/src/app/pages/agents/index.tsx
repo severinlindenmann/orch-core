@@ -43,9 +43,9 @@ export function AgentsPage() {
   const setTab = (next: string) => void navigate({ to: '/agents', search: next === 'mandates' ? { tab: 'mandates' } : {}, replace: true })
   const mandates = useMandatesPreview(ws)
 
-  const failure = useLoadFailure(today, sessions, grants, activity, ...(tab === 'mandates' ? [mandates] : []))
+  const failure = useLoadFailure(today, sessions, grants, activity)
   if (failure.failed) return <LoadFailed what="agents" onRetry={failure.retry} />
-  if (!ws || !me.data || !today.data || !sessions.data || !grants.data || !activity.data || (tab === 'mandates' && !mandates.data)) {
+  if (!ws || !me.data || !today.data || !sessions.data || !grants.data || !activity.data || (tab === 'mandates' && mandates.isPending)) {
     return <AgentsSkeleton inPage tab={tab} />
   }
 
@@ -72,9 +72,10 @@ export function AgentsPage() {
       <div className="flex items-center gap-3">
         <div className="flex-1">
           <h1 className="text-xl font-semibold tracking-tight">Agents</h1>
-          <p className="mt-1 text-[13px] text-text-muted">{summary}</p>
+          {/* The sessions summary and Issue grant belong to the Sessions tab (Mandates is a preview of its own). */}
+          {tab === 'sessions' && <p className="mt-1 text-[13px] text-text-muted">{summary}</p>}
         </div>
-        {canAct && <Button onClick={() => setAction({ kind: 'issue' })}>Issue grant…</Button>}
+        {canAct && tab === 'sessions' && <Button onClick={() => setAction({ kind: 'issue' })}>Issue grant…</Button>}
       </div>
 
       <Tabs value={tab} onValueChange={setTab} className="gap-4">
@@ -97,7 +98,14 @@ export function AgentsPage() {
           </Section>
           <AgentActivity items={activity.data} sessions={sessions.data} />
         </TabsContent>
-        <TabsContent value="mandates">{mandates.data && <MandatesTab ws={ws} state={mandates.data} now={now} />}</TabsContent>
+        <TabsContent value="mandates">
+          {mandates.data ? (
+            <MandatesTab ws={ws} state={mandates.data} now={now} />
+          ) : (
+            // A host without the preview endpoint: say so, never "Agents could not load".
+            <p className="text-[13px] text-text-muted">The mandates preview is not available here.</p>
+          )}
+        </TabsContent>
       </Tabs>
 
       <GrantDialog

@@ -22,7 +22,7 @@ import { acceptOrder, buildGroups, foldLabel, pruneOrder, reconcile, toEntries, 
 import { ReloginGroup } from './relogin'
 import { ApprovalRow, DecisionRow, FoldRow, NewItemContext, SigningContext, QuestionRow, VerdictRow } from './rows'
 import { AgentsBar, AgentsPanel, Glance, GLANCE_TILES, Recently } from './side'
-import { displayName, useMediaQuery, useSessionState, WIDE_QUERY, type Directory } from './shared'
+import { displayName, useSessionState, useTodayWide, type Directory } from './shared'
 import { queries } from '@/api/queries'
 import { DecidedForYou } from '../../mandates/DecidedForYou'
 import { useMandatesPreview } from '../../mandates/shared'
@@ -152,7 +152,8 @@ function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention, g
   const today = useQuery({ ...queries.today(ws!), enabled: !!ws })
   const agentsQ = useQuery({ ...queries.agents(ws!), enabled: !!ws })
   const addons = useAddons()
-  const wide = useMediaQuery(WIDE_QUERY)
+  // Two columns only when the page itself is wide (the window minus the dock), never because the window is.
+  const wide = useTodayWide()
   const now = today.data!.now
   const sessions = useMemo(() => agentsQ.data ?? [], [agentsQ.data])
   const dir: Directory = { workspace, agents: sessions }
@@ -317,7 +318,6 @@ function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention, g
         )}
       </div>
       <ReloginGroup now={now} />
-      {!readOnly && ws && <DecidedForYou ws={ws} now={now} />}
       {readOnly ? [...byPerson].map(([person, personEntries]) => (
         <PersonSummary key={person} person={person} entries={personEntries} scope={scope} renderRow={renderRow} />
       )) : groups.map((g) => (
@@ -347,6 +347,9 @@ function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention, g
           {waiting.count} more {waiting.count === 1 ? 'is' : 'are'} waiting {allOwners ? `for an owner (${whoWaits})` : `for ${whoWaits || 'other people'}`}.
         </p>
       )}
+
+      {/* Mandates, PREVIEW ONLY: below the real queue, folded to one row. */}
+      {!readOnly && ws && <DecidedForYou ws={ws} now={now} />}
     </section>
   )
 

@@ -110,7 +110,16 @@ export class MandatesPreviewHost {
       const raw = this.storage()?.getItem(STORAGE_KEY)
       const saved = raw ? (JSON.parse(raw) as Partial<Saved>) : null
       if (saved?.v === 1 && saved.ws && typeof saved.ws === 'object') {
-        for (const [ws, sim] of Object.entries(saved.ws)) if (sim && typeof sim.on === 'boolean') this.sims.set(ws, { on: sim.on, mandate: sim.mandate ?? null, next: sim.next ?? 3 })
+        for (const [ws, sim] of Object.entries(saved.ws)) {
+          if (!sim || typeof sim.on !== 'boolean') continue
+          const m = sim.mandate ?? null
+          // The demo clock restarts on a reload: a Stop sent before it is acknowledged now (never stuck on "Stopping…").
+          if (m?.state === 'stopping' && m.stop) {
+            m.state = 'stopped'
+            m.stop.boundary_seq = BOUNDARY_SEQ
+          }
+          this.sims.set(ws, { on: sim.on, mandate: m, next: sim.next ?? 3 })
+        }
       }
     } catch {
       /* unreadable: the preview starts off */
@@ -234,11 +243,6 @@ export class MandatesPreviewHost {
         detail: 'Plan approval skipped: you requested changes on this plan. Your “no” stands until you lift it.',
         at: iso(now - 5 * 3_600_000),
       },
-      {
-        id: `${md}.r3`, ticket: kid(1).key, title: kid(1).title, kind: 'verdict', reason: 'limit',
-        detail: 'Skipped: 3 request-changes cycles reached on this ticket (the pilot’s limit). The next decision is yours.',
-        at: iso(now - 2 * 3_600_000),
-      },
     ]
     return {
       id: md,
@@ -255,7 +259,6 @@ export class MandatesPreviewHost {
       limits: {
         decisions: { used: decisions.length, max: 40 },
         children: { used: Math.min(kids.length, 25), max: 25 },
-        rework: { used: 3, max: 3 },
       },
       decisions,
       refused,

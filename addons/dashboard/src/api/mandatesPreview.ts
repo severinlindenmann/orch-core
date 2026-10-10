@@ -84,7 +84,7 @@ export interface PreviewMandate {
   state: 'active' | 'stopping' | 'stopped' | 'revoked'
   stop?: { requested_at: string; stop_agents: boolean; boundary_seq?: number }
   revoked_at?: string
-  limits: { decisions: MandateLimit; children: MandateLimit; rework: MandateLimit }
+  limits: { decisions: MandateLimit; children: MandateLimit }
   decisions: MandateDecision[]
   refused: MandateRefusal[]
   revisions: { revision: number; at: string; what: string }[]

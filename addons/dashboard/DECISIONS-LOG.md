@@ -912,3 +912,28 @@ The owner answered the eight open questions of REVIEW.md. Items 1, 2, 5 and 6 ch
 - **Why:** owner decision 10 Oct 2026 ("Approve step 1 (pilot)" + a mockup screen to see it), brief M1.
 - **Revert:** revert the M1 commits (delete `src/app/mandates/`, `src/app/pages/agents/Mandates.tsx`,
   `src/api/mandatesPreview.ts`, `src/mocks/mandates-preview.ts`; the Agents tabs, the shell and Today go back).
+
+## M1 mandates preview: review fixes (round 1, controller rulings)
+
+- **Decision:** (I1) Today's "Decided for you" moves **below** the real needs-you queue, folded to one summary row
+  ("Decided for you · 5 since you last looked · 2 refused or skipped · Review"); open, it shows at most 3 decisions,
+  the refused or skipped items (core's reason in full) and "Show all (N more) on Agents → Mandates". (I4) One
+  "Revoke mandate and void…" in the digest header; rows keep Looks right and Veto (with the ticket and kind in their
+  accessible names). (I2) The Stop and Revoke covers and lists, the decision label (`DecisionLine`, built from parts),
+  the banner and the mandate view put values through `visible.tsx` (`Raw` / `plain`); tested with a bidi override in
+  the issuer's name. (I3) The owner's decision stands: **approvals and verdicts only**. The rework-cycles meter and
+  the "3 request-changes cycles" refusal are gone; the dialog and the mandate say "Request changes stay yours" (concept
+  §5 lists request-changes for the pilot; the owner's Step 1 approval and the brief name the three approval kinds).
+  (Choice 6) Today and its skeleton choose one or two columns by the **page** width (the shell's window-minus-dock,
+  `useTodayWide`, ≥ 1280), not the window: with the dock open Today is one column. The width is known on the first
+  render (DockArea's context), so the first paint already has the final layout. Minors: a Stop pending at a reload is
+  acknowledged on load (M3); the preview query does not retry and Agents → Mandates says "not available here" instead
+  of "Agents could not load" on a host without it (M1, partly); the "never signs" tests spy on every api method and
+  allow no write except the preview's (M2); the sessions summary and Issue grant show on the Sessions tab only, the
+  skeleton matches (M5); the issue dialog's duplicate "fixed" list is gone (M6); the preflight says "unblocked here
+  only to show the flow" once the preview is on (M7); the banner's button reads "Stop…" (M8); a meter at its limit is
+  muted with "limit reached" (M9).
+- **Not done:** M1's warm-up on every shell load stays (it is the mock's endpoint; the real host gets no preview).
+  M3's seeded times still follow the demo clock after a reload (the log is seeded relative to "now" when turned on).
+- **Why:** review M1, controller rulings for fix round 1.
+- **Revert:** revert the M1 fix-round commit.

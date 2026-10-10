@@ -41,6 +41,7 @@ export function MandatesTab({ ws, state, now }: { ws: string; state: MandatesPre
       {missing > 0 && (
         <p className="mt-3 text-[13px] text-text" data-testid="preflight-blocked">
           Issuing is blocked. A real host refuses every mandate until all four pass (mandate.custody_unsupported); it is never a warning you can click past.
+          {state.on && <span className="text-text-muted"> Preview: unblocked here only to show the flow; a real host would refuse.</span>}
         </p>
       )}
       {owner ? (
@@ -100,16 +101,20 @@ function stateLine(m: PreviewMandate): { text: string; tone: 'success' | 'neutra
   }
 }
 
-function Meter({ label, value, max, text }: { label: string; value: number; max: number; text: string }) {
+function Meter({ label, value, max, text, reached = value >= max }: { label: string; value: number; max: number; text: string; reached?: boolean }) {
   const v = Math.max(0, Math.min(value, max))
   return (
     <div>
       <div className="mb-1 flex justify-between gap-2 text-[12px] text-text-muted">
         <span>{label}</span>
-        <span className="font-mono tabular-nums">{text}</span>
+        <span className="font-mono tabular-nums">
+          {text}
+          {reached ? ' · limit reached' : ''}
+        </span>
       </div>
       <div role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={max} aria-valuenow={v} className="h-1.5 overflow-hidden rounded-full bg-surface-2">
-        <div className="h-full rounded-full bg-brand" style={{ width: `${(v / max) * 100}%` }} />
+        {/* A reached limit is marked (muted, with "limit reached"), not drawn like any other fill. */}
+        <div className={cn('h-full rounded-full', reached ? 'bg-text-muted' : 'bg-brand')} style={{ width: `${(v / max) * 100}%` }} />
       </div>
     </div>
   )
@@ -149,19 +154,21 @@ function MandateView({ ws, m, now, owner }: { ws: string; m: PreviewMandate; now
       >
         <dl className="grid grid-cols-[120px_minmax(0,1fr)] gap-x-3 gap-y-1 text-[13px]">
           <dt className="text-text-muted">For</dt>
-          <dd>{m.issuer} (issuer, owner)</dd>
+          <dd>{plain(m.issuer)} (issuer, owner)</dd>
           <dt className="text-text-muted">Orchestrator</dt>
           <dd className="min-w-0 truncate">
-            {m.orchestrator.name} · <span className="font-mono text-[12px]">{m.orchestrator.identity}</span>
+            <Raw>{m.orchestrator.name}</Raw> · <Raw>{m.orchestrator.identity}</Raw>
           </dd>
           <dt className="text-text-muted">Checker</dt>
-          <dd className="font-mono text-[12px]">{m.checker.identity} (host-provisioned)</dd>
+          <dd>
+            <Raw>{m.checker.identity}</Raw> (host-provisioned)
+          </dd>
           <dt className="text-text-muted">Epic</dt>
           <dd className="min-w-0 truncate">
-            <span className="font-mono text-[12px]">{m.epic.key}</span> {m.epic.title} · children up to size {m.max_size}
+            <Raw>{m.epic.key}</Raw> {plain(m.epic.title)} · children up to size {m.max_size}
           </dd>
           <dt className="text-text-muted">Decides</dt>
-          <dd>{m.decides.map((k) => (k === 'verdict' ? 'verdicts' : `${k} approvals`)).join(', ')}</dd>
+          <dd>{m.decides.map((k) => (k === 'verdict' ? 'verdicts' : `${k} approvals`)).join(', ')} · request changes stay yours</dd>
           <dt className="text-text-muted">In force</dt>
           <dd>
             {fmtDateTime(m.issued_at)} until {weekday(m.expires)} {fmtExact(m.expires)} · no renewal
@@ -182,9 +189,8 @@ function MandateView({ ws, m, now, owner }: { ws: string; m: PreviewMandate; now
         <h4 className="mb-2 mt-4 text-[12px] font-semibold text-text">Limits</h4>
         <div className="grid grid-cols-1 gap-3 @[40rem]/page:grid-cols-2" data-testid="mandate-limits">
           <Meter label="Decisions" value={m.limits.decisions.used} max={m.limits.decisions.max} text={`${m.limits.decisions.used} / ${m.limits.decisions.max}`} />
-          <Meter label="Days left" value={left} max={total} text={`${left} of ${total}`} />
+          <Meter label="Days left" value={left} max={total} text={`${left} of ${total}`} reached={left <= 0} />
           <Meter label="Children" value={m.limits.children.used} max={m.limits.children.max} text={`${m.limits.children.used} / ${m.limits.children.max}`} />
-          <Meter label="Rework cycles (on one ticket)" value={m.limits.rework.used} max={m.limits.rework.max} text={`${m.limits.rework.used} / ${m.limits.rework.max}`} />
         </div>
         <p className="mt-2 text-[12px] text-text-muted">Money is not shown as a limit until the usage addon can enforce it.</p>
       </Section>
@@ -252,6 +258,7 @@ function IssueDialog({ ws, state, now, onClose }: { ws: string; state: MandatesP
         o ? <>Orchestrator: <Raw>{o.name}</Raw> (session <Raw>{o.session}</Raw>)</> : 'Orchestrator: none picked',
         e ? <>Admits epic <Raw>{e.key}</Raw> {plain(e.title)} and its children up to size m</> : 'Epic: none picked',
         'Decides: requirements approvals, plan approvals, verdicts (fixed in the pilot)',
+        'Request changes stay yours: the mandate never requests changes',
         `Duration: 7 days, until ${fmtExact(until)} · no renewal`,
         'For you: every decision reads “via mandate, for you — no person reviewed this”',
       ]}
@@ -285,14 +292,6 @@ function IssueDialog({ ws, state, now, onClose }: { ws: string; state: MandatesP
           </select>
         </div>
       </div>
-      <dl className="grid grid-cols-[120px_1fr] gap-x-3 gap-y-1 text-[13px]" aria-label="Fixed in the pilot">
-        <dt className="text-text-muted">Decides</dt>
-        <dd>Requirements approvals, plan approvals, verdicts</dd>
-        <dt className="text-text-muted">Children</dt>
-        <dd>Up to size m</dd>
-        <dt className="text-text-muted">Duration</dt>
-        <dd>7 days, no renewal</dd>
-      </dl>
       <section aria-label="Never" className="space-y-1">
         <h3 className="text-[12px] font-semibold text-text">It can never, by any path:</h3>
         <ul className="list-disc space-y-0.5 pl-4 text-[12px] text-text" data-testid="mandate-never">

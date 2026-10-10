@@ -250,7 +250,7 @@ How the approved Step 1 pilot would look. A non-functional preview: nothing sign
 - [ ] **Preflight** — Agents → Mandates: the four prerequisites are "not available in this build", so issuing is blocked. Page: `/agents?tab=mandates`.
 - [ ] **Issue a pilot mandate** — Show the pilot anyway (preview), then Issue a pilot mandate…: the fixed scope, the never list and the protected paths; "Sign mandate (preview — nothing is signed)". Page: `/agents?tab=mandates`.
 - [ ] **The banner** — One calm line on every page: Mandate md_3 · for Severin · epic DEMO-0050 · 9 decisions · until Tue. Details opens the tab; × hides it for this session. Page: `/board`.
-- [ ] **Decided for you** — Today: Looks right, Veto, Revoke and void on each decision; what the mandate refused or skipped below it. Page: `/`.
+- [ ] **Decided for you** — Today, below the real queue: one folded row. Open it for up to 3 decisions (Looks right, Veto), the refused or skipped items and Show all; "Revoke mandate and void…" sits in its header. Page: `/`.
 - [ ] **Stop** — Stop in the banner (optionally also stop agents): "Stopping…", then "Stopped at #1842". Page: `/agents?tab=mandates`.
 - [ ] **Revoke and void** — Lists the 7 decisions it would void and the 2 on landed work it only lists for review. Page: `/agents?tab=mandates`.
 - [ ] **Off again** — Demo data → Preview: mandates (or Reset demo): Today and the shell look exactly as before. Page: `/`.

@@ -7,7 +7,7 @@ import type { ReactNode } from 'react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { usePageHeader } from '../shell/ShellUi'
 import { TABS } from './settings/tabs'
-import { WIDE_QUERY } from './today/shared'
+import { useTodayWide } from './today/shared'
 
 /** As the router's pending component the skeleton sets the topbar title; inside a page (`inPage`) the page does. */
 function Title({ title }: { title: string }) {
@@ -50,7 +50,10 @@ function Panel({ rows, rowH = 'h-11' }: { rows: number; rowH?: string }) {
   )
 }
 
-export function TodaySkeleton({ wide = typeof window === 'undefined' || window.matchMedia?.(WIDE_QUERY).matches !== false, inPage }: { wide?: boolean } & Placement) {
+export function TodaySkeleton({ wide: forced, inPage }: { wide?: boolean } & Placement) {
+  // The same rule as Today: two columns only when the page is wide (the window minus the dock).
+  const pageWide = useTodayWide()
+  const wide = forced ?? pageWide
   const queue = (
     <div className="min-w-0 space-y-3">
       <Panel rows={3} />
@@ -177,7 +180,7 @@ export function AgentsSkeleton({ inPage, tab = 'sessions' }: Placement & { tab?:
     <Loading title="Agents" className="max-w-[1040px] space-y-5" inPage={inPage}>
       <div>
         <H1>Agents</H1>
-        <Skeleton className="mt-1 h-4 w-80" />
+        {tab === 'sessions' && <Skeleton className="mt-1 h-4 w-80" />}
       </div>
       <div className="space-y-4">
         <div className={AGENTS_TAB_ROW}>

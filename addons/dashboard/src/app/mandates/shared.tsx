@@ -9,7 +9,7 @@ import { toast } from 'sonner'
 import { api } from '@/api/client'
 import { can } from '@/api/permissions'
 import { queries } from '@/api/queries'
-import { decisionLabel, PREVIEW_LINE, revokeSplit, type MandatesPreviewRequest, type MandatesPreviewState, type PreviewMandate } from '@/api/mandatesPreview'
+import { DECISION_KIND_LABEL, PREVIEW_LINE, revokeSplit, type MandatesPreviewRequest, type MandatesPreviewState, type PreviewMandate } from '@/api/mandatesPreview'
 import { plain, Raw } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -67,14 +67,22 @@ export function PreviewNote({ className, chip = true }: { className?: string; ch
   )
 }
 
-/** One mandate decision in core's words, with the checker line under it. */
+/** One mandate decision in core's words, with the checker line under it. Values go through visible.tsx (Raw / plain). */
 export function DecisionLine({ m, d, className }: { m: PreviewMandate; d: PreviewMandate['decisions'][number]; className?: string }) {
   return (
     <span className={cn('min-w-0', className)}>
       {/* Core's label in full (it wraps, never truncates): it must never pass for the owner's own signature. */}
-      <span className="block break-words">{decisionLabel(d, m.id, m.issuer)}</span>
+      <span className="block break-words" data-testid="decision-label">
+        {DECISION_KIND_LABEL[d.kind]}: via mandate <Raw>{m.id}</Raw>, for {plain(m.issuer)} — no person reviewed this
+        {d.commit && (
+          <>
+            {' '}
+            (commit <Raw>{d.commit}</Raw>)
+          </>
+        )}
+      </span>
       <span className="block truncate text-text-muted">
-        checked by checker {d.checker.identity} ({d.checker.result})
+        checked by checker <Raw>{d.checker.identity}</Raw> ({d.checker.result})
       </span>
     </span>
   )
@@ -154,18 +162,18 @@ export function StopDialog({ ws, m, onClose }: { ws: string; m: PreviewMandate; 
   const op = useMandatesOp(ws)
   return (
     <PreviewPrompt
-      title={`Stop mandate ${m.id}?`}
+      title={`Stop mandate ${plain(m.id)}?`}
       icon="stop"
       covers={[
-        <>Mandate {m.id}, for {plain(m.issuer)}, epic <Raw>{m.epic.key}</Raw></>,
+        <>Mandate <Raw>{m.id}</Raw>, for {plain(m.issuer)}, epic <Raw>{m.epic.key}</Raw></>,
         'Nothing after the boundary the host acknowledges is signed',
         'Queued effects end: landing entries are dequeued, pending checker runs end',
-        agents ? <>Also stops the agents: <Raw>{m.orchestrator.name}</Raw> ({m.orchestrator.identity}) and its subagents; its grant is revoked</> : 'The agents keep running (without the mandate)',
+        agents ? <>Also stops the agents: <Raw>{m.orchestrator.name}</Raw> (<Raw>{m.orchestrator.identity}</Raw>) and its subagents; its grant is revoked</> : 'The agents keep running (without the mandate)',
       ]}
       confirmLabel="Stop mandate (preview — nothing is signed)"
       onConfirm={() => {
         onClose()
-        void op({ op: 'stop', stop_agents: agents }, `Stop sent for ${m.id}`)
+        void op({ op: 'stop', stop_agents: agents }, `Stop sent for ${plain(m.id)}`)
       }}
       onClose={onClose}
     >
@@ -184,18 +192,18 @@ export function RevokeDialog({ ws, m, onClose }: { ws: string; m: PreviewMandate
   const { voids, landed } = revokeSplit(m)
   return (
     <PreviewPrompt
-      title={`Revoke mandate ${m.id} and void its decisions?`}
+      title={`Revoke mandate ${plain(m.id)} and void its decisions?`}
       icon="void"
       destructive
       covers={[
-        <>Revokes mandate {m.id}, for {plain(m.issuer)}, epic <Raw>{m.epic.key}</Raw></>,
+        <>Revokes mandate <Raw>{m.id}</Raw>, for {plain(m.issuer)}, epic <Raw>{m.epic.key}</Raw></>,
         `Voids ${voids.length} decision${voids.length === 1 ? '' : 's'} on work that has not landed (gate.invalidated, cause: mandate revoked)`,
         landed.length ? `Lists ${landed.length} decision${landed.length === 1 ? '' : 's'} on landed work for your review (not voided)` : 'No decision covers landed work',
       ]}
       confirmLabel="Revoke and void (preview — nothing is signed)"
       onConfirm={() => {
         onClose()
-        void op({ op: 'revoke' }, `Mandate ${m.id} revoked, ${voids.length} decisions voided`)
+        void op({ op: 'revoke' }, `Mandate ${plain(m.id)} revoked, ${voids.length} decisions voided`)
       }}
       onClose={onClose}
     >
@@ -205,7 +213,7 @@ export function RevokeDialog({ ws, m, onClose }: { ws: string; m: PreviewMandate
           {voids.map((d) => (
             <li key={d.id} className="flex min-w-0 gap-2">
               <span className="shrink-0 font-mono text-text-muted">#{d.seq}</span>
-              <span className="shrink-0 font-mono">{d.ticket}</span>
+              <span className="shrink-0"><Raw>{d.ticket}</Raw></span>
               <DecisionLine m={m} d={d} />
             </li>
           ))}
@@ -218,7 +226,7 @@ export function RevokeDialog({ ws, m, onClose }: { ws: string; m: PreviewMandate
             {landed.map((d) => (
               <li key={d.id} className="flex min-w-0 gap-2">
                 <span className="shrink-0 font-mono text-text-muted">#{d.seq}</span>
-                <span className="shrink-0 font-mono">{d.ticket}</span>
+                <span className="shrink-0"><Raw>{d.ticket}</Raw></span>
                 <DecisionLine m={m} d={d} />
               </li>
             ))}

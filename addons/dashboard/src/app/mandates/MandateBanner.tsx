@@ -4,6 +4,7 @@
 import { Link } from '@tanstack/react-router'
 import { ShieldCheck, X } from 'lucide-react'
 import { useState } from 'react'
+import { plain } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
 import { useWorkspace } from '../workspace'
 import { Pill } from '../pages/ticket/shared'
@@ -33,7 +34,7 @@ export function MandateBanner() {
 
   const live = m.decisions.filter((d) => !d.voided).length
   const phase = m.state === 'stopping' ? 'Stopping…' : m.state === 'stopped' ? `Stopped at #${m.stop?.boundary_seq}` : `until ${weekday(m.expires)}`
-  const text = `Mandate ${m.id} · for ${m.issuer} · epic ${m.epic.key} · ${live} decision${live === 1 ? '' : 's'} · ${phase}`
+  const text = `Mandate ${plain(m.id)} · for ${plain(m.issuer)} · epic ${plain(m.epic.key)} · ${live} decision${live === 1 ? '' : 's'} · ${phase}`
   return (
     <div role="region" aria-label="Mandate in force (preview)" data-testid="mandate-banner" className="flex h-9 shrink-0 items-center gap-2 border-b border-border bg-surface px-4 text-[13px]">
       <ShieldCheck className="size-4 shrink-0 text-text-muted" aria-hidden />
@@ -43,7 +44,7 @@ export function MandateBanner() {
       </span>
       {owner && m.state === 'active' && (
         <Button size="xs" variant="outline" className="shrink-0" onClick={() => setStopping(true)}>
-          Stop
+          Stop…
         </Button>
       )}
       <Link to="/agents" search={{ tab: 'mandates' }} className="shrink-0 rounded px-1 text-[12px] text-text-muted underline-offset-2 outline-none hover:text-text hover:underline focus-visible:ring-2 focus-visible:ring-ring">

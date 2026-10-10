@@ -290,10 +290,38 @@ def test_file_records_tolerate_a_file_with_missing_keys(cli, tmp_path):
     assert cli("approve", "plan", env=SESSION_ENV, records=FileRecords(d)).err.startswith("err human_only")
 
 
-@pytest.mark.skip(reason="C6: FileRecords needs a lock and must be written with the append (see session.py TODO)")
-def test_file_records_two_writers_lose_no_update_and_corruption_fails_closed():
-    """Acceptance for C6: two processes of one session refuse and succeed concurrently and every record survives;
-    the dedup record exists if and only if the event was appended; a corrupt file is an error, never a reset."""
+def _hammer(directory: str, session: str, tag: str, n: int) -> None:
+    from orch.cli.session import FileRecords
+
+    rec = FileRecords(directory)
+    for i in range(n):
+        rec.refused(session, "approve", {"i": f"{tag}{i}"}, "human_only", 1000.0)
+        rec.remember(session, f"{tag}{i}", 1000.0, {"i": i})
+
+
+def test_file_records_two_writers_lose_no_update_and_corruption_fails_closed(cli, tmp_path):
+    """Two processes of one session refuse and succeed concurrently and every record survives; a corrupt file is an
+    error, never a reset (the dedup-with-append ordering is tested in tests/store/test_cli_wiring.py)."""
+    import multiprocessing as mp
+
+    d = tmp_path / "rec"
+    ctx = mp.get_context("spawn")
+    with ctx.Pool(2) as pool:
+        rs = [pool.apply_async(_hammer, (str(d), SESSION, t, 15)) for t in ("a", "b")]
+        [r.get(timeout=120) for r in rs]
+    rec = FileRecords(d)
+    for t in ("a", "b"):
+        for i in range(15):
+            assert rec.recall(SESSION, f"{t}{i}", 1000.0) == {"i": i}
+    assert len(rec._get(SESSION)["refusals"]) == 1  # human_only counts by operation, whatever the arguments
+    (d / f"{SESSION}.json").write_text("{ torn")
+    r = cli("approve", "plan", "--json", env=SESSION_ENV, records=FileRecords(d))
+    assert json.loads(r.out)["error"]["code"] == "internal" and (d / f"{SESSION}.json").read_text() == "{ torn"
+    (d / f"{SESSION}.json").write_text("[1, 2]")
+    assert (
+        json.loads(cli("approve", "plan", "--json", env=SESSION_ENV, records=FileRecords(d)).out)["error"]["code"]
+        == "internal"
+    )
 
 
 # ---- retry dedup

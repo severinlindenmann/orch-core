@@ -87,6 +87,96 @@ orchestrator/
   number is one above the highest number seen in `keys.jsonl` or in any `ticket.created` event, so a deleted or
   edited line can never make a key reusable. On disagreement the events win (`projection.repaired`).
 
+### 2.1 The store (decisions of C3, P1)
+
+`orch.store` is the only writer. What the format above leaves open is fixed here, because external-edit detection
+compares bytes and a second implementation must produce the same ones.
+
+**Serialization.**
+- `ticket.json`: all 17 keys in the §3 order, nested objects of the known shapes (`links`, acceptance items, tasks,
+  questions, options, pull requests) in the order of the §3 example, every other object with sorted keys; two-space
+  indent, `ensure_ascii` off, a single final LF. It is rebuilt from the replayed events and compared byte for byte.
+- `config.json`: the §2 shape, `members` in member-list order, `gates` in the order requirements, plan, verify, code,
+  each policy as `approvers, count, not, applies, independent`, `settings.repos` and `addons` sorted by name. Same
+  indent rules. The workspace name and `agents.run_for` are in no signed event: P1 keeps them as the file has them (the
+  creator's value, or the default `owner, maintainer, member`) and **nothing decides anything from them** (a guard test
+  checks it). Owner question: if `run_for` is ever honoured it must come from a signed event.
+- `body.md`: `## <heading>` (the bare heading, `Out of scope`), a blank line, the text, a blank line, per section in table
+  order; an empty section is the heading and a blank line; one LF ends the file after the last non-empty text; no
+  section at all is a zero-byte file. Reading accepts every other layout (§4 rules) and normalises (CRLF, NFC).
+- `keys.jsonl`: one `cj` line per ticket log, ordered by key number then uid; its source is the first line of each ticket log.
+  There is no `rev` field: a change is found by the section hashes in the log and the exact `ticket.json` bytes.
+
+**`.state/`** (git-ignored; every file is derivable from the logs, none is a source of truth): `lock`, `applied` (the last
+installed event, a record), `pending/<event id>/` (files and `manifest.json`), `body/<uid>.md` (the host's copy, used
+only when its section hashes match the log), `checkpoints/` (§5.10), `intents/` (idempotency), `sessions/` (CLI records),
+`abandoned/` (cut log tails, never overwritten), `rejected/` (a `body.md` that was not a body, kept before it is reverted),
+`index.sqlite`. A symlink in place of `.state` or any of its fixed directories, or of `events` or `tickets`, is refused.
+The host state directory (pin, noted revocations) is mandatory for a store that can write.
+
+**Write order and recovery** (§5.5, as built). Under the lock: stamp, validate, admit, sign, write the pending files, then the
+manifest (last), append the event line and flush it (the commit), rename the files into place, copy the body, write
+`applied`. Recovery runs when a pending directory exists and the log's last line is that manifest's event and
+`applied` does not name it (a superset of §5.5's trigger, which cannot see a half-written manifest). Nothing the manifest
+says is believed: its line must be a verified event of the replayed log, and a file is installed only if it is what the
+log says (rebuilt `ticket.json`, a body with the log's section hashes, an artifact with the logged digest); otherwise
+`store.torn_write` and the ordinary external-edit check answers what is on disk. A torn prefix of the line is cut off.
+Recovery never appends an event of its own. A ticket whose files cannot be answered (nothing trustworthy to revert to)
+takes no new event until they match the log again.
+
+**Freshness and order.** Before every decision, under the lock, the store compares size and inode of the workspace log and of
+every loaded ticket log with what it read and reloads on any difference; `.state/applied` is never the signal. `at` and the
+merged order come from verified data only (the workspace log, the loaded tickets, the store's own appends): `at` is the
+clock or the latest verified `at`, and moves one second past the latest verified position only when
+`(ws_seq, at, uid, seq)` would not grow, computed directly. Unloaded ticket logs are not consulted; only if `admit` refuses an
+order does the store look at the last line of every ticket, and then only lines whose `host_sig` verifies, whose `ws_seq` is
+not above the workspace head and whose `at` is not later than the host clock plus two minutes (such a log is reported, its
+date not adopted). Lines are read one at a time and capped at the event line limit; a longer line, deep nesting or a bad
+line breaks that log (reported) and no other.
+
+**Lazy replay.** The workspace log is always replayed and verified in full. A ticket log is replayed and verified when a
+command touches it, together with the tickets it names (`parent`, `blocked_by`, `duplicate_of`), which are found through the
+`host_sig`-checked creation line of every ticket (never a hint, `keys.jsonl` or the index). If a key is missing there, two
+creations claim one key, or a log has no verified creation line, every ticket is loaded. A host event
+(`projection.repaired`, `edit.external`) is written only from the full replay or from a state that is equal to it. `load_all`,
+`scan` and the index rebuild load everything; an unattended event does too (its quota counts the whole workspace). No new
+ticket is created while a log lacks a verified creation line or is diverged, since it could own a key nobody can see.
+Costs on a laptop at 1000 tickets (they vary with the machine): opening a workspace and reading, appending to one ticket by
+uid is about a tenth of a second; resolving a ticket by key checks one signature per ticket first (a few tenths of a second);
+a ticket event is a few milliseconds beyond the drive flush; a workspace-wide event such as a role change takes under a
+second; loading and verifying everything takes seconds.
+
+**Checkpoints.** A ticket checkpoint after every append to that log; a workspace checkpoint after every workspace append,
+after every 50 ticket appends and when the store is opened with everything loaded; entries of tickets that are not loaded
+carry over from the previous one. Verification: signature, genesis, and the log head at the checkpointed height; a ticket
+is compared when it is loaded, a missing log at once.
+
+**Genesis pin and keys.** The genesis must be `seq` 1 (checked by the model, not only by the schema). `expected_genesis`
+absent means the pin file in the host state directory, else trust on first use and pin. A new key is one above the highest
+number in `keys.jsonl`, in any `ticket.created`, or among the first lines of the ticket logs, allocated under the lock.
+
+**Idempotency.** A caller may pass a key. The store records the event id before the append and the result after it. A
+retry returns the first result only if the log confirms it: same log, and the logged event is the requested one (type,
+actor, payload; for a signed event its own id and base). A record that names anything else is ignored. A first attempt that
+never reached the log gives its event id to the retry for an event nobody signs; a signed event keeps its signed id. The CLI
+pins an attempt id per call across a crash (`Context.idem`).
+
+**Revocations.** The host notes every person-key-signed device revocation it appends (with its time) in the host state
+directory. On every load: a noted revocation the log lacks, that a later workspace `restore` post-dates, is re-appended
+(host actor), which also finishes a re-append a crash interrupted; any other is a rolled-back revocation and the workspace
+log is marked diverged until an owner `restore`. A `restore` is stamped no earlier than the revocations it must re-append.
+
+**Lock.** One exclusive lock file per workspace, re-entrant within a process, `flock` (Windows: `msvcrt`); a call waits at
+most ten seconds, then `store.busy` (retryable).
+
+**Addon sections and artifacts.** Addon sections cannot be written until their manifest supplies a heading (C9). A file
+artifact comes with its bytes, which must match the logged digest and size, and lands under `artifacts/`.
+
+**Platforms.** macOS and Linux are supported. Windows is best effort and fails closed: files open in binary mode,
+a replace is retried briefly on a sharing violation, and where `O_NOFOLLOW` is missing an opened file must be the file `lstat`
+sees. Durability: the commit (the log append) uses `F_FULLFSYNC` on macOS (median 3.0 ms against 0.05 ms for a plain `fsync` on the
+test laptop), `fsync` elsewhere.
+
 ## 3. `ticket.json`
 
 Pretty-printed with a fixed key order, so git diffs show one value per line. It is validated against JSON Schema

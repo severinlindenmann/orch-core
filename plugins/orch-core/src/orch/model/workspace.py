@@ -53,6 +53,8 @@ def _owner_only(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
 def genesis(core: Core, e: dict[str, Any], v: Verifier, expected: str | None) -> Refusal | None:
     """§5.11 genesis. The cross-field checks (1, 3, 5 partly) are the schema's; the signatures are the verifier's."""
     ws, a = core.ws, e["actor"]
+    if e["seq"] != 1:  # the schema says so too, but the trust root must not rely on the schema alone
+        return Refusal(Code.GENESIS_INVALID, "the genesis is seq 1 of the workspace log")
     if e["roster_v"] != 0:
         return Refusal(Code.GENESIS_INVALID, "the genesis has roster_v 0")
     head = _head(e)

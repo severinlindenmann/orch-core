@@ -380,3 +380,18 @@ def test_push_sends_a_done_ticket_back_to_testing_only_for_a_new_sha_on_an_exist
     )
     w.push(uid, SHA2)
     assert w.view(uid).status == "testing"
+
+
+def test_external_edit_voids_is_what_replay_will_demand(env):
+    from orch.model import external_edit_voids
+
+    w, uid, a = env
+    w.decide(uid, "sev", "requirements")
+    new2 = {"hash": canon.section_hash("outside 2"), "refs": []}
+    st = w.state()
+    assert external_edit_voids(st, uid, {"context": new2}) == ["requirements"]
+    assert external_edit_voids(st, uid, {"findings": None}).code == Code.BODY_UNKNOWN_SECTION
+    assert external_edit_voids(st, "01J9ZK4Q7M3R8T2V6X0B5N1C9D", {"context": new2}).code == Code.TICKET_UNKNOWN
+    got = external_edit_voids(st, uid, {"context": new2})
+    w.tev(uid, "edit.external", w.HOST, sections={"context": new2}, voided_gates=got, normalised=False)
+    assert w.view(uid).gates["requirements"].gen > 0

@@ -1,0 +1,20 @@
+ok describe close
+Close a ticket without finishing it.
+usage: orch close [REF] [--resolution wont_do|duplicate|obsolete|other] [--duplicate-of KEY] [--message TEXT] [--dry-run]
+who: human · emits: ticket.closed
+pre: ticket_exists ticket_owner_or_maintainer user_presence text_clean
+args:
+  REF  ticket REF
+  --resolution RESOLUTION  why (wont_do|duplicate|obsolete|other) [default other]
+  --duplicate-of KEY  the surviving ticket (with --resolution duplicate)
+  -m, --message TEXT  free text
+  --dry-run  say what would happen, append nothing
+errors:
+  not_found (exit 2): orch list | fix: orch list
+  human_only (exit 3): orch ask or orch wait | fix: orch describe ask
+  role.denied (exit 3): ask an owner or maintainer | fix: orch status
+  transition.refused (exit 3): orch show --section current_state | fix: orch show
+  lock.busy (exit 4 retry): retry in a moment | fix: orch status
+  parse.text (exit 6): orch describe close | fix: orch describe close
+  members.stale (exit 9 retry): retry; the person re-signs | fix: orch status
+out: ok {key} ticket.closed {resolution} seq={seq} / next: {next}

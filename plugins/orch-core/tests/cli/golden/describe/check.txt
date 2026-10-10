@@ -1,0 +1,7 @@
+ok describe check
+Check that the ticket files match their events (for a commit hook).
+usage: orch check
+who: read · emits: -
+pre: workspace_exists
+errors:
+out: ok check {problems} / next: {next}

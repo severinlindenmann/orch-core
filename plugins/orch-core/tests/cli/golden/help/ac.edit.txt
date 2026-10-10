@@ -1,0 +1,7 @@
+Change the text of an acceptance criterion.
+usage: orch ac edit AC TEXT [--ref REF] [--dry-run]
+  AC  criterion id
+  TEXT  the new text
+  --ref REF  ticket REF (flag)
+  --dry-run  say what would happen, append nothing
+more: orch describe ac.edit

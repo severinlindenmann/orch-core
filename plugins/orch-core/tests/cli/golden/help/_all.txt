@@ -1,0 +1,9 @@
+ok help all
+work: pick up a ticket, do its tasks, prove the acceptance criteria, hand over
+ask: ask a person instead of guessing, then wait for the answer
+refine: turn a rough ticket into requirements, acceptance criteria and tasks
+parallel: work as a subagent: one lease on one task of the manager's claim
+commands: orch describe
+flags: --json (or ORCH_OUTPUT=json) on every command, --dry-run on every write
+REF left out means your current claim
+next: orch help work

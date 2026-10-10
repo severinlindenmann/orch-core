@@ -1,0 +1,14 @@
+ok describe wait
+Wait for an answer, an approval, a change request, a verdict or an invalidation (default 540 s).
+usage: orch wait [--ref REF] [--timeout SECONDS] [--strict-timeout]
+who: read · emits: -
+pre: ticket_exists ticket_visible
+args:
+  --ref REF  ticket REF (flag); default: your claim
+  --timeout SECONDS  seconds to wait [default 540]
+  --strict-timeout  exit 7 when the timeout passes
+errors:
+  ambiguous_ref (exit 2): name the ticket REF, for example DEMO-0043 | fix: orch status
+  not_found (exit 2): orch list | fix: orch list
+  wait.timeout (exit 7 retry): orch wait | fix: orch wait
+out: ok {key} wait {kind} cursor={cursor} / next: {next}

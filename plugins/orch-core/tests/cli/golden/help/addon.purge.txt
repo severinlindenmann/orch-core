@@ -1,0 +1,5 @@
+Delete an addon's data.
+usage: orch addon purge NAME [--dry-run]
+  NAME  addon name
+  --dry-run  say what would happen, append nothing
+more: orch describe addon.purge

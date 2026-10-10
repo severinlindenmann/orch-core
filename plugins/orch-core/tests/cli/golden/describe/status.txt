@@ -1,0 +1,8 @@
+ok describe status
+Who you are, your grant, your cursor, your claim and what needs you.
+usage: orch status
+who: read · emits: -
+pre: workspace_exists
+errors:
+  not_found (exit 2): run orch init in a workspace | fix: orch describe init
+out: ok status {person} cursor={cursor}[ grant={grant}][ claim={claim}] / next: {next}

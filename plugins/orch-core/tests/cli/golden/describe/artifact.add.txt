@@ -1,0 +1,21 @@
+ok describe artifact.add
+Store a file; works without a grant (unattended, never evidence). --ac and --task need a grant.
+usage: orch artifact add PATH [--ref REF] [--kind KIND] [--name NAME] [--ac AC] [--task TASK] [--label TEXT] [--dry-run]
+who: unattended · emits: artifact.added
+pre: ticket_exists ticket_visible ticket_open_for_work unattended_quota text_clean
+args:
+  PATH  file to store
+  --ref REF  ticket REF (flag); default: your claim
+  --kind KIND  what it is (screenshot|log|report|link|dataset|build|diagram|receipt|other) [default other]
+  --name NAME  name in the ticket; default: the file name
+  --ac AC  criterion it is evidence for
+  --task TASK  task it belongs to
+  --label TEXT  short label
+  --dry-run  say what would happen, append nothing
+errors:
+  ambiguous_ref (exit 2): name the ticket REF, for example DEMO-0043 | fix: orch status
+  not_found (exit 2): orch list | fix: orch list
+  transition.refused (exit 3): orch show --section current_state | fix: orch show
+  lock.busy (exit 4 retry): retry in a moment | fix: orch status
+  quota.unattended (exit 9 retry): ask the person for a grant | fix: orch status
+out: ok {key} artifact.added {name} seq={seq} / next: {next}

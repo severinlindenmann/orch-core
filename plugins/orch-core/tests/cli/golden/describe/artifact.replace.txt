@@ -1,0 +1,18 @@
+ok describe artifact.replace
+Replace a stored file; the name stays, the digest changes.
+usage: orch artifact replace NAME PATH [--ref REF] [--dry-run]
+who: agent · emits: artifact.replaced
+pre: ticket_exists ticket_open_for_work grant_valid
+args:
+  NAME  artifact name
+  PATH  the new file
+  --ref REF  ticket REF (flag); default: your claim
+  --dry-run  say what would happen, append nothing
+errors:
+  ambiguous_ref (exit 2): name the ticket REF, for example DEMO-0043 | fix: orch status
+  not_found (exit 2): orch list | fix: orch list
+  grant.expired (exit 3): ask the person for a new grant | fix: orch status
+  grant.required (exit 3): ask the person to run orch grant, then set ORCH_GRANT | fix: orch status
+  transition.refused (exit 3): orch show --section current_state | fix: orch show
+  lock.busy (exit 4 retry): retry in a moment | fix: orch status
+out: ok {key} artifact.replaced {name} seq={seq} / next: {next}

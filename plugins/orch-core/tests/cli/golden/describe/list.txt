@@ -1,0 +1,12 @@
+ok describe list
+List tickets, newest first.
+usage: orch list [--status STATUS] [--mine] [--label LABEL] [--limit N]
+who: read · emits: -
+pre: workspace_exists
+args:
+  --status STATUS  only this status (backlog|open|in_progress|testing|done|closed)
+  --mine  only tickets you hold or are assigned
+  --label LABEL  only this label
+  --limit N  at most this many [default 20]
+errors:
+out: ok list {count} / next: {next}

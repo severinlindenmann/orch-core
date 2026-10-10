@@ -1,0 +1,7 @@
+Write the current state (at most 2048 bytes) and release the claim.
+usage: orch handoff [REF] [--message TEXT] [--file PATH] [--dry-run]
+  REF  ticket REF (DEMO-0043, 43); default: your claim
+  -m, --message TEXT  free text
+  --file PATH  read the text from PATH, or - for stdin
+  --dry-run  say what would happen, append nothing
+more: orch describe handoff

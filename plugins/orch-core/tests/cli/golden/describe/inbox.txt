@@ -1,0 +1,7 @@
+ok describe inbox
+Tickets handed over from peer workspaces.
+usage: orch inbox
+who: read · emits: -
+pre: workspace_exists
+errors:
+out: ok inbox {count} / next: {next}

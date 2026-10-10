@@ -1,0 +1,11 @@
+ok describe artifact.list
+List the ticket's artifacts.
+usage: orch artifact list [REF]
+who: read · emits: -
+pre: ticket_exists ticket_visible
+args:
+  REF  ticket REF (DEMO-0043, 43); default: your claim
+errors:
+  ambiguous_ref (exit 2): name the ticket REF, for example DEMO-0043 | fix: orch status
+  not_found (exit 2): orch list | fix: orch list
+out: ok {key} artifact.list {count} / next: {next}

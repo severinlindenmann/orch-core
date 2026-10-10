@@ -1,0 +1,3 @@
+Check the logs, chains, projections and keys; reports, never changes.
+usage: orch doctor
+more: orch describe doctor

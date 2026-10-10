@@ -1,0 +1,18 @@
+ok describe task.block
+Mark a task blocked, with a reason.
+usage: orch task block TASK --reason TEXT [--dry-run]
+who: agent · emits: task.blocked
+pre: ticket_exists session_holds_claim task_exists session_holds_lease grant_valid text_clean
+args:
+  TASK  task id (T3 or DEMO-0043/T3)
+  --reason TEXT  why (required)
+  --dry-run  say what would happen, append nothing
+errors:
+  not_found (exit 2): orch list | fix: orch list
+  grant.expired (exit 3): ask the person for a new grant | fix: orch status
+  grant.required (exit 3): ask the person to run orch grant, then set ORCH_GRANT | fix: orch status
+  transition.refused (exit 3): orch show --section current_state | fix: orch show
+  claim.required (exit 4): orch claim | fix: orch claim
+  lease.required (exit 4): orch task start TASK | fix: orch describe task.start
+  lock.busy (exit 4 retry): retry in a moment | fix: orch status
+out: ok {key} task.blocked {task} seq={seq} / next: {next}

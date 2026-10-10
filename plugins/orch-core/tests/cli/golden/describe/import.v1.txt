@@ -1,0 +1,15 @@
+ok describe import.v1
+Import a v1 workspace: tickets, history as imported events, artifacts.
+usage: orch import v1 PATH [--dry-run]
+who: human · emits: ticket.created,log.added
+pre: workspace_exists v1_workspace user_presence
+args:
+  PATH  the v1 workspace
+  --dry-run  say what would happen, append nothing
+errors:
+  not_found (exit 2): orch list | fix: orch list
+  human_only (exit 3): orch ask or orch wait | fix: orch describe ask
+  lock.busy (exit 4 retry): retry in a moment | fix: orch status
+  parse.json (exit 6): orch describe import.v1 | fix: orch describe import.v1
+  members.stale (exit 9 retry): retry; the person re-signs | fix: orch status
+out: ok import.v1 {count} tickets / next: {next}

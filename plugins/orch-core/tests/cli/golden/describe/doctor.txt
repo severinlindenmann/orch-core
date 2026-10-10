@@ -1,0 +1,7 @@
+ok describe doctor
+Check the logs, chains, projections and keys; reports, never changes.
+usage: orch doctor
+who: read · emits: -
+pre: workspace_exists
+errors:
+out: ok doctor {problems} / next: {next}

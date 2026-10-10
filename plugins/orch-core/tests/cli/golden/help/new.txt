@@ -1,0 +1,12 @@
+Create a ticket.
+usage: orch new TITLE [--type TYPE] [--priority low|medium|high|urgent] [--size SIZE] [--label A,B] [--parent KEY] [--message TEXT] [--file PATH] [--dry-run]
+  TITLE  one line, at most 200 characters
+  --type TYPE  ticket type (feature|bug|chore|spike|epic) [default feature]
+  --priority PRIORITY  priority (low|medium|high|urgent)
+  --size SIZE  size (xs|s|m|l|xl)
+  --label A,B  labels, comma separated
+  --parent KEY  parent ticket key
+  -m, --message TEXT  free text
+  --file PATH  read the text from PATH, or - for stdin
+  --dry-run  say what would happen, append nothing
+more: orch describe new

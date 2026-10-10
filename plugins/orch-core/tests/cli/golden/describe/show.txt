@@ -1,0 +1,16 @@
+ok describe show
+Read a ticket: the default view, some sections, everything, the log or a diff since an event.
+usage: orch show [REF] [--section A,B] [--full] [--log] [--diff] [--since N]
+who: read · emits: -
+pre: ticket_exists ticket_visible
+args:
+  REF  ticket REF (DEMO-0043, 43); default: your claim
+  --section A,B  only these sections, comma separated
+  --full  every section
+  --log  the event log
+  --diff  what changed
+  --since N  events after this seq
+errors:
+  ambiguous_ref (exit 2): name the ticket REF, for example DEMO-0043 | fix: orch status
+  not_found (exit 2): orch list | fix: orch list
+out: ok {key} show {view} seq={seq} / next: {next}

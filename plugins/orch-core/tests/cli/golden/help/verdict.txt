@@ -1,0 +1,7 @@
+Give the verify verdict: pass, or fail with a reason.
+usage: orch verdict pass|fail [--message TEXT] [--ref REF] [--dry-run]
+  OUTCOME  outcome (pass|fail)
+  -m, --message TEXT  free text
+  --ref REF  ticket REF (flag)
+  --dry-run  say what would happen, append nothing
+more: orch describe verdict

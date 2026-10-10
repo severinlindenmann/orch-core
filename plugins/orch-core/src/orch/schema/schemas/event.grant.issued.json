@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.orch.dev/v2/event.edit.external",
-  "title": "edit.external event",
-  "description": "5.4.1, 5.8. voided_gates and normalised are derived.",
+  "$id": "https://schemas.orch.dev/v2/event.grant.issued",
+  "title": "grant.issued event",
+  "description": "5.4.2, 10.1 A3/D60. expires_at == issued_at + 3600 * hours and |at - issued_at| <= 300 s (validate()).",
   "type": "object",
   "properties": {
     "v": {
@@ -18,7 +18,7 @@
       "$ref": "https://schemas.orch.dev/v2/common#/$defs/timestamp"
     },
     "type": {
-      "const": "edit.external"
+      "const": "grant.issued"
     },
     "actor": {
       "allOf": [
@@ -169,7 +169,7 @@
           "properties": {
             "kind": {
               "enum": [
-                "host"
+                "person"
               ]
             }
           },
@@ -217,49 +217,43 @@
     "host_sig": {
       "$ref": "https://schemas.orch.dev/v2/common#/$defs/sig"
     },
-    "sections": {
-      "type": "object",
-      "minProperties": 1,
-      "propertyNames": {
-        "$ref": "https://schemas.orch.dev/v2/common#/$defs/anySectionId"
-      },
-      "additionalProperties": {
-        "oneOf": [
-          {
-            "type": "object",
-            "properties": {
-              "hash": {
-                "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
-              },
-              "refs": {
-                "type": "array",
-                "items": {
-                  "$ref": "https://schemas.orch.dev/v2/common#/$defs/artifactName"
-                },
-                "uniqueItems": true
-              }
-            },
-            "additionalProperties": false,
-            "required": [
-              "hash",
-              "refs"
-            ]
+    "grant": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/grantId"
+    },
+    "scope": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/grantScope"
+    },
+    "verbs": {
+      "oneOf": [
+        {
+          "const": "agent"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/operationName"
           },
-          {
-            "type": "null"
-          }
-        ]
-      }
+          "uniqueItems": true,
+          "minItems": 1
+        }
+      ]
     },
-    "voided_gates": {
-      "type": "array",
-      "items": {
-        "$ref": "https://schemas.orch.dev/v2/common#/$defs/gateName"
-      },
-      "uniqueItems": true
+    "issued_at": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/timestamp"
     },
-    "normalised": {
-      "type": "boolean"
+    "hours": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 24
+    },
+    "expires_at": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/timestamp"
+    },
+    "secret_hash": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+    },
+    "label": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/line"
     }
   },
   "required": [
@@ -273,9 +267,13 @@
     "prev",
     "hash_v",
     "host_sig",
-    "sections",
-    "voided_gates",
-    "normalised"
+    "grant",
+    "scope",
+    "verbs",
+    "issued_at",
+    "hours",
+    "expires_at",
+    "secret_hash"
   ],
   "additionalProperties": false,
   "allOf": [

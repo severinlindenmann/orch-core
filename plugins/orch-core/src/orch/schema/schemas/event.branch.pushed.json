@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.orch.dev/v2/event.edit.external",
-  "title": "edit.external event",
-  "description": "5.4.1, 5.8. voided_gates and normalised are derived.",
+  "$id": "https://schemas.orch.dev/v2/event.branch.pushed",
+  "title": "branch.pushed event",
+  "description": "5.4.1, D58. before is null on the first observation.",
   "type": "object",
   "properties": {
     "v": {
@@ -18,7 +18,7 @@
       "$ref": "https://schemas.orch.dev/v2/common#/$defs/timestamp"
     },
     "type": {
-      "const": "edit.external"
+      "const": "branch.pushed"
     },
     "actor": {
       "allOf": [
@@ -217,49 +217,44 @@
     "host_sig": {
       "$ref": "https://schemas.orch.dev/v2/common#/$defs/sig"
     },
-    "sections": {
-      "type": "object",
-      "minProperties": 1,
-      "propertyNames": {
-        "$ref": "https://schemas.orch.dev/v2/common#/$defs/anySectionId"
-      },
-      "additionalProperties": {
-        "oneOf": [
-          {
-            "type": "object",
-            "properties": {
-              "hash": {
-                "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
-              },
-              "refs": {
-                "type": "array",
-                "items": {
-                  "$ref": "https://schemas.orch.dev/v2/common#/$defs/artifactName"
-                },
-                "uniqueItems": true
-              }
+    "repo_name": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/repoName"
+    },
+    "repo_id": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/repoIdentity"
+    },
+    "ref": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/refName"
+    },
+    "sha": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/gitCommit"
+    },
+    "before": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "repo_id": {
+              "$ref": "https://schemas.orch.dev/v2/common#/$defs/repoIdentity"
             },
-            "additionalProperties": false,
-            "required": [
-              "hash",
-              "refs"
-            ]
+            "ref": {
+              "$ref": "https://schemas.orch.dev/v2/common#/$defs/refName"
+            },
+            "sha": {
+              "$ref": "https://schemas.orch.dev/v2/common#/$defs/gitCommit"
+            }
           },
-          {
-            "type": "null"
-          }
-        ]
-      }
-    },
-    "voided_gates": {
-      "type": "array",
-      "items": {
-        "$ref": "https://schemas.orch.dev/v2/common#/$defs/gateName"
-      },
-      "uniqueItems": true
-    },
-    "normalised": {
-      "type": "boolean"
+          "additionalProperties": false,
+          "required": [
+            "repo_id",
+            "ref",
+            "sha"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "required": [
@@ -273,9 +268,11 @@
     "prev",
     "hash_v",
     "host_sig",
-    "sections",
-    "voided_gates",
-    "normalised"
+    "repo_name",
+    "repo_id",
+    "ref",
+    "sha",
+    "before"
   ],
   "additionalProperties": false,
   "allOf": [

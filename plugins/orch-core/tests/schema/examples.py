@@ -1,31 +1,113 @@
-"""Valid example documents. The ones from the format doc have its ellipses replaced by well-formed values."""
+"""Valid example documents, shaped like the ones in the format doc (F1) with its ellipses filled in."""
 
+import base64
 import copy
+import hashlib
+
+
+def b64u(b: bytes) -> str:
+    return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+
+
+def _bytes(tag: str, n: int) -> bytes:
+    return hashlib.sha256(tag.encode()).digest()[:n] if n <= 32 else (hashlib.sha256(tag.encode()).digest() * 3)[:n]
+
+
+def sig(tag: str = "sig") -> str:
+    return b64u(_bytes(tag, 64))  # 64-byte r||s
+
+
+def pub(tag: str = "pub") -> str:
+    return b64u(b"\x04" + _bytes(tag, 64))  # 65-byte uncompressed point
+
+
+def digest(tag: str) -> str:
+    return "sha256:" + hashlib.sha256(tag.encode()).hexdigest()
+
+
+def hex32(tag: str) -> str:
+    return hashlib.sha256(tag.encode()).hexdigest()[:32]
+
 
 U1 = "01J9ZK4Q7M3R8T2V6X0B5N1C9D"
-H = "sha256:" + "fa37" * 16
-H2 = "sha256:" + "aa91" * 16
-SIG = "p256:MEUCIQDabcdefghijklmnopqrstuvwxyz0123456789ABCD"
+EID = "01J9ZPABCDEFGHJKMNPQRSTVWX"
+SIG = sig()
+H = digest("gate")
+H2 = digest("prev")
+H3 = digest("policy")
+WS = hex32("workspace")
+PID, PID2, DID, DID2 = hex32("sev"), hex32("mara"), hex32("mac"), hex32("phone")
+PERSON = {"kind": "person", "id": "p_" + PID, "device": "d_" + DID}
+AGENT = {"kind": "agent", "id": "claude-code", "session": "s_" + U1, "for": "p_" + PID, "grant": "gr_" + U1}
+UNATT = {"kind": "agent", "id": "claude-code", "session": "s_" + U1, "unattended": True}
+HOST = {"kind": "host"}
+ACTORS = {"person": PERSON, "agent": AGENT, "unattended": UNATT, "host": HOST}
+
+WORKSPACE_ONLY = {
+    "workspace.created",
+    "member.added",
+    "member.removed",
+    "role.changed",
+    "device.added",
+    "device.removed",
+    "device.revoked",
+    "settings.changed",
+    "grant.issued",
+    "grant.revoked",
+    "addon.granted",
+    "addon.disabled",
+    "addon.purged",
+}
+
+
+def policy(approvers=("owner",), count=1, not_=(), applies="all", independent=False):
+    return {
+        "approvers": list(approvers),
+        "count": count,
+        "not": list(not_),
+        "applies": applies,
+        "independent": independent,
+    }
+
+
+GATES = {
+    "requirements": policy(),
+    "plan": policy(),
+    "verify": policy(("reviewers",), 1, ("assignees",)),
+    "code": policy(("maintainer", "owner"), 1, ("assignees",), "off", True),
+}
 
 WORKSPACE = {
     "schema": "orch.workspace/2",
-    "workspace": {"id": "6f1c0d2e-8b4a-4e1f-9c3d-2a7b5e9f0c11", "prefix": "DEMO", "name": "Acme energy data"},
-    "host": {"id": "h_01J9Z7", "wsk_pub": SIG.replace("MEUC", "MFkw")},
+    "workspace": {"id": WS, "prefix": "DEMO", "name": "Acme energy data"},
+    "host": {"id": "h_" + U1, "wsk_pub": pub("wsk")},
     "members": [
-        {"person": "p_sev", "name": "Severin", "role": "owner"},
-        {"person": "p_mara", "name": "Mara", "role": "maintainer"},
-        {"person": "p_tom", "name": "Tom", "role": "viewer"},
+        {"person": "p_" + PID, "name": "Severin", "role": "owner"},
+        {"person": "p_" + PID2, "name": "Mara", "role": "maintainer"},
+        {"person": "p_" + hex32("tom"), "name": "Tom", "role": "viewer"},
     ],
-    "gates": {
-        "requirements": {"approvers": "owner", "count": 1},
-        "plan": {"approvers": "owner", "count": 1},
-        "verify": {"approvers": "reviewers", "count": 1, "not": "assignees"},
+    "gates": GATES,
+    "settings": {
+        "grant_hours": 8,
+        "claim_ttl_min": 120,
+        "lease_ttl_min": 60,
+        "repos": {"acme-energy-dbt": {"path": "../acme-energy-dbt"}},
     },
     "agents": {"run_for": ["owner", "maintainer", "member"]},
     "addons": {"dashboard": {"enabled": True}, "estimate": {"enabled": True}, "publish": {"enabled": False}},
 }
 
-KEYS_LINE = {"key": "DEMO-0043", "uid": U1}
+KEYS_LINE = {"key": "DEMO-0043", "uid": U1, "at": "2026-10-09T09:00:00Z"}
+
+QUESTION = {
+    "id": "Q1",
+    "to": "p_" + PID2,
+    "text": "Which tariff export is the source of truth, the monthly CSV or the API?",
+    "why": "The two differ for 3 of 40 tariffs; the seed must pick one.",
+    "options": [{"key": "csv", "label": "Monthly CSV"}, {"key": "api", "label": "Tariff API", "cost": "+1 day"}],
+    "recommended": "csv",
+    "blocking": True,
+}
 
 TICKET = {
     "schema": "orch.ticket/2",
@@ -69,25 +151,38 @@ TICKET = {
             "text": "Join in fct_billing, add tests",
             "verify": {"cmd": "dbt test --select fct_billing"},
             "proves": ["AC2"],
-            "assignee": "p_sev",
+            "assignee": "p_" + PID,
         },
-        {"id": "T4", "text": "Document the refresh command", "verify": None, "proves": ["AC3"], "assignee": "p_mara"},
-    ],
-    "questions": [
         {
-            "id": "Q1",
-            "to": "p_mara",
-            "text": "Which tariff export is the source of truth, the monthly CSV or the API?",
-            "why": "The two differ for 3 of 40 tariffs; the seed must pick one.",
-            "options": [
-                {"key": "csv", "label": "Monthly CSV"},
-                {"key": "api", "label": "Tariff API", "cost": "+1 day"},
-            ],
-            "recommended": "csv",
-            "blocking": True,
-        }
+            "id": "T4",
+            "text": "Document the refresh command",
+            "verify": None,
+            "proves": ["AC3"],
+            "assignee": "p_" + PID2,
+        },
     ],
+    "questions": [QUESTION],
     "addons": {"estimate": {"points": 5}},
+}
+# the defaults of a new ticket (section 3)
+TICKET_NEW = {
+    "schema": "orch.ticket/2",
+    "uid": U1,
+    "key": "DEMO-0043",
+    "title": "New",
+    "type": "bug",
+    "priority": "medium",
+    "size": None,
+    "labels": [],
+    "parent": None,
+    "blocked_by": [],
+    "due": None,
+    "visibility": "workspace",
+    "links": {"repos": [], "branches": {}, "prs": [], "external": []},
+    "acceptance": [],
+    "tasks": [],
+    "questions": [],
+    "addons": {},
 }
 
 BODY_FEATURE = {
@@ -103,123 +198,295 @@ BODY_FEATURE = {
     },
 }
 
-AGENT = {"kind": "agent", "id": "claude-code", "session": "s_77c2", "for": "p_sev", "grant": "gr_01J9Z8"}
-PERSON = {"kind": "person", "id": "p_sev", "device": "d_mac"}
+SOURCE = [{"repo": "https://github.com/acme/energy-dbt", "ref": "refs/heads/feat/DEMO-0043", "sha": "b7e1f02c" * 5}]
 
 
-SIGNED = {
-    "gate.approved",
-    "gate.changes_requested",
-    "verdict.given",
-    "question.answered",
-    "ticket.closed",
-    "ticket.reopened",
-    "people.changed",
-    "member.added",
-    "member.removed",
-    "role.changed",
-    "policy.changed",
-    "addon.granted",
-    "addon.purged",
-    "session.granted",
-    "restore",
-}
+def cert(person, device, scopes=("look", "decide", "operate", "type"), tag=""):
+    return {
+        "o": {
+            "v": 2,
+            "suite": 2,
+            "kind": "device_cert",
+            "device_id": device,
+            "person_id": person,
+            "dk_sig_pub": pub("dk" + device + tag),
+            "dk_kx_pub": pub("kx" + device + tag),
+            "label_sealed": b64u(b"sealed label"),
+            "created_ms": 1_760_000_000_000,
+            "expires_ms": None,
+            "scopes_max": list(scopes),
+        },
+        "sig": sig("cert" + device + tag),
+    }
+
+
+def revocation(person, device, reason="lost"):
+    return {
+        "o": {
+            "v": 2,
+            "suite": 2,
+            "kind": "revocation",
+            "person_id": person,
+            "device_id": device,
+            "revoked_ms": 1_760_000_100_000,
+            "reason": reason,
+        },
+        "sig": sig("rev" + device),
+    }
 
 
 def _env(t, actor, seq=5, **kw):
     e = {
         "v": 2,
-        "id": "01J9ZPABCDEFGHJKMNPQRSTVWX",
+        "id": EID,
         "seq": seq,
         "at": "2026-10-09T09:10:11Z",
         "type": t,
         "actor": actor,
-        "based_on": H2,
-        "prev": H2,
+        "based_on": None if seq == 1 else H2,
+        "prev": None if seq == 1 else H2,
         "hash_v": 1,
         "host_sig": SIG,
     }
+    if t not in WORKSPACE_ONLY:
+        e["ws_seq"] = 31
     e.update(kw)
-    if t in SIGNED:
-        e.update(sig=SIG, presence="touchid")
+    if actor["kind"] == "person":
+        e.update(sig=SIG, auth="passphrase", roster_v=0 if t == "workspace.created" else 7)
     return e
 
 
-def _no_actor(t, **kw):
-    e = _env(t, AGENT, **kw)
-    for k in ("actor",):
-        del e[k]
-    return e
+def make(t, actor, seq=5, **kw):
+    """An event of type ``t`` for ``actor`` (a key of ACTORS or an actor dict); for tests that vary the actor."""
+    return _env(t, ACTORS.get(actor, actor) if isinstance(actor, str) else actor, seq, **kw)
 
 
-# one valid example per core event type (the three from the doc first)
-EVENTS = {
-    "gate.approved": _env(
-        "gate.approved", PERSON, gate="requirements", hash=H, policy_hash="sha256:" + "31c2" * 16, list_seq=7
-    ),
-    "task.done": _env("task.done", AGENT, seq=9, task="T2", receipt={"exit": 0, "ms": 38200, "commit": "b7e1f02"}),
-    "artifact.added": _env(
-        "artifact.added",
+# one valid example per type: (actor, payload) with seq where it matters
+_SPEC = {
+    "ticket.created": (
         AGENT,
-        seq=10,
-        name="seeds-in-warehouse.png",
-        kind="screenshot",
-        sha256="3f9a" * 16,
-        bytes=84213,
-        ac="AC1",
+        {"key": "DEMO-0043", "ticket_type": "feature", "title": "Load tariffs", "owner": "p_" + PID},
+        1,
     ),
-    "artifact.replaced": _env("artifact.replaced", AGENT, name="a.log", kind="log", sha256="3f9a" * 16, bytes=1),
-    "ticket.created": _env("ticket.created", PERSON, key="DEMO-0043"),
-    "ticket.updated": _env("ticket.updated", AGENT, base_rev="r12", fields=["title"], sections=["plan"]),
-    "ticket.submitted": _env("ticket.submitted", AGENT),
-    "status.changed": _env("status.changed", AGENT, **{"from": "in-progress", "to": "testing"}),
-    "ticket.closed": _env("ticket.closed", PERSON, reason="done"),
-    "ticket.reopened": _env("ticket.reopened", PERSON, reason="regression"),
-    "people.changed": _env("people.changed", PERSON, role="reviewers", add=["p_mara"], list_seq=3),
-    "gate.changes_requested": _env("gate.changes_requested", PERSON, gate="plan", hash=H, text="Split T3"),
-    "verdict.given": _env("verdict.given", PERSON, hash=H, outcome="accepted"),
-    "question.asked": _env("question.asked", AGENT, question="Q1"),
-    "question.answered": _env("question.answered", PERSON, question="Q1", hash=H, answer="csv"),
-    "claim.taken": _env(
-        "claim.taken",
+    "ticket.updated": (
         AGENT,
-        **{"for": "p_sev", "expires_at": "2026-10-09T18:00:00Z"},
-        takeover={"from_session": "s_11aa", "reason": "stuck"},
+        {
+            "base_rev": {"ticket.title": H, "body.plan": H2},
+            "set": {"ticket.title": "Load tariff tables"},
+            "sections": {"plan": {"hash": H3, "refs": ["a.png", "b.png"]}},
+        },
+        5,
     ),
-    "claim.released": _env("claim.released", AGENT, reason="handoff"),
-    "claim.expired": _env("claim.expired", AGENT),
-    "task.started": _env("task.started", {**AGENT, "session": "s_77c2.1"}, task="T3"),
-    "task.skipped": _env("task.skipped", AGENT, task="T3", reason="not needed"),
-    "task.blocked": _env("task.blocked", AGENT, task="T3", reason="needs Q1"),
-    "task.reopened": _env("task.reopened", AGENT, task="T3"),
-    "log": _env("log", {"kind": "agent", "id": "claude-code", "session": "s_77c2", "unattended": True}, text="note"),
-    "handoff": _env("handoff", AGENT, text="T3 half done"),
-    "edit.external": _no_actor("edit.external", files=["body.md"], sections=["plan"], voided_gates=["plan"]),
-    "projection.repaired": _no_actor("projection.repaired", path="ticket.json", fields=["uid"]),
-    "restore": _env("restore", PERSON, from_seq=4, reason="restored backup"),
-    "member.added": _env("member.added", PERSON, person="p_tom", name="Tom", role="viewer", list_seq=2),
-    "member.removed": _env("member.removed", PERSON, person="p_tom", list_seq=3),
-    "role.changed": _env("role.changed", PERSON, person="p_tom", role="member", list_seq=4),
-    "policy.changed": _env(
-        "policy.changed",
+    "status.changed": (AGENT, {"from": "open", "to": "backlog", "reason": "later"}, 5),
+    "ticket.submitted": (AGENT, {}, 5),
+    "ticket.closed": (PERSON, {"resolution": "duplicate", "duplicate_of": "DEMO-0040", "text": "same"}, 5),
+    "ticket.reopened": (PERSON, {"text": "regression"}, 5),
+    "visibility.changed": (PERSON, {"visibility": {"restricted": ["p_" + PID]}}, 5),
+    "people.changed": (PERSON, {"role": "reviewers", "add": ["p_" + PID2], "remove": []}, 5),
+    "policy.changed": (PERSON, {"gates": {"verify": policy(("reviewers",), 2, ("assignees",))}}, 5),
+    "claim.taken": (AGENT, {"takeover": {"from_session": "s_" + EID, "reason": "stuck"}}, 5),
+    "claim.released": (AGENT, {"session": AGENT["session"], "reason": "handoff"}, 5),
+    "task.started": (AGENT, {"task": "T3"}, 5),
+    "task.done": (
+        AGENT,
+        {
+            "task": "T2",
+            "receipt": {
+                "cmd": "dbt seed --select tariffs",
+                "exit": 0,
+                "ms": 38200,
+                "repo": "acme-energy-dbt",
+                "commit": "b7e1f02c" * 5,
+            },
+            "log": "seed.log",
+            "text": "ok",
+        },
+        9,
+    ),
+    "task.skipped": (AGENT, {"task": "T3", "reason": "not needed"}, 5),
+    "task.blocked": (AGENT, {"task": "T3", "reason": "needs Q1"}, 5),
+    "task.reopened": (AGENT, {"task": "T3"}, 5),
+    "handoff.written": (AGENT, {"text": "T3 half done"}, 5),
+    "log.added": (UNATT, {"text": "note"}, 5),
+    "question.asked": (AGENT, {"question": QUESTION, "qid": hex32("qid"), "hash": H}, 5),
+    "question.answered": (PERSON, {"question": "Q1", "hash": H, "option": "csv", "text": "csv, monthly"}, 5),
+    "gate.approved": (
         PERSON,
-        gates={"plan": {"approvers": "owner", "count": 2}},
-        policy_hash="sha256:" + "31c2" * 16,
+        {"gate": "requirements", "gate_gen": 2, "hash": H, "policy_hash": H3},
+        5,
     ),
-    "addon.granted": _env(
-        "addon.granted", PERSON, name="estimate", version="1.0.0", package_sha256="ab" * 32, capabilities=["network"]
+    "gate.changes_requested": (
+        PERSON,
+        {"gate": "plan", "gate_gen": 0, "hash": H, "policy_hash": H3, "text": "Split T3"},
+        5,
     ),
-    "addon.purged": _env("addon.purged", PERSON, name="estimate"),
-    "session.granted": _env(
-        "session.granted", PERSON, grant="gr_01J9Z8", expires_at="2026-10-09T18:00:00Z", **{"for": "p_sev"}
+    "verdict.given": (
+        PERSON,
+        {"outcome": "pass", "gate_gen": 1, "hash": H, "policy_hash": H3, "source_sha": SOURCE, "text": "good"},
+        5,
     ),
+    "gate.invalidated": (HOST, {"gate": "verify", "cause": "new_commits", "voided": [EID]}, 5),
+    "branch.pushed": (
+        HOST,
+        {
+            "repo_name": "acme-energy-dbt",
+            "repo_id": "https://github.com/acme/energy-dbt",
+            "ref": "refs/heads/feat/DEMO-0043",
+            "sha": "b7e1f02c" * 5,
+            "before": None,
+        },
+        5,
+    ),
+    "artifact.added": (
+        AGENT,
+        {
+            "name": "seeds-in-warehouse.png",
+            "kind": "screenshot",
+            "sha256": digest("png"),
+            "bytes": 84213,
+            "ac": "AC1",
+            "task": "T2",
+            "label": "after",
+        },
+        10,
+    ),
+    "artifact.replaced": (
+        AGENT,
+        {
+            "name": "seeds-in-warehouse.png",
+            "kind": "screenshot",
+            "sha256": digest("png2"),
+            "bytes": 84300,
+            "replaces": digest("png"),
+        },
+        5,
+    ),
+    "edit.external": (
+        HOST,
+        {
+            "sections": {"plan": {"hash": H, "refs": []}, "decisions": None},
+            "voided_gates": ["plan"],
+            "normalised": False,
+        },
+        5,
+    ),
+    "projection.repaired": (
+        HOST,
+        {"path": "ticket.json", "cause": "projection_mismatch", "fields": ["ticket.title"]},
+        5,
+    ),
+    "restore": (
+        PERSON,
+        {
+            "from_seq": 4,
+            "head": H2,
+            "abandoned": {"seq": 9, "head": H},
+            "abandoned_decisions": [EID],
+            "reason": "restored backup",
+        },
+        5,
+    ),
+    "invalid.acknowledged": (PERSON, {"invalid_seq": 4, "invalid_head": H, "reason": "forged by an agent"}, 5),
+    "workspace.created": (
+        PERSON,
+        {
+            "workspace_id": WS,
+            "prefix": "DEMO",
+            "host_id": "h_" + U1,
+            "wsk_pub": pub("wsk"),
+            "owner": {"person": "p_" + PID, "name": "Severin", "pk_pub": pub("pk")},
+            "delegation": {
+                "o": {
+                    "v": 2,
+                    "suite": 2,
+                    "kind": "ws_delegation",
+                    "workspace_id": WS,
+                    "wsk_pub": pub("wsk"),
+                    "owner_person_id": PID,
+                    "client_hosted": False,
+                    "issued_ms": 1_760_000_000_000,
+                },
+                "sig": sig("deleg"),
+            },
+            "device_cert": cert(PID, DID),
+        },
+        1,
+    ),
+    "member.added": (
+        PERSON,
+        {
+            "person": "p_" + PID2,
+            "name": "Mara",
+            "role": "maintainer",
+            "pk_pub": pub("pk2"),
+            "device_cert": cert(PID2, DID2),
+        },
+        5,
+    ),
+    "member.removed": (PERSON, {"person": "p_" + PID2}, 5),
+    "role.changed": (PERSON, {"person": "p_" + PID2, "role": "member"}, 5),
+    "device.added": (PERSON, {"device": "d_" + DID2, "cert": cert(PID, DID2)}, 5),
+    "device.removed": (PERSON, {"device": "d_" + DID2, "reason": "sold"}, 5),
+    "device.revoked": (
+        PERSON,
+        {"device": "d_" + DID2, "reason": "lost", "revocation": revocation(PID, DID2, "lost")},
+        5,
+    ),
+    "settings.changed": (
+        PERSON,
+        {"set": {"grant_hours": 12, "repos": {"acme-energy-dbt": {"path": "../dbt"}, "old": None}}},
+        5,
+    ),
+    "grant.issued": (
+        PERSON,
+        {
+            "grant": "gr_" + U1,
+            "scope": "workable",
+            "verbs": "agent",
+            "issued_at": "2026-10-09T09:10:00Z",
+            "hours": 8,
+            "expires_at": "2026-10-09T17:10:00Z",
+            "secret_hash": digest("secret"),
+            "label": "laptop",
+        },
+        5,
+    ),
+    "grant.revoked": (PERSON, {"grant": "gr_" + U1, "reason": "done"}, 5),
+    "addon.granted": (
+        PERSON,
+        {
+            "name": "estimate",
+            "version": "1.2.0",
+            "package_sha256": digest("pkg"),
+            "capabilities": ["serve_http"],
+            "binds": {
+                "fields": {"points": ["plan"]},
+                "sections": [{"id": "estimate.notes", "gate": ["plan"], "types": ["feature", "bug"]}],
+            },
+        },
+        5,
+    ),
+    "addon.disabled": (PERSON, {"name": "estimate"}, 5),
+    "addon.purged": (PERSON, {"name": "estimate"}, 5),
 }
+
+EVENTS = {t: _env(t, a, s, **p) for t, (a, p, s) in _SPEC.items()}
+# the same types in the other log
+EVENTS_WS_VARIANTS = {
+    "policy.changed": {k: v for k, v in EVENTS["policy.changed"].items() if k != "ws_seq"},
+    "projection.repaired": {k: v for k, v in EVENTS["projection.repaired"].items() if k != "ws_seq"},
+    "restore": {k: v for k, v in EVENTS["restore"].items() if k != "ws_seq"},
+    "invalid.acknowledged": {k: v for k, v in EVENTS["invalid.acknowledged"].items() if k != "ws_seq"},
+}
+EVENTS["gate.approved.code"] = _env(
+    "gate.approved", PERSON, gate="code", gate_gen=0, hash=H, policy_hash=H3, source_sha=SOURCE
+)
 ADDON_EVENT = _env("estimate.updated", AGENT, points=5)
 
 ARTIFACT = {
     "name": "seeds-in-warehouse.png",
     "kind": "screenshot",
-    "sha256": "3f9a" * 16,
+    "sha256": digest("png"),
     "bytes": 84213,
     "ac": "AC1",
     "label": "after",
@@ -228,22 +495,81 @@ ARTIFACT = {
 }
 ARTIFACT_ADDON = {"name": "board", "kind": "board", "addon": "dashboard", "ref": "boards/1", "actor": AGENT}
 
+CHECKPOINT_TICKET = {
+    "o": {
+        "v": 2,
+        "suite": 2,
+        "kind": "ticket_checkpoint",
+        "workspace_id": WS,
+        "uid": U1,
+        "seq": 9,
+        "head": H,
+        "at": "2026-10-09T10:00:00Z",
+    },
+    "sig": SIG,
+}
+CHECKPOINT_WORKSPACE = {
+    "o": {
+        "v": 2,
+        "suite": 2,
+        "kind": "workspace_checkpoint",
+        "workspace_id": WS,
+        "genesis": H2,
+        "n": 3,
+        "at": "2026-10-09T10:00:00Z",
+        "workspace_log": {"seq": 12, "head": H3},
+        "tickets": {U1: {"seq": 9, "head": H}},
+    },
+    "sig": SIG,
+}
+
 MANIFEST = {
     "schema": "orch.addon/2",
     "name": "estimate",
-    "version": "1.0.0",
+    "version": "1.2.0",
+    "title": "Estimate",
+    "entry": {"cmd": ["python", "-m", "orch_estimate"]},
     "fields": {
-        "points": {"type": "integer", "set_by": ["maintainer", "agent"], "gate": "plan", "filter": True, "show": True}
+        "points": {
+            "type": "integer",
+            "min": 0,
+            "max": 100,
+            "set_by": ["owner", "maintainer", "agent"],
+            "gate": ["plan"],
+            "show": True,
+            "filter": True,
+        },
+        "mood": {"type": "enum", "values": ["good", "bad"], "set_by": ["addon"]},
     },
     "sections": [
-        {"id": "estimate", "title": "Estimate", "placement": {"after": "plan"}, "gate": "plan", "types": ["feature"]}
+        {"id": "notes", "heading": "Estimate notes", "after": "plan", "gate": ["plan"], "types": ["feature", "bug"]}
     ],
-    "artifact_kinds": ["chart"],
-    "needs": [{"id": "no-points", "when": "points == null", "text": "Estimate missing"}],
-    "cli": {"group": "estimate", "ops": []},
-    "skills": ["skills/estimate.md"],
-    "agents_md": "estimate: orch estimate set N",
-    "capabilities": ["network"],
+    "artifact_kinds": [{"kind": "chart", "label": "Chart"}],
+    "capabilities": ["serve_http"],
+}
+
+GATE_INPUT = {
+    "workspace_id": WS,
+    "uid": U1,
+    "gate": "verify",
+    "schema": "orch.ticket/2",
+    "hash_v": 1,
+    "sections": {"verification": H},
+    "fields": {
+        "ticket_type": "feature",
+        "size": "m",
+        "acceptance": [{"id": "AC1", "text": "loads"}],
+        "links": TICKET["links"],
+        "addons": {},
+    },
+    "addon_packages": {},
+    "tasks": [],
+    "artifacts": {"a.png": {"kind": "screenshot", "digest": digest("png"), "ac": "AC1", "task": None}},
+    "receipts": {"T2": {"event": EID, "repo": "acme-energy-dbt", "commit": "b7e1f02c" * 5, "exit": 0}},
+    "source_sha": SOURCE,
+    "prior": {"requirements": {"gen": 2, "approvals": [EID]}, "plan": {"gen": 1, "approvals": [EID]}},
+    "policy_hash": H3,
+    "people_hash": H2,
 }
 
 OPERATION = {
@@ -262,11 +588,58 @@ OPERATION = {
     ],
 }
 
-CHECKPOINT_TICKET = {"v": 2, "uid": U1, "seq": 9, "head": H, "host_sig": SIG}
-CHECKPOINT_WORKSPACE = {"v": 2, "heads": {U1: {"seq": 9, "head": H}}, "host_sig": SIG}
 CLI_RESULT = {"v": "orch.cli/2.0", "ok": True, "data": {}, "key": "DEMO-0043", "seq": 18, "cursor": 18, "hints": []}
 CLI_ERROR = {"ok": False, "error": {"code": "human_only", "message": "approve is human-only", "retryable": False}}
-WAIT_RESULT = {"kind": "timeout", "cursor": 14, "next": "orch wait"}
+WAIT = {
+    "timeout": {"kind": "timeout", "key": "DEMO-0043", "cursor": 14, "next": "orch wait"},
+    "answered": {
+        "kind": "answered",
+        "key": "DEMO-0043",
+        "seq": 15,
+        "cursor": 15,
+        "next": "orch task next",
+        "question": "Q1",
+        "option": "csv",
+        "by": "p_" + PID2,
+    },
+    "approved": {
+        "kind": "approved",
+        "key": "DEMO-0043",
+        "seq": 16,
+        "cursor": 16,
+        "next": "orch task next",
+        "gate": "plan",
+        "by": "p_" + PID,
+    },
+    "changes_requested": {
+        "kind": "changes_requested",
+        "key": "DEMO-0043",
+        "seq": 16,
+        "cursor": 16,
+        "next": "orch show",
+        "gate": "plan",
+        "text": "Split T3",
+        "by": "p_" + PID,
+    },
+    "verdict": {
+        "kind": "verdict",
+        "key": "DEMO-0043",
+        "seq": 17,
+        "cursor": 17,
+        "next": "orch show",
+        "outcome": "fail",
+        "text": "tests fail",
+        "by": "p_" + PID,
+    },
+    "invalidated": {
+        "kind": "invalidated",
+        "key": "DEMO-0043",
+        "seq": 18,
+        "cursor": 18,
+        "next": "orch show",
+        "gate": "verify",
+    },
+}
 
 VALID = {
     "workspace": WORKSPACE,
@@ -276,11 +649,12 @@ VALID = {
     "event": EVENTS["gate.approved"],
     "artifact": ARTIFACT,
     "addon-manifest": MANIFEST,
+    "gate-input": GATE_INPUT,
     "operation": OPERATION,
     "checkpoint": CHECKPOINT_TICKET,
     "cli-result": CLI_RESULT,
     "cli-error": CLI_ERROR,
-    "wait-result": WAIT_RESULT,
+    "wait-result": WAIT["timeout"],
 }
 
 

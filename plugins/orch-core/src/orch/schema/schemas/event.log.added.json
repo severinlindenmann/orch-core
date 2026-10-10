@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.orch.dev/v2/event.edit.external",
-  "title": "edit.external event",
-  "description": "5.4.1, 5.8. voided_gates and normalised are derived.",
+  "$id": "https://schemas.orch.dev/v2/event.log.added",
+  "title": "log.added event",
+  "description": "5.4.1. At most 4096 bytes. Unattended agents may append it.",
   "type": "object",
   "properties": {
     "v": {
@@ -18,7 +18,7 @@
       "$ref": "https://schemas.orch.dev/v2/common#/$defs/timestamp"
     },
     "type": {
-      "const": "edit.external"
+      "const": "log.added"
     },
     "actor": {
       "allOf": [
@@ -169,7 +169,8 @@
           "properties": {
             "kind": {
               "enum": [
-                "host"
+                "person",
+                "agent"
               ]
             }
           },
@@ -217,49 +218,8 @@
     "host_sig": {
       "$ref": "https://schemas.orch.dev/v2/common#/$defs/sig"
     },
-    "sections": {
-      "type": "object",
-      "minProperties": 1,
-      "propertyNames": {
-        "$ref": "https://schemas.orch.dev/v2/common#/$defs/anySectionId"
-      },
-      "additionalProperties": {
-        "oneOf": [
-          {
-            "type": "object",
-            "properties": {
-              "hash": {
-                "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
-              },
-              "refs": {
-                "type": "array",
-                "items": {
-                  "$ref": "https://schemas.orch.dev/v2/common#/$defs/artifactName"
-                },
-                "uniqueItems": true
-              }
-            },
-            "additionalProperties": false,
-            "required": [
-              "hash",
-              "refs"
-            ]
-          },
-          {
-            "type": "null"
-          }
-        ]
-      }
-    },
-    "voided_gates": {
-      "type": "array",
-      "items": {
-        "$ref": "https://schemas.orch.dev/v2/common#/$defs/gateName"
-      },
-      "uniqueItems": true
-    },
-    "normalised": {
-      "type": "boolean"
+    "text": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/str"
     }
   },
   "required": [
@@ -273,9 +233,7 @@
     "prev",
     "hash_v",
     "host_sig",
-    "sections",
-    "voided_gates",
-    "normalised"
+    "text"
   ],
   "additionalProperties": false,
   "allOf": [

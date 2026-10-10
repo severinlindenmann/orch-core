@@ -2,8 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.orch.dev/v2/wait-result",
   "title": "orch wait result",
-  "description": "Format doc 10.4 item 7.",
+  "description": "Format doc 10.4 item 7: kind, key, cursor, next always; seq except on timeout; per-kind fields and nothing else (by on every human decision, text on changes_requested and on a fail verdict only).",
   "type": "object",
+  "required": [
+    "kind"
+  ],
   "properties": {
     "kind": {
       "enum": [
@@ -11,37 +14,346 @@
         "approved",
         "changes_requested",
         "verdict",
+        "invalidated",
         "timeout"
       ]
-    },
-    "key": {
-      "$ref": "https://schemas.orch.dev/v2/common#/$defs/ticketKey"
-    },
-    "seq": {
-      "type": "integer",
-      "minimum": 0
-    },
-    "gate": {
-      "$ref": "https://schemas.orch.dev/v2/common#/$defs/gateName"
-    },
-    "question": {
-      "$ref": "https://schemas.orch.dev/v2/common#/$defs/questionId"
-    },
-    "answer": {
-      "$ref": "https://schemas.orch.dev/v2/common#/$defs/text"
-    },
-    "cursor": {
-      "type": "integer",
-      "minimum": 0
-    },
-    "next": {
-      "type": "string"
     }
   },
-  "additionalProperties": false,
-  "required": [
-    "kind",
-    "cursor",
-    "next"
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "answered"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "const": "answered"
+          },
+          "key": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/ticketKey"
+          },
+          "cursor": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/nonNegInt"
+          },
+          "next": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/line"
+          },
+          "seq": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/posInt"
+          },
+          "question": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/questionId"
+          },
+          "option": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/token"
+          },
+          "text": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/str"
+          },
+          "by": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/personId"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "key",
+          "cursor",
+          "next",
+          "seq",
+          "question",
+          "by"
+        ],
+        "anyOf": [
+          {
+            "required": [
+              "option"
+            ]
+          },
+          {
+            "required": [
+              "text"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "approved"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "const": "approved"
+          },
+          "key": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/ticketKey"
+          },
+          "cursor": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/nonNegInt"
+          },
+          "next": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/line"
+          },
+          "seq": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/posInt"
+          },
+          "gate": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/decisionGate"
+          },
+          "by": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/personId"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "key",
+          "cursor",
+          "next",
+          "seq",
+          "gate",
+          "by"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "changes_requested"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "const": "changes_requested"
+          },
+          "key": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/ticketKey"
+          },
+          "cursor": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/nonNegInt"
+          },
+          "next": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/line"
+          },
+          "seq": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/posInt"
+          },
+          "gate": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/decisionGate"
+          },
+          "text": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/str"
+          },
+          "by": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/personId"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "key",
+          "cursor",
+          "next",
+          "seq",
+          "gate",
+          "text",
+          "by"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "verdict"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "const": "verdict"
+          },
+          "key": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/ticketKey"
+          },
+          "cursor": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/nonNegInt"
+          },
+          "next": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/line"
+          },
+          "seq": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/posInt"
+          },
+          "outcome": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/verdictOutcome"
+          },
+          "text": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/str"
+          },
+          "by": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/personId"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "key",
+          "cursor",
+          "next",
+          "seq",
+          "outcome",
+          "by"
+        ],
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "outcome": {
+                  "const": "fail"
+                }
+              },
+              "required": [
+                "outcome"
+              ]
+            },
+            "then": {
+              "required": [
+                "text"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "outcome": {
+                  "const": "pass"
+                }
+              },
+              "required": [
+                "outcome"
+              ]
+            },
+            "then": {
+              "properties": {
+                "text": {
+                  "not": {}
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "invalidated"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "const": "invalidated"
+          },
+          "key": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/ticketKey"
+          },
+          "cursor": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/nonNegInt"
+          },
+          "next": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/line"
+          },
+          "seq": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/posInt"
+          },
+          "gate": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/gateName"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "key",
+          "cursor",
+          "next",
+          "seq",
+          "gate"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "timeout"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "const": "timeout"
+          },
+          "key": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/ticketKey"
+          },
+          "cursor": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/nonNegInt"
+          },
+          "next": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/line"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "key",
+          "cursor",
+          "next"
+        ]
+      }
+    }
   ]
 }

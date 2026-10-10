@@ -41,6 +41,8 @@ __all__ = [
     "Suspect",
     "TextError",
     "check_text",
+    "clean",
+    "clean_line",
     "is_clean_text",
     "nfc",
     "normalize_text",
@@ -292,3 +294,22 @@ def show_invisible(text: str) -> str:
     return "".join(
         f"{_LANGLE}U+{ord(ch):04X}\u27e9" if i in flagged or ch == _LANGLE else ch for i, ch in enumerate(text)
     )
+
+
+def clean(text: str) -> str:
+    """The one escaping step for untrusted text that is echoed to a person: invisible and suspicious
+    characters become ``\u27e8U+XXXX\u27e9`` markers (:func:`show_invisible`), and C0/C1 controls, ESC
+    included, are escaped. Newline stays."""
+    out = []
+    for ch in show_invisible(text):
+        o = ord(ch)
+        if ch != "\n" and (o < 0x20 or 0x7F <= o <= 0x9F):
+            out.append(f"\u27e8U+{o:04X}\u27e9")
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def clean_line(text: str) -> str:
+    """:func:`clean`, on one line, with the ``\u00b7`` field separator of error lines made visible."""
+    return clean(" ".join(text.split())).replace("\u00b7", "\u27e8U+00B7\u27e9")

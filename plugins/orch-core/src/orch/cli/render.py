@@ -16,7 +16,12 @@ import shlex
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from orch.canon.text import is_clean_text, show_invisible
+from orch.canon.text import (  # noqa: F401  (clean, clean_line re-exported)
+    clean,
+    clean_line,
+    is_clean_text,
+    show_invisible,
+)
 from orch.ops import Operation, Result
 from orch.ops.errors import ERRORS, OrchError
 
@@ -55,24 +60,6 @@ def dumps(obj: Any) -> str:
     text from a ticket cannot move a terminal or reorder what a reader sees."""
     text = json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
     return _JSON_ESCAPE.sub(lambda m: f"\\u{ord(m.group()):04x}", text)
-
-
-def clean(text: str) -> str:
-    """The one escaping step for agent-supplied text that is echoed: invisible and suspicious characters become
-    ``\u27e8U+XXXX\u27e9`` markers (orch.canon), and C0/C1 controls, ESC included, are escaped. Newline stays."""
-    out = []
-    for ch in show_invisible(text):
-        o = ord(ch)
-        if ch != "\n" and (o < 0x20 or 0x7F <= o <= 0x9F):
-            out.append(f"\u27e8U+{o:04X}\u27e9")
-        else:
-            out.append(ch)
-    return "".join(out)
-
-
-def clean_line(text: str) -> str:
-    """:func:`clean`, on one line, with the ``·`` field separator of error lines made visible."""
-    return clean(" ".join(text.split())).replace("\u00b7", "\u27e8U+00B7\u27e9")
 
 
 def fence(text: str, label: str = "ticket") -> list[str]:

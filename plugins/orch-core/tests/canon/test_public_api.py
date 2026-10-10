@@ -9,6 +9,8 @@ GROUPS = {
         "Suspect",
         "TextError",
         "check_text",
+        "clean",
+        "clean_line",
         "is_clean_text",
         "nfc",
         "normalize_text",

@@ -1,1 +1,15 @@
-{"ok":false,"error":{"code":"claim.required","message":"you hold no claim on the ticket","hint":"orch claim","fix":{"argv":["orch","claim"]},"retryable":false}}
+{
+  "ok": false,
+  "error": {
+    "code": "claim.required",
+    "message": "you hold no claim on the ticket",
+    "hint": "orch claim",
+    "fix": {
+      "argv": [
+        "orch",
+        "claim"
+      ]
+    },
+    "retryable": false
+  }
+}

@@ -1,1 +1,97 @@
-{"v":"orch.cli/2.0","ok":true,"data":{"target":"list","name":"list","cli":"orch list","summary":"List tickets, newest first.","who":"read","usage":"orch list [--status STATUS] [--mine] [--label LABEL] [--limit N]","pre":["workspace_exists"],"emits":[],"input":{"type":"object","description":"List tickets, newest first.","properties":{"status":{"type":"string","enum":["backlog","open","in_progress","testing","done","closed"],"description":"only this status"},"mine":{"type":"boolean","description":"only tickets you hold or are assigned"},"label":{"type":"string","description":"only this label"},"limit":{"type":"integer","description":"at most this many","minimum":1,"maximum":200,"default":20,"x-metavar":"N"}},"required":[],"additionalProperties":false},"output":{"text":"ok list {count}\nnext: {next}","json":{"type":"object","properties":{"count":{"type":"integer","minimum":0},"tickets":{"type":"array","items":{"type":"object","properties":{"key":{"$ref":"https://schemas.orch.dev/v2/common#/$defs/ticketKey"},"title":{"type":"string"},"status":{"type":"string"}},"required":["key","title","status"],"additionalProperties":false}}},"required":["count","tickets"],"additionalProperties":false}},"errors":[]},"key":null,"seq":0,"cursor":0,"hints":[]}
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "target": "list",
+    "name": "list",
+    "cli": "orch list",
+    "summary": "List tickets, newest first.",
+    "who": "read",
+    "usage": "orch list [--status STATUS] [--mine] [--label LABEL] [--limit N]",
+    "pre": [
+      "workspace_exists"
+    ],
+    "emits": [],
+    "input": {
+      "type": "object",
+      "description": "List tickets, newest first.",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "backlog",
+            "open",
+            "in_progress",
+            "testing",
+            "done",
+            "closed"
+          ],
+          "description": "only this status"
+        },
+        "mine": {
+          "type": "boolean",
+          "description": "only tickets you hold or are assigned"
+        },
+        "label": {
+          "type": "string",
+          "description": "only this label"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "at most this many",
+          "minimum": 1,
+          "maximum": 200,
+          "default": 20,
+          "x-metavar": "N"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "output": {
+      "text": "ok list {count}\nnext: {next}",
+      "json": {
+        "type": "object",
+        "properties": {
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "tickets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "$ref": "https://schemas.orch.dev/v2/common#/$defs/ticketKey"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "key",
+                "title",
+                "status"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "count",
+          "tickets"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "errors": []
+  },
+  "key": null,
+  "seq": 0,
+  "cursor": 0,
+  "hints": []
+}

@@ -1,6 +1,6 @@
 """orch ask: ask a person and carry on"""
 
-from orch.ops._dsl import BOOL, REF_PATTERN, STR, B, L, S, err, obj, operation
+from orch.ops._dsl import BOOL, REF_PATTERN, STR, TOKEN_PATTERN, B, L, S, err, obj, operation
 
 OP = operation(
     "ask",
@@ -10,7 +10,12 @@ OP = operation(
     props={
         "text": S("the question", **{"x-metavar": "TEXT"}),
         "ref": S("ticket REF (flag); default: your claim", pattern=REF_PATTERN, **{"x-metavar": "REF"}),
-        "options": L("answer options, comma separated keys", **{"x-metavar": "A,B"}),
+        "options": L(
+            "answer option keys, comma separated",
+            split=True,
+            items={"type": "string", "pattern": TOKEN_PATTERN},
+            **{"x-metavar": "A,B"},
+        ),
         "rec": S("the recommended option key", **{"x-metavar": "KEY"}),
         "to": S("person id or role to ask", **{"x-metavar": "WHO"}),
         "why": S("why it matters", **{"x-metavar": "TEXT"}),
@@ -18,7 +23,7 @@ OP = operation(
     },
     required=("text",),
     positional=("text",),
-    pre=("ticket_exists", "ticket_visible", "text_clean", "unattended_quota"),
+    pre=("ticket_exists", "ticket_visible", "unattended_scope", "text_clean", "unattended_quota"),
     emits=("question.asked",),
     text="ok {key} question.asked {question} seq={seq}\nnext: {next}",
     data=obj({"question": STR, "blocking": BOOL}),

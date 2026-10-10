@@ -7,23 +7,47 @@ import re
 import sys
 import time
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from typing import Any, TextIO
 
 from jsonschema import Draft202012Validator
 
-import orch.ops as ops
-from orch import __version__, schema
+from orch import schema
 from orch.cli import meta, parser, render
+from orch.cli.args import arg_specs
 from orch.cli.errors import UsageError
-from orch.cli.session import STOP_AFTER, MemoryRecords
+from orch.cli.session import STOP_AFTER, MemoryRecords, fingerprint
 from orch.ops import Context, NotImplementedYet, Operation, Result
 from orch.ops.errors import ERRORS, GLOBAL_ERRORS, OrchError
 
-__all__ = ["main", "run"]
+__all__ = ["Hooks", "main", "run"]
 
 VERSION_LINE = "orch v2 (in development)"
 _SESSION = re.compile(schema.load("common")["$defs"]["sessionId"]["pattern"])
-_GRANT = re.compile(r"^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}\.[A-Za-z0-9_-]{43}$")
+_GRANT = re.compile(r"gr_[0-7][0-9A-HJKMNP-TV-Z]{25}\.[A-Za-z0-9_-]{43}")
+# Not counted by the stop rule: they are about the command line, not about a refusal of the action.
+_NOT_COUNTED = {"usage", "unknown_command", "grant.secret_in_args", "stop", "not_implemented", "internal"}
+
+
+@dataclass
+class Hooks:
+    """What the CLI cannot know without the store (C6 wires them); the defaults are neutral."""
+
+    #: The head ``seq`` of the ticket a write touches, part of the dedup key; ``None`` when unknown.
+    head_seq: Callable[[Operation, dict[str, Any]], int | None] = field(default=lambda op, args: None)
+    #: A ``REF`` as the ticket key (``43`` and ``DEMO-0043`` are the same ticket); used for stop rule and dedup.
+    normalise_ref: Callable[[str], str] = field(default=lambda ref: ref)
+    #: Raises ``grant.expired`` when the (well-formed) grant is expired, revoked or out of scope.
+    grant_valid: Callable[[Context], None] = field(default=lambda ctx: None)
+
+
+def _secrets(grant: str | None) -> list[str]:
+    return [grant, grant.partition(".")[2]] if grant else []
+
+
+def _cap(text: str, secrets: list[str], n: int) -> str:
+    """Redact first, then truncate: a cut can never leave a secret too short to match."""
+    return render.redact(text, secrets)[:n]
 
 
 def _short_error(e: Any) -> str:
@@ -38,26 +62,38 @@ def _short_error(e: Any) -> str:
     elif kind in ("minimum", "maximum", "maxLength", "minLength"):
         what = f"fails {kind} {e.validator_value}"
     elif kind == "required":
-        what = e.message
+        what = e.message.split(" is a required")[0] + " is required" if "is a required" in e.message else "is required"
+    elif kind == "oneOf":
+        names = [n for sub in e.validator_value for n in sub.get("required", [])]
+        what = "give exactly one of " + ", ".join(names)
     else:
-        what = e.message[:100]
+        what = "is not valid"
     return f"{where}: {what}" if where else what
 
 
-def _check_input(op: Operation, args: dict[str, Any]) -> None:
+def _check_input(op: Operation, args: dict[str, Any], secrets: list[str]) -> None:
     errors = sorted(Draft202012Validator(op.input).iter_errors(args), key=lambda e: (list(map(str, e.path)), e.message))
     if errors:
-        raise OrchError("invalid.input", f"{op.cli}: {_short_error(errors[0])}")
+        raise OrchError("invalid.input", _cap(f"{op.cli}: {_short_error(errors[0])}", secrets, 200))
 
 
-def _check_who(op: Operation, ctx: Context) -> None:
-    if op.who == "human" and not ctx.human_presence:
-        raise OrchError("human_only", f"{op.cli}: human only")
-    if op.who == "agent":
-        if not ctx.grant:
-            raise OrchError("grant.required", f"{op.cli} needs a grant")
-        if not _GRANT.match(ctx.grant):
-            raise OrchError("grant.required", "ORCH_GRANT is malformed")
+def _check_who(op: Operation, ctx: Context, args: dict[str, Any], hooks: Hooks) -> None:
+    if op.who == "human":
+        if not ctx.human_presence:
+            raise OrchError("human_only", f"{op.cli}: human only")
+        return
+    if op.who == "read":
+        return
+    if ctx.grant is not None and not _GRANT.fullmatch(ctx.grant):
+        raise OrchError("grant.required", "ORCH_GRANT is malformed")
+    if op.who == "agent" and not ctx.grant:
+        raise OrchError("grant.required", f"{op.cli} needs a grant")
+    if op.who == "unattended" and not ctx.grant:
+        for a in arg_specs(op):
+            if a.needs_grant and a.name in args:
+                raise OrchError("grant.required", f"{op.cli} {a.flag} needs a grant")
+    if ctx.grant:
+        hooks.grant_valid(ctx)
 
 
 def _call(op: Operation, ctx: Context, args: dict[str, Any]) -> Result:
@@ -67,21 +103,44 @@ def _call(op: Operation, ctx: Context, args: dict[str, Any]) -> Result:
         raise OrchError("not_implemented", f"{op.cli}: not implemented yet") from e
 
 
-def run(
-    parsed: parser.Parsed,
-    ctx: Context,
-    records: MemoryRecords,
-) -> Result:
+def _normalised(op: Operation, args: dict[str, Any], hooks: Hooks) -> dict[str, Any]:
+    out = dict(args)
+    if isinstance(out.get("ref"), str):
+        out["ref"] = hooks.normalise_ref(out["ref"])
+    return out
+
+
+def _dedup_key(op: Operation, ctx: Context, args: dict[str, Any], hooks: Hooks) -> str:
+    grant_id = ctx.grant.partition(".")[0] if ctx.grant else "none"
+    mode = "attended" if ctx.grant else "unattended"
+    head = hooks.head_seq(op, args) if "ticket_exists" in op.pre else None
+    return fingerprint(ctx.session, grant_id, mode, op.name, _normalised(op, args, hooks), head)
+
+
+def _redact_obj(obj: Any, secrets: list[str]) -> Any:
+    if isinstance(obj, str):
+        return render.redact(obj, secrets)
+    if isinstance(obj, list):
+        return [_redact_obj(v, secrets) for v in obj]
+    if isinstance(obj, dict):
+        return {k: _redact_obj(v, secrets) for k, v in obj.items()}
+    return obj
+
+
+def run(parsed: parser.Parsed, ctx: Context, records: MemoryRecords, hooks: Hooks | None = None) -> Result:
     """Check and run one parsed call. Raises :class:`OrchError` for every refusal."""
+    hooks = hooks or Hooks()
     op, args = parsed.op, parsed.args
-    _check_input(op, args)
-    _check_who(op, ctx)
+    secrets = _secrets(ctx.grant)
+    _check_input(op, args, secrets)
+    _check_who(op, ctx, args, hooks)
     session = ctx.session
-    if session and records.stopped(session, op.name, args):
+    if session and records.stopped(session, op.name, _normalised(op, args, hooks), ctx.now()):
         raise OrchError("stop")
     caching = bool(session) and op.is_write and not ctx.dry_run
+    key = _dedup_key(op, ctx, args, hooks) if caching else ""
     if caching:
-        hit = records.recall(session, op.name, args, ctx.now())  # type: ignore[arg-type]
+        hit = records.recall(session, key, ctx.now())  # type: ignore[arg-type]
         if hit is not None:
             return Result(**{**hit, "duplicate": True})
     try:
@@ -91,7 +150,7 @@ def run(
             raise OrchError("internal", f"{op.cli} returned undeclared error {e.code}") from e
         raise
     if caching:
-        records.remember(session, op.name, args, ctx.now(), _plain(res))  # type: ignore[arg-type]
+        records.remember(session, key, ctx.now(), _redact_obj(_plain(res), secrets))  # type: ignore[arg-type]
     return res
 
 
@@ -109,7 +168,7 @@ def _plain(res: Result) -> dict[str, Any]:
 
 def _is_refusal(e: OrchError) -> bool:
     cat = ERRORS.get(e.code)
-    return bool(cat) and cat.exit in (2, 3, 4, 5, 6) and e.code != "stop" and not cat.retryable
+    return bool(cat) and e.code not in _NOT_COUNTED and cat.exit in (2, 3, 4, 5, 6) and not cat.retryable
 
 
 def main(
@@ -120,20 +179,22 @@ def main(
     stderr: TextIO | None = None,
     records: MemoryRecords | None = None,
     now: Callable[[], float] = time.time,
+    hooks: Hooks | None = None,
 ) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     env = os.environ if env is None else env
     out = sys.stdout if stdout is None else stdout
     err = sys.stderr if stderr is None else stderr
     records = records if records is not None else _DEFAULT_RECORDS
+    hooks = hooks or Hooks()
 
     if args == ["--version"]:
         out.write(VERSION_LINE + "\n")
         return 0
-    tokens, flag_json = parser.split_globals(args)
-    as_json = flag_json or env.get("ORCH_OUTPUT") == "json"
-    secrets = [env.get("ORCH_GRANT", "")]
-    secrets.append(secrets[0].partition(".")[2])
+    grant_env = env.get("ORCH_GRANT") or None
+    secrets = _secrets(grant_env)
+    head_args = args[: args.index("--")] if "--" in args else args
+    as_json = "--json" in head_args or env.get("ORCH_OUTPUT") == "json"
 
     def emit(text: str, stream: TextIO) -> None:
         stream.write(render.redact(text, secrets) + "\n")
@@ -149,45 +210,50 @@ def main(
     op: Operation | None = None
     parsed: parser.Parsed | None = None
     try:
-        if not tokens:
-            tokens = ["help"]
-        if any(t in ("--help", "-h") for t in tokens):
-            tokens = [t for t in tokens if t not in ("--help", "-h")]
-            if tokens:  # orch <cmd> --help; a bare orch --help is orch help
-                emit(meta.op_help(parser.resolve_command(tokens)[0]), out)
+        for t in args:
+            if _GRANT.search(t) or any(len(s) >= 8 and s in t for s in secrets):
+                raise OrchError("grant.secret_in_args", "an argument contains a grant secret")
+        sc = parser.scan(args)
+        as_json = as_json or sc.json
+        if sc.help:
+            if sc.op is not None:
+                emit(meta.op_help(sc.op), out)
                 return 0
-            tokens = ["help"]
-        parsed = parser.parse(tokens)
+            args = ["help"]
+        elif sc.op is None and not sc.rest:
+            args = ["help"]
+        parsed = parser.parse(args)
         op = parsed.op
         session = env.get("ORCH_SESSION") or None
         if session and not _SESSION.search(session):
             raise OrchError("invalid.input", "ORCH_SESSION is not a session id (s_<ULID>, then at most three .n)")
         ctx = Context(
             session=session,
-            grant=env.get("ORCH_GRANT") or None,
+            grant=grant_env,
             human_presence=False,
             dry_run=parsed.dry_run,
             now=now,
-            env=env,
+            env={k: v for k, v in env.items() if k != "ORCH_GRANT"},
         )
-        res = run(parsed, ctx, records)
-        if session:
-            records.succeeded(session)
+        res = run(parsed, ctx, records, hooks)
         text = render.dumps(render.result_envelope(res)) if as_json else render.result_text(op, res)
         emit(text, out)
+        if session and op.is_write and not parsed.dry_run:
+            records.succeeded_write(session)
         return res.exit
     except OrchError as e:
         session = env.get("ORCH_SESSION") or None
-        if op is not None and parsed is not None and session and e.code != "stop" and _is_refusal(e):
-            if records.refused(session, op.name, parsed.args, e.code) >= STOP_AFTER:
+        if op is not None and parsed is not None and session and _is_refusal(e):
+            norm = _normalised(op, parsed.args, hooks)
+            if records.refused(session, op.name, norm, e.code, now()) >= STOP_AFTER:
                 e = OrchError("stop")
         return fail(e, op)
     except render.TemplateError as e:
-        return fail(OrchError("internal", f"output template: {e}"), op)
+        return fail(OrchError("internal", _cap(f"output template: {e}", secrets, 200)), op)
     except Exception as e:  # the safety net: an unexpected failure is still an envelope
-        return fail(OrchError("internal", f"{type(e).__name__}: {e}"[:200]), op)
+        return fail(OrchError("internal", _cap(f"{type(e).__name__}: {e}", secrets, 200)), op)
 
 
 _DEFAULT_RECORDS = MemoryRecords()
 
-__all__ += ["UsageError", "__version__", "ops"]
+__all__ += ["UsageError"]

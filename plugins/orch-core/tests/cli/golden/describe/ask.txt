@@ -2,11 +2,11 @@ ok describe ask
 Ask a person; works without a grant (unattended). Then orch wait.
 usage: orch ask TEXT [--ref REF] [--options A,B] [--rec KEY] [--to WHO] [--why TEXT] [--non-blocking] [--dry-run]
 who: unattended · emits: question.asked
-pre: ticket_exists ticket_visible text_clean unattended_quota
+pre: ticket_exists ticket_visible unattended_scope text_clean unattended_quota
 args:
   TEXT  the question
   --ref REF  ticket REF (flag); default: your claim
-  --options A,B  answer options, comma separated keys
+  --options A,B  answer option keys, comma separated
   --rec KEY  the recommended option key
   --to WHO  person id or role to ask
   --why TEXT  why it matters
@@ -14,8 +14,10 @@ args:
   --dry-run  say what would happen, append nothing
 errors:
   ambiguous_ref (exit 2): name the ticket REF, for example DEMO-0043 | fix: orch status
-  not_found (exit 2): orch list | fix: orch list
+  not_found (exit 2): orch list
+  grant.expired (exit 3): ask the person for a new grant | fix: orch status
+  grant.required (exit 3): ask the person to run orch grant, then set ORCH_GRANT | fix: orch status
   lock.busy (exit 4 retry): retry in a moment | fix: orch status
-  parse.text (exit 6): orch describe ask | fix: orch describe ask
+  parse.text (exit 6): orch describe ask
   quota.unattended (exit 9 retry): ask the person for a grant | fix: orch status
 out: ok {key} question.asked {question} seq={seq} / next: {next}

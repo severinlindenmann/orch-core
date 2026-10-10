@@ -98,6 +98,15 @@ _SPECS = [
         ["orch", "status"],
         "REF left out and the session holds no claim or more than one; the candidates are in the message.",
     ),
+    _e(
+        "grant.secret_in_args",
+        2,
+        False,
+        "an argument contains a grant secret",
+        "never put ORCH_GRANT into arguments",
+        ["orch", "help"],
+        "An argument has the shape of an ORCH_GRANT secret; it is refused before anything runs or is stored.",
+    ),
     # 3 not allowed
     _e(
         "human_only",
@@ -336,7 +345,16 @@ ERRORS: dict[str, ErrorSpec] = {s.code: s for s in _SPECS}
 assert len(ERRORS) == len(_SPECS), "duplicate error code"
 
 # Possible from any operation: the dispatcher, the parser, the stop rule and the safety net produce them.
-GLOBAL_ERRORS = ("usage", "unknown_command", "invalid.input", "internal", "not_implemented", "stop", "retry.later")
+GLOBAL_ERRORS = (
+    "usage",
+    "unknown_command",
+    "grant.secret_in_args",
+    "invalid.input",
+    "internal",
+    "not_implemented",
+    "stop",
+    "retry.later",
+)
 
 
 def spec(code: str) -> ErrorSpec:

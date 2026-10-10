@@ -2,7 +2,7 @@ Ask a person; works without a grant (unattended). Then orch wait.
 usage: orch ask TEXT [--ref REF] [--options A,B] [--rec KEY] [--to WHO] [--why TEXT] [--non-blocking] [--dry-run]
   TEXT  the question
   --ref REF  ticket REF (flag); default: your claim
-  --options A,B  answer options, comma separated keys
+  --options A,B  answer option keys, comma separated
   --rec KEY  the recommended option key
   --to WHO  person id or role to ask
   --why TEXT  why it matters

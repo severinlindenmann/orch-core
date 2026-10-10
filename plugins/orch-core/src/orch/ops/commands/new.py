@@ -1,6 +1,6 @@
 """orch new: create a ticket"""
 
-from orch.ops._dsl import FILE, MSG, STR, E, L, S, err, obj, operation
+from orch.ops._dsl import FILE, LABEL_PATTERN, MSG, STR, E, L, S, err, obj, operation
 
 OP = operation(
     "new",
@@ -12,7 +12,12 @@ OP = operation(
         "type": E("ticket type", "feature", "bug", "chore", "spike", "epic", default="feature"),
         "priority": E("priority", "low", "medium", "high", "urgent"),
         "size": E("size", "xs", "s", "m", "l", "xl"),
-        "label": L("labels, comma separated", **{"x-metavar": "A,B"}),
+        "label": L(
+            "labels, comma separated",
+            split=True,
+            items={"type": "string", "pattern": LABEL_PATTERN},
+            **{"x-metavar": "A,B"},
+        ),
         "parent": S("parent ticket key", **{"x-metavar": "KEY"}),
         "message": MSG,
         "file": FILE,

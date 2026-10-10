@@ -4,8 +4,8 @@ usage: orch artifact add PATH [--ref REF] [--kind KIND] [--name NAME] [--ac AC] 
   --ref REF  ticket REF (flag); default: your claim
   --kind KIND  what it is (screenshot|log|report|link|dataset|build|diagram|receipt|other) [default other]
   --name NAME  name in the ticket; default: the file name
-  --ac AC  criterion it is evidence for
-  --task TASK  task it belongs to
+  --ac AC  criterion it is evidence for (needs a grant)
+  --task TASK  task it belongs to (needs a grant)
   --label TEXT  short label
   --dry-run  say what would happen, append nothing
 more: orch describe artifact.add

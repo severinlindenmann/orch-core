@@ -9,6 +9,7 @@ OP = operation(
     who="agent",
     props={"ref": REF(), "message": MSG, "file": FILE},
     positional=("ref",),
+    one_of=("message", "file"),
     pre=("ticket_exists", "session_holds_claim", "grant_valid", "text_clean"),
     emits=("handoff.written", "claim.released"),
     text="ok {key} handoff.written {bytes} seq={seq}\nnext: {next}",

@@ -6,6 +6,8 @@ file or stale file fails the test.
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from tests.cli.conftest import GOLDEN
@@ -21,8 +23,10 @@ def test_golden(name, golden):
 
 def test_no_stale_golden_files(request):
     if request.config.getoption("--update-golden"):
+        assert not os.environ.get("CI"), "--update-golden is refused when CI is set"
         for path in GOLDEN.rglob("*"):
             if path.is_file() and str(path.relative_to(GOLDEN)) not in ALL:
+                print(f"golden removed: {path.relative_to(GOLDEN)}")
                 path.unlink()
         return
     on_disk = {str(p.relative_to(GOLDEN)) for p in GOLDEN.rglob("*") if p.is_file()}
@@ -35,6 +39,6 @@ def test_golden_json_files_are_valid_envelopes():
     from orch import schema
 
     for name, text in ALL.items():
-        if name.endswith(".json") and name != "errors/_human-only.json":
+        if name.endswith(".json"):
             doc = json.loads(text)
             schema.validate("cli-error" if name.startswith("errors/") else "cli-result", doc)

@@ -1,1 +1,108 @@
-{"v":"orch.cli/2.0","ok":true,"data":{"target":"init","name":"init","cli":"orch init","summary":"Create a workspace here: the genesis event, the workspace key and the instructions.","who":"human","usage":"orch init --prefix PREFIX [--name NAME] [--dry-run]","pre":["no_workspace","user_presence","text_clean"],"emits":["workspace.created"],"input":{"type":"object","description":"Create a workspace here: the genesis event, the workspace key and the instructions.","properties":{"prefix":{"type":"string","description":"ticket key prefix, for example DEMO","pattern":"^[A-Z][A-Z0-9]{0,15}$","x-metavar":"PREFIX"},"name":{"type":"string","description":"your display name","x-metavar":"NAME"}},"required":["prefix"],"additionalProperties":false},"output":{"text":"ok init {prefix} seq={seq}\nnext: {next}","json":{"type":"object","properties":{"prefix":{"type":"string"},"workspace_id":{"type":"string"}},"required":["prefix","workspace_id"],"additionalProperties":false}},"errors":[{"code":"human_only","exit":3,"retryable":false,"hint":"orch ask or orch wait","fix":["orch","describe","ask"]},{"code":"lock.busy","exit":4,"retryable":true,"hint":"retry in a moment","fix":["orch","status"]},{"code":"parse.text","exit":6,"retryable":false,"hint":"orch describe init","fix":["orch","describe","init"]},{"code":"members.stale","exit":9,"retryable":true,"hint":"retry; the person re-signs","fix":["orch","status"]}]},"key":null,"seq":0,"cursor":0,"hints":[]}
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "target": "init",
+    "name": "init",
+    "cli": "orch init",
+    "summary": "Create a workspace here: the genesis event, the workspace key and the instructions.",
+    "who": "human",
+    "usage": "orch init --prefix PREFIX [--name NAME] [--dry-run]",
+    "pre": [
+      "no_workspace",
+      "user_presence",
+      "text_clean"
+    ],
+    "emits": [
+      "workspace.created"
+    ],
+    "input": {
+      "type": "object",
+      "description": "Create a workspace here: the genesis event, the workspace key and the instructions.",
+      "properties": {
+        "prefix": {
+          "type": "string",
+          "description": "ticket key prefix, for example DEMO",
+          "pattern": "^[A-Z][A-Z0-9]{0,15}$",
+          "x-metavar": "PREFIX"
+        },
+        "name": {
+          "type": "string",
+          "description": "your display name",
+          "x-metavar": "NAME"
+        }
+      },
+      "required": [
+        "prefix"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "text": "ok init {prefix} seq={seq}\nnext: {next}",
+      "json": {
+        "type": "object",
+        "properties": {
+          "prefix": {
+            "type": "string"
+          },
+          "workspace_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "prefix",
+          "workspace_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "errors": [
+      {
+        "code": "human_only",
+        "exit": 3,
+        "retryable": false,
+        "hint": "orch ask or orch wait",
+        "fix": [
+          "orch",
+          "describe",
+          "ask"
+        ]
+      },
+      {
+        "code": "lock.busy",
+        "exit": 4,
+        "retryable": true,
+        "hint": "retry in a moment",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
+        "code": "parse.text",
+        "exit": 6,
+        "retryable": false,
+        "hint": "orch describe init",
+        "fix": [
+          "orch",
+          "describe",
+          "init"
+        ]
+      },
+      {
+        "code": "members.stale",
+        "exit": 9,
+        "retryable": true,
+        "hint": "retry; the person re-signs",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      }
+    ]
+  },
+  "key": null,
+  "seq": 0,
+  "cursor": 0,
+  "hints": []
+}

@@ -1,1 +1,75 @@
-{"v":"orch.cli/2.0","ok":true,"data":{"target":"describe","name":"describe","cli":"orch describe","summary":"The full contract of one command (or the list of commands), generated from the registry.","who":"read","usage":"orch describe [CMD...]","pre":[],"emits":[],"input":{"type":"object","description":"The full contract of one command (or the list of commands), generated from the registry.","properties":{"cmd":{"type":"array","items":{"type":"string"},"description":"command, for example task done or task.done; leave out for the list","x-metavar":"CMD"}},"x-positional":["cmd"],"required":[],"additionalProperties":false},"output":{"text":"ok describe {target}\nnext: {next}","json":{"type":"object","properties":{"target":{"type":"string"},"name":{"type":"string"},"cli":{"type":"string"},"summary":{"type":"string"},"who":{"type":"string"}},"required":["target"]}},"errors":[{"code":"not_found","exit":2,"retryable":false,"hint":"orch describe lists the commands","fix":["orch","describe"]}]},"key":null,"seq":0,"cursor":0,"hints":[]}
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "target": "describe",
+    "name": "describe",
+    "cli": "orch describe",
+    "summary": "The full contract of one command (or the list of commands), generated from the registry.",
+    "who": "read",
+    "usage": "orch describe [CMD...]",
+    "pre": [],
+    "emits": [],
+    "input": {
+      "type": "object",
+      "description": "The full contract of one command (or the list of commands), generated from the registry.",
+      "properties": {
+        "cmd": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "command, for example task done or task.done; leave out for the list",
+          "x-metavar": "CMD"
+        }
+      },
+      "x-positional": [
+        "cmd"
+      ],
+      "required": [],
+      "additionalProperties": false
+    },
+    "output": {
+      "text": "ok describe {target}\nnext: {next}",
+      "json": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "cli": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "who": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "target"
+        ]
+      }
+    },
+    "errors": [
+      {
+        "code": "not_found",
+        "exit": 2,
+        "retryable": false,
+        "hint": "orch describe lists the commands",
+        "fix": [
+          "orch",
+          "describe"
+        ]
+      }
+    ]
+  },
+  "key": null,
+  "seq": 0,
+  "cursor": 0,
+  "hints": []
+}

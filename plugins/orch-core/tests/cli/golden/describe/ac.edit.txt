@@ -9,11 +9,11 @@ args:
   --ref REF  ticket REF (flag)
   --dry-run  say what would happen, append nothing
 errors:
-  not_found (exit 2): orch list | fix: orch list
+  not_found (exit 2): orch list
   grant.expired (exit 3): ask the person for a new grant | fix: orch status
   grant.required (exit 3): ask the person to run orch grant, then set ORCH_GRANT | fix: orch status
   transition.refused (exit 3): orch show --section current_state | fix: orch show
   lock.busy (exit 4 retry): retry in a moment | fix: orch status
-  parse.text (exit 6): orch describe ac.edit | fix: orch describe ac.edit
+  parse.text (exit 6): orch describe ac.edit
   conflict.field (exit 8 retry): orch show, then redo the edit | fix: orch show
 out: ok {key} ticket.updated {ac} seq={seq} / next: {next}

@@ -1,1 +1,16 @@
-{"ok":false,"error":{"code":"verify.failed","message":"the task's verify command failed","hint":"fix the cause, then run the task again","fix":{"argv":["orch","task","next"]},"retryable":false}}
+{
+  "ok": false,
+  "error": {
+    "code": "verify.failed",
+    "message": "the task's verify command failed",
+    "hint": "fix the cause, then run the task again",
+    "fix": {
+      "argv": [
+        "orch",
+        "task",
+        "next"
+      ]
+    },
+    "retryable": false
+  }
+}

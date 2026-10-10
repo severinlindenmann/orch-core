@@ -24,6 +24,7 @@ PRECONDITIONS: dict[str, str] = {
     "ticket_owner_or_maintainer": "the person owns the ticket or is an owner or maintainer",
     "grant_valid": "the grant is valid, unexpired, covers the ticket and the verb",
     "user_presence": "the person confirmed with user presence",
+    "unattended_scope": "without a grant: visibility workspace only, new question ids only, no --ac or --task",
     "unattended_quota": "the unattended quotas are not used up",
     "base_rev_tracked": "orch has the session's base_rev for the touched section or field",
     "text_clean": "the text passes the text rules",

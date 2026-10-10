@@ -1,1 +1,15 @@
-{"ok":false,"error":{"code":"role.denied","message":"your role does not allow this","hint":"ask an owner or maintainer","fix":{"argv":["orch","status"]},"retryable":false}}
+{
+  "ok": false,
+  "error": {
+    "code": "role.denied",
+    "message": "your role does not allow this",
+    "hint": "ask an owner or maintainer",
+    "fix": {
+      "argv": [
+        "orch",
+        "status"
+      ]
+    },
+    "retryable": false
+  }
+}

@@ -82,6 +82,17 @@ def describe(ctx: Context, args: dict[str, Any]) -> Result:
             lines=overview(),
         )
     op = ops.resolve(words)
+    if op is None and len(words) == 1:
+        members = [o for o in ops.all() if o.words[0] == words[0].replace("_", "-") and len(o.words) > 1]
+        if members:
+            return Result(
+                data={
+                    "target": words[0],
+                    "commands": [{"name": o.name, "cli": o.cli, "summary": o.summary} for o in members],
+                },
+                hints=["orch describe CMD"],
+                lines=[f"orch {o.cli}: {o.summary}" for o in members],
+            )
     if op is None:
         raise OrchError("not_found", f"no command {' '.join(words)!r}", hint="orch describe lists the commands")
     errors = _error_rows(op)
@@ -107,7 +118,9 @@ def describe(ctx: Context, args: dict[str, Any]) -> Result:
     lines.append("errors:")
     for e in errors:
         retry = " retry" if e["retryable"] else ""
-        lines.append(f"  {e['code']} (exit {e['exit']}{retry}): {e['hint']} | fix: {' '.join(e['fix'])}")
+        fix = " ".join(e["fix"])
+        tail = "" if fix == e["hint"] else f" | fix: {fix}"
+        lines.append(f"  {e['code']} (exit {e['exit']}{retry}): {e['hint']}{tail}")
     lines.append("out: " + op.output["text"].replace("\n", " / "))
     return Result(data=data, lines=lines)
 

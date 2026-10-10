@@ -1,1 +1,35 @@
-{"v":"orch.cli/2.0","ok":true,"data":{"topic":"refine","steps":[{"op":"show","call":"orch show --section requirements"},{"op":"section.set","call":"orch section set requirements --file -"},{"op":"ac.add","call":"orch ac add 'text'"},{"op":"task.add","call":"orch task add 'text' --verify 'cmd' --proves AC1"},{"op":"ask","call":"orch ask 'question' --options a,b --rec a"}]},"key":null,"seq":0,"cursor":0,"hints":["orch describe CMD"]}
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "topic": "refine",
+    "steps": [
+      {
+        "op": "show",
+        "call": "orch show --section requirements"
+      },
+      {
+        "op": "section.set",
+        "call": "orch section set requirements --file -"
+      },
+      {
+        "op": "ac.add",
+        "call": "orch ac add 'text'"
+      },
+      {
+        "op": "task.add",
+        "call": "orch task add 'text' --verify 'cmd' --proves AC1"
+      },
+      {
+        "op": "ask",
+        "call": "orch ask 'question' --options a,b --rec a"
+      }
+    ]
+  },
+  "key": null,
+  "seq": 0,
+  "cursor": 0,
+  "hints": [
+    "orch describe CMD"
+  ]
+}

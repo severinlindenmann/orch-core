@@ -6,7 +6,8 @@ import pytest
 
 import orch.ops as ops
 from orch import schema
-from orch.cli.session import DEDUP_SECONDS, FileRecords, MemoryRecords
+from orch.cli.main import Hooks
+from orch.cli.session import DEDUP_SECONDS, STOP_SECONDS, FileRecords, MemoryRecords
 from orch.ops import Result
 from orch.ops.errors import ERRORS, EXIT_CODES, OrchError
 from tests.cli.conftest import GRANT, SESSION
@@ -169,7 +170,14 @@ def test_a_bad_template_is_an_internal_error(cli, bound):
     assert r.code == 1 and "err internal output template" in r.err
 
 
-# ---- stop rule
+# ---- stop rule (advisory)
+
+
+def refuse_with(bound, code="claim.required", op="task.start"):
+    def handler(ctx, args):
+        raise OrchError(code)
+
+    bound(op, handler)
 
 
 def test_stop_rule_third_identical_refusal_returns_stop(cli):
@@ -183,27 +191,71 @@ def test_stop_rule_third_identical_refusal_returns_stop(cli):
     assert r.err.startswith("err stop STOP: report to the user · retry:false")
 
 
-def test_stop_rule_needs_the_same_call_in_a_row(cli):
+def test_human_only_counts_by_operation_ignoring_arguments(cli):
     rec = MemoryRecords()
-    for argv in (
-        ["approve", "plan"],
-        ["approve", "plan"],
-        ["approve", "code"],
-        ["approve", "plan"],
-        ["approve", "plan"],
-    ):
-        r = cli(*argv, "--json", env=SESSION_ENV, records=rec)
-        assert json.loads(r.out)["error"]["code"] == "human_only"
+    got = [cli("approve", g, "--json", env=SESSION_ENV, records=rec) for g in ("plan", "code", "requirements")]
+    assert [json.loads(r.out)["error"]["code"] for r in got] == ["human_only", "human_only", "stop"]
     assert json.loads(cli("approve", "plan", "--json", env=SESSION_ENV, records=rec).out)["error"]["code"] == "stop"
+    assert json.loads(cli("close", "1", "--json", env=SESSION_ENV, records=rec).out)["error"]["code"] == "human_only"
 
 
-def test_stop_rule_resets_on_success(cli, bound):
+def test_other_refusals_count_by_arguments_and_normalised_ref(cli, bound):
+    refuse_with(bound)
+    rec = MemoryRecords()
+    hooks = Hooks(normalise_ref=lambda ref: ref.lstrip("0") if ref.isdigit() else ref.split("-")[-1].lstrip("0"))
+
+    def go(*argv):
+        return json.loads(cli(*argv, "--json", env=AGENT_ENV, records=rec, hooks=hooks).out)["error"]["code"]
+
+    assert [go("task", "start", "DEMO-0043/T3")] == ["claim.required"]
+    assert go("task", "start", "T4") == "claim.required"  # another call: its own count
+    assert go("task", "start", "T4") == "claim.required"
+    assert go("task", "start", "T4") == "stop"
+    # a REF in any spelling is the same call
+    rec2 = MemoryRecords()
+    refuse_with(bound, code="claim.held", op="claim")
+    out = [
+        json.loads(cli("claim", ref, "--json", env=AGENT_ENV, records=rec2, hooks=hooks).out)["error"]["code"]
+        for ref in ("43", "DEMO-0043", "0043")
+    ]
+    assert out == ["claim.held", "claim.held", "stop"]
+
+
+def test_stop_expires_after_15_minutes_and_window_slides(cli):
+    rec = MemoryRecords()
+    clock = [1000.0]
+
+    def go():
+        r = cli("approve", "plan", "--json", env=SESSION_ENV, records=rec, now=lambda: clock[0])
+        return json.loads(r.out)["error"]["code"]
+
+    assert [go(), go(), go()] == ["human_only", "human_only", "stop"]
+    clock[0] += STOP_SECONDS + 1
+    assert go() == "human_only"
+    clock[0] += STOP_SECONDS - 10
+    assert go() == "human_only"  # the earlier ones left the window
+
+
+def test_stop_rule_resets_only_on_a_successful_write(cli, bound):
     bound("log", lambda ctx, args: Result(key="DEMO-0001", seq=2))
+    bound("show", lambda ctx, args: Result(data={"view": "x"}, key="DEMO-0001", seq=2))
     rec = MemoryRecords()
     for _ in range(2):
         cli("approve", "plan", env=SESSION_ENV, records=rec)
-    assert cli("log", "x", env=SESSION_ENV, records=rec).code == 0
+    assert cli("show", env=SESSION_ENV, records=rec).code == 0  # a read does not reset
+    assert cli("approve", "plan", "--json", env=SESSION_ENV, records=rec).code == 3
+    assert json.loads(cli("approve", "plan", "--json", env=SESSION_ENV, records=rec).out)["error"]["code"] == "stop"
+    # a dry run is not a write either
+    cli("log", "x", "--dry-run", env=SESSION_ENV, records=rec)
+    assert json.loads(cli("approve", "plan", "--json", env=SESSION_ENV, records=rec).out)["error"]["code"] == "stop"
+    cli("log", "x", env=SESSION_ENV, records=rec)
     assert cli("approve", "plan", env=SESSION_ENV, records=rec).err.startswith("err human_only")
+
+
+def test_usage_errors_do_not_count(cli):
+    rec = MemoryRecords()
+    for _ in range(5):
+        assert json.loads(cli("task", "done", "--json", env=SESSION_ENV, records=rec).out)["error"]["code"] == "usage"
 
 
 def test_stop_rule_is_per_session_and_needs_one(cli):
@@ -229,6 +281,19 @@ def test_file_records_persist_between_processes(cli, tmp_path):
     r = cli("approve", "plan", "--json", env=SESSION_ENV, records=FileRecords(tmp_path / "session"))
     assert json.loads(r.out)["error"]["code"] == "stop"
     assert (tmp_path / "session" / f"{SESSION}.json").exists()
+
+
+def test_file_records_tolerate_a_file_with_missing_keys(cli, tmp_path):
+    d = tmp_path / "session"
+    d.mkdir()
+    (d / f"{SESSION}.json").write_text("{}")
+    assert cli("approve", "plan", env=SESSION_ENV, records=FileRecords(d)).err.startswith("err human_only")
+
+
+@pytest.mark.skip(reason="C6: FileRecords needs a lock and must be written with the append (see session.py TODO)")
+def test_file_records_two_writers_lose_no_update_and_corruption_fails_closed():
+    """Acceptance for C6: two processes of one session refuse and succeed concurrently and every record survives;
+    the dedup record exists if and only if the event was appended; a corrupt file is an error, never a reset."""
 
 
 # ---- retry dedup

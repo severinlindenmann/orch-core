@@ -27,6 +27,7 @@ OP = operation(
     },
     required=("section",),
     positional=("section",),
+    one_of=("message", "file"),
     pre=("ticket_exists", "ticket_open_for_work", "base_rev_tracked", "grant_valid", "text_clean"),
     emits=("ticket.updated",),
     text="ok {key} ticket.updated {section} seq={seq}\nnext: {next}",

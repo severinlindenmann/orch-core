@@ -30,9 +30,31 @@ def B(desc: str, **kw: Any) -> dict[str, Any]:
     return {"type": "boolean", "description": desc, **kw}
 
 
-def L(desc: str, **kw: Any) -> dict[str, Any]:
-    """A list of strings: ``--flag a,b`` (comma separated, or the flag repeated)."""
-    return {"type": "array", "items": {"type": "string"}, "description": desc, **kw}
+SECTIONS = [
+    "summary",
+    "context",
+    "requirements",
+    "out_of_scope",
+    "plan",
+    "decisions",
+    "verification",
+    "findings",
+    "current_state",
+]
+LABEL_PATTERN = r"^[a-z0-9][a-z0-9._-]{0,31}$"
+TOKEN_PATTERN = r"^[a-z][a-z0-9_]*$"
+AC_PATTERN = r"^AC[1-9][0-9]*$"
+# Fields a ticket may set through `orch set`; person-only ones (visibility, owner, people) have their own operations.
+SET_PATTERN = r"^(?:title|priority|size|labels|due|links|parent|blocked_by)=."
+
+
+def L(desc: str, *, split: bool = False, items: dict[str, Any] | None = None, **kw: Any) -> dict[str, Any]:
+    """A list of strings. ``--flag x --flag y`` always works; with ``split=True`` (``x-split``) one value may also
+    hold a comma separated list (``--flag x,y``). Free text and ``key=value`` lists never split."""
+    out: dict[str, Any] = {"type": "array", "items": items or {"type": "string"}, "description": desc, **kw}
+    if split:
+        out["x-split"] = ","
+    return out
 
 
 def E(desc: str, *values: str, **kw: Any) -> dict[str, Any]:
@@ -80,6 +102,7 @@ def err(
 
 _IMPLIED = {
     "agent": ("grant.required", "grant.expired"),
+    "unattended": ("grant.required", "grant.expired"),
     "human": ("human_only", "members.stale"),
 }
 
@@ -95,6 +118,7 @@ def operation(
     props: dict[str, Any] | None = None,
     required: tuple[str, ...] = (),
     positional: tuple[str, ...] = (),
+    one_of: tuple[str, ...] = (),
     pre: tuple[str, ...] = (),
     emits: tuple[str, ...] = (),
     errors: tuple[dict[str, Any], ...] = (),
@@ -132,6 +156,8 @@ def operation(
     if positional:
         inp["x-positional"] = list(positional)
     inp["required"] = list(required)
+    if one_of:  # exactly one of these must be given
+        inp["oneOf"] = [{"required": [n]} for n in one_of]
     inp["additionalProperties"] = False
     out_json = {"$ref": output_ref} if output_ref else (data if data is not None else obj())
     decl = {

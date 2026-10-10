@@ -1,1 +1,70 @@
-{"v":"orch.cli/2.0","ok":true,"data":{"target":"status","name":"status","cli":"orch status","summary":"Who you are, your grant, your cursor, your claim and what needs you.","who":"read","usage":"orch status","pre":["workspace_exists"],"emits":[],"input":{"type":"object","description":"Who you are, your grant, your cursor, your claim and what needs you.","properties":{},"required":[],"additionalProperties":false},"output":{"text":"ok status {person} cursor={cursor}[ grant={grant}][ claim={claim}]\nnext: {next}","json":{"type":"object","properties":{"person":{"type":"string"},"grant":{"type":"string"},"claim":{"$ref":"https://schemas.orch.dev/v2/common#/$defs/ticketKey"},"cursor":{"type":"integer","minimum":0},"new_events":{"type":"integer","minimum":0}},"required":["person","cursor"],"additionalProperties":false}},"errors":[{"code":"not_found","exit":2,"retryable":false,"hint":"run orch init in a workspace","fix":["orch","describe","init"]}]},"key":null,"seq":0,"cursor":0,"hints":[]}
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "target": "status",
+    "name": "status",
+    "cli": "orch status",
+    "summary": "Who you are, your grant, your cursor, your claim and what needs you.",
+    "who": "read",
+    "usage": "orch status",
+    "pre": [
+      "workspace_exists"
+    ],
+    "emits": [],
+    "input": {
+      "type": "object",
+      "description": "Who you are, your grant, your cursor, your claim and what needs you.",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "output": {
+      "text": "ok status {person} cursor={cursor}[ grant={grant}][ claim={claim}]\nnext: {next}",
+      "json": {
+        "type": "object",
+        "properties": {
+          "person": {
+            "type": "string"
+          },
+          "grant": {
+            "type": "string"
+          },
+          "claim": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/ticketKey"
+          },
+          "cursor": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "new_events": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "person",
+          "cursor"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "errors": [
+      {
+        "code": "not_found",
+        "exit": 2,
+        "retryable": false,
+        "hint": "run orch init in a workspace",
+        "fix": [
+          "orch",
+          "describe",
+          "init"
+        ]
+      }
+    ]
+  },
+  "key": null,
+  "seq": 0,
+  "cursor": 0,
+  "hints": []
+}

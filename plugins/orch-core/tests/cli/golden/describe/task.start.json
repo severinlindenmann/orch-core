@@ -1,1 +1,133 @@
-{"v":"orch.cli/2.0","ok":true,"data":{"target":"task.start","name":"task.start","cli":"orch task start","summary":"Take the lease on one task (parallel subagents use ORCH_SESSION=<parent>.<n>).","who":"agent","usage":"orch task start TASK [--dry-run]","pre":["ticket_exists","session_holds_claim","task_exists","task_lease_free","grant_valid"],"emits":["task.started"],"input":{"type":"object","description":"Take the lease on one task (parallel subagents use ORCH_SESSION=<parent>.<n>).","properties":{"task":{"type":"string","description":"task id (T3 or DEMO-0043/T3)","pattern":"^(?:(?:[A-Z][A-Z0-9]{0,15}-)?[0-9]+/)?T[1-9][0-9]*$","x-metavar":"TASK"}},"x-positional":["task"],"required":["task"],"additionalProperties":false},"output":{"text":"ok {key} task.started {task} seq={seq}\nnext: {next}","json":{"type":"object","properties":{"task":{"type":"string"}},"required":["task"],"additionalProperties":false}},"errors":[{"code":"not_found","exit":2,"retryable":false,"hint":"orch list","fix":["orch","list"]},{"code":"grant.expired","exit":3,"retryable":false,"hint":"ask the person for a new grant","fix":["orch","status"]},{"code":"grant.required","exit":3,"retryable":false,"hint":"ask the person to run orch grant, then set ORCH_GRANT","fix":["orch","status"]},{"code":"transition.refused","exit":3,"retryable":false,"hint":"orch show --section current_state","fix":["orch","show"]},{"code":"claim.required","exit":4,"retryable":false,"hint":"orch claim","fix":["orch","claim"]},{"code":"lease.held","exit":4,"retryable":false,"hint":"pick another task: orch task next","fix":["orch","task","next"]},{"code":"lock.busy","exit":4,"retryable":true,"hint":"retry in a moment","fix":["orch","status"]}]},"key":null,"seq":0,"cursor":0,"hints":[]}
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "target": "task.start",
+    "name": "task.start",
+    "cli": "orch task start",
+    "summary": "Take the lease on one task (parallel subagents use ORCH_SESSION=<parent>.<n>).",
+    "who": "agent",
+    "usage": "orch task start TASK [--dry-run]",
+    "pre": [
+      "ticket_exists",
+      "session_holds_claim",
+      "task_exists",
+      "task_lease_free",
+      "grant_valid"
+    ],
+    "emits": [
+      "task.started"
+    ],
+    "input": {
+      "type": "object",
+      "description": "Take the lease on one task (parallel subagents use ORCH_SESSION=<parent>.<n>).",
+      "properties": {
+        "task": {
+          "type": "string",
+          "description": "task id (T3 or DEMO-0043/T3)",
+          "pattern": "^(?:(?:[A-Z][A-Z0-9]{0,15}-)?[0-9]+/)?T[1-9][0-9]*$",
+          "x-metavar": "TASK"
+        }
+      },
+      "x-positional": [
+        "task"
+      ],
+      "required": [
+        "task"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "text": "ok {key} task.started {task} seq={seq}\nnext: {next}",
+      "json": {
+        "type": "object",
+        "properties": {
+          "task": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "task"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "errors": [
+      {
+        "code": "not_found",
+        "exit": 2,
+        "retryable": false,
+        "hint": "orch list",
+        "fix": [
+          "orch",
+          "list"
+        ]
+      },
+      {
+        "code": "grant.expired",
+        "exit": 3,
+        "retryable": false,
+        "hint": "ask the person for a new grant",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
+        "code": "grant.required",
+        "exit": 3,
+        "retryable": false,
+        "hint": "ask the person to run orch grant, then set ORCH_GRANT",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
+        "code": "transition.refused",
+        "exit": 3,
+        "retryable": false,
+        "hint": "orch show --section current_state",
+        "fix": [
+          "orch",
+          "show"
+        ]
+      },
+      {
+        "code": "claim.required",
+        "exit": 4,
+        "retryable": false,
+        "hint": "orch claim",
+        "fix": [
+          "orch",
+          "claim"
+        ]
+      },
+      {
+        "code": "lease.held",
+        "exit": 4,
+        "retryable": false,
+        "hint": "pick another task: orch task next",
+        "fix": [
+          "orch",
+          "task",
+          "next"
+        ]
+      },
+      {
+        "code": "lock.busy",
+        "exit": 4,
+        "retryable": true,
+        "hint": "retry in a moment",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      }
+    ]
+  },
+  "key": null,
+  "seq": 0,
+  "cursor": 0,
+  "hints": []
+}

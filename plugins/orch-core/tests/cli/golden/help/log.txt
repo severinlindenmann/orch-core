@@ -1,6 +1,8 @@
 Add a note to the ticket log; works without a grant (unattended).
-usage: orch log TEXT [--ref REF] [--dry-run]
+usage: orch log [TEXT] [--message TEXT] [--file PATH] [--ref REF] [--dry-run]
   TEXT  the note, at most 4096 bytes
+  -m, --message TEXT  free text
+  --file PATH  read the text from PATH, or - for stdin
   --ref REF  ticket REF (flag); default: your claim
   --dry-run  say what would happen, append nothing
 more: orch describe log

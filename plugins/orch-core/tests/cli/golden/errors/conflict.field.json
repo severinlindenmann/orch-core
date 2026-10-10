@@ -1,1 +1,15 @@
-{"ok":false,"error":{"code":"conflict.field","message":"the field changed since you read it","hint":"orch show, then redo the edit","fix":{"argv":["orch","show"]},"retryable":true}}
+{
+  "ok": false,
+  "error": {
+    "code": "conflict.field",
+    "message": "the field changed since you read it",
+    "hint": "orch show, then redo the edit",
+    "fix": {
+      "argv": [
+        "orch",
+        "show"
+      ]
+    },
+    "retryable": true
+  }
+}

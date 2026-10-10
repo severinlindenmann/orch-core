@@ -18,7 +18,7 @@ def probe():
         who="agent",
         props={
             "target": d.S("the target", **{"x-metavar": "TARGET"}),
-            "tags": d.L("tags", **{"x-metavar": "A,B"}),
+            "tags": d.L("tags", split=True, **{"x-metavar": "A,B"}),
             "count": d.I("how many", default=3),
             "verbose": d.B("talk"),
             "mode": d.E("mode", "fast", "slow"),

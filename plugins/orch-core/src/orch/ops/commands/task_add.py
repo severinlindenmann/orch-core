@@ -1,6 +1,6 @@
 """orch task add: add a task"""
 
-from orch.ops._dsl import REF_PATTERN, STR, L, S, err, obj, operation
+from orch.ops._dsl import AC_PATTERN, REF_PATTERN, STR, L, S, err, obj, operation
 
 OP = operation(
     "task.add",
@@ -10,7 +10,12 @@ OP = operation(
     props={
         "text": S("the task", **{"x-metavar": "TEXT"}),
         "verify": S("verify command", **{"x-metavar": "CMD"}),
-        "proves": L("criteria it proves, comma separated", **{"x-metavar": "AC1,AC2"}),
+        "proves": L(
+            "criteria it proves, comma separated",
+            split=True,
+            items={"type": "string", "pattern": AC_PATTERN},
+            **{"x-metavar": "AC1,AC2"},
+        ),
         "assignee": S("person id", **{"x-metavar": "PERSON"}),
         "ref": S("ticket REF (flag)", pattern=REF_PATTERN, **{"x-metavar": "REF"}),
     },

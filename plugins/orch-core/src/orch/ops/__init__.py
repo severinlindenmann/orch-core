@@ -12,6 +12,7 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Iterator
 
+from orch.ops.actors import EVENT_ACTORS
 from orch.ops.base import Context, Handler, NotImplementedYet, Operation, Result
 
 __all__ = [
@@ -38,7 +39,23 @@ def _unimplemented(name: str) -> Handler:
     return handler
 
 
+def _check_rules(op: Operation) -> None:
+    """The actor rules of format doc 5.2 and 5.4, enforced for every operation that enters the registry."""
+    from orch.ops.actors import allows
+
+    if op.who == "read" and op.emits:
+        raise ValueError(f"{op.name}: a read operation cannot emit events")
+    for t in op.emits:
+        if t not in EVENT_ACTORS or not allows(op.who, t):
+            raise ValueError(f"{op.name}: who={op.who} may not append {t}")
+    if op.who == "human" and "grant_valid" in op.pre:
+        raise ValueError(f"{op.name}: a human operation is signed by the person, it has no grant")
+    if op.who in ("agent", "unattended") and "user_presence" in op.pre:
+        raise ValueError(f"{op.name}: an agent operation cannot need user presence")
+
+
 def register(op: Operation) -> Operation:
+    _check_rules(op)
     if op.name in _REGISTRY:
         raise ValueError(f"operation {op.name!r} is already registered")
     for other in _REGISTRY.values():
@@ -52,11 +69,15 @@ def _load() -> None:
     global _LOADED
     if _LOADED:
         return
-    _LOADED = True
     from orch.ops import commands
 
-    for op in commands.collect():
-        register(op)
+    try:
+        for op in commands.collect():
+            register(op)
+    except Exception:
+        _REGISTRY.clear()  # never leave a half-filled registry behind
+        raise
+    _LOADED = True
 
 
 def get(name: str) -> Operation:

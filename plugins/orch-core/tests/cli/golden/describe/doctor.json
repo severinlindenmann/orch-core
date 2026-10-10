@@ -1,1 +1,64 @@
-{"v":"orch.cli/2.0","ok":true,"data":{"target":"doctor","name":"doctor","cli":"orch doctor","summary":"Check the logs, chains, projections and keys; reports, never changes.","who":"read","usage":"orch doctor","pre":["workspace_exists"],"emits":[],"input":{"type":"object","description":"Check the logs, chains, projections and keys; reports, never changes.","properties":{},"required":[],"additionalProperties":false},"output":{"text":"ok doctor {problems}\nnext: {next}","json":{"type":"object","properties":{"problems":{"type":"integer","minimum":0},"findings":{"type":"array","items":{"type":"object","properties":{"where":{"type":"string"},"what":{"type":"string"}},"required":["where","what"],"additionalProperties":false}}},"required":["problems","findings"],"additionalProperties":false}},"errors":[]},"key":null,"seq":0,"cursor":0,"hints":[]}
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "target": "doctor",
+    "name": "doctor",
+    "cli": "orch doctor",
+    "summary": "Check the logs, chains, projections and keys; reports, never changes.",
+    "who": "read",
+    "usage": "orch doctor",
+    "pre": [
+      "workspace_exists"
+    ],
+    "emits": [],
+    "input": {
+      "type": "object",
+      "description": "Check the logs, chains, projections and keys; reports, never changes.",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "output": {
+      "text": "ok doctor {problems}\nnext: {next}",
+      "json": {
+        "type": "object",
+        "properties": {
+          "problems": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "where": {
+                  "type": "string"
+                },
+                "what": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "where",
+                "what"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "problems",
+          "findings"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "errors": []
+  },
+  "key": null,
+  "seq": 0,
+  "cursor": 0,
+  "hints": []
+}

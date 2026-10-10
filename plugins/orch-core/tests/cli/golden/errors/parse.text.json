@@ -1,1 +1,16 @@
-{"ok":false,"error":{"code":"parse.text","message":"the text breaks the text rules","hint":"orch describe describe","fix":{"argv":["orch","describe","describe"]},"retryable":false}}
+{
+  "ok": false,
+  "error": {
+    "code": "parse.text",
+    "message": "the text breaks the text rules",
+    "hint": "orch describe describe",
+    "fix": {
+      "argv": [
+        "orch",
+        "describe",
+        "describe"
+      ]
+    },
+    "retryable": false
+  }
+}

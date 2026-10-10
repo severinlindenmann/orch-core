@@ -9,6 +9,6 @@ args:
   --strict-timeout  exit 7 when the timeout passes
 errors:
   ambiguous_ref (exit 2): name the ticket REF, for example DEMO-0043 | fix: orch status
-  not_found (exit 2): orch list | fix: orch list
-  wait.timeout (exit 7 retry): orch wait | fix: orch wait
+  not_found (exit 2): orch list
+  wait.timeout (exit 7 retry): orch wait
 out: ok {key} wait {kind} cursor={cursor} / next: {next}

@@ -18,5 +18,5 @@ errors:
   grant.expired (exit 3): ask the person for a new grant | fix: orch status
   grant.required (exit 3): ask the person to run orch grant, then set ORCH_GRANT | fix: orch status
   lock.busy (exit 4 retry): retry in a moment | fix: orch status
-  parse.text (exit 6): orch describe new | fix: orch describe new
+  parse.text (exit 6): orch describe new
 out: ok {key} ticket.created {ticket_type} seq={seq} / next: {next}

@@ -15,6 +15,7 @@ usage 2 retry:false
 unknown_command 2 retry:false
 not_found 2 retry:false
 ambiguous_ref 2 retry:false
+grant.secret_in_args 2 retry:false
 human_only 3 retry:false
 grant.required 3 retry:false
 grant.expired 3 retry:false

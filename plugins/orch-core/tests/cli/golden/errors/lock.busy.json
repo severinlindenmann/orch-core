@@ -1,1 +1,15 @@
-{"ok":false,"error":{"code":"lock.busy","message":"the workspace lock is busy","hint":"retry in a moment","fix":{"argv":["orch","status"]},"retryable":true}}
+{
+  "ok": false,
+  "error": {
+    "code": "lock.busy",
+    "message": "the workspace lock is busy",
+    "hint": "retry in a moment",
+    "fix": {
+      "argv": [
+        "orch",
+        "status"
+      ]
+    },
+    "retryable": true
+  }
+}

@@ -1,6 +1,6 @@
 """orch show: read a ticket, a section, the log or a diff"""
 
-from orch.ops._dsl import REF, STR, B, I, L, err, obj, operation
+from orch.ops._dsl import REF, SECTIONS, STR, B, I, L, err, obj, operation
 
 OP = operation(
     "show",
@@ -9,7 +9,9 @@ OP = operation(
     who="read",
     props={
         "ref": REF(),
-        "section": L("only these sections, comma separated", **{"x-metavar": "A,B"}),
+        "section": L(
+            "only these sections, comma separated", split=True, items={"enum": SECTIONS}, **{"x-metavar": "A,B"}
+        ),
         "full": B("every section"),
         "log": B("the event log"),
         "diff": B("what changed"),

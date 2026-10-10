@@ -1,6 +1,6 @@
 """orch set: change ticket fields"""
 
-from orch.ops._dsl import REF, STR, L, arr, err, obj, operation
+from orch.ops._dsl import REF, SET_PATTERN, STR, L, arr, err, obj, operation
 
 OP = operation(
     "set",
@@ -9,7 +9,11 @@ OP = operation(
     who="agent",
     props={
         "ref": REF("ticket REF"),
-        "pairs": L("key=value pairs", **{"x-metavar": "KEY=VALUE"}),
+        "pairs": L(
+            "key=value pairs; keys: title priority size labels due links parent blocked_by",
+            items={"type": "string", "pattern": SET_PATTERN},
+            **{"x-metavar": "KEY=VALUE"},
+        ),
     },
     required=("ref", "pairs"),
     positional=("ref", "pairs"),

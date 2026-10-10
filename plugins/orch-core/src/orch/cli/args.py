@@ -4,8 +4,9 @@ The rules (the only place they live):
 
 * a property named in ``x-positional`` is positional, in that order; every other property is a ``--flag``
   (underscores become hyphens), optionally with a one-letter ``x-short``;
-* ``boolean`` is a switch, ``integer`` takes a number, ``array`` takes a comma separated list (a repeated flag
-  adds to it), an ``enum`` limits the choices, anything else is text;
+* ``boolean`` is a switch, ``integer`` takes a number, ``array`` of strings takes values (a repeated flag adds to
+  it; ``x-split`` also lets one value hold a comma separated list), an ``enum`` limits the choices, ``string`` is
+  text; any other type is refused when the parser is built; a scalar flag given twice is a usage error;
 * a name in ``required`` must be given (a missing one is a usage error);
 * ``default`` fills a missing argument after parsing;
 * ``x-metavar`` is the placeholder shown in usage, default the upper-cased name.
@@ -33,6 +34,8 @@ class Arg:
     metavar: str
     help: str
     default: Any
+    split: str | None = None
+    needs_grant: bool = False
 
     @property
     def label(self) -> str:
@@ -47,9 +50,17 @@ def arg_specs(op: Operation) -> list[Arg]:
     ordered = positional + [n for n in props if n not in positional]
     out: list[Arg] = []
     for name in ordered:
+        if name not in props:
+            raise ValueError(f"{op.name}: x-positional names {name!r}, which is not a property")
         p = props[name]
-        t = p.get("type", "string")
-        kind = {"boolean": "bool", "integer": "int", "array": "list"}.get(t, "str")
+        t = p.get("type")
+        kind = (
+            {"string": "str", "boolean": "bool", "integer": "int", "array": "list"}.get(t)
+            if isinstance(t, str)
+            else None
+        )
+        if kind is None:
+            raise ValueError(f"{op.name}: property {name!r} has type {t!r}, which the CLI cannot take")
         choices = tuple(p["enum"]) if "enum" in p else None
         is_pos = name in positional
         out.append(
@@ -64,6 +75,8 @@ def arg_specs(op: Operation) -> list[Arg]:
                 metavar=p.get("x-metavar") or name.upper(),
                 help=p.get("description", ""),
                 default=p.get("default"),
+                split=p.get("x-split"),
+                needs_grant=bool(p.get("x-needs-grant")),
             )
         )
     return out

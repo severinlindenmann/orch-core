@@ -25,11 +25,11 @@ class Context:
     """What the CLI hands a handler. Secrets never reach output: ``grant`` is redacted by the renderer."""
 
     session: str | None = None
-    grant: str | None = None
+    grant: str | None = field(default=None, repr=False)
     human_presence: bool = False
     dry_run: bool = False
     now: Callable[[], float] = time.time
-    env: Mapping[str, str] = field(default_factory=dict)
+    env: Mapping[str, str] = field(default_factory=dict, repr=False)
 
 
 @dataclass

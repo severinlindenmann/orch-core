@@ -17,7 +17,7 @@ import type { Block, WidgetSpec } from './parse'
 export const BODY_HEIGHT = 280
 
 /** `reason` is the technical text (behind "Details"); `plain` says what happened and who fixes it. */
-type Resolved = { ok: true; html: string; layerLabel: string } | { ok: false; reason: string; plain: string }
+type Resolved = { ok: true; page: string; data: unknown; layerLabel: string } | { ok: false; reason: string; plain: string }
 
 const DRIFT = 'This preview changed after it was pinned, so it is not shown. Ask the agent that wrote it to update the pin.'
 
@@ -36,7 +36,7 @@ function resolveFrame(spec: WidgetSpec, ticket: Pick<TicketDocument, 'key' | 'ar
       why = 'data could not be read'
     }
     if (why) return { ok: false, reason: `data does not fit ${spec.widget}: ${why}`, plain: `This widget's data does not fit the ${t.title.toLowerCase()} template, so it is not shown. Ask its author to fix the block.` }
-    return { ok: true, html: frameDocument(t.html, spec.data), layerLabel: spec.widget! }
+    return { ok: true, page: t.html, data: spec.data, layerLabel: spec.widget! }
   }
   if (spec.artifactTicket && spec.artifactTicket !== ticket.key)
     return { ok: false, reason: `artifact belongs to ${spec.artifactTicket}, not to this ticket`, plain: `This widget shows a page from ${spec.artifactTicket}, not from this ticket. Ask its author to fix the block.` }
@@ -45,7 +45,7 @@ function resolveFrame(spec: WidgetSpec, ticket: Pick<TicketDocument, 'key' | 'ar
   const now = sha256Hex(a.preview)
   if (now !== spec.sha256)
     return { ok: false, reason: `sha256 does not match: ${spec.artifact} has ${now.slice(0, 12)}…, the block pins ${spec.sha256!.slice(0, 12)}…. The page changed since this widget was written, so it does not run.`, plain: DRIFT }
-  return { ok: true, html: frameDocument(a.preview, spec.data), layerLabel: 'one-off' }
+  return { ok: true, page: a.preview, data: spec.data, layerLabel: 'one-off' }
 }
 
 /** What a parse refusal means for the reader and who fixes it. The technical text stays behind "Details". */
@@ -138,7 +138,9 @@ function Body({ spec, res, agentHtml, height }: { spec: WidgetSpec; res: Extract
   if (framed && !agentHtml)
     return <p className="rounded-md border border-dashed border-border px-3 py-2 text-[12px] text-text-muted">Agent HTML is off in this workspace, so this widget is not drawn. {spec.caption ?? 'No text alternative given.'}</p>
   if (framed && res) {
-    const node = frameNode.safeParse({ type: 'frame', title: `Sandboxed preview · ${res.layerLabel}`, html: res.html, height: Math.min(1200, Math.max(80, height)) })
+    // The document is built for the height of the frame it sits in (its chart cap is that fixed number, see frameDocument).
+    const h = Math.min(1200, Math.max(80, height))
+    const node = frameNode.safeParse({ type: 'frame', title: `Sandboxed preview · ${res.layerLabel}`, html: frameDocument(res.page, res.data, h), height: h })
     return node.success ? <FrameNode node={node.data} fallback={<AddonUnavailable addon="widgets" />} fitContent /> : <AddonUnavailable addon="widgets" />
   }
   return <CoreWidget spec={spec} />

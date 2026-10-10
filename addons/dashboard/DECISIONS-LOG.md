@@ -731,3 +731,82 @@ The owner answered the eight open questions of REVIEW.md. Items 1, 2, 5 and 6 ch
 - **Decision:** (F1, ruling) the split pane exists only while something is previewed; the empty-pane line is gone, and with nothing previewed the full list (all columns) or grid (up to 4 columns) takes the whole width. Preview opens the pane (the list goes compact); Close or a new context returns to full width. This replaces amendment 7's "empty split pane" line. (F2, prep) `useArtifactSelection` is controllable: `view`/`onViewChange` and `currentKey`/`onCurrentKeyChange` (value + onChange); localStorage is only the uncontrolled default and never overrides a controlled view; `setCurrentKey` is exposed; the context and settled-missing clearing go through `onCurrentKeyChange(null)`; `parseArtifactKey` reads the `<ticket>/<name>/<sha256>` key back. No URL handling yet. (F3) an addon item's button reads "Open addon page" (core words, fixed); the addon shows beside it as plain secondary text, badge + "Title (id)", truncated with the full text in `title`; accessible name "Open addon page: Title (id)". The action column is wider (w-36) so nothing leaves its cell at 720 px. (F4) a card without a label keeps its line (no-break space). (F5) the web link's accessible name contains its visible text: "Open link <name> (opens in a new tab)". (F6) the ticket's artifact cards take columns from the tab's width (container query). (F7) the denied drawer says "You can no longer see this artifact." once. (F8) the j/k labels: "move to the next/previous artifact (the preview follows when it is beside the list)". (F10) the focus fallback heading becomes visible (with a ring) while it has focus. (F11) the live announcement clears whenever nothing is previewed.
 - **Why:** review G3 (F1–F11) and the controller's rulings.
 - **Revert:** revert the fix-round commit.
+
+## 2026-10-10 Owner bug reports 2026-10-10 — G1
+
+- **Agent spend glance "could not be shown".**
+  - **Decision:** root cause: the mock store persists every addon's state in localStorage, and a browser that opened the hosted preview before N3 kept usage days keyed `opus/sonnet/haiku`; today's view sums the new model ids, so every day is NaN and F2's `stat.trend` (finite numbers only) failed the whole Glance item. Addon modules now declare `stateVersion` (default 1); the store saves the versions next to the states (`addonVersions`) and drops, on load, any state saved under another version, so it is seeded again. Usage is `stateVersion: 2`. Also `stat.trend` accepts null (a `$ref` to state that is not there): no sparkline instead of a failed item; bad values still fail closed. A test parses every Today glance item of every workspace in normal and busy data and after a reload with the old usage state, and renders the Glance in both datasets.
+  - **Why:** owner bug report 1 (screenshot 16:52). The simulator never writes addon state, so "after time passes" is not a cause on its own.
+  - **Revert:** remove `stateVersion`/`addonVersions`/`currentAddonStates` and the `.nullish()` on `trend`.
+- **Workspace switcher: calm rows.**
+  - **Decision:** one row per workspace: prefix chip, name, the needs-you count only when > 0 (`useAttention().needsYou.total`, the sidebar badge's number), a check on the current one. The ⌘n hint shows only on hover/focus (and is `aria-keyshortcuts`); the role, the relay state and the shortcut are in the row's tooltip. Recent tickets, the role line and the relay dot are gone (the per-workspace Today fetch with them). The list is a `<ul>` named "Workspaces"; focus starts on the current workspace, Up/Down/Home/End move, Enter switches; ⌘1..n unchanged. There were no footer actions to keep.
+  - **Why:** owner item 2 ("should show less info, too complex").
+  - **Revert:** revert the switcher commit.
+- **Sandboxed widget shrinking in a loop (DEMO-0219 line chart).**
+  - **Decision:** root cause: core's frame wrapper capped SVGs at `calc(100vh - 16px)`, i.e. at the frame's own viewport, while a fitted frame takes the height its document reports. With the iframe's 2 px border the report came back smaller each round (measured 180 → 48 px in ~3 s). `frameDocument(page, data, frameHeight)` now caps SVGs at a fixed `frameHeight - 18` px (border + body padding), built per frame (280 inline, 720 in Expand, 520 for artifact previews). FrameNode's fitting is a pure `stepFit`: a shrink that answers the frame's own shrink (within 500 ms, at least half as big) twice in a row is a loop; the frame goes back to its height before that run and takes no more shrinks (it still grows), so agent HTML that sizes itself from `100vh`/`height:100%` cannot shrink it either. Measured after: 278 px stable at 1440 and at a 720 px page with the dock open; Expand 414 px; DEMO-0041/0043 frames stable.
+  - **Why:** owner bug report 3 (screenshots 16:53).
+  - **Revert:** revert the frame commit (the `svg` cap goes back to `100vh`).
+- **Parked minors.** F1 N1: Activity test that `terminal.shell_opened` is shown to owners and maintainers and hidden from members. F1 N2: tests for the 2 s lapse of `requestSettingsFocus`; they found that an older request's timer cleared a newer request for the same addon, so each request now lapses on its own (token). F3: `useDecide`'s success toast names the signed snapshot's addon, and `decisionChanged` also compares the addon (the Today row is keyed by id only). F2 minor 8 (j/k announced) moved to G3 with the artifacts redesign (coordinator).
+  - **Revert:** revert the minors commit.
+- **G1 review fixes (round 1).**
+  - **Decision:** (I1) A fitted frame adds its own border (`offsetHeight - clientHeight`) to the reported content height, so the visible area equals the content and a viewport-sized document is a fixed point (before: always 2 px short, which drove the loop). `stepFit` stays as a backstop. (M2) Three changes of direction in a row (each within 500 ms) settle on the larger height for good. (M3) A shrink held as a possible loop is tried once after 500 ms without reports (`settleFit`): a document that settled in steps ends at its final height; a shrink that answers the probe confirms a loop and the frame stays at the larger height. (M4) A component test drives the frame's message path (source and shape filter, border, cap, loop). Switcher: "current" only as `aria-current`; the check and count are `aria-hidden` (the name carries the count); the tooltip waits 500 ms on hover and does not open for the focus the popover puts on the current row; the heading id comes from `useId`; a test checks ⌘1..n with the switcher closed.
+  - **Why:** review G1 (1 Important, 7 Minor).
+  - **Revert:** revert the review-fix commit.
+## Owner request 2026-10-10 — G2 permanent URLs
+
+- **Decision:** (1) **Browser history, real paths**, is the app's only mode (local dev, `npm run preview`, a real
+  host); memory history only where a test passes an initial path. This **supersedes** the G7 note "Deep link
+  `/ticket/X` lands on Today … memory history on purpose (sandboxed viewer)". Per the owner ("we care about the local
+  setup") there is no iframe/hash fallback for the claude.ai preview; Vite `base` is now `/` so a reload on a deep
+  path finds `/assets/`. (2) **Workspace in the address** for every workspace page: `/w/<PREFIX>/…`, done with a
+  router rewrite (`src/app/urls.ts`) so the route tree and the ~60 in-app links keep their short paths. **Today is
+  per workspace** (its queries are keyed by the workspace), so it is `/w/<PREFIX>`, and `/` goes there. **Settings
+  are per workspace** too (`/w/<PREFIX>/settings/<tab>`). Tickets stay `/ticket/<KEY>` (the key names the workspace;
+  a `/w/X/ticket/K` address drops the `/w/X`). On a `/w/…` address the address is the source of truth for the
+  workspace (Back/Forward and pasted links switch); a switch on a workspace page pushes the same page in the new
+  workspace (Back returns); elsewhere the remembered workspace applies. Old paths are replaced with the current
+  workspace's address. An unknown prefix shows "No workspace <PREFIX>" and keeps the address. (3) **View state in
+  search params**, validated per field with zod (invalid → default): ticket `tab`; board `view`, `mine`, `type`,
+  `label`, `person`, `epic`, `q`; tickets filters (already); artifacts `view` and `a` (the shown artifact as
+  `<ticket>.<sha256[:12]>`, no file name); the settings addon row is the existing `/settings/addon/<name>` path. Tab
+  and artifact changes replace the history entry; filter and view changes push (like the tickets list; the artifacts layout pushes since the review fixes); search text
+  replaces after 200 ms. Not in the URL: dialogs, signing prompts, the terminal dock, the demo dataset (Normal/Busy
+  day is mock data, not a place) and the review tour step. Addon page tabs (core's `tabs` node, e.g. Usage's
+  Overview / By model) are `?tab.<node id>=<tab id>` on addon pages (the remembered per-viewer tab still applies
+  when the address has none; on Today and tickets addon tabs stay local). Agents has no tabs, so no param. (4) **Copy link** on the ticket header, Settings, addon
+  pages and in ⌘K; it copies `origin + address` of the page as shown. (5) Links in the app follow the workspace: the
+  router caches built link addresses, so a workspace change gives the router a fresh rewrite (`setLinkWorkspace`),
+  which TanStack uses to drop that cache. The address replace that adds `/w/<PREFIX>` ignores navigation blockers
+  (same page, not a navigation).
+- **Why:** owner request 2026-10-10 16:52 ("copy paste a url and come back to the same page, ticket, settings etc."),
+  then "we don't care about the artifact on claude, we care about the local setup".
+- **Revert:** revert the G2 commits (router back to `createMemoryHistory({ initialEntries: ['/'] })`, `base: './'`,
+  drop `urls.ts`, `search.ts`, `copyLink.ts`, the URL hooks in board/artifacts and the ticket tab param).
+
+## G2 permanent URLs: review fixes
+
+- **Decision:** (1) **Redirects keep the address's workspace**: the router rewrite's input points the link workspace
+  at the prefix of each new incoming address (marking the cached link addresses stale), so a redirect built while
+  that address loads (`/w/INT/settings` → `/w/INT/settings/general`, `/w/INT/settings/addons/x` →
+  `/w/INT/settings/addon/x`, an unknown tab → General) stays in INT; `WorkspaceProvider` re-points links at the shown
+  workspace after every render (an unknown prefix). Repeated parses of the same address do not touch it. (2) **Copy
+  link copies the address bar exactly** (`router.history.location.href`), so on "No workspace NOPE" it copies the
+  NOPE address. (3) Prefixes match case-insensitively; the address is corrected to the real prefix. `/w` and `/w/`
+  are Today. (4) The artifacts layout (`view`) now pushes, like the board's view; the shown artifact replaces.
+  (5) An addon page tab follows the address (subscribed to the history); when the address has none, the shown tab is
+  put in (replace). (6) `setWorkspaceId` gains `url: 'replace'`; the Review tour uses it (no extra history entry).
+  (7) The default ticket breadcrumb (a ticket opened first) is the permanent `/w/<PREFIX>/board`. (8) A jump on a
+  ticket (to a question, to the evidence) keeps the `#question-…` hash; a tab click drops it. (9) While the workspaces
+  load, a `/w/<PREFIX>` address shows the page skeleton instead of the remembered workspace's page. (10) The hosted
+  preview is frozen at 98151971; the publish steps are marked obsolete.
+- **Not done:** invalid search params stay in the address until the page writes it (they never apply; dropping them
+  needs a replace on every route); `/nonsense` still becomes `/w/DEMO/nonsense` (the router's not-found page, as
+  before G2); ticket keys stay case-sensitive (predates G2).
+- **Why:** review G2 (2 Important, 11 Minor).
+- **Revert:** revert the review-fix commit.
+
+## 2026-10-10 G2 × G3: the Artifacts address has one owner
+
+- **Decision:** `useArtifactSelection` (`artifacts/selection.ts`) owns the Artifacts page's address; G2's `useArtifactsUrl` / `useShownArtifactInUrl` (`artifacts/urlState.ts`) and the page's own `selected`/`open`/`view` state are gone, so the address is the one source. `?view=` wins; without it the person's remembered layout (localStorage, read once per visit) applies, else list. Choosing a view pushes a history entry (and is remembered for the next visit); Preview and Close set `?a=` with replace. `?a=` keeps G2's form `<KEY>.<sha256[:12]>` (`artifactUrlId`); the page key `<ticket>/<name>/<sha256>` maps to it through `parseArtifactKey`. The shown artifact is derived from `?a=` and the results, so a cold load of `/w/DEMO/artifacts?view=grid&a=…` shows it (pane when wide, drawer when narrow), list ↔ grid keeps it, and Back/Forward restore view and artifact. A new workspace, filter or page clears `?a=` (replace; counted from the first settled results, so a cold load's own setup never clears a deep link); settled results without it clear it too (replace), with G2's toast "The linked artifact is not in this list" only for the link the page was opened with.
+- **Why:** G2 and G3 both kept artifacts state; the controller asked for one owner (fix round, Part B).
+- **Revert:** revert this merge's follow-up commit (restores urlState.ts and its wiring).

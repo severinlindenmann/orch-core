@@ -13,6 +13,7 @@ import type { TicketDocument } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { VIEWER_REASON } from '@/components/DisabledReason'
+import { CopyLinkButton } from '@/app/shell/CopyLinkButton'
 import { BlockedByConnection } from './Needs'
 import { availableActions, blockedApproval, GATE_LABEL, primaryAction, primaryLabel } from './actions'
 import { agentName, fmtClock, Mono, Pill, StatusChip, type Jump, type HumanAction, type Viewer } from './shared'
@@ -197,6 +198,7 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
       <div className="flex flex-wrap items-center gap-2 text-[13px]">
         <Mono className="text-text-muted">{ticket.key}</Mono>
         <CopyButton text={ticket.key} label={`Copy ${ticket.key}`} />
+        <CopyLinkButton label={`Copy link to ${ticket.key}`} what={`Link to ${ticket.key}`} />
         <Pill className="capitalize">{ticket.type}</Pill>
         {ticket.parent && (
           <span className="text-text-muted">

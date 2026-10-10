@@ -1,7 +1,5 @@
-import { useState } from 'react'
-import { useQueries } from '@tanstack/react-query'
+import { useId, useRef, useState, type KeyboardEvent, type MutableRefObject } from 'react'
 import { Check, ChevronsUpDown } from 'lucide-react'
-import { api } from '@/api/client'
 import { roleOf } from '@/api/permissions'
 import type { Workspace } from '@/api/types'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -11,76 +9,79 @@ import { useAttention } from '../attention'
 import { useWorkspace } from '../workspace'
 import { SHORTCUTS } from './shortcuts'
 
-const PREVIEWS = 2
+/** `⌘2` / `Ctrl+2` as aria-keyshortcuts writes it. */
+const ariaKeys = (keys: string) => keys.replace('⌘', 'Meta+').replace('Ctrl+', 'Control+')
 
-/** The relay link the owner turned on or off in Settings > Relay & devices (simulated until orch-relay ships). */
-function RelayDot({ on }: { on: boolean }) {
-  const label = on ? 'Relay on (simulated)' : 'Relay not connected'
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span role="img" aria-label={label} className={cn('size-2 shrink-0 rounded-full', on ? 'bg-success' : 'border border-text-faint')} />
-      </TooltipTrigger>
-      <TooltipContent side="right">{label}</TooltipContent>
-    </Tooltip>
-  )
-}
-
-function WorkspaceRow({ w, index, current, viewer, onPick }: { w: Workspace; index: number; current: boolean; viewer: string | undefined; onPick: (ticket?: string) => void }) {
-  const [today] = useQueries({ queries: [{ queryKey: ['today', w.id], queryFn: () => api.getToday(w.id) }] })
+/**
+ * One calm row (owner feedback G1 #2): prefix, name, a check on the current one, and what needs you when that is more
+ * than nothing (the sidebar badge's number). The shortcut shows on hover or focus; the role and the relay are in the
+ * tooltip (and in the workspace's settings).
+ */
+function WorkspaceRow({ w, index, current, viewer, onPick, quietFocus }: { w: Workspace; index: number; current: boolean; viewer: string | undefined; onPick: () => void; quietFocus: MutableRefObject<boolean> }) {
   const needs = useAttention(w.id).needsYou.total
-  const previews = (today.data?.needs_you ?? []).slice(0, PREVIEWS)
   const keys = SHORTCUTS.find((s) => s.id === `workspace.${index + 1}`)?.keys
+  const relay = w.relay === 'on' ? 'Relay on (simulated)' : 'Relay not connected'
   return (
-    <div role="group" aria-label={`${w.prefix} · ${w.name}`} className="rounded-md p-1">
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => onPick()}
-          className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 py-1 text-left text-[13px] outline-none hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-brand"
-        >
-          <span className="rounded bg-surface-3 px-1 font-mono text-[10px] font-semibold text-text-muted">{w.prefix}</span>
-          <span className="min-w-0 flex-1 truncate">{w.name}</span>
-          {current && <Check role="img" className="size-3.5 text-text-muted" aria-label="Current workspace" />}
-        </button>
-        {needs > 0 && (
-          <span aria-label={`${needs} need you`} className="rounded-full bg-brand px-1.5 text-[11px] font-semibold text-on-brand">
-            {needs}
-          </span>
-        )}
-        <RelayDot on={w.relay === 'on'} />
-      </div>
-      <div className="flex items-center gap-2 px-1.5 text-[11px] text-text-faint">
-        <span>{roleOf(w, viewer)}</span>
-        {keys && <kbd className="ml-auto rounded bg-surface-3 px-1 font-mono text-[10px]">{keys}</kbd>}
-      </div>
-      {previews.length > 0 && (
-        <ul className="mt-0.5 space-y-0.5">
-          {previews.map((n) => (
-            <li key={`${n.kind}:${n.ticket}:${n.ref ?? ''}`}>
-              <a
-                href={`/ticket/${n.ticket}`}
-                onClick={(e) => {
-                  e.preventDefault()
-                  onPick(n.ticket)
-                }}
-                className="flex items-baseline gap-2 rounded px-1.5 py-0.5 text-[12px] text-text-muted outline-none hover:bg-surface-2 hover:text-text focus-visible:ring-2 focus-visible:ring-brand"
-              >
-                <span className="shrink-0 font-mono text-[11px] text-text-faint">{n.ticket}</span>
-                <span className="truncate">{n.title}</span>
-              </a>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
+    <li>
+      {/* Hover waits a moment; the focus the popover puts on the current row when it opens shows no tooltip. */}
+      <Tooltip delayDuration={500}>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            data-ws-row
+            aria-current={current ? 'true' : undefined}
+            onClick={onPick}
+            onFocus={(e) => {
+              if (!quietFocus.current) return
+              quietFocus.current = false
+              e.preventDefault() // Radix opens a tooltip on focus unless the event is prevented
+            }}
+            // `aria-current` says which one is current; the label carries the name and the count once.
+            aria-label={`${w.prefix} · ${w.name}${needs > 0 ? `, ${needs} need you` : ''}`}
+            aria-keyshortcuts={keys ? ariaKeys(keys) : undefined}
+            className="group flex w-full min-w-0 items-center gap-2 rounded-md px-1.5 py-1.5 text-left text-[13px] outline-none hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:ring-2 focus-visible:ring-brand"
+          >
+            <span className="rounded bg-surface-3 px-1 font-mono text-[10px] font-semibold text-text-muted">{w.prefix}</span>
+            <span className="min-w-0 flex-1 truncate">{w.name}</span>
+            {keys && (
+              <kbd aria-hidden className="hidden rounded bg-surface-3 px-1 font-mono text-[10px] text-text-faint group-hover:inline group-focus-visible:inline">
+                {keys}
+              </kbd>
+            )}
+            {needs > 0 && (
+              <span aria-hidden className="rounded-full bg-brand px-1.5 text-[11px] font-semibold text-on-brand">
+                {needs}
+              </span>
+            )}
+            {current ? <Check aria-hidden className="size-3.5 shrink-0 text-text-muted" /> : <span aria-hidden className="size-3.5 shrink-0" />}
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="right">
+          Your role: {roleOf(w, viewer)} · {relay}
+          {keys ? ` · ${keys}` : ''}
+        </TooltipContent>
+      </Tooltip>
+    </li>
   )
 }
 
-/** The workspace trigger and popover: every workspace with your role, what needs you, and the top items to open directly. */
+/** Up/Down (and Home/End) move between the rows; Tab leaves the list as usual. */
+function onListKey(e: KeyboardEvent<HTMLUListElement>) {
+  const rows = [...e.currentTarget.querySelectorAll<HTMLButtonElement>('[data-ws-row]')]
+  const at = rows.indexOf(document.activeElement as HTMLButtonElement)
+  const to = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: rows.length - 1 }[e.key]
+  if (to === undefined || rows.length === 0) return
+  e.preventDefault()
+  rows[(to + rows.length) % rows.length].focus()
+}
+
+/** The workspace trigger and popover: one calm row per workspace. */
 export function WorkspaceSwitcher({ collapsed, viewer }: { collapsed: boolean; viewer: string | undefined }) {
   const { workspace, workspaces, switchWorkspace } = useWorkspace()
   const [open, setOpen] = useState(false)
+  const list = useRef<HTMLUListElement>(null)
+  const quietFocus = useRef(false)
+  const headingId = useId()
   const trigger = (
     <button
       type="button"
@@ -107,21 +108,36 @@ export function WorkspaceSwitcher({ collapsed, viewer }: { collapsed: boolean; v
       ) : (
         <PopoverTrigger asChild>{trigger}</PopoverTrigger>
       )}
-      <PopoverContent align="start" side="bottom" className="w-72 p-1.5">
-        <div className="px-1.5 pb-1 text-[11px] uppercase tracking-wider text-text-faint">Workspaces</div>
-        {workspaces.map((w, i) => (
-          <WorkspaceRow
-            key={w.id}
-            w={w}
-            viewer={viewer}
-            index={i}
-            current={w.id === workspace?.id}
-            onPick={(ticket) => {
-              setOpen(false)
-              switchWorkspace(w.id, { ticket })
-            }}
-          />
-        ))}
+      <PopoverContent
+        align="start"
+        side="bottom"
+        className="w-64 p-1.5"
+        onOpenAutoFocus={(e) => {
+          // Focus starts on the current workspace (not the first row), so Up/Down move from where you are.
+          e.preventDefault()
+          quietFocus.current = true
+          ;(list.current?.querySelector<HTMLButtonElement>('[aria-current="true"]') ?? list.current?.querySelector<HTMLButtonElement>('[data-ws-row]'))?.focus()
+        }}
+      >
+        <div id={headingId} className="px-1.5 pb-1 text-[11px] uppercase tracking-wider text-text-faint">
+          Workspaces
+        </div>
+        <ul ref={list} aria-labelledby={headingId} onKeyDown={onListKey} className="space-y-0.5">
+          {workspaces.map((w, i) => (
+            <WorkspaceRow
+              key={w.id}
+              w={w}
+              viewer={viewer}
+              index={i}
+              current={w.id === workspace?.id}
+              quietFocus={quietFocus}
+              onPick={() => {
+                setOpen(false)
+                switchWorkspace(w.id)
+              }}
+            />
+          ))}
+        </ul>
       </PopoverContent>
     </Popover>
   )

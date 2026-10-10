@@ -265,7 +265,7 @@ describe('ticket page structure: next action first, gates as a stepper, a rail t
     await screen.findByRole('heading', { level: 1, name: /Load tariff tables/ }, T)
     const topbar = screen.getByTestId('topbar-title').parentElement as HTMLElement
     const crumb = await within(topbar).findByRole('link', { name: 'Tickets' }, T)
-    expect(crumb).toHaveAttribute('href', expect.stringMatching(/^\/tickets/))
+    expect(crumb).toHaveAttribute('href', expect.stringMatching(/^\/w\/DEMO\/tickets/))
     await user.click(crumb)
     await waitFor(() => expect(screen.getByTestId('topbar-title')).toHaveTextContent('Tickets'), T)
   })
@@ -274,7 +274,7 @@ describe('ticket page structure: next action first, gates as a stepper, a rail t
     renderApp('/ticket/DEMO-0043', { viewer: 'p_sev' })
     await screen.findByRole('heading', { level: 1, name: /Load tariff tables/ }, T)
     const topbar = screen.getByTestId('topbar-title').parentElement as HTMLElement
-    expect(within(topbar).getByRole('link', { name: 'Board' })).toHaveAttribute('href', '/board')
+    expect(within(topbar).getByRole('link', { name: 'Board' })).toHaveAttribute('href', '/w/DEMO/board')
   })
 
   it('shows at most 3 labels and "+n"', async () => {

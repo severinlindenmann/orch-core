@@ -353,7 +353,8 @@ async function main() {
               more.click()
               await new Promise((r) => setTimeout(r, 300))
             }
-            const hrefs = [...new Set([...document.querySelectorAll('a[href^="/addon/"]')].map((a) => a.getAttribute('href')))]
+            // Links carry the workspace (/w/DEMO/addon/…); the guard goes by the in-app path, which the app redirects back.
+            const hrefs = [...new Set([...document.querySelectorAll('a[href*="/addon/"]')].map((a) => a.getAttribute('href').replace(/^\/w\/[^/]+(?=\/addon\/)/, '')).filter((h) => h.startsWith('/addon/')))]
             document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
             document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
             return hrefs

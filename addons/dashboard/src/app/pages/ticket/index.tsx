@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { Link, useRouter, useRouterState } from '@tanstack/react-router'
+import { Link, useNavigate, useRouter, useRouterState, useSearch } from '@tanstack/react-router'
 import { ChevronRight, Lock, TriangleAlert } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -7,10 +7,13 @@ import { api } from '@/api/client'
 import { ApiError } from '@/api/types'
 import { workspaceOfTicket } from '@/api/workspaces'
 import { useWorkspace } from '@/app/workspace'
+import { validateTicketSearch } from '@/app/search'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { usePageHeader, useTicketOrigin } from '../../shell/ShellUi'
+import { BOARD_ORIGIN } from '../../shell/origin'
+import { toPublicPath } from '@/app/urls'
 import { AcceptanceTasks } from './AcceptanceTasks'
 import { Artifacts } from './Artifacts'
 import { Changes, HAS_CHANGES } from './Changes'
@@ -103,8 +106,18 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
     queryFn: () => api.getTicket(ticketKey),
     retry: false,
   })
-  // A `#question-Q2` link (Today's Agents panel) opens the Questions tab on that question from the first paint.
-  const [tab, setTab] = useState<TabId>(() => (questionOf(hash) ? 'questions' : 'overview'))
+  // The tab is in the address (`?tab=history`, Overview when absent). A `#question-Q2` link (Today's Agents panel)
+  // opens the Questions tab on that question from the first paint.
+  // Read through the route's validator again: a parent match passes the raw params on.
+  const search = validateTicketSearch(useSearch({ strict: false }))
+  const navigate = useNavigate()
+  const tab: TabId = search.tab ?? (questionOf(hash) ? 'questions' : 'overview')
+  // A tab click drops a `#question-…` hash; a jump (to a question, the evidence) keeps it so its highlight stays.
+  const setTab = useCallback(
+    (next: TabId, keepHash = false) =>
+      void navigate({ to: '/ticket/$key', params: { key: ticketKey }, search: next === 'overview' ? {} : { tab: next }, hash: keepHash ? true : undefined, replace: true }),
+    [navigate, ticketKey],
+  )
   const [focus, setFocus] = useState<string | undefined>(() => questionOf(hash))
   const applied = useRef(`${ticketKey}#${hash}`)
   const [signing, setSigning] = useState<HumanAction | null>(null)
@@ -113,8 +126,14 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
   const wide = useWideLayout()
 
   // Back to where the ticket was opened from (Today, Board, Tickets, Artifacts, an addon page), filters included.
-  const origin = useTicketOrigin()
+  const shellOrigin = useTicketOrigin()
   const router = useRouter()
+  const linkPrefix = useWorkspace().workspace?.prefix
+  // The default origin (a ticket opened first) is an in-app path: show its permanent address.
+  const origin = useMemo(
+    () => (shellOrigin.href === BOARD_ORIGIN.href ? { ...shellOrigin, href: toPublicPath(BOARD_ORIGIN.href, linkPrefix) } : shellOrigin),
+    [shellOrigin, linkPrefix],
+  )
   const breadcrumb = useMemo(
     () => (
       <>
@@ -141,15 +160,13 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
     const now = `${ticketKey}#${hash}`
     if (applied.current === now) return
     applied.current = now
-    const question = questionOf(hash)
-    setTab(question ? 'questions' : 'overview')
-    setFocus(question)
+    setFocus(questionOf(hash))
   }, [ticketKey, hash])
 
   const jump = useCallback((j: Jump) => {
-    setTab(j.tab)
+    setTab(j.tab, true)
     setFocus(j.id)
-  }, [])
+  }, [setTab])
 
   // Runs again once the ticket is on screen, so a cold deep link highlights its target too.
   const shown = !!q.data && viewer.ready && home.ready
@@ -186,7 +203,8 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
       {/* From 1280 px the rail is a 320 px column; below, it is the Panels sheet (it never drops under the content). */}
       <div className={wide ? 'grid min-w-0 grid-cols-[minmax(0,1fr)_320px] items-start gap-6' : 'min-w-0'}>
         <Tabs
-          value={tab}
+          // `?tab=changes` on a ticket without changes (yet): Overview.
+          value={tab === 'changes' && !HAS_CHANGES.has(ticket.status) ? 'overview' : tab}
           onValueChange={(v) => {
             setTab(v as TabId)
             setFocus(undefined)

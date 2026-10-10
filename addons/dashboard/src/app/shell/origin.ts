@@ -1,7 +1,7 @@
 // Where a ticket was opened from (B m3): the ticket page's breadcrumb leads back there, not always to the Board.
 
 export interface PageOrigin {
-  /** The page's full href (path and search), so filters come back too. */
+  /** The page's full address-bar href (path with its workspace, and search), so filters come back too. */
   href: string
   label: string
 }

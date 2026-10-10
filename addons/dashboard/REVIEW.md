@@ -6,16 +6,20 @@ are in. Branch `feat/dashboard-mockup`. Everything runs on simulated data in the
 
 ## Open the preview
 
-- Hosted preview: https://claude.ai/artifact/QvyFVD1JtFPyb3MegNXjgT (private to the owner's claude.ai account until shared)
 - Local dev server: http://127.0.0.1:5180/ (live; it may be stale for a minute while branches are merged)
 - Stable snapshot: http://127.0.0.1:5181/ (refreshed after each tested merge; use this one for a calm review)
 - On your own machine: `cd addons/dashboard && npm install && npm run dev`, then open the address it prints.
+- The hosted claude.ai preview (https://claude.ai/artifact/QvyFVD1JtFPyb3MegNXjgT) is frozen at commit 98151971,
+  before permanent URLs; builds since then do not load there (your decision: the local setup is the target).
 
 Things to know before you start:
 
-- The app always starts on **Today**. It uses in-memory routing (it also runs inside the claude.ai viewer, where the
-  address bar carries nothing), so a pasted `/ticket/…` address does not open that page. Navigate by clicking, by
-  ⌘K, or with the review tour's **Go** buttons.
+- **Every page has a permanent address.** Copy it from the address bar, with **Copy link** (ticket header, Settings,
+  addon pages) or ⌘K "Copy link to this page", and paste it into a new tab: the same page, workspace, ticket tab,
+  filters or settings row opens. Workspace pages read `/w/DEMO/board`, `/w/INT/settings/members`; tickets stay
+  `/ticket/DEMO-0043?tab=history`. Try: open `/ticket/DEMO-0043?tab=history` cold, reload a settings addon page
+  (`/w/DEMO/settings/addon/publish`), paste `/w/INT/tickets` (switches to INT), `/w/NOPE/board` (says the workspace
+  does not exist), and use Back/Forward across a workspace switch.
 - Desktop only, 1024 px and wider. The target is a 13" notebook (1440×900) with the terminal docked on the right.
 - Dark theme only (your decision).
 - What you change is kept in this browser (localStorage) until you reset the demo.
@@ -267,7 +271,6 @@ artifact kind, Usage that scales).
 
 Known and left for later:
 
-- A pasted deep link (`/ticket/DEMO-0043`) opens Today, because of the in-memory routing (see above).
 - The addon settings drawer resets your unsaved edits if someone else saves the same settings meanwhile; it needs an
   "Updated elsewhere — Reload / Keep mine" design.
 - In a very narrow terminal the simulated Claude welcome box is cut with "…" (terminal content, allowed to clip).

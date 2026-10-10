@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRouter, useRouterState } from '@tanstack/react-router'
-import { Bot, Check, Clock, FileText, Files, LayoutDashboard, ListChecks, MessageSquare, MessageSquareReply, Plus, Save, Settings, SquareKanban, User, Zap, ArrowRightLeft, Building2 } from 'lucide-react'
+import { Bot, Check, Link2, Clock, FileText, Files, LayoutDashboard, ListChecks, MessageSquare, MessageSquareReply, Plus, Save, Settings, SquareKanban, User, Zap, ArrowRightLeft, Building2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { addonActive } from '@/api/addons'
 import { can } from '@/api/permissions'
@@ -25,6 +25,7 @@ import { keysFor } from '../shortcuts'
 import { Group, matches, ticketRank, type Entry } from './groups'
 import { describePath, loadRecent, recordRecent, type RecentItem } from './recent'
 import { toastApiError } from '@/app/toast'
+import { useCopyLink } from '../../copyLink'
 
 type Mode = null | 'comment' | 'move' | 'move-pick' | 'ask-to' | 'quick' | { ask: string }
 
@@ -124,6 +125,7 @@ export function CommandPalette() {
   })
   const viewer = useViewer(ticketKey ?? '')
 
+  const copyLink = useCopyLink()
   const close = () => setPaletteOpen(false)
   const go = (to: string) => {
     close()
@@ -144,6 +146,7 @@ export function CommandPalette() {
 
   // ------------------------------------------------------------ entries
   const goTo: Entry[] = [
+    { id: 'copy-link', label: 'Copy link to this page', icon: <Link2 />, hint: 'link', run: () => (close(), void copyLink()) },
     { id: 'today', label: 'Go to Today', icon: <LayoutDashboard />, keys: keysFor('go.today'), run: () => go('/') },
     { id: 'board', label: 'Go to Board', icon: <SquareKanban />, keys: keysFor('go.board'), run: () => go('/board') },
     { id: 'tickets', label: 'Go to Tickets', icon: <ListChecks />, keys: keysFor('go.tickets'), run: () => go('/tickets') },

@@ -18,10 +18,14 @@ export function renderApp(path = '/', opts: { viewer?: string; setup?: (store: M
   }
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   const user = userEvent.setup()
+  // Memory history starting at `path` (an in-app path such as /board, or an address such as /w/DEMO/board).
+  const router = createAppRouter(path)
   const r = render(
     <QueryClientProvider client={client}>
-      <RouterProvider router={createAppRouter(path)} />
+      <RouterProvider router={router} />
     </QueryClientProvider>,
   )
-  return { ...r, user, client }
+  /** The address bar as the person would see it (`/w/DEMO/board?view=list`). */
+  const address = () => router.history.location.href
+  return { ...r, user, client, router, address }
 }

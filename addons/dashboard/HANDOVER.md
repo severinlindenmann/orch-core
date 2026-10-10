@@ -25,7 +25,7 @@ JSON data with working, simulated buttons. When the backend exists, swap the moc
 | Theme | **Dark only.** No light theme and no toggle; make dark as good as possible. |
 | Addon marker | An orange "A" badge (`AddonBadge`) plus an orange hairline frame (`AddonFrame`) on every addon contribution. **Orange is reserved for addons**, so never use it for anything else. |
 | Shell | A dark sidebar holding the workspace switcher, core nav (Today, Board, Tickets, Agents), an "Addons" group, and settings, grant status and viewer at the bottom. It switches between wide and narrow (icon rail) with a button or the `[` key. The choice is remembered; without one, the rail is used below 1280 px. |
-| Build | Real code, not a design canvas: React 19, Vite 8, TypeScript, shadcn/ui (Radix), Tailwind v4, TanStack Router (memory history), TanStack Query, lucide. Exact pins are in `package.json`. |
+| Build | Real code, not a design canvas: React 19, Vite 8, TypeScript, shadcn/ui (Radix), Tailwind v4, TanStack Router (browser history, permanent URLs: see Routes), TanStack Query, lucide. Exact pins are in `package.json`. |
 | Mock | An **in-process mock API** (`src/mocks/`: router, store, derive, fixtures). There is **no MSW or service worker**, because the claude.ai preview viewer blocks service workers. Buttons really change the mock state; the store persists to localStorage. |
 | Addon UI | Addons describe their UI as **declarative JSON nodes** (stack, stat, kv, list, table, markdown, code, chart, form, button, link), validated with zod and rendered by core inside `AddonFrame`. Slots: `nav`, `today.card`, `ticket.panel`, `board.lane`, `board.card_field`, `settings`. Rich addon pages later go into a sandboxed iframe. |
 | Core-only | Approvals, answers, verdicts and addon *decisions* are always rendered and "signed" by core, never by an addon node. |
@@ -265,6 +265,47 @@ undecided). Everything below that is not in that list is **provisional**.
   that commit, new commits void the verdict, and the opt-in `code` gate (when on) signs the same commit.
 - **D54.** The relay is API only; its one allowed page is the static, script-free fallback for the pairing link (`/pair`). The dashboard draws no relay-hosted page. Decided (10 Oct): strict D54 — Drop is orch-only, no outsider download page; revisit later.
 
+## Routes (permanent URLs)
+
+The app owns real paths (browser history). Every page, ticket, settings tab and addon page has an address that opens
+the same view after a reload or pasted into a new tab. **The host serves `index.html` for every app path below**
+(SPA fallback: `npm run dev` and `npm run preview` do this already) and the built assets from `/assets/` (Vite
+`base: '/'`, so a reload on a deep path still finds them).
+
+| Address | View |
+|---|---|
+| `/w/<PREFIX>` | Today of that workspace (Today is per workspace) |
+| `/w/<PREFIX>/board?view=list&mine=true&type=…&label=…&person=…&epic=…&q=…` | Board, its view and filters |
+| `/w/<PREFIX>/tickets?q=…&status=…&type=…&priority=…&person=…&needs=…&label=…&sort=…` | Tickets list and filters (saved views are these params) |
+| `/w/<PREFIX>/tickets/new` | New ticket page |
+| `/ticket/<KEY>?tab=acceptance\|changes\|questions\|artifacts\|history\|raw` | A ticket and its tab (Overview without `tab`); `#question-<id>` opens that question. The key names the workspace. |
+| `/w/<PREFIX>/artifacts?view=list\|grid&a=<KEY>.<sha256[:12]>` | Artifacts, layout and the shown artifact |
+| `/w/<PREFIX>/agents` | Agents |
+| `/w/<PREFIX>/settings/<tab>` | Settings tab (general, members, gates, relay, addons, skills, connections) |
+| `/w/<PREFIX>/settings/addon/<name>` | Settings > Addons with that addon's row open |
+| `/w/<PREFIX>/addon/<name>/<page>?tab.<node>=<tab>` | An addon page, and the open tab of core's tabs node `<node>` |
+
+- **Mechanics.** The route tree keeps short in-app paths (`/board`, `/settings/$tab`); a router rewrite
+  (`src/app/urls.ts`) strips `/w/<PREFIX>` on the way in and adds the current workspace on the way out, so every
+  `<Link>` gets the workspace without naming it. On a `/w/…` address the address decides the workspace
+  (`WorkspaceProvider`); on a ticket the ticket's home workspace becomes current. The last workspace is remembered
+  (localStorage) for addresses without one.
+- **Old addresses keep working:** `/`, `/board`, `/settings/…` etc. are replaced by the current workspace's address;
+  `/settings` → `/settings/general`; `/settings/addons/<name>` → `/settings/addon/<name>`; `/w/<PREFIX>/ticket/<KEY>`
+  → `/ticket/<KEY>`.
+- **Not found:** an unknown `/w/<PREFIX>` shows "No workspace <PREFIX>" (the address stays); an unknown ticket,
+  a restricted one, an addon that is off or a missing addon page show their existing states. An unknown settings tab
+  still goes to General (in the address's workspace: the router's redirects keep `/w/<PREFIX>`). Prefixes match
+  in any case (`/w/demo` → `/w/DEMO`); `/w/` is Today.
+- **View state** is in search params, each validated on its own (`src/app/search.ts`, zod): an invalid value is
+  dropped and the default applies. Dialogs, signing prompts, the terminal dock and the demo dataset are not in the URL.
+- **Privacy:** addresses carry keys and ids only (ticket keys, workspace prefixes, addon names, artifact
+  `<ticket>.<hash prefix>`), and the search text a person typed; never titles, tokens or signed values.
+- **Copy link** (ticket header, Settings, addon pages, ⌘K "Copy link to this page") copies the address bar
+  exactly, as origin + address (`useCopyLink`, `src/app/copyLink.ts`).
+- **Tests** pass an initial path to `createAppRouter(path)` (memory history; in-app or `/w/…` paths both work);
+  `renderApp` returns `address()` (the address bar as the person sees it).
+
 ## How to run, test and preview
 
 ```
@@ -282,7 +323,7 @@ npm run layout:guard             # 13" notebook check (below)
 notebook in full screen with the terminal docked on the right, without sideways scrolling. jsdom cannot lay out, so
 the guard drives headless Chrome over the DevTools protocol (plain node, no Playwright) against a running dev build
 (`npx vite --port 5201 --strictPort --host 127.0.0.1`, or `--url <base>`). It moves between routes through
-`window.__orchRouter` (dev builds only) and checks every core page, every addon page (also under "More addons"),
+`window.__orchRouter` (dev builds only; it pushes in-app paths, which the app turns into `/w/DEMO/…` addresses) and checks every core page, every addon page (also under "More addons"),
 every Settings tab and addon drawer, every tab of DEMO-0043, `/tickets/new`, the New ticket overlay and the Review
 tour sheet, at 1440×900 and 1470×956, right dock at min / default / max width, sidebar wide and rail, Normal and Busy
 day. It fails (exit 1) on document or element overflow outside the allowed scrollers (terminal, `pre`/`code`, tab
@@ -294,20 +335,17 @@ Options: `--quick` (one configuration), `--docks min,max`, `--dataset busy`, `--
 tests after each small change; full suite, typecheck and build at the end of a group. Commit only `addons/dashboard`
 paths; never commit `.design-drafts/`. No realistic-looking secrets in seeds (GitHub push protection).
 
-**Preview for the owner.** Hosted preview: https://claude.ai/artifact/QvyFVD1JtFPyb3MegNXjgT (private to the owner's claude.ai account until shared). Local: http://127.0.0.1:5180/ (live) and
-http://127.0.0.1:5181/ (stable snapshot). To publish a new version:
-
-1. `npm run build`.
-2. `python3 scripts/build-preview.py dist <preview-folder>`: copies the JS chunks, inlines the built CSS into a small
-   `index.html` (title, Google Fonts, dark background, `dark` class, module preloads, root, entry script), and
-   escapes every U+FFFD and C0/C1 control character in every `.js` as `\uXXXX` (the publisher refuses them; they sit
-   inside strings, so escaping is safe). It prints the new files and the old ones to remove.
-3. Publish to the same artifact URL, passing the new hashed files in `files` and `null` for the old ones.
+**Preview for the owner.** Local: http://127.0.0.1:5180/ (live) and http://127.0.0.1:5181/ (stable snapshot). The
+hosted preview (https://claude.ai/artifact/QvyFVD1JtFPyb3MegNXjgT) is **frozen at 98151971**: since G2 the build
+uses `base: '/'` and lazy chunks import `/assets/…`, which the sandboxed viewer does not serve, so the old publish
+steps (`npm run build`, `python3 scripts/build-preview.py dist <folder>`, publish to the artifact URL) are obsolete
+for G2+ builds. `build-preview.py` still runs, but its output does not load; it is kept only for reference.
 
 ## Known gaps and notes
 
-- Memory routing: the app always starts on Today; a pasted deep link does not open its page (on purpose: it also runs
-  in the sandboxed viewer).
+- The hosted claude.ai preview is no longer a target for routing (owner, 2026-10-10): with `base: '/'` the built
+  chunks load from `/assets/`, which the sandboxed viewer does not serve, so a preview published from this build is
+  expected not to load. Local dev, `npm run preview` and a real host are the targets.
 - `confirmed` (core's confirm flag on spawn/sign/decision actions) is a plain boolean in the mock. A real host needs
   a server-issued, single-use confirmation bound to the person, the action and the arguments.
 - The start dialog's facts come from core's `agents/launch` preview; a real host renders them from its own resolver.

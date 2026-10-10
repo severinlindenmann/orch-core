@@ -154,6 +154,24 @@ describe('Today: addon decisions are core rows, signed in core', () => {
     success.mockRestore()
   })
 
+  it('the success toast names the addon of the decision that was signed, not the one on screen now (F3)', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const { user, client } = renderApp('/', { viewer: 'p_sev' })
+    const row = await openDecision(user, 'dec_publish_failed_build')
+    await user.click(within(row).getByRole('button', { name: 'Retry last good version' }))
+    const prompt = await screen.findByRole('dialog', { name: /^Decide for / })
+    // While the prompt is open the row (keyed by id) comes back from another addon: the snapshot still says Publish.
+    const original = api.getAddonDecisions.bind(api)
+    const list = vi.spyOn(api, 'getAddonDecisions').mockImplementation(async (ws) => (await original(ws)).map((d) => (d.id === 'dec_publish_failed_build' ? { ...d, addon: 'github' } : d)))
+    await client.invalidateQueries({ queryKey: ['addon-decisions'] })
+    await within(prompt).findByText(/This decision changed after you opened this prompt/, {}, T)
+    list.mockRestore()
+    await user.click(within(prompt).getByRole('button', { name: 'Send answer' }))
+    await waitFor(() => expect(success).toHaveBeenCalled(), T)
+    expect(success).toHaveBeenCalledWith('Signed: answer retry · Publish (publish)', { description: expect.stringMatching(/^Addon says: /) })
+    success.mockRestore()
+  })
+
   it('options are off from the click until the post resolves (no second prompt or post)', async () => {
     let release: () => void = () => {}
     const spy = vi.spyOn(api, 'runAddonAction').mockImplementation(() => new Promise((r) => (release = () => r({ ok: true, message: 'done' }))))

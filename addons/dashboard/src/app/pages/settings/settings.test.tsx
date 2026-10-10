@@ -55,7 +55,7 @@ describe('Settings', () => {
   it('shows the relay as not connected and links to Relay & devices', async () => {
     renderApp('/settings/general')
     expect(await screen.findByText(/Not connected yet/)).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Open Relay & devices' })).toHaveAttribute('href', '/settings/relay')
+    expect(screen.getByRole('link', { name: 'Open Relay & devices' })).toHaveAttribute('href', '/w/DEMO/settings/relay')
   })
   it('the nav shows General, Members, Gates, Relay & devices (Preview), Addons, Skills and Connections only: no entry per addon', async () => {
     renderApp('/settings/general')

@@ -1,8 +1,10 @@
-import { createMemoryHistory, createRootRoute, createRoute, createRouter, redirect } from '@tanstack/react-router'
+import { createBrowserHistory, createMemoryHistory, createRootRouteWithContext, createRoute, createRouter, redirect } from '@tanstack/react-router'
 import { Shell } from './shell/Shell'
 import { lazyPage } from './pages/lazyPage'
 import { SETTINGS_TABS } from './pages/settings/tabs'
 import { validateTicketsSearch } from './pages/tickets/search'
+import { validateArtifactsSearch, validateBoardSearch, validateTicketSearch } from './search'
+import { workspaceRewrite, type UrlState } from './urls'
 
 // Every page is its own chunk (the Shell shows a skeleton while it loads).
 const TodayPage = lazyPage(() => import('./pages/today'), 'TodayPage')
@@ -15,12 +17,16 @@ const AgentsPage = lazyPage(() => import('./pages/agents'), 'AgentsPage')
 const SettingsPage = lazyPage(() => import('./pages/settings'), 'SettingsPage')
 const AddonPage = lazyPage(() => import('./pages/AddonPage'), 'AddonPage')
 
-// Code-based route tree. Memory history on purpose: the app also runs inside a sandboxed viewer
-// where URL fragments do not carry state.
-const rootRoute = createRootRoute({ component: Shell })
+// Code-based route tree with short in-app paths. The address bar carries the workspace (`/w/DEMO/board`): the router's
+// rewrite (urls.ts) strips it on the way in and adds the current one on the way out. Browser history (real paths) in
+// the app; memory history only where a test passes an initial path.
+export interface RouterContext {
+  urls: UrlState
+}
+const rootRoute = createRootRouteWithContext<RouterContext>()({ component: Shell })
 
 const todayRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: TodayPage })
-const boardRoute = createRoute({ getParentRoute: () => rootRoute, path: 'board', component: BoardPage })
+const boardRoute = createRoute({ getParentRoute: () => rootRoute, path: 'board', validateSearch: validateBoardSearch, component: BoardPage })
 const ticketsRoute = createRoute({
   getParentRoute: () => rootRoute, path: 'tickets',
   validateSearch: validateTicketsSearch,
@@ -30,12 +36,13 @@ const newTicketRoute = createRoute({ getParentRoute: () => rootRoute, path: 'tic
 const ticketRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'ticket/$key',
+  validateSearch: validateTicketSearch,
   component: function TicketRoute() {
     const { key } = ticketRoute.useParams()
     return <TicketPage ticketKey={key} />
   },
 })
-const artifactsRoute = createRoute({ getParentRoute: () => rootRoute, path: 'artifacts', component: ArtifactsPage })
+const artifactsRoute = createRoute({ getParentRoute: () => rootRoute, path: 'artifacts', validateSearch: validateArtifactsSearch, component: ArtifactsPage })
 const agentsRoute = createRoute({ getParentRoute: () => rootRoute, path: 'agents', component: AgentsPage })
 const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -83,8 +90,14 @@ const addonRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, artifactsRoute, agentsRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, settingsAddonsAliasRoute, addonRoute])
 
-export function createAppRouter(initialPath = '/') {
-  return createRouter({ routeTree, history: createMemoryHistory({ initialEntries: [initialPath] }) })
+/**
+ * The app's router. Without `initialPath` it owns the address bar (browser history); tests pass an in-app or
+ * address-bar path (`/board`, `/w/DEMO/board`) and get memory history starting there.
+ */
+export function createAppRouter(initialPath?: string) {
+  const urls: UrlState = { prefix: null }
+  const history = initialPath === undefined ? createBrowserHistory() : createMemoryHistory({ initialEntries: [initialPath] })
+  return createRouter({ routeTree, history, context: { urls }, rewrite: workspaceRewrite(urls) })
 }
 
 declare module '@tanstack/react-router' {

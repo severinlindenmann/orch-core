@@ -1,10 +1,10 @@
-import { act, renderHook, screen, waitFor, within } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
-import { ApiError, type ArtifactItem } from '@/api/types'
+import { ApiError } from '@/api/types'
 import type { MockStore } from '@/mocks/store'
 import { renderApp } from '@/test/renderApp'
-import { artifactKey, parseArtifactKey, previewTarget, useArtifactSelection } from './selection'
+import { artifactKey, artifactUrlId, parseArtifactKey, previewTarget } from './selection'
 
 const T = { timeout: 4000 }
 
@@ -94,7 +94,7 @@ describe('Artifacts page: one action per item', () => {
       renderApp('/artifacts', { storage: { 'orch.artifacts.view.p_sev': view } })
       const link = await screen.findByRole('link', { name: /^Open addon page: .+ \(publish\)$/ }, T)
       expect(link).toHaveTextContent(/^Open addon page$/)
-      expect(link.getAttribute('href')).toMatch(/^\/addon\/publish\//)
+      expect(link.getAttribute('href')).toMatch(/\/addon\/publish\//)
       expect(screen.queryByRole('button', { name: /Preview share\/demo-0043-preview/ })).toBeNull()
     })
   }
@@ -203,54 +203,13 @@ describe('Artifacts page: viewer states', () => {
   })
 })
 
-describe('useArtifactSelection', () => {
-  const item = (name: string) => ({ name, ticket: 'DEMO-1', ticket_title: 't', sha256: name, kind: 'log', bytes: 1, at: '', by: { kind: 'host', id: 'orch' }, has_preview: true }) as ArtifactItem
-  const a = item('a.log')
-  const b = item('b.log')
-  it('a new context (workspace, filters, page) clears the preview; the first render does not', () => {
-    const { result, rerender } = renderHook((p: { context: string; items: ArtifactItem[] }) => useArtifactSelection({ ...p, settled: true }), { initialProps: { context: 'x', items: [a, b] } })
-    act(() => result.current.preview(b))
-    expect(result.current.current).toBe(b)
-    rerender({ context: 'x', items: [a, b] })
-    expect(result.current.current).toBe(b)
-    rerender({ context: 'y', items: [a, b] })
-    expect(result.current.current).toBeNull()
-  })
-  it('a controlled view is not overridden when the person arrives (localStorage is only the default)', () => {
-    localStorage.setItem('orch.artifacts.view.p_sev', 'grid')
-    const { result, rerender } = renderHook((p: { person?: string }) => useArtifactSelection({ ...p, context: 'x', settled: true, items: [a], view: 'list' }), { initialProps: {} })
-    rerender({ person: 'p_sev' })
-    expect(result.current.view).toBe('list')
-  })
-  it('uncontrolled: the remembered view is read once the person is known', () => {
-    localStorage.setItem('orch.artifacts.view.p_sev', 'grid')
-    const { result, rerender } = renderHook((p: { person?: string }) => useArtifactSelection({ ...p, context: 'x', settled: true, items: [a] }), { initialProps: {} })
-    expect(result.current.view).toBeNull()
-    rerender({ person: 'p_sev' })
-    expect(result.current.view).toBe('grid')
-  })
-  it('a controlled preview: every change, the clearing too, goes through the callback', () => {
-    const onChange = vi.fn()
-    const { result, rerender } = renderHook((p: { context: string; currentKey: string | null }) => useArtifactSelection({ ...p, settled: true, items: [a, b], onCurrentKeyChange: onChange }), { initialProps: { context: 'x', currentKey: artifactKey(b) } })
-    expect(result.current.current).toBe(b)
-    act(() => result.current.setCurrentKey(artifactKey(a)))
-    expect(onChange).toHaveBeenLastCalledWith(artifactKey(a))
-    // Still controlled: nothing changes until the owner passes the new value.
-    expect(result.current.current).toBe(b)
-    rerender({ context: 'y', currentKey: artifactKey(b) })
-    expect(onChange).toHaveBeenLastCalledWith(null)
-  })
+describe('artifact keys', () => {
   it('parseArtifactKey reads back an artifactKey (names may hold "/")', () => {
     expect(parseArtifactKey(artifactKey({ ticket: 'DEMO-1', name: 'share/x.md', sha256: 'abc' }))).toEqual({ ticket: 'DEMO-1', name: 'share/x.md', sha256: 'abc' })
     expect(parseArtifactKey('nonsense')).toBeNull()
   })
-  it('settled results without the item clear it (no stale drawer)', () => {
-    const { result, rerender } = renderHook((p: { items: ArtifactItem[]; settled: boolean }) => useArtifactSelection({ ...p, context: 'x' }), { initialProps: { items: [a, b], settled: true } })
-    act(() => result.current.preview(b))
-    rerender({ items: [a], settled: false })
-    expect(result.current.currentKey).not.toBeNull()
-    rerender({ items: [a], settled: true })
-    expect(result.current.currentKey).toBeNull()
+  it('the address id is the ticket key and the first 12 hash characters', () => {
+    expect(artifactUrlId({ ticket: 'DEMO-0043', sha256: '9b1e44c07ad2ffff' })).toBe('DEMO-0043.9b1e44c07ad2')
   })
   it('focus falls back to the results heading when the item is gone', () => {
     const h = document.createElement('h2')

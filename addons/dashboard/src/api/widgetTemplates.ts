@@ -166,16 +166,22 @@ export const FRAME_SIZE_REPORTER =
   '<script>(function(){var last=0;function send(){var b=document.body;if(!b)return;var h=Math.ceil(b.getBoundingClientRect().height);if(h>0&&h!==last){last=h;parent.postMessage({orch:"size",height:h},"*")}}' +
   'if(window.ResizeObserver&&document.body)new ResizeObserver(send).observe(document.body);addEventListener("load",send);send()})()</script>'
 
+/** The frame's 1 px border on each side and the body's 8 px padding above and below. */
+const svgCap = (frameHeight: number) => Math.max(0, Math.round(frameHeight) - 18)
+
 /**
  * The frame document for a template or a one-off page: the block's data as inert JSON (`<` escaped), a tiny `orch`
  * object (data only; the text/ready/resize hooks are no-ops in the mock), then the page. The frame node prepends the CSP.
- * Core's base style keeps an SVG inside the frame's height (a width-100% chart in a wide card would otherwise be cut
- * off); it is core's wrapper, not part of any template's pinned bytes, and so is the size reporter.
+ * Core's base style keeps an SVG inside `frameHeight`, the height of the frame it is drawn in (a width-100% chart in
+ * a wide card would otherwise be cut off); it is core's wrapper, not part of any template's pinned bytes, and so is
+ * the size reporter. The cap is a fixed number, never the frame's viewport (`100vh`): a fitted frame takes the height
+ * its document reports, so a chart sized from the viewport would shrink the frame, which shrinks the chart, again and
+ * again (owner bug G1 #3).
  */
-export function frameDocument(page: string, data: unknown): string {
+export function frameDocument(page: string, data: unknown, frameHeight: number): string {
   const json = JSON.stringify(data ?? {}).replace(/</g, '\\u003c').replace(/[\u2028\u2029]/g, (c) => '\\u' + c.charCodeAt(0).toString(16))
   return (
-    '<style>:root{color-scheme:dark}html,body{margin:0}body{padding:8px;font:12px/1.45 ui-sans-serif,system-ui,sans-serif;color:CanvasText;background:Canvas}svg{max-height:calc(100vh - 16px)}</style>' +
+    '<style>:root{color-scheme:dark}html,body{margin:0}body{padding:8px;font:12px/1.45 ui-sans-serif,system-ui,sans-serif;color:CanvasText;background:Canvas}svg{max-height:' + svgCap(frameHeight) + 'px}</style>' +
     `<script type="application/json" id="orch-data">${json}</script>` +
     '<script>window.orch={data:JSON.parse(document.getElementById("orch-data").textContent),text:function(){},ready:function(){},resize:function(){}}</script>' +
     page +

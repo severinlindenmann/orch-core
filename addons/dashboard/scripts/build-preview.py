@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Builds the hosted-preview folder from addons/dashboard/dist (HANDOVER publish procedure).
+"""Builds the hosted-preview folder from addons/dashboard/dist (the former HANDOVER publish procedure).
+
+OBSOLETE since G2 (permanent URLs, Vite base '/'): the output no longer loads in the claude.ai viewer, which does not
+serve /assets/. The hosted preview is frozen at 98151971. Kept for reference only.
 
 - copies dist/assets/*.js (+ other non-css assets) into <out>/assets
 - inlines every built CSS file into index.html (the publisher takes CSS only inline)

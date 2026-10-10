@@ -153,7 +153,7 @@ describe('Today: Decided for you (preview)', () => {
     expect(digest).toHaveTextContent(PREVIEW_LINE)
     const rows = () => within(digest).queryAllByTestId(/^mandate-decision:/)
     expect(rows()).toHaveLength(5)
-    expect(rows()[0]).toHaveTextContent(/Requirements approved on DEMO-0054: via mandate md_3, for Severin — no person reviewed this/)
+    expect(rows()[0]).toHaveTextContent(/DEMO-0054Requirements approved: via mandate md_3, for Severin — no person reviewed this/)
     await user.click(within(rows()[0]).getByRole('button', { name: 'Looks right' }))
     await waitFor(() => expect(rows()).toHaveLength(4))
     await user.click(within(rows()[0]).getByRole('button', { name: 'Veto' }))

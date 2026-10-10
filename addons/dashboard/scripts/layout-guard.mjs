@@ -366,6 +366,7 @@ async function main() {
             ['tickets', '/tickets'],
             ['artifacts', '/artifacts'],
             ['agents', '/agents'],
+            ['agents-mandates', '/agents?tab=mandates'],
             ['new-ticket-page', '/tickets/new'],
             ...addonPages.map((h) => [`addon-${h.split('/').slice(2).join('-')}`, h]),
             ...['general', 'members', 'gates', 'relay', 'addons', 'skills', 'connections'].map((t) => [`settings-${t}`, `/settings/${t}`]),
@@ -437,6 +438,32 @@ async function main() {
             const open = await evaluate(() => !!document.querySelector('[role="dialog"] [aria-expanded="true"]'))
             await check(config, 'review-tour', open ? undefined : ['the Review tour sheet did not open'])
             await evaluate(() => document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+          }
+          // Mandates, PREVIEW: the Demo data toggle turns it on with a mandate in force (banner on every page, the digest on
+          // Today, the mandate on Agents → Mandates). Checked with the banner, then turned off again.
+          if (!ONLY || ONLY.test('mandates-preview')) {
+            await go('/')
+            const turnedOn = await evaluate(async () => {
+              const b = [...document.querySelectorAll('header button')].find((x) => x.textContent.trim() === 'Preview: mandates')
+              if (!b) return false
+              if (b.getAttribute('aria-pressed') !== 'true') b.click()
+              for (let i = 0; i < 50 && !document.querySelector('[data-testid="mandate-banner"]'); i++) await new Promise((r) => setTimeout(r, 100))
+              return !!document.querySelector('[data-testid="mandate-banner"]')
+            })
+            for (const [name, path] of [['mandates-preview-today', '/'], ['mandates-preview-agents', '/agents?tab=mandates'], ['mandates-preview-board', '/board']]) {
+              await go(path)
+              const banner = await evaluate(() => {
+                const el = document.querySelector('[data-testid="mandate-banner"]')
+                return el ? { h: el.getBoundingClientRect().height, cut: el.scrollWidth > el.clientWidth + 1 } : null
+              })
+              const problems = !turnedOn ? ['the Preview: mandates toggle did not show the banner'] : !banner ? ['the mandate banner is missing'] : banner.h > 40 ? [`the mandate banner wraps (${banner.h}px high)`] : banner.cut ? ['the mandate banner overflows sideways'] : undefined
+              await check(config, name, problems)
+            }
+            await evaluate(async () => {
+              const b = [...document.querySelectorAll('header button')].find((x) => x.textContent.trim() === 'Preview: mandates')
+              if (b?.getAttribute('aria-pressed') === 'true') b.click()
+              await new Promise((r) => setTimeout(r, 600))
+            })
           }
           shotsTaken = true
         }

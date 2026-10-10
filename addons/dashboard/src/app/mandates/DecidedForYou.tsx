@@ -3,7 +3,7 @@
 // "needs you" rows. Shown only while the preview is on with a mandate (not revoked). Nothing here signs.
 import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
-import { DECISION_KIND_LABEL, REFUSAL_LABEL, unseen, type PreviewMandate } from '@/api/mandatesPreview'
+import { decisionLabel, REFUSAL_LABEL, unseen, type PreviewMandate } from '@/api/mandatesPreview'
 import { Button } from '@/components/ui/button'
 import { fmtWhen } from '@/lib/time'
 import { RowShell } from '../pages/today/rows'
@@ -39,33 +39,31 @@ export function DecidedForYou({ ws, now }: { ws: string; now: string }) {
         {fresh.length > 0 ? (
           <ul className="border-t border-border">
             {fresh.map((d) => (
-              <RowShell
-                key={d.id}
-                testId={`mandate-decision:${d.id}`}
-                ask={`${DECISION_KIND_LABEL[d.kind]} on ${d.ticket}: via mandate ${m.id}, for ${m.issuer} — no person reviewed this${d.commit ? ` (commit ${d.commit})` : ''}`}
-                sub={
-                  <>
-                    <Link to="/ticket/$key" params={{ key: d.ticket }} className="mr-1.5 rounded font-mono text-text-muted outline-none hover:text-text focus-visible:ring-2 focus-visible:ring-ring">
+              // Core's label is shown in full (it wraps, never truncates): it must never pass for your own signature.
+              <li key={d.id} data-testid={`mandate-decision:${d.id}`} className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-3 py-2 last:border-b-0">
+                <div className="min-w-[16rem] flex-1">
+                  <p className="text-[13px] font-medium leading-5 text-text">
+                    <Link to="/ticket/$key" params={{ key: d.ticket }} className="mr-1.5 rounded font-mono text-[12px] text-text-muted outline-none hover:text-text focus-visible:ring-2 focus-visible:ring-ring">
                       {d.ticket}
                     </Link>
-                    checked by checker {d.checker.identity} ({d.checker.result}) · #{d.seq}
-                  </>
-                }
-                age={fmtWhen(d.at, now)}
-                action={
-                  <>
-                    <Button size="xs" variant="outline" onClick={() => void op({ op: 'review', decision: d.id, review: 'looks_right' })}>
-                      Looks right
-                    </Button>
-                    <Button size="xs" variant="ghost" onClick={() => void op({ op: 'review', decision: d.id, review: 'veto' }, `Veto recorded on ${d.ticket}`)}>
-                      Veto
-                    </Button>
-                    <Button size="xs" variant="ghost" onClick={() => setRevoking(true)}>
-                      Revoke and void
-                    </Button>
-                  </>
-                }
-              />
+                    {decisionLabel(d, m.id, m.issuer)}
+                  </p>
+                  <p className="text-xs leading-5 text-text-muted">
+                    checked by checker {d.checker.identity} ({d.checker.result}) · #{d.seq} · {fmtWhen(d.at, now)}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-1">
+                  <Button size="xs" variant="outline" onClick={() => void op({ op: 'review', decision: d.id, review: 'looks_right' })}>
+                    Looks right
+                  </Button>
+                  <Button size="xs" variant="ghost" onClick={() => void op({ op: 'review', decision: d.id, review: 'veto' }, `Veto recorded on ${d.ticket}`)}>
+                    Veto
+                  </Button>
+                  <Button size="xs" variant="ghost" onClick={() => setRevoking(true)}>
+                    Revoke and void
+                  </Button>
+                </div>
+              </li>
             ))}
           </ul>
         ) : (

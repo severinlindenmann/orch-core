@@ -23,41 +23,47 @@ export function MandatesTab({ ws, state, now }: { ws: string; state: MandatesPre
   const missing = state.preflight.filter((c) => c.state !== 'passed').length
   const inForce = m && (m.state === 'active' || m.state === 'stopping')
 
+  const preflight = (
+    <Section title="Preflight" aside={<Pill tone={missing ? 'warning' : 'success'}>{missing ? `${missing} of ${state.preflight.length} missing` : 'All pass'}</Pill>}>
+      <ul className="space-y-2" aria-label="Prerequisites">
+        {state.preflight.map((c) => (
+          <li key={c.id} className="flex gap-2 text-[13px]" data-testid={`preflight-${c.id}`}>
+            {c.state === 'passed' ? <Check className="mt-0.5 size-4 shrink-0 text-success" aria-label="passed" /> : <CircleSlash className="mt-0.5 size-4 shrink-0 text-text-muted" aria-label="missing" />}
+            <div className="min-w-0">
+              <p className="font-medium text-text">
+                {c.title}: <span className="font-normal text-text-muted">{c.note.replace(/\.$/, '').toLowerCase()}</span>
+              </p>
+              <p className="text-[12px] text-text-muted">{c.detail}</p>
+            </div>
+          </li>
+        ))}
+      </ul>
+      {missing > 0 && (
+        <p className="mt-3 text-[13px] text-text" data-testid="preflight-blocked">
+          Issuing is blocked. A real host refuses every mandate until all four pass (mandate.custody_unsupported); it is never a warning you can click past.
+        </p>
+      )}
+      {owner ? (
+        <div className="mt-3 flex items-center gap-2 border-t border-border pt-3">
+          <Switch id="mandates-anyway" checked={state.on} onCheckedChange={(v) => void op(v ? { op: 'enable' } : { op: 'disable' })} />
+          <Label htmlFor="mandates-anyway" className="text-[13px] font-normal">
+            Show the pilot anyway (preview)
+          </Label>
+          <span className="text-[12px] text-text-muted">· only to see how it would look</span>
+        </div>
+      ) : (
+        <p className="mt-3 text-[12px] text-text-muted">Only owners can try the preview.</p>
+      )}
+    </Section>
+  )
+
   return (
     <div className="space-y-4" data-testid="mandates-tab">
       <PreviewNote />
 
-      <Section title="Preflight" aside={<Pill tone={missing ? 'warning' : 'success'}>{missing ? `${missing} of ${state.preflight.length} missing` : 'All pass'}</Pill>}>
-        <ul className="space-y-2" aria-label="Prerequisites">
-          {state.preflight.map((c) => (
-            <li key={c.id} className="flex gap-2 text-[13px]" data-testid={`preflight-${c.id}`}>
-              {c.state === 'passed' ? <Check className="mt-0.5 size-4 shrink-0 text-success" aria-label="passed" /> : <CircleSlash className="mt-0.5 size-4 shrink-0 text-text-muted" aria-label="missing" />}
-              <div className="min-w-0">
-                <p className="font-medium text-text">
-                  {c.title}: <span className="font-normal text-text-muted">{c.note.replace(/\.$/, '').toLowerCase()}</span>
-                </p>
-                <p className="text-[12px] text-text-muted">{c.detail}</p>
-              </div>
-            </li>
-          ))}
-        </ul>
-        {missing > 0 && (
-          <p className="mt-3 text-[13px] text-text" data-testid="preflight-blocked">
-            Issuing is blocked. A real host refuses every mandate until all four pass (mandate.custody_unsupported); it is never a warning you can click past.
-          </p>
-        )}
-        {owner ? (
-          <div className="mt-3 flex items-center gap-2 border-t border-border pt-3">
-            <Switch id="mandates-anyway" checked={state.on} onCheckedChange={(v) => void op(v ? { op: 'enable' } : { op: 'disable' })} />
-            <Label htmlFor="mandates-anyway" className="text-[13px] font-normal">
-              Show the pilot anyway (preview)
-            </Label>
-            <span className="text-[12px] text-text-muted">· only to see how it would look</span>
-          </div>
-        ) : (
-          <p className="mt-3 text-[12px] text-text-muted">Only owners can try the preview.</p>
-        )}
-      </Section>
+      {/* The preflight comes first; with a mandate shown it follows the mandate (it still says why a real host refuses). */}
+      {!m && preflight}
+      {m && <MandateView ws={ws} m={m} now={now} owner={owner} />}
 
       {!inForce && (
         <Section title="Issue a pilot mandate">
@@ -74,7 +80,7 @@ export function MandatesTab({ ws, state, now }: { ws: string; state: MandatesPre
         </Section>
       )}
 
-      {m && <MandateView ws={ws} m={m} now={now} owner={owner} />}
+      {m && preflight}
 
       {issuing && <IssueDialog ws={ws} state={state} now={now} onClose={() => setIssuing(false)} />}
     </div>
@@ -113,7 +119,7 @@ function MandateView({ ws, m, now, owner }: { ws: string; m: PreviewMandate; now
   const [dialog, setDialog] = useState<'stop' | 'revoke' | null>(null)
   const s = stateLine(m)
   const total = Math.round((Date.parse(m.expires) - Date.parse(m.issued_at)) / DAY)
-  const left = Math.max(0, Math.ceil((Date.parse(m.expires) - Date.parse(now)) / DAY))
+  const left = Math.max(0, Math.round((Date.parse(m.expires) - Date.parse(now)) / DAY))
   const log = [...m.decisions].reverse()
   return (
     <>

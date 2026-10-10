@@ -112,7 +112,7 @@ export function PreviewPrompt({
         className="max-h-[90vh] max-w-lg gap-4 overflow-y-auto border-border bg-surface"
         onOpenAutoFocus={(e) => {
           e.preventDefault()
-          cancel.current?.focus()
+          cancel.current?.focus({ preventScroll: true })
         }}
       >
         <DialogHeader>

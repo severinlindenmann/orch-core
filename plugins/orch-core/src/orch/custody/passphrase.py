@@ -18,8 +18,12 @@ Key file (JSON, one per key, mode 0600)::
   object holds no key, no passphrase and no derived key between calls (tested: two signatures run the KDF twice and
   ``vars(backend)`` holds only configuration). Python cannot guarantee that no copy of the scalar survives in
   ``cryptography``'s or the interpreter's memory; this is best effort, stated in the doctor tier line.
-* **A prompt or nothing.** The default provider asks on a real terminal (stdin and stderr both TTYs) and raises
-  :class:`NoPrompt` otherwise; tests inject a callback. There is no environment variable, no cache file and no
+* **A prompt or nothing.** The default provider writes the prompt to ``/dev/tty`` and reads the passphrase from it
+  with echo off (never stdin/stdout/stderr, which an agent may hold), and raises :class:`NoPrompt` without a
+  terminal. Every value in the prompt goes through :func:`shown` (``orch.cli.render.clean_line``: escapes ESC, C0/C1,
+  CR, bidi and invisible characters, one line, 80 characters), under fixed labels, one per line; the hash shown is
+  computed from the signing bytes by the backend; tests inject a callback. There is no environment
+  variable, no cache file and no
   command-line form of the passphrase.
 * **Minimum length.** 8 characters when a key is created (portable-custody §7 leaves the minimum open; the owner can
   raise it). An existing file never checks length.
@@ -27,10 +31,9 @@ Key file (JSON, one per key, mode 0600)::
 
 from __future__ import annotations
 
-import getpass
 import json
+import os
 import secrets
-import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,6 +44,7 @@ from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 from orch import canon, crypto
 
 from . import files
+from .base import PERSON_LABELS as _PERSON_LABELS
 from .base import (
     CustodyError,
     KeyNotFound,
@@ -49,7 +53,6 @@ from .base import (
     check_key_id,
     label_allowed,
 )
-from .base import PERSON_LABELS as _PERSON_LABELS
 
 __all__ = [
     "DEFAULT_KDF",
@@ -57,6 +60,8 @@ __all__ = [
     "KdfParams",
     "PassphraseBackend",
     "PassphraseRequest",
+    "render_prompt",
+    "shown",
     "tty_passphrase_provider",
 ]
 
@@ -83,23 +88,113 @@ class PassphraseRequest:
     kind: str  # "create" or "unlock"
     key_id: str
     action: str
-    digest: str  # first 16 hex characters of sha256(payload), "" for create
+    digest: str  # first 32 hex characters of sha256(payload), "" for create
 
 
 PassphraseProvider = Callable[[PassphraseRequest], str]
 
 
-def tty_passphrase_provider(request: PassphraseRequest) -> str:
-    """Ask on the person's own terminal. Refuses (:class:`NoPrompt`) unless stdin and stderr are TTYs, so a human-only
-    signature can never run under an agent's pipe (D65)."""
-    if not (sys.stdin.isatty() and sys.stderr.isatty()):
-        raise NoPrompt("no terminal: human-only signatures need a real terminal (D65)")
+MAX_SHOWN = 80
+_HEX = frozenset("0123456789abcdef")
+
+
+def shown(text: object, limit: int = MAX_SHOWN) -> str:
+    """The one escaping step for every value in the prompt: ``orch.cli.render.clean_line`` (invisible, bidi, C0/C1 and
+    ESC become visible markers; one line), then cut to ``limit`` characters with a visible ellipsis."""
+    from orch.cli.render import clean_line  # lazy: cli imports ops, which may import custody later
+
+    out = clean_line(text if isinstance(text, str) else repr(text))
+    return out if len(out) <= limit else out[: limit - 1] + "\u2026"
+
+
+def render_prompt(request: PassphraseRequest) -> str:
+    """The text a person reads before typing a passphrase. Fixed labels the input can't contain (values are escaped
+    to one line and can't hold a newline), one value per line, and the hash is the digest of the bytes about to be
+    signed, which the backend computes (not caller text)."""
+    digest = request.digest if request.digest and set(request.digest) <= _HEX else shown(request.digest, 64)
+    lines = ["", "=== orch: passphrase ==="]
     if request.kind == "create":
-        first = getpass.getpass(f"New passphrase for key {request.key_id}: ")
-        if getpass.getpass("Repeat passphrase: ") != first:
+        lines += [f"key:    {shown(request.key_id, 64)}", "action: create this key"]
+    else:
+        lines += [f"key:    {shown(request.key_id, 64)}", f"action: {shown(request.action)}", f"sha256: {digest}"]
+    return "\n".join(lines) + "\n"
+
+
+def _open_tty():
+    """The controlling terminal as ``(read_fd, write_fd, close)``, or :class:`NoPrompt`. Never stdin/stdout/stderr."""
+    if os.name == "nt":  # pragma: no cover - exercised on Windows CI
+        try:
+            r, w = os.open("CONIN$", os.O_RDWR), os.open("CONOUT$", os.O_RDWR)
+        except OSError:
+            raise NoPrompt("no console: human-only signatures need a real terminal (D65)") from None
+    else:
+        try:
+            r = w = os.open("/dev/tty", os.O_RDWR | os.O_NOCTTY)
+        except OSError:
+            raise NoPrompt("no controlling terminal: human-only signatures need a real terminal (D65)") from None
+        if not os.isatty(r):
+            os.close(r)
+            raise NoPrompt("/dev/tty is not a terminal")
+
+    def close() -> None:
+        os.close(r)
+        if w != r:
+            os.close(w)
+
+    return r, w, close
+
+
+def _read_secret(r: int, w: int, prompt: str) -> str:
+    """Write ``prompt`` to the terminal and read one line with echo off."""
+    os.write(w, prompt.encode("utf-8", "replace"))
+    if os.name == "nt":  # pragma: no cover
+        import msvcrt
+
+        chars: list[str] = []
+        while True:
+            ch = msvcrt.getwch()
+            if ch in ("\r", "\n"):
+                break
+            if ch == "\x03":
+                raise KeyboardInterrupt
+            if ch == "\b":
+                chars = chars[:-1]
+            else:
+                chars.append(ch)
+        os.write(w, b"\r\n")
+        return "".join(chars)
+    import termios
+
+    old = termios.tcgetattr(r)
+    new = old[:]
+    new[3] &= ~termios.ECHO
+    termios.tcsetattr(r, termios.TCSAFLUSH, new)
+    try:
+        buf = bytearray()
+        while True:
+            c = os.read(r, 1)
+            if not c or c == b"\n":
+                break
+            buf += c
+    finally:
+        termios.tcsetattr(r, termios.TCSAFLUSH, old)
+        os.write(w, b"\n")
+    return buf.decode("utf-8", "replace").rstrip("\r")
+
+
+def tty_passphrase_provider(request: PassphraseRequest) -> str:
+    """Ask on the person's own terminal: the prompt goes to ``/dev/tty`` (``CONOUT$`` on Windows) and the passphrase is
+    read from it with echo off, never through stdin, stdout or stderr, which an agent may control. Refuses
+    (:class:`NoPrompt`) without a terminal, so a human-only signature can never run under an agent's pipe (D65)."""
+    r, w, close = _open_tty()
+    try:
+        header = render_prompt(request)
+        first = _read_secret(r, w, header + "Passphrase: ")
+        if request.kind == "create" and _read_secret(r, w, "Repeat passphrase: ") != first:
             raise CustodyError("passphrases differ")
         return first
-    return getpass.getpass(f"Passphrase to {request.action} [{request.digest}] with key {request.key_id}: ")
+    finally:
+        close()
 
 
 def _derive(passphrase: str, salt: bytes, params: KdfParams) -> bytes:
@@ -212,8 +307,8 @@ class PassphraseBackend:
         if not label_allowed(payload, _PERSON_LABELS):
             raise CustodyError("this key signs person-tier payloads only (unknown or host-only signature label)")
         doc, header, params, salt, nonce, ct = self._read(key_id)
-        digest = crypto.sha256(payload).hex()[:16]
-        passphrase = self._provider(PassphraseRequest("unlock", key_id, action, digest))
+        digest = crypto.sha256(payload).hex()[:32]
+        passphrase = self._provider(PassphraseRequest("unlock", key_id, shown(action), digest))
         if not isinstance(passphrase, str) or not passphrase:
             raise WrongPassphrase("empty passphrase")
         derived = bytearray(_derive(passphrase, salt, params))

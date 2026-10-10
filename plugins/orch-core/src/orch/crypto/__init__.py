@@ -7,7 +7,7 @@ Spec: orch-relay ``docs/protocol-v2.md`` §1 (suite 2), §3 (labels), §4 (ids),
 from cryptography.exceptions import InvalidTag
 
 from .encoding import EncodingError, b64u, hex_id, unb64u, unhex
-from .labels import L, LABELS, signature_labels
+from .labels import LABELS, L, signature_labels
 from .sealing import SEAL_PURPOSES, open_sealed, seal, seal_aad
 from .suite import (
     P256_N,

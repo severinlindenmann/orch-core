@@ -203,4 +203,3 @@ def pk_pin(pk_pub: bytes) -> bytes:
 
 def wsk_pin(wsk_pub: bytes) -> bytes:
     return _suite_hash("h_pin_workspace", validate_public_key(wsk_pub))
-

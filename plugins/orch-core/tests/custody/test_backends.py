@@ -1,4 +1,4 @@
-"""Custody backends (D64-D66, ticket-format §5.3 / §12 O2): passphrase key files, the file tier, the unavailable ones."""
+"""Custody backends (D64-D66, ticket-format §5.3 / §12 O2): passphrase key files, the file tier, unavailable ones."""
 
 from __future__ import annotations
 
@@ -35,12 +35,27 @@ PHRASE = "correct horse battery"
 
 
 def person_payload(extra="x"):
-    ev = {"v": 2, "id": "01J9ZP0000000000000000000B", "type": "ticket.updated", "actor": {"kind": "person"}, "hash_v": 1, "n": extra}
+    ev = {
+        "v": 2,
+        "id": "01J9ZP0000000000000000000B",
+        "type": "ticket.updated",
+        "actor": {"kind": "person"},
+        "hash_v": 1,
+        "n": extra,
+    }
     return canon.person_signing_bytes(WS, TICKET, ev)
 
 
 def host_payload():
-    ev = {"v": 2, "id": "01J9ZP0000000000000000000B", "type": "x", "seq": 1, "at": "2026-10-10T10:00:00Z", "prev": None, "hash_v": 1}
+    ev = {
+        "v": 2,
+        "id": "01J9ZP0000000000000000000B",
+        "type": "x",
+        "seq": 1,
+        "at": "2026-10-10T10:00:00Z",
+        "prev": None,
+        "hash_v": 1,
+    }
     return canon.host_signing_bytes(WS, "workspace", ev)
 
 
@@ -67,7 +82,7 @@ def test_create_sign_verify_round_trip(tmp_path):
     sig = b.sign("dk-sig", payload, action="approve requirements")
     assert crypto.verify(pub, sig, payload)
     assert b.seen[-1].kind == "unlock" and b.seen[-1].action == "approve requirements"
-    assert b.seen[-1].digest == crypto.sha256(payload).hex()[:16]
+    assert b.seen[-1].digest == crypto.sha256(payload).hex()[:32]
 
 
 def test_backend_metadata():
@@ -161,29 +176,85 @@ def test_scalar_buffer_is_zeroised(tmp_path, monkeypatch):
     assert buffers and all(not any(x) for x in buffers)
 
 
+def _no_tty(monkeypatch):
+    def boom(*a, **k):
+        raise OSError("no tty")
+
+    monkeypatch.setattr(pp.os, "open", boom)
+
+
 def test_default_provider_refuses_without_a_terminal(tmp_path, monkeypatch):
     b = PassphraseBackend(tmp_path / "k", kdf=FAST, min_n=2**10)
-    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+    _no_tty(monkeypatch)
     with pytest.raises(NoPrompt):
         b.create("dk")
     with pytest.raises(NoPrompt):
         tty_passphrase_provider(PassphraseRequest("unlock", "dk", "approve", "abcd"))
 
 
-def test_default_provider_needs_stderr_tty_too(monkeypatch):
-    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr(sys.stderr, "isatty", lambda: False)
+def test_default_provider_never_touches_stdio(monkeypatch, capsys):
+    """Stdin/stdout/stderr may belong to an agent: even with all three TTYs the provider uses /dev/tty only."""
+    _no_tty(monkeypatch)
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        monkeypatch.setattr(stream, "isatty", lambda: True, raising=False)
     with pytest.raises(NoPrompt):
         tty_passphrase_provider(PassphraseRequest("unlock", "dk", "approve", "abcd"))
+    out = capsys.readouterr()
+    assert out.out == "" and out.err == ""
 
 
-def test_tty_provider_prompts_when_both_are_terminals(monkeypatch):
-    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr(sys.stderr, "isatty", lambda: True)
-    prompts = []
-    monkeypatch.setattr(pp.getpass, "getpass", lambda p: (prompts.append(p), "phrase-ok-1")[1])
-    assert tty_passphrase_provider(PassphraseRequest("unlock", "dk", "approve gate", "abcd1234")) == "phrase-ok-1"
-    assert "approve gate" in prompts[0] and "abcd1234" in prompts[0]
+def test_tty_provider_writes_the_prompt_to_the_tty_and_reads_from_it(monkeypatch, capsys):
+    written = []
+    monkeypatch.setattr(pp, "_open_tty", lambda: (10, 11, lambda: written.append("closed")))
+    monkeypatch.setattr(pp, "_read_secret", lambda r, w, prompt: (written.append(prompt), "phrase-ok-1")[1])
+    req = PassphraseRequest("unlock", "dk", "approve gate", "ab" * 16)
+    assert tty_passphrase_provider(req) == "phrase-ok-1"
+    assert "action: approve gate" in written[0] and "sha256: " + "ab" * 16 in written[0]
+    assert written[-1] == "closed"
+
+
+def test_prompt_escapes_hostile_values_and_cannot_be_forged():
+    evil_action = "approve\x1b[2J\x1b]0;pwned\x07\rSign: approve gate\nsha256: " + "0" * 32 + "\u202etxet\u200b"
+    req = PassphraseRequest("unlock", "dk\x1b[31m", evil_action, "ab" * 16)
+    text = pp.render_prompt(req)
+    lines = text.split("\n")
+    assert "\x1b" not in text and "\r" not in text and "\x07" not in text
+    assert "\u202e" not in text and "\u200b" not in text
+    # exactly one line per fixed label, and the real hash is the last field
+    assert [ln.split(":")[0] for ln in lines if ln.startswith(("key", "action", "sha256"))] == [
+        "key",
+        "action",
+        "sha256",
+    ]
+    assert sum(ln.startswith("sha256: ") for ln in lines) == 1
+    assert lines[-2] == "sha256: " + "ab" * 16
+    action_line = next(ln for ln in lines if ln.startswith("action: "))
+    assert "U+001B" in action_line and "U+0007" in action_line
+    short = pp.render_prompt(PassphraseRequest("unlock", "dk", "a\u202eb\u200bc\rd", "ab" * 16))
+    assert "U+202E" in short and "U+200B" in short and "\r" not in short and "\u202e" not in short
+    assert "Sign: approve gate" in action_line  # present only as inert text on the action line
+    assert not any(ln.startswith("Sign:") for ln in lines)
+
+
+def test_prompt_values_are_length_limited():
+    text = pp.render_prompt(PassphraseRequest("unlock", "dk", "x" * 5000, "ab" * 16))
+    assert len(text) < 400
+    assert pp.shown("x" * 5000).endswith("\u2026") and len(pp.shown("x" * 5000)) == 80
+
+
+def test_non_hex_digest_is_escaped_too():
+    text = pp.render_prompt(PassphraseRequest("unlock", "dk", "a", "\x1b[0m" + "f" * 100))
+    assert "\x1b" not in text
+
+
+def test_backend_passes_the_signing_hash_not_caller_text(tmp_path):
+    b = pass_backend(tmp_path)
+    b.create("dk")
+    payload = person_payload()
+    b.sign("dk", payload, action="approve\nsha256: 0000\x1b[2J")
+    req = b.seen[-1]
+    assert req.digest == crypto.sha256(payload).hex()[:32]
+    assert "\n" not in req.action and "\x1b" not in req.action
 
 
 def test_passphrase_key_refuses_host_labels_and_unlabelled_bytes(tmp_path):
@@ -322,7 +393,7 @@ def test_person_and_host_label_sets_are_disjoint_where_it_matters():
             assert a == b or not b.startswith(a)
 
 
-# --- unavailable backends and registry ----------------------------------------------------------------------------------
+# --- unavailable backends and registry ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("name", sorted(PLANNED))

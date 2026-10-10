@@ -46,7 +46,7 @@ import { SECTIONS_BY_TYPE, requiredAtCreation, sectionLabel, type SectionName } 
 import { roleMeets } from '@/api/roles'
 import { atLeast, can, canRevokeGrant, roleOf } from '@/api/permissions'
 import { Simulator } from './sim'
-import { activeGrantOf } from '@/api/grants'
+import { activeGrantOf, grantTerms } from '@/api/grants'
 import { isModelName, renderCommand, type LaunchSpec } from '@/api/launch'
 import { HARNESSES, HARNESS_LABEL, MODES, MODE_LABEL, WHERES, WHERE_LABEL, launchSpec, foldSessions, sessionScript, type LaunchPlan, type LaunchRequest, type StartedSession } from './sessions'
 import { clearPersisted, loadPersisted, savePersisted, type PersistedV2 } from './persist'
@@ -638,15 +638,19 @@ export class MockStore {
   }
 
   /**
-   * Issue a grant for `actor`. Human only: an agent actor is refused with `human_only`, whatever its role.
-   * Owners and maintainers may issue (`grant.issue`); members and viewers may not.
+   * Issue a grant for `actor` (always for themselves). Human only: an agent actor is refused with `human_only`, whatever
+   * its role. Terms by role (`grantTerms`): owners and maintainers all tickets up to 12 h; members the tickets they may
+   * work on, up to the workspace default (owner decision 2026-10-10); viewers none.
    */
-  issueGrant(wsId: string, req: { hours: number; scope: 'all' }, actor: Actor): GrantResult {
+  issueGrant(wsId: string, req: { hours: number; scope: 'all' | 'workable' }, actor: Actor): GrantResult {
     if (actor.kind !== 'person') return refuse(403, 'human_only', 'Only a person can issue a grant.', 'Run orch grant yourself, or issue it from the dashboard.')
     const role = this.roleIn(wsId, actor.id)
-    if (!can(role, 'grant.issue')) return refuse(403, 'forbidden', 'Only owners and maintainers issue grants.', 'Ask an owner or maintainer.')
-    if (!Number.isInteger(req.hours) || req.hours < 1 || req.hours > 12) return refuse(400, 'validation', 'A grant lasts 1 to 12 hours.')
-    if (req.scope !== 'all') return refuse(400, 'validation', 'Only the scope "all" can be issued here.')
+    const terms = grantTerms(role, this.workspaces.find((w) => w.id === wsId))
+    if (!terms || !can(role, 'grant.issue')) return refuse(403, 'forbidden', 'Viewers cannot issue grants.', 'Ask an owner to make you a member.')
+    if (req.scope !== terms.scope)
+      return refuse(403, 'grant.scope', terms.scope === 'workable' ? "A member's grant covers the tickets they may work on, not all tickets." : `Only the scope "${terms.scope}" can be issued here.`)
+    if (!Number.isInteger(req.hours) || req.hours < 1 || req.hours > terms.maxHours)
+      return refuse(400, 'validation', terms.scope === 'workable' ? `A member's grant lasts 1 to ${terms.maxHours} hours (the workspace default).` : `A grant lasts 1 to ${terms.maxHours} hours.`)
     const id = `gr_01JA${String(this.grants(wsId).length).padStart(2, '0')}`
     const until = new Date(Date.parse(this.now()) + req.hours * 3600_000).toISOString().replace(/\.\d{3}Z$/, 'Z')
     this.appendWs(wsId, { type: 'grant.issued', actor, grant: id, person: actor.id, scope: req.scope, until, hours: req.hours, sessions: [], presence: 'touchid' })
@@ -663,7 +667,7 @@ export class MockStore {
     if (!g) return refuse(404, 'not_found', `No grant ${id}`)
     const role = this.roleIn(wsId, actor.id)
     if (!canRevokeGrant(role, g.person, actor.id))
-      return refuse(403, 'forbidden', can(role, 'grant.issue') ? `Only ${g.person} or an owner can revoke ${id}.` : 'Only owners and maintainers revoke grants.')
+      return refuse(403, 'forbidden', can(role, 'grant.issue') ? `Only ${g.person} or an owner can revoke ${id}.` : 'Viewers cannot revoke grants.')
     if (g.revoked) return refuse(409, 'grant.revoked', `${id} was already revoked.`)
     this.appendWs(wsId, { type: 'grant.revoked', actor, grant: id, presence: 'touchid' })
     const roots = g.sessions
@@ -691,7 +695,7 @@ export class MockStore {
     return foldSessions(this.wsEvents.get(wsId) ?? [])
   }
 
-  /** The person's active `all` grant in a workspace (not revoked, not expired), if any. */
+  /** The person's active ticket grant (`all` or `workable`) in a workspace (not revoked, not expired), if any. */
   activeGrant(wsId: string, person: string): GrantInfo | undefined {
     return activeGrantOf(this.grants(wsId), person, Date.parse(this.now()))
   }
@@ -777,7 +781,7 @@ export class MockStore {
     if (doc.claim || pending)
       return refuse(409, 'claim.held', `${req.ticket} is claimed by ${doc.claim ? `${doc.claim.agent} (${doc.claim.session})` : `${pending!.name} (${pending!.session})`}.`, 'Stop that session first.')
     const grant = this.activeGrant(wsId, actor.id)
-    if (!grant) return refuse(409, 'grant.none', 'You have no active grant in this workspace.', 'Sign one in the start dialog, or ask an owner or maintainer to issue one.')
+    if (!grant) return refuse(409, 'grant.none', 'You have no active grant in this workspace.', 'Sign one in the start dialog or on the Agents page.')
     const blocked = this.resolveLaunch(wsId, req).plan.error
     if (blocked) return refuse(409, 'launch.invalid_model', blocked, 'Fix the model names in the launch addon\'s settings.')
     // D57: last of the refusals (so a start refused for another reason records no check): the checks of the

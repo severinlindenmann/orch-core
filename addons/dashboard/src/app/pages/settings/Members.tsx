@@ -18,7 +18,7 @@ const ROLES: Role[] = ['owner', 'maintainer', 'member', 'viewer']
 const ROLE_HELP: Record<Role, string> = {
   owner: 'Everything: settings, roles, gate policies, grants, approvals the policy allows.',
   maintainer: 'Creates and moves tickets, issues grants, approves gates when the policy allows.',
-  member: 'Creates tickets, comments, answers questions addressed to them.',
+  member: 'Creates tickets, comments, answers questions addressed to them, grants their own agents the tickets they may work on.',
   viewer: 'Reads everything they can see. Changes nothing.',
 }
 

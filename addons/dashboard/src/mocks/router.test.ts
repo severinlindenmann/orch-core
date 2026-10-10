@@ -180,14 +180,32 @@ describe('mock tickets search', () => {
       expect(Date.parse(g.until) - Date.parse(g.issued_at)).toBe(4 * 3600_000)
       expect(store.wsEventsOf(ws).some((e) => e.type === 'grant.issued' && e.grant === g.id)).toBe(true)
     })
-    it('a member cannot issue a grant or revoke their own (owners and maintainers only)', async () => {
+    it('a member issues a grant for themselves: the tickets they may work on, up to the workspace default; revokes their own, not others', async () => {
       const { api, store } = setup()
       const cli = store.workspaces.find((w) => w.prefix === 'CLI')!.id
       expect(store.roleIn(cli, 'p_tom')).toBe('member')
-      store.appendWs(cli, { type: 'grant.issued', actor: 'p_tom', grant: 'gr_tom', person: 'p_tom', scope: 'all', until: '2026-10-09T18:00:00Z', hours: 4, sessions: [] })
+      store.appendWs(cli, { type: 'grant.issued', actor: 'p_sev', grant: 'gr_sev', person: 'p_sev', scope: 'all', until: '2026-10-09T18:00:00Z', hours: 4, sessions: [] })
       store.setViewer('p_tom')
-      await expect(api.issueGrant(cli, { hours: 4, scope: 'all' })).rejects.toMatchObject({ status: 403, code: 'forbidden' })
-      await expect(api.revokeGrant(cli, 'gr_tom')).rejects.toMatchObject({ status: 403, code: 'forbidden' })
+      // Not all tickets, and not longer than the workspace default (8 h).
+      await expect(api.issueGrant(cli, { hours: 4, scope: 'all' })).rejects.toMatchObject({ status: 403, code: 'grant.scope' })
+      await expect(api.issueGrant(cli, { hours: 9, scope: 'workable' })).rejects.toMatchObject({ status: 400, code: 'validation' })
+      const g = await api.issueGrant(cli, { hours: 8, scope: 'workable' })
+      expect(g).toMatchObject({ person: 'p_tom', scope: 'workable', revoked: null })
+      expect(store.wsEventsOf(cli).at(-1)).toMatchObject({ type: 'grant.issued', presence: 'touchid', actor: { kind: 'person', id: 'p_tom' } })
+      await expect(api.revokeGrant(cli, 'gr_sev')).rejects.toMatchObject({ status: 403, code: 'forbidden' })
+      expect((await api.revokeGrant(cli, g.id)).revoked?.by).toBe('p_tom')
+    })
+    it('an owner revokes a member grant; a viewer cannot issue one', async () => {
+      const { api, store } = setup()
+      const cli = store.workspaces.find((w) => w.prefix === 'CLI')!.id
+      store.setViewer('p_tom')
+      const g = await api.issueGrant(cli, { hours: 2, scope: 'workable' })
+      store.setViewer('p_sev')
+      expect((await api.revokeGrant(cli, g.id)).revoked?.by).toBe('p_sev')
+      const demo = store.workspaces.find((w) => w.prefix === 'DEMO')!.id
+      store.setViewer('p_tom')
+      expect(store.roleIn(demo, 'p_tom')).toBe('viewer')
+      await expect(api.issueGrant(demo, { hours: 2, scope: 'workable' })).rejects.toMatchObject({ status: 403, code: 'forbidden' })
     })
     it('an agent actor cannot issue or revoke a grant (human_only)', () => {
       const store = createMockStore({ persist: false })

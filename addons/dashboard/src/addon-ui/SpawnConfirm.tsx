@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Bot, TriangleAlert } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { api } from '@/api/client'
-import { activeGrantOf } from '@/api/grants'
+import { activeGrantOf, grantTerms, scopeCover } from '@/api/grants'
 import { can } from '@/api/permissions'
 import type { CoreLaunch, LaunchPreview, TicketDocument } from '@/api/types'
 import { blockedText, type TicketNeeds } from '@/api/connections'
@@ -18,8 +18,6 @@ import { canSpawnAgent } from './capabilities'
 import { addonStateKey, useAddons } from './slots'
 import { fmtClock, fmtExact } from '@/lib/time'
 
-/** Hours of the grant a person signs here when they have none. */
-const GRANT_HOURS = 8
 const timeOfDay = (iso: string) => fmtClock(iso)
 const withId = (label: string, id: string) => (label === id ? label : `${label} (${id})`)
 /** Addon-supplied text, shown in full (never cut): only strings are drawn. */
@@ -76,8 +74,8 @@ export interface ConfirmedLaunch {
  * differs is shown apart, under "From addon <name>", as capped plain text. The confirm label is core's. The action
  * is then posted with the values core showed (`onStart`), and the host validates them again.
  *
- * With an active grant it is a plain confirmation; without one, an owner or maintainer signs a grant here first
- * (SignPrompt, Touch ID); a member is told who can issue one.
+ * With an active grant it is a plain confirmation; without one, the person signs a grant for themselves here first
+ * (SignPrompt, Touch ID) on their own terms (`grantTerms`: members the tickets they may work on, the workspace default).
  */
 export function SpawnConfirm({ addon, ticketKey, onStart, onClose }: { addon: string; ticketKey?: string; onStart: (l: ConfirmedLaunch) => void; onClose: () => void }) {
   const { workspace } = useWorkspace()
@@ -147,8 +145,11 @@ export function SpawnConfirm({ addon, ticketKey, onStart, onClose }: { addon: st
   const launch: ConfirmedLaunch = request!
   const now = today.data.now
   const grant = activeGrantOf(grants.data, me.data.person, Date.parse(now))
-  const canIssue = can(role, 'grant.issue')
-  const until = new Date(Date.parse(now) + GRANT_HOURS * 3600_000).toISOString()
+  // The grant a person signs here when they have none: their own terms (members: the tickets they may work on, the workspace default).
+  const terms = grantTerms(role, workspace)
+  const canIssue = can(role, 'grant.issue') && !!terms
+  const grantHours = terms?.defaultHours ?? 0
+  const until = new Date(Date.parse(now) + grantHours * 3600_000).toISOString()
   const facts: [string, string][] = [
     ['Workspace', c.workspace],
     ['Ticket', `${c.ticket} · ${c.title}`],
@@ -158,7 +159,7 @@ export function SpawnConfirm({ addon, ticketKey, onStart, onClose }: { addon: st
     ['Where', withId(c.where, launch.where)],
     // Rendered by core from the validated plan, never from the addon's text.
     ['Model', `${c.model ? `${c.model}${c.tier ? ` (${c.tier} tier)` : ''}` : 'the harness default'}${c.subagent_model ? `; subagents on ${c.subagent_model}` : ''}`],
-    ['Grant', grant ? `active until ${timeOfDay(grant.until)}; revoking it stops this run` : `none yet: signing issues you one for all tickets here, ${GRANT_HOURS} h, until ${timeOfDay(until)}`],
+    ['Grant', grant ? `active until ${timeOfDay(grant.until)}; revoking it stops this run` : `none yet: signing issues you one for ${terms?.scope === 'workable' ? 'the tickets you may work on' : 'all tickets'} here, ${grantHours} h, until ${timeOfDay(until)}`],
   ]
   const warning = gateWarning(doc.data)
   // What the addon displayed, where it differs from what orch will start.
@@ -233,13 +234,13 @@ export function SpawnConfirm({ addon, ticketKey, onStart, onClose }: { addon: st
     return (
       <SignPrompt
         title={`Sign a grant and start ${c.harness} on ${c.ticket}`}
-        covers={[`Issues you a grant: all tickets in this workspace, ${GRANT_HOURS} h, until ${fmtExact(until)}`, `Starts ${c.harness} on ${c.ticket} under it`]}
+        covers={[`Issues you a grant: ${scopeCover(terms!.scope)}, ${grantHours} h, until ${fmtExact(until)}`, `Starts ${c.harness} on ${c.ticket} under it`]}
         confirmLabel="Sign and start"
         disabled={!!c.blocked}
         onClose={onClose}
         onSign={() => {
           onClose()
-          void signed('Grant issued', () => api.issueGrant(ws, { hours: GRANT_HOURS, scope: 'all' })).then((ok) => ok && onStart(launch))
+          void signed('Grant issued', () => api.issueGrant(ws, { hours: grantHours, scope: terms!.scope })).then((ok) => ok && onStart(launch))
         }}
       >
         {body}
@@ -258,7 +259,7 @@ export function SpawnConfirm({ addon, ticketKey, onStart, onClose }: { addon: st
           <DialogDescription>orch starts this session under your grant. Only core shows this confirmation; an addon cannot start a session on its own.</DialogDescription>
         </DialogHeader>
         {body}
-        {!grant && <p className="text-[13px] text-text-muted">You have no active grant in this workspace. Only owners and maintainers issue grants: ask one to issue yours.</p>}
+        {!grant && <p className="text-[13px] text-text-muted">You have no active grant in this workspace. Viewers cannot start agents: ask an owner to make you a member.</p>}
         <DialogFooter className="gap-2">
           <Button variant="ghost" onClick={onClose}>
             Cancel

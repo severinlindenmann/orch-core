@@ -219,6 +219,21 @@ const CASES: Case[] = [
     shown: grantShown,
   },
   {
+    // Owner decision 2026-10-10 (5): a member signs a grant for themselves, limited to the tickets they may work on.
+    name: 'member self-grant (issue)',
+    path: '/agents',
+    viewer: 'p_tom',
+    setup: (s) => s.appendWs(wsOf(s), { type: 'member.role_changed', person: 'p_tom', role: 'member', from: 'viewer' }),
+    open: async (user) => {
+      await user.click(await screen.findByRole('button', { name: 'Issue grant…' }, T))
+      return dialogNamed(/Issue a grant/)
+    },
+    confirm: press('Issue grant'),
+    method: 'issueGrant',
+    arg: 1,
+    shown: { hours: (v) => `Duration: ${v} h`, scope: (v) => (v === 'workable' ? 'Scope: the tickets you may work on in this workspace' : `unexpected scope ${v}`) },
+  },
+  {
     name: 'agent grant (revoke)',
     path: '/agents',
     open: async (user) => {

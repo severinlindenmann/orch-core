@@ -81,14 +81,23 @@ describe('Agents page', () => {
     expect(screen.queryByRole('button', { name: 'Revoke' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Issue grant…' })).toBeNull()
   })
-  it('a member cannot issue or revoke grants either (owners and maintainers only)', async () => {
-    renderApp('/agents', {
+  it('a member issues a grant for themselves: the tickets they may work on, at most the workspace default', async () => {
+    const { user } = renderApp('/agents', {
       viewer: 'p_tom',
       setup: (s) => s.appendWs(s.workspaces[0].id, { type: 'member.role_changed', person: 'p_tom', role: 'member', from: 'viewer' }),
     })
     await screen.findByRole('region', { name: /Working/ })
+    // Other people's grants: only their owner or an owner revokes them.
     expect(screen.queryByRole('button', { name: 'Revoke' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Issue grant…' })).toBeNull()
+    await user.click(await screen.findByRole('button', { name: 'Issue grant…' }))
+    const dialog = await screen.findByRole('dialog', { name: /Issue a grant/ })
+    const covers = within(dialog).getByText('Covers').nextElementSibling!
+    expect(covers).toHaveTextContent('Scope: the tickets you may work on in this workspace')
+    expect(covers).toHaveTextContent('Duration: 8 h, until 9 Oct 2026 19:30 UTC')
+    expect(within(dialog).getByRole('slider')).toHaveAttribute('max', '8')
+    await user.click(within(dialog).getByRole('button', { name: 'Issue grant' }))
+    await waitFor(() => expect(screen.getByRole('row', { name: /Tom's grant \(tickets they may work on/ })).toBeInTheDocument())
+    expect(within(screen.getByRole('row', { name: /Tom's grant/ })).getByRole('button', { name: 'Revoke' })).toBeInTheDocument()
   })
   it('issues a grant after signing', async () => {
     const { user } = renderApp('/agents')

@@ -47,6 +47,8 @@ export interface Workspace {
   needs_you: number
   /** Whether the owner turned the (simulated) relay link on: folded from relay.connected / relay.stopped. */
   relay?: 'on' | 'off'
+  /** Default agent grant length in hours (absent: 8); also the longest grant a member may sign for themselves. */
+  grant_hours?: number
 }
 
 /** A person this device knows (from any workspace or the identity registry): what the Add member combobox offers. */
@@ -792,7 +794,8 @@ export interface WorkspaceEvent {
 export interface GrantInfo {
   id: string
   person: string
-  scope: 'all' | 'ci'
+  /** `all`: every ticket in the workspace (owners, maintainers); `workable`: the tickets the person may work on (a member's self-grant); `ci`: CI only. */
+  scope: 'all' | 'workable' | 'ci'
   issued_at: string
   until: string
   revoked: { at: string; by: string } | null

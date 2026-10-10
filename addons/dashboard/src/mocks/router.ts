@@ -419,7 +419,7 @@ export function buildRouter(): MockRouter {
   const person = (s: MockStore) => ({ kind: 'person', id: s.viewer, device: 'd_mac' }) as const
   r.add('POST', '/api/workspaces/:ws/grants', (s, c) => {
     if (!s.workspaces.some((w) => w.id === c.params.ws)) return fail(404, 'not_found', 'No such workspace')
-    const b = c.body as { hours?: number; scope?: 'all' } | null
+    const b = c.body as { hours?: number; scope?: 'all' | 'workable' } | null
     const res = s.issueGrant(c.params.ws, { hours: Number(b?.hours), scope: b?.scope ?? 'all' }, person(s))
     return res.ok ? ok(res.grant, 201) : fail(res.status, res.code, res.message, res.hint)
   })

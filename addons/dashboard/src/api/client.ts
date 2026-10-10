@@ -128,7 +128,7 @@ export function createApi(transport: Transport) {
     getAgentActivity: (workspaceId: string) => call<AgentActivityItem[]>('GET', `/api/workspaces/${workspaceId}/agents/activity`),
     listGrants: (ws: string) => call<GrantInfo[]>('GET', `/api/workspaces/${ws}/grants`),
     /** Human only, signed in the dashboard. */
-    issueGrant: (ws: string, req: { hours: number; scope: 'all' }) => call<GrantInfo>('POST', `/api/workspaces/${ws}/grants`, req),
+    issueGrant: (ws: string, req: { hours: number; scope: 'all' | 'workable' }) => call<GrantInfo>('POST', `/api/workspaces/${ws}/grants`, req),
     revokeGrant: (ws: string, id: string) => call<GrantInfo>('POST', `/api/workspaces/${ws}/grants/${id}/revoke`),
     // Skills, connections and simple auth (D55–D57). Every answer is parsed with its zod schema; none carries a secret value.
     getSkills: async (ws: string) => skillList.parse(await call('GET', `/api/workspaces/${ws}/skills`)),

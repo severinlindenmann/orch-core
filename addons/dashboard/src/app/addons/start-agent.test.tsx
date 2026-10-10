@@ -129,7 +129,7 @@ describe('start agent on the ticket rail', { timeout: 20_000 }, () => {
     expect(issued).toMatchObject({ presence: 'touchid', actor: { kind: 'person', id: 'p_sev' } })
     expect(started()[0].grant).toBe(issued.grant)
   })
-  it('a member with no grant cannot sign one: the dialog says who can, and Start agent is disabled', async () => {
+  it('a member with no grant signs one for themselves (the tickets they may work on, the workspace default) and starts', async () => {
     const { user } = renderApp('/ticket/DEMO-0048', {
       setup: (s) => {
         s.appendWs(wsOf(s), { type: 'member.added', person: 'p_lea', name: 'Lea', role: 'member' })
@@ -138,9 +138,12 @@ describe('start agent on the ticket rail', { timeout: 20_000 }, () => {
     })
     await openTicketPanel(user, 'Start agent')
     await user.click(await screen.findByRole('button', { name: 'Start' }, FIRST))
-    const dialog = await screen.findByRole('dialog', { name: 'Start Claude Code on DEMO-0048' }, T)
-    expect(within(dialog).getByText(/You have no active grant in this workspace/)).toBeInTheDocument()
-    expect(within(dialog).getByRole('button', { name: 'Start agent' })).toBeDisabled()
+    const dialog = await screen.findByRole('dialog', { name: 'Sign a grant and start Claude Code on DEMO-0048' }, T)
+    expect(within(dialog).getByText('Covers').nextElementSibling).toHaveTextContent('Issues you a grant: the tickets you may work on in this workspace, 8 h, until 9 Oct 2026 19:30 UTC')
+    await user.click(within(dialog).getByRole('button', { name: 'Sign and start' }))
+    await waitFor(() => expect(started()).toHaveLength(1), T)
+    const issued = mockStore.wsEventsOf(wsOf(mockStore)).find((e) => e.type === 'grant.issued')!
+    expect(issued).toMatchObject({ person: 'p_lea', scope: 'workable', hours: 8 })
   })
   it('a viewer sees the panel read only', async () => {
     const { user } = renderApp('/ticket/DEMO-0048', { viewer: 'p_tom' })

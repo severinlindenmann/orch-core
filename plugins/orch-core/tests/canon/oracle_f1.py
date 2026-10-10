@@ -429,6 +429,38 @@ def chain_vectors() -> dict[str, Any]:
     }
 
 
+def repo_identity_vectors() -> dict[str, Any]:
+    ok = [
+        "https://github.com/acme/x",
+        "https://github.com/Acme/X.y_z~1",
+        "https://git.example.com:8443/a/b/c",
+        "https://xn--bcher-kva.example/x",
+        "https://127.0.0.1/x",
+        "https://127.0.0.1:1/x",
+        "https://h:65535/x",
+        "https://a.b-c.d/x",
+        "local:my-repo",
+    ]
+    refused = [
+        "https://github.com./acme/x", "https://github.com:0443/acme/x", "https://github.com:0/acme/x",
+        "https://github.com:99999/acme/x", "https://github.com:65536/acme/x", "https://github.com:443/acme/x",
+        "https://github.com//acme/x", "https://github.com/acme//x", "https://github.com/./acme/x",
+        "https://github.com/acme/../x", "https://github.com/acme/.", "https://github.com/acme/..",
+        "https://0x7f.1/x", "https://2130706433/x", "https://127.0.0.01/x", "https://127.0.0/x",
+        "https://256.0.0.1/x", "https://a..b/x", "https://.com/x", "https://-x.com/x", "https://x-.com/x",
+        "https://GitHub.com/acme/x", "https://github.com/acme/x.GIT", "https://github.com/acme/x.git",
+        "https://github.com/acme/x/", "https://github.com", "https://github.com:/x",
+        "https://user:token@github.com/acme/x", "https://token@github.com/x", "https://github.com/a%2Fb",
+        "https://github.com/a?b", "https://github.com/a#b", "https://github.com/a b", "https://github.com/a\tb",
+        "https://[::1]/x", "https://b\u00fccher.example/x", "https://github.com/caf\u00e9",
+        "https://" + "a" * 64 + ".com/x",
+        "https://" + ".".join(["abcdefghi"] * 26) + "/x",
+        "http://github.com/x", "ssh://git@github.com/x", "git@github.com:acme/x", "file:///tmp/x", "/tmp/x",
+        "local:", "local:a b", "local:a/b", "",
+    ]  # fmt: skip
+    return {"ok": ok, "refused": refused, "same": [["https://github.com/Acme/X", "https://github.com/acme/x"]]}
+
+
 def all_vectors() -> dict[str, dict[str, Any]]:
     return {
         "labels.json": {"labels": LABELS},
@@ -437,6 +469,7 @@ def all_vectors() -> dict[str, dict[str, Any]]:
         "hashes.json": hash_vectors(),
         "gate_hash.json": gate_vectors(),
         "chain.json": chain_vectors(),
+        "repo_identity.json": repo_identity_vectors(),
     }
 
 

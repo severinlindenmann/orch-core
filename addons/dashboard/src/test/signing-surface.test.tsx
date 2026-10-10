@@ -394,6 +394,22 @@ const CASES: Case[] = [
     skip: ['op'],
     shown: { gate: (v) => `the ${v} gate`, approvers: (v) => `Approvers: ${approversText(v)}`, count: (v) => `Approvals needed: ${v}`, not: () => 'The ticket assignees cannot approve' },
   },
+  {
+    name: 'agent grant length (settings)',
+    path: '/settings/general',
+    open: async (user) => {
+      const f = await screen.findByLabelText('Agent grant length (hours)', {}, T)
+      await user.clear(f)
+      await user.type(f, '24')
+      await user.click(screen.getAllByRole('button', { name: 'Save' })[1])
+      return screen.findByRole('dialog', {}, T)
+    },
+    confirm: press('Sign and save'),
+    method: 'postSettings',
+    arg: 1,
+    skip: ['op'],
+    shown: { hours: (v) => `Default length of a grant: ${v} hours` },
+  },
 ]
 
 /** [key, value] for every scalar leaf of a body (arrays and nested objects flattened; a bare value has key ''). */

@@ -1,7 +1,8 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mockStore, resetMockStoreForTests } from '@/api/client'
+import { api, mockStore, resetMockStoreForTests } from '@/api/client'
+import userEvent from '@testing-library/user-event'
 import { parseSecretsFile } from '@/api/secrets'
 import { SpawnConfirm } from '@/addon-ui/SpawnConfirm'
 import { replay } from '@/app/terminal/fakePty'
@@ -164,6 +165,28 @@ describe('Today: re-login', () => {
     await vi.waitFor(() => expect(screen.queryByTestId('relogin-databricks-prod')).toBeNull(), T)
     expect(await screen.findByText('Demo: this check assumes you logged in again.', {}, T)).toBeInTheDocument() // the result toast
     expect(mockStore.ticket('DEMO-0053')!.needs?.blocked).toBeNull()
+  })
+
+  it('"Log in in the terminal" opens a shell as the agents\' OS user with the login command typed, not run', async () => {
+    const { user } = renderApp('/')
+    const row = await screen.findByTestId('relogin-databricks-prod', {}, T)
+    // On the collapsed card: one click, no expanding first.
+    expect(within(row).getByRole('button', { name: 'Run check again' })).toBeInTheDocument() // still there
+    await user.click(within(row).getByRole('button', { name: 'Log in to databricks-prod in the terminal (as orch-agent)' }))
+    await vi.waitFor(async () => {
+      const st = (await api.getAddonState(mockStore.workspaces[0].id, 'terminals')) as unknown as { sessions: { label: string; prefill?: string; run_as?: string; transcript: string[] }[] }
+      expect(st.sessions.find((x) => x.label === 'Log in databricks-prod as orch-agent')).toMatchObject({ run_as: 'orch-agent', transcript: [], prefill: expect.stringMatching(/^databricks auth login/) })
+    }, T)
+    expect(await screen.findByRole('region', { name: 'Terminal dock' }, T)).toBeInTheDocument()
+  })
+
+  it('without pty on the terminals addon there is no terminal button, only the command to copy', async () => {
+    renderApp('/', { setup: (s) => void (s.workspaces[0].addons.terminals.granted = { ...s.workspaces[0].addons.terminals.granted!, capabilities: [] }) })
+    const row = await screen.findByTestId('relogin-databricks-prod', {}, T)
+    await userEvent.setup().click(within(row).getByRole('button', { name: 'Re-login needed: databricks-prod' }))
+    expect(within(row).queryByRole('button', { name: 'Log in in the terminal' })).toBeNull()
+    expect(within(row).queryByRole('button', { name: /^Log in to .* in the terminal/ })).toBeNull()
+    expect(within(row).getByRole('button', { name: 'Copy the login command for databricks-prod' })).toBeInTheDocument()
   })
 
   it('Mara gets no re-login item', async () => {

@@ -14,7 +14,7 @@ import { AgentActivity } from './AgentActivity'
 import { GrantDialog, useSignGrant, type GrantAction } from './GrantDialog'
 import { Grants } from './Grants'
 import { SessionGroup, type SessionContext } from './Sessions'
-import { fmtClock } from '@/lib/time'
+import { fmtClock, fmtDateTime } from '@/lib/time'
 
 export function AgentsPage() {
   usePageHeader('Agents')
@@ -49,7 +49,7 @@ export function AgentsPage() {
 
   const { sessions: n, waitingOnYou, stopped } = attention.agents
   const mine = activeGrantOf(grants.data, viewer, Date.parse(now))
-  const summary = [`${n} agent session${n === 1 ? '' : 's'}`, ...(canAct || waitingOnYou > 0 ? [`${waitingOnYou} waiting on you`] : []), ...(stopped > 0 ? [`${stopped} stopped`] : []), ...(mine ? [`your grant until ${fmtClock(mine.until)}`] : [])].join(' · ')
+  const summary = [`${n} agent session${n === 1 ? '' : 's'}`, ...(canAct || waitingOnYou > 0 ? [`${waitingOnYou} waiting on you`] : []), ...(stopped > 0 ? [`${stopped} stopped`] : []), ...(mine ? [`your grant until ${mine.until.slice(0, 10) === now.slice(0, 10) ? fmtClock(mine.until) : fmtDateTime(mine.until)}`] : [])].join(' · ')
   const titles = new Map((tickets.data ?? []).map((t) => [t.key, t.title]))
   const ctx: SessionContext = { sessions: sessions.data, viewer, name, now, title: (k) => titles.get(k) }
   const roots = sessions.data.filter((s) => !s.parent)

@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { api } from '@/api/client'
 import { addonActive, manifestFor, pendingUpdate, viewerActions } from '@/api/addons'
 import type { AddonOpRequest, AddonPackage, InstalledAddon, Workspace } from '@/api/types'
@@ -9,9 +9,9 @@ import { PIN_ADDON_EVENT } from '@/app/shell/pinEvent'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Table, TableBody, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { AddonRow } from './AddonRow'
-import { AddonSettingsDrawer } from './AddonSettingsDrawer'
+import { AddonSettingsPanel, requestSettingsFocus } from './AddonSettingsPanel'
 import { Catalog } from './Catalog'
 import { GrantDialog, type GrantAsk } from './GrantDialog'
 import { toastApiError } from '@/app/toast'
@@ -96,9 +96,10 @@ export function AddonManager({ workspace, canEdit, settingsOf }: { workspace: Wo
             </TableHeader>
             <TableBody>
               {(installed.data ?? []).map((a) => (
+                <Fragment key={a.name}>
                 <AddonRow
-                  key={a.name}
                   addon={a}
+                  settingsOpen={settingsOf === a.name}
                   active={addonActive(workspace, a.name)}
                   canEdit={canEdit}
                   hasSettings={a.contributions.some((c) => c.slot === 'settings')}
@@ -106,15 +107,28 @@ export function AddonManager({ workspace, canEdit, settingsOf }: { workspace: Wo
                     grant: () => setAsk({ kind: 'grant', addon: a }),
                     update: () => setAsk({ kind: 'update', addon: a }),
                     uninstall: () => setRemoving(a),
-                    openSettings: () => void navigate({ to: '/settings/addon/$name', params: { name: a.name } }),
+                    openSettings: () => {
+                      requestSettingsFocus(a.name) // the list is drawn again by the route: Settings keeps the keyboard
+                      void navigate(settingsOf === a.name ? { to: '/settings/$tab', params: { tab: 'addons' } } : { to: '/settings/addon/$name', params: { name: a.name } })
+                    },
                     setEnabled: (on) => void run(a.name, { op: on ? 'enable' : 'disable' }),
                   }}
                 />
+                {settingsOf === a.name && (
+                  <TableRow aria-label={`${a.title} settings`} className="hover:bg-transparent">
+                    <TableCell colSpan={5} className="whitespace-normal bg-surface-2/30">
+                      <AddonSettingsPanel name={a.name} workspace={workspace} canEdit={canEdit} />
+                    </TableCell>
+                  </TableRow>
+                )}
+                </Fragment>
               ))}
             </TableBody>
           </Table>
         </div>
       )}
+      {/* A deep link to an addon that has no row (not installed): the panel says so, under the table. */}
+      {settingsOf && !installed.isLoading && !installed.data?.some((a) => a.name === settingsOf) && <AddonSettingsPanel name={settingsOf} workspace={workspace} canEdit={canEdit} />}
 
       <Catalog
         ws={ws}
@@ -126,7 +140,6 @@ export function AddonManager({ workspace, canEdit, settingsOf }: { workspace: Wo
           setAsk({ kind: 'install', addon: pkg })
         }}
       />
-      {settingsOf && <AddonSettingsDrawer name={settingsOf} workspace={workspace} canEdit={canEdit} />}
       {ask && <GrantDialog ask={ask} onSign={() => sign(ask)} onClose={() => setAsk(null)} />}
       {removing && (
         <Dialog open onOpenChange={(o) => !o && setRemoving(null)}>

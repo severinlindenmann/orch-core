@@ -109,6 +109,10 @@ function run(line: string, c: ShellCtx): CommandResult {
       : []
     return { lines: [...debug, '{ "userName": "ci-orch@acme-energy.ch", "active": true }'] }
   }
+  // The re-login commands of the seeded connections: nothing is logged in here (the dashboard is a mockup).
+  if ((cmd === 'databricks' || cmd === 'gh' || cmd === 'gcloud' || cmd === 'az') && /(^|\s)(auth|login)(\s|$)/.test(line)) {
+    return { lines: ['Demo: no login happens in this mockup. On Today, "Run check again" assumes you logged in.'] }
+  }
   if (cmd === 'git' && sub === 'status') return { lines: [`On branch ${c.branch}`, 'Your branch is up to date with origin.', 'nothing to commit, working tree clean'] }
   if (cmd === 'git' && sub === 'log')
     return {

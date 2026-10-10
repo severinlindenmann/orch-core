@@ -42,7 +42,8 @@ export function openSession(session: () => TerminalSessionView, cols: () => numb
   if (!cli) {
     const shell = createShell(() => session().ctx)
     const resumed = s.resumedFrom ? [`# continued from ${clean(s.resumedFrom.label)}`, ...(s.resumedFrom.summary ? [`# ${clean(s.resumedFrom.summary)}`] : [])].map((l) => l + '\r\n').join('') : ''
-    return { ...shell, start: () => resumed + promptOf(session().ctx) }
+    // A re-login shell: the login command is typed at the prompt, not run (the person presses Enter).
+    return { ...shell, start: () => resumed + promptOf(session().ctx) + (s.prefill ? shell.feed(s.prefill) : '') }
   }
   return createCli({ harness: cli, ctx: s.ctx, context: s.context, resumedFrom: s.resumedFrom }, () => session().ctx, cols)
 }

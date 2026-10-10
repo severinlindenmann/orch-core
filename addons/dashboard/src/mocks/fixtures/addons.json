@@ -1129,7 +1129,7 @@
         "action": "open"
       }
     ],
-    "actions": { "save_settings": { "minRole": "owner" }, "open": { "minRole": "viewer", "label": "Open terminal", "kind": "navigation" }, "start": { "minRole": "member", "label": "Start a terminal session" }, "resume": { "minRole": "member", "label": "Continue from a session summary" } },
+    "actions": { "save_settings": { "minRole": "owner" }, "open": { "minRole": "viewer", "label": "Open terminal", "kind": "navigation" }, "start": { "minRole": "member", "label": "Start a terminal session" }, "resume": { "minRole": "member", "label": "Continue from a session summary" }, "login_shell": { "minRole": "owner", "label": "Open a shell to log a connection in again" } },
     "package_sha256": "cf469c979452d209a452ce4f693679a3bb9e21c7e555c97843d25269dcfcd81c",
     "update": null
   },

@@ -158,7 +158,7 @@ export const SCENARIOS: TourScenario[] = [
     { title: 'Unsaved prompt', detail: 'Type, then Esc: "Discard unsaved changes?".' },
   ]),
   S(15, 'Settings', 'The other settings tabs.', [
-    { title: 'Addon settings drawer', detail: 'Addons → Settings on a row opens a drawer; Save closes it.', go: { path: '/settings/addons' } },
+    { title: 'Addon settings', detail: 'Addons → Settings on a row expands its form beneath the row; Save closes it.', go: { path: '/settings/addons' } },
     { title: 'Members', detail: 'The combobox; an unknown email is refused inline.', go: { path: '/settings/members' } },
     { title: 'Gates', detail: 'Policy and "Affects N open tickets".', go: { path: '/settings/gates' } },
     { title: 'Relay & devices', detail: 'Pair a device (simulated QR and code).', go: { path: '/settings/relay' } },

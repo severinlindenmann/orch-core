@@ -56,4 +56,7 @@ export interface TerminalSessionView {
   summary: string | null
   /** Set when this session resumed an earlier one: its title and the summary it was seeded with. */
   resumedFrom: { id: string; label: string; summary: string | null } | null
+  /** A re-login shell only: the login command typed at the prompt (not run) and the OS user the shell runs as. */
+  prefill?: string
+  run_as?: string
 }

@@ -112,7 +112,7 @@ An **agent** is a program such as Claude Code or Codex that works on tickets. It
 
 ## Grants
 
-A grant says: this person's agents may work in this workspace until a given time. You sign it for yourself with Touch ID: owners and maintainers for all tickets (up to 12 hours), members for the tickets they may work on (up to the workspace default, 8 hours). Owners can revoke any grant. It runs out by itself. **Revoke** ends it at once, and every agent under it stops. The grant status is shown at the bottom of the sidebar.
+A grant says: this person's agents may work in this workspace until a given time. You sign it for yourself with Touch ID: owners and maintainers for all tickets (up to 24 hours), members for the tickets they may work on (up to the workspace default, 8 hours). Owners can revoke any grant. It runs out by itself. **Revoke** ends it at once, and every agent under it stops. The grant status is shown at the bottom of the sidebar.
 
 ## What an agent does
 

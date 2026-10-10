@@ -606,6 +606,7 @@ export type SettingsRequest =
   | { op: 'member.role'; person: string; role: Role }
   | { op: 'member.remove'; person: string }
   | { op: 'gate.policy'; gate: GateName; approvers: string; count: number; not?: 'assignees' | null; applies?: CodeReviewApplies }
+  | { op: 'grant.hours'; hours: number }
   | { op: 'archive'; prefix: string }
 
 /** POST /api/workspaces/:ws/addons/:name. Owner only; grant and update are signed in the UI. */
@@ -819,7 +820,8 @@ export type WorkspaceEventType =
   | 'agent.started' | 'agent.stopped'
   | 'view.saved' | 'view.deleted'
   | 'ticket.discarded'
-  | 'workspace.renamed'
+  | 'workspace.renamed' | 'workspace.grant_hours_set'
+  | 'terminal.shell_opened'
   | 'relay.connected' | 'relay.stopped' | 'device.paired' | 'device.removed' | 'epoch.rotated'
   | 'skill.credentials_granted' | 'connection.checked'
   | 'records.committed' | 'records.pushed' | 'records.pulled'

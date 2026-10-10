@@ -146,7 +146,7 @@ describe('permits on Today', () => {
 describe('factory full runs', () => {
   const holding = (s: MockStore) => {
     on(s)
-    Object.assign(s.addonState(wsOf(s), 'factory'), seedRuns(s, 'p_sev'))
+    Object.assign(s.addonState(wsOf(s), 'factory'), seedRuns(s, 'p_sev', wsOf(s)))
   }
   it('the request form: Deliver needs a destination; the signing prompt names every value in core lines', async () => {
     const { user } = renderApp('/addon/factory/factory', { viewer: 'p_sev', setup: on })
@@ -163,7 +163,8 @@ describe('factory full runs', () => {
     await user.click(await screen.findByRole('button', { name: 'Sign and start' }, T))
     const dialog = await screen.findByRole('dialog', { name: /^Sign: Start run \(start_run\) · AI Factory \(factory\)$/ }, T)
     const lines = [...dialog.querySelectorAll('[data-arg-key]')].map((e) => [e.getAttribute('data-arg-key'), e.getAttribute('data-arg-value')])
-    expect(lines).toEqual([['request', 'rq-1'], ['goal', 'Autumn tariff campaign'], ['goes_up_to', 'Deliver'], ['deliver_means', 'Publish campaign'], ['hold_minutes', '60'], ['largest_child', 'm']])
+    expect(lines[0][1]).toMatch(/^rq-DEMO-[0-9a-f]{8}-1$/)
+    expect(lines).toEqual([['request', lines[0][1]], ['goal', 'Autumn tariff campaign'], ['goes_up_to', 'Deliver'], ['deliver_means', 'Publish campaign'], ['hold_minutes', '60'], ['largest_child', 'm']])
     expect(dialog.textContent).toContain('Deliver means (deliver_means): Publish campaign')
     await user.click(within(dialog).getByRole('button', { name: 'Sign and run' }))
     await waitFor(() => expect(mockStore.eventsOf('DEMO-0050').some((e) => e.type === 'factory.run_requested' && e.deliver_means === 'Publish campaign')).toBe(true), T)
@@ -171,7 +172,7 @@ describe('factory full runs', () => {
   })
   it('a run on hold: the calm notice above the tabs, on Today and in the shell; Stop from the shell cancels it', async () => {
     const { user } = renderApp('/addon/factory/factory', { viewer: 'p_sev', setup: holding })
-    expect(await screen.findByText('Full run R-2 · Autumn tariff campaign: on hold before Deliver', { selector: 'strong' }, T)).toBeInTheDocument()
+    expect(await screen.findByText('Full run R-1 · Autumn tariff campaign: on hold before Deliver', { selector: 'strong' }, T)).toBeInTheDocument()
     expect(await screen.findByText('Delivering in 28 min: Publish campaign to the newsletter list', {}, T)).toBeInTheDocument()
     const banner = await screen.findByTestId('delivery-hold-banner', {}, T)
     expect(banner).toHaveTextContent(/^Delivering in 28 min · Publish campaign to the newsletter list · at \d\d:\d\d · AI Factory \(factory\)/)
@@ -184,11 +185,11 @@ describe('factory full runs', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Send answer' }))
     await waitFor(() => expect(screen.queryByTestId('delivery-hold-banner')).not.toBeInTheDocument(), T)
     expect(mockStore.eventsOf('DEMO-0050').filter((e) => e.type === 'factory.deliver_stopped')).toHaveLength(1)
-    expect(mockStore.eventsOf('DEMO-0050').some((e) => e.type === 'factory.delivered' && e.run === 'R-2')).toBe(false)
+    expect(mockStore.eventsOf('DEMO-0050').some((e) => e.type === 'factory.delivered' && e.run === 'R-1')).toBe(false)
   })
   it('Today lists the hold as a needs-you item with Stop delivery', async () => {
     renderApp('/', { viewer: 'p_sev', setup: holding })
-    const card = await screen.findByTestId('card-addon:factory.hold:R-2', {}, T)
+    const card = await screen.findByTestId('card-addon:factory.hold:R-1', {}, T)
     expect(card).toHaveTextContent(/Delivering in 28 min: Publish campaign to the newsletter list/)
   })
   it('Simulate: let the hold time pass (demo) delivers: "Delivered: <destination> at <time>"', async () => {
@@ -197,6 +198,6 @@ describe('factory full runs', () => {
     await waitFor(() => expect(screen.queryByTestId('delivery-hold-banner')).not.toBeInTheDocument(), T)
     await user.click(await screen.findByRole('tab', { name: /^Full runs/ }, T))
     expect(await screen.findByText(/^Delivered: Publish campaign to the newsletter list at /, {}, T)).toBeInTheDocument()
-    expect(mockStore.eventsOf('DEMO-0050').some((e) => e.type === 'factory.delivered' && e.run === 'R-2')).toBe(true)
+    expect(mockStore.eventsOf('DEMO-0050').some((e) => e.type === 'factory.delivered' && e.run === 'R-1')).toBe(true)
   })
 })

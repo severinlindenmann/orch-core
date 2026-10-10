@@ -4,8 +4,9 @@ import type { AddonDecision } from '@/api/types'
 import type { MockStore } from '../store'
 import type { Rng } from '../busy/rng'
 import { canSeeTicket, conflict, notFound, refusal, registerAddon, withinCharterSize, type AddonCtx } from './registry'
+import { plain } from '@/components/sign/visible'
 import { fmtDateTime, fmtWhen } from '@/lib/time'
-import { approveReview, checkRequest, visibleEpic, DEMO_DATASETS, DEMO_REQUEST, ensureChain, holdBlocksOff, holdDecisions, hoursUsed, issueRequest, MAX_CHILDREN, MAX_HOURS, runsOf, runsView, seedRuns, settleRuns, staleRunKeys, startRun, type RunDraft } from './factory-runs'
+import { approveReview, checkRequest, visibleEpic, DEMO_DATASETS, DEMO_REQUEST, ensureChain, holdBlocksOff, holdDecisions, hoursUsed, issueRequest, migrateState, MAX_CHILDREN, RUN_CHILDREN, requestNonce, MAX_HOURS, runsOf, runsView, seedRuns, settleRuns, staleRunKeys, startRun, type RunDraft } from './factory-runs'
 
 // factory (AI Factory, Phase 2 preview; v1 docs/factory.md): one factory epic, DEMO-0050 "Monthly billing v2".
 //  - The charter (25 children or 72 hours, children of size m or smaller) was signed when the epic started. The
@@ -234,7 +235,9 @@ function seedBusy(ws: string, store: MockStore, rng: Rng) {
   permits.sort((a, b) => b.at.localeCompare(a.at))
   state.seq = 2 + states.length
   // Full runs (D61 option): one holds before Deliver, an earlier one was delivered.
-  Object.assign(state, seedRuns(store, 'p_sev'))
+  Object.assign(state, seedRuns(store, 'p_sev', ws))
+  // A valid charter state: the run's children are reserved in the child budget like any admitted run's.
+  ;(state as unknown as { used: number }).used += RUN_CHILDREN
   return state
 }
 
@@ -255,6 +258,9 @@ function seedBase(ws: string, store: MockStore) {
     epicGrants: [],
     runs: [],
     runSeq: 0,
+    requestSeq: 0,
+    requestNonce: requestNonce(),
+    usedRequests: [],
     permits: epic
       ? ([
           { id: 'P-2', ...COMMANDS[2], ticket: 'DEMO-0052', state: 'open', at: '2026-10-09T10:40:00Z' },
@@ -267,7 +273,9 @@ function seedBase(ws: string, store: MockStore) {
 
 registerAddon({
   name: 'factory',
-  stateVersion: 3, // full runs (`runs`, `runSeq`, request ids, holds on the wall clock)
+  stateVersion: 4, // full runs: request ids with a nonce, code review approvals per commit, holds on the wall clock
+  migrate: migrateState,
+  saveOnSeed: true,
   seed: seedBase,
   seedBusy,
 
@@ -395,7 +403,9 @@ registerAddon({
   },
 
   // Core refuses to turn the factory off or change it while a delivery is on hold (its Stop would go with it).
-  offBlocked(state) {
+  offBlocked(state, c) {
+    // Settled first: a hold whose window already ended is delivered (or not), not counted as on hold.
+    if (state.epic) settleRuns(c.store, state)
     return holdBlocksOff(state)
   },
 
@@ -457,7 +467,7 @@ registerAddon({
       const d = checkRequest(c, (c.body.formData ?? {}) as Record<string, unknown>)
       if ('ok' in d) return d
       // Every review issues a new single-use request id: the signature binds it, the start consumes it.
-      setNav(c.state, c.viewer, { ...navOf(c.state, c.viewer), runDraft: issueRequest(c.state, d) })
+      setNav(c.state, c.viewer, { ...navOf(c.state, c.viewer), runDraft: issueRequest(c, c.state, d) })
       return { ok: true, message: 'Review and sign the request.' }
     },
     clear_run(c) {
@@ -469,7 +479,7 @@ registerAddon({
       if (typeof epic !== 'string') return epic
       const d = checkRequest(c, { ...DEMO_REQUEST })
       if ('ok' in d) return d
-      setNav(c.state, c.viewer, { ...navOf(c.state, c.viewer), runDraft: issueRequest(c.state, d) })
+      setNav(c.state, c.viewer, { ...navOf(c.state, c.viewer), runDraft: issueRequest(c, c.state, d) })
       return { ok: true, message: 'Demo request filled in: review and sign it.' }
     },
     // Signed in core's prompt (`confirm: 'sign'`): the covers list the goal, how far it goes, what Deliver means and the hold.
@@ -512,9 +522,9 @@ registerAddon({
       const epic = visibleEpic(ctx, state)
       if (typeof epic !== 'string') return epic
       if (!ctx.decision || ctx.body.option !== 'approve') return conflict('decision.closed', 'That decision is closed.')
-      const done = approveReview(store, state, ctx.decision.id, viewer)
+      const done = approveReview(store, ctx.ws, state, ctx.decision.id, viewer, ctx.body.terms)
       if ('ok' in done) return done
-      return { ok: true, message: `Code review approved for ${done.run.id}. The child goes on to Validate.`, changed: true }
+      return { ok: true, message: done.done ? `Code review approved for ${done.run.id}. The child goes on to Validate.` : `Code review approval recorded for ${done.run.id}; more approvals are needed.`, changed: true }
     },
     // A SIMULATOR control of the mock, not an operation: no host operation shortens a Deliver hold (the only human
     // act during the hold is a signed Stop). The mock clock runs in real time, so the demo lets the simulated time of
@@ -532,7 +542,7 @@ registerAddon({
       run.holdWallUntil = Date.now()
       settleRuns(store, state)
       if ((run.stage as string) !== 'delivered') return conflict('factory.not_running', 'The charter is stopped: the hold ended without delivery.')
-      return { ok: true, message: `Simulated: the hold time of ${run.id} passed. Delivered: ${run.deliverMeans}.`, changed: true }
+      return { ok: true, message: `Simulated: the hold time of ${run.id} passed. Delivered: ${plain(run.deliverMeans ?? '')}.`, changed: true }
     },
 
     pause({ state, store, viewer, ws }) {
@@ -541,6 +551,10 @@ registerAddon({
       const mode = modeOf(state, store.now())
       if (mode === 'paused') return { ok: true, message: 'The factory is already paused.' }
       if (mode === 'stopped') return conflict('factory.stopped', 'The factory is stopped; there is nothing to pause.')
+      // A hold freezes: what is left of it is kept (wall clock), so a reload while paused never shortens or ends it.
+      settleRuns(store, state)
+      for (const r of runsOf(state))
+        if (r.stage === 'holding') r.holdRemainingMs = Math.max(0, r.holdWallUntil !== undefined ? r.holdWallUntil - Date.now() : Date.parse(r.holdUntil!) - Date.parse(store.now()))
       state.paused = { at: store.now(), by: viewer }
       endWatching(store, ws, state)
       store.append(epic, { type: 'factory.paused', actor: ADDON })
@@ -554,11 +568,13 @@ registerAddon({
       const pausedFor = Date.parse(store.now()) - Date.parse(paused.at)
       state.pausedMs = (state.pausedMs as number) + pausedFor
       state.paused = null
-      // The hold clock does not run while paused: a run that holds before Deliver gets the paused time back.
+      // The hold clock did not run while paused: both deadlines are rebuilt from the remaining time kept at pause.
       for (const r of runsOf(state))
         if (r.stage === 'holding' && r.holdUntil) {
-          r.holdUntil = new Date(Date.parse(r.holdUntil) + pausedFor).toISOString().replace(/\.\d{3}Z$/, 'Z')
-          if (r.holdWallUntil !== undefined) r.holdWallUntil += pausedFor
+          const left = r.holdRemainingMs ?? Date.parse(r.holdUntil) + pausedFor - Date.parse(store.now())
+          r.holdUntil = new Date(Date.parse(store.now()) + left).toISOString().replace(/\.\d{3}Z$/, 'Z')
+          r.holdWallUntil = Date.now() + left
+          delete r.holdRemainingMs
         }
       store.append(epic, { type: 'factory.resumed', actor: ADDON })
       return { ok: true, message: 'Factory resumed.', changed: true }

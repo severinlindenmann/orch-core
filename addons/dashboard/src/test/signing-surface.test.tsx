@@ -298,7 +298,7 @@ const CASES: Case[] = [
     path: '/addon/factory/factory',
     setup: (s) => {
       installAndGrant(s, wsOf(s), 'factory')
-      s.addonState(wsOf(s), 'factory').nav = { p_sev: { runDraft: { ...DEMO_REQUEST, request: 'rq-7' } } }
+      s.addonState(wsOf(s), 'factory').nav = { p_sev: { runDraft: { ...DEMO_REQUEST, request: 'rq-DEMO-0a1b2c3d-7' } } }
     },
     open: async (user) => {
       await user.click(await screen.findByRole('tab', { name: /^Full runs/ }, T))

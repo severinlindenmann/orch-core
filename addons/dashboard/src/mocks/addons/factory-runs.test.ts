@@ -1,9 +1,10 @@
 // Factory full runs (owner decision 2026-10-10 evening, D61 option): the request, the signed start, the steps with
 // their labels, the hold before Deliver, Stop during the hold and the delivery after it.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { describeEvent } from '@/mocks/derive'
 import { createMockStore } from '@/mocks/store'
 import { installAndGrant } from '@/test/installAddon'
-import { RUN_STEP_MS, runArgs, type Run, type RunDraft } from './factory-runs'
+import { pushChildCommit, RUN_STEP_MS, runArgs, type Run, type RunDraft } from './factory-runs'
 
 const EPIC = 'DEMO-0050'
 const DELIVER = { goal: 'Release monthly billing v2', goes_up_to: 'Deliver', deliver_means: 'Deploy to production', hold_minutes: 30 }
@@ -55,7 +56,7 @@ describe('factory full run: the request', () => {
     const s = setup()
     s.run('prepare_run', { formData: DELIVER })
     const args = runArgs(draftOf(s))
-    expect(args.request).toMatch(/^rq-\d+$/)
+    expect(args.request).toMatch(/^rq-DEMO-[0-9a-f]{8}-\d+$/)
     expect(s.run('start_run', args)).toMatchObject({ ok: false, code: 'confirm.required' })
     expect(s.run('start_run', { ...args, deliver_means: 'Deploy to staging', confirmed: true })).toMatchObject({ ok: false, code: 'factory.stale' })
     expect(s.run('start_run', { ...args, confirmed: true })).toMatchObject({ ok: true })
@@ -178,14 +179,15 @@ describe('factory full run: steps, hold, Stop, delivery', () => {
     expect(s.events('factory.deliver_held')).toHaveLength(0)
     expect(s.store.addonDecisions(s.ws).some((x) => x.id.startsWith('factory.hold:'))).toBe(false)
   })
-  it('the busy day seeds a run on hold (28 min left) and an earlier delivered one', () => {
+  it('the busy day seeds a run on hold (28 min left), its children reserved: a valid charter state', () => {
     const store = createMockStore({ persist: false, dataset: 'busy' })
     const ws = store.workspaces.find((w) => w.prefix === 'DEMO')!.id
     const v = store.addonStateView(ws, 'factory')!
-    expect(JSON.stringify(v.attentionNode)).toContain('Full run R-2 · Autumn tariff campaign: on hold before Deliver')
+    expect(JSON.stringify(v.attentionNode)).toContain('Full run R-1 · Autumn tariff campaign: on hold before Deliver')
     expect(JSON.stringify(v.runsNode)).toContain('Delivering in 28 min · Publish campaign to the newsletter list')
-    expect(JSON.stringify(v.runsNode)).toContain('Delivered: Send to finance@example.test (boss)')
-    expect(store.addonDecisions(ws).some((d) => d.id === 'factory.hold:R-2' && d.hold)).toBe(true)
+    expect(store.addonState(ws, 'factory').used).toBe(23) // 20 children + the run's 3 reserved
+    expect(v.mode).toBe('running')
+    expect(store.addonDecisions(ws).some((d) => d.id === 'factory.hold:R-1' && d.hold)).toBe(true)
   })
 })
 
@@ -235,35 +237,89 @@ describe('fix round 1: one charter check, budget reservation', () => {
 
 describe('fix round 1: the code review gate stays human in a full run', () => {
   const policyOn = (s: S) => s.store.appendWs(s.ws, { type: 'gate.policy_set', gate: 'code', approvers: 'maintainer', count: 1, not: 'assignees', applies: 'all' })
-  it('each child waits at Code review for a person before Validate; Preview needs every review', () => {
-    const s = setup()
-    policyOn(s)
+  const review = (s: S, id: string, viewer: string) => {
+    s.store.setViewer(viewer)
+    const x = s.store.addonDecisions(s.ws).find((y) => y.id === id)
+    const r = x ? s.run('code_review', { id, option: 'approve', ticket: x.ticket, terms: x.terms, confirmed: true }) : null
+    s.store.setViewer('p_sev')
+    return r
+  }
+  const toReview = (s: S) => {
     startDeliverRun(s)
     vi.advanceTimersByTime(RUN_STEP_MS * 60)
+  }
+  it('each child waits at Code review for an eligible person before Validate; Preview needs every review', () => {
+    const s = setup()
+    policyOn(s)
+    toReview(s)
     const r = s.runs()[0]
     expect(r.stage).toBe('working')
-    expect(r.children.map((k) => [k.done, k.review?.state])).toEqual([[2, 'waiting'], [2, 'waiting'], [2, 'waiting']])
-    const ids = s.store.addonDecisions(s.ws).filter((d) => d.id.startsWith('factory.code:')).map((d) => d.id)
+    expect(r.children.map((k) => [k.done, k.review?.waiting])).toEqual([[2, true], [2, true], [2, true]])
+    // The requester (Severin) counts as an assignee of the run's children: never their reviewer (D59).
+    expect(s.store.addonDecisions(s.ws).filter((d) => d.id.startsWith('factory.code:'))).toEqual([])
+    s.store.setViewer('p_mara')
+    const ds = s.store.addonDecisions(s.ws).filter((d) => d.id.startsWith('factory.code:'))
+    const ids = ds.map((d) => d.id)
     expect(ids).toEqual(['factory.code:R-1:1', 'factory.code:R-1:2', 'factory.code:R-1:3'])
-    expect(JSON.stringify(s.view().runsNode)).toContain('Code review (waits for a person)')
-    // Only through core's prompt (a person's signature), never on its own.
-    const d = s.store.addonDecisions(s.ws).find((x) => x.id === ids[0])!
-    expect(s.run('code_review', { id: d.id, option: 'approve', ticket: d.ticket, terms: d.terms })).toMatchObject({ ok: false, code: 'confirm.required' })
-    s.store.setViewer('p_tom')
-    expect(s.run('code_review', { id: d.id, option: 'approve', ticket: d.ticket, terms: d.terms, confirmed: true })).toMatchObject({ ok: false, status: 403 })
+    expect(ds[0].terms!.commit).toMatch(/^[0-9a-f]{7}$/)
+    expect(s.run('code_review', { id: ids[0], option: 'approve', ticket: ds[0].ticket, terms: ds[0].terms })).toMatchObject({ ok: false, code: 'confirm.required' })
     s.store.setViewer('p_sev')
-    for (const id of ids.slice(0, 2)) {
-      const x = s.store.addonDecisions(s.ws).find((y) => y.id === id)!
-      expect(s.run('code_review', { id, option: 'approve', ticket: x.ticket, terms: x.terms, confirmed: true })).toMatchObject({ ok: true })
-    }
+    expect(JSON.stringify(s.view().runsNode)).toContain('Code review (waits for a person)')
+    // Severin and Tom cannot (requester; viewer): core finds no open decision for them.
+    s.store.setViewer('p_tom')
+    expect(s.run('code_review', { id: ids[0], option: 'approve', ticket: ds[0].ticket, terms: ds[0].terms, confirmed: true })).toMatchObject({ ok: false })
+    s.store.setViewer('p_sev')
+    expect(s.run('code_review', { id: ids[0], option: 'approve', ticket: ds[0].ticket, terms: ds[0].terms, confirmed: true })).toMatchObject({ ok: false, code: 'decision.closed' })
+    for (const id of ids.slice(0, 2)) expect(review(s, id, 'p_mara')).toMatchObject({ ok: true })
     vi.advanceTimersByTime(RUN_STEP_MS * 30)
     expect(s.runs()[0].stage).toBe('working') // one review still waits
-    const last = s.store.addonDecisions(s.ws).find((y) => y.id === ids[2])!
-    expect(s.run('code_review', { id: last.id, option: 'approve', ticket: last.ticket, terms: last.terms, confirmed: true })).toMatchObject({ ok: true })
+    expect(review(s, ids[2], 'p_mara')).toMatchObject({ ok: true })
     toHold()
     expect(s.runs()[0].stage).toBe('holding')
     expect(s.store.wsEventsOf(s.ws).filter((e) => e.type === 'addon.decided' && String(e.id).startsWith('factory.code:')).every((e) => e.presence === 'touchid' && (e.actor as { kind: string }).kind === 'person')).toBe(true)
-    expect(JSON.stringify(s.view().runsNode)).toContain('code review approved by Severin')
+    expect(JSON.stringify(s.view().runsNode)).toMatch(/code review \(commit [0-9a-f]{7}\) approved by Mara/)
+  })
+  it('the policy decides: the approver group and the quorum of distinct people', () => {
+    const s = setup()
+    s.store.appendWs(s.ws, { type: 'member.added', person: 'p_ann', name: 'Ann', role: 'maintainer' })
+    s.store.appendWs(s.ws, { type: 'gate.policy_set', gate: 'code', approvers: 'maintainer', count: 2, not: 'assignees', applies: 'all' })
+    toReview(s)
+    expect(review(s, 'factory.code:R-1:1', 'p_mara')).toMatchObject({ ok: true })
+    // One approval of two: still waiting; Mara cannot count twice.
+    expect(s.runs()[0].children[0].review?.waiting).toBe(true)
+    expect(review(s, 'factory.code:R-1:1', 'p_mara')).toBeNull()
+    expect(review(s, 'factory.code:R-1:1', 'p_ann')).toMatchObject({ ok: true })
+    expect(s.runs()[0].children[0].review?.waiting).toBe(false)
+    // Owners only: a maintainer is not in the group, and the only owner requested the run.
+    s.store.appendWs(s.ws, { type: 'gate.policy_set', gate: 'code', approvers: 'owner', count: 1, not: 'assignees', applies: 'all' })
+    s.store.setViewer('p_mara')
+    expect(s.store.addonDecisions(s.ws).some((d) => d.id === 'factory.code:R-1:2')).toBe(false)
+  })
+  it('the approval signs the child\'s commit: a new commit voids it and the child waits again', () => {
+    const s = setup()
+    policyOn(s)
+    toReview(s)
+    for (const n of [1, 2, 3]) expect(review(s, `factory.code:R-1:${n}`, 'p_mara')).toMatchObject({ ok: true })
+    vi.advanceTimersByTime(RUN_STEP_MS * 2)
+    s.store.setViewer('p_mara')
+    const stale = { ...s.store.addonDecisions(s.ws).find((d) => d.id === 'factory.code:R-1:1') }
+    s.store.setViewer('p_sev')
+    expect(stale.id).toBeUndefined() // nothing waits now
+    const sha = pushChildCommit(s.store, s.store.addonState(s.ws, 'factory'), 'R-1', 1)!
+    const k = s.runs()[0].children[0]
+    expect(k.review?.waiting).toBe(true)
+    expect(k.done).toBeLessThanOrEqual(2)
+    s.store.setViewer('p_mara')
+    const d = s.store.addonDecisions(s.ws).find((x) => x.id === 'factory.code:R-1:1')!
+    expect(d.terms!.commit).toBe(sha)
+    // An answer that names the old commit is refused (core: the terms changed).
+    expect(s.run('code_review', { id: d.id, option: 'approve', ticket: d.ticket, terms: { ...d.terms, commit: 'aaaaaaa' }, confirmed: true })).toMatchObject({ ok: false, code: 'decision.closed' })
+    s.store.setViewer('p_sev')
+    toHold()
+    expect(s.runs()[0].stage).toBe('working')
+    expect(review(s, 'factory.code:R-1:1', 'p_mara')).toMatchObject({ ok: true })
+    toHold()
+    expect(s.runs()[0].stage).toBe('holding')
   })
   it('without the policy, no code review step', () => {
     const s = setup()
@@ -348,5 +404,105 @@ describe('fix round 1: values through visible.tsx', () => {
     const d = s.store.addonDecisions(s.ws).find((x) => x.id === 'factory.hold:R-1')!
     expect(d.question + d.detail).not.toMatch(/[​‮]/)
     expect(d.terms!.deliver_means).toBe(means)
+  })
+})
+
+// Fix round 2 (Codex re-check).
+describe('fix round 2', () => {
+  afterEach(() => localStorage.clear())
+  const persisted = () => {
+    localStorage.clear()
+    const a = createMockStore({ persist: true })
+    const ws = a.workspaces.find((w) => w.prefix === 'DEMO')!.id
+    installAndGrant(a, ws, 'factory')
+    a.runAddon(ws, 'factory', 'prepare_run', { formData: DELIVER })
+    const draft = (a.addonState(ws, 'factory').nav as Record<string, { runDraft: RunDraft }>).p_sev.runDraft
+    expect(a.runAddon(ws, 'factory', 'start_run', { ...runArgs(draft), confirmed: true })).toMatchObject({ ok: true })
+    toHold()
+    a.sim.stopAll()
+    return { a, ws }
+  }
+  const leftOf = (b: ReturnType<typeof createMockStore>, ws: string) => {
+    const r = (b.addonState(ws, 'factory').runs as Run[])[0]
+    return (Date.parse(r.holdUntil!) - Date.parse(b.now())) / 60_000
+  }
+  it('pause → reload 40 min later → resume keeps the remaining hold (about 30 min), never delivers at once', () => {
+    const { a, ws } = persisted()
+    expect(a.runAddon(ws, 'factory', 'pause', { confirmed: true })).toMatchObject({ ok: true })
+    vi.advanceTimersByTime(40 * 60_000)
+    const b = createMockStore({ persist: true })
+    b.addonStateView(ws, 'factory')
+    expect((b.addonState(ws, 'factory').runs as Run[])[0].stage).toBe('holding')
+    expect(b.runAddon(ws, 'factory', 'resume', { confirmed: true })).toMatchObject({ ok: true })
+    b.addonStateView(ws, 'factory')
+    expect((b.addonState(ws, 'factory').runs as Run[])[0].stage).toBe('holding')
+    expect(leftOf(b, ws)).toBeGreaterThan(29)
+    expect(leftOf(b, ws)).toBeLessThanOrEqual(30)
+    expect(b.eventsOf(EPIC).some((e) => e.type === 'factory.delivered')).toBe(false)
+    b.sim.stopAll()
+  })
+  it('request ids never repeat across a reset (workspace + nonce of this seeding)', () => {
+    const s = setup()
+    s.run('prepare_run', { formData: DELIVER })
+    const first = draftOf(s).request!
+    expect(first).toMatch(/^rq-DEMO-[0-9a-f]{8}-1$/)
+    s.store.reset()
+    installAndGrant(s.store, s.ws, 'factory')
+    s.store.setViewer('p_sev')
+    s.run('prepare_run', { formData: DELIVER })
+    expect(draftOf(s).request).not.toBe(first)
+  })
+  it('disable is refused while a seeded hold exists, even before anyone looked at the factory', () => {
+    const store = createMockStore({ persist: false, dataset: 'busy' })
+    const ws = store.workspaces.find((w) => w.prefix === 'DEMO')!.id
+    expect(store.addonOp(ws, 'factory', { op: 'disable' }, { kind: 'person', id: 'p_sev' })).toMatchObject({ ok: false, status: 409, code: 'addon.delivery_on_hold' })
+  })
+  it('the busy day\'s seeded hold is saved when seeded: a reload does not restart it', async () => {
+    localStorage.clear()
+    const a = createMockStore({ persist: true, dataset: 'busy' })
+    const ws = a.workspaces.find((w) => w.prefix === 'DEMO')!.id
+    a.addonStateView(ws, 'factory')
+    await Promise.resolve()
+    vi.advanceTimersByTime(10 * 60_000)
+    const b = createMockStore({ persist: true })
+    b.addonStateView(ws, 'factory')
+    expect(leftOf(b, ws)).toBeGreaterThan(17)
+    expect(leftOf(b, ws)).toBeLessThan(19)
+    a.sim.stopAll()
+    b.sim.stopAll()
+  })
+  it('event summaries show the destination through plain(); the event keeps the exact value', () => {
+    const e = { type: 'factory.deliver_held', run: 'R-1', until: '2026-10-09T12:00:00Z', deliver_means: 'Send‮ to boss' }
+    expect(describeEvent(e)).not.toMatch(/‮/)
+    expect(describeEvent(e)).toContain('\\u{202e}')
+    expect(describeEvent({ ...e, type: 'factory.delivered' })).not.toMatch(/‮/)
+    expect(describeEvent({ ...e, type: 'factory.run_requested', goes_up_to: 'Deliver' })).not.toMatch(/‮/)
+  })
+  it('state saved by version 2 is migrated: runs and counters kept; a legacy hold gets its full window again (never shorter)', async () => {
+    localStorage.clear()
+    const a = createMockStore({ persist: true })
+    const ws = a.workspaces.find((w) => w.prefix === 'DEMO')!.id
+    installAndGrant(a, ws, 'factory')
+    a.addonStateView(ws, 'factory')
+    await Promise.resolve()
+    const saved = JSON.parse(localStorage.getItem('orch-mock-v2')!)
+    const key = `${ws}/factory`
+    const old = saved.addonState[key]
+    old.used = 7
+    old.runSeq = 1
+    old.runs = [{ id: 'R-1', goal: 'Old run', goesUpTo: 'Deliver', deliverMeans: 'Deploy to production', holdMinutes: 30, signedBy: 'p_sev', signedAt: '2026-10-09T10:00:00Z', planned: true, children: [{ title: 'A', size: 's', done: 4 }], stage: 'holding', holdUntil: '2026-10-09T11:40:00Z' }]
+    delete old.requestNonce
+    delete old.usedRequests
+    saved.addonVersions = { ...saved.addonVersions, factory: 2 }
+    localStorage.setItem('orch-mock-v2', JSON.stringify(saved))
+    const b = createMockStore({ persist: true })
+    const st = b.addonState(ws, 'factory')
+    expect(st.used).toBe(7)
+    const run = (st.runs as Run[])[0]
+    expect(run).toMatchObject({ id: 'R-1', stage: 'holding', request: 'rq-legacy-R-1' })
+    expect(st.usedRequests).toContain('rq-legacy-R-1')
+    b.addonStateView(ws, 'factory')
+    expect(leftOf(b, ws)).toBeGreaterThan(29.9)
+    b.sim.stopAll()
   })
 })

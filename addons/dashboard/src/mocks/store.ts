@@ -98,7 +98,14 @@ function currentAddonStates(p: PersistedV2): PersistedV2['addonState'] {
   const out: PersistedV2['addonState'] = {}
   for (const [key, state] of Object.entries(p.addonState)) {
     const name = key.slice(key.indexOf('/') + 1)
-    if ((getAddon(name)?.stateVersion ?? 1) === (p.addonVersions?.[name] ?? 1)) out[key] = state
+    const mod = getAddon(name)
+    const want = mod?.stateVersion ?? 1
+    const had = p.addonVersions?.[name] ?? 1
+    if (want === had) out[key] = state
+    else if (mod?.migrate) {
+      const m = mod.migrate(state, had)
+      if (m) out[key] = m
+    }
   }
   return out
 }
@@ -1002,7 +1009,10 @@ export class MockStore {
     const mod = getAddon(name)
     // The busy dataset seeds an addon with its own, bigger state when the module has one.
     const seeded = this.dataset === 'busy' && mod?.seedBusy ? mod.seedBusy(ws, this, makeRng(BUSY_SEED).fork(key)) : (mod?.seed(ws, this) ?? {})
-    return (this.addonStates[key] = seeded)
+    this.addonStates[key] = seeded
+    // Seeded state that holds a deadline (a factory hold) is saved at once, so a reload never seeds it again.
+    if (mod?.saveOnSeed && this.persist) queueMicrotask(() => this.save())
+    return seeded
   }
 
   /**
@@ -1066,7 +1076,8 @@ export class MockStore {
     // A delivery on hold keeps its addon on: turning it off or changing it would take the Stop away mid-hold.
     if (req.op === 'disable' || req.op === 'update' || req.op === 'uninstall') {
       const mod = getAddon(name)
-      const why = mod?.offBlocked && this.addonStates[`${wsId}/${name}`] ? mod.offBlocked(this.addonStates[`${wsId}/${name}`]) : null
+      // The state is initialised (seeded) and settled first: a hold seeded but never looked at still counts.
+      const why = mod?.offBlocked ? mod.offBlocked(this.addonState(wsId, name), { store: this, ws: wsId, viewer: actor.id }) : null
       if (why) return refuse(409, 'addon.delivery_on_hold', why, 'Stop the delivery first (or wait for the hold to end).')
     }
     switch (req.op) {
@@ -1299,17 +1310,27 @@ export class MockStore {
   /** Gate policy: why `person` may not approve `gate` on `t` (null when eligible). */
   canApprove(t: TicketDocument, gate: GateName, person: string): string | null {
     const ws = this.workspaceOf(t.key)!
+    return this.gateEligibility(ws.id, gate, person, { assignees: t.people.assignees, reviewers: t.people.reviewers }, t.gates[gate].approvals.map((a) => a.by))
+  }
+
+  /**
+   * Core's one eligibility rule for a gate under the workspace policy (D59): role, the approver group, assignees (always
+   * excluded on the code gate) and one approval per person. Used for tickets and for work that is not a ticket yet
+   * (a factory full run's child: its requester and author count as assignees).
+   */
+  gateEligibility(wsId: string, gate: GateName, person: string, people: { assignees: string[]; reviewers: string[] }, approvedBy: string[]): string | null {
+    const ws = this.workspaces.find((w) => w.id === wsId)!
     const policy = ws.gates[gate]
     const role = this.roleIn(ws.id, person)
     if (!can(role, 'ticket.act')) return 'Viewers cannot approve.'
-    if (policy.approvers === 'reviewers' ? !t.people.reviewers.includes(person) : !roleMeets(role, policy.approvers))
+    if (policy.approvers === 'reviewers' ? !people.reviewers.includes(person) : !roleMeets(role, policy.approvers))
       return policy.approvers === 'reviewers'
         ? 'Only a reviewer of this ticket can approve this gate.'
         : policy.approvers === 'maintainer'
           ? 'Only an owner or a maintainer can approve this gate.'
           : `Only the ${policy.approvers} can approve this gate.`
-    if ((policy.not === 'assignees' || gate === 'code') && t.people.assignees.includes(person)) return 'Assignees cannot approve their own work.'
-    if (t.gates[gate].approvals.some((a) => a.by === person)) return 'You already approved this gate.'
+    if ((policy.not === 'assignees' || gate === 'code') && people.assignees.includes(person)) return 'Assignees cannot approve their own work.'
+    if (approvedBy.includes(person)) return 'You already approved this gate.'
     return null
   }
 

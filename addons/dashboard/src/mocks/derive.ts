@@ -1,3 +1,4 @@
+import { plain } from '@/components/sign/visible'
 // Derives the ticket document (§7) from definitions + events. Events are the only truth for state (T14).
 import { codeReviewApplies, commitCover, DEFAULT_CODE_POLICY, GATE_ORDER, gateSignedContent } from '@/api/gates'
 import { branchOf, commitOf, firstCommit, type Commit } from './changes'
@@ -561,15 +562,21 @@ export function describeEvent(e: Pick<OrchEvent, 'type'> & Record<string, unknow
       return 'resumed the AI Factory'
     // Full runs (owner decision 2026-10-10 evening, D61 option; provisional names).
     case 'factory.run_requested':
-      return e.goes_up_to === 'Deliver' ? `started full run ${t(e.run, 'a run')}, all the way to Deliver: ${t(e.deliver_means, 'a destination')}` : `started full run ${t(e.run, 'a run')}, up to Preview`
+      return e.goes_up_to === 'Deliver' ? `started full run ${t(e.run, 'a run')}, all the way to Deliver: ${plain(t(e.deliver_means, 'a destination'))}` : `started full run ${t(e.run, 'a run')}, up to Preview`
     case 'factory.run_step':
       return `full run ${t(e.run, 'a run')} reached ${t(e.step, 'a step')} (no person reviewed this step)`
     case 'factory.deliver_held':
-      return `full run ${t(e.run, 'a run')} holds before Deliver until ${t(e.until, 'the end of its window')}: ${t(e.deliver_means, 'a destination')}`
+      return `full run ${t(e.run, 'a run')} holds before Deliver until ${t(e.until, 'the end of its window')}: ${plain(t(e.deliver_means, 'a destination'))}`
+    case 'factory.deliver_cancelled':
+      return `full run ${t(e.run, 'a run')} was not delivered: the charter stopped`
+    case 'factory.code_reviewed':
+      return `recorded a code review on full run ${t(e.run, 'a run')}, child ${t(e.child, '?')} (commit ${t(e.commit, '?')})`
+    case 'factory.child_pushed':
+      return `full run ${t(e.run, 'a run')}, child ${t(e.child, '?')}: new commit ${t(e.commit, '?')} (its code reviews no longer stand)`
     case 'factory.deliver_stopped':
       return `stopped the delivery of full run ${t(e.run, 'a run')}: nothing went out`
     case 'factory.delivered':
-      return `delivered full run ${t(e.run, 'a run')}: ${t(e.deliver_means, 'a destination')}`
+      return `delivered full run ${t(e.run, 'a run')}: ${plain(t(e.deliver_means, 'a destination'))}`
     case 'records.committed':
       return `recorded the ticket records as ${t(e.commit, 'a commit')} (${who})`
     case 'records.pushed':

@@ -78,7 +78,7 @@ describe('busy day: addons are installed and filled', () => {
     expect(s.store.ticket('DEMO-0050')!.children).toHaveLength(20)
     expect((raw('factory').permits as { state: string }[]).filter((p) => p.state === 'open').length).toBe(5)
     const view = (await s.api.getAddonState(s.ws, 'factory')) as { used: number; mode: string }
-    expect(view.used).toBe(20)
+    expect(view.used).toBe(23) // 20 children + the 3 a seeded full run reserved
     expect(view.mode).toBe('running')
   })
   it('activity is busy by itself: many events, many days', async () => {

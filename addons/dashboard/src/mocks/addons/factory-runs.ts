@@ -4,6 +4,7 @@ import { plain } from '@/components/sign/visible'
 import type { AddonDecision } from '@/api/types'
 import { fmtDateTime } from '@/lib/time'
 import type { MockStore, StoreFailure } from '../store'
+import { fnvHex } from '../derive'
 import { canSeeTicket, conflict, refusal, type AddonCtx } from './registry'
 
 // Factory full runs (owner decision 2026-10-10 evening, D61 option; docs/factory-full-run-proposal.md). A request
@@ -51,8 +52,12 @@ export interface RunChild {
   size: string
   /** Steps done, 0 to CHILD_STEPS.length. */
   done: number
-  /** The code review (only when the gate applies): waiting for a person, or approved by one. */
-  review?: { state: 'waiting' } | { state: 'approved'; by: string; at: string }
+  /** Who wrote it (the run's agent): never one of its reviewers. */
+  author?: string
+  /** Commits pushed after the first (the mock's content revision): a new one voids the code review approvals. */
+  rev?: number
+  /** The code review (only when the gate applies): the approvals, each on the commit it signed; waiting until enough. */
+  review?: { waiting: boolean; approvals: { by: string; at: string; sha: string }[] }
 }
 export interface Run {
   id: string
@@ -72,6 +77,8 @@ export interface Run {
   holdUntil?: string
   /** The same deadline on the wall clock (ms): a reload never extends a hold. */
   holdWallUntil?: number
+  /** While the factory is paused: what was left of the hold (ms), frozen; resume rebuilds both deadlines from it. */
+  holdRemainingMs?: number
   deliveredAt?: string
   stopped?: { at: string; by: string }
   notDelivered?: { at: string; reason: string }
@@ -150,20 +157,55 @@ export function checkRequest(c: Ctx, f: Record<string, unknown>): RunDraft | Sto
   return { goal, goes_up_to: 'Deliver', deliver_means: means, hold_minutes: hold }
 }
 
-/** A reviewed draft with a new single-use request id (every review issues a new one). */
-export function issueRequest(state: Record<string, unknown>, d: RunDraft): RunDraft {
-  const n = ((state.requestSeq as number) ?? 0) + 1
-  state.requestSeq = n
-  return { ...d, request: `rq-${n}` }
+/** A random nonce for one seeding of the factory state (a Reset seeds again, so ids never repeat across resets). */
+export function requestNonce(): string {
+  const b = new Uint8Array(4)
+  globalThis.crypto.getRandomValues(b)
+  return [...b].map((x) => x.toString(16).padStart(2, '0')).join('')
 }
 
-const childrenFor = (goal: string): RunChild[] => {
+/**
+ * A reviewed draft with a new single-use request id (every review issues a new one): `rq-<PREFIX>-<nonce>-<n>`, bound
+ * to the workspace and this seeding of the state, so a reset never issues an id that was signed before.
+ */
+export function issueRequest(c: Ctx, state: Record<string, unknown>, d: RunDraft): RunDraft {
+  const n = ((state.requestSeq as number) ?? 0) + 1
+  state.requestSeq = n
+  const nonce = ((state.requestNonce as string | undefined) ??= requestNonce())
+  const prefix = c.store.workspaces.find((w) => w.id === c.ws)?.prefix ?? c.ws
+  return { ...d, request: `rq-${prefix}-${nonce}-${n}` }
+}
+
+/** The agent that writes a run's children for the person who signed it. */
+export const runAgent = (by: string) => `claude-code:s_factory:${by}`
+
+const childrenFor = (goal: string, by: string): RunChild[] => {
   const g = goal.length > 60 ? `${goal.slice(0, 57)}…` : goal
   return [
-    { title: `Make the first version: ${g}`, size: 's', done: 0 },
-    { title: `Check it against the goal: ${g}`, size: 'm', done: 0 },
-    { title: `Prepare what goes out: ${g}`, size: 'xs', done: 0 },
+    { title: `Make the first version: ${g}`, size: 's', done: 0, author: runAgent(by) },
+    { title: `Check it against the goal: ${g}`, size: 'm', done: 0, author: runAgent(by) },
+    { title: `Prepare what goes out: ${g}`, size: 'xs', done: 0, author: runAgent(by) },
   ]
+}
+
+// ------------------------------------------------------------------ code review of a run's child (D58/D59 semantics)
+
+/** The commit the child's branch is at (mock sha): a new commit is a new revision. */
+export const childSha = (r: Run, i: number, k: RunChild) => fnvHex(`${r.request}|${i}|${k.rev ?? 0}`, 7)
+const codePolicy = (store: MockStore, ws: string) => store.workspaces.find((w) => w.id === ws)!.gates.code
+/** Approvals that still stand: on the current commit, one per person. */
+const standing = (r: Run, i: number, k: RunChild) => {
+  const sha = childSha(r, i, k)
+  const seen = new Set<string>()
+  return (k.review?.approvals ?? []).filter((a) => a.sha === sha && !seen.has(a.by) && seen.add(a.by))
+}
+/** Has the child the code reviews the policy asks for (distinct people, on its current commit)? Off: nothing to do. */
+const reviewed = (store: MockStore, ws: string, r: Run, i: number, k: RunChild) => !r.codeReview || standing(r, i, k).length >= codePolicy(store, ws).count
+/** Core's eligibility rule (D59) for this child: the run's requester and the child's author count as its assignees. */
+export function reviewEligibility(store: MockStore, ws: string, state: Record<string, unknown>, r: Run, i: number, k: RunChild, person: string): string | null {
+  const epic = state.epic as string
+  const reviewers = store.ticket(epic)?.people.reviewers ?? []
+  return store.gateEligibility(ws, 'code', person, { assignees: [r.signedBy, k.author ?? runAgent(r.signedBy)], reviewers }, standing(r, i, k).map((a) => a.by))
 }
 
 /**
@@ -191,7 +233,7 @@ export function startRun(store: MockStore, ws: string, state: Record<string, unk
     signedAt: store.now(),
     planned: false,
     codeReview: policyApplies(store, ws),
-    children: childrenFor(d.goal),
+    children: childrenFor(d.goal, by),
     stage: 'working',
   }
   runsOf(state).unshift(run)
@@ -205,7 +247,8 @@ export function startRun(store: MockStore, ws: string, state: Record<string, unk
 
 /** Keeps a hold's mock deadline on its wall-clock deadline when the mock clock jumped (a reload restarts it). */
 function syncHold(store: MockStore, r: Run) {
-  if (r.stage !== 'holding' || !r.holdUntil || r.holdWallUntil === undefined) return
+  // Paused: the remaining time is frozen in holdRemainingMs; resume rebuilds both deadlines from it.
+  if (r.stage !== 'holding' || !r.holdUntil || r.holdWallUntil === undefined || r.holdRemainingMs !== undefined) return
   const want = Date.parse(store.now()) + (r.holdWallUntil - Date.now())
   if (Math.abs(want - Date.parse(r.holdUntil)) > 5_000) r.holdUntil = iso(want)
 }
@@ -239,8 +282,6 @@ export function settleRuns(store: MockStore, state: Record<string, unknown>): bo
   return changed
 }
 
-/** Does this child wait for its code review before going on? (The gate applies and no person approved it yet.) */
-const needsReview = (r: Run, k: RunChild) => !!r.codeReview && k.review?.state !== 'approved'
 
 /** One step of every working run (only while the charter runs): plan, one child step, Preview, then the hold. */
 function stepRuns(store: MockStore, ws: string, state: Record<string, unknown>) {
@@ -256,15 +297,19 @@ function stepRuns(store: MockStore, ws: string, state: Record<string, unknown>) 
         store.append(epic, { type: 'factory.run_step', actor: ADDON, run: r.id, step: 'Plan' })
         continue
       }
-      // A child at Validate (or later) without its review waits for a person; it never passes on its own.
-      for (const k of r.children) if (k.done >= REVIEW_BEFORE && needsReview(r, k) && k.review?.state !== 'waiting') k.review = { state: 'waiting' }
-      const next = [...r.children].filter((k) => k.done < CHILD_STEPS.length && !(k.done >= REVIEW_BEFORE && needsReview(r, k))).sort((a, b) => a.done - b.done)[0]
+      // A child at Validate (or later) without its reviews waits for people; it never passes on its own.
+      const blocked = (k: RunChild, i: number) => k.done >= REVIEW_BEFORE && !reviewed(store, ws, r, i, k)
+      r.children.forEach((k, i) => {
+        if (blocked(k, i)) k.review = { waiting: true, approvals: k.review?.approvals ?? [] }
+        else if (k.review) k.review.waiting = false
+      })
+      const next = r.children.map((k, i) => ({ k, i })).filter(({ k, i }) => k.done < CHILD_STEPS.length && !blocked(k, i)).sort((a, b) => a.k.done - b.k.done)[0]
       if (next) {
-        next.done += 1
-        if (next.done >= REVIEW_BEFORE && needsReview(r, next)) next.review = { state: 'waiting' }
+        next.k.done += 1
+        if (blocked(next.k, next.i)) next.k.review = { waiting: true, approvals: next.k.review?.approvals ?? [] }
         continue
       }
-      if (r.children.some((k) => k.done < CHILD_STEPS.length || needsReview(r, k))) continue // waiting for code reviews
+      if (r.children.some((k, i) => k.done < CHILD_STEPS.length || blocked(k, i))) continue // waiting for code reviews
       r.stage = 'preview'
       store.append(epic, { type: 'factory.run_step', actor: ADDON, run: r.id, step: 'Preview' })
       continue
@@ -306,15 +351,39 @@ export function holdBlocksOff(state: Record<string, unknown>): string | null {
   return r ? `Full run ${r.id} "${plain(r.goal)}" is on hold before Deliver (${plain(r.deliverMeans ?? '')}). Stop it, or let the hold end, before you turn the AI Factory off or change it.` : null
 }
 
-/** A code review a person approved (core recorded who in addon.decided); the child goes on to Validate. */
-export function approveReview(store: MockStore, state: Record<string, unknown>, id: string, by: string): StoreFailure | { run: Run; child: RunChild } {
+/** One person's code review approval on the child's current commit; enough distinct people and the child goes on. */
+export function approveReview(store: MockStore, ws: string, state: Record<string, unknown>, id: string, by: string, terms: unknown): StoreFailure | { run: Run; child: RunChild; done: boolean } {
   const m = /^factory\.code:(R-\d+):(\d+)$/.exec(id)
   const run = m && runsOf(state).find((r) => r.id === m[1])
-  const child = run && run.children[Number(m![2]) - 1]
-  if (!run || !child || run.stage !== 'working' || child.review?.state !== 'waiting') return conflict('decision.closed', 'That code review is no longer waiting.')
-  child.review = { state: 'approved', by, at: store.now() }
-  store.append(state.epic as string, { type: 'factory.code_reviewed', actor: ADDON, run: run.id, child: Number(m![2]) })
-  return { run, child }
+  const i = m ? Number(m[2]) - 1 : -1
+  const child = run && run.children[i]
+  if (!run || !child || run.stage !== 'working' || !child.review?.waiting) return conflict('decision.closed', 'That code review is no longer waiting.')
+  // The approval signs exactly the commit shown; a new commit since the prompt opened is refused.
+  const sha = childSha(run, i, child)
+  if ((terms as { commit?: unknown } | undefined)?.commit !== sha) return conflict('decision.closed', 'The child has a new commit since you opened the review.', 'Reopen it and review the current commit.')
+  const why = reviewEligibility(store, ws, state, run, i, child, by)
+  if (why) return refusal(403, 'forbidden', why)
+  child.review.approvals.push({ by, at: store.now(), sha })
+  const done = reviewed(store, ws, run, i, child)
+  if (done) child.review.waiting = false
+  store.append(state.epic as string, { type: 'factory.code_reviewed', actor: ADDON, run: run.id, child: i + 1, commit: sha, approvals: standing(run, i, child).length, needed: codePolicy(store, ws).count })
+  return { run, child, done }
+}
+
+/**
+ * A new commit on a run's child (the agent pushed again): its code review approvals no longer stand (they signed the
+ * previous commit, D58/D59) and a child already past Validate goes back to wait for the review again.
+ */
+export function pushChildCommit(store: MockStore, state: Record<string, unknown>, runId: string, n: number): string | null {
+  const run = runsOf(state).find((r) => r.id === runId)
+  const child = run?.children[n - 1]
+  if (!run || !child || run.stage !== 'working') return null
+  child.rev = (child.rev ?? 0) + 1
+  if (run.codeReview && child.done > REVIEW_BEFORE) child.done = REVIEW_BEFORE
+  if (run.codeReview && child.done >= REVIEW_BEFORE) child.review = { waiting: true, approvals: child.review?.approvals ?? [] }
+  const sha = childSha(run, n - 1, child)
+  store.append(state.epic as string, { type: 'factory.child_pushed', actor: ADDON, run: run.id, child: n, commit: sha })
+  return sha
 }
 
 // ------------------------------------------------------------------ what core draws
@@ -332,15 +401,17 @@ function runNode(c: Ctx, r: Run, now: string, gate: ReturnType<typeof runGate>) 
   const label = stepLabel(c, r)
   const goal = plain(r.goal)
   const means = plain(r.deliverMeans ?? '')
-  const doneAll = r.children.every((k) => k.done >= CHILD_STEPS.length && !needsReview(r, k))
-  const childRow = (k: RunChild) => {
-    const waiting = k.review?.state === 'waiting'
-    const reviewed = k.review?.state === 'approved' ? `; code review approved by ${nameOf(c, k.review.by)}` : ''
+  const doneAll = r.children.every((k, i) => k.done >= CHILD_STEPS.length && reviewed(c.store, c.ws, r, i, k))
+  const need = codePolicy(c.store, c.ws).count
+  const childRow = (k: RunChild, i: number) => {
+    const waiting = !!k.review?.waiting
+    const ok = standing(r, i, k)
+    const reviewedBy = ok.length ? `; code review (commit ${childSha(r, i, k)}) approved by ${ok.map((a) => nameOf(c, a.by)).join(', ')}${waiting ? ` (${ok.length} of ${need})` : ''}` : ''
     return {
-      step: waiting ? 'Code review (waits for a person)' : k.done >= CHILD_STEPS.length ? 'Evidence collected' : `${CHILD_STEPS[k.done]} (${k.done + 1} of ${CHILD_STEPS.length})`,
+      step: waiting ? `Code review (waits for ${need === 1 ? 'a person' : `${need} people`})` : k.done >= CHILD_STEPS.length ? 'Evidence collected' : `${CHILD_STEPS[k.done]} (${k.done + 1} of ${CHILD_STEPS.length})`,
       item: `${plain(k.title)} · ${k.size}`,
       state: waiting ? 'waiting' : k.done >= CHILD_STEPS.length ? 'done' : r.planned ? 'working' : 'waiting',
-      decided: (k.done > 0 ? label : '–') + reviewed,
+      decided: (k.done > 0 ? label : '–') + reviewedBy,
     }
   }
   const rows = [
@@ -379,7 +450,7 @@ function runNode(c: Ctx, r: Run, now: string, gate: ReturnType<typeof runGate>) 
             ? { type: 'alert', tone: 'warn', title: `Not delivered: the charter stopped (${fmtDateTime(r.notDelivered!.at)}). Nothing went out; the run stays at Preview.` }
             : halted
               ? { type: 'alert', tone: 'info', title: gate === 'paused' ? 'The factory is paused: this run waits.' : 'The charter is stopped: this run goes no further.' }
-              : r.stage === 'working' && r.children.some((k) => k.review?.state === 'waiting')
+              : r.stage === 'working' && r.children.some((k) => k.review?.waiting)
                 ? { type: 'alert', tone: 'info', title: 'Waiting for a code review by a person (the code review gate applies). Approve it above.' }
                 : r.stage === 'preview'
                   ? { type: 'alert', tone: 'success', title: r.goesUpTo === 'Deliver' ? 'At Preview. The hold before Deliver starts next.' : 'At Preview: made and checked, visible only inside this workspace. It goes no further on its own.' }
@@ -422,7 +493,7 @@ export function runsView(c: Ctx, state: Record<string, unknown>, opts: { epic: s
   const nav = (((state.nav ?? {}) as Record<string, { runDraft?: RunDraft }>)[c.viewer] ?? {}) as { runDraft?: RunDraft }
   const draft = nav.runDraft
   const holding = runs.filter((r) => r.stage === 'holding')
-  const reviews = runs.flatMap((r) => (r.stage === 'working' ? r.children.map((k, i) => ({ r, k, i })).filter((x) => x.k.review?.state === 'waiting') : []))
+  const reviews = runs.flatMap((r) => (r.stage === 'working' ? r.children.map((k, i) => ({ r, k, i })).filter((x) => x.k.review?.waiting && !reviewEligibility(c.store, c.ws, state, x.r, x.i, x.k, c.viewer)) : []))
   const policy = policyApplies(c.store, c.ws)
   const form = {
     type: 'form',
@@ -527,7 +598,7 @@ export function holdDecisions(c: Ctx, state: Record<string, unknown>, epic: stri
     .filter((r) => r.stage === 'working')
     .flatMap((r) =>
       r.children.flatMap((k, i) =>
-        k.review?.state === 'waiting'
+        k.review?.waiting && !reviewEligibility(c.store, c.ws, state, r, i, k, c.viewer)
           ? [
               {
                 kind: 'decision' as const,
@@ -535,10 +606,10 @@ export function holdDecisions(c: Ctx, state: Record<string, unknown>, epic: stri
                 addon: 'factory',
                 ticket: epic,
                 title: 'AI Factory full run: code review',
-                question: `Code review: ${plain(k.title)}`,
-                detail: `Full run ${r.id} "${plain(r.goal)}". The code review gate applies, so a person reviews this child before it is validated; the factory never signs it.`,
+                question: `Code review: ${plain(k.title)} (commit ${childSha(r, i, k)})`,
+                detail: `Full run ${r.id} "${plain(r.goal)}". The code review gate applies (${standing(r, i, k).length} of ${codePolicy(c.store, c.ws).count} approvals on this commit), so people review this child before it is validated; the factory never signs it. A new commit voids the approvals.`,
                 options: [{ key: 'approve', label: 'Approve code review', primary: true }],
-                terms: { run: r.id, child: i + 1, child_title: k.title },
+                terms: { run: r.id, child: i + 1, child_title: k.title, commit: childSha(r, i, k) },
                 action: 'code_review',
               },
             ]
@@ -548,18 +619,22 @@ export function holdDecisions(c: Ctx, state: Record<string, unknown>, epic: stri
   return [...holds, ...reviews]
 }
 
-/** Busy day: one run holds before Deliver (28 min left) and an earlier one was delivered. */
-export function seedRuns(store: MockStore, by: string): { runs: Run[]; runSeq: number; requestSeq: number; usedRequests: string[] } {
+/** Busy day: one run holds before Deliver (28 min left; its 3 children are reserved in the budget by the caller). */
+export function seedRuns(store: MockStore, by: string, ws: string): { runs: Run[]; runSeq: number; requestSeq: number; requestNonce: string; usedRequests: string[] } {
   const now = Date.parse(store.now())
-  const done = (titles: [string, string][]) => titles.map(([title, size]) => ({ title, size, done: CHILD_STEPS.length }))
+  const nonce = requestNonce()
+  const prefix = store.workspaces.find((w) => w.id === ws)?.prefix ?? ws
+  const request = `rq-${prefix}-${nonce}-1`
+  const done = (titles: [string, string][]) => titles.map(([title, size]) => ({ title, size, done: CHILD_STEPS.length, author: runAgent(by) }))
   return {
-    runSeq: 2,
-    requestSeq: 2,
-    usedRequests: ['rq-1', 'rq-2'],
+    runSeq: 1,
+    requestSeq: 1,
+    requestNonce: nonce,
+    usedRequests: [request],
     runs: [
       {
-        id: 'R-2',
-        request: 'rq-2',
+        id: 'R-1',
+        request,
         goal: 'Autumn tariff campaign',
         goesUpTo: 'Deliver',
         deliverMeans: 'Publish campaign to the newsletter list',
@@ -572,23 +647,32 @@ export function seedRuns(store: MockStore, by: string): { runs: Run[]; runSeq: n
         holdUntil: iso(now + 28 * MIN),
         holdWallUntil: Date.now() + 28 * MIN,
       },
-      {
-        id: 'R-1',
-        request: 'rq-1',
-        goal: 'September cost report for my boss',
-        goesUpTo: 'Deliver',
-        deliverMeans: 'Send to finance@example.test (boss)',
-        holdMinutes: 30,
-        signedBy: by,
-        signedAt: iso(now - 26 * 60 * MIN),
-        planned: true,
-        children: done([['Pull September costs by model', 's'], ['Write the summary', 'xs'], ['Check the totals against usage', 's']]),
-        stage: 'delivered',
-        holdUntil: iso(now - 24 * 60 * MIN),
-        deliveredAt: iso(now - 24 * 60 * MIN),
-      },
     ],
   }
+}
+
+/**
+ * Factory state saved under an older version (2: full runs without request ids or wall deadlines; 3: single review
+ * per child): runs, holds and counters are kept. A hold without a wall-clock deadline gets its full window again from
+ * now: conservative, never shorter than what was left (the old deadline cannot be trusted after a reload).
+ */
+export function migrateState(state: Record<string, unknown>, from: number): Record<string, unknown> | null {
+  if (from >= 4) return state
+  const runs = runsOf(state)
+  state.requestNonce ??= requestNonce()
+  state.requestSeq ??= 0
+  for (const r of runs) {
+    r.request ??= `rq-legacy-${r.id}`
+    for (const k of r.children ?? []) {
+      k.author ??= runAgent(r.signedBy)
+      const old = k.review as unknown as { state?: string; by?: string; at?: string } | undefined
+      if (old?.state === 'approved') k.review = { waiting: false, approvals: [{ by: old.by!, at: old.at!, sha: childSha(r, r.children.indexOf(k), k) }] }
+      else if (old?.state === 'waiting') k.review = { waiting: true, approvals: [] }
+    }
+    if (r.stage === 'holding' && r.holdWallUntil === undefined) r.holdWallUntil = Date.now() + r.holdMinutes * MIN
+  }
+  state.usedRequests = [...new Set([...(((state.usedRequests as string[]) ?? [])), ...runs.map((r) => r.request)])]
+  return state
 }
 
 /** The mock's demo datasets: the only place the hold simulator (`simulate_time`) answers. */

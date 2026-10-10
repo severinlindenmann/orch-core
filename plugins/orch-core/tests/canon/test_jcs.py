@@ -1,4 +1,4 @@
-"""Canonical JSON: RFC 8785 test data, protocol-v2 §2.3 vectors, rejections."""
+"""Canonical JSON: RFC 8785 test data (test-only oracle), protocol-v2 §2.3 and F1 depth vectors, rejections."""
 
 import json
 import struct
@@ -9,6 +9,8 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from orch.canon import jcs
+
+from .rfc8785_oracle import dumps_general
 
 VECTORS = json.loads((Path(__file__).parent.parent / "vectors" / "vectors_v2.json").read_text())["encodings"]
 
@@ -48,7 +50,7 @@ RFC_NUMBERS = [
 
 @pytest.mark.parametrize(("bits", "text"), RFC_NUMBERS)
 def test_rfc8785_number_serialisation(bits, text):
-    assert jcs.dumps_general(_f(bits)) == text.encode()
+    assert dumps_general(_f(bits)) == text.encode()
 
 
 def test_rfc8785_section_3_2_2_example():
@@ -60,25 +62,33 @@ def test_rfc8785_section_3_2_2_example():
         '{"literals":[null,true,false],"numbers":[333333333.3333333,1e+30,4.5,0.002,1e-27],'
         '"string":"\u20ac$\\u000f\\nA\'B\\"\\\\\\\\\\"/"}'
     )
-    assert jcs.dumps_general(json.loads(src)) == expected.encode()
+    assert dumps_general(json.loads(src)) == expected.encode()
 
 
 def test_rfc8785_utf16_key_sorting():
     obj = {k: 1 for k in ["€", "\r", "דּ", "1", "\U0001f600", "\u0080", "ö"]}
-    keys = list(json.loads(jcs.dumps_general(obj), object_pairs_hook=lambda p: p))
+    keys = list(json.loads(dumps_general(obj), object_pairs_hook=lambda p: p))
     assert [k for k, _ in keys] == ["\r", "1", "\u0080", "ö", "€", "\U0001f600", "דּ"]
 
 
 def test_utf16_vs_codepoint_order():
-    # U+FB33 > U+1F600 by code point, but its UTF-16 unit (0xFB33) > 0xD83D too; use U+E000 vs U+10000:
-    obj = {"": 1, "\U00010000": 2}
-    assert jcs.dumps_general(obj).decode() == '{"\U00010000":2,"":1}'
+    # UTF-16 order puts U+10000 (surrogates D800 DC00) before U+E000; code point order is the reverse.
+    obj = {"\ue000": 1, "\U00010000": 2}
+    assert dumps_general(obj).decode() == '{"\U00010000":2,"\ue000":1}'
 
 
-def test_general_rejects_nan_inf():
+def test_oracle_rejects_nan_inf():
     for bad in (float("nan"), float("inf"), float("-inf")):
-        with pytest.raises(jcs.JcsError):
-            jcs.dumps_general(bad)
+        with pytest.raises(ValueError):
+            dumps_general(bad)
+
+
+def test_cj_has_no_general_mode():
+    from orch import canon
+
+    assert not hasattr(canon, "dumps_general") and not hasattr(jcs, "dumps_general")
+    with pytest.raises(jcs.JcsError):
+        jcs.dumps(1.5)
 
 
 @pytest.mark.parametrize("v", VECTORS["canonical_json"], ids=lambda v: v["name"])
@@ -143,6 +153,36 @@ def test_dumps_accepts_limits():
     assert jcs.dumps({"a": True, "b": None, "c": False}) == b'{"a":true,"b":null,"c":false}'
 
 
+def test_subclasses_are_refused():
+    import collections
+    import enum
+
+    class E(enum.IntEnum):
+        A = 1
+
+    for bad in (collections.OrderedDict(a=1), E.A, type("S", (str,), {})("x")):
+        with pytest.raises(jcs.JcsError):
+            jcs.dumps(bad)
+
+
+def test_self_referential_input_is_a_jcs_error_not_recursion_error():
+    a: list = []
+    a.append(a)
+    with pytest.raises(jcs.JcsError):
+        jcs.dumps(a)
+
+
+def test_depth_and_minus_zero_vectors():
+    v = json.loads((Path(__file__).parent.parent / "vectors" / "f1" / "canon.json").read_text())
+    for d in v["depth"]:
+        if d["ok"]:
+            assert jcs.dumps(jcs.loads_strict(d["text"])).decode() == d["canonical"]
+        else:
+            with pytest.raises(jcs.JcsError):
+                jcs.loads_strict(d["text"])
+    assert jcs.loads_strict("-0") == 0 and jcs.dumps(jcs.loads_strict("[-0]")) == b"[0]"
+
+
 def test_bool_is_not_int_and_escapes():
     assert jcs.dumps([True, 1]) == b"[true,1]"
     assert jcs.dumps("\x00\x1f\x7f ") == '"\\u0000\\u001f\x7f "'.encode()
@@ -166,10 +206,7 @@ _json = st.recursive(
 @settings(max_examples=100, deadline=None)
 @given(_json)
 def test_roundtrip_idempotent_and_matches_python_json(obj):
-    try:
-        out = jcs.dumps(obj)
-    except jcs.JcsError:
-        return  # only depth can trigger it here
+    out = jcs.dumps(obj)  # max_leaves keeps depth below 16, so every generated value must be accepted
     assert jcs.loads_strict(out) == obj
     assert jcs.dumps(jcs.loads_strict(out)) == out
     ref = json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()

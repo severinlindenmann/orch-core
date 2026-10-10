@@ -162,6 +162,9 @@ describe('start agent on the ticket rail', { timeout: 20_000 }, () => {
 
 describe('the run is visible live across the app', { timeout: 20_000 }, () => {
   it('Today: the blocking question lands in Needs you for the viewer and the agent is at work', async () => {
+    // Today's one-column layout (its Agents bar opens the sheet): Today now follows the page width, and this file
+    // stubs a 1440 px window for the ticket rail.
+    vi.stubGlobal('innerWidth', 1024)
     const { user } = renderApp('/', { viewer: 'p_sev', setup: playRun(15_000) })
     expect(await screen.findByText(/T1 is done\. Go on with T2/, {}, FIRST)).toBeInTheDocument()
     await user.click(within(screen.getByRole('region', { name: 'Agents' })).getByRole('button', { name: 'Show' }))

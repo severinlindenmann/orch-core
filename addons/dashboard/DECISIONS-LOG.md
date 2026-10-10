@@ -791,3 +791,47 @@ The owner answered the eight open questions of REVIEW.md. Items 1, 2, 5 and 6 ch
   before G2); ticket keys stay case-sensitive (predates G2).
 - **Why:** review G2 (2 Important, 11 Minor).
 - **Revert:** revert the review-fix commit.
+
+## Owner request 2026-10-10 — G4 calm navigation
+
+- **Decision:** navigating should feel calm: no blank page, no content that jumps, one short fade. Measured before and
+  after with the audit's script (programmatic navigation, every layout shift summed; `audit-G4-navigation.md`).
+  (1) **The shell settles before its first paint:** the root route's loader reads `me`, the workspaces, the addons and
+  the demo dataset first (nothing is on screen yet, so nothing waits visibly); the dock's layout falls back to the
+  last viewer's (`orch.sidebar.lastViewer`, like the rail); the rail squeeze is worked out from the stored dock layout
+  on the first render (`useDockSqueezesNow`) and the dock re-measures its area before paint when the sidebar changes,
+  so the dock is never drawn at the bottom first; the sidebar's width transition runs only after a toggle by the
+  person; xterm stays hidden (visibility) until its viewport has its final box. (2) **The router owns page loading:**
+  pages are `lazyPage` components with `preload()` (still retried after a failed chunk); every page route has a
+  loader that loads its chunk and warms the queries the page gates on with `ensureQueryData` (same keys and query
+  functions; components keep `useQuery`; `src/app/routeData.ts`); `defaultPreload: 'intent'` (50 ms);
+  `defaultPendingMs` 200 / `defaultPendingMinMs` 300: under 200 ms the old page simply stays, past it the page's
+  skeleton shows for at least 300 ms. A loader holds a page at most 1.5 s (`LOADER_WAIT_MS`), then the page shows
+  with its own placeholders; a loader never fails (the page shows its own error). The topbar title is set before
+  paint. The Shell's dead `<Suspense>`/`PageSkeleton` is gone; a failed route shows the page boundary's note.
+  (3) **One skeleton per page in the page's shape** (`src/app/pages/skeletons.tsx`: Today, Board, Tickets, Ticket,
+  Agents, Settings with the real sub-nav, addon page), used both by the router and by the page while its data is
+  missing; "Loading board…"/"Loading tickets…" are body skeletons. Today's gate covers the Connections group, the
+  Glance addon states and the tickets its rows open into (warmed by the loader), so it appears in one piece.
+  (4) **Reserved sizes:** a fitted frame opens at the height its document settled at before (in memory for the page
+  load, keyed by a hash of the document; `stepFit`/`settleFit` unchanged); addon node chunks (widgets, forms,
+  markdown, charts, terminal) are `lazyWithPreload` and loaded by the loaders of addon pages, tickets and addon
+  settings, so they render at once instead of a placeholder of another size. (5) **Scroll:** `#main` starts at the
+  top on a page change, keeps its scroll for a search-only change (filters, a ticket's tab), and Back/Forward restore
+  the entry's scroll (`src/app/shell/pageMotion.tsx`). (6) **Fade:** a new page fades in once, 160 ms, opacity only,
+  `--ease-out`, via WAAPI on the page wrapper; not on the first paint, not for search or Settings-section changes,
+  not on live refreshes, never under reduced motion. No View Transitions. (7) **Mock latency:** one 120 ms delay per
+  burst (requests starting within 16 ms resolve together, like one server); `?jitter=1` brings back the old
+  per-request 120–300 ms jitter, `?latency=<ms>` sets another delay (both kept for the tab; `?jitter=0`/`?latency=`
+  end them; `src/mocks/latency.ts`).
+- **Not done / kept:** the dock body is still keyed by scope (workspace ↔ ticket): each scope shows its own sessions;
+  with the xterm reveal the remount no longer moves anything. A ticket's right-hand dock still opens its session list
+  above the terminal in ticket scope (intended, so the terminal is shorter there). Artifacts (G3) keep their own
+  loading states; only their chunk is preloaded. The first-ever visit to a fitted frame still sizes it once (nothing
+  is known before its first report). `placeholderData` was not added to keys that change between tickets or
+  workspaces (it would show another ticket's or workspace's data); the Tickets list already keeps its rows on a filter
+  change.
+- **Why:** owner request 2026-10-10 ~17:05 ("some things load faster and slower, and then stuff jumps … make it feel
+  better when navigating through the app"). Before/after numbers in the G4 hand-back.
+- **Revert:** revert the G4 commits on `ux/g4` (router back to plain `lazyPage` without loaders/pending options, the
+  Shell's `<Suspense fallback={<PageSkeleton />}>`, per-request mock latency).

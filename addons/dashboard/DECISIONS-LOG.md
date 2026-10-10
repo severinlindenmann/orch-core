@@ -953,3 +953,8 @@ The owner answered the eight open questions of REVIEW.md. Items 1, 2, 5 and 6 ch
 - **Revert:** in `src/app/urls.ts` drop the ticket branch of `toPublicPath` and the ticket guard in the rewrite's input;
   in `workspace.tsx` restore the old redirect effect (a ticket address loses its `/w/X`); restore the tests in
   `urls.test.tsx` and the HANDOVER routes row.
+## 2026-10-10 U4: dashboard developer guide
+
+- **Decision:** make `AGENTS.md` the shared app guide, with `CLAUDE.md` pointing to it. Document the signing boundary, host enforcement, addon workflow, G4 loading and 13" layout checks; correct README setup, latency and browser-history routing. Describe `view()` as serializable state containing declarative UI nodes, matching the registry. Mark factory full-run and repos proposals as absent in this checkout instead of linking nonexistent files.
+- **Why:** a new agent session needs current, source-checked instructions without prior conversation context; the README still described the retired sandbox routing and relative build base.
+- **Revert:** remove the two guide files and revert this documentation change; runtime behavior is unchanged.

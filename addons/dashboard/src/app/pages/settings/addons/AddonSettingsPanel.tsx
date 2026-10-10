@@ -19,10 +19,13 @@ export const addonsHeadingAttr = 'data-addons-heading'
 // The route change remounts the Addons list, so the row's Settings button is a new element: which addon's button
 // should take focus there is remembered here (set by whoever navigates, taken once by the row that mounts).
 let focusSettingsOf: string | null = null
+/** Each request is its own: an older request's lapse never clears a newer one for the same addon. */
+let focusRequest = 0
 export const requestSettingsFocus = (name: string | null) => {
   focusSettingsOf = name
+  const mine = ++focusRequest
   // A request that no row takes soon (the list was not drawn again) lapses, so it cannot steal focus on a later visit.
-  if (name) setTimeout(() => focusSettingsOf === name && (focusSettingsOf = null), 2000)
+  if (name) setTimeout(() => focusRequest === mine && (focusSettingsOf = null), 2000)
 }
 export function takeSettingsFocus(name: string): boolean {
   if (focusSettingsOf !== name) return false

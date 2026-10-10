@@ -79,9 +79,9 @@ export const decisionToast = (title: string, addon: string, option: string, mess
   ...(message ? { description: `Addon says: ${message}` } : {}),
 })
 
-/** Has the live decision moved away from the one a prompt was opened on (id, terms or options)? */
+/** Has the live decision moved away from the one a prompt was opened on (addon, id, terms or options)? */
 export const decisionChanged = (opened: AddonDecision, live: AddonDecision | undefined) =>
-  !live || live.id !== opened.id || JSON.stringify(live.terms ?? null) !== JSON.stringify(opened.terms ?? null) || JSON.stringify(live.options) !== JSON.stringify(opened.options)
+  !live || live.addon !== opened.addon || live.id !== opened.id || JSON.stringify(live.terms ?? null) !== JSON.stringify(opened.terms ?? null) || JSON.stringify(live.options) !== JSON.stringify(opened.options)
 
 /** The body core posts for a decision after its prompt: the decision's own id, ticket and terms, the option key, `confirmed`. */
 export const decisionBody = (d: AddonDecision, option: string) => ({ id: d.id, option, ...(d.ticket ? { ticket: d.ticket } : {}), ...(d.terms ? { terms: { ...d.terms } } : {}), confirmed: true })

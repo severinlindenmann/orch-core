@@ -2,76 +2,194 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.orch.dev/v2/checkpoint",
   "title": "Checkpoint",
-  "description": "Section 5: WSK-signed ticket checkpoint {uid, seq, head} or workspace checkpoint over all ticket heads.",
-  "oneOf": [
-    {
+  "description": "Format doc section 5.10: a protocol section 2.4 signed object {o, sig}; kind ticket_checkpoint or workspace_checkpoint.",
+  "type": "object",
+  "required": [
+    "o",
+    "sig"
+  ],
+  "properties": {
+    "o": {
       "type": "object",
-      "properties": {
-        "v": {
-          "const": 2
-        },
-        "uid": {
-          "$ref": "https://schemas.orch.dev/v2/common#/$defs/ulid"
-        },
-        "seq": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "head": {
-          "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
-        },
-        "host_sig": {
-          "$ref": "https://schemas.orch.dev/v2/common#/$defs/sig"
-        }
-      },
-      "additionalProperties": false,
       "required": [
-        "v",
-        "uid",
-        "seq",
-        "head",
-        "host_sig"
-      ]
-    },
-    {
-      "type": "object",
+        "kind"
+      ],
       "properties": {
-        "v": {
-          "const": 2
+        "kind": {
+          "enum": [
+            "ticket_checkpoint",
+            "workspace_checkpoint"
+          ]
+        }
+      }
+    },
+    "sig": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/sig"
+    }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "o": {
+            "properties": {
+              "kind": {
+                "const": "ticket_checkpoint"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          }
         },
-        "heads": {
-          "type": "object",
-          "propertyNames": {
-            "$ref": "https://schemas.orch.dev/v2/common#/$defs/ulid"
-          },
-          "additionalProperties": {
+        "required": [
+          "o"
+        ]
+      },
+      "then": {
+        "properties": {
+          "o": {
             "type": "object",
             "properties": {
+              "v": {
+                "const": 2
+              },
+              "suite": {
+                "const": 2
+              },
+              "kind": {
+                "const": "ticket_checkpoint"
+              },
+              "workspace_id": {
+                "$ref": "https://schemas.orch.dev/v2/common#/$defs/hex32"
+              },
+              "uid": {
+                "$ref": "https://schemas.orch.dev/v2/common#/$defs/ulid"
+              },
               "seq": {
-                "type": "integer",
-                "minimum": 1
+                "$ref": "https://schemas.orch.dev/v2/common#/$defs/posInt"
               },
               "head": {
                 "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+              },
+              "at": {
+                "$ref": "https://schemas.orch.dev/v2/common#/$defs/timestamp"
               }
             },
             "additionalProperties": false,
             "required": [
+              "v",
+              "suite",
+              "kind",
+              "workspace_id",
+              "uid",
               "seq",
-              "head"
+              "head",
+              "at"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "o": {
+            "properties": {
+              "kind": {
+                "const": "workspace_checkpoint"
+              }
+            },
+            "required": [
+              "kind"
             ]
           }
         },
-        "host_sig": {
-          "$ref": "https://schemas.orch.dev/v2/common#/$defs/sig"
-        }
+        "required": [
+          "o"
+        ]
       },
-      "additionalProperties": false,
-      "required": [
-        "v",
-        "heads",
-        "host_sig"
-      ]
+      "then": {
+        "properties": {
+          "o": {
+            "type": "object",
+            "properties": {
+              "v": {
+                "const": 2
+              },
+              "suite": {
+                "const": 2
+              },
+              "kind": {
+                "const": "workspace_checkpoint"
+              },
+              "workspace_id": {
+                "$ref": "https://schemas.orch.dev/v2/common#/$defs/hex32"
+              },
+              "genesis": {
+                "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+              },
+              "n": {
+                "$ref": "https://schemas.orch.dev/v2/common#/$defs/posInt"
+              },
+              "at": {
+                "$ref": "https://schemas.orch.dev/v2/common#/$defs/timestamp"
+              },
+              "workspace_log": {
+                "type": "object",
+                "properties": {
+                  "seq": {
+                    "$ref": "https://schemas.orch.dev/v2/common#/$defs/posInt"
+                  },
+                  "head": {
+                    "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "seq",
+                  "head"
+                ]
+              },
+              "tickets": {
+                "type": "object",
+                "propertyNames": {
+                  "$ref": "https://schemas.orch.dev/v2/common#/$defs/ulid"
+                },
+                "additionalProperties": {
+                  "type": "object",
+                  "properties": {
+                    "seq": {
+                      "$ref": "https://schemas.orch.dev/v2/common#/$defs/posInt"
+                    },
+                    "head": {
+                      "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "seq",
+                    "head"
+                  ]
+                }
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "v",
+              "suite",
+              "kind",
+              "workspace_id",
+              "genesis",
+              "n",
+              "at",
+              "workspace_log",
+              "tickets"
+            ]
+          }
+        }
+      }
     }
   ]
 }

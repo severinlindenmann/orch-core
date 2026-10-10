@@ -8,9 +8,9 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any
 
+from . import visibility
 from .codes import OK, Ok, Refusal
 from .engine import Ctx, apply_event
-from . import visibility
 from .types import Core, ts
 from .verifier import Verifier
 from .views import TicketView, WorkspaceView, ticket_view, workspace_view

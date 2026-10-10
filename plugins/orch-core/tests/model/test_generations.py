@@ -1,3 +1,4 @@
+# ruff: noqa: E731
 """§5.7 raise table, row by row: which gates an event raises, at most +1 each, in every status."""
 
 import pytest
@@ -152,7 +153,7 @@ def test_artifacts_raise_verify_and_requirements_only_when_referenced(env):
 
 def test_task_events(env):
     w, uid, a = env
-    t = lambda typ, **kw: w.tev(uid, typ, a, task="T1", **kw)  # noqa: E731
+    t = lambda typ, **kw: w.tev(uid, typ, a, task="T1", **kw)
     assert delta(w, uid, lambda: t("task.started"))[0] == ()
     assert delta(w, uid, lambda: t("task.blocked", reason="x"))[0] == ()
     assert delta(w, uid, lambda: t("task.skipped", reason="x"))[0] == FROM_VERIFY
@@ -205,7 +206,7 @@ def test_addon_events_raise_gates_their_binds_name(env):
         "addon.granted",
         "sev",
         name="estimate",
-        version="1.0.0",  # noqa: E731
+        version="1.0.0",
         package_sha256=digest("pkg"),
         capabilities=[],
         binds=binds,

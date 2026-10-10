@@ -1,3 +1,4 @@
+# ruff: noqa: E731
 """§5.2, §5.3, §5.11: who may append what, and what an agent may do on behalf of whom."""
 
 from datetime import timedelta
@@ -110,12 +111,12 @@ def test_d60_grant_terms(w):
         "workspace",
         "grant.issued",
         who,
-        grant="gr_01J9ZK0000000000000000AAAA",  # noqa: E731
+        grant="gr_01J9ZK0000000000000000AAAA",
         secret_hash="sha256:" + "1" * 64,
         **kw,
     )
     now = w.at()
-    from datetime import datetime, UTC
+    from datetime import UTC, datetime
 
     base = datetime.strptime(now, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
 

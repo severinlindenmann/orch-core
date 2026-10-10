@@ -5,7 +5,7 @@ import { activeGrantOf } from '@/api/grants'
 import { can, canRevokeGrant, roleOf } from '@/api/permissions'
 import type { GrantInfo } from '@/api/types'
 import { Button } from '@/components/ui/button'
-import { Skeleton } from '@/components/ui/skeleton'
+import { AgentsSkeleton } from '../skeletons'
 import { useWorkspace } from '../../workspace'
 import { usePageHeader } from '../../shell/ShellUi'
 import { Section } from '../ticket/shared'
@@ -31,13 +31,7 @@ export function AgentsPage() {
   const sign = useSignGrant(ws ?? '')
 
   if (!ws || !me.data || !today.data || !sessions.data || !grants.data || !activity.data) {
-    return (
-      <div className="space-y-4" aria-busy="true">
-        <h1 className="text-xl font-semibold tracking-tight">Agents</h1>
-        <Skeleton className="h-5 w-96" />
-        <Skeleton className="h-40 w-full max-w-4xl" />
-      </div>
-    )
+    return <AgentsSkeleton inPage />
   }
 
   const now = today.data.now

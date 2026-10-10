@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { api } from '@/api/client'
 import { can, roleOf } from '@/api/permissions'
-import { Skeleton } from '@/components/ui/skeleton'
+import { SettingsSkeleton } from '../skeletons'
 import { cn } from '@/lib/utils'
 import { useWorkspace } from '../../workspace'
 import { usePageHeader } from '../../shell/ShellUi'
@@ -28,12 +28,7 @@ export function SettingsPage({ tab, addon }: { tab?: string; addon?: string }) {
   const me = useQuery({ queryKey: ['me'], queryFn: api.getMe })
 
   if (!workspace || !me.data) {
-    return (
-      <div className="space-y-4" aria-busy="true">
-        <h1 className="text-xl font-semibold tracking-tight">Settings</h1>
-        <Skeleton className="h-40 w-full max-w-3xl" />
-      </div>
-    )
+    return <SettingsSkeleton inPage />
   }
   const isOwner = can(roleOf(workspace, me.data.person), 'settings')
   // An addon's own settings page belongs to Addons: that stays the marked section.

@@ -22,6 +22,7 @@ import { useTicketsGroup } from './group'
 import { Filters } from './Filters'
 import { SavedViews } from './SavedViews'
 import { useElementWidth } from '@/lib/useElementWidth'
+import { TicketRowsSkeleton } from '../skeletons'
 import { TICKETS_FOLD_BELOW, TicketsTable, type AddonColumn } from './TicketsTable'
 import { hasFilters, type SortKey, type TicketsSearch } from './search'
 import { toastApiError } from '@/app/toast'
@@ -314,7 +315,7 @@ export function TicketsPage() {
       {meQ.isError ? (
         <LoadFailed what="tickets" onRetry={() => void meQ.refetch()} />
       ) : isPending || !me ? (
-        <p className="text-[13px] text-text-faint">Loading tickets…</p>
+        <TicketRowsSkeleton />
       ) : shown.length === 0 ? (
         <div className="rounded-lg border border-border bg-surface p-8 text-center" role="status">
           <p className="text-[13px] text-text">No tickets match.</p>

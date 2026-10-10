@@ -90,12 +90,46 @@ export function settleFit(s: FitState, max: number, now: number): FitState {
   return { ...s, fit: s.held, held: null, frozen: false, probing: true, shrankAt: now, shrankBy: cur - s.held, streak: 0, before: cur }
 }
 
+/**
+ * The last height each fitted document settled at (G4), per frame document, for this page load. A frame opens at its
+ * remembered height instead of `node.height`, so on a second visit nothing below it moves when its size report
+ * arrives. Bounded; the oldest entries go first.
+ */
+const fitMemory = new Map<string, number>()
+const FIT_MEMORY_MAX = 200
+/** A short key for a document (FNV-1a over its text, plus its length). */
+export function fitKey(srcDoc: string): string {
+  let h = 0x811c9dc5
+  for (let i = 0; i < srcDoc.length; i++) h = Math.imul(h ^ srcDoc.charCodeAt(i), 0x01000193)
+  return `${srcDoc.length}:${(h >>> 0).toString(36)}`
+}
+export function rememberedFit(srcDoc: string): number | undefined {
+  return fitMemory.get(fitKey(srcDoc))
+}
+function rememberFit(srcDoc: string, height: number) {
+  const k = fitKey(srcDoc)
+  fitMemory.delete(k)
+  fitMemory.set(k, height)
+  if (fitMemory.size > FIT_MEMORY_MAX) fitMemory.delete(fitMemory.keys().next().value!)
+}
+/** Tests only. */
+export function forgetFits() {
+  fitMemory.clear()
+}
+
 /** The first load is the srcdoc itself; any later load means the frame navigated somewhere else. */
 function SandboxFrame({ node, srcDoc, fallback, fitContent }: { node: NodeOf<'frame'>; srcDoc: string; fallback: ReactNode; fitContent: boolean }) {
   const loads = useRef(0)
   const ref = useRef<HTMLIFrameElement>(null)
   const [navigated, setNavigated] = useState(false)
-  const [fit, setFit] = useState<FitState>(FIT_START)
+  // A document seen before starts at the height it settled at then (null: `node.height` until its first report).
+  const [fit, setFit] = useState<FitState>(() => {
+    const known = fitContent ? rememberedFit(srcDoc) : undefined
+    return known === undefined ? FIT_START : { ...FIT_START, fit: Math.min(node.height, known) }
+  })
+  useEffect(() => {
+    if (fitContent && fit.fit !== null) rememberFit(srcDoc, fit.fit)
+  }, [fitContent, srcDoc, fit.fit])
   // `fitContent`: the document is core's frame document, whose size reporter posts its content height. Only messages
   // from this frame's own window count, and only a number: the frame shrinks to it, never past `node.height`, and
   // never in a loop (stepFit).

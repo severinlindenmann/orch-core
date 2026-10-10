@@ -25,6 +25,7 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { noteRect } from '@/lib/motion'
 import { useElementWidth } from '@/lib/useElementWidth'
+import { BoardColumnsSkeleton } from '../skeletons'
 import { useWorkspace } from '@/app/workspace'
 import { usePageHeader } from '@/app/shell/ShellUi'
 import { useSlot } from '@/addon-ui'
@@ -357,7 +358,7 @@ export function BoardPage() {
       {meQ.isError ? (
         <LoadFailed what="the board" onRetry={() => void meQ.refetch()} />
       ) : isPending || !me ? (
-        <p className="text-[13px] text-text-faint">Loading board…</p>
+        <BoardColumnsSkeleton />
       ) : view === 'list' ? (
         <ListView tickets={filtered} people={people} onOpen={open} />
       ) : (

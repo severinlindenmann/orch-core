@@ -5,13 +5,13 @@ import { api } from '@/api/client'
 import { can } from '@/api/permissions'
 import type { AddonDecision, NeedsYouItem, TicketDocument } from '@/api/types'
 import { useAddons } from '@/addon-ui'
-import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import { useWorkspace } from '../../workspace'
 import { useRole } from '../../useRole'
 import { useAttention, type Attention } from '../../attention'
 import { SEEN_PREFIX, useTodayGeneration } from '../../todayRestart'
 import { usePageHeader } from '../../shell/ShellUi'
+import { TodaySkeleton } from '../skeletons'
 import { SignDialog } from '../ticket/SignDialog'
 import type { HumanAction } from '../ticket/shared'
 import { QueueGroup } from './groups'
@@ -102,13 +102,7 @@ export function TodayPage() {
   const readOnly = !can(role, 'ticket.act')
 
   if (!today.data || !agentsQ.data || !me.data || !decisionsQ.data || !role || dataset.isPending || stale || !attention.ready) {
-    return (
-      <div className="space-y-4" aria-busy="true">
-        <h1 className="text-xl font-semibold tracking-tight">Today</h1>
-        <Skeleton className="h-5 w-96" />
-        <Skeleton className="h-40 w-full max-w-3xl" />
-      </div>
-    )
+    return <TodaySkeleton inPage />
   }
   // A new workspace or person starts a new queue (its own accepted order and open row).
   return (

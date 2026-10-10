@@ -7,10 +7,21 @@ import type { ReactNode } from 'react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { usePageHeader } from '../shell/ShellUi'
 
-function Loading({ title, children, className }: { title: string; children: ReactNode; className?: string }) {
+/** As the router's pending component the skeleton sets the topbar title; inside a page (`inPage`) the page does. */
+function Title({ title }: { title: string }) {
   usePageHeader(title)
+  return null
+}
+
+/** Where a skeleton is shown: by the router while the page loads, or by the page itself while its data is missing. */
+interface Placement {
+  inPage?: boolean
+}
+
+function Loading({ title, children, className, inPage }: { title: string; children: ReactNode; className?: string } & Placement) {
   return (
     <div role="status" aria-label="Loading page" aria-busy="true" className={className}>
+      {!inPage && <Title title={title} />}
       {children}
     </div>
   )
@@ -37,7 +48,7 @@ function Panel({ rows, rowH = 'h-11' }: { rows: number; rowH?: string }) {
   )
 }
 
-export function TodaySkeleton({ wide = typeof window === 'undefined' || window.matchMedia?.('(min-width: 1280px)').matches !== false }: { wide?: boolean }) {
+export function TodaySkeleton({ wide = typeof window === 'undefined' || window.matchMedia?.('(min-width: 1280px)').matches !== false, inPage }: { wide?: boolean } & Placement) {
   const queue = (
     <div className="min-w-0 space-y-3">
       <Panel rows={3} />
@@ -45,7 +56,7 @@ export function TodaySkeleton({ wide = typeof window === 'undefined' || window.m
     </div>
   )
   return (
-    <Loading title="Today" className="space-y-5">
+    <Loading title="Today" className="space-y-5" inPage={inPage}>
       <div className="space-y-1">
         <H1>Today</H1>
         <Skeleton className="my-0.5 h-4 w-72" />
@@ -81,29 +92,44 @@ function Toolbar() {
   )
 }
 
-export function BoardSkeleton() {
+/** The board's columns while its tickets load (under the real toolbar, or the skeleton's). */
+export function BoardColumnsSkeleton() {
   return (
-    <Loading title="Board" className="flex min-h-0 flex-col gap-3">
+    <div role="status" aria-label="Loading tickets" className="flex min-w-0 items-start gap-2 overflow-hidden">
+      {[4, 3, 2, 3, 1].map((n, i) => (
+        <div key={i} className="w-[272px] shrink-0 space-y-2 rounded-lg bg-surface-2/50 p-2">
+          <Skeleton className="h-5 w-28" />
+          {Array.from({ length: n }, (_, j) => (
+            <Skeleton key={j} className="h-[88px] w-full" />
+          ))}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+export function BoardSkeleton({ inPage }: Placement = {}) {
+  return (
+    <Loading title="Board" className="flex min-h-0 flex-col gap-4" inPage={inPage}>
       <Toolbar />
-      <div className="flex min-w-0 items-start gap-2 overflow-hidden">
-        {[4, 3, 2, 3, 1].map((n, i) => (
-          <div key={i} className="w-[272px] shrink-0 space-y-2 rounded-lg bg-surface-2/50 p-2">
-            <Skeleton className="h-5 w-28" />
-            {Array.from({ length: n }, (_, j) => (
-              <Skeleton key={j} className="h-[88px] w-full" />
-            ))}
-          </div>
-        ))}
-      </div>
+      <BoardColumnsSkeleton />
     </Loading>
   )
 }
 
-export function TicketsSkeleton() {
+export function TicketsSkeleton({ inPage }: Placement = {}) {
   return (
-    <Loading title="Tickets" className="space-y-3">
+    <Loading title="Tickets" className="space-y-3" inPage={inPage}>
       <Toolbar />
-      <div className="overflow-hidden rounded-lg border border-border bg-surface">
+      <TicketRowsSkeleton />
+    </Loading>
+  )
+}
+
+/** The tickets table while its rows load (under the real filters, or the skeleton's). */
+export function TicketRowsSkeleton() {
+  return (
+    <div role="status" aria-label="Loading tickets" className="overflow-hidden rounded-lg border border-border bg-surface">
         <div className="border-b border-border px-3 py-2">
           <Skeleton className="h-4 w-1/3" />
         </div>
@@ -114,14 +140,13 @@ export function TicketsSkeleton() {
             <Skeleton className="h-3.5 w-24" />
           </div>
         ))}
-      </div>
-    </Loading>
+    </div>
   )
 }
 
-export function TicketSkeleton({ title }: { title: string }) {
+export function TicketSkeleton({ title, inPage }: { title: string } & Placement) {
   return (
-    <Loading title={title} className="mx-auto min-w-0 max-w-[1280px] space-y-4">
+    <Loading title={title} className="mx-auto min-w-0 max-w-[1280px] space-y-4" inPage={inPage}>
       <Skeleton className="h-4 w-40" />
       <Skeleton className="h-7 w-2/3" />
       <Skeleton className="h-6 w-1/2" />
@@ -139,9 +164,9 @@ export function TicketSkeleton({ title }: { title: string }) {
   )
 }
 
-export function AgentsSkeleton() {
+export function AgentsSkeleton({ inPage }: Placement = {}) {
   return (
-    <Loading title="Agents" className="max-w-[1040px] space-y-5">
+    <Loading title="Agents" className="max-w-[1040px] space-y-5" inPage={inPage}>
       <div>
         <H1>Agents</H1>
         <Skeleton className="mt-1 h-4 w-80" />
@@ -152,9 +177,9 @@ export function AgentsSkeleton() {
   )
 }
 
-export function SettingsSkeleton() {
+export function SettingsSkeleton({ inPage }: Placement = {}) {
   return (
-    <Loading title="Settings" className="flex max-w-5xl flex-col gap-4 @[60rem]/page:flex-row @[60rem]/page:gap-8">
+    <Loading title="Settings" className="flex max-w-5xl flex-col gap-4 @[60rem]/page:flex-row @[60rem]/page:gap-8" inPage={inPage}>
       <div className="flex flex-wrap items-center gap-0.5 @[60rem]/page:block @[60rem]/page:w-48 @[60rem]/page:shrink-0 @[60rem]/page:space-y-0.5">
         <div className="mb-1 flex w-full items-center gap-1 @[60rem]/page:mb-2 @[60rem]/page:px-2.5">
           <H1>Settings</H1>
@@ -174,9 +199,9 @@ export function SettingsSkeleton() {
   )
 }
 
-export function AddonPageSkeleton({ title = '' }: { title?: string }) {
+export function AddonPageSkeleton({ title = '', inPage }: { title?: string } & Placement) {
   return (
-    <Loading title={title} className="w-full space-y-4">
+    <Loading title={title} className="w-full space-y-4" inPage={inPage}>
       <div className="flex h-[41px] items-center gap-2 border-b border-border pb-3">
         <Skeleton className="size-5" />
         <Skeleton className="h-6 w-48" />

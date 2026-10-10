@@ -7,7 +7,7 @@ import { AddonBadge } from '@/addon-ui/AddonBadge'
 import { PreviewChip } from '@/addon-ui/PreviewChip'
 import { AddonContributionView } from '@/addon-ui/AddonSlot'
 import { useAddons, useAddonStateEntries, selectContributions } from '@/addon-ui/slots'
-import { Skeleton } from '@/components/ui/skeleton'
+import { AddonPageSkeleton } from './skeletons'
 import { useWorkspace } from '../workspace'
 import { useRole } from '../useRole'
 import { usePageHeader } from '../shell/ShellUi'
@@ -24,7 +24,7 @@ export function AddonPage({ name, page }: { name: string; page: string }) {
   const c = selectContributions(addons ?? [], 'nav', { workspace, addon }, state?.waiting).find((x) => x.addon === name && x.id === page)
   usePageHeader(c ? c.title : name)
 
-  if (isLoading || !workspace) return <Skeleton className="h-40 w-full" />
+  if (isLoading || !workspace) return <AddonPageSkeleton inPage />
   if (!addonActive(workspace, name)) {
     const title = addons?.find((x) => x.name === name)?.title ?? name
     const isOwner = can(role, 'addon.manage')

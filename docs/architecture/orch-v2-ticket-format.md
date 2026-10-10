@@ -434,8 +434,8 @@ Workspace views, agent starts, relay links, epochs and terminal events are defin
   of the last event. An empty log has no head.
 - **Merged order.** `ws_seq` is non-decreasing along a ticket log and at most the workspace log's last `seq`;
   otherwise the line fails like a bad `host_sig`. The merged order of all logs is by `ws_seq`, the workspace log
-  first, then ticket events by `seq`: an event with `ws_seq = k` is evaluated against the workspace state after
-  workspace event `k`. The host holds the workspace-log lock (shared) while it appends a ticket event. `ws_seq` and
+  first, then ticket events ordered by `(at, uid, seq)` (§5.11): an event with `ws_seq = k` is evaluated against the
+  workspace state after workspace event `k`. The host holds the workspace-log lock (shared) while it appends a ticket event. `ws_seq` and
   `at` are chosen by the host and not signed by the person (§12 N4).
 - **Reading** a log: strictly parse each line, check that it is `cj`, check the field set, `seq`, `prev`, `ws_seq`
   and `host_sig`, then `sig` against the device certificate, then replay authorization (§5.11). A line that fails

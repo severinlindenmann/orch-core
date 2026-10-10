@@ -17,8 +17,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     event: dict[str, Any] = {"type": "ticket.closed", "resolution": resolution}
     if args.get("duplicate_of"):
         dup = h.store.normalise_ref(args["duplicate_of"])
-        if h.store.ticket(dup) is None:  # loaded now: the model judges the reference against its place in the order
-            raise OrchError("not_found", f"no ticket {dup}")
+        h.ticket(dup)  # loaded for the model; one not_found for "no such ticket" and "you may not see it" alike
         event["duplicate_of"] = dup
     text = h.text(args, what="the reason")
     if text is not None:

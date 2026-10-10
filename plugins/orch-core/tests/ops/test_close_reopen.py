@@ -62,3 +62,60 @@ def test_a_member_who_neither_owns_nor_maintains_may_not_close(hws, agent, me):
     r = me("close", key, "--json")
     assert r.code == 3 and r.err_code == "role.denied"
     assert hws.provider.requests == [] and hws.view("1").status != "closed"
+
+
+def restricted(hws, agent, ref="1"):
+    """Restrict ticket ``ref`` to the owner (a person event, as the owner signs it)."""
+    uid = hws.uid(ref)
+    hws.sign(ref, "visibility.changed", visibility={"restricted": [hws.owner.ref]})
+    return uid
+
+
+def test_an_invisible_ticket_gives_the_same_answer_as_an_unknown_one(hws, agent, me):
+    key = make_ticket(agent, "Secret title")
+    restricted(hws, agent)
+    hws.act_as(hws.add_member("maya", "maintainer"))  # a maintainer who is not on the list
+    hws.provider.requests.clear()
+    outs = []
+    for op in ("close", "reopen"):
+        hidden = me(op, key, "--json")
+        unknown = me(op, "DEMO-0099", "--json")
+        h, u = hidden.doc, unknown.doc
+        assert hidden.code == unknown.code == 2 and h["error"]["code"] == "not_found"
+        assert h["error"]["message"].replace(key, "X") == u["error"]["message"].replace("DEMO-0099", "X")
+        assert h["error"]["hint"] == u["error"]["hint"]
+        assert "Secret title" not in hidden.out + hidden.err
+        outs.append(hidden)
+    assert hws.provider.requests == [] and hws.view("1").status != "closed"
+
+
+def test_duplicate_of_an_invisible_ticket_is_the_same_as_an_unknown_one(hws, agent, me):
+    a = make_ticket(agent, "Visible one")
+    agent("release")
+    b = agent("new", "Hidden target", "-m", "x").first.split()[1]
+    hws.sign("2", "visibility.changed", visibility={"restricted": [hws.owner.ref]})
+    hws.act_as(hws.add_member("maya", "maintainer"))
+    hws.provider.requests.clear()
+    hidden = me("close", a, "--resolution", "duplicate", "--duplicate-of", b, "--json")
+    unknown = me("close", a, "--resolution", "duplicate", "--duplicate-of", "DEMO-0099", "--json")
+    assert hidden.code == unknown.code == 2 and hidden.err_code == "not_found"
+    assert hidden.doc["error"]["message"].replace(b, "X") == unknown.doc["error"]["message"].replace("DEMO-0099", "X")
+    assert "Hidden target" not in hidden.out and hws.provider.requests == []
+
+
+def test_a_viewer_and_a_member_may_not_close_or_reopen_a_visible_ticket(hws, agent, me):
+    key = make_ticket(agent)
+    for role in ("viewer", "member"):
+        hws.act_as(hws.add_member(f"u-{role}", role))
+        hws.provider.requests.clear()
+        for op in ("close", "reopen"):
+            r = me(op, key, "--json")
+            assert r.code == 3 and r.err_code in ("role.denied", "transition.refused"), (role, op, r.out)
+        assert hws.provider.requests == []
+    assert hws.view("1").status != "closed"
+
+
+def test_an_agent_never_closes(hws, agent):
+    key = make_ticket(agent)
+    for op in ("close", "reopen"):
+        assert agent(op, key, "--json").err_code == "human_only"

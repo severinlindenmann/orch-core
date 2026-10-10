@@ -598,7 +598,14 @@ in `links.branches` before `submit`.
   `ssh://`/scp-like forms map to `https://host[:port]/path`, keeping every port except 443 (https) and 22 (ssh),
   userinfo (`user:token@`) always removed, host lower-case and nothing else changed, one trailing `.git` and `/`
   removed. Anything else (no remote, `file://`,
-  a path) is `local:<repo name>`. A prompt is refused when two linked repos share an identity.
+  a path) is `local:<repo name>`. The result must match the canonical form exactly, and anything that doesn't is
+  **refused, never converted**: host labels `[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?` joined by single dots (at most 253
+  characters, no trailing dot; punycode `xn--` allowed; Unicode hosts and IPv6 refused; an all-numeric last label only
+  as a plain dotted quad without leading zeros); port `[1-9][0-9]{0,4}` up to 65535, never 443; path segments
+  `[A-Za-z0-9._~-]+` joined by single slashes, no empty, `.` or `..` segment, no trailing slash, no `.git` suffix in
+  any case; ASCII only, no `%`, `?`, `#`, `@` or whitespace. A prompt is refused when two linked repos share an
+  identity, compared **ignoring ASCII case** (hosts like GitHub treat `Acme/X` and `acme/x` as one repo); the hashed
+  value keeps the raw form.
 - **P1 limit:** the identity is read from a working copy the agent can write, so it protects against mistakes and
   aliasing, not against the agent.
 

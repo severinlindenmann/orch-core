@@ -24,14 +24,17 @@ type HistoryMove = 'PUSH' | 'REPLACE' | 'BACK' | 'FORWARD' | 'GO'
 /** Resets or restores `#main`'s scroll when the page changes (see the top of this file). */
 export function usePageScroll(main: RefObject<HTMLElement | null>) {
   const router = useRouter()
-  const path = useShownPath()
+  // The location the page on screen was loaded for (its path and its history entry), not the one being loaded.
+  const shownLoc = useRouterState({
+    select: (s) => {
+      const l = s.resolvedLocation ?? s.location
+      const st = l.state as { __TSR_key?: string; key?: string } | undefined
+      return `${l.pathname}\n${st?.__TSR_key ?? st?.key ?? l.href}`
+    },
+  })
   const saved = useRef(new Map<string, number>())
   const lastMove = useRef<HistoryMove>('PUSH')
   const shown = useRef<{ path: string; entry: string } | null>(null)
-  const entryKey = () => {
-    const st = router.history.location.state as { __TSR_key?: string; key?: string } | undefined
-    return st?.__TSR_key ?? st?.key ?? ''
-  }
 
   useEffect(() => router.history.subscribe(({ action }) => void (lastMove.current = action.type as HistoryMove)), [router])
 
@@ -47,15 +50,19 @@ export function usePageScroll(main: RefObject<HTMLElement | null>) {
   }, [main])
 
   useLayoutEffect(() => {
+    const [path, entry] = shownLoc.split('\n')
     const el = main.current
-    const entry = entryKey()
     const prev = shown.current
     shown.current = { path, entry }
-    if (!el || !prev || prev.path === path) return
+    if (!el || !prev || prev.entry === entry) return
+    // The same page with another search (a filter, a tab): the new entry keeps the scroll.
+    if (prev.path === path) {
+      saved.current.set(entry, el.scrollTop)
+      return
+    }
     const back = lastMove.current === 'BACK' || lastMove.current === 'FORWARD' || lastMove.current === 'GO'
     el.scrollTop = back ? (saved.current.get(entry) ?? 0) : 0
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [path])
+  }, [shownLoc, main])
 }
 
 /** Wraps the page: fades it in when another page is shown (see the top of this file). */

@@ -30,3 +30,8 @@ HTMLCanvasElement.prototype.getContext = (() => null) as typeof HTMLCanvasElemen
 
 // jsdom logs "not implemented" for scrollTo; the app calls it on navigation.
 window.scrollTo = (() => {}) as typeof window.scrollTo
+
+// Fitted frames remember their last height for the page load (G4): each test starts without that memory.
+import { afterEach } from 'vitest'
+import { forgetFits } from '@/addon-ui/FrameNode'
+afterEach(() => forgetFits())

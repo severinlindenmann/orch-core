@@ -189,9 +189,9 @@ describe('factory full runs', () => {
     const card = await screen.findByTestId('card-addon:factory.hold:R-2', {}, T)
     expect(card).toHaveTextContent(/Delivering in 28 min: Publish campaign to the newsletter list/)
   })
-  it('Skip the wait (demo) delivers: "Delivered: <destination> at <time>"', async () => {
+  it('Simulate: let the hold time pass (demo) delivers: "Delivered: <destination> at <time>"', async () => {
     const { user } = renderApp('/addon/factory/factory', { viewer: 'p_sev', setup: holding })
-    await user.click(await screen.findByRole('button', { name: 'Skip the wait (demo)' }, T))
+    await user.click(await screen.findByRole('button', { name: 'Simulate: let the hold time pass (demo)' }, T))
     await waitFor(() => expect(screen.queryByTestId('delivery-hold-banner')).not.toBeInTheDocument(), T)
     await user.click(await screen.findByRole('tab', { name: /^Full runs/ }, T))
     expect(await screen.findByText(/^Delivered: Publish campaign to the newsletter list at /, {}, T)).toBeInTheDocument()

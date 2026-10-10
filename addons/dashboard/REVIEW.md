@@ -266,9 +266,9 @@ Owner decision 10 Oct evening (D61 option): one signed request, the factory goes
 - [ ] **Stop the delivery** — Stop… in the shell line (or Stop delivery on the page): core's prompt names the run, the destination and the end of the window; Send answer. "Stopped by Severin …: nothing went out." Page: `/addon/factory/factory`.
 - [ ] **Request a full run** — Full runs tab: Goal, "How far may the factory go on its own?" → All the way to Deliver, What Deliver means (required), Hold window → Review request → Sign and start (or Fill in a demo request). The prompt lists every value in core lines. Page: `/addon/factory/factory`.
 - [ ] **Watch the steps** — Plan, then Requirements / Build and test / Validate / Evidence per child, then Preview: each reads "via the factory full run you signed on … — no person reviewed this step". About 30 s later it holds before Deliver. Page: `/addon/factory/factory`.
-- [ ] **Delivered** — Skip the wait (demo) ends the hold now: "Delivered: Deploy to production at …". The epic's History has the run's milestones. Page: `/addon/factory/factory`.
+- [ ] **Delivered** — Simulate: let the hold time pass (demo) ends the hold now: "Delivered: Deploy to production at …". The epic's History has the run's milestones. Page: `/addon/factory/factory`.
 
-In the normal demo, install AI Factory (Settings → Addons → Browse addons), then Full runs → Fill in a demo request → Sign and start: it reaches the hold in about 30 s. The mock clock runs in real time, so a 30-minute hold really takes 30 minutes; Skip the wait (demo) ends it now. Proposal: `docs/factory-full-run-proposal.md`.
+In the normal demo, install AI Factory (Settings → Addons → Browse addons), then Full runs → Fill in a demo request → Sign and start: it reaches the hold in about 30 s. The mock clock runs in real time, so a 30-minute hold really takes 30 minutes; Simulate: let the hold time pass (demo) ends it now. Proposal: `docs/factory-full-run-proposal.md`.
 
 ## What is simulated
 

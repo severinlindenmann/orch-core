@@ -326,7 +326,7 @@ export function runsView(c: Ctx, state: Record<string, unknown>, opts: { epic: s
       ? holding.flatMap((r) => [
           { type: 'markdown', text: `**Full run ${r.id} · ${r.goal}: on hold before Deliver**` },
           { type: 'decision', id: `factory.hold:${r.id}` },
-          { type: 'button', label: 'Skip the wait (demo)', action: 'skip_hold', variant: 'ghost', args: { run: r.id } },
+          ...(opts.isOwner ? [{ type: 'button', label: 'Simulate: let the hold time pass (demo)', action: 'simulate_time', variant: 'ghost', args: { run: r.id } }] : []),
         ])
       : holding.map((r) => ({ type: 'alert', tone: 'info', title: `Delivering in ${minutesLeft(r, now)} min · ${r.deliverMeans}`, text: 'An owner or maintainer can stop it until then.' }))
   return {
@@ -398,6 +398,9 @@ export function seedRuns(store: MockStore, by: string): { runs: Run[]; runSeq: n
     ],
   }
 }
+
+/** The mock's demo datasets: the only place the hold simulator (`simulate_time`) answers. */
+export const DEMO_DATASETS = ['normal', 'busy'] as const
 
 export const DEMO_REQUEST: RunDraft = { goal: 'Release monthly billing v2', goes_up_to: 'Deliver', deliver_means: 'Deploy to production', hold_minutes: DEFAULT_HOLD }
 

@@ -965,7 +965,9 @@ The owner answered the eight open questions of REVIEW.md. Items 1, 2, 5 and 6 ch
   the proposal; the run's children are steps in the addon state, not tickets, and its milestones are events on the
   factory epic (a real host would give a run its own epic); the hold is a core decision so Stop goes through core's
   one decision path (who decides, terms checked again, `addon.decided`); the mock clock runs in real time, so the demo
-  adds "Fill in a demo request" (prefills the form; it is still signed) and "Skip the wait (demo)"; a paused factory
+  adds "Fill in a demo request" (prefills the form; it is still signed) and a simulator control "Simulate: let the hold
+  time pass (demo)" (`simulate_time`, owner only, refused outside the demo datasets; coordinator security ruling: no
+  operation shortens a Deliver hold, it is not a host operation); a paused factory
   holds the delivery and gives the paused time back. Concept open points left for the owner: the code review gate
   under a mandate, the old "never" items not named either way (restore/purge treated as settings; first peer send,
   public publish, landing on `main` as delegable), a ceiling across renewals and a weekly acknowledgement.

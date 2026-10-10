@@ -276,8 +276,11 @@ factory addon's (`src/mocks/addons/factory-runs.ts`); the hold is meant to be **
   Preview. When `until` passes with no Stop the host delivers to exactly `deliver_means` (it refuses any other
   destination, `factory.deliver_mismatch`) and writes `factory.delivered`. While the factory is paused nothing is
   delivered and the paused time is added to `until`. Agents never hold the delivery credential: the host delivers.
-- **Demo only:** "Fill in a demo request" and "Skip the wait (demo)" (`demo_run`, `skip_hold`); the busy day seeds
-  run R-2 on hold (28 min left) and R-1 delivered.
+- **No operation shortens a Deliver hold.** During the hold the only human act is a signed Stop; there is no
+  "deliver now". The mock's "Simulate: let the hold time pass (demo)" is a simulator control of the demo data (owner
+  only, refused outside the demo datasets), not a host operation: a host implements nothing for it.
+- **Demo only:** "Fill in a demo request" (`demo_run`, prefills the form; still signed); the busy day seeds run R-2 on
+  hold (28 min left) and R-1 delivered.
 
 ## Sign dialogs and landing against D41 / D49 / D53
 

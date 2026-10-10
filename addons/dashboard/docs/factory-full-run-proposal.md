@@ -79,6 +79,8 @@ hold with Stop. A run that goes "Up to Preview" behaves like today's charter plu
 - The host executes Deliver itself; agents never hold the production, publishing or mail credential (concept-mandates
   §2.2).
 - Stop during the hold cancels; after `factory.delivered` there is nothing to stop.
+- **No operation shortens a hold.** There is no "deliver now": during the window the only human act is a signed Stop.
+  (The mockup's "Simulate: let the hold time pass (demo)" is a demo-data simulator control, not an operation.)
 - A paused or stopped factory holds every run where it is; the hold clock does not run while paused.
 
 ## Mandates (owner decision, 10 Oct evening)

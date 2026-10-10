@@ -3,9 +3,9 @@ import { atLeast } from '@/api/permissions'
 import type { AddonDecision } from '@/api/types'
 import type { MockStore } from '../store'
 import type { Rng } from '../busy/rng'
-import { canSeeTicket, conflict, notFound, registerAddon, withinCharterSize, type AddonCtx } from './registry'
+import { canSeeTicket, conflict, notFound, refusal, registerAddon, withinCharterSize, type AddonCtx } from './registry'
 import { fmtDateTime, fmtWhen } from '@/lib/time'
-import { checkRequest, DEMO_REQUEST, ensureChain, holdDecisions, runsOf, runsView, seedRuns, settleRuns, staleRunKeys, startRun, type RunDraft } from './factory-runs'
+import { checkRequest, DEMO_DATASETS, DEMO_REQUEST, ensureChain, holdDecisions, runsOf, runsView, seedRuns, settleRuns, staleRunKeys, startRun, type RunDraft } from './factory-runs'
 
 // factory (AI Factory, Phase 2 preview; v1 docs/factory.md): one factory epic, DEMO-0050 "Monthly billing v2".
 //  - The charter (25 children or 72 hours, children of size m or smaller) was signed when the epic started. The
@@ -499,14 +499,18 @@ registerAddon({
       store.append(state.epic as string, { type: 'factory.deliver_stopped', actor: ADDON, run: run.id })
       return { ok: true, message: `Stopped the delivery of ${run.id}. Nothing went out; the run stays at Preview.`, changed: true }
     },
-    // Demo only: the mock clock runs in real time, so this ends a hold window now (the delivery follows at once).
-    skip_hold({ state, store, body }) {
+    // A SIMULATOR control of the mock, not an operation: no host operation shortens a Deliver hold (the only human
+    // act during the hold is a signed Stop). The mock clock runs in real time, so the demo lets the simulated time of
+    // one hold pass. Owners only, and only on the demo datasets.
+    simulate_time({ state, store, body, viewer, ws }) {
+      if (store.roleIn(ws, viewer) !== 'owner') return refusal(403, 'forbidden', 'Only an owner can use the demo simulator.')
+      if (!(DEMO_DATASETS as readonly string[]).includes(store.dataset)) return conflict('factory.not_demo', 'This simulator control exists only in the demo data. Nothing shortens a hold.')
       const run = runsOf(state).find((r) => r.id === body.run)
       if (!run || run.stage !== 'holding') return conflict('factory.not_holding', 'That run is not on hold.')
       if (state.paused) return conflict('factory.paused', 'The factory is paused: the hold clock does not run.')
-      run.holdUntil = store.now()
+      run.holdUntil = store.now() // the simulated time of the hold has passed
       settleRuns(store, state, false)
-      return { ok: true, message: `Demo: the hold window of ${run.id} ended. Delivered: ${run.deliverMeans}.`, changed: true }
+      return { ok: true, message: `Simulated: the hold time of ${run.id} passed. Delivered: ${run.deliverMeans}.`, changed: true }
     },
 
     pause({ state, store, viewer, ws }) {

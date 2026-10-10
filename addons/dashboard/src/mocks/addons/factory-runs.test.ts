@@ -120,6 +120,23 @@ describe('factory full run: steps, hold, Stop, delivery', () => {
     // A late Stop finds nothing to stop.
     expect(s.run('hold', { id: 'factory.hold:R-1', option: 'stop', confirmed: true })).toMatchObject({ ok: false, code: 'decision.closed' })
   })
+  it('no operation shortens a hold: the demo simulator is owner-only and refused outside the demo data', () => {
+    const s = setup()
+    startDeliverRun(s)
+    toHold()
+    s.store.setViewer('p_mara')
+    expect(s.run('simulate_time', { run: 'R-1' })).toMatchObject({ ok: false, status: 403 })
+    expect(JSON.stringify(s.view().attentionNode)).not.toContain('simulate_time')
+    s.store.setViewer('p_sev')
+    const real = s.store.dataset
+    ;(s.store as { dataset: string }).dataset = 'host'
+    expect(s.run('simulate_time', { run: 'R-1' })).toMatchObject({ ok: false, status: 409, code: 'factory.not_demo' })
+    expect(s.runs()[0].stage).toBe('holding')
+    expect(s.events('factory.delivered')).toHaveLength(0)
+    ;(s.store as { dataset: string }).dataset = real
+    expect(s.run('simulate_time', { run: 'R-1' })).toMatchObject({ ok: true })
+    expect(s.events('factory.delivered')).toHaveLength(1)
+  })
   it('a paused factory holds: no delivery while paused, and the paused time is given back', () => {
     const s = setup()
     startDeliverRun(s)

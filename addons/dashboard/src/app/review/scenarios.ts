@@ -201,7 +201,7 @@ export const SCENARIOS: TourScenario[] = [
     { title: 'Stop the delivery', detail: 'Stop… in the shell line (or Stop delivery on the page): core\'s prompt names the run, the destination and the end of the window; Send answer. "Stopped by Severin …: nothing went out."', go: { path: '/addon/factory/factory' } },
     { title: 'Request a full run', detail: 'Full runs tab: Goal, "How far may the factory go on its own?" → All the way to Deliver, What Deliver means (required), Hold window → Review request → Sign and start (or Fill in a demo request). The prompt lists every value in core lines.', go: { path: '/addon/factory/factory' } },
     { title: 'Watch the steps', detail: 'Plan, then Requirements / Build and test / Validate / Evidence per child, then Preview: each reads "via the factory full run you signed on … — no person reviewed this step". About 30 s later it holds before Deliver.', go: { path: '/addon/factory/factory' } },
-    { title: 'Delivered', detail: 'Skip the wait (demo) ends the hold now: "Delivered: Deploy to production at …". The epic\'s History has the run\'s milestones.', go: { path: '/addon/factory/factory' } },
+    { title: 'Delivered', detail: 'Simulate: let the hold time pass (demo) ends the hold now: "Delivered: Deploy to production at …". The epic\'s History has the run\'s milestones.', go: { path: '/addon/factory/factory' } },
   ]),
 ]
 

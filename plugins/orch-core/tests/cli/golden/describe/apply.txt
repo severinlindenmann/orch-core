@@ -1,0 +1,18 @@
+ok describe apply
+Apply a batch of operations atomically, from JSON (--file -).
+usage: orch apply --file PATH [--dry-run]
+who: agent · emits: ticket.updated,log.added,task.started,task.done,task.skipped,task.blocked,task.reopened,artifact.added,artifact.replaced,question.asked
+pre: ticket_exists base_rev_tracked grant_valid text_clean
+args:
+  --file PATH  read the text from PATH, or - for stdin (required)
+  --dry-run  say what would happen, append nothing
+errors:
+  not_found (exit 2): orch list
+  grant.expired (exit 3): ask the person for a new grant | fix: orch status
+  grant.required (exit 3): ask the person to run orch grant, then set ORCH_GRANT | fix: orch status
+  transition.refused (exit 3): orch show --section current_state | fix: orch show
+  lock.busy (exit 4 retry): retry in a moment | fix: orch status
+  parse.json (exit 6): orch describe apply
+  conflict.field (exit 8 retry): orch show, then redo the edit | fix: orch show
+  conflict.section (exit 8 retry): orch show --section SECTION, then redo the edit | fix: orch show
+out: ok {key} apply {count} seq={seq} / next: {next}

@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "code": "not_found",
+    "message": "not found",
+    "hint": "orch list",
+    "fix": {
+      "argv": [
+        "orch",
+        "list"
+      ]
+    },
+    "retryable": false
+  }
+}

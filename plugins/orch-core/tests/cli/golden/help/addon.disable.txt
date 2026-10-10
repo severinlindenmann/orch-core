@@ -1,0 +1,5 @@
+Disable an addon; its data stays.
+usage: orch addon disable NAME [--dry-run]
+  NAME  addon name
+  --dry-run  say what would happen, append nothing
+more: orch describe addon.disable

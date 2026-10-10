@@ -1,0 +1,172 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "target": "section.set",
+    "name": "section.set",
+    "cli": "orch section set",
+    "summary": "Replace one section of the body with text from -m or --file.",
+    "who": "agent",
+    "usage": "orch section set SECTION [--ref REF] [--message TEXT] [--file PATH] [--dry-run]",
+    "pre": [
+      "ticket_exists",
+      "ticket_open_for_work",
+      "base_rev_tracked",
+      "grant_valid",
+      "text_clean"
+    ],
+    "emits": [
+      "ticket.updated"
+    ],
+    "input": {
+      "type": "object",
+      "description": "Replace one section of the body with text from -m or --file.",
+      "properties": {
+        "section": {
+          "type": "string",
+          "enum": [
+            "summary",
+            "context",
+            "requirements",
+            "out_of_scope",
+            "plan",
+            "decisions",
+            "verification",
+            "findings",
+            "current_state"
+          ],
+          "description": "section id",
+          "x-metavar": "SECTION"
+        },
+        "ref": {
+          "type": "string",
+          "description": "ticket REF (flag); default: your claim",
+          "pattern": "^(?:(?:[A-Z][A-Z0-9]{0,15}-)?[0-9]+(?:/T[1-9][0-9]*)?|T[1-9][0-9]*)$",
+          "x-metavar": "REF"
+        },
+        "message": {
+          "type": "string",
+          "description": "free text",
+          "x-short": "m",
+          "x-metavar": "TEXT"
+        },
+        "file": {
+          "type": "string",
+          "description": "read the text from PATH, or - for stdin",
+          "x-metavar": "PATH"
+        }
+      },
+      "x-positional": [
+        "section"
+      ],
+      "required": [
+        "section"
+      ],
+      "oneOf": [
+        {
+          "required": [
+            "message"
+          ]
+        },
+        {
+          "required": [
+            "file"
+          ]
+        }
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "text": "ok {key} ticket.updated {section} seq={seq}\nnext: {next}",
+      "json": {
+        "type": "object",
+        "properties": {
+          "section": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "section"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "errors": [
+      {
+        "code": "not_found",
+        "exit": 2,
+        "retryable": false,
+        "hint": "orch list",
+        "fix": [
+          "orch",
+          "list"
+        ]
+      },
+      {
+        "code": "grant.expired",
+        "exit": 3,
+        "retryable": false,
+        "hint": "ask the person for a new grant",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
+        "code": "grant.required",
+        "exit": 3,
+        "retryable": false,
+        "hint": "ask the person to run orch grant, then set ORCH_GRANT",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
+        "code": "transition.refused",
+        "exit": 3,
+        "retryable": false,
+        "hint": "orch show --section current_state",
+        "fix": [
+          "orch",
+          "show"
+        ]
+      },
+      {
+        "code": "lock.busy",
+        "exit": 4,
+        "retryable": true,
+        "hint": "retry in a moment",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
+        "code": "parse.text",
+        "exit": 6,
+        "retryable": false,
+        "hint": "orch describe section.set",
+        "fix": [
+          "orch",
+          "describe",
+          "section.set"
+        ]
+      },
+      {
+        "code": "conflict.section",
+        "exit": 8,
+        "retryable": true,
+        "hint": "orch show --section SECTION, then redo the edit",
+        "fix": [
+          "orch",
+          "show"
+        ]
+      }
+    ]
+  },
+  "key": null,
+  "seq": 0,
+  "cursor": 0,
+  "hints": []
+}

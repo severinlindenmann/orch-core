@@ -1,0 +1,379 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "target": "all",
+    "commands": [
+      {
+        "name": "status",
+        "cli": "status",
+        "group": "Context",
+        "who": "read",
+        "summary": "Who you are, your grant, your cursor, your claim and what needs you."
+      },
+      {
+        "name": "describe",
+        "cli": "describe",
+        "group": "Context",
+        "who": "read",
+        "summary": "The full contract of one command (or the list of commands), generated from the registry."
+      },
+      {
+        "name": "help",
+        "cli": "help",
+        "group": "Context",
+        "who": "read",
+        "summary": "How to do one kind of work (a workflow), generated from the registry; no argument lists them."
+      },
+      {
+        "name": "show",
+        "cli": "show",
+        "group": "Read",
+        "who": "read",
+        "summary": "Read a ticket: the default view, some sections, everything, the log or a diff since an event."
+      },
+      {
+        "name": "list",
+        "cli": "list",
+        "group": "Read",
+        "who": "read",
+        "summary": "List tickets, newest first."
+      },
+      {
+        "name": "search",
+        "cli": "search",
+        "group": "Read",
+        "who": "read",
+        "summary": "Search ticket titles and sections."
+      },
+      {
+        "name": "next",
+        "cli": "next",
+        "group": "Read",
+        "who": "read",
+        "summary": "The ticket to work on next."
+      },
+      {
+        "name": "inbox",
+        "cli": "inbox",
+        "group": "Read",
+        "who": "read",
+        "summary": "Tickets handed over from peer workspaces."
+      },
+      {
+        "name": "new",
+        "cli": "new",
+        "group": "Lifecycle",
+        "who": "agent",
+        "summary": "Create a ticket."
+      },
+      {
+        "name": "claim",
+        "cli": "claim",
+        "group": "Lifecycle",
+        "who": "agent",
+        "summary": "Claim a ticket, the next one, or take over another session's claim."
+      },
+      {
+        "name": "release",
+        "cli": "release",
+        "group": "Lifecycle",
+        "who": "agent",
+        "summary": "Release your claim without a handoff."
+      },
+      {
+        "name": "handoff",
+        "cli": "handoff",
+        "group": "Lifecycle",
+        "who": "agent",
+        "summary": "Write the current state (at most 2048 bytes) and release the claim."
+      },
+      {
+        "name": "submit",
+        "cli": "submit",
+        "group": "Lifecycle",
+        "who": "agent",
+        "summary": "Move the ticket to testing; every acceptance criterion needs evidence first."
+      },
+      {
+        "name": "ask",
+        "cli": "ask",
+        "group": "Lifecycle",
+        "who": "unattended",
+        "summary": "Ask a person; works without a grant (unattended). Then orch wait."
+      },
+      {
+        "name": "wait",
+        "cli": "wait",
+        "group": "Lifecycle",
+        "who": "read",
+        "summary": "Wait for an answer, an approval, a change request, a verdict or an invalidation (default 540 s)."
+      },
+      {
+        "name": "set",
+        "cli": "set",
+        "group": "Edit",
+        "who": "agent",
+        "summary": "Set ticket fields: title, priority, size, labels, due, links, parent, blocked_by."
+      },
+      {
+        "name": "section.set",
+        "cli": "section set",
+        "group": "Edit",
+        "who": "agent",
+        "summary": "Replace one section of the body with text from -m or --file."
+      },
+      {
+        "name": "ac.add",
+        "cli": "ac add",
+        "group": "Edit",
+        "who": "agent",
+        "summary": "Add an acceptance criterion."
+      },
+      {
+        "name": "ac.edit",
+        "cli": "ac edit",
+        "group": "Edit",
+        "who": "agent",
+        "summary": "Change the text of an acceptance criterion."
+      },
+      {
+        "name": "task.list",
+        "cli": "task list",
+        "group": "Edit",
+        "who": "read",
+        "summary": "List the ticket's tasks with their state."
+      },
+      {
+        "name": "task.next",
+        "cli": "task next",
+        "group": "Edit",
+        "who": "read",
+        "summary": "The next task to do: its text, what it proves and its verify command."
+      },
+      {
+        "name": "task.add",
+        "cli": "task add",
+        "group": "Edit",
+        "who": "agent",
+        "summary": "Add a task, optionally with a verify command and the criteria it proves."
+      },
+      {
+        "name": "task.start",
+        "cli": "task start",
+        "group": "Edit",
+        "who": "agent",
+        "summary": "Take the lease on one task (parallel subagents use ORCH_SESSION=<parent>.<n>)."
+      },
+      {
+        "name": "task.done",
+        "cli": "task done",
+        "group": "Edit",
+        "who": "agent",
+        "summary": "Finish a task: --run runs its verify command and stores the receipt; prints the next task."
+      },
+      {
+        "name": "task.skip",
+        "cli": "task skip",
+        "group": "Edit",
+        "who": "agent",
+        "summary": "Skip a task, with a reason."
+      },
+      {
+        "name": "task.block",
+        "cli": "task block",
+        "group": "Edit",
+        "who": "agent",
+        "summary": "Mark a task blocked, with a reason."
+      },
+      {
+        "name": "task.reopen",
+        "cli": "task reopen",
+        "group": "Edit",
+        "who": "agent",
+        "summary": "Reopen a finished, skipped or blocked task."
+      },
+      {
+        "name": "artifact.add",
+        "cli": "artifact add",
+        "group": "Edit",
+        "who": "unattended",
+        "summary": "Store a file; works without a grant (unattended, never evidence). --ac and --task need a grant."
+      },
+      {
+        "name": "artifact.replace",
+        "cli": "artifact replace",
+        "group": "Edit",
+        "who": "agent",
+        "summary": "Replace a stored file; the name stays, the digest changes."
+      },
+      {
+        "name": "artifact.list",
+        "cli": "artifact list",
+        "group": "Edit",
+        "who": "read",
+        "summary": "List the ticket's artifacts."
+      },
+      {
+        "name": "log",
+        "cli": "log",
+        "group": "Edit",
+        "who": "unattended",
+        "summary": "Add a note to the ticket log; works without a grant (unattended)."
+      },
+      {
+        "name": "apply",
+        "cli": "apply",
+        "group": "Edit",
+        "who": "agent",
+        "summary": "Apply a batch of operations atomically, from JSON (--file -)."
+      },
+      {
+        "name": "approve",
+        "cli": "approve",
+        "group": "Human only",
+        "who": "human",
+        "summary": "Approve a gate (requirements, plan or code) with your signature."
+      },
+      {
+        "name": "request_changes",
+        "cli": "request-changes",
+        "group": "Human only",
+        "who": "human",
+        "summary": "Request changes on a gate, with a reason."
+      },
+      {
+        "name": "verdict",
+        "cli": "verdict",
+        "group": "Human only",
+        "who": "human",
+        "summary": "Give the verify verdict: pass, or fail with a reason."
+      },
+      {
+        "name": "answer",
+        "cli": "answer",
+        "group": "Human only",
+        "who": "human",
+        "summary": "Answer a question with an option, text, or both."
+      },
+      {
+        "name": "close",
+        "cli": "close",
+        "group": "Human only",
+        "who": "human",
+        "summary": "Close a ticket without finishing it."
+      },
+      {
+        "name": "reopen",
+        "cli": "reopen",
+        "group": "Human only",
+        "who": "human",
+        "summary": "Reopen a done or closed ticket; raises every gate's generation."
+      },
+      {
+        "name": "grant",
+        "cli": "grant",
+        "group": "Human only",
+        "who": "human",
+        "summary": "Issue a standing grant for agents; the secret is printed once, on your terminal."
+      },
+      {
+        "name": "grant.revoke",
+        "cli": "grant revoke",
+        "group": "Human only",
+        "who": "human",
+        "summary": "Revoke a grant; every session using it ends."
+      },
+      {
+        "name": "member.add",
+        "cli": "member add",
+        "group": "Human only",
+        "who": "human",
+        "summary": "Add a member with a role; their first device certificate comes with the invitation."
+      },
+      {
+        "name": "member.remove",
+        "cli": "member remove",
+        "group": "Human only",
+        "who": "human",
+        "summary": "Remove a member; their claims are released."
+      },
+      {
+        "name": "member.role",
+        "cli": "member role",
+        "group": "Human only",
+        "who": "human",
+        "summary": "Change a member's role."
+      },
+      {
+        "name": "init",
+        "cli": "init",
+        "group": "Admin",
+        "who": "human",
+        "summary": "Create a workspace here: the genesis event, the workspace key and the instructions."
+      },
+      {
+        "name": "doctor",
+        "cli": "doctor",
+        "group": "Admin",
+        "who": "read",
+        "summary": "Check the logs, chains, projections and keys; reports, never changes."
+      },
+      {
+        "name": "check",
+        "cli": "check",
+        "group": "Admin",
+        "who": "read",
+        "summary": "Check that the ticket files match their events (for a commit hook)."
+      },
+      {
+        "name": "instructions.sync",
+        "cli": "instructions sync",
+        "group": "Admin",
+        "who": "agent",
+        "summary": "Rewrite AGENTS.orch.md and the skills to the installed version."
+      },
+      {
+        "name": "import.v1",
+        "cli": "import v1",
+        "group": "Admin",
+        "who": "human",
+        "summary": "Import a v1 workspace: tickets, history as imported events, artifacts."
+      },
+      {
+        "name": "addon.list",
+        "cli": "addon list",
+        "group": "Admin",
+        "who": "read",
+        "summary": "List the installed addons and whether each is enabled."
+      },
+      {
+        "name": "addon.grant",
+        "cli": "addon grant",
+        "group": "Admin",
+        "who": "human",
+        "summary": "Grant an addon its capabilities (owner only); also enables it."
+      },
+      {
+        "name": "addon.disable",
+        "cli": "addon disable",
+        "group": "Admin",
+        "who": "human",
+        "summary": "Disable an addon; its data stays."
+      },
+      {
+        "name": "addon.purge",
+        "cli": "addon purge",
+        "group": "Admin",
+        "who": "human",
+        "summary": "Delete an addon's data."
+      }
+    ]
+  },
+  "key": null,
+  "seq": 0,
+  "cursor": 0,
+  "hints": [
+    "orch describe CMD"
+  ]
+}

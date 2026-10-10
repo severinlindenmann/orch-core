@@ -1,0 +1,18 @@
+ok describe set
+Set ticket fields: title, priority, size, labels, due, links, parent, blocked_by.
+usage: orch set REF KEY=VALUE... [--dry-run]
+who: agent · emits: ticket.updated
+pre: ticket_exists ticket_open_for_work base_rev_tracked grant_valid text_clean
+args:
+  REF  ticket REF
+  KEY=VALUE  key=value pairs; keys: title priority size labels due links parent blocked_by
+  --dry-run  say what would happen, append nothing
+errors:
+  not_found (exit 2): orch list
+  grant.expired (exit 3): ask the person for a new grant | fix: orch status
+  grant.required (exit 3): ask the person to run orch grant, then set ORCH_GRANT | fix: orch status
+  transition.refused (exit 3): orch show --section current_state | fix: orch show
+  lock.busy (exit 4 retry): retry in a moment | fix: orch status
+  parse.text (exit 6): orch describe set
+  conflict.field (exit 8 retry): orch show, then redo the edit | fix: orch show
+out: ok {key} ticket.updated {fields} seq={seq} / next: {next}

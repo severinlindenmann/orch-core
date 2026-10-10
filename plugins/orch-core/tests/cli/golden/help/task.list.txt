@@ -1,0 +1,4 @@
+List the ticket's tasks with their state.
+usage: orch task list [--ref REF]
+  --ref REF  ticket REF (flag); default: your claim
+more: orch describe task.list

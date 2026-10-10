@@ -1,0 +1,147 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "target": "set",
+    "name": "set",
+    "cli": "orch set",
+    "summary": "Set ticket fields: title, priority, size, labels, due, links, parent, blocked_by.",
+    "who": "agent",
+    "usage": "orch set REF KEY=VALUE... [--dry-run]",
+    "pre": [
+      "ticket_exists",
+      "ticket_open_for_work",
+      "base_rev_tracked",
+      "grant_valid",
+      "text_clean"
+    ],
+    "emits": [
+      "ticket.updated"
+    ],
+    "input": {
+      "type": "object",
+      "description": "Set ticket fields: title, priority, size, labels, due, links, parent, blocked_by.",
+      "properties": {
+        "ref": {
+          "type": "string",
+          "description": "ticket REF",
+          "pattern": "^(?:(?:[A-Z][A-Z0-9]{0,15}-)?[0-9]+(?:/T[1-9][0-9]*)?|T[1-9][0-9]*)$",
+          "x-metavar": "REF"
+        },
+        "pairs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^(?:title|priority|size|labels|due|links|parent|blocked_by)=."
+          },
+          "description": "key=value pairs; keys: title priority size labels due links parent blocked_by",
+          "x-metavar": "KEY=VALUE"
+        }
+      },
+      "x-positional": [
+        "ref",
+        "pairs"
+      ],
+      "required": [
+        "ref",
+        "pairs"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "text": "ok {key} ticket.updated {fields} seq={seq}\nnext: {next}",
+      "json": {
+        "type": "object",
+        "properties": {
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "fields"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "errors": [
+      {
+        "code": "not_found",
+        "exit": 2,
+        "retryable": false,
+        "hint": "orch list",
+        "fix": [
+          "orch",
+          "list"
+        ]
+      },
+      {
+        "code": "grant.expired",
+        "exit": 3,
+        "retryable": false,
+        "hint": "ask the person for a new grant",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
+        "code": "grant.required",
+        "exit": 3,
+        "retryable": false,
+        "hint": "ask the person to run orch grant, then set ORCH_GRANT",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
+        "code": "transition.refused",
+        "exit": 3,
+        "retryable": false,
+        "hint": "orch show --section current_state",
+        "fix": [
+          "orch",
+          "show"
+        ]
+      },
+      {
+        "code": "lock.busy",
+        "exit": 4,
+        "retryable": true,
+        "hint": "retry in a moment",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
+        "code": "parse.text",
+        "exit": 6,
+        "retryable": false,
+        "hint": "orch describe set",
+        "fix": [
+          "orch",
+          "describe",
+          "set"
+        ]
+      },
+      {
+        "code": "conflict.field",
+        "exit": 8,
+        "retryable": true,
+        "hint": "orch show, then redo the edit",
+        "fix": [
+          "orch",
+          "show"
+        ]
+      }
+    ]
+  },
+  "key": null,
+  "seq": 0,
+  "cursor": 0,
+  "hints": []
+}

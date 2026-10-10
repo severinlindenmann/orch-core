@@ -1,0 +1,43 @@
+0 ok
+1 internal error
+2 usage or not found
+3 not allowed (transition or human-only)
+4 claim, lease or lock
+5 validation
+6 parse
+7 wait timeout with --strict-timeout
+8 base_rev conflict
+9 retryable
+
+internal 1 retry:false
+not_implemented 1 retry:false
+usage 2 retry:false
+unknown_command 2 retry:false
+not_found 2 retry:false
+ambiguous_ref 2 retry:false
+grant.secret_in_args 2 retry:false
+human_only 3 retry:false
+grant.required 3 retry:false
+grant.expired 3 retry:false
+role.denied 3 retry:false
+transition.refused 3 retry:false
+stop 3 retry:false
+claim.required 4 retry:false
+claim.held 4 retry:false
+claim.not_live 4 retry:false
+lease.held 4 retry:false
+lease.required 4 retry:false
+lock.busy 4 retry:true
+invalid.input 5 retry:false
+ac.evidence_missing 5 retry:false
+verify.failed 5 retry:false
+gate.stale 5 retry:false
+source.missing 5 retry:false
+parse.json 6 retry:false
+parse.text 6 retry:false
+wait.timeout 7 retry:true
+conflict.section 8 retry:true
+conflict.field 8 retry:true
+retry.later 9 retry:true
+quota.unattended 9 retry:true
+members.stale 9 retry:true

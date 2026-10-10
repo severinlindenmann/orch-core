@@ -1,0 +1,8 @@
+Close a ticket without finishing it.
+usage: orch close [REF] [--resolution wont_do|duplicate|obsolete|other] [--duplicate-of KEY] [--message TEXT] [--dry-run]
+  REF  ticket REF
+  --resolution RESOLUTION  why (wont_do|duplicate|obsolete|other) [default other]
+  --duplicate-of KEY  the surviving ticket (with --resolution duplicate)
+  -m, --message TEXT  free text
+  --dry-run  say what would happen, append nothing
+more: orch describe close

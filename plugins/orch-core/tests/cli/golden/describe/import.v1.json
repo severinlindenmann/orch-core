@@ -1,0 +1,118 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "target": "import.v1",
+    "name": "import.v1",
+    "cli": "orch import v1",
+    "summary": "Import a v1 workspace: tickets, history as imported events, artifacts.",
+    "who": "human",
+    "usage": "orch import v1 PATH [--dry-run]",
+    "pre": [
+      "workspace_exists",
+      "v1_workspace",
+      "user_presence"
+    ],
+    "emits": [
+      "ticket.created",
+      "log.added"
+    ],
+    "input": {
+      "type": "object",
+      "description": "Import a v1 workspace: tickets, history as imported events, artifacts.",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "the v1 workspace",
+          "x-metavar": "PATH"
+        }
+      },
+      "x-positional": [
+        "path"
+      ],
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "text": "ok import.v1 {count} tickets\nnext: {next}",
+      "json": {
+        "type": "object",
+        "properties": {
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "skipped": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "count",
+          "skipped"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "errors": [
+      {
+        "code": "not_found",
+        "exit": 2,
+        "retryable": false,
+        "hint": "orch list",
+        "fix": [
+          "orch",
+          "list"
+        ]
+      },
+      {
+        "code": "human_only",
+        "exit": 3,
+        "retryable": false,
+        "hint": "orch ask or orch wait",
+        "fix": [
+          "orch",
+          "describe",
+          "ask"
+        ]
+      },
+      {
+        "code": "lock.busy",
+        "exit": 4,
+        "retryable": true,
+        "hint": "retry in a moment",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
+        "code": "parse.json",
+        "exit": 6,
+        "retryable": false,
+        "hint": "orch describe import.v1",
+        "fix": [
+          "orch",
+          "describe",
+          "import.v1"
+        ]
+      },
+      {
+        "code": "members.stale",
+        "exit": 9,
+        "retryable": true,
+        "hint": "retry; the person re-signs",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      }
+    ]
+  },
+  "key": null,
+  "seq": 0,
+  "cursor": 0,
+  "hints": []
+}

@@ -1,0 +1,9 @@
+Finish a task: --run runs its verify command and stores the receipt; prints the next task.
+usage: orch task done TASK [--run] [--artifact PATH] [--ac AC] [--message TEXT] [--dry-run]
+  TASK  task id (T3 or DEMO-0043/T3)
+  --run  run the task's verify command first
+  --artifact PATH  evidence file to store
+  --ac AC  criterion the evidence is for
+  -m, --message TEXT  free text
+  --dry-run  say what would happen, append nothing
+more: orch describe task.done

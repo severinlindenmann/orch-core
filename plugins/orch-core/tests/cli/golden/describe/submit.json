@@ -1,0 +1,140 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "target": "submit",
+    "name": "submit",
+    "cli": "orch submit",
+    "summary": "Move the ticket to testing; every acceptance criterion needs evidence first.",
+    "who": "agent",
+    "usage": "orch submit [REF] [--dry-run]",
+    "pre": [
+      "ticket_exists",
+      "session_holds_claim",
+      "all_ac_have_evidence",
+      "grant_valid"
+    ],
+    "emits": [
+      "ticket.submitted"
+    ],
+    "input": {
+      "type": "object",
+      "description": "Move the ticket to testing; every acceptance criterion needs evidence first.",
+      "properties": {
+        "ref": {
+          "type": "string",
+          "description": "ticket REF (DEMO-0043, 43); default: your claim",
+          "pattern": "^(?:(?:[A-Z][A-Z0-9]{0,15}-)?[0-9]+(?:/T[1-9][0-9]*)?|T[1-9][0-9]*)$",
+          "x-metavar": "REF"
+        }
+      },
+      "x-positional": [
+        "ref"
+      ],
+      "required": [],
+      "additionalProperties": false
+    },
+    "output": {
+      "text": "ok {key} ticket.submitted testing seq={seq}\nnext: {next}",
+      "json": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "errors": [
+      {
+        "code": "ambiguous_ref",
+        "exit": 2,
+        "retryable": false,
+        "hint": "name the ticket REF, for example DEMO-0043",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
+        "code": "not_found",
+        "exit": 2,
+        "retryable": false,
+        "hint": "orch list",
+        "fix": [
+          "orch",
+          "list"
+        ]
+      },
+      {
+        "code": "grant.expired",
+        "exit": 3,
+        "retryable": false,
+        "hint": "ask the person for a new grant",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
+        "code": "grant.required",
+        "exit": 3,
+        "retryable": false,
+        "hint": "ask the person to run orch grant, then set ORCH_GRANT",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
+        "code": "transition.refused",
+        "exit": 3,
+        "retryable": false,
+        "hint": "orch show --section current_state",
+        "fix": [
+          "orch",
+          "show"
+        ]
+      },
+      {
+        "code": "claim.required",
+        "exit": 4,
+        "retryable": false,
+        "hint": "orch claim",
+        "fix": [
+          "orch",
+          "claim"
+        ]
+      },
+      {
+        "code": "lock.busy",
+        "exit": 4,
+        "retryable": true,
+        "hint": "retry in a moment",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
+        "code": "ac.evidence_missing",
+        "exit": 5,
+        "retryable": false,
+        "hint": "orch artifact add FILE --ac AC1",
+        "fix": [
+          "orch",
+          "describe",
+          "artifact.add"
+        ]
+      }
+    ]
+  },
+  "key": null,
+  "seq": 0,
+  "cursor": 0,
+  "hints": []
+}

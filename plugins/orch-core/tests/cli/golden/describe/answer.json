@@ -1,0 +1,141 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "target": "answer",
+    "name": "answer",
+    "cli": "orch answer",
+    "summary": "Answer a question with an option, text, or both.",
+    "who": "human",
+    "usage": "orch answer Q [--option KEY] [--message TEXT] [--ref REF] [--dry-run]",
+    "pre": [
+      "ticket_exists",
+      "question_open",
+      "role_allows",
+      "user_presence",
+      "text_clean"
+    ],
+    "emits": [
+      "question.answered"
+    ],
+    "input": {
+      "type": "object",
+      "description": "Answer a question with an option, text, or both.",
+      "properties": {
+        "question": {
+          "type": "string",
+          "description": "question id",
+          "pattern": "^Q[1-9][0-9]*$",
+          "x-metavar": "Q"
+        },
+        "option": {
+          "type": "string",
+          "description": "option key",
+          "x-metavar": "KEY"
+        },
+        "message": {
+          "type": "string",
+          "description": "free text",
+          "x-short": "m",
+          "x-metavar": "TEXT"
+        },
+        "ref": {
+          "type": "string",
+          "description": "ticket REF (flag)",
+          "pattern": "^(?:(?:[A-Z][A-Z0-9]{0,15}-)?[0-9]+(?:/T[1-9][0-9]*)?|T[1-9][0-9]*)$",
+          "x-metavar": "REF"
+        }
+      },
+      "x-positional": [
+        "question"
+      ],
+      "required": [
+        "question"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "text": "ok {key} question.answered {question} seq={seq}\nnext: {next}",
+      "json": {
+        "type": "object",
+        "properties": {
+          "question": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "question"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "errors": [
+      {
+        "code": "not_found",
+        "exit": 2,
+        "retryable": false,
+        "hint": "orch list",
+        "fix": [
+          "orch",
+          "list"
+        ]
+      },
+      {
+        "code": "human_only",
+        "exit": 3,
+        "retryable": false,
+        "hint": "orch ask or orch wait",
+        "fix": [
+          "orch",
+          "describe",
+          "ask"
+        ]
+      },
+      {
+        "code": "role.denied",
+        "exit": 3,
+        "retryable": false,
+        "hint": "ask an owner or maintainer",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
+        "code": "lock.busy",
+        "exit": 4,
+        "retryable": true,
+        "hint": "retry in a moment",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
+        "code": "parse.text",
+        "exit": 6,
+        "retryable": false,
+        "hint": "orch describe answer",
+        "fix": [
+          "orch",
+          "describe",
+          "answer"
+        ]
+      },
+      {
+        "code": "members.stale",
+        "exit": 9,
+        "retryable": true,
+        "hint": "retry; the person re-signs",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      }
+    ]
+  },
+  "key": null,
+  "seq": 0,
+  "cursor": 0,
+  "hints": []
+}

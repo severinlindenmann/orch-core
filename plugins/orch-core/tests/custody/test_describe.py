@@ -356,7 +356,7 @@ def test_backend_refuses_before_prompting_for_unhandled_types(tmp_path):
     assert crypto.verify(b.public_key("dk"), b.sign("dk", ok, action=""), ok)
 
 
-# --- canonical bytes, exact actor, field names (re-review P1, P2, names) -----------------------------------------------
+# --- canonical bytes, exact actor, field names (re-review) ----------------------------------------
 
 
 def test_non_canonical_signing_bytes_refuse():

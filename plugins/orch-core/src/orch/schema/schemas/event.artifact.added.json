@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.orch.dev/v2/event.artifact.added",
+  "title": "artifact.added event",
+  "description": "Section 5/6 example.",
+  "allOf": [
+    {
+      "$ref": "https://schemas.orch.dev/v2/event"
+    },
+    {
+      "allOf": [
+        {
+          "$ref": "https://schemas.orch.dev/v2/artifact#/$defs/fields"
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "feedback"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "actor": {
+                "properties": {
+                  "kind": {
+                    "const": "person"
+                  }
+                }
+              }
+            },
+            "required": [
+              "actor"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "not": {
+        "required": [
+          "sig"
+        ]
+      }
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "artifact.added"
+    }
+  },
+  "required": [
+    "type"
+  ],
+  "unevaluatedProperties": false
+}

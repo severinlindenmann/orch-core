@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.orch.dev/v2/event.projection.repaired",
+  "title": "projection.repaired event",
+  "description": "Section 2/5: host rewrote a projection or reverted protected fields.",
+  "allOf": [
+    {
+      "$ref": "https://schemas.orch.dev/v2/event-host"
+    },
+    {
+      "not": {
+        "required": [
+          "sig"
+        ]
+      }
+    },
+    {
+      "not": {
+        "required": [
+          "actor"
+        ]
+      }
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "projection.repaired"
+    },
+    "path": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/text"
+    },
+    "fields": {
+      "type": "array",
+      "items": {
+        "$ref": "https://schemas.orch.dev/v2/common#/$defs/text"
+      },
+      "uniqueItems": true
+    }
+  },
+  "required": [
+    "type",
+    "path"
+  ],
+  "unevaluatedProperties": false
+}

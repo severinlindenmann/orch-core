@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.orch.dev/v2/event.task.started",
+  "title": "task.started event",
+  "description": "A4: a lease on one task.",
+  "allOf": [
+    {
+      "$ref": "https://schemas.orch.dev/v2/event"
+    },
+    {
+      "not": {
+        "required": [
+          "sig"
+        ]
+      }
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "task.started"
+    },
+    "task": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/taskId"
+    }
+  },
+  "required": [
+    "type",
+    "task"
+  ],
+  "unevaluatedProperties": false
+}

@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.orch.dev/v2/event.ticket.closed",
+  "title": "ticket.closed event",
+  "description": "Section 5: close is a signed human event.",
+  "allOf": [
+    {
+      "$ref": "https://schemas.orch.dev/v2/event"
+    },
+    {
+      "required": [
+        "sig",
+        "presence"
+      ],
+      "properties": {
+        "actor": {
+          "properties": {
+            "kind": {
+              "const": "person"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "ticket.closed"
+    },
+    "reason": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/text"
+    }
+  },
+  "required": [
+    "type"
+  ],
+  "unevaluatedProperties": false
+}

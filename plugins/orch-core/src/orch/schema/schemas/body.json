@@ -1,0 +1,219 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.orch.dev/v2/body",
+  "title": "body.md section model",
+  "description": "Format doc section 4: the parsed form of body.md ({type, sections: {id: text}}). Addon sections are keyed <addon>.<id>. Size limits are enforced by orch.schema.validate.",
+  "type": "object",
+  "properties": {
+    "type": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/ticketType"
+    },
+    "sections": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      },
+      "propertyNames": {
+        "anyOf": [
+          {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/sectionId"
+          },
+          {
+            "pattern": "^[a-z][a-z0-9_-]*\\.[a-z][a-z0-9_-]*$"
+          }
+        ]
+      }
+    }
+  },
+  "required": [
+    "type",
+    "sections"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "feature",
+              "bug"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "sections": {
+            "required": [
+              "context",
+              "requirements",
+              "out_of_scope",
+              "plan",
+              "decisions",
+              "verification",
+              "current_state"
+            ],
+            "propertyNames": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "context",
+                    "requirements",
+                    "out_of_scope",
+                    "plan",
+                    "decisions",
+                    "verification",
+                    "current_state",
+                    "summary"
+                  ]
+                },
+                {
+                  "pattern": "^[a-z][a-z0-9_-]*\\.[a-z][a-z0-9_-]*$"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "chore"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "sections": {
+            "required": [
+              "requirements",
+              "plan",
+              "current_state"
+            ],
+            "propertyNames": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "requirements",
+                    "plan",
+                    "current_state",
+                    "summary",
+                    "context",
+                    "decisions"
+                  ]
+                },
+                {
+                  "pattern": "^[a-z][a-z0-9_-]*\\.[a-z][a-z0-9_-]*$"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "spike",
+              "investigation"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "sections": {
+            "required": [
+              "context",
+              "requirements",
+              "plan",
+              "decisions",
+              "findings",
+              "current_state"
+            ],
+            "propertyNames": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "context",
+                    "requirements",
+                    "plan",
+                    "decisions",
+                    "findings",
+                    "current_state",
+                    "summary"
+                  ]
+                },
+                {
+                  "pattern": "^[a-z][a-z0-9_-]*\\.[a-z][a-z0-9_-]*$"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "epic"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "sections": {
+            "required": [
+              "summary",
+              "context",
+              "requirements",
+              "out_of_scope",
+              "decisions",
+              "current_state"
+            ],
+            "propertyNames": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "summary",
+                    "context",
+                    "requirements",
+                    "out_of_scope",
+                    "decisions",
+                    "current_state"
+                  ]
+                },
+                {
+                  "pattern": "^[a-z][a-z0-9_-]*\\.[a-z][a-z0-9_-]*$"
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  ]
+}

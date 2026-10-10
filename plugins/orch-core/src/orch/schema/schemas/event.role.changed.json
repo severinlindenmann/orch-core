@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.orch.dev/v2/event.role.changed",
+  "title": "role.changed event",
+  "description": "Section 2: workspace event.",
+  "allOf": [
+    {
+      "$ref": "https://schemas.orch.dev/v2/event"
+    },
+    {
+      "required": [
+        "sig",
+        "presence"
+      ],
+      "properties": {
+        "actor": {
+          "properties": {
+            "kind": {
+              "const": "person"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "role.changed"
+    },
+    "person": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/personId"
+    },
+    "role": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/memberRole"
+    },
+    "list_seq": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "type",
+    "person",
+    "role",
+    "list_seq"
+  ],
+  "unevaluatedProperties": false
+}

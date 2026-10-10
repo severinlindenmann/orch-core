@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.orch.dev/v2/wait-result",
+  "title": "orch wait result",
+  "description": "Format doc 10.4 item 7.",
+  "type": "object",
+  "properties": {
+    "kind": {
+      "enum": [
+        "answered",
+        "approved",
+        "changes_requested",
+        "verdict",
+        "timeout"
+      ]
+    },
+    "key": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/ticketKey"
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "gate": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/gateName"
+    },
+    "question": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/questionId"
+    },
+    "answer": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/text"
+    },
+    "cursor": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "next": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "cursor",
+    "next"
+  ]
+}

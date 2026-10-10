@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.orch.dev/v2/event.policy.changed",
+  "title": "policy.changed event",
+  "description": "Section 2: workspace event; carries the new gate policies.",
+  "allOf": [
+    {
+      "$ref": "https://schemas.orch.dev/v2/event"
+    },
+    {
+      "required": [
+        "sig",
+        "presence"
+      ],
+      "properties": {
+        "actor": {
+          "properties": {
+            "kind": {
+              "const": "person"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "policy.changed"
+    },
+    "gates": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/gates"
+    },
+    "policy_hash": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+    }
+  },
+  "required": [
+    "type",
+    "gates",
+    "policy_hash"
+  ],
+  "unevaluatedProperties": false
+}

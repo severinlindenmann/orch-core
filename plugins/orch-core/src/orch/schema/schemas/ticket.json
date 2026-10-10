@@ -1,0 +1,323 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.orch.dev/v2/ticket",
+  "title": "ticket.json",
+  "description": "Format doc section 3 (definitions only, never state; T10, T11, T4, T6). Cross-field rules live in orch.schema.validate.",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "orch.ticket/2"
+    },
+    "uid": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/ulid"
+    },
+    "key": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/ticketKey"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300,
+      "pattern": "^[^\\n]*$"
+    },
+    "type": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/ticketType"
+    },
+    "priority": {
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "urgent"
+      ]
+    },
+    "size": {
+      "enum": [
+        "xs",
+        "s",
+        "m",
+        "l",
+        "xl"
+      ]
+    },
+    "labels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[^\\s,]+$"
+      },
+      "uniqueItems": true
+    },
+    "parent": {
+      "oneOf": [
+        {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/ticketKey"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "blocked_by": {
+      "type": "array",
+      "items": {
+        "$ref": "https://schemas.orch.dev/v2/common#/$defs/ticketKey"
+      },
+      "uniqueItems": true
+    },
+    "due": {
+      "oneOf": [
+        {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/timestamp"
+        },
+        {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "visibility": {
+      "oneOf": [
+        {
+          "const": "workspace"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "restricted": {
+              "type": "array",
+              "items": {
+                "$ref": "https://schemas.orch.dev/v2/common#/$defs/personId"
+              },
+              "minItems": 1,
+              "uniqueItems": true
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "restricted"
+          ]
+        }
+      ]
+    },
+    "links": {
+      "type": "object",
+      "properties": {
+        "repos": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "branches": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "prs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "repo": {
+                "type": "string",
+                "minLength": 1
+              },
+              "url": {
+                "type": "string",
+                "pattern": "^https://\\S+$"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "repo",
+              "url"
+            ]
+          }
+        },
+        "external": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^https?://\\S+$"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "repos",
+        "branches",
+        "prs",
+        "external"
+      ]
+    },
+    "acceptance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/acId"
+          },
+          "text": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/text"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "text"
+        ]
+      }
+    },
+    "tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/taskId"
+          },
+          "text": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/text"
+          },
+          "verify": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "cmd": {
+                    "$ref": "https://schemas.orch.dev/v2/common#/$defs/text"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "cmd"
+                ]
+              }
+            ]
+          },
+          "proves": {
+            "type": "array",
+            "items": {
+              "$ref": "https://schemas.orch.dev/v2/common#/$defs/acId"
+            },
+            "uniqueItems": true
+          },
+          "assignee": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/personId"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "text",
+          "verify",
+          "proves"
+        ]
+      }
+    },
+    "questions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/questionId"
+          },
+          "to": {
+            "oneOf": [
+              {
+                "$ref": "https://schemas.orch.dev/v2/common#/$defs/personId"
+              },
+              {
+                "$ref": "https://schemas.orch.dev/v2/common#/$defs/ticketRole"
+              }
+            ]
+          },
+          "text": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/text"
+          },
+          "why": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/text"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "$ref": "https://schemas.orch.dev/v2/common#/$defs/token"
+                },
+                "label": {
+                  "$ref": "https://schemas.orch.dev/v2/common#/$defs/text"
+                },
+                "cost": {
+                  "$ref": "https://schemas.orch.dev/v2/common#/$defs/text"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "key",
+                "label"
+              ]
+            },
+            "minItems": 1
+          },
+          "recommended": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/token"
+          },
+          "blocking": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "to",
+          "text",
+          "blocking"
+        ]
+      }
+    },
+    "addons": {
+      "type": "object",
+      "propertyNames": {
+        "$ref": "https://schemas.orch.dev/v2/common#/$defs/addonName"
+      },
+      "additionalProperties": {
+        "type": "object"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "uid",
+    "key",
+    "title",
+    "type",
+    "priority",
+    "size",
+    "labels",
+    "parent",
+    "blocked_by",
+    "due",
+    "visibility",
+    "links",
+    "acceptance",
+    "tasks",
+    "questions",
+    "addons"
+  ]
+}

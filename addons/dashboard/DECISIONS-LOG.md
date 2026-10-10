@@ -968,3 +968,16 @@ The owner answered the eight open questions of REVIEW.md. Items 1, 2, 5 and 6 ch
 - **Why:** Codex adversarial review of e2e035e2 (5 High, 6 Medium); controller rulings for #1, #2/#7, #4/#8, #5, #6,
   #9, #10, #11.
 - **Revert:** revert the "security review" commits on `fix/dashboard-security`.
+
+## Security review fixes, round 2 (Codex re-check 2026-10-11)
+
+- **Decision:** (1) every decision answer must carry the digest (409 `decision.digest_required`), so the factory
+  replay without a digest is refused too; the addon tests post through `test/offered.ts` (digest of the decision as
+  offered). (2) the contribution budget also runs on the node after binding resolution, counts each value before it is
+  queued, and interpolation never stringifies objects. (3) a non-NFC string shows every non-ASCII code point escaped.
+  (4) `open` on a running person shell and `interactive` need the pty grant; transcripts stay readable. (5) the
+  content-hash cache keeps one entry per (ticket, gate/question) slot and is cleared on reset. (6) scripted agent HTML
+  shows core's notice and its source instead of an empty inert frame.
+- **Still open:** factory permits' typed terms (see the round 1 entry), after the factory rewrite merges.
+- **Why:** Codex re-check of the round 1 fixes (1 High, 4 Medium, 1 Low); controller rulings.
+- **Revert:** revert the "round 2" commits on `fix/dashboard-security`.

@@ -70,3 +70,13 @@ export const INERT_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src
 export function inertDocument(html: string): string {
   return `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${INERT_CSP}"></head><body>${sanitizeFrameHtml(html)}</body></html>`
 }
+
+/** Does this HTML rely on scripts (script elements, event handlers, javascript: URLs)? An inert frame would drop them. */
+export function usesScripts(html: string): boolean {
+  const doc = new DOMParser().parseFromString(html, 'text/html')
+  for (const el of doc.querySelectorAll('*')) {
+    if (el.localName.toLowerCase() === 'script') return true
+    for (const a of el.attributes) if (a.name.toLowerCase().startsWith('on') || /^\s*javascript:/i.test(a.value)) return true
+  }
+  return false
+}

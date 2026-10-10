@@ -6,6 +6,8 @@ import type { TicketDocument } from '@/api/types'
 import { AddonBadge, AddonUnavailable } from '@/addon-ui'
 import { CodeBlock } from '@/addon-ui/CodeBlock'
 import { FrameNode } from '@/addon-ui/FrameNode'
+import { usesScripts } from '@/addon-ui/frameSanitize'
+import { ScriptedPreview } from '@/addon-ui/ScriptedPreview'
 import { frameNode } from '@/addon-ui/nodes'
 import { addonHairline } from '@/addon-ui/addonClasses'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
@@ -141,6 +143,8 @@ function Body({ spec, res, agentHtml, height }: { spec: WidgetSpec; res: Extract
     const h = Math.min(1200, Math.max(80, height))
     // A one-off page is agent HTML: drawn inert (no scripts, sanitized: security review #1), at the body's fixed height.
     if (spec.layer !== 'widget') {
+      // A page that relied on scripts would be empty or misleading inert: core says so and shows its source (round 2 #6).
+      if (usesScripts(res.page)) return <ScriptedPreview html={res.page} />
       const page = frameNode.safeParse({ type: 'frame', title: `Sandboxed preview · ${res.layerLabel}`, html: res.page, height: h })
       return page.success ? <FrameNode node={page.data} fallback={<AddonUnavailable addon="widgets" />} /> : <AddonUnavailable addon="widgets" />
     }

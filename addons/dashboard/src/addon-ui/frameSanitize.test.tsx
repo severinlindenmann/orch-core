@@ -3,7 +3,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
-import { inertDocument, sanitizeFrameHtml } from './frameSanitize'
+import { inertDocument, sanitizeFrameHtml, usesScripts } from './frameSanitize'
 import { FrameNode } from './FrameNode'
 import { AddonNode } from './AddonNode'
 
@@ -80,5 +80,35 @@ describe('frames', () => {
   it('only core\'s own template document runs scripts', () => {
     render(<FrameNode node={{ type: 'frame', title: 'Template', html: '<p>x</p><script>1</script>', height: 200 }} fallback={null} coreTemplate fitContent />)
     expect(screen.getByTitle('Template').getAttribute('sandbox')).toBe('allow-scripts')
+  })
+})
+
+describe('round 2 #6 a scripted agent page says so and shows its source', () => {
+  it('usesScripts finds script elements, event handlers and javascript: URLs, and nothing in a static page', () => {
+    expect(usesScripts('<p>x</p><script>1</script>')).toBe(true)
+    expect(usesScripts('<div onclick="x()">x</div>')).toBe(true)
+    expect(usesScripts('<a href="javascript:x()">x</a>')).toBe(true)
+    expect(usesScripts('<details><summary>a</summary>b</details><style>p{}</style>')).toBe(false)
+  })
+  it('the one-off widget shows core\'s notice and the source instead of an empty frame', async () => {
+    const { ScriptedPreview } = await import('./ScriptedPreview')
+    render(<ScriptedPreview html={'<p>x</p><script>document.body.textContent="hi"</script>'} />)
+    const note = screen.getByRole('note')
+    expect(note).toHaveTextContent('This preview used scripts, which orch no longer runs for agent HTML — showing the source')
+    expect(screen.getByText(/document\.body\.textContent/)).toBeInTheDocument()
+  })
+})
+
+describe('round 2 #6 wiring', () => {
+  it('a pinned one-off page that uses scripts is not drawn as an empty frame: notice and source', async () => {
+    const { WidgetBlock } = await import('@/app/pages/ticket/widgets/WidgetBlock')
+    const { sha256Hex } = await import('@/api/sha256')
+    const preview = '<table id="t"></table><script>document.getElementById("t").innerHTML="<tr><td>1</td></tr>"</script>'
+    const block = { section: 'verification', line: 1, raw: '{}', spec: { layer: 'html', id: 'p', artifact: 'p.html', sha256: sha256Hex(preview) } }
+    const ticket = { key: 'DEMO-0041', artifacts: [{ name: 'p.html', kind: 'other', preview }] }
+    render(<WidgetBlock block={block as never} ticket={ticket as never} agentHtml sectionLabel="Verification" />)
+    expect(screen.getByRole('note')).toHaveTextContent(/used scripts, which orch no longer runs/)
+    expect(screen.queryByTitle(/Sandboxed preview/)).toBeNull()
+    expect(screen.getByText(/getElementById/)).toBeInTheDocument()
   })
 })

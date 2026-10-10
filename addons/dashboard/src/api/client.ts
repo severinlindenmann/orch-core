@@ -37,6 +37,7 @@ import {
   type RelaySimRequest,
   type RelayState,
 } from './types'
+import type { MandatesPreviewRequest, MandatesPreviewState } from './mandatesPreview'
 import { connectionInfo, connectionList, doctorReport, secretsFileInfo, skillInfo, skillList, type SkillGrantRequest } from './connections'
 
 export interface ListTicketsParams {
@@ -168,6 +169,10 @@ export function createApi(transport: Transport) {
     postRelay: (ws: string, req: RelayRequest) => call<RelayState>('POST', `/api/workspaces/${ws}/relay`, req),
     /** Mock only: a dropped connection, or a phone scanning the pairing code. */
     simulateRelay: (ws: string, req: RelaySimRequest) => call<RelayState>('POST', `/api/dev/relay/${ws}`, req),
+    /** Mandates, PREVIEW ONLY (not part of the contract; served by the mock; nothing is signed). */
+    getMandatesPreview: (ws: string) => call<MandatesPreviewState>('GET', `/api/workspaces/${ws}/preview/mandates`),
+    /** Mandates, PREVIEW ONLY: turn the preview on or off, issue, stop, review, revoke. Never a signing path. */
+    postMandatesPreview: (ws: string, req: MandatesPreviewRequest) => call<MandatesPreviewState>('POST', `/api/workspaces/${ws}/preview/mandates`, req),
     /** Mock only: switch the viewer (p_sev, p_mara, p_tom). */
     setViewer: (person: string) => call<{ ok: true }>('POST', '/api/dev/viewer', { person }),
     /** Mock only: restore the seeded demo data; `dataset` switches to the normal demo or the busy day. */

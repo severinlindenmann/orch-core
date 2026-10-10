@@ -9,6 +9,7 @@ import { GRANT_MAX_HOURS } from '@/api/grants'
 import { addonActive } from '@/api/addons'
 import peopleFixture from './fixtures/people.json'
 import type { RelayRequest, RelaySimRequest } from '@/api/types'
+import type { MandatesPreviewRequest } from '@/api/mandatesPreview'
 import { listArtifacts } from './artifacts'
 import { relayEpoch, relayRequest, relaySim, relayState } from './relay'
 import { changesOf } from './changes'
@@ -436,6 +437,12 @@ export function buildRouter(): MockRouter {
   r.add('POST', '/api/workspaces/:ws/relay', (s, c) => {
     const res = relayRequest(s, c.params.ws, c.body as RelayRequest | null)
     return res.ok ? ok(res.relay) : fail(res.status, res.code, res.message, res.hint)
+  })
+  // Mandates, PREVIEW ONLY (mocks/mandates-preview.ts): not part of the contract, nothing is signed.
+  readOf('/api/workspaces/:ws/preview/mandates', (s, c) => ok(s.mandatesPreview.state(c.params.ws)))
+  r.add('POST', '/api/workspaces/:ws/preview/mandates', (s, c) => {
+    const res = s.mandatesPreview.request(c.params.ws, c.body as MandatesPreviewRequest | null)
+    return res.ok ? ok(res.state) : fail(res.status, res.code, res.message, res.hint)
   })
   readOf('/api/workspaces/:ws/cursor', (s, c) =>
     ok({ cursor: s.cursor(c.params.ws) }),

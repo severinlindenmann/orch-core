@@ -1,0 +1,325 @@
+// Mandates, PREVIEW ONLY (docs/concept-mandates.md, Step 1 pilot; owner decision 10 Oct 2026). A mock of how the
+// pilot would look, for the owner to see. Nothing here is real:
+//  - nothing is signed, no Touch ID runs, and no request reaches a signing or decision path (tickets' actions, grants,
+//    addon ops, settings, relay): this module keeps its own little state and never touches the workspace or ticket logs;
+//  - the preflight is honest: none of the four prerequisites exists in this build, so a real host would refuse every
+//    mandate. "Show the pilot anyway" only turns the preview on;
+//  - the decision log is seeded ("as if the mandate had run for three days"), on the chosen epic's children.
+// Off by default. Kept in the browser under its own key (the demo's Reset clears it); tests keep it in memory.
+import type { MandateDecision, MandateDecisionKind, MandatePreflightCheck, MandateRefusal, MandatesPreviewRequest, MandatesPreviewState, PreviewMandate } from '@/api/mandatesPreview'
+import { can } from '@/api/permissions'
+import type { MockStore, StoreFailure } from './store'
+
+export const STORAGE_KEY = 'orch.preview.mandates'
+/** How long the host takes to acknowledge a Stop (mock clock). */
+export const STOP_ACK_MS = import.meta.env.MODE === 'test' ? 150 : 1_500
+const DAY = 86_400_000
+const PILOT_DAYS = 7
+/** Where the seeded log starts in the workspace log, and where a Stop draws its boundary. */
+const FIRST_SEQ = 1831
+const BOUNDARY_SEQ = 1842
+
+export const PREFLIGHT: MandatePreflightCheck[] = [
+  {
+    id: 'p1',
+    title: 'P2 custody',
+    detail: 'The host holds every signing key, agents run under their own OS user, addons are isolated from host code and state, the keychain backend is verified.',
+    state: 'missing',
+    note: 'Not available in this build.',
+  },
+  {
+    id: 'p2',
+    title: 'Isolated execution for mandated sessions',
+    detail: 'No deploy or production credentials, an egress allowlist, a sandboxed test runner, no CI or deploy with secrets from develop while a mandate is in force.',
+    state: 'missing',
+    note: 'Not available in this build.',
+  },
+  {
+    id: 'p3',
+    title: 'Host-minted session identities and a host-provisioned checker',
+    detail: 'The host mints the orchestrator’s and the checker’s identities; the orchestrator cannot pick, prompt or feed the checker.',
+    state: 'missing',
+    note: 'Not available in this build.',
+  },
+  {
+    id: 'p4',
+    title: 'Typed effects, durable counters, time and rollback guard',
+    detail: 'Core validates every delegable action against a typed effect; counters survive restarts; a clock jump or restored state suspends every mandate.',
+    state: 'missing',
+    note: 'Not available in this build.',
+  },
+]
+
+/** Concept §Summary, "What it can never do". Core text, shown in full. */
+export const NEVER: string[] = [
+  'Issue grants or mandates.',
+  'Change members, roles, devices or relay pairing.',
+  'Touch secrets, credentials or connections.',
+  'Install or upgrade addons or their capabilities.',
+  'Change policies or settings.',
+  'Restore, purge, make a first send to a peer, publish publicly, or land on main.',
+  'Sign the code review gate.',
+  'Approve a change to protected paths: a person approves those, always.',
+  'Override a person’s “no”: it stays in place until a person lifts it.',
+]
+
+/** Concept §2.2: the workspace default. A person can extend it, never shrink it below this. */
+export const PROTECTED_PATHS: string[] = [
+  'CI workflows (.github/workflows/**)',
+  'Build and test tooling (scripts/**, Makefile, vitest/jest config)',
+  'Deploy config (deploy/**, Dockerfile, *.tf)',
+  'Dependency manifests and lockfiles (package.json, package-lock.json, pyproject.toml, uv.lock)',
+  'orch config (.orch/**)',
+  'AGENTS*.md, skills and hooks',
+  'Code classed security',
+]
+
+interface Sim {
+  on: boolean
+  mandate: PreviewMandate | null
+  /** The next mandate number (md_3 is the first: the factory charter and one earlier pilot came before, as in the concept). */
+  next: number
+}
+interface Saved {
+  v: 1
+  ws: Record<string, Sim>
+}
+
+const iso = (ms: number) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z')
+const fail = (status: number, code: string, message: string, hint?: string): StoreFailure => ({ ok: false, status, code, message, ...(hint ? { hint } : {}) })
+
+/** The preview's state per workspace, beside the store (never in a workspace or ticket log). */
+export class MandatesPreviewHost {
+  private sims = new Map<string, Sim>()
+  private loaded = false
+  constructor(private store: MockStore) {}
+
+  private storage(): Storage | null {
+    if (!this.store.persisting) return null
+    try {
+      return globalThis.localStorage ?? null
+    } catch {
+      return null
+    }
+  }
+
+  private load() {
+    if (this.loaded) return
+    this.loaded = true
+    try {
+      const raw = this.storage()?.getItem(STORAGE_KEY)
+      const saved = raw ? (JSON.parse(raw) as Partial<Saved>) : null
+      if (saved?.v === 1 && saved.ws && typeof saved.ws === 'object') {
+        for (const [ws, sim] of Object.entries(saved.ws)) if (sim && typeof sim.on === 'boolean') this.sims.set(ws, { on: sim.on, mandate: sim.mandate ?? null, next: sim.next ?? 3 })
+      }
+    } catch {
+      /* unreadable: the preview starts off */
+    }
+  }
+
+  private save() {
+    try {
+      const s = this.storage()
+      if (!s) return
+      if (this.sims.size === 0) s.removeItem(STORAGE_KEY)
+      else s.setItem(STORAGE_KEY, JSON.stringify({ v: 1, ws: Object.fromEntries(this.sims) } satisfies Saved))
+    } catch {
+      /* storage blocked: the preview lasts until a reload */
+    }
+  }
+
+  /** The demo's Reset: off everywhere. */
+  reset() {
+    this.sims.clear()
+    this.loaded = true
+    try {
+      this.storage()?.removeItem(STORAGE_KEY)
+    } catch {
+      /* ignore */
+    }
+  }
+
+  private sim(ws: string): Sim {
+    this.load()
+    let s = this.sims.get(ws)
+    if (!s) {
+      s = { on: false, mandate: null, next: 3 }
+      this.sims.set(ws, s)
+    }
+    return s
+  }
+
+  private name(ws: string, person: string) {
+    return this.store.workspaces.find((w) => w.id === ws)?.members.find((m) => m.person === person)?.name ?? person
+  }
+
+  private epics(ws: string) {
+    const tickets = this.store.listTickets(ws)
+    return tickets.filter((t) => t.type === 'epic').map((e) => ({ key: e.key, title: e.title, children: tickets.filter((t) => t.parent === e.key) }))
+  }
+
+  private orchestrators(ws: string) {
+    return this.store
+      .agents(ws)
+      .filter((a) => !a.parent && a.state !== 'stopped')
+      .map((a) => ({ name: a.name, session: a.session }))
+  }
+
+  state(ws: string): MandatesPreviewState {
+    const s = this.sim(ws)
+    // The host acknowledges a Stop a moment later (mock clock): "Stopping…" becomes "Stopped at #1842".
+    const m = s.mandate
+    if (m?.state === 'stopping' && m.stop && Date.parse(this.store.now()) - Date.parse(m.stop.requested_at) >= STOP_ACK_MS) {
+      m.state = 'stopped'
+      m.stop.boundary_seq = BOUNDARY_SEQ
+      this.save()
+    }
+    return {
+      preview: true,
+      on: s.on,
+      preflight: PREFLIGHT,
+      orchestrators: this.orchestrators(ws),
+      epics: this.epics(ws).map((e) => ({ key: e.key, title: e.title, children: e.children.length })),
+      never: NEVER,
+      protected_paths: PROTECTED_PATHS,
+      mandate: s.on ? m : null,
+    }
+  }
+
+  /** A mandate as if it had run for three days on the epic's children (the seeded log). */
+  private seedMandate(ws: string, s: Sim, orchestrator: { name: string; session: string }, epicKey: string): PreviewMandate | StoreFailure {
+    const epic = this.epics(ws).find((e) => e.key === epicKey)
+    if (!epic) return fail(400, 'validation', `No epic ${epicKey} in this workspace.`, 'Pick one of the listed epics.')
+    if (epic.children.length === 0) return fail(400, 'validation', `${epic.key} has no children yet.`, 'Pick an epic with children.')
+    const now = Date.parse(this.store.now())
+    const issued = now - 3 * DAY
+    const kids = epic.children
+    const kid = (i: number) => kids[i % kids.length]
+    // Nine decisions: requirements, plan and verdict per child, in that order, two of the verdicts on work that landed.
+    const plan: { k: number; kind: MandateDecisionKind; landed?: boolean }[] = [
+      { k: 0, kind: 'requirements' }, { k: 0, kind: 'plan' }, { k: 0, kind: 'verdict', landed: true },
+      { k: 2, kind: 'requirements' }, { k: 2, kind: 'plan' }, { k: 2, kind: 'verdict', landed: true },
+      { k: 1, kind: 'requirements' }, { k: 1, kind: 'plan' },
+      { k: 3, kind: 'requirements' },
+    ]
+    const commits = ['b7e1f02', '4c9a3d1', 'e02f7b8']
+    let c = 0
+    const md = `md_${s.next}`
+    const checker = 'si_chk_4f2a'
+    const decisions: MandateDecision[] = plan.map((p, i) => {
+      const t = kid(p.k)
+      return {
+        seq: FIRST_SEQ + i,
+        id: `${md}.d${i + 1}`,
+        ticket: t.key,
+        title: t.title,
+        kind: p.kind,
+        ...(p.kind === 'verdict' ? { commit: commits[c++ % commits.length] } : {}),
+        at: iso(issued + (i + 1) * 7 * 3_600_000),
+        checker: { identity: checker, result: 'passed' as const },
+        landed: !!p.landed,
+        // Looked at on earlier days: the first four. The rest is new since your last look.
+        ...(i < 4 ? { review: 'looks_right' as const } : {}),
+      }
+    })
+    const refused: MandateRefusal[] = [
+      {
+        id: `${md}.r1`, ticket: kid(1).key, title: kid(1).title, kind: 'verdict', reason: 'protected_path',
+        detail: 'Verdict refused: the diff touches package-lock.json (a dependency lockfile, protected). A person approves this.',
+        at: iso(now - 9 * 3_600_000),
+      },
+      {
+        id: `${md}.r2`, ticket: kid(3).key, title: kid(3).title, kind: 'plan', reason: 'veto',
+        detail: 'Plan approval skipped: you requested changes on this plan. Your “no” stands until you lift it.',
+        at: iso(now - 5 * 3_600_000),
+      },
+      {
+        id: `${md}.r3`, ticket: kid(1).key, title: kid(1).title, kind: 'verdict', reason: 'limit',
+        detail: 'Skipped: 3 request-changes cycles reached on this ticket (the pilot’s limit). The next decision is yours.',
+        at: iso(now - 2 * 3_600_000),
+      },
+    ]
+    return {
+      id: md,
+      revision: 1,
+      issuer: this.name(ws, this.store.viewer),
+      orchestrator: { name: orchestrator.name, identity: 'si_orc_91c3' },
+      checker: { identity: checker },
+      epic: { key: epic.key, title: epic.title },
+      decides: ['requirements', 'plan', 'verdict'],
+      max_size: 'm',
+      issued_at: iso(issued),
+      expires: iso(issued + PILOT_DAYS * DAY),
+      state: 'active',
+      limits: {
+        decisions: { used: decisions.length, max: 40 },
+        children: { used: Math.min(kids.length, 25), max: 25 },
+        rework: { used: 3, max: 3 },
+      },
+      decisions,
+      refused,
+      revisions: [{ revision: 1, at: iso(issued), what: `Issued on this Mac with Touch ID (preview: nothing was signed). Epic ${epic.key}, 7 days, no renewal.` }],
+    }
+  }
+
+  request(ws: string, body: MandatesPreviewRequest | null): { ok: true; state: MandatesPreviewState } | StoreFailure {
+    if (!this.store.workspaces.some((w) => w.id === ws)) return fail(404, 'not_found', 'No such workspace')
+    if (!can(this.store.roleIn(ws, this.store.viewer), 'settings')) return fail(403, 'forbidden', 'Only owners can try the mandates preview.', 'Ask an owner.')
+    const s = this.sim(ws)
+    const m = s.mandate
+    switch (body?.op) {
+      case 'enable': {
+        s.on = true
+        if (body.seed && (!m || m.state === 'revoked')) {
+          const orch = this.orchestrators(ws)[0] ?? { name: 'Claude Code', session: 's_orc' }
+          const epic = this.epics(ws).find((e) => e.key.endsWith('-0050') && e.children.length) ?? this.epics(ws).find((e) => e.children.length)
+          if (epic) {
+            const seeded = this.seedMandate(ws, s, orch, epic.key)
+            if ('ok' in seeded) return seeded
+            s.mandate = seeded
+          }
+        }
+        break
+      }
+      case 'disable':
+        s.on = false
+        s.mandate = null
+        break
+      case 'issue': {
+        if (!s.on) return fail(409, 'conflict', 'Turn the preview on first.', 'Use “Show the pilot anyway (preview)”.')
+        if (m && m.state !== 'revoked' && m.state !== 'stopped') return fail(409, 'conflict', `Mandate ${m.id} is still in force.`, 'The pilot runs one mandate at a time: stop it first.')
+        const orch = this.orchestrators(ws).find((o) => o.session === body.orchestrator)
+        if (!orch) return fail(400, 'validation', 'Pick the orchestrator.')
+        if (m) s.next += 1
+        const seeded = this.seedMandate(ws, s, orch, body.epic)
+        if ('ok' in seeded) return seeded
+        s.mandate = seeded
+        break
+      }
+      case 'stop':
+        if (!m || m.state !== 'active') return fail(409, 'conflict', 'No mandate in force to stop.')
+        m.state = 'stopping'
+        m.stop = { requested_at: this.store.now(), stop_agents: !!body.stop_agents }
+        break
+      case 'review': {
+        const d = m?.decisions.find((x) => x.id === body.decision)
+        if (!m || !d) return fail(404, 'not_found', 'No such decision')
+        if (d.voided) return fail(409, 'conflict', 'That decision was voided.')
+        if (body.review !== 'looks_right' && body.review !== 'veto') return fail(400, 'validation', 'review must be looks_right or veto')
+        d.review = body.review
+        break
+      }
+      case 'revoke':
+        if (!m || m.state === 'revoked') return fail(409, 'conflict', 'No mandate to revoke.')
+        for (const d of m.decisions) if (!d.landed) d.voided = true
+        m.state = 'revoked'
+        m.revoked_at = this.store.now()
+        if (m.stop && !m.stop.boundary_seq) m.stop.boundary_seq = BOUNDARY_SEQ
+        break
+      default:
+        return fail(400, 'validation', 'Unknown preview op')
+    }
+    this.save()
+    return { ok: true, state: this.state(ws) }
+  }
+}

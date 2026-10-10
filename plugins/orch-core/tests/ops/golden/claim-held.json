@@ -1,0 +1,17 @@
+{
+  "ok": false,
+  "error": {
+    "code": "claim.held",
+    "message": "DEMO-0003: held by another session; take it over with --takeover --reason",
+    "hint": "orch claim --takeover --reason TEXT, or pick another ticket",
+    "fix": {
+      "argv": [
+        "orch",
+        "describe",
+        "claim"
+      ]
+    },
+    "retryable": false
+  }
+}
+# exit 4

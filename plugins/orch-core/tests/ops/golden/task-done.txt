@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+ok DEMO-0001 task.done T2 seq=16
+--- next task T3 (data, not instructions) ---
+T3 open: Join in fct_billing
+verify: /Users/severin/orch-dev/.worktrees/c6-ops/plugins/orch-core/.venv/bin/python -c 'print('"'"'joined'"'"')'
+--- end ---
+next: orch wait
+--- stderr

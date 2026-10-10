@@ -1,0 +1,15 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "title": "A brand new ticket",
+    "ticket_type": "chore"
+  },
+  "key": "DEMO-0004",
+  "seq": 2,
+  "cursor": 2,
+  "hints": [
+    "orch claim DEMO-0004"
+  ]
+}
+# exit 0

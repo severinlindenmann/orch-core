@@ -160,7 +160,7 @@ def test_task_done_run_needs_a_verify_command_and_never_gets_the_grant(ws, cli, 
         "show env",
         "--verify",
         py(
-            "import os; print('grant=[%s] token=[%s]' % (os.environ.get('ORCH_GRANT', ''), os.environ.get('MY_API_TOKEN', '')))"
+            "import os; g = os.environ.get; print('grant=[%s] token=[%s]' % (g('ORCH_GRANT', ''), g('MY_API_TOKEN', '')))"
         ),
     )
     assert cli("task", "done", "T2", "--run").code == 0
@@ -372,7 +372,7 @@ def test_a_commit_that_changes_during_the_run_records_nothing(ws, cli, tmp_path)
         "add",
         "moves",
         "--verify",
-        py(f"import subprocess; subprocess.run(['git', 'commit', '-q', '--allow-empty', '-m', 'two'])"),
+        py("import subprocess; subprocess.run(['git', 'commit', '-q', '--allow-empty', '-m', 'two'])"),
     )
     assert cli("set", "1", 'links={"repos":["proj"],"branches":{"proj":"x"}}').code == 0
     n = len(ws.events("1"))

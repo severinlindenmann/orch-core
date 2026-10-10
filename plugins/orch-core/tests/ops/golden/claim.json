@@ -1,0 +1,14 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "status": "in_progress"
+  },
+  "key": "DEMO-0002",
+  "seq": 3,
+  "cursor": 3,
+  "hints": [
+    "orch show"
+  ]
+}
+# exit 0

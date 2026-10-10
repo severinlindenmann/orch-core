@@ -64,7 +64,7 @@ from .errors import StoreError
 from .fsio import append_durable, fsync_dir, loads, open_nofollow, read_or_none, replace, tail_bytes, write_atomic
 from .index import Index
 from .lock import FileLock
-from .logs import MAX_LINE, LogInfo, first_line, last_line, read_new_lines, stat_sig
+from .logs import MAX_LINE, LogInfo, first_line, info_sig, last_line, read_new_lines, stat_sig
 from .paths import check_artifact, check_state_dirs, check_uid, safe_join, target_ok
 from .pins import HostPins
 
@@ -157,7 +157,7 @@ class _Hint:
     """What the store knows about a ticket log without reading it: its first and last line, **unverified**. Used to find
     the ticket of a key, to keep the merged order (`at`, `ws_seq`) and keys.jsonl right; never for a decision."""
 
-    sig: tuple[int, int]  # (size, inode) when read
+    sig: tuple[int, int, int, int]  # (size, inode, mtime_ns, ctime_ns) when read
     ino: int
     key: str | None
     created_at: str | None
@@ -226,7 +226,9 @@ class Store:
         self._exists: set[str] = set()
         self._pending_revs: list[dict[str, Any]] = []
         self._ws_restore_at = ""
-        self._created_ok: dict[str, tuple[int, str]] = {}  # uid -> (inode, key) of a first line whose host_sig verified
+        self._created_ok: dict[
+            str, tuple[tuple[int, int, int, int], str]
+        ] = {}  # uid -> (log signature, key) of a verified first line
         self._unverified: set[str] = set()  # ticket logs without a verified creation line
         self._suspect = False  # duplicate or missing keys among the hints
         self._hint_mismatch = False  # a verified ticket whose key its hint did not say
@@ -430,7 +432,7 @@ class Store:
                 continue
             if _S_ISLNK(st.st_mode):
                 continue
-            sig = (st.st_size, st.st_ino)
+            sig = (st.st_size, st.st_ino, st.st_mtime_ns, st.st_ctime_ns)
             sizes[uid] = sig[0]
             old = self._hints.get(uid)
             if old is not None and old.sig == sig:
@@ -560,7 +562,7 @@ class Store:
             self._pin = self._pin or ws.genesis
         for uid in tickets:
             v, h = self._state.tickets.get(uid), self._hints.get(uid)
-            if v is not None and h is not None and h.key != v.key and h.sig != (0, 0):
+            if v is not None and h is not None and h.key != v.key and h.sig != (0, 0, 0, 0):
                 self._hint_mismatch = True  # a first line said another key than the verified ticket has
         self._ws_last_at = max((_epoch(e["at"]) for e in ws_events), default=0)
         lasts = [(e["ws_seq"], _epoch(e["at"]), u, e["seq"]) for u, evs in tickets.items() for e in evs[-1:]]
@@ -609,7 +611,7 @@ class Store:
         """Do the files still say what was read? Compared under the lock: size and inode of the workspace log and of
         every loaded ticket log. ``.state/applied`` plays no part (it is a record, not a signal)."""
         for info in self._logs.values():
-            if stat_sig(info.path) != ((info.seen_size, info.ino) if info.ino is not None else None):
+            if stat_sig(info.path) != info_sig(info):
                 return False
         return True
 
@@ -901,7 +903,7 @@ class Store:
             return out
         for uid, h in self._hints.items():
             hit = self._created_ok.get(uid)
-            if hit is None or hit[0] != h.ino:
+            if hit is None or hit[0] != h.sig:
                 hit = None
                 line = first_line(safe_join(self.root, f"tickets/{uid}/events.jsonl"))
                 try:
@@ -914,7 +916,7 @@ class Store:
                         and isinstance(e.get("key"), str)
                         and self._verifier.verify_host(e, log=uid, wsk_pub=wsk, workspace_id=self.workspace_id)
                     ):
-                        hit = (h.ino, e["key"])
+                        hit = (h.sig, e["key"])
                 except (canon.HashError, KeyError, TypeError):
                     hit = None
                 if hit is None:
@@ -1201,10 +1203,10 @@ class Store:
         info = self._logs.get(log)
         path = self._path_of(log)
         wsi = self._logs[WORKSPACE]  # last look, right before the write: the logs this event rests on are unchanged
-        if stat_sig(wsi.path) != ((wsi.seen_size, wsi.ino) if wsi.ino is not None else None):
+        if stat_sig(wsi.path) != info_sig(wsi):
             self._needs_reload = True
             raise StoreError("chain.broken", f"{log}: the workspace log changed on disk while the store held the lock")
-        if stat_sig(path) != ((info.seen_size, info.ino) if info and info.ino is not None else None):
+        if stat_sig(path) != info_sig(info):
             self._needs_reload = True
             raise StoreError("chain.broken", f"{log}: the log changed on disk while the store held the lock")
         try:
@@ -1443,7 +1445,9 @@ class Store:
         info.seen_size = info.offset
         info.seq = ev["seq"]
         info.heads.append(canon.event_head(ev))
-        info.ino = (stat_sig(info.path) or (0, None))[1]
+        sig = stat_sig(info.path)
+        info.ino = sig[1] if sig else None
+        info.seen_times = (sig[2], sig[3]) if sig else (0, 0)
         if log != WORKSPACE:
             self._loaded.add(log)
 
@@ -1460,7 +1464,7 @@ class Store:
             self._exists.add(log)
             self._sizes[log] = self._logs[log].offset
             if ev["type"] == "ticket.created" and log not in self._hints:
-                self._hints[log] = _Hint((0, 0), 0, ev["key"], ev["at"])
+                self._hints[log] = _Hint((0, 0, 0, 0), 0, ev["key"], ev["at"])
                 self._key_uid[ev["key"]] = log
         typ = ev["type"]
         if typ == "workspace.created":

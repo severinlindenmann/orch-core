@@ -1,0 +1,31 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "count": 3,
+    "tasks": [
+      {
+        "id": "T1",
+        "text": "Export CSVs into seeds/tariffs",
+        "state": "done"
+      },
+      {
+        "id": "T2",
+        "text": "Document the refresh command",
+        "state": "open"
+      },
+      {
+        "id": "T3",
+        "text": "Join in fct_billing",
+        "state": "open"
+      }
+    ]
+  },
+  "key": "DEMO-0001",
+  "seq": 15,
+  "cursor": 15,
+  "hints": [
+    "orch wait"
+  ]
+}
+# exit 0

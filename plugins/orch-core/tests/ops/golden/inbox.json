@@ -1,0 +1,21 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "count": 1,
+    "items": [
+      {
+        "key": "DEMO-0003",
+        "from": "acme",
+        "title": "Handed over"
+      }
+    ]
+  },
+  "key": null,
+  "seq": 0,
+  "cursor": 0,
+  "hints": [
+    "orch show DEMO-0003"
+  ]
+}
+# exit 0

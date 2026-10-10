@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+ok DEMO-0003 claim.taken in_progress seq=4
+next: orch show
+--- stderr

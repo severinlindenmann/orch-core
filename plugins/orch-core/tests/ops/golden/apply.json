@@ -1,0 +1,18 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "count": 2,
+    "events": [
+      "log.added",
+      "ticket.updated"
+    ]
+  },
+  "key": "DEMO-0001",
+  "seq": 17,
+  "cursor": 17,
+  "hints": [
+    "orch wait"
+  ]
+}
+# exit 0

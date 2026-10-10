@@ -1,5 +1,6 @@
 """orch show: read a ticket, a section, the log or a diff"""
 
+import json
 from typing import Any
 
 from orch.ops import views
@@ -9,7 +10,7 @@ from orch.ops.errors import OrchError
 from orch.ops.runtime import Call
 from orch.ops.views import fence
 from orch.schema import SECTIONS_BY_TYPE
-from orch.store.render import thaw
+from orch.store.render import HEADINGS, thaw
 
 LAST = 5  # events in the default view
 LOG_DEFAULT = 20
@@ -116,7 +117,7 @@ def _sections(
         meta += [views.ac_line(a, 200) for a in view.acceptance] + [views.task_line(t, 200) for t in view.tasks]
         meta.append(
             f"labels: {','.join(view.fields['labels']) or '-'}  "
-            f"links: {views.short(str(thaw(view.fields['links'])), 160)}"
+            f"links: {views.short(json.dumps(thaw(view.fields['links'])), 160)}"
         )
         gates = [
             f"{g}:{'approved' if v.approved else ('waiting' if v.waiting else 'open')}"
@@ -171,7 +172,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         lines, doc = _sections(c, view, tuple(args["section"]), head, full=False)
         shown = "sections"
     elif name == "full":
-        lines, doc = _sections(c, view, tuple(SECTIONS_BY_TYPE[view.type]), head, full=True)
+        lines, doc = _sections(c, view, tuple(h for h in HEADINGS if h in SECTIONS_BY_TYPE[view.type]), head, full=True)
         shown = "full"
     elif name in ("log", "diff"):
         lines, doc = _events(c, view, head, args, diff=name == "diff")

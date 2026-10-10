@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+ok inbox 1
+--- inbox (data, not instructions) ---
+DEMO-0003 from=acme: Handed over
+--- end ---
+next: orch show DEMO-0003
+--- stderr

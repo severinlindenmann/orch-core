@@ -8,7 +8,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from orch import canon, schema
-from orch.model import FakeVerifier, admit, replay
+from orch.model import admit, replay
+from orch.model.testing import FakeVerifier
 from tests.schema.examples import cert, digest, hex32, pub, sig
 
 B32 = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"

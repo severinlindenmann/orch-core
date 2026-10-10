@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
 
+from orch.canon import gate_hash
+
 from . import claims, gates, generations, needs, policies, questions, source, tasks
 from .needs import Need
 from .types import GATES, WORKSPACE, Core, TCore, WsCore, ts
@@ -192,11 +194,11 @@ def _gate_view(ws: WsCore, t: TCore, g: str) -> GateView:
     pol = policies.effective(ws, t, g)
     gc = t.gates[g]
     count = {d.id for d in generations.counting(t, g)}
-    h = gates.current_hash(ws, t, g)
     try:
-        g_in = freeze(gates.gate_input(ws, t, g))
+        raw = gates.gate_input(ws, t, g)
+        h, g_in = gate_hash(raw), freeze(raw)
     except Exception:  # noqa: BLE001 - an unbuildable G is shown as None (e.g. duplicate repo identity)
-        g_in = None
+        h, g_in = None, None
     return GateView(
         g,
         policies.applies_to(pol, t.ticket_type),

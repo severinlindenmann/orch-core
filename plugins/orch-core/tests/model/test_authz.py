@@ -5,7 +5,8 @@ from datetime import timedelta
 
 import pytest
 
-from orch.model import Code, FakeVerifier
+from orch.model import Code
+from orch.model.testing import FakeVerifier
 from tests.model.world import World, refused, stamp
 from tests.schema.examples import cert, hex32, revocation
 
@@ -451,3 +452,108 @@ def test_verify_host_always_gets_the_log_and_the_workspace_key_after_genesis():
     v.host_calls.clear()
     refused(w, uid, "log.added", "sev", text="y")
     assert v.host_calls == [] or all(c[0] in by_id for c in v.host_calls)
+
+
+# ---- background checks 1/2/3 on the verifier seam
+def test_embedded_objects_are_checked_under_the_key_the_model_vouches_for():
+    from tests.schema.examples import pub
+
+    v = FakeVerifier()
+    w = World(v).bootstrap({"mara": "maintainer"})
+    newdev = hex32("nd")
+    w.wev("device.added", "mara", device="d_" + newdev, cert=cert(w.people["mara"][2:], newdev))
+    w.wev(
+        "device.revoked",
+        w.HOST,
+        device=w.dev["mara"],
+        reason="lost",
+        revocation=revocation(w.people["mara"][2:], w.dev["mara"][2:], "lost"),
+    )
+    w.state()
+    keys = dict((i, k) for i, k in v.embedded_keys)
+    by_type = {e["type"]: e["id"] for e in w.ws}
+    assert keys[by_type["workspace.created"]] == pub("pk-sev")
+    assert keys[by_type["member.added"]] == pub("pk-mara")
+    assert keys[by_type["device.added"]] == pub("pk-mara")  # the member's key, not something the event says
+    assert keys[by_type["device.revoked"]] == pub("pk-mara")
+
+
+def test_a_second_workspace_created_is_not_checked_under_its_own_key():
+    v = FakeVerifier()
+    w = World(v, validate=False).bootstrap()
+    second = {
+        **w.ws[0],
+        "seq": 2,
+        "id": "01J9ZK0000000000000000ZZZZ",
+        "prev": __import__("orch").canon.event_head(w.ws[0]),
+    }
+    second["based_on"] = second["prev"]
+    w.ws.append(second)
+    v.host_calls.clear()
+    s = w.state()
+    ((eid, log, key),) = [c for c in v.host_calls if c[0] == second["id"]]
+    assert key is not None  # the workspace key of the first genesis, not None
+    assert [i.code for i in s.workspace.invalid] == ["genesis.invalid"] or s.chain_errors
+
+
+def test_events_without_signatures_are_refused_not_skipped():
+    w = World(validate=False).bootstrap({"mara": "maintainer"})
+    uid = w.ticket()
+    e = w.tev(uid, "log.added", "sev", text="x")
+    nosig = {k: v for k, v in e.items() if k != "sig"}
+    w.tl[uid][-1] = nosig
+    s = w.state()
+    assert [i.code for i in s._core.logs[uid].invalid] == ["sig.invalid"]
+    w2 = World(validate=False).bootstrap()
+    nohost = {k: v for k, v in w2.ws[0].items() if k != "host_sig"}
+    w2.ws[0] = nohost
+    assert w2.state().chain_errors
+
+
+def test_verifier_exceptions_are_not_success():
+    class Boom(FakeVerifier):
+        def verify_person(self, event, context):
+            raise RuntimeError("backend down")
+
+    w = World(FakeVerifier())
+    w.bootstrap({"mara": "maintainer"})
+    uid = w.ticket()
+    w.tev(uid, "log.added", "sev", text="x")
+    with pytest.raises(RuntimeError):
+        from orch.model import replay
+
+        replay(w.ws, w.tl, verifier=Boom(), now=w.at())
+
+
+def test_the_fake_verifier_is_not_part_of_the_public_api():
+    import orch.model
+
+    assert not hasattr(orch.model, "FakeVerifier")
+
+
+def test_replay_and_admit_verify_the_same_person_signature(w):
+    uid = w.ticket()
+    e = w.build_unappended(uid, "log.added", "sev", text="x")
+    w.verifier.bad_person.add(e["id"])
+    from orch.model import admit
+
+    assert admit(w.state(), e, log=uid).code == Code.SIG_INVALID
+    e["host_sig"] = "x"
+    w.tl[uid].append(e)
+    assert [i.code for i in w.state()._core.logs[uid].invalid] == ["sig.invalid"]
+
+
+def test_status_transitions_are_person_gated_and_workers_do_not_change_them(w):
+    uid = w.ticket("tom")
+    g = w.grant("tom", "workable")
+    a = w.agent("tom", g)
+    assert refused(w, uid, "ticket.closed", a, resolution="other") == Code.EVENT_BAD_ACTOR
+    assert refused(w, uid, "ticket.reopened", a) == Code.EVENT_BAD_ACTOR
+    other = w.ticket("sev")
+    assert refused(w, other, "ticket.closed", "tom", resolution="other") == Code.ROLE_DENIED
+    w.tev(other, "ticket.closed", "sev", resolution="other")
+    assert refused(w, other, "ticket.reopened", "tom") == Code.ROLE_DENIED
+    assert refused(w, other, "ticket.reopened", "mara") is None
+    # being a worker (agent for tom) does not make tom a manager of someone else's ticket
+    w.tev(other, "ticket.reopened", "sev")
+    assert refused(w, other, "ticket.closed", "tom", resolution="other") == Code.ROLE_DENIED

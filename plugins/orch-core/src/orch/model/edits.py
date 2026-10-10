@@ -18,6 +18,9 @@ from .gates import EMPTY
 from .types import Core, TCore, WsCore
 
 
+PROTECTED = frozenset({"ticket.schema", "ticket.uid", "ticket.key", "ticket.visibility", "ticket.questions"})  # §5.8
+
+
 def _valid_section(ws: WsCore, ticket_type: str, sid: str) -> bool:
     if "." in sid:
         a = ws.addons.get(sid.split(".", 1)[0])
@@ -74,6 +77,8 @@ def updated(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
         if not _valid_section(ws, new_type, sid):
             return Refusal(Code.BODY_UNKNOWN_SECTION, sid)
     for path in sets:
+        if path in PROTECTED:
+            return Refusal(Code.PATH_PROTECTED, path)
         key = path[len("ticket.") :]
         if key.startswith("addons.") and ws.addons.get(key.split(".")[1]) is None:
             return Refusal(Code.ADDON_UNKNOWN, path)

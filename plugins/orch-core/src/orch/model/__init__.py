@@ -14,7 +14,7 @@ from .codes import OK, Code, Ok, Refusal
 from .needs import Need
 from .state import ChainError, State, admit, advance, at, replay
 from .types import WORKSPACE
-from .verifier import FakeVerifier, SigContext, Verifier
+from .verifier import SigContext, Verifier
 from .views import TicketView, WorkspaceView
 
 __all__ = [
@@ -22,7 +22,6 @@ __all__ = [
     "WORKSPACE",
     "ChainError",
     "Code",
-    "FakeVerifier",
     "Need",
     "Ok",
     "Refusal",

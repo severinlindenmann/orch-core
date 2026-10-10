@@ -61,9 +61,9 @@ def genesis(core: Core, e: dict[str, Any], v: Verifier, expected: str | None) ->
     cert = e["device_cert"]
     if (r := authz.device_valid(None, cert, ts(e["at"]), False)) is not None:
         return r
-    if not v.verify_embedded(e):
+    if not v.verify_embedded(e, pk_pub=e["owner"]["pk_pub"]):
         return Refusal(Code.GENESIS_INVALID, "delegation or device certificate does not verify")
-    if not v.verify_person(e, SigContext(e["workspace_id"], WORKSPACE, cert)):
+    if "sig" not in e or not v.verify_person(e, SigContext(e["workspace_id"], WORKSPACE, cert)):
         return Refusal(Code.SIG_INVALID, "genesis signature does not verify")
     o = e["owner"]
     ws.created = True
@@ -93,7 +93,7 @@ def member_added(core: Core, e: dict[str, Any], v: Verifier) -> Refusal | None:
         return Refusal(Code.DEVICE_EXISTS, dev)
     if (r := authz.device_valid(None, cert, ts(e["at"]), False)) is not None:
         return r
-    if not v.verify_embedded(e):
+    if not v.verify_embedded(e, pk_pub=e["pk_pub"]):
         return Refusal(Code.DEVICE_CERT, "the device certificate is not signed by the person key")
     ws.former.pop(p, None)
     ws.members[p] = Member(p, e["name"], e["role"], e["pk_pub"])
@@ -151,7 +151,7 @@ def device_added(core: Core, e: dict[str, Any], v: Verifier) -> Refusal | None:
         return Refusal(Code.DEVICE_EXISTS, dev)
     if (r := authz.device_valid(None, e["cert"], ts(e["at"]), False)) is not None:
         return r
-    if not v.verify_embedded(e):
+    if not v.verify_embedded(e, pk_pub=ws.members[a["id"]].pk_pub):
         return Refusal(Code.DEVICE_CERT, "the device certificate is not signed by the person key")
     ws.devices[dev] = Device(dev, a["id"], copy.deepcopy(e["cert"]))
     return None
@@ -175,7 +175,7 @@ def device_revoked(core: Core, e: dict[str, Any], v: Verifier) -> Refusal | None
     holder = ws.members.get(dev.person) or ws.former.get(dev.person)
     if holder is None or "p_" + e["revocation"]["o"]["person_id"] != dev.person:
         return Refusal(Code.DEVICE_CERT, "the revocation is not for a device of this person")
-    if not v.verify_embedded(e):
+    if not v.verify_embedded(e, pk_pub=holder.pk_pub):
         return Refusal(Code.DEVICE_CERT, "the revocation is not signed by the person key")
 
     def change() -> None:

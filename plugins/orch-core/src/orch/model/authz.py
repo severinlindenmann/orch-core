@@ -152,6 +152,8 @@ def authorize_person(core: Core, log: str, e: dict[str, Any], v: Verifier) -> Re
         return Refusal(Code.ROLE_DENIED, "a viewer cannot write")
     if e["roster_v"] != ws.roster_v:
         return Refusal(Code.MEMBERS_STALE, f"roster_v {e['roster_v']} is not current ({ws.roster_v})")
+    if "sig" not in e:
+        return Refusal(Code.SIG_INVALID, "person event without sig")
     if not v.verify_person(e, SigContext(ws.workspace_id, log, cert)):
         return Refusal(Code.SIG_INVALID, "person signature does not verify")
     return None

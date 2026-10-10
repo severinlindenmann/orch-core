@@ -1,20 +1,41 @@
 """Property tests: random event sequences never reach an impossible state, and admit and replay agree."""
 
 import copy
+import pickle
 import random
+from datetime import timedelta
 
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from orch import canon
-from orch.model import replay
-from tests.model.world import SHA1, SHA2, SHA3, World, pol, ulid
+from orch.model import admit, advance, at, replay
+from tests.model.world import SHA1, SHA2, SHA3, World, pol, stamp, ulid
 from tests.schema.examples import digest, revocation, sig
 
 SHAS = (SHA1, SHA2, SHA3)
 TEXTS = ("alpha", "beta", "gamma")
 GATES = ("requirements", "plan", "verify", "code")
 SESSIONS = ("s_" + ulid(1), "s_" + ulid(1) + ".1", "s_" + ulid(2))
+
+
+class Pick:
+    """Draws from a fixed list of small ints (so Hypothesis can shrink a failing walk step by step)."""
+
+    def __init__(self, ints):
+        self.ints = list(ints)
+
+    def _next(self):
+        return self.ints.pop(0) if self.ints else 0
+
+    def randrange(self, n):
+        return self._next() % n
+
+    def choice(self, seq):
+        return seq[self._next() % len(seq)]
+
+    def random(self):
+        return (self._next() % 100) / 100
 
 
 def make_world():
@@ -120,7 +141,7 @@ def act(w, rnd, uids, grants, st_):
     sess = rnd.choice(SESSIONS)
     agent_name = rnd.choice(["sev", "mara", "tom"])
     agent = w.agent(agent_name, grants[agent_name], sess)
-    kind = rnd.randrange(22)
+    kind = rnd.randrange(25)
     if kind == 15 and rnd.random() < 0.8:
         kind = 21
     if kind == 0:
@@ -286,6 +307,41 @@ def act(w, rnd, uids, grants, st_):
                 "set": {"ticket.size": rnd.choice(["s", "m", None])},
             },
         )
+    if kind == 22 and len(uids) > 1:  # a reference to another ticket at the very same `at` (merged-order tie)
+        other = rnd.choice([u for u in uids if u != uid])
+        key = st_.tickets[other].key
+        return (
+            uid,
+            "ticket.updated",
+            "sev",
+            {
+                "base_rev": {"ticket.parent": canon.value_hash(v.fields["parent"])},
+                "set": {"ticket.parent": key},
+                "at": w.at(),
+            },
+        )
+    if kind == 23:
+        w.uid_n += 1
+        new = "01J9ZK4Q7M3R8T2V6X0B" + f"{w.uid_n:06d}"
+        return (
+            new,
+            "ticket.created",
+            "sev",
+            {
+                "key": f"DEMO-{w.uid_n:04d}",
+                "ticket_type": "feature",
+                "title": "n",
+                "owner": w.people["sev"],
+                "at": w.at(),
+            },
+        )
+    if kind == 24:  # a key that is taken
+        return (
+            "01J9ZK4Q7M3R8T2V6X0B" + f"{w.uid_n + 50:06d}",
+            "ticket.created",
+            "sev",
+            {"key": st_.tickets[uid].key, "ticket_type": "bug", "title": "dup", "owner": w.people["sev"]},
+        )
     return uid, "log.added", person, {"text": "hello"}
 
 
@@ -335,46 +391,111 @@ def check(w, s):
                 assert e["actor"]["id"] not in assignees  # no code approval by an assignee
 
 
-def run(seeds):
+def assert_same(a, b, note):
+    assert a.workspace == b.workspace, note
+    assert a.tickets.keys() == b.tickets.keys(), note
+    for uid in a.tickets:
+        assert a.tickets[uid] == b.tickets[uid], (note, uid)
+    assert a.chain_errors == b.chain_errors, note
+
+
+def oracle_workers(w, uid):
+    """§5.7 workers at each accepted decision, from the raw log alone: independent approvals by a worker never count."""
+    workers, holder, bad = set(), None, []
+    ws_indep = {g: False for g in GATES}
+    ws_indep["code"] = True
+    override = {g: False for g in GATES}
+    for e in w.tl[uid]:
+        t, a = e["type"], e["actor"]
+        if t == "ticket.reopened":
+            workers, holder = set(), None
+        elif t == "people.changed" and e["role"] == "assignees":
+            workers |= set(e["add"])
+        elif t == "claim.taken":
+            holder = a["for"]
+        elif t == "claim.released":
+            holder = None
+        elif t == "policy.changed":
+            for g, p in e["gates"].items():
+                override[g] = override[g] or p["independent"]
+        if a["kind"] == "agent" and "for" in a:
+            workers.add(a["for"])
+        if a["kind"] == "host" and t == "branch.pushed" and holder:
+            workers.add(holder)
+        if t in ("gate.approved", "verdict.given") and (
+            t == "verdict.given" and e["outcome"] == "pass" or t == "gate.approved"
+        ):
+            g = "verify" if t == "verdict.given" else e["gate"]
+            if (ws_indep[g] or override[g]) and a["id"] in workers:
+                bad.append((g, a["id"], e["id"]))
+    return bad
+
+
+def run(steps):
     w, uids, grants = make_world()
-    st_ = w.state()
-    for seed in seeds:
-        rnd = random.Random(seed)
-        spec = act(w, rnd, uids, grants, st_)
-        log, typ, actor, payload = spec
-        if isinstance(actor, str) and actor not in w.people:
-            continue
-        before_ws, before_tl = len(w.ws), {u: len(x) for u, x in w.tl.items()}
-        try:
-            e, res = w.try_(log, typ, actor, **copy.deepcopy(payload))
-        except Exception as err:  # a generated event the schema refuses is not a model matter
-            if err.__class__.__name__ == "SchemaError":
+    adv = st_ = w.state()
+    history = []
+    try:
+        for step in steps:
+            rnd = Pick(step)
+            log, typ, actor, payload = act(w, rnd, uids, grants, st_)
+            history.append(typ)
+            if isinstance(actor, str) and actor not in w.people:
                 continue
-            raise
-        if hasattr(res, "code"):
-            # refused by admit: appended anyway it must replay as absent, with the same code
-            ws2, tl2 = copy.deepcopy(w.ws), copy.deepcopy(w.tl)
-            e["host_sig"] = sig("host-refused")
-            (ws2 if log == "workspace" else tl2.setdefault(log, [])).append(e)
-            s2 = replay(ws2, tl2, verifier=w.verifier, now=w.at())
-            lc = s2._core.logs[log]
-            hit = [i for i in lc.invalid if i.id == e["id"]]
-            assert hit and hit[0].code == res.code.value, (typ, res)
+            before_ws, before_tl = len(w.ws), {u: len(x) for u, x in w.tl.items()}
+            prev, pickled = adv, pickle.dumps(adv._core)
+            try:
+                e, res = w.try_(log, typ, actor, **copy.deepcopy(payload))
+            except Exception as err:  # a generated event the schema refuses is not a model matter
+                if err.__class__.__name__ == "SchemaError":
+                    continue
+                raise
+            if hasattr(res, "code"):
+                assert len(w.ws) == before_ws and {u: len(x) for u, x in w.tl.items()} == before_tl
+                if res.code.value.startswith(("chain.", "event.unknown")):
+                    continue
+                # refused by admit: appended anyway it must replay as absent, with the same code
+                ws2, tl2 = copy.deepcopy(w.ws), copy.deepcopy(w.tl)
+                e["host_sig"] = sig("host-refused")
+                (ws2 if log == "workspace" else tl2.setdefault(log, [])).append(e)
+                s2 = replay(ws2, tl2, verifier=w.verifier, now=w.at())
+                hit = [i for i in s2._core.logs[log].invalid if i.id == e["id"]]
+                assert hit and hit[0].code == res.code.value, (typ, res)
+                for uid in uids:
+                    assert projection(s2.tickets[uid]) == projection(st_.tickets[uid]), (typ, res)
+                # advance of a refused event == replay of it
+                forged = advance(adv, e, log=log, now=w.at())
+                assert_same(forged, s2, ("refused advance", typ))
+            else:
+                if typ == "ticket.created":
+                    uids.append(log)
+                adv = advance(adv, e, log=log, now=w.at())
+                assert_same(adv, w.state(), ("advance", typ))
+            st_ = w.state()
+            later = at(prev, stamp(w.clock + timedelta(minutes=45)))
+            admit(prev, e, log=log)
+            assert pickle.dumps(prev._core) == pickled, "admit/advance/at changed the earlier State"
+            assert_same(at(st_, st_.now), st_, ("at", typ))
+            assert later.now > st_.now and at(later, st_.now).now == st_.now
+            check(w, st_)
             for uid in uids:
-                assert projection(s2.tickets[uid]) == projection(st_.tickets[uid]), (typ, res)
-            assert len(w.ws) == before_ws and {u: len(x) for u, x in w.tl.items()} == before_tl
-        st_ = w.state()
-        check(w, st_)
+                assert oracle_workers(w, uid) == [], (uid, oracle_workers(w, uid))
+    except Exception as err:
+        err.add_note("sequence: " + " ".join(history))
+        raise
     return w
 
 
+STEP = st.lists(st.integers(0, 99), min_size=14, max_size=14)
+
+
 @settings(max_examples=25, deadline=None, suppress_health_check=[HealthCheck.too_slow])
-@given(st.lists(st.integers(0, 2**31), min_size=5, max_size=30))
-def test_random_sequences_keep_every_invariant_and_admit_agrees_with_replay(seeds):
-    run(seeds)
+@given(st.lists(STEP, min_size=5, max_size=30))
+def test_random_sequences_keep_every_invariant_and_admit_agrees_with_replay(steps):
+    run(steps)
 
 
 def test_a_long_fixed_sequence():
     rnd = random.Random(7)
-    w = run([rnd.randrange(2**31) for _ in range(60)])
+    w = run([[rnd.randrange(100) for _ in range(14)] for _ in range(60)])
     assert w.state().tickets  # smoke: the walk produced a log that replays

@@ -40,7 +40,7 @@ CROSS_TICKETS = frozenset(
 )
 
 
-@dataclass
+@dataclass(frozen=True)
 class Ctx:
     verifier: Verifier
     expected_genesis: str | None = None
@@ -67,7 +67,9 @@ def _chain_check(core: Core, log: str, lc: LogCore, e: dict[str, Any], ctx: Ctx)
     if e["seq"] != lc.seq + 1 or e["prev"] != lc.head:
         return Refusal(Code.CHAIN_BROKEN, "seq/prev do not continue the log")
     if not ctx.admit:
-        genesis = e["type"] == "workspace.created"
+        genesis = e["type"] == "workspace.created" and not core.ws.created  # a second one is checked like any event
+        if "host_sig" not in e:
+            return Refusal(Code.CHAIN_BROKEN, "event has no host_sig")
         if not genesis and not core.ws.created:
             return Refusal(Code.CHAIN_BROKEN, "no genesis yet, so no workspace key to check host_sig with")
         wsk = None if genesis else base64.urlsafe_b64decode(core.ws.wsk_pub + "=" * (-len(core.ws.wsk_pub) % 4))
@@ -253,10 +255,14 @@ def _place(lc: LogCore, e: dict[str, Any]) -> None:
     lc.last_ws_seq = e.get("ws_seq", lc.last_ws_seq)
 
 
-def apply_event(core: Core, log: str, e: dict[str, Any], ctx: Ctx, *, commit: bool) -> Refusal | None:
+def apply_event(
+    core: Core, log: str, e: dict[str, Any], ctx: Ctx, *, commit: bool, cow: bool = False
+) -> Refusal | None:
     """Accept or refuse the next event of ``log``. With ``commit`` the core takes the event (accepted: its effects;
     refused as auth failure: an invalid-event record; chain failure: the log is marked broken)."""
     lc = _log_of(core, log)
+    if cow:  # the caller shares logs with an earlier State: never mutate those
+        lc = copy.deepcopy(lc)
     if (r := _chain_check(core, log, lc, e, ctx)) is not None:
         if commit and lc.broken is None:
             lc.broken = r.detail

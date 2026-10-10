@@ -19,7 +19,7 @@ export function renderApp(path = '/', opts: { viewer?: string; setup?: (store: M
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   const user = userEvent.setup()
   // Memory history starting at `path` (an in-app path such as /board, or an address such as /w/DEMO/board).
-  const router = createAppRouter(path)
+  const router = createAppRouter(path, client)
   const r = render(
     <QueryClientProvider client={client}>
       <RouterProvider router={router} />

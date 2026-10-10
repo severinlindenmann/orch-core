@@ -1,9 +1,10 @@
-import { Suspense } from 'react'
+import { useRef } from 'react'
 import { Outlet, useRouterState } from '@tanstack/react-router'
 import { ErrorBoundary, PageProblem } from '@/components/ErrorBoundary'
-import { Skeleton } from '@/components/ui/skeleton'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { retryFailedPageLoads } from '../pages/lazyPage'
+import { GenericSkeleton } from '../pages/skeletons'
+import { PageFade, usePageScroll } from './pageMotion'
 import { DockArea } from '../terminal/dock/DockArea'
 import { useLiveUpdates } from '../live'
 import { useWorkspace, WorkspaceProvider } from '../workspace'
@@ -28,25 +29,17 @@ function LiveUpdates() {
   return null
 }
 
-/** Shown while a lazily loaded page chunk arrives. */
-function PageSkeleton() {
-  return (
-    <div className="space-y-4" role="status" aria-label="Loading page">
-      <Skeleton className="h-7 w-48" />
-      <Skeleton className="h-40 w-full" />
-    </div>
-  )
-}
-
 /** The page, or "no such workspace" when the address names a workspace the viewer does not have (a skeleton until known). */
 function PageOutlet() {
   const { missingPrefix, pendingPrefix } = useWorkspace()
-  if (pendingPrefix) return <PageSkeleton />
+  if (pendingPrefix) return <GenericSkeleton />
   return missingPrefix !== undefined ? <WorkspaceNotFound prefix={missingPrefix} /> : <Outlet />
 }
 
 export function Shell() {
   const path = useRouterState({ select: (s) => s.resolvedLocation?.href ?? s.location.href })
+  const main = useRef<HTMLElement>(null)
+  usePageScroll(main)
   return (
     <WorkspaceProvider>
       <LiveUpdates />
@@ -69,7 +62,7 @@ export function Shell() {
             <div className="flex min-w-0 flex-1 flex-col">
               <Topbar />
               <DockArea>
-              <main id="main" tabIndex={-1} className="min-h-0 flex-1 overflow-y-auto p-4 outline-none @[60rem]/page:p-6">
+              <main ref={main} id="main" tabIndex={-1} className="min-h-0 flex-1 overflow-y-auto p-4 outline-none @[60rem]/page:p-6">
                 <ErrorBoundary resetKey={path} fallback={(retry) => (
                     <PageProblem
                       retry={() => {
@@ -78,9 +71,10 @@ export function Shell() {
                       }}
                     />
                   )}>
-                  <Suspense fallback={<PageSkeleton />}>
+                  {/* The router shows each page's skeleton while it loads (router.tsx): no Suspense fallback here. */}
+                  <PageFade>
                     <PageOutlet />
-                  </Suspense>
+                  </PageFade>
                 </ErrorBoundary>
               </main>
               </DockArea>

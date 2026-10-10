@@ -1,7 +1,7 @@
 import type { RJSFValidationError } from '@rjsf/utils'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useBlocker, useRouter } from '@tanstack/react-router'
-import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { createContext, Suspense, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { ArrowRight, ChevronRight, Copy, Ellipsis, ExternalLink, TriangleAlert } from 'lucide-react'
 import { addonActive } from '@/api/addons'
 import { api } from '@/api/client'
@@ -18,12 +18,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { cn } from '@/lib/utils'
 import { AddonBadge } from './AddonBadge'
-import { AddonChart } from './AddonChart'
+import { AddonChart, AddonChartChunk } from './AddonChart'
 import { canUsePty } from './capabilities'
 import { FrameNode } from './FrameNode'
 import { CodeBlock } from './CodeBlock'
 import { INTERNAL_LINK, MAX_DEPTH, parseNode, type ItemAction, type NodeOf } from './nodes'
-import { SafeMarkdown } from './SafeMarkdown'
+import { SafeMarkdown, SafeMarkdownChunk } from './SafeMarkdown'
 import { useAddons, type SlotContext } from './slots'
 import { ErrorAlert } from './ErrorAlert'
 import { roleReason, useRunAddonAction, type ActionError } from './useRunAddonAction'
@@ -35,15 +35,22 @@ import { foldedColumns } from '@/lib/columnFold'
 import { useElementWidth } from '@/lib/useElementWidth'
 import { Sparkline } from '@/components/Sparkline'
 import { visible } from '@/components/sign/visible'
+import { lazyWithPreload } from '@/lib/lazyPreload'
 
 // rjsf (with ajv) loads on first form, so it stays out of the main bundle.
-const ThemedForm = lazy(() => import('./AddonForm'))
+const ThemedForm = lazyWithPreload(() => import('./AddonForm'))
 // The whole terminal module (xterm included) loads on first use, so the main bundle does not grow.
-const DecisionNode = lazy(() => import('./DecisionNode'))
-const TerminalView = lazy(() => import('@/app/terminal/TerminalView'))
+const DecisionNode = lazyWithPreload(() => import('./DecisionNode'))
+const TerminalView = lazyWithPreload(() => import('@/app/terminal/TerminalView'))
 // Ticket widgets (parser, core types, template frames) load on first use too.
-const WidgetNodeView = lazy(() => import('@/app/pages/ticket/widgets/WidgetNode'))
-const WidgetIndexView = lazy(() => import('@/app/pages/ticket/widgets/WidgetNode').then((m) => ({ default: m.WidgetIndex })))
+const WidgetNodeView = lazyWithPreload(() => import('@/app/pages/ticket/widgets/WidgetNode'))
+const WidgetIndexView = lazyWithPreload(() => import('@/app/pages/ticket/widgets/WidgetNode').then((m) => ({ default: m.WidgetIndex })))
+
+/** Loads the renderers above (and markdown, charts) ahead of use: see preloadNodes.ts. Never rejects. */
+export function preloadAddonNodes(): Promise<void> {
+  const all = [ThemedForm, DecisionNode, TerminalView, WidgetNodeView, WidgetIndexView, SafeMarkdownChunk, AddonChartChunk]
+  return Promise.allSettled(all.map((c) => c.preload())).then(() => undefined)
+}
 
 interface Runtime {
   addon: string

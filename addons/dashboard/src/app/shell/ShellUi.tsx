@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRouterState } from '@tanstack/react-router'
 import { api } from '@/api/client'
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { BOARD_ORIGIN, originOf, type PageOrigin } from './origin'
 import { railCollapsed, railToggle, type RailPref } from './railRule'
 
@@ -15,6 +15,8 @@ interface ShellUi {
   setHeader: (h: PageHeaderState) => void
   /** The sidebar is the icon rail (the viewer's choice wins; without one, below 1280 px or beside a squeezing dock). */
   railCollapsed: boolean
+  /** The person just toggled the rail: the sidebar animates its width (never on load or an automatic change). */
+  railAnimating: boolean
   toggleRail: () => void
   /** The terminal dock reports whether it squeezes the page (open on the right, little room): see railRule.ts. */
   setDockSqueeze: (squeezed: boolean) => void
@@ -91,7 +93,12 @@ function useRailState() {
   latest.current = inputs
   const latestViewer = useRef(viewer)
   latestViewer.current = viewer
+  const [animating, setAnimating] = useState(false)
+  const settle = useRef<number | undefined>(undefined)
   const toggle = useCallback(() => {
+    setAnimating(true)
+    window.clearTimeout(settle.current)
+    settle.current = window.setTimeout(() => setAnimating(false), 400)
     const { which, value } = railToggle(latest.current)
     const who = latestViewer.current
     setStored((cur) => ({ ...cur, viewer: who, [which]: value }))
@@ -112,7 +119,7 @@ function useRailState() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [toggle])
-  return { collapsed, toggle, setSqueezed }
+  return { collapsed, animating, toggle, setSqueezed }
 }
 
 export interface PageHeaderState {
@@ -140,8 +147,8 @@ export function ShellUiProvider({ children }: { children: ReactNode }) {
     setOrigin((cur) => (next === null ? BOARD_ORIGIN : cur.href === next.href && cur.label === next.label ? cur : next))
   }, [loc, header.title])
   const value = useMemo(
-    () => ({ paletteOpen, setPaletteOpen, paletteSeed, setPaletteSeed, header, setHeader, railCollapsed: rail.collapsed, toggleRail: rail.toggle, setDockSqueeze: rail.setSqueezed, newTicketOpen, setNewTicketOpen, newTicketOpener, origin }),
-    [paletteOpen, paletteSeed, header, rail.collapsed, rail.toggle, rail.setSqueezed, newTicketOpen, origin],
+    () => ({ paletteOpen, setPaletteOpen, paletteSeed, setPaletteSeed, header, setHeader, railCollapsed: rail.collapsed, railAnimating: rail.animating, toggleRail: rail.toggle, setDockSqueeze: rail.setSqueezed, newTicketOpen, setNewTicketOpen, newTicketOpener, origin }),
+    [paletteOpen, paletteSeed, header, rail.collapsed, rail.animating, rail.toggle, rail.setSqueezed, newTicketOpen, origin],
   )
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }
@@ -175,7 +182,8 @@ export const useShellState = useShellUi
  */
 export function usePageHeader(title?: ReactNode, breadcrumb?: ReactNode) {
   const { setHeader } = useShellUi()
-  useEffect(() => {
+  // Before paint: the topbar's title changes in the same frame as the page.
+  useLayoutEffect(() => {
     setHeader({ title, breadcrumb })
     return () => setHeader({})
   }, [setHeader, title, breadcrumb])

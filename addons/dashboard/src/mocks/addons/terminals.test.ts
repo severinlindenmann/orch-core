@@ -289,16 +289,24 @@ describe('harness sessions (start, resume)', () => {
     expect(mine.prefill).toMatch(/^databricks auth login --profile prod/)
     expect(mine.ctx.user).toBe('orch-agent')
     expect(mine.transcript).toEqual([]) // typed, not run
+    // The open leaves a trace: the owner, the connection, the OS user.
+    expect(s.store.wsEventsOf(s.ws).at(-1)).toMatchObject({ type: 'terminal.shell_opened', actor: { kind: 'person', id: 'p_sev' }, connection: 'databricks-prod', run_as: 'orch-agent', session: r.terminal })
     // The command is the host's, never the request's; unknown or login-less connections are refused; so are non-owners.
     expect(await status(run(s, 'login_shell', { connection: 'nope', command: 'rm -rf /' }))).toBe(404)
     expect(await status(run(s, 'login_shell', { connection: 'tariff-api' }))).toBe(400)
     expect(await status(run(as(setup(), 'p_mara'), 'login_shell', { connection: 'databricks-prod' }))).toBe(403)
     expect(await status(run(as(setup(), 'p_tom'), 'login_shell', { connection: 'databricks-prod' }))).toBe(403)
+    // Refusals leave no trace.
+    expect(s.store.wsEventsOf(s.ws).filter((e) => e.type === 'terminal.shell_opened')).toHaveLength(1)
+    const m = as(setup(), 'p_mara')
+    await status(run(m, 'login_shell', { connection: 'databricks-prod' }))
+    expect(m.store.wsEventsOf(m.ws).some((e) => e.type === 'terminal.shell_opened')).toBe(false)
   })
   it('login_shell refuses without pty', async () => {
     const s = setup('p_sev')
     const w = s.store.workspaces.find((x) => x.id === s.ws)!
     w.addons.terminals.granted = { ...w.addons.terminals.granted!, capabilities: [] }
     expect(await refused(run(s, 'login_shell', { connection: 'databricks-prod' }))).toMatchObject({ status: 409, code: 'terminals.no_pty' })
+    expect(s.store.wsEventsOf(s.ws).some((e) => e.type === 'terminal.shell_opened')).toBe(false)
   })
 })

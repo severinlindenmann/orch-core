@@ -280,8 +280,9 @@ export function Sidebar() {
                       </button>
                     </PopoverTrigger>
                   </RailTip>
-                  <PopoverContent side="right" align="end" className="w-72 p-1.5">
-                    <p className="px-2 pb-1 pt-0.5 text-[11px] text-text-faint">All addons in this workspace. Pin as many as you like to the sidebar.</p>
+                  <PopoverContent side="right" align="end" className="w-72 p-1.5" aria-labelledby="all-addons-title">
+                    <h2 id="all-addons-title" className="px-2 pt-0.5 text-[13px] font-semibold text-text">All addons in this workspace</h2>
+                    <p className="px-2 pb-1 text-[11px] text-text-faint">Pin as many as you like to the sidebar.</p>
                     <ul>
                       {navItems.map((item) => {
                         const isPinned = pinned.includes(itemKey(item))

@@ -723,7 +723,7 @@ export class MockStore {
 
   /**
    * Issue a grant for `actor` (always for themselves). Human only: an agent actor is refused with `human_only`, whatever
-   * its role. Terms by role (`grantTerms`): owners and maintainers all tickets up to 12 h; members the tickets they may
+   * its role. Terms by role (`grantTerms`): owners and maintainers all tickets up to 24 h; members the tickets they may
    * work on, up to the workspace default (owner decision 2026-10-10); viewers none.
    */
   issueGrant(wsId: string, req: { hours: number; scope: 'all' | 'workable' }, actor: Actor): GrantResult {

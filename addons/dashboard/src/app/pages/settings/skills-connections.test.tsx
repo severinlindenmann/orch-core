@@ -170,10 +170,9 @@ describe('Today: re-login', () => {
   it('"Log in in the terminal" opens a shell as the agents\' OS user with the login command typed, not run', async () => {
     const { user } = renderApp('/')
     const row = await screen.findByTestId('relogin-databricks-prod', {}, T)
-    await user.click(within(row).getByRole('button', { name: 'Re-login needed: databricks-prod' }))
-    expect(within(row).getByText(/Opens a shell as/)).toHaveTextContent('orch-agent')
-    expect(within(row).getByRole('button', { name: 'Run check again' })).toBeInTheDocument() // still there afterwards
-    await user.click(within(row).getByRole('button', { name: 'Log in in the terminal' }))
+    // On the collapsed card: one click, no expanding first.
+    expect(within(row).getByRole('button', { name: 'Run check again' })).toBeInTheDocument() // still there
+    await user.click(within(row).getByRole('button', { name: 'Log in to databricks-prod in the terminal (as orch-agent)' }))
     await vi.waitFor(async () => {
       const st = (await api.getAddonState(mockStore.workspaces[0].id, 'terminals')) as unknown as { sessions: { label: string; prefill?: string; run_as?: string; transcript: string[] }[] }
       expect(st.sessions.find((x) => x.label === 'Log in databricks-prod as orch-agent')).toMatchObject({ run_as: 'orch-agent', transcript: [], prefill: expect.stringMatching(/^databricks auth login/) })
@@ -186,6 +185,7 @@ describe('Today: re-login', () => {
     const row = await screen.findByTestId('relogin-databricks-prod', {}, T)
     await userEvent.setup().click(within(row).getByRole('button', { name: 'Re-login needed: databricks-prod' }))
     expect(within(row).queryByRole('button', { name: 'Log in in the terminal' })).toBeNull()
+    expect(within(row).queryByRole('button', { name: /^Log in to .* in the terminal/ })).toBeNull()
     expect(within(row).getByRole('button', { name: 'Copy the login command for databricks-prod' })).toBeInTheDocument()
   })
 

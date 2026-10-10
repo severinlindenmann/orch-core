@@ -265,6 +265,8 @@ registerAddon({
       const s = newShell(state, store, viewer, null)
       s.login = { runAs: c.run_as, connection: c.name, command: c.login_hint }
       navOf(state)[viewer] = { current: s.id }
+      // A cross-user shell leaves a trace: the owner opened it, nothing was run (provisional event type).
+      store.appendWs(ws, { type: 'terminal.shell_opened', actor: { kind: 'person', id: viewer }, connection: c.name, run_as: c.run_as, session: s.id })
       return { ok: true, message: `Opened a shell as ${c.run_as} with the login command for ${c.name} typed. Press Enter to run it.`, changed: true, terminal: s.id }
     },
     save_settings: ({ state, body }) => {

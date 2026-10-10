@@ -821,6 +821,7 @@ export type WorkspaceEventType =
   | 'view.saved' | 'view.deleted'
   | 'ticket.discarded'
   | 'workspace.renamed' | 'workspace.grant_hours_set'
+  | 'terminal.shell_opened'
   | 'relay.connected' | 'relay.stopped' | 'device.paired' | 'device.removed' | 'epoch.rotated'
   | 'skill.credentials_granted' | 'connection.checked'
   | 'records.committed' | 'records.pushed' | 'records.pulled'

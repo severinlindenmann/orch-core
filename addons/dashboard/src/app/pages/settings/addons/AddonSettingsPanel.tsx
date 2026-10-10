@@ -19,7 +19,11 @@ export const addonsHeadingAttr = 'data-addons-heading'
 // The route change remounts the Addons list, so the row's Settings button is a new element: which addon's button
 // should take focus there is remembered here (set by whoever navigates, taken once by the row that mounts).
 let focusSettingsOf: string | null = null
-export const requestSettingsFocus = (name: string | null) => void (focusSettingsOf = name)
+export const requestSettingsFocus = (name: string | null) => {
+  focusSettingsOf = name
+  // A request that no row takes soon (the list was not drawn again) lapses, so it cannot steal focus on a later visit.
+  if (name) setTimeout(() => focusSettingsOf === name && (focusSettingsOf = null), 2000)
+}
 export function takeSettingsFocus(name: string): boolean {
   if (focusSettingsOf !== name) return false
   focusSettingsOf = null
@@ -75,6 +79,12 @@ export function AddonSettingsPanel({ name, workspace, canEdit }: { name: string;
     f()
   }
 
+  const keep = () =>
+    answer(() => {
+      requestSettingsFocus(null)
+      asking?.keep()
+    })
+
   return (
     <>
       <div
@@ -84,7 +94,8 @@ export function AddonSettingsPanel({ name, workspace, canEdit }: { name: string;
         aria-labelledby={titleId}
         className="rounded-md border border-border bg-bg py-3"
         onKeyDown={(e) => {
-          if (e.key === 'Escape' && !e.defaultPrevented) void close()
+          // Esc that belongs to a popup of the form (portals bubble through React) is not ours.
+          if (e.key === 'Escape' && !e.defaultPrevented && panel.current?.contains(e.target as Node)) void close()
         }}
       >
         <h3 className="mb-3 flex items-center gap-2 px-4 text-sm font-semibold">
@@ -96,20 +107,14 @@ export function AddonSettingsPanel({ name, workspace, canEdit }: { name: string;
         </Suspense>
       </div>
       {asking && (
-        <Dialog open onOpenChange={(o) => !o && answer(() => {
-          requestSettingsFocus(null)
-          asking.keep()
-        })}>
+        <Dialog open onOpenChange={(o) => !o && keep()}>
           <DialogContent className="max-w-md border-border bg-surface">
             <DialogHeader>
               <DialogTitle>Discard unsaved changes?</DialogTitle>
               <DialogDescription>The {title} settings have changes that are not saved.</DialogDescription>
             </DialogHeader>
             <DialogFooter>
-              <Button variant="ghost" onClick={() => answer(() => {
-          requestSettingsFocus(null)
-          asking.keep()
-        })}>
+              <Button variant="ghost" onClick={keep}>
                 Keep editing
               </Button>
               <Button variant="destructive" onClick={() => answer(asking.discard)}>

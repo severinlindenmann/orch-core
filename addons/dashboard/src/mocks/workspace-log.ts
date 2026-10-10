@@ -108,6 +108,7 @@ export function foldWorkspace(seed: Workspace, events: WorkspaceEvent[]): Worksp
       case 'view.saved':
       case 'view.deleted':
       case 'ticket.discarded':
+      case 'terminal.shell_opened':
         break
       default:
         break // unknown types are ignored

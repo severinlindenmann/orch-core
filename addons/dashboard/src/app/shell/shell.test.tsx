@@ -99,7 +99,7 @@ describe('app shell', () => {
     const total = addonLinks().length + Number(/\((\d+)\)/.exec(more.getAttribute('aria-label')!)![1])
     expect(total).toBeGreaterThan(6)
     await user.click(more)
-    expect(await screen.findByText(/All addons in this workspace\. Pin as many as you like/)).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'All addons in this workspace' })).toBeInTheDocument()
     // Pin one more: the sidebar holds 7 and the count goes down by one.
     const pins = () => screen.queryAllByRole('button', { name: /^Pin .* to the sidebar$/ })
     await user.click(pins()[0])

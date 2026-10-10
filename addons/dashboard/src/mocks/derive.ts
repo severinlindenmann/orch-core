@@ -618,6 +618,8 @@ export function describeEvent(e: Pick<OrchEvent, 'type'> & Record<string, unknow
       return e.key ? `discarded ${t(e.key, '')} right after creating it` : 'discarded a ticket right after creating it'
     case 'workspace.renamed':
       return e.name ? `renamed the workspace to ${t(e.name, '')}` : 'renamed the workspace'
+    case 'terminal.shell_opened':
+      return `opened a shell as ${t(e.run_as, 'the agent user')} to log ${t(e.connection, 'a connection')} in again`
     case 'workspace.grant_hours_set':
       return typeof e.hours === 'number' ? `set the agent grant length to ${e.hours} h` : 'set the agent grant length'
     case 'skill.credentials_granted': {

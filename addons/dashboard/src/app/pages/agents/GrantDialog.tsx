@@ -26,7 +26,7 @@ export function useSignGrant(ws: string) {
 /** Issue or revoke prompt (SignDialog is ticket-bound; SignPrompt is the shared, ticket-independent primitive). */
 export function GrantDialog({ action, now, onSign, onClose }: { action: GrantAction | null; now: string; onSign: (a: GrantAction, hours: number) => void; onClose: () => void }) {
   const { workspace } = useWorkspace()
-  // Owners and maintainers: all tickets, up to 12 h. Members: the tickets they may work on, up to the workspace default.
+  // Owners and maintainers: all tickets, up to 24 h. Members: the tickets they may work on, up to the workspace default.
   const terms = grantTerms(useRole(), workspace) ?? { scope: 'workable' as const, maxHours: 0, defaultHours: 0 }
   const [hours, setHours] = useState(terms.defaultHours)
   const ws = workspace?.id

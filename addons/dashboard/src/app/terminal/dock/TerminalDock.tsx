@@ -15,6 +15,7 @@ import { useRunAddonAction } from '@/addon-ui/useRunAddonAction'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import TerminalView from '../TerminalView'
 import { useWorkspace } from '../../workspace'
@@ -239,9 +240,14 @@ function DockBody({ prefs, side, size, view, area, rightFits, setPrefs, focus, m
             <DropdownMenuItem onSelect={collapse}>Collapse<DropdownMenuShortcut>{DOCK_KEYS}</DropdownMenuShortcut></DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-        <Button variant="ghost" size="icon-xs" aria-label="Collapse the dock" title={`Collapse · ${DOCK_KEYS}`} onClick={collapse}>
-          {right ? <PanelRightClose /> : <PanelBottomClose />}
-        </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="ghost" size="icon-xs" aria-label="Collapse the dock" aria-keyshortcuts="Control+Backquote" onClick={collapse}>
+              {right ? <PanelRightClose /> : <PanelBottomClose />}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">Collapse · {DOCK_KEYS}</TooltipContent>
+        </Tooltip>
       </header>
       {right && (
         <div className="flex h-8 shrink-0 items-center border-b border-border bg-surface-2 px-2">

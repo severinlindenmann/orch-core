@@ -45,7 +45,11 @@ function ReloginRow({ c, ws, now, expanded, onToggle }: { c: ConnectionInfo; ws:
       action={
         c.kind === 'cli_login' ? (
           <>
-            <DemoChip />
+            {shell.ok && c.login_hint && (
+              <Button size="icon-xs" variant="outline" aria-label={`Log in to ${c.name} in the terminal (as ${c.run_as})`} title="Log in in the terminal" disabled={shell.run.pending} onClick={() => shell.open(c.name)}>
+                <SquareTerminal />
+              </Button>
+            )}
             <Button size="xs" variant="outline" disabled={check.isPending} onClick={() => check.mutate({ name: c.name, trigger: 'relogin' })}>
               {check.isPending ? <Loader2 className="animate-spin" /> : <RefreshCw />}
               Run check again

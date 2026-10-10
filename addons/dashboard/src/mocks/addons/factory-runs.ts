@@ -324,7 +324,7 @@ export function runsView(c: Ctx, state: Record<string, unknown>, opts: { epic: s
   const holdNotice =
     holding.length && opts.canAnswer
       ? holding.flatMap((r) => [
-          { type: 'markdown', text: `**Delivering in ${minutesLeft(r, now)} min · ${r.deliverMeans}** · full run ${r.id}, ${r.goal}` },
+          { type: 'markdown', text: `**Full run ${r.id} · ${r.goal}: on hold before Deliver**` },
           { type: 'decision', id: `factory.hold:${r.id}` },
           { type: 'button', label: 'Skip the wait (demo)', action: 'skip_hold', variant: 'ghost', args: { run: r.id } },
         ])

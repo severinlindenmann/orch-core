@@ -86,7 +86,8 @@ describe('factory full run: steps, hold, Stop, delivery', () => {
     const rows = JSON.parse(JSON.stringify(s.view().runsNode)).children.find((n: { children?: unknown[] }) => n.children)?.children.at(-1).rows as { step: string; decided: string }[]
     expect(rows.map((x) => x.step)).toEqual(['Plan', 'Evidence collected', 'Evidence collected', 'Evidence collected', 'Preview', 'Deliver'])
     for (const row of rows.slice(0, 5)) expect(row.decided).toMatch(/^via the factory full run you signed on .* — no person reviewed this step$/)
-    expect(JSON.stringify(s.view().attentionNode)).toContain('Delivering in 30 min · Deploy to production')
+    expect(JSON.stringify(s.view().attentionNode)).toContain('on hold before Deliver')
+    expect(JSON.stringify(s.view().runsNode)).toContain('Delivering in 30 min · Deploy to production')
     const d = s.store.addonDecisions(s.ws).find((x) => x.id === 'factory.hold:R-1')!
     expect(d).toMatchObject({ options: [{ key: 'stop', label: 'Stop delivery' }], terms: { run: 'R-1', deliver_means: 'Deploy to production', hold_until: r.holdUntil }, hold: { until: r.holdUntil, deliver_means: 'Deploy to production' } })
   })
@@ -145,7 +146,8 @@ describe('factory full run: steps, hold, Stop, delivery', () => {
     const store = createMockStore({ persist: false, dataset: 'busy' })
     const ws = store.workspaces.find((w) => w.prefix === 'DEMO')!.id
     const v = store.addonStateView(ws, 'factory')!
-    expect(JSON.stringify(v.attentionNode)).toContain('Delivering in 28 min · Publish campaign to the newsletter list')
+    expect(JSON.stringify(v.attentionNode)).toContain('Full run R-2 · Autumn tariff campaign: on hold before Deliver')
+    expect(JSON.stringify(v.runsNode)).toContain('Delivering in 28 min · Publish campaign to the newsletter list')
     expect(JSON.stringify(v.runsNode)).toContain('Delivered: Send to finance@example.test (boss)')
     expect(store.addonDecisions(ws).some((d) => d.id === 'factory.hold:R-2' && d.hold)).toBe(true)
   })

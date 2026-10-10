@@ -171,7 +171,8 @@ describe('factory full runs', () => {
   })
   it('a run on hold: the calm notice above the tabs, on Today and in the shell; Stop from the shell cancels it', async () => {
     const { user } = renderApp('/addon/factory/factory', { viewer: 'p_sev', setup: holding })
-    expect(await screen.findByText(/Delivering in 28 min · Publish campaign to the newsletter list/, { selector: 'strong' }, T)).toBeInTheDocument()
+    expect(await screen.findByText('Full run R-2 · Autumn tariff campaign: on hold before Deliver', { selector: 'strong' }, T)).toBeInTheDocument()
+    expect(await screen.findByText('Delivering in 28 min: Publish campaign to the newsletter list', {}, T)).toBeInTheDocument()
     const banner = await screen.findByTestId('delivery-hold-banner', {}, T)
     expect(banner).toHaveTextContent(/^Delivering in 28 min · Publish campaign to the newsletter list · at \d\d:\d\d · AI Factory \(factory\)/)
     expect(banner.className).not.toMatch(/warning|danger|orange/)

@@ -27,15 +27,15 @@ export function DeliveryHoldBanner() {
   const ws = workspace?.id
   const q = useQuery({ ...queries.addonDecisions(ws!), enabled: !!ws })
   const holds = (q.data ?? []).filter(isHold).sort((a, b) => a.hold.until.localeCompare(b.hold.until))
-  // The minutes count down without a refetch.
-  const [now, setNow] = useState(() => nowMs())
+  // The minutes count down without a refetch: re-render on a tick, read the host's clock at render time.
+  const [, setTick] = useState(0)
   useEffect(() => {
     if (!holds.length) return
-    const t = setInterval(() => setNow(nowMs()), 15_000)
+    const t = setInterval(() => setTick((n) => n + 1), 15_000)
     return () => clearInterval(t)
   }, [holds.length])
   if (!holds.length) return null
-  return <HoldLine d={holds[0]} more={holds.length - 1} now={now} />
+  return <HoldLine d={holds[0]} more={holds.length - 1} now={nowMs()} />
 }
 
 function HoldLine({ d, more, now }: { d: AddonDecision & { hold: NonNullable<AddonDecision['hold']> }; more: number; now: number }) {

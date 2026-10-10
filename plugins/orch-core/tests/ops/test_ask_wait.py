@@ -228,6 +228,12 @@ def test_wait_approved_and_invalidated(ws, cli):
     other = Cli(ws, session=OTHER)
     other("show", "1", "--section", "requirements")
     assert other("section", "set", "requirements", "-m", "rewritten after approval", "--ref", "1").code == 0
+    # the store records no gate.invalidated by itself yet (D58: the host appends it): do what the host will do
+    s = ws.other()
+    voided = [d.id for d in s.ticket(uid).gates["requirements"].decisions if not d.counting]
+    assert voided
+    s._host_append("gate.invalidated", uid, {"gate": "requirements", "cause": "content_changed", "voided": voided})
+    s.close()
     r = cli.j("wait", "--timeout", "5")
     assert r.code == 3 and r.data["kind"] == "invalidated" and r.data["gate"] == "requirements"
     assert set(r.data) == {"kind", "key", "seq", "cursor", "next", "gate"}

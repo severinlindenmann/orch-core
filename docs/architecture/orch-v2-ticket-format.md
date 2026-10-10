@@ -505,7 +505,7 @@ their fields and sections join one of these (`binds`). In `binds`, a section is 
   even when it names every type). An override can never end up looser, even after a later workspace change.
   "No eligible approver" is judged on tokens, not persons: an override that leaves no token is refused; if a later
   workspace change empties the set, the gate is blocked (`gate.no_eligible`) until someone fixes the policy.
-- **Canonical form** for hashing: all five keys, `approvers` and `not` sorted and de-duplicated, `applies` a non-empty list. Policies and people lists are author input, so hashing applies this canonical form (people lists sorted and de-duplicated too); every other list this document calls "sorted" (for example `source_sha`, `prior.approvals`) must already be sorted and is refused otherwise. "Sorted" always means by Unicode code point (equal to UTF-8 byte order).
+- **Canonical form** for hashing: all five keys, `approvers` and `not` sorted and de-duplicated, `applies` a non-empty list. Policies and people lists are stored in events and files **in this canonical form** (people lists sorted and de-duplicated too); a non-canonical one is refused at append. Hashing applies the canonical form as well, as a safeguard; every other list this document calls "sorted" (for example `source_sha`, `prior.approvals`) must already be sorted and is refused otherwise. "Sorted" always means by Unicode code point (equal to UTF-8 byte order).
 - For `code`, `not` always includes `assignees` and `independent` is `true`; the host refuses a policy without them
   (D59).
 

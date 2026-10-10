@@ -56,6 +56,10 @@ interface Runtime {
   formControl?: FormControl
   /** Submit actions of forms on this page that hold unsaved edits (a form with `cancel`). Any other action asks before it discards them. */
   dirty: Set<string>
+  /** Decisions (by id) whose terms a form with unsaved edits sets (the form's `guards`). */
+  guardedDecisions: Set<string>
+  /** Told whenever `guardedDecisions` changes. */
+  dirtyListeners: Set<() => void>
   /** Which form took the drawer's form control (see FormNode), and the forms waiting to take it when it is released. */
   formControlClaim: FormControlClaim
 }
@@ -70,7 +74,26 @@ interface FormControlClaim {
   waiting: Set<() => void>
 }
 const newClaim = (): FormControlClaim => ({ current: null, waiting: new Set() })
-const RuntimeCtx = createContext<Runtime>({ addon: '', ctx: {}, compact: false, readOnly: false, dirty: new Set(), formControlClaim: newClaim() })
+const RuntimeCtx = createContext<Runtime>({ addon: '', ctx: {}, compact: false, readOnly: false, dirty: new Set(), guardedDecisions: new Set(), dirtyListeners: new Set(), formControlClaim: newClaim() })
+
+/** Does a form on this page that sets this decision's terms hold unsaved edits right now? Re-renders when that changes. */
+function useUnsavedTerms(id: string): boolean {
+  const { guardedDecisions, dirtyListeners } = useContext(RuntimeCtx)
+  const [unsaved, setUnsaved] = useState(guardedDecisions.has(id))
+  useEffect(() => {
+    const check = () => setUnsaved(guardedDecisions.has(id))
+    dirtyListeners.add(check)
+    check()
+    return () => void dirtyListeners.delete(check)
+  }, [id, guardedDecisions, dirtyListeners])
+  return unsaved
+}
+
+/** A decision node: core's row; its primary option (the one that grants) is off while a form that sets its terms (`guards`) holds unsaved edits, which would otherwise not be in what is signed. Other options stay. */
+function GuardedDecision({ addon, id }: { addon: string; id: string }) {
+  const unsaved = useUnsavedTerms(id)
+  return <DecisionNode addon={addon} id={id} blockedReason={unsaved ? 'Unsaved changes to the terms: save or cancel them before you accept.' : undefined} />
+}
 
 /** A stack with nothing in it draws nothing and takes no gap (addons use one as "no alert right now"). */
 const isEmptyStack = (c: unknown) => !!c && typeof c === 'object' && (c as { type?: unknown }).type === 'stack' && Array.isArray((c as { children?: unknown }).children) && (c as { children: unknown[] }).children.length === 0
@@ -103,9 +126,11 @@ export function AddonUnavailable({ addon }: { addon: string }) {
  */
 export function AddonNode({ node, addon, ctx = {}, compact = false, readOnly = false, formControl, glance }: { node: unknown; addon: string; ctx?: SlotContext; compact?: boolean; readOnly?: boolean; formControl?: FormControl; glance?: Glance }) {
   const dirty = useRef(new Set<string>()).current
+  const guardedDecisions = useRef(new Set<string>()).current
+  const dirtyListeners = useRef(new Set<() => void>()).current
   const formControlClaim = useRef(newClaim()).current
   return (
-    <RuntimeCtx.Provider value={{ addon, ctx, compact, readOnly, formControl, dirty, formControlClaim, glance }}>
+    <RuntimeCtx.Provider value={{ addon, ctx, compact, readOnly, formControl, dirty, guardedDecisions, dirtyListeners, formControlClaim, glance }}>
       <NodeView node={node} depth={0} />
     </RuntimeCtx.Provider>
   )
@@ -182,7 +207,7 @@ function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
     case 'decision':
       return (
         <Suspense fallback={<Skeleton className="h-12 w-full" />}>
-          <DecisionNode addon={addon} id={n.id} />
+          <GuardedDecision addon={addon} id={n.id} />
         </Suspense>
       )
     case 'widget':
@@ -548,6 +573,9 @@ function LeaveGuard() {
 }
 
 const initial0 = (node: NodeOf<'form'>) => JSON.stringify(node.formData ?? {})
+/** JSON with object keys sorted: the form's data counts as edited only when a value changed, not when the form reorders keys. */
+const stableJson = (v: unknown): string =>
+  JSON.stringify(v, (_k, x) => (x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.entries(x as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) : x))
 /** A free-text field of a form schema (no choices): typing in it waits for a pause before a live form runs. */
 const isTextField = (schema: Record<string, unknown>, key: string) => {
   const p = ((schema.properties ?? {}) as Record<string, Record<string, unknown>>)[key]
@@ -571,7 +599,7 @@ function FormNode({ node }: { node: NodeOf<'form'> }) {
   }, [round])
   // `live` is honoured only for a navigation action without a core dialog; otherwise the form keeps its submit button.
   const live = !!node.live && liveAllowed(node.action)
-  const { dirty } = useContext(RuntimeCtx)
+  const { dirty, guardedDecisions, dirtyListeners } = useContext(RuntimeCtx)
   // Core's spawn_agent precheck applies to a form that starts an agent as it does to a button.
   const blocked = roleBlocked || !!precheck
   const readOnly = blocked
@@ -624,22 +652,37 @@ function FormNode({ node }: { node: NodeOf<'form'> }) {
     liveTimer.current = setTimeout(() => run(node.action, { formData: next }), typed ? 400 : 0)
   }
   const guarded = !!node.cancel
-  const initial = JSON.stringify(node.formData ?? {})
+  const initial = stableJson(node.formData ?? {})
   const [edited, setEdited] = useState(false)
-  useEffect(() => setEdited(false), [initial]) // new data from the addon (e.g. after a save): nothing unsaved any more
+  // A guarded form keeps what the person typed or ticked as its data: re-rendering for "Unsaved changes" re-reads the
+  // form's props, which would otherwise put the addon's data back over the edit.
+  const [draft, setDraft] = useState<Record<string, unknown> | null>(null)
+  useEffect(() => {
+    setEdited(false) // new data from the addon (e.g. after a save): nothing unsaved any more
+    setDraft(null)
+  }, [initial])
   useEffect(() => void (liveLast.current = initial), [initial]) // the addon's answer is the new starting point for a live form
   // A form with Cancel tracks unsaved edits: this page's other actions ask before they discard them, and closing the tab does too.
   useEffect(() => {
     if (!guarded) return
+    const tell = () => dirtyListeners.forEach((f) => f())
+    const guards = node.guards
     if (edited) dirty.add(node.action)
     else dirty.delete(node.action)
+    if (guards) {
+      if (edited) guardedDecisions.add(guards)
+      else guardedDecisions.delete(guards)
+    }
+    tell()
     const warn = (e: BeforeUnloadEvent) => e.preventDefault()
     if (edited) window.addEventListener('beforeunload', warn)
     return () => {
       dirty.delete(node.action)
+      if (guards) guardedDecisions.delete(guards)
+      tell()
       window.removeEventListener('beforeunload', warn)
     }
-  }, [guarded, edited, dirty, node.action])
+  }, [guarded, edited, dirty, guardedDecisions, dirtyListeners, node.action, node.guards])
   return (
     <>
       {dialog}
@@ -655,12 +698,12 @@ function FormNode({ node }: { node: NodeOf<'form'> }) {
           key={live ? `${round}|live` : `${round}|${JSON.stringify(node.formData ?? null)}`}
           schema={node.schema}
           uiSchema={{ ...node.uiSchema, 'ui:submitButtonOptions': submitOptions }}
-          formData={node.formData ?? undefined}
+          formData={(guarded && draft) || node.formData || undefined}
           noHtml5Validate
           showErrorList={false}
           focusOnFirstError={focusField}
           transformErrors={(errors) => formErrors(errors, node.schema)}
-          onChange={guarded ? ({ formData }) => setEdited(JSON.stringify(formData ?? {}) !== initial) : live ? ({ formData }) => onLive(formData as Record<string, unknown> | undefined) : undefined}
+          onChange={guarded ? ({ formData }) => { setDraft(formData as Record<string, unknown>); setEdited(stableJson(formData ?? {}) !== initial) } : live ? ({ formData }) => onLive(formData as Record<string, unknown> | undefined) : undefined}
           onSubmit={({ formData }) => run(node.action, { formData })}
         >
           {node.cancel && !formControl ? (
@@ -835,6 +878,7 @@ const CHIP_TONE: Record<string, string> = {
   failed: 'bg-danger', failing: 'bg-danger', error: 'bg-danger', refused: 'bg-danger', rejected: 'bg-danger',
   pending: 'bg-warning', open: 'bg-warning', waiting: 'bg-warning', blocked: 'bg-warning', review: 'bg-warning',
   pass: 'bg-success', fail: 'bg-danger', requested: 'bg-warning', 'changes requested': 'bg-danger', enabled: 'bg-success', 'granted once': 'bg-success', 'granted for this epic': 'bg-success',
+  active: 'bg-success', accepted: 'bg-success', answered: 'bg-success', expiring: 'bg-warning', queued: 'bg-warning', denied: 'bg-danger',
 }
 /** State words in a `status`/`state` column read as a small chip with a dot (neutral surface, no orange). */
 function StateChip({ text }: { text: string }) {

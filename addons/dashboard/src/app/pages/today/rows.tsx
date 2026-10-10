@@ -12,7 +12,7 @@ import { AddonBadge } from '@/addon-ui'
 import { addonEdge } from '@/addon-ui/addonClasses'
 import { ErrorAlert } from '@/addon-ui/ErrorAlert'
 import type { ActionError } from '@/addon-ui/useRunAddonAction'
-import { DecisionSignPrompt, decisionBody, decisionToast } from '@/addon-ui/DecisionSignPrompt'
+import { DecisionSignPrompt, decisionBody, decisionChanged, decisionToast } from '@/addon-ui/DecisionSignPrompt'
 import { useAddons } from '@/addon-ui/slots'
 import { TOUCH_ID_MS } from '@/components/sign/SignPrompt'
 import { Button } from '@/components/ui/button'
@@ -289,16 +289,18 @@ function useDecide(d: AddonDecision, onError?: (e: unknown) => void, onDone?: ()
   const qc = useQueryClient()
   const { workspace } = useWorkspace()
   const { data: packages } = useAddons()
-  const [signing, setSigning] = useState<AddonDecision['options'][number] | null>(null)
+  // The decision as it was when the person chose an option: the prompt shows it and the post sends it, never a later
+  // render (a refresh while the prompt is open must not change what is signed; the host refuses a stale snapshot).
+  const [signing, setSigning] = useState<{ o: AddonDecision['options'][number]; d: AddonDecision } | null>(null)
   // From the click until the post resolves the options are off: no second prompt, no second post.
   const [pending, setPending] = useState(false)
-  const sign = async (o: AddonDecision['options'][number]) => {
+  const sign = async ({ o, d: opened }: { o: AddonDecision['options'][number]; d: AddonDecision }) => {
     setSigning(null)
     if (!workspace) return
     setPending(true)
     try {
       await new Promise((r) => setTimeout(r, TOUCH_ID_MS))
-      const res = await api.runAddonAction(workspace.id, d.addon, d.action, decisionBody(d, o.key))
+      const res = await api.runAddonAction(workspace.id, opened.addon, opened.action, decisionBody(opened, o.key))
       // Core's sentence is the title; the addon's own answer rides below it, labelled as the addon's.
       const t = decisionToast(packages?.find((p) => p.name === d.addon)?.title ?? d.addon, d.addon, o.key, res.message)
       toast.success(t.message, { description: t.description })
@@ -313,12 +315,12 @@ function useDecide(d: AddonDecision, onError?: (e: unknown) => void, onDone?: ()
     }
   }
   const prompt = signing && (
-    <DecisionSignPrompt d={d} option={signing} workspacePrefix={workspace?.prefix ?? ''} onClose={() => setSigning(null)} onSign={() => void sign(signing)} />
+    <DecisionSignPrompt d={signing.d} option={signing.o} changed={decisionChanged(signing.d, d)} workspacePrefix={workspace?.prefix ?? ''} onClose={() => setSigning(null)} onSign={() => void sign(signing)} />
   )
-  return { choose: setSigning, busy: pending || !!signing, pending, prompt }
+  return { choose: (o: AddonDecision['options'][number]) => setSigning({ o, d }), busy: pending || !!signing, pending, prompt }
 }
 
-function DecisionBody({ d, readOnly, showQuestion = true, inlineErrors, onPending }: { d: AddonDecision; readOnly: boolean; showQuestion?: boolean; inlineErrors?: boolean; onPending?: (pending: boolean) => void }) {
+function DecisionBody({ d, readOnly, showQuestion = true, inlineErrors, onPending, blockedReason }: { d: AddonDecision; readOnly: boolean; showQuestion?: boolean; inlineErrors?: boolean; onPending?: (pending: boolean) => void; blockedReason?: string }) {
   const [error, setError] = useState<ActionError | null>(null)
   const { choose, busy, pending, prompt } = useDecide(
     d,
@@ -334,11 +336,12 @@ function DecisionBody({ d, readOnly, showQuestion = true, inlineErrors, onPendin
       {!readOnly && (
         <div className="flex flex-wrap items-center gap-2">
           {d.options.map((o) => (
-            <Button key={o.key} size="sm" variant="outline" disabled={busy} aria-busy={pending || undefined} onClick={() => choose(o)}>
+            <Button key={o.key} size="sm" variant="outline" disabled={busy || (!!blockedReason && !!o.primary)} aria-busy={pending || undefined} onClick={() => choose(o)}>
               {pending && <Loader2 className="animate-spin" />}
               {o.label}
             </Button>
           ))}
+          {blockedReason && <span role="status" className="text-[12px] text-text-muted">{blockedReason}</span>}
         </div>
       )}
       {error && <ErrorAlert error={error} onDismiss={() => setError(null)} />}
@@ -362,6 +365,7 @@ export function DecisionRow({
   decider,
   inlineErrors,
   inline = false,
+  blockedReason,
 }: {
   d: AddonDecision
   readOnly: boolean
@@ -374,6 +378,8 @@ export function DecisionRow({
   decider?: string
   /** On an addon's own page (already framed with [A]): no second badge or hairline, always open, no Decide button. */
   inline?: boolean
+  /** Core says the options cannot be used now (e.g. unsaved edits on the page): they are disabled and this is shown. */
+  blockedReason?: string
 }) {
   const [own, setOwn] = useState(false)
   const [pending, setPending] = useState(false)
@@ -399,7 +405,7 @@ export function DecisionRow({
         )
       }
     >
-      <DecisionBody d={d} readOnly={readOnly} showQuestion={false} inlineErrors={inlineErrors} onPending={setPending} />
+      <DecisionBody d={d} readOnly={readOnly} showQuestion={false} inlineErrors={inlineErrors} onPending={setPending} blockedReason={blockedReason} />
     </RowShell>
     </SigningContext.Provider>
   )

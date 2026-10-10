@@ -652,6 +652,12 @@ export interface AddonDecision {
   question: string
   detail?: string
   options: { key: string; label: string; primary?: boolean }[]
+  /**
+   * What answering it authorises, as plain values (at most 12, keys like arg keys): core shows each one as its own
+   * line in the signing covers ("Words (key): value", in full), posts them with the answer, refuses the answer when they
+   * no longer match (409 decision.closed) and records them in `addon.decided`. Invalid terms: the decision is not offered.
+   */
+  terms?: Record<string, string | number>
   /** Posted to POST /api/workspaces/:ws/addons/:addon/actions/:action with { option, ticket }. */
   action: string
 }
@@ -825,6 +831,8 @@ export type WorkspaceEventType =
   | 'relay.connected' | 'relay.stopped' | 'device.paired' | 'device.removed' | 'epoch.rotated'
   | 'skill.credentials_granted' | 'connection.checked'
   | 'records.committed' | 'records.pushed' | 'records.pulled'
+  | 'links.pairing_started' | 'links.pairing_cancelled' | 'links.terms_set' | 'links.pairing_denied' | 'links.paired' | 'links.revoked'
+  | 'links.request_received' | 'links.request_accepted' | 'links.request_denied' | 'links.answered' | 'links.scope_changed' | 'links.sent'
 export interface WorkspaceEvent {
   v: 2
   id: string

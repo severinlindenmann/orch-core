@@ -2,7 +2,7 @@ import type { AddonDecision } from '@/api/types'
 import { SignPrompt } from '@/components/sign/SignPrompt'
 import { AddonBadge } from './AddonBadge'
 import { plain } from '@/components/sign/visible'
-import { addonName, Raw } from './SignConfirm'
+import { addonName, Raw, TERMS_LEAD, words } from './SignConfirm'
 import { useAddons } from './slots'
 
 /**
@@ -13,7 +13,7 @@ import { useAddons } from './slots'
  * question, detail and the option's label) is shown apart, labelled, in the dashed "From the addon" region.
  * Only after signing is the action posted with core's `confirmed` flag; the host refuses a decision without it.
  */
-export function DecisionSignPrompt({ d, option, workspacePrefix, onSign, onClose }: { d: AddonDecision; option: AddonDecision['options'][number]; workspacePrefix: string; onSign: () => void; onClose: () => void }) {
+export function DecisionSignPrompt({ d, option, workspacePrefix, onSign, onClose, changed }: { d: AddonDecision; option: AddonDecision['options'][number]; workspacePrefix: string; onSign: () => void; onClose: () => void; changed?: boolean }) {
   // The addon by its display name (its manifest says it, so it could say anything) and always its package id.
   const { data: packages } = useAddons()
   const title = packages?.find((p) => p.name === d.addon)?.title ?? d.addon
@@ -25,6 +25,14 @@ export function DecisionSignPrompt({ d, option, workspacePrefix, onSign, onClose
         <>
           Decision <Raw>{d.id}</Raw>
         </>,
+        // What answering authorises, one core line per term ("Words (key): value"), in full; posted with the answer.
+        // The terms are the addon's statements, bound by core: a core lead line says so before them.
+        ...(d.terms && Object.keys(d.terms).length ? [TERMS_LEAD] : []),
+        ...Object.entries(d.terms ?? {}).map(([k, v]) => (
+          <span key={`term-${k}`} data-term-key={k} data-term-value={String(v)}>
+            {words(k) === k ? <Raw>{k}</Raw> : <>{plain(words(k))} (<Raw>{k}</Raw>)</>}: <Raw>{String(v)}</Raw>
+          </span>
+        )),
         <>
           Answer: option <Raw>{option.key}</Raw>
         </>,
@@ -35,6 +43,11 @@ export function DecisionSignPrompt({ d, option, workspacePrefix, onSign, onClose
       onClose={onClose}
       onSign={onSign}
     >
+      {changed && (
+        <p role="alert" className="text-[13px] text-warning">
+          This decision changed after you opened this prompt. You sign what is shown here; orch refuses it if it no longer matches. Close and reopen it to see the current one.
+        </p>
+      )}
       {/* Shown in full, never cut (a permit's question carries the exact command): long text wraps and scrolls in the box. */}
       <section aria-label={`From addon ${d.addon}`} className="max-h-[40vh] space-y-1 overflow-auto rounded-md border border-dashed border-border p-2 text-[13px] text-text-muted">
         <p className="flex items-center gap-1.5 text-[12px]">
@@ -66,5 +79,9 @@ export const decisionToast = (title: string, addon: string, option: string, mess
   ...(message ? { description: `Addon says: ${message}` } : {}),
 })
 
-/** The body core posts for a decision after its prompt: the decision's own id and ticket, the option key, `confirmed`. */
-export const decisionBody = (d: AddonDecision, option: string) => ({ id: d.id, option, ...(d.ticket ? { ticket: d.ticket } : {}), confirmed: true })
+/** Has the live decision moved away from the one a prompt was opened on (id, terms or options)? */
+export const decisionChanged = (opened: AddonDecision, live: AddonDecision | undefined) =>
+  !live || live.id !== opened.id || JSON.stringify(live.terms ?? null) !== JSON.stringify(opened.terms ?? null) || JSON.stringify(live.options) !== JSON.stringify(opened.options)
+
+/** The body core posts for a decision after its prompt: the decision's own id, ticket and terms, the option key, `confirmed`. */
+export const decisionBody = (d: AddonDecision, option: string) => ({ id: d.id, option, ...(d.ticket ? { ticket: d.ticket } : {}), ...(d.terms ? { terms: { ...d.terms } } : {}), confirmed: true })

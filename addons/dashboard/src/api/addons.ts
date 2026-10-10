@@ -48,6 +48,26 @@ export const PACKAGE_NAME = /^[a-z][a-z0-9-]{0,39}$/
 export const ARG_KEY = /^[A-Za-z][A-Za-z0-9_]{0,31}$/
 const HIDDEN_CHAR = new RegExp('[\\p{Cc}\\p{Cf}\\u2028\\u2029]', 'u')
 
+/** At most this many terms on one decision (as for signed args). */
+export const MAX_DECISION_TERMS = 12
+/**
+ * Are these a decision's terms core can show and sign exactly (null/undefined: none)? At most 12, keys like arg keys,
+ * values plain strings or finite numbers. Anything else fails closed: core does not offer the decision at all.
+ */
+export function validTerms(terms: unknown): boolean {
+  if (terms === undefined) return true
+  if (!terms || typeof terms !== 'object' || Array.isArray(terms)) return false
+  const entries = Object.entries(terms as Record<string, unknown>)
+  return entries.length > 0 && entries.length <= MAX_DECISION_TERMS && entries.every(([k, v]) => ARG_KEY.test(k) && (typeof v === 'string' || (typeof v === 'number' && Number.isFinite(v))))
+}
+/** Do the terms a person signed equal the decision's terms now (same keys, same values)? */
+export function sameTerms(signed: unknown, now: Record<string, string | number> | undefined): boolean {
+  if (!now) return signed === undefined
+  if (!signed || typeof signed !== 'object' || Array.isArray(signed)) return false
+  const a = Object.entries(signed as Record<string, unknown>)
+  return a.length === Object.keys(now).length && a.every(([k, v]) => Object.hasOwn(now, k) && String(v) === String(now[k]) && typeof v === typeof now[k])
+}
+
 /**
  * Why core will not install or show this package's name and title in its own lines (null when it can). Core writes
  * the addon as "Title (id)" in titles and covers, so a title must not carry the characters that sentence uses

@@ -68,7 +68,7 @@ describe('addon manager API', () => {
   it('lists the catalog of not-yet-installed addons', async () => {
     const { api, ws } = setup()
     const titles = (await api.getAddonCatalog(ws)).map((a) => a.title)
-    expect(titles).toEqual(['Worktrees', 'Quick tasks', 'Records', 'Activity', 'Model routing', 'AI Factory', 'Schedules', 'Drop'])
+    expect(titles).toEqual(['Worktrees', 'Quick tasks', 'Records', 'Activity', 'Model routing', 'AI Factory', 'Schedules', 'Drop', 'Workspace links'])
   })
   it('refuses enable before grant with 409 addon.needs_grant', async () => {
     const { api, ws } = setup()

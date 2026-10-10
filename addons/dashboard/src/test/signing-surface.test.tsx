@@ -42,6 +42,8 @@ interface Case {
   skip?: string[]
   /** Addon-picked args: each must be core's line for that key (data-arg-key/value), outside the addon region; `ticket` is "About <ticket>". */
   args?: boolean
+  /** Args that must be among the posted (and shown) ones: what this signature has to cover. */
+  expectArgs?: string[]
   /** Core's rendering of each other posted field. Every posted field needs one. */
   shown?: Record<string, Shown>
   /** The body is only the verb (relay connect): nothing else to compare. */
@@ -196,6 +198,97 @@ const CASES: Case[] = [
     addon: ['Stop app', 'Anyone using the app loses it', 'Billing explorer'],
     skip: ['confirmed'],
     args: true,
+  },
+  {
+    // Workspace links (owner feedback 2026-10-10 B): an incoming pairing request is an owner's decision; its id carries the comparison code.
+    name: 'links pairing request (decision node)',
+    path: '/addon/links/links',
+    setup: (s) => installAndGrant(s, wsOf(s), 'links'),
+    open: async (user) => {
+      await user.click(await screen.findByRole('tab', { name: /^Requests/ }, T))
+      await user.click(await screen.findByRole('button', { name: 'Codes match: link on these terms' }, T))
+      return dialogNamed('Decide for Workspace links (links)')
+    },
+    confirm: press('Send answer'),
+    method: 'runAddonAction',
+    arg: 3,
+    addon: ['Link request from Fabrikam Energy', 'Codes match: link on these terms', 'Jonas Weber'],
+    skip: ['confirmed'],
+    // The id names the signed terms: comparison code, carrier, what each side may send and the expiry.
+    // The id binds; the terms are core's own labelled lines (posted with the answer, checked and recorded by the host).
+    shown: {
+      id: (v) => (v.endsWith('.relay.recv-question+drop.send-handoff+question.90d') ? `Decision ${v}` : `unexpected id ${v}`),
+      option: (v) => `Answer: option ${v}`,
+      peer: (v) => `Peer (peer): ${v}`,
+      comparison_code: (v) => `Comparison code (comparison_code): ${v}`,
+      carrier: (v) => `Carrier (carrier): ${v}`,
+      they_may_send_us: (v) => `They may send us (they_may_send_us): ${v}`,
+      we_may_send_them: (v) => `We may send them (we_may_send_them): ${v}`,
+      expires_after: (v) => `Expires after (expires_after): ${v}`,
+    },
+  },
+  {
+    name: 'links confirm pairing (confirm: sign)',
+    path: '/addon/links/links',
+    setup: (s) => {
+      installAndGrant(s, wsOf(s), 'links')
+      s.addonState(wsOf(s), 'links').pending = {
+        id: 'pr_9', carrier: 'local', peer: { name: 'CLI · Client VM', ws: 'CLI', owner: 'Severin' }, accepts: ['status'], days: 30, pairing_code: 'ABC-DEF',
+        started_at: '2026-10-09T11:29:00Z', started_by: 'p_sev', joined: { at: '2026-10-09T11:29:30Z', fingerprint: 'K7M2QX', theyAccept: ['status'] },
+      }
+    },
+    open: async (user) => {
+      await user.click(await screen.findByRole('tab', { name: /^Set up/ }, T))
+      await user.click(await screen.findByRole('button', { name: 'Codes match: sign' }, T))
+      return dialogNamed(/^Sign: .* · Workspace links \(links\)$/)
+    },
+    confirm: press('Sign and run'),
+    method: 'runAddonAction',
+    arg: 3,
+    addon: ['Link the two workspaces'],
+    skip: ['confirmed'],
+    args: true,
+    // The covers name the peer, carrier, scopes both ways and the expiry (each one checked by the host).
+    expectArgs: ['pairing', 'code', 'peer', 'carrier', 'they_may_send', 'we_may_send', 'expires_days'],
+  },
+  {
+    name: 'links hand off a ticket (confirm: sign)',
+    path: '/addon/links/links',
+    setup: (s) => {
+      installAndGrant(s, wsOf(s), 'links')
+      s.addonState(wsOf(s), 'links').nav = { p_sev: { draft: { link: 'ln_int', ticket: 'DEMO-0045' } } }
+    },
+    open: async (user) => {
+      await user.click(await screen.findByRole('tab', { name: /^Requests/ }, T))
+      await user.click(await screen.findByRole('button', { name: 'Sign and send' }, T))
+      return dialogNamed(/^Sign: .* · Workspace links \(links\)$/)
+    },
+    confirm: press('Sign and run'),
+    method: 'runAddonAction',
+    arg: 3,
+    addon: ['Hand off a ticket'],
+    skip: ['confirmed'],
+    args: true,
+    // The covers name the peer, carrier and exactly what crosses: title, sections, attachments and the deadline.
+    expectArgs: ['link', 'to', 'carrier', 'ticket_key', 'title', 'sends', 'deadline'],
+  },
+  {
+    name: 'links revoke (confirm: sign)',
+    path: '/addon/links/links',
+    setup: (s) => installAndGrant(s, wsOf(s), 'links'),
+    open: async (user) => {
+      const row = (await screen.findByText('INT · Internal', {}, T)).closest('tr')!
+      await user.click(within(row).getByRole('button', { name: /More actions/ }))
+      await user.click(await screen.findByRole('menuitem', { name: 'Revoke' }, T))
+      return dialogNamed(/^Sign: Revoke .* · Workspace links \(links\)$/)
+    },
+    confirm: press('Sign and run'),
+    method: 'runAddonAction',
+    arg: 3,
+    addon: ['Revoke a link: nothing crosses it from now on'],
+    skip: ['confirmed'],
+    args: true,
+    expectArgs: ['id', 'peer'],
   },
   {
     name: 'start agent (grant + start)',
@@ -477,6 +570,7 @@ describe('signing surface: these dialogs show exactly what is signed, in core\'s
       else expectShown(texts, k, v, c.shown?.[k])
     }
     if (c.args) for (const k of args.keys()) expect(sent.map(([x]) => x), `the region shows ${k}, which was not posted`).toContain(k)
+    for (const k of c.expectArgs ?? []) expect(sent.map(([x]) => x), `the signature does not cover ${k}`).toContain(k)
     if (c.then && next) {
       await waitFor(() => expect(next).toHaveBeenCalled(), T)
       for (const [k, v] of leaves(next.mock.calls.at(-1)![c.then.arg]).filter(([x]) => !(c.then!.skip ?? []).includes(x))) expectShown(texts, k, v, c.then.shown[k])

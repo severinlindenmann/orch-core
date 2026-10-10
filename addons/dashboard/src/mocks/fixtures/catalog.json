@@ -1157,5 +1157,104 @@
         "label": "Open checks"
       }
     }
+  },
+  {
+    "name": "links",
+    "title": "Workspace links",
+    "version": "0.1.0",
+    "preview": true,
+    "description": "Preview: link this workspace with another (same machine or through the relay), choose what may cross, accept or deny pairing and requests, and see a log of everything that crossed. Simulated.",
+    "capabilities": [
+      "network"
+    ],
+    "first_party": true,
+    "update": null,
+    "contributions": [
+      {
+        "slot": "nav",
+        "id": "links",
+        "title": "Workspace links",
+        "icon": "Link2",
+        "node": {
+          "$ref": "addon.page"
+        }
+      }
+    ],
+    "commands": [],
+    "actions": {
+      "select_link": {
+        "minRole": "viewer",
+        "kind": "navigation",
+        "label": "Show a link"
+      },
+      "filter_log": {
+        "minRole": "viewer",
+        "kind": "navigation",
+        "label": "Filter the log"
+      },
+      "start_pairing": {
+        "minRole": "owner",
+        "label": "Start pairing"
+      },
+      "simulate_peer": {
+        "minRole": "owner",
+        "label": "Simulate the other owner"
+      },
+      "confirm_pairing": {
+        "minRole": "owner",
+        "confirm": "sign",
+        "label": "Link the two workspaces"
+      },
+      "cancel_pairing": {
+        "minRole": "owner",
+        "label": "Cancel pairing"
+      },
+      "revoke": {
+        "minRole": "owner",
+        "confirm": "sign",
+        "label": "Revoke a link: nothing crosses it from now on; open requests close and waiting handoffs come back"
+      },
+      "prepare_handoff": {
+        "minRole": "member",
+        "kind": "navigation",
+        "label": "Review a handoff"
+      },
+      "clear_handoff": {
+        "minRole": "member",
+        "kind": "navigation",
+        "label": "Discard a handoff"
+      },
+      "send_handoff": {
+        "minRole": "member",
+        "confirm": "sign",
+        "label": "Hand off a ticket"
+      },
+      "simulate_request": {
+        "minRole": "member",
+        "label": "Simulate a handoff from INT"
+      },
+      "decide": {
+        "minRole": "member",
+        "decision": true
+      },
+      "decide_pairing": {
+        "minRole": "owner",
+        "decision": true
+      },
+      "decide_scope": {
+        "minRole": "owner",
+        "decision": true
+      },
+      "set_pairing_terms": {
+        "minRole": "owner",
+        "label": "Set the terms of a link request"
+      },
+      "reset_pairing_terms": {
+        "minRole": "owner",
+        "kind": "navigation",
+        "label": "Discard changes to the terms"
+      }
+    },
+    "package_sha256": "9395d3ff43d09f8372895d9387287a801f0c69dc021d545c391ef3683867d5d9"
   }
 ]

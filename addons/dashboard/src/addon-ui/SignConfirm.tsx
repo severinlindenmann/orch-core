@@ -5,6 +5,10 @@ import { AddonBadge } from './AddonBadge'
 
 export { Raw } from '@/components/sign/visible'
 
+/** Core's lead line before the arg lines of a signature: the values are the addon's, and they are sent exactly as shown. */
+export const ARGS_LEAD = 'Values set by the addon (sent exactly as shown):'
+/** Core's lead line before a decision's term lines: the terms are the addon's, and the host checks them again on the answer. */
+export const TERMS_LEAD = 'Terms set by the addon (checked again when you answer):'
 /** At most this many args are signed in one action; more are refused (never silently dropped). */
 export const MAX_SIGNED_ARGS = 12
 /** "arm_schedule" → "Arm schedule": an id said in words (core's own rendering of the action id and arg names). */
@@ -84,7 +88,8 @@ export function SignConfirm({
         <>
           Runs "{plain(words(action))}" (<Raw>{action}</Raw>) of the addon {addonTitle === addon ? <Raw>{addon}</Raw> : <>{plain(addonTitle)} (<Raw>{addon}</Raw>)</>}
         </>,
-        ...(problem ? [] : argLines(args)),
+        // The values below are the addon's, bound by core: a core lead line says so before them.
+        ...(problem || !Object.keys(args ?? {}).length ? [] : [ARGS_LEAD, ...argLines(args)]),
         ...(ticket ? [`About ${plain(ticket)}`] : []),
         `In workspace ${workspace.name} (${workspace.prefix})`,
       ]}

@@ -12,7 +12,7 @@ import { useAddons } from './slots'
  * The addon only names the decision's id; the question, options and facts come from core's list, which is also what
  * the host checks. A decision that is no longer open renders nothing.
  */
-export default function DecisionNode({ addon, id }: { addon: string; id: string }) {
+export default function DecisionNode({ addon, id, blockedReason }: { addon: string; id: string; blockedReason?: string }) {
   const { workspace } = useWorkspace()
   const role = useRole()
   const { data: packages } = useAddons()
@@ -33,6 +33,7 @@ export default function DecisionNode({ addon, id }: { addon: string; id: string 
         expanded={open}
         onToggle={() => setOpen((o) => !o)}
         decider={!canDecide ? owners.join(', ') || 'The owner' : undefined}
+        blockedReason={blockedReason}
       />
     </ul>
   )

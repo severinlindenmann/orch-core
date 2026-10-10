@@ -155,6 +155,18 @@ The host requires core's `confirmed: true` on `confirm: 'sign'`, `'destructive'`
 actions (409 `confirm.required`); a signed action carries at most 12 plain values (400 `validation`), and
 `addon.action_signed` records exactly the signed args (uncut, without `confirmed`).
 
+**Proposal for the addon contract: decision `terms`** (F3 workspace links, 2026-10-10). An `AddonDecision` may carry
+`terms: Record<string, string | number>`: what answering authorises (a link's peer, comparison code, carrier, scopes
+each way, expiry). Same limits as signed args: at most 12 plain finite values under `^[A-Za-z][A-Za-z0-9_]{0,31}$` keys;
+anything else fails closed (core does not offer the decision; `validTerms` in `api/addons.ts`, applied in
+`openDecisions`). Core shows each term in the decision's signing covers as its own line "Words (key): value" (core
+humanises the key; the value through `visible.tsx` `Raw`, in full), posts them with the answer (`decisionBody`), and the
+host refuses the answer with 409 `decision.closed` ("…or its terms changed", hint "Reopen it and check the terms again")
+unless they equal the decision's terms now (`sameTerms`: same keys, values and types). `addon.decided` records them. The
+id still binds the decision; terms make what it binds legible. On an addon page, a decision node's primary option is
+disabled while a form on that page that names it (`guards: <decision id>`, with `cancel`) holds unsaved edits
+("Unsaved changes to the terms: save or cancel them before you accept."); other options stay.
+
 The host refuses package names that are core namespaces (`addon`, `gate`, `role`, `policy`, `edit`, `projection`,
 `restore`, … : `CORE_EVENT_NAMESPACES` in `mocks/addons/registry.ts`; install answers 409 `addon.reserved_name`) and
 accepts only `<name>.<verb>` records from an addon.

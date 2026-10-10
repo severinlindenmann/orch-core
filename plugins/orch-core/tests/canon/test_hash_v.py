@@ -27,14 +27,12 @@ def test_literal_known_answers():
     # computed independently with hashlib, pinned as literals
     assert canon.artifact_digest(b"abc") == "sha256:" + ABC
     assert canon.section_hash("") == "sha256:513b24f990af0ba5f96cae1a0d7f0956a1c3e505c83d8ad833c41472a7a0369a"
-    assert canon.section_hash("café\nline  \n") == (
-        "sha256:db321811bacce8a5d610528d7bf638b66eb9bf469b80d589cc3d74fe5b7a893e"
-    )
+    assert canon.section_hash("caf\u00e9\nline  ") == oracle.h("section", "caf\u00e9\nline  ".encode())
     assert (
         canon.grant_secret_hash(bytes(32)) == "sha256:8380c7dc19efbb04e8d07e16da1850dda54145b814fdbaa21024dfd8d07d3c0c"
     )
     assert canon.question_id(oracle.W, oracle.UID, "Q1") == "d60478ec5ff8f6ff213cded9c0f8f243"
-    g = {x["gate"]: x for x in oracle.gate_vectors()["gate_hash"]}
+    g = {x["name"]: x for x in oracle.gate_vectors()["gate_hash"]}
     assert canon.gate_hash(g["requirements"]["G"]) == (
         "sha256:b642e8d470eb195a0b0f7661488e6d8c7c1488dbdf0c77e82eec8d005be4d803"
     )
@@ -43,7 +41,7 @@ def test_literal_known_answers():
 
 def test_section_text_with_json_sensitive_characters_hashes_raw_utf8():
     # U+2028, an astral character and a quote: the section hash is over UTF-8, not over any JSON escaping
-    t = 'x y \U0001f600 "q" \\'
+    t = 'x\u2028y \U0001f600 "q" \\'
     assert canon.section_hash(t) == "sha256:" + hashlib.sha256(b"orch/v2/section|" + t.encode()).hexdigest()
 
 
@@ -101,7 +99,7 @@ def test_hash_helpers_reject_wrong_types():
 
 
 def test_refuses_non_normalised_everywhere():
-    nfd = "café"
+    nfd = "cafe\u0301"
     with pytest.raises(HashError):
         canon.section_hash(nfd)
     with pytest.raises(HashError):
@@ -124,7 +122,15 @@ def test_refuses_non_normalised_everywhere():
 
 
 def test_cj_errors_are_hash_errors():
-    for bad in ({"a": 1.5}, {"a": "\ud800"}, {"": 1}, {"ä": 1}, [[[[[[[[[[[[[[[[[1]]]]]]]]]]]]]]]]], 2**53, object()):
+    for bad in (
+        {"a": 1.5},
+        {"a": "\ud800"},
+        {"": 1},
+        {"\u00e4": 1},
+        [[[[[[[[[[[[[[[[[1]]]]]]]]]]]]]]]]],
+        2**53,
+        object(),
+    ):
         with pytest.raises(HashError):
             canon.value_hash(bad)
     a: list = []
@@ -289,8 +295,8 @@ BAD_GATE_INPUTS = {
     "hash_v 2": ("requirements", _set(["hash_v"], 2)),
     "hash_v true": ("requirements", _set(["hash_v"], True)),
     "section other gate": ("requirements", _set(["sections", "plan"], GOOD)),
-    "section ascii only": ("requirements", _set(["sections", "Lösung.x"], GOOD)),
-    "section non-ascii core": ("requirements", _set(["sections", "résumé"], GOOD)),
+    "section ascii only": ("requirements", _set(["sections", "L\u00f6sung.x"], GOOD)),
+    "section non-ascii core": ("requirements", _set(["sections", "r\u00e9sum\u00e9"], GOOD)),
     "section hash bare hex": ("requirements", _set(["sections", "summary"], "ab" * 32)),
     "section hash not hash": ("requirements", _set(["sections", "summary"], "x")),
     "code with sections": ("code", _set(["sections", "plan"], GOOD)),
@@ -352,8 +358,8 @@ BAD_GATE_INPUTS = {
     "policy_hash upper": ("requirements", _set(["policy_hash"], "sha256:" + "AB" * 32)),
     "people_hash x": ("requirements", _set(["people_hash"], "x")),
     "people_hash none": ("requirements", _set(["people_hash"], None)),
-    "nfd text": ("requirements", _set(["fields", "acceptance", 0, "text"], "café")),
-    "bidi text": ("plan", _set(["tasks", 0, "text"], "a‮b")),
+    "nfd text": ("requirements", _set(["fields", "acceptance", 0, "text"], "cafe\u0301")),
+    "bidi text": ("plan", _set(["tasks", 0, "text"], "a\u202eb")),
     "control text": ("plan", _set(["tasks", 0, "text"], "a\x00b")),
     "surrogate text": ("plan", _set(["tasks", 0, "text"], "a\ud800")),
     "empty ac text": ("requirements", _set(["fields", "acceptance", 0, "text"], "")),
@@ -394,7 +400,7 @@ def test_gate_hash_text_is_exact_or_refused(t):
     g["fields"]["acceptance"][0]["text"] = t or "x"
     try:
         canon.normalize_text(t or "x")
-        ok = canon.is_normalized(t or "x")
+        ok = canon.is_clean_text(t or "x")
     except canon.TextError:
         ok = False
     if ok:
@@ -502,3 +508,133 @@ def test_host_signing_bytes_needs_the_full_event():
     e = {k: v for k, v in oracle.chain_events()[0].items() if k != "seq"}
     with pytest.raises(HashError):
         canon.host_signing_bytes(oracle.W, oracle.UID, e)
+
+
+# --- section key sets (ticket-format §4/§5.7) ------------------------------------------------------------------
+
+_EXPECTED_SECTIONS = {
+    ("requirements", "feature"): {"summary", "context", "requirements", "out_of_scope"},
+    ("requirements", "bug"): {"summary", "context", "requirements", "out_of_scope"},
+    ("requirements", "chore"): {"summary", "context", "requirements"},
+    ("requirements", "spike"): {"summary", "context", "requirements"},
+    ("requirements", "epic"): {"summary", "context", "requirements", "out_of_scope"},
+    ("plan", "feature"): {"plan", "decisions"},
+    ("plan", "epic"): {"decisions"},
+    ("verify", "feature"): {"verification"},
+    ("verify", "bug"): {"verification"},
+    ("verify", "spike"): {"findings"},
+    ("verify", "chore"): set(),
+    ("verify", "epic"): set(),
+    ("code", "feature"): set(),
+}
+
+
+@pytest.mark.parametrize(("gate", "ttype"), sorted(_EXPECTED_SECTIONS))
+def test_exact_core_section_set_per_gate_and_type(gate, ttype):
+    want = _EXPECTED_SECTIONS[gate, ttype]
+    g = _g(gate)
+    g["fields"]["ticket_type"] = ttype
+    if gate == "verify" and ttype in ("chore", "epic", "spike"):
+        g["receipts"] = {}
+    g["sections"] = {k: oracle.h("section", b"") for k in want}  # missing sections are present as H("")
+    assert canon.gate_hash(g).startswith("sha256:")
+    for k in want:  # leaving one out is a second encoding of the same approval: refused
+        h = dict(g["sections"])
+        del h[k]
+        with pytest.raises(HashError):
+            canon.gate_hash({**g, "sections": h})
+    for extra in {
+        "summary",
+        "context",
+        "requirements",
+        "out_of_scope",
+        "plan",
+        "decisions",
+        "verification",
+        "findings",
+    } - want:
+        with pytest.raises(HashError):
+            canon.gate_hash({**g, "sections": {**g["sections"], extra: GOOD}})
+    canon.gate_hash({**g, "sections": {**g["sections"], "estimate.notes": GOOD}})  # addon sections are allowed
+
+
+def test_section_hash_text_shape():
+    for bad in ("\nabc", "abc\n", "\n", "a" * 65537, "\u00e9" * 32769):
+        with pytest.raises(HashError):
+            canon.section_hash(bad)
+    canon.section_hash("a" * 65536)
+    canon.section_hash("a\n\nb  \t")  # interior blank lines, trailing spaces and tabs are kept
+
+
+def test_receipts_may_have_null_repo_and_commit():
+    g = _g("verify")
+    g["receipts"]["T2"].update(repo=None, commit=None)
+    assert canon.gate_hash(g).startswith("sha256:")
+    g["receipts"]["T2"]["repo"] = "bad repo"
+    with pytest.raises(HashError):
+        canon.gate_hash(g)
+
+
+@pytest.mark.parametrize(
+    "repo",
+    [
+        "https://user:token@github.com/acme/x",
+        "https://token@github.com/acme/x",
+        "https://GitHub.com/acme/x",
+        "https://github.com/acme/x.git",
+        "https://github.com/acme/x/",
+        "https://github.com:443/acme/x",
+        "http://github.com/acme/x",
+        "ssh://git@github.com/acme/x",
+        "git@github.com:acme/x",
+        "file:///tmp/x",
+        "local:",
+        "local:a b",
+        "",
+        "https://github.com",
+    ],
+)
+def test_source_repo_identity_must_be_canonical(repo):
+    g = _g("code")
+    g["source_sha"][0]["repo"] = repo
+    with pytest.raises(HashError):
+        canon.gate_hash(g)
+
+
+@pytest.mark.parametrize("repo", ["https://github.com/acme/x", "https://git.example.com:8443/a/b", "local:my-repo"])
+def test_source_repo_identity_accepts_canonical(repo):
+    g = _g("code")
+    g["source_sha"][0]["repo"] = repo
+    canon.gate_hash(g)
+
+
+@pytest.mark.parametrize("name", ["../x", "a/b", ".hidden", "-x", "", "a b", "x" * 129, "caf\u00e9.png"])
+def test_artifact_names_follow_section_6(name):
+    g = _g("requirements")
+    g["artifacts"] = {name: {"kind": "log", "digest": GOOD, "ac": None, "task": None}}
+    with pytest.raises(HashError):
+        canon.gate_hash(g)
+    g["artifacts"] = {"x" * 128: {"kind": "log", "digest": GOOD, "ac": None, "task": None}}
+    canon.gate_hash(g)
+
+
+def test_chain_inputs_are_typed():
+    ev = oracle.chain_events()
+    for bad in (None, (ev[0],), "x", {"a": 1}):
+        with pytest.raises(HashError):
+            canon.check_chain(bad)  # type: ignore[arg-type]
+    for bad in ([1], [None], [[]], ["x"]):
+        with pytest.raises(canon.ChainError):
+            canon.check_chain(bad)  # type: ignore[arg-type]
+    no_prev = {k: v for k, v in ev[0].items() if k != "prev"}
+    with pytest.raises(canon.ChainError):
+        canon.check_chain([no_prev])
+    for bad in (None, 1, "x", [1]):
+        with pytest.raises(HashError):
+            canon.log_head(bad)  # type: ignore[arg-type]
+
+
+def test_escaped_characters_in_hashed_strings():
+    v = 'a\nb\t"q" \\ \u2028'
+    assert canon.value_hash(v) == oracle.h("value", oracle.cj(v))
+    assert oracle.cj(v) == b'"a\\nb\\t\\"q\\" \\\\ \xe2\x80\xa8"'  # \n \t \" \\ escaped, U+2028 raw

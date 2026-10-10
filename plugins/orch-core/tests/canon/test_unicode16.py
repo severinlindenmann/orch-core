@@ -20,18 +20,42 @@ def test_known_values_independent_of_the_runtime():
     assert text._assigned(0x10D40) and text._assigned(0x41) and text._assigned(0xE000)  # Garay (16.0), A, PUA
     assert not text._assigned(0x378) and not text._assigned(0xFFFF) and not text._assigned(0x10FFFF)
     assert text._ccc(0x0301) == 230 and text._ccc(0x0323) == 220 and text._ccc(0x41) == 0
-    assert nfc("é") == "é" and nfc("한") == "한" and nfc("Å") == "Å"
-    assert nfc("ạ́") == "ạ́" and nfc("ạ́") == "ạ́"  # reordering
-    assert nfc("̈́") == "̈́"  # singleton decomposition, not recomposed
-    assert nfc("क़") == "क़"  # composition exclusion
-    assert nfc("한".encode().decode()) == "한" and nfc("") == ""
+    assert nfc("e\u0301") == "\u00e9" and nfc("\u1112\u1161\u11ab") == "\ud55c" and nfc("\u212b") == "\u00c5"
+    assert nfc("a\u0323\u0301") == "\u1ea1\u0301" and nfc("a\u0301\u0323") == "\u1ea1\u0301"  # reordering
+    assert nfc("\u0344") == "\u0308\u0301"  # singleton decomposition, not recomposed
+    assert nfc("\u0958") == "\u0915\u093c"  # composition exclusion
+    assert nfc("\ud55c".encode().decode()) == "\ud55c" and nfc("") == ""
+
+
+def test_ci_has_a_unicode16_runtime():
+    """The runtime-comparison tests below only run on Unicode 16.0 (CPython 3.14). CI sets ORCH_REQUIRE_UNICODE16=1
+    on that leg so a missing 16.0 runtime fails here instead of silently skipping them. The conformance test
+    (NormalizationTest 16.0) runs on every runtime regardless."""
+    import os
+
+    if os.environ.get("ORCH_REQUIRE_UNICODE16") == "1":
+        assert RUNTIME_IS_16, f"runtime has Unicode {unicodedata.unidata_version}"
+
+
+def test_normalization_conformance_16_0():
+    """Unicode's own NormalizationTest.txt (16.0.0, trimmed to c1;c2;c3), on every runtime."""
+    from pathlib import Path
+
+    f = Path(__file__).parent.parent / "vectors" / "unicode" / "NormalizationTest-16.0.0.nfc.txt"
+    n = 0
+    for line in f.read_text(encoding="utf-8").splitlines():
+        if not line or line.startswith("#"):
+            continue
+        c1, c2, c3 = ("".join(chr(int(x, 16)) for x in col.split()) for col in line.split(";"))
+        assert nfc(c1) == c2 and nfc(c2) == c2 and nfc(c3) == c2, line
+        n += 1
+    assert n > 19000
 
 
 @needs16
 def test_generated_module_is_up_to_date():
-    from pathlib import Path
 
-    assert (Path(_unicode16.__file__)).read_text() == gen_unicode16.generate()
+    assert open(_unicode16.__file__, encoding="utf-8", newline="").read() == gen_unicode16.generate()
 
 
 @needs16
@@ -60,6 +84,6 @@ def test_nfc_matches_runtime_on_random_sequences():
     ]
     for _ in range(4000):
         s = "".join(
-            chr(rnd.choice(pool)) if rnd.random() < 0.7 else rnd.choice("aeouᅡ") for _ in range(rnd.randint(1, 8))
+            chr(rnd.choice(pool)) if rnd.random() < 0.7 else rnd.choice("aeou\u1161") for _ in range(rnd.randint(1, 8))
         )
         assert nfc(s) == unicodedata.normalize("NFC", s), [hex(ord(c)) for c in s]

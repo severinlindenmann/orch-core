@@ -77,6 +77,106 @@
    "input": "\ud803\udd40",
    "name": "unicode_16_new_char",
    "output": "\ud803\udd40"
+  },
+  {
+   "input": "\ud801\uddd2\u0307",
+   "name": "nfc16_105c9",
+   "output": "\ud801\uddc9"
+  },
+  {
+   "input": "\ud801\uddda\u0307",
+   "name": "nfc16_105e4",
+   "output": "\ud801\udde4"
+  },
+  {
+   "input": "\ud804\udf82\ud804\udfc9",
+   "name": "nfc16_11383",
+   "output": "\ud804\udf83"
+  },
+  {
+   "input": "\ud804\udf84\ud804\udfbb",
+   "name": "nfc16_11385",
+   "output": "\ud804\udf85"
+  },
+  {
+   "input": "\ud804\udf8b\ud804\udfc2",
+   "name": "nfc16_1138e",
+   "output": "\ud804\udf8e"
+  },
+  {
+   "input": "\ud804\udf90\ud804\udfc9",
+   "name": "nfc16_11391",
+   "output": "\ud804\udf91"
+  },
+  {
+   "input": "\ud804\udfc2\ud804\udfc2",
+   "name": "nfc16_113c5",
+   "output": "\ud804\udfc5"
+  },
+  {
+   "input": "\ud804\udfc2\ud804\udfb8",
+   "name": "nfc16_113c7",
+   "output": "\ud804\udfc7"
+  },
+  {
+   "input": "\ud804\udfc2\ud804\udfc9",
+   "name": "nfc16_113c8",
+   "output": "\ud804\udfc8"
+  },
+  {
+   "input": "\ud818\udd1e\ud818\udd1e",
+   "name": "nfc16_16121",
+   "output": "\ud818\udd21"
+  },
+  {
+   "input": "\ud818\udd1e\ud818\udd29",
+   "name": "nfc16_16122",
+   "output": "\ud818\udd22"
+  },
+  {
+   "input": "\ud818\udd1e\ud818\udd1f",
+   "name": "nfc16_16123",
+   "output": "\ud818\udd23"
+  },
+  {
+   "input": "\ud818\udd29\ud818\udd1f",
+   "name": "nfc16_16124",
+   "output": "\ud818\udd24"
+  },
+  {
+   "input": "\ud818\udd1e\ud818\udd20",
+   "name": "nfc16_16125",
+   "output": "\ud818\udd25"
+  },
+  {
+   "input": "\ud818\udd21\ud818\udd1f",
+   "name": "nfc16_16126",
+   "output": "\ud818\udd26"
+  },
+  {
+   "input": "\ud818\udd22\ud818\udd1f",
+   "name": "nfc16_16127",
+   "output": "\ud818\udd27"
+  },
+  {
+   "input": "\ud818\udd21\ud818\udd20",
+   "name": "nfc16_16128",
+   "output": "\ud818\udd28"
+  },
+  {
+   "input": "\ud81b\udd67\ud81b\udd67",
+   "name": "nfc16_16d68",
+   "output": "\ud81b\udd68"
+  },
+  {
+   "input": "\ud81b\udd63\ud81b\udd67",
+   "name": "nfc16_16d69",
+   "output": "\ud81b\udd69"
+  },
+  {
+   "input": "\ud81b\udd69\ud81b\udd67",
+   "name": "nfc16_16d6a",
+   "output": "\ud81b\udd6a"
   }
  ],
  "refused": [
@@ -177,6 +277,86 @@
   {
    "input": "a\r\nb",
    "name": "crlf"
+  },
+  {
+   "input": "\ud801\uddd2\u0307",
+   "name": "nfc16_105c9"
+  },
+  {
+   "input": "\ud801\uddda\u0307",
+   "name": "nfc16_105e4"
+  },
+  {
+   "input": "\ud804\udf82\ud804\udfc9",
+   "name": "nfc16_11383"
+  },
+  {
+   "input": "\ud804\udf84\ud804\udfbb",
+   "name": "nfc16_11385"
+  },
+  {
+   "input": "\ud804\udf8b\ud804\udfc2",
+   "name": "nfc16_1138e"
+  },
+  {
+   "input": "\ud804\udf90\ud804\udfc9",
+   "name": "nfc16_11391"
+  },
+  {
+   "input": "\ud804\udfc2\ud804\udfc2",
+   "name": "nfc16_113c5"
+  },
+  {
+   "input": "\ud804\udfc2\ud804\udfb8",
+   "name": "nfc16_113c7"
+  },
+  {
+   "input": "\ud804\udfc2\ud804\udfc9",
+   "name": "nfc16_113c8"
+  },
+  {
+   "input": "\ud818\udd1e\ud818\udd1e",
+   "name": "nfc16_16121"
+  },
+  {
+   "input": "\ud818\udd1e\ud818\udd29",
+   "name": "nfc16_16122"
+  },
+  {
+   "input": "\ud818\udd1e\ud818\udd1f",
+   "name": "nfc16_16123"
+  },
+  {
+   "input": "\ud818\udd29\ud818\udd1f",
+   "name": "nfc16_16124"
+  },
+  {
+   "input": "\ud818\udd1e\ud818\udd20",
+   "name": "nfc16_16125"
+  },
+  {
+   "input": "\ud818\udd21\ud818\udd1f",
+   "name": "nfc16_16126"
+  },
+  {
+   "input": "\ud818\udd22\ud818\udd1f",
+   "name": "nfc16_16127"
+  },
+  {
+   "input": "\ud818\udd21\ud818\udd20",
+   "name": "nfc16_16128"
+  },
+  {
+   "input": "\ud81b\udd67\ud81b\udd67",
+   "name": "nfc16_16d68"
+  },
+  {
+   "input": "\ud81b\udd63\ud81b\udd67",
+   "name": "nfc16_16d69"
+  },
+  {
+   "input": "\ud81b\udd69\ud81b\udd67",
+   "name": "nfc16_16d6a"
   }
  ],
  "unicode_version": "16.0.0"

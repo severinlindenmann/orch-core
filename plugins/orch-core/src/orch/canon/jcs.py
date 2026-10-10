@@ -149,8 +149,10 @@ def loads_strict(data: bytes | str) -> Any:
             text = bytes(data).decode("utf-8")
         except UnicodeDecodeError:
             raise JcsError("invalid UTF-8") from None
-    else:
+    elif isinstance(data, str):
         text = data
+    else:
+        raise JcsError(f"JSON text must be str or bytes, not {type(data).__name__}")
     try:
         obj = json.loads(
             text,

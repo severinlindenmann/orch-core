@@ -11,16 +11,16 @@ from orch.canon import jcs
 from . import oracle_f1 as oracle
 
 DIR = Path(__file__).parent.parent / "vectors" / "f1"
-PROTOCOL_LABELS = json.loads((DIR.parent / "vectors_v2.json").read_text())["labels"]
+PROTOCOL_LABELS = json.loads((DIR.parent / "vectors_v2.json").read_text(encoding="utf-8"))["labels"]
 
 
 def load(name: str):
-    return json.loads((DIR / name).read_text())
+    return json.loads((DIR / name).read_text(encoding="utf-8"))
 
 
 @pytest.mark.parametrize("name", sorted(oracle.all_vectors()))
 def test_fixture_files_are_what_the_oracle_produces(name):
-    assert (DIR / name).read_text() == oracle.render(oracle.all_vectors()[name])
+    assert open(DIR / name, encoding="utf-8", newline="").read() == oracle.render(oracle.all_vectors()[name])
 
 
 def test_labels_are_prefix_free_with_the_protocol_labels():
@@ -113,6 +113,24 @@ def test_section_hash_refuses(text):
         canon.section_hash(text)
 
 
+@pytest.mark.parametrize("v", H["value_hash_refused"], ids=range(len(H["value_hash_refused"])))
+def test_value_hash_refused(v):
+    with pytest.raises(canon.HashError):
+        canon.value_hash(v)
+
+
+@pytest.mark.parametrize("v", H["question_hash_refused"], ids=range(len(H["question_hash_refused"])))
+def test_question_hash_refused(v):
+    with pytest.raises(canon.HashError):
+        canon.question_hash("a" * 32, oracle.UID, v["text"], v["options"])
+
+
+@pytest.mark.parametrize("secret_hex", H["grant_secret_hash_refused"])
+def test_grant_secret_hash_refused(secret_hex):
+    with pytest.raises(canon.HashError):
+        canon.grant_secret_hash(bytes.fromhex(secret_hex))
+
+
 @pytest.mark.parametrize("v", H["value_hash"], ids=range(len(H["value_hash"])))
 def test_value_hash(v):
     assert canon.value_hash(v["value"]) == v["hash"]
@@ -146,7 +164,7 @@ def test_grant_secret_hash(v):
 # --- gate hash ------------------------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("v", load("gate_hash.json")["gate_hash"], ids=lambda v: v["gate"])
+@pytest.mark.parametrize("v", load("gate_hash.json")["gate_hash"], ids=lambda v: v["name"])
 def test_gate_hash_vectors(v):
     assert canon.gate_hash(v["G"]) == v["hash"]
     assert jcs.dumps(v["G"]).hex() == v["cj_hex"]

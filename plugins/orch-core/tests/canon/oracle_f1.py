@@ -7,6 +7,7 @@ reproduces them, so the files are literal known answers that two separate implem
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 from pathlib import Path
@@ -77,19 +78,30 @@ def canon_vectors() -> dict[str, Any]:
 # --- text -----------------------------------------------------------------------------------------------------------
 
 
+NEW_IN_16 = [  # primary composites added after Unicode 14.0: (composite, decomposition); NFC differs on old runtimes
+    (0x105C9, (0x105D2, 0x307)), (0x105E4, (0x105DA, 0x307)), (0x11383, (0x11382, 0x113C9)),
+    (0x11385, (0x11384, 0x113BB)), (0x1138E, (0x1138B, 0x113C2)), (0x11391, (0x11390, 0x113C9)),
+    (0x113C5, (0x113C2, 0x113C2)), (0x113C7, (0x113C2, 0x113B8)), (0x113C8, (0x113C2, 0x113C9)),
+    (0x16121, (0x1611E, 0x1611E)), (0x16122, (0x1611E, 0x16129)), (0x16123, (0x1611E, 0x1611F)),
+    (0x16124, (0x16129, 0x1611F)), (0x16125, (0x1611E, 0x16120)), (0x16126, (0x16121, 0x1611F)),
+    (0x16127, (0x16122, 0x1611F)), (0x16128, (0x16121, 0x16120)), (0x16D68, (0x16D67, 0x16D67)),
+    (0x16D69, (0x16D63, 0x16D67)), (0x16D6A, (0x16D69, 0x16D67)),
+]  # fmt: skip
+
+
 def text_vectors() -> dict[str, Any]:
     normalize = [
         ("crlf", "a\r\nb", "a\nb"),
         ("lone_cr", "a\rb", "a\nb"),
         ("cr_cr_lf", "\r\r\n", "\n\n"),
-        ("nfd_e_acute", "é", "é"),
-        ("angstrom_sign", "Å", "Å"),
-        ("hangul", "한", "한"),
-        ("combining_order", "ạ́", "ạ́"),
+        ("nfd_e_acute", "e\u0301", "\u00e9"),
+        ("angstrom_sign", "\u212b", "\u00c5"),
+        ("hangul", "\u1112\u1161\u11ab", "\ud55c"),
+        ("combining_order", "a\u0323\u0301", "\u1ea1\u0301"),
         ("trailing_space_kept", "x  \n", "x  \n"),
         ("no_final_newline_kept", "x", "x"),
         ("tab_kept", "a\tb", "a\tb"),
-        ("compat_not_folded", "ﬁ", "ﬁ"),
+        ("compat_not_folded", "\ufb01", "\ufb01"),
         ("unicode_16_new_char", "\U00010d40", "\U00010d40"),
     ]
     refused = [
@@ -99,33 +111,37 @@ def text_vectors() -> dict[str, Any]:
         ("del", "\x7f"),
         ("c1_nel", "\x85"),
         ("c1_last", "\x9f"),
-        ("bidi_rlo", "‮"),
-        ("bidi_pdf", "‬"),
-        ("bidi_lri", "⁦"),
-        ("bidi_pdi", "⁩"),
-        ("bidi_lrm", "‎"),
-        ("bidi_rlm", "‏"),
-        ("bidi_alm", "؜"),
-        ("unassigned_0378", "͸"),
-        ("noncharacter_fffe", "￾"),
-        ("noncharacter_ffff", "￿"),
+        ("bidi_rlo", "\u202e"),
+        ("bidi_pdf", "\u202c"),
+        ("bidi_lri", "\u2066"),
+        ("bidi_pdi", "\u2069"),
+        ("bidi_lrm", "\u200e"),
+        ("bidi_rlm", "\u200f"),
+        ("bidi_alm", "\u061c"),
+        ("unassigned_0378", "\u0378"),
+        ("noncharacter_fffe", "\ufffe"),
+        ("noncharacter_ffff", "\uffff"),
         ("unassigned_plane4", "\U00040000"),
         ("unassigned_tags_block", "\U000e0080"),
         ("unassigned_max", "\U0010ffff"),
         ("lone_surrogate", "a\ud800"),
-        ("unassigned_cr_survivor", "\r͸"),
+        ("unassigned_cr_survivor", "\r\u0378"),
     ]
-    check_refused_unnormalised = [("nfd", "é"), ("cr", "a\rb"), ("crlf", "a\r\nb")]
+    for cp, parts in NEW_IN_16:
+        normalize.append((f"nfc16_{cp:x}", "".join(map(chr, parts)), chr(cp)))
+    check_refused_unnormalised = [("nfd", "e\u0301"), ("cr", "a\rb"), ("crlf", "a\r\nb")] + [
+        (f"nfc16_{cp:x}", "".join(map(chr, parts))) for cp, parts in NEW_IN_16
+    ]
     return {
         "unicode_version": "16.0.0",
         "normalize": [{"name": n, "input": i, "output": o} for n, i, o in normalize],
         "refused": [{"name": n, "input": i} for n, i in refused],
         "refused_not_normalised": [{"name": n, "input": i} for n, i in check_refused_unnormalised],
         "kept_invisible": [
-            {"name": "zwsp", "input": "a​b"},
+            {"name": "zwsp", "input": "a\u200bb"},
             {"name": "tag", "input": "\U000e0041"},
-            {"name": "bom", "input": "﻿x"},
-            {"name": "private_use", "input": ""},
+            {"name": "bom", "input": "\ufeffx"},
+            {"name": "private_use", "input": "\ue000"},
         ],
     }
 
@@ -163,14 +179,22 @@ def hash_vectors() -> dict[str, Any]:
         ],
         "section_hash": [
             {"text": "", "hash": h("section", b"")},
-            {"text": "café\nline  \n", "hash": h("section", "café\nline  \n".encode())},
-            {"text": "x y \U0001f600 \x7f".replace("\x7f", ""), "hash": h("section", "x y \U0001f600 ".encode())},
+            {"text": "caf\u00e9\nline  ", "hash": h("section", "caf\u00e9\nline  ".encode())},
+            {"text": 'a\nb\t"q" \\', "hash": h("section", b'a\nb\t"q" \\')},
+            {"text": "x\u2028y \U0001f600 ", "hash": h("section", "x\u2028y \U0001f600 ".encode())},
         ],
-        "section_hash_refused": ["café", "a\r\nb", "a\x00", "‮"],
+        "section_hash_refused": ["cafe\u0301", "a\r\nb", "a\x00", "\u202e", "\nabc", "abc\n", "\n", "a" * 65537],
+        "value_hash_refused": ["cafe\u0301", {"k": ["a\r\nb"]}, {"x": "\u202e"}, ["\ud800"]],
+        "question_hash_refused": [
+            {"text": "cafe\u0301", "options": []},
+            {"text": "ok", "options": [{"key": "a", "label": "cafe\u0301"}]},
+        ],
         "value_hash": [
             {"value": None, "hash": h("value", b"null")},
             {"value": ["a", 1, {"b": True}], "hash": h("value", cj(["a", 1, {"b": True}]))},
             {"value": "m", "hash": h("value", b'"m"')},
+            {"value": 'a\nb\t"q" \\ \u2028', "hash": h("value", cj('a\nb\t"q" \\ \u2028'))},
+            {"value": {'k\\"': ["\t\n"]}, "hash": h("value", cj({'k\\"': ["\t\n"]}))},
         ],
         "policy_hash": [
             {
@@ -219,6 +243,7 @@ def hash_vectors() -> dict[str, Any]:
                 "hash": h("question", cj({"question_id": qid, "ticket": UID, "text": "Ok?", "options": []})),
             },
         ],
+        "grant_secret_hash_refused": ["", "00" * 31, "00" * 33],
         "grant_secret_hash": [{"secret_hex": "00" * 32, "hash": h("grant_secret", bytes(32))}],
     }
 
@@ -247,7 +272,7 @@ def gate_inputs() -> dict[str, dict[str, Any]]:
         "sections": {
             "summary": _sec("Load tariffs.\n"),
             "context": _sec(""),
-            "requirements": _sec("- R1 café\n"),
+            "requirements": _sec("- R1 caf\u00e9\n"),
             "out_of_scope": _sec("Nothing.\n"),
         },
         "fields": {"ticket_type": "feature", "size": "m", "acceptance": ac, "links": None, "addons": {}},
@@ -320,7 +345,20 @@ def gate_inputs() -> dict[str, dict[str, Any]]:
 
 def gate_vectors() -> dict[str, Any]:
     gi = gate_inputs()
-    return {"gate_hash": [{"gate": g, "G": v, "cj_hex": cj(v).hex(), "hash": h("gate", cj(v))} for g, v in gi.items()]}
+    nulls = copy.deepcopy(gi["verify"])  # a receipt of a command that is not tied to a repo (ticket-format 5.4.1)
+    nulls["receipts"]["T2"].update(repo=None, commit=None)
+    chore = copy.deepcopy(gi["requirements"])  # a chore has no out_of_scope section; a missing summary is H("")
+    chore["fields"]["ticket_type"] = "chore"
+    del chore["sections"]["out_of_scope"]
+    cases = [(g, g, v) for g, v in gi.items()] + [
+        ("verify_null_receipt", "verify", nulls),
+        ("requirements_chore", "requirements", chore),
+    ]
+    return {
+        "gate_hash": [
+            {"name": n, "gate": g, "G": v, "cj_hex": cj(v).hex(), "hash": h("gate", cj(v))} for n, g, v in cases
+        ]
+    }
 
 
 # --- chain and signed bytes -----------------------------------------------------------------------------------------
@@ -342,7 +380,8 @@ def chain_events() -> list[dict[str, Any]]:
     e2["host_sig"] = "B" * 86
     e3: dict[str, Any] = {
         "v": 2, "id": "01J9ZP0000000000000000000C", "seq": 3, "at": "2026-10-09T09:11:00Z", "type": "log.added",
-        "text": "café   note", "actor": {"kind": "host"}, "based_on": h("event", cj(e2)), "prev": h("event", cj(e2)),
+        "text": "caf\u00e9 \u2028 note", "actor": {"kind": "host"},
+        "based_on": h("event", cj(e2)), "prev": h("event", cj(e2)),
         "hash_v": 1, "ws_seq": 2,
     }  # fmt: skip
     e3["host_sig"] = "C" * 86

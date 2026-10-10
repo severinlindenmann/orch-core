@@ -16,8 +16,10 @@ from .hashing import (
     ChainError,
     HashError,
     artifact_digest,
+    canonical_policy,
     check_chain,
     check_hash_v,
+    cj_checked,
     event_head,
     event_line,
     format_hash,
@@ -38,11 +40,12 @@ from .hashing import (
 )
 from .jcs import JcsError, dumps, loads_strict, validate
 from .text import (
+    BIDI_CONTROLS,
     UNICODE_VERSION,
     Suspect,
     TextError,
     check_text,
-    is_normalized,
+    is_clean_text,
     nfc,
     normalize_text,
     show_invisible,
@@ -50,6 +53,7 @@ from .text import (
 )
 
 __all__ = [
+    "BIDI_CONTROLS",
     "ARTIFACT_KINDS",
     "CONTRACT",
     "GATES",
@@ -64,7 +68,9 @@ __all__ = [
     "Suspect",
     "TextError",
     "artifact_digest",
+    "canonical_policy",
     "check_chain",
+    "cj_checked",
     "check_hash_v",
     "check_text",
     "dumps",
@@ -74,7 +80,7 @@ __all__ = [
     "gate_hash",
     "grant_secret_hash",
     "host_signing_bytes",
-    "is_normalized",
+    "is_clean_text",
     "loads_strict",
     "log_head",
     "nfc",

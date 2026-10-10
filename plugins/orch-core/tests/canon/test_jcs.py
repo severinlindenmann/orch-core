@@ -12,7 +12,9 @@ from orch.canon import jcs
 
 from .rfc8785_oracle import dumps_general
 
-VECTORS = json.loads((Path(__file__).parent.parent / "vectors" / "vectors_v2.json").read_text())["encodings"]
+VECTORS = json.loads((Path(__file__).parent.parent / "vectors" / "vectors_v2.json").read_text(encoding="utf-8"))[
+    "encodings"
+]
 
 
 def _f(bits: int) -> float:
@@ -66,9 +68,9 @@ def test_rfc8785_section_3_2_2_example():
 
 
 def test_rfc8785_utf16_key_sorting():
-    obj = {k: 1 for k in ["€", "\r", "דּ", "1", "\U0001f600", "\u0080", "ö"]}
+    obj = {k: 1 for k in ["\u20ac", "\r", "\ufb33", "1", "\U0001f600", "\u0080", "\u00f6"]}
     keys = list(json.loads(dumps_general(obj), object_pairs_hook=lambda p: p))
-    assert [k for k, _ in keys] == ["\r", "1", "\u0080", "ö", "€", "\U0001f600", "דּ"]
+    assert [k for k, _ in keys] == ["\r", "1", "\u0080", "\u00f6", "\u20ac", "\U0001f600", "\ufb33"]
 
 
 def test_utf16_vs_codepoint_order():
@@ -106,7 +108,7 @@ def test_protocol_strict_parse_vectors(v):
 
 
 def test_strict_parse_invalid_utf8_and_bytes_input():
-    assert jcs.loads_strict(b'{"a":"\xc3\xbc"}') == {"a": "ü"}
+    assert jcs.loads_strict(b'{"a":"\xc3\xbc"}') == {"a": "\u00fc"}
     with pytest.raises(jcs.JcsError):
         jcs.loads_strict(b'{"a":"\xff"}')
     with pytest.raises(jcs.JcsError):
@@ -132,7 +134,7 @@ def test_strict_parse_depth():
         2**53,
         -(2**53),
         {"": 1},
-        {"ä": 1},
+        {"\u00e4": 1},
         {1: 1},
         {"a": "\ud800"},
         {"a": (1, 2)},
@@ -165,6 +167,12 @@ def test_subclasses_are_refused():
             jcs.dumps(bad)
 
 
+def test_loads_strict_type_errors_are_typed():
+    for bad in (None, 123, [], {}):
+        with pytest.raises(jcs.JcsError):
+            jcs.loads_strict(bad)  # type: ignore[arg-type]
+
+
 def test_self_referential_input_is_a_jcs_error_not_recursion_error():
     a: list = []
     a.append(a)
@@ -173,7 +181,7 @@ def test_self_referential_input_is_a_jcs_error_not_recursion_error():
 
 
 def test_depth_and_minus_zero_vectors():
-    v = json.loads((Path(__file__).parent.parent / "vectors" / "f1" / "canon.json").read_text())
+    v = json.loads((Path(__file__).parent.parent / "vectors" / "f1" / "canon.json").read_text(encoding="utf-8"))
     for d in v["depth"]:
         if d["ok"]:
             assert jcs.dumps(jcs.loads_strict(d["text"])).decode() == d["canonical"]
@@ -185,7 +193,7 @@ def test_depth_and_minus_zero_vectors():
 
 def test_bool_is_not_int_and_escapes():
     assert jcs.dumps([True, 1]) == b"[true,1]"
-    assert jcs.dumps("\x00\x1f\x7f ") == '"\\u0000\\u001f\x7f "'.encode()
+    assert jcs.dumps("\x00\x1f\x7f\u2028") == '"\\u0000\\u001f\x7f\u2028"'.encode()
 
 
 _scalars = st.one_of(

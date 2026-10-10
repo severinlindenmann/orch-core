@@ -29,8 +29,7 @@ Decisions (each one is stated by the format section named):
   ``seq``, ``at``, ``prev``, ``ws_seq`` and ``sig``), under ``orch/v2/sig/host-event|``. A person's ``sig`` covers
   the same context with ``E`` the event without ``seq``, ``at``, ``prev``, ``ws_seq``, ``sig`` and ``host_sig``,
   under ``orch/v2/sig/ticket-event|`` (log = the ticket uid) or ``orch/v2/sig/ws-event|`` (log = ``"workspace"``).
-  The signed-context object uses the key ``contract`` (ticket-format §5.3 and §5.5; the decisions log row 39 writes
-  ``v``, the normative text of §5.3/§5.5 is followed).
+  The signed-context object uses the key ``contract`` (ticket-format §5.3, §5.5, decisions log row 57).
 """
 
 from __future__ import annotations
@@ -54,7 +53,9 @@ __all__ = [
     "ChainError",
     "HashError",
     "artifact_digest",
+    "canonical_policy",
     "check_chain",
+    "cj_checked",
     "check_hash_v",
     "event_head",
     "event_line",
@@ -117,12 +118,35 @@ GATE_KEYS = (
     "people_hash",
 )
 SCHEMA = "orch.ticket/2"
+# Core sections of each gate by ticket type (§4 table; "yes" and "optional" are present, "-" is absent). The gate
+# hash input has exactly these keys (a missing section is the hash of ""), plus addon sections.
+_REQ = ("summary", "context", "requirements", "out_of_scope")
 _CORE_SECTIONS = {
-    "requirements": ("summary", "context", "requirements", "out_of_scope"),
-    "plan": ("plan", "decisions"),
-    "verify": ("verification", "findings"),
-    "code": (),
+    "requirements": {
+        "feature": _REQ,
+        "bug": _REQ,
+        "chore": ("summary", "context", "requirements"),
+        "spike": ("summary", "context", "requirements"),
+        "epic": _REQ,
+    },
+    "plan": {
+        "feature": ("plan", "decisions"),
+        "bug": ("plan", "decisions"),
+        "chore": ("plan", "decisions"),
+        "spike": ("plan", "decisions"),
+        "epic": ("decisions",),
+    },
+    "verify": {
+        "feature": ("verification",),
+        "bug": ("verification",),
+        "chore": (),
+        "spike": ("findings",),
+        "epic": (),
+    },
+    "code": dict.fromkeys(("feature", "bug", "chore", "spike", "epic"), ()),
 }
+_ARTIFACT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+MAX_SECTION_BYTES = 65_536
 TICKET_TYPES = ("feature", "bug", "chore", "spike", "epic")
 SIZES = ("xs", "s", "m", "l", "xl")
 ARTIFACT_KINDS = ("screenshot", "log", "report", "link", "dataset", "build", "diagram", "receipt", "feedback", "other")
@@ -138,6 +162,7 @@ _QUESTION = re.compile(r"Q[1-9][0-9]*")
 _TOKEN = re.compile(r"[a-z][a-z0-9_]*")
 _PERSON = re.compile(r"p_[0-9a-f]{32}")
 _COMMIT = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
+_HTTPS_IDENTITY = re.compile(r"https://(?P<host>[A-Za-z0-9.-]+)(?::(?P<port>[0-9]{1,5}))?/(?P<path>[A-Za-z0-9._~/-]+)")
 _REPO_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
 
 
@@ -268,10 +293,17 @@ def _strictly_sorted(items: list[str], what: str) -> None:
 def section_hash(text: str) -> str:
     """``H("orch/v2/section|" || UTF-8(text))`` of one body section; a missing section is the hash of ``""``.
 
-    ``text`` must already follow §11.3 (refused, not normalised). The stored map is keyed by section id, so moving
-    text between sections is a change; the key is not part of this hash.
+    ``text`` must already follow §11.3 and be section text as §4 defines it: no leading or trailing LF, at most
+    65 536 UTF-8 bytes (refused, not trimmed). The stored map is keyed by section id, so moving text between
+    sections is a change; the key is not part of this hash.
     """
-    return _labelled("section", _text(text, "section text").encode("utf-8"))
+    _text(text, "section text")
+    if text.startswith("\n") or text.endswith("\n"):
+        raise HashError("section text has a leading or trailing LF (§4 trims them before hashing)")
+    data = text.encode("utf-8")
+    if len(data) > MAX_SECTION_BYTES:
+        raise HashError("section text is longer than 65 536 bytes")
+    return _labelled("section", data)
 
 
 def value_hash(value: Any) -> str:
@@ -280,9 +312,10 @@ def value_hash(value: Any) -> str:
 
 
 def grant_secret_hash(secret: bytes) -> str:
-    """``H("orch/v2/grant-secret|" || secret)`` as stored by ``grant.issued``; ``secret`` is non-empty bytes."""
-    if type(secret) is not bytes or not secret:
-        raise HashError("grant secret must be non-empty bytes")
+    """``H("orch/v2/grant-secret|" || secret)`` as stored by ``grant.issued``; ``secret`` is the 32 decoded bytes
+    (not their b64u text)."""
+    if type(secret) is not bytes or len(secret) != 32:
+        raise HashError("grant secret must be exactly 32 bytes")
     return _labelled("grant_secret", secret)
 
 
@@ -387,16 +420,26 @@ def question_hash(qid: str, ticket_uid: str, text: str, options: list[dict[str, 
 # --- the gate hash ----------------------------------------------------------------------------------------------
 
 
-def _section_id(sid: object, gate: str) -> str:
-    if type(sid) is not str:
-        raise HashError("section id must be a string")
-    if "." in sid:
-        addon, _, tok = sid.partition(".")
-        _match(_TOKEN, addon, "section addon")
-        _match(_TOKEN, tok, "section token")
-    elif sid not in _CORE_SECTIONS[gate]:
-        raise HashError(f"section {sid!r} does not belong to gate {gate!r}")
-    return sid
+def _check_sections(sections: object, gate: str, ticket_type: str) -> None:
+    """Exactly the core sections of (gate, ticket type) must be present, plus any ``<addon>.<token>`` sections."""
+    if type(sections) is not dict:
+        raise HashError("sections must be an object")
+    core = set(_CORE_SECTIONS[gate][ticket_type])
+    present = set()
+    for sid, h in sections.items():
+        if type(sid) is not str:
+            raise HashError("section id must be a string")
+        if "." in sid:
+            addon, _, tok = sid.partition(".")
+            _match(_TOKEN, addon, "section addon")
+            _match(_TOKEN, tok, "section token")
+        elif sid in core:
+            present.add(sid)
+        else:
+            raise HashError(f"section {sid!r} does not exist for gate {gate!r} and type {ticket_type!r}")
+        parse_hash(h)
+    if present != core:
+        raise HashError(f"sections missing for gate {gate!r}: {sorted(core - present)} (a missing one is H(''))")
 
 
 def _check_links(links: object) -> None:
@@ -469,7 +512,7 @@ def _check_artifacts(artifacts: object, gate: str) -> None:
     if gate == "code" and artifacts:
         raise HashError("artifacts must be {} for the code gate")
     for name, a in artifacts.items():
-        _text(name, "artifact name", one_line=True, nonempty=True)
+        _match(_ARTIFACT_NAME, name, "artifact name")
         _obj(a, ("kind", "digest", "ac", "task"), "artifact")
         _enum(a["kind"], ARTIFACT_KINDS, "artifact kind")
         parse_hash(a["digest"])
@@ -488,9 +531,25 @@ def _check_receipts(receipts: object, gate: str) -> None:
         _match(_TASK, tid, "receipt task id")
         _obj(r, ("event", "repo", "commit", "exit"), "receipt")
         _match(_ULID, r["event"], "receipt event")
-        _match(_REPO_NAME, r["repo"], "receipt repo")
-        _match(_COMMIT, r["commit"], "receipt commit")
+        if r["repo"] is not None:  # a receipt of a command that is not tied to a repo (§5.4.1, §6)
+            _match(_REPO_NAME, r["repo"], "receipt repo")
+        if r["commit"] is not None:
+            _match(_COMMIT, r["commit"], "receipt commit")
         _int(r["exit"], "receipt exit")
+
+
+def _repo_identity(value: object) -> str:
+    """``local:<repo name>`` or canonical ``https://host[:port]/path`` (§5.7): no userinfo, lower-case host, no port
+    443, no trailing ``/`` or ``.git``, no query or fragment."""
+    if type(value) is not str:
+        raise HashError("repo identity must be a string")
+    if value.startswith("local:"):
+        _match(_REPO_NAME, value[6:], "repo identity")
+        return value
+    m = _HTTPS_IDENTITY.fullmatch(value)
+    if not m or m["host"] != m["host"].lower() or m["port"] == "443" or value.endswith(("/", ".git")):
+        raise HashError(f"repo identity is not canonical: {value[:100]!r}")
+    return value
 
 
 def _check_source_sha(source: object, gate: str) -> None:
@@ -502,7 +561,7 @@ def _check_source_sha(source: object, gate: str) -> None:
     repos = []
     for s in items:
         _obj(s, ("repo", "ref", "sha"), "source entry")
-        repos.append(_text(s["repo"], "source repo", one_line=True, nonempty=True))
+        repos.append(_repo_identity(s["repo"]))
         ref = _text(s["ref"], "source ref", one_line=True)
         if not ref.startswith("refs/heads/") or ref == "refs/heads/":
             raise HashError("source ref must be refs/heads/<branch>")
@@ -540,15 +599,8 @@ def gate_hash(g: Mapping[str, Any]) -> str:
     if g["schema"] != SCHEMA or type(g["schema"]) is not str:
         raise HashError(f"schema must be {SCHEMA!r}")
     check_hash_v(g["hash_v"])
-    sections = g["sections"]
-    if type(sections) is not dict:
-        raise HashError("sections must be an object")
-    if gate == "code" and sections:
-        raise HashError("sections must be {} for the code gate")
-    for sid, h in sections.items():
-        _section_id(sid, gate)
-        parse_hash(h)
     _check_fields(g["fields"], gate)
+    _check_sections(g["sections"], gate, g["fields"]["ticket_type"])
     pk = g["addon_packages"]
     if type(pk) is not dict:
         raise HashError("addon_packages must be an object")
@@ -610,6 +662,8 @@ def parse_event_line(line: bytes) -> dict[str, Any]:
 
 def log_head(events: list[Mapping[str, Any]]) -> str | None:
     """The head of the last event; an empty log has no head (``None``)."""
+    if type(events) is not list:
+        raise HashError("events must be a list")
     return event_head(events[-1]) if events else None
 
 
@@ -619,8 +673,14 @@ def check_chain(events: list[Mapping[str, Any]]) -> list[str]:
     Returns the heads. Raises :class:`ChainError` at the first event that breaks it. Signatures, ``ws_seq``,
     ``based_on`` and authorisation are not checked here.
     """
+    if type(events) is not list:
+        raise HashError("events must be a list")
     heads: list[str] = []
     for i, e in enumerate(events):
+        if type(e) is not dict:
+            raise ChainError(i + 1, "event is not an object")
+        if "prev" not in e:
+            raise ChainError(i + 1, "event has no prev")
         seq = e.get("seq")
         if type(seq) is not int or seq != i + 1:
             raise ChainError(i + 1, f"seq is {seq!r}, expected {i + 1}")

@@ -29,7 +29,9 @@ from __future__ import annotations
 
 import re
 from bisect import bisect_right
+from dataclasses import dataclass
 from functools import lru_cache
+from typing import Literal
 
 from . import _unicode16 as _u
 
@@ -39,7 +41,7 @@ __all__ = [
     "Suspect",
     "TextError",
     "check_text",
-    "is_normalized",
+    "is_clean_text",
     "nfc",
     "normalize_text",
     "show_invisible",
@@ -127,7 +129,11 @@ def _compose_pair(a: int, b: int) -> int | None:
 
 
 def nfc(text: str) -> str:
-    """Unicode 16.0 NFC of ``text`` (independent of the runtime's Unicode version). Does not check the text rules."""
+    """Unicode 16.0 NFC of ``text`` (independent of the runtime's Unicode version). Does not check the text rules.
+
+    Raises :class:`TextError` for a non-``str`` argument."""
+    if not isinstance(text, str):
+        raise TextError(f"text must be str, not {type(text).__name__}")
     if text.isascii():
         return text
     cps: list[int] = []
@@ -164,37 +170,64 @@ def nfc(text: str) -> str:
 
 _ASCII_BAD = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 
+# Non-Cf characters F1 §5.7/§11.3 also show: U+034F, U+115F, U+1160, U+2028, U+2029, U+3164, U+FFA0,
+# U+FE00..FE0F and U+E0100..E01EF. Together with every Cf character they are "invisible"; the decision (an
+# explicit list, not Default_Ignorable_Code_Point) is F1's.
+_EXTRA_INVISIBLE = frozenset(
+    [0x034F, 0x115F, 0x1160, 0x2028, 0x2029, 0x3164, 0xFFA0, *range(0xFE00, 0xFE10), *range(0xE0100, 0xE01F0)]
+)
+
+
+def _first_not_nfc(text: str) -> int:
+    n = nfc(text)
+    i = 0
+    for a, b in zip(text, n, strict=False):
+        if a != b:
+            break
+        i += 1
+    return i
+
+
+def _check(text: str, one_line: bool, known_nfc: bool) -> str:
+    if not isinstance(text, str):
+        raise TextError(f"text must be str, not {type(text).__name__}")
+    if text.isascii():
+        m = _ASCII_BAD.search(text)
+        if m:
+            raise TextError(f"control character U+{ord(m.group()):04X} at index {m.start()}")
+    else:
+        ok: set[str] = set()  # characters already accepted; the scan stays in text order
+        for i, ch in enumerate(text):
+            if ch in ok:
+                continue
+            cp = ord(ch)
+            if 0xD800 <= cp <= 0xDFFF:
+                raise TextError(f"lone surrogate at index {i}")
+            if (cp < 0x20 and ch not in "\n\t") or 0x7F <= cp <= 0x9F:
+                raise TextError(f"control character U+{cp:04X} at index {i}")
+            if cp in BIDI_CONTROLS:
+                raise TextError(f"bidi control U+{cp:04X} at index {i}")
+            if not _assigned(cp):
+                raise TextError(f"code point U+{cp:04X} at index {i} is unassigned in Unicode {UNICODE_VERSION}")
+            ok.add(ch)
+        if not known_nfc and nfc(text) != text:
+            raise TextError(f"text is not in NFC (first difference at index {_first_not_nfc(text)})")
+    if one_line and "\n" in text:
+        raise TextError(f"line feed at index {text.index(chr(10))} in a one-line field")
+    return text
+
 
 def check_text(text: str, *, one_line: bool = False) -> str:
     """Return ``text`` unchanged if it follows §11.3, else raise :class:`TextError`. Never normalises.
 
-    ``one_line=True`` additionally refuses LF (titles, labels, names, option labels, reasons).
+    The scan is in text order, so the error names the first offending ``index`` (a code point index, not a byte
+    offset). ``one_line=True`` additionally refuses LF (titles, labels, names, option labels, reasons).
     """
-    if not isinstance(text, str):
-        raise TextError(f"text must be str, not {type(text).__name__}")
-    if text.isascii():
-        if _ASCII_BAD.search(text):
-            raise TextError("control character")
-    else:
-        for ch in set(text):
-            cp = ord(ch)
-            if 0xD800 <= cp <= 0xDFFF:
-                raise TextError("lone surrogate")
-            if (cp < 0x20 and ch not in "\n\t") or 0x7F <= cp <= 0x9F:
-                raise TextError(f"control character U+{cp:04X}")
-            if cp in BIDI_CONTROLS:
-                raise TextError(f"bidi control U+{cp:04X}")
-            if not _assigned(cp):
-                raise TextError(f"code point U+{cp:04X} is unassigned in Unicode {UNICODE_VERSION}")
-        if nfc(text) != text:
-            raise TextError("text is not in NFC")
-    if one_line and "\n" in text:
-        raise TextError("line feed in a one-line field")
-    return text
+    return _check(text, one_line, False)
 
 
 def normalize_text(text: str, *, one_line: bool = False) -> str:
-    """For text entering the store: CRLF and lone CR become LF, then NFC, then :func:`check_text`.
+    """For text entering the store: CRLF and lone CR become LF, then NFC (once), then the checks of §11.3.
 
     Idempotent. Raises :class:`TextError` when the normalised result still breaks the rules (controls, bidi
     controls, unassigned code points, lone surrogates); such text is refused, not repaired.
@@ -202,65 +235,60 @@ def normalize_text(text: str, *, one_line: bool = False) -> str:
     if not isinstance(text, str):
         raise TextError(f"text must be str, not {type(text).__name__}")
     text = text.replace("\r\n", "\n").replace("\r", "\n")
-    try:
-        text = nfc(text)
-    except (ValueError, OverflowError):  # pragma: no cover - nfc is total on str
-        raise TextError("text cannot be normalised") from None
-    return check_text(text, one_line=one_line)
+    return _check(nfc(text), one_line, True)
 
 
-def is_normalized(text: str) -> bool:
-    """True iff :func:`check_text` accepts ``text`` (so normalising it is a no-op)."""
+def is_clean_text(text: str, *, one_line: bool = False) -> bool:
+    """True iff :func:`check_text` accepts ``text`` (all of §11.3, not just NFC), so normalising it is a no-op."""
     try:
-        check_text(text)
+        check_text(text, one_line=one_line)
     except TextError:
         return False
     return True
 
 
+@dataclass(frozen=True, slots=True)
 class Suspect:
-    """One character that approval prompts must treat specially (:func:`suspicious`)."""
+    """One character an approval prompt must treat specially (:func:`suspicious`).
 
-    __slots__ = ("codepoint", "index", "kind")
+    ``index`` is a code point index into the ``str`` (not a UTF-8 offset)."""
 
-    def __init__(self, index: int, codepoint: int, kind: str) -> None:
-        self.index, self.codepoint, self.kind = index, codepoint, kind
-
-    def __repr__(self) -> str:
-        return f"Suspect({self.index}, U+{self.codepoint:04X}, {self.kind!r})"
-
-    def __eq__(self, other: object) -> bool:
-        return isinstance(other, Suspect) and (self.index, self.codepoint, self.kind) == (
-            other.index,
-            other.codepoint,
-            other.kind,
-        )
-
-    def __hash__(self) -> int:
-        return hash((self.index, self.codepoint, self.kind))
+    index: int
+    codepoint: int
+    kind: Literal["bidi", "invisible"]
 
 
 def suspicious(text: str) -> list[Suspect]:
     """Characters of already-valid text that an approval prompt must refuse or show (ticket-format §5.7, §11.3).
 
     ``kind`` is ``"bidi"`` (the approval is refused, ``gate.suspicious_text``; bidi controls cannot enter the store,
-    so this is defence in depth) or ``"invisible"`` (every other format character, General_Category Cf: U+200B..200D,
-    U+2060, U+FEFF, tag characters, soft hyphen, ...; shown as ``⟨U+200B⟩`` by :func:`show_invisible`). Private-use
-    characters are kept and not flagged. Returns an empty list when there is nothing to flag.
+    so this is defence in depth) or ``"invisible"``: every General_Category Cf character (U+200B..200D, U+2060,
+    U+FEFF, tag characters, soft hyphen, ...) and F1's named non-Cf look-alikes (U+034F, U+115F, U+1160, U+2028,
+    U+2029, U+3164, U+FFA0, U+FE00..FE0F, U+E0100..E01EF). Other characters are kept and not flagged (private use,
+    other spaces). Returns an empty list when there is nothing to flag.
     """
+    if not isinstance(text, str):
+        raise TextError(f"text must be str, not {type(text).__name__}")
     out = []
     for i, ch in enumerate(text):
         cp = ord(ch)
         if cp in BIDI_CONTROLS:
             out.append(Suspect(i, cp, "bidi"))
-        elif _in_ranges(_CF_STARTS, _CF, cp):
+        elif cp in _EXTRA_INVISIBLE or _in_ranges(_CF_STARTS, _CF, cp):
             out.append(Suspect(i, cp, "invisible"))
     return out
 
 
+_LANGLE = "\u27e8"
+
+
 def show_invisible(text: str) -> str:
-    """``text`` with every :func:`suspicious` character replaced by its visible ``⟨U+XXXX⟩`` marker."""
+    """``text`` with every :func:`suspicious` character replaced by a visible ``\u27e8U+XXXX\u27e9`` marker.
+
+    A literal ``\u27e8`` in the text is itself shown as ``\u27e8U+27E8\u27e9``, so no text can forge a marker: every
+    ``\u27e8`` in the output starts a real marker.
+    """
     flagged = {s.index for s in suspicious(text)}
-    if not flagged:
-        return text
-    return "".join(f"⟨U+{ord(ch):04X}⟩" if i in flagged else ch for i, ch in enumerate(text))
+    return "".join(
+        f"{_LANGLE}U+{ord(ch):04X}\u27e9" if i in flagged or ch == _LANGLE else ch for i, ch in enumerate(text)
+    )

@@ -1,12 +1,8 @@
 ok describe instructions.sync
-Rewrite AGENTS.orch.md and the skills to the installed version.
-usage: orch instructions sync [--dry-run]
-who: agent · emits: -
-pre: workspace_exists grant_valid
-args:
-  --dry-run  say what would happen, append nothing
+Rewrite AGENTS.orch.md and the built-in skills to the installed version; no grant needed, no event.
+usage: orch instructions sync
+who: read · emits: -
+pre: workspace_exists
 errors:
-  grant.expired (exit 3): ask the person for a new grant | fix: orch status
-  grant.required (exit 3): ask the person to run orch grant, then set ORCH_GRANT | fix: orch status
-  lock.busy (exit 4 retry): retry in a moment | fix: orch status
+  not_found (exit 2): run orch init in a workspace | fix: orch describe init
 out: ok instructions.sync {version} / next: {next}

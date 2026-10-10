@@ -5,17 +5,16 @@
     "target": "instructions.sync",
     "name": "instructions.sync",
     "cli": "orch instructions sync",
-    "summary": "Rewrite AGENTS.orch.md and the skills to the installed version.",
-    "who": "agent",
-    "usage": "orch instructions sync [--dry-run]",
+    "summary": "Rewrite AGENTS.orch.md and the built-in skills to the installed version; no grant needed, no event.",
+    "who": "read",
+    "usage": "orch instructions sync",
     "pre": [
-      "workspace_exists",
-      "grant_valid"
+      "workspace_exists"
     ],
     "emits": [],
     "input": {
       "type": "object",
-      "description": "Rewrite AGENTS.orch.md and the skills to the installed version.",
+      "description": "Rewrite AGENTS.orch.md and the built-in skills to the installed version; no grant needed, no event.",
       "properties": {},
       "required": [],
       "additionalProperties": false
@@ -44,33 +43,14 @@
     },
     "errors": [
       {
-        "code": "grant.expired",
-        "exit": 3,
+        "code": "not_found",
+        "exit": 2,
         "retryable": false,
-        "hint": "ask the person for a new grant",
+        "hint": "run orch init in a workspace",
         "fix": [
           "orch",
-          "status"
-        ]
-      },
-      {
-        "code": "grant.required",
-        "exit": 3,
-        "retryable": false,
-        "hint": "ask the person to run orch grant, then set ORCH_GRANT",
-        "fix": [
-          "orch",
-          "status"
-        ]
-      },
-      {
-        "code": "lock.busy",
-        "exit": 4,
-        "retryable": true,
-        "hint": "retry in a moment",
-        "fix": [
-          "orch",
-          "status"
+          "describe",
+          "init"
         ]
       }
     ]

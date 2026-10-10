@@ -13,7 +13,7 @@ Key file (JSON, one per key, mode 0600)::
   default can be lowered only through underscore test seams (``_kdf``, ``_min_n``), which no production path uses.
 * **Passphrase text.** NFC-normalised with :func:`orch.canon.nfc` (Unicode 16.0, the same on every OS and Python)
   and encoded as strict UTF-8; a passphrase that is not valid text is refused, never altered (``"replace"`` would
-  make distinct byte strings collide). Minimum 8 characters after normalisation when a key is created.
+  make distinct byte strings collide). Minimum 12 characters and a strength check (``strength.py``) on creation.
 * **Cipher.** AES-256-GCM, a fresh random nonce, the AAD is ``"orch/v2/custody-file|" || cj(header)`` over
   ``{v, key_id, role, pub, kdf}``, so the file's public key, id, role and KDF parameters are authenticated. After
   decrypting, the scalar must reproduce ``pub``.
@@ -60,6 +60,7 @@ from .base import (
     label_allowed,
 )
 from .describe import describe_payload
+from .strength import check_strength
 
 __all__ = [
     "DEFAULT_KDF",
@@ -74,7 +75,7 @@ __all__ = [
 
 FILE_SUFFIX = ".key.json"
 AAD_LABEL = b"orch/v2/custody-file|"
-MIN_PASSPHRASE_CHARS = 8
+MIN_PASSPHRASE_CHARS = 12
 MIN_N = 2**15
 MAX_N = 2**20
 MAX_SHOWN = 120
@@ -319,8 +320,7 @@ class PassphraseBackend:
         pub = crypto.public_bytes(key)
         passphrase = self._provider(PassphraseRequest("create", key_id, "", ""))
         pw = _passphrase_bytes(passphrase)
-        if len(canon.nfc(passphrase)) < MIN_PASSPHRASE_CHARS:
-            raise CustodyError(f"passphrase needs at least {MIN_PASSPHRASE_CHARS} characters")
+        check_strength(passphrase)
         salt, nonce = secrets.token_bytes(16), secrets.token_bytes(12)
         kdf = {"name": "scrypt", "n": self._kdf.n, "r": self._kdf.r, "p": self._kdf.p, "salt": crypto.b64u(salt)}
         header = {"v": 1, "key_id": key_id, "role": role, "pub": crypto.b64u(pub), "kdf": kdf}

@@ -1,4 +1,3 @@
-Rewrite AGENTS.orch.md and the skills to the installed version.
-usage: orch instructions sync [--dry-run]
-  --dry-run  say what would happen, append nothing
+Rewrite AGENTS.orch.md and the built-in skills to the installed version; no grant needed, no event.
+usage: orch instructions sync
 more: orch describe instructions.sync

@@ -1381,14 +1381,14 @@ following. Each is a rule the tests pin (`tests/ops/test_presence.py` and the te
   role `device`), next to the workspace key. The person and the device are not named by the caller: the device id is
   derived from the key file's public key and looked up in the replayed device roster, which says whose device it is. A key
   the log does not know, a removed or revoked device and a person who is no longer a member sign nothing
-  (`role.denied`, before any prompt). A key file others can read is refused by the backend. P1 holds one device key per
+  (role.denied, before any prompt). A key file others can read is refused by the backend. P1 holds one device key per
   workspace per machine; creating it is `orch init`/`keys` (C8), not C7.
 - **What is signed comes from the log.** `gate`, `gate_gen`, `hash`, `policy_hash`, `source_sha`, the question `hash`,
   `roster_v` and `based_on` are read from the verified state (`orch.model` views and the store) at the moment of the
   call; the operations have no option for any of them. The ticket is named with `--ref` (a person has no claim, so there
   is no "my claim" default: `ambiguous_ref`); a ticket the signer may not see is `not_found` (§9).
 - **Judged before the prompt, the lock not held while typing.** The event is judged with `orch.model.preview` as
-  `Store.append` will judge it (all rules, the signature aside), so a refused event (`gate.stale`, `role.denied`,
+  `Store.append` will judge it (all rules, the signature aside), so a refused event (`gate.stale`, role.denied,
   `transition.refused`, `answer.not_allowed` ...) costs no passphrase. The workspace lock is not held while the person
   types; `Store.append` then verifies the signature and judges again, so a change during the prompt is `gate.stale` or
   `members.stale` and the person decides again.
@@ -1411,12 +1411,12 @@ following. Each is a rule the tests pin (`tests/ops/test_presence.py` and the te
   `issued_at` is the clock when the command starts (readers allow 300 s, §10.1). **`--verbs` is validated at issue:**
   each name must be an operation an agent or an unattended agent may run (§10.1: a human-only operation is never in a
   grant; the model would otherwise accept a name that grants nothing). The D60 role terms are the model's
-  (`grant.terms` is `invalid.input` with the reason in the message; a viewer is `role.denied` after the pre-check).
+  (grant.terms is invalid.input with the reason in the message; a viewer is role.denied after the pre-check).
 - **`member add`** takes what the invitee made: `--pk` (their person key, base64url) and `--cert` (their first device
   certificate, a path or `-`); the person id is derived from the key and the certificate is checked by the model
-  (`device.cert`). `member role` and `member remove` of the last owner are `invalid.input` carrying `members.last_owner`.
+  (device.cert). `member role` and `member remove` of the last owner are invalid.input carrying `members.last_owner`.
   Maintainers add members and viewers, owners do everything else; a device whose certificate lacks `operate` cannot sign
-  member, role, grant or settings events (`device.scope`, §5.3).
+  member, role, grant or settings events (device.scope, §5.3).
 - **Texts.** `request-changes` and a `fail` verdict need `-m`; every text passes the §11.3 rules (`parse.text`) and the
   grant-secret filter. `close --duplicate-of` loads and normalises the key (`not_found` if there is no such ticket).
 - **Not built here, because no operation is declared for it in §10.3:** `invalid acknowledge`, `restore`, ticket

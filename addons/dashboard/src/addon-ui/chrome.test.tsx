@@ -37,8 +37,10 @@ describe('frame headers across the app', () => {
   it('Today and a ticket show no slot ids or package ids in addon frame headers', async () => {
     renderApp('/')
     await screen.findByRole('heading', { level: 1, name: /Today/ })
-    await waitFor(() => expect(document.querySelectorAll('[data-addon] > header').length).toBeGreaterThan(0))
-    for (const h of document.querySelectorAll('[data-addon] > header')) expect(h.textContent).not.toMatch(/today\.card|ticket\.panel|\bnav\b|decision/)
+    // Today's addon cards are Glance items (an h3 per item, no frame header); frames elsewhere keep their header.
+    const headers = '[data-addon] > header, [aria-labelledby="glance-h"] li h3'
+    await waitFor(() => expect(document.querySelectorAll(headers).length).toBeGreaterThan(0))
+    for (const h of document.querySelectorAll(headers)) expect(h.textContent).not.toMatch(/today\.card|ticket\.panel|\bnav\b|decision/)
   })
 })
 

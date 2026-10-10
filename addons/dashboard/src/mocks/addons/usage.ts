@@ -44,6 +44,12 @@ interface Agent {
   tokens: number
   sessions: number
 }
+/** A person whose grants ran agent sessions; `weight` is their share of the work (seed only). */
+interface Person {
+  id: string
+  name: string
+  weight: number
+}
 interface Settings {
   budget_chf: number
 }
@@ -117,6 +123,12 @@ const AGENT_SEED = [
   { id: 'claude-code-sub', name: 'Claude Code (subagents)', weight: 15, sessions: 2 },
 ]
 
+/** Who ran the agents: every agent session runs under one person's grant (the owner most of the time). */
+const PERSON_SEED: Person[] = [
+  { id: 'p_sev', name: 'Severin', weight: 64 },
+  { id: 'p_mara', name: 'Mara', weight: 36 },
+]
+
 function seedState(days = seedDays(), ticketSeed = TICKET_SEED, agentSeed = AGENT_SEED, budget = DEFAULT_BUDGET_CHF): Record<string, unknown> {
   const cents = days.reduce((n, d) => n + sum(d), 0)
   const tokens = days.reduce((n, d) => n + sumTokens(d), 0)
@@ -126,7 +138,7 @@ function seedState(days = seedDays(), ticketSeed = TICKET_SEED, agentSeed = AGEN
   const at = allocate(tokens, agentSeed.map((t) => t.weight))
   const tickets: Row[] = ticketSeed.map((t, i) => ({ key: t.key, cents: tc[i], tokens: tt[i], sessions: t.sessions, ms: t.ms }))
   const agents: Agent[] = agentSeed.map((a, i) => ({ id: a.id, name: a.name, cents: ac[i], tokens: at[i], sessions: a.sessions }))
-  return { days, tickets, agents, settings: { budget_chf: budget } satisfies Settings }
+  return { days, tickets, agents, people: PERSON_SEED, settings: { budget_chf: budget } satisfies Settings }
 }
 
 /**
@@ -220,6 +232,18 @@ registerAddon({
     const sum1 = (xs: number[]) => xs.reduce((a, b) => a + b, 0)
     const agents = state.agents as Agent[]
     const agentShare = allocate(1000, agents.map((a) => a.cents))
+    // By person: the same 30-day totals split by whose grant ran the sessions (largest remainder, so each column adds
+    // up to the Overview and the By model Total exactly: cost in cents, sessions, tokens in 10k units, share in tenths).
+    const people = (state.people as Person[] | undefined) ?? PERSON_SEED
+    const weights = people.map((p) => p.weight)
+    const tokenUnits = sum1(inU) + sum1(outU)
+    const personCents = allocate(cost30, weights)
+    const personSessions = allocate(sessionsTotal, weights)
+    const personUnits = allocate(tokenUnits, weights)
+    const personShare = allocate(1000, personCents)
+    const personTotals = people
+      .map((p, i) => ({ person: p.id, name: p.name, cents: personCents[i], sessions: personSessions[i], tokenUnits: personUnits[i], shareTenths: personShare[i] }))
+      .sort((a, b) => b.cents - a.cents || (a.name < b.name ? -1 : 1))
     const byTicket: Record<string, Omit<Row, 'key'>> = {}
     for (const t of tickets) byTicket[t.key] = { cents: t.cents, tokens: t.tokens, sessions: t.sessions, ms: t.ms }
     return {
@@ -239,6 +263,8 @@ registerAddon({
         ratio > ALERT_AT
           ? { type: 'alert', tone: 'warn', title: `Budget ${pct}% used`, text: `${chf(month)} of ${chf(budget * 100)} this month. Raise the budget in Settings or slow the agents down.` }
           : { type: 'stack', children: [] },
+      // The Today glance's sparkline: cost per day of the last 7 days (CHF), the days that add up to weekCents.
+      weekTrend: days.slice(-7).map((d) => sum(d) / 100),
       perDay: days.map((d) => ({ day: dayLabel(d.date), chf: sum(d) / 100 })),
       cost30Cents: cost30,
       perModel: [...MODELS.map((m, i) => ({ model: MODEL_LABEL[m], chf: modelCents[i] / 100 }))].sort((a, b) => b.chf - a.chf),
@@ -251,6 +277,11 @@ registerAddon({
       // Raw numbers behind the By model rows (the formatted cells round).
       modelTotals: byModel.map((r) => ({ model: r.model, sessions: r.sessions, tokensIn: r.tokensIn, tokensOut: r.tokensOut, cacheRead: r.cacheRead, cents: r.cents, shareTenths: r.share })),
       ticketRows: [...tickets].sort((a, b) => b.cents - a.cents).map((t) => ({ ticket: t.key, cost: cents2(t.cents), tokens: mtok(t.tokens), sessions: t.sessions, time: hm(t.ms) })),
+      personTotals,
+      personRows: [
+        ...personTotals.map((p) => ({ person: p.name, sessions: p.sessions, tokens: mUnits(p.tokenUnits), cost: cents2(p.cents), share: pctText(p.shareTenths) })),
+        { person: 'Total', sessions: sessionsTotal, tokens: mUnits(tokenUnits), cost: cents2(cost30), share: '100.0 %' },
+      ],
       agentRows: agents.map((a, i) => ({ agent: a.name, cost: cents2(a.cents), share: pctText(agentShare[i]), sessions: a.sessions, tokens: mtok(a.tokens) })),
       topTickets: [...tickets]
         .sort((a, b) => b.cents - a.cents)

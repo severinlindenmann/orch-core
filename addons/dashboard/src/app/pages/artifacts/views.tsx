@@ -8,12 +8,12 @@ import { cn } from '@/lib/utils'
 import { KIND_ICON, Thumb } from '../ticket/Artifacts'
 import { fmtBytes, fmtTime, Pill } from '../ticket/shared'
 import { byLabel } from './label'
+import { openMode } from './Preview'
 
 type Open = (a: ArtifactItem, el: HTMLElement) => void
 
-const isHttp = (u?: string) => !!u && /^https?:\/\//i.test(u)
-/** How an item opens: a web link in a new tab, an addon artifact not here (its addon shows it), the rest in the drawer. */
-const openMode = (a: ArtifactItem): 'external' | 'addon' | 'drawer' => (a.kind === 'link' && isHttp(a.url) ? 'external' : a.addon ? 'addon' : 'drawer')
+/** A row's identity (a ticket may hold two files of one name with different content). */
+export const artifactKey = (a: ArtifactItem) => `${a.ticket}/${a.name}/${a.sha256}`
 
 function NameCell({ a, onOpen }: { a: ArtifactItem; onOpen: Open }) {
   const Icon = KIND_ICON[a.kind]
@@ -50,23 +50,33 @@ function TicketLink({ a }: { a: ArtifactItem }) {
   )
 }
 
-export function ArtifactList({ items, members, onOpen }: { items: ArtifactItem[]; members: Member[]; onOpen: Open }) {
+/**
+ * The list view. `selected` is the row the preview shows (j/k move it); `narrow`: the preview pane sits beside the
+ * table, so "Added by" and "Size" step back (the pane names both).
+ */
+export function ArtifactList({ items, members, onOpen, selected, narrow = false }: { items: ArtifactItem[]; members: Member[]; onOpen: Open; selected?: string | null; narrow?: boolean }) {
   return (
     <div className="rounded-lg border border-border bg-surface">
       <Table className="table-fixed">
         <TableHeader>
           <TableRow className="hover:bg-transparent">
-            <TableHead className="w-[32%]">Name</TableHead>
+            <TableHead className={narrow ? 'w-[44%]' : 'w-[32%]'}>Name</TableHead>
             <TableHead className="w-24">Kind</TableHead>
             <TableHead>Ticket</TableHead>
-            <TableHead className="w-[18%]">Added by</TableHead>
+            {!narrow && <TableHead className="w-[18%]">Added by</TableHead>}
             <TableHead className="w-28">Added (UTC)</TableHead>
-            <TableHead className="w-20 text-right">Size</TableHead>
+            {!narrow && <TableHead className="w-20 text-right">Size</TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
           {items.map((a) => (
-            <TableRow key={`${a.ticket}/${a.name}/${a.sha256}`} data-kind={a.kind} className="text-[13px]">
+            <TableRow
+              key={artifactKey(a)}
+              data-kind={a.kind}
+              data-artifact={artifactKey(a)}
+              aria-current={selected === artifactKey(a) ? 'true' : undefined}
+              className={cn('text-[13px]', selected === artifactKey(a) && 'bg-surface-2 shadow-[inset_2px_0_0_var(--color-brand)] hover:bg-surface-2')}
+            >
               <TableCell>
                 <NameCell a={a} onOpen={onOpen} />
                 {a.label && <p className="mt-0.5 truncate pl-5.5 text-[12px] text-text-muted">{a.label}</p>}
@@ -77,9 +87,9 @@ export function ArtifactList({ items, members, onOpen }: { items: ArtifactItem[]
               <TableCell>
                 <TicketLink a={a} />
               </TableCell>
-              <TableCell className="truncate text-text-muted">{byLabel(a.by, members)}</TableCell>
+              {!narrow && <TableCell className="truncate text-text-muted">{byLabel(a.by, members)}</TableCell>}
               <TableCell className="whitespace-nowrap tabular-nums text-text-muted">{fmtTime(a.at)}</TableCell>
-              <TableCell className="text-right tabular-nums text-text-muted">{a.bytes > 0 ? fmtBytes(a.bytes) : '–'}</TableCell>
+              {!narrow && <TableCell className="text-right tabular-nums text-text-muted">{a.bytes > 0 ? fmtBytes(a.bytes) : '–'}</TableCell>}
             </TableRow>
           ))}
         </TableBody>
@@ -113,7 +123,7 @@ export function ArtifactGrid({ items, members, onOpen }: { items: ArtifactItem[]
         )
         const frame = 'block w-full rounded-md text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50'
         return (
-          <li key={`${a.ticket}/${a.name}/${a.sha256}`} data-kind={a.kind} className={cn('rounded-lg border bg-surface p-2.5', a.addon ? addonHairline : 'border-border hover:border-border-strong')}>
+          <li key={artifactKey(a)} data-kind={a.kind} className={cn('rounded-lg border bg-surface p-2.5', a.addon ? addonHairline : 'border-border hover:border-border-strong')}>
             {mode === 'external' ? (
               <a href={a.url} target="_blank" rel="noopener noreferrer nofollow" className={frame}>
                 {body}

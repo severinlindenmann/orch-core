@@ -82,9 +82,9 @@ describe('usage ticket panel and Today card', () => {
     expect(within(frame).getByText(/\d+k$|\d+(\.\d)? M$/)).toBeInTheDocument()
     expect(within(frame).getByText('3')).toBeInTheDocument()
   })
-  it('the Today card says This week CHF 31.40', async () => {
+  it('the Today glance says CHF 31.40 last 7 days', async () => {
     renderApp('/', { viewer: 'p_sev' })
     const card = (await screen.findByText('CHF 31.40', {}, T)).closest('[data-addon="usage"]') as HTMLElement
-    expect(within(card).getByText('Last 7 days')).toBeInTheDocument()
+    expect(card).toHaveTextContent('CHF 31.40 last 7 days')
   })
 })

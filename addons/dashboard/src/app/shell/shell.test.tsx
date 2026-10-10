@@ -12,7 +12,8 @@ describe('app shell', () => {
     expect(await screen.findByRole('heading', { name: 'Today' })).toBeInTheDocument()
     expect(await screen.findByRole('link', { name: /Board/ })).toBeInTheDocument()
     expect(await screen.findByRole('link', { name: /Code reviews/ })).toBeInTheDocument()
-    expect(await screen.findByRole('link', { name: /Apps & shares/ })).toBeInTheDocument()
+    // The sidebar entry (Today's Glance also has "Open Apps & shares").
+    expect(await screen.findByRole('link', { name: /^Apps & shares/ })).toBeInTheDocument()
     expect((await screen.findAllByRole('img', { name: /From addon:/ })).length).toBeGreaterThanOrEqual(5)
     expect(await screen.findByText('agents granted until 18:00')).toBeInTheDocument()
   })

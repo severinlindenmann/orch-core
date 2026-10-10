@@ -187,7 +187,8 @@ function HtmlViewer({ a, agentHtml }: { a: Artifact; agentHtml: boolean }) {
   )
 }
 
-function Viewer({ a, agentHtml }: { a: Artifact; agentHtml: boolean }) {
+/** The content of one artifact (also the Artifacts page's preview pane): same sandbox and agent-HTML rule everywhere. */
+export function Viewer({ a, agentHtml }: { a: Artifact; agentHtml: boolean }) {
   if (a.kind === 'screenshot')
     return (
       <div className="space-y-2">

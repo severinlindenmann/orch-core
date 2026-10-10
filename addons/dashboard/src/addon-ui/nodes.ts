@@ -31,6 +31,8 @@ export const statNode = z.object({
   hint: text.optional(),
   /** What a card-field stat adds to its Board column's sum, when it differs from `value` (e.g. a t-shirt size's weight). */
   sum: z.union([z.string().max(200), z.number()]).nullable().optional(),
+  /** A few recent values, oldest first (e.g. cost per day): core draws them as a small sparkline where the stat is a glance line (Today). */
+  trend: z.array(z.number().finite()).max(60).optional(),
 })
 export const kvNode = z.object({
   type: z.literal('kv'),
@@ -89,6 +91,18 @@ export const tableNode = z.object({
   totalRow: z.boolean().optional(),
   /** Shown instead of the table when there are no rows (like a list's `empty`). */
   empty: text.optional(),
+  /**
+   * Rows that open (an accordion, one row at a time): `nodes` holds a node per row, keyed by the value of the row's
+   * `key` cell; core draws a chevron on the rows that have one and the node in a full-width row beneath. Every detail
+   * node is untrusted and validated again when it is rendered, only while its row is open. Unknown keys are refused.
+   */
+  rowDetail: z
+    .object({
+      key: z.string().regex(/^[A-Za-z0-9_]{1,64}$/),
+      nodes: z.record(z.string().max(200), z.unknown()).refine((o) => Object.keys(o).length <= 500, 'at most 500 row details'),
+    })
+    .strict()
+    .optional(),
 })
 /** `toc`: core gives the headings its own ids and shows "On this page" links to them. */
 export const markdownNode = z.object({ type: z.literal('markdown'), text: z.string().max(20000), toc: z.boolean().optional() })
@@ -144,6 +158,8 @@ export const linkNode = z.object({
   label: z.string().max(120),
   /** An http(s) URL (opens in a new tab), or another addon's page in this app: `/addon/<name>/<page>` (core's router). */
   href: z.string().max(2000).refine((h) => /^https?:\/\//i.test(h) || INTERNAL_LINK.test(h), 'only http(s) links or /addon/<name>/<page>'),
+  /** An http(s) link only: core shows the address itself and a Copy button beside it (an app's URL). */
+  copy: z.boolean().optional(),
 })
 
 export const alertNode = z.object({ type: z.literal('alert'), tone: z.enum(['info', 'success', 'warn', 'error']), title: text, text: text.optional() })

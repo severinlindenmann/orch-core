@@ -7,7 +7,7 @@ import { AddonBadge } from './AddonBadge'
 import { AddonFrame } from './AddonFrame'
 import { Collapse } from '@/components/Collapse'
 import { Skeleton } from '@/components/ui/skeleton'
-import { AddonNode, type FormControl } from './AddonNode'
+import { AddonNode, type FormControl, type Glance } from './AddonNode'
 import { useSlot, type AddonStateWait, type ResolvedContribution, type SlotContext } from './slots'
 
 /** What core draws while an addon's state is loading, or after it failed to load (with Retry). */
@@ -29,11 +29,11 @@ export function AddonStatePlaceholder({ title, waiting, compact = false }: { tit
 }
 
 /** The body of a contribution: its node, or core's placeholder while the addon's state loads. */
-function ContributionBody({ c, ctx, compact, readOnly, formControl }: { c: ResolvedContribution; ctx: SlotContext; compact: boolean; readOnly: boolean; formControl?: FormControl }) {
-  if (c.waiting) return <AddonStatePlaceholder title={c.addonTitle} waiting={c.waiting} compact={compact} />
+function ContributionBody({ c, ctx, compact, readOnly, formControl, glance }: { c: ResolvedContribution; ctx: SlotContext; compact: boolean; readOnly: boolean; formControl?: FormControl; glance?: Glance }) {
+  if (c.waiting) return <AddonStatePlaceholder title={c.addonTitle} waiting={c.waiting} compact={compact || !!glance} />
   return (
     <ErrorBoundary resetKey={c.node} fallback={() => <BlockProblem what={`This ${c.addon} panel`} />}>
-      <AddonNode node={c.node} addon={c.addon} ctx={ctx} compact={compact} readOnly={readOnly} formControl={formControl} />
+      <AddonNode node={c.node} addon={c.addon} ctx={ctx} compact={compact} readOnly={readOnly} formControl={formControl} glance={glance} />
     </ErrorBoundary>
   )
 }
@@ -52,6 +52,7 @@ export function AddonContributionView({
   bare = false,
   level,
   formControl,
+  glance,
 }: {
   c: ResolvedContribution
   ctx?: SlotContext
@@ -61,8 +62,11 @@ export function AddonContributionView({
   level?: 2 | 3
   /** A form node here draws no submit button of its own; see FormControl. */
   formControl?: FormControl
+  /** Drawn as a glance line (Today's Glance list, which draws the A and the title itself); implies `bare`. */
+  glance?: Glance
 }) {
-  const body = <ContributionBody c={c} ctx={ctx} compact={compact} readOnly={readOnly} formControl={formControl} />
+  const body = <ContributionBody c={c} ctx={ctx} compact={compact} readOnly={readOnly} formControl={formControl} glance={glance} />
+  if (glance) return <div data-addon={c.addon}>{body}</div>
   if (bare) return <div data-addon={c.addon}>{body}</div>
   return (
     <AddonFrame addon={c.addon} addonTitle={c.addonTitle} title={c.title} slot={c.slot} compact={compact} level={level}>

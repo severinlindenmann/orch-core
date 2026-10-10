@@ -1,12 +1,12 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useRouter, useRouterState } from '@tanstack/react-router'
+import { useRouter } from '@tanstack/react-router'
 import { toast } from 'sonner'
 import { addonActive } from '@/api/addons'
 import { api } from '@/api/client'
 import { workspaceOfTicket } from '@/api/workspaces'
 import type { Workspace } from '@/api/types'
-import { isWorkspacePath, splitWorkspacePath, toPublicPath } from './urls'
+import { isWorkspacePath, setLinkWorkspace, splitWorkspacePath, toPublicPath, type UrlState } from './urls'
 
 interface SwitchOptions {
   /** Open this ticket in the target workspace instead of keeping the current page. */
@@ -32,8 +32,11 @@ interface WorkspaceCtx {
 const noop = () => {}
 const Ctx = createContext<WorkspaceCtx>({ workspace: undefined, workspaces: [], setWorkspaceId: noop, switchWorkspace: noop })
 
-/** The address-bar href of the current location (with its `/w/<PREFIX>`). */
+/** The address-bar path of an href (with its `/w/<PREFIX>`). */
 const publicPathOf = (publicHref: string) => new URL(publicHref, 'http://x').pathname
+/** Outside the app's router (a component test with its own router, or none): links are left as they are. */
+const NO_URLS: UrlState = { prefix: null }
+const noSubscribe = () => () => {}
 
 const STORAGE_KEY = 'orch.workspace'
 
@@ -73,7 +76,7 @@ function askGuards(list: SwitchGuard[], done: () => void) {
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const qc = useQueryClient()
   const router = useRouter()
-  const urls = router.options.context.urls
+  const urls = (router?.options.context as { urls?: UrlState } | undefined)?.urls ?? NO_URLS
   const { data = [], isSuccess } = useQuery({ queryKey: ['workspaces'], queryFn: api.getWorkspaces })
   const [id, setId] = useState<string | null>(readStored)
   const remember = useCallback((next: string) => {
@@ -86,14 +89,21 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }, [])
 
   // The address bar decides on workspace pages (`/w/DEMO/board`); elsewhere (a ticket) the last workspace stays.
-  const loc = useRouterState({ select: (s) => ({ pathname: s.location.pathname, publicHref: s.location.publicHref }), structuralSharing: true })
-  const scoped = isWorkspacePath(loc.pathname)
-  const urlPrefix = splitWorkspacePath(publicPathOf(loc.publicHref)).prefix
+  // The address bar itself (the history), read without the router's state so tests without a router still work.
+  const history = router?.history
+  const publicHref = useSyncExternalStore(history ? (cb) => history.subscribe(cb) : noSubscribe, () => history?.location.href ?? '/')
+  const ownsUrl = urls !== NO_URLS
+  const split = ownsUrl ? splitWorkspacePath(publicPathOf(publicHref)) : { prefix: undefined, path: publicPathOf(publicHref) }
+  const { prefix: urlPrefix, path: inAppPath } = split
+  const scoped = isWorkspacePath(inAppPath)
   const fromUrl = scoped && urlPrefix !== undefined ? data.find((w) => w.prefix === urlPrefix) : undefined
   const missingPrefix = scoped && urlPrefix !== undefined && isSuccess && !fromUrl ? urlPrefix : undefined
   const workspace = fromUrl ?? data.find((w) => w.id === id) ?? data[0]
   // In-app links point into this workspace (the router's rewrite reads it when it builds an address).
-  urls.prefix = workspace?.prefix ?? null
+  const linkPrefix = workspace?.prefix ?? null
+  useLayoutEffect(() => {
+    if (router && ownsUrl) setLinkWorkspace(router, urls, linkPrefix)
+  }, [router, ownsUrl, urls, linkPrefix])
 
   // An address for another workspace (pasted, Back/Forward) makes it the remembered one too.
   useEffect(() => {
@@ -104,10 +114,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   // Old and short addresses (`/board`, `/`) get the workspace; a ticket address loses one (its key names it).
   useEffect(() => {
     if (!workspace || missingPrefix) return
-    if (scoped === (urlPrefix !== undefined)) return
-    const l = router.state.location
-    router.history.replace(`${toPublicPath(l.pathname, workspace.prefix)}${l.searchStr}${l.hash ? `#${l.hash}` : ''}`, l.state)
-  }, [workspace, missingPrefix, scoped, urlPrefix, router])
+    if (!router || !ownsUrl || scoped === (urlPrefix !== undefined)) return
+    const l = router.latestLocation
+    // The same page under its full address: not a navigation a page with unsaved work needs to ask about.
+    router.history.replace(`${toPublicPath(l.pathname, workspace.prefix)}${l.searchStr}${l.hash ? `#${l.hash}` : ''}`, l.state, { ignoreBlocker: true })
+  }, [workspace, missingPrefix, scoped, urlPrefix, router, ownsUrl])
 
   // Latest values for switchWorkspace, so its identity stays stable for key handlers.
   const latest = useRef({ data, workspace })
@@ -119,10 +130,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     (next: string, opts: { url?: 'push' | 'none' } = {}) => {
       const target = latest.current.data.find((w) => w.id === next)
       remember(next)
-      if (target) urls.prefix = target.prefix
-      const l = router.state.location
-      if (target && opts.url !== 'none' && isWorkspacePath(l.pathname)) {
-        router.history.push(`${toPublicPath(l.pathname, target.prefix)}${l.searchStr}${l.hash ? `#${l.hash}` : ''}`)
+      // Links and the navigation that may follow point into the new workspace right away.
+      if (target && router && urls !== NO_URLS) setLinkWorkspace(router, urls, target.prefix)
+      const l = router?.latestLocation
+      if (router && l && urls !== NO_URLS && target && opts.url !== 'none' && isWorkspacePath(l.pathname)) {
+        // The switch guards (useSwitchGuard) have already asked about unsaved work.
+        router.history.push(`${toPublicPath(l.pathname, target.prefix)}${l.searchStr}${l.hash ? `#${l.hash}` : ''}`, undefined, { ignoreBlocker: true })
       }
       void qc.invalidateQueries()
     },

@@ -9,7 +9,7 @@
 //
 // URLs carry keys and ids only: never titles, tokens or signed values.
 
-import type { LocationRewrite } from '@tanstack/react-router'
+import type { AnyRouter, LocationRewrite } from '@tanstack/react-router'
 
 const WS_PATH = /^\/w\/([^/?#]+)(\/.*)?$/
 
@@ -55,6 +55,17 @@ export function workspaceRewrite(state: UrlState): LocationRewrite {
       return url
     },
   }
+}
+
+/**
+ * Points in-app links at workspace `prefix`. The router caches the addresses it built for links, so it gets a new
+ * rewrite (TanStack drops that cache and re-renders the links when the rewrite changes). Call from an effect or an
+ * event handler, never during render.
+ */
+export function setLinkWorkspace(router: AnyRouter, urls: UrlState, prefix: string | null) {
+  if (urls.prefix === prefix) return
+  urls.prefix = prefix
+  router.update({ ...router.options, rewrite: workspaceRewrite(urls) })
 }
 
 /** The link a person can paste elsewhere, for an address-bar href (`/w/DEMO/board?x=1`). */

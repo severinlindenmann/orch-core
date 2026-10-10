@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { useNavigate, useSearch } from '@tanstack/react-router'
 import { toast } from 'sonner'
-import type { ArtifactsSearch } from '@/app/search'
+import { validateArtifactsSearch, type ArtifactsSearch } from '@/app/search'
 import type { ArtifactItem } from '@/api/types'
 
 /** An artifact's id in the address: its ticket key and the start of its content hash (no file names or titles). */
@@ -12,7 +12,8 @@ export const artifactUrlId = (a: Pick<ArtifactItem, 'ticket' | 'sha256'>) => `${
  * keeps its own state; this hook reads the address once the list is there and writes the address back on changes.
  */
 export function useArtifactsUrl() {
-  const search = useSearch({ strict: false }) as ArtifactsSearch
+  // Read through the route's validator again: a parent match passes the raw params on.
+  const search = validateArtifactsSearch(useSearch({ strict: false }))
   const navigate = useNavigate()
   const latest = useRef(search)
   latest.current = search

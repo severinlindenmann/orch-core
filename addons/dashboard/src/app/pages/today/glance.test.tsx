@@ -26,8 +26,8 @@ describe('Today: Glance', () => {
     expect(within(glance).getByText('CHF 39.91 this month')).toBeInTheDocument()
     // Agent spend: one line with a sparkline of the last 7 days.
     expect(within(glance).getByRole('img', { name: /^Trend over 7 values/ })).toBeInTheDocument()
-    expect(within(glance).getByRole('link', { name: 'Open Apps & shares' })).toHaveAttribute('href', '/addon/publish/shares')
-    expect(within(glance).getByRole('link', { name: 'Open PRs needing review' })).toHaveAttribute('href', '/addon/github/reviews')
-    expect(within(glance).getByRole('link', { name: 'Open Agent spend' })).toHaveAttribute('href', '/addon/usage/overview')
+    expect(within(glance).getByRole('link', { name: 'Open Apps & shares' })).toHaveAttribute('href', '/w/DEMO/addon/publish/shares')
+    expect(within(glance).getByRole('link', { name: 'Open PRs needing review' })).toHaveAttribute('href', '/w/DEMO/addon/github/reviews')
+    expect(within(glance).getByRole('link', { name: 'Open Agent spend' })).toHaveAttribute('href', '/w/DEMO/addon/usage/overview')
   })
 })

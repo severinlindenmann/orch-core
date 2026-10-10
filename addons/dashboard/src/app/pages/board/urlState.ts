@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearch } from '@tanstack/react-router'
-import type { BoardSearch } from '@/app/search'
+import { validateBoardSearch, type BoardSearch } from '@/app/search'
 import { NO_FILTERS, type Filters } from './lib'
 import type { View } from './Toolbar'
 
@@ -24,7 +24,8 @@ export function searchOf(f: Filters, view: View): BoardSearch {
  * copied link opens the same board. The search text is local while typing and reaches the address after 200 ms.
  */
 export function useBoardUrlState() {
-  const search = useSearch({ strict: false }) as BoardSearch
+  // Read through the route's validator again: a parent match passes the raw params on.
+  const search = validateBoardSearch(useSearch({ strict: false }))
   const navigate = useNavigate()
   const view: View = search.view ?? 'board'
   const fromUrl = filtersOf(search)

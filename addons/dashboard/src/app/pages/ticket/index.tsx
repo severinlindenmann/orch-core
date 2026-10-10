@@ -7,6 +7,7 @@ import { api } from '@/api/client'
 import { ApiError } from '@/api/types'
 import { workspaceOfTicket } from '@/api/workspaces'
 import { useWorkspace } from '@/app/workspace'
+import { validateTicketSearch } from '@/app/search'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -105,7 +106,8 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
   })
   // The tab is in the address (`?tab=history`, Overview when absent). A `#question-Q2` link (Today's Agents panel)
   // opens the Questions tab on that question from the first paint.
-  const search = useSearch({ strict: false }) as { tab?: TabId }
+  // Read through the route's validator again: a parent match passes the raw params on.
+  const search = validateTicketSearch(useSearch({ strict: false }))
   const navigate = useNavigate()
   const tab: TabId = search.tab ?? (questionOf(hash) ? 'questions' : 'overview')
   const setTab = useCallback(

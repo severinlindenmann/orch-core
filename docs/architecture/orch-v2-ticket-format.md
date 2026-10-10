@@ -505,7 +505,7 @@ their fields and sections join one of these (`binds`).
   even when it names every type). An override can never end up looser, even after a later workspace change.
   "No eligible approver" is judged on tokens, not persons: an override that leaves no token is refused; if a later
   workspace change empties the set, the gate is blocked (`gate.no_eligible`) until someone fixes the policy.
-- **Canonical form** for hashing: all five keys, `approvers` and `not` sorted and de-duplicated, `applies` a non-empty list. Policies and people lists are author input, so hashing applies this canonical form; every other list this document calls "sorted" (for example `source_sha`, `prior.approvals`) must already be sorted and is refused otherwise. "Sorted" always means by Unicode code point (equal to UTF-8 byte order).
+- **Canonical form** for hashing: all five keys, `approvers` and `not` sorted and de-duplicated, `applies` a non-empty list. Policies and people lists are author input, so hashing applies this canonical form (people lists sorted and de-duplicated too); every other list this document calls "sorted" (for example `source_sha`, `prior.approvals`) must already be sorted and is refused otherwise. "Sorted" always means by Unicode code point (equal to UTF-8 byte order).
 - For `code`, `not` always includes `assignees` and `independent` is `true`; the host refuses a policy without them
   (D59).
 
@@ -637,7 +637,7 @@ later gate, so all their earlier approvals stop counting.
 
 **Text in approved content.** The approval is refused (`gate.suspicious_text`) when gated text contains a bidi
 control (U+202A–202E, U+2066–2069, U+200E, U+200F, U+061C). Other invisible characters (U+200B–200D, U+2060,
-U+FEFF, tag characters, other `Cf`) are shown as `⟨U+200B⟩` in every approval prompt and in `orch show`
+U+FEFF, tag characters, other `Cf`, and these non-`Cf` look-alikes: U+034F, U+115F, U+1160, U+2028, U+2029, U+3164, U+FFA0, U+FE00–U+FE0F, U+E0100–U+E01EF) are shown as `⟨U+200B⟩` in every approval prompt and in `orch show`
 (§12 N5).
 
 **The verdict binds to the commit (D58).** The verify gate hash includes the source list, and the prompt shows the
@@ -1259,7 +1259,7 @@ A1–A20 (PR body), HO (dashboard handover, input only), D58–D60, the adversar
 | 54 | Event line bytes | Each line is exactly `cj(event)`. | Hashing the parse and the line agree; a hand edit is caught. |
 | 55 | D61, D62 | Not in the format; no `via` field, no mandate events. | Out of P1 (owner, 10 Oct). |
 | 56 | `ticket.created` payload `type` collides with the envelope (Codex 1) | Renamed `ticket_type`; also in the gate hash `fields`. | One name, one meaning per object. |
-| 57 | `auth` checked against a certificate field that doesn't exist (Codex 2) | `auth` is signed metadata only; no certificate field; signed-event contract versioned as `v`. | Don't invent protocol fields; protocol §6.1 is fixed. |
+| 57 | `auth` checked against a certificate field that doesn't exist (Codex 2) | `auth` is signed metadata only; no certificate field; signed-event contract versioned as `contract` (§5.3). | Don't invent protocol fields; protocol §6.1 is fixed. |
 | 58 | Phone decisions vs `sig/ticket-event` (Codex 2) | Host verifies the protocol §13 decision and records it verbatim as `evidence`; the adapter is P3. The signed bytes differ. | A signature over one byte string can't become another. |
 | 59 | "Older commit is not a new head" vs D58 vs D53 clean rebase (Codex 3) | Any ref-value change is a new head (D58). D53's clean rebase applies only to the landing worker's candidate, which records the approved `source_sha` and its `candidate_sha` and is re-checked (§5.7). | Approval binds one exact commit; landing is a derived, checked step. |
 | 60 | A workspace-key holder forges surrounding state (Codex 4) | Readers replay authorization (actors, certificates, roles, grants, policies, generations, transitions); the genesis is pinned (§5.11). | Signatures alone don't make a forged `member.added` harmless; replay does. |

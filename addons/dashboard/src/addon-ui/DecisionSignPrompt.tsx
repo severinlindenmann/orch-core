@@ -2,7 +2,7 @@ import type { AddonDecision } from '@/api/types'
 import { SignPrompt } from '@/components/sign/SignPrompt'
 import { AddonBadge } from './AddonBadge'
 import { plain } from '@/components/sign/visible'
-import { addonName, Raw } from './SignConfirm'
+import { addonName, Raw, words } from './SignConfirm'
 import { useAddons } from './slots'
 
 /**
@@ -25,6 +25,12 @@ export function DecisionSignPrompt({ d, option, workspacePrefix, onSign, onClose
         <>
           Decision <Raw>{d.id}</Raw>
         </>,
+        // What answering authorises, one core line per term ("Words (key): value"), in full; posted with the answer.
+        ...Object.entries(d.terms ?? {}).map(([k, v]) => (
+          <span key={`term-${k}`} data-term-key={k} data-term-value={String(v)}>
+            {words(k) === k ? <Raw>{k}</Raw> : <>{plain(words(k))} (<Raw>{k}</Raw>)</>}: <Raw>{String(v)}</Raw>
+          </span>
+        )),
         <>
           Answer: option <Raw>{option.key}</Raw>
         </>,
@@ -66,5 +72,5 @@ export const decisionToast = (title: string, addon: string, option: string, mess
   ...(message ? { description: `Addon says: ${message}` } : {}),
 })
 
-/** The body core posts for a decision after its prompt: the decision's own id and ticket, the option key, `confirmed`. */
-export const decisionBody = (d: AddonDecision, option: string) => ({ id: d.id, option, ...(d.ticket ? { ticket: d.ticket } : {}), confirmed: true })
+/** The body core posts for a decision after its prompt: the decision's own id, ticket and terms, the option key, `confirmed`. */
+export const decisionBody = (d: AddonDecision, option: string) => ({ id: d.id, option, ...(d.ticket ? { ticket: d.ticket } : {}), ...(d.terms ? { terms: { ...d.terms } } : {}), confirmed: true })

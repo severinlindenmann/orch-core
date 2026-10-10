@@ -571,6 +571,8 @@ export function describeEvent(e: Pick<OrchEvent, 'type'> & Record<string, unknow
       return 'cancelled a workspace link pairing'
     case 'links.pairing_denied':
       return 'denied a workspace link request'
+    case 'links.terms_set':
+      return 'set the terms of a workspace link request'
     case 'links.paired':
       return 'linked a workspace'
     case 'links.revoked':

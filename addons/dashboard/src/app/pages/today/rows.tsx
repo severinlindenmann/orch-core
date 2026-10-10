@@ -318,7 +318,7 @@ function useDecide(d: AddonDecision, onError?: (e: unknown) => void, onDone?: ()
   return { choose: setSigning, busy: pending || !!signing, pending, prompt }
 }
 
-function DecisionBody({ d, readOnly, showQuestion = true, inlineErrors, onPending }: { d: AddonDecision; readOnly: boolean; showQuestion?: boolean; inlineErrors?: boolean; onPending?: (pending: boolean) => void }) {
+function DecisionBody({ d, readOnly, showQuestion = true, inlineErrors, onPending, blockedReason }: { d: AddonDecision; readOnly: boolean; showQuestion?: boolean; inlineErrors?: boolean; onPending?: (pending: boolean) => void; blockedReason?: string }) {
   const [error, setError] = useState<ActionError | null>(null)
   const { choose, busy, pending, prompt } = useDecide(
     d,
@@ -334,11 +334,12 @@ function DecisionBody({ d, readOnly, showQuestion = true, inlineErrors, onPendin
       {!readOnly && (
         <div className="flex flex-wrap items-center gap-2">
           {d.options.map((o) => (
-            <Button key={o.key} size="sm" variant="outline" disabled={busy} aria-busy={pending || undefined} onClick={() => choose(o)}>
+            <Button key={o.key} size="sm" variant="outline" disabled={busy || (!!blockedReason && !!o.primary)} aria-busy={pending || undefined} onClick={() => choose(o)}>
               {pending && <Loader2 className="animate-spin" />}
               {o.label}
             </Button>
           ))}
+          {blockedReason && <span role="status" className="text-[12px] text-text-muted">{blockedReason}</span>}
         </div>
       )}
       {error && <ErrorAlert error={error} onDismiss={() => setError(null)} />}
@@ -362,6 +363,7 @@ export function DecisionRow({
   decider,
   inlineErrors,
   inline = false,
+  blockedReason,
 }: {
   d: AddonDecision
   readOnly: boolean
@@ -374,6 +376,8 @@ export function DecisionRow({
   decider?: string
   /** On an addon's own page (already framed with [A]): no second badge or hairline, always open, no Decide button. */
   inline?: boolean
+  /** Core says the options cannot be used now (e.g. unsaved edits on the page): they are disabled and this is shown. */
+  blockedReason?: string
 }) {
   const [own, setOwn] = useState(false)
   const [pending, setPending] = useState(false)
@@ -399,7 +403,7 @@ export function DecisionRow({
         )
       }
     >
-      <DecisionBody d={d} readOnly={readOnly} showQuestion={false} inlineErrors={inlineErrors} onPending={setPending} />
+      <DecisionBody d={d} readOnly={readOnly} showQuestion={false} inlineErrors={inlineErrors} onPending={setPending} blockedReason={blockedReason} />
     </RowShell>
     </SigningContext.Provider>
   )

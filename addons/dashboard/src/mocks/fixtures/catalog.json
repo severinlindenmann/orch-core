@@ -1248,6 +1248,11 @@
       "set_pairing_terms": {
         "minRole": "owner",
         "label": "Set the terms of a link request"
+      },
+      "reset_pairing_terms": {
+        "minRole": "owner",
+        "kind": "navigation",
+        "label": "Discard changes to the terms"
       }
     },
     "package_sha256": "9395d3ff43d09f8372895d9387287a801f0c69dc021d545c391ef3683867d5d9"

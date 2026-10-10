@@ -1,4 +1,4 @@
-import { PACKAGE_NAME } from '@/api/addons'
+import { PACKAGE_NAME, validTerms } from '@/api/addons'
 import type { AddonActionResult, AddonDecision } from '@/api/types'
 import type { LaunchPlan, LaunchRequest } from '../sessions'
 import type { Rng } from '../busy/rng'
@@ -110,9 +110,10 @@ export function markDecided(state: Record<string, unknown>, id: string): void {
 
 /** Open decisions of an addon in a workspace, from its mock module (or the default rule). */
 export function openDecisions(addon: MockAddon | undefined, state: Record<string, unknown>, pkg: AddonDecision[], ctx: Omit<AddonCtx, 'body' | 'state'>): AddonDecision[] {
-  if (addon?.decisions) return addon.decisions(state, pkg, ctx)
   const done = (state.decided as string[] | undefined) ?? []
-  return pkg.filter((d) => !done.includes(d.id))
+  const open = addon?.decisions ? addon.decisions(state, pkg, ctx) : pkg.filter((d) => !done.includes(d.id))
+  // Terms core cannot show exactly (too many, odd keys, non-plain values) fail closed: that decision is not offered.
+  return open.filter((d) => validTerms(d.terms))
 }
 
 const registry = new Map<string, MockAddon>()

@@ -123,6 +123,11 @@ export const formNode = z.object({
   reset: z.boolean().optional(),
   /** Filters: the action runs on each change (a choice at once, typed text after a short pause) and there is no submit button. */
   live: z.boolean().optional(),
+  /**
+   * The id of a decision on this page that this form sets the terms of (needs `cancel`): while the form holds unsaved
+   * edits, core disables that decision's primary option and says why, so nobody accepts terms they have not saved.
+   */
+  guards: z.string().min(1).max(200).optional(),
 })
 export const buttonNode = z.object({
   type: z.literal('button'),

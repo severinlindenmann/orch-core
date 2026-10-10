@@ -63,6 +63,8 @@ interface Request {
   offers?: Kind[]
   /** The terms the owner signs (narrowed from wants/offers, expiry chosen); default: as asked, 90 days. */
   terms?: Terms
+  /** Bumped by "Cancel changes" so the terms form starts over from the saved terms. */
+  termsRev?: number
   // question
   options?: { key: string; label: string }[]
   // scope
@@ -315,7 +317,10 @@ const left = (iso: string, now: string) => {
  * it from the two workspace names, the same way on both sides.
  */
 export const comparisonCode = (prefix: string, peer: Peer) => fingerprintOf(['ws:' + prefix, 'peer:' + (peer.ws ?? peer.name)].sort().join('|'))
-const termsOf = (r: Request): Terms => r.terms ?? { recv: r.wants ?? [], send: r.offers ?? [], days: 90 }
+/** What the peer asked for, kept to the kinds this host knows (the host drops unknown kinds when a request arrives). */
+const wantsOf = (r: Request) => KINDS.filter((k) => (r.wants ?? []).includes(k))
+const offersOf = (r: Request) => KINDS.filter((k) => (r.offers ?? []).includes(k))
+const termsOf = (r: Request): Terms => r.terms ?? { recv: wantsOf(r), send: offersOf(r), days: 90 }
 const kindsTag = (k: Kind[]) => (k.length ? k.join('+') : 'none')
 /**
  * A decision's id. A pairing request's id carries everything the signature authorises (core shows the id in full in
@@ -351,8 +356,17 @@ function toDecision(r: Request, l: Link | undefined, now: string, prefix: string
       ...base,
       title: `Link request from ${r.from.name}`,
       question: `Link ${r.from.name} with this workspace ${r.carrier === 'local' ? 'on this machine' : 'through the relay'} on these terms?`,
-      detail: `Comparison code ${comparisonCode(prefix, r.from)} (worked out on this machine). Ask ${r.from.owner}${r.from.org ? ` (${r.from.org})` : ''} to read the code on their screen and accept only if it is the same. Terms you sign: they may send you ${kindsText(t.recv)}; you may send them ${kindsText(t.send)}; the link expires after ${t.days} days. They asked to send ${kindsText(r.wants ?? [])} and to receive ${kindsText(r.offers ?? [])}: narrow the terms or change the expiry in Workspace links → Requests before you accept. The request expires ${left(r.expires_at, now)}.`,
+      detail: `Comparison code ${comparisonCode(prefix, r.from)} (worked out on this machine). Ask ${r.from.owner}${r.from.org ? ` (${r.from.org})` : ''} to read the code on their screen and accept only if it is the same. Terms you sign: they may send you ${kindsText(t.recv)}; you may send them ${kindsText(t.send)}; the link expires after ${t.days} days. They asked to send ${kindsText(wantsOf(r))} and to receive ${kindsText(offersOf(r))}: narrow the terms or change the expiry in Workspace links → Requests before you accept. The request expires ${left(r.expires_at, now)}.`,
       options: [{ key: 'accept', label: 'Codes match: link on these terms', primary: true }, { key: 'deny', label: 'Deny' }],
+      // Core shows each term as its own line in the signing covers, checks them on the answer and records them.
+      terms: {
+        peer: r.from.name,
+        comparison_code: comparisonCode(prefix, r.from),
+        carrier: carrierArg(r.carrier ?? 'relay'),
+        they_may_send_us: kindsText(t.recv),
+        we_may_send_them: kindsText(t.send),
+        expires_after: `${t.days} days`,
+      },
     }
   }
   if (r.kind === 'scope')
@@ -496,19 +510,22 @@ function page(state: Record<string, unknown>, c: Omit<AddonCtx, 'body' | 'state'
     .filter((r) => r.kind === 'pairing')
     .map((r) => {
       const t = termsOf(r)
-      const props: Record<string, unknown> = { request: { type: 'string', enum: [r.id], default: r.id } }
-      for (const k of r.wants ?? []) props[`recv_${k}`] = { type: 'boolean', title: `They may send us ${KIND_LABEL[k]}`, default: t.recv.includes(k) }
-      for (const k of r.offers ?? []) props[`send_${k}`] = { type: 'boolean', title: `We may send them ${KIND_LABEL[k]}`, default: t.send.includes(k) }
+      const props: Record<string, unknown> = { request: { type: 'string', enum: [r.id], default: r.id }, rev: { type: 'integer' } }
+      for (const k of wantsOf(r)) props[`recv_${k}`] = { type: 'boolean', title: `They may send us ${KIND_LABEL[k]}`, default: t.recv.includes(k) }
+      for (const k of offersOf(r)) props[`send_${k}`] = { type: 'boolean', title: `We may send them ${KIND_LABEL[k]}`, default: t.send.includes(k) }
       props.days = { type: 'integer', title: 'Link expires after', enum: [30, 90, 365], default: t.days }
       const nodes: unknown[] = [
-        { type: 'markdown', text: `### Terms for ${md(r.from.name)}\nYou can narrow what they asked for and pick the expiry. The decision you sign names these terms.` },
+        { type: 'markdown', text: `### Terms for ${md(r.from.name)}\nYou can narrow what they asked for and pick the expiry. The decision below names these terms line by line when you sign; it cannot be accepted while changes here are unsaved.` },
         {
           type: 'form',
           schema: { type: 'object', properties: props },
-          uiSchema: { request: { 'ui:widget': 'hidden' }, days: { 'ui:enumNames': ['30 days', '90 days', '365 days'] } },
-          formData: { request: r.id, days: t.days, ...Object.fromEntries((r.wants ?? []).map((k) => [`recv_${k}`, t.recv.includes(k)])), ...Object.fromEntries((r.offers ?? []).map((k) => [`send_${k}`, t.send.includes(k)])) },
+          uiSchema: { request: { 'ui:widget': 'hidden' }, rev: { 'ui:widget': 'hidden' }, days: { 'ui:enumNames': ['30 days', '90 days', '365 days'] } },
+          formData: { request: r.id, rev: r.termsRev ?? 0, days: t.days, ...Object.fromEntries(wantsOf(r).map((k) => [`recv_${k}`, t.recv.includes(k)])), ...Object.fromEntries(offersOf(r).map((k) => [`send_${k}`, t.send.includes(k)])) },
           action: 'set_pairing_terms',
           submitLabel: 'Use these terms',
+          // With Cancel, core tracks unsaved edits: the decision below cannot be accepted until they are saved or cancelled.
+          cancel: { label: 'Cancel changes', action: 'reset_pairing_terms' },
+          guards: decisionId(r, prefix),
         },
       ]
       return [r.id, nodes] as const
@@ -688,7 +705,7 @@ function page(state: Record<string, unknown>, c: Omit<AddonCtx, 'body' | 'state'
             node: {
               type: 'stack',
               children: [
-                ...(deciders.length ? [{ type: 'markdown', text: '## Waiting for you\nSigned in orch\'s own prompt. Accepted tickets land in the Backlog as untrusted data.' }, ...deciders.flatMap((r) => [{ type: 'decision', id: decisionId(r, prefix) }, ...(termsForms.get(r.id) ?? [])])] : []),
+                ...(deciders.length ? [{ type: 'markdown', text: '## Waiting for you\nSigned in orch\'s own prompt. Accepted tickets land in the Backlog as untrusted data.' }, ...deciders.flatMap((r) => [...(termsForms.get(r.id) ?? []), { type: 'decision', id: decisionId(r, prefix) }])] : []),
                 { type: 'markdown', text: '## All requests' },
                 {
                   type: 'table',
@@ -940,11 +957,19 @@ registerAddon({
         const keys = Object.keys(f).filter((k) => k.startsWith(prefix) && f[k] === true).map((k) => k.slice(prefix.length) as Kind)
         return keys.every((k) => bound.includes(k)) ? KINDS.filter((k) => keys.includes(k)) : null
       }
-      const recv = pick('recv_', r.wants ?? [])
-      const send = pick('send_', r.offers ?? [])
+      const recv = pick('recv_', wantsOf(r))
+      const send = pick('send_', offersOf(r))
       if (!recv || !send) return invalid('Terms can only narrow what the other side asked for.')
       r.terms = { recv, send, days }
+      // One owner can narrow what another signs: the change is on the record.
+      record(c, null, 'terms_set', `Set the terms of the link request from ${r.from.name}: they may send ${kindsText(recv)}; we may send ${kindsText(send)}; ${days} days.`, { by: c.viewer })
       return { ok: true, message: `Terms set: they may send ${kindsText(recv)}; you may send ${kindsText(send)}; ${days} days. Accept to sign them.`, changed: true }
+    },
+
+    // "Cancel changes" on the terms form: nothing changes but the form, which starts over from the saved terms.
+    reset_pairing_terms(c) {
+      for (const r of openRequestsFor(c.state, c)) if (r.kind === 'pairing') r.termsRev = (r.termsRev ?? 0) + 1
+      return { ok: true, message: 'Changes to the terms discarded.' }
     },
 
     // Decisions (manifest decision: true): core checked who may decide, that it is open and the option; this applies it.

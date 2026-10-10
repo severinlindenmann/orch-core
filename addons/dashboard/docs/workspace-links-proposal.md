@@ -62,10 +62,13 @@ queue (Settings → Relay); same-machine links are not affected.
   the peer, the carrier, what they may send us, what we may send them and the expiry. The host refuses the signature
   when any of these no longer matches (409 `links.stale`).
 - **An incoming pairing request is a decision** for owners only (its own action, so Today never folds it with
-  routine requests). The terms are part of its id, which core shows in full in the covers:
-  `pair.<request>.<comparison code>.<carrier>.recv-<kinds>.send-<kinds>.<days>d`. The owner may narrow what the
-  peer asked for and pick the expiry (default 90 days) before accepting, never widen it; changing the terms changes
-  the id, so a prompt opened on old terms is refused. Accepting is refused while a link to that peer exists or, for a
+  routine requests). It carries **decision terms** (a proposed addition to the addon contract, HANDOVER): core shows
+  Peer, Comparison code, Carrier, They may send us, We may send them and Expires after as its own lines in the signing
+  covers, posts them with the answer, refuses the answer when they changed and records them in `addon.decided`. The id
+  (`pair.<request>.<comparison code>.<carrier>.recv-<kinds>.send-<kinds>.<days>d`) still binds the decision. The owner
+  may narrow what the peer asked for and pick the expiry (default 90 days) in a form above the decision, never widen
+  it; accept is off while that form has unsaved changes, and every change of terms is logged (`links.terms_set`).
+  The host drops kinds it does not know when a request arrives, so only known scopes ever reach the terms. Accepting is refused while a link to that peer exists or, for a
   relay carrier, while the relay is offline.
 - **Scopes per link and per direction**; widening a scope is a request the receiving owner signs (its own action).
   Narrowing is not in the mock (open point).

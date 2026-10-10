@@ -38,6 +38,8 @@ const buttonArgs = async (s: S, action: string) => (nodes(await page(s)).find((n
 const decisions = (s: S) => s.api.getAddonDecisions(s.ws).then((d) => d.filter((x) => x.addon === 'links'))
 const sign = (s: S, id: string, body: Record<string, unknown>) => run(s, id, { ...body, confirmed: true })
 const pairingDecision = async (s: S) => (await decisions(s)).find((d) => d.id.startsWith('pair.'))!
+/** What core posts after its prompt: the decision's id and terms, the option, `confirmed`. */
+const answer = (s: S, d: { action: string; id: string; terms?: Record<string, string | number> }, option: string) => sign(s, d.action, { id: d.id, option, ...(d.terms ? { terms: d.terms } : {}) })
 /** The relay online: connected, and 3 s of the mock clock for "connecting" to pass. Needs fake timers. */
 const relayOnline = (s: S) => {
   s.store.appendWs(s.ws, { type: 'relay.connected' })
@@ -83,7 +85,7 @@ describe('links package', () => {
     for (const r of st.requests as { link?: string; state: string }[]) if (r.state === 'open' && r.link) expect(live.has(r.link), r.link).toBe(true)
     for (const x of st.sent.filter((y) => y.id.startsWith('out_b'))) expect(live.has(x.link), x.link).toBe(true)
     relayOnline(s)
-    for (const d of await decisions(s)) expect(await fail(sign(s, d.action, { id: d.id, option: d.options[0].key })), d.id).toBe('ok')
+    for (const d of await decisions(s)) expect(await fail(answer(s, d, d.options[0].key)), d.id).toBe('ok')
     expect(await decisions(s)).toEqual([])
   })
 })
@@ -158,32 +160,47 @@ describe('decisions (core renders and signs them)', () => {
     const s = setup()
     const d = await pairingDecision(s)
     expect(await fail(run(s, 'decide_pairing', { id: d.id, option: 'accept' }))).toBe('409 confirm.required')
-    expect(await fail(sign(s, 'decide_pairing', { id: d.id, option: 'accept' }))).toBe('409 links.relay_offline')
+    expect(await fail(answer(s, d, 'accept'))).toBe('409 links.relay_offline')
     relayOnline(s)
-    expect((await sign(s, 'decide_pairing', { id: d.id, option: 'accept' })).message).toMatch(/Linked with Fabrikam/)
+    // Core shows the terms line by line and posts them; an answer without them, or with others, is refused.
+    expect(d.terms).toEqual({ peer: 'Fabrikam Energy · DATA', comparison_code: expect.stringMatching(/^[0-9A-Z]{6}$/), carrier: 'relay https://relay.dev.severin.io', they_may_send_us: 'questions, Drop files', we_may_send_them: 'ticket handoffs, questions', expires_after: '90 days' })
+    expect(await fail(sign(s, 'decide_pairing', { id: d.id, option: 'accept' }))).toBe('409 decision.closed')
+    expect(await fail(sign(s, 'decide_pairing', { id: d.id, option: 'accept', terms: { ...d.terms, expires_after: '365 days' } }))).toBe('409 decision.closed')
+    expect((await answer(s, d, 'accept')).message).toMatch(/Linked with Fabrikam/)
     const l = raw(s).links.find((x) => x.peer.name.startsWith('Fabrikam'))!
     expect(l).toMatchObject({ accepts: ['question', 'drop'], theyAccept: ['handoff', 'question'] })
     expect(Date.parse(l.expires_at) - Date.parse(l.paired_at)).toBe(90 * 86_400_000)
     const evs = s.store.wsEventsOf(s.ws)
-    expect(evs.find((e) => e.type === 'addon.decided' && e.name === 'links')).toMatchObject({ id: d.id, option: 'accept', presence: 'touchid' })
+    expect(evs.find((e) => e.type === 'addon.decided' && e.name === 'links')).toMatchObject({ id: d.id, option: 'accept', terms: d.terms, presence: 'touchid' })
     expect(evs.find((e) => e.type === 'links.paired')).toMatchObject({ actor: { kind: 'addon', id: 'links' }, person: 'p_sev' })
     expect((await decisions(s)).some((x) => x.id === d.id)).toBe(false)
   })
   it('the owner narrows the terms and picks the expiry, never widens; the decision id follows the terms', async () => {
     vi.useFakeTimers()
     const s = setup()
-    const before = (await pairingDecision(s)).id
+    const before = await pairingDecision(s)
     expect(await fail(run(s, 'set_pairing_terms', { formData: { request: 'rq_fab', recv_handoff: true, days: 30 } }))).toBe('400 validation')
     await run(s, 'set_pairing_terms', { formData: { request: 'rq_fab', recv_question: true, recv_drop: false, send_question: true, days: 30 } })
-    const after = (await pairingDecision(s)).id
-    expect(after).toMatch(/\.relay\.recv-question\.send-question\.30d$/)
-    // A prompt opened on the old terms cannot be signed any more.
+    expect(raw(s).log.at(-1)).toMatchObject({ type: 'links.terms_set', by: 'p_sev' })
+    const after = await pairingDecision(s)
+    expect(after.id).toMatch(/\.relay\.recv-question\.send-question\.30d$/)
+    expect(after.terms).toMatchObject({ they_may_send_us: 'questions', we_may_send_them: 'questions', expires_after: '30 days' })
+    // A prompt opened on the old terms cannot be signed any more, and core says the terms changed.
     relayOnline(s)
-    expect(await fail(sign(s, 'decide_pairing', { id: before, option: 'accept' }))).toBe('409 decision.closed')
-    await sign(s, 'decide_pairing', { id: after, option: 'accept' })
+    const stale = await answer(s, before, 'accept').then(() => null, (e: { code: string; message: string; hint?: string }) => e)
+    expect(stale).toMatchObject({ code: 'decision.closed', message: 'That decision is closed, or its terms changed.', hint: 'Reopen it and check the terms again.' })
+    await answer(s, after, 'accept')
     const l = raw(s).links.find((x) => x.peer.name.startsWith('Fabrikam'))!
     expect(l).toMatchObject({ accepts: ['question'], theyAccept: ['question'] })
     expect(Date.parse(l.expires_at) - Date.parse(l.paired_at)).toBe(30 * 86_400_000)
+  })
+  it('the default terms keep only the kinds this host knows (unknown kinds from the peer are dropped)', async () => {
+    const s = setup()
+    const r = (raw(s).requests as unknown as { id: string; wants: string[] }[]).find((x) => x.id === 'rq_fab')!
+    r.wants = ['question', 'question.send-handoff', 'drop']
+    const d = await pairingDecision(s)
+    expect(d.id).toMatch(/\.recv-question\+drop\.send-handoff\+question\.90d$/)
+    expect(d.terms!.they_may_send_us).toBe('questions, Drop files')
   })
   it('accepting a handoff makes a Backlog ticket marked from-peer', async () => {
     const s = setup('p_mara')

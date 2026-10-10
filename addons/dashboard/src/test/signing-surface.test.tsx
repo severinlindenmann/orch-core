@@ -215,7 +215,17 @@ const CASES: Case[] = [
     addon: ['Link request from Fabrikam Energy', 'Codes match: link on these terms', 'Jonas Weber'],
     skip: ['confirmed'],
     // The id names the signed terms: comparison code, carrier, what each side may send and the expiry.
-    shown: { id: (v) => (v.endsWith('.relay.recv-question+drop.send-handoff+question.90d') ? `Decision ${v}` : `unexpected id ${v}`), option: (v) => `Answer: option ${v}` },
+    // The id binds; the terms are core's own labelled lines (posted with the answer, checked and recorded by the host).
+    shown: {
+      id: (v) => (v.endsWith('.relay.recv-question+drop.send-handoff+question.90d') ? `Decision ${v}` : `unexpected id ${v}`),
+      option: (v) => `Answer: option ${v}`,
+      peer: (v) => `Peer (peer): ${v}`,
+      comparison_code: (v) => `Comparison code (comparison_code): ${v}`,
+      carrier: (v) => `Carrier (carrier): ${v}`,
+      they_may_send_us: (v) => `They may send us (they_may_send_us): ${v}`,
+      we_may_send_them: (v) => `We may send them (we_may_send_them): ${v}`,
+      expires_after: (v) => `Expires after (expires_after): ${v}`,
+    },
   },
   {
     name: 'links confirm pairing (confirm: sign)',

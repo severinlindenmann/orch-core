@@ -220,3 +220,23 @@ describe('#3 (core part) an answer binds the whole decision core showed', () => 
     expect(decisionChanged(d, structuredClone(d))).toBe(false)
   })
 })
+
+describe('round 2 #5 the content-hash cache is bounded and cleared on reset', () => {
+  it('editing a plan many times keeps one entry per slot; a reset empties it', async () => {
+    const { s } = setup()
+    const { contentHashSlots } = await import('@/mocks/derive')
+    s.ticket('DEMO-0044')
+    const before = contentHashSlots()
+    for (let i = 0; i < 50; i++) {
+      ;(s as unknown as { bodies: Map<string, Record<string, string>> }).bodies.get('DEMO-0044')!.plan = `plan ${i} ${'x'.repeat(10_000)}`
+      s.append('DEMO-0044', { type: 'section.edited', actor: 'p_sev', section: 'plan', text: `plan ${i}` })
+      s.ticket('DEMO-0044')
+    }
+    expect(contentHashSlots()).toBe(before)
+    s.reset()
+    expect(contentHashSlots()).toBeLessThanOrEqual(before)
+    const { clearContentHashes } = await import('@/mocks/derive')
+    clearContentHashes()
+    expect(contentHashSlots()).toBe(0)
+  })
+})

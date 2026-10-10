@@ -33,7 +33,7 @@ import type {
 import { addonActive, ARG_KEY, decisionDigest, manifestProblem, pendingUpdate, manifestFor, sameSet, sameTerms, viewerActions } from '@/api/addons'
 import { getAddon, openDecisions } from './addons'
 import { isCoreNamespace } from './addons/registry'
-import { deriveTicket, describeEvent, fnvHex, parseActor } from './derive'
+import { clearContentHashes, deriveTicket, describeEvent, fnvHex, parseActor } from './derive'
 import { commitOf, nextCommitSha } from './changes'
 import { withinCharterSize } from './addons/registry'
 import addonsFixture from './fixtures/addons.json'
@@ -356,6 +356,7 @@ export class MockStore {
     this.sim.stopAll()
     this.relaySim.clear()
     this.mandatesPreview.reset()
+    clearContentHashes() // the content-hash cache holds ticket texts: nothing of the old dataset survives a reset
     this.dataset = dataset
     this.seed()
     if (!keepViewer) this.viewer = meFixture.person

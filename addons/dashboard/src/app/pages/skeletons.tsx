@@ -217,6 +217,58 @@ export function AddonPageSkeleton({ title = '', inPage }: { title?: string } & P
   )
 }
 
+/** The artifacts results while they load: the table's rows (list) or cards (grid), under the real toolbar. */
+export function ArtifactsBodySkeleton({ view }: { view: 'list' | 'grid' }) {
+  if (view === 'grid')
+    return (
+      <div role="status" aria-label="Loading artifacts" className="grid grid-cols-2 gap-3 @[44rem]/page:grid-cols-3 @[64rem]/page:grid-cols-4">
+        {Array.from({ length: 8 }, (_, i) => (
+          <div key={i} className="space-y-2 rounded-lg border border-border bg-surface p-2.5">
+            <Skeleton className="h-24 w-full" />
+            <Skeleton className="h-3.5 w-3/4" />
+            <Skeleton className="h-3 w-1/2" />
+          </div>
+        ))}
+      </div>
+    )
+  return (
+    <div role="status" aria-label="Loading artifacts" className="overflow-hidden rounded-lg border border-border bg-surface">
+      <div className="flex h-10 items-center border-b border-border px-2">
+        <Skeleton className="h-3.5 w-1/3" />
+      </div>
+      {Array.from({ length: 8 }, (_, i) => (
+        <div key={i} className="flex h-[49px] items-center gap-3 border-b border-border px-2 last:border-0">
+          <Skeleton className="h-3.5 w-[26%]" />
+          <Skeleton className="h-3.5 w-16" />
+          <Skeleton className="h-3.5 flex-1" />
+          <Skeleton className="h-3.5 w-24" />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+export function ArtifactsSkeleton({ view = 'list', inPage }: { view?: 'list' | 'grid' } & Placement) {
+  return (
+    <Loading title="Artifacts" className="space-y-4" inPage={inPage}>
+      <div className="flex flex-wrap items-center gap-3">
+        <H1>Artifacts</H1>
+        <span className="flex-1" />
+        <Skeleton className="h-8 w-[132px]" />
+      </div>
+      <p className="-mt-2 text-[13px] text-text-muted">Evidence, logs, screenshots and reports from the tickets you can see in this workspace.</p>
+      <div className="flex flex-wrap items-center gap-2">
+        <Skeleton className="h-8 w-56" />
+        <Skeleton className="h-8 w-[110px]" />
+        <Skeleton className="h-8 w-[110px]" />
+        <Skeleton className="h-8 w-[110px]" />
+        <Skeleton className="h-8 w-[110px]" />
+      </div>
+      <ArtifactsBodySkeleton view={view} />
+    </Loading>
+  )
+}
+
 /** The fallback for a page without its own skeleton (a heading line and one block). */
 export function GenericSkeleton() {
   return (

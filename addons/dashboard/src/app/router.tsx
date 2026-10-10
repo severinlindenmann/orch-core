@@ -3,10 +3,10 @@ import { createBrowserHistory, createMemoryHistory, createRootRouteWithContext, 
 import { Shell } from './shell/Shell'
 import { RouteProblem } from './shell/RouteProblem'
 import { lazyPage } from './pages/lazyPage'
-import { AddonPageSkeleton, AgentsSkeleton, BoardSkeleton, GenericSkeleton, SettingsSkeleton, TicketSkeleton, TicketsSkeleton, TodaySkeleton } from './pages/skeletons'
+import { AddonPageSkeleton, AgentsSkeleton, ArtifactsSkeleton, BoardSkeleton, GenericSkeleton, SettingsSkeleton, TicketSkeleton, TicketsSkeleton, TodaySkeleton } from './pages/skeletons'
 import { SETTINGS_TABS } from './pages/settings/tabs'
 import { validateTicketsSearch } from './pages/tickets/search'
-import { addonPageData, agentsData, boardData, loadShell, pageLoader, settingsData, ticketData, ticketsData, todayData, type LoaderContext } from './routeData'
+import { addonPageData, agentsData, artifactsData, boardData, loadShell, pageLoader, settingsData, ticketData, ticketsData, todayData, type LoaderContext } from './routeData'
 import { validateArtifactsSearch, validateBoardSearch, validateTicketSearch } from './search'
 import { workspaceRewrite, type UrlState } from './urls'
 
@@ -67,8 +67,18 @@ const ticketRoute = createRoute({
     return <TicketPage ticketKey={key} />
   },
 })
-// Artifacts (G3) keeps its own loading states for now; only its chunk loads ahead.
-const artifactsRoute = createRoute({ getParentRoute: () => rootRoute, path: 'artifacts', validateSearch: validateArtifactsSearch, component: ArtifactsPage, loader: pageLoader(() => [], [ArtifactsPage.preload]) })
+const artifactsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'artifacts',
+  validateSearch: validateArtifactsSearch,
+  component: ArtifactsPage,
+  loader: pageLoader(artifactsData, [ArtifactsPage.preload]),
+  pendingComponent: function ArtifactsPending() {
+    // The layout the address asks for (the viewer's remembered one is not known yet: list).
+    const { view } = artifactsRoute.useSearch()
+    return <ArtifactsSkeleton view={view ?? 'list'} />
+  },
+})
 const agentsRoute = createRoute({ getParentRoute: () => rootRoute, path: 'agents', component: AgentsPage, loader: pageLoader(agentsData, [AgentsPage.preload]), pendingComponent: AgentsSkeleton })
 const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,

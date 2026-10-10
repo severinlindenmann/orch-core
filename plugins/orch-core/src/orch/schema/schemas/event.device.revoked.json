@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.orch.dev/v2/event.device.revoked",
+  "title": "device.revoked event",
+  "description": "5.4.2, 5.3. reason must equal revocation.o.reason (validate()).",
+  "allOf": [
+    {
+      "$ref": "https://schemas.orch.dev/v2/event"
+    },
+    {
+      "properties": {
+        "actor": {
+          "$ref": "https://schemas.orch.dev/v2/event#/$defs/actorPH"
+        }
+      }
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "device.revoked"
+    },
+    "device": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/deviceId"
+    },
+    "reason": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/revokeReason"
+    },
+    "revocation": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/revocation"
+    }
+  },
+  "required": [
+    "type",
+    "device",
+    "reason",
+    "revocation"
+  ],
+  "unevaluatedProperties": false
+}

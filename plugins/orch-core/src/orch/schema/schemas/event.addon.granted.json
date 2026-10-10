@@ -2,23 +2,15 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.orch.dev/v2/event.addon.granted",
   "title": "addon.granted event",
-  "description": "Section 8: addon.granted {name, version, package_sha256, capabilities}.",
+  "description": "5.4.2, 8. Owner only. Replay uses only binds.",
   "allOf": [
     {
       "$ref": "https://schemas.orch.dev/v2/event"
     },
     {
-      "required": [
-        "sig",
-        "presence"
-      ],
       "properties": {
         "actor": {
-          "properties": {
-            "kind": {
-              "const": "person"
-            }
-          }
+          "$ref": "https://schemas.orch.dev/v2/event#/$defs/actorP"
         }
       }
     }
@@ -31,17 +23,75 @@
       "$ref": "https://schemas.orch.dev/v2/common#/$defs/addonName"
     },
     "version": {
-      "$ref": "https://schemas.orch.dev/v2/common#/$defs/text"
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/semver"
     },
     "package_sha256": {
-      "$ref": "https://schemas.orch.dev/v2/common#/$defs/hexSha256"
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
     },
     "capabilities": {
       "type": "array",
       "items": {
-        "$ref": "https://schemas.orch.dev/v2/common#/$defs/token"
+        "$ref": "https://schemas.orch.dev/v2/common#/$defs/capability"
       },
       "uniqueItems": true
+    },
+    "binds": {
+      "type": "object",
+      "properties": {
+        "fields": {
+          "type": "object",
+          "propertyNames": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/token"
+          },
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "$ref": "https://schemas.orch.dev/v2/common#/$defs/gateName"
+            },
+            "uniqueItems": true,
+            "minItems": 1
+          }
+        },
+        "sections": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^(?:[a-z][a-z0-9_]*|[a-z][a-z0-9-]{0,39}\\.[a-z][a-z0-9_]*)(?![\\s\\S])"
+              },
+              "gate": {
+                "type": "array",
+                "items": {
+                  "$ref": "https://schemas.orch.dev/v2/common#/$defs/gateName"
+                },
+                "uniqueItems": true,
+                "minItems": 1
+              },
+              "types": {
+                "type": "array",
+                "items": {
+                  "$ref": "https://schemas.orch.dev/v2/common#/$defs/ticketType"
+                },
+                "uniqueItems": true,
+                "minItems": 1
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "gate",
+              "types"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "fields",
+        "sections"
+      ]
     }
   },
   "required": [
@@ -49,7 +99,8 @@
     "name",
     "version",
     "package_sha256",
-    "capabilities"
+    "capabilities",
+    "binds"
   ],
   "unevaluatedProperties": false
 }

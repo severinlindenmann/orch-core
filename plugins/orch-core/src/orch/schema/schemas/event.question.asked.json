@@ -2,16 +2,16 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.orch.dev/v2/event.question.asked",
   "title": "question.asked event",
-  "description": "T6/A5: ask (unattended allowed); the question text lives in ticket.json.",
+  "description": "5.4.1, N6. Carries the full question as in ticket.json; qid is derived (5.6).",
   "allOf": [
     {
       "$ref": "https://schemas.orch.dev/v2/event"
     },
     {
-      "not": {
-        "required": [
-          "sig"
-        ]
+      "properties": {
+        "actor": {
+          "$ref": "https://schemas.orch.dev/v2/event#/$defs/actorU"
+        }
       }
     }
   ],
@@ -20,12 +20,20 @@
       "const": "question.asked"
     },
     "question": {
-      "$ref": "https://schemas.orch.dev/v2/common#/$defs/questionId"
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/question"
+    },
+    "qid": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/hex32"
+    },
+    "hash": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
     }
   },
   "required": [
     "type",
-    "question"
+    "question",
+    "qid",
+    "hash"
   ],
   "unevaluatedProperties": false
 }

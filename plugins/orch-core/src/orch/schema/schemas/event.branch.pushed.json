@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.orch.dev/v2/event.branch.pushed",
+  "title": "branch.pushed event",
+  "description": "5.4.1, D58. before is null on the first observation.",
+  "allOf": [
+    {
+      "$ref": "https://schemas.orch.dev/v2/event"
+    },
+    {
+      "properties": {
+        "actor": {
+          "$ref": "https://schemas.orch.dev/v2/event#/$defs/actorH"
+        }
+      }
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "branch.pushed"
+    },
+    "repo_name": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/repoName"
+    },
+    "repo_id": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/repoIdentity"
+    },
+    "ref": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/refName"
+    },
+    "sha": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/gitCommit"
+    },
+    "before": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "repo_id": {
+              "$ref": "https://schemas.orch.dev/v2/common#/$defs/repoIdentity"
+            },
+            "ref": {
+              "$ref": "https://schemas.orch.dev/v2/common#/$defs/refName"
+            },
+            "sha": {
+              "$ref": "https://schemas.orch.dev/v2/common#/$defs/gitCommit"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "repo_id",
+            "ref",
+            "sha"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "type",
+    "repo_name",
+    "repo_id",
+    "ref",
+    "sha",
+    "before"
+  ],
+  "unevaluatedProperties": false
+}

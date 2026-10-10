@@ -2,22 +2,31 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.orch.dev/v2/event.ticket.closed",
   "title": "ticket.closed event",
-  "description": "Section 5: close is a signed human event.",
+  "description": "5.4.1. duplicate_of only with resolution duplicate.",
   "allOf": [
     {
       "$ref": "https://schemas.orch.dev/v2/event"
     },
     {
-      "required": [
-        "sig",
-        "presence"
-      ],
       "properties": {
         "actor": {
-          "properties": {
-            "kind": {
-              "const": "person"
-            }
+          "$ref": "https://schemas.orch.dev/v2/event#/$defs/actorP"
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "duplicate_of": {}
+        },
+        "required": [
+          "duplicate_of"
+        ]
+      },
+      "then": {
+        "properties": {
+          "resolution": {
+            "const": "duplicate"
           }
         }
       }
@@ -27,12 +36,19 @@
     "type": {
       "const": "ticket.closed"
     },
-    "reason": {
-      "$ref": "https://schemas.orch.dev/v2/common#/$defs/text"
+    "resolution": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/closeResolution"
+    },
+    "duplicate_of": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/ticketKey"
+    },
+    "text": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/str"
     }
   },
   "required": [
-    "type"
+    "type",
+    "resolution"
   ],
   "unevaluatedProperties": false
 }

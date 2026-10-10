@@ -2,59 +2,154 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.orch.dev/v2/event.artifact.replaced",
   "title": "artifact.replaced event",
-  "description": "Section 6.",
+  "description": "5.4.1, 6. A file artifact has sha256 and bytes; an addon artifact has addon and ref instead (replacing is for files only: the old digest is in replaces). feedback only from a person. Unattended: no ac, no task.",
   "allOf": [
     {
       "$ref": "https://schemas.orch.dev/v2/event"
     },
     {
-      "allOf": [
-        {
-          "$ref": "https://schemas.orch.dev/v2/artifact#/$defs/fields"
-        },
-        {
-          "if": {
-            "properties": {
-              "kind": {
-                "const": "feedback"
-              }
-            },
-            "required": [
-              "kind"
-            ]
-          },
-          "then": {
-            "properties": {
-              "actor": {
-                "properties": {
-                  "kind": {
-                    "const": "person"
-                  }
-                }
-              }
-            },
-            "required": [
-              "actor"
-            ]
-          }
+      "properties": {
+        "actor": {
+          "$ref": "https://schemas.orch.dev/v2/event#/$defs/actorA"
         }
-      ]
+      }
     },
     {
+      "properties": {
+        "name": {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/artifactName"
+        },
+        "task": {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/taskId"
+        },
+        "ac": {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/acId"
+        },
+        "label": {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/line"
+        },
+        "kind": {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/coreArtifactKind"
+        },
+        "sha256": {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+        },
+        "bytes": {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/nonNegInt"
+        },
+        "replaces": {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+        }
+      },
+      "required": [
+        "name",
+        "kind",
+        "sha256",
+        "bytes",
+        "replaces"
+      ],
       "not": {
-        "required": [
-          "sig"
+        "anyOf": [
+          {
+            "required": [
+              "addon"
+            ]
+          },
+          {
+            "required": [
+              "ref"
+            ]
+          }
         ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "feedback"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "actor": {
+            "properties": {
+              "kind": {
+                "const": "person"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "actor": {
+            "required": [
+              "unattended"
+            ]
+          }
+        },
+        "required": [
+          "actor"
+        ]
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "ac"
+              ]
+            },
+            {
+              "required": [
+                "task"
+              ]
+            }
+          ]
+        }
       }
     }
   ],
   "properties": {
     "type": {
       "const": "artifact.replaced"
+    },
+    "name": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/artifactName"
+    },
+    "task": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/taskId"
+    },
+    "ac": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/acId"
+    },
+    "label": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/line"
+    },
+    "kind": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/token"
+    },
+    "sha256": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+    },
+    "bytes": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/nonNegInt"
+    },
+    "replaces": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
     }
   },
   "required": [
-    "type"
+    "type",
+    "name",
+    "kind"
   ],
   "unevaluatedProperties": false
 }

@@ -2,23 +2,16 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.orch.dev/v2/event.edit.external",
   "title": "edit.external event",
-  "description": "T9/section 5: unsigned, unattributed file edit.",
+  "description": "5.4.1, 5.8. voided_gates and normalised are derived.",
   "allOf": [
     {
-      "$ref": "https://schemas.orch.dev/v2/event-host"
+      "$ref": "https://schemas.orch.dev/v2/event"
     },
     {
-      "not": {
-        "required": [
-          "sig"
-        ]
-      }
-    },
-    {
-      "not": {
-        "required": [
-          "actor"
-        ]
+      "properties": {
+        "actor": {
+          "$ref": "https://schemas.orch.dev/v2/event#/$defs/actorH"
+        }
       }
     }
   ],
@@ -26,23 +19,39 @@
     "type": {
       "const": "edit.external"
     },
-    "files": {
-      "type": "array",
-      "items": {
-        "enum": [
-          "ticket.json",
-          "body.md"
-        ]
-      },
-      "minItems": 1,
-      "uniqueItems": true
-    },
     "sections": {
-      "type": "array",
-      "items": {
-        "$ref": "https://schemas.orch.dev/v2/common#/$defs/sectionId"
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "$ref": "https://schemas.orch.dev/v2/common#/$defs/anySectionId"
       },
-      "uniqueItems": true
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "hash": {
+                "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+              },
+              "refs": {
+                "type": "array",
+                "items": {
+                  "$ref": "https://schemas.orch.dev/v2/common#/$defs/artifactName"
+                },
+                "uniqueItems": true
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "hash",
+              "refs"
+            ]
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
     },
     "voided_gates": {
       "type": "array",
@@ -50,11 +59,16 @@
         "$ref": "https://schemas.orch.dev/v2/common#/$defs/gateName"
       },
       "uniqueItems": true
+    },
+    "normalised": {
+      "type": "boolean"
     }
   },
   "required": [
     "type",
-    "files"
+    "sections",
+    "voided_gates",
+    "normalised"
   ],
   "unevaluatedProperties": false
 }

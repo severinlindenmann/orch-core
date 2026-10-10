@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.orch.dev/v2/event.task.started",
-  "title": "task.started event",
-  "description": "5.4.1, A4. Agents only.",
+  "$id": "https://schemas.orch.dev/v2/event.addon.disabled",
+  "title": "addon.disabled event",
+  "description": "5.4.2.",
   "allOf": [
     {
       "$ref": "https://schemas.orch.dev/v2/event"
@@ -10,22 +10,22 @@
     {
       "properties": {
         "actor": {
-          "$ref": "https://schemas.orch.dev/v2/event#/$defs/actorAgent"
+          "$ref": "https://schemas.orch.dev/v2/event#/$defs/actorP"
         }
       }
     }
   ],
   "properties": {
     "type": {
-      "const": "task.started"
+      "const": "addon.disabled"
     },
-    "task": {
-      "$ref": "https://schemas.orch.dev/v2/common#/$defs/taskId"
+    "name": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/addonName"
     }
   },
   "required": [
     "type",
-    "task"
+    "name"
   ],
   "unevaluatedProperties": false
 }

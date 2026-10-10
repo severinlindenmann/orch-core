@@ -2,17 +2,31 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.orch.dev/v2/event.ticket.updated",
   "title": "ticket.updated event",
-  "description": "T9/T10: a host-written edit of ticket.json fields and/or body.md sections, carrying base_rev.",
+  "description": "5.4.1, 5.8. Leaf paths only; protected paths (schema, uid, key, visibility, questions) can not be set. At least one of set, sections; base_rev names exactly the touched paths and values of core paths are checked against ticket.json (validate()).",
   "allOf": [
     {
       "$ref": "https://schemas.orch.dev/v2/event"
     },
     {
-      "not": {
-        "required": [
-          "sig"
-        ]
+      "properties": {
+        "actor": {
+          "$ref": "https://schemas.orch.dev/v2/event#/$defs/actorA"
+        }
       }
+    },
+    {
+      "anyOf": [
+        {
+          "required": [
+            "set"
+          ]
+        },
+        {
+          "required": [
+            "sections"
+          ]
+        }
+      ]
     }
   ],
   "properties": {
@@ -20,21 +34,57 @@
       "const": "ticket.updated"
     },
     "base_rev": {
-      "$ref": "https://schemas.orch.dev/v2/common#/$defs/text"
-    },
-    "fields": {
-      "type": "array",
-      "items": {
-        "$ref": "https://schemas.orch.dev/v2/common#/$defs/token"
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^(?:ticket\\.(?:title|type|priority|size|labels|parent|blocked_by|due|links|acceptance|tasks)|ticket\\.addons\\.[a-z][a-z0-9-]{0,39}\\.[a-z][a-z0-9_]*|body\\.(?:summary|context|requirements|out_of_scope|plan|decisions|verification|findings|current_state|[a-z][a-z0-9-]{0,39}\\.[a-z][a-z0-9_]*))(?![\\s\\S])"
       },
-      "uniqueItems": true
+      "additionalProperties": {
+        "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+      }
+    },
+    "set": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^(?:ticket\\.(?:title|type|priority|size|labels|parent|blocked_by|due|links|acceptance|tasks)|ticket\\.addons\\.[a-z][a-z0-9-]{0,39}\\.[a-z][a-z0-9_]*)(?![\\s\\S])"
+      }
     },
     "sections": {
-      "type": "array",
-      "items": {
-        "$ref": "https://schemas.orch.dev/v2/common#/$defs/sectionId"
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "$ref": "https://schemas.orch.dev/v2/common#/$defs/anySectionId"
       },
-      "uniqueItems": true
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "hash": {
+                "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+              },
+              "refs": {
+                "type": "array",
+                "items": {
+                  "$ref": "https://schemas.orch.dev/v2/common#/$defs/artifactName"
+                },
+                "uniqueItems": true
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "hash",
+              "refs"
+            ]
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
     }
   },
   "required": [

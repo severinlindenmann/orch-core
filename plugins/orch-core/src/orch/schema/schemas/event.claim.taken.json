@@ -2,28 +2,22 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.orch.dev/v2/event.claim.taken",
   "title": "claim.taken event",
-  "description": "T7: a claim; takeover is logged.",
+  "description": "5.4.1. Agents only (with a grant).",
   "allOf": [
     {
       "$ref": "https://schemas.orch.dev/v2/event"
     },
     {
-      "not": {
-        "required": [
-          "sig"
-        ]
+      "properties": {
+        "actor": {
+          "$ref": "https://schemas.orch.dev/v2/event#/$defs/actorAgent"
+        }
       }
     }
   ],
   "properties": {
     "type": {
       "const": "claim.taken"
-    },
-    "for": {
-      "$ref": "https://schemas.orch.dev/v2/common#/$defs/personId"
-    },
-    "expires_at": {
-      "$ref": "https://schemas.orch.dev/v2/common#/$defs/timestamp"
     },
     "takeover": {
       "type": "object",
@@ -32,7 +26,7 @@
           "$ref": "https://schemas.orch.dev/v2/common#/$defs/sessionId"
         },
         "reason": {
-          "$ref": "https://schemas.orch.dev/v2/common#/$defs/text"
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/str"
         }
       },
       "additionalProperties": false,
@@ -43,9 +37,7 @@
     }
   },
   "required": [
-    "type",
-    "for",
-    "expires_at"
+    "type"
   ],
   "unevaluatedProperties": false
 }

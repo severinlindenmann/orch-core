@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.orch.dev/v2/event.workspace.created",
+  "title": "workspace.created event",
+  "description": "5.4.2, 5.11. The genesis: seq 1, roster_v 0. The field links of the genesis checks are in validate().",
+  "allOf": [
+    {
+      "$ref": "https://schemas.orch.dev/v2/event"
+    },
+    {
+      "properties": {
+        "actor": {
+          "$ref": "https://schemas.orch.dev/v2/event#/$defs/actorP"
+        }
+      }
+    },
+    {
+      "properties": {
+        "seq": {
+          "const": 1
+        },
+        "roster_v": {
+          "const": 0
+        }
+      }
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "workspace.created"
+    },
+    "workspace_id": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/hex32"
+    },
+    "prefix": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/prefix"
+    },
+    "host_id": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/hostId"
+    },
+    "wsk_pub": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/pubkey"
+    },
+    "owner": {
+      "type": "object",
+      "properties": {
+        "person": {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/personId"
+        },
+        "name": {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/line"
+        },
+        "pk_pub": {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/pubkey"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "person",
+        "name",
+        "pk_pub"
+      ]
+    },
+    "delegation": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/delegation"
+    },
+    "device_cert": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/deviceCertDecide"
+    }
+  },
+  "required": [
+    "type",
+    "workspace_id",
+    "prefix",
+    "host_id",
+    "wsk_pub",
+    "owner",
+    "delegation",
+    "device_cert"
+  ],
+  "unevaluatedProperties": false
+}

@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.orch.dev/v2/event.invalid.acknowledged",
+  "title": "invalid.acknowledged event",
+  "description": "5.4.1, 5.11. Both logs, owner only. Names an earlier event of the same log. F1 calls the first field seq, which is the envelope's name (5.1: payload fields never reuse an envelope name), so it is invalid_seq here.",
+  "allOf": [
+    {
+      "$ref": "https://schemas.orch.dev/v2/event"
+    },
+    {
+      "properties": {
+        "actor": {
+          "$ref": "https://schemas.orch.dev/v2/event#/$defs/actorP"
+        }
+      }
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "invalid.acknowledged"
+    },
+    "invalid_seq": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/posInt"
+    },
+    "head": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+    },
+    "reason": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/str"
+    }
+  },
+  "required": [
+    "type",
+    "invalid_seq",
+    "head"
+  ],
+  "unevaluatedProperties": false
+}

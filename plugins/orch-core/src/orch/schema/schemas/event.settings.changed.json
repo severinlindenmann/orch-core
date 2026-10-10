@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.orch.dev/v2/event.settings.changed",
+  "title": "settings.changed event",
+  "description": "5.4.2, D60. A null repo removes it.",
+  "allOf": [
+    {
+      "$ref": "https://schemas.orch.dev/v2/event"
+    },
+    {
+      "properties": {
+        "actor": {
+          "$ref": "https://schemas.orch.dev/v2/event#/$defs/actorP"
+        }
+      }
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "settings.changed"
+    },
+    "set": {
+      "type": "object",
+      "minProperties": 1,
+      "properties": {
+        "grant_hours": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 24
+        },
+        "claim_ttl_min": {
+          "type": "integer",
+          "minimum": 15,
+          "maximum": 1440
+        },
+        "lease_ttl_min": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 1440
+        },
+        "repos": {
+          "type": "object",
+          "propertyNames": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/repoName"
+          },
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "$ref": "https://schemas.orch.dev/v2/common#/$defs/str"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "path"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "type",
+    "set"
+  ],
+  "unevaluatedProperties": false
+}

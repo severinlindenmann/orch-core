@@ -2,10 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.orch.dev/v2/event",
   "title": "Event envelope",
-  "description": "Format doc section 5: fields common to every events.jsonl line. validate('event', obj) dispatches on type to event.<type>; <addon>.* events are checked against the envelope only.",
+  "description": "Format doc section 5.1. Every event has an actor; person events (and only those) carry sig, auth and roster_v; prev/based_on are null only on seq 1; ws_seq is for ticket-log events (validate(..., log=) enforces it). validate('event', obj) dispatches on type to event.<type>; a type outside section 5.4 is refused in P1.",
   "$defs": {
     "actor": {
       "type": "object",
+      "description": "Section 5.2. A person, an agent (with a grant, or unattended) or the host. An addon actor is refused in P1 (A5).",
       "required": [
         "kind"
       ],
@@ -13,7 +14,8 @@
         "kind": {
           "enum": [
             "person",
-            "agent"
+            "agent",
+            "host"
           ]
         }
       },
@@ -24,7 +26,10 @@
               "kind": {
                 "const": "person"
               }
-            }
+            },
+            "required": [
+              "kind"
+            ]
           },
           "then": {
             "type": "object",
@@ -53,94 +58,204 @@
               "kind": {
                 "const": "agent"
               }
-            }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "agent"
+                  },
+                  "id": {
+                    "$ref": "https://schemas.orch.dev/v2/common#/$defs/agentId"
+                  },
+                  "session": {
+                    "$ref": "https://schemas.orch.dev/v2/common#/$defs/sessionId"
+                  },
+                  "for": {
+                    "$ref": "https://schemas.orch.dev/v2/common#/$defs/personId"
+                  },
+                  "grant": {
+                    "$ref": "https://schemas.orch.dev/v2/common#/$defs/grantId"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "id",
+                  "session",
+                  "for",
+                  "grant"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "agent"
+                  },
+                  "id": {
+                    "$ref": "https://schemas.orch.dev/v2/common#/$defs/agentId"
+                  },
+                  "session": {
+                    "$ref": "https://schemas.orch.dev/v2/common#/$defs/sessionId"
+                  },
+                  "unattended": {
+                    "const": true
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "id",
+                  "session",
+                  "unattended"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "host"
+              }
+            },
+            "required": [
+              "kind"
+            ]
           },
           "then": {
             "type": "object",
             "properties": {
               "kind": {
-                "const": "agent"
-              },
-              "id": {
-                "$ref": "https://schemas.orch.dev/v2/common#/$defs/token"
-              },
-              "session": {
-                "$ref": "https://schemas.orch.dev/v2/common#/$defs/sessionId"
-              },
-              "for": {
-                "$ref": "https://schemas.orch.dev/v2/common#/$defs/personId"
-              },
-              "grant": {
-                "$ref": "https://schemas.orch.dev/v2/common#/$defs/grantId"
-              },
-              "unattended": {
-                "const": true
+                "const": "host"
               }
             },
-            "required": [
-              "kind",
-              "id",
-              "session"
-            ],
             "additionalProperties": false,
-            "oneOf": [
-              {
-                "required": [
-                  "for",
-                  "grant"
-                ],
-                "not": {
-                  "required": [
-                    "unattended"
-                  ]
-                }
-              },
-              {
-                "required": [
-                  "unattended"
-                ],
-                "not": {
-                  "anyOf": [
-                    {
-                      "required": [
-                        "for"
-                      ]
-                    },
-                    {
-                      "required": [
-                        "grant"
-                      ]
-                    }
-                  ]
-                }
-              }
+            "required": [
+              "kind"
             ]
           }
         }
       ]
     },
-    "coreTypePrefixes": {
-      "enum": [
-        "gate",
-        "verdict",
-        "question",
-        "ticket",
-        "people",
-        "claim",
-        "task",
-        "status",
-        "artifact",
-        "edit",
-        "projection",
-        "restore",
-        "member",
-        "role",
-        "policy",
-        "addon",
-        "session",
-        "log",
-        "handoff"
+    "actorP": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "person"
+          ]
+        }
+      },
+      "required": [
+        "kind"
       ]
+    },
+    "actorA": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "person",
+            "agent"
+          ]
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "not": {
+        "required": [
+          "unattended"
+        ]
+      }
+    },
+    "actorU": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "person",
+            "agent"
+          ]
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    },
+    "actorAgent": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "agent"
+          ]
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "not": {
+        "required": [
+          "unattended"
+        ]
+      }
+    },
+    "actorH": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "host"
+          ]
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    },
+    "actorPH": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "person",
+            "host"
+          ]
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    },
+    "actorAH": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "person",
+            "agent",
+            "host"
+          ]
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "not": {
+        "required": [
+          "unattended"
+        ]
+      }
     }
   },
   "type": "object",
@@ -152,15 +267,14 @@
       "$ref": "https://schemas.orch.dev/v2/common#/$defs/ulid"
     },
     "seq": {
-      "type": "integer",
-      "minimum": 1
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/posInt"
     },
     "at": {
       "$ref": "https://schemas.orch.dev/v2/common#/$defs/timestamp"
     },
     "type": {
       "type": "string",
-      "pattern": "^[a-z][a-z0-9_-]*(\\.[a-z][a-z0-9_-]*)*$"
+      "pattern": "^(?:[a-z][a-z0-9_-]*(?:\\.[a-z][a-z0-9_-]*)*)(?![\\s\\S])"
     },
     "actor": {
       "$ref": "https://schemas.orch.dev/v2/event#/$defs/actor"
@@ -186,28 +300,22 @@
       ]
     },
     "hash_v": {
-      "type": "integer",
-      "minimum": 1
+      "const": 1
+    },
+    "ws_seq": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/posInt"
+    },
+    "roster_v": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/nonNegInt"
+    },
+    "auth": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/auth"
     },
     "sig": {
       "$ref": "https://schemas.orch.dev/v2/common#/$defs/sig"
     },
     "host_sig": {
       "$ref": "https://schemas.orch.dev/v2/common#/$defs/sig"
-    },
-    "presence": {
-      "enum": [
-        "touchid",
-        "password",
-        "passkey"
-      ]
-    },
-    "list_seq": {
-      "type": "integer",
-      "minimum": 0
-    },
-    "policy_hash": {
-      "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
     }
   },
   "required": [
@@ -229,7 +337,36 @@
           "actor": {
             "properties": {
               "kind": {
-                "const": "agent"
+                "const": "person"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          }
+        },
+        "required": [
+          "actor"
+        ]
+      },
+      "then": {
+        "required": [
+          "sig",
+          "auth",
+          "roster_v"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "actor": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "agent",
+                  "host"
+                ]
               }
             },
             "required": [
@@ -251,10 +388,47 @@
             },
             {
               "required": [
-                "presence"
+                "auth"
+              ]
+            },
+            {
+              "required": [
+                "roster_v"
               ]
             }
           ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "seq": {
+            "const": 1
+          }
+        },
+        "required": [
+          "seq"
+        ]
+      },
+      "then": {
+        "properties": {
+          "prev": {
+            "type": "null"
+          },
+          "based_on": {
+            "type": "null"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "prev": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+          },
+          "based_on": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+          }
         }
       }
     }

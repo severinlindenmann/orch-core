@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.orch.dev/v2/event.task.skipped",
-  "title": "task.skipped event",
-  "description": "5.4.1.",
+  "$id": "https://schemas.orch.dev/v2/event.device.removed",
+  "title": "device.removed event",
+  "description": "5.4.2, protocol 6.3.",
   "allOf": [
     {
       "$ref": "https://schemas.orch.dev/v2/event"
@@ -10,17 +10,17 @@
     {
       "properties": {
         "actor": {
-          "$ref": "https://schemas.orch.dev/v2/event#/$defs/actorA"
+          "$ref": "https://schemas.orch.dev/v2/event#/$defs/actorP"
         }
       }
     }
   ],
   "properties": {
     "type": {
-      "const": "task.skipped"
+      "const": "device.removed"
     },
-    "task": {
-      "$ref": "https://schemas.orch.dev/v2/common#/$defs/taskId"
+    "device": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/deviceId"
     },
     "reason": {
       "$ref": "https://schemas.orch.dev/v2/common#/$defs/str"
@@ -28,8 +28,7 @@
   },
   "required": [
     "type",
-    "task",
-    "reason"
+    "device"
   ],
   "unevaluatedProperties": false
 }

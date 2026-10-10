@@ -2,16 +2,16 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.orch.dev/v2/event.task.done",
   "title": "task.done event",
-  "description": "Section 5 example: task.done with receipt {exit, ms, commit}.",
+  "description": "5.4.1. receipt.cmd must equal the task's verify.cmd (host).",
   "allOf": [
     {
       "$ref": "https://schemas.orch.dev/v2/event"
     },
     {
-      "not": {
-        "required": [
-          "sig"
-        ]
+      "properties": {
+        "actor": {
+          "$ref": "https://schemas.orch.dev/v2/event#/$defs/actorA"
+        }
       }
     }
   ],
@@ -25,23 +25,50 @@
     "receipt": {
       "type": "object",
       "properties": {
+        "cmd": {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/str"
+        },
         "exit": {
-          "type": "integer"
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/safeInt"
         },
         "ms": {
-          "type": "integer",
-          "minimum": 0
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/nonNegInt"
+        },
+        "repo": {
+          "oneOf": [
+            {
+              "$ref": "https://schemas.orch.dev/v2/common#/$defs/repoName"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "commit": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{7,64}$"
+          "oneOf": [
+            {
+              "$ref": "https://schemas.orch.dev/v2/common#/$defs/gitCommit"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "additionalProperties": false,
       "required": [
+        "cmd",
         "exit",
-        "ms"
+        "ms",
+        "repo",
+        "commit"
       ]
+    },
+    "log": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/artifactName"
+    },
+    "text": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/str"
     }
   },
   "required": [

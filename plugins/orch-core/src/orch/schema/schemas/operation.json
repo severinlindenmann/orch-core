@@ -2,12 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.orch.dev/v2/operation",
   "title": "Operation declaration",
-  "description": "Core section 3: the registry fields of one operation (not the operations themselves). 'who: human' operations must emit a signed event type.",
+  "description": "Core section 3 and format doc A1: the registry fields of one operation (not the operations themselves).",
   "type": "object",
   "properties": {
     "name": {
-      "type": "string",
-      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/operationName"
     },
     "input": {
       "allOf": [
@@ -38,14 +37,14 @@
     "pre": {
       "type": "array",
       "items": {
-        "$ref": "https://schemas.orch.dev/v2/common#/$defs/text"
+        "$ref": "https://schemas.orch.dev/v2/common#/$defs/str"
       }
     },
     "emits": {
       "type": "array",
       "items": {
         "type": "string",
-        "pattern": "^[a-z][a-z0-9_-]*(\\.[a-z][a-z0-9_-]*)*$"
+        "pattern": "^(?:[a-z][a-z0-9_-]*(?:\\.[a-z][a-z0-9_-]*)*)(?![\\s\\S])"
       },
       "uniqueItems": true
     },
@@ -54,7 +53,7 @@
       "properties": {
         "text": {
           "type": "string",
-          "pattern": "^ok [^\\n]*(\\nnext: [^\\n]*)?$"
+          "pattern": "^(?:ok [^\\n]*(?:\\nnext: [^\\n]*)?)(?![\\s\\S])"
         },
         "json": {
           "$ref": "https://json-schema.org/draft/2020-12/schema"
@@ -72,11 +71,10 @@
         "type": "object",
         "properties": {
           "code": {
-            "type": "string",
-            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/operationName"
           },
           "hint": {
-            "$ref": "https://schemas.orch.dev/v2/common#/$defs/text"
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/str"
           },
           "fix": {
             "type": "object",
@@ -84,7 +82,8 @@
               "argv": {
                 "type": "array",
                 "items": {
-                  "type": "string"
+                  "type": "string",
+                  "minLength": 1
                 },
                 "minItems": 1
               }

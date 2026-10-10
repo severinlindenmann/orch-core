@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.orch.dev/v2/event.ticket.submitted",
-  "title": "ticket.submitted event",
-  "description": "5.4.1, 5.9.",
+  "$id": "https://schemas.orch.dev/v2/event.handoff.written",
+  "title": "handoff.written event",
+  "description": "5.4.1. At most 2048 bytes (validate()).",
   "allOf": [
     {
       "$ref": "https://schemas.orch.dev/v2/event"
@@ -17,11 +17,15 @@
   ],
   "properties": {
     "type": {
-      "const": "ticket.submitted"
+      "const": "handoff.written"
+    },
+    "text": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/str"
     }
   },
   "required": [
-    "type"
+    "type",
+    "text"
   ],
   "unevaluatedProperties": false
 }

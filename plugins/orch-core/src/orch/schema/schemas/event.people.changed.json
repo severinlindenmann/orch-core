@@ -2,36 +2,34 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.orch.dev/v2/event.people.changed",
   "title": "people.changed event",
-  "description": "T4/section 5: changes to people are signed.",
+  "description": "5.4.1. For role owner, add has exactly one id.",
   "allOf": [
     {
       "$ref": "https://schemas.orch.dev/v2/event"
     },
     {
-      "anyOf": [
-        {
-          "required": [
-            "add"
-          ]
-        },
-        {
-          "required": [
-            "remove"
-          ]
-        }
-      ]
-    },
-    {
-      "required": [
-        "sig",
-        "presence"
-      ],
       "properties": {
         "actor": {
-          "properties": {
-            "kind": {
-              "const": "person"
-            }
+          "$ref": "https://schemas.orch.dev/v2/event#/$defs/actorP"
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "role": {
+            "const": "owner"
+          }
+        },
+        "required": [
+          "role"
+        ]
+      },
+      "then": {
+        "properties": {
+          "add": {
+            "minItems": 1,
+            "maxItems": 1
           }
         }
       }
@@ -42,7 +40,7 @@
       "const": "people.changed"
     },
     "role": {
-      "$ref": "https://schemas.orch.dev/v2/common#/$defs/ticketRole"
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/ticketPeopleRole"
     },
     "add": {
       "type": "array",
@@ -57,15 +55,13 @@
         "$ref": "https://schemas.orch.dev/v2/common#/$defs/personId"
       },
       "uniqueItems": true
-    },
-    "list_seq": {
-      "type": "integer",
-      "minimum": 0
     }
   },
   "required": [
     "type",
-    "role"
+    "role",
+    "add",
+    "remove"
   ],
   "unevaluatedProperties": false
 }

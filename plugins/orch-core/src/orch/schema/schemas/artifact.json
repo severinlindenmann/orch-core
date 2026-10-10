@@ -2,9 +2,12 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.orch.dev/v2/artifact",
   "title": "Artifact manifest entry",
-  "description": "Format doc section 6: one entry derived from artifact.added / artifact.replaced events. A file artifact has sha256+bytes; an addon artifact has addon+ref instead of a file. Feedback artifacts need a person actor.",
-  "$defs": {
-    "fields": {
+  "description": "Format doc section 6: an entry of the manifest that artifact.added / artifact.replaced events build. A file artifact has sha256 (sha256:<hex>) and bytes; an addon artifact has addon and ref instead. The actor is the one of the event; a feedback artifact needs a person.",
+  "allOf": [
+    {
+      "required": [
+        "actor"
+      ],
       "if": {
         "required": [
           "addon"
@@ -13,8 +16,7 @@
       "then": {
         "properties": {
           "name": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/artifactName"
           },
           "task": {
             "$ref": "https://schemas.orch.dev/v2/common#/$defs/taskId"
@@ -23,7 +25,7 @@
             "$ref": "https://schemas.orch.dev/v2/common#/$defs/acId"
           },
           "label": {
-            "$ref": "https://schemas.orch.dev/v2/common#/$defs/text"
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/line"
           },
           "kind": {
             "$ref": "https://schemas.orch.dev/v2/common#/$defs/token"
@@ -32,7 +34,10 @@
             "$ref": "https://schemas.orch.dev/v2/common#/$defs/addonName"
           },
           "ref": {
-            "$ref": "https://schemas.orch.dev/v2/common#/$defs/text"
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/str"
+          },
+          "actor": {
+            "$ref": "https://schemas.orch.dev/v2/event#/$defs/actor"
           }
         },
         "required": [
@@ -40,13 +45,26 @@
           "kind",
           "addon",
           "ref"
-        ]
+        ],
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "sha256"
+              ]
+            },
+            {
+              "required": [
+                "bytes"
+              ]
+            }
+          ]
+        }
       },
       "else": {
         "properties": {
           "name": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/artifactName"
           },
           "task": {
             "$ref": "https://schemas.orch.dev/v2/common#/$defs/taskId"
@@ -55,17 +73,19 @@
             "$ref": "https://schemas.orch.dev/v2/common#/$defs/acId"
           },
           "label": {
-            "$ref": "https://schemas.orch.dev/v2/common#/$defs/text"
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/line"
           },
           "kind": {
             "$ref": "https://schemas.orch.dev/v2/common#/$defs/coreArtifactKind"
           },
           "sha256": {
-            "$ref": "https://schemas.orch.dev/v2/common#/$defs/hexSha256"
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
           },
           "bytes": {
-            "type": "integer",
-            "minimum": 0
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/nonNegInt"
+          },
+          "actor": {
+            "$ref": "https://schemas.orch.dev/v2/event#/$defs/actor"
           }
         },
         "required": [
@@ -73,13 +93,22 @@
           "kind",
           "sha256",
           "bytes"
-        ]
+        ],
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "addon"
+              ]
+            },
+            {
+              "required": [
+                "ref"
+              ]
+            }
+          ]
+        }
       }
-    }
-  },
-  "allOf": [
-    {
-      "$ref": "https://schemas.orch.dev/v2/artifact#/$defs/fields"
     },
     {
       "if": {
@@ -101,20 +130,41 @@
               }
             }
           }
-        },
-        "required": [
-          "actor"
-        ]
+        }
       }
     }
   ],
   "properties": {
+    "name": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/artifactName"
+    },
+    "task": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/taskId"
+    },
+    "ac": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/acId"
+    },
+    "label": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/line"
+    },
+    "kind": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/token"
+    },
+    "sha256": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+    },
+    "bytes": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/nonNegInt"
+    },
+    "addon": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/addonName"
+    },
+    "ref": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/str"
+    },
     "actor": {
       "$ref": "https://schemas.orch.dev/v2/event#/$defs/actor"
     }
   },
-  "required": [
-    "actor"
-  ],
   "unevaluatedProperties": false
 }

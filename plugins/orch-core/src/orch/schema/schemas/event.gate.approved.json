@@ -2,23 +2,39 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.orch.dev/v2/event.gate.approved",
   "title": "gate.approved event",
-  "description": "Section 5 example and 'Who may approve'.",
+  "description": "5.4.1. source_sha only and always on the code gate (D59).",
   "allOf": [
     {
       "$ref": "https://schemas.orch.dev/v2/event"
     },
     {
-      "required": [
-        "sig",
-        "presence"
-      ],
       "properties": {
         "actor": {
-          "properties": {
-            "kind": {
-              "const": "person"
-            }
+          "$ref": "https://schemas.orch.dev/v2/event#/$defs/actorP"
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "gate": {
+            "const": "code"
           }
+        },
+        "required": [
+          "gate"
+        ]
+      },
+      "then": {
+        "required": [
+          "source_sha"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "source_sha"
+          ]
         }
       }
     }
@@ -27,26 +43,28 @@
     "type": {
       "const": "gate.approved"
     },
+    "gate": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/decisionGate"
+    },
+    "gate_gen": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/nonNegInt"
+    },
     "hash": {
       "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
-    },
-    "gate": {
-      "$ref": "https://schemas.orch.dev/v2/common#/$defs/gateName"
     },
     "policy_hash": {
       "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
     },
-    "list_seq": {
-      "type": "integer",
-      "minimum": 0
+    "source_sha": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/sourceList"
     }
   },
   "required": [
     "type",
     "gate",
+    "gate_gen",
     "hash",
-    "policy_hash",
-    "list_seq"
+    "policy_hash"
   ],
   "unevaluatedProperties": false
 }

@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.orch.dev/v2/event.grant.issued",
+  "title": "grant.issued event",
+  "description": "5.4.2, 10.1 A3/D60. expires_at == issued_at + 3600 * hours and |at - issued_at| <= 300 s (validate()).",
+  "allOf": [
+    {
+      "$ref": "https://schemas.orch.dev/v2/event"
+    },
+    {
+      "properties": {
+        "actor": {
+          "$ref": "https://schemas.orch.dev/v2/event#/$defs/actorP"
+        }
+      }
+    }
+  ],
+  "properties": {
+    "type": {
+      "const": "grant.issued"
+    },
+    "grant": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/grantId"
+    },
+    "scope": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/grantScope"
+    },
+    "verbs": {
+      "oneOf": [
+        {
+          "const": "agent"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/operationName"
+          },
+          "uniqueItems": true,
+          "minItems": 1
+        }
+      ]
+    },
+    "issued_at": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/timestamp"
+    },
+    "hours": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 24
+    },
+    "expires_at": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/timestamp"
+    },
+    "secret_hash": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+    },
+    "label": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/line"
+    }
+  },
+  "required": [
+    "type",
+    "grant",
+    "scope",
+    "verbs",
+    "issued_at",
+    "hours",
+    "expires_at",
+    "secret_hash"
+  ],
+  "unevaluatedProperties": false
+}

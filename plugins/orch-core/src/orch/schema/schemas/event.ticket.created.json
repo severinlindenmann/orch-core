@@ -2,16 +2,23 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.orch.dev/v2/event.ticket.created",
   "title": "ticket.created event",
-  "description": "Not named in the format doc; see PR ambiguities. Records the key assignment (T1/T2).",
+  "description": "5.4.1. Always seq 1. owner is the person actor, or the agent's for (validate()).",
   "allOf": [
     {
       "$ref": "https://schemas.orch.dev/v2/event"
     },
     {
-      "not": {
-        "required": [
-          "sig"
-        ]
+      "properties": {
+        "actor": {
+          "$ref": "https://schemas.orch.dev/v2/event#/$defs/actorA"
+        }
+      }
+    },
+    {
+      "properties": {
+        "seq": {
+          "const": 1
+        }
       }
     }
   ],
@@ -21,11 +28,26 @@
     },
     "key": {
       "$ref": "https://schemas.orch.dev/v2/common#/$defs/ticketKey"
+    },
+    "ticket_type": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/ticketType"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^(?:[^\\n]+)(?![\\s\\S])"
+    },
+    "owner": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/personId"
     }
   },
   "required": [
     "type",
-    "key"
+    "key",
+    "ticket_type",
+    "title",
+    "owner"
   ],
   "unevaluatedProperties": false
 }

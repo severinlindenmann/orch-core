@@ -5,7 +5,7 @@ import type { MockStore } from '../store'
 import type { Rng } from '../busy/rng'
 import { canSeeTicket, conflict, notFound, refusal, registerAddon, withinCharterSize, type AddonCtx } from './registry'
 import { fmtDateTime, fmtWhen } from '@/lib/time'
-import { checkRequest, DEMO_DATASETS, DEMO_REQUEST, ensureChain, holdDecisions, runsOf, runsView, seedRuns, settleRuns, staleRunKeys, startRun, type RunDraft } from './factory-runs'
+import { checkRequest, visibleEpic, DEMO_DATASETS, DEMO_REQUEST, ensureChain, holdDecisions, runsOf, runsView, seedRuns, settleRuns, staleRunKeys, startRun, type RunDraft } from './factory-runs'
 
 // factory (AI Factory, Phase 2 preview; v1 docs/factory.md): one factory epic, DEMO-0050 "Monthly billing v2".
 //  - The charter (25 children or 72 hours, children of size m or smaller) was signed when the epic started. The
@@ -455,7 +455,8 @@ registerAddon({
 
     // ---- full runs (D61 option): review the request, then sign it in core's prompt
     prepare_run(c) {
-      if (!c.state.epic) return notFound('There is no factory epic here.')
+      const epic = visibleEpic(c, c.state)
+      if (typeof epic !== 'string') return epic
       const d = checkRequest(c, (c.body.formData ?? {}) as Record<string, unknown>)
       if ('ok' in d) return d
       setNav(c.state, c.viewer, { ...navOf(c.state, c.viewer), runDraft: d })
@@ -466,7 +467,8 @@ registerAddon({
       return { ok: true, message: 'Request discarded.' }
     },
     demo_run(c) {
-      if (!c.state.epic) return notFound('There is no factory epic here.')
+      const epic = visibleEpic(c, c.state)
+      if (typeof epic !== 'string') return epic
       const d = checkRequest(c, { ...DEMO_REQUEST })
       if ('ok' in d) return d
       setNav(c.state, c.viewer, { ...navOf(c.state, c.viewer), runDraft: d })
@@ -475,7 +477,8 @@ registerAddon({
     // Signed in core's prompt (`confirm: 'sign'`): the covers list the goal, how far it goes, what Deliver means and the hold.
     start_run(c) {
       const { state, store, ws, viewer, body } = c
-      if (!state.epic) return notFound('There is no factory epic here.')
+      const epic = visibleEpic(c, state)
+      if (typeof epic !== 'string') return epic
       if (modeOf(state, store.now()) !== 'running') return conflict('factory.not_running', 'The factory is not running: resume it before starting a full run.')
       const d = checkRequest(c, body)
       if ('ok' in d) return d
@@ -490,6 +493,8 @@ registerAddon({
     // A decision (Stop delivery): core checked who decides, that it is open and its terms; the addon cancels the delivery.
     hold(ctx) {
       const { state, store, body, viewer } = ctx
+      const epic = visibleEpic(ctx, state)
+      if (typeof epic !== 'string') return epic
       settleRuns(store, state, !!state.paused)
       const run = ctx.decision && runsOf(state).find((r) => `factory.hold:${r.id}` === ctx.decision!.id)
       if (!run || run.stage !== 'holding') return conflict('decision.closed', 'That delivery is no longer on hold.')
@@ -502,7 +507,10 @@ registerAddon({
     // A SIMULATOR control of the mock, not an operation: no host operation shortens a Deliver hold (the only human
     // act during the hold is a signed Stop). The mock clock runs in real time, so the demo lets the simulated time of
     // one hold pass. Owners only, and only on the demo datasets.
-    simulate_time({ state, store, body, viewer, ws }) {
+    simulate_time(c) {
+      const { state, store, body, viewer, ws } = c
+      const epic = visibleEpic(c, state)
+      if (typeof epic !== 'string') return epic
       if (store.roleIn(ws, viewer) !== 'owner') return refusal(403, 'forbidden', 'Only an owner can use the demo simulator.')
       if (!(DEMO_DATASETS as readonly string[]).includes(store.dataset)) return conflict('factory.not_demo', 'This simulator control exists only in the demo data. Nothing shortens a hold.')
       const run = runsOf(state).find((r) => r.id === body.run)

@@ -69,6 +69,14 @@ export function runArgs(d: RunDraft): Record<string, string | number> {
     : { goal: d.goal, goes_up_to: 'Preview', largest_child: 'm' }
 }
 
+/** The factory epic when this viewer may see it, else a 404 (`not_visible`): runs are the epic's content. */
+export function visibleEpic(c: Ctx, state: Record<string, unknown>): string | StoreFailure {
+  const epic = state.epic as string | null
+  if (!epic) return refusal(404, 'not_found', 'There is no factory epic here.')
+  if (!canSeeTicket(c, epic)) return refusal(404, 'not_visible', 'No factory epic you can see here.', 'The epic is restricted to other people.')
+  return epic
+}
+
 /** Checks a request (the form's data, or a signed body): a refusal, or the draft. */
 export function checkRequest(c: Ctx, f: Record<string, unknown>): RunDraft | StoreFailure {
   const goal = typeof f.goal === 'string' ? f.goal.trim() : ''
@@ -343,6 +351,8 @@ export function runsView(c: Ctx, state: Record<string, unknown>, opts: { epic: s
 /** Core decisions for runs that hold before Deliver: one option, Stop delivery (owners and maintainers decide). */
 export function holdDecisions(c: Ctx, state: Record<string, unknown>, epic: string | null): AddonDecision[] {
   if (!atLeast(c.store.roleIn(c.ws, c.viewer), 'maintainer')) return []
+  // Runs belong to the factory epic: a viewer who cannot see it gets no hold decision at all (nothing of the run).
+  if (!epic || !canSeeTicket(c, epic)) return []
   const now = c.store.now()
   return runsOf(state)
     .filter((r) => r.stage === 'holding')
@@ -350,7 +360,7 @@ export function holdDecisions(c: Ctx, state: Record<string, unknown>, epic: stri
       kind: 'decision' as const,
       id: `factory.hold:${r.id}`,
       addon: 'factory',
-      ...(epic && canSeeTicket(c, epic) ? { ticket: epic } : {}),
+      ticket: epic,
       title: 'AI Factory full run: delivery on hold',
       question: `Delivering in ${minutesLeft(r, now)} min: ${r.deliverMeans}`,
       detail: `Full run ${r.id} "${r.goal}" reached Preview and goes out at ${fmtDateTime(r.holdUntil!)} unless you stop it. Stop cancels the delivery; the run stays at Preview.`,

@@ -137,6 +137,22 @@ describe('factory full run: steps, hold, Stop, delivery', () => {
     expect(s.run('simulate_time', { run: 'R-1' })).toMatchObject({ ok: true })
     expect(s.events('factory.delivered')).toHaveLength(1)
   })
+  it('a restricted epic: a maintainer without access sees no hold decision and no run, and Stop is 404', () => {
+    const s = setup()
+    startDeliverRun(s)
+    toHold()
+    ;(s.store as unknown as { defs: Map<string, { visibility: unknown }> }).defs.get(EPIC)!.visibility = { restricted: ['p_sev'] }
+    s.store.setViewer('p_mara')
+    expect(s.store.addonDecisions(s.ws).some((d) => d.id.startsWith('factory.hold:'))).toBe(false)
+    const seen = JSON.stringify(s.view())
+    for (const leak of ['Deploy to production', 'Release monthly billing v2', 'factory.hold:R-1']) expect(seen).not.toContain(leak)
+    expect(s.run('hold', { id: 'factory.hold:R-1', option: 'stop', ticket: EPIC, confirmed: true })).toMatchObject({ ok: false, status: 404, code: 'not_visible' })
+    expect(s.run('prepare_run', { formData: { goal: 'X', goes_up_to: 'Preview' } })).toMatchObject({ ok: false, status: 404, code: 'not_visible' })
+    expect(s.runs()[0].stage).toBe('holding')
+    // Severin, who can see it, still can.
+    s.store.setViewer('p_sev')
+    expect(s.store.addonDecisions(s.ws).some((d) => d.id === 'factory.hold:R-1')).toBe(true)
+  })
   it('a paused factory holds: no delivery while paused, and the paused time is given back', () => {
     const s = setup()
     startDeliverRun(s)

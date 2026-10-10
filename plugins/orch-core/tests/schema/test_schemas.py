@@ -1582,7 +1582,8 @@ def test_event_types_match_doc_tables():
 
 # Names in the doc that look like event types but are not: error codes, ticket.json paths, config paths.
 DOC_NON_EVENTS = {
-    "artifact.mismatch", "claim.held", "claim.not_live", "grant.verb", "gate.incomplete", "gate.no_eligible", "gate.stale", "gate.suspicious_text",
+    "artifact.mismatch", "claim.held", "claim.not_live", "grant.verb",
+    "gate.incomplete", "gate.no_eligible", "gate.stale", "gate.suspicious_text",
     "settings.repos", "ticket.acceptance", "ticket.addons", "ticket.json", "ticket.key", "ticket.links",
     "ticket.questions", "ticket.schema", "ticket.size", "ticket.tasks", "ticket.title", "ticket.type", "ticket.uid",
     "ticket.visibility",

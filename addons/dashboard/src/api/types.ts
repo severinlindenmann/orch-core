@@ -679,6 +679,12 @@ export interface AddonDecision {
    * no longer match (409 decision.closed) and records them in `addon.decided`. Invalid terms: the decision is not offered.
    */
   terms?: Record<string, string | number>
+  /**
+   * A delivery that waits out its hold window (factory full run, owner decision 2026-10-10 evening; provisional): it goes
+   * out at `until` unless a person answers. The decision then has one option, `stop`. Core shows it on Today, in place
+   * on the addon's page, and as a calm notice in the shell ("Delivering in 28 min · <deliver_means> · Stop…").
+   */
+  hold?: { until: string; deliver_means: string }
   /** Posted to POST /api/workspaces/:ws/addons/:addon/actions/:action with { option, ticket }. */
   action: string
 }

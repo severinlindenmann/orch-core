@@ -285,7 +285,7 @@ export function VerdictRow({ item, ticket, now, expanded, onToggle, sign, decide
 const DECISION_KEYS = ['today', 'addon-decisions', 'addon-state', 'ticket', 'ticket-events', 'ticket-children', 'tickets', 'board', 'agents', 'workspaces']
 
 /** Core's flow for one addon decision: core's prompt, presence, then the post with `confirmed`. */
-function useDecide(d: AddonDecision, onError?: (e: unknown) => void, onDone?: () => void) {
+export function useDecide(d: AddonDecision, onError?: (e: unknown) => void, onDone?: () => void) {
   const qc = useQueryClient()
   const { workspace } = useWorkspace()
   const { data: packages } = useAddons()

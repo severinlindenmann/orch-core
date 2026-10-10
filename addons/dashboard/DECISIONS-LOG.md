@@ -1008,3 +1008,81 @@ The owner answered the eight open questions of REVIEW.md. Items 1, 2, 5 and 6 ch
   change, including remove-then-restore, cancels it. Changes to other repos do not.
 - **Revert:** revert the U3 fix-round-3 commit.
 
+## Owner decisions 2026-10-10 (evening) — D58–D60 confirmed, D61 full run, D62 wider mandate
+
+- **Decision:** (1) **D58, D59, D60 confirmed**; nothing to build. (2) **D61 full run** (an extra option on the AI
+  Factory; `docs/factory-full-run-proposal.md`): one signed request ("How far may the factory go on its own?" Up to
+  Preview (default) / All the way to Deliver; "What Deliver means" required for Deliver; hold window 15 min / 30 min
+  (default) / 1 h / 4 h; children of size m or smaller). Stage words: **Preview** (made and checked, visible only in
+  the workspace) and **Deliver** (it goes out). The factory goes Plan → per child Requirements, Build and test,
+  Validate, Evidence → Preview → (hold) → Deliver; every decided step reads "via the factory full run you signed on
+  <date> — no person reviewed this step". At Deliver: a core decision with one option, Stop delivery, shown above the
+  factory's tabs, on Today and as a calm shell line (`DeliveryHoldBanner`, new optional `AddonDecision.hold`); Stop is
+  signed by a person and cancels (no `factory.delivered`); after the window: "Delivered: <destination> at <time>".
+  Events and fields in HANDOVER ("Factory full runs"). (3) **D62 wider mandate** (`docs/concept-mandates.md`
+  revision 3): it steers the whole workspace in the owner's name except settings, addons, members/roles, devices,
+  relay pairing, secrets/connections and protected paths; up to 30 days, renewable with one new signature; P2
+  custody and the other prerequisites stay mandatory. Follow-up owner rulings via the coordinator: a mandate **may**
+  start full runs with a Deliver target (the hold notice is the only human checkpoint; the risk is stated in the
+  concept's Summary and §2.16); a mandate may issue grants but **never another mandate** (host refuses
+  mandate → mandate, `mandate.chain_refused`). The mandates preview shows the wide scope: issue dialog with "Steers the
+  whole workspace in your name", the may-do list ("Enable factories and start factory runs, including Deliver (after
+  the hold window)"), the always-yours list and protected paths, a length picker up to 30 days, Renew… in the
+  mandate view (new revision, same scope), and a seeded log mixing gate approvals, a verdict and code review, an
+  unblocked ticket, a factory permit, a factory enabled, a full run started and a grant; refused items now include
+  an addon install (always yours) and a second mandate (no chains). The "one admitted epic" pilot wording is gone.
+- **Choices made here:** a full run to Deliver is owner-only (maintainers may request Preview runs) — open point 1 of
+  the proposal; the run's children are steps in the addon state, not tickets, and its milestones are events on the
+  factory epic (a real host would give a run its own epic); the hold is a core decision so Stop goes through core's
+  one decision path (who decides, terms checked again, `addon.decided`); the mock clock runs in real time, so the demo
+  adds "Fill in a demo request" (prefills the form; it is still signed) and a simulator control "Simulate: let the hold
+  time pass (demo)" (`simulate_time`, owner only, refused outside the demo datasets; coordinator security ruling: no
+  operation shortens a Deliver hold, it is not a host operation); a paused factory
+  holds the delivery and gives the paused time back. Concept open points left for the owner: the code review gate
+  under a mandate, the old "never" items not named either way (restore/purge treated as settings; first peer send,
+  public publish, landing on `main` as delegable), a ceiling across renewals and a weekly acknowledgement.
+- **Why:** owner answers 10 Oct evening (brief U2) and two coordinator follow-ups the same evening.
+- **Revert:** revert the U2 commits (delete `src/mocks/addons/factory-runs.ts`, `src/app/shell/DeliveryHoldBanner.tsx`,
+  `docs/factory-full-run-proposal.md`; restore the factory manifest, `AddonDecision.hold`, the mandates preview types
+  and pages, concept revision 2).
+
+## U2 fix round 1 (Codex review, controller rulings)
+
+- **Decision:** (1) **One charter check** for full runs (`runGate`): at admission, every simulator step and every
+  settlement. Paused holds everything (the hold clock too); a charter stopped by time, or an over-committed child
+  budget, stops progress and ends a hold "Not delivered: the charter stopped" (`factory.deliver_cancelled`). A run
+  reserves its 3 children against the shared 25-child budget at admission, in the same step that consumes the request
+  id and creates the run (refused whole, 409 `factory.budget`). Reaching the budget stops new children (the page's
+  mode); admitted children are inside it and go on. (2) **Code review stays human** (D61): when the workspace code
+  review policy applies, each child waits at "Code review (waits for a person)" before Validate; a core decision
+  `factory.code:<run>:<n>` (maintainer+, signed); Preview needs every review; the policy is sticky for a run once on.
+  The form says so. (3) **Single-use request ids:** Review request issues `rq-<n>`; it is a signed arg; consumed with the
+  run's creation; a replay is 409 `factory.request_used`; reviewing again issues a new id. (4) **The factory stays on
+  during a hold:** disable / update / uninstall → 409 `addon.delivery_on_hold` naming the run (`MockAddon.offBlocked`,
+  checked in `store.addonOp`); HANDOVER: the real host keeps Stop independent of addon activation. (5) **Reloads:** a
+  hold keeps a wall-clock deadline (`holdWallUntil`); the mock deadline is re-derived from it when the mock clock
+  restarted, so a reload never extends a hold (factory state version 3). (6) **Values via visible.tsx:** the goal,
+  destination and child titles go through `plain()` in the run view, the alerts, the kv, the hold and review decisions'
+  question and detail (markdown-escaped in headings); the signed terms keep the exact value; the shell hold line wraps
+  instead of truncating. (7) Concept: landing on `main` is refused until the owner decides (§2.4, §2.14, §6 point 2).
+  (8) Concept: `max_until` is optional and pending, consistently in the schema, the prompt text, §2.11 and the review
+  table.
+- **Why:** Codex review of U2 (findings 1–8), controller rulings.
+- **Revert:** revert the fix-round commits.
+
+## U2 fix round 2 (Codex re-check, controller rulings)
+
+- **Decision:** (1) Full-run code reviews use core's D59 rule: `store.gateEligibility` (extracted from `canApprove`, so
+  tickets and run children share it): the policy's approver group, the requester and the child's author count as
+  assignees, one approval per person, the policy's `count` of distinct people; the decision is offered only to eligible
+  people. (2) Pause keeps the remaining hold (`holdRemainingMs`, wall clock); Resume rebuilds both deadlines; pause →
+  reload 40 min → resume keeps about 30 min. (3) A review signs the child's commit (mock sha, in the terms); a new commit
+  (`factory.child_pushed`) voids the approvals and sends the child back before Validate. (4) Request ids are
+  `rq-<PREFIX>-<nonce>-<n>`, the nonce new per seeding (a reset never reissues one). (5) `addonOp` initialises and the
+  factory settles its state before `offBlocked`. (6) `MockAddon.saveOnSeed`: the factory's seeded state is saved at
+  once. (7) The busy seed is a valid charter: one run on hold (R-1), its 3 children reserved (23 of 25); the delivered
+  example run was dropped (25 would be exceeded). (8) `plain()` at the event-summary and simulator-toast boundaries;
+  events keep the exact value. (9) Factory state version 4 with `MockAddon.migrate` for 2 and 3: runs and counters kept,
+  a legacy hold without a wall deadline gets its full window again (never shorter than what was left).
+- **Why:** Codex re-check of U2, controller rulings for fix round 2.
+- **Revert:** revert the fix-round-2 commits.

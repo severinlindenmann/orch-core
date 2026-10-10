@@ -1,4 +1,4 @@
-// Mandates, PREVIEW ONLY (docs/concept-mandates.md, Step 1 pilot). The pieces the Mandates tab, the shell banner and
+// Mandates, PREVIEW ONLY (docs/concept-mandates.md, owner decision 10 Oct evening: the wide mandate). The pieces the Mandates tab, the shell banner and
 // Today's digest share: the preview's query and its one request, the label, and core's dialogs for Stop and
 // Revoke and void. Every request goes to the preview endpoint (api.postMandatesPreview); nothing here signs, runs
 // Touch ID or posts to a signing or decision path.
@@ -81,11 +81,17 @@ export function DecisionLine({ m, d, className }: { m: PreviewMandate; d: Previe
           </>
         )}
       </span>
+      {d.target && <span className="block break-words text-text">{plain(d.target)}</span>}
       <span className="block truncate text-text-muted">
         checked by checker <Raw>{d.checker.identity}</Raw> ({d.checker.result})
       </span>
     </span>
   )
+}
+
+/** What a decision is on: the ticket key (exact), or "workspace" for a workspace-level decision. */
+export function DecisionSubject({ d, className }: { d: { ticket?: string }; className?: string }) {
+  return <span className={cn('shrink-0', className)}>{d.ticket ? <Raw>{d.ticket}</Raw> : <span className="text-text-muted">workspace</span>}</span>
 }
 
 /** Core's preview dialog: title, the preview line, Covers, then a confirm that says nothing is signed. */
@@ -165,7 +171,7 @@ export function StopDialog({ ws, m, onClose }: { ws: string; m: PreviewMandate; 
       title={`Stop mandate ${plain(m.id)}?`}
       icon="stop"
       covers={[
-        <>Mandate <Raw>{m.id}</Raw>, for {plain(m.issuer)}, epic <Raw>{m.epic.key}</Raw></>,
+        <>Mandate <Raw>{m.id}</Raw>, for {plain(m.issuer)}, whole workspace</>,
         'Nothing after the boundary the host acknowledges is signed',
         'Queued effects end: landing entries are dequeued, pending checker runs end',
         agents ? <>Also stops the agents: <Raw>{m.orchestrator.name}</Raw> (<Raw>{m.orchestrator.identity}</Raw>) and its subagents; its grant is revoked</> : 'The agents keep running (without the mandate)',
@@ -196,7 +202,7 @@ export function RevokeDialog({ ws, m, onClose }: { ws: string; m: PreviewMandate
       icon="void"
       destructive
       covers={[
-        <>Revokes mandate <Raw>{m.id}</Raw>, for {plain(m.issuer)}, epic <Raw>{m.epic.key}</Raw></>,
+        <>Revokes mandate <Raw>{m.id}</Raw>, for {plain(m.issuer)}, whole workspace</>,
         `Voids ${voids.length} decision${voids.length === 1 ? '' : 's'} on work that has not landed (gate.invalidated, cause: mandate revoked)`,
         landed.length ? `Lists ${landed.length} decision${landed.length === 1 ? '' : 's'} on landed work for your review (not voided)` : 'No decision covers landed work',
       ]}
@@ -213,7 +219,7 @@ export function RevokeDialog({ ws, m, onClose }: { ws: string; m: PreviewMandate
           {voids.map((d) => (
             <li key={d.id} className="flex min-w-0 gap-2">
               <span className="shrink-0 font-mono text-text-muted">#{d.seq}</span>
-              <span className="shrink-0"><Raw>{d.ticket}</Raw></span>
+              <DecisionSubject d={d} />
               <DecisionLine m={m} d={d} />
             </li>
           ))}
@@ -226,7 +232,7 @@ export function RevokeDialog({ ws, m, onClose }: { ws: string; m: PreviewMandate
             {landed.map((d) => (
               <li key={d.id} className="flex min-w-0 gap-2">
                 <span className="shrink-0 font-mono text-text-muted">#{d.seq}</span>
-                <span className="shrink-0"><Raw>{d.ticket}</Raw></span>
+                <DecisionSubject d={d} />
                 <DecisionLine m={m} d={d} />
               </li>
             ))}

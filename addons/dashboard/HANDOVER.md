@@ -129,7 +129,7 @@ All workspace reads are members only (404 unknown workspace, 403 non-member); hi
 | GET `/api/workspaces/:ws/agents`, `…/agents/activity` | no operation yet — proposal `session.list`, `session.refusals` |
 | GET `/api/workspaces/:ws/agents/launch?ticket&mode&harness&where` | no operation yet — proposal `session.preview` (core-computed facts for the start dialog) |
 | (start/stop run through the start-agent addon actions) | no operation yet — proposal `session.start` / `session.stop` (human; needs `spawn_agent`, a grant, a server-issued single-use confirmation) |
-| GET/POST `/api/workspaces/:ws/preview/mandates` | **PREVIEW ONLY — not part of the contract.** Served by the mock for the non-functional mandates preview (M1, `docs/concept-mandates.md` Step 1); nothing is signed. A host implements nothing here until core specifies mandates (D62 draft, PR #340); the shape will change. |
+| GET/POST `/api/workspaces/:ws/preview/mandates` | **PREVIEW ONLY — not part of the contract.** Served by the mock for the non-functional mandates preview (M1, updated in U2 to the wide mandate, `docs/concept-mandates.md`; ops `enable`, `disable`, `issue {orchestrator, days ≤ 30}`, `renew {days ≤ 30}`, `stop`, `review`, `revoke`); nothing is signed. A host implements nothing here until core specifies mandates (D62 draft, PR #340); the shape will change. |
 | GET/POST `/api/workspaces/:ws/grants`, POST `…/grants/:id/revoke` | `grant` (human, signed; revoke stops its sessions). Terms by role (`grantTerms`): owners and maintainers scope `all`, 1–24 h; **members grant themselves** scope `workable` (the tickets they may work on), 1 h up to the workspace default (`grant_hours`, 8); viewers none (403). Wrong scope 403 `grant.scope`. Members revoke their own; owners revoke any |
 
 **Skills, connections, relay (D54–D57)**
@@ -247,8 +247,68 @@ undecided). Everything below that is not in that list is **provisional**.
   `publish.decided`, `github.imported`, `github.pr_linked`, `estimate.set`, `usage.recorded`, `wiki.linked`,
   `quick.made_ticket`, `records.committed`, `records.pushed`, `records.pulled`, `drop.shared`, `drop.claimed`,
   `drop.revoked`, `drop.removed`, `drop.extended`, `factory.paused`, `factory.resumed`, `factory.permit_granted`,
-  `factory.permit_refused`, `land.queued`, `land.attempt`, `land.dequeued`, `land.resolved`.
+  `factory.permit_refused`, `factory.run_requested`, `factory.run_step`, `factory.deliver_held`,
+  `factory.deliver_stopped`, `factory.delivered` (full runs, below), `land.queued`, `land.attempt`, `land.dequeued`, `land.resolved`.
 - Not written by the mock: `artifact.replaced`, `edit.external`, `projection.repaired`, `restore`.
+
+## Factory full runs: request fields, events, the hold/Stop contract (provisional)
+
+Owner decision 10 Oct 2026 evening (D61 option); proposal `docs/factory-full-run-proposal.md`. In the mock it is the
+factory addon's (`src/mocks/addons/factory-runs.ts`); the hold is meant to be **host-enforced**.
+
+- **Request** (signed, `start_run`, `confirm: 'sign'`, maintainer+; a Deliver target owner-only in the mock): the
+  signed args are exactly `request` (a single-use id the host issued at review: `rq-<PREFIX>-<nonce>-<n>`, the nonce new for every seeding of the state, so a reset never reissues an id), `goal` (≤ 200 chars), `goes_up_to` (`Preview` | `Deliver`), and for Deliver
+  `deliver_means` (the concrete destination, ≤ 160 chars, required) and `hold_minutes` (15 | 30 | 60 | 240, default
+  30), plus `largest_child: 'm'`. Core records them in `addon.action_signed {args}`. The form (`prepare_run`) stores a
+  per-viewer draft; the host refuses a signature whose values differ from the reviewed draft (409 `factory.stale`),
+  a Deliver without a destination (400 `validation`), a run while the factory is paused or stopped (409
+  `factory.not_running`), a reused request id (409 `factory.request_used`; the id is consumed with the run's creation in
+  one step) and a run whose children do not fit the charter's child budget (409 `factory.budget`; admission reserves
+  them, `used += 3`).
+- **Charter:** one check at admission, every step and settlement: paused holds everything, the hold clock too; a
+  charter stopped by time (or an over-committed budget) stops progress and ends a hold `factory.deliver_cancelled
+  {run, reason: 'charter_stopped'}` ("Not delivered: the charter stopped"). Nothing is delivered after it stops.
+- **Code review (D61 "never the code gate"):** when the workspace code review policy applies, each child waits at a
+  Code review step for people: core decision `factory.code:<run>:<n>` (option `approve`, terms `{run, child,
+  child_title, commit}`, signed in core's prompt; `addon.decided` with presence) → `factory.code_reviewed {run, child,
+  commit, approvals, needed}`. Eligibility is core's D59 rule (`store.gateEligibility`, the same as a ticket's code
+  gate): the policy's approver group, the run's requester and the child's author count as its assignees (never
+  reviewers), one approval per person, and the policy's `count` of distinct people. The decision is offered only to
+  people who are eligible. Each approval signs the child's commit; a new commit (`factory.child_pushed {run, child,
+  commit}`) voids the approvals and sends the child back to wait before Validate (D58/D59). Validate and Preview wait
+  for every review; neither the factory nor a mandate satisfies it.
+- **Events** on the factory epic, by the addon: `factory.run_requested {run, request, goal, goes_up_to, children,
+  deliver_means?, hold_minutes?}`, `factory.code_reviewed {run, child}`, `factory.deliver_cancelled {run, reason}`, `factory.run_step {run, step: 'Plan' | 'Preview'}`, `factory.deliver_held {run, deliver_means,
+  until}`, `factory.deliver_stopped {run}`, `factory.delivered {run, deliver_means}`. Children's steps
+  (Requirements, Build and test, Validate, Evidence) are in the addon state in the mock; a real host writes them on
+  child tickets with `via: 'factory_full_run'`. Every decided step is labelled "via the factory full run <you|name>
+  signed on <date> — no person reviewed this step".
+- **Hold/Stop contract.** At Deliver the host opens a core decision `factory.hold:<run>` with **one option, `stop`**,
+  `terms {run, deliver_means, hold_until}` and `hold {until, deliver_means}` (new optional `AddonDecision.hold`).
+  Core shows it on Today, in place on the page (`decision` node) and as a calm shell line (`DeliveryHoldBanner`:
+  "Delivering in 28 min · <deliver_means> · at 14:32 · AI Factory (factory) · Stop…"). Stop is signed in core's
+  decision prompt (`addon.decided`, presence Touch ID) and cancels: no `factory.delivered`, the run stays at
+  Preview. When `until` passes with no Stop the host delivers to exactly `deliver_means` (it refuses any other
+  destination, `factory.deliver_mismatch`) and writes `factory.delivered`. While the factory is paused nothing is
+  delivered: Pause keeps what is left of the hold (`holdRemainingMs`, from the wall clock), and Resume rebuilds both
+  deadlines from it, so a reload while paused never ends or shortens the hold. Agents never hold the delivery credential: the host delivers.
+- **The factory stays on during a hold.** Disable, update and uninstall are refused (409 `addon.delivery_on_hold`,
+  core's sentence names the run) while a delivery holds (mock: `MockAddon.offBlocked`). The real host keeps Stop
+  available independently of the addon's activation (Stop is a core decision on a core-held deadline), so even an
+  addon that crashed or was removed cannot take the Stop away.
+- **Reloads:** the hold's deadline is held on the host's real clock. The mock keeps a wall-clock deadline next to the
+  mock one (`holdWallUntil`) and re-derives the mock deadline from it when the mock clock restarts on a reload, so a
+  reload never extends a hold. Seeded factory state is saved as soon as it is seeded (`MockAddon.saveOnSeed`), so the
+  busy day's hold is not seeded again on a reload. Factory state version 4; versions 2 and 3 are migrated
+  (`MockAddon.migrate`): runs, holds and counters kept; a hold saved without a wall deadline gets its full window again
+  from the reload (conservative: never shorter than what was left).
+- Disable / update / uninstall initialise and settle the factory state before the hold check, so a seeded hold nobody
+  looked at still blocks them.
+- **No operation shortens a Deliver hold.** During the hold the only human act is a signed Stop; there is no
+  "deliver now". The mock's "Simulate: let the hold time pass (demo)" is a simulator control of the demo data (owner
+  only, refused outside the demo datasets), not a host operation: a host implements nothing for it.
+- **Demo only:** "Fill in a demo request" (`demo_run`, prefills the form; still signed); the busy day seeds run R-1 on
+  hold (28 min left); its 3 children are reserved in the budget (23 of 25 used), a valid charter state.
 
 ## Sign dialogs and landing against D41 / D49 / D53
 
@@ -368,8 +428,9 @@ for G2+ builds. `build-preview.py` still runs, but its output does not load; it 
 - Addon settings drawer: a save by someone else while you edit resets your edits (needs an "Updated elsewhere" design).
 - The simulated Claude welcome box clips in a very narrow terminal (allowed: terminal content).
 - **Mandates are a preview only (M1), not part of the contract.** Agents → Mandates, the shell's mandate banner,
-  Today's "Decided for you" and Demo data → "Preview: mandates" show how the owner-approved Step 1 pilot
-  (`docs/concept-mandates.md`) would look. Nothing signs; the preview endpoint, its types (`src/api/mandatesPreview.ts`)
+  Today's "Decided for you" and Demo data → "Preview: mandates" show how the wide mandate (owner decision 10 Oct
+  evening, `docs/concept-mandates.md`: whole workspace minus the always-human areas and protected paths, up to 30 days,
+  renewable, never another mandate, may start full runs that Deliver) would look. Nothing signs; the preview endpoint, its types (`src/api/mandatesPreview.ts`)
   and words are provisional. Off by default; a host ships none of it until core specifies mandates. The real build
   needs the four prerequisites (P2 custody, isolated execution, host-minted identities and checker, typed effects with
   durable counters and a time guard) before any of it can be enabled.

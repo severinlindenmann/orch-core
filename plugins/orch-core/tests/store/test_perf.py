@@ -1,4 +1,5 @@
-"""Append latency at 1000 tickets, fsync excluded (target for a ticket event: < 20 ms). Slow: builds the workspace."""
+"""Latency at 1000 tickets: append (fsync excluded, target < 20 ms), cold open and a single-ticket command (target
+< 300 ms), reload and full load. Slow: builds the workspace."""
 
 from __future__ import annotations
 
@@ -66,3 +67,36 @@ def test_append_latency_at_1000_tickets(env, monkeypatch, capsys):
         print("\nPERF", msg)
     assert statistics.median(ticket) < 20
     assert max(roles) < 5000
+    monkeypatch.undo()
+    s.close()
+
+    def ms(fn):
+        t = time.perf_counter()
+        out = fn()
+        return (time.perf_counter() - t) * 1000, out
+
+    cold, lazy = ms(lambda: env.open(load="lazy"))
+    t_ticket, _ = ms(lambda: lazy.ticket("DEMO-0500"))
+    t_append, _ = ms(lambda: lazy.append({"type": "log.added", "actor": env.agent, "text": "x"}, log=uids[499]))
+    lazy.close()
+    cmd, _ = ms(lambda: _one_command(env, uids[321]))  # a fresh process's whole life: open, read, append
+    other = env.other(load="lazy")
+    other.append({"type": "log.added", "actor": env.agent, "text": "elsewhere"}, log=uids[7])
+    reload_ms, _ = ms(lambda: lazy.refresh())  # `lazy` is closed but usable: it re-reads what changed
+    full, _ = ms(lambda: lazy.load_all())
+    msg2 = (
+        f"cold open (lazy) {cold:.0f} ms; first ticket read {t_ticket:.0f} ms; first append {t_append:.0f} ms; "
+        f"open + read + append one ticket {cmd:.0f} ms; reload after another process appended {reload_ms:.0f} ms; "
+        f"load_all (every event verified) {full:.0f} ms"
+    )
+    with capsys.disabled():
+        print("PERF", msg2)
+    assert cmd < 300
+
+
+def _one_command(env, uid):
+    s = env.open(load="lazy")
+    s.ticket(uid)
+    s.append({"type": "log.added", "actor": env.agent, "text": "one command"}, log=uid)
+    s.close()
+    return s

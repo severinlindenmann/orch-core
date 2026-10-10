@@ -8,8 +8,7 @@ import shutil
 import pytest
 
 from orch import canon, crypto, schema
-from orch.store import StoreError
-from orch.store import checkpoints
+from orch.store import StoreError, checkpoints
 from tests.store.helpers import WS
 
 

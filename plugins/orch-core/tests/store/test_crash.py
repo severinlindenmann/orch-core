@@ -161,3 +161,37 @@ def test_an_exception_after_the_commit_is_recovered_at_the_next_lock(ws, monkeyp
     assert not s.chain_errors()
     with pytest.raises(StoreError):
         s.append({"type": "log.added", "actor": env.agent, "text": "x", "seq": 9}, log=uid)
+
+
+@pytest.mark.slow
+def test_randomly_killed_writers_leave_a_consistent_workspace(env):
+    """The child appends in a loop; the parent SIGKILLs it at a random moment, twenty times; after each kill the next
+    open recovers to a state where the files agree with the log (this tests the real write order, not a seam)."""
+    import os
+    import random
+    import signal
+    import time
+
+    env.bootstrap()
+    uid = env.new_ticket()
+    env.update(uid, body={"context": "start"})
+    env.store.close()
+    rng = random.Random(7)
+    ctx = mp.get_context("spawn")
+    for i in range(20):
+        ready = env.tmp / f"ready{i}"
+        p = ctx.Process(
+            target=workers.append_forever,
+            args=(str(env.root), str(env.tmp / "wsk"), str(env.host_state), uid, env.agent, str(ready)),
+        )
+        p.start()
+        t = time.time()
+        while not ready.exists() and time.time() - t < 30:
+            time.sleep(0.005)
+        time.sleep(rng.uniform(0.02, 0.08))
+        os.kill(p.pid, signal.SIGKILL)
+        p.join(30)
+        s = consistent(env, uid)
+        seqs = [e["seq"] for e in env.read_events(uid)]
+        assert seqs == list(range(1, len(seqs) + 1)) and s.chain_errors() == []
+        s.close()

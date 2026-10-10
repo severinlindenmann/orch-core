@@ -15,7 +15,6 @@ missing ticket log). The store then refuses new events on that log until a ``res
 
 from __future__ import annotations
 
-import json
 import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -24,7 +23,7 @@ from typing import Any
 
 from orch import canon, crypto, schema
 
-from .fsio import read_or_none, write_atomic
+from .fsio import loads, read_or_none, write_atomic
 from .logs import WORKSPACE, LogInfo
 from .paths import ULID, check_uid
 
@@ -72,7 +71,7 @@ class Checkpoints:
         if raw is None:
             return None
         try:
-            cp = json.loads(raw)
+            cp = loads(raw)
             schema.validate("checkpoint", cp)
             return cp
         except (ValueError, schema.SchemaError):

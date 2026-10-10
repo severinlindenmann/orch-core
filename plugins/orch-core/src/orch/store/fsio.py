@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import contextlib
 import errno
+import json
 import os
 import secrets
 import stat
@@ -21,10 +22,11 @@ import sys
 import time
 from pathlib import Path
 
-__all__ = ["append_durable", "fsync_dir", "read_or_none", "replace", "write_atomic"]
+__all__ = ["append_durable", "fsync_dir", "loads", "read_or_none", "replace", "tail_bytes", "write_atomic"]
 
 _BIN = getattr(os, "O_BINARY", 0)
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+_RETRY = os.name == "nt"  # a busy target (a reader, an indexer) is retried only where that can happen
 
 
 def _full_fsync(fd: int) -> None:
@@ -56,7 +58,7 @@ def replace(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
             os.replace(src, dst)
             return
         except PermissionError:
-            if os.name != "nt" or attempt == 24:
+            if not _RETRY or attempt == 24:
                 raise
             time.sleep(0.02)  # pragma: no cover
 
@@ -117,8 +119,13 @@ def append_durable(path: Path, data: bytes, *, commit: bool = False) -> None:
         fsync_dir(path.parent)
 
 
-def read_or_none(path: Path) -> bytes | None:
-    """The bytes of ``path``; None if it is missing or a symlink (a link is never followed: it counts as absent)."""
+MAX_READ = 16 * 1024 * 1024
+
+
+def read_or_none(path: Path, limit: int | None = MAX_READ) -> bytes | None:
+    """The bytes of ``path``; None if it is missing or a symlink (a link is never followed: it counts as absent). At
+    most ``limit`` + 1 bytes are read: a larger file comes back one byte too long, which no comparison or parse accepts,
+    and an agent-written file cannot make the store allocate more (``limit=None`` reads all, for our own files)."""
     try:
         fd = open_nofollow(path, os.O_RDONLY)
     except (FileNotFoundError, NotADirectoryError):
@@ -128,4 +135,24 @@ def read_or_none(path: Path) -> bytes | None:
             return None
         raise
     with os.fdopen(fd, "rb") as f:
-        return f.read()
+        return f.read() if limit is None else f.read(limit + 1)
+
+
+def loads(raw: bytes | str) -> object:
+    """``json.loads`` for data an agent may have written: deep nesting is a ``ValueError``, not a ``RecursionError``."""
+    try:
+        return json.loads(raw)
+    except RecursionError:
+        raise ValueError("nested too deeply") from None
+
+
+def tail_bytes(path: Path, n: int) -> tuple[int, bytes]:
+    """``(size, last n bytes)`` of a file (a symlink or a missing file is ``(0, b"")``)."""
+    try:
+        fd = open_nofollow(path, os.O_RDONLY)
+    except OSError:
+        return 0, b""
+    with os.fdopen(fd, "rb") as f:
+        size = f.seek(0, os.SEEK_END)
+        f.seek(max(0, size - n))
+        return size, f.read(n)

@@ -117,3 +117,22 @@ def crash_update(
         "sections": {"context": section_entry("crashed body")},
     }
     s.append(ev, log=uid, body={"context": "crashed body"})
+
+
+def hold_lock(root: str, marker: str, seconds: float) -> None:
+    """Hold the workspace lock of ``root`` for ``seconds`` (a stuck writer); ``marker`` appears once it is held."""
+    from orch.store.lock import FileLock
+
+    with FileLock(Path(root) / ".state" / "lock"):
+        Path(marker).write_text("held")
+        time.sleep(seconds)
+
+
+def append_forever(root: str, host_dir: str, host_state: str, uid: str, agent: dict, ready: str) -> None:
+    """Append notes until killed (the SIGKILL loop test)."""
+    s = open_store(root, host_dir, host_state)
+    Path(ready).write_text("go")
+    i = 0
+    while True:
+        s.append({"type": "log.added", "actor": agent, "text": f"n{i}" * 20}, log=uid)
+        i += 1

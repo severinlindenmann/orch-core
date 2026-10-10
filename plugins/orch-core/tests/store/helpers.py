@@ -49,6 +49,14 @@ class Env:
         self.store = Store.open(self.root, expected_workspace_id=WS, **kw)
         return self.store
 
+    def other(self, **kw: Any) -> Store:
+        """A second Store on the same workspace (another process, as far as the files can tell)."""
+        kw.setdefault("host", self.signer)
+        kw.setdefault("host_state_dir", self.host_state)
+        kw.setdefault("clock", lambda: self.clock[0])
+        kw.setdefault("load", "all")
+        return Store.open(self.root, expected_workspace_id=WS, **kw)
+
     # -- person events
     def person_event(self, p: Person, log: str, typ: str, **payload: Any) -> dict[str, Any]:
         s = self.store

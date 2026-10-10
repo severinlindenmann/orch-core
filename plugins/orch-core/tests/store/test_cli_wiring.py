@@ -129,3 +129,21 @@ def test_the_records_hold_no_secret_and_live_in_state(wired):
     for p in list(files) + list((s.state_dir / "intents").glob("*")):
         data = p.read_bytes()
         assert crypto.b64u(GRANT_SECRET).encode() not in data and GRANT_SECRET not in data
+
+
+def test_a_refused_call_does_not_make_the_next_identical_call_a_duplicate(wired, bound):
+    env, s, uid, run, calls, hooks = wired
+    seen = []
+
+    def handler(ctx, args):
+        seen.append(ctx.idem)
+        if len(seen) == 1:
+            raise OrchError("role.denied", "no")
+        return Result(key="DEMO-0001", seq=1, data={})
+
+    bound("log", handler)
+    code1, _ = run("x", "--ref", "1")
+    code2, out2 = run("x", "--ref", "1")
+    assert code1 != 0 and code2 == 0 and len(seen) == 2
+    assert seen[0] == seen[1]  # the attempt id is pinned across the refusal and the retry ...
+    assert "duplicate" not in json.loads(out2)  # ... and the retry is a real run, not a replayed answer

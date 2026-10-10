@@ -40,6 +40,7 @@ import time
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from stat import S_ISLNK as _S_ISLNK
 from typing import Any, Protocol
 
 from orch import canon, crypto, schema
@@ -60,10 +61,10 @@ from orch.model import (
 from . import render
 from .checkpoints import WORKSPACE_EVERY, Checkpoints, Divergence, find_divergence
 from .errors import StoreError
-from .fsio import append_durable, fsync_dir, read_or_none, replace, write_atomic
+from .fsio import append_durable, fsync_dir, loads, open_nofollow, read_or_none, replace, tail_bytes, write_atomic
 from .index import Index
 from .lock import FileLock
-from .logs import LogInfo, first_line, last_line, read_new_lines, stat_sig
+from .logs import MAX_LINE, LogInfo, first_line, last_line, read_new_lines, stat_sig
 from .paths import check_artifact, check_state_dirs, check_uid, safe_join, target_ok
 from .pins import HostPins
 
@@ -221,7 +222,8 @@ class Store:
         self._exists: set[str] = set()
         self._pending_revs: list[dict[str, Any]] = []
         self._ws_restore_at = ""
-        self._ws_events_len = 0
+        self._suspect = False  # duplicate or missing keys among the hints
+        self._hint_mismatch = False  # a verified ticket whose key its hint did not say
 
     # ------------------------------------------------------------------ opening
 
@@ -279,7 +281,7 @@ class Store:
         cfg = read_or_none(self.root / "config.json")
         if cfg is not None:
             try:
-                have = json.loads(cfg)["workspace"]["id"]
+                have = loads(cfg)["workspace"]["id"]
             except (ValueError, KeyError, TypeError):
                 have = None
             if have is not None and have != self.workspace_id:
@@ -381,22 +383,26 @@ class Store:
             uid = ent.name
             if not _ULID.fullmatch(uid) or ent.is_symlink():
                 continue
-            path = Path(ent.path) / "events.jsonl"
-            sig = stat_sig(path)
-            if sig is None or sig == (-1, -1):
+            try:  # one lstat per ticket: this runs under every lock
+                st = os.lstat(ent.path + "/events.jsonl")
+            except OSError:
                 continue
+            if _S_ISLNK(st.st_mode):
+                continue
+            sig = (st.st_size, st.st_ino)
             sizes[uid] = sig[0]
             old = self._hints.get(uid)
             if old is not None and old.sig == sig:
                 seen[uid] = old
                 continue
+            path = Path(ent.path) / "events.jsonl"
             key = created = None
             if old is not None and old.ino == sig[1]:
                 key, created = old.key, old.created_at
             else:
                 first = first_line(path)
                 try:
-                    f = json.loads(first) if first else {}
+                    f = loads(first) if first else {}
                     if isinstance(f, dict) and f.get("type") == "ticket.created":
                         key, created = f.get("key"), f.get("at")
                 except ValueError:
@@ -404,7 +410,7 @@ class Store:
             pos = None
             last = last_line(path)
             try:
-                e = json.loads(last) if last else None
+                e = loads(last) if last else None
                 if isinstance(e, dict):
                     p = (int(e["ws_seq"]), _epoch(e["at"]), uid, int(e["seq"]))
                     if p[1] <= limit:
@@ -417,6 +423,7 @@ class Store:
         self._hints, self._sizes = seen, sizes
         self._exists = set(seen)
         self._key_uid = {h.key: u for u, h in seen.items() if h.key}
+        self._suspect = len(self._key_uid) != len(seen)  # a log without a readable first line, or two with one key
 
     def _order(self) -> tuple[int, tuple[int, int, str, int] | None]:
         """The latest `at` and merged position of everything written so far (all logs, from the hints)."""
@@ -463,6 +470,8 @@ class Store:
                 dep = self._key_uid.get(key)
                 if dep is not None and dep not in tickets:
                     todo.append(dep)
+                elif dep is None and self._unsure():
+                    todo.extend(u for u in self._exists if u not in tickets)  # hints cannot be believed: load them all
         self._loaded = set(tickets)
         for name, info in self._logs.items():
             if info.error:
@@ -484,6 +493,10 @@ class Store:
             self._pins.pin_genesis(ws.genesis)
         if ws.genesis is not None:
             self._pin = self._pin or ws.genesis
+        for uid in tickets:
+            v, h = self._state.tickets.get(uid), self._hints.get(uid)
+            if v is not None and h is not None and h.key != v.key and h.sig != (0, 0):
+                self._hint_mismatch = True  # a first line said another key than the verified ticket has
         self._ws_last_at = max((_epoch(e["at"]) for e in ws_events), default=0)
         # a grant's secret hash counts only from a grant.issued the model accepted (not invalid, and the grant exists)
         invalid = {i.id for i in ws.invalid}
@@ -493,7 +506,7 @@ class Store:
                 self._grant_hashes.setdefault(e["grant"], e["secret_hash"])
         self._json_cache = {}
         try:
-            applied = json.loads(read_or_none(self.state_dir / "applied") or b"{}")
+            applied = loads(read_or_none(self.state_dir / "applied") or b"{}")
             self._applied_n = int(applied.get("n", 0))
         except (ValueError, TypeError, AttributeError):
             self._applied_n = 0
@@ -528,7 +541,7 @@ class Store:
         """Do the files still say what was read? Compared under the lock: size and inode of the workspace log and of
         every loaded ticket log. ``.state/applied`` plays no part (it is a record, not a signal)."""
         for info in self._logs.values():
-            if stat_sig(info.path) != ((info.offset, info.ino) if info.ino is not None else None):
+            if stat_sig(info.path) != ((info.seen_size, info.ino) if info.ino is not None else None):
                 return False
         return True
 
@@ -573,7 +586,7 @@ class Store:
         return self._index
 
     def _maybe_index(self, state: State | None = None) -> None:
-        """Build the index now if it is missing or stale and everything is loaded anyway (a new workspace, ``load="all"``)."""
+        """Build the index now if it is missing or stale and everything is loaded anyway (new or ``load="all"``)."""
         state = state or self._state
         if state is None or state.workspace.genesis is None or self._index_ok or not self._loaded >= self._exists:
             return
@@ -636,7 +649,7 @@ class Store:
 
     def _recover_one(self, d: Path) -> dict[str, Any] | None:
         try:
-            m = json.loads((d / "manifest.json").read_bytes())
+            m = loads(read_or_none(d / "manifest.json", 2_000_000) or b"")
             line = m["line"].encode("utf-8")
             log = m["log"]
             path = self._path_of(log)
@@ -647,18 +660,18 @@ class Store:
         except (OSError, ValueError, KeyError, StoreError, TypeError, canon.HashError):
             shutil.rmtree(d, ignore_errors=True)  # the manifest is written last: the event was never appended
             return None
-        raw = read_or_none(path) or b""
-        if raw.endswith(line):
+        size, tail = tail_bytes(path, len(line) + 1)
+        if tail.endswith(line):
             applied = self._read_applied()
             if applied.get("id") == m["id"]:
                 shutil.rmtree(d, ignore_errors=True)  # already installed (§5.5: recovery runs only for an event that
                 return None  # `.state/applied` does not name)
             self._needs_reload = True
             return m
-        for k in range(min(len(line) - 1, len(raw)), 0, -1):  # a torn prefix of our own line: cut it off
-            if raw[-k:] == line[:k] and (len(raw) == k or raw[-k - 1] == 0x0A):
+        for k in range(min(len(line) - 1, size), 0, -1):  # a torn prefix of our own line: cut it off
+            if tail[-k:] == line[:k] and (size == k or tail[-k - 1] == 0x0A):
                 with open(path, "r+b") as f:
-                    f.truncate(len(raw) - k)
+                    f.truncate(size - k)
                     os.fsync(f.fileno())
                 self._needs_reload = True
                 break
@@ -667,7 +680,7 @@ class Store:
 
     def _read_applied(self) -> dict[str, Any]:
         try:
-            a = json.loads(read_or_none(self.state_dir / "applied") or b"{}")
+            a = loads(read_or_none(self.state_dir / "applied") or b"{}")
             return a if isinstance(a, dict) else {}
         except ValueError:
             return {}
@@ -729,7 +742,7 @@ class Store:
         torn: list[str] = []
         for f in m["files"]:
             dest, src = safe_join(self.root, target_ok(f["to"])), d / str(int(f["n"]))
-            data = read_or_none(src)
+            data = read_or_none(src, 256 * 1024 * 1024)
             if data is not None and _sha(data) == f["sha256"] and (check is None or check(f["to"], data)):
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 replace(src, dest)
@@ -795,30 +808,71 @@ class Store:
         """The next ticket key: one above the highest number in ``keys.jsonl`` or in any ``ticket.created`` (§2). Only
         called under the lock (``create_ticket``), after the directory scan."""
         assert self._state is not None
+        if self._unsure():
+            self._ensure(set(self._exists))  # the hints cannot be believed: the verified keys decide
         best = 0
         for key in (*self._key_uid, *(t.key for t in self._state.tickets.values())):
             m = _KEY_NUM.fullmatch(key)
             best = max(best, int(m.group(1)) if m else 0)
         for line in (read_or_none(self.root / "keys.jsonl") or b"").splitlines():
             with contextlib.suppress(ValueError, KeyError, TypeError):
-                m = _KEY_NUM.fullmatch(json.loads(line)["key"])
+                m = _KEY_NUM.fullmatch(loads(line)["key"])
                 best = max(best, int(m.group(1)) if m else 0)
         return f"{self._state.workspace.prefix}-{best + 1:04d}"
 
-    def normalise_ref(self, ref: str) -> str:
-        """``43``, ``#43``, ``demo-43`` and ``DEMO-0043`` are the ticket key ``DEMO-0043``. Text only (a hint
-        for the stop rule and the dedup key): it takes no lock, and a uid is turned into its key from the last scan.
-        Anything else comes back unchanged."""
+    def _unsure(self) -> bool:
+        """Can the key hints (first lines of unverified logs) not be believed? Duplicates, missing keys, or a verified
+        ticket that contradicted its hint."""
+        return self._suspect or self._hint_mismatch
+
+    def _resolve(self, ref: str) -> str | None:
+        """The uid of the ticket ``ref``, from **verified** state only: a hint names a candidate, the candidate is
+        replayed and checked (its verified key must be ``ref``); anything doubtful loads every ticket and looks there.
+        Under the lock."""
+        r = self._text_ref(ref)
+        assert self._state is not None
+        if _ULID.fullmatch(r):
+            if r not in self._exists:
+                return None
+            self._ensure({r})
+            return r if r in self._state.tickets else None
+        cand = self._key_uid.get(r)
+        if cand is not None and not self._unsure():
+            self._ensure({cand})
+            v = self._state.tickets.get(cand)
+            if v is not None and v.key == r:
+                return cand
+            self._hint_mismatch = True
+        if cand is None and not self._unsure():
+            return None  # every ticket has a distinct, readable key hint and none says `r`
+        self._ensure(set(self._exists))
+        return next((u for u, v in self._state.tickets.items() if v.key == r), None)
+
+    def _text_ref(self, ref: str) -> str:
+        """``43``, ``#43``, ``demo-43`` and ``DEMO-0043`` as ``DEMO-0043`` (the workspace prefix is verified state)."""
         assert self._state is not None
         r = ref.strip().lstrip("#")
-        if _ULID.fullmatch(r):
-            h = self._hints.get(r)
-            return h.key if h and h.key else ref
         prefix = self._state.workspace.prefix
-        m = re.fullmatch(r"(?:(?i:" + re.escape(prefix) + r")-)?([0-9]+)", r) if prefix else None
+        m = (
+            re.fullmatch(r"(?:(?i:" + re.escape(prefix) + r")-)?([0-9]+)", r)
+            if prefix and not _ULID.fullmatch(r)
+            else None
+        )
         if m and int(m.group(1)) >= 1:
             return f"{prefix}-{int(m.group(1)):04d}"
-        return ref
+        return r if _ULID.fullmatch(r) else ref
+
+    def normalise_ref(self, ref: str) -> str:
+        """``43``, ``#43``, ``demo-43`` and ``DEMO-0043`` are the ticket key ``DEMO-0043`` (text, from the verified
+        workspace prefix); a uid becomes the key of the ticket it names, after that ticket was replayed and checked.
+        Anything else comes back unchanged. Feeds the stop rule and the dedup key, so it believes nothing unverified."""
+        r = self._text_ref(ref)
+        if _ULID.fullmatch(r):
+            with self._locked():
+                uid = self._resolve(r)
+                assert self._state is not None
+                return self._state.tickets[uid].key if uid else ref
+        return r
 
     def grant_secret_hash(self, grant_id: str) -> str | None:
         """The ``secret_hash`` of an **accepted** ``grant.issued`` for ``grant_id`` (the secret itself is never stored).
@@ -827,10 +881,7 @@ class Store:
             return self._grant_hashes.get(grant_id)
 
     def _uid_of(self, ref: str) -> str | None:
-        r = self.normalise_ref(ref)
-        if _ULID.fullmatch(r):
-            return r if r in self._exists else None
-        return self._key_uid.get(r)
+        return self._resolve(ref)
 
     def uid_of(self, ref: str) -> str | None:
         """The uid of the ticket ``ref`` (from the directory scan under the lock), None if there is none."""
@@ -971,7 +1022,9 @@ class Store:
         and, for an unattended event (a quota counted over the whole workspace), every ticket."""
         need: set[str] = set() if log == WORKSPACE else {log}
         actor = e.get("actor")
-        if isinstance(actor, dict) and actor.get("unattended") is True:
+        if (isinstance(actor, dict) and actor.get("unattended") is True) or (
+            e.get("type") == "ticket.created" and self._unsure()
+        ):
             need |= self._exists
         for key in self._read_refs([e]) | ({e["key"]} if e.get("type") == "ticket.created" else set()):
             if isinstance(key, str) and key in self._key_uid:
@@ -1031,7 +1084,7 @@ class Store:
         if not self._fresh():  # last look, right before the write: the files must still be what was judged
             self._needs_reload = True
             raise StoreError("chain.broken", f"{log}: a log changed on disk while the store held the lock")
-        if stat_sig(path) != ((info.offset, info.ino) if info and info.ino is not None else None):
+        if stat_sig(path) != ((info.seen_size, info.ino) if info and info.ino is not None else None):
             self._needs_reload = True
             raise StoreError("chain.broken", f"{log}: the log changed on disk while the store held the lock")
         try:
@@ -1195,7 +1248,7 @@ class Store:
     def _ticket_for(self, view: Any, uid: str) -> bytes:
         data = self._ticket_bytes(uid, view)
         try:
-            schema.validate("ticket", json.loads(data))
+            schema.validate("ticket", loads(data))
         except (schema.SchemaError, ValueError) as err:
             raise StoreError("validation.ticket", str(err)) from None
         return data
@@ -1208,7 +1261,7 @@ class Store:
         cur = read_or_none(self.root / "config.json")
         if cur is not None:  # `name` and `agents.run_for` are in no event: whatever the file says (if valid) stays
             with contextlib.suppress(ValueError, KeyError, TypeError, schema.SchemaError):
-                doc = json.loads(cur)
+                doc = loads(cur)
                 schema.validate("workspace", doc)
                 name, run_for = doc["workspace"]["name"], doc["agents"]["run_for"]
         return render.render_config(
@@ -1259,6 +1312,7 @@ class Store:
         info = self._logs.setdefault(log, LogInfo(log, self._path_of(log)))
         info.starts.append(info.offset)
         info.offset += len(line)
+        info.seen_size = info.offset
         info.seq = ev["seq"]
         info.heads.append(canon.event_head(ev))
         info.ino = (stat_sig(info.path) or (0, None))[1]
@@ -1353,7 +1407,7 @@ class Store:
 
     def _read_intent(self, idem: str) -> dict[str, Any] | None:
         try:
-            rec = json.loads(read_or_none(self._intent_path(idem)) or b"null")
+            rec = loads(read_or_none(self._intent_path(idem)) or b"null")
         except ValueError:
             return None
         if isinstance(rec, dict) and isinstance(rec.get("log"), str) and isinstance(rec.get("id"), str):
@@ -1414,21 +1468,26 @@ class Store:
         info = self._logs.get(log)
         if info is None or not info.seq:
             return None
-        raw = read_or_none(self._path_of(log)) or b""
         needle = b'"id":"' + event_id.encode() + b'"'
-        for i, line in enumerate(raw.splitlines(), 1):
-            if needle in line:
-                with contextlib.suppress(canon.HashError, KeyError):
-                    if canon.parse_event_line(line + b"\n")["id"] == event_id:
-                        return i
+        try:
+            fd = open_nofollow(self._path_of(log), os.O_RDONLY)
+        except OSError:
+            return None
+        with os.fdopen(fd, "rb") as f:  # line by line, at most one line's limit at a time
+            for i in range(1, info.seq + 1):
+                line = f.readline(MAX_LINE + 1)
+                if needle in line:
+                    with contextlib.suppress(canon.HashError, KeyError):
+                        if canon.parse_event_line(line)["id"] == event_id:
+                            return i
         return None
 
     def _read_event(self, log: str, seq: int) -> dict[str, Any]:
         info = self._logs[log]
-        path = self._path_of(log)
-        with open(path, "rb") as f:  # the line offsets come from the verified read: seek, do not scan the log
+        fd = open_nofollow(self._path_of(log), os.O_RDONLY)
+        with os.fdopen(fd, "rb") as f:  # the line offsets come from the verified read: seek, do not scan the log
             f.seek(info.starts[seq - 1])
-            return canon.parse_event_line(f.readline())
+            return canon.parse_event_line(f.readline(MAX_LINE + 1))
 
     def _idem_intent(self, idem: str, log: str, event_id: str) -> None:
         write_atomic(self._intent_path(idem), json.dumps({"log": log, "id": event_id}).encode("utf-8"), mode=0o600)
@@ -1543,8 +1602,8 @@ class Store:
         if have is None:
             return []
         try:
-            doc = json.loads(have)
-            want = json.loads(self._ticket_bytes(uid))
+            doc = loads(have)
+            want = loads(self._ticket_bytes(uid))
         except ValueError:
             return []
         if not isinstance(doc, dict):
@@ -1726,7 +1785,7 @@ class Store:
         with self._locked():
             self._ensure({log} if log != WORKSPACE else set())
             path = self._path_of(log)
-            raw = read_or_none(path) or b""
+            raw = read_or_none(path, None) or b""  # an owner's explicit repair: the whole file
             lines = raw.splitlines(keepends=True)
             if from_seq >= len(lines):
                 return 0

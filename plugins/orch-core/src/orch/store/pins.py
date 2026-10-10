@@ -10,7 +10,6 @@ P1 limit (§12 O7): these are files the same OS user owns, like the workspace it
 
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 from typing import Any
@@ -18,7 +17,7 @@ from typing import Any
 from orch import canon
 
 from .errors import StoreError
-from .fsio import append_durable, read_or_none, write_atomic
+from .fsio import append_durable, loads, read_or_none, write_atomic
 
 __all__ = ["HostPins"]
 
@@ -63,7 +62,7 @@ class HostPins:
         out = []
         for line in raw.splitlines():
             try:
-                out.append(json.loads(line))
+                out.append(loads(line))
             except ValueError:
                 continue
         return out

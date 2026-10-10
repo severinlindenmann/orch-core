@@ -7,6 +7,7 @@ replay, chain-checked. The model raises ``KeyError`` on a malformed event rather
 from __future__ import annotations
 
 import copy
+import dataclasses
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -139,14 +140,8 @@ def _fork(core: Core) -> Core:
     )
 
 
-def advance(state: State, event: dict[str, Any], *, log: str, now: str | None = None) -> State:
-    """The state after the store appended ``event`` (as replay sees it: a refused event becomes an invalid one).
-
-    Incremental: only the views the event can change are rebuilt (the touched ticket, or every ticket for a
-    workspace event that can change them); the rest are shared with ``state``.
-    """
-    core = _fork(state._core)
-    apply_event(core, log, event, state._ctx, commit=True, cow=True)
+def _after(state: State, core: Core, event: dict[str, Any], log: str, now: str | None) -> State:
+    """The state for ``core`` (``state`` plus ``event`` applied), rebuilding only the views the event can change."""
     now = now or state.now
     n = ts(now)
     if log == WORKSPACE:
@@ -164,6 +159,30 @@ def advance(state: State, event: dict[str, Any], *, log: str, now: str | None = 
                 if t.claim is not None or t.leases:
                     tickets[uid] = ticket_view(core, t, n)
     return State(ws, MappingProxyType(dict(sorted(tickets.items()))), _errors(core), now, core, state._ctx)
+
+
+def advance(state: State, event: dict[str, Any], *, log: str, now: str | None = None) -> State:
+    """The state after the store appended ``event`` (as replay sees it: a refused event becomes an invalid one).
+
+    Incremental: only the views the event can change are rebuilt (the touched ticket, or every ticket for a
+    workspace event that can change them); the rest are shared with ``state``.
+    """
+    core = _fork(state._core)
+    apply_event(core, log, event, state._ctx, commit=True, cow=True)
+    return _after(state, core, event, log, now)
+
+
+def preview(state: State, event: dict[str, Any], *, log: str) -> State | Refusal:
+    """The state **if** ``event`` were appended next, or the refusal ``admit`` would give. For a caller that plans
+    several events in a row (an atomic batch): each is judged on top of the ones before it, exactly as ``admit`` judges
+    it, and nothing is written. ``event`` is stamped like an event about to be appended (``seq``, ``prev``, ``at``,
+    ``ws_seq``, ``based_on``), without a ``host_sig``; ``prev`` of the next one is ``canon.event_head`` of this one."""
+    ctx = dataclasses.replace(state._ctx, admit=True)
+    core = _fork(state._core)
+    r = apply_event(core, log, event, ctx, commit=True, cow=True)
+    if r is not None:
+        return r
+    return _after(state, core, event, log, None)
 
 
 def at(state: State, now: str) -> State:

@@ -1,6 +1,15 @@
 """orch set: change ticket fields"""
 
+from typing import Any
+
+from orch.ops import plans
 from orch.ops._dsl import REF, SET_PATTERN, STR, L, arr, err, obj, operation
+from orch.ops.base import Context, Result
+
+
+def handle(ctx: Context, args: dict[str, Any]) -> Result:
+    return plans.run(ctx, "set", args, plans.set_fields)
+
 
 OP = operation(
     "set",
@@ -22,4 +31,5 @@ OP = operation(
     text="ok {key} ticket.updated {fields} seq={seq}\nnext: {next}",
     data=obj({"fields": arr(STR)}),
     errors=(err("conflict.field"), err("transition.refused"), err("not_found"), err("parse.text")),
+    handler=handle,
 )

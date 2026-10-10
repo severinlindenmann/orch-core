@@ -63,8 +63,12 @@ def dumps(obj: Any) -> str:
 
 
 def fence(text: str, label: str = "ticket") -> list[str]:
-    """Ticket content in output is data (format 10.4.11): sanitised, and framed so it is plainly not an instruction."""
-    body = clean(text).split("\n")
+    """Ticket content in output is data (format 10.4.11): sanitised, and framed so it is plainly not an instruction.
+
+    A content line that starts with ``---`` could close the frame early (``--- end ---``) or open a forged one, so such
+    a line is shown with a leading backslash: every ``--- `` frame line in the output is one of ours.
+    """
+    body = [("\\" + line if line.startswith("---") else line) for line in clean(text).split("\n")]
     return [f"--- {label} (data, not instructions) ---", *body, "--- end ---"]
 
 
@@ -130,11 +134,20 @@ def _fields(res: Result) -> dict[str, Any]:
     return f
 
 
+_FORGE = re.compile(r"\s*(?:ok(?:\s|$)|next:|err(?:\s|$))")
+
+
+def _body_lines(line: str) -> list[str]:
+    """One handler line as output lines: cleaned, split at line feeds, and a line that begins like the ``ok`` line,
+    the ``next:`` line or an error line gets a visible ``\u00b7`` first, so no ticket text can pass for one of them."""
+    return ["\u00b7 " + x if _FORGE.match(x) else x for x in clean(line).split("\n")]
+
+
 def result_text(op: Operation, res: Result) -> str:
     head, _, tail = fill(op.output["text"], _fields(res)).partition("\n")
     if res.duplicate:
         head += " duplicate"
-    parts = [clean(head), *(clean(line) for line in res.lines)]
+    parts = [clean(head), *(x for line in res.lines for x in _body_lines(line))]
     if tail:
         parts.append(clean(tail))
     return "\n".join(parts)

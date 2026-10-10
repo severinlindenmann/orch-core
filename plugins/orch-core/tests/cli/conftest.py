@@ -36,6 +36,18 @@ def run_cli(*argv: str, env: dict[str, str] | None = None, records=None, now=Non
     return Run(code, out.getvalue(), err.getvalue())
 
 
+@pytest.fixture(autouse=True)
+def _declared_only():
+    """The CLI contract tests (C5) run against declarations whose handlers are not written: every operation raises
+    ``not_implemented`` here, whatever C6/C7 bound. The real handlers are tested in ``tests/ops``."""
+    saved = {op.name: op.handler for op in ops.all() if op.name not in ("describe", "help")}  # C5's own handlers
+    for name in saved:
+        ops.bind(name, ops._unimplemented(name))
+    yield
+    for name, handler in saved.items():
+        ops.bind(name, handler)
+
+
 @pytest.fixture
 def cli():
     return run_cli

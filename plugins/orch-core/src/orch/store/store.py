@@ -315,6 +315,42 @@ class Store:
         with self._locked():
             pass
 
+    @contextlib.contextmanager
+    def locked(self) -> Iterator[None]:
+        """Hold the workspace lock (re-entrant) with the state freshly read: for a caller that judges and then appends
+        several events and must not let another writer in between (an atomic batch)."""
+        with self._locked():
+            yield
+
+    def events(self, ref: str, *, after: int = 0, limit: int | None = None) -> list[dict[str, Any]]:
+        """The events of the ticket ``ref`` with ``seq`` above ``after`` (at most ``limit``), parsed from the log that
+        was replayed and verified. ``[]`` if there is no such ticket. Read-only; the lines are not re-verified here."""
+        with self._locked():
+            uid = self._uid_of(ref)
+            if uid is None:
+                return []
+            self._ensure({uid})
+            info = self._logs.get(uid)
+            if info is None or uid in self._read_errors:
+                return []
+            last = info.seq if limit is None else min(info.seq, after + limit)
+            return [self._read_event(uid, n) for n in range(max(after, 0) + 1, last + 1)]
+
+    def peek_stamp(self, log: str) -> dict[str, Any]:
+        """The ``seq``, ``prev``, ``at`` and ``ws_seq`` the next event of ``log`` would be stamped with, without
+        appending anything: what a caller needs to plan a chain of events with ``orch.model.preview``."""
+        with self._locked():
+            ev: dict[str, Any] = {"type": "log.added"}
+            self._stamp(ev, log)
+            return {k: ev[k] for k in ("seq", "prev", "at") + (() if log == WORKSPACE else ("ws_seq",))}
+
+    def peek_key(self) -> str:
+        """The key the next ``create_ticket`` would allocate (a dry run shows it; another writer may take it first)."""
+        with self._locked():
+            self._scan_dirs()
+            self._verified_keys()
+            return self._next_key()
+
     # ------------------------------------------------------------------ small helpers
 
     def _now(self) -> str:

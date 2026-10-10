@@ -1,6 +1,31 @@
 """orch submit: move the ticket to testing"""
 
+from typing import Any
+
+from orch.canon.text import clean_line
+from orch.ops import plans
 from orch.ops._dsl import REF, STR, err, obj, operation
+from orch.ops.base import Context, Result
+from orch.ops.errors import OrchError
+from orch.ops.runtime import Call, Projection
+from orch.store import StoreError
+
+
+def handle(ctx: Context, args: dict[str, Any]) -> Result:
+    return plans.run(ctx, "submit", args, build, claim=True)
+
+
+def build(c: Call, p: Projection, args: dict[str, Any]) -> plans.Out:
+    try:
+        p.add({"type": "ticket.submitted"})
+    except StoreError as e:
+        if e.code != "submit.incomplete":
+            raise
+        # the model lists everything that is missing; evidence is the case this operation names
+        code = "ac.evidence_missing" if "no evidence" in e.detail else "transition.refused"
+        raise OrchError(code, f"submit: {clean_line(e.detail)[:180]}") from None
+    return plans.Out({"status": p.last_view.status}, ["orch wait"])
+
 
 OP = operation(
     "submit",
@@ -20,4 +45,5 @@ OP = operation(
         err("not_found"),
         err("ambiguous_ref"),
     ),
+    handler=handle,
 )

@@ -190,8 +190,13 @@ def main(
     env = os.environ if env is None else env
     out = sys.stdout if stdout is None else stdout
     err = sys.stderr if stderr is None else stderr
-    records = records if records is not None else _DEFAULT_RECORDS
-    hooks = hooks or Hooks()
+    from orch.ops.runtime import Workspace  # the workspace is found and opened only when something asks for it
+
+    workspace = Workspace(env, now)
+    if hooks is None or records is None:
+        from orch.cli.store_hooks import workspace_hooks, workspace_records
+    hooks = hooks or workspace_hooks(workspace)
+    records = records if records is not None else workspace_records(workspace, _DEFAULT_RECORDS)
 
     if args == ["--version"]:
         out.write(VERSION_LINE + "\n")
@@ -239,6 +244,7 @@ def main(
             dry_run=parsed.dry_run,
             now=now,
             env={k: v for k, v in env.items() if k != "ORCH_GRANT"},
+            workspace=workspace,
         )
         res = run(parsed, ctx, records, hooks)
         text = render.dumps(render.result_envelope(res)) if as_json else render.result_text(op, res)

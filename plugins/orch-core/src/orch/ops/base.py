@@ -33,6 +33,9 @@ class Context:
     #: The retry-dedup key of this call (set by the CLI for writes with a session). A handler passes it to
     #: ``Store.append(idem=...)`` so a retry after a crash can never append twice.
     idem: str | None = field(default=None, repr=False)
+    #: The workspace of this call (``orch.ops.runtime.Workspace``), set by the CLI: opened lazily, shared by the hooks
+    #: and the handler, so one call opens the store once. ``None`` in a test that builds a Context by hand.
+    workspace: Any = field(default=None, repr=False)
 
 
 @dataclass

@@ -1,6 +1,15 @@
 """orch section set: replace one body section"""
 
+from typing import Any
+
+from orch.ops import plans
 from orch.ops._dsl import FILE, MSG, REF_PATTERN, STR, E, S, err, obj, operation
+from orch.ops.base import Context, Result
+
+
+def handle(ctx: Context, args: dict[str, Any]) -> Result:
+    return plans.run(ctx, "section.set", args, plans.section_set)
+
 
 OP = operation(
     "section.set",
@@ -33,4 +42,5 @@ OP = operation(
     text="ok {key} ticket.updated {section} seq={seq}\nnext: {next}",
     data=obj({"section": STR}),
     errors=(err("conflict.section"), err("transition.refused"), err("not_found"), err("parse.text")),
+    handler=handle,
 )

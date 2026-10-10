@@ -1,6 +1,15 @@
 """orch task add: add a task"""
 
+from typing import Any
+
+from orch.ops import plans
 from orch.ops._dsl import AC_PATTERN, REF_PATTERN, STR, L, S, err, obj, operation
+from orch.ops.base import Context, Result
+
+
+def handle(ctx: Context, args: dict[str, Any]) -> Result:
+    return plans.run(ctx, "task.add", args, plans.task_add)
+
 
 OP = operation(
     "task.add",
@@ -26,4 +35,5 @@ OP = operation(
     text="ok {key} ticket.updated {task} seq={seq}\nnext: {next}",
     data=obj({"task": STR}),
     errors=(err("conflict.field"), err("transition.refused"), err("not_found"), err("parse.text")),
+    handler=handle,
 )

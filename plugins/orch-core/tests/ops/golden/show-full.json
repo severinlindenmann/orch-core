@@ -1,0 +1,105 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "view": "full",
+    "ticket": {
+      "key": "DEMO-0001",
+      "title": "Load tariff tables as dbt seeds",
+      "type": "feature",
+      "status": "in_progress",
+      "priority": "high",
+      "size": null,
+      "labels": [
+        "dbt",
+        "tariffs"
+      ],
+      "due": null,
+      "parent": null,
+      "blocked_by": [],
+      "owner": "p_PERSON",
+      "claim": {
+        "session": "s_ULID",
+        "live": true
+      },
+      "waiting": true,
+      "acceptance": [
+        {
+          "id": "AC1",
+          "text": "`dbt seed` loads all 40 tariff tables",
+          "evidence": [
+            "artifact:evidence.log",
+            "task:T1"
+          ]
+        },
+        {
+          "id": "AC2",
+          "text": "The refresh command is documented",
+          "evidence": []
+        }
+      ],
+      "tasks": [
+        {
+          "id": "T1",
+          "text": "Export CSVs into seeds/tariffs",
+          "state": "done",
+          "proves": [
+            "AC1"
+          ]
+        },
+        {
+          "id": "T2",
+          "text": "Document the refresh command",
+          "state": "open",
+          "proves": [
+            "AC2"
+          ]
+        },
+        {
+          "id": "T3",
+          "text": "Join in fct_billing",
+          "state": "open",
+          "proves": []
+        }
+      ],
+      "questions": [
+        {
+          "id": "Q1",
+          "to": "ticket_owner",
+          "blocking": true,
+          "answered": false,
+          "text": "Which export is the source of truth?",
+          "options": [
+            "csv",
+            "api"
+          ],
+          "recommended": "csv"
+        }
+      ],
+      "current_state": "",
+      "events": [
+        "#12 task.done a T1",
+        "#13 log.added a Seeds are in; the join is next.",
+        "#14 question.asked a Q1",
+        "#15 artifact.added a evidence.log"
+      ],
+      "sections": {
+        "summary": "Load the 40 tariff tables as seeds.",
+        "context": "",
+        "requirements": "",
+        "out_of_scope": "",
+        "plan": "1. export the CSVs\n2. seed them",
+        "decisions": "",
+        "verification": "",
+        "current_state": ""
+      }
+    }
+  },
+  "key": "DEMO-0001",
+  "seq": 15,
+  "cursor": 15,
+  "hints": [
+    "orch wait"
+  ]
+}
+# exit 0

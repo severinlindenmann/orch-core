@@ -7,7 +7,7 @@
     "cli": "orch claim",
     "summary": "Claim a ticket, the next one, or take over another session's claim.",
     "who": "agent",
-    "usage": "orch claim [REF] [--next] [--takeover] [--reason TEXT] [--dry-run]",
+    "usage": "orch claim [REF] [--next] [--takeover] [--also] [--reason TEXT] [--dry-run]",
     "pre": [
       "ticket_exists",
       "ticket_visible",
@@ -35,6 +35,10 @@
         "takeover": {
           "type": "boolean",
           "description": "take the claim from another session (needs --reason)"
+        },
+        "also": {
+          "type": "boolean",
+          "description": "hold this claim besides the ones you already hold"
         },
         "reason": {
           "type": "string",
@@ -67,6 +71,16 @@
       }
     },
     "errors": [
+      {
+        "code": "ambiguous_ref",
+        "exit": 2,
+        "retryable": false,
+        "hint": "name the ticket REF, for example DEMO-0043",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
       {
         "code": "not_found",
         "exit": 2,

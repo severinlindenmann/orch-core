@@ -37,7 +37,7 @@ import os
 import re
 import shutil
 import time
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from stat import S_ISLNK as _S_ISLNK
@@ -64,7 +64,7 @@ from .errors import StoreError
 from .fsio import append_durable, fsync_dir, loads, open_nofollow, read_or_none, replace, tail_bytes, write_atomic
 from .index import Index
 from .lock import FileLock
-from .logs import MAX_LINE, LogInfo, first_line, last_line, read_new_lines, stat_sig
+from .logs import MAX_LINE, LogInfo, first_line, info_sig, last_line, read_new_lines, stat_sig
 from .paths import check_artifact, check_state_dirs, check_uid, safe_join, target_ok
 from .pins import HostPins
 
@@ -145,6 +145,13 @@ def _sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _verb_events() -> dict[str, frozenset[str]]:
+    """What each operation emits, from the registry: the table that turns a grant's operation names into event types."""
+    from orch.ops import verb_events
+
+    return verb_events()
+
+
 _default_verifier: Callable[[], Verifier] = CryptoVerifier  # test seam (a module attribute, never set from src/)
 LOCK_TIMEOUT = 10.0  # seconds a call waits for the workspace lock before it fails with ``store.busy``
 FUTURE_SLACK = (
@@ -157,7 +164,7 @@ class _Hint:
     """What the store knows about a ticket log without reading it: its first and last line, **unverified**. Used to find
     the ticket of a key, to keep the merged order (`at`, `ws_seq`) and keys.jsonl right; never for a decision."""
 
-    sig: tuple[int, int]  # (size, inode) when read
+    sig: tuple[int, int, int, int]  # (size, inode, mtime_ns, ctime_ns) when read
     ino: int
     key: str | None
     created_at: str | None
@@ -226,7 +233,9 @@ class Store:
         self._exists: set[str] = set()
         self._pending_revs: list[dict[str, Any]] = []
         self._ws_restore_at = ""
-        self._created_ok: dict[str, tuple[int, str]] = {}  # uid -> (inode, key) of a first line whose host_sig verified
+        self._created_ok: dict[
+            str, tuple[tuple[int, int, int, int], str]
+        ] = {}  # uid -> (log signature, key) of a verified first line
         self._unverified: set[str] = set()  # ticket logs without a verified creation line
         self._suspect = False  # duplicate or missing keys among the hints
         self._hint_mismatch = False  # a verified ticket whose key its hint did not say
@@ -315,6 +324,112 @@ class Store:
         with self._locked():
             pass
 
+    @contextlib.contextmanager
+    def locked(self) -> Iterator[None]:
+        """Hold the workspace lock (re-entrant) with the state freshly read: for a caller that judges and then appends
+        several events and must not let another writer in between (an atomic batch)."""
+        with self._locked():
+            yield
+
+    def events(self, ref: str, *, after: int = 0, limit: int | None = None) -> list[dict[str, Any]]:
+        """The events of the ticket ``ref`` with ``seq`` above ``after`` (at most ``limit``), parsed from the log that
+        was replayed and verified. ``[]`` if there is no such ticket. Read-only; the lines are not re-verified here."""
+        with self._locked():
+            uid = self._uid_of(ref)
+            if uid is None:
+                return []
+            self._ensure({uid})
+            info = self._logs.get(uid)
+            if info is None or uid in self._read_errors:
+                return []
+            last = info.seq if limit is None else min(info.seq, after + limit)
+            return [self._read_event(uid, n) for n in range(max(after, 0) + 1, last + 1)]
+
+    @property
+    def can_write(self) -> bool:
+        """Does this store hold the workspace key (it can append), or only read?"""
+        return self._host is not None
+
+    def host_append(self, typ: str, ref: str, payload: Mapping[str, Any]) -> list[dict[str, Any]]:
+        """Append the host's observation of a repository (``branch.pushed``) to the ticket ``ref`` and, **under the same
+        lock**, the ``gate.invalidated`` records it makes owed (see :meth:`flush_invalidations`). Returns the events."""
+        if typ != "branch.pushed":
+            raise StoreError("validation.event", f"{typ} is not an event a caller appends in the host's name")
+        with self._locked():
+            uid = self._uid_of(ref)
+            if uid is None:
+                raise StoreError("ticket.unknown", ref)
+            self._ensure({uid})
+            out = [self._host_append(typ, uid, dict(payload))]
+            return out + self._flush(uid)
+
+    def flush_invalidations(self, ref: str) -> list[dict[str, Any]]:
+        """Append a host ``gate.invalidated`` for every gate that still has approvals the model voided without a record
+        (after a ``branch.pushed``, a crash between the two appends, a changed section...). ``voided`` is exactly what
+        the model derived (``pending_void``, read from the state after the last append), never a caller's guess."""
+        with self._locked():
+            uid = self._uid_of(ref)
+            if uid is None:
+                return []
+            self._ensure({uid})
+            return self._flush(uid)
+
+    def _flush(self, uid: str) -> list[dict[str, Any]]:
+        assert self._state is not None
+        out = []
+        for g in ("requirements", "plan", "verify", "code"):
+            t = self._state._core.tickets.get(uid)
+            ids = sorted(t.gates[g].pending_void) if t is not None else []
+            if ids:
+                cause = "new_commits" if g in ("verify", "code") else "content_changed"
+                out.append(self._host_append("gate.invalidated", uid, {"gate": g, "cause": cause, "voided": ids}))
+        return out
+
+    def attempt_logged(self, ref: str, idem: str) -> bool:
+        """Did an append with this idempotency key reach the log of ticket ``ref``? (The log confirms the record.)"""
+        with self._locked():
+            uid = self._uid_of(ref)
+            rec = self._read_intent(idem)
+            if uid is None or rec is None or rec["log"] != uid:
+                return False
+            self._ensure({uid})
+            s = rec.get("seq")
+            info = self._logs.get(uid)
+            if isinstance(s, int) and info is not None and 1 <= s <= info.seq and info.heads[s - 1] == rec.get("head"):
+                return True
+            return self._seq_of_id(uid, rec["id"]) is not None
+
+    def peek_stamp(self, log: str) -> dict[str, Any]:
+        """The ``seq``, ``prev``, ``at`` and ``ws_seq`` the next event of ``log`` would be stamped with, without
+        appending anything: what a caller needs to plan a chain of events with ``orch.model.preview``."""
+        with self._locked():
+            ev: dict[str, Any] = {"type": "log.added"}
+            self._stamp(ev, log)
+            return {k: ev[k] for k in ("seq", "prev", "at") + (() if log == WORKSPACE else ("ws_seq",))}
+
+    def raw_matches(self, needle: str) -> list[str]:
+        """The uids whose ``ticket.json`` or ``body.md`` contains ``needle`` (case-insensitive), read as bytes from the
+        files without replaying anything: **candidates only**. A caller verifies (loads) a ticket before it prints
+        anything from it."""
+        with self._locked():
+            self._scan_dirs()
+            want = needle.lower()
+            out = []
+            for uid in sorted(self._exists):
+                for name in ("ticket.json", "body.md"):
+                    raw = read_or_none(safe_join(self.root, f"tickets/{check_uid(uid)}/{name}"))
+                    if raw and want in raw.decode("utf-8", "ignore").lower():
+                        out.append(uid)
+                        break
+            return out
+
+    def peek_key(self) -> str:
+        """The key the next ``create_ticket`` would allocate (a dry run shows it; another writer may take it first)."""
+        with self._locked():
+            self._scan_dirs()
+            self._verified_keys()
+            return self._next_key()
+
     # ------------------------------------------------------------------ small helpers
 
     def _now(self) -> str:
@@ -394,7 +509,7 @@ class Store:
                 continue
             if _S_ISLNK(st.st_mode):
                 continue
-            sig = (st.st_size, st.st_ino)
+            sig = (st.st_size, st.st_ino, st.st_mtime_ns, st.st_ctime_ns)
             sizes[uid] = sig[0]
             old = self._hints.get(uid)
             if old is not None and old.sig == sig:
@@ -513,6 +628,7 @@ class Store:
             now=self._now(),
             expected_workspace_id=self.workspace_id,
             expected_genesis=self._pin,
+            verb_events=_verb_events(),
         )
         ws = self._state.workspace
         if ws_events and ws.genesis is None:
@@ -524,7 +640,7 @@ class Store:
             self._pin = self._pin or ws.genesis
         for uid in tickets:
             v, h = self._state.tickets.get(uid), self._hints.get(uid)
-            if v is not None and h is not None and h.key != v.key and h.sig != (0, 0):
+            if v is not None and h is not None and h.key != v.key and h.sig != (0, 0, 0, 0):
                 self._hint_mismatch = True  # a first line said another key than the verified ticket has
         self._ws_last_at = max((_epoch(e["at"]) for e in ws_events), default=0)
         lasts = [(e["ws_seq"], _epoch(e["at"]), u, e["seq"]) for u, evs in tickets.items() for e in evs[-1:]]
@@ -573,7 +689,7 @@ class Store:
         """Do the files still say what was read? Compared under the lock: size and inode of the workspace log and of
         every loaded ticket log. ``.state/applied`` plays no part (it is a record, not a signal)."""
         for info in self._logs.values():
-            if stat_sig(info.path) != ((info.seen_size, info.ino) if info.ino is not None else None):
+            if stat_sig(info.path) != info_sig(info):
                 return False
         return True
 
@@ -586,6 +702,11 @@ class Store:
             self._loaded |= need
             self._load()
             self._enforce_revocations()
+
+    def load(self, uids: Iterable[str]) -> None:
+        """Replay and check these tickets in one go (one at a time each load replays everything loaded again)."""
+        with self._locked():
+            self._ensure({u for u in uids if isinstance(u, str)})
 
     def load_all(self) -> None:
         """Replay and check every ticket log (cold cost: every event is verified)."""
@@ -608,14 +729,18 @@ class Store:
             return self.state.tickets.get(uid)  # at the current clock: claims, leases and grants lapse by it
 
     def _index_fresh(self) -> Index:
-        """The index, current: if it is not, every ticket is loaded and it is rebuilt."""
+        """The index, current: one that matches the logs' sizes is taken as it is (a hint, never a decision); if it is
+        not, every ticket is loaded and it is rebuilt."""
         with self._locked():
             ws = self._state.workspace if self._state else None
             if ws is not None and ws.genesis is not None and not self._index_ok:
-                self._ensure(set(self._exists))
-                assert self._state is not None
-                self._index.rebuild(self._state, self._logs, self.workspace_id, ws.genesis, self._sizes_now())
-                self._index_ok = True
+                if self._index.is_current(self._sizes_now(), self.workspace_id, ws.genesis):
+                    self._index_ok = True
+                else:
+                    self._ensure(set(self._exists))
+                    assert self._state is not None
+                    self._index.rebuild(self._state, self._logs, self.workspace_id, ws.genesis, self._sizes_now())
+                    self._index_ok = True
         return self._index
 
     def _maybe_index(self, state: State | None = None) -> None:
@@ -865,7 +990,7 @@ class Store:
             return out
         for uid, h in self._hints.items():
             hit = self._created_ok.get(uid)
-            if hit is None or hit[0] != h.ino:
+            if hit is None or hit[0] != h.sig:
                 hit = None
                 line = first_line(safe_join(self.root, f"tickets/{uid}/events.jsonl"))
                 try:
@@ -878,7 +1003,7 @@ class Store:
                         and isinstance(e.get("key"), str)
                         and self._verifier.verify_host(e, log=uid, wsk_pub=wsk, workspace_id=self.workspace_id)
                     ):
-                        hit = (h.ino, e["key"])
+                        hit = (h.sig, e["key"])
                 except (canon.HashError, KeyError, TypeError):
                     hit = None
                 if hit is None:
@@ -1165,10 +1290,10 @@ class Store:
         info = self._logs.get(log)
         path = self._path_of(log)
         wsi = self._logs[WORKSPACE]  # last look, right before the write: the logs this event rests on are unchanged
-        if stat_sig(wsi.path) != ((wsi.seen_size, wsi.ino) if wsi.ino is not None else None):
+        if stat_sig(wsi.path) != info_sig(wsi):
             self._needs_reload = True
             raise StoreError("chain.broken", f"{log}: the workspace log changed on disk while the store held the lock")
-        if stat_sig(path) != ((info.seen_size, info.ino) if info and info.ino is not None else None):
+        if stat_sig(path) != info_sig(info):
             self._needs_reload = True
             raise StoreError("chain.broken", f"{log}: the log changed on disk while the store held the lock")
         try:
@@ -1407,7 +1532,9 @@ class Store:
         info.seen_size = info.offset
         info.seq = ev["seq"]
         info.heads.append(canon.event_head(ev))
-        info.ino = (stat_sig(info.path) or (0, None))[1]
+        sig = stat_sig(info.path)
+        info.ino = sig[1] if sig else None
+        info.seen_times = (sig[2], sig[3]) if sig else (0, 0)
         if log != WORKSPACE:
             self._loaded.add(log)
 
@@ -1424,7 +1551,7 @@ class Store:
             self._exists.add(log)
             self._sizes[log] = self._logs[log].offset
             if ev["type"] == "ticket.created" and log not in self._hints:
-                self._hints[log] = _Hint((0, 0), 0, ev["key"], ev["at"])
+                self._hints[log] = _Hint((0, 0, 0, 0), 0, ev["key"], ev["at"])
                 self._key_uid[ev["key"]] = log
         typ = ev["type"]
         if typ == "workspace.created":

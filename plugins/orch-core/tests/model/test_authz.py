@@ -608,3 +608,18 @@ def test_a_genesis_must_be_seq_1_in_replay_and_in_admit():
     assert admit(empty, first_try, log=WORKSPACE).code in (Code.CHAIN_BROKEN, Code.GENESIS_INVALID)
     one = {**genesis, "seq": 1, "prev": None}
     assert not hasattr(admit(empty, {k: v for k, v in one.items() if k != "host_sig"}, log=WORKSPACE), "code")
+
+
+def test_grant_verbs_by_operation_can_only_narrow():
+    from orch.model.authz import check_actor_kind, verb_covers
+
+    table = {"task.done": frozenset({"task.done", "artifact.added"}), "log": frozenset({"log.added"})}
+    assert verb_covers("artifact.added", ["task.done"], table) and verb_covers("task.done", ["task.done"], table)
+    assert not verb_covers("log.added", ["task.done"], table)  # no operation of the grant emits it
+    assert not verb_covers("log.added", ["log.added"], table)  # an event type is not an operation name
+    assert not verb_covers("log.added", ["nope"], table) and not verb_covers("log.added", [], table)  # unknown: nothing
+    assert verb_covers("anything", "agent", table)  # "agent" is every agent operation ...
+    agent = {"kind": "agent", "id": "x", "session": "s_01J9ZP0000000000000000000S", "for": "p_x", "grant": "gr_x"}
+    for human_only in ("gate.approved", "verdict.given", "ticket.closed", "grant.issued", "question.answered"):
+        assert check_actor_kind({"type": human_only, "actor": agent}) is not None  # ... and never a person's action
+    assert verb_covers("log.added", ["log.added"], None)  # without a table (a model test) names are event types

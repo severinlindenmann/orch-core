@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "wait.timeout",
+    "message": "no decision on DEMO-0001 within 1 s",
+    "hint": "orch wait",
+    "fix": {
+      "argv": [
+        "orch",
+        "wait"
+      ]
+    },
+    "retryable": true
+  }
+}
+# exit 7

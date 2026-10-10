@@ -104,8 +104,8 @@ def ac_evidence(ws: WsCore, t: TCore) -> dict[str, list[str]]:
         if tk is None or tk.state != "done" or tk.receipt is None or tk.receipt["exit"] != 0:
             continue
         repo = tk.receipt["repo"]
-        if repo is not None and tk.receipt["commit"] != source.repo_sha(t, repo):
-            continue
+        if repo is not None and (tk.receipt["commit"] is None or tk.receipt["commit"] != source.repo_sha(t, repo)):
+            continue  # no commit (a dirty tree) or not the code the host observed: not evidence
         for ac in task["proves"]:
             if ac in out:
                 out[ac].append(f"task:{task['id']}")
@@ -122,6 +122,8 @@ def artifact_event(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
     unattended = a["kind"] == "agent" and a.get("unattended") is True
     if e["kind"] == "feedback" and a["kind"] != "person":
         return Refusal(Code.ARTIFACT_KIND, "feedback only from a person")
+    if e["kind"] == "receipt" and (typ == "artifact.replaced" or "task" not in e):
+        return Refusal(Code.ARTIFACT_KIND, "a receipt is made by task done --run (it names its task), never replaced")
     is_file = "sha256" in e
     if is_file and e["kind"] not in ARTIFACT_KINDS:
         return Refusal(Code.ARTIFACT_KIND, f"unknown core kind {e['kind']!r}")

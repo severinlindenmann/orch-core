@@ -1,0 +1,1 @@
+err observe.unavailable a linked repository cannot be observed · retry:false · next: orch show names the repository; fix settings.repos or links.branches · fix: orch show

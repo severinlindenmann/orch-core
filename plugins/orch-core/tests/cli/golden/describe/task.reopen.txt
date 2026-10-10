@@ -8,11 +8,13 @@ args:
   --reason TEXT  why
   --dry-run  say what would happen, append nothing
 errors:
+  ambiguous_ref (exit 2): name the ticket REF, for example DEMO-0043 | fix: orch status
   not_found (exit 2): orch list
   grant.expired (exit 3): ask the person for a new grant | fix: orch status
   grant.required (exit 3): ask the person to run orch grant, then set ORCH_GRANT | fix: orch status
   transition.refused (exit 3): orch show --section current_state | fix: orch show
   claim.required (exit 4): orch claim
+  lease.held (exit 4): pick another task: orch task next | fix: orch task next
   lease.required (exit 4): orch task start TASK | fix: orch describe task.start
   lock.busy (exit 4 retry): retry in a moment | fix: orch status
 out: ok {key} task.reopened {task} seq={seq} / next: {next}

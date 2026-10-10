@@ -40,6 +40,8 @@ class Hooks:
     normalise_ref: Callable[[str], str] = field(default=lambda ref: ref)
     #: Raises ``grant.expired`` when the (well-formed) grant is expired, revoked or out of scope.
     grant_valid: Callable[[Context], None] = field(default=lambda ctx: None)
+    #: The grant's ``verbs``: ``"agent"`` (every agent operation) or the list of operation names it allows.
+    grant_verbs: Callable[[Context], Any] = field(default=lambda ctx: "agent")
 
 
 def _secrets(grant: str | None) -> list[str]:
@@ -95,6 +97,9 @@ def _check_who(op: Operation, ctx: Context, args: dict[str, Any], hooks: Hooks) 
                 raise OrchError("grant.required", f"{op.cli} {a.flag} needs a grant")
     if ctx.grant:
         hooks.grant_valid(ctx)
+        verbs = hooks.grant_verbs(ctx)
+        if verbs != "agent" and op.name not in verbs:  # F1 10.1: verbs are operation names, matched exactly
+            raise OrchError("grant.verb", f"the grant does not cover {op.cli}")
 
 
 def _call(op: Operation, ctx: Context, args: dict[str, Any]) -> Result:
@@ -136,6 +141,13 @@ def run(parsed: parser.Parsed, ctx: Context, records: MemoryRecords, hooks: Hook
     _check_input(op, args, secrets)
     _check_who(op, ctx, args, hooks)
     session = ctx.session
+    if session:  # a file argument is its content for the stop rule and the dedup key, not its name
+        from orch.ops.runtime import keyed
+
+        args = keyed(ctx, args)
+        res_args = parsed.args
+    else:
+        res_args = args
     if session and records.stopped(session, op.name, _normalised(op, args, hooks), ctx.now()):
         raise OrchError("stop")
     caching = bool(session) and op.is_write and not ctx.dry_run
@@ -147,7 +159,7 @@ def run(parsed: parser.Parsed, ctx: Context, records: MemoryRecords, hooks: Hook
     base = _dedup_key(op, ctx, args, hooks, with_head=False) if caching else ""
     idem = records.attempt(session, base, ctx.now()) if caching else None  # type: ignore[arg-type]
     try:
-        res = _call(op, dataclasses.replace(ctx, idem=idem) if caching else ctx, args)
+        res = _call(op, dataclasses.replace(ctx, idem=idem) if caching else ctx, res_args)
     except OrchError as e:
         if e.code not in GLOBAL_ERRORS and not any(d["code"] == e.code for d in op.errors):
             raise OrchError("internal", f"{op.cli} returned undeclared error {e.code}") from e
@@ -190,8 +202,14 @@ def main(
     env = os.environ if env is None else env
     out = sys.stdout if stdout is None else stdout
     err = sys.stderr if stderr is None else stderr
-    records = records if records is not None else _DEFAULT_RECORDS
-    hooks = hooks or Hooks()
+    from orch.ops.runtime import Workspace  # the workspace is found and opened only when something asks for it
+
+    render.new_nonce()
+    workspace = Workspace(env, now)
+    if hooks is None or records is None:
+        from orch.cli.store_hooks import workspace_hooks, workspace_records
+    hooks = hooks or workspace_hooks(workspace)
+    records = records if records is not None else workspace_records(workspace, _DEFAULT_RECORDS)
 
     if args == ["--version"]:
         out.write(VERSION_LINE + "\n")
@@ -214,6 +232,7 @@ def main(
 
     op: Operation | None = None
     parsed: parser.Parsed | None = None
+    ctx: Context | None = None
     try:
         for t in args:
             if _GRANT.search(t) or any(len(s) >= 8 and s in t for s in secrets):
@@ -239,6 +258,7 @@ def main(
             dry_run=parsed.dry_run,
             now=now,
             env={k: v for k, v in env.items() if k != "ORCH_GRANT"},
+            workspace=workspace,
         )
         res = run(parsed, ctx, records, hooks)
         text = render.dumps(render.result_envelope(res)) if as_json else render.result_text(op, res)
@@ -249,7 +269,9 @@ def main(
     except OrchError as e:
         session = env.get("ORCH_SESSION") or None
         if op is not None and parsed is not None and session and _is_refusal(e):
-            norm = _normalised(op, parsed.args, hooks)
+            from orch.ops.runtime import keyed
+
+            norm = _normalised(op, keyed(ctx, parsed.args) if ctx is not None else parsed.args, hooks)
             try:
                 if records.refused(session, op.name, norm, e.code, now()) >= STOP_AFTER:
                     e = OrchError("stop")

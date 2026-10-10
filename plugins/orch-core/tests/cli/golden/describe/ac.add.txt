@@ -8,6 +8,7 @@ args:
   --ref REF  ticket REF (flag)
   --dry-run  say what would happen, append nothing
 errors:
+  ambiguous_ref (exit 2): name the ticket REF, for example DEMO-0043 | fix: orch status
   not_found (exit 2): orch list
   grant.expired (exit 3): ask the person for a new grant | fix: orch status
   grant.required (exit 3): ask the person to run orch grant, then set ORCH_GRANT | fix: orch status

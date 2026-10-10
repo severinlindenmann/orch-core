@@ -40,11 +40,18 @@
           "new_events": {
             "type": "integer",
             "minimum": 0
+          },
+          "state_dir": {
+            "type": "string"
+          },
+          "pin": {
+            "type": "string"
           }
         },
         "required": [
           "person",
-          "cursor"
+          "cursor",
+          "state_dir"
         ],
         "additionalProperties": false
       }

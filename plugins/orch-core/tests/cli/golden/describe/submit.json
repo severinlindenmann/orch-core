@@ -130,6 +130,16 @@
           "describe",
           "artifact.add"
         ]
+      },
+      {
+        "code": "observe.unavailable",
+        "exit": 5,
+        "retryable": false,
+        "hint": "orch show names the repository; fix settings.repos or links.branches",
+        "fix": [
+          "orch",
+          "show"
+        ]
       }
     ]
   },

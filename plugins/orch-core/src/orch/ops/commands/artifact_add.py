@@ -1,11 +1,23 @@
 """orch artifact add: store a file as evidence"""
 
+from typing import Any
+
+from orch.ops import plans
 from orch.ops._dsl import INT, REF_PATTERN, STR, E, S, err, obj, operation
+from orch.ops.base import Context, Result
+
+
+def handle(ctx: Context, args: dict[str, Any]) -> Result:
+    return plans.run(ctx, "artifact.add", args, plans.artifact_add)
+
 
 OP = operation(
     "artifact.add",
     "Edit",
-    "Store a file; works without a grant (unattended, never evidence). --ac and --task need a grant.",
+    (
+        "Store a file; works without a grant (unattended, never evidence). --ac and --task need a grant. "
+        "A receipt is only made by task done --run."
+    ),
     who="unattended",
     props={
         "path": S("file to store", **{"x-metavar": "PATH"}),
@@ -19,7 +31,6 @@ OP = operation(
             "dataset",
             "build",
             "diagram",
-            "receipt",
             "other",
             default="other",
         ),
@@ -50,4 +61,5 @@ OP = operation(
     text="ok {key} artifact.added {name} seq={seq}\nnext: {next}",
     data=obj({"name": STR, "sha256": STR, "bytes": INT}),
     errors=(err("quota.unattended"), err("transition.refused"), err("not_found"), err("ambiguous_ref")),
+    handler=handle,
 )

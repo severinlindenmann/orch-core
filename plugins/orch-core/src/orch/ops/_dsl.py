@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from orch.ops.base import Operation, cli_words
+from orch.ops.base import Handler, Operation, cli_words
 from orch.ops.errors import ERRORS, GLOBAL_ERRORS
 from orch.ops.preconditions import PRECONDITIONS
 
@@ -123,6 +123,7 @@ def operation(
     emits: tuple[str, ...] = (),
     errors: tuple[dict[str, Any], ...] = (),
     output_ref: str | None = None,
+    handler: Handler | None = None,
 ) -> Operation:
     """Build, complete and validate one declaration. ``errors`` lists the op's own codes; the ones implied by
     ``who`` (human_only, grant.required, ...) and by writing (lock.busy) are added, with catalog hint and fix."""
@@ -134,6 +135,9 @@ def operation(
     declared = list(errors)
     present = {e["code"] for e in declared}
     extra = list(_IMPLIED.get(who, ()))
+    props_ = props or {}
+    if ("ref" in props_ and "ref" not in required) or "task" in props_ or name == "apply":
+        extra.append("ambiguous_ref")  # REF left out means "my claim"; none or several is ambiguous
     if who != "read":
         extra.append("lock.busy")
     declared += [err(c) for c in extra if c not in present]
@@ -170,4 +174,8 @@ def operation(
         "errors": entries,
     }
     assert cli_words(name)
-    return Operation(declaration=decl, group=group, handler=_unimplemented(name))
+    if handler is None:
+        return Operation(declaration=decl, group=group, handler=_unimplemented(name))
+    from orch.ops.runtime import guarded  # lazy: declaring an operation must not import the store
+
+    return Operation(declaration=decl, group=group, handler=guarded(handler, name, [e["code"] for e in entries]))

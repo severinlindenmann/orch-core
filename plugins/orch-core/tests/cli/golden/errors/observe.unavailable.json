@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "code": "observe.unavailable",
+    "message": "a linked repository cannot be observed",
+    "hint": "orch show names the repository; fix settings.repos or links.branches",
+    "fix": {
+      "argv": [
+        "orch",
+        "show"
+      ]
+    },
+    "retryable": false
+  }
+}

@@ -1,1 +1,96 @@
-"""Person key, device certificates, recovery code, session grants, member list."""
+"""Person key, device certificates, recovery code, session grants, genesis and member checks, the signature verifier.
+
+Specs: orch-relay ``docs/protocol-v2.md`` §6 (certificates, revocation), §7.1 (delegation); ticket-format §5.3, §5.4.2,
+§5.11 (genesis), §10.1 (grants, D60); core §2. Pure functions over values; keys live in ``custody/``.
+"""
+
+from .certs import (
+    REVOKE_REASONS,
+    SCOPE_ORDER,
+    SKEW_MS,
+    check_cert,
+    check_delegation,
+    check_revocation,
+    delegation_binds,
+    device_ref,
+    make_delegation,
+    make_device_cert,
+    make_revocation,
+    open_device_label,
+    person_ref,
+    person_scope_ok,
+    scopes_ok,
+    seal_device_label,
+    sign_object,
+    verify_cert,
+    verify_object,
+    verify_revocation,
+)
+from .errors import Refused
+from .grants import (
+    GrantToken,
+    check_grant_issued,
+    check_grant_revoker,
+    format_grant,
+    new_grant,
+    new_ulid,
+    parse_grant,
+    parse_timestamp,
+    secret_matches,
+)
+from .members import check_device_added, check_device_revoked, check_genesis, check_member_added
+from .recovery import (
+    RecoveryCodeError,
+    check_recovery_code,
+    code_from_entropy,
+    derive_person_key,
+    generate_recovery_code,
+    normalise_code,
+)
+from .signing import sign_person_event
+from .verifier import CryptoVerifier
+
+__all__ = [
+    "REVOKE_REASONS",
+    "SCOPE_ORDER",
+    "SKEW_MS",
+    "CryptoVerifier",
+    "GrantToken",
+    "RecoveryCodeError",
+    "Refused",
+    "check_cert",
+    "check_delegation",
+    "check_device_added",
+    "check_device_revoked",
+    "check_genesis",
+    "check_grant_issued",
+    "check_grant_revoker",
+    "check_member_added",
+    "check_recovery_code",
+    "check_revocation",
+    "code_from_entropy",
+    "delegation_binds",
+    "derive_person_key",
+    "device_ref",
+    "format_grant",
+    "generate_recovery_code",
+    "make_delegation",
+    "make_device_cert",
+    "make_revocation",
+    "new_grant",
+    "new_ulid",
+    "normalise_code",
+    "open_device_label",
+    "parse_grant",
+    "parse_timestamp",
+    "person_ref",
+    "person_scope_ok",
+    "scopes_ok",
+    "seal_device_label",
+    "secret_matches",
+    "sign_object",
+    "sign_person_event",
+    "verify_cert",
+    "verify_object",
+    "verify_revocation",
+]

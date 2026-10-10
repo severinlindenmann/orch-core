@@ -235,3 +235,30 @@ def test_signing_bytes_do_not_replay():
     # but the payload, actor and gate_gen are
     for k, v in (("gate_gen", 1), ("auth", "webauthn"), ("hash", "sha256:" + "00" * 32), ("roster_v", 2)):
         assert canon.person_signing_bytes(C["workspace_id"], C["log"], {**e, k: v}) != a
+
+
+# --- repo identity --------------------------------------------------------------------------------------------
+
+R = load("repo_identity.json")
+
+
+@pytest.mark.parametrize("v", R["ok"])
+def test_repo_identity_ok(v):
+    assert canon.check_repo_identity(v) == v
+
+
+@pytest.mark.parametrize("v", R["refused"], ids=range(len(R["refused"])))
+def test_repo_identity_refused(v):
+    with pytest.raises(canon.HashError):
+        canon.check_repo_identity(v)
+
+
+def test_same_repo_identity_ignores_ascii_case_only():
+    for a, b in R["same"]:
+        assert canon.same_repo_identity(a, b)
+    assert not canon.same_repo_identity("https://github.com/a/x", "https://github.com/a/y")
+    # the hashed value keeps the raw form: two case variants hash differently and the source list refuses both
+    g = oracle.gate_inputs()["verify"]
+    g["source_sha"] = [dict(g["source_sha"][0], repo=a) for a in R["same"][0]]
+    with pytest.raises(canon.HashError):
+        canon.gate_hash(g)

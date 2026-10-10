@@ -55,6 +55,7 @@ __all__ = [
     "artifact_digest",
     "canonical_policy",
     "check_chain",
+    "check_repo_identity",
     "cj_checked",
     "check_hash_v",
     "event_head",
@@ -71,6 +72,7 @@ __all__ = [
     "policy_hash",
     "question_hash",
     "question_id",
+    "same_repo_identity",
     "section_hash",
     "signed_context",
     "value_hash",
@@ -162,7 +164,10 @@ _QUESTION = re.compile(r"Q[1-9][0-9]*")
 _TOKEN = re.compile(r"[a-z][a-z0-9_]*")
 _PERSON = re.compile(r"p_[0-9a-f]{32}")
 _COMMIT = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
-_HTTPS_IDENTITY = re.compile(r"https://(?P<host>[A-Za-z0-9.-]+)(?::(?P<port>[0-9]{1,5}))?/(?P<path>[A-Za-z0-9._~/-]+)")
+_HOST_LABEL = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?")
+_PORT = re.compile(r"[1-9][0-9]{0,4}")
+_PATH_SEGMENT = re.compile(r"[A-Za-z0-9._~-]+")
+_OCTET = re.compile(r"0|[1-9][0-9]{0,2}")
 _REPO_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
 
 
@@ -538,18 +543,44 @@ def _check_receipts(receipts: object, gate: str) -> None:
         _int(r["exit"], "receipt exit")
 
 
-def _repo_identity(value: object) -> str:
-    """``local:<repo name>`` or canonical ``https://host[:port]/path`` (§5.7): no userinfo, lower-case host, no port
-    443, no trailing ``/`` or ``.git``, no query or fragment."""
-    if type(value) is not str:
-        raise HashError("repo identity must be a string")
+def check_repo_identity(value: object) -> str:
+    """Return ``value`` if it is a canonical repo identity (§5.7 "Repo identity"), else raise :class:`HashError`.
+
+    Either ``local:<repo name>`` or ``https://host[:port]/path`` where: host labels are
+    ``[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?`` joined by single dots (at most 253 characters, no trailing dot, ``xn--``
+    allowed, no Unicode or IPv6; an all-numeric last label only as a plain dotted quad of octets without leading
+    zeros); port ``[1-9][0-9]{0,4}`` up to 65535 and never 443; path segments ``[A-Za-z0-9._~-]+`` joined by single
+    slashes, none empty, ``.`` or ``..``, no trailing slash, no ``.git`` suffix in any case. Everything else
+    (userinfo, ``%``, ``?``, ``#``, whitespace, non-ASCII) is refused, never converted.
+    """
+    if type(value) is not str or not value.isascii():
+        raise HashError("repo identity must be an ASCII string")
     if value.startswith("local:"):
         _match(_REPO_NAME, value[6:], "repo identity")
         return value
-    m = _HTTPS_IDENTITY.fullmatch(value)
-    if not m or m["host"] != m["host"].lower() or m["port"] == "443" or value.endswith(("/", ".git")):
-        raise HashError(f"repo identity is not canonical: {value[:100]!r}")
+    bad = HashError(f"repo identity is not canonical: {value[:100]!r}")
+    if not value.startswith("https://"):
+        raise bad
+    authority, slash, path = value[8:].partition("/")
+    if not slash:
+        raise bad
+    host, colon, port = authority.partition(":")
+    if colon and (not _PORT.fullmatch(port) or int(port) > 65535 or port == "443"):
+        raise bad
+    labels = host.split(".")
+    if len(host) > 253 or not all(_HOST_LABEL.fullmatch(x) for x in labels):
+        raise bad
+    if labels[-1].isdigit() and not (len(labels) == 4 and all(_OCTET.fullmatch(x) and int(x) < 256 for x in labels)):
+        raise bad
+    segments = path.split("/")
+    if not all(_PATH_SEGMENT.fullmatch(x) and x not in (".", "..") for x in segments) or path.lower().endswith(".git"):
+        raise bad
     return value
+
+
+def same_repo_identity(a: str, b: str) -> bool:
+    """Whether two canonical identities name one repo: equal ignoring ASCII case (§5.7). Hashes keep the raw form."""
+    return check_repo_identity(a).lower() == check_repo_identity(b).lower()
 
 
 def _check_source_sha(source: object, gate: str) -> None:
@@ -561,12 +592,14 @@ def _check_source_sha(source: object, gate: str) -> None:
     repos = []
     for s in items:
         _obj(s, ("repo", "ref", "sha"), "source entry")
-        repos.append(_repo_identity(s["repo"]))
+        repos.append(check_repo_identity(s["repo"]))
         ref = _text(s["ref"], "source ref", one_line=True)
         if not ref.startswith("refs/heads/") or ref == "refs/heads/":
             raise HashError("source ref must be refs/heads/<branch>")
         _match(_COMMIT, s["sha"], "source sha")
     _strictly_sorted(repos, "source_sha repos")
+    if len({r.lower() for r in repos}) != len(repos):
+        raise HashError("source_sha repos name one identity twice (compared ignoring ASCII case)")
 
 
 def _check_prior(prior: object, gate: str) -> None:

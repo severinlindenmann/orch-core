@@ -390,7 +390,7 @@ def test_external_edit_voids_is_what_replay_will_demand(env):
     new2 = {"hash": canon.section_hash("outside 2"), "refs": []}
     st = w.state()
     assert external_edit_voids(st, uid, {"context": new2}) == ["requirements"]
-    assert external_edit_voids(st, uid, {"findings": None}) == []
+    assert external_edit_voids(st, uid, {"findings": None}).code == Code.BODY_UNKNOWN_SECTION
     assert external_edit_voids(st, "01J9ZK4Q7M3R8T2V6X0B5N1C9D", {"context": new2}).code == Code.TICKET_UNKNOWN
     got = external_edit_voids(st, uid, {"context": new2})
     w.tev(uid, "edit.external", w.HOST, sections={"context": new2}, voided_gates=got, normalised=False)

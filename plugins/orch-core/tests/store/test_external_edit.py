@@ -7,7 +7,7 @@ import json
 import pytest
 
 from orch import canon
-from orch.store import render_ticket
+from orch.store.render import render_ticket
 from tests.store.helpers import Env
 
 
@@ -224,7 +224,7 @@ def test_keys_jsonl_is_repaired_and_never_makes_a_key_reusable(ready):
     (ev,) = s.scan()
     assert ev["type"] == "projection.repaired" and ev["path"] == "keys.jsonl" and ev["cause"] == "keys_mismatch"
     assert (env.root / "keys.jsonl").read_bytes().count(b"\n") == 1
-    assert s.next_key() == "DEMO-0002"
+    assert next_key(s) == "DEMO-0002"
 
 
 def test_config_json_follows_the_events_but_keeps_its_unsigned_name(ready):
@@ -248,3 +248,8 @@ def test_external_edit_gates_survive_a_fresh_replay(ready):
     fresh = replayed(env)  # replay recomputes voided_gates itself and refuses a mismatch
     assert not fresh.chain_errors and not fresh.workspace.invalid
     assert not fresh.tickets[uid].gates["requirements"].approved and not fresh.tickets[uid].frozen
+
+
+def next_key(s):
+    s.refresh()
+    return s._next_key()

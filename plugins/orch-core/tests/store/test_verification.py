@@ -23,16 +23,18 @@ SRC = Path(__file__).resolve().parents[2] / "src" / "orch"
 def test_no_verification_bypass_is_reachable_from_production_code():
     public = inspect.signature(Store.open).parameters
     assert "verifier" not in public and "validate" not in public and "skip_verify" not in public
-    assert "_verifier" in public and not any(n.startswith("_") is False and "verif" in n for n in public)
+    assert not any("verif" in n for n in public)  # no verifier argument at all: the seam is a module attribute
+    from orch.store import store as store_module
+
+    assert callable(store_module._default_verifier)
     for p in (SRC / "store").rglob("*.py"):
         text = p.read_text()
         assert "FakeVerifier" not in text and "model.testing" not in text, p
         assert "validate=False" not in text, p
         assert not re.search(r"verifier\s*=\s*None", text), p
-    for p in SRC.rglob("*.py"):  # nothing outside the store passes the seam either
-        if "store" in p.parts and p.name == "store.py":
-            continue
-        assert "_verifier=" not in p.read_text(), p
+    for p in SRC.rglob("*.py"):  # nothing in src/ sets the seam
+        text = p.read_text()
+        assert text.count("_default_verifier") == (2 if p.name == "store.py" and "store" in p.parts else 0), p
 
 
 def test_every_event_is_checked_by_the_real_crypto_verifier(env):
@@ -145,6 +147,7 @@ def test_the_index_is_never_consulted_for_authorization(env):
     token = f"{env.grant_id}.{crypto.b64u(GRANT_SECRET)}"
     hooks = hooks_for(s)
     hooks.grant_valid(Context(grant=token))
+    s.index.dump()  # make sure there is one
     db = sqlite3.connect(env.root / ".state" / "index.sqlite")
     db.execute("UPDATE members SET role = 'viewer'")
     db.commit()

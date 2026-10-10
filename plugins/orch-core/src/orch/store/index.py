@@ -22,7 +22,7 @@ __all__ = ["Index"]
 VERSION = "1"
 _SCHEMA = """
 CREATE TABLE meta(k TEXT PRIMARY KEY, v TEXT NOT NULL);
-CREATE TABLE logs(log TEXT PRIMARY KEY, seq INTEGER NOT NULL, head TEXT NOT NULL);
+CREATE TABLE logs(log TEXT PRIMARY KEY, seq INTEGER NOT NULL, head TEXT NOT NULL, size INTEGER NOT NULL);
 CREATE TABLE tickets(uid TEXT PRIMARY KEY, key TEXT NOT NULL UNIQUE, title TEXT NOT NULL, type TEXT NOT NULL,
   status TEXT NOT NULL, owner TEXT NOT NULL, priority TEXT NOT NULL, size TEXT, due TEXT, parent TEXT,
   waiting INTEGER NOT NULL, frozen INTEGER NOT NULL, seq INTEGER NOT NULL);
@@ -84,7 +84,9 @@ class Index:
                 Path(str(self.path) + suffix).unlink()
 
     # -- freshness
-    def is_current(self, logs: Mapping[str, LogInfo], workspace_id: str, genesis: str | None) -> bool:
+    def is_current(self, sizes: Mapping[str, int], workspace_id: str, genesis: str | None) -> bool:
+        """The index describes these logs: same version, workspace and genesis, and every log has the size the index
+        recorded (a log that grew, shrank or appeared without the index being told is stale)."""
         if not self.path.exists():
             return False
         try:
@@ -92,9 +94,8 @@ class Index:
             meta = dict(db.execute("SELECT k, v FROM meta"))
             if meta != {"version": VERSION, "workspace_id": workspace_id, "genesis": genesis or ""}:
                 return False
-            have = {r[0]: (r[1], r[2]) for r in db.execute("SELECT log, seq, head FROM logs")}
-            want = {n: (i.seq, i.head) for n, i in logs.items() if i.seq}
-            if have != want:
+            have = {r[0]: r[1] for r in db.execute("SELECT log, size FROM logs")}
+            if have != {n: sz for n, sz in sizes.items() if sz}:
                 return False
             self._rows = {}
             return True
@@ -102,7 +103,9 @@ class Index:
             return False
 
     # -- writing
-    def rebuild(self, state: Any, logs: Mapping[str, LogInfo], workspace_id: str, genesis: str | None) -> None:
+    def rebuild(
+        self, state: Any, logs: Mapping[str, LogInfo], workspace_id: str, genesis: str | None, sizes: Mapping[str, int]
+    ) -> None:
         self.drop()
         db = self._connect()
         db.executescript("BEGIN;" + _SCHEMA)
@@ -111,16 +114,23 @@ class Index:
             [("version", VERSION), ("workspace_id", workspace_id), ("genesis", genesis or "")],
         )
         self._rows = {}
-        self._write(db, state, logs, set(state.tickets), full=True)
+        self._write(db, state, logs, set(state.tickets), full=True, sizes=sizes)
         db.execute("COMMIT")
 
-    def update(self, state: Any, logs: Mapping[str, LogInfo], touched_logs: Iterable[str], changed: set[str]) -> None:
+    def update(
+        self,
+        state: Any,
+        logs: Mapping[str, LogInfo],
+        touched_logs: Iterable[str],
+        changed: set[str],
+        sizes: Mapping[str, int],
+    ) -> None:
         """After an append: refresh the rows of the tickets in ``changed`` (views that are not the old state's), the
         log heads of ``touched_logs`` and, when the workspace log moved, the members."""
         db = self._connect()
         db.execute("BEGIN")
         try:
-            self._write(db, state, logs, changed, full=False, touched=set(touched_logs))
+            self._write(db, state, logs, changed, full=False, touched=set(touched_logs), sizes=sizes)
             db.execute("COMMIT")
         except BaseException:
             db.execute("ROLLBACK")
@@ -135,11 +145,12 @@ class Index:
         *,
         full: bool,
         touched: set[str] | None = None,
+        sizes: Mapping[str, int],
     ) -> None:
         for name in sorted(touched if touched is not None else logs):
             i = logs.get(name)
             if i is not None and i.seq:
-                db.execute("INSERT OR REPLACE INTO logs VALUES(?,?,?)", (name, i.seq, i.head))
+                db.execute("INSERT OR REPLACE INTO logs VALUES(?,?,?,?)", (name, i.seq, i.head, sizes[name]))
         if full or "workspace" in (touched or ()):
             db.execute("DELETE FROM members")
             db.executemany(

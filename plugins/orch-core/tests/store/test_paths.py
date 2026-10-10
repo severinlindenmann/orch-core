@@ -113,7 +113,7 @@ def test_a_symlinked_log_is_refused(env, tmp_path):
     log.unlink()
     os.symlink(elsewhere, log)
     s = env.open()
-    assert s.chain_errors() and "symlink" in s.chain_errors()[0][3]
+    assert uid in s.diverged  # a symlinked log is not a log: the ticket's checkpoint finds it missing
     with pytest.raises(StoreError):
         env.log(uid)
     assert elsewhere.read_bytes() == data

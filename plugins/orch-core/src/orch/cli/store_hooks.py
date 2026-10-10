@@ -28,18 +28,20 @@ def records_for(store: Store) -> FileRecords:
 
 def hooks_for(store: Store) -> Hooks:
     def head_seq(op: Operation, args: dict[str, Any]) -> int | None:
-        store.refresh()
         ref = args.get("ref")
-        uid = store.uid_of(ref) if isinstance(ref, str) else None
-        return store.head_seq(uid) if uid else None
+        if not isinstance(ref, str):
+            return None
+        n = store.head_seq(ref)  # takes the lock and checks the ticket (not a hint)
+        return n or None
 
     def grant_valid(ctx: Context) -> None:
-        store.refresh()  # a grant revoked by another process counts now
+        """Existence, secret, expiry, revocation and the person's membership. ``config.json`` (``agents.run_for``) is
+        never read: it is not signed, so it decides nothing (a viewer may not run agents, whatever the file says)."""
         try:
             token = parse_grant(ctx.grant)
         except Refused:
             raise OrchError("grant.required", "ORCH_GRANT is malformed") from None
-        want = store.grant_secret_hash(token.grant_id)
+        want = store.grant_secret_hash(token.grant_id)  # under the lock, re-read from the logs
         view = store.state.workspace.grants.get(token.grant_id)
         if want is None or view is None or not secret_matches(token.secret, want):
             raise OrchError("grant.required", "ORCH_GRANT is not a grant of this workspace")

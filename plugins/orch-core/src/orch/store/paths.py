@@ -13,7 +13,7 @@ from pathlib import Path
 
 from .errors import StoreError
 
-__all__ = ["ARTIFACT", "ULID", "check_artifact", "check_uid", "safe_join", "target_ok"]
+__all__ = ["ARTIFACT", "ULID", "check_artifact", "check_state_dirs", "check_uid", "safe_join", "target_ok"]
 
 ULID = re.compile(r"[0-7][0-9A-HJKMNP-TV-Z]{25}")
 ARTIFACT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
@@ -56,3 +56,18 @@ def safe_join(root: Path, rel: str) -> Path:
     if os.path.commonpath([base, os.path.realpath(cur)]) != base:
         raise StoreError("validation.path", f"{rel!r} escapes the workspace")
     return root / rel
+
+
+_DIRS = ("events", "tickets", ".state", ".state/pending", ".state/body", ".state/checkpoints", ".state/intents",
+         ".state/sessions", ".state/abandoned", ".state/rejected")  # fmt: skip
+
+
+def check_state_dirs(root: Path) -> None:
+    """The directories the store writes under must be real directories of the workspace: a symlink (``.state`` pointing
+    elsewhere, say) would send writes outside it (``validation.path``)."""
+    for rel in _DIRS:
+        p = root / rel
+        if os.path.islink(p):
+            raise StoreError("validation.path", f"{rel} is a symlink")
+        if os.path.lexists(p) and not p.is_dir():
+            raise StoreError("validation.path", f"{rel} is not a directory")

@@ -38,7 +38,7 @@ import re
 import shutil
 import time
 from collections.abc import Callable, Iterator, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -60,11 +60,11 @@ from orch.model import (
 from . import render
 from .checkpoints import WORKSPACE_EVERY, Checkpoints, Divergence, find_divergence
 from .errors import StoreError
-from .fsio import append_durable, fsync_dir, read_or_none, write_atomic
+from .fsio import append_durable, fsync_dir, read_or_none, replace, write_atomic
 from .index import Index
 from .lock import FileLock
-from .logs import LogInfo, file_size, read_new_lines
-from .paths import check_artifact, check_uid, safe_join, target_ok
+from .logs import LogInfo, first_line, last_line, read_new_lines, stat_sig
+from .paths import check_artifact, check_state_dirs, check_uid, safe_join, target_ok
 from .pins import HostPins
 
 __all__ = ["Appended", "BackendSigner", "HostSigner", "Report", "Store"]
@@ -132,13 +132,6 @@ class _Write:
     body_copy: str | None = None  # uid whose .state/body copy follows this body.md
 
 
-@dataclass
-class _Plan:
-    """An external change the store found in one ticket's files and the host events that answer it."""
-
-    events: list[tuple[dict[str, Any], dict[str, Any]]] = field(default_factory=list)  # (event, append kwargs)
-
-
 def _epoch(stamp: str) -> int:
     return calendar.timegm(time.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ"))
 
@@ -151,8 +144,31 @@ def _sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+_default_verifier: Callable[[], Verifier] = CryptoVerifier  # test seam (a module attribute, never set from src/)
+LOCK_TIMEOUT = 10.0  # seconds a call waits for the workspace lock before it fails with ``store.busy``
+_FUTURE = 86_400  # a last-line `at` this far ahead of the clock is not believed (see Store._scan_dirs)
+
+
+@dataclass
+class _Hint:
+    """What the store knows about a ticket log without reading it: its first and last line, **unverified**. Used to find
+    the ticket of a key, to keep the merged order (`at`, `ws_seq`) and keys.jsonl right; never for a decision."""
+
+    sig: tuple[int, int]  # (size, inode) when read
+    ino: int
+    key: str | None
+    created_at: str | None
+    pos: tuple[int, int, str, int] | None  # position of the last line (ws_seq, at, uid, seq)
+
+
 class Store:
-    """A workspace directory. Use :meth:`open`; ``append`` is the only way to add an event."""
+    """A workspace directory. Use :meth:`open`; ``append`` is the only way to add an event.
+
+    **Lazy replay** (ticket-format §2.1): the workspace log is always replayed and verified in full; a ticket log is
+    replayed and verified when a call touches it (``ticket``, ``append`` and the helpers that need a ticket), together
+    with the tickets it refers to. ``state`` is the state of what is loaded; ``load_all`` (and ``scan``,
+    ``rebuild_index``) load everything. Everything that decides something is checked under the lock, against the
+    files, never against ``.state`` records."""
 
     def __init__(
         self,
@@ -162,40 +178,50 @@ class Store:
         expected_genesis: str | None,
         host: HostSigner | None,
         host_state_dir: Path | None,
-        _verifier: Verifier,
+        verifier: Verifier,
         clock: Callable[[], float],
         workspace_name: str | None,
+        lock_timeout: float | None,
     ) -> None:
         self.root = root
         self.workspace_id = workspace_id
         self._expected_genesis = expected_genesis
         self._host = host
-        self._verifier = _verifier
+        self._verifier = verifier
         self._clock = clock
         self._name = workspace_name
         self.state_dir = root / ".state"
-        self._pins = HostPins(host_state_dir if host_state_dir is not None else self.state_dir, workspace_id)
-        self._external_pins = host_state_dir is not None
-        self._lock = FileLock(self.state_dir / "lock")
+        self._pins = HostPins(host_state_dir, workspace_id) if host_state_dir is not None else None
+        self._lock = FileLock(self.state_dir / "lock", timeout=lock_timeout)
         self._checkpoints = Checkpoints(self.state_dir / "checkpoints", workspace_id)
         self._index = Index(self.state_dir / "index.sqlite")
         self.reports: list[Report] = []
         self._logs: dict[str, LogInfo] = {}
+        self._loaded: set[str] = set()
         self._state: State | None = None
         self._read_errors: dict[str, str] = {}
         self._diverged: dict[str, Divergence] = {}
         self._genesis_event: dict[str, Any] | None = None
-        self._created_at: dict[str, str] = {}
+        self._hints: dict[str, _Hint] = {}
+        self._key_uid: dict[str, str] = {}
+        self._sizes: dict[str, int] = {}
+        self._pin: str | None = expected_genesis
         self._json_cache: dict[str, tuple[Any, bytes]] = {}
-        self._applied_raw: bytes | None = None
         self._applied_n = 0
-        self._last_at = 0
-        self._last_pos: tuple[int, int, str, int] | None = None
+        self._ws_last_at = 0
+        self._own_pos: tuple[int, int, str, int] | None = None
+        self._own_at = 0
         self._needs_reload = False
         self._torn: set[str] = set()
+        self._bad_projection: dict[str, str] = {}
         self._ticket_appends_since_cp = 0
         self._healing = False
         self._grant_hashes: dict[str, str] = {}
+        self._index_ok = False
+        self._exists: set[str] = set()
+        self._pending_revs: list[dict[str, Any]] = []
+        self._ws_restore_at = ""
+        self._ws_events_len = 0
 
     # ------------------------------------------------------------------ opening
 
@@ -210,17 +236,26 @@ class Store:
         host_state_dir: str | os.PathLike[str] | None = None,
         clock: Callable[[], float] = time.time,
         workspace_name: str | None = None,
-        _verifier: Verifier | None = None,
+        load: str = "lazy",
+        lock_timeout: float | None = LOCK_TIMEOUT,
     ) -> Store:
         """Open (and, for a new directory, prepare) the workspace at ``path``.
 
         ``expected_workspace_id`` and ``expected_genesis`` are the pins: the id from ``config.json`` and the genesis
         head from ``<host state dir>/hosts/<workspace_id>/genesis`` (§5.11). ``expected_genesis=None`` means "use the
         pin file in ``host_state_dir`` if there is one, otherwise trust the genesis the logs hold and pin it" (trust on
-        first use). Replay uses both pins for every read. ``host`` is the workspace key signer; without it the store
-        is read-only (``append`` raises ``store.read_only``). On the way in the store recovers a crashed write,
-        checks the checkpoints and looks for external edits (see :meth:`scan`); what it did is in ``reports``.
+        first use). A store that can write (``host`` given) **needs** ``host_state_dir``: without it there would be no
+        pin and nowhere to keep revocations (``validation.host_state``). Replay uses both pins for every read.
+        ``host`` is the workspace key signer; without it the store is read-only (``append`` raises
+        ``store.read_only``). ``load="lazy"`` (default) replays the workspace log now and tickets when touched;
+        ``load="all"`` replays every ticket and looks for external edits on the way in (see :meth:`scan`); what the
+        store did is in ``reports``. A call that waits longer than ``lock_timeout`` seconds for the workspace lock
+        raises ``store.busy``.
         """
+        if host is not None and host_state_dir is None:
+            raise StoreError("validation.host_state", "a store that can write needs host_state_dir (pin, revocations)")
+        if load not in ("lazy", "all"):
+            raise StoreError("validation.load", "load is 'lazy' or 'all'")
         root = Path(path)
         store = cls(
             root,
@@ -228,15 +263,18 @@ class Store:
             expected_genesis=expected_genesis,
             host=host,
             host_state_dir=Path(host_state_dir) if host_state_dir is not None else None,
-            _verifier=_verifier or CryptoVerifier(),
+            verifier=_default_verifier(),
             clock=clock,
             workspace_name=workspace_name,
+            lock_timeout=lock_timeout,
         )
-        store._open()
+        store._open(load == "all")
         return store
 
-    def _open(self) -> None:
+    def _open(self, eager: bool) -> None:
         for d in ("events", "tickets", ".state"):
+            if os.path.islink(self.root / d):
+                raise StoreError("validation.path", f"{d} is a symlink")
             (self.root / d).mkdir(parents=True, exist_ok=True)
         cfg = read_or_none(self.root / "config.json")
         if cfg is not None:
@@ -247,17 +285,25 @@ class Store:
             if have is not None and have != self.workspace_id:
                 raise StoreError("trust.genesis_mismatch", "config.json belongs to another workspace")
         with self._lock:
-            self._recover_pending()
-            self._load_all()
+            check_state_dirs(self.root)
+            pend = self._recover_pending()
+            self._scan_dirs()
+            if eager:
+                self._loaded = set(self._exists)
+            self._loaded |= {m["log"] for _, m in pend if m["log"] != WORKSPACE}
+            self._load()
+            self._finish_pending(pend)
+            self._enforce_revocations()
             if self._host is not None:
-                self._after_open_heal()
+                self._after_open_heal(eager)
+            self._maybe_index()
 
     def close(self) -> None:
         self._index.close()
 
     def refresh(self) -> None:
-        """Take the lock and re-read the logs if another process appended since: what a long-lived caller does before
-        it decides anything from :attr:`state` (the CLI hooks do)."""
+        """Take the lock and re-read what changed on disk since the last call: what a long-lived caller does before it
+        decides anything from :attr:`state`."""
         with self._locked():
             pass
 
@@ -268,7 +314,8 @@ class Store:
 
     @property
     def state(self) -> State:
-        """The derived state now (claims, leases and grants judged by the clock)."""
+        """The derived state now (claims, leases and grants judged by the clock): the workspace and the **loaded**
+        tickets, as of the last call that took the lock. Use :meth:`ticket` or :meth:`load_all` to get a ticket."""
         assert self._state is not None
         return at(self._state, self._now())
 
@@ -282,15 +329,24 @@ class Store:
         return dict(self._diverged)
 
     def chain_errors(self) -> list[tuple[str, int, str, str]]:
-        """Every broken log as ``(log, seq, code, detail)``: unreadable lines, and what the model reports."""
+        """Every broken log that was read, as ``(log, seq, code, detail)``: unreadable lines, and the model's report.
+        A ticket log that is not loaded has not been checked (``load_all`` checks them all)."""
         out = [(log, self._logs[log].error_seq, "chain.broken", msg) for log, msg in sorted(self._read_errors.items())]
         out += [(c.log, c.seq, c.code, c.detail) for c in self.state.chain_errors if c.log not in self._read_errors]
         return out
 
-    def head_seq(self, log: str) -> int:
-        """The seq of the last event of ``log`` (0 for an unknown log): the ticket head in the dedup key."""
-        info = self._logs.get(log)
-        return info.seq if info else 0
+    def head_seq(self, ref: str) -> int:
+        """The seq of the last event of the ticket ``ref`` (a key, a number or a uid), 0 if there is none: the ticket
+        head in the dedup key. Takes the lock and loads the ticket (it is checked, not trusted from a hint)."""
+        with self._locked():
+            if ref == WORKSPACE:
+                return self._logs[WORKSPACE].seq
+            uid = self._uid_of(ref)
+            if uid is None:
+                return 0
+            self._ensure({uid})
+            info = self._logs.get(uid)
+            return info.seq if info else 0
 
     def log_head(self, log: str) -> str | None:
         info = self._logs.get(log)
@@ -309,11 +365,85 @@ class Store:
         if r not in self.reports:
             self.reports.append(r)
 
+    # ------------------------------------------------------------------ the directory scan (hints)
+
+    def _scan_dirs(self) -> None:
+        """List the ticket logs and refresh the hints of those whose size or inode changed (about a stat per ticket)."""
+        tdir = self.root / "tickets"
+        seen: dict[str, _Hint] = {}
+        sizes: dict[str, int] = {}
+        try:
+            entries = list(os.scandir(tdir))
+        except FileNotFoundError:
+            entries = []
+        limit = int(self._clock()) + _FUTURE
+        for ent in entries:
+            uid = ent.name
+            if not _ULID.fullmatch(uid) or ent.is_symlink():
+                continue
+            path = Path(ent.path) / "events.jsonl"
+            sig = stat_sig(path)
+            if sig is None or sig == (-1, -1):
+                continue
+            sizes[uid] = sig[0]
+            old = self._hints.get(uid)
+            if old is not None and old.sig == sig:
+                seen[uid] = old
+                continue
+            key = created = None
+            if old is not None and old.ino == sig[1]:
+                key, created = old.key, old.created_at
+            else:
+                first = first_line(path)
+                try:
+                    f = json.loads(first) if first else {}
+                    if isinstance(f, dict) and f.get("type") == "ticket.created":
+                        key, created = f.get("key"), f.get("at")
+                except ValueError:
+                    pass
+            pos = None
+            last = last_line(path)
+            try:
+                e = json.loads(last) if last else None
+                if isinstance(e, dict):
+                    p = (int(e["ws_seq"]), _epoch(e["at"]), uid, int(e["seq"]))
+                    if p[1] <= limit:
+                        pos = p
+                    else:
+                        self._report("store.torn_write", f"the last line of {uid} has an `at` far in the future", uid)
+            except (ValueError, KeyError, TypeError):
+                pass
+            seen[uid] = _Hint(sig, sig[1], key if isinstance(key, str) else None, created, pos)
+        self._hints, self._sizes = seen, sizes
+        self._exists = set(seen)
+        self._key_uid = {h.key: u for u, h in seen.items() if h.key}
+
+    def _order(self) -> tuple[int, tuple[int, int, str, int] | None]:
+        """The latest `at` and merged position of everything written so far (all logs, from the hints)."""
+        at_ = max([self._ws_last_at, self._own_at, *(h.pos[1] for h in self._hints.values() if h.pos)])
+        pos = max([p for p in (*(h.pos for h in self._hints.values()), self._own_pos) if p], default=None)
+        return at_, pos
+
     # ------------------------------------------------------------------ loading
 
-    def _load_all(self) -> None:
-        """Read every log from disk, replay, and rebuild every cache. The pins are enforced here."""
-        pin = self._pins.genesis() if self._external_pins else None
+    def _read_refs(self, events: list[dict[str, Any]]) -> set[str]:
+        """Ticket keys the events of one ticket refer to (parent, blocked_by, duplicate_of): the tickets that must be
+        replayed with it, because the model checks them against the creation positions."""
+        keys: set[str] = set()
+        for e in events:
+            if e["type"] == "ticket.updated":
+                s = e.get("set", {})
+                if isinstance(s.get("ticket.parent"), str):
+                    keys.add(s["ticket.parent"])
+                keys.update(k for k in s.get("ticket.blocked_by", []) if isinstance(k, str))
+            elif e["type"] == "ticket.closed" and isinstance(e.get("duplicate_of"), str):
+                keys.add(e["duplicate_of"])
+        return keys
+
+    def _load(self) -> None:
+        """Read the workspace log and the loaded ticket logs (and the tickets they refer to) from disk, replay with the
+        real verifier and both pins, and rebuild every cache."""
+        pin = self._pins.genesis() if self._pins is not None else None
         if self._expected_genesis is not None and pin is not None and pin != self._expected_genesis:
             raise StoreError("trust.genesis_mismatch", "the genesis pin file differs from the genesis given")
         self._pin = self._expected_genesis or pin
@@ -321,21 +451,23 @@ class Store:
         self._read_errors = {}
         ws_events = read_new_lines(self._logs[WORKSPACE])
         tickets: dict[str, list[dict[str, Any]]] = {}
-        tdir = self.root / "tickets"
-        for p in sorted(tdir.iterdir()) if tdir.is_dir() else []:
-            if not _ULID.fullmatch(p.name) or p.is_symlink():
+        todo = sorted(u for u in self._loaded if u in self._exists)
+        while todo:
+            uid = todo.pop()
+            if uid in tickets:
                 continue
-            info = LogInfo(p.name, p / "events.jsonl")
-            if not info.path.exists():
-                continue  # an empty ticket directory: the event never made it (recovery removes it when empty)
-            tickets[p.name] = read_new_lines(info)
-            self._logs[p.name] = info
+            info = LogInfo(uid, safe_join(self.root, f"tickets/{uid}/events.jsonl"))
+            tickets[uid] = read_new_lines(info)
+            self._logs[uid] = info
+            for key in self._read_refs(tickets[uid]):
+                dep = self._key_uid.get(key)
+                if dep is not None and dep not in tickets:
+                    todo.append(dep)
+        self._loaded = set(tickets)
         for name, info in self._logs.items():
             if info.error:
                 self._read_errors[name] = info.error
-        self._grant_hashes = {e["grant"]: e["secret_hash"] for e in ws_events if e["type"] == "grant.issued"}
         self._genesis_event = ws_events[0] if ws_events and ws_events[0]["type"] == "workspace.created" else None
-        self._created_at = {u: evs[0]["at"] for u, evs in tickets.items() if evs and evs[0]["type"] == "ticket.created"}
         self._state = replay(
             ws_events,
             tickets,
@@ -348,86 +480,161 @@ class Store:
         if ws_events and ws.genesis is None:
             detail = next((c.detail for c in self._state.chain_errors if c.log == WORKSPACE), "untrusted genesis")
             raise StoreError("trust.genesis_mismatch", detail)
-        if ws.genesis is not None and self._pin is None and self._external_pins:
+        if ws.genesis is not None and self._pin is None and self._pins is not None:
             self._pins.pin_genesis(ws.genesis)
         if ws.genesis is not None:
             self._pin = self._pin or ws.genesis
-        last_at, last_pos = 0, None
-        for name, evs in [(WORKSPACE, ws_events), *tickets.items()]:
-            for e in evs:
-                last_at = max(last_at, _epoch(e["at"]))
-                if name != WORKSPACE:
-                    pos = (e["ws_seq"], _epoch(e["at"]), name, e["seq"])
-                    last_pos = pos if last_pos is None or pos > last_pos else last_pos
-        self._last_at, self._last_pos = last_at, last_pos
+        self._ws_last_at = max((_epoch(e["at"]) for e in ws_events), default=0)
+        # a grant's secret hash counts only from a grant.issued the model accepted (not invalid, and the grant exists)
+        invalid = {i.id for i in ws.invalid}
+        self._grant_hashes = {}
+        for e in ws_events:
+            if e["type"] == "grant.issued" and e["id"] not in invalid and e["grant"] in ws.grants:
+                self._grant_hashes.setdefault(e["grant"], e["secret_hash"])
         self._json_cache = {}
-        raw = read_or_none(self.state_dir / "applied")
-        self._applied_raw = raw
         try:
-            self._applied_n = int(json.loads(raw)["n"]) if raw else 0
-        except (ValueError, KeyError, TypeError):
+            applied = json.loads(read_or_none(self.state_dir / "applied") or b"{}")
+            self._applied_n = int(applied.get("n", 0))
+        except (ValueError, TypeError, AttributeError):
             self._applied_n = 0
         self._needs_reload = False
         self._diverged = {}
         wsk = self._wsk_pub()
         if wsk is not None:
-            for d in find_divergence(self._checkpoints, wsk, ws.genesis, self._logs):
+            for d in find_divergence(self._checkpoints, wsk, ws.genesis, self._logs, self._exists):
                 if d.code == "trust.genesis_mismatch":
                     raise StoreError(d.code, d.detail)
                 self._diverged[d.log] = d
-        self._ensure_index()
+        self._index_ok = ws.genesis is not None and self._index.is_current(
+            self._sizes_now(), self.workspace_id, ws.genesis
+        )
+        self._ws_restore_at = max(
+            (e["at"] for e in ws_events if e["type"] == "restore" and e["id"] not in invalid), default=""
+        )
+        self._pending_revs = self._revocation_plan()
+
+    def _sizes_now(self) -> dict[str, int]:
+        sizes = dict(self._sizes)
+        ws = stat_sig(self._path_of(WORKSPACE))
+        sizes[WORKSPACE] = ws[0] if ws else 0
+        return sizes
 
     def _wsk_pub(self) -> bytes | None:
         if self._genesis_event is None:
             return None
         return crypto.unb64u(self._genesis_event["wsk_pub"], crypto.PUB_LEN)
 
-    def _ensure_index(self) -> None:
-        assert self._state is not None
-        ws = self._state.workspace
-        if ws.genesis is None:
+    def _fresh(self) -> bool:
+        """Do the files still say what was read? Compared under the lock: size and inode of the workspace log and of
+        every loaded ticket log. ``.state/applied`` plays no part (it is a record, not a signal)."""
+        for info in self._logs.values():
+            if stat_sig(info.path) != ((info.offset, info.ino) if info.ino is not None else None):
+                return False
+        return True
+
+    def _ensure(self, uids: set[str]) -> None:
+        """Make sure these tickets (and the tickets they refer to) are replayed and checked."""
+        need = {u for u in uids if u in self._exists and u not in self._loaded}
+        if need:
+            self._loaded |= need
+            self._load()
+            self._enforce_revocations()
+
+    def load_all(self) -> None:
+        """Replay and check every ticket log (cold cost: every event is verified)."""
+        with self._locked():
+            self._ensure(set(self._exists))
+
+    def ticket(self, ref: str, *, heal: bool = True) -> Any | None:
+        """The view of the ticket ``ref`` (a key, ``43``, a uid), loading and checking it first; ``None`` if there is no
+        such ticket. With ``heal`` (and a writable store) edits made outside the store are answered first (§5.8)."""
+        with self._locked():
+            uid = self._uid_of(ref)
+            if uid is None:
+                return None
+            self._ensure({uid})
+            if heal and self._host is not None and uid not in self._read_errors and uid not in self._diverged:
+                try:
+                    self._heal_ticket(uid)
+                except StoreError as e:
+                    self._report(e.code, e.detail, uid)
+            assert self._state is not None
+            return self._state.tickets.get(uid)
+
+    def _index_fresh(self) -> Index:
+        """The index, current: if it is not, every ticket is loaded and it is rebuilt."""
+        with self._locked():
+            ws = self._state.workspace if self._state else None
+            if ws is not None and ws.genesis is not None and not self._index_ok:
+                self._ensure(set(self._exists))
+                assert self._state is not None
+                self._index.rebuild(self._state, self._logs, self.workspace_id, ws.genesis, self._sizes_now())
+                self._index_ok = True
+        return self._index
+
+    def _maybe_index(self, state: State | None = None) -> None:
+        """Build the index now if it is missing or stale and everything is loaded anyway (a new workspace, ``load="all"``)."""
+        state = state or self._state
+        if state is None or state.workspace.genesis is None or self._index_ok or not self._loaded >= self._exists:
             return
-        if not self._index.is_current(self._logs, self.workspace_id, ws.genesis):
-            self._index.rebuild(self._state, self._logs, self.workspace_id, ws.genesis)
+        try:
+            self._index.rebuild(state, self._logs, self.workspace_id, state.workspace.genesis, self._sizes_now())
+            self._index_ok = True
+        except Exception:  # noqa: BLE001 - derived data
+            self._index.drop()
 
     def rebuild_index(self) -> None:
         """Drop and rebuild ``.state/index.sqlite`` from the logs (it is derived data)."""
-        with self._lock:
-            assert self._state is not None
-            if self._state.workspace.genesis is not None:
-                self._index.rebuild(self._state, self._logs, self.workspace_id, self._state.workspace.genesis)
+        with self._locked():
+            self._index_ok = False
+            self._index_fresh()
 
     @property
     def index(self) -> Index:
-        return self._index
+        """The derived index. First use after it went stale loads every ticket to rebuild it; it is never read for a
+        decision."""
+        return self._index_fresh()
 
     # ------------------------------------------------------------------ locking, sync, recovery
 
     @contextlib.contextmanager
     def _locked(self) -> Iterator[None]:
         with self._lock:
-            self._recover_pending()
-            raw = read_or_none(self.state_dir / "applied")
-            if self._needs_reload or raw != self._applied_raw:
-                self._load_all()
+            check_state_dirs(self.root)
+            pend = self._recover_pending()
+            self._scan_dirs()
+            self._loaded |= {m["log"] for _, m in pend if m["log"] != WORKSPACE}
+            reloaded = bool(pend) or self._needs_reload or not self._fresh()
+            if reloaded:
+                self._load()
+            self._finish_pending(pend)
+            if reloaded:
+                self._enforce_revocations()
             yield
 
-    def _recover_pending(self) -> None:
+    def _recover_pending(self) -> list[tuple[Path, dict[str, Any]]]:
+        """Phase 1 of crash recovery (no state needed): a pending directory without a manifest that describes its own
+        event is deleted; a torn prefix of its line is cut off the log; a manifest whose line is the last line of its
+        log (and that ``.state/applied`` does not name yet) is returned, to be finished once the log is replayed."""
         pdir = self.state_dir / "pending"
         if not pdir.is_dir():
-            return
+            return []
         found = sorted(pdir.iterdir())
         if not found:
-            return  # the common case costs one directory listing
+            return []  # the common case costs one directory listing
+        out: list[tuple[Path, dict[str, Any]]] = []
         for d in found:
-            self._recover_one(d)
+            m = self._recover_one(d)
+            if m is not None:
+                out.append((d, m))
         tdir = self.root / "tickets"
         for p in tdir.iterdir() if tdir.is_dir() else []:  # a ticket directory whose event never landed
             with contextlib.suppress(OSError):
-                if p.is_dir() and not (p / "events.jsonl").exists() and not any(p.iterdir()):
+                if p.is_dir() and not p.is_symlink() and not (p / "events.jsonl").exists() and not any(p.iterdir()):
                     p.rmdir()
+        return out
 
-    def _recover_one(self, d: Path) -> None:
+    def _recover_one(self, d: Path) -> dict[str, Any] | None:
         try:
             m = json.loads((d / "manifest.json").read_bytes())
             line = m["line"].encode("utf-8")
@@ -439,37 +646,97 @@ class Store:
                 raise ValueError("the manifest does not describe its own event")
         except (OSError, ValueError, KeyError, StoreError, TypeError, canon.HashError):
             shutil.rmtree(d, ignore_errors=True)  # the manifest is written last: the event was never appended
-            return
+            return None
         raw = read_or_none(path) or b""
         if raw.endswith(line):
+            applied = self._read_applied()
+            if applied.get("id") == m["id"]:
+                shutil.rmtree(d, ignore_errors=True)  # already installed (§5.5: recovery runs only for an event that
+                return None  # `.state/applied` does not name)
             self._needs_reload = True
-            torn = self._install(m, d)
+            return m
+        for k in range(min(len(line) - 1, len(raw)), 0, -1):  # a torn prefix of our own line: cut it off
+            if raw[-k:] == line[:k] and (len(raw) == k or raw[-k - 1] == 0x0A):
+                with open(path, "r+b") as f:
+                    f.truncate(len(raw) - k)
+                    os.fsync(f.fileno())
+                self._needs_reload = True
+                break
+        shutil.rmtree(d, ignore_errors=True)
+        return None
+
+    def _read_applied(self) -> dict[str, Any]:
+        try:
+            a = json.loads(read_or_none(self.state_dir / "applied") or b"{}")
+            return a if isinstance(a, dict) else {}
+        except ValueError:
+            return {}
+
+    def _finish_pending(self, pend: list[tuple[Path, dict[str, Any]]]) -> None:
+        """Phase 2 of crash recovery: install the pending files of an event that is in the (replayed) log. A file is
+        installed only if it is exactly what the log says it should be (``ticket.json`` is rebuilt from the state, a
+        body must have the log's section hashes, an artifact the log's digest); otherwise it is ``store.torn_write``
+        and the ordinary external-edit check answers what is on disk. Nothing the manifest says is believed."""
+        for d, m in pend:
+            log = m["log"]
+            info = self._logs.get(log)
+            line = m["line"].encode("utf-8")
+            ok = (
+                info is not None
+                and 1 <= m["seq"] <= info.seq
+                and info.heads[m["seq"] - 1] == canon.event_head(canon.parse_event_line(line))
+            )
+            if not ok:  # the log up to that line did not verify: nothing to finish
+                self._report("store.torn_write", f"event {m['id']} is not in the verified part of {log}", log)
+                shutil.rmtree(d, ignore_errors=True)
+                continue
+            torn = self._install(m, d, check=self._expected_bytes)
             for rel in torn:
                 self._torn.add(rel)
                 self._report("store.torn_write", f"{rel} did not survive the crash of event {m['id']}", log)
-        else:
-            for k in range(min(len(line) - 1, len(raw)), 0, -1):  # a torn prefix of our own line: cut it off
-                if raw[-k:] == line[:k] and (len(raw) == k or raw[-k - 1] == 0x0A):
-                    with open(path, "r+b") as f:
-                        f.truncate(len(raw) - k)
-                        os.fsync(f.fileno())
-                    self._needs_reload = True
-                    break
-        shutil.rmtree(d, ignore_errors=True)
+            shutil.rmtree(d, ignore_errors=True)
 
-    def _install(self, m: dict[str, Any], d: Path) -> list[str]:
-        """Step 4 of the write order (idempotent). Returns the relative paths that could not be installed."""
+    def _expected_bytes(self, rel: str, data: bytes) -> bool:
+        """Is ``data`` what the replayed log says the file ``rel`` holds (recovery only)?"""
+        assert self._state is not None
+        m = re.fullmatch(r"tickets/([0-7][0-9A-HJKMNP-TV-Z]{25})/(ticket\.json|body\.md|artifacts/.+)", rel)
+        if m is None:
+            if rel == "config.json":
+                return data == self._config_bytes(self._state)
+            if rel == "keys.jsonl":
+                return data == self._keys_bytes()
+            return False
+        uid, what = m.groups()
+        view = self._state.tickets.get(uid)
+        if view is None:
+            return False
+        if what == "ticket.json":
+            return data == self._ticket_bytes(uid)
+        if what == "body.md":
+            try:
+                texts = render.parse_body(data, view.type)
+            except render.BodyError:
+                return False
+            return self._hashes(texts) == self._log_hashes(view) and data == render.render_body(
+                view.type, texts
+            ).encode("utf-8")
+        art = view.artifacts and next((a for a in view.artifacts if a.name == what[len("artifacts/") :]), None)
+        return bool(art and art.digest == canon.artifact_digest(data))
+
+    def _install(self, m: dict[str, Any], d: Path, check: Callable[[str, bytes], bool] | None = None) -> list[str]:
+        """Step 4 of the write order (idempotent). Returns the relative paths that could not be installed. With
+        ``check`` (recovery) a pending file is installed only if ``check(rel, data)``."""
         torn: list[str] = []
         for f in m["files"]:
             dest, src = safe_join(self.root, target_ok(f["to"])), d / str(int(f["n"]))
             data = read_or_none(src)
-            if data is not None and _sha(data) == f["sha256"]:
+            if data is not None and _sha(data) == f["sha256"] and (check is None or check(f["to"], data)):
                 dest.parent.mkdir(parents=True, exist_ok=True)
-                os.replace(src, dest)
+                replace(src, dest)
                 fsync_dir(dest.parent)
             else:
                 now = read_or_none(dest)
-                if now is None or _sha(now) != f["sha256"]:
+                if now is None or _sha(now) != f["sha256"] or (check is not None and not check(f["to"], now)):
                     torn.append(f["to"])
         uid = m.get("body_copy")
         if uid:
@@ -484,7 +751,6 @@ class Store:
         self._applied_n += 1
         raw = canon.cj_checked({"id": event_id, "log": log, "n": self._applied_n, "seq": seq}) + b"\n"
         write_atomic(self.state_dir / "applied", raw)
-        self._applied_raw = raw
 
     # ------------------------------------------------------------------ reading projections
 
@@ -503,23 +769,35 @@ class Store:
         return read_or_none(safe_join(self.root, f"tickets/{check_uid(uid)}/ticket.json"))
 
     def body_sections(self, uid: str) -> dict[str, str]:
-        """The section texts of the ticket's ``body.md`` as on disk. Raises ``StoreError`` if the file is not a body the
-        log accounts for (call :meth:`scan` first to have such files answered with host events)."""
+        """The section texts of the ticket's ``body.md`` as on disk, **checked against the log**: every section's hash
+        must be the one the log holds, otherwise ``store.torn_write`` is raised (nothing forged is served). Call
+        :meth:`ticket` or :meth:`scan` first to have edits made outside the store answered with host events."""
+        with self._locked():
+            self._ensure({check_uid(uid)})
+            return self._body_sections(uid)
+
+    def _body_sections(self, uid: str) -> dict[str, str]:
         assert self._state is not None
+        view = self._state.tickets[uid]
         raw = read_or_none(safe_join(self.root, f"tickets/{check_uid(uid)}/body.md"))
         if raw is None:
-            return {}
-        try:
-            return render.parse_body(raw, self._state.tickets[uid].type)
-        except render.BodyError as e:
-            raise StoreError("validation.body", str(e)) from None
+            texts: dict[str, str] = {}
+        else:
+            try:
+                texts = render.parse_body(raw, view.type)
+            except render.BodyError as e:
+                raise StoreError("validation.body", str(e)) from None
+        if self._hashes(texts) != self._log_hashes(view):
+            raise StoreError("store.torn_write", f"body.md of {uid} does not match the log (sections differ)")
+        return texts
 
-    def next_key(self) -> str:
-        """The next ticket key: one above the highest number in ``keys.jsonl`` or in any ``ticket.created`` (§2)."""
+    def _next_key(self) -> str:
+        """The next ticket key: one above the highest number in ``keys.jsonl`` or in any ``ticket.created`` (§2). Only
+        called under the lock (``create_ticket``), after the directory scan."""
         assert self._state is not None
         best = 0
-        for t in self._state.tickets.values():
-            m = _KEY_NUM.fullmatch(t.key)
+        for key in (*self._key_uid, *(t.key for t in self._state.tickets.values())):
+            m = _KEY_NUM.fullmatch(key)
             best = max(best, int(m.group(1)) if m else 0)
         for line in (read_or_none(self.root / "keys.jsonl") or b"").splitlines():
             with contextlib.suppress(ValueError, KeyError, TypeError):
@@ -528,12 +806,14 @@ class Store:
         return f"{self._state.workspace.prefix}-{best + 1:04d}"
 
     def normalise_ref(self, ref: str) -> str:
-        """``43``, ``#43``, ``demo-43`` and ``DEMO-0043`` are the ticket key ``DEMO-0043``; a uid is its ticket's key.
+        """``43``, ``#43``, ``demo-43`` and ``DEMO-0043`` are the ticket key ``DEMO-0043``. Text only (a hint
+        for the stop rule and the dedup key): it takes no lock, and a uid is turned into its key from the last scan.
         Anything else comes back unchanged."""
         assert self._state is not None
         r = ref.strip().lstrip("#")
-        if _ULID.fullmatch(r) and r in self._state.tickets:
-            return self._state.tickets[r].key
+        if _ULID.fullmatch(r):
+            h = self._hints.get(r)
+            return h.key if h and h.key else ref
         prefix = self._state.workspace.prefix
         m = re.fullmatch(r"(?:(?i:" + re.escape(prefix) + r")-)?([0-9]+)", r) if prefix else None
         if m and int(m.group(1)) >= 1:
@@ -541,14 +821,21 @@ class Store:
         return ref
 
     def grant_secret_hash(self, grant_id: str) -> str | None:
-        """The ``secret_hash`` a ``grant.issued`` recorded for ``grant_id`` (the secret itself is never stored)."""
-        return self._grant_hashes.get(grant_id)
+        """The ``secret_hash`` of an **accepted** ``grant.issued`` for ``grant_id`` (the secret itself is never stored).
+        Takes the lock and re-reads what changed, so a grant revoked elsewhere is seen."""
+        with self._locked():
+            return self._grant_hashes.get(grant_id)
+
+    def _uid_of(self, ref: str) -> str | None:
+        r = self.normalise_ref(ref)
+        if _ULID.fullmatch(r):
+            return r if r in self._exists else None
+        return self._key_uid.get(r)
 
     def uid_of(self, ref: str) -> str | None:
-        assert self._state is not None
-        r = self.normalise_ref(ref)
-        t = next((t for t in self._state.tickets.values() if t.key == r), None)
-        return t.uid if t else None
+        """The uid of the ticket ``ref`` (from the directory scan under the lock), None if there is none."""
+        with self._locked():
+            return self._uid_of(ref)
 
     # ------------------------------------------------------------------ the one write path
 
@@ -589,11 +876,11 @@ class Store:
         """Append a ``ticket.created`` for an actor nobody signs (an agent with a grant): allocates the key and the
         uid under the lock, so two processes never take the same number."""
         with self._locked():
-            new_uid = uid or new_ulid()
+            new_uid = uid or self._uid_for_idem(idem) or new_ulid()
             ev = {
                 "type": "ticket.created",
                 "actor": dict(actor),
-                "key": self.next_key(),
+                "key": self._next_key(),
                 "ticket_type": ticket_type,
                 "title": title,
                 "owner": owner,
@@ -652,13 +939,19 @@ class Store:
     ) -> Appended:
         typ = e.get("type", "")
         self._check_writable(log, typ)
+        actor = e.get("actor")
+        host_event = isinstance(actor, dict) and actor.get("kind") == "host"
+        if not self._healing:
+            self._ensure_for(e, log)
         if idem is not None:
             dup = self._idem_hit(idem, log, e)
             if dup is not None:
                 return dup
-        actor = e.get("actor")
-        host_event = isinstance(actor, dict) and actor.get("kind") == "host"
         healed = [] if self._healing else self._heal_for(log, typ, host_event)
+        if log in self._bad_projection and not (host_event and typ in _TICKET_HOST_EVENTS):
+            raise StoreError(
+                "store.torn_write", f"{log}: {self._bad_projection[log]} (restore the files or ask an owner)"
+            )
         e = self._envelope(e, log)
         if typ == "restore":
             self._check_restore(log, e)
@@ -671,6 +964,20 @@ class Store:
             self._idem_done(idem, log, result.event)
         assert self._state is not None
         return Appended(result.event, self._state, False, tuple(healed))
+
+    def _ensure_for(self, e: dict[str, Any], log: str) -> None:
+        """Load what the model needs to judge ``e``: its ticket, the tickets it refers to (parent, blocked_by,
+        duplicate_of), the ticket that already holds the key of a ``ticket.created`` (so the model refuses a repeat),
+        and, for an unattended event (a quota counted over the whole workspace), every ticket."""
+        need: set[str] = set() if log == WORKSPACE else {log}
+        actor = e.get("actor")
+        if isinstance(actor, dict) and actor.get("unattended") is True:
+            need |= self._exists
+        for key in self._read_refs([e]) | ({e["key"]} if e.get("type") == "ticket.created" else set()):
+            if isinstance(key, str) and key in self._key_uid:
+                need.add(self._key_uid[key])
+        self._ensure(need)
+        self._enforce_revocations()
 
     def _check_restore(self, log: str, e: dict[str, Any]) -> None:
         want = self.restore_facts(log)["abandoned"]
@@ -688,7 +995,6 @@ class Store:
         assert self._state is not None and self._host is not None
         kind = "workspace" if log == WORKSPACE else "ticket"
         old_state = self._state
-        ev: dict[str, Any] = {}
         genesis = e["type"] == "workspace.created"
         if genesis and self._host.public_key != crypto.unb64u(e.get("wsk_pub", ""), crypto.PUB_LEN):
             raise StoreError("validation.host_key", "the genesis names a workspace key other than this host's")
@@ -722,12 +1028,15 @@ class Store:
         writes = self._projection(old_state, new_state, ev, log, new_texts, files, force)
         info = self._logs.get(log)
         path = self._path_of(log)
-        if (info.offset if info else 0) != file_size(path):
+        if not self._fresh():  # last look, right before the write: the files must still be what was judged
+            self._needs_reload = True
+            raise StoreError("chain.broken", f"{log}: a log changed on disk while the store held the lock")
+        if stat_sig(path) != ((info.offset, info.ino) if info and info.ino is not None else None):
             self._needs_reload = True
             raise StoreError("chain.broken", f"{log}: the log changed on disk while the store held the lock")
         try:
             manifest = self._write_pending(ev, log, line, writes)
-            append_durable(path, line)  # the commit
+            append_durable(path, line, commit=True)  # the commit
             self._finish(manifest, ev, log, line)
         except BaseException:
             self._needs_reload = True  # whatever got half done, the next lock recovers from disk
@@ -746,12 +1055,16 @@ class Store:
         seq = (info.seq if info else 0) + 1
         ev["seq"] = seq
         ev["prev"] = info.head if info else None
-        t = max(int(self._clock()), self._last_at) + bump
+        last_at, last_pos = self._order()
+        t = max(int(self._clock()), last_at) + bump
+        if (
+            ev["type"] == "restore" and log == WORKSPACE and self._pins is not None
+        ):  # after every revocation it re-appends
+            t = max([t, *(_epoch(r["at"]) for r in self._pins.revocations() if r.get("at"))])
         if log != WORKSPACE:
             wsh = self._logs[WORKSPACE].seq if WORKSPACE in self._logs else 0
             ev["ws_seq"] = wsh
-            lp = self._last_pos
-            while lp is not None and (wsh, t, log, seq) <= lp:  # minimal bump: the merged order must grow
+            while last_pos is not None and (wsh, t, log, seq) <= last_pos:  # minimal bump: the merged order must grow
                 t += 1
         ev["at"] = _fmt(t)
 
@@ -809,11 +1122,7 @@ class Store:
 
     def _merge_body(self, uid: str, e: dict[str, Any], delta: Mapping[str, str | None]) -> dict[str, str]:
         assert self._state is not None
-        cur = (
-            self.body_sections(uid)
-            if read_or_none(safe_join(self.root, f"tickets/{check_uid(uid)}/body.md")) is not None
-            else {}
-        )
+        cur = self._body_sections(uid)  # checked against the log: a body the log does not account for is not merged
         new = dict(cur)
         for sid, text in delta.items():
             if text is None:
@@ -866,7 +1175,7 @@ class Store:
                 if typ == "workspace.created" or "config.json" in force or cfg != self._config_bytes(old):
                     out.append(_Write("config.json", cfg))
             if "keys.jsonl" in force or typ == "workspace.created":
-                out.append(_Write("keys.jsonl", self._keys_bytes(new)))
+                out.append(_Write("keys.jsonl", self._keys_bytes()))
             return out
         uid = log
         view = new.tickets[uid]
@@ -880,7 +1189,7 @@ class Store:
         for name, blob in files.items():
             out.append(_Write(base + "artifacts/" + name, blob))
         if typ == "ticket.created":
-            out.append(_Write("keys.jsonl", self._keys_bytes(new, extra=(view.key, uid, ev["at"]))))
+            out.append(_Write("keys.jsonl", self._keys_bytes(extra=(view.key, uid, ev["at"]))))
         return out
 
     def _ticket_for(self, view: Any, uid: str) -> bytes:
@@ -906,8 +1215,10 @@ class Store:
             state.workspace, host_id=g["host_id"], wsk_pub=g["wsk_pub"], name=name, run_for=run_for
         )
 
-    def _keys_bytes(self, state: State, extra: tuple[str, str, str] | None = None) -> bytes:
-        rows = {t.uid: (t.key, self._created_at.get(t.uid, "")) for t in state.tickets.values()}
+    def _keys_bytes(self, extra: tuple[str, str, str] | None = None) -> bytes:
+        """``keys.jsonl`` for every ticket log there is (key and creation time from its first line, a hint that the
+        ticket's own replay checks when it is loaded), plus ``extra`` (the ticket being created)."""
+        rows = {u: (h.key, h.created_at or "") for u, h in self._hints.items() if h.key and _KEY_NUM.fullmatch(h.key)}
         if extra is not None:
             rows[extra[1]] = (extra[0], extra[2])
         ordered = sorted(rows.items(), key=lambda kv: (int(_KEY_NUM.fullmatch(kv[1][0]).group(1)), kv[0]))  # type: ignore[union-attr]
@@ -946,46 +1257,56 @@ class Store:
             raise StoreError("store.torn_write", f"could not install {', '.join(torn)}")
         shutil.rmtree(pdir, ignore_errors=True)
         info = self._logs.setdefault(log, LogInfo(log, self._path_of(log)))
+        info.starts.append(info.offset)
         info.offset += len(line)
         info.seq = ev["seq"]
         info.heads.append(canon.event_head(ev))
+        info.ino = (stat_sig(info.path) or (0, None))[1]
+        if log != WORKSPACE:
+            self._loaded.add(log)
 
     # -- after the commit
 
     def _after_commit(self, old: State, new: State, ev: dict[str, Any], log: str) -> None:
         assert self._host is not None
-        self._last_at = max(self._last_at, _epoch(ev["at"]))
-        if log != WORKSPACE:
+        self._own_at = max(self._own_at, _epoch(ev["at"]))
+        if log == WORKSPACE:
+            self._ws_last_at = max(self._ws_last_at, _epoch(ev["at"]))
+        else:
             pos = (ev["ws_seq"], _epoch(ev["at"]), log, ev["seq"])
-            self._last_pos = pos if self._last_pos is None or pos > self._last_pos else self._last_pos
-            if ev["type"] == "ticket.created":
-                self._created_at[log] = ev["at"]
+            self._own_pos = pos if self._own_pos is None or pos > self._own_pos else self._own_pos
+            self._exists.add(log)
+            self._sizes[log] = self._logs[log].offset
+            if ev["type"] == "ticket.created" and log not in self._hints:
+                self._hints[log] = _Hint((0, 0), 0, ev["key"], ev["at"], pos)
+                self._key_uid[ev["key"]] = log
         typ = ev["type"]
         if typ == "workspace.created":
             self._genesis_event = ev
             self._pin = self._expected_genesis = new.workspace.genesis
-            self._load_all()  # replay from here on carries the pin (the State built so far has none)
-            if self._external_pins and new.workspace.genesis:
+            self._load()  # replay from here on carries the pin (the State built so far has none)
+            if self._pins is not None and new.workspace.genesis:
                 self._pins.pin_genesis(new.workspace.genesis)
         if typ == "grant.issued":
-            self._grant_hashes[ev["grant"]] = ev["secret_hash"]
-        if typ == "device.revoked":
-            self._pins.note_revocation(ev["device"], ev["reason"], ev["revocation"])
+            self._grant_hashes.setdefault(ev["grant"], ev["secret_hash"])
+        if typ == "device.revoked" and self._pins is not None:
+            self._pins.note_revocation(ev["device"], ev["reason"], ev["revocation"], ev["at"])
         if typ == "restore":
             self._checkpoints.abandon_above(log, ev["from_seq"])
             self._diverged.pop(log, None)
         self._write_checkpoints(log, ev, new)
         changed = {u for u, v in new.tickets.items() if old.tickets.get(u) is not v}
-        if new.workspace.genesis is not None:
+        self._maybe_index(new)
+        if new.workspace.genesis is not None and self._index_ok:
             try:
-                if not self._index.path.exists():
-                    self._index.rebuild(new, self._logs, self.workspace_id, new.workspace.genesis)
-                else:
-                    self._index.update(new, self._logs, [log], changed)
+                self._index.update(new, self._logs, [log], changed, self._sizes_now() | {log: self._logs[log].offset})
             except Exception:  # noqa: BLE001 - derived data: never fail an append for it
                 self._index.drop()
+                self._index_ok = False
         if typ == "restore" and log == WORKSPACE:
-            self._reappend_revocations()
+            self._ws_restore_at = max(self._ws_restore_at, ev["at"])
+            self._pending_revs = self._revocation_plan()
+            self._enforce_revocations()
 
     def _write_checkpoints(self, log: str, ev: dict[str, Any], new: State) -> None:
         assert self._host is not None
@@ -1030,33 +1351,69 @@ class Store:
     def _intent_path(self, idem: str) -> Path:
         return self.state_dir / "intents" / (_sha(idem.encode("utf-8"))[:40] + ".json")
 
-    def _idem_hit(self, idem: str, log: str, e: dict[str, Any]) -> Appended | None:
-        """A retry of an append that already happened returns its result; one whose first try never reached the log
-        reuses the event id it recorded (so a retry can never append twice)."""
-        raw = read_or_none(self._intent_path(idem))
+    def _read_intent(self, idem: str) -> dict[str, Any] | None:
         try:
-            rec = json.loads(raw) if raw else None
+            rec = json.loads(read_or_none(self._intent_path(idem)) or b"null")
         except ValueError:
-            rec = None
-        if not isinstance(rec, dict) or not isinstance(rec.get("log"), str) or not isinstance(rec.get("id"), str):
             return None
-        info = self._logs.get(rec["log"])
-        seq = rec.get("seq")
-        if not (
-            isinstance(seq, int)
-            and info is not None
-            and 1 <= seq <= info.seq
-            and info.heads[seq - 1] == rec.get("head")
-        ):
-            seq = self._seq_of_id(rec["log"], rec["id"]) if info is not None else None
+        if isinstance(rec, dict) and isinstance(rec.get("log"), str) and isinstance(rec.get("id"), str):
+            return rec
+        return None
+
+    def _uid_for_idem(self, idem: str | None) -> str | None:
+        """The uid a retried ``create_ticket`` must use: the one its first attempt recorded (a name, nothing more; the
+        request is matched against the logged event before it counts as a duplicate)."""
+        rec = self._read_intent(idem) if idem else None
+        return rec["log"] if rec and _ULID.fullmatch(rec["log"]) else None
+
+    @staticmethod
+    def _same_request(logged: dict[str, Any], e: dict[str, Any]) -> bool:
+        """Is ``logged`` the event ``e`` asks for: same type, actor and payload (everything the host does not stamp)?
+        ``id`` and ``based_on`` are compared only for a signed event (they are inside its signature); a
+        ``ticket.created`` ignores ``key`` (allocated per attempt)."""
+        skip = {*_HOST_FIELDS, "id", "based_on"}
+        if e.get("type") == "ticket.created":
+            skip.add("key")
+        want = {k: v for k, v in e.items() if k not in skip}
+        want.setdefault("v", 2)
+        want.setdefault("hash_v", 1)
+        have = {k: v for k, v in logged.items() if k not in skip}
+        if have != want:
+            return False
+        if isinstance(e.get("actor"), dict) and e["actor"].get("kind") == "person":
+            return logged.get("id") == e.get("id") and logged.get("based_on") == e.get("based_on")
+        return True
+
+    def _idem_hit(self, idem: str, log: str, e: dict[str, Any]) -> Appended | None:
+        """A retry of an append that already happened returns its result. The record is believed only as far as the log
+        confirms it: same log, and the logged event is the one requested (type, actor, payload; id and base for a signed
+        event). A first attempt that never reached the log hands its event id to the retry, for an event nobody signs
+        (a signed event keeps its own id, which is already its idempotency key)."""
+        rec = self._read_intent(idem)
+        signed = isinstance(e.get("actor"), dict) and e["actor"].get("kind") == "person"
+        seq = None
+        if signed and isinstance(e.get("id"), str):
+            seq = self._seq_of_id(log, e["id"])  # a signed event is its own idempotency key
+        elif rec is not None and rec["log"] == log:
+            info = self._logs.get(log)
+            s = rec.get("seq")
+            if isinstance(s, int) and info is not None and 1 <= s <= info.seq and info.heads[s - 1] == rec.get("head"):
+                seq = s
+            else:
+                seq = self._seq_of_id(log, rec["id"])
         if seq is not None:
-            return Appended(self._read_event(rec["log"], seq), self.state, True)
-        if (e.get("actor") or {}).get("kind") == "person" and e.get("id") not in (None, rec["id"]):
-            raise StoreError("validation.idem", "a retried signed event keeps the id of its first attempt")
-        e["id"] = rec["id"]
+            logged = self._read_event(log, seq)
+            if self._same_request(logged, e):
+                return Appended(logged, self.state, True)
+            return None  # a record that names some other event is ignored, never trusted
+        if rec is not None and rec["log"] == log and not signed and "id" not in e:
+            e["id"] = rec["id"]  # the first attempt never reached the log: same id, so it cannot land twice
         return None
 
     def _seq_of_id(self, log: str, event_id: str) -> int | None:
+        info = self._logs.get(log)
+        if info is None or not info.seq:
+            return None
         raw = read_or_none(self._path_of(log)) or b""
         needle = b'"id":"' + event_id.encode() + b'"'
         for i, line in enumerate(raw.splitlines(), 1):
@@ -1067,8 +1424,11 @@ class Store:
         return None
 
     def _read_event(self, log: str, seq: int) -> dict[str, Any]:
-        lines = (read_or_none(self._path_of(log)) or b"").splitlines()
-        return canon.parse_event_line(lines[seq - 1] + b"\n")
+        info = self._logs[log]
+        path = self._path_of(log)
+        with open(path, "rb") as f:  # the line offsets come from the verified read: seek, do not scan the log
+            f.seek(info.starts[seq - 1])
+            return canon.parse_event_line(f.readline())
 
     def _idem_intent(self, idem: str, log: str, event_id: str) -> None:
         write_atomic(self._intent_path(idem), json.dumps({"log": log, "id": event_id}).encode("utf-8"), mode=0o600)
@@ -1080,10 +1440,11 @@ class Store:
     # ------------------------------------------------------------------ external edits (§5.8)
 
     def scan(self) -> list[dict[str, Any]]:
-        """Look at every ticket's files and ``config.json``/``keys.jsonl``; answer each external change with the host
-        events §5.8 names (``edit.external`` for ``body.md``; revert and ``projection.repaired`` for the rest).
-        Returns the events appended. A read-only store reports instead (``reports``)."""
+        """Load every ticket, look at every ticket's files and ``config.json``/``keys.jsonl``; answer each external
+        change with the host events §5.8 names (``edit.external`` for ``body.md``; revert and ``projection.repaired``
+        for the rest). Returns the events appended. A read-only store reports instead (``reports``)."""
         with self._locked():
+            self._ensure(set(self._exists))
             return self._scan_all()
 
     def _scan_all(self) -> list[dict[str, Any]]:
@@ -1107,12 +1468,20 @@ class Store:
                 self._report(e.code, e.detail, uid)
         return out
 
-    def _after_open_heal(self) -> None:
+    def _after_open_heal(self, eager: bool) -> None:
+        """On open: answer a changed ``config.json``/``keys.jsonl``; with ``load="all"`` also every ticket's files."""
         assert self._state is not None
-        if self._state.workspace.genesis is None or self._read_errors or self._diverged:
+        if self._state.workspace.genesis is None or WORKSPACE in self._read_errors or WORKSPACE in self._diverged:
             return
-        self._scan_all()
-        self._checkpoint_all()
+        if eager:
+            if not self._read_errors and not self._diverged:
+                self._scan_all()
+                self._checkpoint_all()
+            return
+        try:
+            self._heal_workspace()
+        except StoreError as e:
+            self._report(e.code, e.detail, WORKSPACE)
 
     def _heal_for(self, log: str, typ: str, host_event: bool) -> list[dict[str, Any]]:
         if typ in ("workspace.created", "ticket.created"):
@@ -1137,7 +1506,7 @@ class Store:
             return out
         for path, cause, produce in (
             ("config.json", "projection_mismatch", lambda: self._config_bytes(self._state)),
-            ("keys.jsonl", "keys_mismatch", lambda: self._keys_bytes(self._state)),
+            ("keys.jsonl", "keys_mismatch", lambda: self._keys_bytes()),
         ):
             want = produce()
             if read_or_none(self.root / path) == want:
@@ -1154,6 +1523,7 @@ class Store:
             return []
         view = self._state.tickets[uid]
         out: list[dict[str, Any]] = []
+        self._bad_projection.pop(uid, None)
         tpath = f"tickets/{uid}/ticket.json"
         want = self._ticket_bytes(uid)
         have = read_or_none(self.root / tpath)
@@ -1214,9 +1584,10 @@ class Store:
         copy = self._copy_texts(uid, view)
         if texts is None:  # not a body at all (unknown heading, open fence, text outside the rules)
             if copy is None:
-                self._report("store.torn_write", f"{bpath} is not a body and no valid copy to restore", uid)
+                self._unhealable(uid, f"{bpath} is not a body and no valid copy to restore")
                 return []
             self._torn.discard(bpath)
+            self._keep_rejected(uid, raw)
             return [self._repair_body(uid, view, copy, [], "external_edit" if not torn else "projection_mismatch")]
         have_h = {s: canon.section_hash(t) for s, t in texts.items()}
         log_h = {s: v["hash"] for s, v in view.sections.items()}
@@ -1232,9 +1603,7 @@ class Store:
         self._torn.discard(bpath)
         bound = [s for s, entry in changed.items() if self._is_bound(uid, s, entry)]
         if bound and copy is None:
-            self._report(
-                "store.torn_write", f"bound sections {bound} of {bpath} changed and no valid copy to revert", uid
-            )
+            self._unhealable(uid, f"bound sections {bound} of {bpath} changed and no valid copy to revert")
             return []
         installs = {s: v for s, v in changed.items() if s not in bound}
         final = {s: t for s, t in texts.items() if s not in bound}
@@ -1262,10 +1631,32 @@ class Store:
             )
         return out
 
+    def _unhealable(self, uid: str, detail: str) -> None:
+        """An edit outside the store that cannot be answered (nothing trustworthy to revert to): reported, and the
+        ticket takes no new event until the files match the log again."""
+        self._bad_projection[uid] = detail
+        self._report("store.torn_write", detail, uid)
+
     def _is_bound(self, uid: str, sid: str, entry: dict[str, Any] | None) -> bool:
         assert self._state is not None
         r = external_edit_voids(self._state, uid, {sid: entry})
         return isinstance(r, Refusal) and r.code == Code.TICKET_FROZEN
+
+    def _keep_rejected(self, uid: str, raw: bytes | None) -> None:
+        """A body.md that is not a body is saved to ``.state/rejected/<uid>-<at>.md`` before it is reverted, so prose a
+        person typed is not lost; the report says where."""
+        if raw is None:
+            return
+        d = self.state_dir / "rejected"
+        stem = f"{uid}-{self._now().replace(':', '')}"
+        p, n = d / f"{stem}.md", 0
+        while os.path.lexists(p):
+            n += 1
+            p = d / f"{stem}.{n}.md"
+        write_atomic(p, raw, mode=0o600)
+        self._report(
+            "store.rejected_body", f"body.md was not a body; the file is kept as .state/rejected/{p.name}", uid
+        )
 
     def _repair_body(self, uid: str, view: Any, texts: dict[str, str], bound: list[str], cause: str) -> dict[str, Any]:
         payload: dict[str, Any] = {"path": "body.md", "cause": cause}
@@ -1333,6 +1724,7 @@ class Store:
         For a log that has events after the last valid one (a fork, a rewritten tail); a rolled-back log needs none.
         Returns the number of lines moved. The next step is an owner-signed ``restore``."""
         with self._locked():
+            self._ensure({log} if log != WORKSPACE else set())
             path = self._path_of(log)
             raw = read_or_none(path) or b""
             lines = raw.splitlines(keepends=True)
@@ -1341,18 +1733,56 @@ class Store:
             keep, cut = b"".join(lines[:from_seq]), b"".join(lines[from_seq:])
             ab = self.state_dir / "abandoned"
             ab.mkdir(parents=True, exist_ok=True)
-            write_atomic(ab / f"{log}-{from_seq + 1}.jsonl", cut, mode=0o600)
+            target, n = ab / f"{log}-{from_seq + 1}.jsonl", 0
+            while os.path.lexists(target):  # an earlier archive is never overwritten
+                n += 1
+                target = ab / f"{log}-{from_seq + 1}.{n}.jsonl"
+            write_atomic(target, cut, mode=0o600)
             write_atomic(path, keep, mode=0o644)
             self._needs_reload = True
-            self._load_all()
+            self._load()
             return len(lines) - from_seq
 
-    def _reappend_revocations(self) -> None:
-        """§5.10: after a workspace ``restore`` the host puts back every person-key-signed revocation it has seen, as
-        ``device.revoked`` with actor H. A device the restored chain does not know has nothing to revoke."""
+    def _revocation_plan(self) -> list[dict[str, Any]]:
+        """Revocations the host noted (PK-signed, §5.10) that the workspace log does not show: those a workspace
+        ``restore`` post-dates are to be re-appended (a restore without them is incomplete, so this runs on every load
+        and finishes a re-append that a crash interrupted); any other is a rollback of a revocation, and the workspace
+        log is marked diverged (appends refused until an owner ``restore``)."""
         assert self._state is not None
+        ws = self._state.workspace
+        out: list[dict[str, Any]] = []
+        if self._pins is None or ws.genesis is None or WORKSPACE not in self._logs:
+            return out
         for rec in self._pins.revocations():
-            dev = self._state.workspace.devices.get(rec["device"])
+            dev = ws.devices.get(rec.get("device"))
+            if dev is None or dev.revoked:
+                continue
+            if self._ws_restore_at and rec.get("at", "") <= self._ws_restore_at:
+                out.append(rec)
+            else:
+                self._diverged.setdefault(
+                    WORKSPACE,
+                    Divergence(
+                        WORKSPACE,
+                        self._logs[WORKSPACE].seq,
+                        f"the host noted a revocation of {rec.get('device')} that the log lacks (rolled back?)",
+                    ),
+                )
+        return out
+
+    def _enforce_revocations(self) -> None:
+        """Re-append the revocations of :meth:`_revocation_plan` (host actor, allowed by the embedded revocation, §5.3).
+        A read-only store cannot: it marks the workspace diverged instead."""
+        todo, self._pending_revs = self._pending_revs, []
+        if not todo or self._healing:
+            return
+        if self._host is None:
+            self._diverged.setdefault(
+                WORKSPACE, Divergence(WORKSPACE, self._logs[WORKSPACE].seq, "a restore lacks noted revocations")
+            )
+            return
+        for rec in todo:
+            dev = self._state.workspace.devices.get(rec["device"]) if self._state else None
             if dev is None or dev.revoked:
                 continue
             self._host_append(

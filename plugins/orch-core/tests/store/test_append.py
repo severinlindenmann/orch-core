@@ -9,7 +9,8 @@ import pytest
 from orch import canon, crypto
 from orch.identity import CryptoVerifier
 from orch.model import replay
-from orch.store import Store, StoreError, render_ticket
+from orch.store import Store, StoreError
+from orch.store.render import render_ticket
 from tests.store.helpers import GRANT_SECRET, WS, Env, snapshot, ts
 
 
@@ -174,7 +175,7 @@ def test_inline_artifact_references_are_checked(env):
     s = env.bootstrap()
     uid = env.new_ticket()
     text = "see (artifact:missing.png)"
-    from orch.store import section_entry
+    from orch.store.render import section_entry
 
     wrong = {"context": {"hash": canon.section_hash(text), "refs": []}}
     with pytest.raises(StoreError) as e:
@@ -193,7 +194,7 @@ def test_inline_artifact_references_are_checked(env):
 def test_body_text_must_match_the_event_and_the_text_rules(env):
     s = env.bootstrap()
     uid = env.new_ticket()
-    from orch.store import section_entry
+    from orch.store.render import section_entry
 
     sec = {"context": section_entry("one")}
     ev = {"type": "ticket.updated", "actor": env.agent, "base_rev": env.base_rev(uid, {}, sec), "sections": sec}
@@ -228,12 +229,20 @@ def test_genesis_pin_is_written_outside_the_workspace_and_enforced(env):
     assert not any(p.name == "genesis" for p in env.root.rglob("*"))  # the pin is not a file of the workspace
     s.close()
     with pytest.raises(StoreError) as e:
-        Store.open(env.root, expected_workspace_id=WS, expected_genesis="sha256:" + "0" * 64, host=env.signer)
+        Store.open(
+            env.root,
+            expected_workspace_id=WS,
+            expected_genesis="sha256:" + "0" * 64,
+            host=env.signer,
+            host_state_dir=env.host_state,
+        )
     assert e.value.code == "trust.genesis_mismatch"
     with pytest.raises(StoreError) as e:
-        Store.open(env.root, expected_workspace_id="f" * 32, host=env.signer)
+        Store.open(env.root, expected_workspace_id="f" * 32, host=env.signer, host_state_dir=env.host_state)
     assert e.value.code == "trust.genesis_mismatch"
-    ok = Store.open(env.root, expected_workspace_id=WS, expected_genesis=pin, host=env.signer)
+    ok = Store.open(
+        env.root, expected_workspace_id=WS, expected_genesis=pin, host=env.signer, host_state_dir=env.host_state
+    )
     assert ok.genesis == pin
 
 
@@ -258,9 +267,13 @@ def test_the_genesis_must_name_the_hosts_workspace_key(env):
     g = env.genesis()
     other = Env(env.tmp / "o2")
     with pytest.raises(StoreError) as e:
-        Store.open(other.root, expected_workspace_id=WS, host=other.signer, clock=lambda: env.clock[0]).append(
-            g, log="workspace"
-        )
+        Store.open(
+            other.root,
+            expected_workspace_id=WS,
+            host=other.signer,
+            host_state_dir=other.host_state,
+            clock=lambda: env.clock[0],
+        ).append(g, log="workspace")
     assert e.value.code == "validation.host_key"
     assert s.state.workspace.genesis is None
 
@@ -272,11 +285,11 @@ def test_keys_jsonl_is_cj_lines_and_the_allocator_never_reuses_a_number(env):
     assert len(lines) == 2 and all(canon.parse_event_line.__name__ for _ in lines)
     assert json.loads(lines[1])["key"] == "DEMO-0002"
     assert lines[0] == canon.cj_checked(json.loads(lines[0])) + b"\n"
-    assert s.next_key() == "DEMO-0003"
+    assert next_key(s) == "DEMO-0003"
     (env.root / "keys.jsonl").write_bytes(b"")  # a deleted file can not make a number reusable
-    assert s.next_key() == "DEMO-0003"
+    assert next_key(s) == "DEMO-0003"
     (env.root / "keys.jsonl").write_bytes(canon.cj_checked({"key": "DEMO-0099", "uid": a, "at": ts(1)}) + b"\n")
-    assert s.next_key() == "DEMO-0100"  # ... and a number seen in keys.jsonl is never handed out again
+    assert next_key(s) == "DEMO-0100"  # ... and a number seen in keys.jsonl is never handed out again
     assert b
 
 
@@ -307,3 +320,8 @@ def test_no_secret_is_written_anywhere_but_the_host_key_file(env):
         if p.is_file():
             assert scalar.encode() not in p.read_bytes(), p
     assert (wsk_file.stat().st_mode & 0o777) == 0o600
+
+
+def next_key(s):
+    s.refresh()
+    return s._next_key()

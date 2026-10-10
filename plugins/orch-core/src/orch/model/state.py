@@ -12,9 +12,9 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any
 
-from . import edits, generations, visibility
+from . import engine, visibility
 from .codes import OK, Code, Ok, Refusal
-from .engine import Ctx, _scratch, apply_event
+from .engine import Ctx, apply_event
 from .types import WORKSPACE, Core, ts
 from .verifier import Verifier
 from .views import TicketView, WorkspaceView, ticket_view, workspace_view
@@ -121,18 +121,10 @@ def admit(state: State, event: dict[str, Any], *, log: str) -> Ok | Refusal:
 
 
 def external_edit_voids(state: State, uid: str, sections: dict[str, Any]) -> list[str] | Refusal:
-    """The ``voided_gates`` an ``edit.external`` of ``uid`` with these ``sections`` would carry (§5.11), or
-    the refusal (a bound section of a done or closed ticket, an unknown section). The store calls this to fill the
-    event it appends; replay recomputes the same list and refuses a mismatch."""
-    if uid not in state._core.tickets:
-        return Refusal(Code.TICKET_UNKNOWN, uid)
-    sc = _scratch(state._core, uid, {"type": "edit.external", "actor": {"kind": "host"}})
-    t = sc.tickets[uid]
-    before = generations.snapshot(sc.ws, t)
-    r = edits.external(sc.ws, t, {"sections": sections})
-    if r is not None:
-        return r
-    return sorted(generations.settle(sc.ws, t, before).voided)
+    """The ``voided_gates`` an ``edit.external`` of ``uid`` with these ``sections`` would carry (§5.11), or the refusal
+    (a bound section of a done or closed ticket, an unknown section). The store calls this to fill the event it
+    appends; replay recomputes the same list and refuses a mismatch."""
+    return engine.external_edit_voids(state._core, uid, sections)
 
 
 def _fork(core: Core) -> Core:

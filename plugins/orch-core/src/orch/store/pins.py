@@ -68,9 +68,10 @@ class HostPins:
                 continue
         return out
 
-    def note_revocation(self, device: str, reason: str, revocation: dict[str, Any]) -> None:
+    def note_revocation(self, device: str, reason: str, revocation: dict[str, Any], at: str) -> None:
+        """Remember a revocation (``at``: when the host appended it). Once noted it is never dropped or changed."""
         if any(r.get("device") == device for r in self.revocations()):
             return
         self.dir.mkdir(parents=True, exist_ok=True)
-        line = canon.cj_checked({"device": device, "reason": reason, "revocation": revocation}) + b"\n"
+        line = canon.cj_checked({"at": at, "device": device, "reason": reason, "revocation": revocation}) + b"\n"
         append_durable(self._revocations, line)

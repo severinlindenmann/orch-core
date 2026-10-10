@@ -135,6 +135,13 @@ class Checkpoints:
             lo = old["o"]["workspace_log"]
             if lo["seq"] > ws.seq or (lo["seq"] == ws.seq and lo["head"] != ws.head):
                 return "diverged"
+        # unloaded tickets keep their entry from the previous checkpoint (lazy replay: their heads are not known now)
+        tickets = dict(old["o"]["tickets"]) if old and "o" in old else {}
+        for u, i in logs.items():
+            if u != WORKSPACE and i.seq:
+                prev = tickets.get(u)
+                if prev is None or prev["seq"] <= i.seq:
+                    tickets[u] = {"seq": i.seq, "head": i.head}
         o = {
             "v": 2,
             "suite": 2,
@@ -144,7 +151,7 @@ class Checkpoints:
             "n": self.highest_n() + 1,
             "at": at,
             "workspace_log": {"seq": ws.seq, "head": ws.head},
-            "tickets": {u: {"seq": i.seq, "head": i.head} for u, i in sorted(logs.items()) if u != WORKSPACE and i.seq},
+            "tickets": dict(sorted(tickets.items())),
         }
         self._write(self._workspace_path, sign_object(sign, o))
         return None
@@ -159,12 +166,22 @@ class Checkpoints:
             cp = self.workspace()
             if cp and "o" in cp and cp["o"]["workspace_log"]["seq"] > from_seq:
                 ab.mkdir(parents=True, exist_ok=True)
-                os.replace(self._workspace_path, ab / f"workspace-{cp['o']['n']}.json")
+                os.replace(self._workspace_path, _unique(ab, f"workspace-{cp['o']['n']}", ".json"))
             return
         cp = self.ticket(log)
         if cp and "o" in cp and cp["o"]["seq"] > from_seq:
             ab.mkdir(parents=True, exist_ok=True)
-            os.replace(self._ticket_path(log), ab / f"ticket-{log}-{cp['o']['seq']}.json")
+            os.replace(self._ticket_path(log), _unique(ab, f"ticket-{log}-{cp['o']['seq']}", ".json"))
+
+
+def _unique(directory: Path, stem: str, suffix: str) -> Path:
+    """``stem+suffix``, else ``stem.1+suffix``, ``stem.2+suffix``...: the first free name (nothing is overwritten)."""
+    p = directory / (stem + suffix)
+    n = 0
+    while os.path.lexists(p):
+        n += 1
+        p = directory / f"{stem}.{n}{suffix}"
+    return p
 
 
 def find_divergence(
@@ -172,9 +189,14 @@ def find_divergence(
     wsk_pub: bytes | None,
     genesis: str | None,
     logs: Mapping[str, LogInfo],
+    exists: set[str] | None = None,
 ) -> list[Divergence]:
     """Every way the logs disagree with the signed checkpoints. A checkpoint whose signature does not verify counts as
-    a problem of its log too (someone wrote it who does not hold the workspace key)."""
+    a problem of its log too (someone wrote it who does not hold the workspace key).
+
+    ``logs`` holds the logs that were read (the workspace log and every loaded ticket); ``exists`` is the set of
+    ticket uids that have a log file. A ticket that is not loaded is only checked for existence: its head is compared
+    with its checkpoints when it is loaded (lazy replay, ticket-format §2.1)."""
     out: list[Divergence] = []
     if wsk_pub is None:
         return out
@@ -182,8 +204,10 @@ def find_divergence(
     def check(log: str, seq: int, head: str) -> None:
         info = logs.get(log)
         if info is None or info.seq == 0:
-            out.append(Divergence(log, seq, f"the log is missing; a checkpoint names seq {seq}"))
-        elif info.seq < seq:
+            if log == WORKSPACE or (exists is not None and log not in exists) or log in logs:
+                out.append(Divergence(log, seq, f"the log is missing or empty; a checkpoint names seq {seq}"))
+            return  # not loaded: compared when it is
+        if info.seq < seq:
             out.append(Divergence(log, seq, f"the log ends at seq {info.seq}, before the checkpoint at seq {seq}"))
         elif info.heads[seq - 1] != head:
             out.append(Divergence(log, seq, f"the head at seq {seq} differs from the checkpoint"))
@@ -200,6 +224,11 @@ def find_divergence(
             for uid, t in o["tickets"].items():
                 check(uid, t["seq"], t["head"])
     for uid in checkpoints.ticket_uids():
+        if exists is not None and uid not in exists:
+            out.append(Divergence(uid, 0, "the log is missing or empty; a ticket checkpoint exists"))
+            continue
+        if uid not in logs:
+            continue  # compared when the ticket is loaded
         cp = checkpoints.ticket(uid)
         if cp is None:
             continue

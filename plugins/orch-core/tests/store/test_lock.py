@@ -68,7 +68,7 @@ def test_two_processes_creating_tickets_never_share_a_key(env):
 
 
 def test_the_lock_is_reentrant_in_a_process_and_exclusive_across_processes(env):
-    from orch.store import FileLock, LockTimeout
+    from orch.store.lock import FileLock, LockTimeout
 
     path = env.tmp / "x.lock"
     with FileLock(path), FileLock(path):
@@ -79,11 +79,11 @@ def test_the_lock_is_reentrant_in_a_process_and_exclusive_across_processes(env):
             assert pool.apply(workers_try_lock, (str(path),)) == "busy"
     with ctx.Pool(1) as pool:
         assert pool.apply(workers_try_lock, (str(path),)) == "got it"
-    assert LockTimeout.code == "store.busy"
+    assert LockTimeout().code == "store.busy"
 
 
 def workers_try_lock(path: str) -> str:
-    from orch.store import FileLock, LockTimeout
+    from orch.store.lock import FileLock, LockTimeout
 
     try:
         with FileLock(path, timeout=0.2):

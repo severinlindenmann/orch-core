@@ -10,7 +10,8 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from orch import canon
-from orch.store import StoreError, render_ticket
+from orch.store import StoreError
+from orch.store.render import render_ticket
 from tests.store.helpers import Env
 from tests.store.test_append import replayed
 

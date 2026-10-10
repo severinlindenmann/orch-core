@@ -54,7 +54,7 @@ def test_a_stale_index_is_rebuilt_on_open(busy):
     want = s.index.dump()
     s.close()
     db = sqlite3.connect(IDX(env))
-    db.execute("UPDATE logs SET seq = seq - 1")
+    db.execute("UPDATE logs SET size = size - 1")
     db.execute("UPDATE tickets SET status = 'done'")
     db.commit()
     db.close()

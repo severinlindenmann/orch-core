@@ -15,6 +15,8 @@ from typing import Any
 
 from orch import canon, schema
 
+from .fsio import open_nofollow
+
 __all__ = ["LogInfo", "read_new_lines"]
 
 WORKSPACE = "workspace"
@@ -29,6 +31,8 @@ class LogInfo:
     heads: list[str] = field(default_factory=list)  # heads[i] is the head of seq i + 1
     error: str | None = None  # first unreadable line, if any
     error_seq: int = 0
+    ino: int | None = None  # inode of the file when it was read (the freshness check compares it, see Store._fresh)
+    starts: list[int] = field(default_factory=list)  # starts[i] is the byte offset of the line of seq i + 1
 
     @property
     def head(self) -> str | None:
@@ -48,7 +52,9 @@ def read_new_lines(info: LogInfo, *, validate: bool = True) -> list[dict[str, An
         if os.path.islink(info.path):
             info.error, info.error_seq = "the log is a symlink", info.seq + 1
             return []
-        with open(info.path, "rb") as f:
+        fd = open_nofollow(info.path, os.O_RDONLY)
+        with os.fdopen(fd, "rb") as f:
+            info.ino = os.fstat(f.fileno()).st_ino
             f.seek(info.offset)
             data = f.read()
     except FileNotFoundError:
@@ -73,6 +79,7 @@ def read_new_lines(info: LogInfo, *, validate: bool = True) -> list[dict[str, An
             info.error, info.error_seq = f"{type(err).__name__}: {err}"[:300], seq
             break
         out.append(e)
+        info.starts.append(info.offset)
         info.heads.append(head)
         info.seq = seq
         pos = nl + 1
@@ -85,3 +92,50 @@ def file_size(path: Path) -> int:
         return os.stat(path).st_size
     except FileNotFoundError:
         return 0
+
+
+def stat_sig(path: Path) -> tuple[int, int] | None:
+    """``(size, inode)`` of a log, None if it is missing; a symlink has its own signature (never a file's)."""
+    try:
+        st = os.lstat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    if os.path.islink(path):
+        return (-1, -1)
+    return (st.st_size, st.st_ino)
+
+
+def last_line(path: Path) -> bytes | None:
+    """The last complete line of a log (with its LF), read from the end; None if there is none. Unverified: used only
+    as a hint (see ``Store._hints``)."""
+    try:
+        fd = open_nofollow(path, os.O_RDONLY)
+    except OSError:
+        return None
+    with os.fdopen(fd, "rb") as f:
+        size = f.seek(0, os.SEEK_END)
+        end, chunk, buf = size, 8192, b""
+        while end > 0:
+            start = max(0, end - chunk)
+            f.seek(start)
+            buf = f.read(end - start) + buf
+            end = start
+            body = buf[:-1] if buf.endswith(b"\n") else None
+            if body is None:
+                return None
+            k = body.rfind(b"\n")
+            if k >= 0:
+                return body[k + 1 :] + b"\n"
+            if len(buf) > 600_000:
+                return None
+        return buf if buf.endswith(b"\n") else None
+
+
+def first_line(path: Path) -> bytes | None:
+    try:
+        fd = open_nofollow(path, os.O_RDONLY)
+    except OSError:
+        return None
+    with os.fdopen(fd, "rb") as f:
+        line = f.readline(600_000)
+    return line if line.endswith(b"\n") else None

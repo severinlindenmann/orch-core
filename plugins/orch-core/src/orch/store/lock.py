@@ -11,6 +11,8 @@ import threading
 import time
 from pathlib import Path
 
+from .errors import StoreError
+
 __all__ = ["FileLock", "LockTimeout"]
 
 try:  # POSIX
@@ -23,8 +25,11 @@ _registry: dict[str, _Held] = {}
 _registry_guard = threading.Lock()
 
 
-class LockTimeout(TimeoutError):
-    code = "store.busy"
+class LockTimeout(StoreError):
+    """Another process (or thread) holds the workspace lock for longer than the timeout: ``store.busy``, retryable."""
+
+    def __init__(self, detail: str = "the workspace lock is held by another process") -> None:
+        super().__init__("store.busy", detail)
 
 
 class _Held:
@@ -44,7 +49,7 @@ def _flock(fd: int, timeout: float | None) -> None:
                 return
             except BlockingIOError:
                 if deadline is not None and time.monotonic() >= deadline:
-                    raise LockTimeout("the workspace lock is held by another process") from None
+                    raise LockTimeout() from None
                 time.sleep(0.002)
     while True:  # pragma: no cover - Windows
         try:
@@ -53,7 +58,7 @@ def _flock(fd: int, timeout: float | None) -> None:
             return
         except OSError:
             if deadline is not None and time.monotonic() >= deadline:
-                raise LockTimeout("the workspace lock is held by another process") from None
+                raise LockTimeout() from None
             time.sleep(0.01)
 
 
@@ -83,7 +88,7 @@ class FileLock:
         try:
             if h.depth == 0:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
-                fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600)
+                fd = os.open(self.path, os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0), 0o600)
                 try:
                     _flock(fd, self.timeout)
                 except BaseException:

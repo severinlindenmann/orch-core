@@ -18,6 +18,7 @@ T0 = 1_790_000_000  # the Env clock; children run on a frozen clock so that `at`
 def open_store(root: str, host_dir: str, host_state: str, **kw) -> Store:
     host = BackendSigner(FileBackend(host_dir), "wsk")
     kw.setdefault("clock", lambda: T0 + 5)
+    kw.setdefault("load", "all")
     return Store.open(root, expected_workspace_id=WS, host=host, host_state_dir=host_state, **kw)
 
 
@@ -62,7 +63,7 @@ def crash_at(root: str, host_dir: str, host_state: str, uid: str, agent: dict, s
     elif step == "mid_install":
         real = s._install
 
-        def half(m, d):
+        def half(m, d, check=None):
             f0 = m["files"][0]
             dest = Path(root) / f0["to"]
             os.replace(d / str(f0["n"]), dest)
@@ -73,7 +74,7 @@ def crash_at(root: str, host_dir: str, host_state: str, uid: str, agent: dict, s
     elif step == "torn_line":
         real_append = store_mod.append_durable
 
-        def torn(path, data):
+        def torn(path, data, **kw):
             real_append(path, data[: len(data) // 2])
             die()
 
@@ -89,12 +90,12 @@ def crash_update(
     """ticket.updated of title and a section; die after the first projection file was renamed into place."""
     import os
 
-    from orch.store import section_entry
+    from orch.store.render import section_entry
 
     s = open_store(root, host_dir, host_state)
     real = s._install
 
-    def half(m, d):
+    def half(m, d, check=None):
         f0 = m["files"][0]
         dest = Path(root) / f0["to"]
         os.replace(d / str(f0["n"]), dest)

@@ -45,6 +45,7 @@ class Env:
         kw.setdefault("host_state_dir", self.host_state)
         kw.setdefault("clock", lambda: self.clock[0])
         kw.setdefault("workspace_name", "Acme")
+        kw.setdefault("load", "all")  # the tests of the lazy path say load="lazy"
         self.store = Store.open(self.root, expected_workspace_id=WS, **kw)
         return self.store
 
@@ -184,7 +185,7 @@ class Env:
 
     def update(self, uid: str, sets: dict[str, Any] | None = None, body: dict[str, str | None] | None = None):
         """An agent edit of ticket fields and/or sections, through ``Store.append``."""
-        from orch.store import section_entry
+        from orch.store.render import section_entry
 
         s = self.store
         assert s is not None

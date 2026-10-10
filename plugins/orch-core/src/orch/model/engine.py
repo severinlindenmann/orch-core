@@ -302,3 +302,16 @@ def apply_event(
         )
         _place(lc, e)
     return r
+
+
+def external_edit_voids(core: Core, uid: str, sections: dict[str, Any]) -> list[str] | Refusal:
+    """What an ``edit.external`` of ``uid`` with ``sections`` would void (see ``state.external_edit_voids``)."""
+    if uid not in core.tickets:
+        return Refusal(Code.TICKET_UNKNOWN, uid)
+    sc = _scratch(core, uid, {"type": "edit.external", "actor": {"kind": "host"}})
+    t = sc.tickets[uid]
+    before = generations.snapshot(sc.ws, t)
+    r = edits.external(sc.ws, t, {"sections": sections})
+    if r is not None:
+        return r
+    return sorted(generations.settle(sc.ws, t, before).voided)

@@ -18,7 +18,8 @@ Decisions:
   delegation).
 * **``workspace_id``.** Ticket events do not carry the workspace id, but it is in the signed bytes (§5.5), so
   ``verify_host`` takes it as an optional keyword (taken from the event when it has one, as workspace-log
-  events do; otherwise required; without it the event is ``False``). It is optional, so a call that follows the C4 interface is accepted.
+  events do; otherwise required; without it the event is ``False``). It is optional, so a call
+  that follows the C4 interface is accepted.
 * **Fail closed.** Every method returns ``bool`` and never raises; a malformed event, key or signature is ``False``.
   ``verify_embedded`` is ``True`` only for an event whose ``type`` is a known string that carries embedded objects and
   whose objects all verify. An event with a missing, non-string or unknown type is ``False``.

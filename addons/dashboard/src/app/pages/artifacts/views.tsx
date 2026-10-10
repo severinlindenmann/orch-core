@@ -20,14 +20,17 @@ interface ViewProps {
   addonPage: AddonPages
 }
 
-/** The ticket key, a link that looks like one; the title is plain text beside it (full text on hover). */
-export function TicketLink({ a, className }: { a: Pick<ArtifactItem, 'ticket' | 'ticket_title'>; className?: string }) {
+/**
+ * The ticket key, a link that looks like one; the title is plain text beside it (full text on hover). `stacked`: the
+ * title on its own line under the key (a narrow table column).
+ */
+export function TicketLink({ a, className, stacked = false }: { a: Pick<ArtifactItem, 'ticket' | 'ticket_title'>; className?: string; stacked?: boolean }) {
   return (
-    <span className={cn('flex min-w-0 items-baseline gap-1.5', className)}>
-      <Link to="/ticket/$key" params={{ key: a.ticket }} className={cn(LINK, 'shrink-0 font-mono text-[12px]')}>
+    <span className={cn('flex min-w-0', stacked ? 'flex-col' : 'items-baseline gap-1.5', className)}>
+      <Link to="/ticket/$key" params={{ key: a.ticket }} className={cn(LINK, 'w-fit shrink-0 font-mono text-[12px]')}>
         {a.ticket}
       </Link>
-      <span className="min-w-0 truncate text-text-muted" title={a.ticket_title}>
+      <span className={cn('min-w-0 truncate text-text-muted', stacked && 'text-[12px]')} title={a.ticket_title}>
         {a.ticket_title}
       </span>
     </span>
@@ -36,8 +39,8 @@ export function TicketLink({ a, className }: { a: Pick<ArtifactItem, 'ticket' | 
 
 /**
  * The list view: one row per artifact, plain text except the ticket link and the row's one action at its end
- * (Preview, Open link, or the addon). `compact`: beside the preview pane or on a narrow page, "Added by" and "Size"
- * step back (the viewer names both).
+ * (Preview, Open link, or the addon). `compact`: beside the preview pane or on a narrow page, "Kind", "Added by" and
+ * "Size" step back (the type icon stays; the viewer names all three).
  */
 export function ArtifactList({ items, members, current, onPreview, addonPage, compact = false }: ViewProps & { compact?: boolean }) {
   return (
@@ -46,12 +49,12 @@ export function ArtifactList({ items, members, current, onPreview, addonPage, co
         <TableHeader>
           <TableRow className="hover:bg-transparent">
             <TableHead className={compact ? 'w-[38%]' : 'w-[30%]'}>Name</TableHead>
-            <TableHead className="w-24">Kind</TableHead>
+            {!compact && <TableHead className="w-24">Kind</TableHead>}
             <TableHead>Ticket</TableHead>
             {!compact && <TableHead className="w-[15%]">Added by</TableHead>}
             <TableHead className="w-24">Added (UTC)</TableHead>
             {!compact && <TableHead className="w-18 text-right">Size</TableHead>}
-            <TableHead className="w-32">
+            <TableHead className="w-30">
               <span className="sr-only">Action</span>
             </TableHead>
           </TableRow>
@@ -71,7 +74,9 @@ export function ArtifactList({ items, members, current, onPreview, addonPage, co
               >
                 <TableCell>
                   <div className="flex min-w-0 items-center gap-2">
-                    <Icon className="size-3.5 shrink-0 text-text-muted" aria-hidden />
+                    <Icon className="size-3.5 shrink-0 text-text-muted" role="img" aria-label={a.kind} aria-hidden={!compact || undefined}>
+                      <title>{a.kind}</title>
+                    </Icon>
                     <span className="min-w-0 truncate font-medium" title={a.name}>
                       {a.name}
                     </span>
@@ -83,11 +88,13 @@ export function ArtifactList({ items, members, current, onPreview, addonPage, co
                     </p>
                   )}
                 </TableCell>
+                {!compact && (
+                  <TableCell>
+                    <Pill>{a.kind}</Pill>
+                  </TableCell>
+                )}
                 <TableCell>
-                  <Pill>{a.kind}</Pill>
-                </TableCell>
-                <TableCell>
-                  <TicketLink a={a} />
+                  <TicketLink a={a} stacked />
                 </TableCell>
                 {!compact && <TableCell className="truncate text-text-muted">{byLabel(a.by, members)}</TableCell>}
                 <TableCell className="whitespace-nowrap tabular-nums text-text-muted">{fmtTime(a.at)}</TableCell>

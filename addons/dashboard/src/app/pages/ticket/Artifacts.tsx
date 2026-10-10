@@ -296,7 +296,7 @@ export function ArtifactAction({ a, onPreview, current = false, addonPage }: { a
     )
   }
   return (
-    <Button type="button" variant={current ? 'secondary' : 'outline'} size="sm" data-preview className={ACTION} aria-label={`Preview ${a.name}`} onClick={(e) => onPreview(e.currentTarget)}>
+    <Button type="button" variant="outline" size="sm" data-preview className={cn(ACTION, current && 'border-brand/60 bg-brand-soft text-brand hover:bg-brand-soft hover:text-brand')} aria-label={`Preview ${a.name}`} onClick={(e) => onPreview(e.currentTarget)}>
       <Eye aria-hidden />
       Preview
     </Button>

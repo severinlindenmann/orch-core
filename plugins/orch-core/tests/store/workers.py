@@ -81,3 +81,38 @@ def crash_at(root: str, host_dir: str, host_state: str, uid: str, agent: dict, s
     s.append({"type": "log.added", "actor": agent, "text": "dying"}, log=uid)
     time.sleep(0.1)
     sys.exit(0)
+
+
+def crash_update(
+    root: str, host_dir: str, host_state: str, uid: str, agent: dict, base_rev: dict, mode: str = "mid_install"
+) -> None:
+    """ticket.updated of title and a section; die after the first projection file was renamed into place."""
+    import os
+
+    from orch.store import section_entry
+
+    s = open_store(root, host_dir, host_state)
+    real = s._install
+
+    def half(m, d):
+        f0 = m["files"][0]
+        dest = Path(root) / f0["to"]
+        os.replace(d / str(f0["n"]), dest)
+        os._exit(7)
+        return real(m, d)
+
+    def die(*a, **k):
+        os._exit(7)
+
+    s._install = half if mode == "mid_install" else die  # type: ignore[method-assign]
+    s._finish = die if mode == "after_append" else s._finish  # type: ignore[method-assign]
+    from orch import canon
+
+    ev = {
+        "type": "ticket.updated",
+        "actor": agent,
+        "base_rev": {"ticket.title": canon.value_hash("A ticket"), "body.context": canon.section_hash("")},
+        "set": {"ticket.title": "crashed title"},
+        "sections": {"context": section_entry("crashed body")},
+    }
+    s.append(ev, log=uid, body={"context": "crashed body"})

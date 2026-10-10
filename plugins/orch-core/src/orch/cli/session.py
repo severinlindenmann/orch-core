@@ -16,11 +16,9 @@ the grant id and the mode, and a cached result is only returned after the grant 
 
 :class:`MemoryRecords` lives as long as the process; :class:`FileRecords` keeps one JSON file per session.
 
-TODO (C6, acceptance criteria for wiring ``FileRecords`` to the workspace ``.state/``): the dedup record must be
-written in the same lock or transaction as the ``Store.append`` it describes (a crash between the two makes the
-retry append twice), or dedup must be derived from the log; read-modify-write needs a file lock so two processes of
-one session lose no update; a corrupt or partial file must fail closed, not reset the stop rule, and a file with
-missing keys must not raise. ``tests/cli/test_errors.py`` has a skipped test describing the two-process case.
+Wiring to a workspace (``orch.cli.store_hooks``): ``FileRecords`` under ``.state/sessions``; the dedup key goes to
+``Store.append(idem=...)`` through ``Context.idem``, so a crash between the append and the record cannot make the
+retry append twice.
 """
 
 from __future__ import annotations
@@ -28,7 +26,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import tempfile
+import re
 from pathlib import Path
 from typing import Any
 
@@ -46,7 +44,7 @@ def fingerprint(*parts: Any) -> str:
 
 
 def _empty() -> dict[str, Any]:
-    return {"refusals": {}, "stops": {}, "dedup": {}}
+    return {"refusals": {}, "stops": {}, "dedup": {}, "attempts": {}}
 
 
 class MemoryRecords:
@@ -101,36 +99,95 @@ class MemoryRecords:
             return hit["result"]
         return None
 
-    def remember(self, session: str, key: str, now: float, result: dict[str, Any]) -> None:
+    def attempt(self, session: str, base_key: str, now: float) -> str:
+        """The id of this attempt at an operation (``base_key``: session, grant, mode, operation and arguments, but not
+        the ticket head). It is recorded before the handler runs and cleared by :meth:`remember` in the same write, so
+        a crash between the append and the record leaves it behind: the retry gets the same id, which the store uses
+        as ``Store.append(idem=...)`` and answers with the first append instead of appending again."""
         st = self._get(session)
+        st["attempts"] = {k: v for k, v in st["attempts"].items() if now - v["at"] <= DEDUP_SECONDS}
+        hit = st["attempts"].get(base_key)
+        if hit is None:
+            hit = st["attempts"][base_key] = {"id": hashlib.sha256(os.urandom(16)).hexdigest(), "at": now}
+            self._save(session, st)
+        return fingerprint(base_key, hit["id"])
+
+    def remember(self, session: str, key: str, now: float, result: dict[str, Any], base_key: str | None = None) -> None:
+        st = self._get(session)
+        if base_key is not None:
+            st["attempts"].pop(base_key, None)
         st["dedup"] = {k: v for k, v in st["dedup"].items() if now - v["at"] <= DEDUP_SECONDS}
         st["dedup"][key] = {"at": now, "result": result}
         self._save(session, st)
 
 
 class FileRecords(MemoryRecords):
-    """The same records, one ``<session>.json`` per session under ``directory``. Not safe for two writers yet
-    (see the TODO in the module docstring)."""
+    """The same records, one ``<session>.json`` per session under ``directory``.
+
+    * Every operation is one read-modify-write under a file lock (``orch.store.FileLock`` on ``<directory>/.lock``), so
+      two processes of one session lose no update.
+    * Files are replaced atomically (``orch.store.write_atomic``), never written in place.
+    * A file that exists but is not a JSON object **fails closed** (``OrchError`` ``internal``): it is never read as an
+      empty record, so corruption cannot reset the stop rule. A file with missing keys is filled with defaults.
+    * Retry dedup across a crash is the store's job, not this file's: the CLI hands the dedup key to
+      ``Store.append(idem=...)`` (``Context.idem``), which records its intent before the append. A lost record here
+      only means the retry runs the handler again, and the store answers it with the first append.
+    """
 
     def __init__(self, directory: str | os.PathLike[str]) -> None:
         super().__init__()
         self.directory = Path(directory)
+        from orch.store.lock import FileLock  # lazy: `orch --help` does not need the store
+
+        self._flock = FileLock(self.directory / ".lock")
 
     def _path(self, session: str) -> Path:
-        return self.directory / (session.replace("/", "_") + ".json")
+        return self.directory / (re.sub(r"[^A-Za-z0-9_-]", "_", session)[:120] + ".json")
 
     def _get(self, session: str) -> dict[str, Any]:
         try:
-            st = json.loads(self._path(session).read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            st = _empty()
+            raw = self._path(session).read_bytes()
+        except FileNotFoundError:
+            return _empty()
+        try:
+            st = json.loads(raw)
+            if not isinstance(st, dict) or any(not isinstance(st.get(k, {}), dict) for k in _empty()):
+                raise ValueError("not a record")
+        except ValueError:
+            from orch.ops.errors import OrchError
+
+            raise OrchError("internal", f"the session record {self._path(session).name} is corrupt") from None
         for k, v in _empty().items():
             st.setdefault(k, v)
         return st
 
     def _save(self, session: str, state: dict[str, Any]) -> None:
-        self.directory.mkdir(parents=True, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=self.directory, suffix=".tmp")
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump(state, fh)
-        os.replace(tmp, self._path(session))
+        from orch.store.fsio import write_atomic
+
+        write_atomic(self._path(session), json.dumps(state).encode("utf-8"), mode=0o600)
+
+    # one lock around each read-modify-write of the base class
+    def refused(self, *a: Any, **k: Any) -> int:
+        with self._flock:
+            return super().refused(*a, **k)
+
+    def stopped(self, *a: Any, **k: Any) -> bool:
+        with self._flock:
+            return super().stopped(*a, **k)
+
+    def succeeded_write(self, *a: Any, **k: Any) -> None:
+        with self._flock:
+            return super().succeeded_write(*a, **k)
+
+    def recall(self, *a: Any, **k: Any) -> dict[str, Any] | None:
+        with self._flock:
+            return super().recall(*a, **k)
+
+    def remember(self, *a: Any, **k: Any) -> None:
+        with self._flock:
+            return super().remember(*a, **k)
+
+    def attempt(self, *a: Any, **k: Any) -> str:
+        with self._flock:
+            return super().attempt(*a, **k)
+

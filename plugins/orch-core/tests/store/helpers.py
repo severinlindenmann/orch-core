@@ -229,6 +229,9 @@ class Env:
         assert self.store is not None
         return self.store.append({"type": "log.added", "actor": self.agent, "text": text}, log=uid)
 
+    def base_rev_for(self, uid: str) -> dict[str, str]:
+        return self.base_rev(uid, {"ticket.title": None}, {"context": None})
+
     def tick(self, seconds: int = 1) -> None:
         self.clock[0] += seconds
 

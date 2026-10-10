@@ -195,6 +195,7 @@ class Store:
         self._torn: set[str] = set()
         self._ticket_appends_since_cp = 0
         self._healing = False
+        self._grant_hashes: dict[str, str] = {}
 
     # ------------------------------------------------------------------ opening
 
@@ -326,6 +327,7 @@ class Store:
         for name, info in self._logs.items():
             if info.error:
                 self._read_errors[name] = info.error
+        self._grant_hashes = {e["grant"]: e["secret_hash"] for e in ws_events if e["type"] == "grant.issued"}
         self._genesis_event = ws_events[0] if ws_events and ws_events[0]["type"] == "workspace.created" else None
         self._created_at = {u: evs[0]["at"] for u, evs in tickets.items() if evs and evs[0]["type"] == "ticket.created"}
         self._state = replay(
@@ -527,6 +529,10 @@ class Store:
         if m and int(m.group(1)) >= 1:
             return f"{prefix}-{int(m.group(1)):04d}"
         return ref
+
+    def grant_secret_hash(self, grant_id: str) -> str | None:
+        """The ``secret_hash`` a ``grant.issued`` recorded for ``grant_id`` (the secret itself is never stored)."""
+        return self._grant_hashes.get(grant_id)
 
     def uid_of(self, ref: str) -> str | None:
         assert self._state is not None
@@ -946,6 +952,8 @@ class Store:
             self._pin = new.workspace.genesis
             if self._external_pins and new.workspace.genesis:
                 self._pins.pin_genesis(new.workspace.genesis)
+        if typ == "grant.issued":
+            self._grant_hashes[ev["grant"]] = ev["secret_hash"]
         if typ == "device.revoked":
             self._pins.note_revocation(ev["device"], ev["reason"], ev["revocation"])
         if typ == "restore":
@@ -960,7 +968,7 @@ class Store:
                 else:
                     self._index.update(new, self._logs, [log], changed)
             except Exception:  # noqa: BLE001 - derived data: never fail an append for it
-                self._index.close()
+                self._index.drop()
         if typ == "restore" and log == WORKSPACE:
             self._reappend_revocations()
 

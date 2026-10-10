@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import re
 import sys
@@ -110,10 +111,10 @@ def _normalised(op: Operation, args: dict[str, Any], hooks: Hooks) -> dict[str, 
     return out
 
 
-def _dedup_key(op: Operation, ctx: Context, args: dict[str, Any], hooks: Hooks) -> str:
+def _dedup_key(op: Operation, ctx: Context, args: dict[str, Any], hooks: Hooks, *, with_head: bool = True) -> str:
     grant_id = ctx.grant.partition(".")[0] if ctx.grant else "none"
     mode = "attended" if ctx.grant else "unattended"
-    head = hooks.head_seq(op, args) if "ticket_exists" in op.pre else None
+    head = hooks.head_seq(op, args) if with_head and "ticket_exists" in op.pre else None
     return fingerprint(ctx.session, grant_id, mode, op.name, _normalised(op, args, hooks), head)
 
 
@@ -143,14 +144,18 @@ def run(parsed: parser.Parsed, ctx: Context, records: MemoryRecords, hooks: Hook
         hit = records.recall(session, key, ctx.now())  # type: ignore[arg-type]
         if hit is not None:
             return Result(**{**hit, "duplicate": True})
+    base = _dedup_key(op, ctx, args, hooks, with_head=False) if caching else ""
+    idem = records.attempt(session, base, ctx.now()) if caching else None  # type: ignore[arg-type]
     try:
-        res = _call(op, ctx, args)
+        res = _call(op, dataclasses.replace(ctx, idem=idem) if caching else ctx, args)
     except OrchError as e:
         if e.code not in GLOBAL_ERRORS and not any(d["code"] == e.code for d in op.errors):
             raise OrchError("internal", f"{op.cli} returned undeclared error {e.code}") from e
         raise
     if caching:
-        records.remember(session, key, ctx.now(), _redact_obj(_plain(res), secrets))  # type: ignore[arg-type]
+        # recorded under the head *after* this call: a client retry sees that head, anything that happened since differs
+        key = _dedup_key(op, ctx, args, hooks)
+        records.remember(session, key, ctx.now(), _redact_obj(_plain(res), secrets), base)  # type: ignore[arg-type]
     return res
 
 
@@ -245,8 +250,11 @@ def main(
         session = env.get("ORCH_SESSION") or None
         if op is not None and parsed is not None and session and _is_refusal(e):
             norm = _normalised(op, parsed.args, hooks)
-            if records.refused(session, op.name, norm, e.code, now()) >= STOP_AFTER:
-                e = OrchError("stop")
+            try:
+                if records.refused(session, op.name, norm, e.code, now()) >= STOP_AFTER:
+                    e = OrchError("stop")
+            except OrchError as broken:  # unreadable records fail closed: say so instead of the refusal
+                e = broken
         return fail(e, op)
     except render.TemplateError as e:
         return fail(OrchError("internal", _cap(f"output template: {e}", secrets, 200)), op)

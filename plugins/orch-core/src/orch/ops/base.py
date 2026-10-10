@@ -30,6 +30,9 @@ class Context:
     dry_run: bool = False
     now: Callable[[], float] = time.time
     env: Mapping[str, str] = field(default_factory=dict, repr=False)
+    #: The retry-dedup key of this call (set by the CLI for writes with a session). A handler passes it to
+    #: ``Store.append(idem=...)`` so a retry after a crash can never append twice.
+    idem: str | None = field(default=None, repr=False)
 
 
 @dataclass

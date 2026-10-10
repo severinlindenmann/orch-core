@@ -75,7 +75,9 @@ class Index:
             self._db.close()
             self._db = None
 
-    def _drop(self) -> None:
+    def drop(self) -> None:
+        """Delete the file (the next append or open rebuilds it)."""
+        self._rows = {}
         self.close()
         for suffix in ("", "-journal", "-wal", "-shm"):
             with contextlib.suppress(FileNotFoundError):
@@ -101,7 +103,7 @@ class Index:
 
     # -- writing
     def rebuild(self, state: Any, logs: Mapping[str, LogInfo], workspace_id: str, genesis: str | None) -> None:
-        self._drop()
+        self.drop()
         db = self._connect()
         db.executescript("BEGIN;" + _SCHEMA)
         db.executemany(

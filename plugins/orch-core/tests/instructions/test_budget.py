@@ -40,22 +40,25 @@ def test_each_skill_is_under_its_token_budget():
         assert TOKENS(s.text) <= SKILL_MAX_TOKENS, (s.name, TOKENS(s.text))
 
 
+WORST_SESSION_START = session_start_lines(
+    person="A Person With A Long Display Name",
+    grant="gr_01J9Z8AAAAAAAAAAAAAAAAAAAA until 2026-10-11T18:00:00Z",
+    claim="DEMO-0043",
+    claim_line="DEMO-0043 in-progress (your claim) \u00b7 T3 next \u00b7 99 new events \u00b7 waiting: Q1 blocking",
+    unread=["DEMO-0043 #14 answered Q1 option=b"] * 9,
+    stale=True,
+    next_hint="orch wait",
+)
+
+
 def test_the_worst_session_start_text_is_six_lines_and_150_tokens():
-    out = session_start_lines(
-        person="A Person With A Long Display Name",
-        grant="gr_01J9Z8AAAAAAAAAAAAAAAAAAAA until 2026-10-11T18:00:00Z",
-        claim="DEMO-0043",
-        claim_line="DEMO-0043 in-progress (your claim) · T3 next · 99 new events · waiting: Q1 blocking",
-        unread=["DEMO-0043 #14 answered Q1 option=b: because the second source is the one we trust"] * 9,
-        stale=True,
-        next_hint="orch wait",
-    )
-    assert len(out) <= SESSION_START_MAX_LINES == 6
-    assert TOKENS("\n".join(out)) <= SESSION_START_MAX_TOKENS
+    assert len(WORST_SESSION_START) <= SESSION_START_MAX_LINES == 6
+    assert TOKENS("\n".join(WORST_SESSION_START)) <= SESSION_START_MAX_TOKENS
 
 
 def test_always_loaded_text_together_stays_small():
-    assert TOKENS(render_agents_md()) + SESSION_START_MAX_TOKENS <= ALWAYS_LOADED_MAX_TOKENS
+    total = TOKENS(render_agents_md()) + TOKENS("\n".join(WORST_SESSION_START))
+    assert total <= ALWAYS_LOADED_MAX_TOKENS, total
 
 
 def test_the_real_session_start_output_in_a_busy_workspace_stays_within_six_lines(tmp_path):

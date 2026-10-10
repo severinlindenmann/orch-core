@@ -12,8 +12,11 @@ The guard hook (tier C) is not part of this module.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import stat
+import tempfile
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -25,6 +28,9 @@ __all__ = [
     "AGENTS_POINTER",
     "CLAUDE_IMPORT",
     "SKILLS_DIR",
+    "UnsafePath",
+    "check_targets",
+    "safe_read",
     "plugin_files",
     "workspace_files",
     "write_workspace_files",
@@ -63,51 +69,164 @@ def plugin_files() -> dict[str, str]:
     return files
 
 
-def _write(path: Path, text: str) -> bool:
-    """Write ``text`` (LF, UTF-8) atomically unless it is already there; True if the file changed."""
+class UnsafePath(OSError):
+    """A path orch would write or read is, or lies below, a symbolic link (or is not a regular file)."""
+
+
+def _check_chain(root: Path, rel: str) -> Path:
+    """``root / rel`` after checking, with ``lstat``, that no component below ``root`` is a symbolic link and that every
+    component that exists is a directory (the last one may be a regular file or missing)."""
+    cur = root
+    parts = Path(rel).parts
+    for i, part in enumerate(parts):
+        cur = cur / part
+        try:
+            st = os.lstat(cur)
+        except FileNotFoundError:
+            continue
+        if stat.S_ISLNK(st.st_mode):
+            raise UnsafePath(f"{rel}: {part} is a symbolic link; orch does not write through links")
+        last = i == len(parts) - 1
+        if (not last and not stat.S_ISDIR(st.st_mode)) or (
+            last and not (stat.S_ISREG(st.st_mode) or stat.S_ISDIR(st.st_mode))
+        ):
+            raise UnsafePath(f"{rel}: {part} is not a regular file or directory")
+    return cur
+
+
+def safe_read(root: Path, rel: str) -> str | None:
+    """The text of ``root / rel``, or ``None`` if there is no such file. Never follows a link (``UnsafePath``)."""
+    path = _check_chain(root, rel)
     try:
-        if path.read_text(encoding="utf-8") == text:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except FileNotFoundError:
+        return None
+    except OSError as e:  # ELOOP: it became a link between the check and the open
+        raise UnsafePath(f"{rel}: {e.strerror}") from None
+    with os.fdopen(fd, "rb") as f:
+        if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
+            raise UnsafePath(f"{rel}: not a regular file")
+        return f.read(1 << 20).decode("utf-8")
+
+
+def _write(root: Path, rel: str, text: str) -> bool:
+    """Write ``text`` (LF, UTF-8) to ``root / rel`` unless it is already there; True if the file changed. No component
+    is followed if it is a link; the temporary file is made with ``mkstemp`` (exclusive, random name) beside the
+    target."""
+    path = _check_chain(root, rel)
+    try:
+        if safe_read(root, rel) == text:
             return False
-    except (FileNotFoundError, UnicodeDecodeError):
+    except UnicodeDecodeError:
         pass
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.tmp{os.getpid()}")
-    tmp.write_bytes(text.encode("utf-8"))
-    os.replace(tmp, path)
+    parent = path.parent
+    rel_parent = Path(rel).parent
+    cur = root
+    for part in rel_parent.parts:  # make the missing directories one by one, each checked after it exists
+        cur = cur / part
+        if not cur.exists():
+            cur.mkdir()
+        _check_chain(root, str(cur.relative_to(root)))
+    fd, tmp_name = tempfile.mkstemp(prefix=".orch-", suffix=".tmp", dir=parent)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(text.encode("utf-8"))
+        with contextlib.suppress(OSError):
+            os.chmod(tmp_name, 0o644)
+        _check_chain(root, rel)  # still no link on the way
+        os.replace(tmp_name, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_name)
+        raise
     return True
 
 
-def _ensure_line(path: Path, line: str) -> bool:
-    """Append ``line`` to ``path`` (created if missing) unless a line equal to it is there. True if the file changed."""
-    try:
-        have = path.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        have = ""
+def _ensure_line(root: Path, rel: str, line: str) -> bool:
+    """Append ``line`` to ``root / rel`` (created if missing) unless a line equal to it is there. True if changed."""
+    have = safe_read(root, rel) or ""
     if line in have.split("\n"):
         return False
     sep = "" if not have or have.endswith("\n") else "\n"
-    return _write(path, have + sep + line + "\n")
+    return _write(root, rel, have + sep + line + "\n")
 
 
-def write_workspace_files(root: Path, *, pointers: bool = True, owned: Mapping[str, str] | None = None) -> list[str]:
-    """Write the instruction files into ``root`` and return the relative paths that changed. ``pointers`` also adds the
-    ``AGENTS.md`` and ``CLAUDE.md`` lines (``orch init`` does; ``instructions sync`` only rewrites what orch owns).
+def check_targets(root: Path) -> list[str]:
+    """Why the instruction files cannot be written safely into ``root`` (empty when they can)."""
+    problems = []
+    rels = [AGENTS_FILE, "AGENTS.md", "CLAUDE.md", ".gitignore", *workspace_files()]
+    for rel in dict.fromkeys(rels):
+        try:
+            _check_chain(root, rel)
+        except UnsafePath as e:
+            problems.append(str(e))
+    return problems
 
-    A built-in skill whose sidecar says another scope than ``builtin`` was taken over by the owner and is left alone."""
+
+def write_workspace_files(
+    root: Path,
+    *,
+    pointers: bool = True,
+    owned: Mapping[str, str] | None = None,
+    force: bool = False,
+    dry_run: bool = False,
+) -> tuple[list[str], list[str]]:
+    """Write the instruction files into ``root``. Returns ``(changed, kept)``: the relative paths that changed (or
+    would,
+    with ``dry_run``) and a line for each file left alone and why.
+
+    ``pointers`` also adds the ``AGENTS.md`` and ``CLAUDE.md`` lines (``orch init`` does; ``instructions sync`` only
+    rewrites what orch owns). A built-in skill whose sidecar names another scope than ``builtin`` is the owner's and is
+    kept; so is a ``SKILL.md`` that differs from the shipped text at the same ``skill_version`` (edited by hand) unless
+    ``force``. Nothing is written through a symbolic link: :class:`UnsafePath`."""
     changed: list[str] = []
+    kept: list[str] = []
+    skip_dirs: set[str] = set()
     for rel, text in (owned if owned is not None else workspace_files()).items():
-        path = root / rel
         if rel.startswith(SKILLS_DIR + "/"):
-            side = path.parent / "orch.skill.json"
-            try:
-                if json.loads(side.read_text(encoding="utf-8")).get("scope") not in (None, "builtin"):
-                    continue
-            except (OSError, ValueError, AttributeError):
-                pass
-        if _write(path, text):
+            skill_dir = rel.rsplit("/", 1)[0]
+            if skill_dir in skip_dirs:
+                continue
+            reason = _keep_reason(root, skill_dir, force)
+            if reason:
+                skip_dirs.add(skill_dir)
+                kept.append(f"kept {skill_dir} ({reason})")
+                continue
+        if dry_run:
+            if safe_read(root, rel) != text:
+                changed.append(rel)
+        elif _write(root, rel, text):
             changed.append(rel)
     if pointers:
-        for rel, line in (("AGENTS.md", AGENTS_POINTER), ("CLAUDE.md", CLAUDE_IMPORT)):
-            if _ensure_line(root / rel, line):
+        for rel, line in (("AGENTS.md", AGENTS_POINTER), ("CLAUDE.md", CLAUDE_IMPORT), (".gitignore", ".state/")):
+            if dry_run:
+                if line not in (safe_read(root, rel) or "").split("\n"):
+                    changed.append(rel)
+            elif _ensure_line(root, rel, line):
                 changed.append(rel)
-    return changed
+    return changed, kept
+
+
+def _keep_reason(root: Path, skill_dir: str, force: bool) -> str | None:
+    """Why the skill in ``skill_dir`` must not be overwritten, or ``None``."""
+    try:
+        side = safe_read(root, skill_dir + "/orch.skill.json")
+        have = json.loads(side) if side is not None else None
+    except (ValueError, UnicodeDecodeError):
+        have = None
+    if not isinstance(have, dict):
+        return None
+    if have.get("scope") not in (None, "builtin"):
+        return f"scope {have['scope']}, not orch's"
+    if force:
+        return None
+    name = skill_dir.rsplit("/", 1)[1]
+    skill = next((k for k in builtin_skills() if k.name == name), None)
+    if skill is not None and have.get("skill_version") == skill.version:
+        try:
+            current = safe_read(root, skill_dir + "/SKILL.md")
+        except UnicodeDecodeError:
+            current = None
+        if current is not None and current != skill.text:
+            return "edited by hand; --force overwrites it, or set scope workspace in orch.skill.json to keep it"
+    return None

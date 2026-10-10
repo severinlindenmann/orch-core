@@ -39,7 +39,7 @@ def session_start_lines(
     head = f"ok session-start {person}" + (f" · grant {grant}" if grant else " · no grant")
     out = [head]
     if not grant:
-        out.append("no grant: only ask, log and artifact add work; the person runs orch grant")
+        out.append("no grant: only ask, log, artifact add (no --ac) work; the person runs orch grant")
     if claim_line:
         out.append(claim_line)
     elif claim is None:

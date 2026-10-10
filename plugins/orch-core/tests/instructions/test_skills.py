@@ -112,3 +112,24 @@ def test_judgment_rules_only_no_command_manual(skill: Skill):
 @pytest.mark.parametrize("skill", SKILLS, ids=lambda s: s.name)
 def test_each_skill_is_small(skill: Skill):
     assert len(skill.text) <= SKILL_MAX_CHARS and len(skill.text.splitlines()) <= 30
+
+
+# The text of each built-in skill is pinned to its skill_version: change a SKILL.md and this fails until the version in
+# its orch.skill.json is raised and the hash below is updated, so installed copies are reported as old, not "edited".
+PINNED = {
+    "orch-tickets": ("1.0.0", "a040b5534137b1e1"),
+    "orch-work-on-ticket": ("1.0.0", "b31df8c7bb56bee8"),
+    "orch-refine-ticket": ("1.0.0", "b4eb3cc9fb58a8b1"),
+}
+
+
+@pytest.mark.parametrize("skill", SKILLS, ids=lambda s: s.name)
+def test_skill_text_is_pinned_to_its_version(skill: Skill):
+    import hashlib
+
+    digest = hashlib.sha256(skill.text.encode()).hexdigest()[:16]
+    version, pinned = PINNED[skill.name]
+    assert skill.version == version, f"{skill.name}: bump PINNED when you bump skill_version"
+    assert digest == pinned, (
+        f"{skill.name} text changed (sha256 {digest}): raise skill_version in orch.skill.json, then pin it"
+    )

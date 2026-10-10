@@ -1,8 +1,11 @@
 ok describe instructions.sync
 Rewrite AGENTS.orch.md and the built-in skills to the installed version; no grant needed, no event.
-usage: orch instructions sync
+usage: orch instructions sync [--dry-run] [--force]
 who: read · emits: -
 pre: workspace_exists
+args:
+  --dry-run  say what would be written, write nothing
+  --force  overwrite a built-in skill that was edited by hand
 errors:
   not_found (exit 2): run orch init in a workspace | fix: orch describe init
 out: ok instructions.sync {version} / next: {next}

@@ -12,5 +12,5 @@ Judgment rules. The steps are in `orch help refine`.
 - Every criterion is proven by some task; every task proves a criterion or is needed by one that does.
 - Write out of scope what you are tempted to add. It is the cheapest way to keep the ticket small.
 - Ask before building a plan on a guess, but only the one to three questions whose answers change the plan. Offer options and a recommendation.
-- Complete the sections before asking for approval; an incomplete gate is refused.
+- Fill every section and criterion the gate needs, then hand over and ask the person to review the requirements gate; an incomplete gate is refused.
 - Once approved, do not reword the approved sections quietly: a change voids the approval and sends the ticket back. Say why you change it.

@@ -95,12 +95,13 @@ def ws(tmp_path):
 
 def test_orch_check_reports_stale_instructions_and_sync_fixes_them(ws):
     code, out, err = cli(ws, "check")
-    assert code == 0 and out.splitlines()[0] == "ok check 4", out + err  # nothing installed in this workspace yet
+    assert code == 5 and out.splitlines()[0] == "ok check 4", out + err  # problems: exit 5 so a hook can gate
     assert "AGENTS.orch.md: missing" in out and out.splitlines()[-1] == "next: orch instructions sync"
     code, out, err = cli(ws, "instructions", "sync", grant=False)  # no grant needed, no event
     assert code == 0 and out.splitlines()[0] == f"ok instructions.sync r{INSTRUCTIONS_REV}", out + err
     assert (ws.root / "AGENTS.orch.md").is_file()
-    assert cli(ws, "check")[1].splitlines()[0] == "ok check 0"
+    code, out, _ = cli(ws, "check")
+    assert code == 0 and out.splitlines()[0] == "ok check 0"
     code, out, err = cli(ws, "instructions", "sync")
     assert code == 0 and "already current" in out
 
@@ -118,3 +119,34 @@ def test_outside_a_workspace_sync_and_check_say_so(tmp_path, monkeypatch):
         out, err = io.StringIO(), io.StringIO()
         code = main(argv, env={"HOME": str(tmp_path)}, stdout=out, stderr=err)
         assert code == 2 and err.getvalue().startswith("err not_found no orch workspace here"), (argv, err.getvalue())
+
+
+def test_sync_dry_run_writes_nothing_and_force_is_needed_for_a_hand_edited_skill(ws):
+    code, out, _ = cli(ws, "instructions", "sync", "--dry-run")
+    assert code == 0 and "would write AGENTS.orch.md" in out and not (ws.root / "AGENTS.orch.md").exists()
+    cli(ws, "instructions", "sync")
+    skill = ws.root / ".claude/skills/orch-tickets/SKILL.md"
+    skill.write_text(skill.read_text() + "- my own rule\n")
+    code, out, _ = cli(ws, "instructions", "sync")
+    assert code == 0 and "kept .claude/skills/orch-tickets (edited by hand; --force overwrites it" in out
+    assert "my own rule" in skill.read_text()
+    code, out, _ = cli(ws, "instructions", "sync", "--dry-run", "--force")
+    assert "would write .claude/skills/orch-tickets/SKILL.md" in out and "my own rule" in skill.read_text()
+    code, out, _ = cli(ws, "instructions", "sync", "--force")
+    assert "wrote .claude/skills/orch-tickets/SKILL.md" in out and "my own rule" not in skill.read_text()
+    assert cli(ws, "check")[0] == 0
+
+
+def test_an_old_skill_version_is_upgraded_without_force(ws):
+    cli(ws, "instructions", "sync")
+    side = ws.root / ".claude/skills/orch-tickets/orch.skill.json"
+    side.write_text(json.dumps({**json.loads(side.read_text()), "skill_version": "0.1.0"}))
+    (ws.root / ".claude/skills/orch-tickets/SKILL.md").write_text("an old text\n")
+    assert "wrote .claude/skills/orch-tickets/SKILL.md" in cli(ws, "instructions", "sync")[1]
+
+
+def test_stale_check_does_not_follow_a_symlink(root, tmp_path):
+    (tmp_path / "secret").write_text("orch v2.0 (instructions r1) \u00b7 not the real one\n")
+    (root / "AGENTS.orch.md").unlink()
+    (root / "AGENTS.orch.md").symlink_to(tmp_path / "secret")
+    assert "symbolic link" in where(stale_findings(root))["AGENTS.orch.md"]

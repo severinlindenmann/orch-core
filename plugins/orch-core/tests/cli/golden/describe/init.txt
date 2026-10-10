@@ -8,7 +8,7 @@ args:
   --name NAME  your display name
   --dry-run  say what would happen, append nothing
 errors:
-  human_only (exit 3): orch ask or orch wait | fix: orch describe ask
+  human_only (exit 3): run orch init in your own terminal, not through an agent | fix: orch describe init
   lock.busy (exit 4 retry): retry in a moment | fix: orch status
   parse.text (exit 6): orch describe init
   members.stale (exit 9 retry): retry; the person re-signs | fix: orch status

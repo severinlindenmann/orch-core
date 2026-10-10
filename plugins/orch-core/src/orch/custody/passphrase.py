@@ -13,7 +13,7 @@ Key file (JSON, one per key, mode 0600)::
   default can be lowered only through underscore test seams (``_kdf``, ``_min_n``), which no production path uses.
 * **Passphrase text.** NFC-normalised with :func:`orch.canon.nfc` (Unicode 16.0, the same on every OS and Python)
   and encoded as strict UTF-8; a passphrase that is not valid text is refused, never altered (``"replace"`` would
-  make distinct byte strings collide). Minimum 12 characters and a strength check (``strength.py``) on creation.
+  make distinct byte strings collide). Minimum length and strength: :mod:`orch.custody.strength`, checked on creation.
 * **Cipher.** AES-256-GCM, a fresh random nonce, the AAD is ``"orch/v2/custody-file|" || cj(header)`` over
   ``{v, key_id, role, pub, kdf}``, so the file's public key, id, role and KDF parameters are authenticated. After
   decrypting, the scalar must reproduce ``pub``.
@@ -60,6 +60,7 @@ from .base import (
     label_allowed,
 )
 from .describe import describe_payload
+from .strength import MIN_CHARS as MIN_PASSPHRASE_CHARS
 from .strength import check_strength
 
 __all__ = [
@@ -75,7 +76,6 @@ __all__ = [
 
 FILE_SUFFIX = ".key.json"
 AAD_LABEL = b"orch/v2/custody-file|"
-MIN_PASSPHRASE_CHARS = 12
 MIN_N = 2**15
 MAX_N = 2**20
 MAX_SHOWN = 120
@@ -304,7 +304,12 @@ class PassphraseBackend:
 
     # -- interface ----------------------------------------------------------------------------------------------------
 
-    def create(self, key_id: str, *, secret: bytes | None = None, role: str = "device") -> bytes:
+    def create(
+        self, key_id: str, *, secret: bytes | None = None, role: str = "device", passphrase: str | None = None
+    ) -> bytes:
+        """Create the key. ``passphrase`` is for a caller that has already asked the person itself on the terminal
+        (``orch init`` offers a generated one); without it the backend's own prompt asks (twice). Either way the text
+        must pass :func:`orch.custody.strength.check_strength`."""
         check_key_id(key_id)
         if role not in ROLES:
             raise CustodyError(f"the passphrase backend holds person and device keys, not {role!r}")
@@ -318,7 +323,8 @@ class PassphraseBackend:
                 raise CustodyError("secret must be the 32-byte scalar")
             key = crypto.private_key_from_scalar(int.from_bytes(secret, "big"))
         pub = crypto.public_bytes(key)
-        passphrase = self._provider(PassphraseRequest("create", key_id, "", ""))
+        if passphrase is None:
+            passphrase = self._provider(PassphraseRequest("create", key_id, "", ""))
         pw = _passphrase_bytes(passphrase)
         check_strength(passphrase)
         salt, nonce = secrets.token_bytes(16), secrets.token_bytes(12)

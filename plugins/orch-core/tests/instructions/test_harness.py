@@ -37,11 +37,11 @@ def test_workspace_files_are_the_instructions_and_the_three_skills():
 
 
 def test_writing_is_idempotent_and_repairs_a_damaged_file(tmp_path):
-    first = write_workspace_files(tmp_path)
-    assert "AGENTS.orch.md" in first and "AGENTS.md" in first and "CLAUDE.md" in first
-    assert write_workspace_files(tmp_path) == []  # nothing changes the second time
+    first, kept = write_workspace_files(tmp_path)
+    assert {"AGENTS.orch.md", "AGENTS.md", "CLAUDE.md", ".gitignore"} <= set(first) and kept == []
+    assert write_workspace_files(tmp_path) == ([], [])  # nothing changes the second time
     (tmp_path / "AGENTS.orch.md").write_text("tampered\n")
-    assert write_workspace_files(tmp_path, pointers=False) == ["AGENTS.orch.md"]
+    assert write_workspace_files(tmp_path, pointers=False) == (["AGENTS.orch.md"], [])
     assert (tmp_path / "AGENTS.md").read_text() == AGENTS_POINTER + "\n"
     assert (tmp_path / "CLAUDE.md").read_text() == CLAUDE_IMPORT + "\n"
 
@@ -66,3 +66,4 @@ def test_the_wheel_ships_the_skills_and_the_sidecars(tmp_path):
         assert f"orch/instructions/skills/{n}/SKILL.md" in names
         assert f"orch/instructions/skills/{n}/orch.skill.json" in names
     assert "orch/instructions/agents_md.py" in names
+    assert "orch/custody/common_passwords.txt" in names

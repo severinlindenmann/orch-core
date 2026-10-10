@@ -7,7 +7,7 @@
     "cli": "orch instructions sync",
     "summary": "Rewrite AGENTS.orch.md and the built-in skills to the installed version; no grant needed, no event.",
     "who": "read",
-    "usage": "orch instructions sync",
+    "usage": "orch instructions sync [--dry-run] [--force]",
     "pre": [
       "workspace_exists"
     ],
@@ -15,7 +15,16 @@
     "input": {
       "type": "object",
       "description": "Rewrite AGENTS.orch.md and the built-in skills to the installed version; no grant needed, no event.",
-      "properties": {},
+      "properties": {
+        "dry_run": {
+          "type": "boolean",
+          "description": "say what would be written, write nothing"
+        },
+        "force": {
+          "type": "boolean",
+          "description": "overwrite a built-in skill that was edited by hand"
+        }
+      },
       "required": [],
       "additionalProperties": false
     },

@@ -6,7 +6,7 @@ cannot name a command that does not exist (core §2, ticket-format §10.2). The 
 """
 
 from .agents_md import AGENTS_MAX_LINES, INSTRUCTIONS_REV, render_agents_md, stamp_rev
-from .harness import plugin_files, workspace_files, write_workspace_files
+from .harness import UnsafePath, check_targets, plugin_files, safe_read, workspace_files, write_workspace_files
 from .hooks import PRE_COMPACT_MAX_LINES, SESSION_START_MAX_LINES, pre_compact_lines, session_start_lines
 from .skills import SKILL_MAX_CHARS, Skill, builtin_skills, check_sidecar, parse_frontmatter
 from .stale import stale_findings
@@ -18,6 +18,9 @@ __all__ = [
     "SESSION_START_MAX_LINES",
     "SKILL_MAX_CHARS",
     "Skill",
+    "UnsafePath",
+    "check_targets",
+    "safe_read",
     "builtin_skills",
     "check_sidecar",
     "parse_frontmatter",

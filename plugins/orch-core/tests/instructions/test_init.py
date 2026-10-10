@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import re
 import secrets
 import time
@@ -20,7 +21,7 @@ from orch.ops import workspace_init as wi
 from orch.ops.commands.init import OP
 from orch.ops.errors import OrchError
 from orch.store import BackendSigner, Store
-from tests.instructions.conftest import init_ctx
+from tests.instructions.conftest import OWN, init_ctx
 
 ARGS = {"prefix": "DEMO", "name": "Severin"}
 SESSION = "s_01J9ZP0000000000000000000S"
@@ -79,10 +80,8 @@ def test_init_creates_workspace_keys_pin_and_instructions(where, term, passphras
 
 def test_recovery_code_is_shown_once_on_the_terminal_and_nowhere_else(where, term, passphrases):
     res = run_init(where)
-    assert len(term.shown) == 1 and len(term.waits) == 1
-    words = re.findall(r"^[a-z]+(?: [a-z]+){23}$", term.shown[0], flags=re.M)
-    assert len(words) == 1
-    code = words[0]
+    assert len(re.findall(r"^[a-z]+(?: [a-z]+){23}$", term.text, flags=re.M)) == 1
+    code = term.code
     check_recovery_code(code)  # 24 valid BIP-39 words with a good checksum
     # the code is the person key: its person id is the owner of the genesis
     assert config(where)["members"][0]["person"] == person_ref(crypto.public_bytes(derive_person_key(code)))
@@ -92,21 +91,51 @@ def test_recovery_code_is_shown_once_on_the_terminal_and_nowhere_else(where, ter
         for p in base.rglob("*"):
             if p.is_file():
                 assert first_half.encode() not in p.read_bytes(), p
+                assert term.generated.encode() not in p.read_bytes(), p
     blob = json.dumps([res.data, res.lines, res.hints])
-    assert first_half not in blob and " ".join(code.split()[:2]) not in blob
-    # a second init in another directory draws another code
+    assert first_half not in blob and " ".join(code.split()[:2]) not in blob and term.generated not in blob
+    # a second init in another directory draws another code and another passphrase
+    first_code, first_pass = code, term.generated
     other = {**where, "root": where["root"].parent / "second", "state": where["state"].parent / "state2"}
     other["root"].mkdir()
     run_init(other)
-    assert term.shown[1] != term.shown[0]
+    assert term.code != first_code and term.generated != first_pass
 
 
-def test_passphrase_is_asked_through_the_backend_for_the_key_and_for_the_genesis(where, term, passphrases):
+def test_the_order_is_passphrase_then_code_then_three_words_then_a_cleared_screen(where, term, passphrases):
     run_init(where)
-    assert [r.kind for r in passphrases.requests] == ["create", "unlock"]  # create the device key, sign the genesis
-    unlock = passphrases.requests[1]
-    assert dict(unlock.fields)["type"] == "workspace.created"  # the person sees what is signed
-    assert unlock.key_id == "dk"
+    assert "Your generated passphrase" in term.shown[0] and "recovery code" in term.shown[1]
+    words = [a for a in term.asked if a.startswith("Word ")]
+    assert len(words) == 3
+    positions = [int(a[5:].split(":")[0]) for a in words]
+    assert positions == sorted(set(positions)) and all(1 <= n <= 24 for n in positions)
+    assert term.asked[0] == "Passphrase: " and term.cleared == 1
+
+
+def test_a_passphrase_of_the_persons_own_is_asked_twice_and_checked(where, term, passphrases):
+    term.typed = ["password1234567", OWN, OWN]  # the first is refused, the second is accepted and repeated
+    term.final = OWN
+    run_init(where)
+    assert "Not accepted" in term.text and term.asked.count("Repeat your passphrase: ") == 1
+    assert (where["root"] / "config.json").is_file()
+
+
+def test_a_passphrase_that_differs_the_second_time_is_not_taken(where, term, passphrases):
+    term.typed = [OWN, OWN + "x", "also bad", "bad too", "third"]
+    with pytest.raises(OrchError) as e:
+        run_init(where)
+    assert e.value.code == "invalid.input" and "nothing was created" in e.value.message
+    assert tree(where["root"]) == set() and not (where["state"] / "hosts").exists()
+    assert not re.findall(r"^[a-z]+(?: [a-z]+){23}$", term.text, flags=re.M)  # no code was shown yet
+
+
+def test_a_wrong_recovery_word_shows_the_code_again_and_three_failures_abort(where, term, passphrases):
+    term.wrong_words = True
+    with pytest.raises(OrchError) as e:
+        run_init(where)
+    assert "not confirmed" in e.value.message and "void" in e.value.message
+    assert tree(where["root"]) == set() and term.cleared == 1
+    assert len(re.findall(r"^[a-z]+(?: [a-z]+){23}$", term.text, flags=re.M)) == 3
 
 
 def test_the_log_replays_clean_and_check_says_so(where, term, passphrases):
@@ -274,11 +303,11 @@ def test_refuses_a_state_directory_inside_the_workspace(where, term, passphrases
     assert e.value.code == "invalid.input" and "inside" in e.value.message
 
 
-def test_a_too_short_passphrase_rolls_everything_back(where, term, passphrases):
-    passphrases.answer = "short"  # under the 8 character floor: the backend refuses to create the key
+def test_a_wrong_passphrase_at_the_genesis_signature_rolls_everything_back(where, term, passphrases):
+    passphrases.override = "not the passphrase at all"
     with pytest.raises(OrchError) as e:
         run_init(where)
-    assert e.value.code == "invalid.input" and "nothing was created" in e.value.message
+    assert e.value.code == "invalid.input" and "nothing was created" in e.value.message and "void" in e.value.message
     assert tree(where["root"]) == set()
     assert not (where["state"] / "hosts").exists() or not list((where["state"] / "hosts").iterdir())
 
@@ -322,3 +351,187 @@ def test_no_production_path_skips_the_prompts():
     assert offenders == []
     assert set(OP.input["properties"]) == {"prefix", "name"}
     assert wi.TERMINAL.__class__ is wi.Terminal  # the module default is the real /dev/tty terminal
+
+
+# ------------------------------------------------------------------------------- interruption, locks, leftovers
+
+
+@pytest.mark.parametrize("at", ["Passphrase: ", "Press Enter", "Word "])
+def test_ctrl_c_is_one_clear_error_and_rolls_back(where, term, passphrases, at):
+    term.interrupt_at = at
+    with pytest.raises(OrchError) as e:
+        run_init(where)
+    assert e.value.code == "stop" and "cancelled; nothing was created" in e.value.message
+    assert tree(where["root"]) == set()
+    assert not (where["state"] / "hosts").exists() or not list((where["state"] / "hosts").iterdir())
+
+
+def test_ctrl_c_at_the_signing_prompt_rolls_back_too(where, term, passphrases):
+    passphrases.interrupt = True
+    with pytest.raises(OrchError) as e:
+        run_init(where)
+    assert e.value.code == "stop" and tree(where["root"]) == set()
+
+
+def test_sighup_is_turned_into_an_interrupt_during_init():
+    import os
+    import signal
+
+    with wi._hangup_as_interrupt():
+        with pytest.raises(KeyboardInterrupt):
+            os.kill(os.getpid(), signal.SIGHUP)
+    assert signal.getsignal(signal.SIGHUP) in (signal.SIG_DFL, signal.SIG_IGN) or callable(
+        signal.getsignal(signal.SIGHUP)
+    )
+
+
+def test_a_second_init_in_the_same_directory_is_refused_and_deletes_nothing(where, term, passphrases):
+    (where["root"] / wi.LOCK_DIR).mkdir()  # another init holds the lock
+    (where["root"] / "mine.txt").write_text("keep")
+    with pytest.raises(OrchError) as e:
+        run_init(where)
+    assert e.value.code == "lock.busy"
+    assert (where["root"] / wi.LOCK_DIR).is_dir() and (where["root"] / "mine.txt").read_text() == "keep"
+    assert not term.shown
+
+
+def test_the_lock_is_released_after_success_and_after_failure(where, term, passphrases):
+    term.wrong_words = True
+    with pytest.raises(OrchError):
+        run_init(where)
+    assert not (where["root"] / wi.LOCK_DIR).exists()
+    term.wrong_words = False
+    run_init(where)
+    assert not (where["root"] / wi.LOCK_DIR).exists()
+
+
+def test_keys_of_a_killed_init_are_swept_by_the_next_one_but_a_live_one_is_not(where, term, passphrases):
+    import subprocess
+    import sys
+
+    dead = subprocess.Popen([sys.executable, "-c", "pass"])
+    dead.wait()
+    hosts = where["state"] / "hosts"
+    orphan, live = hosts / ("a" * 32), hosts / ("b" * 32)
+    for d, pid in ((orphan, dead.pid), (live, os.getpid())):
+        (d / "keys").mkdir(parents=True)
+        (d / "keys" / "wsk.filekey.json").write_text("{}")
+        (d / wi.MARKER).write_text(f"{pid}\n")
+    run_init(where)
+    assert not orphan.exists() and live.exists()
+
+
+def test_no_marker_is_left_after_success(where, term, passphrases):
+    run_init(where)
+    assert not list(where["state"].rglob(wi.MARKER))
+
+
+# ------------------------------------------------------------------------------------------- after the genesis
+
+
+def test_a_failure_writing_the_instruction_files_keeps_the_workspace_and_says_so(where, term, passphrases, monkeypatch):
+    def boom(*a, **k):
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr(wi, "write_workspace_files", boom)
+    res = run_init(where)
+    text = "\n".join(res.lines)
+    assert "WORKSPACE CREATED" in text and "read-only file system" in text and "orch instructions sync" in text
+    assert (where["root"] / "config.json").is_file() and res.seq == 1
+
+
+def test_a_kept_workspace_skill_is_announced(where, term, passphrases):
+    skill = where["root"] / ".claude" / "skills" / "orch-tickets"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("mine\n")
+    (skill / "orch.skill.json").write_text(
+        json.dumps({"schema_version": 1, "skill_version": "1.0.0", "scope": "workspace", "connections": [], "env": []})
+    )
+    res = run_init(where)
+    assert any(x.startswith("kept .claude/skills/orch-tickets (scope workspace") for x in res.lines)
+    assert (skill / "SKILL.md").read_text() == "mine\n"
+
+
+# ---------------------------------------------------------------------------------------------------------- symlinks
+
+
+def outside(tmp_path) -> Path:
+    p = tmp_path / "outside"
+    p.mkdir()
+    (p / "secret.txt").write_text("TOP SECRET\n")
+    return p
+
+
+@pytest.mark.parametrize("name", ["AGENTS.md", "CLAUDE.md", ".gitignore", "AGENTS.orch.md"])
+def test_init_refuses_a_symlinked_file_and_copies_nothing(where, term, passphrases, tmp_path, name):
+    out = outside(tmp_path)
+    (where["root"] / name).symlink_to(out / "secret.txt")
+    with pytest.raises(OrchError) as e:
+        run_init(where)
+    assert e.value.code == "invalid.input" and "symbolic link" in e.value.message
+    assert (out / "secret.txt").read_text() == "TOP SECRET\n" and not term.shown
+    assert not where["state"].exists() and sorted(p.name for p in where["root"].iterdir()) == [name]
+
+
+@pytest.mark.parametrize("rel", [".claude", ".claude/skills", ".claude/skills/orch-tickets"])
+def test_init_refuses_a_symlinked_directory_and_writes_nothing_outside(where, term, passphrases, tmp_path, rel):
+    out = outside(tmp_path)
+    link = where["root"] / rel
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(out, target_is_directory=True)
+    with pytest.raises(OrchError) as e:
+        run_init(where)
+    assert e.value.code == "invalid.input" and "symbolic link" in e.value.message
+    assert sorted(p.name for p in out.iterdir()) == ["secret.txt"] and not where["state"].exists()
+
+
+def test_a_planted_temp_name_is_never_followed(where, term, passphrases, tmp_path):
+    out = outside(tmp_path)
+    for pid in range(1, 200):  # the old predictable name
+        (where["root"] / f".AGENTS.orch.md.tmp{pid}").symlink_to(out / "secret.txt")
+    run_init(where)
+    assert (out / "secret.txt").read_text() == "TOP SECRET\n"
+    assert not (where["root"] / "AGENTS.orch.md").is_symlink()
+
+
+def test_sync_refuses_to_write_through_a_symlink(where, term, passphrases, tmp_path):
+    from orch.cli.main import main
+
+    run_init(where)
+    out = outside(tmp_path)
+    (where["root"] / "AGENTS.orch.md").unlink()
+    (where["root"] / "AGENTS.orch.md").symlink_to(out / "secret.txt")
+    e, o = io.StringIO(), io.StringIO()
+    code = main(
+        ["instructions", "sync"],
+        env={"ORCH_WORKSPACE": str(where["root"]), "ORCH_STATE_DIR": str(where["state"])},
+        stdout=o,
+        stderr=e,
+    )
+    assert code == 5 and "symbolic link" in e.getvalue()
+    assert (out / "secret.txt").read_text() == "TOP SECRET\n"
+
+
+# --------------------------------------------------------------------------------------------- through the CLI itself
+
+
+def test_init_through_main_with_the_cli_deciding_presence(where, term, passphrases, monkeypatch):
+    """``main(["init", ...])`` end to end: the CLI, not the test, decides whether a person is present. That needs the
+    human operations of C7 (#354); until they are merged the CLI never grants presence and this test is skipped."""
+    monkeypatch.chdir(where["root"])
+    out, err = io.StringIO(), io.StringIO()
+    env = {"ORCH_STATE_DIR": str(where["state"]), "HOME": str(where["home"]), "USER": "severin", "PATH": "/usr/bin"}
+    code = main(["init", "--prefix", "DEMO", "--name", "Severin"], env=env, stdout=out, stderr=err)
+    if code != 0 and "human_only" in err.getvalue() and not term.shown:
+        pytest.skip("the CLI grants no human presence before C7 (#354) is merged")
+    assert code == 0 and out.getvalue().startswith("ok init DEMO seq=1"), out.getvalue() + err.getvalue()
+    assert term.code not in out.getvalue() + err.getvalue()
+    assert (where["root"] / "config.json").is_file()
+    code = main(["init", "--prefix", "DEMO"], env=env, stdout=io.StringIO(), stderr=err)
+    assert code == 2 and "already exists" in err.getvalue()
+    env["ORCH_GRANT"] = "gr_01J9ZP0000000000000000000A." + "A" * 43
+    other = where["root"].parent / "second"
+    other.mkdir()
+    monkeypatch.chdir(other)
+    assert main(["init", "--prefix", "DEMO"], env=env, stdout=io.StringIO(), stderr=io.StringIO()) == 3
+    assert tree(other) == set()

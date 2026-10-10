@@ -26,6 +26,9 @@ OP = operation(
     emits=("workspace.created",),
     text="ok init {prefix} seq={seq}\nnext: {next}",
     data=obj({"prefix": STR, "workspace_id": STR}),
-    errors=(err("parse.text"),),
+    errors=(
+        err("parse.text"),
+        err("human_only", "run orch init in your own terminal, not through an agent", ["orch", "describe", "init"]),
+    ),
     handler=handle,
 )

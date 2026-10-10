@@ -38,6 +38,12 @@
           },
           "actor": {
             "$ref": "https://schemas.orch.dev/v2/event#/$defs/actor"
+          },
+          "sha256": {
+            "not": {}
+          },
+          "bytes": {
+            "not": {}
           }
         },
         "required": [
@@ -45,21 +51,7 @@
           "kind",
           "addon",
           "ref"
-        ],
-        "not": {
-          "anyOf": [
-            {
-              "required": [
-                "sha256"
-              ]
-            },
-            {
-              "required": [
-                "bytes"
-              ]
-            }
-          ]
-        }
+        ]
       },
       "else": {
         "properties": {
@@ -86,6 +78,12 @@
           },
           "actor": {
             "$ref": "https://schemas.orch.dev/v2/event#/$defs/actor"
+          },
+          "addon": {
+            "not": {}
+          },
+          "ref": {
+            "not": {}
           }
         },
         "required": [
@@ -93,21 +91,7 @@
           "kind",
           "sha256",
           "bytes"
-        ],
-        "not": {
-          "anyOf": [
-            {
-              "required": [
-                "addon"
-              ]
-            },
-            {
-              "required": [
-                "ref"
-              ]
-            }
-          ]
-        }
+        ]
       }
     },
     {

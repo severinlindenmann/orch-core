@@ -386,7 +386,7 @@ _SPEC = {
         },
         5,
     ),
-    "invalid.acknowledged": (PERSON, {"invalid_seq": 4, "head": H, "reason": "forged by an agent"}, 5),
+    "invalid.acknowledged": (PERSON, {"invalid_seq": 4, "invalid_head": H, "reason": "forged by an agent"}, 5),
     "workspace.created": (
         PERSON,
         {
@@ -461,7 +461,7 @@ _SPEC = {
             "capabilities": ["serve_http"],
             "binds": {
                 "fields": {"points": ["plan"]},
-                "sections": [{"id": "notes", "gate": ["plan"], "types": ["feature", "bug"]}],
+                "sections": [{"id": "estimate.notes", "gate": ["plan"], "types": ["feature", "bug"]}],
             },
         },
         5,

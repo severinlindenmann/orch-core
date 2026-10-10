@@ -401,10 +401,12 @@
             "$ref": "https://schemas.orch.dev/v2/common#/$defs/token"
           },
           "heading": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 40,
-            "pattern": "^(?:[^\\n]+)(?![\\s\\S])"
+            "allOf": [
+              {
+                "$ref": "https://schemas.orch.dev/v2/common#/$defs/line"
+              }
+            ],
+            "maxLength": 40
           },
           "after": {
             "$ref": "https://schemas.orch.dev/v2/common#/$defs/sectionId"

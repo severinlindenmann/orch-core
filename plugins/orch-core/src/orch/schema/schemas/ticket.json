@@ -15,10 +15,7 @@
       "$ref": "https://schemas.orch.dev/v2/common#/$defs/ticketKey"
     },
     "title": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 200,
-      "pattern": "^(?:[^\\n]+)(?![\\s\\S])"
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/title"
     },
     "type": {
       "$ref": "https://schemas.orch.dev/v2/common#/$defs/ticketType"

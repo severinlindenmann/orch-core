@@ -3,30 +3,38 @@
 The schemas live as ``.json`` files in ``schemas/`` (package data). Names are the file stems, for example
 ``ticket``, ``workspace``, ``event``, ``event.gate.approved``, ``gate-input`` or ``addon-manifest``. They follow
 ``docs/architecture/orch-v2-ticket-format.md`` (F1) section by section; each schema's ``description`` names the
-section.
+section. ``common`` is a library of definitions, not a document: ``validate("common", ...)`` is refused.
 
-* ``names()``: every schema name.
-* ``load(name)``: the schema as a dict (a copy).
-* ``validate(name, obj, log=None)``: raises :class:`SchemaError` (with a JSON pointer) on the first problem.
-  Besides the schema it enforces what JSON Schema cannot express: the text rules of section 11.3 (NFC, LF, no
-  controls or bidi controls), the canonical JSON subset (no floats, safe integers, ASCII keys, depth 16), byte
-  limits, real calendar dates, git ref names and the cross-field rules (unique ids, ``proves``, the per-actor
-  rules of section 5.4, the genesis links of section 5.11, ...).
-* ``validate("event", obj, log="ticket" | "workspace")`` dispatches on ``obj["type"]`` to ``event.<type>`` and
-  checks the log-specific rules (``ws_seq`` only in ticket logs, which types belong to which log, seq 1). A type
-  that is not in section 5.4 is refused, also ``<addon>.<verb>`` (custom addon events are deferred, A5).
-* ``parse_json(text)``: the strict parser of ``orch.canon`` (:func:`orch.canon.loads_strict`), so that this module
-  and the signing code accept and refuse the same inputs.
+* ``names()``: every schema name. ``load(name)``: the schema as a dict (a copy; callers should cache it).
+* ``validate(name, obj, log=None)``: raises :class:`SchemaError` (``.schema`` is the concrete schema, for an event
+  ``event.<type>``; ``.path`` a JSON pointer) on the first problem. Events need ``log="ticket"`` or
+  ``"workspace"`` (their rules differ: ``ws_seq``, seq 1, which types belong where).
+* ``parse_json(text)``: :func:`orch.canon.loads_strict`, so this module and the signing code accept and refuse the
+  same inputs.
 
-Every JSON Schema pattern ends in ``(?![\\s\\S])`` instead of ``$``: Python's ``$`` also matches before a final LF,
-which would let ``"sha256:...\\n"`` through.
+**The JSON files are necessary, not sufficient.** Where each rule lives:
+
+* In the JSON Schema files: field sets and types, id/hash/signature/key encodings, value lists, actor kinds per
+  event type, signed-event fields, per-type conditionals, one-line fields, limits that count characters.
+* In ``validate()`` before the schema (``_walk``): the text rules of §11.3 through ``orch.canon.check_text``
+  (pinned Unicode 16.0, NFC), the 4096-byte string limit (65 536 for body sections), the canonical JSON subset
+  (no floats, safe integers, ASCII keys, depth 16) and ``orch.canon.dumps`` as the reference serialiser, the size
+  limits of ticket.json and an event line.
+* In ``_DOC_CHECKS`` / ``_EVENT_CHECKS`` (this module): real calendar dates, git ref names, canonical repo
+  identities, sorted lists and canonical policies, unique ids, ``proves`` and ``recommended``, body sections per
+  type and forged headings, manifest titles, gate-input emptiness per gate, and for events the per-actor rules,
+  genesis links, ``base_rev`` paths, grant arithmetic, restore/ack positions and ``binds`` prefixes.
+* Not here (needs the store, keys or the operation registry): signatures, hash derivations, role and grant checks.
+
+Every pattern ends in ``(?![\\s\\S])`` instead of ``$``: Python's ``$`` also matches before a final LF.
+Full validation happens at append; replay relies on the hash chain, ``host_sig`` and authorization replay.
 """
 
 from __future__ import annotations
 
+import copy
 import json
 import re
-import unicodedata
 from datetime import UTC, datetime
 from functools import cache
 from importlib import resources
@@ -36,7 +44,7 @@ from jsonschema import Draft202012Validator
 from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT202012
 
-from orch.canon import dumps, loads_strict
+from orch.canon import TextError, canonical_policy, check_text, dumps, loads_strict, suspicious
 
 __all__ = ["LOG_TYPES", "SchemaError", "event_types", "load", "names", "parse_json", "validate"]
 
@@ -48,6 +56,8 @@ MAX_EVENT_LINE_BYTES = 524_288
 MAX_DEPTH = 16
 MAX_SAFE_INT = 2**53 - 1
 HANDOFF_MAX_BYTES = 2048
+MAX_MESSAGE = 200
+_DEFINITIONS = frozenset({"common"})
 
 _WORKSPACE_ONLY = frozenset(
     {
@@ -90,6 +100,8 @@ class SchemaError(ValueError):
     """A document does not match its schema. ``path`` is an RFC 6901 JSON pointer ("" is the root)."""
 
     def __init__(self, schema: str, path: str, message: str) -> None:
+        if len(message) > MAX_MESSAGE:
+            message = message[: MAX_MESSAGE - 3] + "..."
         super().__init__(f"{schema}: {path or '/'}: {message}")
         self.schema = schema
         self.path = path
@@ -133,8 +145,29 @@ def _registry() -> Registry:
     return reg
 
 
+_INLINE_PREFIXES = (BASE + "common#/$defs/", BASE + "event#/$defs/")
+
+
+def _inline(node: Any) -> Any:
+    """Replace every ``$ref`` to a ``common`` or ``event`` definition by the definition itself (a faster, equal
+    validator)."""
+    if isinstance(node, dict):
+        ref = node.get("$ref")
+        if isinstance(ref, str) and len(node) == 1:
+            for prefix in _INLINE_PREFIXES:
+                if ref.startswith(prefix):
+                    doc = _raw(prefix[len(BASE) : prefix.index("#")])
+                    return _inline(copy.deepcopy(doc["$defs"][ref[len(prefix) :]]))
+        return {k: _inline(v) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_inline(v) for v in node]
+    return node
+
+
 @cache
 def _validator(ref: str) -> Draft202012Validator:
+    if ref in _files() and ref not in _DEFINITIONS:
+        return Draft202012Validator(_inline(_raw(ref)), registry=_registry())
     return Draft202012Validator({"$ref": BASE + ref}, registry=_registry())
 
 
@@ -163,27 +196,13 @@ def parse_json(text: str | bytes) -> Any:
 
 
 # ---- text rules (section 11.3) and the canonical JSON subset (section 11.2) ----
-_FORBIDDEN = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f‪-‮⁦-⁩‎‏؜]")
-_UNICODE_16 = unicodedata.unidata_version == "16.0.0"
-
-
 def _check_string(name: str, value: str, parts: tuple[Any, ...], limit: int) -> None:
     p = _pointer(parts)
     try:
-        raw = value.encode("utf-8")
-    except UnicodeEncodeError:
-        raise SchemaError(name, p, "text contains a lone surrogate") from None
-    if "\r" in value:
-        raise SchemaError(name, p, "text must use LF line endings")
-    if not value.isascii() and not unicodedata.is_normalized("NFC", value):
-        raise SchemaError(name, p, "text must be NFC-normalised")
-    m = _FORBIDDEN.search(value)
-    if m:
-        raise SchemaError(name, p, f"text contains a forbidden control or bidi character U+{ord(m.group()):04X}")
-    # The pinned Unicode version is 16.0 (11.3); older runtimes can not tell, so this check waits for bundled tables.
-    if _UNICODE_16 and not value.isascii() and any(unicodedata.category(c) == "Cn" for c in value):
-        raise SchemaError(name, p, "text contains a code point unassigned in Unicode 16.0")
-    if len(raw) > limit:
+        check_text(value)  # NFC, LF, controls, bidi, lone surrogates, unassigned: all against pinned Unicode 16.0
+    except TextError as e:
+        raise SchemaError(name, p, f"text rule (11.3): {e}") from None
+    if len(value) * 4 > limit and len(value.encode("utf-8")) > limit:
         raise SchemaError(name, p, f"text exceeds {limit} bytes (UTF-8)")
 
 
@@ -215,16 +234,15 @@ def _walk(name: str, value: Any, parts: tuple[Any, ...] = (), depth: int = 0) ->
         raise SchemaError(name, _pointer(parts), f"{type(value).__name__} is not JSON")
 
 
-def _first_error(name: str, obj: Any, ref: str | None = None, prefix: tuple[Any, ...] = ()) -> None:
-    errors = list(_validator(ref or name).iter_errors(obj))
-    if not errors:
+def _first_error(owner: str, obj: Any, ref: str | None = None, prefix: tuple[Any, ...] = ()) -> None:
+    v = _validator(ref or owner)
+    if v.is_valid(obj):
         return
     from jsonschema.exceptions import best_match
 
-    # An unevaluatedProperties error is a by-product when a $ref'd envelope fails; report the real cause instead.
-    primary = [e for e in errors if e.validator != "unevaluatedProperties"] or errors
-    err = best_match(primary) or primary[0]
-    raise SchemaError(name, _pointer((*prefix, *err.absolute_path)), err.message)
+    errors = list(v.iter_errors(obj))
+    err = best_match(errors) or errors[0]
+    raise SchemaError(owner, _pointer((*prefix, *err.absolute_path)), err.message)
 
 
 # ---- helpers for the cross-field rules ----
@@ -254,9 +272,55 @@ def _check_ref(name: str, path: tuple[Any, ...], ref: str) -> None:
         raise SchemaError(name, _pointer(path), f"{ref!r} is not a valid git ref name")
 
 
+_IDENTITY = re.compile(r"https://(?P<host>[^/:]+)(?::(?P<port>[0-9]+))?(?P<path>(?:/[^/]+)+)")
+_QUAD = re.compile(
+    r"(?:(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])"
+)
+
+
+def _check_identity(name: str, path: tuple[Any, ...], value: str) -> None:
+    """The rest of the canonical repo identity rule of 5.7 that the schema pattern does not carry."""
+    if value.startswith("local:"):
+        return
+    m = _IDENTITY.fullmatch(value)
+    why = None
+    if m is None:
+        why = "not a canonical https:// identity"
+    elif len(m["host"]) > 253:
+        why = "host is longer than 253 characters"
+    elif m["host"].rsplit(".", 1)[-1].isdigit() and not _QUAD.fullmatch(m["host"]):
+        why = "an all-numeric last host label is allowed only in a plain dotted quad"
+    elif m["port"] is not None and not 1 <= int(m["port"]) <= 65535:
+        why = "port out of range"
+    elif m["port"] == "443":
+        why = "port 443 is never written"
+    elif any(seg in (".", "..") for seg in m["path"].split("/")):
+        why = "path has a . or .. segment"
+    elif m["path"].lower().endswith(".git"):
+        why = "path ends in .git"
+    if why:
+        raise SchemaError(name, _pointer(path), f"repo identity {value[:80]!r}: {why}")
+
+
+def _check_policy(name: str, path: tuple[Any, ...], policy: dict[str, Any]) -> None:
+    """Policies are stored in canonical form (5.7); a non-canonical one is refused."""
+    try:
+        canonical = canonical_policy(policy)
+    except ValueError as e:
+        raise SchemaError(name, _pointer(path), f"policy: {e}") from None
+    if canonical != policy:
+        raise SchemaError(name, _pointer(path), "policy is not in canonical form (sorted, de-duplicated lists)")
+
+
+def _check_sorted_people(name: str, path: tuple[Any, ...], people: list[str]) -> None:
+    if people != sorted(set(people)):
+        raise SchemaError(name, _pointer(path), "people lists are stored sorted and de-duplicated")
+
+
 def _check_source_list(name: str, path: tuple[Any, ...], items: list[dict[str, Any]]) -> None:
     for i, e in enumerate(items):
         _check_ref(name, (*path, i, "ref"), e["ref"])
+        _check_identity(name, (*path, i, "repo"), e["repo"])
     repos = [e["repo"] for e in items]
     if repos != sorted(set(repos)):
         raise SchemaError(name, _pointer(path), "source list must be sorted by repo, one entry per repo")
@@ -301,8 +365,30 @@ def _check_ticket(obj: dict[str, Any]) -> None:
         raise SchemaError("ticket", "/key", "a ticket cannot be its own parent or blocker")
     if obj["due"] is not None:
         _date("ticket", ("due",), obj["due"], "%Y-%m-%d")
+    if isinstance(obj["visibility"], dict):
+        _check_sorted_people("ticket", ("visibility", "restricted"), obj["visibility"]["restricted"])
     for repo, branch in obj["links"]["branches"].items():
         _check_ref("ticket", ("links", "branches", repo), "refs/heads/" + branch)
+
+
+_FENCE = re.compile(r"(`{3,}|~{3,})")
+
+
+def _forged_heading(text: str) -> int | None:
+    """Index of the first line that would start a section when body.md is parsed: ``## `` at column 0 outside a
+    code fence (F1 §4). A fence opens with three or more backticks or tildes at column 0 and closes with the same
+    character at least as long."""
+    fence: str | None = None
+    for i, line in enumerate(text.split("\n")):
+        m = _FENCE.match(line)
+        if fence is None:
+            if m:
+                fence = m.group(1)
+            elif line.startswith("## "):
+                return i
+        elif m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence) and not line[m.end() :].strip():
+            fence = None
+    return None
 
 
 def _check_body(obj: dict[str, Any]) -> None:
@@ -312,21 +398,28 @@ def _check_body(obj: dict[str, Any]) -> None:
             raise SchemaError("body", _pointer(["sections", sid]), f"a {obj['type']} ticket has no section {sid!r}")
         if text.startswith("\n") or text.endswith("\n"):
             raise SchemaError("body", _pointer(["sections", sid]), "section text has leading or trailing LF")
+        line = _forged_heading(text)
+        if line is not None:
+            raise SchemaError(
+                "body", _pointer(["sections", sid]), f"line {line + 1} would start a section (## outside a code fence)"
+            )
 
 
 def _check_workspace(obj: dict[str, Any]) -> None:
+    for g, p in obj["gates"].items():
+        _check_policy("workspace", ("gates", g), p)
     persons = [m["person"] for m in obj["members"]]
     for i, p in enumerate(persons):
         if p in persons[:i]:
             raise SchemaError("workspace", _pointer(["members", i, "person"]), f"duplicate member {p!r}")
 
 
-_INVISIBLE = frozenset({"Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp"})
-
-
 def _check_manifest(obj: dict[str, Any]) -> None:
-    if any(unicodedata.category(c) in _INVISIBLE for c in obj["title"]):
-        raise SchemaError("addon-manifest", "/title", "title contains an invisible character")
+    flagged = suspicious(obj["title"])  # bidi, every Cf and F1's named look-alikes (5.7, 8)
+    if flagged:
+        raise SchemaError(
+            "addon-manifest", "/title", f"title contains an invisible character U+{flagged[0].codepoint:04X}"
+        )
     for fname, f in obj.get("fields", {}).items():
         if f["type"] == "integer" and "min" in f and "max" in f and f["min"] > f["max"]:
             raise SchemaError("addon-manifest", _pointer(["fields", fname, "min"]), "min is greater than max")
@@ -366,13 +459,9 @@ def _check_gate_input(obj: dict[str, Any]) -> None:
 
 
 # ---- events ----
-def _check_event(obj: dict[str, Any], log: str | None) -> None:
+def _check_event(obj: dict[str, Any], log: str) -> None:
     t, actor = obj["type"], obj["actor"]
-    if log not in (None, "ticket", "workspace"):
-        raise ValueError(f"unknown log {log!r}")
-    if log is None and t not in _BOTH_LOGS:
-        log = "workspace" if t in _WORKSPACE_ONLY else "ticket"
-    if log is not None:
+    try:
         if t not in LOG_TYPES[log]:
             raise SchemaError("event", "/type", f"{t!r} is not an event of the {log} log")
         if log == "ticket" and "ws_seq" not in obj:
@@ -382,10 +471,12 @@ def _check_event(obj: dict[str, Any], log: str | None) -> None:
         first = "ticket.created" if log == "ticket" else "workspace.created"
         if (t == first) != (obj["seq"] == 1):
             raise SchemaError("event", "/seq", f"seq 1 of a {log} log is {first} and nothing else is")
-    _ts("event", ("at",), obj["at"])
-    fn = _EVENT_CHECKS.get(t)
-    if fn:
-        fn(obj, actor)
+        _ts("event", ("at",), obj["at"])
+        fn = _EVENT_CHECKS.get(t)
+        if fn:
+            fn(obj, actor)
+    except SchemaError as e:  # report the concrete schema, whichever helper raised
+        raise SchemaError("event." + t, e.path, e.message) from None
 
 
 def _ev_ticket_created(obj: dict[str, Any], actor: dict[str, Any]) -> None:
@@ -413,6 +504,31 @@ def _ev_ticket_updated(obj: dict[str, Any], actor: dict[str, Any]) -> None:
             for repo, branch in value["branches"].items():
                 _check_ref("event", ("set", path, "branches", repo), "refs/heads/" + branch)
     _check_sections_map("event", ("sections",), obj.get("sections", {}))
+
+
+def _ev_visibility(obj: dict[str, Any], actor: dict[str, Any]) -> None:
+    if isinstance(obj["visibility"], dict):
+        _check_sorted_people("event", ("visibility", "restricted"), obj["visibility"]["restricted"])
+
+
+def _ev_people(obj: dict[str, Any], actor: dict[str, Any]) -> None:
+    _check_sorted_people("event", ("add",), obj["add"])
+    _check_sorted_people("event", ("remove",), obj["remove"])
+    if set(obj["add"]) & set(obj["remove"]):
+        raise SchemaError("event", "/remove", "a person can not be added and removed in one event")
+
+
+def _ev_policy(obj: dict[str, Any], actor: dict[str, Any]) -> None:
+    for g, p in obj["gates"].items():
+        _check_policy("event", ("gates", g), p)
+
+
+def _ev_addon_granted(obj: dict[str, Any], actor: dict[str, Any]) -> None:
+    for i, sec in enumerate(obj["binds"]["sections"]):
+        if sec["id"].split(".", 1)[0] != obj["name"]:
+            raise SchemaError(
+                "event", _pointer(["binds", "sections", i, "id"]), "a section is named <addon>.<token> of this addon"
+            )
 
 
 def _ev_edit_external(obj: dict[str, Any], actor: dict[str, Any]) -> None:
@@ -449,8 +565,10 @@ def _ev_source(obj: dict[str, Any], actor: dict[str, Any]) -> None:
 
 def _ev_branch_pushed(obj: dict[str, Any], actor: dict[str, Any]) -> None:
     _check_ref("event", ("ref",), obj["ref"])
+    _check_identity("event", ("repo_id",), obj["repo_id"])
     if obj["before"] is not None:
         _check_ref("event", ("before", "ref"), obj["before"]["ref"])
+        _check_identity("event", ("before", "repo_id"), obj["before"]["repo_id"])
 
 
 def _ev_restore(obj: dict[str, Any], actor: dict[str, Any]) -> None:
@@ -524,6 +642,10 @@ _EVENT_CHECKS = {
     "verdict.given": _ev_source,
     "branch.pushed": _ev_branch_pushed,
     "restore": _ev_restore,
+    "visibility.changed": _ev_visibility,
+    "people.changed": _ev_people,
+    "policy.changed": _ev_policy,
+    "addon.granted": _ev_addon_granted,
     "invalid.acknowledged": _ev_invalid_ack,
     "workspace.created": _ev_workspace_created,
     "member.added": _ev_member_added,
@@ -533,47 +655,44 @@ _EVENT_CHECKS = {
 }
 
 
+_DOC_CHECKS = {
+    "ticket": _check_ticket,
+    "body": _check_body,
+    "workspace": _check_workspace,
+    "addon-manifest": _check_manifest,
+    "gate-input": _check_gate_input,
+    "checkpoint": lambda obj: _ts("checkpoint", ("o", "at"), obj["o"]["at"]),
+    "keys-line": lambda obj: _ts("keys-line", ("at",), obj["at"]),
+}
+
+
 def validate(name: str, obj: Any, *, log: str | None = None) -> None:
     """Validate ``obj`` against the named schema or raise :class:`SchemaError`.
 
-    ``log`` (``"ticket"`` or ``"workspace"``) only matters for events; see the module docstring.
+    ``name`` is a document schema (not ``common``) or ``event`` / ``event.<type>``. For events ``log`` is required
+    (``"ticket"`` or ``"workspace"``); for everything else it must be ``None``. ``ValueError`` for a misuse.
     """
     _raw(name)  # unknown name -> KeyError
+    if name in _DEFINITIONS:
+        raise ValueError(f"{name!r} is a library of definitions, not a document")
+    is_event = name == "event" or name.startswith("event.")
+    if is_event != (log is not None) or log not in (None, "ticket", "workspace"):
+        raise ValueError("log ('ticket' or 'workspace') is required for events and refused for other documents")
+    if name == "event" and isinstance(obj, dict) and isinstance(obj.get("type"), str):
+        name = "event." + obj["type"] if "event." + obj["type"] in _files() else name
     _walk(name, obj)
     try:
         line = dumps(obj)
-    except (
-        ValueError,
-        TypeError,
-    ) as e:  # the canonical serialiser is the reference: anything it refuses is refused here
+    except (ValueError, TypeError) as e:  # the canonical serialiser is the reference: what it refuses is refused here
         raise SchemaError(name, "", f"not canonical JSON: {e}") from None
     kind = name.split(".")[0]
     limit = {"ticket": MAX_TICKET_BYTES, "event": MAX_EVENT_LINE_BYTES - 1}.get(kind)  # an event line has an LF
     if limit is not None and len(line) > limit:
         raise SchemaError(name, "", f"{kind} exceeds {limit + (kind == 'event')} bytes")
-    if name == "event":
-        if not isinstance(obj, dict) or not isinstance(obj.get("type"), str):
-            _first_error("event", obj)
-            raise SchemaError("event", "/type", "event needs a type")
-        specific = "event." + obj["type"]
-        if specific not in _files():
-            _first_error("event", obj)
-            raise SchemaError("event", "/type", f"unknown event type {obj['type']!r} (custom addon events are refused)")
-        name = specific
     _first_error(name, obj)
-    if name.startswith("event."):
-        _check_event(obj, log)
-    elif name == "ticket":
-        _check_ticket(obj)
-    elif name == "body":
-        _check_body(obj)
-    elif name == "workspace":
-        _check_workspace(obj)
-    elif name == "addon-manifest":
-        _check_manifest(obj)
-    elif name == "gate-input":
-        _check_gate_input(obj)
-    elif name == "checkpoint":
-        _ts("checkpoint", ("o", "at"), obj["o"]["at"])
-    elif name == "keys-line":
-        _ts("keys-line", ("at",), obj["at"])
+    if name == "event":  # only reached for an unknown type: the envelope is fine
+        raise SchemaError("event", "/type", f"unknown event type {obj['type']!r} (custom addon events are refused)")
+    if is_event:
+        _check_event(obj, log)  # type: ignore[arg-type]
+    elif name in _DOC_CHECKS:
+        _DOC_CHECKS[name](obj)

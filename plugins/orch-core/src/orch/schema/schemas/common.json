@@ -338,8 +338,8 @@
     },
     "repoIdentity": {
       "type": "string",
-      "description": "canonical https:// remote URL, or local:<repo name>",
-      "pattern": "^(?:https://[!-~]+|local:[A-Za-z0-9][A-Za-z0-9._-]{0,99})(?![\\s\\S])"
+      "description": "canonical https:// remote URL (5.7; the length, port, numeric-host and path-segment rules are in validate()), or local:<repo name>",
+      "pattern": "^(?:https://[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*(?::[1-9][0-9]{0,4})?(?:/[A-Za-z0-9._~-]+)+|local:[A-Za-z0-9][A-Za-z0-9._-]{0,99})(?![\\s\\S])"
     },
     "refName": {
       "type": "string",
@@ -364,6 +364,24 @@
     "operationName": {
       "type": "string",
       "pattern": "^(?:[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)*)(?![\\s\\S])"
+    },
+    "eventType": {
+      "type": "string",
+      "pattern": "^(?:[a-z][a-z0-9_-]*(?:\\.[a-z][a-z0-9_-]*)*)(?![\\s\\S])"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^(?:[^\\n]+)(?![\\s\\S])"
+    },
+    "settablePath": {
+      "type": "string",
+      "pattern": "^(?:ticket\\.(?:title|type|priority|size|labels|parent|blocked_by|due|links|acceptance|tasks)|ticket\\.addons\\.[a-z][a-z0-9-]{0,39}\\.[a-z][a-z0-9_]*)(?![\\s\\S])"
+    },
+    "editPath": {
+      "type": "string",
+      "pattern": "^(?:ticket\\.(?:title|type|priority|size|labels|parent|blocked_by|due|links|acceptance|tasks)|ticket\\.addons\\.[a-z][a-z0-9-]{0,39}\\.[a-z][a-z0-9_]*|body\\.(?:summary|context|requirements|out_of_scope|plan|decisions|verification|findings|current_state|[a-z][a-z0-9-]{0,39}\\.[a-z][a-z0-9_]*))(?![\\s\\S])"
     },
     "str": {
       "type": "string",

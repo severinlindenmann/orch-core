@@ -43,10 +43,6 @@ DOC_HEADINGS = [
     "### 11.4 Value lists",
 ]
 
-# Payload fields whose F1 name is the envelope's name (5.1: "Payload fields never reuse an envelope name"): the doc
-# name -> the name the schema uses. invalid.acknowledged's "seq" is the lone case.
-RENAMED_PAYLOAD_FIELDS = {"invalid.acknowledged": {"seq": "invalid_seq"}}
-
 # Event rows whose Payload cell is not a plain "`field`; `field?`" list.
 IRREGULAR_PAYLOAD_CELLS = {"artifact.added", "artifact.replaced"}
 ARTIFACT_FIELDS = {
@@ -79,3 +75,49 @@ VALUE_LISTS = {
     "core artifact kind": ("common", "coreArtifactKind"),
     "addon capability": ("common", "capability"),
 }
+
+
+# ---- reading the F1 doc: anchored on headings, with errors that say what to update ----
+import re  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+DOC = Path(__file__).resolve().parents[4] / "docs" / "architecture" / "orch-v2-ticket-format.md"
+
+
+def doc_text() -> str:
+    assert DOC.exists(), f"the F1 doc is not at {DOC}; these tests need the monorepo checkout (docs/ next to plugins/)"
+    return DOC.read_text(encoding="utf-8")
+
+
+def doc_block(heading: str) -> str:
+    """The text under ``heading`` (a full heading line such as ``### 5.7 Gates``) up to the next heading of the same or
+    a higher level."""
+    text = doc_text()
+    m = re.search(rf"^{re.escape(heading)}\s*$", text, re.M)
+    assert m, f"F1 heading {heading!r} not found: update DOC_HEADINGS and the tests in tests/schema"
+    level = len(heading) - len(heading.lstrip("#"))
+    end = re.search(rf"^#{{1,{level}}} ", text[m.end() :], re.M)
+    return text[m.end() : m.end() + end.start()] if end else text[m.end() :]
+
+
+def doc_before(heading: str) -> str:
+    text = doc_text()
+    m = re.search(rf"^{re.escape(heading)}\s*$", text, re.M)
+    assert m, f"F1 heading {heading!r} not found: update the tests in tests/schema"
+    return text[: m.start()]
+
+
+def doc_table(heading: str, header_start: str, min_cells: int = 2) -> list[list[str]]:
+    """The rows (cells, trimmed) of the table under ``heading`` whose header row starts with ``header_start``."""
+    lines = doc_block(heading).splitlines()
+    starts = [i for i, ln in enumerate(lines) if ln.startswith(header_start)]
+    assert starts, f"table starting {header_start!r} not found under {heading!r}: update tests/schema"
+    rows = []
+    for ln in lines[starts[0] + 2 :]:
+        if not ln.startswith("|"):
+            break
+        cells = [c.strip() for c in re.split(r"(?<!\\)\|", ln)[1:-1]]
+        assert len(cells) >= min_cells, (heading, ln)
+        rows.append(cells)
+    assert rows, f"table under {heading!r} has no rows"
+    return rows

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.orch.dev/v2/event",
   "title": "Event envelope",
-  "description": "Format doc section 5.1. Every event has an actor; person events (and only those) carry sig, auth and roster_v; prev/based_on are null only on seq 1; ws_seq is for ticket-log events (validate(..., log=) enforces it). validate('event', obj) dispatches on type to event.<type>; a type outside section 5.4 is refused in P1.",
+  "description": "Format doc section 5.1. Every event has an actor; person events (and only those) carry sig, auth and roster_v; prev/based_on are null only on seq 1; ws_seq is for ticket-log events (validate(log=) enforces it). This schema is the envelope alone; each event.<type> schema repeats it (inlined for speed) with the payload and the actor rule of its row. validate('event', obj, log=) dispatches on type; a type outside section 5.4 is refused in P1.",
   "$defs": {
     "actor": {
       "type": "object",
@@ -167,16 +167,12 @@
             "person",
             "agent"
           ]
-        }
+        },
+        "unattended": false
       },
       "required": [
         "kind"
-      ],
-      "not": {
-        "required": [
-          "unattended"
-        ]
-      }
+      ]
     },
     "actorU": {
       "type": "object",
@@ -199,16 +195,12 @@
           "enum": [
             "agent"
           ]
-        }
+        },
+        "unattended": false
       },
       "required": [
         "kind"
-      ],
-      "not": {
-        "required": [
-          "unattended"
-        ]
-      }
+      ]
     },
     "actorH": {
       "type": "object",
@@ -246,16 +238,12 @@
             "agent",
             "host"
           ]
-        }
+        },
+        "unattended": false
       },
       "required": [
         "kind"
-      ],
-      "not": {
-        "required": [
-          "unattended"
-        ]
-      }
+      ]
     }
   },
   "type": "object",
@@ -273,11 +261,149 @@
       "$ref": "https://schemas.orch.dev/v2/common#/$defs/timestamp"
     },
     "type": {
-      "type": "string",
-      "pattern": "^(?:[a-z][a-z0-9_-]*(?:\\.[a-z][a-z0-9_-]*)*)(?![\\s\\S])"
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/eventType"
     },
     "actor": {
-      "$ref": "https://schemas.orch.dev/v2/event#/$defs/actor"
+      "type": "object",
+      "description": "Section 5.2. A person, an agent (with a grant, or unattended) or the host. An addon actor is refused in P1 (A5).",
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "person",
+            "agent",
+            "host"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "person"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "person"
+              },
+              "id": {
+                "$ref": "https://schemas.orch.dev/v2/common#/$defs/personId"
+              },
+              "device": {
+                "$ref": "https://schemas.orch.dev/v2/common#/$defs/deviceId"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "id",
+              "device"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "agent"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "agent"
+                  },
+                  "id": {
+                    "$ref": "https://schemas.orch.dev/v2/common#/$defs/agentId"
+                  },
+                  "session": {
+                    "$ref": "https://schemas.orch.dev/v2/common#/$defs/sessionId"
+                  },
+                  "for": {
+                    "$ref": "https://schemas.orch.dev/v2/common#/$defs/personId"
+                  },
+                  "grant": {
+                    "$ref": "https://schemas.orch.dev/v2/common#/$defs/grantId"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "id",
+                  "session",
+                  "for",
+                  "grant"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "agent"
+                  },
+                  "id": {
+                    "$ref": "https://schemas.orch.dev/v2/common#/$defs/agentId"
+                  },
+                  "session": {
+                    "$ref": "https://schemas.orch.dev/v2/common#/$defs/sessionId"
+                  },
+                  "unattended": {
+                    "const": true
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "id",
+                  "session",
+                  "unattended"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "host"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "host"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "kind"
+            ]
+          }
+        }
+      ]
     },
     "based_on": {
       "oneOf": [
@@ -379,24 +505,16 @@
         ]
       },
       "then": {
-        "not": {
-          "anyOf": [
-            {
-              "required": [
-                "sig"
-              ]
-            },
-            {
-              "required": [
-                "auth"
-              ]
-            },
-            {
-              "required": [
-                "roster_v"
-              ]
-            }
-          ]
+        "properties": {
+          "sig": {
+            "not": {}
+          },
+          "auth": {
+            "not": {}
+          },
+          "roster_v": {
+            "not": {}
+          }
         }
       }
     },

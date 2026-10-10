@@ -3,14 +3,349 @@
   "$id": "https://schemas.orch.dev/v2/event.gate.approved",
   "title": "gate.approved event",
   "description": "5.4.1. source_sha only and always on the code gate (D59).",
+  "type": "object",
+  "properties": {
+    "v": {
+      "const": 2
+    },
+    "id": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/ulid"
+    },
+    "seq": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/posInt"
+    },
+    "at": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/timestamp"
+    },
+    "type": {
+      "const": "gate.approved"
+    },
+    "actor": {
+      "allOf": [
+        {
+          "type": "object",
+          "description": "Section 5.2. A person, an agent (with a grant, or unattended) or the host. An addon actor is refused in P1 (A5).",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "person",
+                "agent",
+                "host"
+              ]
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "kind": {
+                    "const": "person"
+                  }
+                },
+                "required": [
+                  "kind"
+                ]
+              },
+              "then": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "person"
+                  },
+                  "id": {
+                    "$ref": "https://schemas.orch.dev/v2/common#/$defs/personId"
+                  },
+                  "device": {
+                    "$ref": "https://schemas.orch.dev/v2/common#/$defs/deviceId"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "id",
+                  "device"
+                ]
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "kind": {
+                    "const": "agent"
+                  }
+                },
+                "required": [
+                  "kind"
+                ]
+              },
+              "then": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "const": "agent"
+                      },
+                      "id": {
+                        "$ref": "https://schemas.orch.dev/v2/common#/$defs/agentId"
+                      },
+                      "session": {
+                        "$ref": "https://schemas.orch.dev/v2/common#/$defs/sessionId"
+                      },
+                      "for": {
+                        "$ref": "https://schemas.orch.dev/v2/common#/$defs/personId"
+                      },
+                      "grant": {
+                        "$ref": "https://schemas.orch.dev/v2/common#/$defs/grantId"
+                      }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                      "kind",
+                      "id",
+                      "session",
+                      "for",
+                      "grant"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "const": "agent"
+                      },
+                      "id": {
+                        "$ref": "https://schemas.orch.dev/v2/common#/$defs/agentId"
+                      },
+                      "session": {
+                        "$ref": "https://schemas.orch.dev/v2/common#/$defs/sessionId"
+                      },
+                      "unattended": {
+                        "const": true
+                      }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                      "kind",
+                      "id",
+                      "session",
+                      "unattended"
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "kind": {
+                    "const": "host"
+                  }
+                },
+                "required": [
+                  "kind"
+                ]
+              },
+              "then": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "host"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "kind"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "person"
+              ]
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "based_on": {
+      "oneOf": [
+        {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "prev": {
+      "oneOf": [
+        {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "hash_v": {
+      "const": 1
+    },
+    "ws_seq": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/posInt"
+    },
+    "roster_v": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/nonNegInt"
+    },
+    "auth": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/auth"
+    },
+    "sig": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/sig"
+    },
+    "host_sig": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/sig"
+    },
+    "gate": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/decisionGate"
+    },
+    "gate_gen": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/nonNegInt"
+    },
+    "hash": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+    },
+    "policy_hash": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+    },
+    "source_sha": {
+      "allOf": [
+        {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/sourceList"
+        }
+      ],
+      "minItems": 1
+    }
+  },
+  "required": [
+    "v",
+    "id",
+    "seq",
+    "at",
+    "type",
+    "actor",
+    "based_on",
+    "prev",
+    "hash_v",
+    "host_sig",
+    "gate",
+    "gate_gen",
+    "hash",
+    "policy_hash"
+  ],
+  "additionalProperties": false,
   "allOf": [
     {
-      "$ref": "https://schemas.orch.dev/v2/event"
+      "if": {
+        "properties": {
+          "actor": {
+            "properties": {
+              "kind": {
+                "const": "person"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          }
+        },
+        "required": [
+          "actor"
+        ]
+      },
+      "then": {
+        "required": [
+          "sig",
+          "auth",
+          "roster_v"
+        ]
+      }
     },
     {
-      "properties": {
-        "actor": {
-          "$ref": "https://schemas.orch.dev/v2/event#/$defs/actorP"
+      "if": {
+        "properties": {
+          "actor": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "agent",
+                  "host"
+                ]
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          }
+        },
+        "required": [
+          "actor"
+        ]
+      },
+      "then": {
+        "properties": {
+          "sig": {
+            "not": {}
+          },
+          "auth": {
+            "not": {}
+          },
+          "roster_v": {
+            "not": {}
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "seq": {
+            "const": 1
+          }
+        },
+        "required": [
+          "seq"
+        ]
+      },
+      "then": {
+        "properties": {
+          "prev": {
+            "type": "null"
+          },
+          "based_on": {
+            "type": "null"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "prev": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+          },
+          "based_on": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+          }
         }
       }
     },
@@ -31,40 +366,12 @@
         ]
       },
       "else": {
-        "not": {
-          "required": [
-            "source_sha"
-          ]
+        "properties": {
+          "source_sha": {
+            "not": {}
+          }
         }
       }
     }
-  ],
-  "properties": {
-    "type": {
-      "const": "gate.approved"
-    },
-    "gate": {
-      "$ref": "https://schemas.orch.dev/v2/common#/$defs/decisionGate"
-    },
-    "gate_gen": {
-      "$ref": "https://schemas.orch.dev/v2/common#/$defs/nonNegInt"
-    },
-    "hash": {
-      "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
-    },
-    "policy_hash": {
-      "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
-    },
-    "source_sha": {
-      "$ref": "https://schemas.orch.dev/v2/common#/$defs/sourceList"
-    }
-  },
-  "required": [
-    "type",
-    "gate",
-    "gate_gen",
-    "hash",
-    "policy_hash"
-  ],
-  "unevaluatedProperties": false
+  ]
 }

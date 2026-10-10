@@ -265,10 +265,10 @@
               ]
             },
             "then": {
-              "not": {
-                "required": [
-                  "text"
-                ]
+              "properties": {
+                "text": {
+                  "not": {}
+                }
               }
             }
           }

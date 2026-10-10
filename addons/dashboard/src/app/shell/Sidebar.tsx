@@ -1,3 +1,4 @@
+import { toast } from 'sonner'
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useRouterState } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -43,11 +44,14 @@ import { iconByName } from '../icons'
 import { useWorkspace } from '../workspace'
 import { useShellState } from './ShellUi'
 import { WorkspaceSwitcher } from './WorkspaceSwitcher'
+import { PIN_ADDON_EVENT } from './pinEvent'
+import { fmtClock, fmtDateTime } from '@/lib/time'
+import { queries } from '@/api/queries'
 
 const RailContext = createContext(false)
 
-/** At most this many addons sit in the sidebar; the rest are under "More addons". */
-const MAX_PINNED = 6
+/** Until the viewer chooses, the first this-many addons sit in the sidebar; there is no upper limit on pins. */
+const DEFAULT_PINNED = 6
 const PINS_KEY = (person: string, ws: string) => `orch.sidebar.pins.${person}.${ws}`
 
 function readPins(person: string, ws: string): string[] | null {
@@ -61,14 +65,14 @@ function readPins(person: string, ws: string): string[] | null {
 
 /**
  * Which addon pages sit in the sidebar: the viewer's choice (kept per workspace in this browser), else the first
- * six by install order. The rest are reached through "More addons".
+ * six by install order. Pins are unlimited; the rest are reached through "More addons".
  */
 function usePinnedAddons(person: string | undefined, ws: string | undefined, all: string[]) {
   const [stored, setStored] = useState<string[] | null>(() => (ws && person ? readPins(person, ws) : null))
   useEffect(() => setStored(ws && person ? readPins(person, ws) : null), [person, ws])
-  const pinned = (stored ? all.filter((k) => stored.includes(k)) : all).slice(0, MAX_PINNED)
+  const pinned = stored ? all.filter((k) => stored.includes(k)) : all.slice(0, DEFAULT_PINNED)
   const toggle = (key: string) => {
-    const next = pinned.includes(key) ? pinned.filter((k) => k !== key) : pinned.length < MAX_PINNED ? [...pinned, key] : pinned
+    const next = pinned.includes(key) ? pinned.filter((k) => k !== key) : [...pinned, key]
     setStored(next)
     try {
       if (ws && person) localStorage.setItem(PINS_KEY(person, ws), JSON.stringify(next))
@@ -76,7 +80,23 @@ function usePinnedAddons(person: string | undefined, ws: string | undefined, all
       /* storage unavailable: the choice lasts for this page only */
     }
   }
-  return { pinned, toggle, full: pinned.length >= MAX_PINNED }
+  // "Pin to sidebar" from the toast after an install: add the page unless it is there.
+  const latest = useRef({ pinned, toggle })
+  latest.current = { pinned, toggle }
+  useEffect(() => {
+    const on = (e: Event) => {
+      const key = (e as CustomEvent<string>).detail
+      if (typeof key !== 'string') return
+      if (latest.current.pinned.includes(key)) toast.message('Already pinned')
+      else {
+        latest.current.toggle(key)
+        toast.success('Pinned to the sidebar')
+      }
+    }
+    window.addEventListener(PIN_ADDON_EVENT, on)
+    return () => window.removeEventListener(PIN_ADDON_EVENT, on)
+  }, [])
+  return { pinned, toggle }
 }
 
 /** In the icon rail the label is hidden and a tooltip carries it. */
@@ -134,7 +154,7 @@ const PEOPLE = [
 export function Sidebar() {
   const { workspace } = useWorkspace()
   const qc = useQueryClient()
-  const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.getMe })
+  const { data: me } = useQuery(queries.me())
   const navItems = useSlot('nav')
   const { data: packages } = useAddons()
   const previews = new Set(packages?.filter((a) => a.preview).map((a) => a.name))
@@ -142,14 +162,18 @@ export function Sidebar() {
   const attention = useAttention(workspace?.id)
   // The viewer's own active grant in the current workspace (revoke, re-issue and switching all show).
   const ws = workspace?.id
-  const grants = useQuery({ queryKey: ['grants', ws], queryFn: () => api.listGrants(ws!), enabled: !!ws })
-  const today = useQuery({ queryKey: ['today', ws], queryFn: () => api.getToday(ws!), enabled: !!ws })
+  const grants = useQuery({ ...queries.grants(ws!), enabled: !!ws })
+  const today = useQuery({ ...queries.today(ws!), enabled: !!ws })
   const grant = grants.data && today.data ? activeGrantOf(grants.data, me?.person, Date.parse(today.data.now)) : undefined
-  const grantTime = grant?.until.slice(11, 16)
-  const { railCollapsed: collapsed, toggleRail: toggle } = useShellState()
+  // A grant that ends on another day says the date (grants run up to 24 h).
+  const grantTime = grant ? (today.data && grant.until.slice(0, 10) !== today.data.now.slice(0, 10) ? fmtDateTime(grant.until) : fmtClock(grant.until)) : undefined
+  const { railCollapsed: collapsed, railAnimating, toggleRail: toggle } = useShellState()
   const itemKey = (i: { addon: string; id: string }) => `${i.addon}/${i.id}`
-  const { pinned, toggle: togglePin, full } = usePinnedAddons(me?.person, ws, navItems.map(itemKey))
+  const { pinned, toggle: togglePin } = usePinnedAddons(me?.person, ws, navItems.map(itemKey))
   const shown = navItems.filter((i) => pinned.includes(itemKey(i)))
+  // Only addons that are not pinned count as "more"; with none left the entry reads "All addons".
+  const moreCount = navItems.length - shown.length
+  const moreLabel = moreCount > 0 ? `More addons (${moreCount})` : 'All addons'
   const [moreOpen, setMoreOpen] = useState(false)
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   // The nav scrolls when the window is short; a fade at the edge says there is more below.
@@ -169,7 +193,8 @@ export function Sidebar() {
   }, [navItems.length, shown.length, collapsed])
 
   const link = cn(
-    'flex items-center gap-2.5 rounded-md text-[13px] text-text-muted transition-colors hover:bg-surface-2 hover:text-text',
+    // Keyboard focus is a brand ring, not the grey fill of the current page (aria-current) or of hover.
+    'flex items-center gap-2.5 rounded-md text-[13px] text-text-muted outline-none transition-colors hover:bg-surface-2 hover:text-text focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
     collapsed ? 'justify-center px-0 py-2' : 'px-2.5 py-1.5',
   )
   const activeProps = { className: 'bg-surface-2 !text-text' }
@@ -179,7 +204,8 @@ export function Sidebar() {
     <RailContext.Provider value={collapsed}>
       <aside
         data-collapsed={collapsed}
-        className={cn('flex shrink-0 flex-col border-r border-border bg-sidebar transition-[width] duration-150', collapsed ? 'w-14' : 'w-[232px]')}
+        // The width animates only when the person toggles it: on load and on automatic changes it is right at once.
+        className={cn('flex shrink-0 flex-col border-r border-border bg-sidebar', railAnimating && 'transition-[width] duration-150', collapsed ? 'w-14' : 'w-[232px]')}
       >
         <div className={cn('flex h-12 items-center gap-2', collapsed ? 'justify-center' : 'px-3.5')}>
           <OrbitMark size={24} />
@@ -242,22 +268,23 @@ export function Sidebar() {
                   </Link>
                 </RailTip>
               ))}
-              {navItems.length > shown.length && (
+              {navItems.length > 0 && (
                 <Popover open={moreOpen} onOpenChange={setMoreOpen}>
-                  <RailTip label={`More addons (${navItems.length - shown.length})`}>
+                  <RailTip label={moreLabel}>
                     <PopoverTrigger asChild>
                       <button
                         type="button"
-                        aria-label={`More addons (${navItems.length - shown.length})`}
+                        aria-label={moreLabel}
                         className={cn(link, 'w-full outline-none focus-visible:ring-2 focus-visible:ring-brand', navItems.some((i) => !shown.includes(i) && pathname === `/addon/${i.addon}/${i.id}`) && 'bg-surface-2 text-text')}
                       >
                         <Ellipsis className="size-4" />
-                        <span className={cn('flex-1 text-left', label)}>More addons ({navItems.length - shown.length})</span>
+                        <span className={cn('flex-1 text-left', label)}>{moreLabel}</span>
                       </button>
                     </PopoverTrigger>
                   </RailTip>
-                  <PopoverContent side="right" align="end" className="w-72 p-1.5">
-                    <p className="px-2 pb-1 pt-0.5 text-[11px] text-text-faint">All addons in this workspace. Pin up to {MAX_PINNED} to the sidebar.</p>
+                  <PopoverContent side="right" align="end" className="w-72 p-1.5" aria-labelledby="all-addons-title">
+                    <h2 id="all-addons-title" className="px-2 pt-0.5 text-[13px] font-semibold text-text">All addons in this workspace</h2>
+                    <p className="px-2 pb-1 text-[11px] text-text-faint">Pin as many as you like to the sidebar.</p>
                     <ul>
                       {navItems.map((item) => {
                         const isPinned = pinned.includes(itemKey(item))
@@ -279,10 +306,8 @@ export function Sidebar() {
                               type="button"
                               aria-label={`${isPinned ? 'Unpin' : 'Pin'} ${item.title} ${isPinned ? 'from' : 'to'} the sidebar`}
                               aria-pressed={isPinned}
-                              disabled={!isPinned && full}
-                              title={!isPinned && full ? `The sidebar holds ${MAX_PINNED}. Unpin one first.` : undefined}
                               onClick={() => togglePin(itemKey(item))}
-                              className="rounded-md p-1.5 text-text-faint outline-none hover:bg-surface-2 hover:text-text focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-40"
+                              className="rounded-md p-1.5 text-text-faint outline-none hover:bg-surface-2 hover:text-text focus-visible:ring-2 focus-visible:ring-brand"
                             >
                               {isPinned ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}
                             </button>

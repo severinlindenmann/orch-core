@@ -47,7 +47,10 @@ describe('G4 signing dialogs say what you sign', () => {
     expect(dialog).toHaveTextContent(/AC \d+\/\d+ evidenced · \d+ receipts?/)
     expect(within(dialog).getByRole('button', { name: /Open evidence/ })).toBeInTheDocument()
     expect(dialog).toHaveTextContent('Choose Pass or Send back')
-    await user.click(within(dialog).getByRole('radio', { name: /Pass · the evidence is enough/ }))
+    // The verdict signs the commit: the head of the branch, with its diffstat, in the choice and in the covers.
+    expect(within(dialog).getByRole('button', { name: 'Open changes' })).toBeInTheDocument()
+    expect(within(dialog).getByRole('region', { name: 'Commit' })).toHaveTextContent(/Commit c90e7a1 on feat\/DEMO-0041-reconciliation: \+\d+ \u2212\d+ in \d+ files? against develop/)
+    await user.click(within(dialog).getByRole('radio', { name: /^Pass on c90e7a1 · \+\d+ \u2212\d+: the evidence is enough$/ }))
     const pass = within(dialog).getByRole('button', { name: 'Pass' })
     expect(pass).toBeEnabled()
     await user.click(within(dialog).getByRole('radio', { name: /Send back · something must change/ }))
@@ -112,7 +115,7 @@ describe('G4 empty approvals and content', () => {
     const { user } = renderApp('/ticket/DEMO-0041')
     await screen.findByRole('heading', { level: 1, name: /billing reconciliation/ }, T)
     await user.click(screen.getByRole('tab', { name: /Artifacts/ }))
-    const open = await screen.findByRole('button', { name: 'Open reconcile-pass.log' }, T)
+    const open = await screen.findByRole('button', { name: 'Preview reconcile-pass.log' }, T)
     await user.click(open)
     const sheet = await screen.findByRole('dialog', {}, T)
     expect(within(sheet).getByRole('button', { name: 'Copy all' })).toBeInTheDocument()
@@ -125,7 +128,7 @@ describe('G4 empty approvals and content', () => {
     const { user } = renderApp('/ticket/DEMO-0041')
     await screen.findByRole('heading', { level: 1, name: /billing reconciliation/ }, T)
     await user.click(screen.getByRole('tab', { name: /Artifacts/ }))
-    await user.click(await screen.findByRole('button', { name: 'Open reconciliation-demo.html' }, T))
+    await user.click(await screen.findByRole('button', { name: 'Preview reconciliation-demo.html' }, T))
     const sheet = await screen.findByRole('dialog', {}, T)
     await waitFor(() => expect(sheet.querySelector('iframe')).toBeTruthy(), T)
     expect(sheet.querySelector('iframe')).toHaveAttribute('sandbox', 'allow-scripts')
@@ -224,7 +227,7 @@ describe('G4 artifact drawer stays closed to stale state', () => {
         <Artifacts {...({ ticket, viewer: { name: (id: string) => id }, jump: () => {}, sign: () => {} } as unknown as import('./shared').TabProps)} />
       </QueryClientProvider>,
     )
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Open demo.html' }))
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Preview demo.html' }))
     const sheet = await screen.findByRole('dialog', {}, T)
     await waitFor(() => expect(sheet.querySelector('iframe')).toBeTruthy(), T)
     const ws = store.workspaces.find((w) => w.prefix === 'DEMO')!.id
@@ -247,7 +250,7 @@ describe('G4 artifact drawer stays closed to stale state', () => {
         <Artifacts {...({ ticket, viewer, jump: () => {}, sign: () => {} } as unknown as import('./shared').TabProps)} />
       </QueryClientProvider>,
     )
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Open run.html' }))
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Preview run.html' }))
     const sheet = await screen.findByRole('dialog', {}, T)
     expect(sheet.querySelector('iframe')).toBeNull()
     expect(within(sheet).getByRole('button', { name: 'Wrap lines' })).toBeInTheDocument()
@@ -256,7 +259,7 @@ describe('G4 artifact drawer stays closed to stale state', () => {
     const { user } = renderApp('/ticket/DEMO-0041')
     await screen.findByRole('heading', { level: 1, name: /billing reconciliation/ }, T)
     await user.click(screen.getByRole('tab', { name: /Artifacts/ }))
-    const log = await screen.findByRole('button', { name: 'Open reconcile-pass.log' }, T)
+    const log = await screen.findByRole('button', { name: 'Preview reconcile-pass.log' }, T)
     await user.click(log)
     let sheet = await screen.findByRole('dialog', {}, T)
     await user.click(within(sheet).getByRole('button', { name: 'Wrap lines' }))

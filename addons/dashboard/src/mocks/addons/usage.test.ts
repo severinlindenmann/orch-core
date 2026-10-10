@@ -3,6 +3,8 @@ import { createApi } from '@/api/client'
 import { createMockTransport } from '@/api/transport'
 import { createMockStore } from '@/mocks/store'
 import { FORMATTERS } from '@/addon-ui/bindings'
+import { addonActive } from '@/api/addons'
+import { allocate } from './usage'
 
 const setup = () => {
   const store = createMockStore({ persist: false })
@@ -140,5 +142,65 @@ describe('chf formatter', () => {
   it('formats tokens compactly', () => {
     expect(FORMATTERS.ktok(2_400_000)).toBe('2.4 M')
     expect(FORMATTERS.ktok(84_300)).toBe('84k')
+  })
+})
+
+describe('usage by person', () => {
+  type PersonState = {
+    cost30Cents: number
+    tokens30Text: string
+    modelRows: { model: string; sessions: number; input: string; output: string }[]
+    personTotals: { person: string; name: string; cents: number; sessions: number; tokenUnits: number; shareTenths: number }[]
+    personRows: { person: string; sessions: number; tokens: string; cost: string; share: string }[]
+  }
+  const check = async (s: ReturnType<typeof setup>) => {
+    const st = (await s.api.getAddonState(s.ws, 'usage')) as unknown as PersonState
+    const total = st.modelRows[st.modelRows.length - 1]
+    // Every column adds up exactly to the Overview / By model Total (largest remainder, no rounding drift).
+    expect(sum(st.personTotals.map((p) => p.cents))).toBe(st.cost30Cents)
+    expect(sum(st.personTotals.map((p) => p.sessions))).toBe(total.sessions)
+    expect(`${(sum(st.personTotals.map((p) => p.tokenUnits)) / 100).toFixed(2)} M`).toBe(st.tokens30Text)
+    expect(sum(st.personTotals.map((p) => p.shareTenths))).toBe(1000)
+    const last = st.personRows[st.personRows.length - 1]
+    expect(last).toEqual({ person: 'Total', sessions: total.sessions, tokens: st.tokens30Text.replace(' M', ''), cost: (st.cost30Cents / 100).toFixed(2), share: '100.0 %' })
+    expect(sum(st.personRows.slice(0, -1).map((r) => Math.round(Number(r.cost) * 100)))).toBe(st.cost30Cents)
+    return st
+  }
+  it('splits the 30 days by whose grant ran the sessions, largest first, and adds up to the Overview', async () => {
+    const st = await check(setup())
+    expect(st.personTotals.map((p) => [p.person, p.name])).toEqual([
+      ['p_sev', 'Severin'],
+      ['p_mara', 'Mara'],
+    ])
+    expect(st.personRows.map((r) => r.person)).toEqual(['Severin', 'Mara', 'Total'])
+  })
+  it('adds up on the Busy day too', async () => {
+    const store = createMockStore({ persist: false, dataset: 'busy' })
+    const api = createApi(createMockTransport(store, { latency: false }))
+    const withUsage = store.workspaces.filter((w) => addonActive(w, 'usage'))
+    expect(withUsage.length).toBeGreaterThan(0)
+    for (const w of withUsage) await check({ store, api, ws: w.id })
+  })
+  it('the page has a By person tab after By agent', async () => {
+    const s = setup()
+    const pkg = (await s.api.getAddons()).find((a) => a.name === 'usage')!
+    const nav = pkg.contributions.find((c) => c.slot === 'nav')!
+    const tabs = JSON.stringify(nav.node)
+    expect(tabs.indexOf('"label":"By person"')).toBeGreaterThan(tabs.indexOf('"label":"By agent"'))
+    expect(tabs).toContain('addon.personRows')
+  })
+})
+
+describe('allocate (largest remainder)', () => {
+  it('all-zero or no weights: every part 0, never NaN', () => {
+    expect(allocate(1000, [0, 0])).toEqual([0, 0])
+    expect(allocate(0, [0])).toEqual([0])
+    expect(allocate(5, [])).toEqual([])
+  })
+  it('one person takes all; equal weights with an odd total still add up', () => {
+    expect(allocate(1183, [64])).toEqual([1183])
+    const parts = allocate(7, [1, 1])
+    expect(sum(parts)).toBe(7)
+    expect(parts).toEqual([4, 3])
   })
 })

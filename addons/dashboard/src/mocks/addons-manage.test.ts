@@ -47,7 +47,7 @@ describe('addon packages vs per-workspace state', () => {
     const { store, api, ws } = setup()
     await api.postAddonOp(ws, 'github', updateReq(store))
     const gh = (await api.getWorkspaceAddons(ws)).find((a) => a.name === 'github')!
-    expect(gh.ws).toMatchObject({ version: '0.6.0', status: 'needs_grant', enabled: true })
+    expect(gh.ws).toMatchObject({ version: '0.6.0', status: 'active', enabled: true })
     expect(pendingUpdate(gh)).toBeNull()
     const other = (await api.getWorkspaceAddons(store.workspaces[1].id)).find((a) => a.name === 'github')!
     expect(other.ws.version).toBe('0.5.2')
@@ -68,7 +68,7 @@ describe('addon manager API', () => {
   it('lists the catalog of not-yet-installed addons', async () => {
     const { api, ws } = setup()
     const titles = (await api.getAddonCatalog(ws)).map((a) => a.title)
-    expect(titles).toEqual(['Worktrees', 'Quick tasks', 'Records', 'Activity', 'Model routing', 'AI Factory', 'Schedules', 'Drop'])
+    expect(titles).toEqual(['Worktrees', 'Quick tasks', 'Records', 'Activity', 'Model routing', 'AI Factory', 'Schedules', 'Drop', 'Workspace links'])
   })
   it('refuses enable before grant with 409 addon.needs_grant', async () => {
     const { api, ws } = setup()
@@ -98,14 +98,16 @@ describe('addon manager API', () => {
     expect(store.addonOp(ws, 'wiki', { op: 'enable' }, agent)).toMatchObject({ ok: false, code: 'human_only' })
     expect(store.addonOp(ws, 'wiki', { op: 'grant', version: '0.1.4', package_sha256: 'x', capabilities: [], viewer_actions: [] }, agent)).toMatchObject({ ok: false, code: 'human_only' })
   })
-  it('update makes the addon needs_grant and inactive until re-granted; uninstall keeps ticket data', async () => {
+  it('an update is one signed act: it grants the new version and the addon stays on; an out-of-band update needs a grant; uninstall keeps ticket data', async () => {
     const { store, api, ws } = setup()
     await api.postAddonOp(ws, 'github', updateReq(store))
     let gh = (await api.getWorkspaceAddons(ws)).find((a) => a.name === 'github')!
-    expect(gh.ws).toMatchObject({ version: '0.6.0', status: 'needs_grant' })
+    expect(gh.ws).toMatchObject({ version: '0.6.0', status: 'active' })
     expect(pendingUpdate(gh)).toBeNull()
-    expect(store.addonStateView(ws, 'github')).toBeNull()
-    await api.postAddonOp(ws, 'github', { op: 'grant', version: '0.6.0', package_sha256: store.addons.find((a) => a.name === 'github')!.update!.package_sha256, capabilities: ['network', 'spawn_agent'], viewer_actions: ['open'] })
+    expect(store.addonStateView(ws, 'github')).not.toBeNull()
+    // A new version that arrives without a signature (a record written elsewhere) is off until granted.
+    store.appendWs(ws, { type: 'addon.updated', name: 'wiki', version: '0.1.4', package_sha256: 'c'.repeat(64), capabilities: [] })
+    expect(store.workspaceAddons(ws).find((a) => a.name === 'wiki')!.ws.status).toBe('needs_grant')
     gh = (await api.getWorkspaceAddons(ws)).find((a) => a.name === 'github')!
     expect(gh.ws.status).toBe('active')
     expect(gh.ws.granted).toMatchObject({ version: '0.6.0', capabilities: ['network', 'spawn_agent'] })
@@ -136,6 +138,25 @@ describe('addon manager API', () => {
     expect(await code(api.postAddonOp(ws, 'models', { ...g, package_sha256: 'e'.repeat(64) }))).toBe('409 addon.changed')
     expect(store.workspaceAddons(ws).find((a) => a.name === 'models')!.ws.status).toBe('needs_grant')
   })
+  it('a signed install is one act: installed, granted and on; a changed package is refused and installs nothing', async () => {
+    const { store, api, ws } = setup()
+    const pkg = store.workspaceCatalog(ws).find((a) => a.name === 'quick')!
+    const signed = { op: 'install' as const, version: pkg.version, package_sha256: pkg.package_sha256, capabilities: pkg.capabilities, viewer_actions: viewerActions(pkg).map((x) => x.id), enable: true }
+    expect(await code(api.postAddonOp(ws, 'quick', { ...signed, package_sha256: 'e'.repeat(64) }))).toBe('409 addon.changed')
+    expect(await code(api.postAddonOp(ws, 'quick', { ...signed, capabilities: [...pkg.capabilities, 'pty'] }))).toBe('409 addon.changed')
+    expect(store.workspaceAddons(ws).some((a) => a.name === 'quick')).toBe(false)
+    await api.postAddonOp(ws, 'quick', signed)
+    expect(store.workspaceAddons(ws).find((a) => a.name === 'quick')!.ws).toMatchObject({ status: 'active', enabled: true })
+    const types = store.wsEventsOf(ws).filter((e) => e.name === 'quick').map((e) => e.type)
+    expect(types).toEqual(['addon.installed', 'addon.granted', 'addon.enabled'])
+    expect(store.wsEventsOf(ws).find((e) => e.type === 'addon.granted' && e.name === 'quick')).toMatchObject({ presence: 'touchid', viewer_actions: signed.viewer_actions })
+  })
+  it('a grant with enable: true turns the addon on in the same act', async () => {
+    const { store, api, ws } = setup()
+    await api.postAddonOp(ws, 'models', { op: 'install' })
+    await api.postAddonOp(ws, 'models', { ...grantReq(store, ws, 'models'), enable: true })
+    expect(store.workspaceAddons(ws).find((a) => a.name === 'models')!.ws).toMatchObject({ status: 'active', enabled: true })
+  })
   it('refuses an update whose target differs from the offered one (409 addon.changed)', async () => {
     const { store, api, ws } = setup()
     const u = updateReq(store)
@@ -154,7 +175,7 @@ describe('addon manager API', () => {
     await api.postAddonOp(ws, 'publish', { op: 'disable' })
     expect((await api.getAddonDecisions(ws)).filter((d) => d.addon === 'publish')).toEqual([])
     expect(await code(api.runAddonAction(ws, 'publish', 'share', { ticket: 'DEMO-0041' }))).toBe('409 addon.inactive')
-    await api.postAddonOp(ws, 'github', updateReq(store))
-    expect(await code(api.runAddonAction(ws, 'github', 'import', { item: { title: 'x' } }))).toBe('409 addon.inactive')
+    store.appendWs(ws, { type: 'addon.updated', name: 'wiki', version: '0.1.4', package_sha256: 'c'.repeat(64), capabilities: [] })
+    expect(await code(api.runAddonAction(ws, 'wiki', 'open', { slug: 'glossary' }))).toBe('409 addon.inactive')
   })
 })

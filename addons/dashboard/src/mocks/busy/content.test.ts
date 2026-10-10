@@ -3,7 +3,7 @@ import { createApi } from '@/api/client'
 import { createMockTransport } from '@/api/transport'
 import { sha256Hex } from '@/api/sha256'
 import { findTemplate, templateDigest } from '@/api/widgetTemplates'
-import { resolveTicketWidgets, type Block } from '@/app/pages/ticket/widgets/parse'
+import { CORE_TYPES, resolveTicketWidgets, type Block } from '@/app/pages/ticket/widgets/parse'
 import type { TicketDocument } from '@/api/types'
 import { createMockStore } from '../store'
 import { generateBusy } from './generate'
@@ -61,6 +61,15 @@ describe('agents', () => {
       expect(t.questions_state.find((q) => q.id === a.waiting_on!.ref)?.state, a.session).toBe('open')
     }
   })
+  it('a waiting session works for the person its question is addressed to', async () => {
+    const agents = await s.api.getAgents(s.ws)
+    const waiting = agents.filter((x) => x.waiting_on && Number(x.waiting_on.ticket.slice(5)) >= 100)
+    expect(waiting.length).toBeGreaterThan(0)
+    for (const a of waiting) {
+      const q = s.store.ticket(a.waiting_on!.ticket)!.questions_state.find((x) => x.id === a.waiting_on!.ref)!
+      expect(a.for, `${a.session} on ${a.waiting_on!.ticket}`).toBe(q.to)
+    }
+  })
 })
 
 const artifactEvents = () => generateBusy().tickets.DEMO.map((t) => ({ key: t.definition.key, arts: t.events.filter((e) => e.type === 'artifact.added') }))
@@ -98,6 +107,17 @@ describe('widgets', () => {
     return Object.values(seg).flatMap((list) => list.flatMap((x) => (x.kind === 'widget' ? [x.block] : [])))
   }
   const heavy = () => generated().map((t) => ({ t, blocks: blocksOf(t) })).filter((x) => x.blocks.length >= 4)
+
+  it('spreads a varied mix over about 20 tickets: every core type and at least two templates, most tickets light (R-g)', () => {
+    const withWidgets = generated().map((t) => ({ t, blocks: blocksOf(t) })).filter((x) => x.blocks.length > 0)
+    expect(withWidgets.length).toBeGreaterThanOrEqual(18)
+    expect(withWidgets.length).toBeLessThanOrEqual(22)
+    expect(withWidgets.filter((x) => x.blocks.length <= 3).length).toBeGreaterThanOrEqual(10)
+    const light = withWidgets.filter((x) => x.blocks.length <= 3).flatMap((x) => x.blocks).filter((b) => b.spec && !b.reason)
+    const kinds = new Set(light.map((b) => b.spec!.type ?? b.spec!.widget?.split('@')[0]))
+    for (const k of CORE_TYPES) expect(kinds.has(k), k).toBe(true)
+    expect(light.filter((b) => b.spec!.widget).map((b) => b.spec!.widget).filter((v, i, xs) => xs.indexOf(v) === i).length).toBeGreaterThanOrEqual(2)
+  })
 
   it('puts 4 to 10 widgets on at least 6 tickets', () => {
     const h = heavy()

@@ -11,12 +11,14 @@ import { ago } from './shared'
 
 /** Agent rows the side column shows before "All agents". */
 export const AGENT_ROWS = 6
-/** Glance tiles the side column shows before "Show N more". */
+/** Glance items the side column shows before "Show N more". */
 export const GLANCE_TILES = 3
 
 interface AgentRowData {
   s: AgentSession
   waiting: boolean
+  blocker?: AgentSession['waiting_on']
+  state: string
   ticket?: string
   since: string
 }
@@ -27,23 +29,26 @@ function agentRows(sessions: AgentSession[], viewer: string | undefined): AgentR
     .filter((s) => !s.parent)
     .map((s) => ({ s, group: groupOf(s, sessions, viewer) }))
     .filter((r) => r.group !== 'stopped')
-    .map(({ s, group }) => ({ s, waiting: group === 'waiting', ticket: s.claims[0]?.ticket ?? s.waiting_on?.ticket, since: s.claims[0]?.since ?? s.last_seen }))
+    .map(({ s, group }) => {
+      const blocker = [s, ...sessions.filter(a => a.parent === s.session)].find(a => a.state === 'waiting' && a.for === viewer && a.waiting_on)?.waiting_on
+      return { s, waiting: group === 'waiting', blocker, state: group === 'waiting-others' ? 'waiting on others' : group, ticket: blocker?.ticket ?? s.waiting_on?.ticket ?? s.claims[0]?.ticket, since: s.claims[0]?.since ?? s.last_seen }
+    })
     .sort((a, b) => Number(b.waiting) - Number(a.waiting) || Date.parse(a.since) - Date.parse(b.since) || (a.s.session < b.s.session ? -1 : 1))
 }
 
-export const agentsSummary = (a: Attention['agents']) => `${a.working} working${a.waitingOnYou ? ` · ${a.waitingOnYou} waiting on you` : ''}`
+export const agentsSummary = (a: Attention['agents']) => `${a.working} working${a.waitingOnYou ? ` · ${a.waitingOnYou} waiting on you` : ''}${a.waitingOnOthers ? ` · ${a.waitingOnOthers} waiting on others` : ''}${a.idle ? ` · ${a.idle} idle` : ''}`
 
-function AgentList({ rows, tickets, now }: { rows: AgentRowData[]; tickets: Record<string, TicketDocument | undefined>; now: string }) {
+function AgentList({ rows, tickets, now, onOpen }: { onOpen?: () => void; rows: AgentRowData[]; tickets: Record<string, TicketDocument | undefined>; now: string }) {
   if (rows.length === 0) return <p className="px-3 py-3 text-[13px] text-text-muted">No agent is working right now.</p>
   return (
     <ul className="divide-y divide-border">
-      {rows.map(({ s, waiting, ticket, since }) => (
+      {rows.map(({ s, waiting, blocker, state, ticket, since }) => (
         <li key={s.session} className="flex min-h-10 items-center gap-2 px-3 py-1.5">
           <Bot className="size-3.5 shrink-0 text-text-muted" aria-hidden />
           <div className="min-w-0 flex-1">
             <p className="flex items-center gap-1.5 text-[13px] leading-4 text-text">
               <span className="truncate font-medium">{s.name}</span>
-              {waiting && <span className="shrink-0 text-[11px] text-warning">waiting on you</span>}
+              {waiting && blocker?.kind === 'question' && blocker.ref ? <Link to="/ticket/$key" params={{ key: blocker.ticket }} hash={`question-${blocker.ref}`} onClick={onOpen} aria-label={`waiting on you · ${blocker.ref}, answer it on ${blocker.ticket}`} className="shrink-0 rounded text-[11px] text-warning underline focus-visible:ring-2 focus-visible:ring-ring">waiting on you · {blocker.ref}</Link> : <span className="shrink-0 text-[11px] text-text-muted">{waiting ? 'waiting on you' : state}</span>}
             </p>
             {ticket && (
               <Link
@@ -103,7 +108,7 @@ export function AgentsBar({ sessions, viewer, counts, tickets, now }: { sessions
             <SheetDescription>{agentsSummary(counts)}</SheetDescription>
           </SheetHeader>
           <div className="min-h-0 flex-1 overflow-y-auto">
-            <AgentList rows={agentRows(sessions, viewer)} tickets={tickets} now={now} />
+            <AgentList rows={agentRows(sessions, viewer)} tickets={tickets} now={now} onOpen={() => setOpen(false)} />
           </div>
           <div className="border-t border-border px-3 py-3">
             <AllAgents />
@@ -114,32 +119,66 @@ export function AgentsBar({ sessions, viewer, counts, tickets, now }: { sessions
   )
 }
 
+/** A list contribution's number of items (the one key number of e.g. "PRs needing review"), else nothing. */
+function listCount(node: unknown): number | undefined {
+  const n = node as { type?: unknown; items?: unknown } | null
+  return n && n.type === 'list' && Array.isArray(n.items) ? n.items.length : undefined
+}
+
 /**
- * Addon `today.card` tiles. In the side column at most `max` (3), the rest behind "Show N more" so Agents stays on the
- * first screen; below the queue (one column) all of them in two columns, since they no longer push any decision down.
+ * Addon `today.card` contributions as one calm list in the language of the core rows (owner feedback D): neutral
+ * borders, no card in a card, one small A in each item's header (the item's one addon marker), the item's title, its
+ * one key number and secondary line, and "Open" to the addon's own page. In the side column at most `max` (3) items,
+ * the rest behind "Show N more" so Agents stays on the first screen.
  */
 export function Glance({ readOnly, max }: { readOnly: boolean; max?: number }) {
   const all = useSlot('today.card')
+  const pages = useSlot('nav')
   const [more, setMore] = useState(false)
   if (all.length === 0) return null
   const items = max && !more ? all.slice(0, max) : all
   const hidden = all.length - items.length
   return (
-    <section aria-label="Glance" className="space-y-2">
-      <h2 className="px-1 text-[13px] font-semibold text-text">Glance</h2>
-      <div className={max ? 'space-y-2' : 'grid grid-cols-2 items-start gap-2'}>
-        {items.map((c) => (
-          <AddonContributionView key={`${c.addon}/${c.id}`} c={c} readOnly={readOnly} />
-        ))}
-      </div>
+    <section aria-labelledby="glance-h" className="rounded-lg border border-border bg-surface">
+      <h2 id="glance-h" className="border-b border-border px-3 py-2.5 text-[13px] font-semibold text-text">
+        Glance
+      </h2>
+      <ul className="divide-y divide-border">
+        {items.map((c) => {
+          const nav = pages.find((p) => p.addon === c.addon)
+          const open = nav ? { name: nav.addon, page: nav.id } : undefined
+          const count = c.waiting ? undefined : listCount(c.node)
+          return (
+            <li key={`${c.addon}/${c.id}`} className="space-y-1 px-3 py-2.5">
+              <div className="flex items-center gap-2">
+                <AddonBadge name={c.addon} title={c.addonTitle} className="size-3.5 text-[9px]" />
+                <h3 className="min-w-0 flex-1 truncate text-[13px] font-medium text-text">
+                  {c.title}
+                  {count !== undefined && <span className="font-normal text-text-muted"> · {count}</span>}
+                </h3>
+                {open && (
+                  <Link to="/addon/$name/$page" params={open} aria-label={`Open ${c.title}`} className="shrink-0 rounded text-xs text-text-muted outline-none hover:text-text focus-visible:ring-2 focus-visible:ring-ring">
+                    Open
+                  </Link>
+                )}
+              </div>
+              <div className="pl-5.5">
+                <AddonContributionView c={c} readOnly={readOnly} glance={{ open }} />
+              </div>
+            </li>
+          )
+        })}
+      </ul>
       {max && all.length > max && (
-        <button
-          type="button"
-          onClick={() => setMore(!more)}
-          className="rounded px-1 text-xs text-text-muted outline-none hover:text-text focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          {more ? 'Show fewer' : `Show ${hidden} more`}
-        </button>
+        <div className="border-t border-border px-3 py-2">
+          <button
+            type="button"
+            onClick={() => setMore(!more)}
+            className="rounded text-xs text-text-muted outline-none hover:text-text focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {more ? 'Show fewer' : `Show ${hidden} more`}
+          </button>
+        </div>
       )}
     </section>
   )

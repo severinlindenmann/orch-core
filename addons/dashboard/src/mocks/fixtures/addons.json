@@ -21,6 +21,15 @@
             {
               "type": "stack",
               "direction": "row",
+              "fit": true,
+              "children": [
+                { "type": "markdown", "text": "Live apps, and read-only links to tickets and artifacts. Files you send go through Drop." },
+                { "type": "link", "label": "Open Drop", "href": "/addon/drop/drop" }
+              ]
+            },
+            {
+              "type": "stack",
+              "direction": "row",
               "children": [
                 {
                   "type": "stat",
@@ -97,6 +106,12 @@
                           "$ref": "addon.appRows"
                         },
                         "empty": "No apps yet. Put a small app in a workspace folder and it appears here.",
+                        "rowDetail": {
+                          "key": "id",
+                          "nodes": {
+                            "$ref": "addon.appDetails"
+                          }
+                        },
                         "rowActions": [
                           {
                             "label": "Start",
@@ -114,7 +129,8 @@
                               "id": "$row.id"
                             },
                             "variant": "ghost",
-                            "when": "$row.canStop"
+                            "when": "$row.canStop",
+                            "pendingLabel": "Stopping…"
                           },
                           {
                             "label": "Logs",
@@ -206,12 +222,6 @@
                             "variant": "danger"
                           }
                         ]
-                      },
-                      {
-                        "type": "button",
-                        "label": "New show-once link",
-                        "action": "share_once",
-                        "variant": "secondary"
                       }
                     ]
                   }
@@ -228,9 +238,9 @@
         "icon": "Share2",
         "node": {
           "type": "stat",
-          "label": "Apps",
-          "value": "${addon.summary}",
-          "hint": "${addon.liveShares} live shares · ${addon.views} views"
+          "label": "apps running",
+          "value": "${addon.runningCount} of ${addon.appCount}",
+          "hint": "${addon.todayHint}"
         }
       },
       {
@@ -252,6 +262,12 @@
               "type": "button",
               "label": "Share report…",
               "action": "share",
+              "variant": "secondary"
+            },
+            {
+              "type": "button",
+              "label": "New show-once link",
+              "action": "share_once",
               "variant": "secondary"
             }
           ]
@@ -344,7 +360,7 @@
         "action": "share_once"
       }
     ],
-    "actions": { "save_settings": { "minRole": "owner" }, "decide": { "minRole": "maintainer", "decision": true }, "logs": { "minRole": "viewer", "label": "Show app logs" }, "stop": { "minRole": "member", "undo": "start" }, "revoke": { "minRole": "member", "confirm": "destructive", "confirmLabel": "Revoke link", "confirmText": "The link stops working for everyone who has it. This cannot be undone." } },
+    "actions": { "save_settings": { "minRole": "owner" }, "decide": { "minRole": "maintainer", "decision": true }, "logs": { "minRole": "viewer", "label": "Show app logs" }, "start": { "minRole": "member" }, "stop": { "minRole": "member", "undo": "start", "confirm": "destructive", "confirmLabel": "Stop app", "confirmText": "Anyone using the app loses it until you start it again. You can undo this right after." }, "share_once": { "minRole": "member", "label": "Create show-once link", "confirm": "options", "options": { "note": "The link is shown once and cannot be copied again.", "fields": [ { "key": "what", "label": "What to share", "default": "ticket", "choices": [ { "value": "ticket", "label": "The ticket page (read-only)" }, { "value": "report", "label": "The before/after report" } ] }, { "key": "expires_days", "label": "Works for", "default": 7, "choices": [ { "value": 1, "label": "1 day" }, { "value": 3, "label": "3 days" }, { "value": 7, "label": "7 days" }, { "value": 30, "label": "30 days" } ] }, { "key": "view_limit", "label": "Opens", "default": 1, "choices": [ { "value": 1, "label": "Once" }, { "value": 3, "label": "At most 3 times" }, { "value": 10, "label": "At most 10 times" }, { "value": 0, "label": "No limit" } ] } ] } }, "revoke": { "minRole": "member", "confirm": "destructive", "confirmLabel": "Revoke link", "confirmText": "The link stops working for everyone who has it. This cannot be undone." } },
     "package_sha256": "5bff517d9651da29e7bb20407bede9b158b27f279f9e828b1854749b364b8919",
     "update": null
   },
@@ -735,25 +751,25 @@
               "children": [
                 {
                   "type": "stat",
-                  "label": "Last 7 days",
+                  "label": "Cost · last 7 days",
                   "value": "${addon.weekCents|chf}",
-                  "hint": "cost"
+                  "hint": "all models"
                 },
                 {
                   "type": "stat",
-                  "label": "Month to date",
+                  "label": "Cost · this month",
                   "value": "${addon.monthCents|chf}",
-                  "hint": "${addon.budgetPct}% of the CHF ${addon.budgetChf} monthly budget"
+                  "hint": "${addon.monthRange} · ${addon.budgetPct}% of the CHF ${addon.budgetChf} budget"
                 },
                 {
                   "type": "stat",
-                  "label": "Last 30 days",
+                  "label": "Cost · last 30 days",
                   "value": "${addon.cost30Cents|chf}",
-                  "hint": "cost, all models"
+                  "hint": "all models"
                 },
                 {
                   "type": "stat",
-                  "label": "Tokens, last 30 days",
+                  "label": "Tokens · last 30 days",
                   "value": "${addon.tokens30Text}",
                   "hint": "input + output, without cache reads"
                 }
@@ -971,6 +987,53 @@
                       }
                     ]
                   }
+                },
+                {
+                  "id": "person",
+                  "label": "By person",
+                  "node": {
+                    "type": "stack",
+                    "children": [
+                      {
+                        "type": "markdown",
+                        "text": "**Last 30 days.** An agent session counts for the person whose grant it ran under."
+                      },
+                      {
+                        "type": "table",
+                        "totalRow": true,
+                        "columns": [
+                          {
+                            "key": "person",
+                            "label": "Person"
+                          },
+                          {
+                            "key": "sessions",
+                            "label": "Sessions",
+                            "align": "right"
+                          },
+                          {
+                            "key": "tokens",
+                            "label": "Tokens (M)",
+                            "align": "right"
+                          },
+                          {
+                            "key": "cost",
+                            "label": "Cost (CHF)",
+                            "align": "right"
+                          },
+                          {
+                            "key": "share",
+                            "label": "Share of cost",
+                            "align": "right"
+                          }
+                        ],
+                        "rows": {
+                          "$ref": "addon.personRows"
+                        },
+                        "empty": "No agent work yet."
+                      }
+                    ]
+                  }
                 }
               ]
             }
@@ -984,9 +1047,12 @@
         "icon": "Gauge",
         "node": {
           "type": "stat",
-          "label": "Last 7 days",
+          "label": "last 7 days",
           "value": "${addon.weekCents|chf}",
-          "hint": "${addon.monthCents|chf} this month"
+          "hint": "${addon.monthCents|chf} this month",
+          "trend": {
+            "$ref": "addon.weekTrend"
+          }
         }
       },
       {
@@ -1077,19 +1143,12 @@
         "title": "Terminal",
         "icon": "SquareTerminal",
         "node": {
-          "type": "button",
-          "label": "Open terminal in this ticket's worktree",
-          "action": "open_ticket",
-          "variant": "secondary"
+          "type": "stack",
+          "children": [
+            { "type": "terminal", "session": "${addon.sessionByTicket.$ticket}" },
+            { "type": "button", "label": "Open terminal in this ticket's worktree", "action": "open_ticket", "variant": "secondary" }
+          ]
         }
-      },
-      {
-        "slot": "ticket.panel",
-        "id": "ticket-terminal",
-        "title": "Terminal session",
-        "icon": "SquareTerminal",
-        "when": "addon.sessionByTicket.$ticket",
-        "node": { "type": "terminal", "session": "${addon.sessionByTicket.$ticket}" }
       },
       {
         "slot": "settings",
@@ -1126,7 +1185,7 @@
         "action": "open"
       }
     ],
-    "actions": { "save_settings": { "minRole": "owner" }, "open": { "minRole": "viewer", "label": "Open terminal", "kind": "navigation" }, "start": { "minRole": "member", "label": "Start a terminal session" }, "resume": { "minRole": "member", "label": "Continue from a session summary" } },
+    "actions": { "save_settings": { "minRole": "owner" }, "open": { "minRole": "viewer", "label": "Open terminal", "kind": "navigation" }, "start": { "minRole": "member", "label": "Start a terminal session" }, "resume": { "minRole": "member", "label": "Continue from a session summary" }, "login_shell": { "minRole": "owner", "label": "Open a shell to log a connection in again" } },
     "package_sha256": "cf469c979452d209a452ce4f693679a3bb9e21c7e555c97843d25269dcfcd81c",
     "update": null
   },
@@ -1327,7 +1386,7 @@
               "submitLabel": "Preview command"
             },
             { "$ref": "addon.page.preview" },
-            { "type": "markdown", "text": "### Running" },
+            { "type": "markdown", "text": "## Running" },
             {
               "type": "table",
               "columns": [{ "key": "ticket", "label": "Ticket" }, { "key": "title", "label": "Title" }, { "key": "harness", "label": "Harness" }, { "key": "model", "label": "Model" }, { "key": "state", "label": "State" }, { "key": "started", "label": "Started" }],
@@ -1335,7 +1394,7 @@
               "empty": "Nothing is running.",
               "rowActions": [{ "label": "Stop", "action": "stop", "args": { "session": "$row.session" }, "variant": "danger" }]
             },
-            { "type": "markdown", "text": "### Ended" },
+            { "type": "markdown", "text": "## Ended" },
             { "type": "list", "items": { "$ref": "addon.ended" }, "empty": "No run has ended yet." }
           ]
         }

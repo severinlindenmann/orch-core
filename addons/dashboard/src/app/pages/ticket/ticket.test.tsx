@@ -79,6 +79,23 @@ describe('ticket page', () => {
   })
 })
 
+describe('a gate the person may not sign', () => {
+  it('Mara sees "Approve plan (owners only)" disabled with the reason, and the turn line does not say ready to claim', async () => {
+    renderApp('/ticket/DEMO-0044', { viewer: 'p_mara' })
+    const button = await screen.findByRole('button', { name: 'Approve plan (owners only)' }, T)
+    expect(button).toBeDisabled()
+    expect(button).toHaveAccessibleDescription('Plan needs 1 approval from owners.')
+    const header = screen.getByTestId('ticket-header')
+    expect(header).toHaveTextContent(/plan needs approval \(owners\)/i)
+    expect(header).not.toHaveTextContent(/ready to claim/i)
+  })
+  it('the owner gets the real button instead', async () => {
+    renderApp('/ticket/DEMO-0044')
+    expect(await screen.findByRole('button', { name: 'Approve plan' }, T)).toBeEnabled()
+    expect(screen.queryByRole('button', { name: /owners only/ })).toBeNull()
+  })
+})
+
 describe('ticket gate policy wording', () => {
   it('uses the same sentence as Settings, not the raw approver value', async () => {
     const { user } = renderApp('/ticket/DEMO-0043', { setup: (s) => s.appendWs(s.workspaces[0].id, { type: 'gate.policy_set', gate: 'plan', approvers: 'maintainer', count: 1, not: null }) })
@@ -120,7 +137,8 @@ describe('ticket page structure: next action first, gates as a stepper, a rail t
     await screen.findByRole('heading', { level: 1, name: /billing reconciliation/ }, T)
     expect(within(header()).getByRole('button', { name: 'Give verdict' })).toBeInTheDocument()
     expect(screen.queryByRole('complementary', { name: 'Ticket details' })).toBeNull()
-    expect(screen.getByTestId('ticket-properties')).toHaveTextContent(/Size/)
+    expect(screen.getByTestId('ticket-properties')).toHaveTextContent(/Points/) // Estimate is on in DEMO
+    expect(screen.getByTestId('ticket-properties')).not.toHaveTextContent(/Size/)
     await user.click(screen.getByRole('button', { name: /^Panels \(\d+\)$/ }))
     const sheet = await screen.findByRole('dialog', { name: /Panels/ })
     expect(within(sheet).getByRole('heading', { name: 'Details' })).toBeInTheDocument()
@@ -182,7 +200,7 @@ describe('ticket page structure: next action first, gates as a stepper, a rail t
   it('the agent is one status line, without Claim or Release buttons', async () => {
     renderApp('/ticket/DEMO-0043')
     await screen.findByRole('heading', { level: 1, name: /Load tariff tables/ }, T)
-    expect(screen.getByTestId('agent-status')).toHaveTextContent('Claude Code is working for Severin · since 08:05 UTC · 2 subagents')
+    expect(screen.getByTestId('agent-status')).toHaveTextContent('Claude Code is working for Severin · since 08:05 · 2 subagents')
     expect(screen.queryByRole('button', { name: /^Claim/ })).toBeNull()
     expect(screen.queryByRole('button', { name: /^Release/ })).toBeNull()
   })
@@ -204,6 +222,59 @@ describe('ticket page structure: next action first, gates as a stepper, a rail t
     renderApp('/ticket/DEMO-0043', { viewer: 'p_sev', setup: (s) => s.appendWs(s.workspaces[0].id, { type: 'addon.disabled', name: 'github' }) })
     const rail = await findRail()
     expect(await within(rail).findAllByText(/#31/, {}, T)).toHaveLength(1)
+  })
+
+  it('groups the addon panels under one "Addons" heading: neutral borders, one A per panel, one Terminal panel (B M8)', async () => {
+    vi.stubGlobal('innerWidth', 1440)
+    renderApp('/ticket/DEMO-0043', { viewer: 'p_sev' })
+    const rail = await findRail()
+    const group = (await within(rail).findByRole('heading', { name: /^Addons/ }, T)).closest('section') as HTMLElement
+    const panels = [...group.querySelectorAll('section[data-addon]')]
+    expect(panels.length).toBeGreaterThanOrEqual(5)
+    expect(within(group).getByRole('heading', { name: /^Addons/ })).toHaveTextContent(`Addons · ${panels.length}`)
+    for (const p of panels) {
+      expect(p.className, p.getAttribute('data-addon')!).not.toMatch(/addon-border/)
+      expect(p.className).toMatch(/border-border/)
+      expect(within(p.querySelector('button')!).getAllByRole('img', { name: /^From / })).toHaveLength(1)
+    }
+    const titles = panels.map((p) => p.querySelector('button')!.textContent)
+    expect(titles.filter((t) => /Terminal/.test(t ?? ''))).toHaveLength(1)
+    expect(titles.some((t) => /Terminal session/.test(t ?? ''))).toBe(false)
+  })
+
+  it('shows Points (from Estimate) instead of Size while Estimate is on, with a note; Size otherwise (B m14)', async () => {
+    vi.stubGlobal('innerWidth', 1440)
+    const { unmount } = renderApp('/ticket/DEMO-0043', { viewer: 'p_sev' })
+    let rail = await findRail()
+    const details = (await within(rail).findByRole('heading', { name: 'Details' }, T)).closest('section') as HTMLElement
+    expect(within(details).getByText('Points')).toBeInTheDocument()
+    expect(within(details).queryByText('Size')).toBeNull()
+    expect(within(details).getByText(/The size \(M\) is not shown while Estimate is on\./)).toBeInTheDocument()
+    unmount()
+    renderApp('/ticket/DEMO-0043', { viewer: 'p_sev', setup: (s) => s.appendWs(s.workspaces[0].id, { type: 'addon.disabled', name: 'estimate' }) })
+    rail = await findRail()
+    const plain = (await within(rail).findByRole('heading', { name: 'Details' }, T)).closest('section') as HTMLElement
+    expect(within(plain).getByText('Size')).toBeInTheDocument()
+    expect(within(plain).queryByText('Points')).toBeNull()
+  })
+
+  it('the breadcrumb leads back to where the ticket was opened from (B m3)', async () => {
+    vi.stubGlobal('innerWidth', 1440)
+    const { user } = renderApp('/tickets', { viewer: 'p_sev' })
+    await user.click(await screen.findByRole('link', { name: /DEMO-0043/ }, T))
+    await screen.findByRole('heading', { level: 1, name: /Load tariff tables/ }, T)
+    const topbar = screen.getByTestId('topbar-title').parentElement as HTMLElement
+    const crumb = await within(topbar).findByRole('link', { name: 'Tickets' }, T)
+    expect(crumb).toHaveAttribute('href', expect.stringMatching(/^\/w\/DEMO\/tickets/))
+    await user.click(crumb)
+    await waitFor(() => expect(screen.getByTestId('topbar-title')).toHaveTextContent('Tickets'), T)
+  })
+
+  it('opened first (no page before it), the breadcrumb says Board', async () => {
+    renderApp('/ticket/DEMO-0043', { viewer: 'p_sev' })
+    await screen.findByRole('heading', { level: 1, name: /Load tariff tables/ }, T)
+    const topbar = screen.getByTestId('topbar-title').parentElement as HTMLElement
+    expect(within(topbar).getByRole('link', { name: 'Board' })).toHaveAttribute('href', '/w/DEMO/board')
   })
 
   it('shows at most 3 labels and "+n"', async () => {

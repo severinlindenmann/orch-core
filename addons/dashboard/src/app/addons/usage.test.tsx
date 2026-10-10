@@ -14,10 +14,13 @@ describe('usage page', () => {
   it('opens on Overview: every number states its period; budget, cost by model and the daily trend; tables are in their tabs', async () => {
     renderApp('/addon/usage/overview', { viewer: 'p_sev' })
     expect(await screen.findByText('CHF 31.40', {}, T)).toBeInTheDocument()
-    expect(screen.getByText('Last 7 days')).toBeInTheDocument()
+    // One measure and one period per tile, both in the label (B m4).
+    expect(screen.getByText('Cost · last 7 days')).toBeInTheDocument()
     expect(screen.queryByText('This week')).not.toBeInTheDocument()
-    expect(screen.getByText('Month to date')).toBeInTheDocument()
-    expect(screen.getByText('Last 30 days')).toBeInTheDocument()
+    expect(screen.getByText('Cost · this month')).toBeInTheDocument()
+    expect(screen.getByText(/^1–9 Oct · \d+% of the CHF 150 budget$/)).toBeInTheDocument()
+    expect(screen.getByText('Cost · last 30 days')).toBeInTheDocument()
+    expect(screen.getByText('Tokens · last 30 days')).toBeInTheDocument()
     expect(screen.getByRole('progressbar', { name: /Monthly budget used/ })).toBeInTheDocument()
     expect(await screen.findByRole('img', { name: 'Cost by model · last 30 days' }, T)).toBeInTheDocument()
     expect(await screen.findByRole('img', { name: /^Cost per day · last 30 days/ }, T)).toBeInTheDocument()
@@ -79,9 +82,9 @@ describe('usage ticket panel and Today card', () => {
     expect(within(frame).getByText(/\d+k$|\d+(\.\d)? M$/)).toBeInTheDocument()
     expect(within(frame).getByText('3')).toBeInTheDocument()
   })
-  it('the Today card says This week CHF 31.40', async () => {
+  it('the Today glance says CHF 31.40 last 7 days', async () => {
     renderApp('/', { viewer: 'p_sev' })
     const card = (await screen.findByText('CHF 31.40', {}, T)).closest('[data-addon="usage"]') as HTMLElement
-    expect(within(card).getByText('Last 7 days')).toBeInTheDocument()
+    expect(card).toHaveTextContent('CHF 31.40 last 7 days')
   })
 })

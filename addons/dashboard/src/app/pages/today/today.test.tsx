@@ -10,6 +10,7 @@ import { toast } from 'sonner'
 import { ApiError } from '@/api/types'
 import { api, mockStore } from '@/api/client'
 import { renderApp } from '@/test/renderApp'
+import { reloginItems } from '@/api/attention'
 
 const T = { timeout: 6000 }
 const busy = { setup: (s: typeof mockStore) => s.reset('busy', true) }
@@ -26,7 +27,10 @@ describe('Today: a calm, grouped queue', () => {
     const line = await screen.findByText(/· \d+ need you · \d+ agents? working$/, {}, T)
     const ws = mockStore.workspaces[0].id
     const n = Number(/· (\d+) need you/.exec(line.textContent!)![1])
-    expect(n).toBe(mockStore.needsYou(ws).length + mockStore.addonDecisions(ws).length)
+    // R-c: the owner's count includes the connections that need a new login, as listed.
+    const relogin = reloginItems(mockStore.conn.connections(ws)).length
+    expect(relogin).toBeGreaterThan(0)
+    expect(n).toBe(mockStore.needsYou(ws).length + mockStore.addonDecisions(ws).length + relogin)
   })
 
   it('opens the first blocking question; picking an option posts nothing, "Send answer…" opens core\'s dialog', async () => {
@@ -129,12 +133,14 @@ describe('Today: addon decisions are core rows, signed in core', () => {
 
   it('an option opens core\'s prompt; signing posts with the workspace id and core records addon.decided', async () => {
     const spy = vi.spyOn(api, 'runAddonAction')
+    const success = vi.spyOn(toast, 'success')
     const { user } = renderApp('/', { viewer: 'p_sev' })
     const row = await openDecision(user, 'dec_publish_failed_build')
     const option = within(row).getByRole('button', { name: 'Retry last good version' })
     await user.click(option)
-    const prompt = await screen.findByRole('dialog', { name: /^Decide: / })
-    expect(prompt).toHaveTextContent('Your answer: Retry last good version')
+    const prompt = await screen.findByRole('dialog', { name: /^Decide for / })
+    expect(within(prompt).getByText('Covers').nextElementSibling).toHaveTextContent('Answer: option retry')
+    expect(within(prompt).getByRole('region', { name: 'From addon publish' })).toHaveTextContent('Retry last good version')
     expect(spy).not.toHaveBeenCalled()
     await user.click(within(prompt).getByRole('button', { name: 'Send answer' }))
     await waitFor(() => expect(spy).toHaveBeenCalled())
@@ -142,7 +148,28 @@ describe('Today: addon decisions are core rows, signed in core', () => {
     expect(spy.mock.calls[0][0]).toBe(ws)
     await waitFor(() => expect(mockStore.wsEventsOf(ws).some((e) => e.type === 'addon.decided' && e.id === 'dec_publish_failed_build' && e.presence === 'touchid')).toBe(true))
     await waitFor(() => expect(screen.queryByTestId('card-addon:dec_publish_failed_build')).toBeNull(), T)
+    // The confirmation: core's sentence as the title, the addon's own message below it, labelled.
+    expect(success).toHaveBeenCalledWith('Signed: answer retry · Publish (publish)', { description: expect.stringMatching(/^Addon says: /) })
     spy.mockRestore()
+    success.mockRestore()
+  })
+
+  it('the success toast names the addon of the decision that was signed, not the one on screen now (F3)', async () => {
+    const success = vi.spyOn(toast, 'success')
+    const { user, client } = renderApp('/', { viewer: 'p_sev' })
+    const row = await openDecision(user, 'dec_publish_failed_build')
+    await user.click(within(row).getByRole('button', { name: 'Retry last good version' }))
+    const prompt = await screen.findByRole('dialog', { name: /^Decide for / })
+    // While the prompt is open the row (keyed by id) comes back from another addon: the snapshot still says Publish.
+    const original = api.getAddonDecisions.bind(api)
+    const list = vi.spyOn(api, 'getAddonDecisions').mockImplementation(async (ws) => (await original(ws)).map((d) => (d.id === 'dec_publish_failed_build' ? { ...d, addon: 'github' } : d)))
+    await client.invalidateQueries({ queryKey: ['addon-decisions'] })
+    await within(prompt).findByText(/This decision changed after you opened this prompt/, {}, T)
+    list.mockRestore()
+    await user.click(within(prompt).getByRole('button', { name: 'Send answer' }))
+    await waitFor(() => expect(success).toHaveBeenCalled(), T)
+    expect(success).toHaveBeenCalledWith('Signed: answer retry · Publish (publish)', { description: expect.stringMatching(/^Addon says: /) })
+    success.mockRestore()
   })
 
   it('options are off from the click until the post resolves (no second prompt or post)', async () => {
@@ -151,7 +178,7 @@ describe('Today: addon decisions are core rows, signed in core', () => {
     const { user } = renderApp('/', { viewer: 'p_sev' })
     const row = await openDecision(user, 'dec_publish_failed_build')
     await user.click(within(row).getByRole('button', { name: 'Retry last good version' }))
-    await user.click(within(await screen.findByRole('dialog', { name: /^Decide: / })).getByRole('button', { name: 'Send answer' }))
+    await user.click(within(await screen.findByRole('dialog', { name: /^Decide for / })).getByRole('button', { name: 'Send answer' }))
     await waitFor(() => expect(spy).toHaveBeenCalledTimes(1))
     for (const b of within(row).getAllByRole('button', { name: /Retry last good version|Leave it/ })) expect(b).toBeDisabled()
     release()
@@ -164,7 +191,7 @@ describe('Today: addon decisions are core rows, signed in core', () => {
     const { user } = renderApp('/', { viewer: 'p_sev' })
     const row = await openDecision(user, 'dec_publish_failed_build')
     await user.click(within(row).getByRole('button', { name: 'Leave it' }))
-    await user.click(within(await screen.findByRole('dialog', { name: /^Decide: / })).getByRole('button', { name: 'Cancel' }))
+    await user.click(within(await screen.findByRole('dialog', { name: /^Decide for / })).getByRole('button', { name: 'Cancel' }))
     expect(spy).not.toHaveBeenCalled()
     expect(screen.getByTestId('card-addon:dec_publish_failed_build')).toBeInTheDocument()
     spy.mockRestore()
@@ -220,8 +247,10 @@ describe('Today: busy day', { timeout: 20_000 }, () => {
 
 describe('Today by role', () => {
   it('Tom: nothing needs you, read-only rows without buttons, each names who decides', async () => {
-    renderApp('/', { viewer: 'p_tom' })
+    const { user } = renderApp('/', { viewer: 'p_tom' })
     expect(await screen.findByText(/Nothing needs you · \d+ open in the workspace/, {}, T)).toBeInTheDocument()
+    // A viewer sees one summary per person who decides; the rows open on demand.
+    for (const b of await screen.findAllByRole('button', { name: / decides · \d+ open/, expanded: false }, T)) await user.click(b)
     const row = await screen.findByTestId('card-question:DEMO-0043:Q2', {}, T)
     expect(within(row).queryAllByRole('button')).toHaveLength(0)
     expect(within(row).queryAllByRole('radio')).toHaveLength(0)

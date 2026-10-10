@@ -12,8 +12,10 @@ export interface CatalogEntry {
   title: string
   shows: string
   allowed: string
-  /** Not in orch.widgets.v1 yet: shown with a "Proposed" chip, an open question for the owner. */
+  /** Not in orch.widgets.v1 yet: shown with a "Proposed" chip (docs/widgets-v1-proposal.md). */
   proposed?: boolean
+  /** A v1 type with one form that is not in v1 yet (the multi-series `series`): that form, in words. */
+  proposedForm?: string
   /** The block without its pin; pinned() adds the current sha256. */
   example: Record<string, unknown>
 }
@@ -23,14 +25,14 @@ export const SAMPLE_BEFORE_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA
 export const SAMPLE_AFTER_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAUAAAAC0CAIAAABqhmJGAAACPElEQVR42u3dsQmAMBBAUacQG3sLwcaBnMrGMriKQ1k5gqKCOfPgTRDud0eu6voRCKryBCBgQMCAgEHAgIABAQMCBgEDQQOel5UbjBoCFjAIWMAIGAEjYAGDgAWMgAUsYASMgLHIAQgYBAwIGBAwIGAQMCBgQMAgYCBKwHXTAkEJGAQMCBgQMAgYEDAgYEDAIGBAwICAQcCAgAEBAwIGAV81bInMGXcBC1jACBgBI2AELGABCxgBK0TACBgBPxHl4LuAEbCABSxgAQtYwAIWsIARsIAFjIAFLGABC1jACFjAAkbACFjACFjAAkbACBgBI2ABC1jA+NQOEDAgYBAwIGBAwICAQcCAgAEBg4ABAQMCBgQMAgYEDAgYEDAIGBAw8GXA07rD6yQqYAQsYAEjYAGDgAWMgBEwAhawgMknYAe+BYyABQwCFjACFrCAEbCABYyABQwCFjACFrCAschhkUPACFjAIGABI2ABCxgBCxgE7FM7QMAgYEDAgIBBwICAAQEDAgYBAwIGBAwIGAQMCBgQMAgYEDAgYEDAIOBzw5aKYnQQsIBBwAJGwAIWMAIWMAhYwCBgAZfGgW8BC1jAAhYwAhawgBGwgAUsYAELWMACFrCAEbCABYyABSxgLHIIGAQsYBCwgBGwgAWMgAUMEQIGBAwIGAQMCBgQMCBgEDAgYEDAIGBAwICAAQGDgAEBAwIGBAwCBgQMCBgEDAgYEDAgYBAwIGBAwICAQcCAgAEBg4ABAQMCBgQMv3MAYnCZGlqwlTsAAAAASUVORK5CYII='
 
 export const PROPOSED_NOTE = 'Proposed — not in orch.widgets.v1 yet'
-const CORE_ALLOWED = 'Context, Current state and Verification. Refused in Summary, Requirements, Out of scope, Plan and Decisions: a gate signs that text.'
+export const CORE_ALLOWED = 'Context, Current state and Verification. Refused in Summary, Requirements, Out of scope, Plan and Decisions: a gate signs that text.'
 const CHECKS_ALLOWED = 'Verification, where the evidence lives; Context and Current state draw it too. Refused in Summary, Requirements, Out of scope, Plan and Decisions: a gate signs that text.'
-const TEMPLATE_ALLOWED = 'The same sections as core types, and only while the Widgets addon is on in the workspace. Agent HTML runs in a sandboxed frame: no network, no navigation, no access to this dashboard. The block pins the template by sha256.'
+export const TEMPLATE_ALLOWED = 'The same sections as core types, and only while the Widgets addon is on in the workspace. Agent HTML runs in a sandboxed frame: no network, no navigation, no access to this dashboard. The block pins the template by sha256.'
 
 export const CATALOG: CatalogEntry[] = [
   { kind: 'core', ref: 'stats', title: 'Stats', shows: 'Headline numbers with an optional change and a role (ok, info, warn, err, neu).', allowed: CORE_ALLOWED,
     example: { type: 'stats', id: 'ex-stats', title: 'Seed load', source: 'dbt seed, run of 09:55', items: [{ label: 'Tables loaded', value: '31 of 40', delta: '+9 since 09:00', role: 'ok' }, { label: 'Seed time, s', value: 48, delta: -12 }, { label: 'Blocked tables', value: 9, role: 'warn' }] } },
-  { kind: 'core', ref: 'series', title: 'Series', shows: 'A line over x with event markers; also up to four named lines over shared x labels.', allowed: CORE_ALLOWED,
+  { kind: 'core', ref: 'series', title: 'Series', shows: 'A line over x with event markers (v1: points); also up to four named lines over shared x labels.', proposedForm: 'the multi-series form (x with up to four named series)', allowed: CORE_ALLOWED,
     example: { type: 'series', id: 'ex-series', title: 'Seed time per night', source: 'dbt run_results', unit: 's', x: ['10-02', '10-03', '10-04', '10-05', '10-06', '10-07', '10-08', '10-09'], series: [{ name: 'seed', values: [61, 64, 60, 72, null, 58, 51, 48] }, { name: 'test', values: [22, 21, 25, 24, 23, 20, 19, 19] }], markers: [{ x: '10-07', label: 'typed columns' }] } },
   { kind: 'core', ref: 'spark', title: 'Spark', shows: 'A word-sized trend inside a sentence, at {spark}.', allowed: CORE_ALLOWED,
     example: { type: 'spark', id: 'ex-spark', values: [9.1, 8.7, 8.9, 8.2, 7.9, 8.4, 7.1, 6.8, 6.9, 6.4, 6.2, 6.1], text: 'CI time over the last 12 runs {spark} now 6.1 min.' } },

@@ -4,9 +4,8 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { useRouter } from '@tanstack/react-router'
-import { List, MoreHorizontal, SquareTerminal } from 'lucide-react'
+import { List, MoreHorizontal, PanelBottomClose, PanelRightClose, SquareTerminal } from 'lucide-react'
 import { useEffect, useRef, useState, type KeyboardEvent, type MutableRefObject, type PointerEvent } from 'react'
-import { api } from '@/api/client'
 import type { TerminalSessionView } from '@/api/terminals'
 import { AddonBadge } from '@/addon-ui/AddonBadge'
 import { addonHairline, addonRule } from '@/addon-ui/addonClasses'
@@ -15,6 +14,7 @@ import { useRunAddonAction } from '@/addon-ui/useRunAddonAction'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import TerminalView from '../TerminalView'
 import { useWorkspace } from '../../workspace'
@@ -24,6 +24,7 @@ import { DOCK_LIMITS, dockMax, type DockPrefs, type DockSide } from './prefs'
 import { SessionBrowser } from './SessionBrowser'
 import { SessionTabs, type DockWindow } from './SessionTabs'
 import { TicketInfo } from './TicketInfo'
+import { queries } from '@/api/queries'
 
 const STEP = 16
 const BIG_STEP = 64
@@ -42,6 +43,9 @@ export interface TerminalDockProps {
   focus: MutableRefObject<'dock' | 'bar' | null>
   memory: DockMemory
   collapse: () => void
+  /** A session an action opened (Worktrees' "Open terminal here"): select it and put the keyboard in it. */
+  request?: string | null
+  requestDone?: () => void
 }
 
 export default function TerminalDock(props: TerminalDockProps) {
@@ -57,7 +61,7 @@ export default function TerminalDock(props: TerminalDockProps) {
     toWorkspace={(follow) => setWide({ page, follow })} backToTicket={() => setWide(null)} />
 }
 
-function DockBody({ prefs, side, size, view, area, rightFits, setPrefs, focus, memory, collapse, ticket, pageTicket, followFrom, toWorkspace, backToTicket }: TerminalDockProps & {
+function DockBody({ prefs, side, size, view, area, rightFits, setPrefs, focus, memory, collapse, request, requestDone, ticket, pageTicket, followFrom, toWorkspace, backToTicket }: TerminalDockProps & {
   ticket?: string
   /** The ticket of the page (may differ from `ticket` after switching to the workspace scope). */
   pageTicket?: string
@@ -68,7 +72,7 @@ function DockBody({ prefs, side, size, view, area, rightFits, setPrefs, focus, m
 }) {
   const { workspace } = useWorkspace()
   const router = useRouter()
-  const me = useQuery({ queryKey: ['me'], queryFn: api.getMe })
+  const me = useQuery(queries.me())
   const { [DOCK_ADDON]: state } = useAddonStates(workspace?.id, [DOCK_ADDON])
   const inTicket = useRunAddonAction(ticket)
   const inWorkspace = useRunAddonAction()
@@ -103,6 +107,22 @@ function DockBody({ prefs, side, size, view, area, rightFits, setPrefs, focus, m
     setSelected(currentId)
     setFocusId(currentId)
   }, [currentId])
+  const requestSeen = useRef<{ id: string; state: unknown } | null>(null)
+  // A requested session: select it here, or switch to the workspace scope when this ticket's list does not hold it.
+  useEffect(() => {
+    if (!request) return
+    if (list.some((s) => s.id === request) || ended.some((s) => s.id === request)) {
+      requestDone?.()
+      select(request)
+      // The keyboard goes to the dock now, and into the terminal once xterm is up (select's focus step).
+      region.current?.focus({ preventScroll: true })
+    } else if (ticket && sessions.some((s) => s.id === request)) toWorkspace(currentId ?? '')
+    // Not a session of this viewer (or gone) once the sessions were read again after the request: drop it, the dock
+    // stays as it is (no focus grab, no waiting).
+    else if (requestSeen.current && requestSeen.current.id === request && requestSeen.current.state !== state) requestDone?.()
+    else if (!requestSeen.current || requestSeen.current.id !== request) requestSeen.current = { id: request, state }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [request, sessions, state])
   // Opening the dock puts focus on the session strip (or the dock), so the keyboard is where the eye is.
   useEffect(() => {
     if (focus.current !== 'dock') return
@@ -187,14 +207,15 @@ function DockBody({ prefs, side, size, view, area, rightFits, setPrefs, focus, m
 
   return (
     <section ref={region} tabIndex={-1} aria-label="Terminal dock" data-addon={DOCK_ADDON} data-dock-side={side}
-      className={cn('relative flex shrink-0 flex-col bg-bg outline-none', addonHairline, right ? 'border-l' : 'border-t')}
+      className={cn('@container/dock relative flex min-w-0 shrink-0 flex-col bg-bg outline-none', addonHairline, right ? 'border-l' : 'border-t')}
       style={right ? { width: size } : { height: size }}>
       <ResizeHandle side={side} size={size} max={dockMax(side, view, area)} onResize={resize} />
       <header className={cn('flex h-9 shrink-0 items-center gap-2 border-b bg-surface-2 px-2 text-xs', addonRule)}>
         <AddonBadge name={DOCK_ADDON} title="Terminals" />
         <SquareTerminal aria-hidden="true" className="size-3.5 shrink-0 text-text-muted" />
+        {/* At the narrowest right-hand dock (320 px) the header still fits: the scope truncates, "New session" is an icon. */}
         <h2 className="shrink-0 text-xs font-semibold">Terminal</h2>
-        <span className="shrink-0 font-mono text-[11px] text-text-muted" title={ticket ? `Sessions of ${ticket}` : 'Sessions of this workspace'} data-dock-scope>{scope}</span>
+        <span className="min-w-0 truncate font-mono text-[11px] text-text-muted" title={ticket ? `Sessions of ${ticket}` : 'Sessions of this workspace'} data-dock-scope>{scope}</span>
         {!ticket && pageTicket && (
           <Button variant="link" size="xs" className="shrink-0 px-0" onClick={backToTicket}>Back to {pageTicket}</Button>
         )}
@@ -219,6 +240,14 @@ function DockBody({ prefs, side, size, view, area, rightFits, setPrefs, focus, m
             <DropdownMenuItem onSelect={collapse}>Collapse<DropdownMenuShortcut>{DOCK_KEYS}</DropdownMenuShortcut></DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="ghost" size="icon-xs" aria-label="Collapse the dock" aria-keyshortcuts="Control+Backquote" onClick={collapse}>
+              {right ? <PanelRightClose /> : <PanelBottomClose />}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">Collapse · {DOCK_KEYS}</TooltipContent>
+        </Tooltip>
       </header>
       {right && (
         <div className="flex h-8 shrink-0 items-center border-b border-border bg-surface-2 px-2">

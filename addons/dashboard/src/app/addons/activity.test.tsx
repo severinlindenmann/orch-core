@@ -9,7 +9,9 @@ const ws = () => mockStore.workspaces.find((w) => w.prefix === 'DEMO')!.id
 const setup = (store: typeof mockStore) => installAndGrant(store, store.workspaces.find((w) => w.prefix === 'DEMO')!.id, 'activity')
 const PATH = '/addon/activity/activity'
 const rows = () => screen.getAllByRole('listitem').filter((li) => !li.closest('[data-sonner-toaster]'))
-const rowTexts = () => rows().map((li) => li.textContent)
+// Row identity and order without relative times: posting an event moves the mock clock, so "2 min ago" may become "3 min ago".
+const TIME = /just now|\d+ (?:min|h|days?) ago|\d{1,2} [A-Z][a-z]{2} \d{2}:\d{2}/g
+const rowTexts = () => rows().map((li) => (li.textContent ?? '').replace(TIME, '·'))
 
 describe('activity page', () => {
   it('leads with the timeline: the Timeline heading precedes any table and the period is Today', async () => {
@@ -26,7 +28,7 @@ describe('activity page', () => {
     await screen.findByRole('combobox', { name: 'Type' }, T)
     expect(screen.getByRole('combobox', { name: 'Person' })).toBeInTheDocument()
     expect(screen.getByRole('textbox', { name: 'Search' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Apply' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Apply' })).toBeNull() // filters apply on change
     expect(screen.queryByRole('button', { name: 'Only show' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Clear filters' })).toBeNull()
   })
@@ -35,12 +37,20 @@ describe('activity page', () => {
     const type = await screen.findByRole('combobox', { name: 'Type' }, T)
     const opt = within(type).getAllByRole('option').find((o) => /^Status \(\d+\)$/.test(o.textContent ?? ''))!
     const n = Number(opt.textContent!.match(/\((\d+)\)/)![1])
-    await user.selectOptions(type, opt)
-    await user.click(screen.getByRole('button', { name: 'Apply' }))
+    await user.selectOptions(type, opt) // applies at once
     expect(await screen.findByText(new RegExp(`of ${n} matching`), {}, T)).toBeInTheDocument()
     expect(await screen.findByRole('button', { name: 'Clear filters' }, T)).toBeInTheDocument()
     const st = (await api.getAddonState(ws(), 'activity')) as unknown as { counts: { matching: number } }
     expect(st.counts.matching).toBe(n)
+  })
+  it('typing in Search applies after a pause and keeps the keyboard in the field', async () => {
+    const { user } = renderApp(PATH, { viewer: 'p_sev', setup })
+    const box = await screen.findByRole('textbox', { name: 'Search' }, T)
+    await user.type(box, 'DEMO-0043')
+    expect(await screen.findByRole('button', { name: 'Clear filters' }, T)).toBeInTheDocument()
+    const st = (await api.getAddonState(ws(), 'activity')) as unknown as { filters: { q: string } }
+    expect(st.filters.q).toBe('DEMO-0043')
+    expect(screen.getByRole('textbox', { name: 'Search' })).toHaveFocus()
   })
   it('By ticket swaps the timeline for the table, and back', async () => {
     const { user } = renderApp(PATH, { viewer: 'p_sev', setup })
@@ -87,8 +97,8 @@ describe('activity page', () => {
   })
   it('a viewer sees the filter bar enabled', async () => {
     renderApp(PATH, { viewer: 'p_tom', setup })
-    await waitFor(async () => expect(await screen.findByRole('button', { name: 'Apply' })).toBeEnabled(), T)
-    expect(screen.getByRole('combobox', { name: 'Period' })).toBeEnabled()
+    await waitFor(async () => expect(await screen.findByRole('combobox', { name: 'Period' })).toBeEnabled(), T)
+    expect(screen.getByRole('textbox', { name: 'Search' })).toBeEnabled()
   })
   it('the Today page shows the card with the live counts', async () => {
     renderApp('/', { viewer: 'p_sev', setup })

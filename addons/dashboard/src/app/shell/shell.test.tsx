@@ -12,9 +12,23 @@ describe('app shell', () => {
     expect(await screen.findByRole('heading', { name: 'Today' })).toBeInTheDocument()
     expect(await screen.findByRole('link', { name: /Board/ })).toBeInTheDocument()
     expect(await screen.findByRole('link', { name: /Code reviews/ })).toBeInTheDocument()
-    expect(await screen.findByRole('link', { name: /Apps & shares/ })).toBeInTheDocument()
+    // The sidebar entry (Today's Glance also has "Open Apps & shares").
+    expect(await screen.findByRole('link', { name: /^Apps & shares/ })).toBeInTheDocument()
     expect((await screen.findAllByRole('img', { name: /From addon:/ })).length).toBeGreaterThanOrEqual(5)
     expect(await screen.findByText('agents granted until 18:00')).toBeInTheDocument()
+  })
+
+  it('Pin to sidebar says what happened: already pinned, or pinned', async () => {
+    const msg = vi.spyOn(toast, 'message')
+    const ok = vi.spyOn(toast, 'success')
+    renderApp('/')
+    await screen.findByRole('heading', { name: 'Today' })
+    await screen.findByRole('link', { name: /Code reviews/ })
+    window.dispatchEvent(new CustomEvent('orch:pin-addon-page', { detail: 'github/reviews' }))
+    expect(msg).toHaveBeenCalledWith('Already pinned')
+    expect(ok).not.toHaveBeenCalledWith('Pinned to the sidebar')
+    msg.mockRestore()
+    ok.mockRestore()
   })
 
   it('dismisses toasts when the route changes, and not before', async () => {
@@ -67,7 +81,7 @@ describe('app shell', () => {
     await screen.findByRole('heading', { name: 'Today' })
     const nav = await screen.findByRole('navigation', { name: 'Main' })
     const more = await within(nav).findByRole('button', { name: /More addons \(\d+\)/ })
-    const links = within(nav).getAllByRole('link').filter((l) => l.getAttribute('href')?.startsWith('/addon/'))
+    const links = within(nav).getAllByRole('link').filter((l) => l.getAttribute('href')?.includes('/addon/'))
     expect(links.length).toBeLessThanOrEqual(6)
     // The resolved icon component draws a lucide-<name> class: two addons sharing one icon would share it.
     const icons = links.map((l) => [...(l.querySelector('svg')?.classList ?? [])].find((c) => /^lucide-/.test(c) && c !== 'lucide'))
@@ -75,6 +89,28 @@ describe('app shell', () => {
     expect(new Set(icons).size).toBe(icons.length)
     await user.click(more)
     expect((await screen.findAllByRole('img', { name: /From addon:|From the .* addon/ })).length).toBeGreaterThan(links.length)
+  })
+
+  it('pins are unlimited; "More addons (n)" counts only the addons that are not pinned, and reads "All addons" when none is left', async () => {
+    const { user } = renderApp('/')
+    await screen.findByRole('heading', { name: 'Today' })
+    const nav = await screen.findByRole('navigation', { name: 'Main' })
+    const addonLinks = () => within(nav).getAllByRole('link').filter((l) => l.getAttribute('href')?.includes('/addon/'))
+    const more = await within(nav).findByRole('button', { name: /^More addons \(\d+\)$/ })
+    const total = addonLinks().length + Number(/\((\d+)\)/.exec(more.getAttribute('aria-label')!)![1])
+    expect(total).toBeGreaterThan(6)
+    await user.click(more)
+    expect(await screen.findByRole('heading', { name: 'All addons in this workspace' })).toBeInTheDocument()
+    // Pin one more: the sidebar holds 7 and the count goes down by one.
+    const pins = () => screen.queryAllByRole('button', { name: /^Pin .* to the sidebar$/ })
+    await user.click(pins()[0])
+    expect(addonLinks()).toHaveLength(7)
+    expect(await screen.findByRole('button', { name: `More addons (${total - 7})` })).toBeInTheDocument()
+    // Pin them all: nothing is "more" any more.
+    while (pins().length) await user.click(pins()[0])
+    expect(addonLinks()).toHaveLength(total)
+    expect(screen.getByRole('button', { name: 'All addons' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /More addons/ })).toBeNull()
   })
 
   it('Move ticket to… on the board offers the focused card and leaves out its current status', async () => {
@@ -142,6 +178,40 @@ describe('app shell', () => {
       await user.type(screen.getByPlaceholderText(/Search tickets/), 'billing')
       await user.click(await screen.findByRole('option', { name: /DEMO-0043/ }))
       expect(await screen.findByRole('heading', { level: 1, name: /tariff tables/i })).toBeInTheDocument()
+    })
+
+    it('an exact key is the first, preselected hit: Enter opens it', async () => {
+      const { user } = renderApp('/ticket/DEMO-0043')
+      await screen.findByRole('heading', { level: 1 })
+      await user.keyboard('{Control>}k{/Control}')
+      await user.type(screen.getByPlaceholderText(/Search tickets/), 'DEMO-0041')
+      const first = (await screen.findAllByRole('option'))[0]
+      expect(first).toHaveTextContent('DEMO-0041')
+      expect(first).toHaveAttribute('aria-selected', 'true')
+      await user.keyboard('{Enter}')
+      await waitFor(() => expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(/reconciliation tests|billing/i))
+      expect(screen.queryByPlaceholderText(/Search tickets/)).toBeNull()
+    })
+
+    it('a key typed without the dash finds it; a query of only dashes or underscores lists nothing', async () => {
+      const { user } = renderApp('/')
+      await screen.findByRole('heading', { name: 'Today' })
+      await user.keyboard('{Control>}k{/Control}')
+      const box = screen.getByPlaceholderText(/Search tickets/)
+      await user.type(box, 'demo0041')
+      const first = (await screen.findAllByRole('option'))[0]
+      expect(first).toHaveTextContent('DEMO-0041')
+      await user.clear(box)
+      await user.type(box, '-_-')
+      expect(screen.queryByRole('group', { name: 'Tickets' })).toBeNull()
+    })
+
+    it('_ and - match spaces: "billing run id" finds billing_run_id', async () => {
+      const { user } = renderApp('/')
+      await screen.findByRole('heading', { name: 'Today' })
+      await user.keyboard('{Control>}k{/Control}')
+      await user.type(screen.getByPlaceholderText(/Search tickets/), 'billing run id')
+      expect(await screen.findByRole('option', { name: /billing_run_id/ })).toBeInTheDocument()
     })
 
     it('offers ticket actions only on a ticket page, and opens the sign dialog for approve', async () => {
@@ -222,25 +292,54 @@ describe('app shell', () => {
   })
 
   describe('workspace switcher', () => {
-    it('shows needs-you previews per workspace and opens one directly', async () => {
+    it('is calm: one row per workspace (prefix, name, check, needs-you count), no recent tickets, no role line', async () => {
       const { user } = renderApp('/')
       await user.click(await screen.findByRole('button', { name: 'Switch workspace' }))
-      const int = await screen.findByRole('group', { name: /INT/ })
-      await user.click((await within(int).findAllByRole('link'))[0])
-      // Today's h1 is still on screen until the navigation lands, so wait for the ticket heading.
-      await waitFor(() => expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Rotate shared Slack webhook'))
-      // The ticket page's h1 is the title (the key is shown beside it), so the INT ticket is identified by its title.
-      expect(screen.getAllByText('INT-0007').length).toBeGreaterThan(0)
-      expect(screen.getByRole('button', { name: 'Switch workspace' })).toHaveTextContent(/Internal/)
+      const list = await screen.findByRole('list', { name: 'Workspaces' })
+      const rows = within(list).getAllByRole('listitem')
+      expect(rows).toHaveLength(3)
+      const demo = within(rows[0]).getByRole('button', { name: /^DEMO · Acme energy data/ })
+      // "Current" is said once (aria-current), not again in the name or by the check.
+      expect(demo).toHaveAttribute('aria-current', 'true')
+      expect(within(list).getAllByRole('button').filter((b) => b.getAttribute('aria-current'))).toHaveLength(1)
+      expect(demo.getAttribute('aria-label')).not.toMatch(/current/i)
+      // The count is the same "needs you" number as the sidebar badge, shown only when there is something.
+      await waitFor(() => expect(demo).toHaveAccessibleName(/^DEMO · Acme energy data, \d+ need you$/))
+      for (const r of rows) {
+        expect(within(r).queryAllByRole('link')).toHaveLength(0) // no recent tickets
+        expect(within(r).queryByText(/^(owner|maintainer|member|viewer)$/)).toBeNull() // the role is in the tooltip
+        expect(within(r).queryByLabelText(/Relay/)).toBeNull()
+      }
+      // The shortcut is a hint on the button (shown on hover/focus), and keyboard users get it as aria-keyshortcuts.
+      expect(demo).toHaveAttribute('aria-keyshortcuts', expect.stringMatching(/^(Meta|Control)\+1$/))
     })
 
-    it('shows role, needs-you count and a muted relay dot per workspace', async () => {
+    it('the role and the relay are in the row\'s tooltip; arrow keys move between workspaces; Enter switches', async () => {
       const { user } = renderApp('/')
       await user.click(await screen.findByRole('button', { name: 'Switch workspace' }))
-      const demo = await screen.findByRole('group', { name: /DEMO/ })
-      expect(within(demo).getByText('owner')).toBeInTheDocument()
-      expect(within(demo).getByLabelText(/\d+ need you/)).toBeInTheDocument()
-      expect(within(demo).getByLabelText('Relay not connected')).toBeInTheDocument()
+      const list = await screen.findByRole('list', { name: 'Workspaces' })
+      const [demo, int] = within(list).getAllByRole('button')
+      await waitFor(() => expect(demo).toHaveFocus())
+      // Opening the switcher focuses the current row but shows no tooltip next to it.
+      await new Promise((r) => setTimeout(r, 700))
+      expect(screen.queryByRole('tooltip')).toBeNull()
+      await user.hover(int)
+      expect(await screen.findByRole('tooltip', {}, { timeout: 3000 })).toHaveTextContent(/Your role: owner.*Relay not connected/)
+      await user.unhover(int)
+      await user.keyboard('{ArrowDown}')
+      expect(int).toHaveFocus()
+      await user.keyboard('{Enter}')
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Switch workspace' })).toHaveTextContent(/Internal/))
+    })
+
+    it('⌘1..n still switch with the switcher closed', async () => {
+      const { user } = renderApp('/')
+      await screen.findByRole('button', { name: 'Switch workspace' })
+      await user.keyboard('{Meta>}3{/Meta}')
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Switch workspace' })).toHaveTextContent(/Client VM/))
+      await user.keyboard('{Meta>}1{/Meta}')
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Switch workspace' })).toHaveTextContent(/Acme/))
+      expect(screen.queryByRole('list', { name: 'Workspaces' })).toBeNull()
     })
 
     it('keeps the board when switching (waits on the topbar title: Board has no h1)', async () => {

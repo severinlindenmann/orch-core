@@ -1,12 +1,14 @@
-import { Suspense } from 'react'
+import { useEffect, useRef } from 'react'
 import { Outlet, useRouterState } from '@tanstack/react-router'
 import { ErrorBoundary, PageProblem } from '@/components/ErrorBoundary'
-import { Skeleton } from '@/components/ui/skeleton'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { retryFailedPageLoads } from '../pages/lazyPage'
+import { GenericSkeleton } from '../pages/skeletons'
+import { PageFade, usePageScroll } from './pageMotion'
 import { DockArea } from '../terminal/dock/DockArea'
 import { useLiveUpdates } from '../live'
-import { WorkspaceProvider } from '../workspace'
+import { useWorkspace, WorkspaceProvider } from '../workspace'
+import { WorkspaceNotFound } from './WorkspaceNotFound'
 import { HelpSheet } from './HelpSheet'
 import { NewTicketHost } from './NewTicketHost'
 import { CommandPalette } from './palette'
@@ -15,10 +17,28 @@ import { useShortcuts } from './shortcuts'
 import { ShellToaster } from './ShellToaster'
 import { Sidebar } from './Sidebar'
 import { Topbar } from './Topbar'
+import { MandateBanner } from '../mandates/MandateBanner'
 
 /** Keyboard shortcuts from `shortcuts.ts`. */
 function Shortcuts() {
   useShortcuts()
+  return null
+}
+
+/** The addon renderers (widgets, forms, markdown, charts, terminal) load once the app is idle: ticket panels and
+ * addon blocks then render at once, without a placeholder of another size. */
+function PreloadAddonNodes() {
+  useEffect(() => {
+    if (import.meta.env.MODE === 'test') return
+    const go = () => void import('@/addon-ui/preloadNodes').then((m) => m.preloadAddonNodes())
+    const w = window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number; cancelIdleCallback?: (id: number) => void }
+    if (w.requestIdleCallback) {
+      const id = w.requestIdleCallback(go, { timeout: 3000 })
+      return () => w.cancelIdleCallback?.(id)
+    }
+    const t = setTimeout(go, 1500)
+    return () => clearTimeout(t)
+  }, [])
   return null
 }
 
@@ -27,28 +47,28 @@ function LiveUpdates() {
   return null
 }
 
-/** Shown while a lazily loaded page chunk arrives. */
-function PageSkeleton() {
-  return (
-    <div className="space-y-4" role="status" aria-label="Loading page">
-      <Skeleton className="h-7 w-48" />
-      <Skeleton className="h-40 w-full" />
-    </div>
-  )
+/** The page, or "no such workspace" when the address names a workspace the viewer does not have (a skeleton until known). */
+function PageOutlet() {
+  const { missingPrefix, pendingPrefix } = useWorkspace()
+  if (pendingPrefix) return <GenericSkeleton />
+  return missingPrefix !== undefined ? <WorkspaceNotFound prefix={missingPrefix} /> : <Outlet />
 }
 
 export function Shell() {
   const path = useRouterState({ select: (s) => s.resolvedLocation?.href ?? s.location.href })
+  const main = useRef<HTMLElement>(null)
+  usePageScroll(main)
   return (
     <WorkspaceProvider>
       <LiveUpdates />
+      <PreloadAddonNodes />
       <ShellUiProvider>
         <Shortcuts />
         <TooltipProvider delayDuration={250}>
           <a
             href="#main"
             onClick={(e) => {
-              // Memory history: a hash link would navigate nowhere, so move the focus by hand.
+              // A hash link would become a router navigation: move the focus by hand.
               e.preventDefault()
               document.getElementById('main')?.focus()
             }}
@@ -60,8 +80,10 @@ export function Shell() {
             <Sidebar />
             <div className="flex min-w-0 flex-1 flex-col">
               <Topbar />
+              {/* Mandates, PREVIEW ONLY: nothing renders unless the preview is on with a mandate in force. */}
+              <MandateBanner />
               <DockArea>
-              <main id="main" tabIndex={-1} className="min-h-0 flex-1 overflow-y-auto p-6 outline-none">
+              <main ref={main} id="main" tabIndex={-1} className="min-h-0 flex-1 overflow-y-auto p-4 outline-none @[60rem]/page:p-6">
                 <ErrorBoundary resetKey={path} fallback={(retry) => (
                     <PageProblem
                       retry={() => {
@@ -70,9 +92,10 @@ export function Shell() {
                       }}
                     />
                   )}>
-                  <Suspense fallback={<PageSkeleton />}>
-                    <Outlet />
-                  </Suspense>
+                  {/* The router shows each page's skeleton while it loads (router.tsx): no Suspense fallback here. */}
+                  <PageFade>
+                    <PageOutlet />
+                  </PageFade>
                 </ErrorBoundary>
               </main>
               </DockArea>

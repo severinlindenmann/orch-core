@@ -1,5 +1,6 @@
 import { createMockTransport, type Transport } from './transport'
 import { createMockStore } from '@/mocks/store'
+import { setClock } from '@/lib/time'
 import {
   ApiError,
   type ActionRequest,
@@ -22,6 +23,8 @@ import {
   type SavedView,
   type ViewParams,
   type Status,
+  type TicketChanges,
+  type CodeReviewApplies,
   type TicketDocument,
   type TicketSummary,
   type TodayDocument,
@@ -34,6 +37,7 @@ import {
   type RelaySimRequest,
   type RelayState,
 } from './types'
+import type { MandatesPreviewRequest, MandatesPreviewState } from './mandatesPreview'
 import { connectionInfo, connectionList, doctorReport, secretsFileInfo, skillInfo, skillList, type SkillGrantRequest } from './connections'
 
 export interface ListTicketsParams {
@@ -105,6 +109,13 @@ export function createApi(transport: Transport) {
     getTicket: (key: string) => call<TicketDocument>('GET', `/api/tickets/${key}`),
     getEvents: (key: string, since = 0) => call<OrchEvent[]>('GET', `/api/tickets/${key}/events${qs({ since: String(since) })}`),
     postAction: (key: string, action: ActionRequest) => call<ActionResult>('POST', `/api/tickets/${key}/actions`, action),
+    /** Dry run of a code review policy: the tickets it would move back to testing or to done (owners). */
+    previewCodeReview: (ws: string, req: { count: number; applies: CodeReviewApplies }) =>
+      call<{ back: { keys: string[]; hidden: number }; done: { keys: string[]; hidden: number } }>('POST', `/api/workspaces/${ws}/code-review-preview`, req),
+    /** Core's diff of the ticket branch against its base. */
+    getChanges: (key: string) => call<TicketChanges>('GET', `/api/tickets/${key}/changes`),
+    /** Demo: the ticket's agent pushes a commit to its branch (a standing verdict is then void). */
+    simulatePush: (key: string) => call<{ ok: true; sha: string; ticket: TicketDocument }>('POST', `/api/dev/tickets/${key}/push`),
     /** Every known addon package (global; no per-workspace state). */
     getAddons: () => call<AddonPackage[]>('GET', '/api/addons'),
     /** Addons installed in a workspace: the package plus that workspace's version, grant and status under `ws`. */
@@ -127,7 +138,7 @@ export function createApi(transport: Transport) {
     getAgentActivity: (workspaceId: string) => call<AgentActivityItem[]>('GET', `/api/workspaces/${workspaceId}/agents/activity`),
     listGrants: (ws: string) => call<GrantInfo[]>('GET', `/api/workspaces/${ws}/grants`),
     /** Human only, signed in the dashboard. */
-    issueGrant: (ws: string, req: { hours: number; scope: 'all' }) => call<GrantInfo>('POST', `/api/workspaces/${ws}/grants`, req),
+    issueGrant: (ws: string, req: { hours: number; scope: 'all' | 'workable' }) => call<GrantInfo>('POST', `/api/workspaces/${ws}/grants`, req),
     revokeGrant: (ws: string, id: string) => call<GrantInfo>('POST', `/api/workspaces/${ws}/grants/${id}/revoke`),
     // Skills, connections and simple auth (D55–D57). Every answer is parsed with its zod schema; none carries a secret value.
     getSkills: async (ws: string) => skillList.parse(await call('GET', `/api/workspaces/${ws}/skills`)),
@@ -158,6 +169,10 @@ export function createApi(transport: Transport) {
     postRelay: (ws: string, req: RelayRequest) => call<RelayState>('POST', `/api/workspaces/${ws}/relay`, req),
     /** Mock only: a dropped connection, or a phone scanning the pairing code. */
     simulateRelay: (ws: string, req: RelaySimRequest) => call<RelayState>('POST', `/api/dev/relay/${ws}`, req),
+    /** Mandates, PREVIEW ONLY (not part of the contract; served by the mock; nothing is signed). */
+    getMandatesPreview: (ws: string) => call<MandatesPreviewState>('GET', `/api/workspaces/${ws}/preview/mandates`),
+    /** Mandates, PREVIEW ONLY: turn the preview on or off, issue, stop, review, revoke. Never a signing path. */
+    postMandatesPreview: (ws: string, req: MandatesPreviewRequest) => call<MandatesPreviewState>('POST', `/api/workspaces/${ws}/preview/mandates`, req),
     /** Mock only: switch the viewer (p_sev, p_mara, p_tom). */
     setViewer: (person: string) => call<{ ok: true }>('POST', '/api/dev/viewer', { person }),
     /** Mock only: restore the seeded demo data; `dataset` switches to the normal demo or the busy day. */
@@ -174,6 +189,8 @@ const isTest = import.meta.env.MODE === 'test'
 /** Exposed for tests only (renderApp resets it). */
 export const mockStore = createMockStore({ persist: !isTest, live: !isTest })
 export const api: Api = createApi(createMockTransport(mockStore, { latency: !isTest }))
+// Relative times are measured against the host's clock (the mock's "now"), not the browser's.
+setClock(() => Date.parse(mockStore.now()))
 export function resetMockStoreForTests() {
   mockStore.reset('normal')
 }

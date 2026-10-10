@@ -1,14 +1,15 @@
 import type { RJSFValidationError } from '@rjsf/utils'
 import { useQuery } from '@tanstack/react-query'
-import { Link, useBlocker } from '@tanstack/react-router'
-import { createContext, lazy, Suspense, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import { ChevronRight, Ellipsis, ExternalLink, TriangleAlert } from 'lucide-react'
-import { api } from '@/api/client'
+import { Link, useBlocker, useRouter } from '@tanstack/react-router'
+import { createContext, Suspense, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { ArrowRight, ChevronRight, Copy, Ellipsis, ExternalLink, TriangleAlert } from 'lucide-react'
+import { addonActive } from '@/api/addons'
 import { useWorkspace } from '@/app/workspace'
 import { Badge } from '@/components/ui/badge'
 import { STATUS_LABEL } from '@/app/pages/ticket/shared'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -16,46 +17,90 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { cn } from '@/lib/utils'
 import { AddonBadge } from './AddonBadge'
-import { AddonChart } from './AddonChart'
+import { AddonChart, AddonChartChunk } from './AddonChart'
 import { canUsePty } from './capabilities'
 import { FrameNode } from './FrameNode'
 import { CodeBlock } from './CodeBlock'
-import { MAX_DEPTH, parseNode, type ItemAction, type NodeOf } from './nodes'
-import { SafeMarkdown } from './SafeMarkdown'
+import { INTERNAL_LINK, MAX_DEPTH, parseNode, type ItemAction, type NodeOf } from './nodes'
+import { SafeMarkdown, SafeMarkdownChunk } from './SafeMarkdown'
 import { useAddons, type SlotContext } from './slots'
 import { ErrorAlert } from './ErrorAlert'
-import { useRunAddonAction, type ActionError } from './useRunAddonAction'
+import { roleReason, useRunAddonAction, type ActionError } from './useRunAddonAction'
+import { useRole } from '@/app/useRole'
 import { precheckReason } from './SpawnConfirm'
 import { DestructiveConfirm } from './DestructiveConfirm'
 import { Collapse } from '@/components/Collapse'
+import { foldedColumns } from '@/lib/columnFold'
+import { useElementWidth } from '@/lib/useElementWidth'
+import { Sparkline } from '@/components/Sparkline'
+import { visible } from '@/components/sign/visible'
+import { lazyWithPreload } from '@/lib/lazyPreload'
+import { queries } from '@/api/queries'
 
 // rjsf (with ajv) loads on first form, so it stays out of the main bundle.
-const ThemedForm = lazy(() => import('./AddonForm'))
+const ThemedForm = lazyWithPreload(() => import('./AddonForm'))
 // The whole terminal module (xterm included) loads on first use, so the main bundle does not grow.
-const DecisionNode = lazy(() => import('./DecisionNode'))
-const TerminalView = lazy(() => import('@/app/terminal/TerminalView'))
+const DecisionNode = lazyWithPreload(() => import('./DecisionNode'))
+const TerminalView = lazyWithPreload(() => import('@/app/terminal/TerminalView'))
 // Ticket widgets (parser, core types, template frames) load on first use too.
-const WidgetNodeView = lazy(() => import('@/app/pages/ticket/widgets/WidgetNode'))
-const WidgetIndexView = lazy(() => import('@/app/pages/ticket/widgets/WidgetNode').then((m) => ({ default: m.WidgetIndex })))
+const WidgetNodeView = lazyWithPreload(() => import('@/app/pages/ticket/widgets/WidgetNode'))
+const WidgetIndexView = lazyWithPreload(() => import('@/app/pages/ticket/widgets/WidgetNode').then((m) => ({ default: m.WidgetIndex })))
+
+/** Loads the renderers above (and markdown, charts) ahead of use: see preloadNodes.ts. Never rejects. */
+export function preloadAddonNodes(): Promise<void> {
+  const all = [ThemedForm, DecisionNode, TerminalView, WidgetNodeView, WidgetIndexView, SafeMarkdownChunk, AddonChartChunk]
+  return Promise.allSettled(all.map((c) => c.preload())).then(() => undefined)
+}
 
 interface Runtime {
   addon: string
   ctx: SlotContext
   compact: boolean
+  /** Drawn as one calm line of a glance list (Today): a stat without its box, a list cut to GLANCE_ROWS. */
+  glance?: Glance
   /** Core says the viewer may not change anything: forms, buttons and item actions render disabled. */
   readOnly: boolean
   formControl?: FormControl
   /** Submit actions of forms on this page that hold unsaved edits (a form with `cancel`). Any other action asks before it discards them. */
   dirty: Set<string>
+  /** Decisions (by id) whose terms a form with unsaved edits sets (the form's `guards`). */
+  guardedDecisions: Set<string>
+  /** Told whenever `guardedDecisions` changes. */
+  dirtyListeners: Set<() => void>
   /** Which form took the drawer's form control (see FormNode), and the forms waiting to take it when it is released. */
   formControlClaim: FormControlClaim
 }
+/** Where the glance's "n more" leads (the addon's own page), when it has one. */
+export interface Glance {
+  open?: { name: string; page: string }
+}
+/** Rows a list shows in a glance before "n more". */
+export const GLANCE_ROWS = 3
 interface FormControlClaim {
   current: string | null
   waiting: Set<() => void>
 }
 const newClaim = (): FormControlClaim => ({ current: null, waiting: new Set() })
-const RuntimeCtx = createContext<Runtime>({ addon: '', ctx: {}, compact: false, readOnly: false, dirty: new Set(), formControlClaim: newClaim() })
+const RuntimeCtx = createContext<Runtime>({ addon: '', ctx: {}, compact: false, readOnly: false, dirty: new Set(), guardedDecisions: new Set(), dirtyListeners: new Set(), formControlClaim: newClaim() })
+
+/** Does a form on this page that sets this decision's terms hold unsaved edits right now? Re-renders when that changes. */
+function useUnsavedTerms(id: string): boolean {
+  const { guardedDecisions, dirtyListeners } = useContext(RuntimeCtx)
+  const [unsaved, setUnsaved] = useState(guardedDecisions.has(id))
+  useEffect(() => {
+    const check = () => setUnsaved(guardedDecisions.has(id))
+    dirtyListeners.add(check)
+    check()
+    return () => void dirtyListeners.delete(check)
+  }, [id, guardedDecisions, dirtyListeners])
+  return unsaved
+}
+
+/** A decision node: core's row; its primary option (the one that grants) is off while a form that sets its terms (`guards`) holds unsaved edits, which would otherwise not be in what is signed. Other options stay. */
+function GuardedDecision({ addon, id }: { addon: string; id: string }) {
+  const unsaved = useUnsavedTerms(id)
+  return <DecisionNode addon={addon} id={id} blockedReason={unsaved ? 'Unsaved changes to the terms: save or cancel them before you accept.' : undefined} />
+}
 
 /** A stack with nothing in it draws nothing and takes no gap (addons use one as "no alert right now"). */
 const isEmptyStack = (c: unknown) => !!c && typeof c === 'object' && (c as { type?: unknown }).type === 'stack' && Array.isArray((c as { children?: unknown }).children) && (c as { children: unknown[] }).children.length === 0
@@ -67,6 +112,8 @@ const isEmptyStack = (c: unknown) => !!c && typeof c === 'object' && (c as { typ
 export interface FormControl {
   id: string
   onState: (s: { pending: boolean; blocked: boolean }) => void
+  /** The form's action went through (a refusal does not call it): the drawer closes itself. */
+  onSaved?: () => void
 }
 
 /** Box shown instead of anything that is not one of the allowed node types or fails validation. */
@@ -84,25 +131,28 @@ export function AddonUnavailable({ addon }: { addon: string }) {
  * Renders one declarative node tree from an addon. The node is untrusted: it is validated against the closed
  * set of node types (nodes.ts) and anything unknown or malformed becomes the "could not be shown" box.
  */
-export function AddonNode({ node, addon, ctx = {}, compact = false, readOnly = false, formControl }: { node: unknown; addon: string; ctx?: SlotContext; compact?: boolean; readOnly?: boolean; formControl?: FormControl }) {
+export function AddonNode({ node, addon, ctx = {}, compact = false, readOnly = false, formControl, glance }: { node: unknown; addon: string; ctx?: SlotContext; compact?: boolean; readOnly?: boolean; formControl?: FormControl; glance?: Glance }) {
   const dirty = useRef(new Set<string>()).current
+  const guardedDecisions = useRef(new Set<string>()).current
+  const dirtyListeners = useRef(new Set<() => void>()).current
   const formControlClaim = useRef(newClaim()).current
   return (
-    <RuntimeCtx.Provider value={{ addon, ctx, compact, readOnly, formControl, dirty, formControlClaim }}>
+    <RuntimeCtx.Provider value={{ addon, ctx, compact, readOnly, formControl, dirty, guardedDecisions, dirtyListeners, formControlClaim, glance }}>
       <NodeView node={node} depth={0} />
     </RuntimeCtx.Provider>
   )
 }
 
 function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
-  const { addon } = useContext(RuntimeCtx)
+  const { addon, glance } = useContext(RuntimeCtx)
   const parsed = depth > MAX_DEPTH ? ({ ok: false } as const) : parseNode(raw)
   if (!parsed.ok) return <AddonUnavailable addon={addon} />
   const n = parsed.node
   switch (n.type) {
     case 'stack':
+      // A row shares the width; in a narrow page area its children wrap once each would get under 12rem (N11).
       return (
-        <div className={cn('flex gap-3', n.direction === 'row' ? (n.fit ? 'flex-row flex-wrap items-center [&>*]:min-w-0' : 'flex-row [&>*]:min-w-0 [&>*]:flex-1') : 'flex-col')}>
+        <div className={cn('flex gap-3', n.direction === 'row' ? (n.fit ? 'flex-row flex-wrap items-center [&>*]:min-w-0' : 'flex-row flex-wrap [&>*]:min-w-0 [&>*]:flex-[1_1_12rem]') : 'flex-col')}>
           {n.children.filter((c) => !isEmptyStack(c)).map((c, i) => (
             <NodeView key={i} node={c} depth={depth + 1} />
           ))}
@@ -112,7 +162,7 @@ function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
       return <Stat node={n} />
     case 'kv':
       return (
-        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-[13px]">
+        <dl className="grid grid-cols-[auto_1fr] content-start gap-x-4 gap-y-1.5 text-[13px]">
           {n.pairs.map((p, i) => (
             <div key={i} className="contents">
               <dt className="text-text-muted">{p.label}</dt>
@@ -122,6 +172,7 @@ function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
         </dl>
       )
     case 'list':
+      if (glance) return <GlanceList n={n} open={glance.open} />
       return n.items.length === 0 ? (
         <p className="text-[13px] text-text-faint">{n.empty ?? 'Nothing here.'}</p>
       ) : (
@@ -133,29 +184,7 @@ function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
       )
     case 'table':
       if (n.rows.length === 0) return <p className="text-[13px] text-text-faint">{n.empty ?? 'Nothing here.'}</p>
-      return (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              {n.columns.map((c) => (
-                <TableHead key={c.key} className={cn('h-8 text-[12px] text-text-muted', numericKeys(n).has(c.key) && 'text-right')}>
-                  {c.label}
-                </TableHead>
-              ))}
-              {n.rowActions && (
-                <TableHead className="h-8">
-                  <span className="sr-only">Actions</span>
-                </TableHead>
-              )}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {stableKeys(n.rows.map((r) => r.id ?? r[n.columns[0].key])).map((k, i) => (
-              n.rowActions || n.rowOpen ? <ActionDataRow key={k} columns={n.columns} row={n.rows[i]} rowActions={n.rowActions} rowOpen={n.rowOpen} numeric={numericKeys(n)} total={!!n.totalRow && i === n.rows.length - 1} /> : <DataRowView key={k} columns={n.columns} row={n.rows[i]} numeric={numericKeys(n)} total={!!n.totalRow && i === n.rows.length - 1} />
-            ))}
-          </TableBody>
-        </Table>
-      )
+      return <TableNodeView n={n} depth={depth} />
     case 'markdown':
       return (
         <div className={n.toc ? undefined : 'max-w-[72ch]'}>
@@ -185,7 +214,7 @@ function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
     case 'decision':
       return (
         <Suspense fallback={<Skeleton className="h-12 w-full" />}>
-          <DecisionNode addon={addon} id={n.id} />
+          <GuardedDecision addon={addon} id={n.id} />
         </Suspense>
       )
     case 'widget':
@@ -207,6 +236,8 @@ function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
     case 'popover':
       return <PopoverView node={n} depth={depth} />
     case 'link':
+      if (INTERNAL_LINK.test(n.href)) return <InternalLink href={n.href} label={n.label} />
+      if (n.copy) return <CopyableLink href={n.href} label={n.label} />
       return (
         <a href={n.href} target="_blank" rel="noopener noreferrer nofollow" className="inline-flex items-center gap-1 text-[13px] text-brand hover:underline">
           {n.label}
@@ -241,7 +272,7 @@ function readTab(key: string): string | null {
 function TabsView({ node, depth }: { node: NodeOf<'tabs'>; depth: number }) {
   const { addon } = useContext(RuntimeCtx)
   const { workspace } = useWorkspace()
-  const me = useQuery({ queryKey: ['me'], queryFn: api.getMe })
+  const me = useQuery(queries.me())
   // The remembered tab is read once we know who is looking (the viewer is cached after the first load); if that fails, nobody in particular.
   if (!me.data && !me.isError) return <Skeleton className="h-8 w-full" />
   const key = tabKey(workspace?.id ?? '', me.data?.person ?? '', addon, node.id)
@@ -249,11 +280,48 @@ function TabsView({ node, depth }: { node: NodeOf<'tabs'>; depth: number }) {
   return <TabsBody key={key} storageKey={key} node={node} depth={depth} />
 }
 
+/**
+ * On an addon page the open tab is also in the address (`?tab.<node id>=<tab id>`), so a copied link opens it; an
+ * unknown tab id there falls back like any other. Elsewhere (Today, a ticket) only the remembered tab applies.
+ */
+const noSubscribe = () => () => {}
+
+function useTabInUrl(nodeId: string) {
+  const router = useRouter({ warn: false })
+  const param = `tab.${nodeId}`
+  // Subscribed to the address: it can change under a mounted node (a sidebar click on the same page, Back). Read from
+  // the history (not the router's state) so a node rendered without the app router still works.
+  const history = router?.history
+  const snap = useSyncExternalStore(history ? (cb) => history.subscribe(cb) : noSubscribe, () => {
+    if (!router || !history) return ''
+    const l = router.parseLocation(history.location)
+    const tab = (l.search as Record<string, unknown>)[param]
+    return `${l.pathname}\n${typeof tab === 'string' ? tab : ''}`
+  })
+  const [pathname, tab] = snap.split('\n')
+  const onPage = !!router && pathname.startsWith('/addon/')
+  const fromUrl = onPage && tab ? tab : null
+  const write = useCallback(
+    (id: string) => {
+      if (onPage) void router.navigate({ to: '.', search: (prev: Record<string, unknown>) => ({ ...prev, [param]: id }), replace: true } as never)
+    },
+    [onPage, router, param],
+  )
+  return [onPage, fromUrl, write] as const
+}
+
 function TabsBody({ storageKey, node, depth }: { storageKey: string; node: NodeOf<'tabs'>; depth: number }) {
-  const [chosen, setChosen] = useState<string | null>(() => readTab(storageKey))
-  const active = node.tabs.find((t) => t.id === chosen) ?? node.tabs[0]
+  const [onPage, urlTab, writeUrlTab] = useTabInUrl(node.id)
+  const [chosen, setChosen] = useState<string | null>(() => urlTab ?? readTab(storageKey))
+  // The address wins when it names a tab; otherwise the shown tab goes into it, so a copied link opens what is shown.
+  const shownId = urlTab ?? chosen
+  const active = node.tabs.find((t) => t.id === shownId) ?? node.tabs[0]
+  useEffect(() => {
+    if (onPage && urlTab === null && chosen !== null && node.tabs.some((t) => t.id === chosen)) writeUrlTab(chosen)
+  }, [onPage, urlTab, chosen, node.tabs, writeUrlTab])
   const pick = (id: string) => {
     setChosen(id)
+    writeUrlTab(id)
     try {
       localStorage.setItem(storageKey, id)
     } catch {
@@ -320,9 +388,57 @@ function FoldView({ node, depth }: { node: NodeOf<'fold'>; depth: number }) {
   )
 }
 
+/** A list as glance rows: one line each (title, the badge as quiet text), at most GLANCE_ROWS, then "n more". */
+function GlanceList({ n, open }: { n: NodeOf<'list'>; open?: Glance['open'] }) {
+  if (n.items.length === 0) return <p className="text-[12px] text-text-faint">{n.empty ?? 'Nothing here.'}</p>
+  const rest = n.items.length - GLANCE_ROWS
+  const more = `${rest} more`
+  const shown = n.items.slice(0, GLANCE_ROWS)
+  const keys = stableKeys(shown.map((it) => it.id ?? it.title))
+  return (
+    <div>
+      <ul className="space-y-1">
+        {shown.map((it, i) => (
+          <li key={keys[i]} className="flex min-w-0 items-baseline gap-2 text-[13px] leading-5">
+            {it.status && <StatusDot status={it.status} className="self-center" />}
+            <span className="min-w-0 flex-1 truncate text-text" title={it.subtitle ? `${it.title} · ${it.subtitle}` : it.title}>
+              {it.title}
+            </span>
+            {it.badge && <span className="shrink-0 text-[12px] text-text-muted">{it.badge}</span>}
+          </li>
+        ))}
+      </ul>
+      {rest > 0 &&
+        (open ? (
+          <Link to="/addon/$name/$page" params={open} className="mt-1 inline-block rounded text-[12px] text-text-muted outline-none hover:text-text focus-visible:ring-2 focus-visible:ring-ring">
+            {more}
+          </Link>
+        ) : (
+          <p className="mt-1 text-[12px] text-text-muted">{more}</p>
+        ))}
+    </div>
+  )
+}
+
+const trendNumber = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 })
+const trendLabel = (t: number[]) => `Trend over ${t.length} values, from ${trendNumber.format(t[0])} to ${trendNumber.format(t[t.length - 1])}`
+
 function Stat({ node }: { node: NodeOf<'stat'> }) {
-  const { compact } = useContext(RuntimeCtx)
+  const { compact, glance } = useContext(RuntimeCtx)
   const value = node.value === null || node.value === '' ? '–' : node.value
+  if (glance)
+    return (
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[13px] leading-5">
+            <span className="text-[15px] font-semibold tabular-nums text-text">{value}</span>
+            {node.label && <span className="text-text-muted"> {node.label}</span>}
+          </p>
+          {node.hint && <p className="truncate text-[12px] leading-4 text-text-muted">{node.hint}</p>}
+        </div>
+        {node.trend && node.trend.length > 1 && <Sparkline values={node.trend} label={trendLabel(node.trend)} />}
+      </div>
+    )
   if (compact)
     return (
       <span className="inline-flex items-baseline gap-1 text-[12px]">
@@ -333,7 +449,10 @@ function Stat({ node }: { node: NodeOf<'stat'> }) {
   return (
     <div className="rounded-md border border-border bg-bg px-3 py-2.5">
       <div className="text-[12px] text-text-muted">{node.label}</div>
-      <div className="mt-0.5 text-xl font-semibold tracking-tight text-text">{value}</div>
+      <div className="mt-0.5 flex items-center justify-between gap-3">
+        <span className="text-xl font-semibold tracking-tight text-text">{value}</span>
+        {node.trend && node.trend.length > 1 && <Sparkline values={node.trend} label={trendLabel(node.trend)} />}
+      </div>
       {node.hint && <div className="mt-0.5 text-[12px] text-text-faint">{node.hint}</div>}
     </div>
   )
@@ -347,12 +466,19 @@ function Stat({ node }: { node: NodeOf<'stat'> }) {
 interface AddonAction {
   run: (action: string, extra?: Record<string, unknown>, subject?: string) => void
   pending: boolean
+  pendingAction: string | null
   blocked: boolean
   blockedFor: (action: string) => boolean
   dialog: ReactNode
   precheck: string | null
   error: ActionError | null
   dismissError: () => void
+  /** Set only on the row's inline field: closes it without running anything. */
+  onCancelAsk?: () => void
+  /** Why this action is off for the viewer, in plain words (null when it can run or only waits for the host). */
+  reasonFor: (action: string) => string | null
+  /** A form may apply on change only for a navigation action with no core dialog (no sign, start or decision step). */
+  liveAllowed: (action: string) => boolean
 }
 function useAddonAction(action?: string, onDone?: () => void): AddonAction {
   const { addon, ctx, readOnly, dirty } = useContext(RuntimeCtx)
@@ -361,7 +487,9 @@ function useAddonAction(action?: string, onDone?: () => void): AddonAction {
   const [discard, setDiscard] = useState<(() => void) | null>(null)
   // A refusal shows as a persistent alert under the node or row that asked (no toast).
   const r = useRunAddonAction(ctx.ticket?.key, { inlineErrors: true, onSuccess: onDone })
+  const role = useRole()
   const blockedFor = (a?: string) => !a || !r.allowed(addon, a) || (readOnly && r.meta(addon, a)?.minRole !== 'viewer')
+  const reasonFor = (a: string) => (!r.allowed(addon, a) ? roleReason(role, r.meta(addon, a)?.minRole ?? 'member') : blockedFor(a) ? 'This view is read-only.' : null)
   // Core's prechecks before its start dialog (from the ticket, not the addon): a claimed ticket gets no second agent,
   // and a ticket whose needed connection fails auth or identity gets none until an owner logs in again.
   const precheck =
@@ -389,7 +517,11 @@ function useAddonAction(action?: string, onDone?: () => void): AddonAction {
       )}
     </>
   )
-  return { run, pending: r.pending, blocked: action ? blockedFor(action) : readOnly, blockedFor, dialog, precheck, error: r.error, dismissError: r.dismissError }
+  const liveAllowed = (a: string) => {
+    const m = r.meta(addon, a)
+    return m?.kind === 'navigation' && !m.confirm && !m.decision
+  }
+  return { run, pending: r.pending, pendingAction: r.pendingAction, blocked: action ? blockedFor(action) : readOnly, blockedFor, reasonFor, dialog, precheck, error: r.error, dismissError: r.dismissError, liveAllowed }
 }
 
 const BUTTON_VARIANT = { primary: 'default', secondary: 'secondary', ghost: 'ghost', danger: 'destructive' } as const
@@ -405,23 +537,34 @@ function PrecheckAlert({ id, text }: { id?: string; text: string }) {
 }
 
 function ButtonNode({ node }: { node: NodeOf<'button'> }) {
-  const { run, pending, blocked, dialog, precheck, error, dismissError } = useAddonAction(node.action)
+  const { run, pending, blocked, dialog, precheck, error, dismissError, reasonFor } = useAddonAction(node.action)
   const reasonId = useId()
+  // A button that is off for the viewer's role says why (a tooltip on its wrapper: the disabled button gets no pointer events).
+  const why = blocked && !pending ? reasonFor(node.action) : null
   return (
     // `flex-none!`: in a row stack a button keeps its own width instead of stretching like a panel does.
     <div className="space-y-2 flex-none!">
       {precheck && <PrecheckAlert id={reasonId} text={precheck} />}
-      <Button
-        size="sm"
-        variant={BUTTON_VARIANT[node.variant]}
-        disabled={pending || blocked || !!precheck}
-        aria-describedby={precheck ? reasonId : undefined}
-        aria-pressed={node.pressed}
-        className={node.pressed ? 'border border-border-strong bg-surface-3' : undefined}
-        onClick={() => run(node.action, node.args)}
-      >
-        {node.label}
-      </Button>
+      <span title={why ?? (!precheck ? node.disabled : undefined)} className="inline-flex">
+        <Button
+          size="sm"
+          variant={BUTTON_VARIANT[node.variant]}
+          disabled={pending || blocked || !!precheck || !!node.disabled}
+          aria-describedby={precheck ? reasonId : why ? `${reasonId}-why` : node.disabled ? `${reasonId}-off` : undefined}
+          title={!precheck && !why ? node.disabled : undefined}
+          aria-pressed={node.pressed}
+          className={node.pressed ? 'border border-border-strong bg-surface-3' : undefined}
+          onClick={() => run(node.action, node.args)}
+        >
+          {node.label}
+        </Button>
+        {why && (
+          <span id={`${reasonId}-why`} className="sr-only">
+            {why}
+          </span>
+        )}
+      </span>
+      {node.disabled && !precheck && !why && <p id={`${reasonId}-off`} className="text-[12px] text-text-muted">{node.disabled}</p>}
       {error && <ErrorAlert error={error} onDismiss={dismissError} />}
       {dialog}
     </div>
@@ -473,11 +616,34 @@ function LeaveGuard() {
   )
 }
 
+const initial0 = (node: NodeOf<'form'>) => JSON.stringify(node.formData ?? {})
+/** JSON with object keys sorted: the form's data counts as edited only when a value changed, not when the form reorders keys. */
+const stableJson = (v: unknown): string =>
+  JSON.stringify(v, (_k, x) => (x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.entries(x as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) : x))
+/** A free-text field of a form schema (no choices): typing in it waits for a pause before a live form runs. */
+const isTextField = (schema: Record<string, unknown>, key: string) => {
+  const p = ((schema.properties ?? {}) as Record<string, Record<string, unknown>>)[key]
+  return !!p && p.type === 'string' && !p.enum && !p.oneOf
+}
+
 function FormNode({ node }: { node: NodeOf<'form'> }) {
   const closePopover = useContext(ClosePopoverCtx)
   // In a popover the form closes it once its action went through (a refusal leaves it open, with the error in it).
-  const { run, pending, blocked: roleBlocked, blockedFor, dialog, precheck, error, dismissError } = useAddonAction(node.action, closePopover ?? undefined)
-  const { dirty } = useContext(RuntimeCtx)
+  // `reset`: once the action went through the fields are emptied (the form remounts) and the first is focused again.
+  const [round, setRound] = useState(0)
+  const box = useRef<HTMLDivElement>(null)
+  const saved = useRef<(() => void) | undefined>(undefined)
+  const { run, pending, blocked: roleBlocked, blockedFor, dialog, precheck, error, dismissError, liveAllowed } = useAddonAction(node.action, () => {
+    closePopover?.()
+    if (node.reset) setRound((n) => n + 1)
+    saved.current?.()
+  })
+  useEffect(() => {
+    if (round > 0) box.current?.querySelector<HTMLElement>('input:not([type=hidden]),select,textarea')?.focus()
+  }, [round])
+  // `live` is honoured only for a navigation action without a core dialog; otherwise the form keeps its submit button.
+  const live = !!node.live && liveAllowed(node.action)
+  const { dirty, guardedDecisions, dirtyListeners } = useContext(RuntimeCtx)
   // Core's spawn_agent precheck applies to a form that starts an agent as it does to a button.
   const blocked = roleBlocked || !!precheck
   const readOnly = blocked
@@ -512,25 +678,55 @@ function FormNode({ node }: { node: NodeOf<'form'> }) {
     }
   }, [offered, formControlClaim, me])
   const formControl = claim === 'won' ? offered : undefined
+  saved.current = formControl?.onSaved
   const report = formControl?.onState
   useEffect(() => report?.({ pending, blocked }), [report, pending, blocked])
-  const submitOptions = formControl ? { norender: true } : { submitText: node.submitLabel ?? 'Save', props: { disabled: pending || blocked } }
+  const submitOptions = formControl || live ? { norender: true } : { submitText: node.submitLabel ?? 'Save', props: { disabled: pending || blocked } }
+  // A live form (filters) runs its action on each change: a choice at once, typed text after a pause.
+  const liveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const liveLast = useRef(initial0(node))
+  useEffect(() => () => void (liveTimer.current && clearTimeout(liveTimer.current)), [])
+  const onLive = (formData: Record<string, unknown> | undefined) => {
+    const next = formData ?? {}
+    const prev = JSON.parse(liveLast.current) as Record<string, unknown>
+    if (JSON.stringify(next) === liveLast.current) return
+    const typed = Object.keys(next).some((k) => next[k] !== prev[k] && isTextField(node.schema, k))
+    liveLast.current = JSON.stringify(next)
+    if (liveTimer.current) clearTimeout(liveTimer.current)
+    liveTimer.current = setTimeout(() => run(node.action, { formData: next }), typed ? 400 : 0)
+  }
   const guarded = !!node.cancel
-  const initial = JSON.stringify(node.formData ?? {})
+  const initial = stableJson(node.formData ?? {})
   const [edited, setEdited] = useState(false)
-  useEffect(() => setEdited(false), [initial]) // new data from the addon (e.g. after a save): nothing unsaved any more
+  // A guarded form keeps what the person typed or ticked as its data: re-rendering for "Unsaved changes" re-reads the
+  // form's props, which would otherwise put the addon's data back over the edit.
+  const [draft, setDraft] = useState<Record<string, unknown> | null>(null)
+  useEffect(() => {
+    setEdited(false) // new data from the addon (e.g. after a save): nothing unsaved any more
+    setDraft(null)
+  }, [initial])
+  useEffect(() => void (liveLast.current = initial), [initial]) // the addon's answer is the new starting point for a live form
   // A form with Cancel tracks unsaved edits: this page's other actions ask before they discard them, and closing the tab does too.
   useEffect(() => {
     if (!guarded) return
+    const tell = () => dirtyListeners.forEach((f) => f())
+    const guards = node.guards
     if (edited) dirty.add(node.action)
     else dirty.delete(node.action)
+    if (guards) {
+      if (edited) guardedDecisions.add(guards)
+      else guardedDecisions.delete(guards)
+    }
+    tell()
     const warn = (e: BeforeUnloadEvent) => e.preventDefault()
     if (edited) window.addEventListener('beforeunload', warn)
     return () => {
       dirty.delete(node.action)
+      if (guards) guardedDecisions.delete(guards)
+      tell()
       window.removeEventListener('beforeunload', warn)
     }
-  }, [guarded, edited, dirty, node.action])
+  }, [guarded, edited, dirty, guardedDecisions, dirtyListeners, node.action, node.guards])
   return (
     <>
       {dialog}
@@ -538,18 +734,20 @@ function FormNode({ node }: { node: NodeOf<'form'> }) {
       {guarded && edited && <LeaveGuard />}
       {precheck && <PrecheckAlert text={precheck} />}
       <Suspense fallback={<Skeleton className="h-24 w-full" />}>
+        <div ref={box}>
         <ThemedForm
           id={formControl?.id}
           disabled={readOnly}
-          key={JSON.stringify(node.formData ?? null)}
+          // A live form keeps its fields mounted (typing goes on while results update); others start over with new data.
+          key={live ? `${round}|live` : `${round}|${JSON.stringify(node.formData ?? null)}`}
           schema={node.schema}
           uiSchema={{ ...node.uiSchema, 'ui:submitButtonOptions': submitOptions }}
-          formData={node.formData ?? undefined}
+          formData={(guarded && draft) || node.formData || undefined}
           noHtml5Validate
           showErrorList={false}
           focusOnFirstError={focusField}
           transformErrors={(errors) => formErrors(errors, node.schema)}
-          onChange={guarded ? ({ formData }) => setEdited(JSON.stringify(formData ?? {}) !== initial) : undefined}
+          onChange={guarded ? ({ formData }) => { setDraft(formData as Record<string, unknown>); setEdited(stableJson(formData ?? {}) !== initial) } : live ? ({ formData }) => onLive(formData as Record<string, unknown> | undefined) : undefined}
           onSubmit={({ formData }) => run(node.action, { formData })}
         >
           {node.cancel && !formControl ? (
@@ -569,6 +767,7 @@ function FormNode({ node }: { node: NodeOf<'form'> }) {
             </div>
           ) : undefined}
         </ThemedForm>
+        </div>
       </Suspense>
       {error && <ErrorAlert error={error} onDismiss={dismissError} className="mt-2" />}
     </>
@@ -600,6 +799,8 @@ function cellText(key: string, v: unknown): string {
 
 /** What a row is called in "More actions for …": its first column's cell. */
 function rowLabel(key: string | undefined, row: Record<string, unknown>): string {
+  // A table whose first column repeats (two PRs of one repository) names its rows with a `rowName` cell.
+  if (typeof row.rowName === 'string' && row.rowName) return row.rowName
   const v = key ? row[key] : undefined
   return v === null || v === undefined || v === '' ? 'row' : String(v)
 }
@@ -615,6 +816,14 @@ function resolveRowArgs(args: ItemAction['args'], row?: Record<string, unknown>)
   return out
 }
 
+/** Why an action is blocked on this row (its `blocked` sentence, or the named cell), or null when it can run. */
+function blockedWhy(a: ItemAction, row?: Record<string, unknown>): string | null {
+  if (!a.blocked) return null
+  const ref = /^\$row\.(.+)$/.exec(a.blocked)
+  const v = ref ? row?.[ref[1]] : a.blocked
+  return typeof v === 'string' && v.trim() ? v : null
+}
+
 /** "$row.<key>" / "!$row.<key>": is the action offered for this row? A cell is false when null, empty, false, 0 or "false". */
 function offered(when: string | undefined, row?: Record<string, unknown>): boolean {
   if (!when || !row) return true
@@ -627,12 +836,56 @@ function offered(when: string | undefined, row?: Record<string, unknown>): boole
 type ListEntry = NodeOf<'list'>['items'][number]
 
 function ActionListItem({ it }: { it: ListEntry }) {
-  return <ListItemView it={it} act={useAddonAction()} />
+  // An action with `input` asks in the row; the row closes it once the action went through.
+  const [asking, setAsking] = useState<ItemAction | null>(null)
+  return <ListItemView it={it} act={useAddonAction(undefined, () => setAsking(null))} asking={asking} onAsk={setAsking} />
 }
 
-function ListItemView({ it, act }: { it: ListEntry; act?: AddonAction }) {
+/** The one-line field under a list item whose action has `input`: focused, Enter sends, Escape cancels. */
+function InlineAsk({ action, act, label }: { action: ItemAction; act: AddonAction; label: string }) {
+  const input = action.input!
+  const id = useId()
+  const [value, setValue] = useState('')
+  const ref = useRef<HTMLInputElement>(null)
+  useEffect(() => ref.current?.focus(), [])
   return (
-    <li className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 py-1.5 first:pt-0 last:pb-0">
+    <form
+      className="col-span-2 flex flex-wrap items-center gap-2 pb-1"
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') {
+          e.stopPropagation()
+          act.onCancelAsk?.()
+        }
+      }}
+      onSubmit={(e) => {
+        e.preventDefault()
+        if (value.trim()) act.run(action.action, { ...resolveRowArgs(action.args), [input.name]: value.trim() }, label)
+      }}
+    >
+      <label htmlFor={id} className="text-[12px] text-text-muted">
+        {input.label}
+      </label>
+      <Input id={id} ref={ref} name={input.name} value={value} maxLength={input.maxLength ?? 200} placeholder={input.placeholder} onChange={(e) => setValue(e.target.value)} className="h-8 min-w-48 flex-1 text-[13px]" />
+      <Button type="submit" size="sm" disabled={act.pending || !value.trim()}>
+        {input.submitLabel ?? action.label}
+      </Button>
+      <Button type="button" size="sm" variant="ghost" onClick={() => act.onCancelAsk?.()}>
+        Cancel
+      </Button>
+    </form>
+  )
+}
+
+function ListItemView({ it, act, asking, onAsk }: { it: ListEntry; act?: AddonAction; asking?: ItemAction | null; onAsk?: (a: ItemAction | null) => void }) {
+  const li = useRef<HTMLLIElement>(null)
+  // Cancelling the row's field puts focus back on the button that opened it.
+  const cancelAsk = () => {
+    const label = asking?.label
+    onAsk?.(null)
+    setTimeout(() => [...(li.current?.querySelectorAll('button') ?? [])].find((b) => b.textContent?.trim() === label)?.focus(), 0)
+  }
+  return (
+    <li ref={li} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 py-1.5 first:pt-0 last:pb-0">
       <div className="flex min-w-0 items-start gap-2">
         {it.status && <StatusDot status={it.status} className="mt-1.5" />}
         <div className="min-w-0">
@@ -647,9 +900,10 @@ function ListItemView({ it, act }: { it: ListEntry; act?: AddonAction }) {
               {it.badge}
             </Badge>
           )}
-          {it.actions && act && <ItemActions act={act} actions={it.actions} label={it.title} />}
+          {it.actions && act && <ItemActions act={act} actions={it.actions} label={it.title} onAsk={onAsk} />}
         </div>
       )}
+      {asking?.input && act && <InlineAsk action={asking} act={{ ...act, onCancelAsk: cancelAsk }} label={it.title} />}
       {act?.error && <ErrorAlert error={act.error} onDismiss={act.dismissError} className="col-span-2" />}
     </li>
   )
@@ -668,6 +922,7 @@ const CHIP_TONE: Record<string, string> = {
   failed: 'bg-danger', failing: 'bg-danger', error: 'bg-danger', refused: 'bg-danger', rejected: 'bg-danger',
   pending: 'bg-warning', open: 'bg-warning', waiting: 'bg-warning', blocked: 'bg-warning', review: 'bg-warning',
   pass: 'bg-success', fail: 'bg-danger', requested: 'bg-warning', 'changes requested': 'bg-danger', enabled: 'bg-success', 'granted once': 'bg-success', 'granted for this epic': 'bg-success',
+  active: 'bg-success', accepted: 'bg-success', answered: 'bg-success', expiring: 'bg-warning', queued: 'bg-warning', denied: 'bg-danger',
 }
 /** State words in a `status`/`state` column read as a small chip with a dot (neutral surface, no orange). */
 function StateChip({ text }: { text: string }) {
@@ -680,8 +935,87 @@ function StateChip({ text }: { text: string }) {
   )
 }
 
-function ActionDataRow({ columns, row, rowActions, rowOpen, numeric, total }: { total?: boolean; columns: NodeOf<'table'>['columns']; row: Record<string, unknown>; rowActions?: ItemAction[]; rowOpen?: NodeOf<'table'>['rowOpen']; numeric: Set<string> }) {
-  return <DataRowView columns={columns} row={row} rowActions={rowActions} rowOpen={rowOpen} numeric={numeric} total={total} act={useAddonAction()} />
+/**
+ * A table node. Core folds columns by the table's own width (N11, src/lib/columnFold.ts): what does not fit moves into
+ * the row's second line under the first column, so the table never scrolls sideways in a narrow page area.
+ */
+function TableNodeView({ n, depth }: { n: NodeOf<'table'>; depth: number }) {
+  const [ref, width] = useElementWidth<HTMLDivElement>()
+  // rowDetail: the one open row (by its key cell); opening another closes it.
+  const [openRow, setOpenRow] = useState<string | null>(null)
+  const detailId = useId()
+  // Still wider than its box after the rule (unbreakable cells): fold one more column until it fits; start over when
+  // the width changes.
+  const [extra, setExtra] = useState({ width, n: 0 })
+  const more = extra.width === width ? extra.n : 0
+  const folded = new Set(foldedColumns(n.columns, width, { actions: !!n.rowActions, extra: more }))
+  const box = useRef<HTMLDivElement | null>(null)
+  // One stable ref for both: an inline callback would detach and re-attach the observer on every commit.
+  const attach = useCallback(
+    (el: HTMLDivElement | null) => {
+      ref(el)
+      box.current = el
+    },
+    [ref],
+  )
+  useLayoutEffect(() => {
+    const scroller = box.current?.querySelector<HTMLElement>('[data-slot="table-container"]')
+    if (!scroller || width === 0 || scroller.scrollWidth <= scroller.clientWidth + 1 || more >= n.columns.length) return
+    setExtra({ width, n: more + 1 })
+  })
+  const shown = n.columns.filter((c) => !folded.has(c.key))
+  const fold = n.columns.filter((c) => folded.has(c.key))
+  const numeric = numericKeys(n)
+  return (
+    <div ref={attach} data-folded={fold.length || undefined}>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            {n.rowDetail && (
+              <TableHead className="h-8 w-8 px-1">
+                <span className="sr-only">Details</span>
+              </TableHead>
+            )}
+            {shown.map((c) => (
+              <TableHead key={c.key} className={cn('h-8 whitespace-normal text-[12px] text-text-muted', numeric.has(c.key) && 'text-right')}>
+                {c.label}
+              </TableHead>
+            ))}
+            {n.rowActions && (
+              <TableHead className="h-8">
+                <span className="sr-only">Actions</span>
+              </TableHead>
+            )}
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {stableKeys(n.rows.map((r) => r.id ?? r[n.columns[0].key])).map((k, i) => {
+            const row = n.rows[i]
+            const cell = n.rowDetail ? row[n.rowDetail.key] : undefined
+            const rowKey = typeof cell === 'string' || typeof cell === 'number' ? String(cell) : null
+            // The open row is remembered by its stable row key (not the detail key's value), so two rows that share a
+            // value still open one at a time.
+            const detail =
+              n.rowDetail && rowKey !== null && Object.hasOwn(n.rowDetail.nodes, rowKey)
+                ? { node: n.rowDetail.nodes[rowKey], open: openRow === k, id: `${detailId}-${i}`, depth, toggle: () => setOpenRow(openRow === k ? null : k) }
+                : undefined
+            const props = { columns: n.columns, shown, fold, row, numeric, total: !!n.totalRow && i === n.rows.length - 1, detail, hasDetail: !!n.rowDetail }
+            return n.rowActions || n.rowOpen ? <ActionDataRow key={k} {...props} rowActions={n.rowActions} rowOpen={n.rowOpen} /> : <DataRowView key={k} {...props} />
+          })}
+        </TableBody>
+      </Table>
+    </div>
+  )
+}
+
+type TableColumn = NodeOf<'table'>['columns'][number]
+
+/** A row that opens (rowDetail): its node, whether it is the open one, and the id of the detail row. */
+type RowDetail = { node: unknown; open: boolean; id: string; depth: number; toggle: () => void }
+type DataRowProps = { total?: boolean; columns: TableColumn[]; shown: TableColumn[]; fold: TableColumn[]; row: Record<string, unknown>; rowActions?: ItemAction[]; rowOpen?: NodeOf<'table'>['rowOpen']; numeric: Set<string>; detail?: RowDetail; hasDetail?: boolean }
+
+function ActionDataRow(props: DataRowProps) {
+  return <DataRowView {...props} act={useAddonAction()} />
 }
 
 const TICKET_KEY = /^[A-Z][A-Z0-9]*-\d+$/
@@ -699,32 +1033,71 @@ function Cell({ column, row, open, act, label }: { column: NodeOf<'table'>['colu
   if (column.cell === 'state' && typeof v === 'string' && v !== '') return <StateChip text={text} />
   if (column.cell === 'ticket' && typeof v === 'string' && TICKET_KEY.test(v))
     return (
-      <Link to="/ticket/$key" params={{ key: v }} className="font-mono text-[12px] text-text hover:underline">
+      <Link to="/ticket/$key" params={{ key: v }} className="whitespace-nowrap font-mono text-[12px] text-text hover:underline">
         {v}
       </Link>
     )
+  // A short single token (a key, an id, "#31", a number) never breaks inside; long ones (paths, branches) may (N11).
+  if (SHORT_TOKEN.test(text)) return <span className="whitespace-nowrap">{text}</span>
   return <>{text}</>
 }
 
-function DataRowView({ columns, row, rowActions, rowOpen, act, numeric, total }: { total?: boolean; columns: NodeOf<'table'>['columns']; row: Record<string, unknown>; rowActions?: ItemAction[]; rowOpen?: NodeOf<'table'>['rowOpen']; act?: AddonAction; numeric: Set<string> }) {
+const SHORT_TOKEN = /^\S{1,24}$/
+
+function DataRowView({ columns, shown, fold, row, rowActions, rowOpen, act, numeric, total, detail, hasDetail }: DataRowProps & { act?: AddonAction }) {
+  const label = rowLabel(columns[0]?.key, row)
+  const span = shown.length + (rowActions ? 1 : 0) + (hasDetail ? 1 : 0)
   return (
     <>
-      <TableRow className={total ? 'border-t-2 border-border-strong bg-surface-2/60 font-semibold' : undefined}>
-        {columns.map((c, i) => (
-          <TableCell key={c.key} className={cn('whitespace-normal break-words py-1.5 text-[13px]', numeric.has(c.key) && 'text-right tabular-nums')}>
-            <Cell column={c} row={row} open={i === 0 ? rowOpen : undefined} act={act} label={rowLabel(columns[0]?.key, row)} />
+      <TableRow className={cn(total && 'border-t-2 border-border-strong bg-surface-2/60 font-semibold', detail?.open && 'border-b-0 bg-surface-2/60')}>
+        {hasDetail && (
+          <TableCell className="w-8 px-1 py-1.5">
+            {detail && (
+              <button
+                type="button"
+                aria-expanded={detail.open}
+                aria-controls={detail.id}
+                aria-label={`Details for ${label}`}
+                onClick={detail.toggle}
+                className="flex size-7 items-center justify-center rounded-md text-text-muted outline-none hover:bg-surface-2 hover:text-text focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <ChevronRight aria-hidden className={cn('size-4 transition-transform', detail.open && 'rotate-90')} />
+              </button>
+            )}
+          </TableCell>
+        )}
+        {shown.map((c, i) => (
+          <TableCell key={c.key} className={cn('whitespace-normal break-words py-1.5 text-[13px] [overflow-wrap:anywhere]', numeric.has(c.key) && 'text-right tabular-nums')}>
+            <Cell column={c} row={row} open={c === columns[0] ? rowOpen : undefined} act={act} label={label} />
+            {i === 0 && fold.length > 0 && (
+              <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[12px] font-normal text-text-muted" data-fold-line>
+                {fold.map((f) => (
+                  <span key={f.key} className="inline-flex min-w-0 items-center gap-1">
+                    <span className="text-text-faint">{f.label}</span>
+                    <Cell column={f} row={row} act={act} label={label} />
+                  </span>
+                ))}
+              </div>
+            )}
           </TableCell>
         ))}
         {rowActions && act && (
           <TableCell className="whitespace-nowrap py-1.5 text-right">
-            <ItemActions act={act} actions={rowActions} row={row} label={rowLabel(columns[0]?.key, row)} />
+            <ItemActions act={act} actions={rowActions} row={row} label={label} />
           </TableCell>
         )}
       </TableRow>
       {act?.error && (
         <TableRow className="hover:bg-transparent">
-          <TableCell colSpan={columns.length + 1} className="py-1.5">
+          <TableCell colSpan={span} className="py-1.5">
             <ErrorAlert error={act.error} onDismiss={act.dismissError} />
+          </TableCell>
+        </TableRow>
+      )}
+      {detail?.open && (
+        <TableRow id={detail.id} className="bg-surface-2/60 hover:bg-surface-2/60">
+          <TableCell colSpan={span} className="whitespace-normal px-3 pb-3 pt-1 pl-10">
+            <NodeView node={detail.node} depth={detail.depth + 1} />
           </TableCell>
         </TableRow>
       )}
@@ -737,19 +1110,20 @@ function DataRowView({ columns, row, rowActions, rowOpen, act, numeric, total }:
  * "More actions for {title}", danger last and in the danger colour. A single action is just its button. An action
  * with `when` is offered only while that cell of the row says so (core evaluates it).
  */
-function ItemActions({ act, actions: all, row, label }: { act: AddonAction; actions: ItemAction[]; row?: Record<string, unknown>; label: string }) {
+function ItemActions({ act, actions: all, row, label, onAsk }: { act: AddonAction; actions: ItemAction[]; row?: Record<string, unknown>; label: string; onAsk?: (a: ItemAction) => void }) {
   const { run, pending, blockedFor, dialog } = act
   const actions = all.filter((a) => offered(a.when, row))
   if (actions.length === 0) return <>{dialog}</>
-  const start = (a: ItemAction) => run(a.action, resolveRowArgs(a.args, row), label)
+  const start = (a: ItemAction) => (a.input && onAsk ? onAsk(a) : run(a.action, resolveRowArgs(a.args, row), label))
   const lead = actions.length === 1 ? actions[0] : (actions.find((a) => a.primary) ?? actions.find((a) => a.variant !== 'danger') ?? actions[0])
   const more = actions.filter((a) => a !== lead)
   const menu = [...more.filter((a) => a.variant !== 'danger'), ...more.filter((a) => a.variant === 'danger')]
   return (
     <div className="flex shrink-0 items-center gap-1">
       {dialog}
-      <Button size="sm" variant={BUTTON_VARIANT[lead.variant]} disabled={pending || blockedFor(lead.action)} onClick={() => start(lead)}>
-        {lead.label}
+      <Button size="sm" variant={BUTTON_VARIANT[lead.variant]} disabled={pending || blockedFor(lead.action) || !!blockedWhy(lead, row)} title={blockedWhy(lead, row) ?? undefined} onClick={() => start(lead)}>
+        {act.pendingAction === lead.action && lead.pendingLabel ? lead.pendingLabel : lead.label}
+        {blockedWhy(lead, row) && <span className="sr-only"> ({blockedWhy(lead, row)})</span>}
       </Button>
       {menu.length > 0 && (
         <DropdownMenu>
@@ -760,8 +1134,9 @@ function ItemActions({ act, actions: all, row, label }: { act: AddonAction; acti
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             {menu.map((a, i) => (
-              <DropdownMenuItem key={i} disabled={pending || blockedFor(a.action)} onSelect={() => start(a)} className={a.variant === 'danger' ? 'text-danger focus:text-danger' : undefined}>
+              <DropdownMenuItem key={i} disabled={pending || blockedFor(a.action) || !!blockedWhy(a, row)} onSelect={() => start(a)} className={a.variant === 'danger' ? 'text-danger focus:text-danger' : undefined}>
                 {a.label}
+                {blockedWhy(a, row) && <span className="ml-2 text-[12px] font-normal text-text-muted">{blockedWhy(a, row)}</span>}
               </DropdownMenuItem>
             ))}
           </DropdownMenuContent>
@@ -808,11 +1183,55 @@ function ProgressNode({ node }: { node: NodeOf<'progress'> }) {
  * Only an addon that declares `pty` and holds a current grant may show a terminal; everyone else gets the fallback box.
  * The session id is untrusted: TerminalView resolves it against this addon's own state (this workspace, this viewer).
  */
+/** An http(s) address shown in full (it is what the person shares), opening in a new tab, with a Copy button beside it. */
+function CopyableLink({ href, label }: { href: string; label: string }) {
+  const [copied, setCopied] = useState<'yes' | 'no' | null>(null)
+  const copy = () => {
+    const done = navigator.clipboard?.writeText(href)
+    if (!done) return setCopied('no')
+    void done.then(
+      () => setCopied('yes'),
+      () => setCopied('no'),
+    )
+  }
+  return (
+    <span className="inline-flex min-w-0 max-w-full flex-wrap items-center gap-x-2 gap-y-1 text-[13px]">
+      <a href={href} target="_blank" rel="noopener noreferrer nofollow" aria-label={`${label}: ${href} (opens in a new tab)`} className="inline-flex min-w-0 items-center gap-1 text-brand hover:underline">
+        {/* In full, wrapped and isolated: never cut off, and nothing around it can reorder it (the schema already refuses hidden characters). */}
+        <bdi className="whitespace-pre-wrap break-all font-mono text-[12px] [unicode-bidi:isolate]">{visible(href)}</bdi>
+        <ExternalLink className="size-3 shrink-0" aria-hidden />
+      </a>
+      <Button type="button" size="sm" variant="ghost" className="h-7 shrink-0 px-2" aria-label={`Copy ${label}`} onClick={copy}>
+        <Copy aria-hidden className="size-3.5" />
+        {copied === 'yes' ? 'Copied' : 'Copy'}
+      </Button>
+      <span role="status" className="sr-only">
+        {copied === 'yes' ? 'Address copied' : copied === 'no' ? 'Could not copy the address' : ''}
+      </span>
+    </span>
+  )
+}
+
+/** A link to another addon's page: drawn only while that addon is active here (else there is nothing to open). */
+function InternalLink({ href, label }: { href: string; label: string }) {
+  const { workspace } = useWorkspace()
+  const [, , name, page] = href.split('/')
+  if (!addonActive(workspace, name)) return null
+  return (
+    <Link to="/addon/$name/$page" params={{ name, page }} className="inline-flex items-center gap-1 text-[13px] text-brand hover:underline">
+      {label}
+      <ArrowRight className="size-3" aria-hidden />
+    </Link>
+  )
+}
+
 function TerminalNode({ session }: { session: string }) {
   const { addon, ctx } = useContext(RuntimeCtx)
   const { data } = useAddons()
   const { workspace } = useWorkspace()
   if (!canUsePty(data?.find((a) => a.name === addon), workspace?.addons[addon])) return <AddonUnavailable addon={addon} />
+  // No session yet (e.g. the ticket panel before "Open terminal"): nothing to draw.
+  if (!session) return null
   return (
     <Suspense fallback={<Skeleton className="h-64 w-full" />}>
       <TerminalView addon={addon} session={session} placement={ctx.ticket ? 'rail' : 'page'} fallback={<AddonUnavailable addon={addon} />} />

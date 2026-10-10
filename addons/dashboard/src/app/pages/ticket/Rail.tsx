@@ -1,15 +1,15 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import { CalendarClock, ExternalLink, GitBranch, GitPullRequest, PanelRight } from 'lucide-react'
 import type { TicketDocument } from '@/api/types'
 import { addonActive } from '@/api/addons'
 import { can } from '@/api/permissions'
-import { AddonSlotStack, AddonBadge, useAddons, useSlot } from '@/addon-ui'
+import { AddonBadge, CollapsibleStack, useAddons, useSlot } from '@/addon-ui'
 import { useWorkspace } from '@/app/workspace'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
 import { NeedsValue } from './Needs'
-import { ago, fmtTime, PersonChip, PriorityLabel, Section, type Viewer } from './shared'
+import { ago, fmtExact, PersonChip, PriorityLabel, Section, type Viewer } from './shared'
 
 const isHttp = (u: string) => /^https?:\/\//i.test(u)
 
@@ -54,8 +54,28 @@ const GITHUB = 'github'
 
 const isPerson = (id: string) => !id.startsWith('agent:')
 
-/** Size, due, blockers, people and times: the ticket's properties (head seq and hash live in Raw). */
+const ESTIMATE = 'estimate'
+
+/**
+ * Size or Points, never both (B m14): with the Estimate addon on, its points are the ticket's size measure and the
+ * core t-shirt size steps back (still in Raw); without it, the size.
+ */
+export function useSizeMeasure(ticket: TicketDocument): { label: 'Size' | 'Points'; value: string | null; note?: string } {
+  const { workspace } = useWorkspace()
+  if (addonActive(workspace, ESTIMATE)) {
+    const points = (ticket.addons?.[ESTIMATE] as { points?: unknown } | undefined)?.points
+    return {
+      label: 'Points',
+      value: points === undefined || points === null ? null : String(points),
+      note: `From the Estimate addon. ${ticket.size ? `The size (${ticket.size.toUpperCase()}) is not shown while Estimate is on.` : 'While Estimate is on, points replace the size.'}`,
+    }
+  }
+  return { label: 'Size', value: ticket.size ? ticket.size.toUpperCase() : null }
+}
+
+/** Size or points, due, blockers, people and times: the ticket's properties (head seq and hash live in Raw). */
 function Details({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewer }) {
+  const measure = useSizeMeasure(ticket)
   const row = (label: string, value: React.ReactNode) => (
     <div className="flex items-baseline gap-2 py-1 text-[13px]">
       <dt className="w-24 shrink-0 text-text-muted">{label}</dt>
@@ -70,7 +90,13 @@ function Details({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewer })
   return (
     <Section title="Details">
       <dl className="divide-y divide-border">
-        {row('Size', ticket.size ? <span className="uppercase">{ticket.size}</span> : <span className="text-text-faint">not set</span>)}
+        {row(
+          measure.label,
+          <span className="flex flex-col">
+            {measure.value ? <span>{measure.value}</span> : <span className="text-text-faint">{measure.label === 'Points' ? 'not estimated' : 'not set'}</span>}
+            {measure.note && <span className="text-[11px] text-text-faint">{measure.note}</span>}
+          </span>,
+        )}
         {row('Priority', <PriorityLabel priority={ticket.priority} />)}
         {row(
           'Due',
@@ -99,8 +125,8 @@ function Details({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewer })
         {assignees.length > 0 && row('Assignees', people(assignees))}
         {reviewers.length > 0 && row('Reviewers', people(reviewers))}
         {watchers.length > 0 && row('Watchers', people(watchers))}
-        {row('Created', <span className="text-text-muted">{fmtTime(ticket.created_at)} UTC</span>)}
-        {row('Updated', <span className="text-text-muted">{ago(ticket.updated_at)}</span>)}
+        {row('Created', <span className="text-text-muted">{fmtExact(ticket.created_at)}</span>)}
+        {row('Updated', <span className="text-text-muted" title={fmtExact(ticket.updated_at)}>{ago(ticket.updated_at)}</span>)}
       </dl>
     </Section>
   )
@@ -153,6 +179,26 @@ function Code({ ticket, prs }: { ticket: TicketDocument; prs: boolean }) {
   )
 }
 
+/**
+ * The addon panels as one group under an "Addons" heading: neutral borders, the A once per panel header, collapsed
+ * (at most two open).
+ */
+function AddonPanels({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewer }) {
+  const ctx = { ticket }
+  const items = useSlot('ticket.panel', ctx)
+  const headingId = useId()
+  if (items.length === 0) return null
+  return (
+    <section aria-labelledby={headingId} className="space-y-1.5 pt-1">
+      <h3 id={headingId} className="px-1 text-[11px] font-medium uppercase tracking-wide text-text-faint">
+        Addons <span className="font-normal normal-case tracking-normal">· {items.length}</span>
+      </h3>
+      {/* The page made the ticket's workspace current, so viewer.role is the role these actions run under. */}
+      <CollapsibleStack items={items} ctx={ctx} readOnly={!can(viewer.role, 'addon.action')} className="space-y-1.5" level={4} />
+    </section>
+  )
+}
+
 /** Everything the rail holds: Details, Code, the addon panels (collapsed, at most two open) and inactive addon data. */
 function RailContent({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewer }) {
   const { workspace } = useWorkspace()
@@ -160,8 +206,7 @@ function RailContent({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewe
     <>
       <Details ticket={ticket} viewer={viewer} />
       <Code ticket={ticket} prs={!addonActive(workspace, GITHUB)} />
-      {/* The page made the ticket's workspace current, so viewer.role is the role these actions run under. */}
-      <AddonSlotStack name="ticket.panel" ctx={{ ticket }} readOnly={!can(viewer.role, 'addon.action')} collapsible level={3} />
+      <AddonPanels ticket={ticket} viewer={viewer} />
       <InactiveAddonData ticket={ticket} />
     </>
   )
@@ -193,6 +238,7 @@ function usePanelCount(ticket: TicketDocument): number {
 export function PropertiesStrip({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewer }) {
   const [open, setOpen] = useState(false)
   const n = usePanelCount(ticket)
+  const measure = useSizeMeasure(ticket)
   const branch = Object.values(ticket.links.branches)[0]
   const pr = ticket.links.prs[0]
   const item = (label: string, value: React.ReactNode) => (
@@ -204,7 +250,9 @@ export function PropertiesStrip({ ticket, viewer }: { ticket: TicketDocument; vi
   return (
     <div className="flex min-w-0 items-center gap-3 rounded-lg border border-border bg-surface px-3 py-1.5 text-[12px]">
       <p data-testid="ticket-properties" className="flex min-w-0 flex-1 items-center gap-x-4 overflow-hidden whitespace-nowrap">
-        {item('Size', ticket.size ? <span className="uppercase">{ticket.size}</span> : 'not set')}
+        <span title={measure.note} className="inline-flex min-w-0">
+          {item(measure.label, measure.value ?? (measure.label === 'Points' ? 'not estimated' : 'not set'))}
+        </span>
         {item('Due', ticket.due ?? 'none')}
         {ticket.blocked_by.length > 0 && item('Blocked by', <span className="font-mono">{ticket.blocked_by.join(', ')}</span>)}
         {branch && item('Branch', <span className="font-mono">{branch}</span>)}

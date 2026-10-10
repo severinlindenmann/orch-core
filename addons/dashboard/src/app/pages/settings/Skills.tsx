@@ -6,7 +6,7 @@ import { Link } from '@tanstack/react-router'
 import { FileText, KeyRound, Plug, TriangleAlert } from 'lucide-react'
 import { useState } from 'react'
 import { api } from '@/api/client'
-import { ENV_RE, SCOPE_LABEL, SKILL_SCOPES, type SkillInfo, type SkillScope } from '@/api/connections'
+import { ENV_RE, SCOPE_LABEL, SKILL_SCOPES, type CheckStatus, type SkillInfo, type SkillScope } from '@/api/connections'
 import type { Workspace } from '@/api/types'
 import { SafeMarkdown } from '@/addon-ui/SafeMarkdown'
 import { SignPrompt, useSignedAction } from '@/components/sign/SignPrompt'
@@ -18,7 +18,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { cn } from '@/lib/utils'
 import { Mono, Pill, Section } from '../ticket/shared'
-import { checkTime, KIND_LABEL, PhaseChip, useConnections, useSkills } from './connectionUi'
+import { CheckChip, checkTime, KIND_LABEL, PhaseChip, useConnections, useSkills } from './connectionUi'
+import { fmtWhen } from '@/lib/time'
 
 export const GRANT_OWNER_ONLY = 'Only owners grant credentials to skills.'
 
@@ -238,6 +239,7 @@ function SkillDetail({ skill, workspace, canEdit }: { skill: SkillInfo; workspac
                   <Mono>{r.name}</Mono>
                   <span className="text-text-muted">connection</span>
                   {r.granted ? <Pill tone="success">granted</Pill> : <Pill tone="warning">waits for your grant</Pill>}
+                  <ConnectionCheck name={r.name} connections={connections.data} />
                 </li>
               ))}
               {skill.env.map((r) => (
@@ -347,5 +349,22 @@ function SkillDetail({ skill, workspace, canEdit }: { skill: SkillInfo; workspac
         />
       )}
     </>
+  )
+}
+
+/**
+ * The connection's own state next to the grant: "granted" says the skill may use it, not that it works. The last check
+ * is the one the Connections tab shows (same data), so the two never disagree.
+ */
+function ConnectionCheck({ name, connections }: { name: string; connections?: { name: string; last_check: { status: CheckStatus; at: string } | null }[] }) {
+  if (!connections) return null
+  const c = connections.find((x) => x.name === name)
+  if (!c) return <span className="text-[12px] text-warning">not set up in Connections</span>
+  if (!c.last_check) return <span className="text-[12px] text-text-faint">never checked</span>
+  return (
+    <span className="inline-flex items-center gap-1.5 text-[12px] text-text-faint">
+      <CheckChip status={c.last_check.status} />
+      last check {fmtWhen(c.last_check.at)}
+    </span>
   )
 }

@@ -1,15 +1,19 @@
 // Tiny in-process router for the mock API: (method, path pattern) -> handler(store, ctx).
 import type { HttpMethod, TransportResponse } from '@/api/transport'
-import type { ActionRequest, AddonOpRequest, GateName, Role, SettingsRequest, WorkspaceIdentity, NewTicketRequest, ApiErrorBody, BodySections, OrchEvent, Priority, SavedView, Status, ViewParams, TicketDocument, TicketSummary } from '@/api/types'
+import type { CodeReviewApplies, ActionRequest, AddonOpRequest, GateName, Role, SettingsRequest, WorkspaceIdentity, NewTicketRequest, ApiErrorBody, BodySections, OrchEvent, Priority, SavedView, Status, ViewParams, TicketDocument, TicketSummary } from '@/api/types'
 import { STATUSES } from '@/api/types'
 import type { MockStore } from './store'
 import { atLeast, can } from '@/api/permissions'
-import { APPROVER_GROUPS, unmeetablePolicy } from '@/api/gates'
+import { APPROVER_GROUPS, codeReviewWaits, unmeetablePolicy } from '@/api/gates'
+import { GRANT_MAX_HOURS } from '@/api/grants'
 import { addonActive } from '@/api/addons'
 import peopleFixture from './fixtures/people.json'
 import type { RelayRequest, RelaySimRequest } from '@/api/types'
+import type { MandatesPreviewRequest } from '@/api/mandatesPreview'
 import { listArtifacts } from './artifacts'
 import { relayEpoch, relayRequest, relaySim, relayState } from './relay'
+import { changesOf } from './changes'
+import { createLatency, readLatencySettings, type LatencySettings } from './latency'
 
 export interface RouteContext {
   params: Record<string, string>
@@ -70,7 +74,7 @@ function visibleTicket(store: MockStore, key: string): TicketDocument | Transpor
   if (!store.isVisible(key)) return fail(404, 'not_visible', `No ticket ${key}`, 'The ticket is restricted to other people.')
   const ws = store.workspaceOf(key)
   if (ws && !store.roleIn(ws.id, store.viewer)) return fail(403, 'forbidden', 'You are not a member of this workspace.', 'Ask an owner.')
-  return store.ticket(key)!
+  return store.servedTicket(key)!
 }
 const isResponse = (x: unknown): x is TransportResponse => typeof x === 'object' && x !== null && 'status' in x && 'json' in x
 
@@ -86,7 +90,7 @@ function postAction(store: MockStore, ctx: RouteContext): TransportResponse {
   if (!a || typeof a !== 'object' || !('action' in a)) return fail(400, 'validation', 'Body must be {action, ...}')
   if (!can(role, 'ticket.act')) return fail(403, 'forbidden', 'Viewers cannot change tickets.', 'Ask an owner or maintainer.')
 
-  const finish = (event: OrchEvent | null) => ok({ ok: true, event, ticket: store.ticket(key)! })
+  const finish = (event: OrchEvent | null) => ok({ ok: true, event, ticket: store.servedTicket(key)! })
 
   switch (a.action) {
     case 'answer': {
@@ -102,6 +106,19 @@ function postAction(store: MockStore, ctx: RouteContext): TransportResponse {
       return finish(event)
     }
     case 'approve': {
+      if (a.gate === 'verify') return fail(400, 'validation', 'The verify gate is approved by a verdict.', 'Give the verdict instead.')
+      if (a.gate === 'code') {
+        // The code review (owner decision 2026-10-10): after a pass verdict, on exactly the commit it signed.
+        if (!codeReviewWaits(t)) return fail(409, 'gate.not_open', `${key} has no code review waiting.`, t.gates.code.required ? 'A code review follows a pass verdict.' : 'The code review gate is off for this ticket.')
+        const why = store.canApprove(t, 'code', me)
+        if (why) return fail(403, 'gate.not_eligible', why, 'See the gate policy in the workspace settings.')
+        if (a.source_sha !== t.branch.head || a.source_sha !== t.verdict?.source_sha)
+          return fail(409, 'gate.stale', `The branch moved: its head is ${t.branch.head}, not ${String(a.source_sha)}.`, 'Open the changes again and review the current commit.')
+        const event = store.append(key, { type: 'gate.approved', gate: 'code', presence: 'touchid', source_sha: a.source_sha })
+        // Done only once the policy's count is met (a count of 2 waits for the second reviewer).
+        if (!codeReviewWaits(store.ticket(key)!)) store.append(key, { type: 'status.changed', actor: 'host', to: 'done' })
+        return finish(event)
+      }
       const why = store.canApprove(t, a.gate, me)
       if (why) return fail(403, 'gate.not_eligible', why, 'See the gate policy in the workspace settings.')
       const event = store.append(key, { type: 'gate.approved', gate: a.gate, presence: 'touchid' })
@@ -112,8 +129,13 @@ function postAction(store: MockStore, ctx: RouteContext): TransportResponse {
       if (!a.text?.trim()) return fail(400, 'validation', 'Say what should change.')
       const why = store.canApprove(t, a.gate, me)
       if (why && !/already/.test(why)) return fail(403, 'gate.not_eligible', why)
+      if (a.gate === 'code' && !codeReviewWaits(t)) return fail(409, 'gate.not_open', `${key} has no code review waiting.`)
+      // A verdict stands: changes on verify would leave it in place and the ticket stuck. A new commit or the code review voids it.
+      if (a.gate === 'verify' && t.verdict) return fail(409, 'verdict.exists', 'A verdict was already given.', 'A new commit voids it; with the code review on, ask for changes there.')
       const event = store.append(key, { type: 'gate.changes_requested', gate: a.gate, text: a.text.trim() })
-      if (a.gate === 'verify' && t.status === 'testing') store.append(key, { type: 'status.changed', actor: 'host', to: 'in-progress' })
+      // Changes to the code void the verdict too: the next commit needs a new one.
+      if (a.gate === 'code') store.append(key, { type: 'gate.invalidated', actor: 'host', gate: 'verify', reason: 'The code review asked for changes.', cause: 'code_review' })
+      if ((a.gate === 'verify' || a.gate === 'code') && t.status === 'testing') store.append(key, { type: 'status.changed', actor: 'host', to: 'in-progress' })
       return finish(event)
     }
     case 'verdict': {
@@ -121,10 +143,14 @@ function postAction(store: MockStore, ctx: RouteContext): TransportResponse {
       if (t.verdict) return fail(409, 'verdict.exists', 'A verdict was already given.')
       const why = store.canApprove(t, 'verify', me)
       if (why) return fail(403, 'gate.not_eligible', why)
-      const event = store.append(key, { type: 'verdict.given', result: a.result, text: a.text?.trim() || undefined })
+      // The verdict signs the commit (owner decision 2026-10-10): the head the person saw must be the head now.
+      if (a.source_sha !== t.branch.head)
+        return fail(409, 'verdict.stale', `New commits since you opened the verdict: the branch head is ${t.branch.head}, not ${String(a.source_sha)}.`, 'Open the verdict again to see the current commit.')
+      const event = store.append(key, { type: 'verdict.given', result: a.result, text: a.text?.trim() || undefined, source_sha: a.source_sha })
       if (a.result === 'pass') {
-        store.append(key, { type: 'gate.approved', gate: 'verify', presence: 'touchid' })
-        store.append(key, { type: 'status.changed', actor: 'host', to: 'done' })
+        store.append(key, { type: 'gate.approved', gate: 'verify', presence: 'touchid', source_sha: a.source_sha })
+        // With the code review gate on for this ticket, it waits in testing for a person's code review.
+        if (!codeReviewWaits(store.ticket(key)!)) store.append(key, { type: 'status.changed', actor: 'host', to: 'done' })
       } else {
         store.append(key, { type: 'gate.changes_requested', gate: 'verify', text: a.text?.trim() })
         store.append(key, { type: 'status.changed', actor: 'host', to: 'in-progress' })
@@ -193,6 +219,12 @@ function bodyMatch(body: BodySections, needle: string): TicketSummary['match'] {
   return undefined
 }
 
+/** `_` and `-` read as spaces, so "tariff code" finds tariff_code. */
+const plainText = (s: string) => s.toLowerCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim()
+
+/** A key typed without its dash (demo0041) still finds DEMO-0041. */
+const squash = (s: string) => plainText(s).replace(/ /g, '')
+
 function searchTickets(s: MockStore, ws: string, query: URLSearchParams): TicketSummary[] {
   const list = (k: string) => query.get(k)?.split(',').filter(Boolean)
   const statuses = list('status')
@@ -217,7 +249,7 @@ function searchTickets(s: MockStore, ws: string, query: URLSearchParams): Ticket
     .filter((t) => restricted === null || t.restricted === (restricted === 'true'))
     .map((t) => ({
       t,
-      direct: !q || t.key.toLowerCase().includes(q) || t.title.toLowerCase().includes(q) || t.labels.some((l) => l.toLowerCase().includes(q)),
+      direct: !q || [t.key, t.title, ...t.labels].some((v) => plainText(v).includes(plainText(q))) || squash(t.key).includes(squash(q)),
       match: q ? bodyMatch(t.body, q) : undefined,
     }))
     .filter((r) => r.direct || r.match)
@@ -234,11 +266,13 @@ function searchTickets(s: MockStore, ws: string, query: URLSearchParams): Ticket
         return byUpdated(a.t, b.t)
     }
   })
-  return rows.map(({ t, match }) => ({ ...s.summary(t), ...(match ? { match } : {}) }))
+  const blocks = s.blockingCheck(ws)
+  return rows.map(({ t, match }) => ({ ...s.summary(t, blocks), ...(match ? { match } : {}) }))
 }
 
 const ROLES: Role[] = ['owner', 'maintainer', 'member', 'viewer']
-const GATES: GateName[] = ['requirements', 'plan', 'verify']
+const GATES: GateName[] = ['requirements', 'plan', 'verify', 'code']
+const TICKET_TYPES = ['feature', 'bug', 'chore', 'spike', 'epic']
 
 /** A stable, fake SHA256-style fingerprint derived from the workspace id. */
 function fingerprint(id: string): string {
@@ -267,6 +301,11 @@ function postSettings(store: MockStore, ctx: RouteContext): TransportResponse {
       const name = String(b.name ?? '').trim()
       if (name.length < 1 || name.length > 60) return fail(400, 'validation.name', 'The name needs 1 to 60 characters.')
       store.appendWs(wsId, { type: 'workspace.renamed', name })
+      return done()
+    }
+    case 'grant.hours': {
+      if (!Number.isInteger(b.hours) || b.hours < 1 || b.hours > GRANT_MAX_HOURS) return fail(400, 'validation.hours', `The agent grant length is 1 to ${GRANT_MAX_HOURS} hours.`)
+      store.appendWs(wsId, { type: 'workspace.grant_hours_set', hours: b.hours })
       return done()
     }
     case 'member.add': {
@@ -301,9 +340,15 @@ function postSettings(store: MockStore, ctx: RouteContext): TransportResponse {
       if (!APPROVER_GROUPS.some((a) => a.value === b.approvers)) return fail(400, 'validation.approvers', `Unknown approvers ${String(b.approvers)}`)
       if (!Number.isInteger(b.count) || b.count < 1 || b.count > 3) return fail(400, 'validation.count', 'A gate needs 1 to 3 approvals.')
       if (b.not != null && b.not !== 'assignees') return fail(400, 'validation', 'Only "assignees" can be excluded.')
+      // The code review gate: never an assignee; `applies` says where it is on (off, every ticket, or ticket types).
+      if (b.gate === 'code' && b.not !== 'assignees') return fail(400, 'validation', 'A code review is never by an assignee.')
+      if (b.applies !== undefined && b.gate !== 'code') return fail(400, 'validation', 'Only the code review gate can be turned on or off.')
+      if (b.applies !== undefined && b.applies !== 'off' && b.applies !== 'all' && !(Array.isArray(b.applies) && b.applies.length > 0 && b.applies.every((x) => TICKET_TYPES.includes(x)) && new Set(b.applies).size === b.applies.length))
+        return fail(400, 'validation.applies', 'Say off, all, or a list of ticket types.')
       const why = unmeetablePolicy(ws, { approvers: b.approvers, count: b.count })
       if (why) return fail(409, 'gate.unmeetable', why, 'Add people to that group first, or lower the count.')
-      store.appendWs(wsId, { type: 'gate.policy_set', gate: b.gate, approvers: b.approvers, count: b.count, not: b.not ?? null })
+      store.appendWs(wsId, { type: 'gate.policy_set', gate: b.gate, approvers: b.approvers, count: b.count, not: b.not ?? null, ...(b.gate === 'code' ? { applies: b.applies ?? ws.gates.code.applies ?? 'off' } : {}) })
+      if (b.gate === 'code') store.recheckCodeReview(wsId)
       return done()
     }
     case 'archive':
@@ -393,6 +438,12 @@ export function buildRouter(): MockRouter {
     const res = relayRequest(s, c.params.ws, c.body as RelayRequest | null)
     return res.ok ? ok(res.relay) : fail(res.status, res.code, res.message, res.hint)
   })
+  // Mandates, PREVIEW ONLY (mocks/mandates-preview.ts): not part of the contract, nothing is signed.
+  readOf('/api/workspaces/:ws/preview/mandates', (s, c) => ok(s.mandatesPreview.state(c.params.ws)))
+  r.add('POST', '/api/workspaces/:ws/preview/mandates', (s, c) => {
+    const res = s.mandatesPreview.request(c.params.ws, c.body as MandatesPreviewRequest | null)
+    return res.ok ? ok(res.state) : fail(res.status, res.code, res.message, res.hint)
+  })
   readOf('/api/workspaces/:ws/cursor', (s, c) =>
     ok({ cursor: s.cursor(c.params.ws) }),
   )
@@ -412,7 +463,7 @@ export function buildRouter(): MockRouter {
   const person = (s: MockStore) => ({ kind: 'person', id: s.viewer, device: 'd_mac' }) as const
   r.add('POST', '/api/workspaces/:ws/grants', (s, c) => {
     if (!s.workspaces.some((w) => w.id === c.params.ws)) return fail(404, 'not_found', 'No such workspace')
-    const b = c.body as { hours?: number; scope?: 'all' } | null
+    const b = c.body as { hours?: number; scope?: 'all' | 'workable' } | null
     const res = s.issueGrant(c.params.ws, { hours: Number(b?.hours), scope: b?.scope ?? 'all' }, person(s))
     return res.ok ? ok(res.grant, 201) : fail(res.status, res.code, res.message, res.hint)
   })
@@ -457,6 +508,34 @@ export function buildRouter(): MockRouter {
     return ok(s.eventsOf(c.params.key).filter((e) => e.seq > since))
   })
   r.add('POST', '/api/tickets/:key/actions', postAction)
+  // Dry run of a code review policy: which tickets it would move (for the signing covers). Owners only.
+  r.add('POST', '/api/workspaces/:ws/code-review-preview', (s, c) => {
+    const ws = s.workspaces.find((w) => w.id === c.params.ws)
+    if (!ws) return fail(404, 'not_found', 'No such workspace')
+    if (!can(s.roleIn(ws.id, s.viewer), 'settings')) return fail(403, 'forbidden', 'Only owners change gate policies.')
+    const b = c.body as { count?: number; applies?: CodeReviewApplies } | null
+    const count = Number(b?.count)
+    if (!Number.isInteger(count) || count < 1 || count > 3) return fail(400, 'validation.count', 'A gate needs 1 to 3 approvals.')
+    const moves = s.codeReviewMoves(ws.id, { count, applies: b?.applies ?? 'off' })
+    // Keys the viewer cannot see are counted, never named.
+    const named = (keys: string[]) => ({ keys: keys.filter((k) => s.isVisible(k)), hidden: keys.filter((k) => !s.isVisible(k)).length })
+    return ok({ back: named(moves.back), done: named(moves.done) })
+  })
+  // Core's diff of the ticket branch against its base (the Changes view next to the evidence).
+  r.add('GET', '/api/tickets/:key/changes', (s, c) => {
+    const t = visibleTicket(s, c.params.key)
+    if (isResponse(t)) return t
+    return ok(changesOf(t, t.branch.commits))
+  })
+  // Demo only (like /api/dev/relay): the ticket's agent pushes a commit to its branch. Members and above.
+  r.add('POST', '/api/dev/tickets/:key/push', (s, c) => {
+    const t = visibleTicket(s, c.params.key)
+    if (isResponse(t)) return t
+    const ws = s.workspaceOf(t.key)!
+    if (!can(s.roleIn(ws.id, s.viewer), 'ticket.act')) return fail(403, 'forbidden', 'Viewers cannot run the demo.')
+    const res = s.pushCommit(t.key)
+    return res.ok ? ok({ ok: true, sha: res.sha, ticket: s.servedTicket(t.key) }) : fail(res.status, res.code, res.message, res.hint)
+  })
   r.add('GET', '/api/addons', (s) => ok(s.addons))
   readOf('/api/workspaces/:ws/addons', (s, c) =>
     ok(s.workspaceAddons(c.params.ws)),
@@ -514,12 +593,12 @@ export function buildRouter(): MockRouter {
   return r
 }
 
-/** Handler with simulated latency (120-300 ms). Pass { latency: false } in tests. */
-export function createMockHandler(store: MockStore, opts: { latency?: boolean } = {}) {
+/** Handler with simulated latency: one shared delay per burst of requests (see latency.ts). Pass { latency: false } in tests. */
+export function createMockHandler(store: MockStore, opts: { latency?: boolean | LatencySettings } = {}) {
   const router = buildRouter()
-  const latency = opts.latency ?? true
+  const latency = opts.latency === false ? null : createLatency(opts.latency === true || opts.latency === undefined ? readLatencySettings() : opts.latency)
   return async (method: HttpMethod, path: string, body?: unknown): Promise<TransportResponse> => {
-    if (latency) await new Promise((res) => setTimeout(res, 120 + Math.random() * 180))
+    if (latency) await latency()
     const m = router.match(method, path, body)
     if (!m) return fail(404, 'not_found', `No route for ${method} ${path}`)
     try {

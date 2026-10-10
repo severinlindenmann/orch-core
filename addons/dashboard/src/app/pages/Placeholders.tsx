@@ -1,8 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
-import { api } from '@/api/client'
 import { AddonFrame } from '@/addon-ui/AddonFrame'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useWorkspace } from '../workspace'
+import { queries } from '@/api/queries'
 
 export function Placeholder({ title, addon }: { title: string; addon?: string }) {
   const body = <p className="text-sm text-text-muted">Coming in a later iteration.</p>
@@ -16,11 +16,7 @@ export function Placeholder({ title, addon }: { title: string; addon?: string })
 
 export function TodayPlaceholder() {
   const { workspace } = useWorkspace()
-  const { data, isLoading } = useQuery({
-    queryKey: ['today', workspace?.id],
-    queryFn: () => api.getToday(workspace!.id),
-    enabled: !!workspace,
-  })
+  const { data, isLoading } = useQuery({ ...queries.today(workspace?.id as string), enabled: !!workspace })
   return (
     <div className="space-y-4">
       <h1 className="text-xl font-semibold tracking-tight">Today</h1>

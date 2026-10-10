@@ -22,7 +22,8 @@ export function AddonChartView({ node }: { node: NodeOf<'chart'> }) {
         <ResponsiveContainer width="100%" height="100%" minWidth={0}>
           {node.kind === 'bar' ? (
             <BarChart data={node.points} layout={horizontal ? 'vertical' : 'horizontal'} margin={horizontal ? { top: 4, right: 72, bottom: 0, left: 0 } : { top: 8, right: 8, bottom: 0, left: -12 }}>
-              <CartesianGrid vertical={horizontal} horizontal={!horizontal} stroke="var(--border)" />
+              {/* Value labels carry the numbers: no gridlines then, so a label never sits on a line (B m4). */}
+              {!node.valueLabels && <CartesianGrid vertical={horizontal} horizontal={!horizontal} stroke="var(--border)" />}
               {horizontal ? (
                 <>
                   <XAxis type="number" hide />

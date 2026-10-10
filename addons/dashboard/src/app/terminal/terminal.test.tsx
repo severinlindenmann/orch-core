@@ -35,7 +35,7 @@ describe('terminals page', () => {
     const term = document.querySelector('[data-terminal-session="agent1"]')!
     expect(term).toHaveAttribute('aria-readonly', 'true')
     await waitFor(() => expect(term.querySelector('textarea')).toHaveAttribute('aria-readonly', 'true'), T)
-    await waitFor(() => expect(term.textContent).toContain('err human_only approve · retry:false · next: orch ask or orch wait'), T)
+    await waitFor(() => expect(term.textContent).toContain('waiting · Answer Q2 · Severin'), T)
     await user.type(term.querySelector('textarea')!, 'ls{enter}')
     await new Promise((r) => setTimeout(r, 150)) // give a (wrongly) accepted keystroke time to run
     expect(term.textContent).not.toContain('dbt_project.yml')

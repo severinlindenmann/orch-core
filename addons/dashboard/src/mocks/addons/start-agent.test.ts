@@ -117,7 +117,7 @@ describe('starting a run', () => {
     await start(s)
     vi.advanceTimersByTime(15_000)
     const tl = ((await s.api.getAddonState(s.ws, 'activity')) as unknown as { timeline: { actor: string; ticket?: string; summary: string; title: string; subtitle: string }[] }).timeline
-    expect(tl.some((r) => r.actor === 'claude-code' && r.ticket === 'DEMO-0044')).toBe(true)
+    expect(tl.some((r) => r.actor === 'Claude Code for Severin' && r.ticket === 'DEMO-0044')).toBe(true)
     // The start is in the workspace log (collapsed with the activity install just before it, so it is the latest line).
     expect(tl.some((r) => r.ticket === undefined && /started an agent session \(Claude Code\)/.test(`${r.summary} ${r.subtitle}`))).toBe(true)
   })

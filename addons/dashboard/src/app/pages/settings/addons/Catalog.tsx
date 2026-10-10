@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/api/client'
+import type { AddonPackage } from '@/api/types'
 import { AddonBadge } from '@/addon-ui/AddonBadge'
 import { PreviewChip } from '@/addon-ui/PreviewChip'
 import { Badge } from '@/components/ui/badge'
@@ -8,15 +9,15 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '
 import { Skeleton } from '@/components/ui/skeleton'
 import { CapabilityChips } from './CapabilityChips'
 
-/** "Browse addons": what can be installed here. Installing adds it; granting its capabilities is a separate, signed step. */
-export function Catalog({ ws, canEdit, open, onOpenChange, onInstall }: { ws: string; canEdit: boolean; open: boolean; onOpenChange: (o: boolean) => void; onInstall: (name: string) => void }) {
+/** "Browse addons": what can be installed here. Install opens core's capability sheet; one signature grants and turns it on. */
+export function Catalog({ ws, canEdit, open, onOpenChange, onInstall }: { ws: string; canEdit: boolean; open: boolean; onOpenChange: (o: boolean) => void; onInstall: (pkg: AddonPackage) => void }) {
   const { data, isLoading } = useQuery({ queryKey: ['addon-catalog', ws], queryFn: () => api.getAddonCatalog(ws), enabled: open })
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="w-[420px] gap-0 overflow-y-auto border-border bg-surface sm:max-w-[420px]">
         <SheetHeader>
           <SheetTitle>Browse addons</SheetTitle>
-          <SheetDescription>Installing needs a grant before it can run.</SheetDescription>
+          <SheetDescription>Installing asks you to review what it may do, then turns it on with one signature.</SheetDescription>
         </SheetHeader>
         <div className="space-y-3 px-4 pb-4">
           {isLoading && <Skeleton className="h-24 w-full" />}
@@ -34,7 +35,7 @@ export function Catalog({ ws, canEdit, open, onOpenChange, onInstall }: { ws: st
               </header>
               <p className="text-[13px] text-text-muted">{a.description}</p>
               <CapabilityChips capabilities={a.capabilities} />
-              <Button size="sm" disabled={!canEdit} onClick={() => onInstall(a.name)}>
+              <Button size="sm" disabled={!canEdit} onClick={() => onInstall(a)}>
                 Install
               </Button>
             </article>

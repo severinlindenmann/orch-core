@@ -71,11 +71,11 @@ describe('board grouped by epic (N2)', () => {
     await waitFor(async () => expect(await sumOf()).toBe(grouped + 21))
   })
 
-  it('No epic comes first, and lane titles are h3 headings', async () => {
+  it('No epic comes last, and lane titles are h3 headings', async () => {
     renderApp('/board')
     const none = await screen.findByRole('button', { name: /^Collapse No epic/ }, T)
     const epic = screen.getByRole('button', { name: /^Collapse DEMO-0040 / })
-    expect(none.compareDocumentPosition(epic) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(epic.compareDocumentPosition(none) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(screen.getByRole('heading', { level: 3, name: 'No epic' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { level: 3, name: /Tariff and billing/ })).toBeInTheDocument()
   })
@@ -150,7 +150,8 @@ describe('board grouped by epic (N2)', () => {
 
   it('if the viewer cannot be loaded the board shows an error with Retry, not Loading forever', async () => {
     const real = api.getMe.bind(api)
-    const spy = vi.spyOn(api, 'getMe').mockRejectedValueOnce(new Error('down'))
+    // Down until restored: the route loader asks first, the page asks again when it mounts (G4).
+    const spy = vi.spyOn(api, 'getMe').mockRejectedValue(new Error('down'))
     const { user } = renderApp('/board')
     expect(await screen.findByRole('alert', {}, T)).toHaveTextContent(/Could not load the board/)
     spy.mockImplementation(real)

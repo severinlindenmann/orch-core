@@ -14,7 +14,7 @@ export type Permission =
   | 'ticket.label'
   /** Save a view shared with the workspace. */
   | 'view.share'
-  /** Issue an agent grant for yourself, and revoke your own. */
+  /** Issue an agent grant for yourself, and revoke your own (members: limited terms, see grantTerms in api/grants.ts). */
   | 'grant.issue'
   /** Revoke anyone's agent grant. */
   | 'grant.revoke.any'
@@ -36,7 +36,7 @@ const MIN_ROLE: Record<Permission, Role> = {
   'ticket.move': 'maintainer',
   'ticket.label': 'maintainer',
   'view.share': 'member',
-  'grant.issue': 'maintainer',
+  'grant.issue': 'member',
   'grant.revoke.any': 'owner',
   settings: 'owner',
   'addon.manage': 'owner',

@@ -1,3 +1,4 @@
+import { fmtSlot, fmtWhen } from '@/lib/time'
 import type { AddonDecision, NewTicketRequest } from '@/api/types'
 import type { StoreFailure } from '../store'
 import type { Rng } from '../busy/rng'
@@ -57,19 +58,15 @@ interface Run {
 
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const DOW_LONG = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
 const KIND_LABEL: Record<Kind, string> = { schedule: 'schedule', listener: 'listener', recurring: 'recurring ticket' }
 const KEEP_RUNS = 200
 const SHOWN_RUNS = 8
 const MAX_FINDINGS_SHOWN = 5
-const pad = (n: number) => String(n).padStart(2, '0')
 const minutes = (hhmm: string) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5))
 
-const stamp = (iso: string) => {
-  const d = new Date(iso)
-  return `${DOW[d.getUTCDay()]} ${pad(d.getUTCDate())} ${MON[d.getUTCMonth()]} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())} UTC`
-}
+/** When a run happened, in the one format (src/lib/time.ts): "30 min ago", "4 days ago". */
+const stamp = (iso: string, now: string) => fmtWhen(iso, now)
 /** ISO week number of a date. */
 function isoWeek(iso: string): number {
   const d = new Date(iso)
@@ -105,7 +102,7 @@ const nextText = (s: Schedule, now: string): string => {
   if (!s.armed) return 'disabled'
   if (s.kind === 'listener') return `on the next ticket moved to ${s.to}`
   const n = nextSlot(s, now)
-  return n ? `${DOW[new Date(n).getUTCDay()]} ${n.slice(11, 16)} UTC` : 'no slot in the next 8 days'
+  return n ? fmtSlot(n) : 'no slot in the next 8 days'
 }
 
 const schedulesOf = (state: Record<string, unknown>) => state.schedules as Schedule[]
@@ -113,9 +110,9 @@ const runsOf = (state: Record<string, unknown>) => state.runs as Run[] // newest
 const selectedOf = (state: Record<string, unknown>, viewer: string): string | undefined => ((state.nav ?? {}) as Record<string, { selected?: string }>)[viewer]?.selected
 const fail = (status: number, code: string, message: string): StoreFailure => ({ ok: false, status, code, message })
 const lastRun = (state: Record<string, unknown>, id: string) => runsOf(state).find((r) => r.schedule === id)
-const lastText = (state: Record<string, unknown>, id: string) => {
+const lastText = (state: Record<string, unknown>, id: string, now: string) => {
   const r = lastRun(state, id)
-  return r ? `${stamp(r.at)}, ${r.result}` : 'never'
+  return r ? `${stamp(r.at, now)}, ${r.result}` : 'never'
 }
 
 const TEMPLATE_DEPS: Template = { label: 'Dependency update', title: 'Update dependencies, week {week}', ask: 'Bump minor versions and run the tests.', type: 'chore', priority: 'medium' }
@@ -221,13 +218,13 @@ registerAddon({
       trigger: triggerText(s),
       skill: s.skill ?? 'none (files a ticket)',
       armed: s.armed,
-      last: lastText(state, s.id),
+      last: lastText(state, s.id, c.store.now()),
       next: nextText(s, now),
     }))
     const lastOutcome = (id: string) => lastRun(state, id)?.result ?? '–'
     const lastAt = (id: string) => {
       const r = lastRun(state, id)
-      return r ? stamp(r.at) : 'never'
+      return r ? stamp(r.at, c.store.now()) : 'never'
     }
     // One row per schedule: state, timing, next run, and the last run's time and outcome as their own columns.
     const scheduleRows = schedules.map((s) => ({
@@ -243,7 +240,7 @@ registerAddon({
     const nameFor = (id: string) => schedules.find((s) => s.id === id)?.name ?? id
     const shown = runs.slice(0, SHOWN_RUNS)
     const selected = runs.find((r) => r.id === selectedOf(state, c.viewer)) ?? runs[0]
-    const reportTitle = selected ? `Report: ${nameFor(selected.schedule)} · ${selected.id} · ${stamp(selected.at)}` : ''
+    const reportTitle = selected ? `Report: ${nameFor(selected.schedule)} · ${selected.id} · ${stamp(selected.at, c.store.now())}` : ''
     const report = selected?.report ?? ''
     const open = runs.filter((r) => r.findingState === 'open').length
     return {
@@ -254,7 +251,7 @@ registerAddon({
       runsNote: runs.length > shown.length ? `Showing the latest ${shown.length} of ${runs.length} runs.` : `${plural(runs.length, 'run', 'runs')}.`,
       shownRunCount: shown.length,
       runItems: shown.map((r) => ({
-        title: `${stamp(r.at)} · ${nameFor(r.schedule)}`,
+        title: `${stamp(r.at, c.store.now())} · ${nameFor(r.schedule)}`,
         subtitle: r.filed && canSeeTicket(c, r.filed) ? `${r.summary} Filed as ${r.filed}.` : r.findingState === 'dismissed' ? `${r.summary} Dismissed.` : r.summary,
         badge: r.result,
         status: r.result === 'failed' ? ('error' as const) : r.result === 'finding' ? ('warn' as const) : ('ok' as const),

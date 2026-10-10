@@ -1,14 +1,9 @@
 import { useEffect, useState } from 'react'
+import { usePageWidth } from '../../pageWidth'
 import type { AgentInfo, Workspace } from '@/api/types'
 
-/** Elapsed time between two ISO instants, as "14m", "2h 05m" or "3d". */
-export function ago(from: string, now: string) {
-  const mins = Math.max(0, Math.round((Date.parse(now) - Date.parse(from)) / 60_000))
-  if (mins < 1) return 'just now'
-  if (mins < 60) return `${mins}m`
-  if (mins < 60 * 24) return `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, '0')}m`
-  return `${Math.floor(mins / 1440)}d`
-}
+/** How long an item has waited ("14 min", "2 h", "3 days"): the one formatter, src/lib/time.ts. */
+export { fmtAge as ago } from '@/lib/time'
 
 export interface Directory {
   workspace?: Workspace
@@ -27,6 +22,13 @@ export function displayName(dir: Directory, id: string): string {
 
 /** Today's two layouts: a side column from 1280 px, one column below. */
 export const WIDE_QUERY = '(min-width: 1280px)'
+/** Today's two columns need this page width (the shell's: the window minus a right-hand dock). */
+export const TODAY_WIDE_MIN = 1280
+
+/** Today (and its skeleton) lay out in two columns only when the page is wide: with the dock open, one column. */
+export function useTodayWide(): boolean {
+  return usePageWidth() >= TODAY_WIDE_MIN
+}
 
 export function useMediaQuery(query: string): boolean {
   const get = () => (typeof window !== 'undefined' && typeof window.matchMedia === 'function' ? window.matchMedia(query).matches : false)

@@ -39,21 +39,12 @@ const as = (s: S, viewer: string): S => {
 }
 
 describe('agent transcript', () => {
-  it('is built from the session ticket, not hard-coded', async () => {
+  it('is built from the session ticket, not hard-coded, and never scripts a wait (the view scripts it from live state)', async () => {
     const s = setup('p_sev')
     const a = (await state(s)).sessions.find((x) => x.kind === 'agent')!
-    expect(a.transcript).toContain(`orch approve ${a.ticket} plan`)
-    const sessions = s.store.addonState(s.ws, 'terminals').sessions as { id: string; ticket: string | null }[]
-    sessions.find((x) => x.id === a.id)!.ticket = 'DEMO-0044'
-    const b = (await state(s)).sessions.find((x) => x.id === a.id)!
-    expect(b.transcript).toContain('orch approve DEMO-0044 plan')
-    expect(b.transcript.join('\n')).not.toContain('DEMO-0043')
-  })
-  it('a mirror without a ticket has no approve line', async () => {
-    const s = setup('p_sev')
-    const sessions = s.store.addonState(s.ws, 'terminals').sessions as { kind: string; ticket: string | null }[]
-    sessions.find((x) => x.kind === 'agent')!.ticket = null
-    expect((await state(s)).sessions.find((x) => x.kind === 'agent')!.transcript.some((c) => c.startsWith('orch approve'))).toBe(false)
+    expect(a.transcript.some((c) => c.startsWith('orch approve'))).toBe(false)
+    // DEMO-0043 waits on Severin's answer to Q2: the live move says so, with his name.
+    expect(a.ctx.ticket?.move).toMatchObject({ who: 'p_sev', why: 'Answer Q2', name: 'Severin' })
   })
 })
 
@@ -68,7 +59,6 @@ describe('terminals state', () => {
     expect(shell).toMatchObject({ kind: 'person', owner: 'p_sev', ticket: 'DEMO-0043', status: 'running', interactive: true })
     expect(shell.ctx.branch).toBe('feat/billing-join')
     expect(mirror).toMatchObject({ kind: 'agent', interactive: false, label: 'DEMO-0043 · Claude Code' })
-    expect(mirror.transcript.some((c) => c.startsWith('orch approve'))).toBe(true)
     expect(stopped).toMatchObject({ status: 'stopped', interactive: false })
     expect(st.settings).toEqual({ shell: '/bin/zsh', font_size: 13 })
   })
@@ -290,5 +280,33 @@ describe('harness sessions (start, resume)', () => {
     expect(await refused(run(s, 'resume', { session: 'agent1' }))).toMatchObject({ status: 409, code: 'terminals.running' })
     expect(await status(run(as(setup(), 'p_mara'), 'resume', { session: 'old1' }))).toBe(404)
     expect(await status(run(as(setup(), 'p_tom'), 'resume', { session: 'codex0' }))).toBe(403)
+  })
+  it('login_shell: owners only; a shell as the agents\' OS user with the connection\'s login command typed, not run', async () => {
+    const s = setup('p_sev')
+    const r = (await run(s, 'login_shell', { connection: 'databricks-prod' })) as { terminal?: string }
+    const mine = (await state(s)).sessions.find((x) => x.id === r.terminal) as Sess & { prefill?: string; run_as?: string }
+    expect(mine).toMatchObject({ kind: 'person', owner: 'p_sev', interactive: true, harness: 'shell', run_as: 'orch-agent', label: 'Log in databricks-prod as orch-agent' })
+    expect(mine.prefill).toMatch(/^databricks auth login --profile prod/)
+    expect(mine.ctx.user).toBe('orch-agent')
+    expect(mine.transcript).toEqual([]) // typed, not run
+    // The open leaves a trace: the owner, the connection, the OS user.
+    expect(s.store.wsEventsOf(s.ws).at(-1)).toMatchObject({ type: 'terminal.shell_opened', actor: { kind: 'person', id: 'p_sev' }, connection: 'databricks-prod', run_as: 'orch-agent', session: r.terminal })
+    // The command is the host's, never the request's; unknown or login-less connections are refused; so are non-owners.
+    expect(await status(run(s, 'login_shell', { connection: 'nope', command: 'rm -rf /' }))).toBe(404)
+    expect(await status(run(s, 'login_shell', { connection: 'tariff-api' }))).toBe(400)
+    expect(await status(run(as(setup(), 'p_mara'), 'login_shell', { connection: 'databricks-prod' }))).toBe(403)
+    expect(await status(run(as(setup(), 'p_tom'), 'login_shell', { connection: 'databricks-prod' }))).toBe(403)
+    // Refusals leave no trace.
+    expect(s.store.wsEventsOf(s.ws).filter((e) => e.type === 'terminal.shell_opened')).toHaveLength(1)
+    const m = as(setup(), 'p_mara')
+    await status(run(m, 'login_shell', { connection: 'databricks-prod' }))
+    expect(m.store.wsEventsOf(m.ws).some((e) => e.type === 'terminal.shell_opened')).toBe(false)
+  })
+  it('login_shell refuses without pty', async () => {
+    const s = setup('p_sev')
+    const w = s.store.workspaces.find((x) => x.id === s.ws)!
+    w.addons.terminals.granted = { ...w.addons.terminals.granted!, capabilities: [] }
+    expect(await refused(run(s, 'login_shell', { connection: 'databricks-prod' }))).toMatchObject({ status: 409, code: 'terminals.no_pty' })
+    expect(s.store.wsEventsOf(s.ws).some((e) => e.type === 'terminal.shell_opened')).toBe(false)
   })
 })

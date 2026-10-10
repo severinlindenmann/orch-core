@@ -1,3 +1,4 @@
+import { PACKAGE_NAME, validTerms } from '@/api/addons'
 import type { AddonActionResult, AddonDecision } from '@/api/types'
 import type { LaunchPlan, LaunchRequest } from '../sessions'
 import type { Rng } from '../busy/rng'
@@ -18,11 +19,22 @@ export interface AddonCtx {
   decision?: AddonDecision
 }
 
+export interface SeedRecord {
+  ticket: string
+  event: { type: string; actor: string; at: string; [k: string]: unknown }
+}
+
 export interface Charter {
   epic: string
   signedBy: string
   active: boolean
+  /** The largest child size the charter covers (xs < s < m < l < xl); larger or unsized children wait for a person. */
+  maxSize: 'xs' | 's' | 'm' | 'l' | 'xl'
 }
+
+const CHARTER_SIZES = ['xs', 's', 'm', 'l', 'xl']
+/** Is a child of `size` inside a charter's size limit? An unsized child is not. */
+export const withinCharterSize = (size: string | null, max: Charter['maxSize']): boolean => !!size && CHARTER_SIZES.includes(size) && CHARTER_SIZES.indexOf(size) <= CHARTER_SIZES.indexOf(max)
 
 /** An action's result, or a refusal the router turns into an HTTP error (status, code, sentence). */
 export type AddonActionFn = (ctx: AddonCtx) => AddonActionResult | StoreFailure
@@ -35,6 +47,12 @@ export type AddonAction = AddonActionFn
 
 export interface MockAddon {
   name: string
+  /**
+   * The shape of this module's state. Bump it when the seed's shape changes (renamed keys, other models): state a
+   * browser saved under another version is dropped on load and seeded again, so a view never reads an old shape.
+   * Default 1.
+   */
+  stateVersion?: number
   /** Initial state per workspace (seed). */
   seed(ws: string, store: MockStore): Record<string, unknown>
   /**
@@ -42,6 +60,11 @@ export interface MockAddon {
    * pages, ...). `rng` is seeded per workspace and addon, so the data is the same every time. Omitted: the normal seed.
    */
   seedBusy?(ws: string, store: MockStore, rng: Rng): Record<string, unknown>
+  /**
+   * Records the seeded state implies in the tickets' logs (e.g. the landing attempts of generated tickets), written into
+   * the seed itself when the store seeds: `at` orders them among the seeded events. Fixture tickets carry their own.
+   */
+  seedLog?(state: Record<string, unknown>, ws: string, store: MockStore): SeedRecord[]
   /** Optional derived fields merged into GET .../state (e.g. counts). */
   view?(state: Record<string, unknown>, ctx: Omit<AddonCtx, 'body' | 'state'>): Record<string, unknown>
   /**
@@ -93,14 +116,33 @@ export function markDecided(state: Record<string, unknown>, id: string): void {
 
 /** Open decisions of an addon in a workspace, from its mock module (or the default rule). */
 export function openDecisions(addon: MockAddon | undefined, state: Record<string, unknown>, pkg: AddonDecision[], ctx: Omit<AddonCtx, 'body' | 'state'>): AddonDecision[] {
-  if (addon?.decisions) return addon.decisions(state, pkg, ctx)
   const done = (state.decided as string[] | undefined) ?? []
-  return pkg.filter((d) => !done.includes(d.id))
+  const open = addon?.decisions ? addon.decisions(state, pkg, ctx) : pkg.filter((d) => !done.includes(d.id))
+  // Terms core cannot show exactly (too many, odd keys, non-plain values) fail closed: that decision is not offered.
+  return open.filter((d) => validTerms(d.terms))
 }
 
 const registry = new Map<string, MockAddon>()
 
+/**
+ * Core's own event namespaces (`<namespace>.<verb>`). An addon writes only `<its name>.<verb>` records (the seedLog
+ * guard and the event rules check that prefix), so an addon named like one of these could pass core events off as its
+ * own: such names are refused at registration and at install (409 `addon.reserved_name`). From the ticket format
+ * (orch-v2-ticket-format.md §5: `role.changed`, `policy.changed`, `edit.external`, `projection.repaired`, `restore`)
+ * and the events core writes in this mock.
+ */
+export const CORE_EVENT_NAMESPACES: readonly string[] = [
+  'addon', 'agent', 'artifact', 'claim', 'comment', 'connection', 'decision', 'device', 'edit', 'epoch', 'gate', 'grant',
+  'handoff', 'host', 'labels', 'lease', 'log', 'member', 'pair', 'people', 'policy', 'projection', 'question', 'relay',
+  'restore', 'role', 'section', 'skill', 'status', 'task', 'ticket', 'verdict', 'verify', 'view', 'workspace',
+]
+
+/** A package name the host refuses (install and registration alike): one of core's own event namespaces. */
+export const isCoreNamespace = (name: string): boolean => CORE_EVENT_NAMESPACES.includes(name)
+
 export function registerAddon(a: MockAddon): void {
+  if (!PACKAGE_NAME.test(a.name)) throw new Error(`Addon name "${a.name}" must be lower case letters, digits and dashes (starting with a letter, at most 40).`)
+  if (isCoreNamespace(a.name)) throw new Error(`Addon name "${a.name}" is a core event namespace; pick another name.`)
   registry.set(a.name, a)
 }
 

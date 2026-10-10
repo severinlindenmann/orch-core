@@ -11,6 +11,8 @@ export interface PersistedV2 {
   created: Record<string, { ws: string; def: TicketDefinition; body: BodySections }>
   wsEvents: Record<string, WorkspaceEvent[]> // appended after the seed, per workspace id
   addonState: Record<string, Record<string, unknown>> // `${ws}/${addon}` -> state
+  /** The `stateVersion` each addon's saved state was written with (addon name -> version). Absent in older storage = 1. */
+  addonVersions?: Record<string, number>
   viewer?: string
   /** The demo dataset ('busy' = the generated busy day). Absent in older storage = 'normal'. */
   dataset?: 'normal' | 'busy'
@@ -32,6 +34,7 @@ export function loadPersisted(): PersistedV2 | null {
       created: p.created ?? {},
       wsEvents: p.wsEvents ?? {},
       addonState: p.addonState ?? {},
+      addonVersions: p.addonVersions ?? {},
       viewer: p.viewer,
       dataset: p.dataset === 'busy' ? 'busy' : 'normal',
     }

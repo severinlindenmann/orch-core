@@ -70,7 +70,7 @@ export function PairDialog({ workspace, relay, fetchedAt, onClose }: { workspace
       <SignPrompt
         title={`Add ${p.label} to ${workspace.name}`}
         description="The device gets this workspace's key. Only core shows this prompt; an agent or an addon cannot sign it."
-        covers={[`Device: ${p.label}`, `Code on both screens: ${spaced(p.fingerprint!)}`, `Seals the epoch ${relay.epoch} key to it`, 'Scopes: Look, Decide, Operate, Type']}
+        covers={[`Device: ${p.label} · pairing ${p.id}`, `Code on both screens: ${spaced(p.fingerprint!)} (${p.fingerprint})`, `Seals the epoch ${relay.epoch} key to it`, 'Scopes: Look, Decide, Operate, Type']}
         confirmLabel="Sign and add device"
         onClose={() => setSigning(false)}
         onSign={() => {

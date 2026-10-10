@@ -1,5 +1,5 @@
 import { cn } from '@/lib/utils'
-import { Download } from 'lucide-react'
+import { ChevronsRight, Download } from 'lucide-react'
 import { AddonBadge, parseNode, useSlot, type ResolvedContribution } from '@/addon-ui'
 import { roleReason, useRunAddonAction } from '@/addon-ui/useRunAddonAction'
 import type { ItemAction } from '@/addon-ui/nodes'
@@ -58,14 +58,37 @@ function LaneCard({ c, item }: { c: ResolvedContribution; item: LaneItem }) {
   )
 }
 
-/** One extra, read-only column per `board.lane` contribution. */
-export function AddonLanes() {
+/** The id the Board uses for an addon lane (its rails and jump chips). */
+export const laneId = (c: { addon: string; id: string }) => `${c.addon}/${c.id}`
+
+/**
+ * One extra, read-only column per `board.lane` contribution. In a narrow page area the Board may show a lane as a
+ * 40 px rail (`railed`, N11); expanding it calls `onExpand`.
+ */
+export function AddonLanes({ railed, onExpand }: { railed?: ReadonlySet<string>; onExpand?: (id: string) => void } = {}) {
   const lanes = useSlot('board.lane')
   return (
     <>
       {lanes.map((c) => {
         const Icon = iconByName(c.icon)
         const items = laneItems(c)
+        if (railed?.has(laneId(c)))
+          return (
+            <section key={laneId(c)} aria-label={`${c.title} (collapsed)`} data-addon={c.addon} data-lane={laneId(c)} className={cn('relative flex min-h-0 w-10 flex-col rounded-lg border', addonLane)}>
+              <button
+                type="button"
+                aria-label={`Expand ${c.title}, ${items.length} items`}
+                title={c.title}
+                onClick={() => onExpand?.(laneId(c))}
+                className="flex h-full min-h-[120px] w-full flex-col items-center gap-2 rounded-lg py-2 text-text-muted outline-none hover:bg-accent hover:text-text focus-visible:ring-2 focus-visible:ring-brand"
+              >
+                <AddonBadge name={c.addon} />
+                <ChevronsRight className="size-3.5" aria-hidden />
+                <span className="rounded-full bg-surface-3 px-1.5 font-mono text-[11px]">{items.length}</span>
+                <span className="text-[13px] font-semibold [writing-mode:vertical-rl]">{c.title}</span>
+              </button>
+            </section>
+          )
         return (
           <section
             key={`${c.addon}/${c.id}`}

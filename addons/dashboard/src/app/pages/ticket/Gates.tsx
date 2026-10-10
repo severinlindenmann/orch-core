@@ -3,9 +3,14 @@ import type { GateName, GateStatus, TicketDocument } from '@/api/types'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 import { availableActions, GATE_LABEL, policyText } from './actions'
-import { fmtDay, fmtTime, Mono, type Viewer } from './shared'
+import { fmtDay, fmtExact, Mono, type Viewer } from './shared'
 
-const GATES: GateName[] = ['requirements', 'plan', 'verify']
+/** The gates this ticket shows: the code review only where it applies (or once it was signed). */
+const gatesOf = (t: TicketDocument): GateName[] =>
+  t.gates.code.required || t.gates.code.approvals.length || t.gates.code.voided?.length ? ['requirements', 'plan', 'verify', 'code'] : ['requirements', 'plan', 'verify']
+
+/** The words for a verdict nobody reviewed: auto-approved under the factory charter (owner decision 2026-10-10). */
+export const CHARTER_VERDICT = 'Verdict: via the factory charter — no person reviewed this'
 
 const VIA: Record<string, string> = { cli: 'CLI', dashboard: 'dashboard', phone: 'phone', factory_charter: 'the factory charter' }
 const PRESENCE: Record<string, string> = { touchid: 'Touch ID', passkey: 'passkey', password: 'password' }
@@ -18,9 +23,16 @@ function stepState(name: GateName, gate: GateStatus, ticket: TicketDocument, min
   if (gate.state === 'approved') return { text: 'Approved', tone: 'success', Icon: CheckCircle2 }
   if (gate.state === 'changes_requested') return { text: 'Changes requested', tone: 'danger', Icon: MessageSquareWarning }
   if (gate.state === 'invalidated') return { text: 'Invalidated', tone: 'warning', Icon: ShieldAlert }
-  if (mine) return { text: name === 'verify' ? 'Waiting for your verdict' : 'Waiting for your approval', tone: 'warning', Icon: CircleDot }
-  const ready = name === 'verify' ? ticket.status === 'testing' : name === 'plan' ? ticket.gates.requirements.state === 'approved' && ticket.tasks.length > 0 : !!ticket.body.requirements?.trim()
-  if (ready) return { text: name === 'verify' ? 'Waiting for a verdict' : 'Waiting for approval', tone: 'neutral', Icon: CircleDot }
+  if (mine) return { text: name === 'verify' ? 'Waiting for your verdict' : name === 'code' ? 'Waiting for your review' : 'Waiting for your approval', tone: 'warning', Icon: CircleDot }
+  const ready =
+    name === 'verify'
+      ? ticket.status === 'testing'
+      : name === 'code'
+        ? ticket.status === 'testing' && ticket.verdict?.result === 'pass'
+        : name === 'plan'
+          ? ticket.gates.requirements.state === 'approved' && ticket.tasks.length > 0
+          : !!ticket.body.requirements?.trim()
+  if (ready) return { text: name === 'verify' ? 'Waiting for a verdict' : name === 'code' ? 'Waiting for a code review' : 'Waiting for approval', tone: 'neutral', Icon: CircleDot }
   return { text: 'Pending', tone: 'neutral', Icon: CircleDashed }
 }
 
@@ -36,6 +48,7 @@ function Approvals({ gate, viewer }: { gate: GateStatus; viewer: Viewer }) {
         <li key={i} className={cn('text-[12px]', stale ? 'text-text-muted line-through decoration-text-faint' : 'text-text')}>
           Approved by {viewer.name(a.by)}, {fmtDay(a.at)}
           {a.via === 'factory_charter' ? ' · auto-approved under the factory charter' : ''}
+          {a.source_sha ? ` · commit ${a.source_sha}` : ''}
           {' · '}
           {a.sig_ok === undefined ? (
             <span className="text-text-muted">signature not checked</span>
@@ -88,7 +101,7 @@ function Step({ name, ticket, viewer, mine }: { name: GateName; ticket: TicketDo
                 <div key={i}>
                   <dt className="inline text-text-faint">{viewer.name(a.by)} </dt>
                   <dd className="inline">
-                    {fmtTime(a.at)} UTC · via {a.via ? VIA[a.via] ?? a.via : 'unknown'}
+                    {fmtExact(a.at)} · via {a.via ? VIA[a.via] ?? a.via : 'unknown'}
                     {a.via === 'factory_charter' ? '' : ` · presence ${a.presence ? PRESENCE[a.presence] ?? a.presence : 'unknown'}`}
                   </dd>
                 </div>
@@ -113,11 +126,14 @@ function Step({ name, ticket, viewer, mine }: { name: GateName; ticket: TicketDo
  */
 export function GatesStrip({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewer }) {
   const av = availableActions(ticket, viewer)
-  const mine = (g: GateName) => (g === 'verify' ? av.verdict : av.approve.includes(g))
+  const GATES = gatesOf(ticket)
+  const mine = (g: GateName) => (g === 'verify' ? av.verdict : av.approve.includes(g as 'requirements' | 'plan' | 'code'))
   const notes = GATES.flatMap((g): { g: GateName; text: string; tone: 'warning' | 'danger' }[] => {
     const s = ticket.gates[g]
     if (s.state === 'invalidated' && s.reason) return [{ g, text: s.reason, tone: 'warning' }]
     if (s.state === 'changes_requested' && s.note) return [{ g, text: s.note, tone: 'danger' }]
+    // A charter verdict is said plainly: no person looked at this work.
+    if (g === 'verify' && ticket.verdict?.via === 'factory_charter') return [{ g, text: `${CHARTER_VERDICT} (charter signed by ${viewer.name(ticket.verdict.charter_signed_by ?? '')}, commit ${ticket.verdict.source_sha ?? ticket.branch.head}).`, tone: 'warning' }]
     return []
   })
   return (

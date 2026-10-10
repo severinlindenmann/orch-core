@@ -2,6 +2,7 @@
 // Children of `stack` stay `unknown` here: every child is validated again when it is rendered, so one bad
 // child shows the "could not be shown" box instead of taking the whole panel down.
 import { z } from 'zod'
+import { ARG_KEY } from '@/api/addons'
 
 const text = z.string().max(4000)
 const scalar = z.union([z.string().max(4000), z.number(), z.boolean()])
@@ -10,7 +11,7 @@ const cell = scalar.nullable()
 const actionId = z.string().regex(/^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,63}$/)
 /** Plain values sent with an action: a few, short keys. */
 const argsRecord = z
-  .record(z.string().max(64), scalar)
+  .record(z.string().regex(ARG_KEY), scalar)
   .refine((o) => Object.keys(o).length <= 16, 'at most 16 args')
 const orEmpty = <T extends z.ZodType>(t: T) => z.array(t).max(500).nullish().transform((v) => v ?? [])
 
@@ -30,6 +31,11 @@ export const statNode = z.object({
   hint: text.optional(),
   /** What a card-field stat adds to its Board column's sum, when it differs from `value` (e.g. a t-shirt size's weight). */
   sum: z.union([z.string().max(200), z.number()]).nullable().optional(),
+  /**
+   * A few recent values, oldest first (e.g. cost per day): core draws them as a small sparkline where the stat is a
+   * glance line (Today). Null (a `$ref` to state that is not there) draws no sparkline; bad values still fail closed.
+   */
+  trend: z.array(z.number().finite().min(-1e12).max(1e12)).max(60).nullish(),
 })
 export const kvNode = z.object({
   type: z.literal('kv'),
@@ -45,6 +51,18 @@ const itemAction = z.object({
   primary: z.boolean().optional(),
   /** "$row.<key>": the action is offered only when that cell is truthy (a table row's, evaluated by core). "!$row.<key>" for the opposite. */
   when: z.string().regex(/^!?\$row\.[A-Za-z0-9_]{1,64}$/).optional(),
+  /**
+   * The action cannot run now, and this is why: drawn disabled with the reason next to it (a literal sentence, or
+   * "$row.<key>" for a table row's cell; an empty cell means it can run). The host still decides.
+   */
+  blocked: z.string().max(120).optional(),
+  /** The button's text while this row's action is running ("Stopping…"), so a slow action never looks like nothing happened. */
+  pendingLabel: z.string().max(40).optional(),
+  /**
+   * A list item only: pressing the action opens a one-line field in the row (focused) before anything runs; the typed
+   * text is sent as arg `name`. For "Close with proof"-style actions that need a sentence but no page of their own.
+   */
+  input: z.object({ name: z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,31}$/), label: z.string().max(60), placeholder: z.string().max(80).optional(), submitLabel: z.string().max(40).optional(), maxLength: z.number().int().min(1).max(500).optional() }).optional(),
 })
 export type ItemAction = z.output<typeof itemAction>
 
@@ -65,7 +83,7 @@ export const listNode = z.object({
 })
 export const tableNode = z.object({
   type: z.literal('table'),
-  columns: z.array(z.object({ key: z.string().max(64), label: text, /** How core draws the cell: `state` = a status chip with a dot; `ticket` = a link to that ticket (the value must be a ticket key). */ cell: z.enum(['state', 'ticket']).optional(), /** Numbers read right-aligned; columns of real numbers are right-aligned without this. */ align: z.enum(['left', 'right']).optional() })).min(1).max(12),
+  columns: z.array(z.object({ key: z.string().max(64), label: text, /** How core draws the cell: `state` = a status chip with a dot; `ticket` = a link to that ticket (the value must be a ticket key). */ cell: z.enum(['state', 'ticket']).optional(), /** Numbers read right-aligned; columns of real numbers are right-aligned without this. */ align: z.enum(['left', 'right']).optional(), /** Below this table width (px) the column folds into the row's second line. Core also folds columns from the right (those without hideBelow first) when they no longer get about 100 px each; the first two columns and the actions always stay. */ hideBelow: z.number().int().min(0).max(4000).optional() })).min(1).max(12),
   rows: orEmpty(z.record(z.string(), cell)),
   // At most 4 declared. A row shows one button (the `primary` one, else the first non-danger) and the rest in a "More"
   // menu; `when` hides an action per row, so a Start / Stop pair leaves one visible. Core enforces nothing else here.
@@ -76,6 +94,25 @@ export const tableNode = z.object({
   totalRow: z.boolean().optional(),
   /** Shown instead of the table when there are no rows (like a list's `empty`). */
   empty: text.optional(),
+  /**
+   * Rows that open (an accordion, one row at a time): `nodes` holds a node per row, keyed by the value of the row's
+   * `key` cell; core draws a chevron on the rows that have one and the node in a full-width row beneath. Every detail
+   * node is untrusted and validated again when it is rendered, only while its row is open. Unknown keys are refused.
+   */
+  rowDetail: z
+    .object({
+      key: z.string().regex(/^[A-Za-z0-9_]{1,64}$/),
+      // State that is missing or out of bounds (a `$ref` resolving to null, too many rows) drops the chevrons only:
+      // the table itself still draws, as `rows` does with orEmpty.
+      nodes: z
+        .record(z.string().max(200), z.unknown())
+        .refine((o) => Object.keys(o).length <= 500, 'at most 500 row details')
+        .nullish()
+        .transform((v) => v ?? {})
+        .catch({}),
+    })
+    .strict()
+    .optional(),
 })
 /** `toc`: core gives the headings its own ids and shows "On this page" links to them. */
 export const markdownNode = z.object({ type: z.literal('markdown'), text: z.string().max(20000), toc: z.boolean().optional() })
@@ -106,6 +143,15 @@ export const formNode = z.object({
   submitLabel: z.string().max(60).optional(),
   /** A Cancel button next to submit. The form then also shows "Unsaved changes" once edited, and core asks before any other action of this addon discards them. */
   cancel: z.object({ label: z.string().max(40), action: actionId }).optional(),
+  /** After the action went through, the fields are emptied and the first one is focused again (an "add another" bar). */
+  reset: z.boolean().optional(),
+  /** Filters: the action runs on each change (a choice at once, typed text after a short pause) and there is no submit button. */
+  live: z.boolean().optional(),
+  /**
+   * The id of a decision on this page that this form sets the terms of (needs `cancel`): while the form holds unsaved
+   * edits, core disables that decision's primary option and says why, so nobody accepts terms they have not saved.
+   */
+  guards: z.string().min(1).max(200).optional(),
 })
 export const buttonNode = z.object({
   type: z.literal('button'),
@@ -116,11 +162,28 @@ export const buttonNode = z.object({
   args: argsRecord.optional(),
   /** A toggle or filter chip that is on right now (drawn pressed, exposed as aria-pressed). */
   pressed: z.boolean().optional(),
+  /** Why it cannot be used now: core disables the button and shows this reason with it. */
+  disabled: z.string().max(160).optional(),
 })
+/** Characters a link address may not carry (see linkNode.href). */
+const HIDDEN_IN_URL = /[\p{Cc}\p{Cf}\p{Z}\s]/u
+
+/** An addon page inside the app; nothing else internal (no settings, no query strings). */
+export const INTERNAL_LINK = /^\/addon\/[a-z0-9-]{1,40}\/[a-z0-9-]{1,40}$/
+
 export const linkNode = z.object({
   type: z.literal('link'),
   label: z.string().max(120),
-  href: z.string().max(2000).refine((h) => /^https?:\/\//i.test(h), 'only http(s) links'),
+  /** An http(s) URL (opens in a new tab), or another addon's page in this app: `/addon/<name>/<page>` (core's router). */
+  href: z
+    .string()
+    .max(2000)
+    .refine((h) => /^https?:\/\//i.test(h) || INTERNAL_LINK.test(h), 'only http(s) links or /addon/<name>/<page>')
+    // What the person sees must be what opens: no control, format (bidi overrides, isolates, zero-width), separator
+    // or space characters, which could reorder or hide part of the address.
+    .refine((h) => !HIDDEN_IN_URL.test(h), 'no control, bidi, zero-width or space characters in a link'),
+  /** An http(s) link only: core shows the address itself and a Copy button beside it (an app's URL). */
+  copy: z.boolean().optional(),
 })
 
 export const alertNode = z.object({ type: z.literal('alert'), tone: z.enum(['info', 'success', 'warn', 'error']), title: text, text: text.optional() })
@@ -133,7 +196,8 @@ export const frameNode = z.object({
 })
 /** One open decision of this addon (by id), rendered and signed by core in place. The id is looked up in core's list. */
 export const decisionNode = z.object({ type: z.literal('decision'), id: z.string().min(1).max(200) })
-export const terminalNode = z.object({ type: z.literal('terminal'), session: z.string().regex(/^[a-z0-9_-]{1,40}$/) })
+/** `session` may be empty (bound to state that has no session for this ticket yet): core then draws nothing. */
+export const terminalNode = z.object({ type: z.literal('terminal'), session: z.string().regex(/^[a-z0-9_-]{0,40}$/) })
 /**
  * A ticket widget (format orch.widgets.v1) drawn by core: `block` is the JSON inside an `orch` fence, read by the same
  * strict parser as ticket text (fail closed). Templates run in the sandboxed frame only on the widgets addon's own

@@ -15,6 +15,21 @@ interface App {
   status: 'running' | 'stopped' | 'failed'
   recipients: number
   log: string[]
+  /** Simulated host numbers for the row's details (see appStats); seeded, changed by start/stop/redeploy. */
+  stats?: AppStats
+}
+interface AppStats {
+  /** When the app got its current status. */
+  since: string
+  deploy: { commit: string; at: string; ok: boolean }
+  /** CPU % and memory while running. */
+  cpu: number
+  mem_mb: number
+  mem_quota_mb: number
+  disk_mb: number
+  disk_quota_mb: number
+  /** Requests per hour over the last 24 hours, oldest first. */
+  requests: number[]
 }
 type ShareKind = 'public link' | 'secret link' | 'sealed' | 'show-once'
 interface Share {
@@ -27,6 +42,8 @@ interface Share {
   expires_in_days: number
   views: number
   last_viewer: string | null
+  /** Most views before the link stops (show-once links choose it; absent = no limit). */
+  view_limit?: number
   /** Token of the link; null for a show-once link (only ever shown in core's "Copy this link now" dialog) and for a sealed share. */
   token: string | null
 }
@@ -49,6 +66,97 @@ const seedApps = (): App[] => [
     log: ['Installing requirements.txt', 'ERROR: pandas==2.3.1 requires numpy>=2.0', 'Traceback (most recent call last):', "ModuleNotFoundError: No module named 'meter_utils'", 'Build failed (exit 1)'],
   },
 ]
+/** The mock's "now" (store MOCK_EPOCH), which the seeded app times count back from. */
+const SEED_NOW = Date.parse('2026-10-09T11:30:00Z')
+
+/**
+ * Seeded, stable host numbers for an app (mock only): disk, memory, CPU, the last deploy and 24 hours of requests
+ * (an app that is not running served nothing). `seedIndex` picks the demo apps' fixed "since" times.
+ */
+function appStats(x: Pick<App, 'id' | 'status'>, seedIndex: number): AppStats {
+  let h = 0
+  for (const ch of x.id) h = (h * 31 + ch.charCodeAt(0)) % 2147483647
+  const rand = () => {
+    h = (h * 1103515245 + 12345) % 2147483648
+    return h / 2147483648
+  }
+  const hex = Array.from({ length: 7 }, () => '0123456789abcdef'[Math.floor(rand() * 16)]).join('')
+  const sinceH = [27.8, 43.4, 3.3][seedIndex] ?? 2 + Math.floor(rand() * 60)
+  const since = new Date(SEED_NOW - sinceH * 3_600_000).toISOString().replace(/:\d{2}\.\d{3}Z$/, ':00Z')
+  const deployAt = new Date(Date.parse(since) - 2 * 60_000).toISOString()
+  const quota = x.status === 'running' ? 5120 : 2048
+  const ranHours = x.status === 'running' ? 24 : 0
+  return {
+    since,
+    deploy: { commit: hex, at: deployAt.replace(/\.\d{3}Z$/, 'Z'), ok: x.status !== 'failed' },
+    cpu: 4 + Math.floor(rand() * 30),
+    mem_mb: 180 + Math.floor(rand() * 600),
+    mem_quota_mb: 1024,
+    disk_mb: 300 + Math.floor(rand() * 1700),
+    disk_quota_mb: quota,
+    requests: Array.from({ length: 24 }, (_, i) => (i >= 24 - ranHours ? Math.round((20 + rand() * 60) * (i % 24 > 8 && i % 24 < 20 ? 1.6 : 0.5)) : 0)),
+  }
+}
+const withStats = (list: App[]): App[] => list.map((x, i) => ({ ...x, stats: x.stats ?? appStats(x, i) }))
+const statsOf = (x: App): AppStats => (x.stats ??= appStats(x, -1))
+
+const RECIPIENTS = ['Mara', 'Severin', 'Tom', 'Ida', 'Jonas']
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+/** "8 Oct, 07:40 UTC". */
+const when = (iso: string) => {
+  const d = new Date(iso)
+  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}, ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')} UTC`
+}
+/** "1 day 3 h", "3 h 18 min", "12 min". */
+const span = (ms: number) => {
+  const min = Math.max(0, Math.round(ms / 60_000))
+  const d = Math.floor(min / 1440)
+  const hh = Math.floor((min % 1440) / 60)
+  if (d) return `${plural(d, 'day', 'days')} ${hh} h`
+  return hh ? `${hh} h ${min % 60} min` : `${min} min`
+}
+const size = (mb: number) => (mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`)
+const slug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+const appUrl = (s: Settings, x: App) => `https://${slug(x.name)}.apps.${s.namespace}.example`
+
+/** The node an app row opens to (table `rowDetail`): its address, host numbers, last deploy and who it is served to. */
+function appDetail(x: App, s: Settings, now: string) {
+  const st = statsOf(x)
+  const running = x.status === 'running'
+  const requests = st.requests.reduce((a, b) => a + b, 0)
+  const statusWord = { running: 'Running', stopped: 'Stopped', failed: 'Failed' }[x.status]
+  return {
+    type: 'stack',
+    children: [
+      { type: 'link', label: `${x.name} address`, href: appUrl(s, x), copy: true },
+      {
+        type: 'stack',
+        direction: 'row',
+        children: [
+          {
+            type: 'kv',
+            pairs: [
+              { label: 'Status', value: `${statusWord} since ${when(st.since)}` },
+              { label: 'Uptime', value: running ? span(Date.parse(now) - Date.parse(st.since)) : '–' },
+              { label: 'CPU', value: running ? `${st.cpu} %` : '–' },
+              { label: 'Memory', value: running ? `${size(st.mem_mb)} of ${size(st.mem_quota_mb)}` : '–' },
+            ],
+          },
+          {
+            type: 'kv',
+            pairs: [
+              { label: 'Disk', value: `${size(st.disk_mb)} of ${size(st.disk_quota_mb)}` },
+              { label: 'Last deploy', value: `${st.deploy.commit} · ${st.deploy.ok ? '' : 'failed · '}${when(st.deploy.at)}` },
+              { label: 'Recipients', value: x.recipients ? RECIPIENTS.slice(0, x.recipients).join(', ') : 'nobody yet' },
+            ],
+          },
+          { type: 'stat', label: 'Requests · last 24 h', value: requests.toLocaleString('en-US'), hint: running ? 'per hour' : 'not served now', trend: st.requests },
+        ],
+      },
+    ],
+  }
+}
+
 const seedShares = (): Share[] => [
   { id: 'sh_report', ticket: 'DEMO-0041', title: 'Before/after report', kind: 'secret link', expires_in_days: 6, views: 14, last_viewer: 'Mara, 2 h ago', token: 'Qm4x9TbA2c' },
   { id: 'sh_utc', ticket: 'DEMO-0042', title: 'UTC migration summary', kind: 'secret link', expires_in_days: 3, views: 5, last_viewer: 'anonymous, yesterday', token: 'Rj7pLw3Yd8' },
@@ -65,6 +173,10 @@ const linkOf = (s: Settings, token: string) => `https://p.${s.namespace}.example
 const visibleShare = (c: AddonCtx, id: unknown) => shares(c.state).find((s) => s.id === id && (!s.ticket || canSeeTicket(c, s.ticket)))
 /** The one line that says why a build failed (the last error-looking log line). */
 const failedLine = (x: App) => [...x.log].reverse().find((l) => /error/i.test(l)) ?? x.log[x.log.length - 2] ?? 'Build failed'
+/** What a show-once link can share, how long it works and how often it opens (the dialog's choices; the host checks them). */
+const SHARE_WHAT: Record<string, string> = { ticket: 'ticket page', report: 'before/after report' }
+const SHARE_DAYS = [1, 3, 7, 30]
+const SHARE_VIEWS = [1, 3, 10, 0]
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
 
 /** Deterministic 10-character token (mock only), so tests and screenshots are stable. */
@@ -88,7 +200,7 @@ function newShare(state: Record<string, unknown>, ticket: string | undefined, ki
 }
 
 const subtitle = (x: Share) =>
-  [x.kind === 'sealed' ? `sealed to ${x.recipient}` : x.kind, `expires in ${plural(x.expires_in_days, 'day', 'days')}`, plural(x.views, 'view', 'views'), x.last_viewer ? `last: ${x.last_viewer}` : null]
+  [x.kind === 'sealed' ? `sealed to ${x.recipient}` : x.kind, `expires in ${plural(x.expires_in_days, 'day', 'days')}`, plural(x.views, 'view', 'views'), x.view_limit ? `limit ${x.view_limit}` : null, x.last_viewer ? `last: ${x.last_viewer}` : null]
     .filter(Boolean)
     .join(' · ')
 
@@ -107,7 +219,7 @@ const shareItem = (x: Share) => ({
 })
 
 const seedState = () => ({
-  apps: seedApps(),
+  apps: withStats(seedApps()),
   shares: seedShares(),
   settings: { default_expiry_days: 7, namespace: 'acme', allow_artifacts: false },
   decided: [],
@@ -154,9 +266,16 @@ function seedBusy(ws: string, store: MockStore, rng: Rng) {
       token: kind === 'sealed' || kind === 'show-once' ? null : tokenOf(i, 11),
     }
   })
-  state.apps.push(...apps.slice(0, demo ? 9 : 2))
+  state.apps.push(...apps.slice(0, demo ? 9 : 2).map((x, i) => ({ ...x, stats: appStats(x, 100 + i) })))
   state.shares.push(...(demo ? shares : shares.slice(0, 10)))
   return state
+}
+
+/** A rebuild: running from now, a new (simulated) commit that went through. */
+function redeployed(x: App, now: string) {
+  const st = statsOf(x)
+  st.since = now
+  st.deploy = { commit: appStats({ id: `${x.id}.${now}`, status: 'running' }, -1).deploy.commit, at: now, ok: true }
 }
 
 registerAddon({
@@ -177,6 +296,8 @@ registerAddon({
       // a member gets a link from copy_link or share_once, in the action's answer.
       shares: sh.map(({ token: _token, ...x }) => x),
       summary: `${plural(running, 'app', 'apps')} running · ${plural(failed.length, 'failed build', 'failed builds')}`,
+      // Today's glance line under "n of m apps running": a failed build first, then the shares.
+      todayHint: [failed.length ? plural(failed.length, 'failed build', 'failed builds') : null, plural(sh.length, 'live share', 'live shares'), plural(sh.reduce((n, x) => n + x.views, 0), 'view', 'views')].filter(Boolean).join(' · '),
       liveShares: sh.length,
       views: sh.reduce((n, x) => n + x.views, 0),
       appCount: a.length,
@@ -195,6 +316,8 @@ registerAddon({
         canCopy: x.kind !== 'show-once',
         shownOnce: x.kind === 'show-once',
       })),
+      // The Apps rows' details (table rowDetail, keyed by the row's id).
+      appDetails: Object.fromEntries(a.map((x) => [x.id, appDetail(x, settingsOf(state), c.store.now())])),
       // Failed builds, once, above the tabs (it needs a person). Empty while nothing failed. The full log is behind "Show log".
       attentionNode: failed.length
         ? {
@@ -242,16 +365,27 @@ registerAddon({
       }
     },
     share_once(ctx) {
-      const { store, ticket, state } = ctx
+      const { store, ticket, state, body } = ctx
+      // A link is always to one ticket (or its report): outside a ticket there is nothing to share.
+      if (!ticket || !canSeeTicket(ctx, ticket)) return invalid('Pick a ticket first.')
+      // Core's small dialog asks first (manifest `confirm: 'options'`); the host checks what came back.
+      const what = body.what === undefined ? 'ticket' : String(body.what)
+      const days = body.expires_days === undefined ? settingsOf(state).default_expiry_days : Number(body.expires_days)
+      const limit = body.view_limit === undefined ? 1 : Number(body.view_limit)
+      if (!(what in SHARE_WHAT)) return invalid('Choose what to share: the ticket or its report.')
+      if (!SHARE_DAYS.includes(days)) return invalid(`Choose how long the link works: ${SHARE_DAYS.join(', ')} days.`)
+      if (!SHARE_VIEWS.includes(limit)) return invalid('Choose how many times it can be opened.')
       const tok = token(state)
-      const label = canSeeTicket(ctx, ticket) ? ticket : undefined
-      newShare(state, label, 'show-once', label ? `${label} one-time link` : 'One-time link', null)
-      if (label) store.append(label, { type: 'publish.shared', actor: { kind: 'addon', id: 'publish' } })
+      const sh = newShare(state, ticket, 'show-once', `${ticket} ${SHARE_WHAT[what]} one-time link`, null)
+      sh.expires_in_days = days
+      if (limit > 0) sh.view_limit = limit
+      store.append(ticket, { type: 'publish.shared', actor: { kind: 'addon', id: 'publish' } })
+      const rule = `${limit > 0 ? `opens ${limit === 1 ? 'once' : `${limit} times`}` : 'no view limit'}, works for ${plural(days, 'day', 'days')}`
       return {
         ok: true,
-        message: 'Created a one-time link.',
+        message: `Created a one-time link (${rule}).`,
         changed: true,
-        secret: { label: label ? `One-time link for ${label}` : 'One-time link', value: linkOf(settingsOf(state), tok), note: 'This link is shown once and cannot be copied again. Revoke it and make a new one if you lose it.' },
+        secret: { label: `One-time link for ${ticket}`, value: linkOf(settingsOf(state), tok), note: `${SHARE_WHAT[what][0].toUpperCase()}${SHARE_WHAT[what].slice(1)}: ${rule}. It is shown once and cannot be copied again. Revoke it and make a new one if you lose it.` },
       }
     },
     copy_link(ctx) {
@@ -267,7 +401,7 @@ registerAddon({
       const x = visibleShare(ctx, body.id)
       if (!x) return notFound('That share no longer exists.')
       x.expires_in_days += 7
-      return { ok: true, message: `${x.title} now expires in ${x.expires_in_days} days.`, changed: true }
+      return { ok: true, message: `${x.title} now expires in ${plural(x.expires_in_days, 'day', 'days')}.`, changed: true }
     },
     revoke(ctx) {
       const { store, state, body } = ctx
@@ -278,18 +412,20 @@ registerAddon({
       if (x.ticket && store.hasTicket(x.ticket)) store.append(x.ticket, { type: 'publish.revoked', actor: { kind: 'addon', id: 'publish' } })
       return { ok: true, message: `Revoked ${x.title}. The link stops working now.`, changed: true }
     },
-    start({ state, body }) {
+    start({ state, body, store }) {
       const x = apps(state).find((a) => a.id === body.id)
       if (!x) return notFound('No such app.')
       if (x.status === 'failed') return conflict('publish.build_failed', `${x.name} failed to build.`, 'Redeploy it first.')
       x.status = 'running'
+      statsOf(x).since = store.now()
       x.log.push('Started')
       return { ok: true, message: `${x.name} is running.`, changed: true }
     },
-    stop({ state, body }) {
+    stop({ state, body, store }) {
       const x = apps(state).find((a) => a.id === body.id)
       if (!x) return notFound('No such app.')
       x.status = 'stopped'
+      statsOf(x).since = store.now()
       x.log.push('Stopped')
       // Acts at once; the toast carries Undo, which starts it again.
       return { ok: true, message: `${x.name} stopped.`, changed: true, undo: { action: 'start', args: { id: x.id } } }
@@ -299,10 +435,11 @@ registerAddon({
       if (!x) return notFound('No such app.')
       return { ok: true, message: `${x.name}: ${x.log.slice(-3).join(' / ')}` }
     },
-    redeploy({ state, body }) {
+    redeploy({ state, body, store }) {
       const x = apps(state).find((a) => a.id === body.id)
       if (!x) return notFound('No such app.')
       x.status = 'running'
+      redeployed(x, store.now())
       x.log.push('Redeployed', 'Started')
       return { ok: true, message: `${x.name} rebuilt and running.`, changed: true }
     },
@@ -318,6 +455,7 @@ registerAddon({
         const ops = apps(state).find((a) => a.id === 'app_ops')
         if (option === 'retry' && ops) {
           ops.status = 'running'
+          redeployed(ops, store.now())
           ops.log.push('Rebuilt from the last good version', 'Started')
         }
         return { ok: true, message: option === 'retry' ? 'Ops notebook rebuilt from the last good version.' : 'Left as it is.', changed: true }

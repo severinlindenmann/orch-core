@@ -1,19 +1,21 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { api } from '@/api/client'
 import { addonActive, manifestFor, pendingUpdate, viewerActions } from '@/api/addons'
-import type { AddonOpRequest, InstalledAddon, Workspace } from '@/api/types'
-import { useSignedAction } from '@/components/sign/SignPrompt'
+import type { AddonOpRequest, AddonPackage, InstalledAddon, Workspace } from '@/api/types'
+import { useSignedAction, type SignedToast } from '@/components/sign/SignPrompt'
+import { PIN_ADDON_EVENT } from '@/app/shell/pinEvent'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Table, TableBody, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { AddonRow } from './AddonRow'
-import { AddonSettingsDrawer } from './AddonSettingsDrawer'
+import { AddonSettingsPanel, requestSettingsFocus } from './AddonSettingsPanel'
 import { Catalog } from './Catalog'
 import { GrantDialog, type GrantAsk } from './GrantDialog'
 import { toastApiError } from '@/app/toast'
+import { queries } from '@/api/queries'
 
 /** The queries an install, enable, disable or uninstall can change. */
 const ADDON_OP_KEYS = ['workspace-addons', 'workspaces', 'addons', 'addon-state', 'addon-decisions', 'today', 'ticket', 'board', 'agents']
@@ -24,7 +26,7 @@ export function AddonManager({ workspace, canEdit, settingsOf }: { workspace: Wo
   const ws = workspace.id
   const qc = useQueryClient()
   const signed = useSignedAction()
-  const installed = useQuery({ queryKey: ['workspace-addons', ws], queryFn: () => api.getWorkspaceAddons(ws) })
+  const installed = useQuery(queries.workspaceAddons(ws))
   const [browsing, setBrowsing] = useState(false)
   const [ask, setAsk] = useState<GrantAsk | null>(null)
   const [removing, setRemoving] = useState<InstalledAddon | null>(null)
@@ -39,13 +41,30 @@ export function AddonManager({ workspace, canEdit, settingsOf }: { workspace: Wo
       toastApiError(e, 'Could not change the addon')
     }
   }
+  /** The success toast of a grant that turned the addon on: Open its page, or Pin it to the sidebar. */
+  const isOn = (pkg: AddonPackage): SignedToast => {
+    const nav = pkg.contributions.find((c) => c.slot === 'nav')
+    return {
+      signedToast: true,
+      message: `${pkg.title} is on`,
+      ...(nav
+        ? {
+            action: { label: 'Open', onClick: () => void navigate({ to: `/addon/${pkg.name}/${nav.id}` } as never) },
+            cancel: { label: 'Pin to sidebar', onClick: () => window.dispatchEvent(new CustomEvent(PIN_ADDON_EVENT, { detail: `${pkg.name}/${nav.id}` })) },
+          }
+        : {}),
+    }
+  }
   const sign = (a: GrantAsk) => {
     setAsk(null)
     // Send exactly what the prompt showed; the host refuses if the package changed in between.
     const update = a.kind === 'update' ? pendingUpdate(a.addon) : null
-    const t = update ?? a.addon.ws
-    const req: AddonOpRequest = { op: a.kind, version: t.version, package_sha256: t.package_sha256, capabilities: t.capabilities, viewer_actions: viewerActions(update ? { actions: update.actions ?? a.addon.actions } : manifestFor(a.addon, a.addon.ws.version)).map((x) => x.id) }
-    void signed(a.kind === 'update' ? `Update ${a.addon.title}` : `Grant ${a.addon.title}`, () => api.postAddonOp(ws, a.addon.name, req))
+    const t = update ?? (a.kind === 'install' ? a.addon : a.addon.ws)
+    const req: AddonOpRequest = { op: a.kind, version: t.version, package_sha256: t.package_sha256, capabilities: t.capabilities, viewer_actions: viewerActions(update ? { actions: update.actions ?? a.addon.actions } : manifestFor(a.addon, a.kind === 'install' ? a.addon.version : a.addon.ws.version)).map((x) => x.id), ...(a.kind === 'update' ? {} : { enable: true }) }
+    void signed(a.kind === 'update' ? `Update ${a.addon.title}` : `Grant ${a.addon.title}`, async () => {
+      await api.postAddonOp(ws, a.addon.name, req)
+      return a.kind === 'update' ? `${a.addon.title} updated to ${t.version}` : isOn(a.addon)
+    })
   }
 
   return (
@@ -78,9 +97,10 @@ export function AddonManager({ workspace, canEdit, settingsOf }: { workspace: Wo
             </TableHeader>
             <TableBody>
               {(installed.data ?? []).map((a) => (
+                <Fragment key={a.name}>
                 <AddonRow
-                  key={a.name}
                   addon={a}
+                  settingsOpen={settingsOf === a.name}
                   active={addonActive(workspace, a.name)}
                   canEdit={canEdit}
                   hasSettings={a.contributions.some((c) => c.slot === 'settings')}
@@ -88,27 +108,39 @@ export function AddonManager({ workspace, canEdit, settingsOf }: { workspace: Wo
                     grant: () => setAsk({ kind: 'grant', addon: a }),
                     update: () => setAsk({ kind: 'update', addon: a }),
                     uninstall: () => setRemoving(a),
-                    openSettings: () => void navigate({ to: '/settings/addon/$name', params: { name: a.name } }),
+                    openSettings: () => {
+                      requestSettingsFocus(a.name) // the list is drawn again by the route: Settings keeps the keyboard
+                      void navigate(settingsOf === a.name ? { to: '/settings/$tab', params: { tab: 'addons' } } : { to: '/settings/addon/$name', params: { name: a.name } })
+                    },
                     setEnabled: (on) => void run(a.name, { op: on ? 'enable' : 'disable' }),
                   }}
                 />
+                {settingsOf === a.name && (
+                  <TableRow aria-label={`${a.title} settings`} className="hover:bg-transparent">
+                    <TableCell colSpan={5} className="whitespace-normal bg-surface-2/30">
+                      <AddonSettingsPanel name={a.name} workspace={workspace} canEdit={canEdit} />
+                    </TableCell>
+                  </TableRow>
+                )}
+                </Fragment>
               ))}
             </TableBody>
           </Table>
         </div>
       )}
+      {/* A deep link to an addon that has no row (not installed): the panel says so, under the table. */}
+      {settingsOf && !installed.isLoading && !installed.data?.some((a) => a.name === settingsOf) && <AddonSettingsPanel name={settingsOf} workspace={workspace} canEdit={canEdit} />}
 
       <Catalog
         ws={ws}
         canEdit={canEdit}
         open={browsing}
         onOpenChange={setBrowsing}
-        onInstall={(name) => {
+        onInstall={(pkg) => {
           setBrowsing(false)
-          void run(name, { op: 'install' })
+          setAsk({ kind: 'install', addon: pkg })
         }}
       />
-      {settingsOf && <AddonSettingsDrawer name={settingsOf} workspace={workspace} canEdit={canEdit} />}
       {ask && <GrantDialog ask={ask} onSign={() => sign(ask)} onClose={() => setAsk(null)} />}
       {removing && (
         <Dialog open onOpenChange={(o) => !o && setRemoving(null)}>

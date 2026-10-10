@@ -216,12 +216,14 @@ function Progress({ f, title }: { f: Obj; title?: string }) {
   )
 }
 
-function Diff({ f }: { f: Obj }) {
+export function Diff({ f }: { f: Obj }) {
   const lines = String(f.lines).split('\n')
   return (
     <div className="overflow-hidden rounded-md border border-border">
       <div className="border-b border-border bg-surface-2 px-2 py-1 font-mono text-[11px] text-text-muted">{String(f.file)}</div>
-      <pre className="overflow-x-auto bg-bg py-1 font-mono text-[12px] leading-5">
+      {/* `relative`: the lines' sr-only labels are absolutely positioned; anchored here they stay inside this scroller
+          (and inside main) instead of stretching an outer box. */}
+      <pre className="relative overflow-x-auto bg-bg py-1 font-mono text-[12px] leading-5">
         {lines.map((l, i) => {
           const kind = l.startsWith('@@') ? 'hunk' : l.startsWith('+') ? 'add' : l.startsWith('-') ? 'del' : 'ctx'
           return (

@@ -43,7 +43,7 @@ describe('publish app actions', () => {
     const s = setup()
     await s.api.runAddonAction(s.ws, 'publish', 'start', { id: 'app_energy' })
     expect((await state(s)).apps.find((a) => a.id === 'app_energy')!.status).toBe('running')
-    await s.api.runAddonAction(s.ws, 'publish', 'stop', { id: 'app_energy' })
+    await s.api.runAddonAction(s.ws, 'publish', 'stop', { confirmed: true, id: 'app_energy' })
     expect((await state(s)).apps.find((a) => a.id === 'app_energy')!.status).toBe('stopped')
   })
   it('logs returns the last lines; redeploy rebuilds a failed app', async () => {
@@ -89,7 +89,7 @@ describe('publish shares', () => {
     }
     expect(await panel()).toContain('Before/after report')
     const sh = (await state(s)).shares.find((x) => x.title === 'Before/after report')!
-    await s.api.runAddonAction(s.ws, 'publish', 'revoke', { id: sh.id })
+    await s.api.runAddonAction(s.ws, 'publish', 'revoke', { confirmed: true, id: sh.id })
     expect((await state(s)).shares.find((x) => x.id === sh.id)).toBeUndefined()
     expect(await panel()).not.toContain('Before/after report')
   })
@@ -105,7 +105,7 @@ describe('publish shares', () => {
   })
   it('share_once returns the full link as a secret (not in the message) and keeps it hidden after', async () => {
     const s = setup()
-    const r = await s.api.runAddonAction(s.ws, 'publish', 'share_once', { ticket: 'DEMO-0041' })
+    const r = await s.api.runAddonAction(s.ws, 'publish', 'share_once', { confirmed: true, ticket: 'DEMO-0041' })
     expect(r.secret!.value).toMatch(/^https:\/\/p\.acme\.example\/s\/[A-Za-z0-9]{8,}$/)
     expect(r.message).not.toMatch(/https:/)
     const st = await state(s)
@@ -116,6 +116,34 @@ describe('publish shares', () => {
     expect(again).toMatchObject({ status: 409, code: 'publish.shown_once' })
     expect(again.message).toMatch(/shown once/i)
     expect(again.message).not.toMatch(/https:/)
+  })
+  it('destructive and options actions need core\'s confirmed flag (409 confirm.required), nothing changes without it', async () => {
+    const s = setup()
+    const before = JSON.stringify(await state(s))
+    expect(await refused(s.api.runAddonAction(s.ws, 'publish', 'stop', { id: 'app_billing' }))).toMatchObject({ status: 409, code: 'confirm.required' })
+    expect(await refused(s.api.runAddonAction(s.ws, 'publish', 'revoke', { id: 'sh_report' }))).toMatchObject({ status: 409, code: 'confirm.required' })
+    expect(await refused(s.api.runAddonAction(s.ws, 'publish', 'share_once', { ticket: 'DEMO-0041' }))).toMatchObject({ status: 409, code: 'confirm.required' })
+    expect(JSON.stringify(await state(s))).toBe(before)
+  })
+  it('share_once outside a ticket refuses like share ("Pick a ticket first"), makes no share', async () => {
+    const s = setup()
+    const before = (await state(s)).shares.length
+    for (const action of ['share', 'share_once']) {
+      const r = await refused(s.api.runAddonAction(s.ws, 'publish', action, { confirmed: true }))
+      expect(r, action).toMatchObject({ status: 400, code: 'validation', message: 'Pick a ticket first.' })
+    }
+    expect((await state(s)).shares).toHaveLength(before)
+  })
+  it('share_once takes the dialog\'s choices (what, expiry, view limit) and refuses values outside them', async () => {
+    const s = setup()
+    const r = await s.api.runAddonAction(s.ws, 'publish', 'share_once', { confirmed: true, ticket: 'DEMO-0041', what: 'report', expires_days: 3, view_limit: 3 })
+    expect(r.message).toMatch(/opens 3 times, works for 3 days/)
+    expect(r.secret!.note).toMatch(/before\/after report/i)
+    const once = (await state(s)).shares[0] as Share & { view_limit?: number }
+    expect(once).toMatchObject({ kind: 'show-once', expires_in_days: 3, view_limit: 3 })
+    expect(await refused(s.api.runAddonAction(s.ws, 'publish', 'share_once', { confirmed: true, ticket: 'DEMO-0041', expires_days: 99 }))).toMatchObject({ status: 400, code: 'validation' })
+    expect(await refused(s.api.runAddonAction(s.ws, 'publish', 'share_once', { confirmed: true, ticket: 'DEMO-0041', view_limit: 7 }))).toMatchObject({ status: 400, code: 'validation' })
+    expect(await refused(s.api.runAddonAction(s.ws, 'publish', 'share_once', { confirmed: true, ticket: 'DEMO-0041', what: 'everything' }))).toMatchObject({ status: 400, code: 'validation' })
   })
 })
 
@@ -190,5 +218,59 @@ describe('reads are viewer-level; secret tokens never ride in the state', () => 
     if (viewer === 'p_tom') return
     const withToken = raw.find((x) => x.token)!
     expect((await s.api.runAddonAction(s.ws, 'publish', 'copy_link', { id: withToken.id })).secret?.value).toContain(withToken.token)
+  })
+})
+
+describe('publish app details (Apps rows open as an accordion)', () => {
+  type Kv = { type: 'kv'; pairs: { label: string; value: string }[] }
+  type Detail = { type: 'stack'; children: [{ type: 'link'; href: string; copy: boolean }, { type: 'stack'; children: [Kv, Kv, { type: 'stat'; value: string; trend: number[] }] }] }
+  const details = async (s: ReturnType<typeof setup>) => (await state(s)).appDetails as Record<string, Detail>
+  const pairs = (d: Detail) => Object.fromEntries([...d.children[1].children[0].pairs, ...d.children[1].children[1].pairs].map((p) => [p.label, p.value]))
+
+  it('has a detail per app: its http(s) address with Copy, host numbers, last deploy, recipients and 24 h of requests', async () => {
+    const s = setup()
+    const d = await details(s)
+    expect(Object.keys(d)).toEqual(['app_billing', 'app_energy', 'app_ops'])
+    const billing = d.app_billing
+    expect(billing.children[0]).toMatchObject({ type: 'link', href: 'https://billing-explorer.apps.acme.example', copy: true })
+    const p = pairs(billing)
+    expect(p.Status).toMatch(/^Running since 8 Oct, \d{2}:\d{2} UTC$/)
+    expect(p.Uptime).toMatch(/^1 day \d+ h$/)
+    expect(p.CPU).toMatch(/^\d+ %$/)
+    expect(p.Memory).toMatch(/ of 1\.0 GB$/)
+    expect(p.Disk).toMatch(/^\d+(\.\d)? (GB|MB) of 5\.0 GB$/)
+    expect(p['Last deploy']).toMatch(/^[0-9a-f]{7} · 8 Oct, /)
+    expect(p.Recipients).toBe('Mara, Severin')
+    const req = billing.children[1].children[2]
+    expect(req.trend).toHaveLength(24)
+    expect(req.value).toBe(req.trend.reduce((a, b) => a + b, 0).toLocaleString('en-US'))
+    // Not running: no uptime, CPU or memory, nothing served; a failed build says so in its deploy.
+    expect(pairs(d.app_energy)).toMatchObject({ Uptime: '–', CPU: '–', Memory: '–', Recipients: 'nobody yet' })
+    expect(d.app_energy.children[1].children[2].trend.every((n) => n === 0)).toBe(true)
+    expect(pairs(d.app_ops)['Last deploy']).toMatch(/· failed · 9 Oct/)
+    // Every address is http(s) only (the link node refuses anything else).
+    for (const x of Object.values(d)) expect(x.children[0].href).toMatch(/^https:\/\//)
+  })
+  it('stop and start move "since"; redeploy makes a new deploy that went through', async () => {
+    const s = setup()
+    await s.api.runAddonAction(s.ws, 'publish', 'stop', { confirmed: true, id: 'app_billing' })
+    expect(pairs((await details(s)).app_billing)).toMatchObject({ Uptime: '–' })
+    expect(pairs((await details(s)).app_billing).Status).toMatch(/^Stopped since 9 Oct/)
+    const before = pairs((await details(s)).app_ops)['Last deploy']
+    await s.api.runAddonAction(s.ws, 'publish', 'redeploy', { id: 'app_ops' })
+    const after = pairs((await details(s)).app_ops)
+    expect(after['Last deploy']).not.toBe(before)
+    expect(after['Last deploy']).not.toMatch(/failed/)
+    expect(after.Status).toMatch(/^Running since 9 Oct/)
+  })
+  it('the Apps table opens rows by id from addon.appDetails', async () => {
+    const s = setup()
+    const pkg = (await s.api.getAddons()).find((a) => a.name === 'publish')!
+    expect(JSON.stringify(pkg.contributions.find((c) => c.slot === 'nav')!.node)).toContain('"rowDetail":{"key":"id","nodes":{"$ref":"addon.appDetails"}}')
+  })
+  it('the Today glance reads "1 of 3 apps running" with the failed build first', async () => {
+    const st = await state(setup())
+    expect([st.runningCount, st.appCount]).toEqual([1, 3])
+    expect(st.todayHint).toBe('1 failed build · 5 live shares · 236 views')
   })
 })

@@ -15,7 +15,8 @@ export interface CoreType {
   check: (v: Obj) => string | undefined
 }
 
-/** Types this mockup draws that orch.widgets.v1 does not define yet (shown as "Proposed" in the gallery). */
+/** Types this mockup draws that orch.widgets.v1 does not define yet (shown as "Proposed" in the gallery). The multi-series
+ * form of `series` (x with named series) is proposed too; see docs/widgets-v1-proposal.md. */
 export const PROPOSED_TYPES: readonly string[] = ['timeline', 'progress']
 
 const shortStr = (v: unknown, max: number) => typeof v === 'string' && v.length <= max
@@ -58,15 +59,15 @@ export function validDate(s: unknown): boolean {
   return t.getUTCFullYear() === y && t.getUTCMonth() === mo - 1 && t.getUTCDate() === d
 }
 
-/** widgets.md role tokens; `note` is accepted as another name for `info`. */
+/** widgets.md role tokens: one name per thing (no aliases). */
 export const ROLES = ['ok', 'info', 'warn', 'err', 'neu'] as const
 export type Role = (typeof ROLES)[number]
-export const roleOf = (r: unknown): Role => (r === 'note' ? 'info' : (r as Role))
-const roleOk = (r: unknown) => r === 'note' || oneOf(r, ROLES)
+export const roleOf = (r: unknown): Role => r as Role
+const roleOk = (r: unknown) => oneOf(r, ROLES)
 
-/** gates statuses; `ok` is accepted as another name for `pass`. */
+/** gates statuses: one name per thing (no aliases). */
 export const GATE_STATES = ['pass', 'fail', 'skip', 'running'] as const
-export const gateOf = (s: unknown) => (s === 'ok' ? 'pass' : (s as (typeof GATE_STATES)[number]))
+export const gateOf = (s: unknown) => s as (typeof GATE_STATES)[number]
 export const SEGMENT_STATES = ['ok', 'warn', 'err', 'neu'] as const
 export const STEP_STATES = ['done', 'current', 'next', 'failed'] as const
 export const MAX_SERIES = 4
@@ -176,7 +177,7 @@ export const MORE_CORE: Record<string, CoreType> = {
         each(o) {
           const r = labelReq(o, 'name', 'a gate name')
           if (r) return r
-          if (o.status !== 'ok' && !oneOf(o.status, GATE_STATES)) return 'status must be pass, fail, skip or running'
+          if (!oneOf(o.status, GATE_STATES)) return 'status must be pass, fail, skip or running'
           if (has(o, 'seconds') && !(num(o.seconds) && o.seconds >= 0 && o.seconds <= 1e12)) return 'seconds must be a number from 0 to 1e12'
         },
       })

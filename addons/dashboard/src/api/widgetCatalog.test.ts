@@ -10,6 +10,17 @@ describe('widget catalog', () => {
     expect(CATALOG.filter((c) => c.kind === 'template').map((c) => c.ref).sort()).toEqual(TEMPLATES.map((t) => `${t.name}@${t.version}`).sort())
     expect(CATALOG.findIndex((c) => c.kind === 'template')).toBe(CORE_TYPES.length)
   })
+
+  it('marks what is not in orch.widgets.v1 yet: timeline, progress and the multi-series form of series', () => {
+    expect(CATALOG.filter((c) => c.proposed).map((c) => c.ref).sort()).toEqual(['progress', 'timeline'])
+    expect(CATALOG.filter((c) => c.proposedForm).map((c) => c.ref)).toEqual(['series'])
+  })
+
+  it('has one name per thing: no example uses the removed aliases (gates ok, role note)', () => {
+    const json = JSON.stringify(CATALOG.map((c) => c.example))
+    expect(json).not.toMatch(/"role":"note"/)
+    for (const c of CATALOG.filter((x) => x.example.type === 'gates')) for (const g of c.example.items as { status: string }[]) expect(g.status).not.toBe('ok')
+  })
   it('every example parses with the strict parser, ids are unique, and template examples pin the current digest and fit the data check', () => {
     const ids = new Set<string>()
     for (const c of CATALOG) {

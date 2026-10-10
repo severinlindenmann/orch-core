@@ -13,6 +13,7 @@ function BaseInputTemplate(props: BaseInputTemplateProps) {
   return (
     <Input
       id={id}
+      name={props.name || id}
       type={type === 'integer' ? 'number' : (type ?? 'text')}
       value={value ?? ''}
       placeholder={placeholder}
@@ -27,10 +28,11 @@ function BaseInputTemplate(props: BaseInputTemplateProps) {
   )
 }
 
-function TextareaWidget({ id, value, disabled, readonly, placeholder, onChange }: WidgetProps) {
+function TextareaWidget({ id, name, value, disabled, readonly, placeholder, onChange }: WidgetProps) {
   return (
     <Textarea
       id={id}
+      name={name || id}
       value={value ?? ''}
       placeholder={placeholder}
       disabled={disabled || readonly}
@@ -41,12 +43,13 @@ function TextareaWidget({ id, value, disabled, readonly, placeholder, onChange }
 }
 
 /** Native <select>: keyboard and screen-reader friendly, and what forms/tests expect for enums. */
-function SelectWidget({ id, value, options, disabled, readonly, placeholder, onChange }: WidgetProps) {
+function SelectWidget({ id, name, value, options, disabled, readonly, placeholder, onChange }: WidgetProps) {
   const opts = (options.enumOptions ?? []) as { value: unknown; label: string }[]
   const current = value === undefined || value === null ? '' : String(value)
   return (
     <select
       id={id}
+      name={name || id}
       value={current}
       disabled={disabled || readonly}
       className="h-8 w-full rounded-md border border-input bg-surface-2 px-2 text-[13px] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50"

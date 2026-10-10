@@ -9,9 +9,14 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
+import { restartToday } from '../todayRestart'
 import { useRole } from '../useRole'
+import { ReviewTour } from '../review/ReviewTour'
 import { useShellActions, useShellState } from './ShellUi'
 import { toastApiError } from '@/app/toast'
+import { queries } from '@/api/queries'
+import { useMandatesOp, useMandatesPreview } from '../mandates/shared'
+import { useWorkspace } from '../workspace'
 
 const TITLES: Record<string, string> = {
   '/': 'Today',
@@ -33,7 +38,7 @@ export function Topbar() {
   const { openPalette, openNewTicket } = useShellActions()
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   const qc = useQueryClient()
-  const dataset = useQuery({ queryKey: ['dev-dataset'], queryFn: () => api.getDataset() })
+  const dataset = useQuery(queries.devDataset())
   const mode: Dataset = dataset.data?.dataset ?? 'normal'
   const [pending, setPending] = useState<Dataset | 'reset' | null>(null)
   const role = useRole()
@@ -44,6 +49,7 @@ export function Topbar() {
     try {
       await api.resetDemo()
       await qc.invalidateQueries()
+      restartToday()
       toast.success('Demo data reset')
     } catch (e) {
       toastApiError(e, 'Reset failed')
@@ -55,6 +61,7 @@ export function Topbar() {
     try {
       await api.resetDemo(to)
       await qc.invalidateQueries()
+      restartToday()
       toast.success(`Demo data: ${DATASET_NAME[to]}`)
     } catch (e) {
       toastApiError(e, 'Switch failed')
@@ -95,6 +102,8 @@ export function Topbar() {
             <RotateCcw className="size-3" />
             Reset demo
           </button>
+          <MandatesPreviewToggle />
+          <ReviewTour />
         </Badge>
       </div>
       {pending && (
@@ -129,5 +138,27 @@ export function Topbar() {
         </Button>
       )}
     </header>
+  )
+}
+
+/** Demo data: "Preview: mandates" turns the mandates preview on with a seeded mandate in force (owners only). */
+function MandatesPreviewToggle() {
+  const { workspace } = useWorkspace()
+  const role = useRole()
+  const ws = workspace?.id
+  const q = useMandatesPreview(ws, { poll: false })
+  const op = useMandatesOp(ws)
+  if (!role || !can(role, 'settings') || !q.data) return null
+  const on = q.data.on
+  return (
+    <button
+      type="button"
+      aria-pressed={on}
+      title="A non-functional preview of the proposed mandates pilot. Nothing signs."
+      onClick={() => void op(on ? { op: 'disable' } : { op: 'enable', seed: true }, on ? 'Mandates preview off' : 'Mandates preview on')}
+      className={cn('rounded-sm px-1 text-[11px]', on ? 'bg-surface-3 text-text' : 'text-text-muted hover:bg-surface-3 hover:text-text')}
+    >
+      Preview: mandates
+    </button>
   )
 }

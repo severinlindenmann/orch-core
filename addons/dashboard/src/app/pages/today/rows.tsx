@@ -1,17 +1,19 @@
 // Today's compact rows: one per open item, 56 px, the ask on the first line, the ticket on the second and one inline
 // action on the right. A row expands in place for what the action needs; signing always happens in core's dialogs.
-import { useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import { Link } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, FileSearch, HelpCircle, Loader2, ShieldCheck } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/api/client'
+import { diffstat } from '@/api/gates'
 import { ApiError, type AddonDecision, type GateName, type NeedsYouItem, type TicketDocument } from '@/api/types'
 import { AddonBadge } from '@/addon-ui'
 import { addonEdge } from '@/addon-ui/addonClasses'
 import { ErrorAlert } from '@/addon-ui/ErrorAlert'
 import type { ActionError } from '@/addon-ui/useRunAddonAction'
-import { DecisionSignPrompt, decisionBody } from '@/addon-ui/DecisionSignPrompt'
+import { DecisionSignPrompt, decisionBody, decisionChanged, decisionToast } from '@/addon-ui/DecisionSignPrompt'
+import { useAddons } from '@/addon-ui/slots'
 import { TOUCH_ID_MS } from '@/components/sign/SignPrompt'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -19,6 +21,10 @@ import { toastApiError } from '@/app/toast'
 import { useWorkspace } from '@/app/workspace'
 import type { HumanAction } from '../ticket/shared'
 import { ago } from './shared'
+import { plural } from '@/lib/time'
+
+export const NewItemContext = createContext(false)
+export const SigningContext = createContext(false)
 
 export type Sign = (ticket: string, action: HumanAction) => void
 
@@ -63,8 +69,12 @@ export function RowShell({
   children?: ReactNode
   addon?: boolean
 }) {
+  const fresh = useContext(NewItemContext)
+  const pending = useContext(SigningContext)
   return (
-    <li data-testid={testId} className={cn('border-b border-border last:border-b-0', addon && addonEdge)}>
+    <li data-testid={testId} aria-busy={pending || undefined} className={cn('border-b border-border last:border-b-0', addon && addonEdge, pending && 'opacity-50')}>
+      {pending && <p role="status" className="px-3 pt-2 text-xs text-text-muted">Signing…</p>}
+      <fieldset disabled={pending} className="min-w-0">
       <div className="flex min-h-14 items-center gap-3 px-3 py-2">
         {icon && <span className="flex w-4 shrink-0 justify-center text-text-muted">{icon}</span>}
         <div className="min-w-0 flex-1">
@@ -78,6 +88,7 @@ export function RowShell({
                 {ask}
               </p>
             )}
+            {fresh && <span aria-label="New since your last look" title="New since your last look" className="size-1.5 shrink-0 rounded-full bg-brand" />}
             {blocking && <BlockingChip />}
           </div>
           <div className="min-w-0 truncate text-xs leading-5 text-text-muted">{sub}</div>
@@ -86,6 +97,7 @@ export function RowShell({
         <div className="flex shrink-0 items-center gap-1">{action}</div>
       </div>
       {expanded && children && <div className={cn('space-y-3 pb-3 pr-3', icon ? 'pl-10' : 'pl-3')}>{children}</div>}
+      </fieldset>
     </li>
   )
 }
@@ -145,7 +157,7 @@ export function QuestionRow({ item, ticket, now, expanded, onToggle, sign, asked
       action={
         readOnly ? (
           <Decides who={decider} />
-        ) : (
+        ) : expanded ? null : (
           <Button size="sm" variant="outline" aria-expanded={expanded} onClick={onToggle}>
             Answer
           </Button>
@@ -161,7 +173,7 @@ export function QuestionRow({ item, ticket, now, expanded, onToggle, sign, asked
                 key={o.key}
                 className="flex cursor-pointer items-center gap-2 rounded-md border border-border px-2.5 py-1.5 text-[13px] text-text has-[:checked]:border-brand has-[:checked]:bg-brand-soft"
               >
-                <input type="radio" name={`answer-${id}`} value={o.key} checked={choice === o.key} onChange={() => setChoice(o.key)} className="accent-[var(--brand)]" />
+                <input type="radio" id={`answer-${id}-${o.key}`} name={`answer-${id}`} value={o.key} checked={choice === o.key} onChange={() => setChoice(o.key)} className="accent-[var(--brand)]" />
                 <span>{o.label}</span>
                 {o.cost && <span className="text-xs text-text-muted">· {o.cost}</span>}
                 {q.recommended === o.key && <RecommendedTag />}
@@ -191,7 +203,9 @@ export function ApprovalRow({ item, ticket, now, expanded, onToggle, sign, decid
   const covers =
     gate === 'requirements'
       ? `Requirements · ${ticket?.acceptance.length ?? 0} acceptance criteria`
-      : `Plan · ${ticket?.tasks.length ?? 0} tasks · ${ticket?.acceptance.length ?? 0} acceptance criteria`
+      : gate === 'code'
+        ? `Code review · commit ${ticket?.branch.head ?? ''} · ${ticket ? diffstat(ticket.branch) : ''}`
+        : `Plan · ${plural(ticket?.tasks.length ?? 0, 'task')} · ${plural(ticket?.acceptance.length ?? 0, 'acceptance criterion', 'acceptance criteria')}`
   return (
     <RowShell
       testId={`card-approval:${item.ticket}:${gate}`}
@@ -274,17 +288,23 @@ const DECISION_KEYS = ['today', 'addon-decisions', 'addon-state', 'ticket', 'tic
 function useDecide(d: AddonDecision, onError?: (e: unknown) => void, onDone?: () => void) {
   const qc = useQueryClient()
   const { workspace } = useWorkspace()
-  const [signing, setSigning] = useState<AddonDecision['options'][number] | null>(null)
+  const { data: packages } = useAddons()
+  // The decision as it was when the person chose an option: the prompt shows it and the post sends it, never a later
+  // render (a refresh while the prompt is open must not change what is signed; the host refuses a stale snapshot).
+  const [signing, setSigning] = useState<{ o: AddonDecision['options'][number]; d: AddonDecision } | null>(null)
   // From the click until the post resolves the options are off: no second prompt, no second post.
   const [pending, setPending] = useState(false)
-  const sign = async (o: AddonDecision['options'][number]) => {
+  const sign = async ({ o, d: opened }: { o: AddonDecision['options'][number]; d: AddonDecision }) => {
     setSigning(null)
     if (!workspace) return
     setPending(true)
     try {
       await new Promise((r) => setTimeout(r, TOUCH_ID_MS))
-      await api.runAddonAction(workspace.id, d.addon, d.action, decisionBody(d, o.key))
-      toast.success(`${d.title}: ${o.label}`)
+      const res = await api.runAddonAction(workspace.id, opened.addon, opened.action, decisionBody(opened, o.key))
+      // Core's sentence is the title; the addon's own answer rides below it, labelled as the addon's.
+      // The snapshot's addon, like the post: the row may show another decision by now.
+      const t = decisionToast(packages?.find((p) => p.name === opened.addon)?.title ?? opened.addon, opened.addon, o.key, res.message)
+      toast.success(t.message, { description: t.description })
       onDone?.()
       // A decision can move a ticket, an approval or the addon's own state; nothing else (not settings, relay, skills ...).
       await Promise.all(DECISION_KEYS.map((k) => qc.invalidateQueries({ queryKey: [k] })))
@@ -296,30 +316,33 @@ function useDecide(d: AddonDecision, onError?: (e: unknown) => void, onDone?: ()
     }
   }
   const prompt = signing && (
-    <DecisionSignPrompt d={d} option={signing} workspacePrefix={workspace?.prefix ?? ''} onClose={() => setSigning(null)} onSign={() => void sign(signing)} />
+    <DecisionSignPrompt d={signing.d} option={signing.o} changed={decisionChanged(signing.d, d)} workspacePrefix={workspace?.prefix ?? ''} onClose={() => setSigning(null)} onSign={() => void sign(signing)} />
   )
-  return { choose: setSigning, busy: pending || !!signing, pending, prompt }
+  return { choose: (o: AddonDecision['options'][number]) => setSigning({ o, d }), busy: pending || !!signing, pending, prompt }
 }
 
-function DecisionBody({ d, readOnly, showQuestion = true, inlineErrors }: { d: AddonDecision; readOnly: boolean; showQuestion?: boolean; inlineErrors?: boolean }) {
+function DecisionBody({ d, readOnly, showQuestion = true, inlineErrors, onPending, blockedReason }: { d: AddonDecision; readOnly: boolean; showQuestion?: boolean; inlineErrors?: boolean; onPending?: (pending: boolean) => void; blockedReason?: string }) {
   const [error, setError] = useState<ActionError | null>(null)
   const { choose, busy, pending, prompt } = useDecide(
     d,
     inlineErrors ? (e) => setError(e instanceof ApiError ? { message: e.message, hint: e.hint } : { message: 'That did not work.' }) : undefined,
     () => setError(null),
   )
+  useEffect(() => { onPending?.(pending) }, [pending, onPending])
   return (
     <>
+      {pending && showQuestion && <p role="status" className="text-xs text-text-muted">Signing…</p>}
       {showQuestion && <p className="text-[13px] leading-relaxed text-text">{d.question}</p>}
       {d.detail && <p className="whitespace-pre-line text-[13px] leading-relaxed text-text-muted">{d.detail}</p>}
       {!readOnly && (
         <div className="flex flex-wrap items-center gap-2">
           {d.options.map((o) => (
-            <Button key={o.key} size="sm" variant="outline" disabled={busy} aria-busy={pending || undefined} onClick={() => choose(o)}>
+            <Button key={o.key} size="sm" variant="outline" disabled={busy || (!!blockedReason && !!o.primary)} aria-busy={pending || undefined} onClick={() => choose(o)}>
               {pending && <Loader2 className="animate-spin" />}
               {o.label}
             </Button>
           ))}
+          {blockedReason && <span role="status" className="text-[12px] text-text-muted">{blockedReason}</span>}
         </div>
       )}
       {error && <ErrorAlert error={error} onDismiss={() => setError(null)} />}
@@ -343,6 +366,7 @@ export function DecisionRow({
   decider,
   inlineErrors,
   inline = false,
+  blockedReason,
 }: {
   d: AddonDecision
   readOnly: boolean
@@ -355,11 +379,15 @@ export function DecisionRow({
   decider?: string
   /** On an addon's own page (already framed with [A]): no second badge or hairline, always open, no Decide button. */
   inline?: boolean
+  /** Core says the options cannot be used now (e.g. unsaved edits on the page): they are disabled and this is shown. */
+  blockedReason?: string
 }) {
   const [own, setOwn] = useState(false)
+  const [pending, setPending] = useState(false)
   const expanded = controlled ?? own
   const toggle = onToggle ?? (() => setOwn((o) => !o))
   return (
+    <SigningContext.Provider value={pending}>
     <RowShell
       testId={`card-addon:${d.id}`}
       addon={!inline}
@@ -378,8 +406,9 @@ export function DecisionRow({
         )
       }
     >
-      <DecisionBody d={d} readOnly={readOnly} showQuestion={false} inlineErrors={inlineErrors} />
+      <DecisionBody d={d} readOnly={readOnly} showQuestion={false} inlineErrors={inlineErrors} onPending={setPending} blockedReason={blockedReason} />
     </RowShell>
+    </SigningContext.Provider>
   )
 }
 

@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { mockStore } from '@/api/client'
 import { renderApp } from '@/test/renderApp'
@@ -48,7 +48,10 @@ describe('Agents page', () => {
     const row = await screen.findByRole('row', { name: /gr_01J9Z8/ })
     const stopped = () => Number(/Stopped \((\d+)\)/.exec(screen.queryByRole('button', { name: /Stopped/ })?.textContent ?? '(0)')?.[1] ?? 0)
     const before = stopped()
+    // Grants are named by person, scope and end; the id is only the fine print.
+    expect(within(row).getByText("Severin's grant (all tickets · until 18:00)")).toBeInTheDocument()
     await user.click(within(row).getByRole('button', { name: 'Revoke' }))
+    expect(await screen.findByRole('heading', { name: "Revoke Severin's grant (all tickets · until 18:00)" })).toBeInTheDocument()
     await user.click(await screen.findByRole('button', { name: /Revoke grant/ }))
     expect(await within(screen.getByRole('row', { name: /gr_01J9Z8/ })).findByText('revoked')).toBeInTheDocument()
     await waitFor(() => expect(stopped()).toBeGreaterThan(before))
@@ -78,19 +81,47 @@ describe('Agents page', () => {
     expect(screen.queryByRole('button', { name: 'Revoke' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Issue grant…' })).toBeNull()
   })
-  it('a member cannot issue or revoke grants either (owners and maintainers only)', async () => {
-    renderApp('/agents', {
+  it('a member issues a grant for themselves: the tickets they may work on, at most the workspace default', async () => {
+    const { user } = renderApp('/agents', {
       viewer: 'p_tom',
       setup: (s) => s.appendWs(s.workspaces[0].id, { type: 'member.role_changed', person: 'p_tom', role: 'member', from: 'viewer' }),
     })
     await screen.findByRole('region', { name: /Working/ })
+    // Other people's grants: only their owner or an owner revokes them.
     expect(screen.queryByRole('button', { name: 'Revoke' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Issue grant…' })).toBeNull()
+    await user.click(await screen.findByRole('button', { name: 'Issue grant…' }))
+    const dialog = await screen.findByRole('dialog', { name: /Issue a grant/ })
+    const covers = within(dialog).getByText('Covers').nextElementSibling!
+    expect(covers).toHaveTextContent('Scope: the tickets you may work on in this workspace')
+    expect(covers).toHaveTextContent('Duration: 8 h, until 9 Oct 2026 19:30 UTC')
+    expect(within(dialog).getByRole('slider')).toHaveAttribute('max', '8')
+    await user.click(within(dialog).getByRole('button', { name: 'Issue grant' }))
+    await waitFor(() => expect(screen.getByRole('row', { name: /Tom's grant \(tickets they may work on/ })).toBeInTheDocument())
+    expect(within(screen.getByRole('row', { name: /Tom's grant/ })).getByRole('button', { name: 'Revoke' })).toBeInTheDocument()
   })
   it('issues a grant after signing', async () => {
     const { user } = renderApp('/agents')
     await user.click(await screen.findByRole('button', { name: 'Issue grant…' }))
     await user.click(await screen.findByRole('button', { name: /Issue grant/ }))
     await waitFor(() => expect(screen.getAllByRole('row', { name: /gr_/ })).toHaveLength(5))
+  })
+  it('the issue covers say the exact end of the grant, with its time zone', async () => {
+    const { user } = renderApp('/agents')
+    await user.click(await screen.findByRole('button', { name: 'Issue grant…' }))
+    const dialog = await screen.findByRole('dialog', { name: /Issue a grant/ })
+    const covers = within(dialog).getByText('Covers').nextElementSibling!
+    // Mock now 11:30 UTC + 8 h.
+    expect(covers).toHaveTextContent('Duration: 8 h, until 9 Oct 2026 19:30 UTC')
+  })
+  it('an owner can sign 1 to 24 h; a grant that crosses midnight says the date', async () => {
+    const { user } = renderApp('/agents')
+    await user.click(await screen.findByRole('button', { name: 'Issue grant…' }))
+    const dialog = await screen.findByRole('dialog', { name: /Issue a grant/ })
+    const slider = within(dialog).getByRole('slider')
+    expect(slider).toHaveAttribute('min', '1')
+    expect(slider).toHaveAttribute('max', '24')
+    fireEvent.change(slider, { target: { value: '24' } })
+    const covers = within(dialog).getByText('Covers').nextElementSibling!
+    expect(covers).toHaveTextContent('Duration: 24 h, until 10 Oct 2026 11:30 UTC')
   })
 })

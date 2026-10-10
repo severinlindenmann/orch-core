@@ -6,6 +6,7 @@ import { briefs } from '../busy/helpers'
 import type { Rng } from '../busy/rng'
 import type { MockStore } from '../store'
 import { canSeeTicket, invalid, notFound, refusal, registerAddon, type AddonCtx } from './registry'
+import { fmtWhen } from '@/lib/time'
 
 // terminals: a fake PTY per session (the shell itself is src/app/terminal/fakePty.ts and runs in the browser).
 // This module owns the sessions and who may see and type in them.
@@ -40,6 +41,8 @@ interface Session {
   summary?: string
   /** The ended session this one resumed. */
   resumedFrom?: string
+  /** A re-login shell: the OS user that runs the agents (the connection's run_as), the connection, and the login command typed but not run. */
+  login?: { runAs: string; connection: string; command: string }
 }
 
 const SESSIONS: Session[] = [
@@ -53,20 +56,19 @@ const SESSIONS: Session[] = [
     summary: 'Reviewed the DEMO-0043 plan: tariff seeds before the billing join is the right order. Flagged VAT rounding on mixed tariffs (answered since). No code changes.',
   },
 ]
-/** What the agent typed: its commands name the ticket it works on. */
-/** When the session got DATABRICKS_TOKEN, its run includes a tool that prints it in debug output: the host's filter shows `•••• (DATABRICKS_TOKEN)`. */
-const agentTranscript = (s: Session, ctx: ShellCtx) => [
+/** What the agent typed. When the session got DATABRICKS_TOKEN, its run includes a tool that prints it in debug output: the host's filter shows `•••• (DATABRICKS_TOKEN)`. */
+const agentTranscript = (ctx: ShellCtx) => [
   'orch status',
   'orch task next',
   ...(ctx.secrets?.includes('DATABRICKS_TOKEN') ? ['databricks current-user me --debug'] : []),
-  ...(s.ticket ? [`orch approve ${s.ticket} plan`] : []),
 ]
+// The mirror's last step (what the agent waits on now) is not in the transcript: the CLI view scripts it from the
+// ticket's live state (src/app/terminal/cli.ts, blockerOf), so it never claims a wait that is over.
 const STOPPED_TRANSCRIPT = ['git status', 'exit']
-const withTranscript = (s: Session, ctx: ShellCtx) => ({ ctx, transcript: s.kind === 'agent' ? (s.transcript ?? agentTranscript(s, ctx)) : s.status === 'stopped' ? STOPPED_TRANSCRIPT : [] })
+const withTranscript = (s: Session, ctx: ShellCtx) => ({ ctx, transcript: s.kind === 'agent' ? (s.transcript ?? agentTranscript(ctx)) : s.status === 'stopped' ? STOPPED_TRANSCRIPT : [] })
 
 const sessionsOf = (state: Record<string, unknown>) => state.sessions as Session[]
 const navOf = (state: Record<string, unknown>) => (state.nav ??= {}) as Record<string, { current?: string }>
-const hhmm = (iso: string) => iso.slice(11, 16)
 
 const harnessOfSession = (s: Session): string => s.harness ?? (s.kind === 'agent' ? harnessForAgent(s.owner.slice('agent:'.length)) : 'shell')
 const contextOf = (s: Session) => !!s.ticket && (s.context ?? true)
@@ -84,7 +86,7 @@ function shellCtx(c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>, s: Session): She
   const g = store.grants(ws).find((x) => x.person === forPerson && !x.revoked && x.until > store.now())
   const next = doc?.tasks_state.find((t) => t.state === 'doing' || t.state === 'todo')
   return {
-    user: s.kind === 'agent' ? 'claude' : nameOf(c, s.owner).toLowerCase(),
+    user: s.login ? s.login.runAs : s.kind === 'agent' ? 'claude' : nameOf(c, s.owner).toLowerCase(),
     cwd: '~/energy',
     branch: s.branch,
     owner: s.kind,
@@ -101,7 +103,7 @@ function shellCtx(c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>, s: Session): She
           status: doc.status,
           current_state: doc.body.current_state ?? '',
           next_task: next ? { id: next.id, text: next.text } : null,
-          move: { who: doc.turn.who, why: doc.turn.why },
+          move: { who: doc.turn.who, why: doc.turn.why, ...(doc.turn.who.startsWith('p_') ? { name: nameOf(c, doc.turn.who) } : {}) },
           gates: (['requirements', 'plan', 'verify'] as const).map((name) => ({ name, state: doc.gates[name].state })),
           questions: { open: doc.questions_state.filter((q) => q.state === 'open').length, total: doc.questions_state.length },
           tasks: { done: doc.tasks_state.filter((t) => t.state === 'done').length, total: doc.tasks_state.length, doing: doc.tasks_state.find((t) => t.state === 'doing')?.id ?? null },
@@ -165,6 +167,7 @@ registerAddon({
       context: contextOf(s),
       summary: s.status === 'stopped' ? (s.summary ?? null) : null,
       resumedFrom: resumedFromView(c, state, s),
+      ...(s.login ? { prefill: s.login.command, run_as: s.login.runAs } : {}),
     }))
     const myNav = ((state.nav ?? {}) as ReturnType<typeof navOf>)[viewer] // read-only: view() never creates state.nav
     const cur = shown.find((s) => s.id === myNav?.current) ?? shown.find((s) => mine(s) && s.status === 'running') ?? shown[0]
@@ -176,7 +179,7 @@ registerAddon({
       sessionByTicket,
       items: shown.map((s) => ({
         title: sessionTitle(s),
-        subtitle: `${findHarness(harnessOfSession(s))?.short ?? harnessOfSession(s)} · ${s.branch}${s.ticket ? ` · ${s.ticket}` : ''} · started ${hhmm(s.started)} UTC`,
+        subtitle: `${findHarness(harnessOfSession(s))?.short ?? harnessOfSession(s)} · ${s.branch}${s.ticket ? ` · ${s.ticket}` : ''} · started ${fmtWhen(s.started, c.store.now())}`,
         badge: s.kind === 'agent' ? 'read only' : s.status,
         actions: [{ action: 'open', label: 'Open', args: { session: s.id } }, ...(mine(s) && s.status === 'running' ? [{ action: 'close', label: 'Close', args: { session: s.id } }] : [])],
       })),
@@ -213,7 +216,7 @@ registerAddon({
       if (!ticket || !canSeeTicket(ctx, ticket)) return invalid('Pick a ticket first.')
       const s = sessionsOf(state).find((x) => x.kind === 'person' && x.owner === viewer && x.status === 'running' && x.ticket === ticket) ?? newShell(state, store, viewer, ticket)
       navOf(state)[viewer] = { current: s.id }
-      return { ok: true, message: `Terminal open in the ${ticket} worktree.`, changed: true }
+      return { ok: true, message: `Terminal open in the ${ticket} worktree.`, changed: true, terminal: s.id }
     },
     /**
      * Start the viewer's own session of a harness: in the ticket's worktree when `ticket` is given, else in the
@@ -248,6 +251,24 @@ registerAddon({
       navOf(state)[viewer] = { current: s.id }
       return { ok: true, message: `Continued from ${sessionTitle(old)} in a new ${h.label} session.`, changed: true }
     },
+    /**
+     * Re-login (owner only): a shell as the OS user that runs the agents, with the connection's login command typed
+     * but not run; the person presses Enter. The command comes from the host's connection, never from the request.
+     */
+    login_shell(ctx) {
+      const { state, store, viewer, ws, body } = ctx
+      if (!ptyGranted(ctx)) return noPty()
+      if (store.roleIn(ws, viewer) !== 'owner') return refusal(403, 'forbidden', 'Only owners log in again.', 'Ask an owner.')
+      const c = store.conn.connections(ws).find((x) => x.name === body.connection)
+      if (!c) return notFound('No such connection.')
+      if (c.kind !== 'cli_login' || !c.login_hint) return invalid('This connection has no login command.')
+      const s = newShell(state, store, viewer, null)
+      s.login = { runAs: c.run_as, connection: c.name, command: c.login_hint }
+      navOf(state)[viewer] = { current: s.id }
+      // A cross-user shell leaves a trace: the owner opened it, nothing was run (provisional event type).
+      store.appendWs(ws, { type: 'terminal.shell_opened', actor: { kind: 'person', id: viewer }, connection: c.name, run_as: c.run_as, session: s.id })
+      return { ok: true, message: `Opened a shell as ${c.run_as} with the login command for ${c.name} typed. Press Enter to run it.`, changed: true, terminal: s.id }
+    },
     save_settings: ({ state, body }) => {
       const d = (body.formData ?? {}) as { shell?: unknown; font_size?: unknown }
       const size = typeof d.font_size === 'number' && Number.isFinite(d.font_size) ? Math.min(20, Math.max(10, Math.round(d.font_size))) : 13
@@ -271,7 +292,8 @@ function resumedFromView(c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>, state: Re
 }
 
 /** What the person sees: ticket first ("DEMO-0043 · Claude Code", "DEMO-0043 · Your shell", "Scratch shell"). */
-function sessionTitle(s: Pick<Session, 'kind' | 'owner' | 'ticket' | 'harness'>): string {
+function sessionTitle(s: Pick<Session, 'kind' | 'owner' | 'ticket' | 'harness' | 'login'>): string {
+  if (s.login) return `Log in ${s.login.connection} as ${s.login.runAs}`
   if (s.kind === 'person') {
     const h = s.harness && s.harness !== 'shell' ? (findHarness(s.harness)?.label ?? s.harness) : null
     return h ? (s.ticket ? `${s.ticket} · Your ${h}` : `Your ${h}`) : s.ticket ? `${s.ticket} · Your shell` : 'Scratch shell'

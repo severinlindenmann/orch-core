@@ -1,8 +1,9 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import { api } from '@/api/client'
 import { can, roleOf } from '@/api/permissions'
-import { Skeleton } from '@/components/ui/skeleton'
+import { SettingsSkeleton } from '../skeletons'
+import { LoadFailed } from '@/components/LoadFailed'
+import { useLoadFailure } from '../../useLoadFailure'
 import { cn } from '@/lib/utils'
 import { useWorkspace } from '../../workspace'
 import { usePageHeader } from '../../shell/ShellUi'
@@ -14,6 +15,8 @@ import { Relay } from './relay'
 import { Skills } from './Skills'
 import { Connections } from './Connections'
 import { TABS } from './tabs'
+import { CopyLinkButton } from '../../shell/CopyLinkButton'
+import { queries } from '@/api/queries'
 
 export const ONLY_OWNERS = 'Only owners change settings.'
 
@@ -24,24 +27,25 @@ const active = 'bg-surface-2 text-text'
 export function SettingsPage({ tab, addon }: { tab?: string; addon?: string }) {
   usePageHeader('Settings')
   const { workspace } = useWorkspace()
-  const me = useQuery({ queryKey: ['me'], queryFn: api.getMe })
+  const me = useQuery(queries.me())
 
+  const failure = useLoadFailure()
+  if (failure.failed) return <LoadFailed what="settings" onRetry={failure.retry} />
   if (!workspace || !me.data) {
-    return (
-      <div className="space-y-4" aria-busy="true">
-        <h1 className="text-xl font-semibold tracking-tight">Settings</h1>
-        <Skeleton className="h-40 w-full max-w-3xl" />
-      </div>
-    )
+    return <SettingsSkeleton inPage />
   }
   const isOwner = can(roleOf(workspace, me.data.person), 'settings')
   // An addon's own settings page belongs to Addons: that stays the marked section.
   const current = addon ? 'addons' : (tab ?? 'general')
 
   return (
-    <div className="flex max-w-5xl gap-8">
-      <nav aria-label="Settings" className="w-48 shrink-0 space-y-0.5">
-        <h1 className="mb-2 px-2.5 text-xl font-semibold tracking-tight">Settings</h1>
+    // A narrow page area (the terminal docked on the right): the sections sit in a row above the content (N11).
+    <div className="flex max-w-5xl flex-col gap-4 @[60rem]/page:flex-row @[60rem]/page:gap-8">
+      <nav aria-label="Settings" className="flex flex-wrap items-center gap-0.5 @[60rem]/page:block @[60rem]/page:w-48 @[60rem]/page:shrink-0 @[60rem]/page:space-y-0.5">
+        <div className="mb-1 flex w-full items-center gap-1 @[60rem]/page:mb-2 @[60rem]/page:px-2.5">
+          <h1 className="text-xl font-semibold tracking-tight">Settings</h1>
+          <CopyLinkButton label={addon ? `Copy link to the ${addon} settings` : 'Copy link to this settings page'} />
+        </div>
         {TABS.map((t) => (
           <Link key={t.id} to="/settings/$tab" params={{ tab: t.id }} className={cn(link, current === t.id && active)} aria-current={current === t.id ? 'page' : undefined}>
             <span className="flex-1">{t.label}</span>

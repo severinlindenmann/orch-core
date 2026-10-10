@@ -2,7 +2,6 @@ import { useQuery } from '@tanstack/react-query'
 import { useBlocker, useNavigate } from '@tanstack/react-router'
 import { Maximize2 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api } from '@/api/client'
 import { can, roleOf } from '@/api/permissions'
 import type { TicketDocument } from '@/api/types'
 import { Button } from '@/components/ui/button'
@@ -14,6 +13,7 @@ import { EMPTY, NewTicketForm, carryDraftToPage, draftKey, readDraft, writeDraft
 import { QuickTicket } from './QuickTicket'
 import { guessType, quickTitle } from './quickRules'
 import { useCreatedToast } from './useQuickCreate'
+import { queries } from '@/api/queries'
 
 /**
  * New ticket as an overlay: a large right-hand sheet over the current page with a Quick ticket line on top and the
@@ -23,7 +23,7 @@ import { useCreatedToast } from './useQuickCreate'
  */
 export function NewTicketOverlay({ onClose, opener }: { onClose: () => void; opener: HTMLElement | null }) {
   const { workspace } = useWorkspace()
-  const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.getMe })
+  const { data: me } = useQuery(queries.me())
   const navigate = useNavigate()
   const createdToast = useCreatedToast()
   const [quick, setQuick] = useState('')
@@ -147,9 +147,10 @@ export function NewTicketOverlay({ onClose, opener }: { onClose: () => void; ope
   return (
     <>
       <Sheet open onOpenChange={(o) => !o && requestClose()}>
+        {/* Over a page with the terminal docked on the right it stops at the dock and sizes to the page area (N11). */}
         <SheetContent
           side="right"
-          className="w-[calc(100vw-4rem)] gap-0 border-border bg-surface p-0 sm:max-w-none xl:w-[min(92vw,56rem)]"
+          className="right-[var(--dock-right,0px)] w-[min(56rem,calc(100vw-var(--dock-right,0px)-4rem))] gap-0 border-border bg-surface p-0 sm:max-w-none"
           onOpenAutoFocus={(e) => {
             e.preventDefault()
             quickRef.current?.focus()

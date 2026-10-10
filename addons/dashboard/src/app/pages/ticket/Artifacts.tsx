@@ -1,22 +1,23 @@
-import { BarChart3, Check, Copy, ExternalLink, FileJson, FileText, Image as ImageIcon, Link2, ScrollText, Table2, Workflow } from 'lucide-react'
+import { ArrowUpRight, BarChart3, Check, Copy, Eye, FileJson, FileText, Image as ImageIcon, Link2, ScrollText, Table2, Workflow } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { Link } from '@tanstack/react-router'
 import { addonActive } from '@/api/addons'
-import { api } from '@/api/client'
 import { workspaceOfTicket } from '@/api/workspaces'
 import { frameDocument } from '@/api/widgetTemplates'
 import { FrameNode } from '@/addon-ui/FrameNode'
 import { frameNode } from '@/addon-ui/nodes'
-import { Button } from '@/components/ui/button'
-import { Skeleton } from '@/components/ui/skeleton'
+import { Button, buttonVariants } from '@/components/ui/button'
 import type { Artifact } from '@/api/types'
 import { AddonBadge } from '@/addon-ui'
+import { useSlot } from '@/addon-ui/slots'
 import { CodeBlock } from '@/addon-ui/CodeBlock'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { cn } from '@/lib/utils'
-import { agentName, fmtBytes, fmtTime, Mono, Pill, shortHash, type Jump, type TabProps } from './shared'
+import { agentName, ago, fmtBytes, Mono, Pill, shortHash, type Jump, type TabProps } from './shared'
 import { addonHairline, addonTile } from '@/addon-ui/addonClasses'
+import { queries } from '@/api/queries'
 
 export const KIND_ICON: Record<Artifact['kind'], typeof FileText> = {
   screenshot: ImageIcon,
@@ -126,28 +127,33 @@ function langOf(a: Artifact): string {
 /** Plain text with a wrap toggle (on by default) and "Copy all": a log is read, searched and pasted, not highlighted. */
 function TextViewer({ text, label }: { text: string; label: string }) {
   const [wrap, setWrap] = useState(true)
-  const [copied, setCopied] = useState(false)
+  const [copy, setCopy] = useState<'idle' | 'copied' | 'failed'>('idle')
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
+  useEffect(() => () => clearTimeout(timer.current), [])
+  const show = (s: 'copied' | 'failed') => {
+    setCopy(s)
+    clearTimeout(timer.current)
+    timer.current = setTimeout(() => setCopy('idle'), s === 'copied' ? 1500 : 4000)
+  }
+  const copyAll = () => {
+    // No clipboard (an insecure context, an old browser) or a refused write: say so instead of looking done.
+    if (!navigator.clipboard?.writeText) return show('failed')
+    navigator.clipboard.writeText(text).then(() => show('copied'), () => show('failed'))
+  }
   return (
     <div className="space-y-2">
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Button type="button" variant="outline" size="sm" aria-pressed={wrap} onClick={() => setWrap(!wrap)}>
           {wrap && <Check />}
           Wrap lines
         </Button>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => {
-            void navigator.clipboard?.writeText(text).then(() => {
-              setCopied(true)
-              setTimeout(() => setCopied(false), 1500)
-            }, () => {})
-          }}
-        >
-          {copied ? <Check /> : <Copy />}
+        <Button type="button" variant="outline" size="sm" onClick={copyAll}>
+          {copy === 'copied' ? <Check /> : <Copy />}
           Copy all
         </Button>
+        <span role="status" className="text-[12px] text-text-muted">
+          {copy === 'copied' ? 'Copied' : copy === 'failed' ? 'Could not copy. Select the text and copy it instead.' : ''}
+        </span>
       </div>
       <pre tabIndex={0} aria-label={label} className={cn('max-h-[70vh] overflow-auto rounded-md border border-border bg-bg p-3 font-mono text-[12px] leading-5', wrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre')}>
         {text}
@@ -163,11 +169,11 @@ const isHtmlDocument = (a: Artifact) => DOCUMENT_KINDS.includes(a.kind) && /\.ht
 /**
  * An HTML document runs in the same sandboxed frame as its widget, and only while agent HTML is on: the frame is
  * drawn from the live `agentHtml` value on every render, so turning the widgets addon off replaces it with source.
- * "View source" shows the bytes instead.
+ * "View source" shows the bytes instead, and then reads "Show preview".
  */
 function HtmlViewer({ a, agentHtml }: { a: Artifact; agentHtml: boolean }) {
   const [source, setSource] = useState(false)
-  const node = frameNode.safeParse({ type: 'frame', title: `Sandboxed preview of ${a.name}`, html: frameDocument(a.preview!, {}), height: 520 })
+  const node = frameNode.safeParse({ type: 'frame', title: `Sandboxed preview of ${a.name}`, html: frameDocument(a.preview!, {}, 520), height: 520 })
   const framed = agentHtml && !source && node.success
   return (
     <div className={cn('space-y-2', agentHtml && 'rounded-lg border p-2', agentHtml && addonHairline)} data-addon={agentHtml ? 'widgets' : undefined}>
@@ -175,9 +181,8 @@ function HtmlViewer({ a, agentHtml }: { a: Artifact; agentHtml: boolean }) {
         {agentHtml && <AddonBadge name="widgets" />}
         {framed && <Pill tone="neutral">Sandboxed preview</Pill>}
         {agentHtml && node.success && (
-          <Button type="button" variant="outline" size="sm" aria-pressed={source} onClick={() => setSource(!source)}>
-            {source && <Check />}
-            View source
+          <Button type="button" variant="outline" size="sm" onClick={() => setSource(!source)}>
+            {source ? 'Show preview' : 'View source'}
           </Button>
         )}
         {!agentHtml && <span className="text-[12px] text-text-muted">Agent HTML is off in this workspace, so only the source is shown.</span>}
@@ -187,7 +192,8 @@ function HtmlViewer({ a, agentHtml }: { a: Artifact; agentHtml: boolean }) {
   )
 }
 
-function Viewer({ a, agentHtml }: { a: Artifact; agentHtml: boolean }) {
+/** The content of one artifact (also the Artifacts page's preview pane): same sandbox and agent-HTML rule everywhere. */
+export function Viewer({ a, agentHtml }: { a: Artifact; agentHtml: boolean }) {
   if (a.kind === 'screenshot')
     return (
       <div className="space-y-2">
@@ -195,7 +201,7 @@ function Viewer({ a, agentHtml }: { a: Artifact; agentHtml: boolean }) {
         <p className="text-[12px] text-text-faint">Placeholder rendering. The real host serves the file; the hash below is what an approval binds.</p>
       </div>
     )
-  if (!a.preview) return <p className="text-[13px] text-text-muted">No inline preview for this artifact.</p>
+  if (!a.preview) return <p className="text-[13px] text-text-muted">No inline preview for this kind of file. Its content is not shown here; the sha256 above is what an approval binds.</p>
   if (isHtmlDocument(a)) return <HtmlViewer a={a} agentHtml={agentHtml} />
   if (a.kind === 'log') return <TextViewer text={a.preview} label={`Log ${a.name}`} />
   if (a.kind === 'dataset' || /\.csv$/.test(a.name)) {
@@ -213,7 +219,7 @@ function Viewer({ a, agentHtml }: { a: Artifact; agentHtml: boolean }) {
         </TableHeader>
         <TableBody>
           {rows.slice(1).map((r, i) => (
-            <TableRow key={i}>
+            <TableRow key={i} className="hover:bg-transparent">
               {r.map((c, j) => (
                 <TableCell key={j} className="font-mono text-[12px]">
                   {c}
@@ -229,39 +235,115 @@ function Viewer({ a, agentHtml }: { a: Artifact; agentHtml: boolean }) {
 }
 
 const isHttp = (u?: string) => !!u && /^https?:\/\//i.test(u)
+/** How an artifact opens: a web link in a new tab, an addon's artifact in its addon, the rest in the viewer (Preview). */
+export const openMode = (a: Pick<Artifact, 'kind' | 'url' | 'addon'>): 'external' | 'addon' | 'preview' => (a.kind === 'link' && isHttp(a.url) ? 'external' : a.addon ? 'addon' : 'preview')
+
+/** A link that looks like one at rest (colour and underline), not only on hover: ticket keys, AC and task jumps. */
+export const LINK = 'rounded-sm text-brand underline decoration-brand/40 underline-offset-2 outline-none hover:decoration-brand focus-visible:ring-2 focus-visible:ring-ring'
+
+/** The addons' own pages in this workspace, by addon: an addon artifact links to its addon only when it has a page. */
+export function useAddonPages() {
+  const nav = useSlot('nav')
+  return (addon: string) => nav.find((n) => n.addon === addon)
+}
+export type AddonPages = ReturnType<typeof useAddonPages>
+
+/**
+ * An honest tile for the grid and the ticket's cards: the type's icon and name. No generated "content" (it would
+ * suggest evidence that is not there); real thumbnails wait for a host capability (DECISIONS-LOG, G3).
+ */
+export function TypeTile({ a }: { a: Pick<Artifact, 'kind' | 'addon'> }) {
+  if (a.addon)
+    return (
+      <div aria-hidden className={cn('flex h-20 flex-col items-center justify-center gap-1.5 rounded-md border', addonTile)}>
+        <AddonBadge name={a.addon} className="size-6 text-[13px]" />
+        <span className="text-[11px] text-text-muted">{a.addon} addon</span>
+      </div>
+    )
+  const Icon = KIND_ICON[a.kind]
+  return (
+    <div aria-hidden className="flex h-20 flex-col items-center justify-center gap-1.5 rounded-md border border-border bg-bg text-text-faint">
+      <Icon className="size-6" strokeWidth={1.5} />
+      <span className="text-[11px]">{a.kind === 'link' ? 'web link' : a.kind}</span>
+    </div>
+  )
+}
+
+const ACTION = 'h-7 gap-1.5 px-2 text-[12px]'
+
+/**
+ * The one action of an artifact, always visible (list row end, card foot): "Preview" opens the viewer; a web link
+ * says it opens a new tab; an addon's artifact links to the addon's page, or says where it is shown. Names, labels and
+ * card bodies are plain text: nothing else on the item is a target except the ticket link (DECISIONS-LOG, G3).
+ */
+export function ArtifactAction({ a, onPreview, current = false, addonPage }: { a: Pick<Artifact, 'name' | 'kind' | 'url' | 'addon'>; onPreview: (el: HTMLElement) => void; current?: boolean; addonPage: AddonPages }) {
+  const mode = openMode(a)
+  if (mode === 'external')
+    return (
+      <a href={a.url} target="_blank" rel="noopener noreferrer nofollow" aria-label={`Open link ${a.name} (opens in a new tab)`} className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), ACTION)}>
+        Open link
+        <ArrowUpRight aria-hidden />
+      </a>
+    )
+  if (mode === 'addon') {
+    const page = addonPage(a.addon!)
+    // Core words on the button; the addon's own title only as plain text beside it, with its id (no addon text as a verb).
+    const who = `${page?.addonTitle ?? a.addon} (${a.addon})`
+    return page ? (
+      <span className="flex min-w-0 flex-col items-start gap-1">
+        <Link to="/addon/$name/$page" params={{ name: page.addon, page: page.id }} aria-label={`Open addon page: ${who}`} className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), ACTION)}>
+          Open addon page
+        </Link>
+        <span className="flex w-full min-w-0 items-center gap-1 text-[11px] text-text-muted">
+          <AddonBadge name={a.addon!} title={page.addonTitle} />
+          <span className="min-w-0 truncate" title={who}>
+            {who}
+          </span>
+        </span>
+      </span>
+    ) : (
+      <span className="text-[12px] text-text-muted">Shown in the {a.addon} addon</span>
+    )
+  }
+  return (
+    <Button type="button" variant="outline" size="sm" data-preview className={cn(ACTION, current && 'border-brand/60 bg-brand-soft text-brand hover:bg-brand-soft hover:text-brand')} aria-label={`Preview ${a.name}`} onClick={(e) => onPreview(e.currentTarget)}>
+      <Eye aria-hidden />
+      Preview
+    </Button>
+  )
+}
 
 function Meta({ a, jump }: { a: Artifact; jump: (j: Jump) => void }) {
   return (
-    <div className="mt-2 space-y-1 text-[11px] text-text-muted">
-      <div className="flex flex-wrap items-center gap-1.5">
-        {a.ac && (
-          <button type="button" onClick={() => jump({ tab: 'acceptance', id: `ac-${a.ac}` })} className="rounded border border-border px-1.5 font-mono hover:bg-surface-2">
-            {a.ac}
-          </button>
-        )}
-        {a.task && (
-          <button type="button" onClick={() => jump({ tab: 'acceptance', id: `task-${a.task}` })} className="rounded border border-border px-1.5 font-mono hover:bg-surface-2">
-            {a.task}
-          </button>
-        )}
-        <Mono className="text-[11px] text-text-faint">{shortHash(a.sha256, 8)}</Mono>
-        {a.bytes > 0 && <span className="text-text-faint">{fmtBytes(a.bytes)}</span>}
-      </div>
+    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-text-faint">
+      {a.ac && (
+        <button type="button" onClick={() => jump({ tab: 'acceptance', id: `ac-${a.ac}` })} className={cn(LINK, 'font-mono')}>
+          Proves {a.ac}
+        </button>
+      )}
+      {a.task && (
+        <button type="button" onClick={() => jump({ tab: 'acceptance', id: `task-${a.task}` })} className={cn(LINK, 'font-mono')}>
+          From {a.task}
+        </button>
+      )}
+      <Mono className="text-[11px] text-text-faint">{shortHash(a.sha256, 8)}</Mono>
+      {a.bytes > 0 && <span>{fmtBytes(a.bytes)}</span>}
     </div>
   )
 }
 
 export function Artifacts({ ticket, viewer, jump, focus }: TabProps & { focus?: string }) {
   const [open, setOpen] = useState<Artifact | null>(null)
-  /** The card button that opened the drawer; closing returns focus to it. */
+  /** The Preview button that opened the drawer; closing returns focus to it. */
   const opener = useRef<HTMLElement | null>(null)
-  const workspaces = useQuery({ queryKey: ['workspaces'], queryFn: api.getWorkspaces })
+  const workspaces = useQuery(queries.workspaces())
   const agentHtml = addonActive(workspaceOfTicket(ticket.key, workspaces.data ?? []), 'widgets')
+  const addonPage = useAddonPages()
   useEffect(() => {
     if (!focus) return
     const a = ticket.artifacts.find((x) => `artifact-${x.name}` === focus)
-    if (a && !a.url && !a.addon) {
-      opener.current = document.getElementById(focus)?.querySelector('button') ?? null
+    if (a && openMode(a) === 'preview') {
+      opener.current = document.getElementById(focus)?.querySelector<HTMLElement>('[data-preview]') ?? null
       setOpen(a)
     }
   }, [focus, ticket.artifacts])
@@ -271,63 +353,47 @@ export function Artifacts({ ticket, viewer, jump, focus }: TabProps & { focus?: 
 
   return (
     <>
-      <ul className="grid grid-cols-2 gap-3 xl:grid-cols-3" aria-label="Artifacts">
-        {ticket.artifacts.map((a) => {
-          const Icon = KIND_ICON[a.kind]
-          const external = a.kind === 'link' && isHttp(a.url)
-          const inner = (
-            <>
-              <div className="relative">
-                {a.addon ? (
-                  <div className={cn('flex h-[120px] w-full items-center justify-center rounded-md border', addonTile)}>
-                    <AddonBadge name={a.addon} className="size-8 text-lg" />
-                  </div>
-                ) : (
-                  <Thumb a={a} />
-                )}
-                {a.addon && <span className="absolute bottom-1.5 right-2 font-mono text-[10px] text-text-muted">{a.addon}</span>}
-              </div>
-              <div className="mt-2 flex items-center gap-1.5">
-                <Icon className="size-3.5 shrink-0 text-text-muted" />
-                <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{a.name}</span>
-                {external && <ExternalLink className="size-3 text-text-faint" aria-hidden />}
-              </div>
-              {a.label && <p className="mt-0.5 line-clamp-2 text-[12px] text-text-muted">{a.label}</p>}
-              <div className="mt-1.5 flex items-center gap-1.5">
-                <Pill>{a.addon ? 'addon artifact' : a.kind}</Pill>
-                <span className="truncate text-[11px] text-text-faint">
-                  by {viewer.name(a.added_by)} · {fmtTime(a.at)}
-                </span>
-              </div>
-            </>
-          )
-          const frame = 'block w-full rounded-md text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50'
-          return (
-            <li
-              key={a.name}
-              id={`artifact-${a.name}`}
-              data-kind={a.kind}
-              className={cn('scroll-mt-4 rounded-lg border bg-surface p-2.5 transition-colors', a.addon ? addonHairline : 'border-border hover:border-border-strong')}
-            >
-              {external ? (
-                <a href={a.url} target="_blank" rel="noopener noreferrer nofollow" className={frame}>
-                  {inner}
-                </a>
-              ) : a.addon ? (
-                <div>{inner}</div>
-              ) : (
-                <button type="button" className={cn(frame, 'cursor-pointer')} aria-label={`Open ${a.name}`} onClick={(e) => {
-                    opener.current = e.currentTarget
-                    setOpen(a)
-                  }}>
-                  {inner}
-                </button>
-              )}
-              <Meta a={a} jump={jump} />
-            </li>
-          )
-        })}
-      </ul>
+      {/* Columns follow the tab's own width (beside a wide dock there are fewer), as on the Artifacts page. */}
+      <div className="@container/cards">
+        <ul className="grid grid-cols-1 gap-3 @[28rem]/cards:grid-cols-2 @[44rem]/cards:grid-cols-3" aria-label="Artifacts">
+          {ticket.artifacts.map((a) => {
+            const Icon = KIND_ICON[a.kind]
+            return (
+              <li
+                key={a.name}
+                id={`artifact-${a.name}`}
+                data-kind={a.kind}
+                aria-current={open?.name === a.name ? 'true' : undefined}
+                className={cn('flex scroll-mt-4 flex-col rounded-lg border bg-surface p-2.5', a.addon ? addonHairline : 'border-border')}
+              >
+                <TypeTile a={a} />
+                <div className="mt-2 flex items-center gap-1.5">
+                  <Icon className="size-3.5 shrink-0 text-text-muted" aria-hidden />
+                  <span className="min-w-0 flex-1 truncate text-[13px] font-medium" title={a.name}>
+                    {a.name}
+                  </span>
+                </div>
+                {a.label && <p className="mt-0.5 line-clamp-2 text-[12px] text-text-muted">{a.label}</p>}
+                <p className="mt-1 truncate text-[11px] text-text-faint">
+                  by {viewer.name(a.added_by)} · {ago(a.at)}
+                </p>
+                <Meta a={a} jump={jump} />
+                <div className="mt-auto pt-2">
+                  <ArtifactAction
+                    a={a}
+                    addonPage={addonPage}
+                    current={open?.name === a.name}
+                    onPreview={(el) => {
+                      opener.current = el
+                      setOpen(a)
+                    }}
+                  />
+                </div>
+              </li>
+            )
+          })}
+        </ul>
+      </div>
 
       <ArtifactDrawer artifact={open} agentHtml={agentHtml} onClose={() => setOpen(null)} opener={opener} />
     </>
@@ -335,8 +401,23 @@ export function Artifacts({ ticket, viewer, jump, focus }: TabProps & { focus?: 
 }
 
 /**
+ * What the viewer shows above the content: kind and size, then (Artifacts page) the ticket it is on, prominent; who
+ * added it, when, its hash and what it proves on one quiet line.
+ */
+export function ArtifactFacts({ a, by }: { a: Artifact; /** "Claude Code for Severin" where the page knows more than the ticket's actor label. */ by?: string }) {
+  return (
+    <p className="text-[11px] text-text-faint">
+      Added by {by ?? (a.added_by === 'host' ? 'orch' : agentName(a.added_by))} · {ago(a.at)} · sha256 {shortHash(a.sha256, 12)}
+      {a.ac && ` · proves ${a.ac}`}
+      {a.task && ` · from ${a.task}`}
+    </p>
+  )
+}
+
+/**
  * The artifact drawer (ticket tab and the workspace Artifacts page). The viewer is keyed by name + sha256, HTML runs
  * only for document kinds and only while agent HTML is on (see HtmlViewer). Closing returns focus to `opener`.
+ * `body` replaces the viewer (the Artifacts page's loading, missing and failed states); `denied` shows no facts at all.
  */
 export function ArtifactDrawer({
   artifact: open,
@@ -344,21 +425,25 @@ export function ArtifactDrawer({
   onClose,
   opener,
   context,
-  loading = false,
+  by,
+  body,
+  denied = false,
 }: {
-  /** The content is still on its way: a skeleton instead of the viewer. */
-  loading?: boolean
   artifact: Artifact | null
   agentHtml: boolean
   onClose: () => void
   opener: { current: HTMLElement | null }
-  /** Extra line under the description (the Artifacts page names the ticket). */
+  /** The ticket it is on (the Artifacts page). */
   context?: ReactNode
+  by?: string
+  body?: ReactNode
+  denied?: boolean
 }) {
   return (
     <Sheet open={!!open} onOpenChange={(o) => !o && onClose()}>
       <SheetContent
         side="right"
+        data-artifact-drawer
         className="w-[640px] max-w-[92vw] gap-0 border-border bg-surface sm:max-w-[640px]"
         onCloseAutoFocus={(e) => {
           e.preventDefault()
@@ -367,18 +452,22 @@ export function ArtifactDrawer({
       >
         {open && (
           <>
-            <SheetHeader className="border-b border-border">
-              <SheetTitle className="break-all font-mono text-[14px]">{open.name}</SheetTitle>
-              <SheetDescription>
-                {open.kind} · {fmtBytes(open.bytes)} · sha256 {shortHash(open.sha256, 12)} · by {open.added_by === 'host' ? 'orch' : agentName(open.added_by)} · {fmtTime(open.at)}
-                {open.ac && ` · proves ${open.ac}`}
-                {open.task && ` · from ${open.task}`}
-              </SheetDescription>
-              {context}
+            <SheetHeader className="gap-1 border-b border-border pr-10">
+              <SheetTitle className="break-all font-mono text-[14px]">{denied ? 'Artifact not available' : open.name}</SheetTitle>
+              {denied ? (
+                <SheetDescription>You can no longer see this artifact.</SheetDescription>
+              ) : (
+                <>
+                  <SheetDescription className="flex flex-wrap items-center gap-x-1.5 text-[12px]">
+                    <Pill>{open.kind}</Pill>
+                    {open.bytes > 0 && <span>{fmtBytes(open.bytes)}</span>}
+                    {context}
+                  </SheetDescription>
+                  <ArtifactFacts a={open} by={by} />
+                </>
+              )}
             </SheetHeader>
-            <div className="min-h-0 flex-1 overflow-auto p-4">
-              {loading ? <Skeleton className="h-60 w-full" aria-label="Loading the artifact" /> : <Viewer key={open.name + open.sha256} a={open} agentHtml={agentHtml} />}
-            </div>
+            <div className="min-h-0 flex-1 overflow-auto p-4">{body ?? <Viewer key={open.name + open.sha256} a={open} agentHtml={agentHtml} />}</div>
           </>
         )}
       </SheetContent>

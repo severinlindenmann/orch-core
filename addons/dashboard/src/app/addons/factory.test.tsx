@@ -35,7 +35,7 @@ describe('AI Factory page', () => {
   it('Pause factory is signed in core\'s dialog; the paused state is calm (info), and Resume brings it back', async () => {
     const { user } = renderApp('/addon/factory/factory', { viewer: 'p_sev', setup: on })
     await user.click(await screen.findByRole('button', { name: 'Pause factory' }, T))
-    const dialog = await screen.findByRole('dialog', { name: /Sign: pause · AI Factory/ }, T)
+    const dialog = await screen.findByRole('dialog', { name: /Sign: Pause \(pause\) · AI Factory \(factory\)/ }, T)
     expect(mockStore.addonStateView(wsOf(mockStore), 'factory')!.mode).toBe('running')
     await user.click(within(dialog).getByRole('button', { name: /Sign and run/ }))
     const alert = (await screen.findByText(/^Paused by/, {}, T)).closest('[role="status"]')!
@@ -43,7 +43,7 @@ describe('AI Factory page', () => {
     expect(alert.className).not.toMatch(/warning|danger/)
     await waitFor(() => expect(mockStore.addonStateView(wsOf(mockStore), 'factory')!.mode).toBe('paused'), T)
     await user.click(await screen.findByRole('button', { name: 'Resume' }, T))
-    await user.click(within(await screen.findByRole('dialog', { name: /Sign: resume · AI Factory/ }, T)).getByRole('button', { name: /Sign and run/ }))
+    await user.click(within(await screen.findByRole('dialog', { name: /Sign: Resume \(resume\) · AI Factory \(factory\)/ }, T)).getByRole('button', { name: /Sign and run/ }))
     await waitFor(() => expect(mockStore.addonStateView(wsOf(mockStore), 'factory')!.mode).toBe('running'), T)
   })
   it('Run demo activity shows a persistent info alert, and Stop demo activity ends it', async () => {
@@ -76,7 +76,7 @@ describe('AI Factory page', () => {
   it('cancelling the signing dialog changes nothing', async () => {
     const { user } = renderApp('/addon/factory/factory', { viewer: 'p_sev', setup: on })
     await user.click(await screen.findByRole('button', { name: 'Pause factory' }, T))
-    const dialog = await screen.findByRole('dialog', { name: /Sign: pause · AI Factory/ }, T)
+    const dialog = await screen.findByRole('dialog', { name: /Sign: Pause \(pause\) · AI Factory \(factory\)/ }, T)
     await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument(), T)
     expect(mockStore.addonStateView(wsOf(mockStore), 'factory')!.mode).toBe('running')
@@ -106,6 +106,24 @@ describe('permits on the page', () => {
 })
 
 describe('permits on Today', () => {
+  it('a permit with a 600-character command shows the whole command in core\'s prompt (never cut)', async () => {
+    const LONG = `bash -c '${'echo safe; '.repeat(55)}rm -rf ~/TAIL'`
+    expect(LONG.length).toBeGreaterThan(600)
+    const { user } = renderApp('/', {
+      viewer: 'p_sev',
+      setup: (s) => {
+        on(s)
+        for (const p of s.addonState(wsOf(s), 'factory').permits as { command: string }[]) p.command = LONG
+      },
+    })
+    const card = (await screen.findAllByTestId(/^card-addon:factory\.permit:/, {}, T))[0]
+    await user.click(within(card).getByRole('button', { name: 'Decide' }))
+    await user.click(within(card).getByRole('button', { name: 'Grant once' }))
+    const dialog = await screen.findByRole('dialog', {}, T)
+    const region = within(dialog).getByRole('region', { name: 'From addon factory' })
+    expect(region.textContent).toContain(LONG)
+    expect(region.textContent).toContain('rm -rf ~/TAIL')
+  })
   it('Grant once removes the card and logs factory.permit_granted on the epic', async () => {
     const { user } = renderApp('/', { viewer: 'p_sev', setup: on })
     const card = (await screen.findAllByTestId(/^card-addon:factory\.permit:/, {}, T))[0]
@@ -115,8 +133,8 @@ describe('permits on Today', () => {
     expect(within(card).getByRole('button', { name: 'Refuse' })).toBeInTheDocument()
     await user.click(within(card).getByRole('button', { name: 'Grant once' }))
     const dialog = await screen.findByRole('dialog', {}, T)
-    const covers = within(dialog).getByText('Covers').nextElementSibling!
-    expect(covers.textContent).toMatch(/The question: .* asks to run: \S+/) // the command is quoted under Covers
+    // The question (with the command it quotes) is the addon's text: shown in full in the labelled region.
+    expect(within(dialog).getByRole('region', { name: 'From addon factory' }).textContent).toMatch(/Question: .* asks to run: \S+/)
     await user.click(within(dialog).getByRole('button', { name: 'Send answer' }))
     await waitFor(() => expect(screen.queryByTestId(`card-addon:${id}`)).not.toBeInTheDocument(), T)
     expect(mockStore.eventsOf('DEMO-0050').some((e) => e.type === 'factory.permit_granted' && e.scope === 'once')).toBe(true)

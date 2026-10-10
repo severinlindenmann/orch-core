@@ -18,6 +18,9 @@
           "type": "stack",
           "children": [
             {
+              "$ref": "addon.addBar"
+            },
+            {
               "$ref": "addon.filterBar"
             },
             {
@@ -158,15 +161,16 @@
               "schema": {
                 "$ref": "addon.addSchema"
               },
+              "uiSchema": {
+                "$ref": "addon.addUi"
+              },
               "action": "add",
-              "submitLabel": "Add quick task"
+              "submitLabel": "Add",
+              "reset": true
             },
             {
               "type": "markdown",
               "text": "An agent picks up quick tasks on its own."
-            },
-            {
-              "$ref": "addon.closePanel"
             },
             {
               "type": "tabs",
@@ -228,9 +232,7 @@
     ],
     "actions": {
       "save_settings": { "minRole": "owner" },
-      "decide": { "minRole": "maintainer", "decision": true },
-      "start_close": { "minRole": "member", "kind": "navigation" },
-      "cancel_close": { "minRole": "member", "kind": "navigation" }
+      "decide": { "minRole": "maintainer", "decision": true }
     }
   },
   {
@@ -256,58 +258,10 @@
               "text": "**${addon.summary}**"
             },
             {
-              "$ref": "addon.pushAlert"
+              "$ref": "addon.statusNote"
             },
             {
-              "type": "stack",
-              "direction": "row",
-              "children": [
-                {
-                  "type": "stack",
-                  "children": [
-                    {
-                      "type": "button",
-                      "label": "Record changes",
-                      "action": "commit",
-                      "variant": "primary"
-                    },
-                    {
-                      "type": "markdown",
-                      "text": "${addon.commitLine}"
-                    }
-                  ]
-                },
-                {
-                  "type": "stack",
-                  "children": [
-                    {
-                      "type": "button",
-                      "label": "Push to remote",
-                      "action": "push",
-                      "variant": "secondary"
-                    },
-                    {
-                      "type": "markdown",
-                      "text": "Sends the record commits to the shared remote."
-                    }
-                  ]
-                },
-                {
-                  "type": "stack",
-                  "children": [
-                    {
-                      "type": "button",
-                      "label": "Pull",
-                      "action": "pull",
-                      "variant": "ghost"
-                    },
-                    {
-                      "type": "markdown",
-                      "text": "Brings in commits another clone pushed."
-                    }
-                  ]
-                }
-              ]
+              "$ref": "addon.actions"
             },
             {
               "type": "tabs",
@@ -568,6 +522,10 @@
                         "label": "Approval"
                       },
                       {
+                        "key": "verdict",
+                        "label": "Verdict"
+                      },
+                      {
                         "key": "size",
                         "label": "Size"
                       }
@@ -806,6 +764,15 @@
           "type": "stack",
           "children": [
             {
+              "type": "stack",
+              "direction": "row",
+              "fit": true,
+              "children": [
+                { "type": "markdown", "text": "Files between devices, people and workspaces. Live apps and links to tickets go through Apps & shares." },
+                { "type": "link", "label": "Open Apps & shares", "href": "/addon/publish/shares" }
+              ]
+            },
+            {
               "type": "alert",
               "tone": "info",
               "title": "Simulated",
@@ -843,7 +810,7 @@
             },
             {
               "type": "markdown",
-              "text": "### Inbox\nFiles sent to this workspace. A file marked **to claim** went to several workspaces: the first one to claim it handles it."
+              "text": "## Inbox\nFiles sent to this workspace. A file marked **to claim** went to several workspaces: the first one to claim it handles it."
             },
             {
               "type": "table",
@@ -911,7 +878,7 @@
             },
             {
               "type": "markdown",
-              "text": "### Sent\nSealed to a person: only their devices open it, there is no link. A link is shown once when you make it; revoke it to stop it."
+              "text": "## Sent\nSealed to a person: only their devices open it, there is no link. A link is shown once when you make it; revoke it to stop it."
             },
             {
               "type": "table",
@@ -972,7 +939,7 @@
             },
             {
               "type": "markdown",
-              "text": "### Share a file\nPick a file (a simulated upload), who gets it and for how long. A link opens only in the orch app (iPhone or Mac). The relay has no download page — seal it to a person or a workspace instead."
+              "text": "## Share a file\nPick a file (a simulated upload), who gets it and for how long. A link opens only in the orch app (iPhone or Mac). The relay has no download page — seal it to a person or a workspace instead."
             },
             {
               "type": "form",
@@ -1190,5 +1157,104 @@
         "label": "Open checks"
       }
     }
+  },
+  {
+    "name": "links",
+    "title": "Workspace links",
+    "version": "0.1.0",
+    "preview": true,
+    "description": "Preview: link this workspace with another (same machine or through the relay), choose what may cross, accept or deny pairing and requests, and see a log of everything that crossed. Simulated.",
+    "capabilities": [
+      "network"
+    ],
+    "first_party": true,
+    "update": null,
+    "contributions": [
+      {
+        "slot": "nav",
+        "id": "links",
+        "title": "Workspace links",
+        "icon": "Link2",
+        "node": {
+          "$ref": "addon.page"
+        }
+      }
+    ],
+    "commands": [],
+    "actions": {
+      "select_link": {
+        "minRole": "viewer",
+        "kind": "navigation",
+        "label": "Show a link"
+      },
+      "filter_log": {
+        "minRole": "viewer",
+        "kind": "navigation",
+        "label": "Filter the log"
+      },
+      "start_pairing": {
+        "minRole": "owner",
+        "label": "Start pairing"
+      },
+      "simulate_peer": {
+        "minRole": "owner",
+        "label": "Simulate the other owner"
+      },
+      "confirm_pairing": {
+        "minRole": "owner",
+        "confirm": "sign",
+        "label": "Link the two workspaces"
+      },
+      "cancel_pairing": {
+        "minRole": "owner",
+        "label": "Cancel pairing"
+      },
+      "revoke": {
+        "minRole": "owner",
+        "confirm": "sign",
+        "label": "Revoke a link: nothing crosses it from now on; open requests close and waiting handoffs come back"
+      },
+      "prepare_handoff": {
+        "minRole": "member",
+        "kind": "navigation",
+        "label": "Review a handoff"
+      },
+      "clear_handoff": {
+        "minRole": "member",
+        "kind": "navigation",
+        "label": "Discard a handoff"
+      },
+      "send_handoff": {
+        "minRole": "member",
+        "confirm": "sign",
+        "label": "Hand off a ticket"
+      },
+      "simulate_request": {
+        "minRole": "member",
+        "label": "Simulate a handoff from INT"
+      },
+      "decide": {
+        "minRole": "member",
+        "decision": true
+      },
+      "decide_pairing": {
+        "minRole": "owner",
+        "decision": true
+      },
+      "decide_scope": {
+        "minRole": "owner",
+        "decision": true
+      },
+      "set_pairing_terms": {
+        "minRole": "owner",
+        "label": "Set the terms of a link request"
+      },
+      "reset_pairing_terms": {
+        "minRole": "owner",
+        "kind": "navigation",
+        "label": "Discard changes to the terms"
+      }
+    },
+    "package_sha256": "9395d3ff43d09f8372895d9387287a801f0c69dc021d545c391ef3683867d5d9"
   }
 ]

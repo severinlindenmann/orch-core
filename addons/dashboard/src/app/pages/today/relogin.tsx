@@ -1,10 +1,15 @@
 // Today's "Re-login needed" items (D57): one per connection whose last check is auth expired or wrong identity, for
-// the owner only. It shows the connection's login_hint to copy and "Run check again"; agents never handle logins and
-// no password is ever stored.
-import { ChevronDown, KeyRound, Loader2, RefreshCw } from 'lucide-react'
+// the owner only. It shows the connection's login_hint to copy, "Log in in the terminal" (a shell as the OS user that
+// runs the agents with the command typed, not run; only with the terminals addon holding pty) and "Run check again";
+// agents never handle logins and no password is ever stored.
+import { reloginItems } from '@/api/attention'
+import { ChevronDown, KeyRound, Loader2, RefreshCw, SquareTerminal } from 'lucide-react'
 import { useState } from 'react'
-import { CHECK_LABEL, isBlocking, type ConnectionInfo } from '@/api/connections'
+import { CHECK_LABEL, type ConnectionInfo } from '@/api/connections'
 import { can } from '@/api/permissions'
+import { useAddons } from '@/addon-ui/slots'
+import { useRunAddonAction } from '@/addon-ui/useRunAddonAction'
+import { canUsePty } from '@/addon-ui/capabilities'
 import { useRole } from '@/app/useRole'
 import { useWorkspace } from '@/app/workspace'
 import { Button } from '@/components/ui/button'
@@ -14,8 +19,18 @@ import { checkTime, DEMO_RELOGIN, DemoChip, PhaseChip, useConnections } from '..
 import { useRunCheck } from '../settings/Connections'
 import { RowShell } from './rows'
 
+/** Terminals holds pty here (enabled, granted for the installed version) and the viewer may open the login shell. */
+function useLoginShell() {
+  const { workspace } = useWorkspace()
+  const { data: packages } = useAddons()
+  const run = useRunAddonAction()
+  const ok = canUsePty(packages?.find((a) => a.name === 'terminals'), workspace?.addons.terminals) && run.allowed('terminals', 'login_shell')
+  return { ok, run, open: (connection: string) => run.run('terminals', 'login_shell', { connection }, connection) }
+}
+
 function ReloginRow({ c, ws, now, expanded, onToggle }: { c: ConnectionInfo; ws: string; now: string; expanded: boolean; onToggle: () => void }) {
   const check = useRunCheck(ws)
+  const shell = useLoginShell()
   const last = c.last_check!
   const blocks = c.tickets.length ? ` · blocks ${c.tickets.join(', ')}` : ''
   const why = last.status === 'wrong_identity' ? `wrong identity: expected ${last.expected}, got ${last.actual}` : CHECK_LABEL[last.status]
@@ -30,7 +45,11 @@ function ReloginRow({ c, ws, now, expanded, onToggle }: { c: ConnectionInfo; ws:
       action={
         c.kind === 'cli_login' ? (
           <>
-            <DemoChip />
+            {shell.ok && c.login_hint && (
+              <Button size="icon-xs" variant="outline" aria-label={`Log in to ${c.name} in the terminal (as ${c.run_as})`} title="Log in in the terminal" disabled={shell.run.pending} onClick={() => shell.open(c.name)}>
+                <SquareTerminal />
+              </Button>
+            )}
             <Button size="xs" variant="outline" disabled={check.isPending} onClick={() => check.mutate({ name: c.name, trigger: 'relogin' })}>
               {check.isPending ? <Loader2 className="animate-spin" /> : <RefreshCw />}
               Run check again
@@ -53,6 +72,17 @@ function ReloginRow({ c, ws, now, expanded, onToggle }: { c: ConnectionInfo; ws:
             <code className="min-w-0 break-all rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[12px]">{c.login_hint}</code>
             <CopyButton text={c.login_hint} label={`Copy the login command for ${c.name}`} />
           </span>
+          {shell.ok && (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button size="xs" variant="outline" disabled={shell.run.pending} onClick={() => shell.open(c.name)}>
+                <SquareTerminal />
+                Log in in the terminal
+              </Button>
+              <p className="min-w-0 text-[12px] text-text-muted">
+                Opens a shell as <span className="font-mono text-text">{c.run_as}</span> with this command typed. Press Enter to run it yourself, then run the check again.
+              </p>
+            </div>
+          )}
           <p className="flex items-center gap-2 text-[12px] text-text-muted">
             <DemoChip />
             {DEMO_RELOGIN} No login happens in this mockup.
@@ -64,6 +94,7 @@ function ReloginRow({ c, ws, now, expanded, onToggle }: { c: ConnectionInfo; ws:
       <p className="flex items-center gap-2 text-[12px] text-text-faint">
         Agents never handle logins. The same prompt on your phone comes later. <PhaseChip phase="P4" />
       </p>
+      {shell.run.dialog}
     </RowShell>
   )
 }
@@ -77,7 +108,7 @@ export function ReloginGroup({ now }: { now: string }) {
   const connections = useConnections(owner ? ws : undefined)
   const [open, setOpen] = useState(true)
   const [expanded, setExpanded] = useState<string | null>(null)
-  const items = (connections.data ?? []).filter((c) => c.last_check && isBlocking(c.last_check.status))
+  const items = reloginItems(connections.data ?? [])
   if (!owner || !ws || items.length === 0) return null
   return (
     <section role="region" aria-labelledby="today-group-relogin" className="overflow-hidden rounded-lg border border-border bg-surface">

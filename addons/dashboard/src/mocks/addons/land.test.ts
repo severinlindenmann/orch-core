@@ -38,7 +38,7 @@ const drain = (s: S, max = 30) => {
 const verdict = async (s: S, key: string, as = 'p_mara') => {
   const before = s.store.viewer
   s.store.setViewer(as)
-  await s.api.postAction(key, { action: 'verdict', result: 'pass', text: 'Looks right.' })
+  await s.api.postAction(key, { action: 'verdict', result: 'pass', text: 'Looks right.', source_sha: s.store.ticket(key)!.branch.head })
   s.store.setViewer(before)
 }
 
@@ -496,5 +496,50 @@ describe('busy day', () => {
     expect(text(v.body)).toMatch(/waits for DEMO-\d+ \(ahead in the queue\)/)
     const ds = (await s.api.getAddonDecisions(s.ws)).filter((d) => d.addon === 'land')
     expect(ds.map((d) => d.title).sort()).toEqual(['Needs: conflict, a person must resolve', 'Needs: red checks'])
+  })
+
+  it('R2: a ticket whose landing failed is never Done; Mark resolved voids the approval and sends it back to Testing', async () => {
+    const s = setup('p_sev', 'busy')
+    const st = land(s)
+    const conflictNeed = st.needs.find((n) => n.open && n.kind === 'conflict')!
+    const red = st.needs.find((n) => n.open && n.kind === 'red_checks')!
+    // Core reads the seeded landing records: the failed ones show as landing failed, the queued ones as landing.
+    for (const n of [conflictNeed, red]) {
+      const t = s.store.ticket(n.ticket)!
+      expect(t.status).toBe('done')
+      expect(t.landing).toMatchObject({ state: 'failed', attempt: n.attempt })
+      expect(t.turn.why).toBe('Landing failed')
+    }
+    const queued = st.queues.flatMap((q) => q.entries)[0]
+    expect(s.store.ticket(queued.ticket)!.landing?.state).toBe('queued')
+    const merged = st.attempts.find((a) => a.outcome === 'merged')!
+    expect(s.store.ticket(merged.ticket)!.landing).toBeUndefined()
+    // Take it and mark it resolved: core finds the failed attempt and voids the approval, the ticket goes to testing.
+    const d = (await s.api.getAddonDecisions(s.ws)).find((x) => x.id === `land.need:${conflictNeed.id}`)!
+    await run(s, 'resolve', { id: d.id, option: 'self', confirmed: true })
+    const res = await run(s, 'mark_resolved', { ticket: conflictNeed.ticket })
+    expect(res.message).toContain('back in Testing')
+    const after = s.store.ticket(conflictNeed.ticket)!
+    expect(after.gates.verify.state).toBe('invalidated')
+    expect(after.gates.verify.reason).toBe(`Landing attempt #${conflictNeed.attempt}: a resolution changed the code (land).`)
+    expect(after.status).toBe('testing')
+    expect(after.landing).toBeUndefined()
+    expect(text(await panel(s, conflictNeed.ticket))).toContain('Back to review')
+    // Leaving done ends the landing story, even for a ticket whose landing failed without a resolution.
+    s.store.append(red.ticket, { type: 'status.changed', actor: 'host', to: 'testing' })
+    expect(s.store.ticket(red.ticket)!.landing).toBeUndefined()
+    s.store.append(red.ticket, { type: 'status.changed', actor: 'host', to: 'done' })
+    expect(s.store.ticket(red.ticket)!.landing).toBeUndefined()
+  })
+
+  it('R2: landing records count only while the landing addon is on, and only when written by it', () => {
+    const s = setup('p_sev', 'busy')
+    const n = land(s).needs.find((x) => x.open && x.kind === 'conflict')!
+    s.store.workspaces.find((w) => w.id === s.ws)!.addons.land.enabled = false
+    expect(s.store.ticket(n.ticket)!.landing).toBeUndefined()
+    expect(s.store.ticket(n.ticket)!.turn.why).toBe('Done')
+    const s2 = setup()
+    s2.store.append('DEMO-0042', { type: 'land.queued', actor: { kind: 'addon', id: 'github' } })
+    expect(s2.store.ticket('DEMO-0042')!.landing).toBeUndefined()
   })
 })

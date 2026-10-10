@@ -4,11 +4,13 @@ import { ChevronDown, ChevronRight } from 'lucide-react'
 import { STATUSES, type Status, type TicketSummary } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import { AddonLanes } from './AddonLane'
+import { useSlot } from '@/addon-ui'
+import { AddonLanes, laneId } from './AddonLane'
+import { BOARD_COL_MIN, BOARD_GAP, BOARD_RAIL } from './autoRail'
 import { ColumnHeader, ExpandRail } from './ColumnHead'
 import { ColumnSums } from './ColumnSum'
 import { isCollapsed, NO_EPIC, progressLabel, type EpicGroups, type EpicLane } from './grouping'
-import { DONE_LIMIT, STATUS_LABEL, TypeIcon, type BoardDisplay } from './lib'
+import { CELL_LIMIT, STATUS_LABEL, TypeIcon, type BoardDisplay } from './lib'
 import { CardFields, TicketCard, type BoardPeople } from './TicketCard'
 
 /** What a lane cell is called as a drop target: one per lane and status, so ids stay unique. */
@@ -95,8 +97,8 @@ function Cell({
       </div>
     )
   }
-  const limited = status === 'done' && !showAll && tickets.length > DONE_LIMIT
-  const visible = limited ? tickets.slice(0, DONE_LIMIT) : tickets
+  const limited = !showAll && tickets.length > CELL_LIMIT
+  const visible = limited ? tickets.slice(0, CELL_LIMIT) : tickets
   return (
     <div
       ref={setNodeRef}
@@ -115,12 +117,12 @@ function Cell({
       ))}
       {limited && (
         <Button variant="ghost" size="sm" className="h-7 text-[12px] text-text-muted" onClick={() => setShowAll(true)}>
-          Show all {tickets.length}
+          +{tickets.length - CELL_LIMIT} more
         </Button>
       )}
-      {status === 'done' && showAll && tickets.length > DONE_LIMIT && (
+      {showAll && tickets.length > CELL_LIMIT && (
         <Button variant="ghost" size="sm" className="h-7 text-[12px] text-text-muted" onClick={() => setShowAll(false)}>
-          Show last {DONE_LIMIT}
+          Show fewer
         </Button>
       )}
     </div>
@@ -184,11 +186,11 @@ function LaneHeader({
               type="button"
               onClick={() => onOpen(epic.key)}
               aria-label={`Open ${epic.key}`}
-              className="rounded font-mono text-[12px] font-semibold text-text-muted outline-none hover:text-text focus-visible:ring-2 focus-visible:ring-brand"
+              className="shrink-0 whitespace-nowrap rounded font-mono text-[12px] font-semibold text-text-muted outline-none hover:text-text focus-visible:ring-2 focus-visible:ring-brand"
             >
               {epic.key}
             </button>
-            <h3 className="max-w-[420px] truncate text-[13px] font-semibold text-text" title={epic.title}>
+            <h3 className="min-w-0 max-w-[420px] truncate text-[13px] font-semibold text-text" title={epic.title}>
               {epic.title}
             </h3>
           </>
@@ -197,8 +199,8 @@ function LaneHeader({
         )}
         {progress && (
           <>
-            <span className="font-mono text-[11px] text-text-muted">{progressLabel(progress)}</span>
-            <div role="img" aria-label={`${name}: ${progressLabel(progress)}`} className="h-1 w-20 overflow-hidden rounded-full bg-surface-3"
+            <span className="shrink-0 whitespace-nowrap font-mono text-[11px] text-text-muted">{progressLabel(progress)}</span>
+            <div role="img" aria-label={`${name}: ${progressLabel(progress)}`} className="h-1 w-20 shrink overflow-hidden rounded-full bg-surface-3"
             >
               <div className={cn('h-full rounded-full', progress.total > 0 && progress.done === progress.total ? 'bg-success' : 'bg-brand')} style={{ width: `${progress.total ? (progress.done / progress.total) * 100 : 0}%` }} />
             </div>
@@ -226,6 +228,8 @@ export function EpicLanes({
   dragLane,
   filtering,
   setDisplay,
+  onRail,
+  railedLanes,
   ...shared
 }: Shared & {
   groups: EpicGroups
@@ -236,6 +240,10 @@ export function EpicLanes({
   dragLane: string | null
   filtering: boolean
   setDisplay: (patch: Partial<BoardDisplay>) => void
+  /** Collapse or open a column (a status or an addon lane): the Board decides which ones are rails (autoRail.ts). */
+  onRail: (id: string, collapse: boolean) => void
+  /** The addon lanes shown as rails. */
+  railedLanes: ReadonlySet<string>
 }) {
   const { display } = shared
   const railed = (s: Status) => display.collapsed.includes(s)
@@ -246,16 +254,17 @@ export function EpicLanes({
     for (const list of m.values()) list.sort((a, b) => b.updated_at.localeCompare(a.updated_at))
     return m
   }
-  const cols = STATUSES.map((s) => (railed(s) ? '40px' : 'minmax(216px, 1fr)')).join(' ')
-  const minWidth = STATUSES.reduce((n, s) => n + (railed(s) ? 40 : 216), 0) + (STATUSES.length - 1) * 8
-  // "No epic" comes first: single tickets are what a big epic would otherwise push out of sight.
+  const cols = STATUSES.map((s) => (railed(s) ? `${BOARD_RAIL}px` : `minmax(${BOARD_COL_MIN}px, 1fr)`)).join(' ')
+  const minWidth = STATUSES.reduce((n, s) => n + (railed(s) ? BOARD_RAIL : BOARD_COL_MIN), 0) + (STATUSES.length - 1) * BOARD_GAP
+  const addonLanes = useSlot('board.lane')
+  // Epics first, with the ungrouped tickets expanded at the end.
   const lanes = [
-    ...(groups.none.length > 0 || groups.lanes.length === 0 ? [{ key: NO_EPIC, lane: null as EpicLane | null, tickets: groups.none }] : []),
     ...groups.lanes.map((l) => ({ key: l.epic.key, lane: l as EpicLane | null, tickets: l.children })),
+    ...(groups.none.length > 0 || groups.lanes.length === 0 ? [{ key: NO_EPIC, lane: null as EpicLane | null, tickets: groups.none }] : []),
   ]
   return (
     <>
-      <div className="grid content-start gap-x-2 gap-y-1" style={{ gridTemplateColumns: cols, minWidth }}>
+      <div className="grid min-w-0 flex-1 content-start gap-x-2 gap-y-1" style={{ gridTemplateColumns: cols, minWidth }}>
         {STATUSES.map((s) => (
           <HeaderCell
             key={s}
@@ -263,7 +272,7 @@ export function EpicLanes({
             tickets={byStatus.get(s) ?? []}
             collapsed={railed(s)}
             draggingFrom={draggingFrom}
-            onCollapse={(c) => setDisplay({ collapsed: c ? [...display.collapsed, s] : display.collapsed.filter((x) => x !== s) })}
+            onCollapse={(c) => onRail(s, c)}
           />
         ))}
         {lanes.map(({ key, lane, tickets }) => {
@@ -304,8 +313,11 @@ export function EpicLanes({
           )
         })}
       </div>
-      <div className="sticky top-0 grid max-h-[calc(100vh-14rem)] grid-flow-col auto-cols-[minmax(216px,1fr)] gap-2 self-start empty:hidden">
-        <AddonLanes />
+      <div
+        className="sticky top-0 grid max-h-[calc(100vh-14rem)] shrink-0 grid-flow-col gap-2 self-start empty:hidden"
+        style={{ gridTemplateColumns: addonLanes.map((l) => (railedLanes.has(laneId(l)) ? `${BOARD_RAIL}px` : `${BOARD_COL_MIN}px`)).join(' ') }}
+      >
+        <AddonLanes railed={railedLanes} onExpand={(id) => onRail(id, false)} />
       </div>
     </>
   )

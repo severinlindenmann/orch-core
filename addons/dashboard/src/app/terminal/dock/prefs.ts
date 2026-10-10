@@ -27,8 +27,8 @@ export const DOCK_BAR = 32
 
 export const DEFAULT_PREFS: DockPrefs = { side: 'bottom', open: false, bottom: 280, right: 440, harness: 'claude' }
 
-/** The page keeps at least this much width beside a right-hand dock. */
-export const PAGE_MIN = 640
+/** The page keeps at least this much width beside a right-hand dock (N11: every page is laid out to work down to 720). */
+export const PAGE_MIN = 720
 
 const keyOf = (viewer: string) => `orch.dock.${viewer}`
 
@@ -54,7 +54,19 @@ export function clampDock(side: DockSide, px: number, view: { width: number; hei
   return Math.round(Math.min(max, Math.max(DOCK_LIMITS[side].min, Number.isFinite(px) ? px : DEFAULT_PREFS[side])))
 }
 
+/** Who used this browser last (the shell remembers them): their layout applies while the viewer is still loading. */
+const LAST_VIEWER_KEY = 'orch.sidebar.lastViewer'
+function lastViewer(): string | undefined {
+  try {
+    return localStorage.getItem(LAST_VIEWER_KEY) ?? undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** The viewer's dock layout; without a viewer yet, the last viewer's (so the dock does not open a moment late). */
 export function readDockPrefs(viewer: string | undefined): DockPrefs {
+  viewer ??= lastViewer()
   if (!viewer) return DEFAULT_PREFS
   try {
     const raw = JSON.parse(localStorage.getItem(keyOf(viewer)) ?? 'null') as Partial<DockPrefs> | null
@@ -110,4 +122,16 @@ export function useViewport() {
     return () => window.removeEventListener('resize', on)
   }, [])
   return view
+}
+
+/**
+ * Does the dock, open on the right, squeeze the page so much that the sidebar should be the rail (N11)? Yes when,
+ * beside the wide sidebar, the page area would drop under `squeeze` px, or when the right side fits only beside the
+ * rail. Worked out for the wide sidebar whatever the sidebar is now, so the answer does not flip when it collapses.
+ */
+export function dockSqueezesSidebar(prefs: Pick<DockPrefs, 'side' | 'open' | 'right'>, view: { width: number; height: number }, widths: { wide: number; rail: number; squeeze: number }): boolean {
+  if (prefs.side !== 'right' || !prefs.open) return false
+  const area = view.width - widths.wide
+  if (!rightFits(view, area)) return rightFits(view, view.width - widths.rail)
+  return area - clampDock('right', prefs.right, view, area) < widths.squeeze
 }

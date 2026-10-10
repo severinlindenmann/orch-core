@@ -17,7 +17,7 @@ import type { Block, WidgetSpec } from './parse'
 export const BODY_HEIGHT = 280
 
 /** `reason` is the technical text (behind "Details"); `plain` says what happened and who fixes it. */
-type Resolved = { ok: true; html: string; layerLabel: string } | { ok: false; reason: string; plain: string }
+type Resolved = { ok: true; page: string; data: unknown; layerLabel: string } | { ok: false; reason: string; plain: string }
 
 const DRIFT = 'This preview changed after it was pinned, so it is not shown. Ask the agent that wrote it to update the pin.'
 
@@ -36,7 +36,7 @@ function resolveFrame(spec: WidgetSpec, ticket: Pick<TicketDocument, 'key' | 'ar
       why = 'data could not be read'
     }
     if (why) return { ok: false, reason: `data does not fit ${spec.widget}: ${why}`, plain: `This widget's data does not fit the ${t.title.toLowerCase()} template, so it is not shown. Ask its author to fix the block.` }
-    return { ok: true, html: frameDocument(t.html, spec.data), layerLabel: spec.widget! }
+    return { ok: true, page: t.html, data: spec.data, layerLabel: spec.widget! }
   }
   if (spec.artifactTicket && spec.artifactTicket !== ticket.key)
     return { ok: false, reason: `artifact belongs to ${spec.artifactTicket}, not to this ticket`, plain: `This widget shows a page from ${spec.artifactTicket}, not from this ticket. Ask its author to fix the block.` }
@@ -45,7 +45,7 @@ function resolveFrame(spec: WidgetSpec, ticket: Pick<TicketDocument, 'key' | 'ar
   const now = sha256Hex(a.preview)
   if (now !== spec.sha256)
     return { ok: false, reason: `sha256 does not match: ${spec.artifact} has ${now.slice(0, 12)}…, the block pins ${spec.sha256!.slice(0, 12)}…. The page changed since this widget was written, so it does not run.`, plain: DRIFT }
-  return { ok: true, html: frameDocument(a.preview, spec.data), layerLabel: 'one-off' }
+  return { ok: true, page: a.preview, data: spec.data, layerLabel: 'one-off' }
 }
 
 /** What a parse refusal means for the reader and who fixes it. The technical text stays behind "Details". */
@@ -98,17 +98,27 @@ function Refused({ block, reason, plain, sectionLabel }: { block: Block; reason:
   )
 }
 
+/** The widget sketches the options of an open question: it is answered in Questions, not here. */
+export interface PrototypeOf {
+  /** The question's id; unset when the prototype belongs to no single question (the link opens Questions). */
+  question?: string
+  /** Opens the Questions tab on that question. */
+  answer: () => void
+}
+
 export function WidgetBlock({
   block,
   ticket,
   agentHtml,
   sectionLabel,
+  prototype,
 }: {
   block: Block
   ticket: Pick<TicketDocument, 'key' | 'artifacts'>
   /** The widgets addon is active in the ticket's workspace: frames may run. */
   agentHtml: boolean
   sectionLabel: string
+  prototype?: PrototypeOf
 }) {
   const spec = block.spec
   if (!spec || block.reason) {
@@ -119,7 +129,7 @@ export function WidgetBlock({
   // The verdict on the pin comes first, also when agent HTML is off: a refused block is never shown as merely "off".
   const res = framed ? resolveFrame(spec, ticket) : undefined
   if (res && !res.ok) return <Refused block={block} reason={res.reason} plain={res.plain} sectionLabel={sectionLabel} />
-  return <Drawn block={block} spec={spec} res={res?.ok ? res : undefined} agentHtml={agentHtml} />
+  return <Drawn block={block} spec={spec} res={res?.ok ? res : undefined} agentHtml={agentHtml} prototype={prototype} />
 }
 
 /** The widget's content. The frame is validated like any addon frame node and keeps `sandbox="allow-scripts"` only. */
@@ -128,14 +138,16 @@ function Body({ spec, res, agentHtml, height }: { spec: WidgetSpec; res: Extract
   if (framed && !agentHtml)
     return <p className="rounded-md border border-dashed border-border px-3 py-2 text-[12px] text-text-muted">Agent HTML is off in this workspace, so this widget is not drawn. {spec.caption ?? 'No text alternative given.'}</p>
   if (framed && res) {
-    const node = frameNode.safeParse({ type: 'frame', title: `Sandboxed preview · ${res.layerLabel}`, html: res.html, height: Math.min(1200, Math.max(80, height)) })
-    return node.success ? <FrameNode node={node.data} fallback={<AddonUnavailable addon="widgets" />} /> : <AddonUnavailable addon="widgets" />
+    // The document is built for the height of the frame it sits in (its chart cap is that fixed number, see frameDocument).
+    const h = Math.min(1200, Math.max(80, height))
+    const node = frameNode.safeParse({ type: 'frame', title: `Sandboxed preview · ${res.layerLabel}`, html: frameDocument(res.page, res.data, h), height: h })
+    return node.success ? <FrameNode node={node.data} fallback={<AddonUnavailable addon="widgets" />} fitContent /> : <AddonUnavailable addon="widgets" />
   }
   return <CoreWidget spec={spec} />
 }
 
 /** One card per widget: a hairline (orange only when agent HTML draws it), a one-line header, a fixed-height body. */
-function Drawn({ block, spec, res, agentHtml }: { block: Block; spec: WidgetSpec; res: Extract<Resolved, { ok: true }> | undefined; agentHtml: boolean }) {
+function Drawn({ block, spec, res, agentHtml, prototype }: { block: Block; spec: WidgetSpec; res: Extract<Resolved, { ok: true }> | undefined; agentHtml: boolean; prototype?: PrototypeOf }) {
   const [text, setText] = useState(false)
   const [big, setBig] = useState(false)
   const framed = spec.layer !== 'type'
@@ -163,9 +175,25 @@ function Drawn({ block, spec, res, agentHtml }: { block: Block; spec: WidgetSpec
           Expand
         </button>
       </figcaption>
+      {prototype && (
+        <p data-widget-prototype className="mx-3 mb-2 rounded-md border border-dashed border-border-strong px-2.5 py-1.5 text-[12px] text-text-muted">
+          <span className="font-medium text-text">Prototype</span> — answer in Questions →{' '}
+          <button type="button" onClick={prototype.answer} className="font-medium text-brand underline-offset-2 hover:underline">
+            {prototype.question ? `Answer ${prototype.question}` : 'Open Questions'}
+          </button>
+        </p>
+      )}
       <div className="space-y-1.5 px-3 pb-2.5">
-        <div data-widget-body className={cn('overflow-auto', framed ? 'h-[280px]' : 'max-h-[280px]')}>
-          {text ? <pre className="whitespace-pre-wrap rounded-md border border-border bg-bg p-2 text-[12px] text-text">{alt}</pre> : <Body spec={spec} res={res} agentHtml={agentHtml} height={BODY_HEIGHT} />}
+        {/* A prototype only shows the options: no clicks or focus inline (Expand still lets the reader look closer). */}
+        <div data-widget-body className="max-h-[280px] overflow-auto">
+          {text ? (
+            // The text alternative stays readable and copyable, also on a prototype.
+            <pre className="whitespace-pre-wrap rounded-md border border-border bg-bg p-2 text-[12px] text-text">{alt}</pre>
+          ) : (
+            <div data-widget-drawing inert={prototype ? true : undefined} className={cn(prototype && 'pointer-events-none select-none opacity-70 saturate-50')}>
+              <Body spec={spec} res={res} agentHtml={agentHtml} height={BODY_HEIGHT} />
+            </div>
+          )}
         </div>
         {(spec.source || spec.caption) && <div className={cn('text-[11px] text-text-muted', !agentHtml && framed && 'hidden')}>{meta}</div>}
       </div>
@@ -181,6 +209,10 @@ function Drawn({ block, spec, res, agentHtml }: { block: Block; spec: WidgetSpec
           </SheetHeader>
           <div className="min-h-0 flex-1 space-y-2 overflow-auto p-4">
             <Body spec={spec} res={res} agentHtml={agentHtml} height={720} />
+            <details className="text-[12px] text-text-muted">
+              <summary className="cursor-pointer">Text alternative</summary>
+              <pre className="mt-1 whitespace-pre-wrap rounded-md border border-border bg-bg p-2 text-text">{alt}</pre>
+            </details>
             <div className="text-[12px] text-text-muted">{meta}</div>
           </div>
         </SheetContent>

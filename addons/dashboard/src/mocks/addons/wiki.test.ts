@@ -99,22 +99,34 @@ describe('wiki seed', () => {
 })
 
 describe('wiki actions', () => {
+  it('says how long ago a page changed against the store\'s now, like every other view', async () => {
+    const s = setup()
+    const target = (await state(s)).pages[0]
+    await run(s, 'open', { slug: target.slug })
+    const before = (await state(s)).current!.meta
+    const days = Number(/updated (\d+) days? ago/.exec(before)![1])
+    // The demo clock moves on three days: the page is three days older.
+    const later = new Date(Date.parse(s.store.now()) + 3 * 86_400_000).toISOString()
+    s.store.now = () => later
+    expect((await state(s)).current!.meta).toBe(`by Mara · updated ${days + 3} days ago`)
+  })
   it('open shows the page: title first, one meta line, ticket backlinks, and "On this page" from core (toc)', async () => {
     const s = setup()
     const target = (await state(s)).pages[0]
     await run(s, 'open', { slug: target.slug })
     const st = await state(s)
     expect(st.current!.slug).toBe(target.slug)
-    expect(st.current!.meta).toMatch(/^by Mara · updated \d+d ago$/)
+    expect(st.current!.meta).toMatch(/^by Mara · updated \d+ days? ago$/)
     expect(st.current!.toc.map((h) => h.text)).toEqual(['Rules', 'Checks', 'Loader query'])
     expect(st.listView.children).toEqual([]) // the list gives way to the page
     const [crumbs, body] = st.pageView.children as unknown as { children: { type: string; label?: string; text?: string; toc?: boolean; rows?: { ticket: string; title: string }[] }[] }[]
     expect(crumbs.children.map((c) => c.label ?? c.text)).toEqual(['All pages', '/ **Tariff data conventions**', 'Edit page'])
-    expect(body.children[0].text).toBe('# Tariff data conventions\n\n*by Mara · updated 2d ago*')
+    expect(body.children[0].text).toBe('# Tariff data conventions\n\n*by Mara · updated 2 days ago*')
     const back = body.children.find((c) => c.type === 'table')!
     expect(back.rows!.map((r) => r.ticket)).toEqual(['DEMO-0041', 'DEMO-0043'])
     expect(back.rows!.every((r) => r.title)).toBe(true)
-    const text = body.children.at(-1)!
+    const text = body.children.find((c) => c.toc)!
+    expect(body.children.at(-1)).toBe(back) // the backlinks come after the content
     expect(text.toc).toBe(true)
     expect(text.text!.startsWith('# ')).toBe(false) // the title is not repeated in the body
   })

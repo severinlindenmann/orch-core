@@ -3,6 +3,7 @@ import { briefs, dayIso } from '../busy/helpers'
 import type { Rng } from '../busy/rng'
 import type { MockStore } from '../store'
 import { canSeeTicket, conflict, invalid, notFound, registerAddon } from './registry'
+import { fmtWhen } from '@/lib/time'
 
 // wiki: markdown pages in the workspace, linked from tickets. Pages are shared per workspace; which page a person has
 // open and their search query are per viewer (`state.nav[viewer] = { current, query }`), so navigating never affects
@@ -21,7 +22,6 @@ interface Page {
 }
 
 const DAY_MS = 86_400_000
-const EPOCH = Date.UTC(2026, 9, 9, 11, 30)
 const daysAgo = (n: number, hour = 9) => new Date(Date.UTC(2026, 9, 9 - n, hour, 0)).toISOString().replace(/\.\d{3}Z$/, 'Z')
 
 const PAGES: Page[] = [
@@ -173,10 +173,8 @@ A normal link still works: [dbt docs](https://docs.getdbt.com).
   },
 ]
 
-const ago = (iso: string) => {
-  const d = Math.max(0, Math.floor((EPOCH - Date.parse(iso)) / DAY_MS))
-  return d === 0 ? 'updated today' : `updated ${d}d ago`
-}
+/** Relative to the store's "now" (`store.now()`), like every other view; `now` is its epoch milliseconds. */
+const ago = (iso: string, now: number) => `updated ${fmtWhen(iso, now)}`
 
 const pagesOf = (state: Record<string, unknown>) => state.pages as Page[]
 interface Nav {
@@ -199,16 +197,16 @@ function headings(markdown: string): { level: 2 | 3; text: string }[] {
   }
   return out
 }
-const shortAgo = (iso: string) => ago(iso).replace('updated ', '')
-const row = (p: Page) => ({ slug: p.slug, page: p.title, updated: shortAgo(p.updated), by: p.by, tickets: p.tickets.length })
+const shortAgo = (iso: string, now: number) => ago(iso, now).replace('updated ', '')
+const row = (p: Page, now: number) => ({ slug: p.slug, page: p.title, updated: shortAgo(p.updated, now), by: p.by, tickets: p.tickets.length })
 const RECENT_DAYS = 14
 
 const bySlug = (state: Record<string, unknown>, slug: unknown) => (typeof slug === 'string' ? pagesOf(state).find((p) => p.slug === slug) : undefined)
 
-const item = (p: Page) => ({
+const item = (p: Page, now: number) => ({
   title: p.title,
   subtitle: `by ${p.by} · wiki/${p.slug}.md`,
-  badge: ago(p.updated),
+  badge: ago(p.updated, now),
 })
 
 const TOPICS = ['Tariff data', 'Meter readings', 'Billing runs', 'Reconciliation', 'dbt seeds', 'Ingestion', 'Invoices', 'Credit notes', 'Daylight saving', 'Warehouse access', 'Finance export', 'Smart meters', 'Heat pumps', 'Solar feed-in', 'Outage events', 'Customer segments']
@@ -256,13 +254,14 @@ registerAddon({
     const q = query.trim().toLowerCase()
     const shown = q ? pages.filter((p) => `${p.title}\n${p.markdown}`.toLowerCase().includes(q)) : pages
     const cur = pages.find((p) => p.slug === nav.current)
+    const now = Date.parse(c.store.now())
     const byTicket: Record<string, ReturnType<typeof item>[]> = {}
-    for (const p of pages) for (const t of p.tickets) (byTicket[t] ??= []).push(item(p))
+    for (const p of pages) for (const t of p.tickets) (byTicket[t] ??= []).push(item(p, now))
     // A page title is the way in: clicking it opens the page (no separate Open button).
     const rowOpen = { action: 'open', args: { slug: '$row.slug' } }
-    const age = (p: Page) => Math.floor((EPOCH - Date.parse(p.updated)) / DAY_MS) // whole days, as `ago` says them
+    const age = (p: Page) => Math.floor((now - Date.parse(p.updated)) / DAY_MS) // whole days, as `ago` says them
     const recent = pages.filter((p) => age(p) <= RECENT_DAYS).sort((a, b) => Date.parse(b.updated) - Date.parse(a.updated))
-    const linked = pages.flatMap((p) => p.tickets.map((t) => ({ slug: p.slug, ticket: t, title: c.store.ticket(t)?.title ?? '', page: p.title, updated: shortAgo(p.updated) }))).sort((a, b) => a.ticket.localeCompare(b.ticket) || a.page.localeCompare(b.page))
+    const linked = pages.flatMap((p) => p.tickets.map((t) => ({ slug: p.slug, ticket: t, title: c.store.ticket(t)?.title ?? '', page: p.title, updated: shortAgo(p.updated, now) }))).sort((a, b) => a.ticket.localeCompare(b.ticket) || a.page.localeCompare(b.page))
     const pageCols = [{ key: 'page', label: 'Page' }, { key: 'updated', label: 'Updated' }, { key: 'by', label: 'By' }, { key: 'tickets', label: 'Linked tickets', align: 'right' as const }]
     const search = {
       type: 'form',
@@ -279,7 +278,7 @@ registerAddon({
       node: { type: 'form', schema: { type: 'object', required: ['title'], properties: { title: { type: 'string', title: 'Page title' } } }, action: 'create', submitLabel: 'Create page' },
     }
     const pagesTable = shown.length
-      ? { type: 'table', columns: pageCols, rows: shown.map(row), rowOpen }
+      ? { type: 'table', columns: pageCols, rows: shown.map((p) => row(p, now)), rowOpen }
       : q
         ? { type: 'stack', children: [{ type: 'markdown', text: `No pages match "${query.trim().replace(/[`*_[\]]/g, '')}".` }, { type: 'button', label: 'Clear search', action: 'clear_search', variant: 'secondary' }] }
         : { type: 'markdown', text: 'No pages yet. Create the first one with New page.' }
@@ -300,7 +299,7 @@ registerAddon({
                 type: 'stack',
                 children: [
                   { type: 'markdown', text: `${recent.length} of ${pages.length} pages changed in the last ${RECENT_DAYS} days. Every page is on the Pages tab.` },
-                  { type: 'table', columns: pageCols, rows: recent.map(row), empty: `Nothing changed in the last ${RECENT_DAYS} days.`, rowOpen },
+                  { type: 'table', columns: pageCols, rows: recent.map((p) => row(p, now)), empty: `Nothing changed in the last ${RECENT_DAYS} days.`, rowOpen },
                 ],
               },
             },
@@ -341,16 +340,16 @@ registerAddon({
                 submitLabel: 'Save changes',
                 cancel: { label: 'Cancel', action: 'done' },
               }
-            : { type: 'stack', children: [{ type: 'markdown', text: `# ${cur.title}\n\n*by ${cur.by} · ${ago(cur.updated)}*` }, ...backlinks, { type: 'markdown', text: body, toc: true }] },
+            : { type: 'stack', children: [{ type: 'markdown', text: `# ${cur.title}\n\n*by ${cur.by} · ${ago(cur.updated, now)}*` }, { type: 'markdown', text: body, toc: true }, ...backlinks] },
         ],
       }
     }
     return {
       pages, // overrides the raw list
-      pageRows: shown.map(row),
+      pageRows: shown.map((p) => row(p, now)),
       pageView,
       listView: cur ? { type: 'stack', children: [] } : listView,
-      current: cur ? { slug: cur.slug, title: cur.title, markdown: cur.markdown, updated: cur.updated, by: cur.by, meta: `by ${cur.by} · ${ago(cur.updated)}`, toc: headings(cur.markdown) } : null,
+      current: cur ? { slug: cur.slug, title: cur.title, markdown: cur.markdown, updated: cur.updated, by: cur.by, meta: `by ${cur.by} · ${ago(cur.updated, now)}`, toc: headings(cur.markdown) } : null,
       editing: !!cur && !!nav.edit,
       pageOptions: pages.map((p) => ({ const: p.slug, title: p.title })),
       byTicket,

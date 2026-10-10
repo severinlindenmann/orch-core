@@ -33,7 +33,9 @@ function motionOn() {
   Element.prototype.getBoundingClientRect = function (this: Element) {
     const st = (this as HTMLElement).dataset?.status ?? this.closest('[data-status]')?.getAttribute('data-status') ?? ''
     const left = Math.max(0, ORDER.indexOf(st)) * 300
-    return { left, top: 100, right: left + 200, bottom: 160, width: 200, height: 60, x: left, y: 100, toJSON() {} } as DOMRect
+    // Outside the columns (the board's own frame) a wide page, so the Board adds no rails (N11).
+    const width = st ? 200 : 2400
+    return { left, top: 100, right: left + width, bottom: 160, width, height: 60, x: left, y: 100, toJSON() {} } as DOMRect
   }
   return animate
 }

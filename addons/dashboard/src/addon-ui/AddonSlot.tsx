@@ -7,7 +7,7 @@ import { AddonBadge } from './AddonBadge'
 import { AddonFrame } from './AddonFrame'
 import { Collapse } from '@/components/Collapse'
 import { Skeleton } from '@/components/ui/skeleton'
-import { AddonNode, type FormControl } from './AddonNode'
+import { AddonNode, type FormControl, type Glance } from './AddonNode'
 import { useSlot, type AddonStateWait, type ResolvedContribution, type SlotContext } from './slots'
 
 /** What core draws while an addon's state is loading, or after it failed to load (with Retry). */
@@ -29,11 +29,11 @@ export function AddonStatePlaceholder({ title, waiting, compact = false }: { tit
 }
 
 /** The body of a contribution: its node, or core's placeholder while the addon's state loads. */
-function ContributionBody({ c, ctx, compact, readOnly, formControl }: { c: ResolvedContribution; ctx: SlotContext; compact: boolean; readOnly: boolean; formControl?: FormControl }) {
-  if (c.waiting) return <AddonStatePlaceholder title={c.addonTitle} waiting={c.waiting} compact={compact} />
+function ContributionBody({ c, ctx, compact, readOnly, formControl, glance }: { c: ResolvedContribution; ctx: SlotContext; compact: boolean; readOnly: boolean; formControl?: FormControl; glance?: Glance }) {
+  if (c.waiting) return <AddonStatePlaceholder title={c.addonTitle} waiting={c.waiting} compact={compact || !!glance} />
   return (
     <ErrorBoundary resetKey={c.node} fallback={() => <BlockProblem what={`This ${c.addon} panel`} />}>
-      <AddonNode node={c.node} addon={c.addon} ctx={ctx} compact={compact} readOnly={readOnly} formControl={formControl} />
+      <AddonNode node={c.node} addon={c.addon} ctx={ctx} compact={compact} readOnly={readOnly} formControl={formControl} glance={glance} />
     </ErrorBoundary>
   )
 }
@@ -52,6 +52,7 @@ export function AddonContributionView({
   bare = false,
   level,
   formControl,
+  glance,
 }: {
   c: ResolvedContribution
   ctx?: SlotContext
@@ -61,8 +62,11 @@ export function AddonContributionView({
   level?: 2 | 3
   /** A form node here draws no submit button of its own; see FormControl. */
   formControl?: FormControl
+  /** Drawn as a glance line (Today's Glance list, which draws the A and the title itself); implies `bare`. */
+  glance?: Glance
 }) {
-  const body = <ContributionBody c={c} ctx={ctx} compact={compact} readOnly={readOnly} formControl={formControl} />
+  const body = <ContributionBody c={c} ctx={ctx} compact={compact} readOnly={readOnly} formControl={formControl} glance={glance} />
+  if (glance) return <div data-addon={c.addon}>{body}</div>
   if (bare) return <div data-addon={c.addon}>{body}</div>
   return (
     <AddonFrame addon={c.addon} addonTitle={c.addonTitle} title={c.title} slot={c.slot} compact={compact} level={level}>
@@ -92,11 +96,13 @@ const writeOpen = (c: ResolvedContribution, open: boolean) => {
 /**
  * Panels as 32 px header buttons (the A, the title, a chevron), collapsed by default. What the person opens is
  * remembered per panel, and at most two stay open: opening a third closes the one opened longest ago.
+ * The panels sit in one "Addons" group (the caller's heading), so their borders are neutral: the A in each header is
+ * the one addon marker per panel.
  */
-export function CollapsibleStack({ items, ctx = {}, readOnly, className, level = 2 }: { items: ResolvedContribution[]; ctx?: SlotContext; readOnly: boolean; className?: string; level?: 2 | 3 }) {
+export function CollapsibleStack({ items, ctx = {}, readOnly, className, level = 2 }: { items: ResolvedContribution[]; ctx?: SlotContext; readOnly: boolean; className?: string; level?: 2 | 3 | 4 }) {
   const keys = items.map(panelKey)
   const [open, setOpen] = useState<string[]>(() => items.filter(readOpen).map(panelKey).slice(-MAX_OPEN))
-  const Heading = level === 2 ? 'h2' : 'h3'
+  const Heading = (['h2', 'h3', 'h4'] as const)[level - 2]
   /** Opens `adding` on top of `current`, closing the oldest beyond MAX_OPEN; remembers the choice. */
   const withOpened = (current: string[], adding: ResolvedContribution[]): string[] => {
     const next = [...current, ...adding.map(panelKey).filter((k) => !current.includes(k))]
@@ -146,7 +152,7 @@ export function CollapsibleStack({ items, ctx = {}, readOnly, className, level =
         const isOpen = open.includes(keys[i])
         const id = `panel-${c.addon}-${c.id}`
         return (
-          <section key={keys[i]} data-addon={c.addon} className="rounded-lg border border-addon-border bg-surface">
+          <section key={keys[i]} data-addon={c.addon} className="rounded-lg border border-border bg-surface">
             <Heading className="m-0">
               <button
                 type="button"
@@ -161,7 +167,7 @@ export function CollapsibleStack({ items, ctx = {}, readOnly, className, level =
               </button>
             </Heading>
             <Collapse open={isOpen} id={id}>
-              <div className="border-t border-addon-border p-3">
+              <div className="border-t border-border p-3">
                 <ContributionBody c={c} ctx={ctx} compact={false} readOnly={readOnly} />
               </div>
             </Collapse>

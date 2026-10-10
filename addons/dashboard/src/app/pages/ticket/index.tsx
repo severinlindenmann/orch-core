@@ -1,18 +1,22 @@
 import { useQuery } from '@tanstack/react-query'
-import { Link } from '@tanstack/react-router'
+import { Link, useNavigate, useRouter, useRouterState, useSearch } from '@tanstack/react-router'
 import { ChevronRight, Lock, TriangleAlert } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { api } from '@/api/client'
 import { ApiError } from '@/api/types'
 import { workspaceOfTicket } from '@/api/workspaces'
 import { useWorkspace } from '@/app/workspace'
+import { validateTicketSearch } from '@/app/search'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { usePageHeader } from '../../shell/ShellUi'
+import { usePageHeader, useTicketOrigin } from '../../shell/ShellUi'
+import { BOARD_ORIGIN } from '../../shell/origin'
+import { toPublicPath } from '@/app/urls'
 import { AcceptanceTasks } from './AcceptanceTasks'
 import { Artifacts } from './Artifacts'
+import { Changes, HAS_CHANGES } from './Changes'
+import { diffstat } from '@/api/gates'
 import { GatesStrip } from './Gates'
 import { TicketHeader } from './Header'
 import { History } from './History'
@@ -22,6 +26,7 @@ import { Raw } from './Raw'
 import { PropertiesStrip, Rail } from './Rail'
 import { SignDialog } from './SignDialog'
 import { useViewer, useWideLayout, type HumanAction, type Jump, type TabId, type TabProps } from './shared'
+import { queries } from '@/api/queries'
 
 function TicketSkeleton() {
   return (
@@ -90,44 +95,79 @@ function useHomeWorkspace(ticketKey: string): { ready: boolean } {
   return { ready: !home || home.id === workspace?.id }
 }
 
+const questionOf = (hash: string) => (/^question-[A-Za-z0-9_-]+$/.test(hash) ? hash : undefined)
+
 export function TicketPage({ ticketKey }: { ticketKey: string }) {
+  const hash = useRouterState({ select: s => s.location.hash })
   const home = useHomeWorkspace(ticketKey)
   const viewer = useViewer(ticketKey)
-  const q = useQuery({
-    queryKey: ['ticket', ticketKey],
-    queryFn: () => api.getTicket(ticketKey),
-    retry: false,
-  })
-  const [tab, setTab] = useState<TabId>('overview')
-  const [focus, setFocus] = useState<string | undefined>()
+  const q = useQuery(queries.ticket(ticketKey))
+  // The tab is in the address (`?tab=history`, Overview when absent). A `#question-Q2` link (Today's Agents panel)
+  // opens the Questions tab on that question from the first paint.
+  // Read through the route's validator again: a parent match passes the raw params on.
+  const search = validateTicketSearch(useSearch({ strict: false }))
+  const navigate = useNavigate()
+  const tab: TabId = search.tab ?? (questionOf(hash) ? 'questions' : 'overview')
+  // A tab click drops a `#question-…` hash; a jump (to a question, the evidence) keeps it so its highlight stays.
+  const setTab = useCallback(
+    (next: TabId, keepHash = false) =>
+      void navigate({ to: '/ticket/$key', params: { key: ticketKey }, search: next === 'overview' ? {} : { tab: next }, hash: keepHash ? true : undefined, replace: true }),
+    [navigate, ticketKey],
+  )
+  const [focus, setFocus] = useState<string | undefined>(() => questionOf(hash))
+  const applied = useRef(`${ticketKey}#${hash}`)
   const [signing, setSigning] = useState<HumanAction | null>(null)
+  // From the touch until the host confirms, the header's actions say "Signing…" and are off (R-d).
+  const [signPending, setSignPending] = useState(false)
   const wide = useWideLayout()
 
+  // Back to where the ticket was opened from (Today, Board, Tickets, Artifacts, an addon page), filters included.
+  const shellOrigin = useTicketOrigin()
+  const router = useRouter()
+  const linkPrefix = useWorkspace().workspace?.prefix
+  // The default origin (a ticket opened first) is an in-app path: show its permanent address.
+  const origin = useMemo(
+    () => (shellOrigin.href === BOARD_ORIGIN.href ? { ...shellOrigin, href: toPublicPath(BOARD_ORIGIN.href, linkPrefix) } : shellOrigin),
+    [shellOrigin, linkPrefix],
+  )
   const breadcrumb = useMemo(
     () => (
       <>
-        <Link to="/board" className="text-text-muted hover:text-text">
-          Board
-        </Link>
+        <a
+          href={origin.href}
+          onClick={(e) => {
+            if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return
+            e.preventDefault()
+            router.history.push(origin.href)
+          }}
+          className="text-text-muted hover:text-text"
+        >
+          {origin.label}
+        </a>
         <ChevronRight className="size-3.5 text-text-faint" aria-hidden />
       </>
     ),
-    [],
+    [origin, router],
   )
   usePageHeader(ticketKey, breadcrumb)
 
-  useEffect(() => {
-    setTab('overview')
-    setFocus(undefined)
-  }, [ticketKey])
+  // Another ticket or another hash on the same page: choose the tab again, before paint.
+  useLayoutEffect(() => {
+    const now = `${ticketKey}#${hash}`
+    if (applied.current === now) return
+    applied.current = now
+    setFocus(questionOf(hash))
+  }, [ticketKey, hash])
 
   const jump = useCallback((j: Jump) => {
-    setTab(j.tab)
+    setTab(j.tab, true)
     setFocus(j.id)
-  }, [])
+  }, [setTab])
 
+  // Runs again once the ticket is on screen, so a cold deep link highlights its target too.
+  const shown = !!q.data && viewer.ready && home.ready
   useEffect(() => {
-    if (!focus) return
+    if (!focus || !shown) return
     const t = setTimeout(() => {
       const el = document.getElementById(focus)
       el?.scrollIntoView?.({ block: 'center', behavior: 'smooth' })
@@ -135,7 +175,7 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
       setTimeout(() => el?.classList.remove('ring-2', 'ring-brand'), 1600)
     }, 60)
     return () => clearTimeout(t)
-  }, [focus, tab])
+  }, [focus, tab, shown])
 
   if (q.isLoading || !viewer.ready || !home.ready) return <TicketSkeleton />
   if (q.error) {
@@ -152,14 +192,15 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
 
   return (
     <div className="mx-auto min-w-0 max-w-[1280px] space-y-4 pb-12">
-      <TicketHeader ticket={ticket} viewer={viewer} sign={setSigning} jump={jump} />
+      <TicketHeader ticket={ticket} viewer={viewer} sign={setSigning} jump={jump} signing={signPending} />
       <GatesStrip ticket={ticket} viewer={viewer} />
       {!wide && <PropertiesStrip ticket={ticket} viewer={viewer} />}
 
       {/* From 1280 px the rail is a 320 px column; below, it is the Panels sheet (it never drops under the content). */}
       <div className={wide ? 'grid min-w-0 grid-cols-[minmax(0,1fr)_320px] items-start gap-6' : 'min-w-0'}>
         <Tabs
-          value={tab}
+          // `?tab=changes` on a ticket without changes (yet): Overview.
+          value={tab === 'changes' && !HAS_CHANGES.has(ticket.status) ? 'overview' : tab}
           onValueChange={(v) => {
             setTab(v as TabId)
             setFocus(undefined)
@@ -174,6 +215,12 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
                 {provenCount}/{ticket.acceptance_state.length}
               </span>
             </TabsTrigger>
+            {HAS_CHANGES.has(ticket.status) && (
+              <TabsTrigger value="changes">
+                Changes
+                <span className="font-mono text-[11px] text-text-faint">{diffstat(ticket.branch)}</span>
+              </TabsTrigger>
+            )}
             <TabsTrigger value="questions">
               Questions
               {openQuestions > 0 && <span className="rounded-full bg-warning-soft px-1.5 font-mono text-[11px] text-warning">{openQuestions}</span>}
@@ -191,6 +238,11 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
           <TabsContent value="acceptance">
             <AcceptanceTasks {...props} />
           </TabsContent>
+          {HAS_CHANGES.has(ticket.status) && (
+            <TabsContent value="changes">
+              <Changes {...props} />
+            </TabsContent>
+          )}
           <TabsContent value="questions">
             <Questions {...props} />
           </TabsContent>
@@ -207,7 +259,7 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
         {wide && <Rail ticket={ticket} viewer={viewer} />}
       </div>
 
-      <SignDialog ticket={ticket} action={signing} onClose={() => setSigning(null)} onOpenEvidence={() => jump({ tab: 'acceptance' })} />
+      <SignDialog ticket={ticket} action={signing} onClose={() => setSigning(null)} onOpenEvidence={() => jump({ tab: 'acceptance' })} onOpenChanges={() => jump({ tab: 'changes' })} onPending={setSignPending} />
     </div>
   )
 }

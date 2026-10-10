@@ -1,6 +1,6 @@
 import { Link } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { Bot, Check, ChevronDown, Copy, Lock, MessageSquareReply, Tag, Timer } from 'lucide-react'
+import { Bot, Check, ChevronDown, Copy, Loader2, Lock, MessageSquareReply, Tag, Timer } from 'lucide-react'
 import { useState } from 'react'
 import { api } from '@/api/client'
 import { addonActive } from '@/api/addons'
@@ -13,8 +13,9 @@ import type { TicketDocument } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { VIEWER_REASON } from '@/components/DisabledReason'
+import { CopyLinkButton } from '@/app/shell/CopyLinkButton'
 import { BlockedByConnection } from './Needs'
-import { availableActions, GATE_LABEL, primaryAction, primaryLabel } from './actions'
+import { availableActions, blockedApproval, GATE_LABEL, primaryAction, primaryLabel } from './actions'
 import { agentName, fmtClock, Mono, Pill, StatusChip, type Jump, type HumanAction, type Viewer } from './shared'
 
 export function CopyButton({ text, label }: { text: string; label: string }) {
@@ -85,7 +86,7 @@ function StartAgentItem({ ticket, viewer, r }: { ticket: TicketDocument; viewer:
   )
 }
 
-export function ActionsMenu({ ticket, viewer, sign, jump }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void }) {
+export function ActionsMenu({ ticket, viewer, sign, jump, signing = false }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; signing?: boolean }) {
   const av = availableActions(ticket, viewer)
   const primary = primaryAction(av)
   // The primary action is the header's button; the menu holds the rest.
@@ -99,7 +100,7 @@ export function ActionsMenu({ ticket, viewer, sign, jump }: { ticket: TicketDocu
     <>
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button size="sm" variant="outline">
+        <Button size="sm" variant="outline" disabled={signing}>
           Actions
           <ChevronDown />
         </Button>
@@ -141,8 +142,29 @@ export function ActionsMenu({ ticket, viewer, sign, jump }: { ticket: TicketDocu
 }
 
 /** The header's one primary button: what the viewer should do next (hidden when nothing needs them). */
-function PrimaryButton({ ticket, viewer, sign, jump }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void }) {
+function PrimaryButton({ ticket, viewer, sign, jump, signing }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; signing: boolean }) {
   const p = primaryAction(availableActions(ticket, viewer))
+  if (signing)
+    return (
+      <Button size="sm" disabled aria-busy>
+        <Loader2 className="animate-spin" />
+        Signing…
+      </Button>
+    )
+  const blocked = blockedApproval(ticket, viewer)
+  // Someone who cannot sign the next gate sees the button, off, with the reason (not an empty header).
+  if (!p && blocked)
+    return (
+      <span title={blocked.reason} className="inline-flex">
+        <Button size="sm" disabled aria-describedby={`why-${ticket.key}`}>
+          <Check />
+          {blocked.label}
+        </Button>
+        <span id={`why-${ticket.key}`} className="sr-only">
+          {blocked.reason}
+        </span>
+      </span>
+    )
   if (!p) return null
   const run = () => {
     if (p.kind === 'answer') jump({ tab: 'questions', id: p.question })
@@ -159,7 +181,7 @@ function PrimaryButton({ ticket, viewer, sign, jump }: { ticket: TicketDocument;
 
 const MAX_LABELS = 3
 
-export function TicketHeader({ ticket, viewer, sign, jump }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void }) {
+export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; signing?: boolean }) {
   const children = useQuery({
     queryKey: ['ticket-children', ticket.key],
     queryFn: async () => {
@@ -176,6 +198,7 @@ export function TicketHeader({ ticket, viewer, sign, jump }: { ticket: TicketDoc
       <div className="flex flex-wrap items-center gap-2 text-[13px]">
         <Mono className="text-text-muted">{ticket.key}</Mono>
         <CopyButton text={ticket.key} label={`Copy ${ticket.key}`} />
+        <CopyLinkButton label={`Copy link to ${ticket.key}`} what={`Link to ${ticket.key}`} />
         <Pill className="capitalize">{ticket.type}</Pill>
         {ticket.parent && (
           <span className="text-text-muted">
@@ -195,12 +218,12 @@ export function TicketHeader({ ticket, viewer, sign, jump }: { ticket: TicketDoc
       <div className="flex min-w-0 items-start gap-3">
         <h1 className="min-w-0 flex-1 text-xl font-semibold leading-tight tracking-tight text-text">{ticket.title}</h1>
         <div className="flex shrink-0 items-center gap-2">
-          <PrimaryButton ticket={ticket} viewer={viewer} sign={sign} jump={jump} />
-          <ActionsMenu ticket={ticket} viewer={viewer} sign={sign} jump={jump} />
+          <PrimaryButton ticket={ticket} viewer={viewer} sign={sign} jump={jump} signing={signing} />
+          <ActionsMenu ticket={ticket} viewer={viewer} sign={sign} jump={jump} signing={signing} />
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-        <StatusChip status={ticket.status} />
+        <StatusChip status={ticket.status} landing={ticket.landing} />
         <span className="text-[13px] text-text-muted">
           Turn: <span className="text-text">{viewer.name(ticket.turn.who)}</span> · {ticket.turn.why.charAt(0).toLowerCase() + ticket.turn.why.slice(1)}
         </span>

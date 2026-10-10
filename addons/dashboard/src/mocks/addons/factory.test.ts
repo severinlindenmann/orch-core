@@ -356,17 +356,21 @@ describe('signed actions leave a core record', () => {
     }
     expect(s.store.wsEventsOf(s.ws).find((e) => e.type === 'addon.action_signed')).toMatchObject({ action: 'resume', changed: false })
   })
-  it('pause appends addon.action_signed with scalar args only; a no-op or a refusal does not', async () => {
+  it('pause appends addon.action_signed with exactly the signed args (uncut); non-plain or too many args are refused; a refusal records nothing', async () => {
     const s = setup()
     expect(await fail(run(s, 'pause'))).toBe('409 confirm.required')
+    expect(await fail(run(s, 'pause', { confirmed: true, nested: { a: 1 } }))).toBe('400 validation')
+    expect(await fail(run(s, 'pause', { confirmed: true, n: Number.NaN }))).toBe('400 validation')
+    expect(await fail(run(s, 'pause', { confirmed: true, 'Target (target)': 'staging' }))).toBe('400 validation')
+    expect(await fail(run(s, 'pause', { confirmed: true, ticket: { key: 'DEMO-0052' } }))).toBe('400 validation') // ticket is signed too
+    expect(await fail(run(s, 'pause', { confirmed: true, ...Object.fromEntries(Array.from({ length: 13 }, (_, i) => [`a${i}`, i])) }))).toBe('400 validation')
     expect(s.store.wsEventsOf(s.ws).some((e) => e.type === 'addon.action_signed')).toBe(false)
-    await run(s, 'pause', { confirmed: true, id: 'x'.repeat(500), nested: { a: 1 } })
+    const long = `${'x'.repeat(500)}\u202etail`
+    await run(s, 'pause', { confirmed: true, id: long, n: 3 })
     const ev = s.store.wsEventsOf(s.ws).filter((e) => e.type === 'addon.action_signed')
     expect(ev).toHaveLength(1)
     expect(ev[0]).toMatchObject({ name: 'factory', action: 'pause', presence: 'touchid', actor: { kind: 'person', id: 'p_sev' } })
-    expect((ev[0].args as Record<string, string>).id).toHaveLength(120)
-    expect(ev[0].args).not.toHaveProperty('nested')
-    expect(ev[0].args).not.toHaveProperty('confirmed')
+    expect(ev[0].args).toEqual({ id: long, n: 3 })
     expect(ev[0].changed).toBe(true)
     await run(s, 'pause', { confirmed: true, ticket: 'DEMO-0052' })
     const all = s.store.wsEventsOf(s.ws).filter((e) => e.type === 'addon.action_signed')

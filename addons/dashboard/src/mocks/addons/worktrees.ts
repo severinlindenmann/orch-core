@@ -93,15 +93,15 @@ registerAddon({
       status: w.dirty ? ('warn' as const) : ('ok' as const),
       actions: [
         ...(terminalsActive ? [{ label: 'Open terminal here', action: 'open_terminal', args: { id: w.id }, variant: 'secondary' as const }] : []),
-        { label: 'Remove', action: 'remove', args: { id: w.id }, variant: 'danger' as const },
+        { label: 'Remove', action: 'remove', args: { id: w.id }, variant: 'danger' as const, ...(w.dirty ? { blocked: `${plural(w.dirty)}: commit or stash first` } : {}) },
       ],
     })
     const all = list(state).filter((w) => canSee(c, w))
-    const row = (w: Worktree) => ({ id: w.id, path: w.path, branch: w.branch, ticket: w.ticket, changes: plural(w.dirty), sync: `ahead ${w.ahead}, behind ${w.behind}`, by: w.created_by })
+    const row = (w: Worktree) => ({ id: w.id, path: w.path, branch: w.branch, ticket: w.ticket, changes: plural(w.dirty), sync: `ahead ${w.ahead}, behind ${w.behind}`, by: w.created_by, remove_blocked: w.dirty ? 'Commit or stash the changes first' : '' })
     // The table's rowActions: "Open terminal here" is included only while terminals is active.
     const rowActions = [
       ...(terminalsActive ? [{ label: 'Open terminal here', action: 'open_terminal', args: { id: '$row.id' }, variant: 'secondary' as const }] : []),
-      { label: 'Remove', action: 'remove', args: { id: '$row.id' }, variant: 'danger' as const },
+      { label: 'Remove', action: 'remove', args: { id: '$row.id' }, variant: 'danger' as const, blocked: '$row.remove_blocked' },
     ]
     const nav = ((state.nav ?? {}) as Record<string, { repo?: string; changes?: boolean }>)[c.viewer] ?? {}
     const repoFilter = REPOS.some((r) => short(r) === nav.repo) ? nav.repo : ''
@@ -131,11 +131,21 @@ registerAddon({
       filterBar: {
         type: 'stack',
         direction: 'row',
+        fit: true,
         children: [
+          { type: 'markdown', text: '**Show**' },
           { type: 'button', label: 'All repositories', action: 'filter', args: { repo: '' }, variant: 'ghost', pressed: !repoFilter },
           ...REPOS.map((r) => ({ type: 'button', label: short(r), action: 'filter', args: { repo: short(r) }, variant: 'ghost', pressed: repoFilter === short(r) })),
           { type: 'button', label: 'With changes', action: 'filter', args: { changes: !changesOnly }, variant: 'ghost', pressed: changesOnly },
-          { type: 'popover', label: 'Add worktree', variant: 'secondary', node: { type: 'form', schema: addSchema, uiSchema: { ticket: { 'ui:enumNames': ticketNames } }, formData: { base: 'main', ...(repoFilter ? { repo: REPOS.find((r) => short(r) === repoFilter) } : {}) }, action: 'add', submitLabel: 'Add worktree' } },
+        ],
+      },
+      // Creating something is not a filter: its own primary button above the filters.
+      addBar: {
+        type: 'stack',
+        direction: 'row',
+        fit: true,
+        children: [
+          { type: 'popover', label: 'Add worktree', variant: 'primary', node: { type: 'form', schema: addSchema, uiSchema: { ticket: { 'ui:enumNames': ticketNames } }, formData: { base: 'main', ...(repoFilter ? { repo: REPOS.find((r) => short(r) === repoFilter) } : {}) }, action: 'add', submitLabel: 'Add worktree' } },
         ],
       },
       shownRows: all.filter((w) => (!repoFilter || short(w.repo) === repoFilter) && (!changesOnly || w.dirty > 0)).map((w) => ({ ...row(w), repo: short(w.repo), changes: w.dirty ? plural(w.dirty) : 'none' })),
@@ -192,7 +202,7 @@ registerAddon({
       const r = store.runAddon(ws, 'terminals', 'open_ticket', { ticket: w.ticket })
       if (!r) return conflict('addon.inactive', 'Terminals is not available.')
       if (!r.ok) return r.code === 'addon.inactive' ? conflict('addon.inactive', 'Terminals is not active in this workspace.', 'Turn it on in Settings > Addons.') : r
-      return { ...r, message: `${r.message} Find it under Terminals.` }
+      return r
     },
   },
 })

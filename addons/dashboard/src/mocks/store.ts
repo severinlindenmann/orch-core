@@ -1,5 +1,6 @@
 // In-memory mock store seeded from fixtures. Mutations append events; state is re-derived from events.
 // Appended events persist to localStorage (in try/catch; the viewer sandbox may block it).
+import { countAttention } from '@/api/attention'
 import type {
   AddonActionResult,
   AddonDecision,
@@ -29,9 +30,12 @@ import type {
   Workspace,
   WorkspaceEvent,
 } from '@/api/types'
-import { addonActive, pendingUpdate, manifestFor, sameSet, viewerActions } from '@/api/addons'
+import { addonActive, ARG_KEY, manifestProblem, pendingUpdate, manifestFor, sameSet, sameTerms, viewerActions } from '@/api/addons'
 import { getAddon, openDecisions } from './addons'
+import { isCoreNamespace } from './addons/registry'
 import { deriveTicket, describeEvent, fnvHex, parseActor } from './derive'
+import { commitOf, nextCommitSha } from './changes'
+import { withinCharterSize } from './addons/registry'
 import addonsFixture from './fixtures/addons.json'
 import catalogFixture from './fixtures/catalog.json'
 import demoFixture from './fixtures/demo.json'
@@ -44,7 +48,8 @@ import { SECTIONS_BY_TYPE, requiredAtCreation, sectionLabel, type SectionName } 
 import { roleMeets } from '@/api/roles'
 import { atLeast, can, canRevokeGrant, roleOf } from '@/api/permissions'
 import { Simulator } from './sim'
-import { activeGrantOf } from '@/api/grants'
+import { activeGrantOf, grantTerms } from '@/api/grants'
+import { codeReviewApplies, codeReviewWaits, DEFAULT_CODE_POLICY } from '@/api/gates'
 import { isModelName, renderCommand, type LaunchSpec } from '@/api/launch'
 import { HARNESSES, HARNESS_LABEL, MODES, MODE_LABEL, WHERES, WHERE_LABEL, launchSpec, foldSessions, sessionScript, type LaunchPlan, type LaunchRequest, type StartedSession } from './sessions'
 import { clearPersisted, loadPersisted, savePersisted, type PersistedV2 } from './persist'
@@ -54,6 +59,7 @@ import { startLive } from './busy/live'
 import { ConnectionsHost } from './connections'
 import { makeRng } from './busy/rng'
 import type { RelaySim } from './relay'
+import { MandatesPreviewHost } from './mandates-preview'
 
 /** The mock "now" when the page loads: matches the fixtures (grant until 18:00 the same day). */
 export const MOCK_EPOCH = '2026-10-09T11:30:00Z'
@@ -82,6 +88,19 @@ const wellFormed = (e: unknown): boolean => {
   if (typeof type !== 'string' || typeof at !== 'string' || typeof actor !== 'object' || actor === null) return false
   const { kind, id } = actor as { kind?: unknown; id?: unknown }
   return typeof kind === 'string' && typeof id === 'string'
+}
+/**
+ * The saved addon states whose shape is still the module's (`stateVersion`); the rest are dropped and seeded again on
+ * first use. A browser that kept an older demo's state (e.g. usage per day under old model names) would otherwise
+ * feed today's view an old shape: NaN sums, and a Glance item that cannot be shown.
+ */
+function currentAddonStates(p: PersistedV2): PersistedV2['addonState'] {
+  const out: PersistedV2['addonState'] = {}
+  for (const [key, state] of Object.entries(p.addonState)) {
+    const name = key.slice(key.indexOf('/') + 1)
+    if ((getAddon(name)?.stateVersion ?? 1) === (p.addonVersions?.[name] ?? 1)) out[key] = state
+  }
+  return out
 }
 const refuse = (status: number, code: string, message: string, hint?: string): StoreFailure => ({ ok: false, status, code, message, hint })
 
@@ -123,6 +142,7 @@ function awaitingGate(t: TicketDocument): GateName | null {
   if (t.status === 'backlog' && t.gates.requirements.state === 'pending' && t.body.requirements && !/not refined/i.test(t.body.requirements)) return 'requirements'
   if (t.status === 'open' && t.gates.plan.state === 'pending' && t.tasks.length > 0) return 'plan'
   if (t.status === 'testing' && !t.verdict) return 'verify'
+  if (codeReviewWaits(t)) return 'code'
   return null
 }
 
@@ -151,6 +171,12 @@ export class MockStore {
   readonly relaySim = new Map<string, RelaySim>()
   /** Skills, connections, checks and the secrets file (D55–D57). */
   readonly conn = new ConnectionsHost(this)
+  /** Mandates, PREVIEW ONLY (mocks/mandates-preview.ts): its own state, never in a workspace or ticket log. */
+  readonly mandatesPreview = new MandatesPreviewHost(this)
+  /** Whether this store keeps the demo in the browser (off in tests). */
+  get persisting(): boolean {
+    return this.persist
+  }
 
   /** Which demo dataset is loaded: today's seed, or the seed plus a generated busy day (src/mocks/busy). */
   dataset: Dataset = 'normal'
@@ -182,7 +208,11 @@ export class MockStore {
     this.addons = structuredClone([...addonsFixture, ...catalogFixture]) as unknown as AddonPackage[]
     this.busy = this.dataset === 'busy' ? generateBusy() : null
     this.agentRegistry = [...meFixture.agents, ...(this.busy?.agents ?? [])] as unknown as typeof this.agentRegistry
-    this.seedWorkspaces = (workspacesFixture as unknown as Workspace[]).map((w) => ({ ...structuredClone(w), counts: {}, needs_you: 0 }))
+    // The code review gate (opt-in) starts off in every workspace that does not name it.
+    this.seedWorkspaces = (workspacesFixture as unknown as Workspace[]).map((w) => {
+      const c = structuredClone(w)
+      return { ...c, gates: { ...c.gates, code: c.gates.code ?? { ...DEFAULT_CODE_POLICY } }, counts: {}, needs_you: 0 }
+    })
     this.wsEvents.clear()
     for (const w of this.seedWorkspaces) this.wsEvents.set(w.id, [])
     if (this.busy) this.installBusyAddons()
@@ -208,13 +238,43 @@ export class MockStore {
         this.seeded.set(def.key, evs.length)
       }
     }
+    this.seedAddonLogs()
+  }
+
+  /** Records an active addon's seed implies (MockAddon.seedLog) join the seeded events, in time order. */
+  private seedAddonLogs() {
+    for (const ws of this.workspaces) {
+      for (const name of Object.keys(ws.addons)) {
+        const mod = getAddon(name)
+        if (!mod?.seedLog || !addonActive(ws, name)) continue
+        const touched = new Set<string>()
+        for (const { ticket, event } of mod.seedLog(this.addonState(ws.id, name), ws.id, this)) {
+          const def = this.defs.get(ticket)
+          if (!def || this.wsOfKey.get(ticket) !== ws.id) continue
+          // An addon seeds only its own records, as itself: never core events or another addon's, never as a person.
+          if (typeof event.type !== 'string' || !event.type.startsWith(`${name}.`) || typeof event.at !== 'string') continue
+          this.events.get(ticket)!.push(this.expand(def, { ...event, actor: `addon:${name}` } as FixtureEvent, 0))
+          touched.add(ticket)
+        }
+        for (const key of touched) {
+          const def = this.defs.get(key)!
+          const evs = this.events
+            .get(key)!
+            .map((e, i) => ({ e, i }))
+            .sort((a, b) => a.e.at.localeCompare(b.e.at) || a.i - b.i)
+            .map(({ e }, idx) => ({ ...e, seq: idx + 1, id: def.uid.slice(0, 14) + String(idx + 1).padStart(12, '0') }) as OrchEvent)
+          this.events.set(key, evs)
+          this.seeded.set(key, evs.length)
+        }
+      }
+    }
   }
 
   /** Busy day: the catalog addons that fill the pages are installed, granted and on in DEMO. */
   private installBusyAddons() {
     const demo = this.seedWorkspaces.find((w) => w.prefix === 'DEMO')
     if (!demo) return
-    for (const name of ['activity', 'records', 'worktrees', 'quick', 'models', 'schedules', 'factory']) {
+    for (const name of ['activity', 'records', 'worktrees', 'quick', 'models', 'schedules', 'factory', 'links']) {
       const pkg = this.addons.find((a) => a.name === name)
       if (!pkg || demo.addons[name]) continue
       demo.addons[name] = {
@@ -268,7 +328,7 @@ export class MockStore {
       }
     }
     this.created = p.created
-    this.addonStates = p.addonState
+    this.addonStates = currentAddonStates(p)
     this.refoldWorkspaces()
     if (p.viewer) this.viewer = p.viewer
     if (latest) this.clockBase = Math.max(this.clockBase, latest + 1000)
@@ -283,13 +343,19 @@ export class MockStore {
     }
     const wsEvents: PersistedV2['wsEvents'] = {}
     for (const [id, list] of this.wsEvents) if (list.length) wsEvents[id] = list
-    savePersisted({ v: 2, ticketEvents, created: this.created, wsEvents, addonState: this.addonStates, viewer: this.viewer, dataset: this.dataset })
+    const addonVersions: Record<string, number> = {}
+    for (const key of Object.keys(this.addonStates)) {
+      const name = key.slice(key.indexOf('/') + 1)
+      addonVersions[name] = getAddon(name)?.stateVersion ?? 1
+    }
+    savePersisted({ v: 2, ticketEvents, created: this.created, wsEvents, addonState: this.addonStates, addonVersions, viewer: this.viewer, dataset: this.dataset })
   }
 
   /** Back to the seed. `dataset` switches the demo to that dataset; without it the current one is reloaded. */
   reset(dataset: Dataset = this.dataset, keepViewer = false) {
     this.sim.stopAll()
     this.relaySim.clear()
+    this.mandatesPreview.reset()
     this.dataset = dataset
     this.seed()
     if (!keepViewer) this.viewer = meFixture.person
@@ -359,10 +425,19 @@ export class MockStore {
     }
     const needs = this.conn.needs(ws.id, key)
     if (needs) doc.needs = needs
+    // Landing records only mean something while their addon runs here: a turned-off lane shows the ticket as done.
+    if (doc.landing && !addonActive(ws, doc.landing.addon)) {
+      delete doc.landing
+      if (doc.status === 'done') doc.turn = { who: 'nobody', why: 'Done' }
+    }
     return doc
   }
 
-  summary(doc: TicketDocument): TicketSummary {
+  /**
+   * The ticket as a list row. `blocks` is the workspace's `blockingCheck` (pass one per list; made here when omitted):
+   * "blocking" counts by the same rule as Today and the ticket page, never by the raw seed flag alone.
+   */
+  summary(doc: TicketDocument, blocks?: (ticket: string, ref: string) => boolean): TicketSummary {
     const open = doc.questions_state.filter((q) => q.state === 'open')
     return {
       key: doc.key,
@@ -385,11 +460,16 @@ export class MockStore {
         ac_total: doc.acceptance_state.length,
       },
       open_questions: open.length,
-      blocking_questions: open.filter((q) => q.blocking).length,
+      blocking_questions: open.filter((q) => {
+        if (!q.blocking) return false
+        blocks ??= this.blockingCheck(this.workspaceOf(doc.key)?.id ?? '')
+        return blocks(doc.key, q.id)
+      }).length,
       restricted: doc.restricted,
       awaiting_gate: awaitingGate(doc),
       addons: doc.addons,
       updated_at: doc.updated_at,
+      ...(doc.landing ? { landing: doc.landing } : {}),
     }
   }
 
@@ -425,7 +505,83 @@ export class MockStore {
     list.push(event)
     this.bump(this.wsOfKey.get(key))
     this.save()
+    if (commitOf(event)) this.voidForNewCommit(key, commitOf(event)!.sha)
     return event
+  }
+
+  /**
+   * Core's rule for a new commit on the ticket branch (owner decision 2026-10-10): a standing verdict (verify approval)
+   * and code review signed another commit, so they no longer cover what would land. Core appends
+   * `gate.invalidated {gate, cause: 'new_commits', sha, reason}` as host for each, and a done ticket goes back to testing
+   * (the same path as a landing resolution).
+   */
+  private voidForNewCommit(key: string, sha: string): void {
+    const t = this.ticket(key)
+    if (!t) return
+    // Compare with the head core derives after the append (a re-pushed older sha is not a new head).
+    sha = t.branch.head
+    const reason = `New commits after the verdict: ${sha}`
+    let voided = false
+    // Any approval on another commit, whatever the gate's state (a partial quorum too), and a verdict on another
+    // commit: none of them may count toward the new head.
+    for (const gate of ['verify', 'code'] as const) {
+      const g = t.gates[gate]
+      const stale = g.approvals.some((a) => a.source_sha !== sha) || (gate === 'verify' && !!t.verdict && t.verdict.source_sha !== sha)
+      if (!stale) continue
+      this.append(key, { type: 'gate.invalidated', actor: 'host', gate, reason, cause: 'new_commits', sha })
+      voided = true
+    }
+    if (voided && t.status === 'done') this.append(key, { type: 'status.changed', actor: 'host', to: 'testing' })
+  }
+
+  /**
+   * Core re-reads every ticket after the code review policy changed. Turned off (or the count met) for a ticket waiting
+   * in testing on a pass verdict: it is done. Turned on for a done ticket that has not landed and has no code review on
+   * its verdict's commit: it goes back to testing and waits for one. Landed tickets keep their history.
+   */
+  recheckCodeReview(wsId: string): void {
+    const { back, done } = this.codeReviewMoves(wsId, this.workspaces.find((w) => w.id === wsId)!.gates.code)
+    for (const key of back) this.append(key, { type: 'status.changed', actor: 'host', to: 'testing', reason: 'code review policy' })
+    for (const key of done) this.append(key, { type: 'status.changed', actor: 'host', to: 'done', reason: 'code review policy' })
+  }
+
+  /**
+   * Which tickets a code review policy would move (owner ruling 2026-10-10), as a dry run for the signing covers and
+   * the rule `recheckCodeReview` applies. Back to testing: a done ticket with a pass verdict whose landing is open
+   * (queued, being checked or failed: core's landing record by the landing addon, the same actor rule as derive) and
+   * that would need a review it does not have. A done ticket without an open landing (landed, merged by hand or a
+   * pull request, no landing addon) counts as landed and stays done. To done: a ticket waiting in testing on a pass
+   * verdict whose review would be met or not needed.
+   */
+  codeReviewMoves(wsId: string, next: Pick<Workspace['gates']['code'], 'count' | 'applies'>): { back: string[]; done: string[] } {
+    const back: string[] = []
+    const done: string[] = []
+    for (const [key, ws] of this.wsOfKey) {
+      if (ws !== wsId) continue
+      const t = this.ticket(key)
+      if (!t?.verdict || t.verdict.result !== 'pass' || t.gates.verify.state !== 'approved') continue
+      const headApprovals = t.gates.code.approvals.filter((a) => a.source_sha === t.branch.head).length
+      const met = t.gates.code.state === 'approved' || headApprovals >= next.count
+      const needs = codeReviewApplies(next.applies, t.type) && !met
+      if (t.status === 'done' && needs && t.landing) back.push(key)
+      else if (t.status === 'testing' && !needs) done.push(key)
+    }
+    return { back: back.sort(), done: done.sort() }
+  }
+
+  /**
+   * An agent pushes a commit to the ticket branch (the demo of "new commits after the verdict"). Recorded as
+   * `branch.pushed {sha, branch}` by the agent that last worked on the ticket (else a session of its owner); core's
+   * new-commit rule then voids a standing verdict and code review.
+   */
+  pushCommit(key: string): { ok: true; sha: string } | StoreFailure {
+    const t = this.ticket(key)
+    if (!t) return refuse(404, 'not_found', `No ticket ${key}`)
+    const last = [...this.eventsOf(key)].reverse().find((e) => e.actor.kind === 'agent')?.actor
+    const actor = last && last.kind === 'agent' ? `${last.id}:${last.session}:${last.for}` : `claude-code:s_${key.slice(-4)}:${t.people.owner ?? this.viewer}`
+    const sha = nextCommitSha(t, this.eventsOf(key).filter((e) => e.type === 'branch.pushed').length)
+    this.append(key, { type: 'branch.pushed', actor, sha, branch: t.branch.name })
+    return { ok: true, sha }
   }
 
   // ------------------------------------------------------------ creating tickets
@@ -592,15 +748,19 @@ export class MockStore {
   }
 
   /**
-   * Issue a grant for `actor`. Human only: an agent actor is refused with `human_only`, whatever its role.
-   * Owners and maintainers may issue (`grant.issue`); members and viewers may not.
+   * Issue a grant for `actor` (always for themselves). Human only: an agent actor is refused with `human_only`, whatever
+   * its role. Terms by role (`grantTerms`): owners and maintainers all tickets up to 24 h; members the tickets they may
+   * work on, up to the workspace default (owner decision 2026-10-10); viewers none.
    */
-  issueGrant(wsId: string, req: { hours: number; scope: 'all' }, actor: Actor): GrantResult {
+  issueGrant(wsId: string, req: { hours: number; scope: 'all' | 'workable' }, actor: Actor): GrantResult {
     if (actor.kind !== 'person') return refuse(403, 'human_only', 'Only a person can issue a grant.', 'Run orch grant yourself, or issue it from the dashboard.')
     const role = this.roleIn(wsId, actor.id)
-    if (!can(role, 'grant.issue')) return refuse(403, 'forbidden', 'Only owners and maintainers issue grants.', 'Ask an owner or maintainer.')
-    if (!Number.isInteger(req.hours) || req.hours < 1 || req.hours > 12) return refuse(400, 'validation', 'A grant lasts 1 to 12 hours.')
-    if (req.scope !== 'all') return refuse(400, 'validation', 'Only the scope "all" can be issued here.')
+    const terms = grantTerms(role, this.workspaces.find((w) => w.id === wsId))
+    if (!terms || !can(role, 'grant.issue')) return refuse(403, 'forbidden', 'Viewers cannot issue grants.', 'Ask an owner to make you a member.')
+    if (req.scope !== terms.scope)
+      return refuse(403, 'grant.scope', terms.scope === 'workable' ? "A member's grant covers the tickets they may work on, not all tickets." : `Only the scope "${terms.scope}" can be issued here.`)
+    if (!Number.isInteger(req.hours) || req.hours < 1 || req.hours > terms.maxHours)
+      return refuse(400, 'validation', terms.scope === 'workable' ? `A member's grant lasts 1 to ${terms.maxHours} hours (the workspace default).` : `A grant lasts 1 to ${terms.maxHours} hours.`)
     const id = `gr_01JA${String(this.grants(wsId).length).padStart(2, '0')}`
     const until = new Date(Date.parse(this.now()) + req.hours * 3600_000).toISOString().replace(/\.\d{3}Z$/, 'Z')
     this.appendWs(wsId, { type: 'grant.issued', actor, grant: id, person: actor.id, scope: req.scope, until, hours: req.hours, sessions: [], presence: 'touchid' })
@@ -617,7 +777,7 @@ export class MockStore {
     if (!g) return refuse(404, 'not_found', `No grant ${id}`)
     const role = this.roleIn(wsId, actor.id)
     if (!canRevokeGrant(role, g.person, actor.id))
-      return refuse(403, 'forbidden', can(role, 'grant.issue') ? `Only ${g.person} or an owner can revoke ${id}.` : 'Only owners and maintainers revoke grants.')
+      return refuse(403, 'forbidden', can(role, 'grant.issue') ? `Only ${g.person} or an owner can revoke ${id}.` : 'Viewers cannot revoke grants.')
     if (g.revoked) return refuse(409, 'grant.revoked', `${id} was already revoked.`)
     this.appendWs(wsId, { type: 'grant.revoked', actor, grant: id, presence: 'touchid' })
     const roots = g.sessions
@@ -645,7 +805,7 @@ export class MockStore {
     return foldSessions(this.wsEvents.get(wsId) ?? [])
   }
 
-  /** The person's active `all` grant in a workspace (not revoked, not expired), if any. */
+  /** The person's active ticket grant (`all` or `workable`) in a workspace (not revoked, not expired), if any. */
   activeGrant(wsId: string, person: string): GrantInfo | undefined {
     return activeGrantOf(this.grants(wsId), person, Date.parse(this.now()))
   }
@@ -731,7 +891,7 @@ export class MockStore {
     if (doc.claim || pending)
       return refuse(409, 'claim.held', `${req.ticket} is claimed by ${doc.claim ? `${doc.claim.agent} (${doc.claim.session})` : `${pending!.name} (${pending!.session})`}.`, 'Stop that session first.')
     const grant = this.activeGrant(wsId, actor.id)
-    if (!grant) return refuse(409, 'grant.none', 'You have no active grant in this workspace.', 'Sign one in the start dialog, or ask an owner or maintainer to issue one.')
+    if (!grant) return refuse(409, 'grant.none', 'You have no active grant in this workspace.', 'Sign one in the start dialog or on the Agents page.')
     const blocked = this.resolveLaunch(wsId, req).plan.error
     if (blocked) return refuse(409, 'launch.invalid_model', blocked, 'Fix the model names in the launch addon\'s settings.')
     // D57: last of the refusals (so a start refused for another reason records no check): the checks of the
@@ -832,7 +992,7 @@ export class MockStore {
     this.append(key, { type: 'ticket.created', actor, status: 'backlog' })
     this.append(key, { type: 'people.set', owner: this.viewer, assignees: [], reviewers: [], watchers: [] })
     this.append(key, { type: 'github.imported', actor, external })
-    return { ok: true, message: `Imported ${external} as ${key}`, changed: true }
+    return { ok: true, message: `Imported ${external} as ${key} (Backlog).`, changed: true, ticket: key }
   }
 
   /** Per-workspace state of an addon (lazily seeded, persisted). */
@@ -881,10 +1041,23 @@ export class MockStore {
     const pkg = this.addons.find((a) => a.name === name)
     const done = () => ({ ok: true as const, addon: this.workspaceAddons(wsId).find((a) => a.name === name)! })
     if (req.op === 'install') {
+      // A package named like a core namespace could write `<name>.<verb>` records that read as core's own.
+      if (isCoreNamespace(name)) return refuse(409, 'addon.reserved_name', `"${name}" is one of core's own names; an addon cannot be installed under it.`, 'The addon must be published under another package name.')
       if (st) return refuse(409, 'addon.installed', `${name} is already installed.`)
       const c = pkg
       if (!c) return refuse(404, 'not_found', `No addon ${name} in the catalog`)
+      // Core names the addon "Title (id)" in its own lines: a name or title it cannot say plainly is refused.
+      const bad = manifestProblem(c)
+      if (bad) return refuse(409, 'addon.invalid_manifest', `${name} cannot be installed. ${bad}`, 'The addon must be published with a valid name and title.')
+      // One signed act (R-f): the values the owner saw must be the catalog's now; install, grant and turn on are recorded together.
+      const signedInstall = 'version' in req
+      if (signedInstall && (req.version !== c.version || req.package_sha256 !== c.package_sha256 || !Array.isArray(req.capabilities) || !sameSet(req.capabilities, c.capabilities) || !Array.isArray(req.viewer_actions) || !sameSet(req.viewer_actions, viewerActions(manifestFor(c, c.version)).map((a) => a.id))))
+        return refuse(409, 'addon.changed', `${c.title} changed since you reviewed it; nothing was signed.`, 'Open it again and review the current package.')
       this.appendWs(wsId, { type: 'addon.installed', actor, name, version: c.version, package_sha256: c.package_sha256, capabilities: c.capabilities })
+      if (signedInstall) {
+        this.appendWs(wsId, { type: 'addon.granted', actor, name, version: c.version, package_sha256: c.package_sha256, capabilities: c.capabilities, viewer_actions: req.viewer_actions, presence: 'touchid' })
+        if (req.enable !== false) this.appendWs(wsId, { type: 'addon.enabled', actor, name })
+      }
       return done()
     }
     if (!st || !pkg) return refuse(404, 'not_found', `${name} is not installed in this workspace.`)
@@ -897,6 +1070,7 @@ export class MockStore {
         if (req.package_sha256 !== st.package_sha256 || !Array.isArray(req.capabilities) || !sameSet(req.capabilities, st.capabilities) || !Array.isArray(req.viewer_actions) || !sameSet(req.viewer_actions, viewerActions(manifestFor(pkg, st.version)).map((a) => a.id)))
           return refuse(409, 'addon.changed', `${v.title} changed since you reviewed it; nothing was signed.`, 'Open the grant again and review the current package.')
         this.appendWs(wsId, { type: 'addon.granted', actor, name, version: st.version, package_sha256: st.package_sha256, capabilities: st.capabilities, viewer_actions: req.viewer_actions, presence: 'touchid' })
+        if (req.enable) this.appendWs(wsId, { type: 'addon.enabled', actor, name })
         break
       case 'enable':
         if (st.status === 'needs_grant') return refuse(409, 'addon.needs_grant', `${v.title} ${st.version} has no grant yet.`, 'Review its capabilities and grant them first.')
@@ -912,6 +1086,8 @@ export class MockStore {
         if (req.version !== update.version || req.package_sha256 !== update.package_sha256 || !Array.isArray(req.capabilities) || !sameSet(req.capabilities, update.capabilities) || !Array.isArray(req.viewer_actions) || !sameSet(req.viewer_actions, viewerActions({ actions: update.actions ?? pkg.actions }).map((a) => a.id)))
           return refuse(409, 'addon.changed', `The update to ${v.title} changed since you reviewed it; nothing was signed.`, 'Open the update again and review it.')
         this.appendWs(wsId, { type: 'addon.updated', actor, name, version: update.version, from: st.version, package_sha256: update.package_sha256, capabilities: update.capabilities, viewer_actions: req.viewer_actions, presence: 'touchid' })
+        // The signature is the grant of the new version too (one act, not two): the addon keeps its on/off state.
+        this.appendWs(wsId, { type: 'addon.granted', actor, name, version: update.version, package_sha256: update.package_sha256, capabilities: update.capabilities, viewer_actions: req.viewer_actions, presence: 'touchid' })
         break
       case 'uninstall': // ticket data under addons.<name> stays; the UI shows it inactive
         this.appendWs(wsId, { type: 'addon.uninstalled', actor, name })
@@ -967,6 +1143,16 @@ export class MockStore {
     // Starting an agent goes through core's own dialog first; only core sets `confirmed` (addon nodes cannot, see actionRuntime).
     if (meta?.confirm === 'spawn_agent' && (body.confirmed !== true || typeof body.launch !== 'object' || body.launch === null)) return refuse(409, 'confirm.required', 'Starting an agent needs your confirmation in orch\'s own dialog.', 'Press Start and confirm in the dialog.')
     if (meta?.confirm === 'sign' && body.confirmed !== true) return refuse(409, 'confirm.required', 'This needs your signature in orch\'s own dialog.', 'Press the button and sign in the dialog.')
+    // A signature covers exactly what core showed: plain finite values only, at most 12 besides core's flag and ticket.
+    if (meta?.confirm === 'sign') {
+      // Every key and value is checked, `ticket` included (it is part of what is signed); only core's flag is left out.
+      const signed = Object.entries(body).filter(([k]) => k !== 'confirmed')
+      const plainValue = (v: unknown) => typeof v === 'string' || typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v))
+      if (signed.filter(([k]) => k !== 'ticket').length > 12 || signed.some(([k, v]) => !ARG_KEY.test(k) || !plainValue(v)))
+        return refuse(400, 'validation', 'A signed action carries at most 12 plain values under plain keys.', 'Nothing was signed.')
+    }
+    // Core's confirm (destructive) and choice (options) dialogs come first too; addon args cannot set `confirmed`.
+    if ((meta?.confirm === 'destructive' || meta?.confirm === 'options') && body.confirmed !== true) return refuse(409, 'confirm.required', 'This asks first in orch\'s own dialog.', 'Press the button and confirm in the dialog.')
     // A decision action (`decision: true`) is decided by core's one rule, for every addon: owners and maintainers only,
     // the decision must be open for this caller now (runtime decisions included) and about a ticket they can see, and
     // the option must be one of its options. The addon then only applies the answer; core records it (addon.decided).
@@ -975,25 +1161,25 @@ export class MockStore {
       if (!can(role, 'addon.decide')) return refuse(403, 'forbidden', 'Only owners and maintainers decide addon decisions.', 'Ask an owner or maintainer.')
       const open = openDecisions(addon, this.addonState(ws, name), pkg?.decisions ?? [], { store: this, ws, viewer: this.viewer })
       decision = open.find((d) => d.id === body.id && d.action === id && (!d.ticket || (this.wsOfKey.get(d.ticket) === ws && this.isVisible(d.ticket))))
-      if (!decision) return refuse(409, 'decision.closed', 'That decision is closed.')
+      // An answer that carried terms names them; the decision may be gone because its terms changed (a new id).
+      if (!decision) return refuse(409, 'decision.closed', body.terms !== undefined ? 'That decision is closed, or its terms changed.' : 'That decision is closed.', body.terms !== undefined ? 'Reopen it and check the terms again.' : undefined)
       if (!decision.options.some((o) => o.key === body.option))
         return refuse(400, 'validation.option', `Choose ${decision.options.map((o) => o.label).join(', ')}.`)
       // Only core's signing prompt sets `confirmed` (addon args cannot: actionRuntime strips it), so addon.decided's presence is true.
       if (body.confirmed !== true) return refuse(409, 'confirm.required', 'A decision is answered in orch\'s own signing prompt.', 'Answer it on Today, or press the option and sign in the dialog.')
+      // The terms the person saw in core's prompt must be the terms now (core shows and signs them line by line).
+      if (!sameTerms(body.terms, decision.terms)) return refuse(409, 'decision.closed', 'The terms of this decision changed since you opened it.', 'Reopen it and check the terms again.')
     }
-    const res = action({ store: this, ws, viewer: this.viewer, ticket, body, state: this.addonState(ws, name), decision })
+    const raw = action({ store: this, ws, viewer: this.viewer, ticket, body, state: this.addonState(ws, name), decision })
     // A refusal changes nothing others need to see: no record, no refresh for other clients, nothing saved.
-    if (!res.ok) return res
+    if (!raw.ok) return raw
+    const res = this.checkedResult(ws, raw)
     // Core's own record of a decision (presence step done in core's prompt): who decided what, never the addon's words.
-    if (decision) this.appendWs(ws, { type: 'addon.decided', name, id: decision.id, option: String(body.option), ...(decision.ticket ? { ticket: decision.ticket } : {}), presence: 'touchid' })
-    // Core's own record of a signed action (the addon cannot write or hide it): who signed which action, with scalar args only, whether or not the addon says it changed anything.
+    if (decision) this.appendWs(ws, { type: 'addon.decided', name, id: decision.id, option: String(body.option), ...(decision.ticket ? { ticket: decision.ticket } : {}), ...(decision.terms ? { terms: { ...decision.terms } } : {}), presence: 'touchid' })
+    // Core's own record of a signed action (the addon cannot write or hide it): who signed which action with exactly the
+    // body that was signed (every arg, uncut; only core's `confirmed` flag left out), whether or not the addon changed anything.
     if (meta?.confirm === 'sign') {
-      const args: Record<string, string | number | boolean> = {}
-      for (const [k, v] of Object.entries(body).slice(0, 12)) {
-        if (k === 'confirmed') continue
-        if (typeof v === 'string') args[k.slice(0, 40)] = v.slice(0, 120)
-        else if (typeof v === 'number' || typeof v === 'boolean') args[k.slice(0, 40)] = v
-      }
+      const { confirmed: _confirmed, ...args } = body
       this.appendWs(ws, { type: 'addon.action_signed', name, action: id, args, changed: !!res.changed, presence: 'touchid' })
     }
     // Addon actions change state without events; let live pages refresh. Navigation is one viewer's own: no refresh for others.
@@ -1003,13 +1189,37 @@ export class MockStore {
   }
 
   /**
+   * What core lets an action's answer point the client at: a `ticket` (the toast's Open) only when it is a ticket of
+   * this workspace the viewer can see; a `terminal` (the dock opens on it) only while terminals is active here and the
+   * session is in this viewer's terminals view. Anything else is dropped, never passed on.
+   */
+  private checkedResult(ws: string, res: AddonActionResult): AddonActionResult {
+    const { ticket, terminal, ...rest } = res
+    const out: AddonActionResult = rest
+    if (typeof ticket === 'string' && this.wsOfKey.get(ticket) === ws && this.isVisible(ticket)) out.ticket = ticket
+    if (typeof terminal === 'string') {
+      const w = this.workspaces.find((x) => x.id === ws)
+      const mod = getAddon('terminals')
+      const view = addonActive(w, 'terminals') && mod?.view ? mod.view(this.addonState(ws, 'terminals'), { store: this, ws, viewer: this.viewer }) : null
+      const sessions = (view?.sessions ?? []) as { id: string }[]
+      if (sessions.some((x) => x.id === terminal)) out.terminal = terminal
+    }
+    return out
+  }
+
+  /**
    * Core's one way to approve a gate without a person: an agent working under an addon's signed charter (the AI
    * Factory, v1 charter behaviour). The charter must be in force now (the addon active, started, not paused or
    * stopped) and the ticket a child of its epic. Gate policy is not applied: the charter's signer agreed to it for the
    * epic. Recorded as `gate.approved {via: 'factory_charter', charter, charter_signed_by}` with the agent as actor;
    * an approved plan moves a backlog ticket to open, as core does for a person's approval.
+   *
+   * `verify` (owner decision 2026-10-10): the charter also gives the verdict of a child in testing — `verdict.given
+   * {result: 'pass', via: 'factory_charter', source_sha}` plus the verify approval, both signing the branch head now.
+   * The child is done, unless the code review gate applies to it: that one stays human (never auto-approved, `code`
+   * is refused here), so the child waits in testing for a person's code review.
    */
-  autoApprove(key: string, gate: 'requirements' | 'plan', opts: { charter: string; by: string }): { ok: true; event: OrchEvent } | StoreFailure {
+  autoApprove(key: string, gate: 'requirements' | 'plan' | 'verify', opts: { charter: string; by: string }): { ok: true; event: OrchEvent } | StoreFailure {
     const t = this.ticket(key)
     const w = this.workspaceOf(key)
     if (!t || !w) return refuse(404, 'not_found', `No ticket ${key}`)
@@ -1019,6 +1229,18 @@ export class MockStore {
     const ch = mod?.charter && addonActive(w, opts.charter) ? mod.charter(this.addonState(w.id, opts.charter), { store: this, ws: w.id, viewer: actor.for }) : null
     if (!ch || !ch.active) return refuse(409, 'charter.inactive', 'No charter is in force for this epic (not started, paused or stopped).')
     if (t.parent !== ch.epic) return refuse(409, 'charter.out_of_scope', `${key} is not a child of ${ch.epic}.`)
+    // The charter covers children up to its size limit only; larger (or unsized) ones wait for a person.
+    if (!withinCharterSize(t.size, ch.maxSize)) return refuse(409, 'charter.out_of_scope', `${key} is ${t.size ? `size ${t.size}` : 'not sized'}; the charter covers children of size ${ch.maxSize} or smaller.`)
+    if ((gate as string) === 'code') return refuse(403, 'human_only', 'A code review is always a person\'s: the charter never approves it.')
+    if (gate === 'verify') {
+      if (t.status !== 'testing') return refuse(409, 'transition.not_allowed', `${key} is ${t.status}, not testing.`)
+      if (t.verdict) return refuse(409, 'verdict.exists', 'A verdict was already given.')
+      const via = { via: 'factory_charter', charter: ch.epic, charter_signed_by: ch.signedBy, source_sha: t.branch.head }
+      const event = this.append(key, { type: 'verdict.given', actor: opts.by, result: 'pass', ...via })
+      this.append(key, { type: 'gate.approved', actor: opts.by, gate: 'verify', ...via })
+      if (!codeReviewWaits(this.ticket(key)!)) this.append(key, { type: 'status.changed', actor: 'host', to: 'done' })
+      return { ok: true, event }
+    }
     if (t.gates[gate].state === 'approved' || t.gates[gate].approvals.some((a) => a.via === 'factory_charter')) return refuse(409, 'gate.already_approved', `The ${gate} of ${key} is already approved.`)
     const event = this.append(key, { type: 'gate.approved', actor: opts.by, gate, via: 'factory_charter', charter: ch.epic, charter_signed_by: ch.signedBy })
     if (gate === 'plan' && this.ticket(key)!.status === 'backlog') this.append(key, { type: 'status.changed', actor: 'host', to: 'open' })
@@ -1054,6 +1276,8 @@ export class MockStore {
     if (approvedAt && resolved.seq < approvedAt.seq) return refuse(409, 'land.already_voided', `The resolution of attempt #${opts.attempt} predates the approval of ${key} standing now.`)
     const reason = `Landing attempt #${opts.attempt}: a resolution changed the code (${opts.addon}).`
     const event = this.append(key, { type: 'gate.invalidated', actor: 'host', gate: 'verify', reason, addon: opts.addon, attempt: opts.attempt })
+    // The code review signed the same commit: a resolution voids it as well (D53 unchanged).
+    if (t.gates.code.state === 'approved') this.append(key, { type: 'gate.invalidated', actor: 'host', gate: 'code', reason, addon: opts.addon, attempt: opts.attempt })
     if (t.status === 'done') this.append(key, { type: 'status.changed', actor: 'host', to: 'testing' })
     return { ok: true, event }
   }
@@ -1078,7 +1302,7 @@ export class MockStore {
         : policy.approvers === 'maintainer'
           ? 'Only an owner or a maintainer can approve this gate.'
           : `Only the ${policy.approvers} can approve this gate.`
-    if (policy.not === 'assignees' && t.people.assignees.includes(person)) return 'Assignees cannot approve their own work.'
+    if ((policy.not === 'assignees' || gate === 'code') && t.people.assignees.includes(person)) return 'Assignees cannot approve their own work.'
     if (t.gates[gate].approvals.some((a) => a.by === person)) return 'You already approved this gate.'
     return null
   }
@@ -1108,15 +1332,38 @@ export class MockStore {
     return fallback
   }
 
+  /**
+   * What the dashboard calls "blocking" (R1): an open question flagged blocking **and** an agent session waiting on
+   * exactly that question right now. Seeds and agents may flag more; the raw flag still drives the host's own logic
+   * (an agent waits on its blocking question, the turn line). Lazy: the agents are read on the first call only.
+   */
+  blockingCheck(workspaceId: string): (ticket: string, ref: string) => boolean {
+    let waitingOn: Set<string> | undefined
+    return (ticket, ref) => {
+      waitingOn ??= new Set(this.agents(workspaceId).flatMap((a) => (a.state === 'waiting' && a.waiting_on?.kind === 'question' ? [`${a.waiting_on.ticket}/${a.waiting_on.ref}`] : [])))
+      return waitingOn.has(`${ticket}/${ref}`)
+    }
+  }
+
+  /** The ticket as the API serves it: open questions say "blocking" by the same rule as Today (`blockingCheck`). */
+  servedTicket(key: string): TicketDocument | undefined {
+    const doc = this.ticket(key)
+    const ws = this.workspaceOf(key)
+    if (!doc || !ws) return doc
+    const blocks = this.blockingCheck(ws.id)
+    return { ...doc, questions_state: doc.questions_state.map((q) => (q.state === 'open' && q.blocking ? { ...q, blocking: blocks(key, q.id) } : q)) }
+  }
+
   /** Open questions, pending gates and verdicts on the workspace's tickets; `eligible` filters to what that person can act on. */
   private openItems(workspaceId: string, eligible?: string): NeedsYouItem[] {
     const items: NeedsYouItem[] = []
+    const blocks = this.blockingCheck(workspaceId)
     for (const t of this.listTickets(workspaceId)) {
       if (t.status === 'done') continue
       const can = (gate: GateName) => !eligible || !this.canApprove(t, gate, eligible)
       for (const q of t.questions_state) {
         if (q.state === 'open' && (!eligible || this.addressedTo(t, q.to, eligible)))
-          items.push({ kind: 'question', ticket: t.key, title: t.title, text: q.text, since: q.asked_at, ref: q.id, blocking: q.blocking })
+          items.push({ kind: 'question', ticket: t.key, title: t.title, text: q.text, since: q.asked_at, ref: q.id, blocking: !!q.blocking && blocks(t.key, q.id) })
       }
       if (t.status === 'testing' && !t.verdict && can('verify'))
         items.push({ kind: 'verdict', ticket: t.key, title: t.title, text: 'Verdict needed: all evidence is attached.', since: this.lastEventAt(t.key, (e) => e.type === 'status.changed' && e.to === 'testing', t.created_at), ref: 'verify' })
@@ -1125,6 +1372,8 @@ export class MockStore {
         items.push({ kind: 'approval', ticket: t.key, title: t.title, text: 'Approve the requirements.', since: this.lastEventAt(t.key, (e) => (e.type === 'section.edited' && e.section === 'requirements') || ((e.type === 'gate.invalidated' || e.type === 'gate.changes_requested') && e.gate === 'requirements'), t.created_at), ref: 'requirements', hash: t.gates.requirements.hash })
       if (t.status === 'open' && t.gates.plan.state === 'pending' && t.tasks.length > 0 && can('plan'))
         items.push({ kind: 'approval', ticket: t.key, title: t.title, text: 'Approve the plan.', since: this.lastEventAt(t.key, (e) => (e.type === 'status.changed' && e.to === 'open') || (e.type === 'section.edited' && e.section === 'plan') || ((e.type === 'gate.invalidated' || e.type === 'gate.changes_requested') && e.gate === 'plan'), t.created_at), ref: 'plan', hash: t.gates.plan.hash })
+      if (codeReviewWaits(t) && can('code'))
+        items.push({ kind: 'approval', ticket: t.key, title: t.title, text: `Review the code: commit ${t.branch.head}.`, since: this.lastEventAt(t.key, (e) => e.type === 'verdict.given', t.created_at), ref: 'code', hash: t.gates.code.hash })
     }
     return items.sort((a, b) => b.since.localeCompare(a.since))
   }
@@ -1176,6 +1425,7 @@ export class MockStore {
 
   today(workspaceId: string): TodayDocument {
     const tickets = this.listTickets(workspaceId)
+    const blocks = this.blockingCheck(workspaceId)
     const counts: Partial<Record<Status, number>> = {}
     for (const t of tickets) counts[t.status] = (counts[t.status] ?? 0) + 1
     const recent: TodayDocument['recent'] = []
@@ -1192,7 +1442,7 @@ export class MockStore {
       needs_you: this.needsYou(workspaceId),
       read_only_open: this.readOnlyOpen(workspaceId),
       waiting_on_others: this.waitingOnOthers(workspaceId),
-      working: tickets.filter((t) => t.claim).map((t) => this.summary(t)),
+      working: tickets.filter((t) => t.claim).map((t) => this.summary(t, blocks)),
       recent: recent.slice(0, 15),
       counts,
     }
@@ -1202,7 +1452,7 @@ export class MockStore {
     return this.workspaces.map((w) => {
       const counts: Partial<Record<Status, number>> = {}
       for (const t of this.listTickets(w.id)) counts[t.status] = (counts[t.status] ?? 0) + 1
-      return { ...w, counts, needs_you: this.needsYou(w.id).length + this.addonDecisions(w.id).length }
+      return { ...w, counts, needs_you: countAttention(this.needsYou(w.id), this.addonDecisions(w.id), can(this.roleIn(w.id, this.viewer), 'settings') ? this.conn.connections(w.id) : []).total }
     })
   }
 

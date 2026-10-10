@@ -127,7 +127,8 @@ function narrate(cmd: string): string {
   if (cmd.startsWith('orch status')) return 'Checking where the ticket stands.'
   if (cmd.startsWith('orch task next')) return 'Picking up the next task.'
   if (cmd.startsWith('orch show')) return 'Reading the ticket section.'
-  if (cmd.startsWith('orch approve')) return 'The plan is ready; trying to approve its gate.'
+  if (cmd.startsWith('orch approve')) return `The ${clean(cmd.split(/\s+/)[3] ?? 'gate')} is ready; trying to approve its gate.`
+  if (cmd.startsWith('orch wait')) return 'Checking what the ticket waits on.'
   if (cmd.startsWith('git')) return 'Looking at the branch.'
   return 'Looking around the worktree.'
 }
@@ -162,6 +163,25 @@ const say = (h: CliHarness, text: string, w: number) => wrap(text, w - 3).map((l
 /** The prompt the agent session was started with (its orch slash command). */
 const agentPrompt = (c: ShellCtx) => (c.ticket ? `/orch:work ${clean(c.ticket.key)}` : '/orch:next')
 
+const GATE_WORD: Record<string, string> = { requirements: 'requirements', plan: 'plan', verify: 'verification' }
+
+/**
+ * The step a running agent ends on, scripted from the ticket's live state: an open question it needs answered, a gate
+ * only a person approves, or the verdict. Null while nothing blocks it (it is working).
+ */
+export function blockerOf(c: ShellCtx): { cmd: string; say: string; verb: string } | null {
+  const t = c.ticket
+  if (!t) return null
+  const who = clean(t.move.name ?? t.move.who)
+  const q = /^Answer (\S+)/.exec(t.move.why)
+  if (q) return { cmd: 'orch wait', say: `${clean(q[1])} needs an answer from ${who} before I go on. Waiting for it in orch.`, verb: `Waiting for ${clean(q[1])}` }
+  const gate = t.gates.find((g) => (g.name === 'requirements' || g.name === 'plan') && g.state !== 'approved')
+  if (gate && t.status !== 'done') return { cmd: `orch approve ${clean(t.key)} ${gate.name}`, say: `Approving is human-only. Waiting for a person to approve the ${GATE_WORD[gate.name]} in orch.`, verb: 'Waiting for approval' }
+  if (t.move.why === 'Verdict needed') return { cmd: 'orch wait', say: `The work is ready. Waiting for ${who === 'nobody' ? 'a person' : who} to give the verdict in orch.`, verb: 'Waiting for the verdict' }
+  if (t.status === 'done') return { cmd: 'orch status', say: 'The ticket is done. Nothing left for me here.', verb: 'Idle' }
+  return null
+}
+
 /** An agent mirror or an ended session, replayed as the CLI would have shown it. */
 export function cliScreen(s: CliSession, cols: number): Screen {
   const w = boxWidth(cols)
@@ -169,12 +189,17 @@ export function cliScreen(s: CliSession, cols: number): Screen {
   const out: string[] = [...welcome(h, s.ctx, w), '']
   if (s.kind === 'person') out.push(...contextLines(s, w), '')
   else out.push(`${h === 'claude' ? '>' : '›'} ${agentPrompt(s.ctx)}`, '')
-  let waiting = false
   for (const cmd of s.transcript) {
     out.push(...say(h, narrate(cmd), w), '')
     out.push(...toolCall(h, cmd, s.ctx, w))
-    waiting = cmd.startsWith('orch approve')
-    if (waiting) out.push(...say(h, 'Approving is human-only. Waiting for a person to approve the plan in orch.', w), '')
+    if (cmd.startsWith('orch approve')) out.push(...say(h, 'Approving is human-only.', w), '')
+  }
+  // A running agent ends on what really blocks it now (the ticket's live state), never on a wait that is over.
+  const block = s.status === 'running' ? blockerOf(s.ctx) : null
+  if (block) {
+    out.push(...say(h, narrate(block.cmd), w), '')
+    out.push(...toolCall(h, block.cmd, s.ctx, w))
+    out.push(...say(h, block.say, w), '')
   }
   if (s.status === 'stopped') {
     out.push(...say(h, s.summary ? `Session ended. Summary: ${clean(s.summary)}` : 'Session ended. No summary was recorded.', w), '')
@@ -182,7 +207,7 @@ export function cliScreen(s: CliSession, cols: number): Screen {
   }
   // Running agent session: the working line is last. No input box and no key hints: nobody can type here (the dock
   // says so below the terminal).
-  const verb = waiting ? 'Waiting for approval' : 'Working'
+  const verb = block?.verb ?? 'Working'
   const base = Math.max(0, Math.round((Date.parse(s.ctx.now) - Date.parse(s.started)) / 1000)) || 0
   const frame = (tick: number) =>
     h === 'claude'

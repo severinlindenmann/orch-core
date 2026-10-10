@@ -3,6 +3,9 @@ import { describe, expect, it } from 'vitest'
 import { mockStore } from '@/api/client'
 import { sha256Hex } from '@/api/sha256'
 import { renderApp } from '@/test/renderApp'
+import type { TicketDocument } from '@/api/types'
+import type { WidgetSpec } from './parse'
+import { prototypeQuestion } from '../Overview'
 
 const T = { timeout: 5000 }
 const widget = (id: string) => document.querySelector(`[data-widget="${id}"]`) as HTMLElement
@@ -115,8 +118,9 @@ describe('mixed tickets', () => {
     expect(document.querySelectorAll('h2').length).toBeGreaterThan(2) // the page structure is intact
   })
   it('DEMO-0046: unknown template, drift, unknown key and a refused place are code with their reason; others draw', async () => {
-    renderApp('/ticket/DEMO-0046')
+    const { user } = renderApp('/ticket/DEMO-0046')
     await waitFor(() => expect(widget('incident')).toBeTruthy(), T)
+    await user.click(screen.getByRole('button', { name: /^\d+ more widgets?$/ }))
     const errs = [...document.querySelectorAll('[data-widget-error]')].map((e) => e.textContent ?? '')
     expect(errs.some((t) => /uses a template orch does not know/.test(t))).toBe(true)
     expect(errs.some((t) => t.includes('This preview changed after it was pinned, so it is not shown. Ask the agent that wrote it to update the pin.'))).toBe(true)
@@ -185,5 +189,63 @@ describe('catalog examples in the demo tickets', () => {
     expect(widget('report-card').querySelector('iframe')!.srcdoc).toContain('data:image/png;base64,')
     expect(widget('wait-rule').querySelector('[data-callout="warn"]')).toHaveTextContent(/^Warning: Do not merge/)
     expect(widget('wait-rule')).not.toHaveAttribute('data-addon')
+  })
+})
+
+describe('Current state stays readable (B M8, B M9)', () => {
+  const handoff = () => document.querySelector('section[aria-labelledby="sec-current_state"]') as HTMLElement
+  it('shows the first two widgets of the handoff, then "N more widgets" (the rest is not mounted until asked)', async () => {
+    const { user } = renderApp('/ticket/DEMO-0046')
+    await screen.findByRole('heading', { level: 2, name: 'Current state' }, T)
+    await waitFor(() => expect(handoff().querySelectorAll('[data-widget]').length).toBe(2), T)
+    const more = within(handoff()).getByRole('button', { name: '4 more widgets' })
+    expect(more).toHaveAttribute('aria-expanded', 'false')
+    await user.click(more)
+    expect(handoff().querySelectorAll('[data-widget]').length).toBe(6)
+    await user.click(within(handoff()).getByRole('button', { name: 'Show fewer widgets' }))
+    expect(handoff().querySelectorAll('[data-widget]').length).toBe(2)
+    // Other sections are not capped.
+    const context = document.querySelector('section[aria-labelledby="sec-context"]') as HTMLElement
+    expect(within(context).queryByRole('button', { name: /more widgets?$/ })).toBeNull()
+  })
+  it('marks an option prototype as a prototype that is answered in Questions, with a link there; its body takes no clicks', async () => {
+    const { user } = renderApp('/ticket/DEMO-0046')
+    await screen.findByRole('heading', { level: 2, name: 'Current state' }, T)
+    await user.click(await within(handoff()).findByRole('button', { name: /^\d+ more widgets?$/ }, T))
+    const w = widget('winner')
+    const note = w.querySelector('[data-widget-prototype]') as HTMLElement
+    expect(note).toHaveTextContent('Prototype — answer in Questions → Answer Q1')
+    expect(w.querySelector('[data-widget-drawing]')).toHaveAttribute('inert')
+    await user.click(within(note).getByRole('button', { name: 'Answer Q1' }))
+    expect(screen.getByRole('tab', { name: /Questions/ })).toHaveAttribute('aria-selected', 'true')
+  })
+  it('Show text on a prototype gives the text alternative outside the inert drawing (readable and copyable); Expand has it too', async () => {
+    const { user } = renderApp('/ticket/DEMO-0043')
+    await waitFor(() => expect(widget('valid-from')).toBeTruthy(), T)
+    const w = widget('valid-from')
+    expect(w.querySelector('[data-widget-drawing]')).toHaveAttribute('inert')
+    await user.click(within(w).getByRole('button', { name: 'Show text' }))
+    const pre = w.querySelector('[data-widget-body] pre') as HTMLElement
+    expect(pre).toHaveTextContent('Drag to compare DATE with TIMESTAMP.')
+    expect(pre.closest('[inert]')).toBeNull()
+    expect(pre.className).not.toMatch(/select-none/)
+    await user.click(within(w).getByRole('button', { name: /^Expand/ }))
+    const sheet = await screen.findByRole('dialog')
+    expect(within(sheet).getByText('Text alternative')).toBeInTheDocument()
+  })
+  it('an option prototype on a ticket with several open questions and none named links to Questions', () => {
+    const open = (id: string) => ({ id, state: 'open' }) as TicketDocument['questions_state'][number]
+    const spec = { layer: 'widget', widget: 'option-prototype@1', title: 'Which record wins?', fields: {} } as WidgetSpec
+    expect(prototypeQuestion(spec, { questions_state: [open('Q1'), open('Q2')] })).toBe('')
+    expect(prototypeQuestion(spec, { questions_state: [open('Q3')] })).toBe('Q3')
+    expect(prototypeQuestion(spec, { questions_state: [] })).toBeUndefined()
+    expect(prototypeQuestion({ ...spec, widget: 'line-chart@1' }, { questions_state: [open('Q1'), open('Q2')] })).toBeUndefined()
+  })
+  it('a widget titled after an open question (DEMO-0043 "Q2: …") is a prototype for it; other widgets are not', async () => {
+    renderApp('/ticket/DEMO-0043')
+    await waitFor(() => expect(widget('valid-from')).toBeTruthy(), T)
+    expect(widget('valid-from').querySelector('[data-widget-prototype]')).toHaveTextContent('Answer Q2')
+    await waitFor(() => expect(widget('size')).toBeTruthy(), T)
+    expect(widget('size').querySelector('[data-widget-prototype]')).toBeNull()
   })
 })

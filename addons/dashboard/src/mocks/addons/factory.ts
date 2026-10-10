@@ -3,7 +3,8 @@ import { atLeast } from '@/api/permissions'
 import type { AddonDecision } from '@/api/types'
 import type { MockStore } from '../store'
 import type { Rng } from '../busy/rng'
-import { canSeeTicket, conflict, notFound, registerAddon, type AddonCtx } from './registry'
+import { canSeeTicket, conflict, notFound, registerAddon, withinCharterSize, type AddonCtx } from './registry'
+import { fmtDateTime, fmtWhen } from '@/lib/time'
 
 // factory (AI Factory, Phase 2 preview; v1 docs/factory.md): one factory epic, DEMO-0050 "Monthly billing v2".
 //  - The charter (25 children or 72 hours, children of size m or smaller) was signed when the epic started. The
@@ -23,7 +24,7 @@ import { canSeeTicket, conflict, notFound, registerAddon, type AddonCtx } from '
 const EPIC_TITLE = 'Monthly billing v2'
 const MAX_CHILDREN = 25
 const MAX_HOURS = 72
-const MAX_SIZE = 'm'
+const MAX_SIZE = 'm' as const
 const WATCH_STEPS = 10 // simulated steps per workspace per hour
 const STEP_MS = 20_000
 const MAX_PERMITS_SHOWN = 5
@@ -66,8 +67,7 @@ const TITLES = [
 ] as const
 
 const nameOf = (c: Ctx, person: string) => c.store.workspaces.find((w) => w.id === c.ws)?.members.find((m) => m.person === person)?.name ?? person
-const utc = (iso: string) => `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`
-const hhmm = (iso: string) => `${iso.slice(11, 16)} UTC`
+const utc = (iso: string) => fmtDateTime(iso)
 const scriptId = (ws: string) => `factory:${ws}`
 /** The addon writes its own events (`factory.*`) as itself; who answered or signed is in core's addon.decided / addon.action_signed. */
 const ADDON = { kind: 'addon', id: 'factory' } as const
@@ -110,6 +110,19 @@ function approvalOf(store: MockStore, c: Ctx, key: string): string {
   return sizeRank(store.ticket(key)?.size ?? null) > sizeRank(MAX_SIZE) ? 'waits for you (above size m)' : 'waiting for approval'
 }
 
+/** The words core uses for a verdict nobody reviewed (the ticket page says the same). */
+export const CHARTER_VERDICT = 'via the factory charter — no person reviewed this'
+
+/** How a child's verdict was given, from core's verdict record: under the charter, by a person, or not yet. */
+function verdictOf(store: MockStore, c: Ctx, key: string): string {
+  const t = store.ticket(key)
+  const v = t?.verdict
+  if (!t || !v) return t?.status === 'testing' ? 'waiting' : '–'
+  const code = t.gates.code.required && t.gates.code.state !== 'approved' && v.result === 'pass' ? '; waits for a code review by a person' : ''
+  if (v.via === 'factory_charter') return `${CHARTER_VERDICT} (commit ${v.source_sha})${code}`
+  return `${v.result === 'pass' ? 'pass' : 'sent back'} by ${nameOf(c, v.by)}${code}`
+}
+
 function readyReport(c: Ctx, epic: string, keys: string[]): string {
   if (!keys.length) return ''
   const statuses = keys.map((k) => c.store.ticket(k)!.status)
@@ -118,7 +131,7 @@ function readyReport(c: Ctx, epic: string, keys: string[]): string {
   const lines = seen.map((k) => {
     const t = c.store.ticket(k)!
     const n = t.acceptance_state.length
-    return `- **${k}** ${t.title}: ${approvalOf(c.store, c, k)}, ${n} acceptance ${n === 1 ? 'criterion' : 'criteria'}, ${t.status}`
+    return `- **${k}** ${t.title}: ${approvalOf(c.store, c, k)}, ${n} acceptance ${n === 1 ? 'criterion' : 'criteria'}, ${t.status}${t.verdict ? `; verdict ${verdictOf(c.store, c, k)}` : ''}`
   })
   return [
     '### Ready for your verdict',
@@ -173,6 +186,13 @@ function simulateStep(store: MockStore, ws: string): boolean {
   // A refused approval is not a step: the budget (`used`) counts only children core approved under the charter.
   if (!store.autoApprove(child.key, 'requirements', { charter: 'factory', by: agent }).ok) return false
   if (!store.autoApprove(child.key, 'plan', { charter: 'factory', by: agent }).ok) return false
+  // The charter approves everything, verdicts included (owner decision 2026-10-10): a child waiting in testing gets
+  // its verdict through core, on its branch head. A code review stays human (core refuses it under a charter).
+  const waiting = childKeys(store, ws, epic).find((k) => {
+    const t = store.ticket(k)
+    return t?.status === 'testing' && !t.verdict && withinCharterSize(t.size, MAX_SIZE)
+  })
+  if (waiting) store.autoApprove(waiting, 'verify', { charter: 'factory', by: agent })
   state.used = (state.used as number) + 1
   state.simSteps = n + 1
   state.simTimes = [...recentSteps(state, now), now]
@@ -260,7 +280,7 @@ registerAddon({
     const visible = epic ? childKeys(c.store, c.ws, epic).filter((k) => canSeeTicket(c, k)) : []
     const children = visible.map((k) => {
       const t = c.store.ticket(k)!
-      return { ticket: k, title: t.title, status: t.status, approval: approvalOf(c.store, c, k), size: t.size ?? '–' }
+      return { ticket: k, title: t.title, status: t.status, approval: approvalOf(c.store, c, k), verdict: verdictOf(c.store, c, k), size: t.size ?? '–' }
     })
     const permits = permitsOf(state).filter((p) => canSeeTicket(c, p.ticket))
     const open = permits.filter((p) => p.state === 'open').length
@@ -282,7 +302,7 @@ registerAddon({
                   : `The time budget is used up (${MAX_HOURS} hours). Agents make no new auto-approvals, start no tasks and no grant answers anything until you decide again.`,
             }
           : mode === 'paused'
-            ? { type: 'alert', tone: 'info', title: `Paused by ${nameOf(c, paused!.by)} at ${hhmm(paused!.at)}`, text: 'Agents hold their work and nothing new starts. The time budget stops while paused. Resume when you are ready.' }
+            ? { type: 'alert', tone: 'info', title: `Paused by ${nameOf(c, paused!.by)} ${fmtWhen(paused!.at, c.store.now())}`, text: 'Agents hold their work and nothing new starts. The time budget stops while paused. Resume when you are ready.' }
             : { type: 'stack', children: [] }
 
     // Everyone sees that demo activity is running, not only the person who started it.
@@ -315,7 +335,7 @@ registerAddon({
       epicLine: epic ? `${epic} · ${EPIC_TITLE}` : 'none',
       mode,
       stateAlert,
-      charter: `Signed by ${startedBy} on ${utc(state.startedAt as string)}: up to ${MAX_CHILDREN} children or ${MAX_HOURS} hours, whichever comes first. Children of size ${MAX_SIZE} or smaller only; larger ones wait for you.`,
+      charter: `Signed by ${startedBy} on ${utc(state.startedAt as string)}: up to ${MAX_CHILDREN} children or ${MAX_HOURS} hours, whichever comes first. Children of size ${MAX_SIZE} or smaller only; larger ones wait for you. The charter approves everything on them, verdicts included: no person reviews that work unless the code review gate is on for them (Settings → Gates).`,
       maxChildren: MAX_CHILDREN,
       maxHours: MAX_HOURS,
       used,
@@ -365,7 +385,7 @@ registerAddon({
   // The charter signed when the epic started; in force while the factory runs (not paused, not stopped).
   charter(state, c) {
     const epic = state.epic as string | null
-    return epic ? { epic, signedBy: state.startedBy as string, active: modeOf(state, c.store.now()) === 'running' } : null
+    return epic ? { epic, signedBy: state.startedBy as string, active: modeOf(state, c.store.now()) === 'running', maxSize: MAX_SIZE } : null
   },
 
   decisions(state, _pkg, c): AddonDecision[] {

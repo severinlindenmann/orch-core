@@ -3,6 +3,7 @@
 
 import type { ShellCtx } from '@/api/terminals'
 import { maskSecrets } from '@/api/secrets'
+import { fmtClock } from '@/lib/time'
 
 export type { ShellCtx }
 
@@ -12,11 +13,12 @@ export interface CommandResult {
   exit?: boolean
 }
 
-const HELP = ['orch status', 'orch show <key> --section <name>', 'orch task next', 'git status', 'git log --oneline -5', 'ls', 'pwd', 'clear', 'help', 'exit']
+const HELP = ['orch status', 'orch show <key> --section <name>', 'orch task next', 'orch wait', 'git status', 'git log --oneline -5', 'ls', 'pwd', 'clear', 'help', 'exit']
 const HUMAN_ONLY = 'err human_only approve · retry:false · next: orch ask or orch wait'
 const CLEAR = '\x1b[2J\x1b[H'
 
-const hhmm = (iso: string) => `${iso.slice(11, 16)} UTC`
+/** The CLI prints the exact time with its zone, like the real `orch status`. */
+const clockUtc = (iso: string) => `${fmtClock(iso)} UTC`
 const left = (until: string, now: string) => {
   const min = Math.max(0, Math.round((Date.parse(until) - Date.parse(now)) / 60000))
   return min >= 60 ? `${Math.floor(min / 60)} h ${String(min % 60).padStart(2, '0')} min left` : `${min} min left`
@@ -78,10 +80,10 @@ function run(line: string, c: ShellCtx): CommandResult {
               `move       ${t.move.who} · ${t.move.why}`,
               `gates      ${t.gates.map((g) => `${g.name} ${g.state}`).join(' · ')}`,
               `questions  ${t.questions.open} open of ${t.questions.total}`,
-              c.claim ? `claim      ${c.claim.agent} ${c.claim.session} · for ${c.claim.for} · expires ${hhmm(c.claim.expires)}` : 'claim      none',
+              c.claim ? `claim      ${c.claim.agent} ${c.claim.session} · for ${c.claim.for} · expires ${clockUtc(c.claim.expires)}` : 'claim      none',
               `tasks      ${t.tasks.done}/${t.tasks.total} done${t.tasks.doing ? ` · doing ${t.tasks.doing}` : ''}${t.next_task ? ` · next ${t.next_task.id}` : ''}`,
               `cursor     ${c.cursor}`,
-              c.grant ? `grant      ${c.grant.id} · ${c.grant.scope} · until ${hhmm(c.grant.until)} (${left(c.grant.until, c.now)})` : 'grant      none · run orch grant',
+              c.grant ? `grant      ${c.grant.id} · ${c.grant.scope} · until ${clockUtc(c.grant.until)} (${left(c.grant.until, c.now)})` : 'grant      none · run orch grant',
             ]
           : ['orch · no ticket in this shell'],
       }
@@ -93,6 +95,8 @@ function run(line: string, c: ShellCtx): CommandResult {
       return { lines: [`${t.key} · ${label(section)}`, t.current_state] }
     }
     if (sub === 'task' && rest[0] === 'next') return { lines: [t?.next_task ? `next ${t.next_task.id} · ${t.next_task.text}` : 'no open tasks'] }
+    // What the ticket waits on now (the dashboard's turn rule): an agent blocks here until it moves.
+    if (sub === 'wait') return { lines: [t ? `waiting · ${t.move.why} · ${t.move.name ?? t.move.who}` : 'err no_ticket · no ticket in this shell'] }
     if (sub === 'approve') return { lines: [c.owner === 'agent' ? HUMAN_ONLY : 'approve needs Touch ID: use the dashboard'] }
     return { lines: [`err unknown_command · orch ${sub ?? ''}`.trimEnd() + ' · next: help'] }
   }
@@ -104,6 +108,10 @@ function run(line: string, c: ShellCtx): CommandResult {
       ? ['> GET /api/2.0/preview/scim/v2/Me', `> * Host: ${env.DATABRICKS_HOST}`, `> * Authorization: Bearer ${env.DATABRICKS_TOKEN}`, '< HTTP/2.0 200 OK']
       : []
     return { lines: [...debug, '{ "userName": "ci-orch@acme-energy.ch", "active": true }'] }
+  }
+  // The re-login commands of the seeded connections: nothing is logged in here (the dashboard is a mockup).
+  if ((cmd === 'databricks' || cmd === 'gh' || cmd === 'gcloud' || cmd === 'az') && /(^|\s)(auth|login)(\s|$)/.test(line)) {
+    return { lines: ['Demo: no login happens in this mockup. On Today, "Run check again" assumes you logged in.'] }
   }
   if (cmd === 'git' && sub === 'status') return { lines: [`On branch ${c.branch}`, 'Your branch is up to date with origin.', 'nothing to commit, working tree clean'] }
   if (cmd === 'git' && sub === 'log')

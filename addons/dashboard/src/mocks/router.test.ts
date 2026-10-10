@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createApi } from '@/api/client'
 import { createMockTransport } from '@/api/transport'
 import { ApiError } from '@/api/types'
+import { reloginItems } from '@/api/attention'
 import { parseActor } from './derive'
 import { createMockStore, sessionBelongsTo } from './store'
 
@@ -172,21 +173,54 @@ describe('mock tickets search', () => {
     it('issues a grant for the viewer and validates the hours', async () => {
       const { api, store } = setup()
       const ws = store.workspaces[0].id
-      await expect(api.issueGrant(ws, { hours: 13, scope: 'all' })).rejects.toMatchObject({ status: 400 })
+      await expect(api.issueGrant(ws, { hours: 25, scope: 'all' })).rejects.toMatchObject({ status: 400 })
       await expect(api.issueGrant(ws, { hours: 0, scope: 'all' })).rejects.toMatchObject({ status: 400 })
+      const long = await api.issueGrant(ws, { hours: 24, scope: 'all' }) // owners and maintainers: 1 to 24 h
+      expect(Date.parse(long.until) - Date.parse(long.issued_at)).toBe(24 * 3600_000)
       const g = await api.issueGrant(ws, { hours: 4, scope: 'all' })
       expect(g).toMatchObject({ person: 'p_sev', scope: 'all', revoked: null })
       expect(Date.parse(g.until) - Date.parse(g.issued_at)).toBe(4 * 3600_000)
       expect(store.wsEventsOf(ws).some((e) => e.type === 'grant.issued' && e.grant === g.id)).toBe(true)
     })
-    it('a member cannot issue a grant or revoke their own (owners and maintainers only)', async () => {
+    it('the owner sets the agent grant length (1 to 24 h): it is the longest a member signs; others cannot', async () => {
+      const { api, store } = setup()
+      const cli = store.workspaces.find((w) => w.prefix === 'CLI')!.id
+      await expect(api.postSettings(cli, { op: 'grant.hours', hours: 25 })).rejects.toMatchObject({ status: 400, code: 'validation.hours' })
+      await expect(api.postSettings(cli, { op: 'grant.hours', hours: 0 })).rejects.toMatchObject({ status: 400 })
+      await api.postSettings(cli, { op: 'grant.hours', hours: 20 })
+      expect(store.workspaces.find((w) => w.id === cli)!.grant_hours).toBe(20)
+      expect(store.wsEventsOf(cli).at(-1)).toMatchObject({ type: 'workspace.grant_hours_set', hours: 20 })
+      store.setViewer('p_tom')
+      const g = await api.issueGrant(cli, { hours: 20, scope: 'workable' })
+      expect(Date.parse(g.until) - Date.parse(g.issued_at)).toBe(20 * 3600_000)
+      await expect(api.postSettings(cli, { op: 'grant.hours', hours: 4 })).rejects.toMatchObject({ status: 403 })
+    })
+    it('a member issues a grant for themselves: the tickets they may work on, up to the workspace default; revokes their own, not others', async () => {
       const { api, store } = setup()
       const cli = store.workspaces.find((w) => w.prefix === 'CLI')!.id
       expect(store.roleIn(cli, 'p_tom')).toBe('member')
-      store.appendWs(cli, { type: 'grant.issued', actor: 'p_tom', grant: 'gr_tom', person: 'p_tom', scope: 'all', until: '2026-10-09T18:00:00Z', hours: 4, sessions: [] })
+      store.appendWs(cli, { type: 'grant.issued', actor: 'p_sev', grant: 'gr_sev', person: 'p_sev', scope: 'all', until: '2026-10-09T18:00:00Z', hours: 4, sessions: [] })
       store.setViewer('p_tom')
-      await expect(api.issueGrant(cli, { hours: 4, scope: 'all' })).rejects.toMatchObject({ status: 403, code: 'forbidden' })
-      await expect(api.revokeGrant(cli, 'gr_tom')).rejects.toMatchObject({ status: 403, code: 'forbidden' })
+      // Not all tickets, and not longer than the workspace default (8 h).
+      await expect(api.issueGrant(cli, { hours: 4, scope: 'all' })).rejects.toMatchObject({ status: 403, code: 'grant.scope' })
+      await expect(api.issueGrant(cli, { hours: 9, scope: 'workable' })).rejects.toMatchObject({ status: 400, code: 'validation' })
+      const g = await api.issueGrant(cli, { hours: 8, scope: 'workable' })
+      expect(g).toMatchObject({ person: 'p_tom', scope: 'workable', revoked: null })
+      expect(store.wsEventsOf(cli).at(-1)).toMatchObject({ type: 'grant.issued', presence: 'touchid', actor: { kind: 'person', id: 'p_tom' } })
+      await expect(api.revokeGrant(cli, 'gr_sev')).rejects.toMatchObject({ status: 403, code: 'forbidden' })
+      expect((await api.revokeGrant(cli, g.id)).revoked?.by).toBe('p_tom')
+    })
+    it('an owner revokes a member grant; a viewer cannot issue one', async () => {
+      const { api, store } = setup()
+      const cli = store.workspaces.find((w) => w.prefix === 'CLI')!.id
+      store.setViewer('p_tom')
+      const g = await api.issueGrant(cli, { hours: 2, scope: 'workable' })
+      store.setViewer('p_sev')
+      expect((await api.revokeGrant(cli, g.id)).revoked?.by).toBe('p_sev')
+      const demo = store.workspaces.find((w) => w.prefix === 'DEMO')!.id
+      store.setViewer('p_tom')
+      expect(store.roleIn(demo, 'p_tom')).toBe('viewer')
+      await expect(api.issueGrant(demo, { hours: 2, scope: 'workable' })).rejects.toMatchObject({ status: 403, code: 'forbidden' })
     })
     it('an agent actor cannot issue or revoke a grant (human_only)', () => {
       const store = createMockStore({ persist: false })
@@ -306,13 +340,15 @@ describe('stable ages and the attention count', () => {
     expect(store.needsYou(ws).find((i) => i.kind === 'verdict' && i.ticket === v.ticket)!.since).toBe(moved)
   })
 
-  it('workspace needs_you counts open addon decisions the viewer can decide', async () => {
+  it('workspace needs_you counts open addon decisions the viewer can decide, and the owner\'s re-logins (R-c)', async () => {
     const { api, store } = setup()
     const ws = store.workspaces[0].id
     const core = (await api.getToday(ws)).needs_you.length
     const addon = (await api.getAddonDecisions(ws)).length
     expect(addon).toBeGreaterThan(0)
-    expect((await api.getWorkspaces()).find((w) => w.id === ws)!.needs_you).toBe(core + addon)
+    const relogin = reloginItems(await api.getConnections(ws)).length
+    expect(relogin).toBeGreaterThan(0)
+    expect((await api.getWorkspaces()).find((w) => w.id === ws)!.needs_you).toBe(core + addon + relogin)
     store.setViewer('p_tom')
     expect((await api.getWorkspaces()).find((w) => w.id === ws)!.needs_you).toBe(0)
   })
@@ -333,5 +369,15 @@ describe('stable ages and the attention count', () => {
     expect(store.viewer).toBe('p_mara')
     store.reset('normal')
     expect(store.viewer).toBe('p_sev')
+  })
+})
+
+describe('grant default hours', () => {
+  it('is clamped to 1..24 whole hours', async () => {
+    const { grantDefaultHours } = await import('@/api/grants')
+    expect(grantDefaultHours({ grant_hours: 99 })).toBe(24)
+    expect(grantDefaultHours({ grant_hours: 0 })).toBe(1)
+    expect(grantDefaultHours({ grant_hours: Number.NaN })).toBe(8)
+    expect(grantDefaultHours({})).toBe(8)
   })
 })

@@ -29,7 +29,7 @@ interface Item {
   badge?: string
   actions?: { label: string; action: string; args?: Record<string, unknown> }[]
 }
-type State = { items: Q[]; list: Item[]; settings: { agents_add: boolean; max_commits: number; max_files: number }; closePanel: { type: string } }
+type State = { items: Q[]; list: Item[]; settings: { agents_add: boolean; max_commits: number; max_files: number } }
 const state = async (s: S) => (await s.api.getAddonState(s.ws, 'quick')) as unknown as State
 const run = (s: S, id: string, body: Record<string, unknown> = {}) => s.api.runAddonAction(s.ws, 'quick', id, body)
 const decisions = async (s: S) => (await s.api.getAddonDecisions(s.ws)).filter((d) => d.addon === 'quick')
@@ -83,12 +83,12 @@ describe('quick tasks actions', () => {
   })
   it('close with proof needs a claimed task and a one-line proof', async () => {
     const s = setup()
-    await run(s, 'start_close', { id: 'Q-003' })
-    await refused(run(s, 'close', { formData: { proof: '' } }))
-    const r = await run(s, 'close', { formData: { proof: 'removed, 9ac1f20' } })
+    await refused(run(s, 'close', { id: 'Q-003', proof: '' }))
+    await refused(run(s, 'close', { id: 'Q-001', proof: 'not claimed' }))
+    const r = await run(s, 'close', { id: 'Q-003', proof: 'removed, 9ac1f20' })
     expect(r.changed).toBe(true)
     expect((await state(s)).items.find((q) => q.id === 'Q-003')).toMatchObject({ status: 'done', proof: 'removed, 9ac1f20' })
-    await refused(run(s, 'close', { formData: { proof: 'again' } }))
+    await refused(run(s, 'close', { id: 'Q-003', proof: 'again' }))
   })
   it('Make a ticket creates a backlog chore with the line as title and marks the task converted', async () => {
     const s = setup()

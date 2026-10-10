@@ -139,7 +139,7 @@ describe('sent drops', () => {
     expect((await run(sev, 'extend', { id: 'out_int' })).message).toMatch(/now expires/) // the owner
     expect((await run(sev, 'extend', { id: 'out_diff' })).ok).toBe(true)
     expect(sev.store.eventsOf('DEMO-0043').at(-1)).toMatchObject({ type: 'drop.extended', actor: { kind: 'addon', id: 'drop' } })
-    await run(sev, 'remove', { id: 'in_photos' })
+    await run(sev, 'remove', { confirmed: true, id: 'in_photos' })
     expect(sev.store.eventsOf('DEMO-0043').at(-1)).toMatchObject({ type: 'drop.removed', actor: { kind: 'addon', id: 'drop' } })
   })
   it('Extend is offered only to the sender or an owner', async () => {
@@ -152,8 +152,8 @@ describe('sent drops', () => {
   it('extend and revoke; revoke is idempotent and adds an addon event on the ticket', async () => {
     const s = setup()
     expect((await run(s, 'extend', { id: 'out_report' })).message).toMatch(/now expires in 8 days/)
-    expect((await run(s, 'revoke', { id: 'out_report' })).message).toMatch(/Revoked/)
-    expect((await run(s, 'revoke', { id: 'out_report' })).message).toMatch(/already revoked/)
+    expect((await run(s, 'revoke', { confirmed: true, id: 'out_report' })).message).toMatch(/Revoked/)
+    expect((await run(s, 'revoke', { confirmed: true, id: 'out_report' })).message).toMatch(/already revoked/)
     expect(await fail(run(s, 'extend', { id: 'out_report' }))).toBe('409 drop.revoked')
     expect(s.store.eventsOf('DEMO-0041').at(-1)).toMatchObject({ type: 'drop.revoked', actor: { kind: 'addon', id: 'drop' } })
     expect((await state(s)).sentRows.find((r) => r.id === 'out_report')!.state).toBe('revoked')

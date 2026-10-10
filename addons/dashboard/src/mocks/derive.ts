@@ -1,5 +1,6 @@
 // Derives the ticket document (§7) from definitions + events. Events are the only truth for state (T14).
-import { gateSignedContent } from '@/api/gates'
+import { codeReviewApplies, commitCover, DEFAULT_CODE_POLICY, GATE_ORDER, gateSignedContent } from '@/api/gates'
+import { branchOf, commitOf, firstCommit, type Commit } from './changes'
 import type {
   AcceptanceStatus,
   Actor,
@@ -18,7 +19,9 @@ import type {
   Status,
   TaskStatus,
   TicketDefinition,
+  TicketBranch,
   TicketDocument,
+  TicketLanding,
   Turn,
   Workspace,
 } from '@/api/types'
@@ -72,12 +75,15 @@ export function deriveTicket(
   let verdict: TicketDocument['verdict'] = null
   let handoff: string | null = null
   const artifacts: Artifact[] = []
-  const gateApprovals: Record<GateName, GateStatus['approvals']> = { requirements: [], plan: [], verify: [] }
+  const gateApprovals: Record<GateName, GateStatus['approvals']> = { requirements: [], plan: [], verify: [], code: [] }
   // How many approvals the policy asked for when the latest one was given: a later policy change does not undo it.
   const gateNeeded: Partial<Record<GateName, number>> = {}
   const gateInvalid: Partial<Record<GateName, { reason: string; at: string }>> = {}
   // Approvals an invalidation voided: kept for the record, never counted again.
-  const gateVoided: Record<GateName, GateStatus['approvals']> = { requirements: [], plan: [], verify: [] }
+  const gateVoided: Record<GateName, GateStatus['approvals']> = { requirements: [], plan: [], verify: [], code: [] }
+  // The branch (D53): commits from task receipts and agent pushes. A verdict and a code review sign its head then.
+  const commits: Commit[] = []
+  const headNow = () => commits[commits.length - 1]?.sha ?? firstCommit(def, events[0]?.at ?? '', 'unknown').sha
   const history: NonNullable<TicketDocument['section_history']> = {}
   const gateChanges: Partial<Record<GateName, { text?: string; at: string }>> = {}
   const taskDone = new Map<string, { exit: number; ms: number; commit?: string; at: string }>()
@@ -89,8 +95,14 @@ export function deriveTicket(
   const extraQuestions: QuestionDef[] = []
   let created = events[0]?.at ?? ''
   let labels = def.labels
+  // Landing records (D53) count only when written by the addon the event type names (`land.*` by addon land).
+  let landing: TicketLanding | undefined
+  const landingAddon = (e: OrchEvent) => (e.actor.kind === 'addon' && e.type.startsWith(`${e.actor.id}.`) ? e.actor.id : null)
 
   for (const e of events) {
+    const c = commitOf(e)
+    // A commit already on the branch (a re-push of the same sha) adds nothing.
+    if (c && !commits.some((x) => x.sha === c.sha)) commits.push(c)
     switch (e.type) {
       case 'ticket.created':
         status = (e.status as Status) ?? 'backlog'
@@ -98,6 +110,8 @@ export function deriveTicket(
         break
       case 'status.changed':
         status = e.to as Status
+        // Leaving done ends the landing story; a later verdict starts a new one.
+        if (status !== 'done') landing = undefined
         break
       case 'labels.changed':
         labels = [...new Set([...labels, ...((e.add as string[] | undefined) ?? [])])].filter((l) => !((e.remove as string[] | undefined) ?? []).includes(l))
@@ -181,6 +195,8 @@ export function deriveTicket(
           via: (e.via as Via | undefined) ?? 'dashboard',
           ...(e.via === 'factory_charter' ? {} : { presence: (e.presence as Presence | undefined) ?? 'touchid' }),
           sig_ok: (e.sig_ok as boolean | undefined) ?? true,
+          // verify and code sign a commit: the one the event names, else (older records) the branch head then.
+          ...(g === 'verify' || g === 'code' ? { source_sha: (e.source_sha as string | undefined) ?? headNow() } : {}),
         })
         delete gateChanges[g]
         delete gateInvalid[g]
@@ -197,6 +213,23 @@ export function deriveTicket(
         if (g === 'verify') verdict = null
         break
       }
+      case 'land.queued': {
+        const addon = landingAddon(e)
+        if (addon) landing = { state: 'queued', addon, at: e.at }
+        break
+      }
+      case 'land.attempt': {
+        const addon = landingAddon(e)
+        if (!addon) break
+        if (e.outcome === 'failed') landing = { state: 'failed', addon, attempt: e.attempt as number, reason: ((e.reason as TicketLanding['reason']) ?? 'conflict'), at: e.at }
+        else if (e.outcome === 'requeued') landing = { state: 'queued', addon, attempt: e.attempt as number, at: e.at }
+        else landing = undefined // merged: landed
+        break
+      }
+      case 'land.dequeued':
+      case 'land.resolved':
+        if (landingAddon(e)) landing = undefined
+        break
       case 'section.edited': {
         const sec = e.section as keyof BodySections
         const list = (history[sec] ??= [])
@@ -210,7 +243,14 @@ export function deriveTicket(
         break
       }
       case 'verdict.given':
-        verdict = { result: e.result as 'pass' | 'fail', by: actorLabel(e.actor), at: e.at, text: e.text as string | undefined }
+        verdict = {
+          result: e.result as 'pass' | 'fail',
+          by: actorLabel(e.actor),
+          at: e.at,
+          text: e.text as string | undefined,
+          source_sha: (e.source_sha as string | undefined) ?? headNow(),
+          ...(e.via === 'factory_charter' ? { via: 'factory_charter' as const, charter: e.charter as string, charter_signed_by: e.charter_signed_by as string } : {}),
+        }
         break
       case 'handoff.written': {
         handoff = e.text as string
@@ -266,19 +306,23 @@ export function deriveTicket(
   })
 
   const finalBody: BodySections = { ...body, current_state: handoff ?? body.current_state }
+  const branch = branchOf(def, commits.length ? commits : [firstCommit(def, created, people.owner ?? 'unknown')])
   const gates = {} as Record<GateName, GateStatus>
-  for (const g of ['requirements', 'plan', 'verify'] as GateName[]) {
-    const policy = ctx.gates[g]
+  for (const g of GATE_ORDER) {
+    const policy = ctx.gates[g] ?? DEFAULT_CODE_POLICY
     const approvals = gateApprovals[g]
     const changes = gateChanges[g]
     const invalid = gateInvalid[g]
-    const gated = gateContent(g, def, finalBody, artifacts)
+    const gated = gateContent(g, def, finalBody, artifacts, branch)
+    const signed = approvals[approvals.length - 1]?.source_sha
+    // verify and code count only approvals of the branch head: one on an older commit never adds to the quorum.
+    const counted = g === 'verify' || g === 'code' ? approvals.filter((a) => a.source_sha === branch.head).length : approvals.length
     gates[g] = {
       state: changes
         ? 'changes_requested'
         : invalid
           ? 'invalidated'
-          : approvals.length >= policy.count || (approvals.length > 0 && approvals.length >= (gateNeeded[g] ?? Infinity))
+          : counted >= policy.count || (counted > 0 && counted >= (gateNeeded[g] ?? Infinity))
             ? 'approved'
             : 'pending',
       approvals,
@@ -290,6 +334,8 @@ export function deriveTicket(
       ...(gateVoided[g].length ? { voided: gateVoided[g] } : {}),
       hash: 'sha256:' + fnvHex(def.uid + g + gated.material, 12) + '…',
       covers: gated.covers,
+      ...(signed ? { source_sha: signed } : {}),
+      ...(g === 'code' ? { required: codeReviewApplies(policy.applies, def.type) } : {}),
     }
   }
 
@@ -304,7 +350,16 @@ export function deriveTicket(
   if (claim && claim.expires <= ctx.now) claim = null // lapsed: nobody holds the ticket any more
 
   const openBlocking = questions_state.find((q) => q.state === 'open' && q.blocking)
-  const turn = computeTurn(status, people, claim, openBlocking, verdict)
+  // Landing only applies to a done ticket (a resolution sends it back to testing).
+  if (status !== 'done') landing = undefined
+  const turn = computeTurn(status, people, claim, openBlocking, verdict, {
+    landing,
+    codeReview: gates.code.required && gates.code.state !== 'approved',
+    plan: gates.plan.state,
+    requirements: gates.requirements.state,
+    planApprovers: gates.plan.approvers,
+    taskCount: def.tasks.length,
+  })
 
   const last = events[events.length - 1]
   return {
@@ -320,46 +375,87 @@ export function deriveTicket(
     artifacts,
     verdict,
     turn,
+    branch,
     body: finalBody,
     section_history: history,
     head: { seq: last?.seq ?? 0, hash: 'sha256:' + fnvHex(def.uid + (last?.seq ?? 0), 12) + '…' },
     created_at: created,
     updated_at: last?.at ?? created,
     restricted: def.visibility !== 'workspace',
+    ...(landing ? { landing } : {}),
   }
 }
 
 /** What a gate hash covers (spec section 5, "Gate hash"), as words plus the material the mock hashes. */
-function gateContent(g: GateName, def: TicketDefinition, body: BodySections, artifacts: Artifact[]): { covers: string[]; material: string } {
+function gateContent(g: GateName, def: TicketDefinition, body: BodySections, artifacts: Artifact[], branch: TicketBranch): { covers: string[]; material: string } {
   switch (g) {
     case 'requirements':
     case 'plan': {
       const { covers, material } = gateSignedContent(g, { ...def, body })
       return { covers, material }
     }
+    // The verdict signs the commit too (owner decision 2026-10-10): source_sha is the branch head at verdict time.
     case 'verify':
       return {
-        covers: ['Section: Verification', `Artifacts (${artifacts.length}) by sha256`, 'Acceptance criteria and their evidence'],
-        material: JSON.stringify([body.verification, artifacts.map((a) => a.sha256), def.acceptance]),
+        covers: [commitCover(branch), 'Section: Verification', `Artifacts (${artifacts.length}) by sha256`, 'Acceptance criteria and their evidence'],
+        material: JSON.stringify([branch.head, body.verification, artifacts.map((a) => a.sha256), def.acceptance]),
+      }
+    // The code review signs exactly that commit and its diff against the base (the landing worker re-checks the candidate).
+    case 'code':
+      return {
+        covers: [commitCover(branch), `The diff of ${branch.name} against ${branch.base}, file by file`],
+        material: JSON.stringify([branch.head, branch.base, branch.files, branch.additions, branch.deletions]),
       }
   }
 }
 
-function computeTurn(
+export function computeTurn(
   status: Status,
   people: People,
   claim: Claim | null,
   openBlocking: QuestionStatus | undefined,
   verdict: TicketDocument['verdict'],
+  {
+    landing,
+    codeReview = false,
+    plan = 'approved',
+    requirements = 'approved',
+    planApprovers = 'maintainer',
+    taskCount = 1,
+  }: {
+    landing?: TicketLanding
+    /** A pass verdict stands and the code review gate applies and is not approved yet. */
+    codeReview?: boolean
+    plan?: GateStatus['state']
+    requirements?: GateStatus['state']
+    planApprovers?: GateStatus['approvers']
+    taskCount?: number
+  } = {},
 ): Turn {
+  if (status === 'done' && landing) return { who: 'nobody', why: landing.state === 'failed' ? 'Landing failed' : 'Landing' }
   if (status === 'done') return { who: 'nobody', why: 'Done' }
   if (openBlocking) return { who: openBlocking.to, why: `Answer ${openBlocking.id}` }
   if (status === 'testing' && !verdict) return { who: people.reviewers[0] ?? people.owner ?? 'nobody', why: 'Verdict needed' }
+  if (status === 'testing' && verdict?.result === 'pass' && codeReview) return { who: people.owner ?? people.reviewers[0] ?? 'nobody', why: 'Code review needed' }
   if (claim) return { who: `agent:${claim.agent}`, why: 'Working' }
   if (status === 'backlog') return { who: people.owner ?? 'nobody', why: 'Refine' }
+  // A plan that still needs a signature is the next step, not "ready to claim" (and it names who may sign it).
+  if (status === 'open' && requirements === 'approved' && plan !== 'approved' && taskCount > 0) return { who: people.owner ?? 'nobody', why: `Plan needs approval (${planApprovers === 'reviewers' ? 'reviewers' : planApprovers === 'owner' ? 'owners' : 'owners and maintainers'})` }
   if (status === 'open') return { who: people.owner ?? 'nobody', why: 'Ready to claim' }
   if (status === 'waiting') return { who: people.owner ?? 'nobody', why: 'Waiting' }
   return { who: people.owner ?? 'nobody', why: 'Next step' }
+}
+
+/** Why core refused an agent, in plain words (agent.refused codes). */
+const REFUSAL_WORDS: Record<string, string> = {
+  human_only: 'only people approve',
+  'claim.held': 'another session holds the ticket',
+  'lease.held': 'another session holds that task',
+  'gate.not_approved': 'the plan is not approved yet',
+  'verify.failed': "the task's check failed",
+  'grant.scope': 'its grant does not cover that',
+  'grant.expired': 'its grant has ended',
+  'grant.revoked': 'its grant was revoked',
 }
 
 /** One-line description of an event for feeds. */
@@ -388,7 +484,8 @@ export function describeEvent(e: Pick<OrchEvent, 'type'> & Record<string, unknow
     case 'lease.released':
       return e.reason ? `released ${t(e.task, 'a task')} (${t(e.reason, '')})` : `released ${t(e.task, 'a task')}`
     case 'agent.refused':
-      return `was refused: ${t(e.code, 'no reason given')}`
+      // In plain words, never the code: the code stays in the event (Raw) for tools.
+      return `was refused: ${REFUSAL_WORDS[String(e.code)] ?? t(e.message, 'no reason given')}`
     case 'lease.taken':
       return `started ${t(e.task, 'a task')}`
     case 'task.done':
@@ -415,7 +512,9 @@ export function describeEvent(e: Pick<OrchEvent, 'type'> & Record<string, unknow
     case 'section.edited':
       return `edited ${t(e.section, 'a section').replace('_', ' ')}`
     case 'gate.invalidated':
-      return `invalidated the ${t(e.gate, 'gate')} approval`
+      return e.cause === 'new_commits' ? `invalidated the ${t(e.gate, 'gate')} approval: new commits after it (${t(e.sha, 'a commit')})` : `invalidated the ${t(e.gate, 'gate')} approval`
+    case 'branch.pushed':
+      return `pushed ${t(e.sha, 'a commit')} to the ticket branch`
     case 'log.added':
       return 'logged a note'
     case 'comment.added':
@@ -446,10 +545,6 @@ export function describeEvent(e: Pick<OrchEvent, 'type'> & Record<string, unknow
       return e.points !== undefined ? `estimated ${t(e.points, '?')} points` : 'set an estimate'
     case 'usage.recorded':
       return 'recorded usage'
-    case 'records.committed':
-      return 'committed the records'
-    case 'records.pushed':
-      return 'pushed the records'
     case 'quick.made_ticket':
       return 'made a quick task into a ticket'
     case 'addon.decided':
@@ -464,6 +559,38 @@ export function describeEvent(e: Pick<OrchEvent, 'type'> & Record<string, unknow
       return 'paused the AI Factory'
     case 'factory.resumed':
       return 'resumed the AI Factory'
+    case 'records.committed':
+      return `recorded the ticket records as ${t(e.commit, 'a commit')} (${who})`
+    case 'records.pushed':
+      return `pushed ${t(e.commit, 'the record commits')} to the remote (${who})`
+    case 'records.pulled':
+      return `pulled the remote's record commits (${who})`
+    case 'links.pairing_started':
+      return 'started pairing a workspace link'
+    case 'links.pairing_cancelled':
+      return 'cancelled a workspace link pairing'
+    case 'links.pairing_denied':
+      return 'denied a workspace link request'
+    case 'links.terms_set':
+      return 'set the terms of a workspace link request'
+    case 'links.paired':
+      return 'linked a workspace'
+    case 'links.revoked':
+      return 'revoked a workspace link'
+    case 'links.request_received':
+      return 'received a request from a linked workspace'
+    case 'links.request_accepted':
+      return 'accepted a request from a linked workspace'
+    case 'links.request_denied':
+      return 'denied a request from a linked workspace'
+    case 'links.answered':
+      return 'answered a linked workspace'
+    case 'links.scope_changed':
+      return 'widened what a linked workspace may send'
+    case 'links.sent':
+      return e.to ? `handed off to ${t(e.to, 'a linked workspace')}` : 'handed off to a linked workspace'
+    case 'links.received':
+      return e.from ? `received from ${t(e.from, 'a linked workspace')}` : 'received from a linked workspace'
     case 'wiki.linked':
       return 'linked a wiki page'
     case 'land.queued':
@@ -517,6 +644,10 @@ export function describeEvent(e: Pick<OrchEvent, 'type'> & Record<string, unknow
       return e.key ? `discarded ${t(e.key, '')} right after creating it` : 'discarded a ticket right after creating it'
     case 'workspace.renamed':
       return e.name ? `renamed the workspace to ${t(e.name, '')}` : 'renamed the workspace'
+    case 'terminal.shell_opened':
+      return `opened a shell as ${t(e.run_as, 'the agent user')} to log ${t(e.connection, 'a connection')} in again`
+    case 'workspace.grant_hours_set':
+      return typeof e.hours === 'number' ? `set the agent grant length to ${e.hours} h` : 'set the agent grant length'
     case 'skill.credentials_granted': {
       const refs = [...(Array.isArray(e.connections) ? e.connections : []), ...(Array.isArray(e.env) ? e.env : [])].map((x) => t(x, '')).filter(Boolean)
       return `granted ${refs.length ? refs.join(', ') : 'credentials'} to the skill ${t(e.skill, '')}`.trimEnd()

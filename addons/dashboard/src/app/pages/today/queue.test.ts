@@ -62,6 +62,13 @@ describe('today queue: new items are buffered', () => {
     expect(acceptOrder(all)).toEqual(['question:D-0:Q1', 'question:D-1:Q1', 'approval:D-2:plan'])
   })
 
+  it('puts items new since the last look ahead of the rest, latest arrival first (R1)', () => {
+    const all = toEntries([ap('D-2', '2026-10-08T10:00:00Z'), q('D-0', '2026-10-01T10:00:00Z', true), q('D-1', '2026-10-09T10:00:00Z'), q('D-5', '2026-10-09T11:00:00Z'), q('D-6', '2026-10-09T08:00:00Z', true)], [])
+    const order = acceptOrder(all, new Set(['question:D-5:Q1', 'question:D-1:Q1', 'question:D-6:Q1']))
+    expect(order).toEqual(['question:D-6:Q1', 'question:D-5:Q1', 'question:D-1:Q1', 'question:D-0:Q1', 'approval:D-2:plan'])
+    expect(buildGroups(reconcile(order, all).shown)[0].rows.map((r) => r.id)).toEqual(['question:D-6:Q1', 'question:D-5:Q1', 'question:D-1:Q1', 'question:D-0:Q1'])
+  })
+
   it('an item resolved and later reopened comes back as new, not in its old place', () => {
     const order = acceptOrder(first)
     const pruned = pruneOrder(order, first.slice(1)) // D-1 resolved

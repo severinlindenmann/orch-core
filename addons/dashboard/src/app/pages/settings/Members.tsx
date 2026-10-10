@@ -1,7 +1,6 @@
 import { HelpCircle, Trash2, UserPlus } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { useId, useRef, useState } from 'react'
-import { api } from '@/api/client'
 import type { KnownPerson, Role, Workspace } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -13,12 +12,13 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { ago, PersonAvatar } from '../ticket/shared'
 import { OwnerNote } from './OwnerNote'
 import { useSettingsSign } from './useSettingsSign'
+import { queries } from '@/api/queries'
 
 const ROLES: Role[] = ['owner', 'maintainer', 'member', 'viewer']
 const ROLE_HELP: Record<Role, string> = {
   owner: 'Everything: settings, roles, gate policies, grants, approvals the policy allows.',
   maintainer: 'Creates and moves tickets, issues grants, approves gates when the policy allows.',
-  member: 'Creates tickets, comments, answers questions addressed to them.',
+  member: 'Creates tickets, comments, answers questions addressed to them, grants their own agents the tickets they may work on.',
   viewer: 'Reads everything they can see. Changes nothing.',
 }
 
@@ -55,7 +55,7 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 /** Add by name or email: a combobox over the people this device knows. Enter adds the highlighted person (or the one chosen). */
 function AddMember({ workspaceId, members, onSubmit, onClose }: { workspaceId: string; members: Workspace['members']; onSubmit: (v: { person: string; name: string; email: string; role: Exclude<Role, 'owner'> }) => void; onClose: () => void }) {
-  const known = useQuery({ queryKey: ['people', workspaceId], queryFn: () => api.listPeople(workspaceId) })
+  const known = useQuery(queries.people(workspaceId))
   const [text, setText] = useState('')
   const [chosen, setChosen] = useState<KnownPerson | null>(null)
   const [open, setOpen] = useState(false)
@@ -119,7 +119,7 @@ function AddMember({ workspaceId, members, onSubmit, onClose }: { workspaceId: s
               aria-autocomplete="list"
               aria-activedescendant={shown && options[active] ? `${listId}-${options[active].person}` : undefined}
               aria-invalid={!!error || undefined}
-              aria-describedby={error ? 'member-person-error' : undefined}
+              aria-describedby={error ? 'member-person-error member-person-help' : 'member-person-help'}
               autoComplete="off"
               value={text}
               placeholder="Name or email"
@@ -138,6 +138,10 @@ function AddMember({ workspaceId, members, onSubmit, onClose }: { workspaceId: s
                   arrowed.current = true
                   setOpen(true)
                   setActive((a) => Math.max(0, Math.min(options.length - 1, a + (e.key === 'ArrowDown' ? 1 : -1))))
+                } else if (e.key === 'Enter' && shown && options[active]) {
+                  // With the list open Enter picks the highlighted person; a second Enter (list closed, person chosen) adds.
+                  e.preventDefault()
+                  pick(options[active])
                 } else if (e.key === 'Escape' && shown) {
                   e.stopPropagation()
                   setOpen(false)
@@ -145,7 +149,7 @@ function AddMember({ workspaceId, members, onSubmit, onClose }: { workspaceId: s
               }}
             />
             {shown && (
-              <ul id={listId} role="listbox" aria-label="People" className="absolute inset-x-0 z-10 mt-1 max-h-48 overflow-y-auto rounded-md border border-border bg-surface p-1 shadow-lg">
+              <ul id={listId} role="listbox" aria-label="People" className="mt-1 max-h-40 overflow-y-auto rounded-md border border-border bg-surface p-1 shadow-lg">
                 {options.length === 0 && <li className="px-2 py-1.5 text-[13px] text-text-faint">{needle ? 'Nobody in your directory matches.' : 'Everyone known is already a member.'}</li>}
                 {options.map((p, i) => (
                   <li
@@ -163,6 +167,9 @@ function AddMember({ workspaceId, members, onSubmit, onClose }: { workspaceId: s
                 ))}
               </ul>
             )}
+            <p id="member-person-help" className="text-[12px] text-text-faint">
+              Pick someone from your directory. Adding by an email address that is not in it comes later.
+            </p>
             {error && (
               <p id="member-person-error" role="alert" className="text-[12px] text-danger">
                 {error}
@@ -236,7 +243,7 @@ export function Members({ workspace, viewer, canEdit }: { workspace: Workspace; 
               const locked = !canEdit || lastOwner
               const select = (
                 <select
-                  aria-label="Role"
+                  aria-label={`Role of ${m.name}`}
                   value={m.role}
                   disabled={locked}
                   onChange={(e) => {

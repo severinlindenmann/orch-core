@@ -44,7 +44,7 @@ export function NewSessionForm({ ticket, lastHarness, canStart, onStart }: {
       <fieldset disabled={!canStart} className="space-y-2">
         <label className="flex items-center gap-2">
           <span className="w-12 text-text-muted">Harness</span>
-          <select value={harness} onChange={(e) => setHarness(e.target.value)} className="h-7 flex-1 rounded-md border border-border bg-bg px-2 text-xs">
+          <select name={`${id}-harness`} id={`${id}-harness`} value={harness} onChange={(e) => setHarness(e.target.value)} className="h-7 flex-1 rounded-md border border-border bg-bg px-2 text-xs">
             {STARTABLE.map((x) => (
               <option key={x.id} value={x.id}>{x.label}</option>
             ))}
@@ -54,18 +54,18 @@ export function NewSessionForm({ ticket, lastHarness, canStart, onStart }: {
           <div role="radiogroup" aria-label="Where" className="flex items-center gap-2">
             <span className="w-12 text-text-muted">Where</span>
             <label className="flex items-center gap-1">
-              <input type="radio" name={`${id}-where`} checked={inTicket} onChange={() => setInTicket(true)} className="accent-brand" />
+              <input type="radio" id={`${id}-where-ticket`} name={`${id}-where`} checked={inTicket} onChange={() => setInTicket(true)} className="accent-brand" />
               Ticket worktree
             </label>
             <label className="flex items-center gap-1">
-              <input type="radio" name={`${id}-where`} checked={!inTicket} onChange={() => setInTicket(false)} className="accent-brand" />
+              <input type="radio" id={`${id}-where-workspace`} name={`${id}-where`} checked={!inTicket} onChange={() => setInTicket(false)} className="accent-brand" />
               Workspace
             </label>
           </div>
         )}
         {where && h.capabilities.contextInjection && (
           <label className="flex items-center gap-2">
-            <input type="checkbox" checked={summary} onChange={(e) => setSummary(e.target.checked)} className="accent-brand" />
+            <input type="checkbox" name={`${id}-summary`} id={`${id}-summary`} checked={summary} onChange={(e) => setSummary(e.target.checked)} className="accent-brand" />
             Include the ticket's current-state summary
           </label>
         )}
@@ -90,7 +90,7 @@ export function NewSessionButton({ open, onOpenChange, ...form }: Parameters<typ
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger asChild>
-        <Button variant="secondary" size="xs"><Plus />New session</Button>
+        <Button variant="secondary" size="xs" aria-label="New session" title="New session"><Plus /><span className="hidden @[26rem]/dock:inline">New session</span></Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-80 p-3">
         <NewSessionForm {...form} onStart={(c) => { onOpenChange(false); form.onStart(c) }} />

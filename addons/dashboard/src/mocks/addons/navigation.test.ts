@@ -29,7 +29,6 @@ const NAVIGATION: [addon: string, action: string, body: Record<string, unknown>]
   ['guide', 'open', { slug: 'getting-around' }],
   ['schedules', 'open_run', { run: 'R-4' }],
   ['terminals', 'open', {}],
-  ['quick', 'cancel_close', {}],
   ['github', 'open', { id: 'acme-energy/energy-dbt#29' }],
 ]
 
@@ -72,7 +71,7 @@ describe('refused actions', () => {
       real()
     }
     await api.runAddonAction(ws, 'publish', 'start', { id: 'nope' }).catch(() => undefined)
-    await api.runAddonAction(ws, 'worktrees', 'remove', { id: 'nope' }).catch(() => undefined)
+    await api.runAddonAction(ws, 'worktrees', 'remove', { confirmed: true, id: 'nope' }).catch(() => undefined)
     expect(store.cursor(ws)).toBe(before)
     expect(saves).toBe(0)
   })

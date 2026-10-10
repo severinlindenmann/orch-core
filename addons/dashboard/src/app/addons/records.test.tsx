@@ -24,27 +24,47 @@ describe('records page', () => {
     expect(screen.getByRole('button', { name: 'Pull' })).toBeInTheDocument()
     expect(screen.getAllByRole('table').length).toBeGreaterThan(0)
     expect(screen.getByText('Saves the 12 pending events as one record commit.')).toBeInTheDocument()
-    expect(screen.getByText('Sends the record commits to the shared remote.')).toBeInTheDocument()
+    expect(screen.getByText('Sends 1 record commit to the shared remote.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Record changes' }).className).toMatch(/bg-primary/) // the next step
     expect(s.summary).toBe('12 events to record · 1 commit waiting to push')
     // The remote and the last push are under Details, closed.
     expect(screen.queryByText(/energy-records\.git/)).not.toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Details' }))
     expect((await screen.findAllByText(/energy-records\.git/)).length).toBeGreaterThan(0)
   })
-  it('Commit records empties the pending list; push twice shows the error alert; Pull clears it', async () => {
+  it('Record empties the pending list; nothing to push disables Push with its reason', async () => {
     const { user } = renderApp('/addon/records/records', { viewer: 'p_sev', setup })
     await user.click(await screen.findByRole('button', { name: 'Record changes' }, T))
     expect(await screen.findByText('Everything is recorded · 2 commits waiting to push', {}, T)).toBeInTheDocument()
     expect((await st()).rows).toEqual([])
+    expect(screen.getByRole('button', { name: 'Record changes' })).toBeDisabled()
+    expect(screen.getByText('Nothing pending to record.')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Push to remote' }))
     await waitFor(() => expect(screen.getAllByText(/pushed/i).length).toBeGreaterThan(0), T)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Push to remote' })).toBeDisabled(), T)
+    expect(screen.getByText('Nothing to push: the remote has every record commit.')).toBeInTheDocument()
+  })
+  it('a rejected push says "pull first" once, with Pull primary; Pull clears it', async () => {
+    // Recorded and pushed, then another clone pushed, and someone worked on a ticket since.
+    const { user } = renderApp('/addon/records/records', {
+      viewer: 'p_sev',
+      setup: (store) => {
+        setup(store)
+        const w = store.workspaces.find((x) => x.prefix === 'DEMO')!.id
+        store.runAddon(w, 'records', 'commit', {})
+        store.runAddon(w, 'records', 'push', {})
+        store.append('DEMO-0041', { type: 'labels.changed', add: ['x'] })
+      },
+    })
+    await user.click(await screen.findByRole('button', { name: 'Record changes' }, T))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Push to remote' })).toBeEnabled(), T)
     await user.click(screen.getByRole('button', { name: 'Push to remote' }))
-    const rejected = 'Remote rejected: non-fast-forward. Pull first.'
-    await waitFor(() => expect(screen.getAllByText(rejected).length).toBeGreaterThan(0), T)
-    expect(screen.getAllByRole('status').some((n) => n.textContent?.includes(rejected) && n.textContent.includes('Pull, then push again'))).toBe(true)
+    expect(await screen.findByText('Push rejected · pull first', {}, T)).toBeInTheDocument()
+    expect(screen.getAllByText(/Remote rejected: non-fast-forward/)).toHaveLength(1)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Pull' }).className).toMatch(/bg-primary/), T)
     await user.click(screen.getByRole('button', { name: 'Pull' }))
-    await waitFor(async () => expect(((await api.getAddonState(ws(), 'records')) as unknown as { pushAlert: { tone?: string } }).pushAlert.tone).not.toBe('error'), T)
-    await waitFor(() => expect(screen.queryByText('Another clone pushed first. Pull, then push again.')).not.toBeInTheDocument(), T)
+    await waitFor(() => expect(screen.queryByText('Push rejected · pull first')).not.toBeInTheDocument(), T)
+    expect(await screen.findByText('Everything is recorded · 1 commit waiting to push', {}, T)).toBeInTheDocument()
   })
   it('has Pending and History tabs: pending first, history behind', async () => {
     const { user } = renderApp('/addon/records/records', { viewer: 'p_sev', setup })
@@ -53,7 +73,7 @@ describe('records page', () => {
     await user.click(screen.getByRole('button', { name: 'Record changes' }))
     await waitFor(() => expect(screen.getByRole('tab', { name: /^Pending\s*0/ })).toBeInTheDocument(), T)
     await user.click(screen.getByRole('tab', { name: /^History\s*\d+/ }))
-    expect((await screen.findAllByText(/UTC by /, {}, T)).length).toBeGreaterThan(0)
+    expect((await screen.findAllByText(/ ago by /, {}, T)).length).toBeGreaterThan(0)
     expect(screen.queryByRole('columnheader', { name: 'Events' })).not.toBeInTheDocument()
   })
   it('a viewer sees the page but its buttons are disabled', async () => {

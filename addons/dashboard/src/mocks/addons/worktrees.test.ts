@@ -120,20 +120,20 @@ describe('worktrees remove', () => {
   it('refuses when dirty, with the file count', async () => {
     const s = setup()
     const dirty = (await state(s)).worktrees.find((w) => w.dirty === 3)!
-    const r = await refused(run(s, 'remove', { id: dirty.id }))
+    const r = await refused(run(s, 'remove', { confirmed: true, id: dirty.id }))
     expect(r).toMatchObject({ status: 409, code: 'worktrees.dirty', message: 'Worktree DEMO-0043 has 3 changed files.', hint: 'Commit or stash them first.' })
     expect((await state(s)).worktrees.some((w) => w.id === dirty.id)).toBe(true)
   })
   it('removes a clean worktree', async () => {
     const s = setup()
     const clean = (await state(s)).worktrees.find((w) => w.dirty === 0)!
-    const r = await run(s, 'remove', { id: clean.id })
+    const r = await run(s, 'remove', { confirmed: true, id: clean.id })
     expect(r.changed).toBe(true)
     expect((await state(s)).worktrees.some((w) => w.id === clean.id)).toBe(false)
   })
   it('an unknown id changes nothing', async () => {
     const s = setup()
-    expect(await refused(run(s, 'remove', { id: 'nope' }))).toMatchObject({ status: 404, code: 'not_found' })
+    expect(await refused(run(s, 'remove', { confirmed: true, id: 'nope' }))).toMatchObject({ status: 404, code: 'not_found' })
   })
 })
 
@@ -194,13 +194,13 @@ describe('worktrees and restricted tickets', () => {
     expect(st.worktrees.some((w) => w.ticket === 'DEMO-0041')).toBe(false)
     expect(Object.values(st.rowsByRepo).flat().some((i) => i.path.includes('DEMO-0041'))).toBe(false)
     expect(st.byTicket['DEMO-0041']).toBeUndefined()
-    expect(await refused(run(s, 'remove', { id: 'wt/DEMO-0041-energy-dbt' }))).toMatchObject({ status: 404, message: 'No such worktree.' })
+    expect(await refused(run(s, 'remove', { confirmed: true, id: 'wt/DEMO-0041-energy-dbt' }))).toMatchObject({ status: 404, message: 'No such worktree.' })
     expect(await refused(run(s, 'open_terminal', { id: 'wt/DEMO-0041-energy-dbt' }))).toMatchObject({ status: 404, message: 'No such worktree.' })
   })
   it('a listed person sees it and can remove it', async () => {
     const s = setup('p_sev')
     restrict(s)
     expect((await state(s)).byTicket['DEMO-0041']).toHaveLength(1)
-    expect((await run(s, 'remove', { id: 'wt/DEMO-0041-energy-dbt' })).changed).toBe(true)
+    expect((await run(s, 'remove', { confirmed: true, id: 'wt/DEMO-0041-energy-dbt' })).changed).toBe(true)
   })
 })

@@ -119,19 +119,21 @@ registerAddon({
     const s = settingsOf(state)
     const bad = invalidOf(s)[0]
     if (bad) return { error: `The ${bad.label} model "${s[bad.key]}" is not a model name (no spaces, no leading "-"). Start is blocked until it is fixed in the Model routing settings.` }
-    if (req.harness !== 'claude-code') return { line: 'Model · Codex starts on its own default (model routing covers Claude Code)' }
+    if (req.harness !== 'claude-code') return { line: "Model: Codex's own default (model routing covers Claude Code)" }
     const strong = nextStrong(state)
     const escalated = !!strong[req.ticket]
     if (escalated && c.commit) delete strong[req.ticket]
     const configured = s[req.mode]
     const tier = (escalated ? 'strong' : configured === 'same' ? (TIERS.includes(c.lastTier as Tier) ? c.lastTier : 'standard') : configured) as Tier | 'none'
     const sub = s.subagent || undefined
-    const subs = sub ? `; subagents on ${sub}` : ''
+    const subs = sub ? ` · subagents on ${sub}` : ''
     // Light without a Light model uses Standard; a tier without a model starts on the harness default.
     const modelTier: Tier | undefined = tier === 'none' ? undefined : tier === 'light' && !s.light ? 'standard' : tier
     const model = modelTier ? s[modelTier] : ''
-    if (tier === 'none' || !model) return { subagentModel: sub, line: `Model · ${req.mode} runs on the harness default${subs}` }
-    return { model, tier, subagentModel: sub, line: `Model · ${req.mode} runs on ${tier}: ${TIER_LABEL[modelTier!]} (${model})${subs}` }
+    // One plain line: the tier by its name and the model it maps to ("Model: Standard (claude-sonnet-5-5)").
+    if (tier === 'none' || !model) return { subagentModel: sub, line: `Model: the harness default${subs}` }
+    const why = escalated ? ', after failed checks' : tier === 'light' && modelTier !== 'light' ? ', as Light has no model' : ''
+    return { model, tier, subagentModel: sub, line: `Model: ${TIER_LABEL[modelTier!]} (${model})${why}${subs}` }
   },
 
   actions: {

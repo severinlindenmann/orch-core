@@ -7,9 +7,9 @@ import type { TerminalSessionView } from '@/api/terminals'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
+import { fmtWhen } from '@/lib/time'
 
-const hhmm = (iso: string) => `${iso.slice(11, 16)} UTC`
-const when = (iso: string, now?: string) => (now && iso.slice(0, 10) === now.slice(0, 10) ? `today ${hhmm(iso)}` : `${iso.slice(5, 10)} ${hhmm(iso)}`)
+const when = (iso: string, now?: string) => fmtWhen(iso, now)
 
 function whose(s: TerminalSessionView) {
   if (s.kind === 'agent') return 'Agent · read only'

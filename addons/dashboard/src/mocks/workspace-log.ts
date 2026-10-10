@@ -1,6 +1,6 @@
 // Pure reducers: workspace state and grants are derived from seed + workspace events.
 import { addonStatus } from '@/api/addons'
-import type { GateName, GrantInfo, Role, SavedView, ViewParams, Workspace, WorkspaceEvent } from '@/api/types'
+import type { CodeReviewApplies, GateName, GrantInfo, Role, SavedView, ViewParams, Workspace, WorkspaceEvent } from '@/api/types'
 
 export function foldWorkspace(seed: Workspace, events: WorkspaceEvent[]): Workspace {
   const ws: Workspace = structuredClone(seed)
@@ -22,9 +22,16 @@ export function foldWorkspace(seed: Workspace, events: WorkspaceEvent[]): Worksp
         break
       case 'gate.policy_set': {
         const gate = e.gate as GateName
-        const { approvers, count } = e as { approvers?: string; count?: number; not?: string }
+        const { approvers, count, applies } = e as { approvers?: string; count?: number; not?: string; applies?: CodeReviewApplies }
         const prev = ws.gates[gate]
-        if (prev) ws.gates[gate] = { approvers: approvers ?? prev.approvers, count: count ?? prev.count, ...('not' in e ? (e.not ? { not: String(e.not) } : {}) : prev.not ? { not: prev.not } : {}) }
+        if (prev)
+          ws.gates[gate] = {
+            approvers: approvers ?? prev.approvers,
+            count: count ?? prev.count,
+            ...('not' in e ? (e.not ? { not: String(e.not) } : {}) : prev.not ? { not: prev.not } : {}),
+            // The code review gate also says where it applies; it never admits an assignee.
+            ...(gate === 'code' ? { not: 'assignees', applies: applies ?? prev.applies ?? 'off' } : {}),
+          }
         break
       }
       case 'addon.installed': {
@@ -76,6 +83,9 @@ export function foldWorkspace(seed: Workspace, events: WorkspaceEvent[]): Worksp
       case 'workspace.renamed':
         ws.name = String(e.name)
         break
+      case 'workspace.grant_hours_set':
+        ws.grant_hours = Number(e.hours)
+        break
       // Relay & devices (simulated): the link switch and each member's device count.
       case 'relay.connected':
       case 'relay.stopped':
@@ -98,6 +108,7 @@ export function foldWorkspace(seed: Workspace, events: WorkspaceEvent[]): Worksp
       case 'view.saved':
       case 'view.deleted':
       case 'ticket.discarded':
+      case 'terminal.shell_opened':
         break
       default:
         break // unknown types are ignored

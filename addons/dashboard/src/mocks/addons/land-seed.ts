@@ -1,5 +1,6 @@
-// Seeds of the land addon: the landing history as attempt records (no events are written while seeding; the
-// matching core events — verdicts, the voided approval of DEMO-0053 — are in the demo fixtures).
+// Seeds of the land addon: the landing history as attempt records. The fixture tickets carry their own land.* records
+// (and DEMO-0053's voided approval) in the demo fixtures; for the generated tickets of the busy day, `landSeedLog`
+// gives the records the seed implies, which the store writes into the seeded logs (so core sees a failed landing).
 //  Normal day (DEMO): #9–#11 merged; DEMO-0053's candidate was rebuilt when develop moved (#12), then hit a conflict
 //  (#13) that Claude Code resolved, which voided its approval (back to review); DEMO-0052 is being checked now (#14).
 //  Busy day: the same, plus the generated tickets that passed their verdict — a long merged history with rebuilt
@@ -7,6 +8,7 @@
 //  failed parent, and the worker's crash-resume note.
 import type { MockStore } from '../store'
 import type { Rng } from '../busy/rng'
+import type { SeedRecord } from './registry'
 import {
   agentOf,
   approved,
@@ -19,7 +21,7 @@ import {
   REMOTES,
   resolutionDiff,
   sha,
-  sourceOf,
+  signedSource,
   type Attempt,
   type LandState,
   type Script,
@@ -63,7 +65,7 @@ function build(store: MockStore, state: LandState, specs: Spec[], first: number)
   const minutes = state.settings.timeout_minutes
   for (const s of [...specs].sort((a, b) => a.at.localeCompare(b.at))) {
     const q = queueFor(state, s.remote ?? remoteOf(store, s.ticket), 'develop')
-    const source = sourceOf(store, s.ticket)
+    const source = signedSource(store, s.ticket)
     const entry = { ticket: s.ticket, branch: branchOf(store, s.ticket), source_sha: source, enqueued: s.at, by: 'p_sev', ...(s.stacked_on ? { stacked_on: s.stacked_on } : {}) }
     if (s.final === 'queued') {
       q.entries.push({ ...entry, ...(s.plan.length ? { script: [...s.plan] } : {}) })
@@ -206,4 +208,47 @@ export function seedLandBusy(ws: string, store: MockStore, rng: Rng): LandState 
   const resumed = state.attempts.find((a) => a.n >= 12 && a.outcome === 'merged')
   if (resumed?.ended) state.worker.resumed = { from: resumed.n, at: plus(resumed.ended, 2) }
   return state
+}
+
+/**
+ * The land.* records the seeded state implies for tickets that do not carry them in the fixtures: a `land.queued` when
+ * the ticket entered the queue, then one `land.attempt` per ended attempt (outcome, reason). Core reads them to show
+ * the ticket as landing or failed, and store.landingResolved needs the failed attempt in the log.
+ */
+export function landSeedLog(state: LandState): SeedRecord[] {
+  const fixture = new Set(FIXTURE_SPECS.map((s) => s.ticket))
+  const out: SeedRecord[] = []
+  const queuedOnce = new Set<string>()
+  const actor = 'addon:land'
+  const queued = (ticket: string, at: string, remote: string, target: string, source_sha: string, by: string) => {
+    if (queuedOnce.has(ticket)) return
+    queuedOnce.add(ticket)
+    out.push({ ticket, event: { type: 'land.queued', actor, at, remote, target, source_sha, by } })
+  }
+  for (const a of state.attempts) {
+    if (fixture.has(a.ticket)) continue
+    queued(a.ticket, plus(a.started, -1), a.remote, a.target, a.source_sha, 'p_sev')
+    if (!a.outcome || !a.ended) continue
+    out.push({
+      ticket: a.ticket,
+      event: {
+        type: 'land.attempt',
+        actor,
+        at: a.ended,
+        attempt: a.n,
+        ticket: a.ticket,
+        remote: a.remote,
+        target: a.target,
+        source_sha: a.source_sha,
+        target_sha: a.target_sha,
+        candidate_sha: a.candidate_sha,
+        checks: a.checks.map((c) => ({ name: c.name, result: c.result, url: c.url })),
+        outcome: a.outcome,
+        ...(a.reason ? { reason: a.reason } : {}),
+      },
+    })
+  }
+  for (const q of state.queues)
+    for (const e of q.entries) if (!fixture.has(e.ticket)) queued(e.ticket, e.enqueued, q.remote, q.target, e.source_sha, e.by)
+  return out
 }

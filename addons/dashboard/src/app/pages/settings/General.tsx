@@ -9,9 +9,13 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { fmtTime, Mono, Section } from '../ticket/shared'
+import { grantDefaultHours, GRANT_MAX_HOURS } from '@/api/grants'
+import { plural } from '@/lib/time'
 import { DangerZone } from './DangerZone'
 import { OwnerNote } from './OwnerNote'
 import { toastApiError } from '@/app/toast'
+import { useSettingsSign } from './useSettingsSign'
+import { queries } from '@/api/queries'
 
 export function CopyButton({ value, label }: { value: string; label: string }) {
   const [done, setDone] = useState(false)
@@ -42,7 +46,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 
 export function General({ workspace, canEdit }: { workspace: Workspace; canEdit: boolean }) {
   const qc = useQueryClient()
-  const identity = useQuery({ queryKey: ['identity', workspace.id], queryFn: () => api.getIdentity(workspace.id) })
+  const identity = useQuery(queries.identity(workspace.id))
   const [name, setName] = useState<string | null>(null)
   const value = name ?? workspace.name
 
@@ -58,6 +62,23 @@ export function General({ workspace, canEdit }: { workspace: Workspace; canEdit:
     }
   }
   const id = identity.data
+  const { ask, prompt } = useSettingsSign(workspace.id)
+  const current = grantDefaultHours(workspace)
+  const [hours, setHours] = useState<string | null>(null)
+  const hoursValue = hours ?? String(current)
+  const hoursNum = Number(hoursValue)
+  const hoursValid = Number.isInteger(hoursNum) && hoursNum >= 1 && hoursNum <= GRANT_MAX_HOURS
+  const saveHours = () =>
+    ask({
+      title: 'Change the agent grant length',
+      covers: [
+        `Default length of a grant: ${plural(hoursNum, 'hour')} (was ${plural(current, 'hour')})`,
+        `Members can sign a grant for themselves up to ${plural(hoursNum, 'hour')}, for the tickets they may work on`,
+        `Owners and maintainers can sign up to ${GRANT_MAX_HOURS} h for all tickets`,
+        'Grants that are already signed keep their end time',
+      ],
+      req: { op: 'grant.hours', hours: hoursNum },
+    })
 
   return (
     <div className="space-y-4">
@@ -66,7 +87,7 @@ export function General({ workspace, canEdit }: { workspace: Workspace; canEdit:
         <div className="flex items-end gap-2">
           <div className="max-w-sm flex-1 space-y-1.5">
             <Label htmlFor="ws-name">Name</Label>
-            <Input id="ws-name" value={value} disabled={!canEdit} onChange={(e) => setName(e.target.value)} />
+            <Input id="ws-name" name="workspace-name" value={value} disabled={!canEdit} onChange={(e) => setName(e.target.value)} />
           </div>
           <Button disabled={!canEdit || value.trim() === workspace.name || !value.trim()} onClick={save} aria-describedby={canEdit ? undefined : 'ws-name-why'}>
             Save
@@ -93,6 +114,22 @@ export function General({ workspace, canEdit }: { workspace: Workspace; canEdit:
         </dl>
       </Section>
 
+      <Section title="Agent grants">
+        <div className="flex items-end gap-2">
+          <div className="max-w-[12rem] flex-1 space-y-1.5">
+            <Label htmlFor="grant-length">Agent grant length (hours)</Label>
+            <Input id="grant-length" name="grant-length" type="number" min={1} max={GRANT_MAX_HOURS} step={1} value={hoursValue} disabled={!canEdit} onChange={(e) => setHours(e.target.value)} />
+          </div>
+          <Button disabled={!canEdit || !hoursValid || hoursNum === current} onClick={saveHours} aria-describedby={canEdit ? undefined : 'grant-length-why'}>
+            Save
+          </Button>
+          {!canEdit && <OwnerNote id="grant-length-why">Only owners can save.</OwnerNote>}
+        </div>
+        <p className="mt-2 text-[12px] text-text-muted">
+          What a grant lasts when nobody picks a length, and the longest a member signs for themselves. Owners and maintainers can sign 1 to {GRANT_MAX_HOURS} h. Signed with Touch ID.
+        </p>
+      </Section>
+
       <Section title="Relay">
         <div className="flex items-center gap-3 text-[13px]">
           <p className="flex-1 text-text-muted">
@@ -107,6 +144,7 @@ export function General({ workspace, canEdit }: { workspace: Workspace; canEdit:
       </Section>
 
       <DangerZone workspace={workspace} identity={id} canEdit={canEdit} />
+      {prompt}
     </div>
   )
 }

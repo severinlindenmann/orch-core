@@ -1,13 +1,13 @@
 import { useQuery } from '@tanstack/react-query'
 import { Bot, Cpu, User } from 'lucide-react'
 import { type ReactNode } from 'react'
-import { api } from '@/api/client'
 import { roleOf } from '@/api/permissions'
 import { workspaceOfTicket } from '@/api/workspaces'
-import type { Member, Priority, Role, Status, TicketDocument } from '@/api/types'
+import type { Member, Priority, Role, Status, TicketDocument, TicketLanding } from '@/api/types'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
 import { usePageWidth } from '../../pageWidth'
+import { queries } from '@/api/queries'
 
 // ------------------------------------------------------------------ viewer + people
 
@@ -22,8 +22,8 @@ export interface Viewer {
 
 /** The viewer's role in the ticket's home workspace (`workspaceOfTicket`) and a name lookup for person ids. */
 export function useViewer(ticketKey: string): Viewer {
-  const ws = useQuery({ queryKey: ['workspaces'], queryFn: api.getWorkspaces })
-  const me = useQuery({ queryKey: ['me'], queryFn: api.getMe })
+  const ws = useQuery(queries.workspaces())
+  const me = useQuery(queries.me())
   const workspace = workspaceOfTicket(ticketKey, ws.data ?? [])
   const members = workspace?.members ?? []
   const person = me.data?.person ?? ''
@@ -74,26 +74,8 @@ export function PersonChip({ id, viewer, role }: { id: string; viewer: Viewer; r
 
 // ------------------------------------------------------------------ time
 
-const NOW_FALLBACK = Date.parse('2026-10-09T11:30:00Z')
-
-export function fmtTime(iso: string): string {
-  const d = new Date(iso)
-  const mon = d.toLocaleString('en-GB', { month: 'short', timeZone: 'UTC' })
-  return `${d.getUTCDate()} ${mon} ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`
-}
-
-/** "8 Oct" (UTC), for who-signed-when lines. */
-export function fmtDay(iso: string): string {
-  const d = new Date(iso)
-  return `${d.getUTCDate()} ${d.toLocaleString('en-GB', { month: 'short', timeZone: 'UTC' })}`
-}
-
-/** "08:05 UTC" (parsed, so any ISO form works). */
-export function fmtClock(iso: string): string {
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return iso
-  return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')} UTC`
-}
+// One formatter for the whole dashboard (src/lib/time.ts); these names stay for the ticket page's callers.
+export { fmtDateTime as fmtTime, fmtDay, fmtClock, fmtExact, fmtWhen as ago } from '@/lib/time'
 
 /** Viewport at least `min` px wide (the ticket rail sits next to the content from 1280 px; below it is a sheet). */
 /** Room for the wide layout? Reads the page's layout width (the window minus a right-hand terminal dock). */
@@ -107,14 +89,6 @@ export function fmtDuration(ms: number): string {
   if (s < 60) return `${s.toFixed(s < 10 ? 1 : 0)} s`
   const m = Math.floor(s / 60)
   return `${m} min ${Math.round(s % 60)} s`
-}
-
-export function ago(iso: string, now = NOW_FALLBACK): string {
-  const diff = now - Date.parse(iso)
-  const abs = Math.abs(diff)
-  if (abs < 60_000 || (diff < 0 && abs < 90_000)) return 'just now' // a clock a little ahead reads as now, not "in 1 min"
-  const unit = abs < 3_600_000 ? `${Math.max(1, Math.round(abs / 60_000))} min` : abs < 86_400_000 ? `${Math.round(abs / 3_600_000)} h` : `${Math.round(abs / 86_400_000)} d`
-  return diff >= 0 ? `${unit} ago` : `in ${unit}`
 }
 
 export function fmtBytes(n: number): string {
@@ -143,11 +117,25 @@ const STATUS_TONE: Record<Status, string> = {
   done: 'border-success/40 bg-success-soft text-success',
 }
 
-export function StatusChip({ status }: { status: Status }) {
+/** A done ticket that is still landing (queued, checked or failed) is not shown as Done (core's `landing`). */
+export function statusLabel(status: Status, landing?: TicketLanding): string {
+  if (status === 'done' && landing) return landing.state === 'failed' ? 'Landing failed' : 'Landing'
+  return STATUS_LABEL[status]
+}
+
+function landingTitle(status: Status, landing?: TicketLanding): string | undefined {
+  if (status !== 'done' || !landing) return undefined
+  if (landing.state === 'queued') return 'Approved and waiting to land on the target branch. Done once it merged.'
+  const why = landing.reason === 'conflict' ? 'a conflict' : landing.reason === 'timeout' ? 'checks that timed out' : 'red checks'
+  return `Approved, but landing attempt #${landing.attempt ?? '?'} failed with ${why}. Not done until it lands.`
+}
+
+export function StatusChip({ status, landing }: { status: Status; landing?: TicketLanding }) {
+  const tone = status === 'done' && landing ? (landing.state === 'failed' ? 'border-danger/40 bg-danger-soft text-danger' : 'border-info/40 bg-info-soft text-info') : STATUS_TONE[status]
   return (
-    <span className={cn('inline-flex h-6 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium', STATUS_TONE[status])}>
+    <span className={cn('inline-flex h-6 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium', tone)} data-testid="status-chip" title={landingTitle(status, landing)}>
       <span className="size-1.5 rounded-full bg-current" aria-hidden />
-      {STATUS_LABEL[status]}
+      {statusLabel(status, landing)}
     </span>
   )
 }
@@ -200,7 +188,7 @@ export function shortHash(h: string, n = 8): string {
   return h.replace(/^sha256:/, '').replace(/…$/, '').slice(0, n)
 }
 
-export type TabId = 'overview' | 'acceptance' | 'questions' | 'artifacts' | 'history' | 'raw'
+export type TabId = 'overview' | 'acceptance' | 'changes' | 'questions' | 'artifacts' | 'history' | 'raw'
 
 export interface Jump {
   tab: TabId
@@ -217,7 +205,7 @@ export interface TabProps {
 }
 
 export type HumanAction =
-  | { kind: 'approve'; gate: 'requirements' | 'plan' }
-  | { kind: 'request_changes'; gate: 'requirements' | 'plan' | 'verify' }
+  | { kind: 'approve'; gate: 'requirements' | 'plan' | 'code' }
+  | { kind: 'request_changes'; gate: 'requirements' | 'plan' | 'verify' | 'code' }
   | { kind: 'verdict' }
   | { kind: 'answer'; question: string; option?: string; text?: string }

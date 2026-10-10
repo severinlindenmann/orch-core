@@ -57,8 +57,23 @@ export function compareEntries(a: Entry, b: Entry): number {
 
 export const sortEntries = (entries: Entry[]) => [...entries].sort(compareEntries)
 
-/** The order the person sees until the next load or "Show new": every current entry, sorted. */
-export const acceptOrder = (entries: Entry[]) => sortEntries(entries).map((e) => e.id)
+/** Among new items the latest arrival comes first (blocking still leads): it is the one the person is looking for. */
+function compareNew(a: Entry, b: Entry): number {
+  if (a.blocking !== b.blocking) return a.blocking ? -1 : 1
+  const sa = a.since ? Date.parse(a.since) : -Infinity
+  const sb = b.since ? Date.parse(b.since) : -Infinity
+  if (sa !== sb) return sa > sb ? -1 : 1
+  return compareEntries(a, b)
+}
+
+/**
+ * The order the person sees until the next load or "Show new": the items new since the person's last look (`isNew`,
+ * latest first) ahead of the rest (blocking, then oldest first). Groups keep this order, so new items lead their group.
+ */
+export function acceptOrder(entries: Entry[], isNew: ReadonlySet<string> = new Set()): string[] {
+  const fresh = entries.filter((e) => isNew.has(e.id)).sort(compareNew)
+  return [...fresh, ...sortEntries(entries.filter((e) => !isNew.has(e.id)))].map((e) => e.id)
+}
 
 /**
  * Splits the current entries into what is on screen (accepted ids, in the accepted order, resolved ones gone)

@@ -1,6 +1,7 @@
 import type { LaunchHarness, LaunchMode, LaunchPreview, LaunchWhere } from '@/api/types'
 import { HARNESSES, HARNESS_LABEL, MODES, MODE_LABEL, WHERES, WHERE_LABEL, type LaunchRequest } from '../sessions'
 import { canSeeTicket, notFound, registerAddon, type AddonCtx } from './registry'
+import { fmtWhen } from '@/lib/time'
 
 // start-agent (capability spawn_agent): pick a mode, a harness and where it runs, see the exact command, press Start.
 //  - The addon never starts anything itself. `start` is declared `confirm: 'spawn_agent'` in the manifest: core shows
@@ -45,7 +46,8 @@ const parseChoice = (raw: unknown, fallback: Choice): Choice => {
   return { mode: one(MODES, f.mode, fallback.mode), harness: one(HARNESSES, f.harness, fallback.harness), where: one(WHERES, f.where, fallback.where) }
 }
 const nameOf = (c: Ctx, person: string) => c.store.workspaces.find((w) => w.id === c.ws)?.members.find((m) => m.person === person)?.name ?? person
-const hhmm = (iso: string) => `${iso.slice(11, 16)} UTC`
+/** When a run started or stopped, against the host's clock. */
+const since = (iso: string, now: string) => fmtWhen(iso, now)
 
 /** Tickets the viewer can see in this workspace that are not done (where a run makes sense). */
 const startable = (c: Ctx) =>
@@ -139,7 +141,7 @@ registerAddon({
                     { label: 'Doing', value: run.step ? `${run.step.id} ${run.step.text}` : null },
                     { label: 'Mode', value: MODE_LABEL[run.s.mode] },
                     ...(run.s.model ? [{ label: 'Model', value: run.s.model, mono: true }] : []),
-                    { label: 'Started', value: `${hhmm(run.s.started_at)} by ${nameOf(c, run.s.for)}` },
+                    { label: 'Started', value: `${since(run.s.started_at, c.store.now())} by ${nameOf(c, run.s.for)}` },
                   ],
                 },
                 { type: 'button', label: 'Stop', action: 'stop', variant: 'danger' },
@@ -180,13 +182,13 @@ registerAddon({
         harness: r.s.name,
         model: r.s.model ?? 'default',
         state: r.state === 'waiting' ? `waiting on ${nameOf(c, r.s.for)}` : r.state,
-        started: hhmm(r.s.started_at),
+        started: since(r.s.started_at, c.store.now()),
       })),
       ended: runs
         .filter((r) => r.state === 'stopped')
         .reverse()
         .slice(0, 10)
-        .map((r) => ({ title: `${r.s.ticket} · ${r.s.name} · ${r.s.session}`, subtitle: `${MODE_LABEL[r.s.mode]}, started ${hhmm(r.s.started_at)}${r.s.stopped ? `, ${r.s.stopped.reason} ${hhmm(r.s.stopped.at)}` : ''}`, status: 'idle' })),
+        .map((r) => ({ title: `${r.s.ticket} · ${r.s.name} · ${r.s.session}`, subtitle: `${MODE_LABEL[r.s.mode]}, started ${since(r.s.started_at, c.store.now())}${r.s.stopped ? `, ${r.s.stopped.reason} ${since(r.s.stopped.at, c.store.now())}` : ''}`, status: 'idle' })),
     }
   },
 

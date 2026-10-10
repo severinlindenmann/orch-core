@@ -49,7 +49,7 @@ describe('Schedules page', () => {
     const dialog = await screen.findByRole('dialog', { name: /Sign: .* · Schedules/ }, T)
     // The row's own name, labelled as the addon's words; the signed args stay visible next to it.
     expect(within(dialog).getByText(/Addon says:/)).toHaveTextContent('Smoke test on testing')
-    expect(within(dialog).getByText(/id = smoke-on-testing/)).toBeInTheDocument()
+    expect(within(dialog).getByText('Covers').nextElementSibling!.textContent).toContain('Id (id): smoke-on-testing') // the signed arg is core's cover line
     await user.click(within(dialog).getByRole('button', { name: /Sign and run/ }))
     await waitFor(() => expect(within(rowOf('Smoke test on testing')).getByText(/next ticket moved to testing/)).toBeInTheDocument(), T)
     expect(within(rowOf('Smoke test on testing')).getByText('Enabled')).toBeInTheDocument()

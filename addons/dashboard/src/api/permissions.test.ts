@@ -12,7 +12,7 @@ const TABLE: [Permission, boolean[]][] = [
   ['ticket.move', [true, true, false, false, false]],
   ['ticket.label', [true, true, false, false, false]],
   ['view.share', [true, true, true, false, false]],
-  ['grant.issue', [true, true, false, false, false]],
+  ['grant.issue', [true, true, true, false, false]],
   ['grant.revoke.any', [true, false, false, false, false]],
   ['settings', [true, false, false, false, false]],
   ['addon.manage', [true, false, false, false, false]],
@@ -39,11 +39,12 @@ describe('atLeast', () => {
 })
 
 describe('canRevokeGrant', () => {
-  it('owners revoke any grant, maintainers their own, members and viewers none', () => {
+  it('owners revoke any grant, maintainers and members their own, viewers none', () => {
     expect(canRevokeGrant('owner', 'p_mara', 'p_sev')).toBe(true)
     expect(canRevokeGrant('maintainer', 'p_mara', 'p_mara')).toBe(true)
     expect(canRevokeGrant('maintainer', 'p_sev', 'p_mara')).toBe(false)
-    expect(canRevokeGrant('member', 'p_tom', 'p_tom')).toBe(false)
+    expect(canRevokeGrant('member', 'p_tom', 'p_tom')).toBe(true)
+    expect(canRevokeGrant('member', 'p_sev', 'p_tom')).toBe(false)
     expect(canRevokeGrant('viewer', 'p_tom', 'p_tom')).toBe(false)
   })
 })

@@ -22,7 +22,7 @@ export interface ShellCtx {
     current_state: string
     next_task: { id: string; text: string } | null
     /** Whose turn it is, and why (the dashboard's own rule). */
-    move: { who: string; why: string }
+    move: { who: string; why: string; /** The person's display name, when `who` is a person. */ name?: string }
     gates: { name: string; state: string }[]
     questions: { open: number; total: number }
     tasks: { done: number; total: number; doing: string | null }
@@ -56,4 +56,7 @@ export interface TerminalSessionView {
   summary: string | null
   /** Set when this session resumed an earlier one: its title and the summary it was seeded with. */
   resumedFrom: { id: string; label: string; summary: string | null } | null
+  /** A re-login shell only: the login command typed at the prompt (not run) and the OS user the shell runs as. */
+  prefill?: string
+  run_as?: string
 }

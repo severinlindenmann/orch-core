@@ -14,6 +14,9 @@ export const SHORTCUT_DEFS: ShortcutDef[] = [
   { id: 'go.board', keys: 'g b', label: 'Go to Board' },
   { id: 'go.tickets', keys: 'g l', label: 'Go to Tickets' },
   { id: 'go.agents', keys: 'g a', label: 'Go to Agents' },
+  // Owned by the Artifacts page (no shell binding): only while the focus is in its results.
+  { id: 'artifacts.next', keys: 'j', label: 'Artifacts: move to the next artifact (the preview follows when it is beside the list)' },
+  { id: 'artifacts.previous', keys: 'k', label: 'Artifacts: move to the previous artifact (the preview follows when it is beside the list)' },
   { id: 'help', keys: '?', label: 'Open the help for this page' },
   { id: 'sidebar', keys: '[', label: 'Collapse or expand the sidebar' },
   { id: 'terminal.dock', keys: 'Ctrl+`', label: 'Open or collapse the terminal dock (when the Terminals addon is on)' },

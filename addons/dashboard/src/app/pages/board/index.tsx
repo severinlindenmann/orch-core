@@ -24,19 +24,24 @@ import { STATUSES, type Status, type TicketSummary } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { noteRect } from '@/lib/motion'
+import { useElementWidth } from '@/lib/useElementWidth'
+import { BoardColumnsSkeleton } from '../skeletons'
 import { useWorkspace } from '@/app/workspace'
 import { usePageHeader } from '@/app/shell/ShellUi'
 import { useSlot } from '@/addon-ui'
-import { AddonLanes } from './AddonLane'
+import { AddonLanes, laneId } from './AddonLane'
+import { BOARD_COL_MIN, BOARD_RAIL, boardColumnsWidth, railedColumns } from './autoRail'
 import { ColumnHeader, ExpandRail } from './ColumnHead'
 import { EpicLanes, statusOfDrop } from './EpicLanes'
-import { groupByEpic, hasEpics, laneOf } from './grouping'
+import { groupByEpic, hasEpics, laneOf, movedAt } from './grouping'
 import { ListView } from './ListView'
 import { TicketCard, TicketCardBody, type BoardPeople } from './TicketCard'
-import { Toolbar, type View } from './Toolbar'
-import { applyFilters, DONE_LIMIT, NO_FILTERS, STATUS_LABEL, useBoardDisplay, type BoardDisplay, type Filters } from './lib'
+import { Toolbar } from './Toolbar'
+import { useBoardUrlState } from './urlState'
+import { applyFilters, DONE_LIMIT, NO_FILTERS, STATUS_LABEL, useBoardDisplay, type BoardDisplay } from './lib'
 import { toastApiError } from '@/app/toast'
 import { LoadFailed } from '@/components/LoadFailed'
+import { queries } from '@/api/queries'
 
 /** Left/right jump to the neighbouring column; up/down nudge. Without this the keyboard moves 25px per press. */
 const columnJump: KeyboardCoordinateGetter = (event, { context, currentCoordinates }) => {
@@ -163,8 +168,7 @@ export function BoardPage() {
   const qc = useQueryClient()
   const { workspace } = useWorkspace()
   const wsId = workspace?.id
-  const [view, setView] = useState<View>('board')
-  const [filters, setFilters] = useState<Filters>(NO_FILTERS)
+  const { view, setView, filters, setFilters } = useBoardUrlState()
   const [dragging, setDragging] = useState<TicketSummary | null>(null)
   const role = useRole()
   const canMove = can(role, 'ticket.move')
@@ -173,16 +177,12 @@ export function BoardPage() {
   const refocus = useRef<{ key: string; status: Status } | null>(null)
   const [overlayWidth, setOverlayWidth] = useState<number | undefined>()
 
-  const meQ = useQuery({ queryKey: ['me'], queryFn: api.getMe })
+  const meQ = useQuery(queries.me())
   const me = meQ.data
   const [display, setDisplay] = useBoardDisplay(me?.person)
-  const ticketsKey = ['board', wsId] as const
-  const { data: tickets = [], isPending } = useQuery({
-    queryKey: ticketsKey,
-    queryFn: () => api.listTickets(wsId!),
-    enabled: !!wsId,
-  })
-  const { data: agents = [] } = useQuery({ queryKey: ['agents', wsId], queryFn: () => api.getAgents(wsId!), enabled: !!wsId })
+  const ticketsKey = queries.board(wsId!).queryKey
+  const { data: tickets = [], isPending } = useQuery({ ...queries.board(wsId!), enabled: !!wsId })
+  const { data: agents = [] } = useQuery({ ...queries.agents(wsId!), enabled: !!wsId })
 
   const people = useMemo<BoardPeople>(() => {
     const byId = new Map(workspace?.members.map((m) => [m.person, m.name]))
@@ -204,6 +204,27 @@ export function BoardPage() {
     for (const list of m.values()) list.sort((a, b) => b.updated_at.localeCompare(a.updated_at))
     return m
   }, [filtered, grouped])
+
+  // A narrow page area (N11): columns narrow to BOARD_COL_MIN, then more of them become rails until the board fits.
+  // The person's own collapsed columns stay rails; a column they open from an automatic rail stays open (this visit).
+  const [frame, frameWidth] = useElementWidth<HTMLDivElement>()
+  const [opened, setOpened] = useState<string[]>([])
+  const laneIds = lanes.map(laneId)
+  const railed = new Set(
+    railedColumns([...STATUSES.map((s) => ({ id: s as string, empty: (byStatus.get(s)?.length ?? 0) === 0 })), ...laneIds.map((id) => ({ id, empty: false }))], boardColumnsWidth(frameWidth), {
+      collapsed: display.collapsed,
+      order: [...laneIds, 'done', 'backlog', 'testing', 'waiting', 'open', 'in-progress'],
+      opened,
+    }),
+  )
+  const shownDisplay: BoardDisplay = { ...display, collapsed: STATUSES.filter((s) => railed.has(s)) }
+  const setRail = (id: string, collapse: boolean) => {
+    setOpened((o) => [...o.filter((x) => x !== id), ...(collapse ? [] : [id])])
+    if (!STATUSES.includes(id as Status)) return
+    const s = id as Status
+    setDisplay({ collapsed: collapse ? [...display.collapsed.filter((x) => x !== s), s] : display.collapsed.filter((x) => x !== s) })
+  }
+  const colTrack = (id: string) => (railed.has(id) ? `${BOARD_RAIL}px` : `minmax(${BOARD_COL_MIN}px, 1fr)`)
   const options = useMemo(
     () => ({
       types: [...new Set(tickets.map((t) => t.type))].sort(),
@@ -229,7 +250,12 @@ export function BoardPage() {
     onMutate: async ({ key, status }) => {
       await qc.cancelQueries({ queryKey: ticketsKey })
       const prev = qc.getQueryData<TicketSummary[]>(ticketsKey)
-      qc.setQueryData<TicketSummary[]>(ticketsKey, (old) => old?.map((t) => (t.key === key ? { ...t, status } : t)))
+      // The moved card is the newest change: it sorts first in its cell, so a capped cell ("+N more") never hides it.
+      qc.setQueryData<TicketSummary[]>(ticketsKey, (old) => {
+        if (!old) return old
+        const updated_at = movedAt(old)
+        return old.map((t) => (t.key === key ? { ...t, status, updated_at } : t))
+      })
       return { prev }
     },
     onError: (err, { key, status }, ctx) => {
@@ -299,7 +325,7 @@ export function BoardPage() {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4">
+    <div ref={frame} className="flex h-full min-h-0 flex-col gap-4">
       <h1 className="sr-only">Board</h1>
       <Toolbar
         view={view}
@@ -324,11 +350,12 @@ export function BoardPage() {
             : null
         }
         onJump={jump}
+        compact={frameWidth > 0 && frameWidth < 960}
       />
       {meQ.isError ? (
         <LoadFailed what="the board" onRetry={() => void meQ.refetch()} />
       ) : isPending || !me ? (
-        <p className="text-[13px] text-text-faint">Loading board…</p>
+        <BoardColumnsSkeleton />
       ) : view === 'list' ? (
         <ListView tickets={filtered} people={people} onOpen={open} />
       ) : (
@@ -348,11 +375,13 @@ export function BoardPage() {
                 dragLane={dragging ? laneOf(dragging, epicKeys) : null}
                 draggingFrom={dragging?.status ?? null}
                 setDisplay={setDisplay}
+                onRail={setRail}
+                railedLanes={railed}
                 people={people}
                 me={me?.person}
                 tasks={tasks}
                 canMove={canMove}
-                display={display}
+                display={shownDisplay}
                 onOpen={open}
                 onMove={moveFromMenu}
               />
@@ -362,8 +391,7 @@ export function BoardPage() {
               ref={boardRef}
               className="grid min-h-0 min-w-0 flex-1 grid-flow-col gap-2 overflow-x-auto pb-2"
               style={{
-                gridTemplateColumns: STATUSES.map((s) => (display.collapsed.includes(s) ? '40px' : 'minmax(216px, 1fr)')).join(' '),
-                gridAutoColumns: 'minmax(216px, 1fr)',
+                gridTemplateColumns: [...STATUSES, ...laneIds].map(colTrack).join(' '),
               }}
             >
               {STATUSES.map((s) => (
@@ -378,14 +406,14 @@ export function BoardPage() {
                   tasks={tasks}
                   onOpen={open}
                   draggingFrom={dragging?.status ?? null}
-                  display={display}
-                  collapsedRail={display.collapsed.includes(s)}
+                  display={shownDisplay}
+                  collapsedRail={railed.has(s)}
                   canMove={canMove}
                   onMove={moveFromMenu}
-                  onCollapse={(c) => setDisplay({ collapsed: c ? [...display.collapsed, s] : display.collapsed.filter((x) => x !== s) })}
+                  onCollapse={(c) => setRail(s, c)}
                 />
               ))}
-              <AddonLanes />
+              <AddonLanes railed={railed} onExpand={(id) => setRail(id, false)} />
             </div>
           )}
           {/* No dnd-kit drop animation: it would fly back to the old column first. The card settles by FLIP in TicketCard. */}

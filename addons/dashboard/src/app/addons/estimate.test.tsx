@@ -20,7 +20,7 @@ const sumNow = async () => {
 }
 
 describe('estimate on the board and the ticket', () => {
-  it('shows a points sum with the A badge in each column that has estimates', async () => {
+  it('shows a neutral points sum in each column that has estimates (R-b: no A per sum)', async () => {
     renderApp('/board')
     const ws = mockStore.workspaces[0].id
     const tickets = await api.listTickets(ws)
@@ -29,7 +29,7 @@ describe('estimate on the board and the ticket', () => {
     const col = await screen.findByRole('region', { name: 'In progress' })
     const sum = await within(col).findByLabelText(/^Sum of /)
     expect(sum).toHaveTextContent(`${want} pts`)
-    expect(within(sum).getByRole('img', { name: 'From addon: estimate' })).toBeInTheDocument()
+    expect(within(sum).queryByRole('img', { name: /From addon/ })).toBeNull()
   })
 
   it('the column sum rises by exactly the new points after estimating a card', async () => {
@@ -50,8 +50,7 @@ describe('estimate on the board and the ticket', () => {
     const { user } = renderApp('/settings/addon/estimate')
     await user.selectOptions(await screen.findByLabelText(/Scale/), 't-shirt')
     await user.click(screen.getByRole('button', { name: 'Save' }))
-    await screen.findByText(/Settings saved/)
-    await user.click(screen.getByRole('button', { name: 'Cancel' })) // saved: closes without asking
+    await screen.findByText(/Estimate settings saved/) // saved: the drawer closes by itself, with a toast
     await user.click(screen.getAllByRole('link', { name: 'Board' })[0])
     const w0 = Number(mockStore.ticket('DEMO-0043')!.addons.estimate?.points ?? 0)
     const before = await sumNow()

@@ -1,6 +1,6 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
+import { openDockOn } from '@/app/terminal/dock/request'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { toast } from 'sonner'
 import { api, mockStore } from '@/api/client'
 import { moreAction } from '@/test/rowActions'
 import { renderApp } from '@/test/renderApp'
@@ -47,28 +47,30 @@ describe('worktrees page', () => {
     await user.click(screen.getByRole('button', { name: 'With changes' }))
     expect(await screen.findByText('No worktrees match. Clear the filter, or add one for a ticket.', {}, T)).toBeInTheDocument()
   })
-  it('Remove on the dirty worktree is refused in place: an alert in the row names the ticket, no toast', async () => {
-    const error = vi.spyOn(toast, 'error')
-    const success = vi.spyOn(toast, 'success')
+  it('Remove is disabled on a worktree with changes, and says why in the menu', async () => {
     const { user } = renderApp('/addon/worktrees/worktrees', { viewer: 'p_sev', setup })
     const row = (await screen.findByText('wt/DEMO-0043-energy-dbt', {}, T)).closest('tr')!
-    await user.click(await moreAction(user, row, 'Remove'))
-    await user.click(await screen.findByRole('button', { name: 'Remove worktree' }))
-    const alert = await screen.findByRole('alert', {}, T)
-    expect(alert).toHaveTextContent(/DEMO-0043 has 3 changed files/)
-    expect(alert).toHaveTextContent(/Commit or stash them first/)
-    expect(alert.closest('tr')!.previousElementSibling).toBe(row)
-    expect(error).not.toHaveBeenCalled()
-    expect(success).not.toHaveBeenCalled()
+    const item = await moreAction(user, row, /^Remove/)
+    expect(item).toHaveAttribute('aria-disabled', 'true')
+    expect(item).toHaveTextContent('Commit or stash the changes first')
     expect((await wts()).some((w) => w.path === 'wt/DEMO-0043-energy-dbt')).toBe(true)
+  })
+  it('Add worktree stands apart from the filters: its own primary button above the Show chips', async () => {
+    renderApp('/addon/worktrees/worktrees', { viewer: 'p_sev', setup })
+    const add = await screen.findByRole('button', { name: 'Add worktree' }, T)
+    const filter = screen.getByRole('button', { name: 'With changes' })
+    expect(add.compareDocumentPosition(filter) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(filter).toHaveAttribute('aria-pressed')
+    expect(add).not.toHaveAttribute('aria-pressed')
+    expect(add.parentElement).not.toBe(filter.parentElement)
   })
   it('Remove on a clean worktree removes it from the page', async () => {
     const { user } = renderApp('/addon/worktrees/worktrees', { viewer: 'p_sev', setup })
     const row = (await screen.findByText('wt/DEMO-0041-energy-dbt', {}, T)).closest('tr')!
     await user.click(await moreAction(user, row, 'Remove'))
-    // A destructive confirm whose button names the consequence.
+    // Core's destructive confirm (its own button words; the addon's "Remove worktree" is in the addon region).
     expect(await screen.findByRole('alertdialog')).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Remove worktree' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm: Remove (remove)' }))
     await waitFor(() => expect(screen.queryByText('wt/DEMO-0041-energy-dbt')).not.toBeInTheDocument(), T)
   })
   it('the add form creates a worktree', async () => {
@@ -103,6 +105,33 @@ describe('worktrees page', () => {
     const row = (await screen.findByText('wt/DEMO-0043-energy-dbt', {}, T)).closest('tr')!
     expect(within(row).getByRole('button', { name: 'Open terminal here' })).toBeInTheDocument()
   })
+  it('Open terminal here opens the dock on the new session, with the keyboard in the dock', async () => {
+    vi.stubGlobal('innerWidth', 1440)
+    vi.stubGlobal('innerHeight', 900)
+    const { user } = renderApp('/addon/worktrees/worktrees', { viewer: 'p_sev', setup })
+    const row = (await screen.findByText('wt/DEMO-0041-energy-dbt', {}, T)).closest('tr')!
+    await user.click(within(row).getByRole('button', { name: 'Open terminal here' }))
+    const dock = await screen.findByRole('region', { name: 'Terminal dock' }, T)
+    expect(await within(dock).findByRole('group', { name: /^Session: \d+ DEMO-0041 Shell · Your shell/ }, { timeout: 8000 })).toBeInTheDocument()
+    // The keyboard goes to the dock (the session strip, then the terminal once xterm is up).
+    await waitFor(() => expect(dock.contains(document.activeElement)).toBe(true), { timeout: 8000 })
+  }, 25_000)
+  it('a dock request for a session that is not in the viewer\'s view is dropped: no focus grab, nothing selected', async () => {
+    vi.stubGlobal('innerWidth', 1440)
+    vi.stubGlobal('innerHeight', 900)
+    const { user } = renderApp('/addon/worktrees/worktrees', { viewer: 'p_sev', setup })
+    const add = await screen.findByRole('button', { name: 'Add worktree' }, T)
+    await user.click(screen.getByRole('button', { name: /^Open terminal dock/ }))
+    const dock = await screen.findByRole('region', { name: 'Terminal dock' }, T)
+    // Opening the dock puts the keyboard on its strip; then the person goes back to the page.
+    await waitFor(() => expect(document.activeElement).toHaveAttribute('data-session-strip'), T)
+    const before = dock.querySelector('[data-session-strip]')?.getAttribute('aria-label')
+    add.focus()
+    act(() => openDockOn('no-such-session'))
+    await new Promise((r) => setTimeout(r, 600))
+    expect(document.activeElement).toBe(add)
+    expect(dock.querySelector('[data-session-strip]')?.getAttribute('aria-label')).toBe(before)
+  })
   it('no Open terminal here when terminals is off', async () => {
     renderApp('/addon/worktrees/worktrees', {
       viewer: 'p_sev',
@@ -117,7 +146,7 @@ describe('worktrees page', () => {
   it('viewer sees disabled actions', async () => {
     const { user } = renderApp('/addon/worktrees/worktrees', { viewer: 'p_tom', setup })
     const row = (await screen.findByText('wt/DEMO-0043-energy-dbt', {}, T)).closest('tr')!
-    expect(await moreAction(user, row, 'Remove')).toHaveAttribute('aria-disabled', 'true')
+    expect(await moreAction(user, row, /^Remove/)).toHaveAttribute('aria-disabled', 'true')
   })
 })
 

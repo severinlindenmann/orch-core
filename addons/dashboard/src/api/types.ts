@@ -11,7 +11,13 @@ export type TicketType = 'feature' | 'bug' | 'chore' | 'spike' | 'epic'
 export type Priority = 'low' | 'medium' | 'high' | 'urgent'
 export type Size = 'xs' | 's' | 'm' | 'l' | 'xl'
 export type Role = 'owner' | 'maintainer' | 'member' | 'viewer'
-export type GateName = 'requirements' | 'plan' | 'verify'
+/**
+ * The gates, in order. `code` is the opt-in code review (owner decision 2026-10-10): off by default, turned on per
+ * workspace or per ticket type; when on it follows the verdict and signs exactly the commit the verdict signed.
+ */
+export type GateName = 'requirements' | 'plan' | 'verify' | 'code'
+/** Where the code review gate applies: nowhere (default), every ticket, or only tickets of these types. */
+export type CodeReviewApplies = 'off' | 'all' | TicketType[]
 
 // ---------------------------------------------------------------- workspace / people
 
@@ -41,12 +47,15 @@ export interface Workspace {
   prefix: string // DEMO
   name: string
   members: Member[]
-  gates: Record<GateName, { approvers: string; count: number; not?: string }>
+  /** Gate policies. `code.applies` says where the code review gate is on (the other gates always apply). */
+  gates: Record<GateName, { approvers: string; count: number; not?: string; applies?: CodeReviewApplies }>
   addons: Record<string, WorkspaceAddon>
   counts: Partial<Record<Status, number>>
   needs_you: number
   /** Whether the owner turned the (simulated) relay link on: folded from relay.connected / relay.stopped. */
   relay?: 'on' | 'off'
+  /** Default agent grant length in hours (absent: 8); also the longest grant a member may sign for themselves. */
+  grant_hours?: number
 }
 
 /** A person this device knows (from any workspace or the identity registry): what the Add member combobox offers. */
@@ -236,7 +245,7 @@ export interface Claim {
 export interface GateStatus {
   state: 'pending' | 'approved' | 'invalidated' | 'changes_requested'
   /** `presence` is absent for a charter approval (no person was present; the charter was signed when the epic started). */
-  approvals: { by: string; at: string; via?: Via; presence?: Presence; sig_ok?: boolean }[]
+  approvals: { by: string; at: string; via?: Via; presence?: Presence; sig_ok?: boolean; source_sha?: string }[]
   needed: number
   approvers: string
   /** Excluded group, e.g. "assignees". */
@@ -250,6 +259,35 @@ export interface GateStatus {
   reason?: string
   /** Approvals an invalidation voided (for the record; they never count toward `needed`). */
   voided?: GateStatus['approvals']
+  /** verify and code: the commit (branch head) the standing approval signed. */
+  source_sha?: string
+  /** code only: whether the code review gate applies to this ticket (workspace policy, by ticket type). */
+  required?: boolean
+}
+
+/** The ticket's branch as core sees it (D53): its head is what a verdict and a code review sign. */
+export interface TicketBranch {
+  name: string
+  /** The branch it is compared with (the landing target). */
+  base: string
+  /** The head commit now (short sha). */
+  head: string
+  commits: { sha: string; at: string; by: string; task?: string }[]
+  /** Diffstat of the branch against `base`. */
+  files: number
+  additions: number
+  deletions: number
+}
+
+/** GET /api/tickets/:key/changes: core's diff of the branch against its base (the Changes view). */
+export interface TicketChanges {
+  ticket: string
+  branch: string
+  base: string
+  head: string
+  additions: number
+  deletions: number
+  files: { path: string; additions: number; deletions: number; lines: string }[]
 }
 
 export interface SectionRevision {
@@ -280,7 +318,8 @@ export interface TicketDocument extends TicketDefinition {
   questions_state: QuestionStatus[]
   gates: Record<GateName, GateStatus>
   artifacts: Artifact[]
-  verdict: { result: 'pass' | 'fail'; by: string; at: string; text?: string } | null
+  /** `source_sha`: the commit the verdict signed. `via: 'factory_charter'`: auto-approved under a factory charter (no person reviewed it). */
+  verdict: { result: 'pass' | 'fail'; by: string; at: string; text?: string; source_sha?: string; via?: Via; charter?: string; charter_signed_by?: string } | null
   turn: Turn
   body: BodySections
   head: { seq: number; hash: string }
@@ -292,6 +331,23 @@ export interface TicketDocument extends TicketDefinition {
   section_history?: Partial<Record<keyof BodySections, SectionRevision[]>>
   /** Skills, connections and env this ticket needs, with the connections' last check (core-computed; D55–D57). */
   needs?: TicketNeeds
+  /** The ticket's branch: head commit, commits and diffstat against its base (core-computed). */
+  branch: TicketBranch
+  /**
+   * Where the ticket is in landing (D53), read by core from the landing records in its own log (`land.*` events by the
+   * landing addon), only while that addon is active. A done ticket that is queued, being checked or failed to land is
+   * shown as "Landing" / "Landing failed", never as Done. Absent: not landing (never queued, landed or taken off).
+   */
+  landing?: TicketLanding
+}
+
+export interface TicketLanding {
+  state: 'queued' | 'failed'
+  /** The addon that wrote the records. */
+  addon: string
+  attempt?: number
+  reason?: 'conflict' | 'red_checks' | 'timeout'
+  at: string
 }
 
 export interface TicketSummary {
@@ -316,6 +372,7 @@ export interface TicketSummary {
   awaiting_gate: GateName | null
   addons: Record<string, Record<string, unknown>>
   updated_at: string
+  landing?: TicketLanding
   /** Set by list search (`q`) when a body section matched: the hit is wrapped in «». */
   match?: { section: keyof BodySections; snippet: string }
 }
@@ -548,14 +605,21 @@ export type SettingsRequest =
   | { op: 'member.add'; person: string; name: string; role: Role }
   | { op: 'member.role'; person: string; role: Role }
   | { op: 'member.remove'; person: string }
-  | { op: 'gate.policy'; gate: GateName; approvers: string; count: number; not?: 'assignees' | null }
+  | { op: 'gate.policy'; gate: GateName; approvers: string; count: number; not?: 'assignees' | null; applies?: CodeReviewApplies }
+  | { op: 'grant.hours'; hours: number }
   | { op: 'archive'; prefix: string }
 
 /** POST /api/workspaces/:ws/addons/:name. Owner only; grant and update are signed in the UI. */
 export type AddonOpRequest =
   | { op: 'install' | 'enable' | 'disable' | 'uninstall' }
-  /** grant and update carry exactly what the person saw and signed; the host refuses (409 addon.changed) if it differs now. */
-  | { op: 'grant' | 'update'; version: string; package_sha256: string; capabilities: string[]; viewer_actions: string[] }
+  /**
+   * grant and update carry exactly what the person saw and signed; the host refuses (409 addon.changed) if it differs now.
+   * `enable: true` on a grant makes turning the addon on part of the same signed act. An update is itself the grant of the
+   * new version (one signature; the addon keeps its on/off state).
+   */
+  | { op: 'grant' | 'update'; version: string; package_sha256: string; capabilities: string[]; viewer_actions: string[]; enable?: boolean }
+  /** Install from the catalog as one signed act: install, grant exactly these values and turn it on (409 addon.changed if the package differs now). */
+  | { op: 'install'; version: string; package_sha256: string; capabilities: string[]; viewer_actions: string[]; enable?: boolean }
 
 // ---------------------------------------------------------------- addons.json
 
@@ -588,6 +652,12 @@ export interface AddonDecision {
   question: string
   detail?: string
   options: { key: string; label: string; primary?: boolean }[]
+  /**
+   * What answering it authorises, as plain values (at most 12, keys like arg keys): core shows each one as its own
+   * line in the signing covers ("Words (key): value", in full), posts them with the answer, refuses the answer when they
+   * no longer match (409 decision.closed) and records them in `addon.decided`. Invalid terms: the decision is not offered.
+   */
+  terms?: Record<string, string | number>
   /** Posted to POST /api/workspaces/:ws/addons/:addon/actions/:action with { option, ticket }. */
   action: string
 }
@@ -611,17 +681,25 @@ export interface ActionMeta {
    * Core confirms this action in its own dialog before it is posted (the addon's node cannot skip it).
    * 'spawn_agent': the start-agent dialog (signs a grant first when the person has none). The host refuses the
    * action without core's `confirmed` flag (409 confirm.required).
-   * 'sign': core's own signing prompt (what is covered, then Touch ID). The dialog title is `label`; the host
+   * 'sign': core's own signing prompt (what is covered, then Touch ID). Title, covers and button are core's words
+   * (the action id, the addon's "Title (id)", every arg); `label` is shown in the addon's labelled region. The host
    * refuses the action without core's `confirmed` flag. Use it for switches only a human may flip (arm, pause).
    */
-  confirm?: 'spawn_agent' | 'sign' | 'destructive'
+  confirm?: 'spawn_agent' | 'sign' | 'destructive' | 'options'
   /**
-   * 'destructive': core's own confirm dialog (not a signature) whose button names the consequence ("Revoke link").
-   * `confirmLabel` is that button's text, `confirmText` the sentence above it. Both are the package's words, shown
-   * as plain text; the dialog's title and Cancel are core's. It is a confirmation, not a signature: the host sets no flag.
+   * 'destructive': core's own confirm dialog (not a signature). Title, the args it sends, the consequence line and
+   * the button ("Confirm: Revoke (revoke)") are core's; `confirmLabel` and `confirmText` are the package's words, shown
+   * in full in its labelled region. The host refuses the action without core's `confirmed` flag (409 confirm.required).
    */
   confirmLabel?: string
   confirmText?: string
+  /**
+   * 'options': core's small dialog asks for these choices first (a select per field), then posts the action with
+   * `{ [field.key]: chosen value }` merged into its args and core's `confirmed` flag (the host refuses it without).
+   * Not a signature. Title, the args it sends and the button ("Continue: Share once (share_once)") are core's; the
+   * label, note, field and choice labels are the package's words, shown in its labelled regions.
+   */
+  options?: { fields: { key: string; label: string; choices: { value: string | number; label: string }[]; default: string | number }[]; note?: string }
   /**
    * The action that reverses this one (e.g. stop -> start). Core shows "Undo" on the success toast only when the
    * response's `undo.action` is exactly this, and the target is a plain action (no confirm, no decision, not navigation)
@@ -683,6 +761,10 @@ export interface AddonActionResult {
   changed?: boolean
   /** An https address the client opens in a new tab (e.g. github's Open). */
   url?: string
+  /** A ticket this action created (e.g. an imported issue): the success toast offers "Open". */
+  ticket?: string
+  /** A terminals session this action opened (e.g. Worktrees' "Open terminal here"): core opens the dock on it. */
+  terminal?: string
   /** Reversible: the toast carries "Undo", which posts `undo.action` with `undo.args` (same addon). */
   undo?: { action: string; args?: Record<string, string | number | boolean> }
   /**
@@ -696,9 +778,11 @@ export interface AddonActionResult {
 
 export type ActionRequest =
   | { action: 'answer'; question: string; option?: string; text?: string }
-  | { action: 'approve'; gate: GateName }
+  /** `source_sha` (code gate): the commit the person reviewed; refused when the branch moved since. */
+  | { action: 'approve'; gate: GateName; source_sha?: string }
   | { action: 'request_changes'; gate: GateName; text: string }
-  | { action: 'verdict'; result: 'pass' | 'fail'; text?: string }
+  /** `source_sha`: the branch head the dialog showed; the host refuses a verdict on another commit (`verdict.stale`). */
+  | { action: 'verdict'; result: 'pass' | 'fail'; text?: string; source_sha: string }
   | { action: 'comment'; text: string }
   | { action: 'ask'; to: string; text: string; options?: QuestionOption[]; blocking?: boolean }
   | { action: 'claim' }
@@ -742,9 +826,13 @@ export type WorkspaceEventType =
   | 'agent.started' | 'agent.stopped'
   | 'view.saved' | 'view.deleted'
   | 'ticket.discarded'
-  | 'workspace.renamed'
+  | 'workspace.renamed' | 'workspace.grant_hours_set'
+  | 'terminal.shell_opened'
   | 'relay.connected' | 'relay.stopped' | 'device.paired' | 'device.removed' | 'epoch.rotated'
   | 'skill.credentials_granted' | 'connection.checked'
+  | 'records.committed' | 'records.pushed' | 'records.pulled'
+  | 'links.pairing_started' | 'links.pairing_cancelled' | 'links.terms_set' | 'links.pairing_denied' | 'links.paired' | 'links.revoked'
+  | 'links.request_received' | 'links.request_accepted' | 'links.request_denied' | 'links.answered' | 'links.scope_changed' | 'links.sent'
 export interface WorkspaceEvent {
   v: 2
   id: string
@@ -757,7 +845,8 @@ export interface WorkspaceEvent {
 export interface GrantInfo {
   id: string
   person: string
-  scope: 'all' | 'ci'
+  /** `all`: every ticket in the workspace (owners, maintainers); `workable`: the tickets the person may work on (a member's self-grant); `ci`: CI only. */
+  scope: 'all' | 'workable' | 'ci'
   issued_at: string
   until: string
   revoked: { at: string; by: string } | null

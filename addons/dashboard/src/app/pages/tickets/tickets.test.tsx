@@ -183,10 +183,31 @@ describe('Tickets grouped by epic (N2)', () => {
   })
 
   it('if the viewer cannot be loaded the list shows an error with Retry', async () => {
-    vi.spyOn(api, 'getMe').mockRejectedValueOnce(new Error('down'))
+    // Down until restored: the route loader asks first, the page asks again when it mounts (G4).
+    vi.spyOn(api, 'getMe').mockRejectedValue(new Error('down'))
     renderApp('/tickets')
     expect(await screen.findByRole('alert')).toHaveTextContent(/Could not load tickets/)
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
     vi.restoreAllMocks()
+  })
+})
+
+describe('Tickets page in a narrow page area (N11)', () => {
+  it('folds People, Turn and Progress under the title, puts the filters in one popover and the views in a select', async () => {
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ width: 700, height: 600, top: 0, left: 0, right: 700, bottom: 600, x: 0, y: 0, toJSON: () => ({}) })
+    const { user } = renderApp('/tickets')
+    const table = await screen.findByRole('table', { name: 'Tickets' })
+    const heads = within(table).getAllByRole('columnheader').map((h) => h.textContent)
+    expect(heads).not.toContain('People')
+    expect(heads).not.toContain('Progress')
+    expect(heads).toContain('Updated')
+    expect(table.querySelector('[data-fold-line]')).toHaveTextContent(/Turn/)
+    expect(screen.queryByRole('tablist', { name: 'Saved views' })).toBeNull()
+    expect(screen.getByRole('combobox', { name: 'Saved view' })).toBeInTheDocument()
+    expect(screen.queryByRole('group', { name: 'Status' })).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Filters' }))
+    await user.click(await screen.findByRole('button', { name: /^testing/i }))
+    expect(screen.getByRole('button', { name: 'Filters (1)' })).toBeInTheDocument()
+    rect.mockRestore()
   })
 })

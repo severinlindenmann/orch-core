@@ -559,6 +559,17 @@ export function describeEvent(e: Pick<OrchEvent, 'type'> & Record<string, unknow
       return 'paused the AI Factory'
     case 'factory.resumed':
       return 'resumed the AI Factory'
+    // Full runs (owner decision 2026-10-10 evening, D61 option; provisional names).
+    case 'factory.run_requested':
+      return e.goes_up_to === 'Deliver' ? `started full run ${t(e.run, 'a run')}, all the way to Deliver: ${t(e.deliver_means, 'a destination')}` : `started full run ${t(e.run, 'a run')}, up to Preview`
+    case 'factory.run_step':
+      return `full run ${t(e.run, 'a run')} reached ${t(e.step, 'a step')} (no person reviewed this step)`
+    case 'factory.deliver_held':
+      return `full run ${t(e.run, 'a run')} holds before Deliver until ${t(e.until, 'the end of its window')}: ${t(e.deliver_means, 'a destination')}`
+    case 'factory.deliver_stopped':
+      return `stopped the delivery of full run ${t(e.run, 'a run')}: nothing went out`
+    case 'factory.delivered':
+      return `delivered full run ${t(e.run, 'a run')}: ${t(e.deliver_means, 'a destination')}`
     case 'records.committed':
       return `recorded the ticket records as ${t(e.commit, 'a commit')} (${who})`
     case 'records.pushed':

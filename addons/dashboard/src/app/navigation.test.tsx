@@ -222,3 +222,41 @@ describe('a workspace switch is another page (G4 review M7)', () => {
     expect(samePage('DEMO|/board', 'DEMO|/tickets')).toBe(false)
   })
 })
+
+describe('Today fix round 2 (G4 re-review R1, R2)', () => {
+  it('R1: an owner whose connections fail sees Could not load with Retry, not a skeleton for good', async () => {
+    const real = api.getConnections.bind(api)
+    const spy = vi.spyOn(api, 'getConnections').mockRejectedValue(new Error('down'))
+    const { user } = renderApp('/', { viewer: 'p_sev' })
+    expect(await screen.findByRole('alert', {}, T)).toHaveTextContent(/Could not load Today/)
+    spy.mockImplementation(real)
+    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(await screen.findByText(/Re-login needed: databricks-prod/, {}, T)).toBeInTheDocument()
+  })
+
+  it('R2: when the addons list arrives late, Today still appears with its Glance, not without it first', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    const real = api.getAddons.bind(api)
+    vi.spyOn(api, 'getAddons').mockImplementation(async () => {
+      await gate
+      return real()
+    })
+    const states = new Set<string>()
+    const watch = new MutationObserver(() => {
+      const main = document.querySelector('main')
+      if (!main || !main.querySelector('section[aria-label="Needs you"]')) return
+      states.add(`glance=${!!main.querySelector('#glance-h')}`)
+    })
+    watch.observe(document.body, { childList: true, subtree: true })
+    renderApp('/', { viewer: 'p_sev' })
+    // Past the loaders' cap (they run in parallel): Today mounts while the addons are still missing, and waits for
+    // them (within its own cap of LOADER_WAIT_MS from mount).
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Today', level: 1 })).toBeInTheDocument(), T)
+    await sleep(500)
+    release()
+    await waitFor(() => expect(document.querySelector('#glance-h')).toBeInTheDocument(), T)
+    watch.disconnect()
+    expect([...states]).toEqual(['glance=true'])
+  }, 20000)
+})

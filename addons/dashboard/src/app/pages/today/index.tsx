@@ -14,6 +14,7 @@ import { TodaySkeleton } from '../skeletons'
 import { LoadFailed } from '@/components/LoadFailed'
 import { LOADER_WAIT_MS } from '../../routeData'
 import { useLoadFailure, useWaitAtMost } from '../../useLoadFailure'
+import { useConnections } from '../settings/connectionUi'
 import { SignDialog } from '../ticket/SignDialog'
 import type { HumanAction } from '../ticket/shared'
 import { QueueGroup } from './groups'
@@ -106,8 +107,13 @@ export function TodayPage() {
 
   // The Glance is part of the first screen: Today waits for its addon states too (at most LOADER_WAIT_MS, then it
   // shows with the Glance's own placeholders), so nothing appears beside the queue a moment later.
-  const glanceWaiting = useWaitAtMost(useSlot('today.card').some((c) => c.waiting?.status === 'pending'), LOADER_WAIT_MS)
-  const failure = useLoadFailure(today, agentsQ, decisionsQ)
+  // Also while the addons themselves are not known yet (no Glance items to wait for so far).
+  const addonList = useAddons()
+  const glancePending = useSlot('today.card').some((c) => c.waiting?.status === 'pending')
+  const glanceWaiting = useWaitAtMost((addonList.isPending && !addonList.isError) || glancePending, LOADER_WAIT_MS)
+  // The owner's connections are part of Today's first screen (attention.ready): a failure there says so too.
+  const connectionsQ = useConnections(can(role, 'settings') ? ws : undefined)
+  const failure = useLoadFailure(today, agentsQ, decisionsQ, connectionsQ)
 
   if (failure.failed) return <LoadFailed what="Today" onRetry={failure.retry} />
   if (!today.data || !agentsQ.data || !me.data || !decisionsQ.data || !role || dataset.isPending || stale || !attention.ready || glanceWaiting) {

@@ -58,7 +58,9 @@ const ticketRoute = createRoute({
   path: 'ticket/$key',
   validateSearch: validateTicketSearch,
   // The addon renderers a ticket's panels use load when the app is idle (Shell), not on every hovered ticket link.
-  loader: ({ context, params }) => pageLoader(ticketData(params.key), [TicketPage.preload])({ context }),
+  // A real visit waits for the addon renderers too (its panels then render without placeholders of another size);
+  // a hover preload does not (moving the pointer down a list of tickets loads the ticket page and its data only).
+  loader: ({ context, params, preload }) => pageLoader(ticketData(params.key), preload ? [TicketPage.preload] : [TicketPage.preload, addonNodes])({ context }),
   pendingComponent: function TicketPending() {
     const { key } = ticketRoute.useParams()
     return <TicketSkeleton title={key} />

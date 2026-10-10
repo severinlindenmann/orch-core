@@ -54,7 +54,19 @@ export function clampDock(side: DockSide, px: number, view: { width: number; hei
   return Math.round(Math.min(max, Math.max(DOCK_LIMITS[side].min, Number.isFinite(px) ? px : DEFAULT_PREFS[side])))
 }
 
+/** Who used this browser last (the shell remembers them): their layout applies while the viewer is still loading. */
+const LAST_VIEWER_KEY = 'orch.sidebar.lastViewer'
+function lastViewer(): string | undefined {
+  try {
+    return localStorage.getItem(LAST_VIEWER_KEY) ?? undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** The viewer's dock layout; without a viewer yet, the last viewer's (so the dock does not open a moment late). */
 export function readDockPrefs(viewer: string | undefined): DockPrefs {
+  viewer ??= lastViewer()
   if (!viewer) return DEFAULT_PREFS
   try {
     const raw = JSON.parse(localStorage.getItem(keyOf(viewer)) ?? 'null') as Partial<DockPrefs> | null

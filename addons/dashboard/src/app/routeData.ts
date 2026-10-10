@@ -101,9 +101,24 @@ export function pageLoader(parts: (s: PageScope) => Ensure[], chunks: (() => Pro
 
 // ---- per page -------------------------------------------------------------------------------------------------
 
+/** The tickets Today's rows open into (the first row is open from the start): one more round trip, in parallel. */
+async function todayTickets(qc: QueryClient, ws: string): Promise<unknown> {
+  const [today, decisions, agents] = await Promise.all([
+    qc.ensureQueryData({ queryKey: ['today', ws], queryFn: () => api.getToday(ws) }),
+    qc.ensureQueryData({ queryKey: ['addon-decisions', ws], queryFn: () => api.getAddonDecisions(ws) }),
+    qc.ensureQueryData({ queryKey: ['agents', ws], queryFn: () => api.getAgents(ws) }),
+  ])
+  const keys = new Set([
+    ...today.needs_you.map((i) => i.ticket),
+    ...today.read_only_open.map((i) => i.ticket),
+    ...decisions.flatMap((d) => (d.ticket ? [d.ticket] : [])),
+    ...agents.flatMap((a) => a.claims.map((c) => c.ticket)),
+  ])
+  return settle([...keys].map((k) => qc.ensureQueryData({ queryKey: ['ticket', k], queryFn: () => api.getTicket(k) })))
+}
+
 export const todayData = ({ qc, ws, pkgs, owner }: PageScope): Ensure[] => [
-  qc.ensureQueryData({ queryKey: ['agents', ws.id], queryFn: () => api.getAgents(ws.id) }),
-  qc.ensureQueryData({ queryKey: ['addon-decisions', ws.id], queryFn: () => api.getAddonDecisions(ws.id) }),
+  todayTickets(qc, ws.id),
   qc.ensureQueryData({ queryKey: ['dev-dataset'], queryFn: () => api.getDataset() }),
   ...(owner ? [qc.ensureQueryData({ queryKey: ['connections', ws.id], queryFn: () => api.getConnections(ws.id) })] : []),
   ...slotStates(qc, ws, pkgs, 'today.card'),

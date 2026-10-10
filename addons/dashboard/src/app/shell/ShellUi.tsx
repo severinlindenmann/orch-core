@@ -4,6 +4,7 @@ import { api } from '@/api/client'
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { BOARD_ORIGIN, originOf, type PageOrigin } from './origin'
 import { railCollapsed, railToggle, type RailPref } from './railRule'
+import { useDockSqueezesNow } from '../terminal/dock/DockArea'
 
 interface ShellUi {
   paletteOpen: boolean
@@ -80,7 +81,9 @@ function useRailState() {
   }, [viewer, stored.viewer])
   const { pref, dockPref } = current
   // Set by the terminal dock: open on the right and squeezing the page (see dockSqueezesSidebar).
-  const [squeezed, setSqueezed] = useState(false)
+  // The dock reports changes (setDockSqueeze); the first frame starts from the stored layout, not from "no dock".
+  const squeezedNow = useDockSqueezesNow()
+  const [squeezed, setSqueezed] = useState(squeezedNow)
   const [windowWidth, setWindowWidth] = useState(() => (typeof window === 'undefined' ? 1440 : window.innerWidth))
   useEffect(() => {
     const onResize = () => setWindowWidth(window.innerWidth)

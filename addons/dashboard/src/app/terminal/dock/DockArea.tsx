@@ -16,7 +16,7 @@ import { cn } from '@/lib/utils'
 import { PageWidthContext } from '../../pageWidth'
 import { useWorkspace } from '../../workspace'
 import { DOCK_ADDON, DOCK_KEYS, sessionsIn, useDockTicket, type DockMemory } from './context'
-import { clampDock, DOCK_BAR, dockSqueezesSidebar, rightFits, useDockPrefs, useViewport } from './prefs'
+import { clampDock, DOCK_BAR, dockSqueezesSidebar, readDockPrefs, rightFits, useDockPrefs, useViewport } from './prefs'
 import { onDockRequest } from './request'
 import { useShellState } from '../../shell/ShellUi'
 import { RAIL_SQUEEZE, SIDEBAR_RAIL, SIDEBAR_WIDE } from '../../shell/railRule'
@@ -33,6 +33,18 @@ export function useDockAllowed(): boolean {
   const { data } = useAddons()
   const { workspace } = useWorkspace()
   return canUsePty(data?.find((a) => a.name === DOCK_ADDON), workspace?.addons[DOCK_ADDON])
+}
+
+/**
+ * Whether the dock, as stored, squeezes the page so much that the sidebar is the rail: worked out at once, so the
+ * shell's first frame already has the right sidebar and dock (DockArea keeps it current afterwards).
+ */
+export function useDockSqueezesNow(): boolean {
+  const allowed = useDockAllowed()
+  const me = useQuery({ queryKey: ['me'], queryFn: api.getMe })
+  if (!allowed || typeof window === 'undefined') return false
+  const view = { width: window.innerWidth, height: window.innerHeight }
+  return dockSqueezesSidebar(readDockPrefs(me.data?.person), view, { wide: SIDEBAR_WIDE, rail: SIDEBAR_RAIL, squeeze: RAIL_SQUEEZE })
 }
 
 /** Ctrl+` opens or collapses the dock, from anywhere (also from inside a terminal), unless a dialog is open. */
@@ -65,7 +77,9 @@ function useAreaWidth(ref: React.RefObject<HTMLDivElement | null>, viewWidth: nu
     const ro = new ResizeObserver(measure)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [ref])
+    // Measured again, before paint, when the sidebar changes width (the observer would report it a frame late, and
+    // the first frame would show the dock on the wrong side).
+  }, [ref, rail])
   return w > 0 ? w : viewWidth - (rail ? SIDEBAR_RAIL : SIDEBAR_WIDE)
 }
 

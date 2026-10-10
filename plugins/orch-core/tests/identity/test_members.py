@@ -204,17 +204,27 @@ def test_device_added():
     refused(check_device_added, {**ev, "cert": drop}, p.pk_pub, code="member.cert_scope")
 
 
-def test_device_revoked_authority_is_the_embedded_signature():
+def test_device_revoked_authority_is_the_embedded_signature_and_the_devices_certificate():
     p, evil = Person(), Person()
     did = crypto.device_id(p.sig_pub).hex()
+    cert_o = certs.check_cert(p.cert(), p.pk_pub)
     rev = make_revocation(p.pk_pub, p.pk_sign, device_id_hex=did, revoked_ms=NOW, reason="lost")
     ev = {"type": "device.revoked", "device": "d_" + did, "reason": "lost", "revocation": rev}
-    assert check_device_revoked(ev, p.pk_pub)["device_id"] == did
-    refused(check_device_revoked, {**ev, "reason": "retired"}, p.pk_pub, code="device.reason_mismatch")
-    refused(check_device_revoked, {**ev, "device": "d_" + "00" * 16}, p.pk_pub, code="device.id_mismatch")
-    refused(check_device_revoked, ev, evil.pk_pub, code="bad_signature")
+    assert check_device_revoked(ev, p.pk_pub, cert_o)["device_id"] == did
+    refused(check_device_revoked, {**ev, "reason": "retired"}, p.pk_pub, cert_o, code="device.reason_mismatch")
+    refused(check_device_revoked, {**ev, "device": "d_" + "00" * 16}, p.pk_pub, cert_o, code="device.id_mismatch")
+    refused(check_device_revoked, ev, evil.pk_pub, cert_o, code="bad_signature")
     forged = make_revocation(evil.pk_pub, evil.pk_sign, device_id_hex=did, revoked_ms=NOW, reason="lost")
-    refused(check_device_revoked, {**ev, "revocation": forged}, p.pk_pub, code="bad_signature")
+    refused(check_device_revoked, {**ev, "revocation": forged}, p.pk_pub, cert_o, code="bad_signature")
+
+
+def test_a_person_key_cannot_revoke_another_persons_device():
+    """Review R2: A signs a revocation of B's device; checking it under A's key against B's certificate fails."""
+    a, b = Person(), Person()
+    b_cert = certs.check_cert(b.cert(), b.pk_pub)
+    rev = make_revocation(a.pk_pub, a.pk_sign, device_id_hex=b_cert["device_id"], revoked_ms=NOW, reason="lost")
+    ev = {"type": "device.revoked", "device": b.device, "reason": "lost", "revocation": rev}
+    refused(check_device_revoked, ev, a.pk_pub, b_cert, code="other_person")
 
 
 # --- signing person events through custody ------------------------------------------------------------------------
@@ -224,16 +234,18 @@ def event(auth="passphrase"):
     return {
         "v": 2,
         "id": "01J9ZP0000000000000000000B",
-        "type": "ticket.updated",
-        "actor": {"kind": "person"},
+        "type": "ticket.reopened",
+        "actor": {"kind": "person", "id": "p_" + "0" * 32, "device": "d_" + "0" * 32},
         "hash_v": 1,
+        "roster_v": 1,
         "auth": auth,
+        "text": "again",
     }
 
 
 def test_person_event_signed_through_passphrase_backend_verifies(tmp_path):
     b = PassphraseBackend(
-        tmp_path, passphrase_provider=lambda r: "long enough pass", kdf=KdfParams(n=2**10), min_n=2**10
+        tmp_path, _passphrase_provider=lambda r: "long enough pass", _kdf=KdfParams(n=2**10), _min_n=2**10
     )
     pub = b.create("dk")
     log = "01J9ZP0000000000000000000A"
@@ -253,7 +265,7 @@ def test_file_tier_key_never_signs_person_events(tmp_path):
 
 def test_event_auth_must_match_the_backend(tmp_path):
     b = PassphraseBackend(
-        tmp_path, passphrase_provider=lambda r: "long enough pass", kdf=KdfParams(n=2**10), min_n=2**10
+        tmp_path, _passphrase_provider=lambda r: "long enough pass", _kdf=KdfParams(n=2**10), _min_n=2**10
     )
     b.create("dk")
     for auth in ("secure-enclave", None, "none"):

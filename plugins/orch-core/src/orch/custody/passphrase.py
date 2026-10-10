@@ -114,6 +114,20 @@ def _value(text: object, limit: int = MAX_SHOWN) -> str:
     return out if len(out) <= limit else out[: limit - 1] + "…"
 
 
+MAX_PROMPT_LINES = 160
+
+
+def _field_lines(name: object, value: object) -> list[str]:
+    """One ``name: value`` line, or several ``name#k/n`` lines when the escaped value is longer than one line, so a
+    long value is shown in full and never truncated (a hidden tail could carry the decisive part)."""
+    text = canon.clean(value if isinstance(value, str) else repr(value)).replace("\n", "\u27e8U+000A\u27e9")
+    label = _value(name, 80)
+    chunks = [text[i : i + MAX_SHOWN] for i in range(0, len(text), MAX_SHOWN)] or [""]
+    if len(chunks) == 1:
+        return [f"{label}: {chunks[0]}"]
+    return [f"{label}#{k}/{len(chunks)}: {c}" for k, c in enumerate(chunks, 1)]
+
+
 def render_prompt(request: PassphraseRequest) -> str:
     """The text a person reads before typing a passphrase: ``sha256:`` first, then fixed ``label: value`` lines, one
     value per line (a value cannot contain a line break), the caller's note last."""
@@ -126,9 +140,12 @@ def render_prompt(request: PassphraseRequest) -> str:
     if request.kind == "create":
         lines.append("action: create this key")
     else:
-        lines += [f"{name}: {_value(value)}" for name, value in request.fields]
+        for name, value in request.fields:
+            lines += _field_lines(name, value)
     if request.action:
         lines.append(f'note (caller text, not signed): "{_value(request.action)}"')
+    if len(lines) > MAX_PROMPT_LINES:
+        raise CustodyError("refusing to prompt: too much to show faithfully")
     return "\n".join(lines) + "\n"
 
 
@@ -327,12 +344,13 @@ class PassphraseBackend:
             raise CustodyError(
                 f"a {doc['role']} key does not sign this payload (unknown label or another role's label)"
             )
+        shown_fields = tuple(describe_payload(payload))  # fail closed: refuses before any prompt
         request = PassphraseRequest(
             "unlock",
             key_id,
             action if isinstance(action, str) else "",
             crypto.sha256(payload).hex()[:32],
-            tuple(describe_payload(payload)),
+            shown_fields,
         )
         pw = _passphrase_bytes(self._provider(request))
         if not pw:

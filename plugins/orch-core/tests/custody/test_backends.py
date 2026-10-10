@@ -38,10 +38,12 @@ def person_payload(extra="x"):
     ev = {
         "v": 2,
         "id": "01J9ZP0000000000000000000B",
-        "type": "ticket.updated",
-        "actor": {"kind": "person"},
+        "type": "ticket.reopened",
+        "actor": {"kind": "person", "id": "p_" + "0" * 32, "device": "d_" + "0" * 32},
         "hash_v": 1,
-        "n": extra,
+        "roster_v": 1,
+        "auth": "passphrase",
+        "text": extra,
     }
     return canon.person_signing_bytes(WS, TICKET, ev)
 
@@ -71,7 +73,7 @@ def pass_backend(tmp_path, phrase=PHRASE, **kw):
     return b
 
 
-# --- passphrase backend ---------------------------------------------------------------------------------------------
+# --- passphrase backend --------------------
 
 
 def test_create_sign_verify_round_trip(tmp_path):
@@ -227,12 +229,12 @@ def test_prompt_escapes_hostile_values_and_cannot_be_forged():
     assert lines[2] == "sha256: " + "ab" * 16, "the real hash is the first line after the banner"
     assert sum(ln.startswith("sha256: ") for ln in lines) == 1
     assert not any(ln.startswith(("Sign:", "action:")) for ln in lines)
-    type_line = next(ln for ln in lines if ln.startswith("type: "))
+    type_line = "".join(ln for ln in lines if ln.startswith("type"))
     assert "U+001B" in type_line and "U+0007" in type_line and "U+000D" in type_line and "U+000A" in type_line
     gate_line = next(ln for ln in lines if ln.startswith("gate: "))
     assert "U+202E" in gate_line and "U+000D" in gate_line
     # every non-empty line is a banner or starts with a fixed label
-    allowed = ("===", "sha256:", "key:", "type:", "gate:", "note (caller text, not signed):")
+    allowed = ("===", "sha256:", "key:", "type", "gate:", "note (caller text, not signed):")
     assert all(ln.startswith(allowed) for ln in lines if ln)
 
 
@@ -251,9 +253,12 @@ def test_values_are_escaped_exactly_once():
 
 
 def test_prompt_values_are_length_limited():
-    text = pp.render_prompt(PassphraseRequest("unlock", "dk", "x" * 5000, "ab" * 16, (("type", "y" * 5000),)))
-    assert len(text) < 600
-    assert pp._value("x" * 5000).endswith("\u2026") and len(pp._value("x" * 5000)) == pp.MAX_SHOWN
+    """A long value is shown in full over numbered continuation lines, never truncated; the note is cut."""
+    text = pp.render_prompt(PassphraseRequest("unlock", "dk", "x" * 5000, "ab" * 16, (("text", "q" * 300),)))
+    assert "text#1/3:" in text and "text#3/3:" in text and text.count("q") == 300
+    assert len(pp._value("x" * 5000)) == pp.MAX_SHOWN and pp._value("x" * 5000).endswith("\u2026")
+    with pytest.raises(CustodyError, match="too much"):
+        pp.render_prompt(PassphraseRequest("unlock", "dk", "", "ab" * 16, (("text", "z" * 40000),)))
 
 
 def test_non_hex_digest_is_escaped_too():
@@ -266,13 +271,15 @@ def _event_payload(**extra):
         "v": 2,
         "id": "01J9ZP0000000000000000000B",
         "type": "gate.approved",
-        "actor": {"kind": "person"},
+        "actor": {"kind": "person", "id": "p_" + "0" * 32, "device": "d_" + "0" * 32},
         "hash_v": 1,
+        "roster_v": 1,
         "auth": "passphrase",
         "gate": "code",
         "hash": "sha256:" + "ab" * 32,
+        "policy_hash": "sha256:" + "cd" * 32,
         "gate_gen": 3,
-        "source": [{"repo": "local:demo", "ref": "main", "sha": "c" * 40}],
+        "source_sha": [{"repo": "local:demo", "ref": "main", "sha": "c" * 40}],
     }
     ev.update(extra)
     return canon.person_signing_bytes(WS, TICKET, ev)
@@ -287,7 +294,7 @@ def test_the_shown_action_is_derived_from_the_signing_bytes(tmp_path):
     assert fields["signs"] == "ticket-event" and fields["type"] == "gate.approved" and fields["gate"] == "code"
     assert fields["hash"] == "sha256:" + "ab" * 32 and fields["gate_gen"] == "3"
     assert fields["log"] == TICKET and fields["workspace"] == WS
-    assert "c" * 40 in fields["source"]
+    assert fields["source_sha[1].sha"] == "c" * 40 and fields["source_sha[1].repo"] == "local:demo"
     text = pp.render_prompt(req)
     assert "type: gate.approved" in text and 'note (caller text, not signed): "harmless-looking text"' in text
 
@@ -295,7 +302,7 @@ def test_the_shown_action_is_derived_from_the_signing_bytes(tmp_path):
 def test_a_lying_caller_cannot_change_the_derived_fields(tmp_path):
     b = pass_backend(tmp_path)
     b.create("dk")
-    b.sign("dk", _event_payload(), action="type: ticket.updated\ngate: plan")
+    b.sign("dk", _event_payload(), action="type: ticket.reopened\ngate: plan")
     fields = dict(b.seen[-1].fields)
     assert fields["type"] == "gate.approved" and fields["gate"] == "code"
     lines = [ln for ln in pp.render_prompt(b.seen[-1]).split("\n") if ln.startswith(("type:", "gate:"))]
@@ -304,28 +311,15 @@ def test_a_lying_caller_cannot_change_the_derived_fields(tmp_path):
 
 def test_hostile_event_values_are_shown_escaped():
     """canon refuses bidi in signed text, but the prompt must not rely on that: raw bytes with one are escaped."""
+    from orch.custody.describe import describe_payload
+
+    ev = {"type": "ticket.reopened", "text": "x\u202e\x1b", "actor": {"kind": "person", "id": "p", "device": "d"}}
+    body = {"contract": 1, "suite": 2, "workspace_id": WS, "log": TICKET, "event": ev}
     import json
 
-    from orch.custody.describe import describe_payload
-
-    body = json.dumps(
-        {"workspace_id": WS, "log": TICKET, "event": {"type": "t", "gate": "x\u202e\x1b"}}, ensure_ascii=False
-    )
-    fields = describe_payload(canon.LABELS["sig_ticket_event"].encode() + body.encode())
-    text = pp.render_prompt(PassphraseRequest("unlock", "dk", "", "ab" * 16, tuple(fields)))
+    payload = canon.LABELS["sig_ticket_event"].encode() + json.dumps(body, ensure_ascii=False).encode()
+    text = pp.render_prompt(PassphraseRequest("unlock", "dk", "", "ab" * 16, tuple(describe_payload(payload))))
     assert "\u202e" not in text and "\x1b" not in text and "U+202E" in text and "U+001B" in text
-
-
-def test_describe_other_signing_bytes():
-    from orch.custody.describe import describe_payload
-
-    assert describe_payload(b"junk") == [("signs", "unknown label")]
-    assert describe_payload(crypto.L["sig_device_cert"] + b"not json")[1] == ("payload", "not parseable")
-    cert = crypto.L["sig_revocation"] + canon.cj_checked(
-        {"kind": "revocation", "device_id": "ab" * 16, "reason": "lost"}
-    )
-    d = dict(describe_payload(cert))
-    assert d["signs"] == "revocation" and d["reason"] == "lost"
 
 
 def test_backend_passes_the_signing_hash_not_caller_text(tmp_path):
@@ -418,7 +412,7 @@ def test_delete_and_missing(tmp_path):
         b.sign("dk", person_payload(), action="a")
 
 
-# --- file tier ------------------------------------------------------------------------------------------------------
+# --- file tier --------------------
 
 
 def test_file_tier_signs_host_payloads_without_a_factor(tmp_path):
@@ -472,7 +466,7 @@ def test_person_and_host_label_sets_are_disjoint_where_it_matters():
             assert a == b or not b.startswith(a)
 
 
-# --- unavailable backends and registry ---------------------------------------------------------------------------
+# --- unavailable backends and registry --------------------
 
 
 @pytest.mark.parametrize("name", sorted(PLANNED))
@@ -501,11 +495,17 @@ def test_production_kdf_parameters_round_trip(tmp_path):
     assert crypto.verify(pub, b.sign("dk", payload, action="a"), payload)
 
 
-# --- roles (security review item 9) -------------------------------------------------------------------------------------
+# --- roles (security review item 9) --------------------
 
 
 def _cert_payload():
-    return crypto.L["sig_device_cert"] + canon.cj_checked({"v": 2, "suite": 2, "kind": "device_cert"})
+    from tests.identity.helpers import Person
+
+    return certs_payload(Person().cert()["o"])
+
+
+def certs_payload(o):
+    return crypto.L["sig_device_cert"] + canon.cj_checked(o)
 
 
 def test_person_key_signs_only_person_key_labels_and_device_key_only_its_own(tmp_path):
@@ -518,8 +518,11 @@ def test_person_key_signs_only_person_key_labels_and_device_key_only_its_own(tmp
         b.sign("pk", person_payload(), action="")  # PK never signs events
     with pytest.raises(CustodyError):
         b.sign("dk", cert, action="")  # dk_sig never signs certificates
+    b.sign("dk", person_payload(), action="")
     for label in ("sig_enroll_request", "sig_drop_object", "sig_relay_auth", "sig_decision"):
-        b.sign("dk", crypto.L[label] + b"{}", action="")
+        # in the dk_sig role's list, but not prompted for in P1: refused before any prompt (fail closed)
+        with pytest.raises(CustodyError, match="not prompted"):
+            b.sign("dk", crypto.L[label] + b"{}", action="")
     for label in ("sig_sk_grant", "sig_card_wsk", "sig_revocation"):
         with pytest.raises(CustodyError):
             b.sign("dk", crypto.L[label] + b"{}", action="")
@@ -546,7 +549,7 @@ def test_unknown_and_workspace_roles_are_refused_by_the_passphrase_backend(tmp_p
         FileBackend(tmp_path / "f").create("k", role="device")
 
 
-# --- R1: atomic create ----------------------------------------------------------------------------------------------
+# --- R1: atomic create --------------------
 
 
 def test_concurrent_create_has_exactly_one_winner_whose_key_is_on_disk(tmp_path):
@@ -558,7 +561,7 @@ def test_concurrent_create_has_exactly_one_winner_whose_key_is_on_disk(tmp_path)
         n = 8
         gate = Barrier(n)
 
-        def attempt(_):
+        def attempt(_, d=d, gate=gate):
             f = FileBackend(d)
             gate.wait()
             try:
@@ -623,7 +626,7 @@ def test_write_new_falls_back_to_exclusive_create_without_hard_links(tmp_path, m
     assert (tmp_path / "a").read_bytes() == b"x"
 
 
-# --- R4: passphrase text ----------------------------------------------------------------------------------------------
+# --- R4: passphrase text --------------------
 
 
 def test_nfc_and_nfd_passphrases_are_the_same_passphrase(tmp_path):
@@ -661,7 +664,7 @@ def test_minimum_length_counts_normalised_characters(tmp_path):
         b.create("dk")
 
 
-# --- hardening seams, modes, presence -------------------------------------------------------------------------------------
+# --- hardening seams, modes, presence --------------------
 
 
 def test_no_public_path_lowers_the_floor_or_injects_a_provider():

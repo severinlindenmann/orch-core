@@ -65,17 +65,17 @@ def test_normalisation_is_case_and_space_insensitive():
 
 def test_same_code_same_key_different_code_different_key():
     other = generate_recovery_code()
-    a1 = derive_person_key(ZERO_CODE, _kdf_n=FAST)
-    a2 = derive_person_key(normalise_code(ZERO_CODE.upper()), _kdf_n=FAST)
-    b = derive_person_key(other, _kdf_n=FAST)
+    a1 = rec._key_at(ZERO_CODE, FAST)
+    a2 = rec._key_at(normalise_code(ZERO_CODE.upper()), FAST)
+    b = rec._key_at(other, FAST)
     assert crypto.public_bytes(a1) == crypto.public_bytes(a2)
     assert crypto.person_id(crypto.public_bytes(a1)) == crypto.person_id(crypto.public_bytes(a2))
     assert crypto.public_bytes(a1) != crypto.public_bytes(b)
 
 
 def test_fast_known_answer_and_independent_derivation():
-    assert rec.derive_person_scalar(ZERO_CODE, _kdf_n=FAST) == KAT_FAST_SCALAR == _independent(ZERO_CODE, FAST)
-    pub = crypto.public_bytes(derive_person_key(ZERO_CODE, _kdf_n=FAST))
+    assert rec._scalar(ZERO_CODE, FAST) == KAT_FAST_SCALAR == _independent(ZERO_CODE, FAST)
+    pub = crypto.public_bytes(rec._key_at(ZERO_CODE, FAST))
     assert crypto.person_id(pub).hex() == "013a2382f5403a0ff95a70870dd9a862"
 
 

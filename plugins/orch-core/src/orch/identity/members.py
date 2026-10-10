@@ -1,9 +1,10 @@
 """Pure checks on the identity-carrying workspace events (ticket-format §5.3, §5.4.2, §5.11): the genesis owner
 checks in their stated order, ``member.added``, ``device.added`` and ``device.revoked``.
 
-Each function takes the event as a strictly parsed mapping and raises :class:`Refused` (a ``genesis.*`` or ``member.*``
-code, or the protocol's code from :mod:`orch.identity.certs`). They check signatures and bindings only; roles,
-``roster_v``, expiry/revocation *at the event's position* and "who may sign what" are ``model/``'s.
+These are **binding checks, not authorization**: roles, ``roster_v``, expiry/revocation at the event's position and
+"who may sign what" are ``model/``'s. Each function takes the event as a strictly parsed mapping and raises
+:class:`Refused` (a ``genesis.*``, ``member.*`` or ``device.*`` code, or the protocol's code from
+:mod:`orch.identity.certs`).
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from typing import Any
 
 from orch import canon, crypto
 
-from .certs import check_cert, check_delegation, check_revocation, delegation_binds, person_scope_ok
+from .certs import check_cert, check_delegation, delegation_binds, person_scope_ok, verify_revocation
 from .errors import Refused
 
 __all__ = [
@@ -149,11 +150,15 @@ def check_device_added(event: Mapping[str, Any], person_pk_pub: bytes) -> dict[s
     return cert_o
 
 
-def check_device_revoked(event: Mapping[str, Any], person_pk_pub: bytes) -> dict[str, Any]:
-    """``device.revoked``: the embedded revocation under the person's key (§6.2: the authority is the signature, not
-    the sender), ``device == "d_" + revocation.device_id`` and ``reason == revocation.o.reason``
-    (``device.id_mismatch`` / ``device.reason_mismatch``)."""
-    rev_o = check_revocation(event.get("revocation"), person_pk_pub)
+def check_device_revoked(
+    event: Mapping[str, Any], person_pk_pub: bytes, device_cert_o: Mapping[str, Any]
+) -> dict[str, Any]:
+    """``device.revoked``: the embedded revocation verified under the person's key **against the revoked device's
+    certificate** (protocol §6.2: the certificate must name the same person and device, so a person's key can never
+    revoke someone else's device), ``device == "d_" + revocation.device_id`` and ``reason == revocation.o.reason``
+    (``device.id_mismatch`` / ``device.reason_mismatch``). ``device_cert_o`` is the certificate object the model holds
+    for that device."""
+    rev_o = verify_revocation(event.get("revocation"), person_pk_pub, device_cert_o)
     if event.get("device") != "d_" + rev_o["device_id"]:
         raise Refused("device.id_mismatch")
     if event.get("reason") != rev_o["reason"]:

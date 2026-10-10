@@ -120,8 +120,9 @@ def check_grant_issued(
     *,
     role: str,
     at: str,
+    human_only: Collection[str],
+    operations: Collection[str] | None = None,
     grant_hours: int = 8,
-    human_only: Collection[str] = frozenset(),
 ) -> None:
     """D60 terms for a ``grant.issued`` payload (``scope``, ``verbs``, ``issued_at``, ``hours``, ``expires_at``,
     ``secret_hash``) signed by a person with ``role`` at the event's position, appended at ``at``. Raises
@@ -130,7 +131,8 @@ def check_grant_issued(
     ``grant.role`` (viewer, or an unknown role); ``grant.scope`` (not ``all``/``workable``, or ``all`` for a member);
     ``grant.hours`` (not an int, outside 1-24, or above ``grant_hours`` for a member); ``grant.issued_at`` (more than
     300 s from ``at``); ``grant.expires_at`` (not ``issued_at + 3600 * hours``); ``grant.verbs``
-    (neither ``"agent"`` nor
+    (``human_only`` is required, the list is exact operation names and none equals or is a segment of a human-only
+    operation; neither ``"agent"`` nor
     a list of operation names, or a human-only operation in the list); ``grant.secret_hash`` (not a hash).
     """
     if role not in ("owner", "maintainer", "member"):
@@ -156,8 +158,12 @@ def check_grant_issued(
             or len(set(verbs)) != len(verbs)
         ):
             raise Refused("grant.verbs")
-        if any(v in human_only for v in verbs):
+        # exact operation names only (F1 §10.1): a segment such as ``gate`` is not an operation, and a name equal to
+        # or a segment of a human-only operation is refused rather than treated as covering it
+        if any(v == h or h.startswith(v + ".") for v in verbs for h in human_only):
             raise Refused("grant.verbs", "a human-only operation is never in a grant")
+        if operations is not None and any(v not in operations for v in verbs):
+            raise Refused("grant.verbs", "verbs are exact operation names")
     try:
         canon.parse_hash(event.get("secret_hash"))
     except canon.HashError:

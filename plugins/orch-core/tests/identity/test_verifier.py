@@ -10,7 +10,7 @@ import pytest
 from orch import crypto
 from orch.identity import CryptoVerifier, make_revocation
 
-from .helpers import NOW, WS, Person, build_genesis, host_sign, sign_person
+from .helpers import NOW, WS, Person, build_genesis, host_sign, resign, sign_person
 
 TICKET = "01J9ZP0000000000000000000A"
 
@@ -40,7 +40,7 @@ def ctx(p: Person, log=TICKET, cert=None):
 
 
 def test_verify_person():
-    p, v = Person(), CryptoVerifier(WS)
+    p, v = Person(), CryptoVerifier()
     ev = ticket_event(p)
     assert v.verify_person(ev, ctx(p))
     assert v.verify_person(ev, ctx(p, cert=p.cert()["o"]))
@@ -53,110 +53,157 @@ def test_verify_person():
     bad = copy.deepcopy(ev)
     bad["sig"] = bad["sig"][:-3] + "AAA"
     assert not v.verify_person(bad, ctx(p))
-    unsigned = {k: x for k, x in ev.items() if k != "sig"}
-    assert not v.verify_person(unsigned, ctx(p))
+    assert not v.verify_person({k: x for k, x in ev.items() if k != "sig"}, ctx(p))
     assert not v.verify_person(ev, SimpleNamespace())
     assert not v.verify_person({}, ctx(p))
 
 
 def test_verify_person_checks_the_actor_device_matches_the_certificate():
     p, other = Person(), Person()
-    ev = ticket_event(p, actor={"kind": "person", "id": p.ref, "device": other.device})
-    assert not CryptoVerifier(WS).verify_person(ev, ctx(p))
-    ev = ticket_event(p, actor={"kind": "agent"})
-    assert not CryptoVerifier(WS).verify_person(ev, ctx(p))
+    assert not CryptoVerifier().verify_person(
+        ticket_event(p, actor={"kind": "person", "id": p.ref, "device": other.device}), ctx(p)
+    )
+    assert not CryptoVerifier().verify_person(ticket_event(p, actor={"kind": "agent"}), ctx(p))
 
 
-def test_verify_host():
+def test_verify_host_takes_log_and_key_per_call():
     g = build_genesis()
     wsk_pub = crypto.public_bytes(g.wsk)
-    v = CryptoVerifier(WS, wsk_pub)
-    assert v.verify_host(g.event)
-    assert CryptoVerifier(WS, crypto.b64u(wsk_pub)).verify_host(g.event)
-    assert not CryptoVerifier(WS, crypto.public_bytes(crypto.generate_private_key())).verify_host(g.event)
-    assert not CryptoVerifier("22" * 16, wsk_pub).verify_host(g.event)
+    v = CryptoVerifier()
+    assert v.verify_host(g.event, log="workspace", wsk_pub=wsk_pub)
+    assert v.verify_host(g.event, log="workspace", wsk_pub=None), "genesis carries its own key"
+    assert not v.verify_host(g.event, log="workspace", wsk_pub=crypto.public_bytes(crypto.generate_private_key()))
+    assert not v.verify_host(g.event, log=TICKET, wsk_pub=wsk_pub)
     ev = copy.deepcopy(g.event)
     ev["prefix"] = "X"
-    assert not v.verify_host(ev)
-    assert not v.verify_host({})
+    assert not v.verify_host(ev, log="workspace", wsk_pub=wsk_pub)
+    assert not v.verify_host({}, log="workspace", wsk_pub=wsk_pub)
+    assert not v.verify_host(g.event, log="workspace", wsk_pub=b"junk")
 
 
-def test_verify_host_on_ticket_logs_needs_the_log():
+def test_verify_host_on_ticket_logs():
     g = build_genesis()
     wsk_pub = crypto.public_bytes(g.wsk)
-    p = Person()
-    ev = ticket_event(p)
+    ev = ticket_event(Person())
     host_sign(g.wsk, ev, TICKET)
-    v = CryptoVerifier(WS, wsk_pub)
-    assert not v.verify_host(ev), "ticket uid unknown: fail closed"
-    assert v.for_log(TICKET).verify_host(ev)
-    assert not v.for_log("workspace").verify_host(ev)
-    assert not v.for_log("01J9ZP0000000000000000000Z").verify_host(ev)
+    v = CryptoVerifier()
+    assert v.verify_host(ev, log=TICKET, wsk_pub=wsk_pub, workspace_id=WS)
+    assert not v.verify_host(ev, log=TICKET, wsk_pub=wsk_pub), "no workspace id: fail closed"
+    assert not v.verify_host(ev, log=TICKET, wsk_pub=wsk_pub, workspace_id="11" * 16)
+    assert not v.verify_host(ev, log="workspace", wsk_pub=wsk_pub, workspace_id=WS)
+    assert not v.verify_host(ev, log="01J9ZP0000000000000000000Z", wsk_pub=wsk_pub, workspace_id=WS)
 
 
-def test_genesis_host_sig_without_a_pinned_key_only_for_genesis():
+def test_no_key_means_genesis_only():
     g = build_genesis()
-    assert CryptoVerifier(WS).verify_host(g.event)
     ev = copy.deepcopy(g.event)
     ev["type"] = "member.added"
     host_sign(g.wsk, ev)
-    assert not CryptoVerifier(WS).verify_host(ev)
+    assert not CryptoVerifier().verify_host(ev, log="workspace", wsk_pub=None)
+    ticket = ticket_event(Person())
+    host_sign(g.wsk, ticket, TICKET)
+    assert not CryptoVerifier().verify_host(ticket, log=TICKET, wsk_pub=None)
 
 
-def test_verify_embedded_genesis():
+def test_verifier_is_stateless_and_immutable():
+    v = CryptoVerifier()
+    with pytest.raises(AttributeError):
+        v.x = 1  # type: ignore[attr-defined]
+    assert not hasattr(v, "for_log")
+
+
+def test_verify_embedded_genesis_uses_the_one_genesis_implementation():
     g = build_genesis()
-    v = CryptoVerifier(WS)
-    assert v.verify_embedded(g.event, None)
-    assert v.verify_embedded(g.event, crypto.b64u(g.owner.pk_pub))
-    assert not v.verify_embedded(g.event, crypto.b64u(Person().pk_pub)), "another person's key"
+    v = CryptoVerifier()
+    assert v.verify_embedded(g.event)
+    assert v.verify_embedded(g.event, pk_pub=crypto.b64u(g.owner.pk_pub))
+    assert not v.verify_embedded(g.event, pk_pub=crypto.b64u(Person().pk_pub)), "another person's key"
     ev = copy.deepcopy(g.event)
     ev["delegation"]["o"]["client_hosted"] = True
-    assert not v.verify_embedded(ev, None)
+    assert not v.verify_embedded(ev)
     ev = copy.deepcopy(g.event)
     ev["device_cert"] = Person().cert()
-    assert not v.verify_embedded(ev, None)
-    assert not CryptoVerifier("33" * 16).verify_embedded(g.event, None), "other workspace"
+    assert not v.verify_embedded(ev)
+    ev = copy.deepcopy(g.event)
+    ev["device_cert"] = g.owner.cert(scopes=("look",))
+    assert not v.verify_embedded(resign(g, ev)), "scopes are checked too (check_genesis)"
 
 
 def test_verify_embedded_member_added_device_added_device_revoked():
     p, m = Person(), Person()
-    v = CryptoVerifier(WS)
+    v = CryptoVerifier()
     added = {"type": "member.added", "person": m.ref, "pk_pub": crypto.b64u(m.pk_pub), "device_cert": m.cert()}
-    assert v.verify_embedded(added, None) and v.verify_embedded(added, crypto.b64u(m.pk_pub))
-    assert not v.verify_embedded(added, crypto.b64u(p.pk_pub))
-    assert not v.verify_embedded({**added, "device_cert": p.cert()}, None)
+    assert v.verify_embedded(added) and v.verify_embedded(added, pk_pub=crypto.b64u(m.pk_pub))
+    assert not v.verify_embedded(added, pk_pub=crypto.b64u(p.pk_pub))
+    assert not v.verify_embedded({**added, "device_cert": p.cert()})
 
     dev = {"type": "device.added", "device": m.device, "cert": m.cert()}
-    assert v.verify_embedded(dev, crypto.b64u(m.pk_pub))
-    assert not v.verify_embedded(dev, None), "device.added needs the person's key"
-    assert not v.verify_embedded(dev, crypto.b64u(p.pk_pub))
+    assert v.verify_embedded(dev, pk_pub=crypto.b64u(m.pk_pub))
+    assert not v.verify_embedded(dev), "device.added needs the person's key"
+    assert not v.verify_embedded(dev, pk_pub=crypto.b64u(p.pk_pub))
 
     did = crypto.device_id(m.sig_pub).hex()
+    cert_o = m.cert()["o"]
     rev = make_revocation(m.pk_pub, m.pk_sign, device_id_hex=did, revoked_ms=NOW, reason="lost")
     r_ev = {"type": "device.revoked", "device": "d_" + did, "reason": "lost", "revocation": rev}
-    assert v.verify_embedded(r_ev, crypto.b64u(m.pk_pub))
-    assert not v.verify_embedded(r_ev, crypto.b64u(p.pk_pub))
-    assert not v.verify_embedded({**r_ev, "reason": "retired"}, crypto.b64u(m.pk_pub))
+    assert v.verify_embedded(r_ev, pk_pub=m.pk_pub, device_cert=cert_o)
+    assert not v.verify_embedded(r_ev, pk_pub=m.pk_pub), "the revoked device's certificate is required"
+    assert not v.verify_embedded(r_ev, pk_pub=m.pk_pub, device_cert=p.cert()["o"]), "another person's device"
+    assert not v.verify_embedded(r_ev, pk_pub=p.pk_pub, device_cert=cert_o)
+    assert not v.verify_embedded({**r_ev, "reason": "retired"}, pk_pub=m.pk_pub, device_cert=cert_o)
 
 
-def test_other_types_embed_nothing_and_garbage_never_raises():
-    v = CryptoVerifier(WS)
-    assert v.verify_embedded({"type": "ticket.updated"}, None)
-    for junk in ({}, {"type": "member.added"}, {"type": "workspace.created"}, {"type": "device.revoked"}):
-        assert v.verify_embedded(junk, None) in (True, False)
-    assert not v.verify_embedded({"type": "device.added", "cert": 5}, "nope")
+def test_unknown_missing_or_malformed_types_are_false_and_never_raise():
+    v = CryptoVerifier()
+    for junk in (
+        {},
+        {"x": 1.5},
+        {"type": None},
+        {"type": 5},
+        {"type": ["member.added"]},
+        {"type": "ticket.updated"},
+        {"type": "member.added"},
+        {"type": "workspace.created"},
+        {"type": "device.revoked"},
+        {"type": "device.added", "cert": 5},
+    ):
+        assert v.verify_embedded(junk) is False
+    assert v.verify_embedded({"type": "device.added", "cert": 5}, pk_pub="nope") is False
+
+
+def test_signatures_match_the_c4_interface():
+    """The interface as decided in the C4 rulings; tightened to the real Protocol once C4 is merged (below)."""
+    import inspect
+
+    def params(fn):
+        return [(n, p.kind, p.default is p.empty) for n, p in inspect.signature(fn).parameters.items() if n != "self"]
+
+    class Interface:
+        def verify_person(self, event, context): ...
+        def verify_host(self, event, *, log, wsk_pub): ...
+        def verify_embedded(self, event): ...
+
+    assert params(CryptoVerifier.verify_person) == params(Interface.verify_person)
+    for name in ("verify_host", "verify_embedded"):
+        ours, theirs = params(getattr(CryptoVerifier, name)), params(getattr(Interface, name))
+        assert ours[: len(theirs)] == theirs, name
+        assert all(not required for _, _, required in ours[len(theirs) :]), "extra parameters are optional keywords"
 
 
 def test_satisfies_c4_protocol():
-    """Runs once C4 (orch.model.verifier) is merged; skipped until then."""
+    """Runs once C4 (orch.model.verifier) is merged and carries the amended Protocol; skipped until then."""
+    import inspect
+
     mod = pytest.importorskip("orch.model.verifier")
+    for name in ("verify_person", "verify_host", "verify_embedded"):
+        theirs = list(inspect.signature(getattr(mod.Verifier, name)).parameters)
+        ours = list(inspect.signature(getattr(CryptoVerifier, name)).parameters)
+        assert ours[: len(theirs)] == theirs, name
     p = Person()
     ev = ticket_event(p)
-    v = CryptoVerifier(WS)
     context = mod.SigContext(workspace_id=WS, log=TICKET, cert=p.cert())
+    v: mod.Verifier = CryptoVerifier()
     assert v.verify_person(ev, context) is True
     g = build_genesis()
-    assert CryptoVerifier(WS).verify_host(g.event) is True
-    assert CryptoVerifier(WS).verify_embedded(g.event, None) is True
-    for name in ("verify_person", "verify_host", "verify_embedded"):
-        assert callable(getattr(mod.Verifier, name))
+    assert v.verify_host(g.event, log="workspace", wsk_pub=None) is True
+    assert v.verify_embedded(g.event) is True

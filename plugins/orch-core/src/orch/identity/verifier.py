@@ -1,40 +1,37 @@
-"""The signature verifier that ``model/`` injects (ticket-format §5.3, §5.11): ``CryptoVerifier``.
+"""The signature verifier that ``model/`` injects (ticket-format §5.3, §5.11): :class:`CryptoVerifier`.
 
-The protocol it satisfies is defined by C4 (``orch.model.verifier.Verifier``, PR #347). It is repeated here so this
-module imports nothing from ``model/`` at runtime::
-
-    @dataclass(frozen=True)
-    class SigContext:
-        workspace_id: str; log: str; cert: Mapping[str, Any]      # the signing device's certificate
+The protocol it satisfies is C4's ``orch.model.verifier.Verifier`` (PR #347), as amended by the C4 security rulings::
 
     class Verifier(Protocol):
         def verify_person(self, event, context: SigContext) -> bool: ...
-        def verify_host(self, event) -> bool: ...
-        def verify_embedded(self, event, pk_pub: str | None) -> bool: ...
+        def verify_host(self, event, *, log: str, wsk_pub: bytes | None) -> bool: ...
+        def verify_embedded(self, event) -> bool: ...
 
-``tests/identity/test_verifier.py::test_satisfies_c4_protocol`` runs against the real module once C4 is merged (it
-skips until then). :meth:`verify_person` reads only ``context.workspace_id``, ``context.log`` and ``context.cert``, so
-any object with those attributes works.
+``SigContext`` has ``workspace_id``, ``log`` and ``cert`` (the signing device's certificate); this module reads only
+those attributes, so it imports nothing from ``model/`` at runtime. ``tests/identity/test_verifier.py`` compares the
+signatures with :func:`inspect.signature` now and runs against the real module once C4 is merged.
 
 Decisions:
 
-* Every method returns ``bool`` and never raises: a malformed event, key or signature is simply ``False``.
+* **Stateless and immutable.** No constructor state: the workspace key comes from the replayed genesis through
+  ``wsk_pub`` (``None`` only for the genesis event itself, which carries its own, bound by the PK-signed
+  delegation).
+* **``workspace_id``.** Ticket events do not carry the workspace id, but it is in the signed bytes (§5.5), so
+  ``verify_host`` takes it as an optional keyword (taken from the event when it has one, as workspace-log
+  events do; otherwise required; without it the event is ``False``). It is optional, so a call that follows the C4 interface is accepted.
+* **Fail closed.** Every method returns ``bool`` and never raises; a malformed event, key or signature is ``False``.
+  ``verify_embedded`` is ``True`` only for an event whose ``type`` is a known string that carries embedded objects and
+  whose objects all verify. An event with a missing, non-string or unknown type is ``False``.
 * ``verify_person`` checks the signature under the certificate's ``dk_sig_pub`` over
-  :func:`orch.canon.person_signing_bytes`
-  **and** that ``event["actor"]["device"] == "d_" + device_id(dk_sig_pub)``, so a certificate for another device can't
-  stand in. ``context.cert`` may be the signed object ``{"o", "sig"}`` or its ``o``. The certificate's own signature,
-  scopes, expiry and revocation at the event's position are ``model/``'s (it checks them with
-  :func:`orch.identity.certs.check_cert` through ``verify_embedded`` and its own replay).
-* ``verify_host`` needs the workspace key and the log the event belongs to, which the protocol's one-argument form
-  doesn't carry: they are constructor state (``for_log`` makes a view per log). With ``log=None`` the log is
-  ``"workspace"`` if the event has no ``ws_seq`` and unknown (``False``) if it has one, because the ticket uid
-  can't be recovered from the event. ``wsk_pub=None`` is accepted only for the genesis event, which carries its own
-  ``wsk_pub`` (bound by the delegation, checked by :func:`orch.identity.members.check_genesis`).
-* ``verify_embedded`` verifies the signed objects an event carries under the person key: ``workspace.created``
-  (delegation and ``device_cert`` under ``owner.pk_pub``, with the genesis bindings), ``member.added``
-  (``device_cert`` under the event's ``pk_pub``), ``device.added`` (``cert`` under ``pk_pub``) and ``device.revoked``
-  (``revocation`` under ``pk_pub``). When the event introduces the key itself and ``pk_pub`` is also given they must
-  be equal. Other event types carry nothing embedded and pass.
+  :func:`orch.canon.person_signing_bytes` **and**
+  that ``actor.device == "d_" + device_id(dk_sig_pub)``. ``context.cert``
+  may be the signed object ``{"o", "sig"}`` or its ``o``. The certificate's own signature, scopes, expiry and
+  revocation at the event's position are ``model/``'s.
+* ``verify_embedded`` is self-contained for ``workspace.created`` (the one genesis implementation,
+  :func:`orch.identity.members.check_genesis`, in F1 §5.11 order, including both signatures) and ``member.added`` (the
+  event carries ``pk_pub``). ``device.added`` and ``device.revoked`` need the person's key, and ``device.revoked`` also
+  the revoked device's certificate, which only the replayed state has: pass them as the keyword-only ``pk_pub`` and
+  ``device_cert``. Without them these types are ``False``.
 """
 
 from __future__ import annotations
@@ -45,12 +42,11 @@ from typing import Any
 from orch import canon, crypto
 
 from . import members
-from .certs import check_cert, check_delegation, delegation_binds
 from .errors import Refused
 
 __all__ = ["CryptoVerifier"]
 
-_EMBEDDED_TYPES = ("workspace.created", "member.added", "device.added", "device.revoked")
+_KNOWN = ("workspace.created", "member.added", "device.added", "device.revoked")
 
 
 def _cert_o(cert: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -58,19 +54,14 @@ def _cert_o(cert: Mapping[str, Any]) -> Mapping[str, Any]:
     return inner if isinstance(inner, Mapping) and "dk_sig_pub" in inner else cert
 
 
+def _key(value: object) -> bytes:
+    if isinstance(value, str):
+        value = crypto.unb64u(value, crypto.PUB_LEN)
+    return crypto.validate_public_key(value)
+
+
 class CryptoVerifier:
-    def __init__(self, workspace_id: str, wsk_pub: bytes | str | None = None, *, log: str | None = None) -> None:
-        self.workspace_id = workspace_id
-        self.wsk_pub = crypto.unb64u(wsk_pub, crypto.PUB_LEN) if isinstance(wsk_pub, str) else wsk_pub
-        if self.wsk_pub is not None:
-            crypto.validate_public_key(self.wsk_pub)
-        self.log = log
-
-    def for_log(self, log: str) -> CryptoVerifier:
-        """The same verifier bound to one log (``"workspace"`` or a ticket uid)."""
-        return CryptoVerifier(self.workspace_id, self.wsk_pub, log=log)
-
-    # -- person ---------------------------------------------------------------------------------------------------
+    __slots__ = ()
 
     def verify_person(self, event: Mapping[str, Any], context: Any) -> bool:
         try:
@@ -85,66 +76,51 @@ class CryptoVerifier:
         except (crypto.EncodingError, crypto.CryptoError, canon.HashError, KeyError, TypeError, AttributeError):
             return False
 
-    # -- host -----------------------------------------------------------------------------------------------------
-
-    def verify_host(self, event: Mapping[str, Any]) -> bool:
+    def verify_host(
+        self, event: Mapping[str, Any], *, log: str, wsk_pub: bytes | None, workspace_id: str | None = None
+    ) -> bool:
         try:
-            log = self.log
-            if log is None:
-                if "ws_seq" in event:
+            if wsk_pub is None:
+                if event.get("type") != "workspace.created" or log != "workspace":
                     return False
-                log = "workspace"
-            wsk = self.wsk_pub
-            if wsk is None:
-                if event.get("type") != "workspace.created":
-                    return False
-                wsk = crypto.validate_public_key(crypto.unb64u(event["wsk_pub"], crypto.PUB_LEN))
+                wsk_pub = _key(event["wsk_pub"])
+                workspace_id = event["workspace_id"]  # the genesis names its own workspace
+            else:
+                wsk_pub = _key(wsk_pub)
+                if workspace_id is None:
+                    workspace_id = event.get("workspace_id")  # only events that carry one (workspace log)
             sig = crypto.unb64u(event["host_sig"], crypto.SIG_LEN)
-            return crypto.verify(wsk, sig, canon.host_signing_bytes(self.workspace_id, log, event))
+            return crypto.verify(wsk_pub, sig, canon.host_signing_bytes(workspace_id, log, event))
         except (crypto.EncodingError, crypto.CryptoError, canon.HashError, KeyError, TypeError, AttributeError):
             return False
 
-    # -- embedded objects -----------------------------------------------------------------------------------------
-
-    def verify_embedded(self, event: Mapping[str, Any], pk_pub: str | None) -> bool:
+    def verify_embedded(
+        self,
+        event: Mapping[str, Any],
+        *,
+        pk_pub: bytes | str | None = None,
+        device_cert: Mapping[str, Any] | None = None,
+    ) -> bool:
         try:
             etype = event.get("type")
-            if etype not in _EMBEDDED_TYPES:
-                return True
-            given = crypto.validate_public_key(crypto.unb64u(pk_pub, crypto.PUB_LEN)) if pk_pub is not None else None
-            if etype == "workspace.created":
-                return self._embedded_genesis(event, given)
-            introduced = event.get("pk_pub") if etype == "member.added" else None
-            if introduced is not None:
-                key = crypto.validate_public_key(crypto.unb64u(introduced, crypto.PUB_LEN))
-                if given is not None and given != key:
-                    return False
-            else:
-                key = given
-            if key is None:
+            if type(etype) is not str or etype not in _KNOWN:
                 return False
+            given = _key(pk_pub) if pk_pub is not None else None
+            if etype == "workspace.created":
+                r = members.check_genesis(event)
+                return given is None or given == r["owner_pk_pub"]
             if etype == "member.added":
+                introduced = _key(event["pk_pub"])
                 members.check_member_added(event)
-            elif etype == "device.added":
-                members.check_device_added(event, key)
+                return given is None or given == introduced
+            if given is None:
+                return False
+            if etype == "device.added":
+                members.check_device_added(event, given)
             else:
-                members.check_device_revoked(event, key)
+                if device_cert is None:
+                    return False
+                members.check_device_revoked(event, given, _cert_o(device_cert))
             return True
         except (Refused, crypto.EncodingError, crypto.CryptoError, KeyError, TypeError, AttributeError):
             return False
-
-    def _embedded_genesis(self, event: Mapping[str, Any], given: bytes | None) -> bool:
-        owner = event["owner"]
-        key = crypto.validate_public_key(crypto.unb64u(owner["pk_pub"], crypto.PUB_LEN))
-        if given is not None and given != key:
-            return False
-        pid = crypto.person_id(key).hex()
-        d_o = check_delegation(event["delegation"], key)
-        delegation_binds(d_o, workspace_id=event["workspace_id"], wsk_pub_b64u=event["wsk_pub"], owner_person_id=pid)
-        c_o = check_cert(event["device_cert"], key)
-        return (
-            owner["person"] == "p_" + pid
-            and c_o["person_id"] == pid
-            and event["actor"]["device"] == "d_" + c_o["device_id"]
-            and event["workspace_id"] == self.workspace_id
-        )

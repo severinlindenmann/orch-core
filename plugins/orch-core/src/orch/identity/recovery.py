@@ -2,7 +2,8 @@
 
 **Wordlist and checksum (decision; the docs say only "24-word code").** BIP-39 English (2048 words, vendored in
 ``_wordlist.py`` with its SHA-256 pinned by a test): 24 words = 256 bits of entropy plus the BIP-39 8-bit checksum
-(first byte of SHA-256 of the entropy). A mistyped word or a swap is caught by the checksum before any key is derived.
+(first byte of SHA-256 of the entropy). A mistyped word or a swap is almost always (255 in 256) caught by
+the 8-bit checksum before any key is derived; the 256 bits of entropy, not the checksum, protect the key.
 
 **Normalisation.** NFKD, lower case, split on whitespace, rejoined with single spaces. Only listed words are accepted
 (so the normalised text is the same for everyone who types the same words).
@@ -94,8 +95,13 @@ def check_recovery_code(code: str) -> str:
     return text
 
 
-def derive_person_scalar(code: str, *, _kdf_n: int = RECOVERY_KDF["n"]) -> int:
-    """The P-256 scalar of a code. ``_kdf_n`` is a test seam (fast structural tests); production always uses 2^17."""
+def derive_person_scalar(code: str) -> int:
+    """The P-256 scalar of a code (production parameters, N = 2^17)."""
+    return _scalar(code, RECOVERY_KDF["n"])
+
+
+def _scalar(code: str, _kdf_n: int) -> int:
+    """Test seam: the derivation at another N (fast structural tests). Never call outside tests."""
     text = check_recovery_code(code)
     okm = Scrypt(
         salt=PERSON_KEY_SALT, length=RECOVERY_KDF["dklen"], n=_kdf_n, r=RECOVERY_KDF["r"], p=RECOVERY_KDF["p"]
@@ -103,6 +109,11 @@ def derive_person_scalar(code: str, *, _kdf_n: int = RECOVERY_KDF["n"]) -> int:
     return int.from_bytes(okm, "big") % (crypto.P256_N - 1) + 1
 
 
-def derive_person_key(code: str, *, _kdf_n: int = RECOVERY_KDF["n"]) -> EllipticCurvePrivateKey:
+def derive_person_key(code: str) -> EllipticCurvePrivateKey:
     """The person key ``PK`` of a recovery code. Same code, same key, same ``person_id``."""
-    return crypto.private_key_from_scalar(derive_person_scalar(code, _kdf_n=_kdf_n))
+    return crypto.private_key_from_scalar(derive_person_scalar(code))
+
+
+def _key_at(code: str, n: int) -> EllipticCurvePrivateKey:
+    """Test seam (see :func:`_scalar`)."""
+    return crypto.private_key_from_scalar(_scalar(code, n))

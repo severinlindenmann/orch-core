@@ -36,6 +36,7 @@ def ev(**over):
 
 
 def code(role="member", e=None, **kw):
+    kw.setdefault("human_only", set())
     with pytest.raises(Refused) as x:
         check_grant_issued(e or ev(), role=role, at=kw.pop("at", AT), **kw)
     return x.value.code
@@ -98,18 +99,20 @@ def test_timestamps():
 
 @pytest.mark.parametrize("role", ["owner", "maintainer"])
 def test_owner_and_maintainer_terms(role):
-    check_grant_issued(ev(scope="all", hours=24, expires_at="2026-10-11T10:00:00Z"), role=role, at=AT)
-    check_grant_issued(ev(hours=1, expires_at="2026-10-10T11:00:00Z"), role=role, at=AT)
+    check_grant_issued(ev(scope="all", hours=24, expires_at="2026-10-11T10:00:00Z"), role=role, at=AT, human_only=set())
+    check_grant_issued(ev(hours=1, expires_at="2026-10-10T11:00:00Z"), role=role, at=AT, human_only=set())
     assert code(role, ev(hours=25, expires_at="2026-10-11T11:00:00Z")) == "grant.hours"
     assert code(role, ev(hours=0, expires_at=AT)) == "grant.hours"
 
 
 def test_member_terms():
-    check_grant_issued(ev(), role="member", at=AT)
-    check_grant_issued(ev(hours=1, expires_at="2026-10-10T11:00:00Z"), role="member", at=AT)
+    check_grant_issued(ev(), role="member", at=AT, human_only=set())
+    check_grant_issued(ev(hours=1, expires_at="2026-10-10T11:00:00Z"), role="member", at=AT, human_only=set())
     assert code("member", ev(scope="all")) == "grant.scope"
     assert code("member", ev(hours=9, expires_at="2026-10-10T19:00:00Z")) == "grant.hours"
-    check_grant_issued(ev(hours=9, expires_at="2026-10-10T19:00:00Z"), role="member", at=AT, grant_hours=12)
+    check_grant_issued(
+        ev(hours=9, expires_at="2026-10-10T19:00:00Z"), role="member", at=AT, grant_hours=12, human_only=set()
+    )
     assert code("member", ev(hours=9, expires_at="2026-10-10T19:00:00Z"), grant_hours=8) == "grant.hours"
 
 
@@ -124,7 +127,9 @@ def test_structure_checks():
     assert code("owner", ev(hours=True)) == "grant.hours"
     assert code("owner", ev(expires_at="2026-10-10T18:00:01Z")) == "grant.expires_at"
     assert code("owner", ev(issued_at="2026-10-10T10:05:01Z", expires_at="2026-10-10T18:05:01Z")) == "grant.issued_at"
-    check_grant_issued(ev(issued_at="2026-10-10T10:05:00Z", expires_at="2026-10-10T18:05:00Z"), role="owner", at=AT)
+    check_grant_issued(
+        ev(issued_at="2026-10-10T10:05:00Z", expires_at="2026-10-10T18:05:00Z"), role="owner", at=AT, human_only=set()
+    )
     assert code("owner", ev(verbs="all")) == "grant.verbs"
     assert code("owner", ev(verbs=[])) == "grant.verbs"
     assert code("owner", ev(verbs=["a", "a"])) == "grant.verbs"
@@ -145,3 +150,17 @@ def test_revocation_terms():
     with pytest.raises(Refused) as e:
         check_grant_revoker(revoker_role="viewer", revoker="p_a", issuer="p_a")
     assert e.value.code == "grant.revoke_role"
+
+
+def test_human_only_is_required():
+    with pytest.raises(TypeError):
+        check_grant_issued(ev(), role="owner", at=AT)  # type: ignore[call-arg]
+
+
+def test_verbs_match_exactly_and_segments_of_human_only_operations_are_refused():
+    ho = {"gate.approve", "verdict.give"}
+    assert code("owner", ev(verbs=["gate"]), human_only=ho) == "grant.verbs"  # a segment covering gate.approve
+    assert code("owner", ev(verbs=["gate.approve"]), human_only=ho) == "grant.verbs"
+    check_grant_issued(ev(verbs=["gate.status"]), role="owner", at=AT, human_only=ho)
+    assert code("owner", ev(verbs=["gate.status"]), human_only=ho, operations={"claim.take"}) == "grant.verbs"
+    check_grant_issued(ev(verbs=["claim.take"]), role="owner", at=AT, human_only=ho, operations={"claim.take"})

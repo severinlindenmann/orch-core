@@ -198,7 +198,7 @@ export function ArtifactsPage() {
             {view === 'grid' ? (
               <ArtifactGrid items={data.items} members={members} current={currentKey} onPreview={preview} addonPage={addonPage} />
             ) : (
-              <ArtifactList items={data.items} members={members} current={currentKey} onPreview={preview} addonPage={addonPage} compact={split || pageWidth < LIST_FULL_MIN} />
+              <ArtifactList items={data.items} members={members} current={currentKey} onPreview={preview} addonPage={addonPage} compact={split || (pageWidth > 0 && pageWidth < LIST_FULL_MIN)} />
             )}
           </div>
           {split && (current ? <ArtifactPane item={current} members={members} onClose={closePane} /> : <EmptyPane />)}

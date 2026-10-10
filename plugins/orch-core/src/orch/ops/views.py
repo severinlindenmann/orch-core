@@ -51,6 +51,10 @@ def open_gate(view: Any) -> str | None:
 
 def next_hint(view: Any, session: str | None = None) -> str:
     """The ``next:`` line after a write: ids and commands only, never ticket text."""
+    if view.status == "testing":
+        return "orch wait"  # submitted: a person decides now
+    if view.status in ("done", "closed"):
+        return "orch next"
     if any(q.blocking for q in open_questions(view)):
         return "orch wait"
     t = next_task(view, session)

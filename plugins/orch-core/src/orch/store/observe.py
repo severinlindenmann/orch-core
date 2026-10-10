@@ -40,7 +40,17 @@ def git(path: Path, *args: str) -> str | None:
     """``git -C path ...`` on a scrubbed environment; stdout stripped, ``None`` if git fails or is missing."""
     try:
         done = subprocess.run(
-            ["git", "-c", "core.fsmonitor=false", "-C", str(path), *args],
+            [
+                "git",
+                "-c",
+                "core.fsmonitor=false",
+                "-c",
+                "core.attributesFile=/dev/null",
+                "--no-optional-locks",
+                "-C",
+                str(path),
+                *args,
+            ],
             capture_output=True,
             text=True,
             timeout=_TIMEOUT,
@@ -62,6 +72,22 @@ def head(path: Path) -> str | None:
 def porcelain(path: Path) -> str | None:
     """``git status --porcelain`` (empty: a clean tree, untracked files count); ``None`` if git fails."""
     return git(path, "status", "--porcelain=v1", "--untracked-files=normal")
+
+
+def dirty(path: Path) -> str | None:
+    """Best effort: what a person would call uncommitted work. ``git status --porcelain`` (untracked files included)
+    plus
+    the files git is told to ignore changes of (``skip-worktree`` and ``assume-unchanged``, from ``git ls-files -v``).
+    Empty means clean as far as this can tell; ``None`` means git could not be asked. It cannot see everything (files
+    matched by ``.gitignore`` or ``info/exclude``, a ``filter`` in the repository's own config): a receipt is
+    attested by
+    the agent's environment anyway (F1 10.7)."""
+    status = porcelain(path)
+    listing = git(path, "ls-files", "-v")
+    if status is None or listing is None:
+        return None
+    hidden = [ln[2:] for ln in listing.splitlines() if ln[:1] == "S" or ln[:1].islower()]
+    return status + ("\n" if status and hidden else "") + "\n".join(f"hidden change flag: {h}" for h in hidden)
 
 
 def repo_path(root: Path, repos: Mapping[str, str], name: str) -> Path | None:
@@ -90,34 +116,67 @@ def repo_identity(path: Path, name: str) -> str:
         return f"local:{name}"
 
 
-def observe(store: Any, ref: str) -> list[dict[str, Any]]:
+def observe(store: Any, ref: str, problems: list[str] | None = None) -> list[dict[str, Any]]:
     """Append the ``branch.pushed`` (host) events the ticket ``ref`` is owed: for each linked repo that has a branch in
     ``links.branches``, compare the branch head in git with the source-list entry and append when they differ (the first
-    sighting has ``before: null``). Returns the events appended. A read-only store, a repo without a working copy and a
-    branch git does not know are skipped. Call it before ``submit``, ``show`` and ``wait`` (and a person's approval
-    prompt, C7), so what is shown and decided is the code that is there."""
+    sighting has ``before: null``). When an append voids ``verify`` or ``code`` approvals, the host's
+    ``gate.invalidated`` (``new_commits``) follows, so a waiting agent hears of it. Returns the events appended.
+
+    git runs **without the workspace lock** (a slow or hostile repository cannot hold every writer up); only the append
+    takes it, and the model re-checks ``before`` there (a head that moved meanwhile is refused and looked at next time).
+    A read-only store, a repo without a working copy, a branch git does not know and a ref that names no commit object
+    are skipped; the last is added to ``problems`` (never signed). Call it before ``submit``, ``show`` and ``wait`` (and
+    a person's approval prompt, C7). In P1 the source list is only as trustworthy as the working copy the agent can
+    write."""
+    from .errors import StoreError
+
     if not store.can_write:
         return []
     view = store.ticket(ref)
     if view is None or view.status in ("closed",):
         return []
     links = view.fields["links"]
-    out = []
-    for name in links["repos"]:
+    wanted = []
+    for name in links["repos"]:  # git, with no lock held
         branch = links["branches"].get(name)
         path = repo_path(store.root, store.state.workspace.repos, name)
         if not branch or path is None or not path.is_dir():
             continue
         ref_name = f"refs/heads/{branch}"
-        sha = git(path, "rev-parse", "--verify", "-q", ref_name)
-        if not sha or not _HEX.fullmatch(sha):
+        if git(path, "rev-parse", "--verify", "-q", ref_name) is None:
             continue
-        rid = repo_identity(path, name)
+        sha = git(path, "rev-parse", "--verify", "-q", f"{ref_name}^{{commit}}")
+        if not sha or not _HEX.fullmatch(sha):
+            if problems is not None:
+                problems.append(f"{name}: {ref_name} names no commit object; nothing was recorded")
+            continue
+        wanted.append((name, ref_name, sha, repo_identity(path, name)))
+    out = []
+    for name, ref_name, sha, rid in wanted:
+        view = store.ticket(ref) or view
         cur = next((dict(e) for e in view.source_list if e["repo"] == rid), None)
         if cur is not None and cur["ref"] == ref_name and cur["sha"] == sha:
             continue
         before = {"repo_id": cur["repo"], "ref": cur["ref"], "sha": cur["sha"]} if cur else None
+        counting = {
+            g: {d.id for d in view.gates[g].decisions if d.counting} for g in ("verify", "code") if g in view.gates
+        }
         payload = {"repo_name": name, "repo_id": rid, "ref": ref_name, "sha": sha, "before": before}
-        out.append(store.host_append("branch.pushed", view.uid, payload))
+        try:
+            out.append(store.host_append("branch.pushed", view.uid, payload))
+        except StoreError:  # the head moved since we looked (or the ticket no longer takes it): next time
+            continue
+        view = store.ticket(ref) or view
+        for g, ids in counting.items():
+            voided = sorted(d.id for d in view.gates[g].decisions if not d.counting and d.id in ids)
+            if voided:
+                try:
+                    out.append(
+                        store.host_append(
+                            "gate.invalidated", view.uid, {"gate": g, "cause": "new_commits", "voided": voided}
+                        )
+                    )
+                except StoreError:
+                    pass
         view = store.ticket(ref) or view
     return out

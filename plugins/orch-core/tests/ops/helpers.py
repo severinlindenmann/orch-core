@@ -220,10 +220,10 @@ def fenced(out: str) -> str:
     return "\n".join("\n".join(b[1]) for b in frames(out))
 
 
-def wait_for(cli: Any, kind: str, *, tries: int = 6) -> Run:
+def wait_for(cli: Any, kind: str, *, tries: int = 6, ref: str | None = None) -> Run:
     """``wait`` until it hands over a decision of this kind (earlier ones are delivered first, one per call)."""
     for _ in range(tries):
-        r = cli.j("wait", "--timeout", "2")
+        r = cli.j("wait", "--timeout", "2", *(["--ref", ref] if ref else []))
         if r.code in (0, 3) and r.doc["ok"] and r.data["kind"] == kind:
             return r
         if r.code not in (0, 3) or r.data["kind"] == "timeout":

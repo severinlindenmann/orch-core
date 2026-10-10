@@ -26,6 +26,7 @@ __all__ = [
     "names",
     "register",
     "resolve",
+    "registry_emits",
     "verb_events",
 ]
 
@@ -120,9 +121,16 @@ def resolve(words: list[str] | tuple[str, ...]) -> Operation | None:
 
 
 def verb_events() -> dict[str, frozenset[str]]:
-    """Operation name -> the event types it emits: what a grant's ``verbs`` list allows (F1 10.1, exact names).
-    Passed to the model, which stays free of the registry. ``task.done`` includes ``artifact.added`` (its receipt)."""
-    return {op.name: frozenset(op.emits) for op in all()}
+    """The frozen table (``orch.model.emits``) that grant verbs are judged by; the live registry must equal it
+    (a test checks), so replay never depends on a release's handlers."""
+    from orch.model.emits import CURRENT
+
+    return dict(CURRENT)
+
+
+def registry_emits() -> dict[str, frozenset[str]]:
+    """What the registry says each operation emits (operations that emit nothing left out), for the test above."""
+    return {op.name: frozenset(op.emits) for op in all() if op.emits}
 
 
 def iter_groups() -> Iterator[tuple[str, list[Operation]]]:

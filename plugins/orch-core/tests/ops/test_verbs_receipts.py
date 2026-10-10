@@ -106,7 +106,7 @@ def test_a_dirty_tree_gives_a_receipt_without_a_commit(ws, cli, tmp_path):
     assert cli.j("task", "done", "T1", "--run").err_code == "verify.failed"  # the committed code fails
     (repo / "impl.txt").write_text("fixed\n")  # uncommitted: passes only here
     r = cli("task", "done", "T1", "--run")
-    assert r.code == 0 and "uncommitted changes" in r.out and "not evidence" in r.out
+    assert r.code == 0 and "looks uncommitted" in r.out and "not evidence" in r.out
     rec = ws.events("1")[-1]["receipt"]
     assert rec["repo"] == "proj" and rec["commit"] is None
     assert ws.view("1").acceptance[0].evidence == ()
@@ -116,7 +116,7 @@ def test_a_dirty_tree_gives_a_receipt_without_a_commit(ws, cli, tmp_path):
     cli("task", "reopen", "T1")
     cli("task", "add", "t2", "--verify", py("print(1)"))
     r = cli("task", "done", "T2", "--run")
-    assert "uncommitted" in r.out and ws.events("1")[-1]["receipt"]["commit"] is None
+    assert "looks uncommitted" in r.out and ws.events("1")[-1]["receipt"]["commit"] is None
 
 
 def test_a_clean_tree_names_the_commit(ws, cli):

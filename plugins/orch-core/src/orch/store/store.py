@@ -351,9 +351,9 @@ class Store:
         return self._host is not None
 
     def host_append(self, typ: str, ref: str, payload: Mapping[str, Any]) -> dict[str, Any]:
-        """Append a host event of the observation kind (``branch.pushed``) to the ticket ``ref``: the one host event the
-        callers of :mod:`orch.store.observe` write. Everything else the host writes it writes by itself."""
-        if typ != "branch.pushed":
+        """Append a host event of the observation kind (``branch.pushed``, ``gate.invalidated``) to the ticket ``ref``:
+        the only host events the callers of :mod:`orch.store.observe` write. The rest the host writes by itself."""
+        if typ not in ("branch.pushed", "gate.invalidated"):
             raise StoreError("validation.event", f"{typ} is not an event a caller appends in the host's name")
         with self._locked():
             uid = self._uid_of(ref)

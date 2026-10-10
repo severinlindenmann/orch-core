@@ -32,7 +32,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         for e in evs:
             pending.append({"key": v.key, "seq": e["seq"], "decision": decisions.line(e)})
         if evs:
-            c.notes.update(v.uid, now=c.now, decided=evs[-1]["seq"])
+            c.notes.update(v.uid, now=c.now, decided=evs[-1]["seq"], keep=False)
     lines = []
     if items:
         lines += fence(

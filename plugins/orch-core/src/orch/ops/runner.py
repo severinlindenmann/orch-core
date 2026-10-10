@@ -14,8 +14,10 @@ and that the host runs it itself from P2. What orch does guarantee:
   caller adds (the variables the ticket's skills declare, D56); nothing else, so no grant, token, ``ORCH_*`` or
   ``GIT_*`` variable reaches it;
 * git is asked with a scrubbed environment (``orch.store.observe``) for the commit and the state of the tree before and
-  after: a repository whose HEAD moved is refused, and a **dirty tree** (before or after) gives ``commit: null`` (a
-  receipt for code that is not committed is never evidence, F1 section 6) and the output says so.
+  after: a repository whose HEAD moved is refused, and a tree that **looks dirty** (before or after: ``git status``
+  with untracked files, and ``skip-worktree``/``assume-unchanged`` flags) gives ``commit: null`` (a receipt without a
+  commit is not evidence, F1 section 6) and the output says so. This is best effort against accidental changes, not a
+  proof: ignored files and a ``filter`` in the repository's own config can still hide a change.
 """
 
 from __future__ import annotations
@@ -85,7 +87,7 @@ def run_verify(
         raise OrchError("verify.failed", "the verify command cannot be split into arguments") from None
     if not argv:
         raise OrchError("verify.failed", "the verify command is empty")
-    before = (observe.head(path), observe.porcelain(path)) if path is not None else (None, "")
+    before = (observe.head(path), observe.dirty(path)) if path is not None else (None, "")
     start = time.monotonic()
     sink = bytearray()
     try:
@@ -121,11 +123,13 @@ def run_verify(
     notes: list[str] = []
     commit = None
     if path is not None:
-        after = (observe.head(path), observe.porcelain(path))
+        after = (observe.head(path), observe.dirty(path))
         if after[0] != before[0]:
             raise OrchError("verify.failed", "the repository's commit changed while the command ran; run it again")
         if before[1] or after[1] or before[1] is None or after[1] is None:
-            notes.append("the working tree has uncommitted changes: the receipt names no commit and is not evidence")
+            notes.append(
+                "the working tree looks uncommitted (best effort): the receipt names no commit and is not evidence"
+            )
         else:
             commit = after[0]
     return Ran({"cmd": cmd, "exit": 0, "ms": ms, "repo": repo, "commit": commit}, out, notes)

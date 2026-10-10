@@ -83,6 +83,8 @@ def _default(c: Call, view: Any, head: int) -> tuple[list[str], dict[str, Any]]:
     events = c.store.events(view.uid, after=max(0, head - LAST))
     pending = decisions.undelivered(c, view)
     body = [f"title: {views.short(view.title, 100)}"]
+    if pending:
+        c.notes.update(view.uid, now=c.now, keep=True)  # the notes limit never evicts a ticket with an unread decision
     if pending:  # an answer or a change request the agent was not handed yet: `orch wait` hands it over
         body += [f"UNREAD {decisions.line(e)}" for e in pending[:5]]
         if len(pending) > 5:
@@ -180,7 +182,8 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     if args.get("since") is not None and not (args.get("log") or args.get("diff")):
         raise OrchError("invalid.input", "--since goes with --log or --diff")
     view = c.resolve(args.get("ref"))
-    if observe.observe(c.store, view.uid):  # a repository moved since the last look: show what is there now
+    problems: list[str] = []
+    if observe.observe(c.store, view.uid, problems):  # a repository moved: show what is there now
         view = c.resolve(args.get("ref"))
     head = c.store.head_seq(view.uid)
     name = modes[0] if modes else "default"
@@ -203,7 +206,11 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         seq=head,
         cursor=c.cursor(view.uid),
         hints=[views.next_hint(view, ctx.session)],
-        lines=lines,
+        lines=[
+            *(f"observe: {x}" for x in problems),
+            *(["session notes were damaged and reset: read what you edit first"] if c.notes.damaged else []),
+            *lines,
+        ],
     )
 
 

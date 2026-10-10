@@ -215,11 +215,27 @@ class Notes:
         self.directory = directory
         self.session = session
         self._mem: dict[str, Any] = {"tickets": {}, "claims": []}
+        self.damaged = False  # a value in the file was malformed and was treated as missing
 
     def _path(self) -> Path | None:
         if self.directory is None or not self.session:
             return None
         return self.directory / (re.sub(r"[^A-Za-z0-9_-]", "_", self.session)[:120] + ".notes.json")
+
+    @staticmethod
+    def _clean_entry(e: Any) -> dict[str, Any] | None:
+        """One ticket entry with every value checked; ``None`` if it is not an object, a bad value is dropped."""
+        if not isinstance(e, dict):
+            return None
+        out: dict[str, Any] = {}
+        for k in ("cursor", "decided", "at"):
+            if isinstance(e.get(k), int) and not isinstance(e.get(k), bool) and e[k] >= 0:
+                out[k] = e[k]
+        if isinstance(e.get("base"), dict):
+            out["base"] = {k: v for k, v in e["base"].items() if isinstance(k, str) and isinstance(v, str)}
+        if e.get("keep") is True:
+            out["keep"] = True
+        return out
 
     def _load(self) -> dict[str, Any]:
         p = self._path()
@@ -227,13 +243,26 @@ class Notes:
             return self._mem
         try:
             doc = json.loads(p.read_bytes())
-            tickets, claims = doc["tickets"], doc.get("claims", [])
-            ok = isinstance(tickets, dict) and all(isinstance(v, dict) for v in tickets.values())
-            if ok and isinstance(claims, list) and all(isinstance(c, str) for c in claims):
-                return {"tickets": tickets, "claims": claims}
-        except (OSError, ValueError, KeyError, TypeError, RecursionError):
-            pass
-        return {"tickets": {}, "claims": []}
+        except FileNotFoundError:
+            return {"tickets": {}, "claims": []}
+        except (OSError, ValueError, RecursionError):
+            self.damaged = True
+            return {"tickets": {}, "claims": []}
+        tickets_in = doc.get("tickets") if isinstance(doc, dict) else None
+        claims_in = doc.get("claims", []) if isinstance(doc, dict) else None
+        if not isinstance(tickets_in, dict) or not isinstance(claims_in, list):
+            self.damaged = True
+            return {"tickets": {}, "claims": []}
+        tickets = {}
+        for uid, e in tickets_in.items():
+            clean = self._clean_entry(e)
+            if clean is None or clean != e:
+                self.damaged = True
+            if clean is not None:
+                tickets[uid] = clean
+        claims = [c for c in claims_in if isinstance(c, str)]
+        self.damaged |= len(claims) != len(claims_in)
+        return {"tickets": tickets, "claims": claims}
 
     def _save(self, doc: dict[str, Any]) -> None:
         p = self._path()
@@ -242,9 +271,13 @@ class Notes:
             return
         from orch.store.fsio import write_atomic
 
-        t = doc["tickets"]
-        newest = sorted(t, key=lambda u: t[u].get("at", 0), reverse=True)[: self.KEEP]
-        out = {"tickets": {u: t[u] for u in newest}, "claims": doc["claims"][-self.KEEP_CLAIMS :]}
+        t, claims = doc["tickets"], doc["claims"][-self.KEEP_CLAIMS :]
+        pinned = [
+            u for u in t if u in claims or t[u].get("keep")
+        ]  # a claim or an undelivered decision is never evicted
+        rest = sorted((u for u in t if u not in pinned), key=lambda u: t[u].get("at", 0), reverse=True)
+        keep = pinned + rest[: max(0, self.KEEP - len(pinned))]
+        out = {"tickets": {u: t[u] for u in keep}, "claims": claims}
         write_atomic(p, json.dumps(out).encode(), mode=0o600, durable=False)
 
     @contextlib.contextmanager
@@ -263,7 +296,7 @@ class Notes:
             e = self._load()["tickets"].get(uid)
         if e is None:
             return {"cursor": 0, "decided": None, "base": {}}
-        return {"cursor": int(e.get("cursor", 0)), "decided": e.get("decided"), "base": dict(e.get("base", {}))}
+        return {"cursor": e.get("cursor", 0), "decided": e.get("decided"), "base": dict(e.get("base", {}))}
 
     def claims(self) -> list[str]:
         with self._locked():
@@ -286,6 +319,7 @@ class Notes:
         cursor: int | None = None,
         decided: int | None = None,
         first_decided: int = 0,
+        keep: bool | None = None,
     ) -> None:
         """Merge into the entry of ``uid``. A new entry starts with ``decided = first_decided`` (the head when the
         session first touched the ticket: older decisions were not made for it); ``decided`` only moves forward."""
@@ -301,6 +335,10 @@ class Notes:
                 e["cursor"] = max(int(e.get("cursor", 0)), cursor)
             if decided is not None:
                 e["decided"] = max(int(e["decided"]), decided)
+            if keep:
+                e["keep"] = True
+            elif keep is False:
+                e.pop("keep", None)
             e["at"] = int(now)
             self._save(doc)
 

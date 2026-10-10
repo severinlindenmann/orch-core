@@ -30,7 +30,9 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     loops, or in ``wait.timeout`` (exit 7) with ``--strict-timeout``."""
     c = Call.of(ctx, "wait")
     view = c.resolve(args.get("ref"), live_only=False)  # a done ticket ended the claim, not the wait
-    observe.observe(c.store, view.uid)
+    problems: list[str] = []
+    observe.observe(c.store, view.uid, problems)
+    notes_ = [f"observe: {x}" for x in problems]
     note = c.notes.get(view.uid)
     start = c.store.head_seq(view.uid)
     if note["decided"] is None:  # the session never touched this ticket: wait for what is decided from now on
@@ -45,10 +47,10 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
             if got is None:
                 continue
             fields, code = got
-            c.notes.update(view.uid, now=c.now, cursor=e["seq"], decided=e["seq"])
+            c.notes.update(view.uid, now=c.now, cursor=e["seq"], decided=e["seq"], keep=False)
             hints = [HINT.get(fields["kind"]) or ("orch show" if fields.get("outcome") == "pass" else "orch task next")]
             data = {**fields, "cursor": e["seq"], "next": hints[0]}
-            lines = fence(fields["text"], "decision text") if fields.get("text") else []
+            lines = notes_ + (fence(fields["text"], "decision text") if fields.get("text") else [])
             return Result(data=data, key=view.key, seq=e["seq"], cursor=e["seq"], hints=hints, lines=lines, exit=code)
         now = time.monotonic()
         if now >= deadline:
@@ -59,7 +61,9 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         raise OrchError("wait.timeout", f"no decision on {view.key} within {args.get('timeout', 540)} s")
     cursor = c.cursor(view.uid)
     data = {"kind": "timeout", "key": view.key, "cursor": cursor, "next": HINT["timeout"]}
-    return Result(data=data, key=view.key, seq=c.store.head_seq(view.uid), cursor=cursor, hints=[HINT["timeout"]])
+    return Result(
+        data=data, key=view.key, seq=c.store.head_seq(view.uid), cursor=cursor, hints=[HINT["timeout"]], lines=notes_
+    )
 
 
 OP = operation(

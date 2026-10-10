@@ -68,10 +68,11 @@ def run(
 ) -> Result:
     """The frame of an editing operation: lock, resolve the ticket, (check the claim), build, append, answer."""
     c = Call.of(ctx, op)
+    problems: list[str] = []
+    if observe_repos:  # git is read before the lock is taken: only the append of what it found holds a writer up
+        observe.observe(c.store, c.resolve(args.get(ref_key), live_only=live_only).uid, problems)
     with c.locked():
         view = c.resolve(args.get(ref_key), live_only=live_only)
-        if observe_repos and observe.observe(c.store, view.uid):  # judge the code that is there now
-            view = c.resolve(args.get(ref_key), live_only=live_only)
         if claim:
             c.require_claim(view)
         p = c.projection(view)
@@ -79,7 +80,9 @@ def run(
         done = p.commit()
         seq = done[-1].event["seq"] if done else p.last_seq
         hints = out.hints if out.hints is not None else [views.next_hint(p.last_view, ctx.session)]
-        return c.result(p.last_view, out.data, seq=seq, hints=hints, lines=out.lines)
+        return c.result(
+            p.last_view, out.data, seq=seq, hints=hints, lines=[*(f"observe: {x}" for x in problems), *out.lines]
+        )
 
 
 def unknown_task(view: Any, tid: str) -> OrchError:

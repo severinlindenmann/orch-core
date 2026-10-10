@@ -61,9 +61,8 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     body = "\n".join(f"{v.key} {v.status} {v.fields['priority']}: {views.short(v.title, 80)}" for v in rows)
     lines = fence(body, "tickets") if rows else ["no tickets"]
     if extra:  # only tickets the actor can see are counted: "N+" when the look was cut short
-        lines.append(
-            f"+{extra}{'' if exhausted else '+'} more (orch list --limit N, or narrow it with --status or --label)"
-        )
+        count = f"+{extra} more" if exhausted else f"{extra} or more not shown"
+        lines.append(f"{count} (orch list --limit N, or narrow it with --status or --label)")
     return Result(
         data={"count": len(rows), "tickets": tickets},
         hints=[f"orch show {rows[0].key}" if rows else "orch new TITLE"],

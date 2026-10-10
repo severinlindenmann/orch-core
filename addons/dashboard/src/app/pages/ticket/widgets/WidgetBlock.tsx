@@ -132,16 +132,22 @@ export function WidgetBlock({
   return <Drawn block={block} spec={spec} res={res?.ok ? res : undefined} agentHtml={agentHtml} prototype={prototype} />
 }
 
-/** The widget's content. The frame is validated like any addon frame node and keeps `sandbox="allow-scripts"` only. */
+/** The widget's content. The frame is validated like any addon frame node; only a core template runs scripts (`sandbox="allow-scripts"`). */
 function Body({ spec, res, agentHtml, height }: { spec: WidgetSpec; res: Extract<Resolved, { ok: true }> | undefined; agentHtml: boolean; height: number }): ReactNode {
   const framed = spec.layer !== 'type'
   if (framed && !agentHtml)
     return <p className="rounded-md border border-dashed border-border px-3 py-2 text-[12px] text-text-muted">Agent HTML is off in this workspace, so this widget is not drawn. {spec.caption ?? 'No text alternative given.'}</p>
   if (framed && res) {
-    // The document is built for the height of the frame it sits in (its chart cap is that fixed number, see frameDocument).
     const h = Math.min(1200, Math.max(80, height))
+    // A one-off page is agent HTML: drawn inert (no scripts, sanitized: security review #1), at the body's fixed height.
+    if (spec.layer !== 'widget') {
+      const page = frameNode.safeParse({ type: 'frame', title: `Sandboxed preview · ${res.layerLabel}`, html: res.page, height: h })
+      return page.success ? <FrameNode node={page.data} fallback={<AddonUnavailable addon="widgets" />} /> : <AddonUnavailable addon="widgets" />
+    }
+    // A template is core's own pinned page: the one frame that runs scripts and fits its height. The document is built
+    // for the height of the frame it sits in (its chart cap is that fixed number, see frameDocument).
     const node = frameNode.safeParse({ type: 'frame', title: `Sandboxed preview · ${res.layerLabel}`, html: frameDocument(res.page, res.data, h), height: h })
-    return node.success ? <FrameNode node={node.data} fallback={<AddonUnavailable addon="widgets" />} fitContent /> : <AddonUnavailable addon="widgets" />
+    return node.success ? <FrameNode node={node.data} fallback={<AddonUnavailable addon="widgets" />} coreTemplate fitContent /> : <AddonUnavailable addon="widgets" />
   }
   return <CoreWidget spec={spec} />
 }

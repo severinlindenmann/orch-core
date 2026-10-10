@@ -7,7 +7,7 @@ import { FrameNode, QUIET_MS, rememberedFit } from './FrameNode'
 const node = { type: 'frame' as const, title: 'Sandboxed preview', html: '<p>x</p>', height: 280 }
 
 function setup() {
-  const r = render(<FrameNode node={node} fallback={<p>gone</p>} fitContent />)
+  const r = render(<FrameNode node={node} fallback={<p>gone</p>} coreTemplate fitContent />)
   const frame = r.container.querySelector('iframe')!
   // jsdom does not lay out: give the frame a 1 px border top and bottom, as the `border` class does in a browser.
   Object.defineProperty(frame, 'offsetHeight', { configurable: true, get: () => parseInt(frame.style.height) || 280 })
@@ -56,17 +56,17 @@ describe('SandboxFrame: remembered height (G4)', () => {
     expect(first.frame.style.height).toBe('176px')
     expect(rememberedFit(`<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:">${node.html}`)).toBe(176)
     // The same document on another visit: its first frame already has the fitted height.
-    const again = render(<FrameNode node={node} fallback={<p>gone</p>} fitContent />)
+    const again = render(<FrameNode node={node} fallback={<p>gone</p>} coreTemplate fitContent />)
     expect(again.container.querySelector('iframe')!.style.height).toBe('176px')
     // Another document starts at node.height as before.
-    const other = render(<FrameNode node={{ ...node, html: '<p>y</p>' }} fallback={<p>gone</p>} fitContent />)
+    const other = render(<FrameNode node={{ ...node, html: '<p>y</p>' }} fallback={<p>gone</p>} coreTemplate fitContent />)
     expect(other.container.querySelector('iframe')!.style.height).toBe('280px')
   })
 
   it('a frame that is not fitted ignores the memory', async () => {
     const first = setup()
     await first.post({ orch: 'size', height: 174 })
-    const plain = render(<FrameNode node={node} fallback={<p>gone</p>} />)
+    const plain = render(<FrameNode node={node} fallback={<p>gone</p>} coreTemplate />)
     expect(plain.container.querySelector('iframe')!.style.height).toBe('280px')
   })
 })

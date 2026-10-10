@@ -131,7 +131,7 @@ describe('G4 empty approvals and content', () => {
     await user.click(await screen.findByRole('button', { name: 'Preview reconciliation-demo.html' }, T))
     const sheet = await screen.findByRole('dialog', {}, T)
     await waitFor(() => expect(sheet.querySelector('iframe')).toBeTruthy(), T)
-    expect(sheet.querySelector('iframe')).toHaveAttribute('sandbox', 'allow-scripts')
+    expect(sheet.querySelector('iframe')).toHaveAttribute('sandbox', '') // agent HTML is inert (security review #1)
     expect(sheet).toHaveTextContent('Sandboxed preview')
     await user.click(within(sheet).getByRole('button', { name: 'View source' }))
     expect(sheet.querySelector('iframe')).toBeNull()

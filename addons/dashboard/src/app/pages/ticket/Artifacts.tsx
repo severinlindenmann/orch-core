@@ -4,7 +4,6 @@ import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { addonActive } from '@/api/addons'
 import { workspaceOfTicket } from '@/api/workspaces'
-import { frameDocument } from '@/api/widgetTemplates'
 import { FrameNode } from '@/addon-ui/FrameNode'
 import { frameNode } from '@/addon-ui/nodes'
 import { Button, buttonVariants } from '@/components/ui/button'
@@ -173,7 +172,8 @@ const isHtmlDocument = (a: Artifact) => DOCUMENT_KINDS.includes(a.kind) && /\.ht
  */
 function HtmlViewer({ a, agentHtml }: { a: Artifact; agentHtml: boolean }) {
   const [source, setSource] = useState(false)
-  const node = frameNode.safeParse({ type: 'frame', title: `Sandboxed preview of ${a.name}`, html: frameDocument(a.preview!, {}, 520), height: 520 })
+  // Agent HTML is drawn inert (no scripts, sanitized: security review #1), at a fixed height the person can drag.
+  const node = frameNode.safeParse({ type: 'frame', title: `Sandboxed preview of ${a.name}`, html: a.preview!, height: 520 })
   const framed = agentHtml && !source && node.success
   return (
     <div className={cn('space-y-2', agentHtml && 'rounded-lg border p-2', agentHtml && addonHairline)} data-addon={agentHtml ? 'widgets' : undefined}>

@@ -179,12 +179,12 @@ def _read_secret(r: int, w: int, prompt: str) -> str:
     """Write ``prompt`` to the terminal and read one line with echo off."""
     import termios
 
-    os.write(w, prompt.encode("utf-8", "replace"))
     old = termios.tcgetattr(r)
     new = old[:]
     new[3] &= ~termios.ECHO
-    termios.tcsetattr(r, termios.TCSAFLUSH, new)
+    termios.tcsetattr(r, termios.TCSAFLUSH, new)  # echo off before the prompt: fast input is neither shown nor flushed
     try:
+        os.write(w, prompt.encode("utf-8", "replace"))
         buf = bytearray()
         while True:
             c = os.read(r, 1)

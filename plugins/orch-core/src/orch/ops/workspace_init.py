@@ -114,13 +114,13 @@ class Terminal:
 
         fd = self._open()
         try:
-            os.write(fd, prompt.encode("utf-8"))
             old = termios.tcgetattr(fd)
-            if not echo:
+            if not echo:  # echo off first, then the prompt: input typed on seeing it is neither shown nor flushed
                 new = old[:]
                 new[3] &= ~termios.ECHO
                 termios.tcsetattr(fd, termios.TCSAFLUSH, new)
             try:
+                os.write(fd, prompt.encode("utf-8"))
                 buf = bytearray()
                 while True:
                     c = os.read(fd, 1)

@@ -528,7 +528,7 @@ def test_init_through_main_with_the_cli_deciding_presence(where, term, passphras
     assert term.code not in out.getvalue() + err.getvalue()
     assert (where["root"] / "config.json").is_file()
     code = main(["init", "--prefix", "DEMO"], env=env, stdout=io.StringIO(), stderr=err)
-    assert code == 2 and "already exists" in err.getvalue()
+    assert code == 5 and "already exists" in err.getvalue()
     env["ORCH_GRANT"] = "gr_01J9ZP0000000000000000000A." + "A" * 43
     other = where["root"].parent / "second"
     other.mkdir()

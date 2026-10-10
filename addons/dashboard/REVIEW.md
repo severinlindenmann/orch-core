@@ -202,7 +202,7 @@ The overlay and the quick ticket.
 
 The other settings tabs.
 
-- [ ] **Addon settings drawer** — Addons → Settings on a row opens a drawer; Save closes it. Page: `/settings/addons`.
+- [ ] **Addon settings** — Addons → Settings on a row expands its form beneath the row; Save closes it. Page: `/settings/addons`.
 - [ ] **Members** — The combobox; an unknown email is refused inline. Page: `/settings/members`.
 - [ ] **Gates** — Policy and "Affects N open tickets". Page: `/settings/gates`.
 - [ ] **Relay & devices** — Pair a device (simulated QR and code). Page: `/settings/relay`.

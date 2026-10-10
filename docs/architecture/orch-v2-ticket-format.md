@@ -374,7 +374,7 @@ agent; **D** an addon; **H** the host only. Types marked D58–D60 are new with 
 | `edit.external` | H | `sections`: sections; `voided_gates`: [gate]; `normalised`: bool | A `body.md` change the host didn't write (§5.8). `voided_gates` and `normalised` are derived. Not followed by `gate.invalidated`. |
 | `projection.repaired` | H | `path`: str; `cause`: `external_edit`, `projection_mismatch` or `keys_mismatch`; `fields?`: [path] | Both logs. |
 | `restore` | P | `from_seq`: int; `head`: hash; `abandoned`: {`seq`: int, `head`: hash} or null; `abandoned_decisions`: [event id]; `reason`: str | Both logs. Owner only (§5.10). |
-| `invalid.acknowledged` | P | `seq`: int; `head`: hash; `reason?`: str | Both logs. Owner only. Names an event that failed authorization (§5.11); lifts the decision freeze, keeps the event absent. |
+| `invalid.acknowledged` | P | `invalid_seq`: int; `invalid_head`: hash; `reason?`: str | Both logs. Owner only. Names an event that failed authorization (§5.11); lifts the decision freeze, keeps the event absent. |
 
 #### 5.4.2 Workspace log
 
@@ -484,7 +484,7 @@ the field it belongs to; no code looks a hash up by value alone.
 ### 5.7 Gates
 
 **Gates.** The core has four, in this order: `requirements`, `plan`, `verify`, `code`. Addons can't add gates;
-their fields and sections join one of these (`binds`).
+their fields and sections join one of these (`binds`). In `binds`, a section is always named in full as `<addon>.<token>`.
 
 **Policy** (workspace default and ticket override). Every policy object, workspace or override, has all five keys:
 
@@ -505,7 +505,7 @@ their fields and sections join one of these (`binds`).
   even when it names every type). An override can never end up looser, even after a later workspace change.
   "No eligible approver" is judged on tokens, not persons: an override that leaves no token is refused; if a later
   workspace change empties the set, the gate is blocked (`gate.no_eligible`) until someone fixes the policy.
-- **Canonical form** for hashing: all five keys, `approvers` and `not` sorted and de-duplicated.
+- **Canonical form** for hashing: all five keys, `approvers` and `not` sorted and de-duplicated, `applies` a non-empty list. Policies and people lists are stored in events and files **in this canonical form** (people lists sorted and de-duplicated too); a non-canonical one is refused at append. Hashing applies the canonical form as well, as a safeguard; every other list this document calls "sorted" (for example `source_sha`, `prior.approvals`) must already be sorted and is refused otherwise. "Sorted" always means by Unicode code point (equal to UTF-8 byte order).
 - For `code`, `not` always includes `assignees` and `independent` is `true`; the host refuses a policy without them
   (D59).
 
@@ -598,7 +598,14 @@ in `links.branches` before `submit`.
   `ssh://`/scp-like forms map to `https://host[:port]/path`, keeping every port except 443 (https) and 22 (ssh),
   userinfo (`user:token@`) always removed, host lower-case and nothing else changed, one trailing `.git` and `/`
   removed. Anything else (no remote, `file://`,
-  a path) is `local:<repo name>`. A prompt is refused when two linked repos share an identity.
+  a path) is `local:<repo name>`. The result must match the canonical form exactly, and anything that doesn't is
+  **refused, never converted**: host labels `[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?` joined by single dots (at most 253
+  characters, no trailing dot; punycode `xn--` allowed; Unicode hosts and IPv6 refused; an all-numeric last label only
+  as a plain dotted quad without leading zeros); port `[1-9][0-9]{0,4}` up to 65535, never 443; path segments
+  `[A-Za-z0-9._~-]+` joined by single slashes, no empty, `.` or `..` segment, no trailing slash, no `.git` suffix in
+  any case; ASCII only, no `%`, `?`, `#`, `@` or whitespace. A prompt is refused when two linked repos share an
+  identity, compared **ignoring ASCII case** (hosts like GitHub treat `Acme/X` and `acme/x` as one repo); the hashed
+  value keeps the raw form.
 - **P1 limit:** the identity is read from a working copy the agent can write, so it protects against mistakes and
   aliasing, not against the agent.
 
@@ -637,7 +644,7 @@ later gate, so all their earlier approvals stop counting.
 
 **Text in approved content.** The approval is refused (`gate.suspicious_text`) when gated text contains a bidi
 control (U+202A–202E, U+2066–2069, U+200E, U+200F, U+061C). Other invisible characters (U+200B–200D, U+2060,
-U+FEFF, tag characters, other `Cf`) are shown as `⟨U+200B⟩` in every approval prompt and in `orch show`
+U+FEFF, tag characters, other `Cf`, and these non-`Cf` look-alikes: U+034F, U+115F, U+1160, U+2028, U+2029, U+3164, U+FFA0, U+FE00–U+FE0F, U+E0100–U+E01EF) are shown as `⟨U+200B⟩` in every approval prompt and in `orch show`
 (§12 N5).
 
 **The verdict binds to the commit (D58).** The verify gate hash includes the source list, and the prompt shows the
@@ -767,7 +774,7 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
 - **Failure.** An event that fails authorization is treated as absent for state, keeps its place in the chain, and
   is reported as `auth.invalid_event`. The host then refuses new person decisions on that ticket (for an invalid
   event in the workspace log: all person decisions in the workspace) until an owner signs
-  `invalid.acknowledged {seq, head, reason?}` (appended to the log that holds the invalid event) naming it, or a `restore`. The acknowledgement keeps the
+  `invalid.acknowledged {invalid_seq, invalid_head, reason?}` (appended to the log that holds the invalid event) naming it, or a `restore`. The acknowledgement keeps the
   event absent and lifts the freeze; it is in the same log as the invalid event. In P1 an agent with the workspace
   key can cause such a freeze (§12 N4).
 - **Derived fields.** `voided` (in `gate.invalidated`), `voided_gates` and `normalised` (in `edit.external`) are
@@ -1194,7 +1201,7 @@ owner's confirmation.
 | O6 | Unattended evidence | Unattended artifacts carry no `ac`/`task` and are never evidence (§6). | agreed with Opus reviewer |
 | O7 | P1 trust root | The genesis pin is in the host state dir and the person's custody key file, both owned by the same OS user as the agents in P1, so an agent can replace them together; stated plainly next to N14. | agreed with Opus reviewer |
 | R3 | Device recovery and who appends revocations | `device.revoked` may be appended by any member's device or by the host; its authority is the embedded PK-signed revocation (protocol §6.2). A device vouched for by the person key (with `decide`) may add itself when its person has no valid device left (the D50 recovery path); otherwise losing the owner's only device would leave the workspace without owner signatures. | agreed with Opus reviewer |
-| R5 | Decision freeze after an invalid event | An owner signs `invalid.acknowledged {seq, head, reason?}` to lift the freeze; the event stays absent. An invalid event in the workspace log freezes all person decisions in the workspace until acknowledged. In P1 an agent with the workspace key can cause the freeze (N4). | agreed with Opus reviewer |
+| R5 | Decision freeze after an invalid event | An owner signs `invalid.acknowledged {invalid_seq, invalid_head, reason?}` to lift the freeze; the event stays absent. An invalid event in the workspace log freezes all person decisions in the workspace until acknowledged. In P1 an agent with the workspace key can cause the freeze (N4). | agreed with Opus reviewer |
 
 ## 13. Decisions log (F1)
 
@@ -1241,7 +1248,7 @@ A1–A20 (PR body), HO (dashboard handover, input only), D58–D60, the adversar
 | 36 | What callers enforce (SR 10) | Roots are objects; sizes are checked before parsing (§11.2). | Written down once for every caller. |
 | 37 | `policy_hash`/`people_hash` unchecked (CR 4) | Both are defined labelled hashes (§5.6) and validated as hashes. | A gate hash can't be built from arbitrary strings. |
 | 38 | Missing signature labels (SR 2) | `orch/v2/sig/ticket-event\|`, `sig/ws-event\|`, `sig/host-event\|`, `sig/checkpoint\|`. | Each signer and object kind has its own domain. |
-| 39 | Signing context form | `label \|\| cj({v, suite, workspace_id, log, event})` instead of `…\|<workspace_id>\|<uid>` fields; `v` is the signed-event contract version (1). | Protocol §2.4 style; no delimiter rules; the suite and contract version are bound. |
+| 39 | Signing context form | `label \|\| cj({contract, suite, workspace_id, log, event})` instead of `…\|<workspace_id>\|<uid>` fields; `contract` is the signed-event contract version (1). | Protocol §2.4 style; no delimiter rules; the suite and contract version are bound. |
 | 40 | `owner` in policies: workspace role or ticket owner? | `owner` is the workspace role; the ticket's owner is `ticket_owner`. | The config example meant the workspace owner. |
 | 41 | Verify gate vs verdict | `verdict.given` is the verify decision; no `gate.approved` for `verify`. | §12 N7; one event per meaning. |
 | 42 | D58 | The source list `[{repo identity, ref, sha}]` in the verify and code gate hash, read from git at prompt, append and landing; any ref-value change is a new head; host events `branch.pushed` and `gate.invalidated` (`new_commits`). | A ticket may link several repos; the host never trusts an agent's SHA. |
@@ -1259,7 +1266,7 @@ A1–A20 (PR body), HO (dashboard handover, input only), D58–D60, the adversar
 | 54 | Event line bytes | Each line is exactly `cj(event)`. | Hashing the parse and the line agree; a hand edit is caught. |
 | 55 | D61, D62 | Not in the format; no `via` field, no mandate events. | Out of P1 (owner, 10 Oct). |
 | 56 | `ticket.created` payload `type` collides with the envelope (Codex 1) | Renamed `ticket_type`; also in the gate hash `fields`. | One name, one meaning per object. |
-| 57 | `auth` checked against a certificate field that doesn't exist (Codex 2) | `auth` is signed metadata only; no certificate field; signed-event contract versioned as `v`. | Don't invent protocol fields; protocol §6.1 is fixed. |
+| 57 | `auth` checked against a certificate field that doesn't exist (Codex 2) | `auth` is signed metadata only; no certificate field; signed-event contract versioned as `contract` (§5.3). | Don't invent protocol fields; protocol §6.1 is fixed. |
 | 58 | Phone decisions vs `sig/ticket-event` (Codex 2) | Host verifies the protocol §13 decision and records it verbatim as `evidence`; the adapter is P3. The signed bytes differ. | A signature over one byte string can't become another. |
 | 59 | "Older commit is not a new head" vs D58 vs D53 clean rebase (Codex 3) | Any ref-value change is a new head (D58). D53's clean rebase applies only to the landing worker's candidate, which records the approved `source_sha` and its `candidate_sha` and is re-checked (§5.7). | Approval binds one exact commit; landing is a derived, checked step. |
 | 60 | A workspace-key holder forges surrounding state (Codex 4) | Readers replay authorization (actors, certificates, roles, grants, policies, generations, transitions); the genesis is pinned (§5.11). | Signatures alone don't make a forged `member.added` harmless; replay does. |

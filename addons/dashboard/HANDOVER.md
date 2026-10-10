@@ -279,7 +279,7 @@ the same view after a reload or pasted into a new tab. **The host serves `index.
 | `/w/<PREFIX>/board?view=list&mine=true&type=…&label=…&person=…&epic=…&q=…` | Board, its view and filters |
 | `/w/<PREFIX>/tickets?q=…&status=…&type=…&priority=…&person=…&needs=…&label=…&sort=…` | Tickets list and filters (saved views are these params) |
 | `/w/<PREFIX>/tickets/new` | New ticket page |
-| `/ticket/<KEY>?tab=acceptance\|changes\|questions\|artifacts\|history\|raw` | A ticket and its tab (Overview without `tab`); `#question-<id>` opens that question. The key names the workspace. |
+| `/w/<PREFIX>/ticket/<KEY>?tab=acceptance\|changes\|questions\|artifacts\|history\|raw` | A ticket and its tab (Overview without `tab`); `#question-<id>` opens that question. The key names the workspace: `/ticket/<KEY>` and `/w/<OTHER>/ticket/<KEY>` redirect (replace) here. |
 | `/w/<PREFIX>/artifacts?view=list\|grid&a=<KEY>.<sha256[:12]>` | Artifacts, layout and the shown artifact |
 | `/w/<PREFIX>/agents?tab=mandates` | Agents (Sessions without `tab`); `mandates` is the **preview** tab (not part of the contract) |
 | `/w/<PREFIX>/settings/<tab>` | Settings tab (general, members, gates, relay, addons, skills, connections) |
@@ -289,11 +289,11 @@ the same view after a reload or pasted into a new tab. **The host serves `index.
 - **Mechanics.** The route tree keeps short in-app paths (`/board`, `/settings/$tab`); a router rewrite
   (`src/app/urls.ts`) strips `/w/<PREFIX>` on the way in and adds the current workspace on the way out, so every
   `<Link>` gets the workspace without naming it. On a `/w/…` address the address decides the workspace
-  (`WorkspaceProvider`); on a ticket the ticket's home workspace becomes current. The last workspace is remembered
+  (`WorkspaceProvider`); on a ticket the ticket's home workspace (its key's prefix, never the remembered one) becomes current and is in the address. The last workspace is remembered
   (localStorage) for addresses without one.
 - **Old addresses keep working:** `/`, `/board`, `/settings/…` etc. are replaced by the current workspace's address;
-  `/settings` → `/settings/general`; `/settings/addons/<name>` → `/settings/addon/<name>`; `/w/<PREFIX>/ticket/<KEY>`
-  → `/ticket/<KEY>`.
+  `/settings` → `/settings/general`; `/settings/addons/<name>` → `/settings/addon/<name>`; `/ticket/<KEY>` →
+  `/w/<KEY's PREFIX>/ticket/<KEY>` (keeping `?tab=` and `#question-…`); `/w/<OTHER>/ticket/<KEY>` → the key's own workspace.
 - **Not found:** an unknown `/w/<PREFIX>` shows "No workspace <PREFIX>" (the address stays); an unknown ticket,
   a restricted one, an addon that is off or a missing addon page show their existing states. An unknown settings tab
   still goes to General (in the address's workspace: the router's redirects keep `/w/<PREFIX>`). Prefixes match

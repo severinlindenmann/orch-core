@@ -5,7 +5,7 @@ import { toast } from 'sonner'
 import { addonActive } from '@/api/addons'
 import { workspaceOfTicket } from '@/api/workspaces'
 import type { Workspace } from '@/api/types'
-import { isWorkspacePath, setLinkWorkspace, splitWorkspacePath, toPublicPath, type UrlState } from './urls'
+import { isWorkspacePath, setLinkWorkspace, splitWorkspacePath, ticketKeyOf, toPublicPath, type UrlState } from './urls'
 import { queries } from '@/api/queries'
 
 interface SwitchOptions {
@@ -117,15 +117,24 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     // Only when the address names another workspace, not when the remembered one changes under it.
   }, [fromUrl?.id])
 
-  // Old and short addresses (`/board`, `/`) get the workspace; a ticket address loses one (its key names it).
+  // Old and short addresses (`/board`, `/`) get the workspace; a ticket address gets (or is corrected to) the workspace
+  // its key names (`/ticket/K`, `/w/OTHER/ticket/K` -> `/w/<K's workspace>/ticket/K`).
+  const ticketKey = ticketKeyOf(inAppPath)
+  const keyHome = ticketKey === undefined ? undefined : workspaceOfTicket(ticketKey, data)
   useEffect(() => {
     if (!workspace || missingPrefix) return
-    const miscased = !!fromUrl && fromUrl.prefix !== urlPrefix
-    if (!router || !ownsUrl || (!miscased && scoped === (urlPrefix !== undefined))) return
+    let target: string | undefined
+    if (ticketKey !== undefined) {
+      if (keyHome && keyHome.prefix !== urlPrefix) target = keyHome.prefix
+    } else {
+      const miscased = !!fromUrl && fromUrl.prefix !== urlPrefix
+      if (miscased || scoped !== (urlPrefix !== undefined)) target = workspace.prefix
+    }
+    if (!target || !router || !ownsUrl) return
     const l = router.latestLocation
     // The same page under its full address: not a navigation a page with unsaved work needs to ask about.
-    router.history.replace(`${toPublicPath(l.pathname, workspace.prefix)}${l.searchStr}${l.hash ? `#${l.hash}` : ''}`, l.state, { ignoreBlocker: true })
-  }, [workspace, fromUrl, missingPrefix, scoped, urlPrefix, router, ownsUrl])
+    router.history.replace(`${toPublicPath(l.pathname, target)}${l.searchStr}${l.hash ? `#${l.hash}` : ''}`, l.state, { ignoreBlocker: true })
+  }, [workspace, fromUrl, missingPrefix, scoped, urlPrefix, router, ownsUrl, ticketKey, keyHome?.prefix])
 
   // Latest values for switchWorkspace, so its identity stays stable for key handlers.
   const latest = useRef({ data, workspace })

@@ -5,7 +5,8 @@
 //   in-app path              address bar
 //   /                        /w/<PREFIX>            (Today of that workspace)
 //   /board, /tickets, ...    /w/<PREFIX>/board, ...
-//   /ticket/<KEY>            /ticket/<KEY>          (the key names its workspace)
+//   /ticket/<KEY>            /w/<KEY's PREFIX>/ticket/<KEY>   (the key names its workspace, not the current one;
+//                            /ticket/<KEY> and /w/<OTHER>/ticket/<KEY> redirect to it)
 //
 // URLs carry keys and ids only: never titles, tokens or signed values.
 
@@ -28,13 +29,30 @@ export function splitWorkspacePath(pathname: string): { prefix?: string; path: s
   return { prefix, path: m[2] && m[2] !== '/' ? m[2] : '/' }
 }
 
-/** Whether an in-app path belongs to one workspace (everything but a ticket, whose key carries its workspace). */
+/** The key of an in-app ticket path (`/ticket/DEMO-0043` -> DEMO-0043). */
+export function ticketKeyOf(path: string): string | undefined {
+  const m = /^\/ticket\/([^/]+)$/.exec(path)
+  if (!m) return undefined
+  try {
+    return decodeURIComponent(m[1])
+  } catch {
+    return m[1]
+  }
+}
+
+/** The workspace prefix a ticket key names (`DEMO-0043` -> DEMO). */
+export const prefixOfKey = (key: string): string | undefined => /^(.+)-\d+$/.exec(key)?.[1]
+
+/** Whether an in-app path takes the current workspace (everything but a ticket, whose key names its workspace). */
 export function isWorkspacePath(path: string): boolean {
   return !path.startsWith('/ticket/') && !WS_PATH.test(path)
 }
 
-/** The address-bar path of an in-app path in workspace `prefix` (unchanged without a prefix or for tickets). */
+/** The address-bar path of an in-app path in workspace `prefix` (a ticket's workspace is its key's, whatever `prefix` is). */
 export function toPublicPath(path: string, prefix: string | null | undefined): string {
+  const key = ticketKeyOf(path)
+  const own = key === undefined ? undefined : prefixOfKey(key)
+  if (own) return `/w/${encodeURIComponent(own)}${path}`
   if (!prefix || !isWorkspacePath(path)) return path
   return `/w/${encodeURIComponent(prefix)}${path === '/' ? '' : path}`
 }
@@ -58,7 +76,8 @@ export function workspaceRewrite(state: UrlState): LocationRewrite {
       // Only for a new address: the router parses the same one again on reloads and invalidations.
       const fresh = url.href !== state.lastInput
       state.lastInput = url.href
-      if (fresh && prefix !== undefined && prefix !== state.prefix) {
+      // A ticket's key names its workspace: its address never moves the links' workspace.
+      if (fresh && prefix !== undefined && ticketKeyOf(path) === undefined && prefix !== state.prefix) {
         state.prefix = prefix
         state.stale = true
       }

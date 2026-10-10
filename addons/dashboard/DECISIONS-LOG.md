@@ -937,3 +937,19 @@ The owner answered the eight open questions of REVIEW.md. Items 1, 2, 5 and 6 ch
   M3's seeded times still follow the demo clock after a reload (the log is seeded relative to "now" when turned on).
 - **Why:** review M1, controller rulings for fix round 1.
 - **Revert:** revert the M1 fix-round commit.
+
+## Owner decision 2026-10-10 — ticket addresses carry the workspace
+
+- **Decision:** a ticket's address is `/w/<PREFIX>/ticket/<KEY>` (e.g. `/w/DEMO/ticket/DEMO-0201?tab=history`), like every
+  other page. The prefix is the key's workspace (`prefixOfKey`), never the remembered one, so every ticket link in the
+  app (lists, breadcrumbs, Copy link, ⌘K, toasts, addon nodes, the dock) is canonical: `toPublicPath` maps `/ticket/<KEY>`
+  to it whatever the current workspace is. The old `/ticket/<KEY>` keeps working and is replaced by the canonical
+  address (`?tab=` and `#question-…` kept); `/w/<OTHER>/ticket/<KEY>` where the key belongs to another workspace is
+  replaced by the key's own workspace (the key is authoritative). A ticket address never moves the in-app links'
+  workspace (the rewrite's input ignores its prefix); the ticket page still makes the key's workspace current as before.
+  An unknown or restricted ticket behaves as before (no redirect when no workspace owns the key; nothing of the ticket
+  is shown). Supersedes the G2 rule "tickets stay `/ticket/<KEY>`; `/w/X/ticket/K` drops the `/w/X`".
+- **Why:** owner decision 2026-10-10: one address shape for every page, and a pasted ticket link names its workspace.
+- **Revert:** in `src/app/urls.ts` drop the ticket branch of `toPublicPath` and the ticket guard in the rewrite's input;
+  in `workspace.tsx` restore the old redirect effect (a ticket address loses its `/w/X`); restore the tests in
+  `urls.test.tsx` and the HANDOVER routes row.

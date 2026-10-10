@@ -380,7 +380,7 @@ async function main() {
 
           // The ticket page, tab by tab.
           if (!ONLY || ONLY.source.includes('ticket-')) {
-            await go('/ticket/DEMO-0043')
+            await go('/w/DEMO/ticket/DEMO-0043')
             // The ticket's own tab row: the first tablist in the page.
             // Self-test: the tab row went missing.
             if (BREAK === 'tabs') await evaluate(() => document.querySelector('main [role="tablist"]')?.remove())

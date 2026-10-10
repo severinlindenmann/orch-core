@@ -103,7 +103,7 @@ def err(
 _IMPLIED = {
     "agent": ("grant.required", "grant.expired"),
     "unattended": ("grant.required", "grant.expired"),
-    "human": ("human_only", "members.stale"),
+    "human": ("human_only", "members.stale", "custody.no_prompt", "custody.wrong_passphrase"),
 }
 
 

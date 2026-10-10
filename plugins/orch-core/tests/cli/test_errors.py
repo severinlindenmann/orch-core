@@ -38,7 +38,7 @@ def test_exit_codes_are_the_table_of_10_4():
 
 
 def test_text_error_goes_to_stderr_with_the_exit_code(cli):
-    r = cli("approve", "plan")
+    r = cli("approve", "plan", env=AGENT_ENV)
     assert (r.code, r.out) == (3, "")
     assert (
         r.err
@@ -47,7 +47,7 @@ def test_text_error_goes_to_stderr_with_the_exit_code(cli):
 
 
 def test_json_error_goes_to_stdout_as_the_envelope(cli):
-    r = cli("approve", "plan", "--json")
+    r = cli("approve", "plan", "--json", env=AGENT_ENV)
     assert (r.code, r.err) == (3, "")
     env = json.loads(r.out)
     schema.validate("cli-error", env)
@@ -64,7 +64,7 @@ def test_json_error_goes_to_stdout_as_the_envelope(cli):
 
 
 def test_orch_output_env_selects_json(cli):
-    r = cli("approve", "plan", env={"ORCH_OUTPUT": "json"})
+    r = cli("approve", "plan", env={"ORCH_OUTPUT": "json", "ORCH_GRANT": GRANT})
     assert json.loads(r.out)["error"]["code"] == "human_only"
 
 
@@ -184,19 +184,19 @@ def test_stop_rule_third_identical_refusal_returns_stop(cli):
     rec = MemoryRecords()
     codes = []
     for _ in range(4):
-        r = cli("approve", "plan", "--json", env=SESSION_ENV, records=rec)
+        r = cli("approve", "plan", "--json", env=AGENT_ENV, records=rec)
         codes.append((r.code, json.loads(r.out)["error"]["code"]))
     assert codes == [(3, "human_only"), (3, "human_only"), (3, "stop"), (3, "stop")]
-    r = cli("approve", "plan", env=SESSION_ENV, records=rec)
+    r = cli("approve", "plan", env=AGENT_ENV, records=rec)
     assert r.err.startswith("err stop STOP: report to the user · retry:false")
 
 
 def test_human_only_counts_by_operation_ignoring_arguments(cli):
     rec = MemoryRecords()
-    got = [cli("approve", g, "--json", env=SESSION_ENV, records=rec) for g in ("plan", "code", "requirements")]
+    got = [cli("approve", g, "--json", env=AGENT_ENV, records=rec) for g in ("plan", "code", "requirements")]
     assert [json.loads(r.out)["error"]["code"] for r in got] == ["human_only", "human_only", "stop"]
-    assert json.loads(cli("approve", "plan", "--json", env=SESSION_ENV, records=rec).out)["error"]["code"] == "stop"
-    assert json.loads(cli("close", "1", "--json", env=SESSION_ENV, records=rec).out)["error"]["code"] == "human_only"
+    assert json.loads(cli("approve", "plan", "--json", env=AGENT_ENV, records=rec).out)["error"]["code"] == "stop"
+    assert json.loads(cli("close", "1", "--json", env=AGENT_ENV, records=rec).out)["error"]["code"] == "human_only"
 
 
 def test_other_refusals_count_by_arguments_and_normalised_ref(cli, bound):
@@ -226,7 +226,7 @@ def test_stop_expires_after_15_minutes_and_window_slides(cli):
     clock = [1000.0]
 
     def go():
-        r = cli("approve", "plan", "--json", env=SESSION_ENV, records=rec, now=lambda: clock[0])
+        r = cli("approve", "plan", "--json", env=AGENT_ENV, records=rec, now=lambda: clock[0])
         return json.loads(r.out)["error"]["code"]
 
     assert [go(), go(), go()] == ["human_only", "human_only", "stop"]
@@ -241,15 +241,15 @@ def test_stop_rule_resets_only_on_a_successful_write(cli, bound):
     bound("show", lambda ctx, args: Result(data={"view": "x"}, key="DEMO-0001", seq=2))
     rec = MemoryRecords()
     for _ in range(2):
-        cli("approve", "plan", env=SESSION_ENV, records=rec)
+        cli("approve", "plan", env=AGENT_ENV, records=rec)
     assert cli("show", env=SESSION_ENV, records=rec).code == 0  # a read does not reset
-    assert cli("approve", "plan", "--json", env=SESSION_ENV, records=rec).code == 3
-    assert json.loads(cli("approve", "plan", "--json", env=SESSION_ENV, records=rec).out)["error"]["code"] == "stop"
+    assert cli("approve", "plan", "--json", env=AGENT_ENV, records=rec).code == 3
+    assert json.loads(cli("approve", "plan", "--json", env=AGENT_ENV, records=rec).out)["error"]["code"] == "stop"
     # a dry run is not a write either
     cli("log", "x", "--dry-run", env=SESSION_ENV, records=rec)
-    assert json.loads(cli("approve", "plan", "--json", env=SESSION_ENV, records=rec).out)["error"]["code"] == "stop"
+    assert json.loads(cli("approve", "plan", "--json", env=AGENT_ENV, records=rec).out)["error"]["code"] == "stop"
     cli("log", "x", env=SESSION_ENV, records=rec)
-    assert cli("approve", "plan", env=SESSION_ENV, records=rec).err.startswith("err human_only")
+    assert cli("approve", "plan", env=AGENT_ENV, records=rec).err.startswith("err human_only")
 
 
 def test_usage_errors_do_not_count(cli):
@@ -262,10 +262,10 @@ def test_stop_rule_is_per_session_and_needs_one(cli):
     rec = MemoryRecords()
     other = {"ORCH_SESSION": "s_01J9ZK4Q7M3R8T2V6X0B5N1C9E"}
     for _ in range(2):
-        cli("approve", "plan", env=SESSION_ENV, records=rec)
-    assert cli("approve", "plan", env=other, records=rec).err.startswith("err human_only")
+        cli("approve", "plan", env=AGENT_ENV, records=rec)
+    assert cli("approve", "plan", env={**other, "ORCH_GRANT": GRANT}, records=rec).err.startswith("err human_only")
     for _ in range(4):
-        assert cli("approve", "plan", records=rec).err.startswith("err human_only")
+        assert cli("approve", "plan", env={"ORCH_GRANT": GRANT}, records=rec).err.startswith("err human_only")
 
 
 def test_retryable_and_internal_errors_do_not_count_toward_stop(cli):
@@ -277,8 +277,8 @@ def test_retryable_and_internal_errors_do_not_count_toward_stop(cli):
 
 def test_file_records_persist_between_processes(cli, tmp_path):
     for _ in range(2):
-        cli("approve", "plan", env=SESSION_ENV, records=FileRecords(tmp_path / "session"))
-    r = cli("approve", "plan", "--json", env=SESSION_ENV, records=FileRecords(tmp_path / "session"))
+        cli("approve", "plan", env=AGENT_ENV, records=FileRecords(tmp_path / "session"))
+    r = cli("approve", "plan", "--json", env=AGENT_ENV, records=FileRecords(tmp_path / "session"))
     assert json.loads(r.out)["error"]["code"] == "stop"
     assert (tmp_path / "session" / f"{SESSION}.json").exists()
 
@@ -287,7 +287,7 @@ def test_file_records_tolerate_a_file_with_missing_keys(cli, tmp_path):
     d = tmp_path / "session"
     d.mkdir()
     (d / f"{SESSION}.json").write_text("{}")
-    assert cli("approve", "plan", env=SESSION_ENV, records=FileRecords(d)).err.startswith("err human_only")
+    assert cli("approve", "plan", env=AGENT_ENV, records=FileRecords(d)).err.startswith("err human_only")
 
 
 def _hammer(directory: str, session: str, tag: str, n: int) -> None:
@@ -315,11 +315,11 @@ def test_file_records_two_writers_lose_no_update_and_corruption_fails_closed(cli
             assert rec.recall(SESSION, f"{t}{i}", 1000.0) == {"i": i}
     assert len(rec._get(SESSION)["refusals"]) == 1  # human_only counts by operation, whatever the arguments
     (d / f"{SESSION}.json").write_text("{ torn")
-    r = cli("approve", "plan", "--json", env=SESSION_ENV, records=FileRecords(d))
+    r = cli("approve", "plan", "--json", env=AGENT_ENV, records=FileRecords(d))
     assert json.loads(r.out)["error"]["code"] == "internal" and (d / f"{SESSION}.json").read_text() == "{ torn"
     (d / f"{SESSION}.json").write_text("[1, 2]")
     assert (
-        json.loads(cli("approve", "plan", "--json", env=SESSION_ENV, records=FileRecords(d)).out)["error"]["code"]
+        json.loads(cli("approve", "plan", "--json", env=AGENT_ENV, records=FileRecords(d)).out)["error"]["code"]
         == "internal"
     )
 

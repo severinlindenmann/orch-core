@@ -186,7 +186,10 @@ def guarded(handler: Handler, name: str, declared: list[str]) -> Handler:
         except StoreError as e:
             raise to_orch_error(e, declared) from e
         except CustodyError as e:
-            raise OrchError("internal", f"the workspace key: {e}") from e
+            # the person's passphrase prompt: kept distinct, agents branch on them (D65)
+            if e.code in ("custody.no_prompt", "custody.wrong_passphrase") and e.code in declared:
+                raise OrchError(e.code, str(e)) from e
+            raise OrchError("internal", f"the key custody: {e}") from e
 
     run.__name__ = f"handle_{name.replace('.', '_')}"
     return run

@@ -27,6 +27,21 @@ import type {
   Workspace,
 } from '@/api/types'
 
+/**
+ * sha256 of a content string, memoised: derive runs on every read and the same material comes back each time
+ * (questions and requirements/plan gates bind a full content hash, security review #2/#7). Bounded; oldest out first.
+ */
+const contentHashes = new Map<string, string>()
+export function contentHash(material: string): string {
+  let h = contentHashes.get(material)
+  if (h === undefined) {
+    h = 'sha256:' + sha256Hex(material)
+    contentHashes.set(material, h)
+    if (contentHashes.size > 20_000) contentHashes.delete(contentHashes.keys().next().value!)
+  }
+  return h
+}
+
 export function fnvHex(input: string, len = 12): string {
   let h1 = 0x811c9dc5
   let h2 = 0x01000193
@@ -300,7 +315,7 @@ export function deriveTicket(
       ...q,
       state: answer ? 'answered' : 'open',
       // A full content hash: an answer binds it (the host compares it, security review #7).
-      hash: 'sha256:' + sha256Hex(JSON.stringify([def.uid, q.id, q.to, q.text, q.options ?? []])),
+      hash: contentHash(JSON.stringify([def.uid, q.id, q.to, q.text, q.options ?? []])),
       asked_at: a?.at ?? created,
       asked_by: a?.by ?? (people.owner ?? 'unknown'),
       answer,
@@ -336,7 +351,7 @@ export function deriveTicket(
       ...(gateVoided[g].length ? { voided: gateVoided[g] } : {}),
       // Requirements and plan: a full content hash an approval binds (security review #2). Verify and code bind the
       // commit through source_sha; their hash stays the mock's short id.
-      hash: g === 'requirements' || g === 'plan' ? 'sha256:' + sha256Hex(JSON.stringify([def.uid, g, gated.material])) : 'sha256:' + fnvHex(def.uid + g + gated.material, 12) + '…',
+      hash: g === 'requirements' || g === 'plan' ? contentHash(JSON.stringify([def.uid, g, gated.material])) : 'sha256:' + fnvHex(def.uid + g + gated.material, 12) + '…',
       covers: gated.covers,
       ...(signed ? { source_sha: signed } : {}),
       ...(g === 'code' ? { required: codeReviewApplies(policy.applies, def.type) } : {}),

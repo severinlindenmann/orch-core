@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { offered } from '@/test/offered'
 import { createApi } from '@/api/client'
 import { createMockTransport } from '@/api/transport'
 import { createMockStore, type MockStore } from '@/mocks/store'
@@ -20,7 +21,8 @@ type S = ReturnType<typeof setup>
 type View = Record<string, unknown> & { cards: Record<string, string>; body: { children: Record<string, unknown>[] }; workerAlert: { title: string; text: string } }
 const view = async (s: S) => (await s.api.getAddonState(s.ws, 'land')) as View
 const panel = async (s: S, key: string) => ((await s.api.getAddonState(s.ws, 'land', key)) as { byTicket: Record<string, { children: Record<string, unknown>[] }> }).byTicket[key]
-const run = (s: S, id: string, body: Record<string, unknown> = {}) => s.api.runAddonAction(s.ws, 'land', id, body)
+// A decision answer carries the digest of the decision as offered (security review #3), as core's prompt posts it.
+const run = (s: S, id: string, body: Record<string, unknown> = {}) => s.api.runAddonAction(s.ws, 'land', id, offered(s.store, s.ws, 'land', id, body))
 const land = (s: S) => asLand(s.store.addonState(s.ws, 'land'))
 const text = (x: unknown) => JSON.stringify(x)
 const landEvents = (s: S, key: string, type = 'land.attempt') => s.store.eventsOf(key).filter((e) => e.type === type)

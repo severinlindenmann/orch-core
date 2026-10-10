@@ -1174,11 +1174,11 @@ export class MockStore {
       // The terms the person saw in core's prompt must be the terms now (core shows and signs them line by line).
       if (!sameTerms(body.terms, decision.terms)) return refuse(409, 'decision.closed', 'The terms of this decision changed since you opened it.', 'Reopen it and check the terms again.')
       // The answer binds the whole decision core showed (security review #3): its ticket, and its digest (title,
-      // question, detail, options, terms) compared with the decision now. Core's prompt always sends the digest.
-      // TODO(host): require the digest once every decision producer is migrated (the factory rewrite); the mock
-      // still accepts a body without one so the existing addon tests run unchanged.
+      // question, detail, options, terms) compared with the decision now. Required on every answer: core's prompt
+      // always sends it (decisionBody), so an answer without one was not shown by core and is refused.
       if (body.ticket !== undefined && body.ticket !== decision.ticket) return refuse(409, 'decision.closed', 'That decision is about another ticket.', 'Reopen it and check it again.')
-      if (body.digest !== undefined && body.digest !== decisionDigest(decision)) return refuse(409, 'decision.closed', 'This decision changed since you opened it.', 'Reopen it and check it again.')
+      if (typeof body.digest !== 'string') return refuse(409, 'decision.digest_required', 'A decision is answered with the digest of what core showed.', 'Answer it in orch\'s own signing prompt.')
+      if (body.digest !== decisionDigest(decision)) return refuse(409, 'decision.closed', 'This decision changed since you opened it.', 'Reopen it and check it again.')
     }
     const raw = action({ store: this, ws, viewer: this.viewer, ticket, body, state: this.addonState(ws, name), decision })
     // A refusal changes nothing others need to see: no record, no refresh for other clients, nothing saved.

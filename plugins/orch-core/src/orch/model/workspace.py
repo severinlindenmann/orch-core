@@ -16,7 +16,7 @@ from orch.canon import HashError, event_head
 
 from . import authz, generations, policies
 from .codes import Code, Refusal
-from .types import GATES, Addon, Core, Device, Grant, LogCore, Member, TCore, WsCore, ts
+from .types import GATES, WORKSPACE, Addon, Core, Device, Grant, LogCore, Member, TCore, WsCore, ts
 from .verifier import SigContext, Verifier
 
 
@@ -61,9 +61,9 @@ def genesis(core: Core, e: dict[str, Any], v: Verifier, expected: str | None) ->
     cert = e["device_cert"]
     if (r := authz.device_valid(None, cert, ts(e["at"]), False)) is not None:
         return r
-    if not v.verify_embedded(e, e["owner"]["pk_pub"]):
+    if not v.verify_embedded(e):
         return Refusal(Code.GENESIS_INVALID, "delegation or device certificate does not verify")
-    if not v.verify_person(e, SigContext(e["workspace_id"], "workspace", cert)):
+    if not v.verify_person(e, SigContext(e["workspace_id"], WORKSPACE, cert)):
         return Refusal(Code.SIG_INVALID, "genesis signature does not verify")
     o = e["owner"]
     ws.created = True
@@ -93,7 +93,7 @@ def member_added(core: Core, e: dict[str, Any], v: Verifier) -> Refusal | None:
         return Refusal(Code.DEVICE_EXISTS, dev)
     if (r := authz.device_valid(None, cert, ts(e["at"]), False)) is not None:
         return r
-    if not v.verify_embedded(e, e["pk_pub"]):
+    if not v.verify_embedded(e):
         return Refusal(Code.DEVICE_CERT, "the device certificate is not signed by the person key")
     ws.former.pop(p, None)
     ws.members[p] = Member(p, e["name"], e["role"], e["pk_pub"])
@@ -119,6 +119,10 @@ def member_removed(core: Core, e: dict[str, Any]) -> Refusal | None:
     def change() -> None:
         ws.former[p] = ws.members.pop(p)
         ws.roster_v += 1
+        for g in ws.grants.values():  # a removal ends the person's grants and devices; a re-add starts clean (§5.7)
+            g.revoked = g.revoked or g.person == p
+        for d in ws.devices.values():
+            d.removed = d.removed or d.person == p
 
     cross(core, change, lambda t: generations.void_person(ws, t, p))
     return None
@@ -147,7 +151,7 @@ def device_added(core: Core, e: dict[str, Any], v: Verifier) -> Refusal | None:
         return Refusal(Code.DEVICE_EXISTS, dev)
     if (r := authz.device_valid(None, e["cert"], ts(e["at"]), False)) is not None:
         return r
-    if not v.verify_embedded(e, ws.members[a["id"]].pk_pub):
+    if not v.verify_embedded(e):
         return Refusal(Code.DEVICE_CERT, "the device certificate is not signed by the person key")
     ws.devices[dev] = Device(dev, a["id"], copy.deepcopy(e["cert"]))
     return None
@@ -171,11 +175,14 @@ def device_revoked(core: Core, e: dict[str, Any], v: Verifier) -> Refusal | None
     holder = ws.members.get(dev.person) or ws.former.get(dev.person)
     if holder is None or "p_" + e["revocation"]["o"]["person_id"] != dev.person:
         return Refusal(Code.DEVICE_CERT, "the revocation is not for a device of this person")
-    if not v.verify_embedded(e, holder.pk_pub):
+    if not v.verify_embedded(e):
         return Refusal(Code.DEVICE_CERT, "the revocation is not signed by the person key")
 
     def change() -> None:
         dev.revoked = e["reason"]
+        if e["reason"] == "compromised":  # also ends every grant that device signed (§5.7)
+            for g in ws.grants.values():
+                g.revoked = g.revoked or g.device == dev.id
 
     if e["reason"] == "compromised":
         cross(core, change, lambda t: generations.void_device(ws, t, dev.id))
@@ -235,6 +242,7 @@ def grant_issued(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
         e["issued_at"],
         e["expires_at"],
         e.get("label"),
+        device=e["actor"]["device"],
     )
     return None
 

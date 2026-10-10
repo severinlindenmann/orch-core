@@ -12,7 +12,7 @@ from typing import Any
 from orch.canon import value_hash
 from orch.schema import SECTIONS_BY_TYPE
 
-from . import generations
+from . import generations, lifecycle
 from .codes import Code, Refusal
 from .gates import EMPTY
 from .types import Core, TCore, WsCore
@@ -41,21 +41,26 @@ def _check_refs(t: TCore, sections: dict[str, Any]) -> Refusal | None:
     return None
 
 
-def _check_fields(core: Core, t: TCore, f: dict[str, Any]) -> Refusal | None:
-    ac = {a["id"] for a in f["acceptance"]}
-    for task in f["tasks"]:
-        if not set(task["proves"]) <= ac:
-            return Refusal(Code.TICKET_BAD_REFERENCE, f"{task['id']} proves an unknown acceptance criterion")
-    for key in [x for x in [f["parent"], *f["blocked_by"]] if x is not None]:
-        if key not in core.keys or core.keys[key] == t.uid:
-            return Refusal(Code.TICKET_BAD_REFERENCE, f"unknown ticket key {key}")
-    lk = f["links"]
-    unknown = [r for r in lk["repos"] if r not in core.ws.repos]
-    if unknown:
-        return Refusal(Code.REPO_UNKNOWN, f"repos not in settings.repos: {unknown}")
-    named = [*lk["branches"], *(p["repo"] for p in lk["prs"])]
-    if any(r not in lk["repos"] for r in named):
-        return Refusal(Code.TICKET_BAD_REFERENCE, "links.branches and links.prs name repos in links.repos")
+def _check_fields(core: Core, t: TCore, f: dict[str, Any], touched: set[str], e: dict[str, Any]) -> Refusal | None:
+    """Cross-references of what this edit changes; an old value that went stale (a repo removed from the settings)
+    never blocks an unrelated edit."""
+    if touched & {"ticket.tasks", "ticket.acceptance"}:
+        ac = {a["id"] for a in f["acceptance"]}
+        for task in f["tasks"]:
+            if not set(task["proves"]) <= ac:
+                return Refusal(Code.TICKET_BAD_REFERENCE, f"{task['id']} proves an unknown acceptance criterion")
+    if touched & {"ticket.parent", "ticket.blocked_by"}:
+        for key in [x for x in [f["parent"], *f["blocked_by"]] if x is not None]:
+            if not lifecycle.known_before(core, t, key, e):
+                return Refusal(Code.TICKET_BAD_REFERENCE, f"unknown ticket key {key}")
+    if "ticket.links" in touched:
+        lk = f["links"]
+        unknown = [r for r in lk["repos"] if r not in core.ws.repos]
+        if unknown:
+            return Refusal(Code.REPO_UNKNOWN, f"repos not in settings.repos: {unknown}")
+        named = [*lk["branches"], *(p["repo"] for p in lk["prs"])]
+        if any(r not in lk["repos"] for r in named):
+            return Refusal(Code.TICKET_BAD_REFERENCE, "links.branches and links.prs name repos in links.repos")
     return None
 
 
@@ -89,7 +94,7 @@ def updated(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
             fields["addons"].setdefault(a, {})[f] = copy.deepcopy(v)
         else:
             fields[key] = copy.deepcopy(v)
-    if (r := _check_fields(core, t, fields)) is not None:
+    if (r := _check_fields(core, t, fields, set(sets), e)) is not None:
         return r
     t.fields = fields
     for sid, v in secs.items():
@@ -97,11 +102,7 @@ def updated(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
             t.sections.pop(sid, None)
         else:
             t.sections[sid] = {"hash": v["hash"], "refs": list(v["refs"])}
-    hit = generations.mark_paths(ws, t, paths)
-    a = e["actor"]
-    if a["kind"] == "agent":
-        for g in hit:
-            t.touch.setdefault(g, set()).add(a["for"])
+    generations.mark_paths(ws, t, paths)
     return None
 
 

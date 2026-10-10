@@ -894,7 +894,7 @@ def test_gates_and_verdicts():
     bad("event", ev(VD, source_sha=None), "", "source_sha")
     bad("event", ev(VD, outcome="fail", text=None), "", "text")
     V("event", ev(VD, outcome="pass", text=None), log="ticket")
-    bad("event", ev(VD, source_sha=[]), "/source_sha")  # a decision binds a commit
+    V("event", ev(VD, source_sha=[]), log="ticket")  # a ticket that links no repo has an empty source list (model: iff)
     bad("event", ev(VD, gate="verify"), "", "gate")  # the verdict is verify's: no gate field
 
 
@@ -1915,9 +1915,10 @@ def test_repo_identity_agrees_with_canon_and_the_shared_vectors():
         assert not canon_ok and not _schema_accepts_identity(ident), ident
 
 
-def test_decisions_need_a_non_empty_source_list():
-    bad("event", mut(ex.EVENTS["gate.approved.code"], lambda e: e.update(source_sha=[])), "/source_sha")
-    bad("event", mut(ex.EVENTS["verdict.given"], lambda e: e.update(source_sha=[])), "/source_sha")
+def test_decisions_may_carry_an_empty_source_list():
+    # the model enforces "empty iff the ticket links no repo" (ticket-format §5.7)
+    V("event", mut(ex.EVENTS["gate.approved.code"], lambda e: e.update(source_sha=[])), log="ticket")
+    V("event", mut(ex.EVENTS["verdict.given"], lambda e: e.update(source_sha=[])), log="ticket")
     V(
         "gate-input",
         mut(ex.GATE_INPUT, lambda o: o.update(gate="code", sections={}, artifacts={}, receipts={}, source_sha=[])),

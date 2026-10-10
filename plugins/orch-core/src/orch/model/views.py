@@ -9,7 +9,7 @@ from typing import Any
 
 from . import claims, gates, generations, needs, policies, questions, source, tasks
 from .needs import Need
-from .types import GATES, Core, TCore, WsCore, ts
+from .types import GATES, WORKSPACE, Core, TCore, WsCore, ts
 
 
 def freeze(o: Any) -> Any:
@@ -298,7 +298,7 @@ def ticket_view(core: Core, t: TCore, now: int) -> TicketView:
 
 def workspace_view(core: Core, now: int) -> WorkspaceView:
     ws = core.ws
-    lc = core.logs.get("workspace")
+    lc = core.logs.get(WORKSPACE)
     invalid = tuple(
         InvalidView(i.log, i.seq, i.id, i.type, i.code, i.detail, i.seq in lc.acked) for i in (lc.invalid if lc else [])
     )

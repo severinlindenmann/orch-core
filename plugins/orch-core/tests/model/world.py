@@ -44,6 +44,7 @@ class World:
         self.clock = T0
         self.roster_v = 0
         self.people: dict[str, str] = {}
+        self.roles: dict[str, str] = {"sev": "owner"}
         self.dev: dict[str, str] = {}
         self.uid_n = 0
         self.workspace_id = hex32("workspace")
@@ -176,6 +177,7 @@ class World:
 
     def member(self, name: str, role: str, by: str = "sev") -> dict[str, Any]:
         self.add_person(name)
+        self.roles[name] = role
         return self.wev(
             "member.added",
             by,
@@ -302,7 +304,7 @@ class World:
         return self.push(uid, repo=name)
 
     def claim(self, uid: str, name: str = "sev", session: str | None = None, gid: str | None = None, **kw):
-        gid = gid or self.grant(name)
+        gid = gid or self.grant(name, "workable" if self.roles.get(name) == "member" else "all")
         a = self.agent(name, gid, session)
         self.tev(uid, "claim.taken", a, **kw)
         return a

@@ -430,3 +430,24 @@ def test_unattended_quotas(w):
     assert refused(w, uid, "log.added", w.unattended("s_01J9ZK0000000000000000TTTT"), text="x") is None
     w.clock += timedelta(hours=2)
     assert refused(w, uid, "log.added", s, text="x", at=stamp(w.clock)) is None
+
+
+def test_verify_host_always_gets_the_log_and_the_workspace_key_after_genesis():
+    import base64
+
+    v = FakeVerifier()
+    w = World(v).bootstrap({"mara": "maintainer"})
+    uid = w.ticket()
+    w.tev(uid, "log.added", "sev", text="x")
+    v.host_calls.clear()
+    w.state()
+    wsk = base64.urlsafe_b64decode(w.ws[0]["wsk_pub"] + "=" * (-len(w.ws[0]["wsk_pub"]) % 4))
+    by_id = {e["id"]: e for e in [*w.ws, *w.tl[uid]]}
+    assert len(v.host_calls) == len(by_id)
+    for eid, log, key in v.host_calls:
+        assert log == ("workspace" if eid in {e["id"] for e in w.ws} else uid)
+        assert key is None if eid == w.ws[0]["id"] else key == wsk
+    # admit (pre-append, no host_sig yet) never asks for a host signature
+    v.host_calls.clear()
+    refused(w, uid, "log.added", "sev", text="y")
+    assert v.host_calls == [] or all(c[0] in by_id for c in v.host_calls)

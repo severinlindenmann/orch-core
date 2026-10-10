@@ -11,7 +11,7 @@ from typing import Any
 from . import visibility
 from .codes import OK, Ok, Refusal
 from .engine import Ctx, apply_event
-from .types import Core, ts
+from .types import WORKSPACE, Core, ts
 from .verifier import Verifier
 from .views import TicketView, WorkspaceView, ticket_view, workspace_view
 
@@ -78,11 +78,11 @@ def replay(
     ctx = Ctx(verifier, expected_genesis)
     core = Core()
     ws_events = list(workspace_events)
-    merged: list[tuple[tuple[int, int, str, int], str, dict[str, Any]]] = [
-        ((e["seq"], 0, "", e["seq"]), "workspace", e) for e in ws_events
+    merged: list[tuple[tuple[int, int, int, str, int], str, dict[str, Any]]] = [
+        ((e["seq"], 0, 0, "", e["seq"]), WORKSPACE, e) for e in ws_events
     ]
     for uid, events in ticket_logs.items():
-        merged += [((e["ws_seq"], 1, uid, e["seq"]), uid, e) for e in events]
+        merged += [((e["ws_seq"], 1, ts(e["at"]), uid, e["seq"]), uid, e) for e in events]
     merged.sort(key=lambda x: x[0])
     for _, log, e in merged:
         apply_event(core, log, e, ctx, commit=True)

@@ -14,7 +14,7 @@ from orch.canon import HashError, section_hash
 
 from . import claims, gates, generations, policies, source, tasks
 from .codes import Code, Refusal
-from .types import GATES, Core, LogCore, TCore, WsCore, new_fields
+from .types import GATES, Core, LogCore, TCore, WsCore, new_fields, position
 
 _KEY = re.compile(r"[A-Z][A-Z0-9]{0,15}-([1-9][0-9]{3,}|[1-9][0-9]{0,2}|0[0-9]{3})")
 
@@ -30,6 +30,7 @@ def created(core: Core, uid: str, e: dict[str, Any]) -> Refusal | None:
     if m is None or m.role == "viewer":
         return Refusal(Code.MEMBER_UNKNOWN, "the owner must be a member who can own tickets")
     core.keys[key] = uid
+    core.created_at[uid] = position(e, uid)
     t = TCore(uid=uid, key=key, owner=e["owner"], status="open", fields=new_fields(e["ticket_type"], e["title"]))
     core.tickets[uid] = t
     return None
@@ -67,12 +68,18 @@ def submitted(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
     return None
 
 
+def known_before(core: Core, t: TCore, key: str, e: dict[str, Any]) -> bool:
+    """The ticket ``key`` exists at an earlier merged position than the event ``e`` (so admit and replay agree)."""
+    uid = core.keys.get(key)
+    return uid is not None and uid != t.uid and core.created_at[uid] < position(e, t.uid)
+
+
 def closed(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
     if not claims.may_manage(core.ws, t, e["actor"]["id"]):
         return Refusal(Code.ROLE_DENIED, "only the ticket owner, owners and maintainers close a ticket")
     if t.status == "closed":
         return Refusal(Code.STATUS_TRANSITION, "already closed")
-    if "duplicate_of" in e and (e["duplicate_of"] not in core.keys or core.keys[e["duplicate_of"]] == t.uid):
+    if "duplicate_of" in e and not known_before(core, t, e["duplicate_of"], e):
         return Refusal(Code.TICKET_BAD_REFERENCE, f"duplicate_of {e['duplicate_of']}")
     t.status = "closed"
     if t.claim is not None:
@@ -87,6 +94,7 @@ def reopened(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
     if t.status not in ("done", "closed"):
         return Refusal(Code.STATUS_TRANSITION, f"ticket.reopened from {t.status}")
     t.status = "open"
+    t.workers = set()  # "since the ticket was last reopened" (§5.7)
     generations.mark(t, *GATES)
     return None
 
@@ -112,8 +120,7 @@ def people_changed(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
     else:
         t.people[role] = (t.people[role] | set(e["add"])) - set(e["remove"])
         if role == "assignees":
-            for gc in t.gates.values():
-                gc.assignee_hist |= set(e["add"])
+            t.workers |= set(e["add"])
     generations.mark(t, *[g for g in GATES if token in named[g]])
     return None
 

@@ -11,6 +11,7 @@ Every event is applied to a scratch copy, so a refusal can never leave half an e
 
 from __future__ import annotations
 
+import base64
 import copy
 from dataclasses import dataclass
 from typing import Any
@@ -20,7 +21,7 @@ from orch.schema import LOG_TYPES
 
 from . import authz, claims, edits, gates, generations, lifecycle, questions, source, tasks, visibility, workspace
 from .codes import Code, Refusal
-from .types import Core, InvalidEvent, LogCore, TCore, WsCore, ts
+from .types import WORKSPACE, Core, InvalidEvent, LogCore, TCore, WsCore, position, ts
 from .verifier import Verifier
 
 CHAIN_CODES = frozenset({Code.CHAIN_BROKEN, Code.CHAIN_BAD_WS_SEQ, Code.EVENT_UNKNOWN_TYPE})
@@ -58,19 +59,28 @@ def _log_of(core: Core, log: str) -> LogCore:
 
 
 def _chain_check(core: Core, log: str, lc: LogCore, e: dict[str, Any], ctx: Ctx) -> Refusal | None:
-    kind = "workspace" if log == "workspace" else "ticket"
+    kind = "workspace" if log == WORKSPACE else "ticket"
     if lc.broken is not None:
         return Refusal(Code.CHAIN_BROKEN, f"the log is broken ({lc.broken})")
     if e["type"] not in LOG_TYPES[kind]:
         return Refusal(Code.EVENT_UNKNOWN_TYPE, f"{e['type']} is not an event of the {kind} log")
     if e["seq"] != lc.seq + 1 or e["prev"] != lc.head:
         return Refusal(Code.CHAIN_BROKEN, "seq/prev do not continue the log")
-    if not ctx.admit and not ctx.verifier.verify_host(e):
-        return Refusal(Code.CHAIN_BROKEN, "host_sig does not verify")
+    if not ctx.admit:
+        genesis = e["type"] == "workspace.created"
+        if not genesis and not core.ws.created:
+            return Refusal(Code.CHAIN_BROKEN, "no genesis yet, so no workspace key to check host_sig with")
+        wsk = None if genesis else base64.urlsafe_b64decode(core.ws.wsk_pub + "=" * (-len(core.ws.wsk_pub) % 4))
+        if not ctx.verifier.verify_host(e, log=log, wsk_pub=wsk):
+            return Refusal(Code.CHAIN_BROKEN, "host_sig does not verify")
     if kind == "ticket":
-        wsh = core.logs["workspace"].seq if "workspace" in core.logs else 0
+        wsh = core.logs[WORKSPACE].seq if WORKSPACE in core.logs else 0
         if e["ws_seq"] < lc.last_ws_seq or e["ws_seq"] > wsh or (ctx.admit and e["ws_seq"] != wsh):
             return Refusal(Code.CHAIN_BAD_WS_SEQ, f"ws_seq {e['ws_seq']} (workspace head {wsh})")
+        if ctx.admit and core.last_pos is not None and position(e, log) <= core.last_pos:
+            # replay walks events by (ws_seq, at, uid, seq); appending out of that order would make replay see
+            # cross-ticket state in another order than admit did, so the host must pick a later `at`
+            return Refusal(Code.CHAIN_BAD_WS_SEQ, "the event would sort before an earlier append (ws_seq, at, uid)")
     return None
 
 
@@ -87,11 +97,12 @@ def _scratch(core: Core, log: str, e: dict[str, Any]) -> Core:
     typ = e["type"]
     a = e["actor"]
     unattended = a["kind"] == "agent" and a.get("unattended") is True
-    is_ws = log == "workspace"
+    is_ws = log == WORKSPACE
     sc = Core(
         ws=copy.deepcopy(core.ws) if (is_ws or unattended) else core.ws,
         tickets=dict(core.tickets),
         keys=dict(core.keys) if typ == "ticket.created" else core.keys,
+        created_at=dict(core.created_at) if typ == "ticket.created" else core.created_at,
         logs=core.logs,
     )
     if is_ws and typ in CROSS_TICKETS:
@@ -192,7 +203,7 @@ def _authorize(core: Core, log: str, t: TCore | None, e: dict[str, Any], ctx: Ct
 def _apply(core: Core, log: str, lc: LogCore, e: dict[str, Any], ctx: Ctx) -> Refusal | None:
     """Authorize and apply ``e`` to ``core`` (a scratch copy). Mutates ``core`` even when it refuses midway."""
     typ, ws = e["type"], core.ws
-    is_ws = log == "workspace"
+    is_ws = log == WORKSPACE
     t = None if is_ws else core.tickets.get(log)
     if not is_ws and typ != "ticket.created" and t is None:
         return Refusal(Code.TICKET_UNKNOWN, log)
@@ -216,9 +227,20 @@ def _apply(core: Core, log: str, lc: LogCore, e: dict[str, Any], ctx: Ctx) -> Re
     if typ in ("gate.approved", "verdict.given"):
         gates.after_decision(ws, t, e)
     claims.touch(ws, t, e)
+    _note_workers(t, e)
     t.last_at = max(t.last_at, ts(e["at"]))
     authz.record_unattended(ws, e)
     return None
+
+
+def _note_workers(t: TCore, e: dict[str, Any]) -> None:
+    """§5.7 workers: the `for` person of any agent event on the ticket, and the claim holder whose session's
+    commits a host `branch.pushed` records. The set only grows until the ticket is reopened."""
+    a = e["actor"]
+    if a["kind"] == "agent" and "for" in a:
+        t.workers.add(a["for"])
+    elif a["kind"] == "host" and e["type"] == "branch.pushed" and t.claim is not None:
+        t.workers.add(t.claim.for_person)
 
 
 def _place(lc: LogCore, e: dict[str, Any]) -> None:
@@ -248,9 +270,11 @@ def apply_event(core: Core, log: str, e: dict[str, Any], ctx: Ctx, *, commit: bo
     if not commit:
         return r
     core.logs[log] = lc
+    if log != WORKSPACE:
+        core.last_pos = position(e, log)
     if r is None:
         assert sc is not None
-        core.ws, core.tickets, core.keys = sc.ws, sc.tickets, sc.keys
+        core.ws, core.tickets, core.keys, core.created_at = sc.ws, sc.tickets, sc.keys, sc.created_at
         _place(lc, e)
         if e["type"] == "invalid.acknowledged":
             lc.acked.add(e["invalid_seq"])

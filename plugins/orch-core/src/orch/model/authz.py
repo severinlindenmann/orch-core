@@ -13,7 +13,7 @@ from typing import Any
 
 from . import visibility
 from .codes import Code, Refusal
-from .types import Core, Device, TCore, WsCore, ts
+from .types import WORKSPACE, Core, Device, TCore, WsCore, ts
 from .verifier import SigContext, Verifier
 
 # P person (signed), A agent with a grant or a person, U also an unattended agent, G agent with a grant only,
@@ -158,9 +158,9 @@ def authorize_person(core: Core, log: str, e: dict[str, Any], v: Verifier) -> Re
 
 
 def verb_covers(typ: str, verbs: Any) -> bool:
-    """``"agent"`` covers every agent operation; a list names operations. Operation names are the registry's (C5):
-    a list entry covers the event type it equals or the type's first segment (``task`` covers ``task.done``)."""
-    return verbs == "agent" or typ in verbs or typ.split(".")[0] in verbs
+    """``"agent"`` covers every agent operation; a list names operations and is matched exactly (§10.1 A3): the
+    event type is the operation name, with no prefix or group matching."""
+    return verbs == "agent" or typ in verbs
 
 
 def authorize_agent(core: Core, t: TCore | None, e: dict[str, Any]) -> Refusal | None:
@@ -219,7 +219,7 @@ def freeze_check(core: Core, log: str, e: dict[str, Any]) -> Refusal | None:
     """New person decisions are refused while an invalid event is unacknowledged (§5.11)."""
     if e["type"] not in DECISIONS:
         return None
-    if core.logs["workspace"].frozen() or (log in core.logs and core.logs[log].frozen()):
+    if core.logs[WORKSPACE].frozen() or (log in core.logs and core.logs[log].frozen()):
         return Refusal(Code.FREEZE_ACTIVE, "an invalid event is not acknowledged yet (invalid.acknowledged)")
     return None
 

@@ -191,8 +191,8 @@ def decision(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
     if kind in ("approve", "pass"):
         if lack := missing_for_gate(ws, t, gate):
             return Refusal(Code.GATE_INCOMPLETE, f"missing: {', '.join(lack)}")
-        if pol["independent"] and (person in gc.assignee_hist or person in gc.touchers):
-            return Refusal(Code.GATE_NOT_ELIGIBLE, "independent: the signer worked on this content")
+        if (pol["independent"] or gate == "code") and person in t.workers:
+            return Refusal(Code.GATE_NOT_ELIGIBLE, "independent: the signer is a worker of this ticket (§5.7)")
     t.gates[gate].decisions.append(
         Decision(
             e["id"],

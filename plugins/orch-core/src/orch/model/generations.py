@@ -93,7 +93,6 @@ def mark_paths(ws: WsCore, t: TCore, paths: set[str]) -> set[str]:
     """Mark every gate one of whose bound paths is touched; returns those gates."""
     hit = {g for g in GATES if paths & bound(ws, g, t.ticket_type)}
     t.marks |= hit
-    t.content_marks |= hit
     return hit
 
 
@@ -168,15 +167,7 @@ def settle(ws: WsCore, t: TCore, before: dict[str, Snap]) -> Settled:
         raised |= {g for i, g in enumerate(GATES) if i > first and app(g)}
     for g in GATES:
         if g in raised:
-            gc = t.gates[g]
-            gc.gen += 1
-            gc.touchers = set()
-            if g in t.content_marks:  # "since the gated content last changed" (§5.7): people changes don't reset it
-                gc.assignee_hist = set(t.people["assignees"])
-    for g, who in t.touch.items():
-        t.gates[g].touchers |= who  # agent edits of the event itself belong to the new generation
-    t.touch.clear()
-    t.content_marks.clear()
+            t.gates[g].gen += 1
     lost = []
     for g in GATES:
         gone = set(before[g].counting) - {d.id for d in counting(t, g)}

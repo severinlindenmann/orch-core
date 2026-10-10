@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+WORKSPACE = "workspace"  # the `log` name of the workspace log; a ticket log is named by its uid
 GATES = ("requirements", "plan", "verify", "code")
 TICKET_ROLES = ("ticket_owner", "assignees", "reviewers", "watchers")
 WS_ROLES = ("owner", "maintainer", "member", "viewer")
@@ -102,6 +103,7 @@ class Grant:
     expires_at: str
     label: str | None = None
     revoked: bool = False
+    device: str = ""  # the device that signed grant.issued
 
 
 @dataclass
@@ -155,8 +157,6 @@ class GateCore:
     gen: int = 0
     decisions: list[Decision] = field(default_factory=list)
     pending_void: set[str] = field(default_factory=set)
-    touchers: set[str] = field(default_factory=set)  # `for` persons of agent edits of bound paths, this generation
-    assignee_hist: set[str] = field(default_factory=set)  # assignees at any time in this generation
     revoked_flag: set[str] = field(default_factory=set)  # decision ids of a done ticket signed by a revoked device
 
 
@@ -232,8 +232,7 @@ class TCore:
     branch_heads: dict[str, dict[str, str]] = field(default_factory=dict)  # repo name -> {repo_id, ref, sha}
     handoff: str | None = None
     marks: set[str] = field(default_factory=set)  # gates the current event raises directly (generations.py)
-    content_marks: set[str] = field(default_factory=set)  # marks caused by a change of the gate's own bound paths
-    touch: dict[str, set[str]] = field(default_factory=dict)  # gate -> `for` persons of this event's agent edits
+    workers: set[str] = field(default_factory=set)  # §5.7 "workers": assignees, claim holders, agents' `for` persons
     last_at: int = 0
 
     @property
@@ -246,9 +245,17 @@ class Core:
     ws: WsCore = field(default_factory=WsCore)
     tickets: dict[str, TCore] = field(default_factory=dict)
     keys: dict[str, str] = field(default_factory=dict)  # key -> uid
+    created_at: dict[str, tuple[int, int, str, int]] = field(default_factory=dict)  # uid -> merged position of creation
+    last_pos: tuple[int, int, str, int] | None = None  # position of the last committed ticket event
     logs: dict[str, LogCore] = field(
         default_factory=dict
     )  # "workspace" and every ticket uid: chain place, invalid events
+
+
+def position(e: dict[str, Any], log: str) -> tuple[int, int, str, int]:
+    """Merged-order position of a ticket event (§5.5): ``ws_seq``, then ``at``, then ticket uid, then ``seq``.
+    ``admit`` requires it to grow with every append, so replay (which sorts by it) walks events in append order."""
+    return (e["ws_seq"], ts(e["at"]), log, e["seq"])
 
 
 def new_fields(ticket_type: str, title: str) -> dict[str, Any]:

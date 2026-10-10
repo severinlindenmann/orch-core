@@ -937,3 +937,9 @@ The owner answered the eight open questions of REVIEW.md. Items 1, 2, 5 and 6 ch
   M3's seeded times still follow the demo clock after a reload (the log is seeded relative to "now" when turned on).
 - **Why:** review M1, controller rulings for fix round 1.
 - **Revert:** revert the M1 fix-round commit.
+
+## 2026-10-10 U4: dashboard developer guide
+
+- **Decision:** make `AGENTS.md` the shared app guide, with `CLAUDE.md` pointing to it. Document the signing boundary, host enforcement, addon workflow, G4 loading and 13" layout checks; correct README setup, latency and browser-history routing. Describe `view()` as serializable state containing declarative UI nodes, matching the registry. Mark factory full-run and repos proposals as absent in this checkout instead of linking nonexistent files.
+- **Why:** a new agent session needs current, source-checked instructions without prior conversation context; the README still described the retired sandbox routing and relative build base.
+- **Revert:** remove the two guide files and revert this documentation change; runtime behavior is unchanged.

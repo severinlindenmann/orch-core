@@ -1,7 +1,8 @@
+import { decisionDigest } from '@/api/addons'
 import type { AddonDecision } from '@/api/types'
 import { SignPrompt } from '@/components/sign/SignPrompt'
 import { AddonBadge } from './AddonBadge'
-import { plain } from '@/components/sign/visible'
+import { plain, Prose, RawValue } from '@/components/sign/visible'
 import { addonName, Raw, TERMS_LEAD, words } from './SignConfirm'
 import { useAddons } from './slots'
 
@@ -30,7 +31,7 @@ export function DecisionSignPrompt({ d, option, workspacePrefix, onSign, onClose
         ...(d.terms && Object.keys(d.terms).length ? [TERMS_LEAD] : []),
         ...Object.entries(d.terms ?? {}).map(([k, v]) => (
           <span key={`term-${k}`} data-term-key={k} data-term-value={String(v)}>
-            {words(k) === k ? <Raw>{k}</Raw> : <>{plain(words(k))} (<Raw>{k}</Raw>)</>}: <Raw>{String(v)}</Raw>
+            {words(k) === k ? <Raw>{k}</Raw> : <>{plain(words(k))} (<Raw>{k}</Raw>)</>}: <RawValue value={v} />
           </span>
         )),
         <>
@@ -40,6 +41,8 @@ export function DecisionSignPrompt({ d, option, workspacePrefix, onSign, onClose
         `In workspace ${workspacePrefix}`,
       ]}
       confirmLabel="Send answer"
+      // The digest of the decision as shown here: posted with the answer, compared by the host (security review #3).
+      hash={decisionDigest(d)}
       onClose={onClose}
       onSign={onSign}
     >
@@ -55,15 +58,15 @@ export function DecisionSignPrompt({ d, option, workspacePrefix, onSign, onClose
           <span>From the addon {named}</span>
         </p>
         <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">
-          Title: <span className="text-text">{d.title}</span>
+          Title: <Prose inline className="text-text">{d.title}</Prose>
         </p>
         <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">
-          Question: <span className="text-text">{d.question}</span>
+          Question: <Prose inline className="text-text">{d.question}</Prose>
         </p>
         <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">
-          Option <Raw>{option.key}</Raw> is labelled: <span className="text-text">{option.label}</span>
+          Option <Raw>{option.key}</Raw> is labelled: <Prose inline className="text-text">{option.label}</Prose>
         </p>
-        {d.detail && <p className="whitespace-pre-wrap text-text [overflow-wrap:anywhere]">{d.detail}</p>}
+        {d.detail && <Prose className="text-text">{d.detail}</Prose>}
       </section>
     </SignPrompt>
   )
@@ -79,9 +82,11 @@ export const decisionToast = (title: string, addon: string, option: string, mess
   ...(message ? { description: `Addon says: ${message}` } : {}),
 })
 
-/** Has the live decision moved away from the one a prompt was opened on (addon, id, terms or options)? */
-export const decisionChanged = (opened: AddonDecision, live: AddonDecision | undefined) =>
-  !live || live.addon !== opened.addon || live.id !== opened.id || JSON.stringify(live.terms ?? null) !== JSON.stringify(opened.terms ?? null) || JSON.stringify(live.options) !== JSON.stringify(opened.options)
+/** Has the live decision moved away from the one a prompt was opened on (anything the prompt shows or posts: its digest)? */
+export const decisionChanged = (opened: AddonDecision, live: AddonDecision | undefined) => !live || decisionDigest(live) !== decisionDigest(opened)
 
-/** The body core posts for a decision after its prompt: the decision's own id, ticket and terms, the option key, `confirmed`. */
-export const decisionBody = (d: AddonDecision, option: string) => ({ id: d.id, option, ...(d.ticket ? { ticket: d.ticket } : {}), ...(d.terms ? { terms: { ...d.terms } } : {}), confirmed: true })
+/**
+ * The body core posts for a decision after its prompt: the decision's own id, ticket and terms, the option key, the
+ * digest of the decision as shown (the host refuses it when the decision changed since), `confirmed`.
+ */
+export const decisionBody = (d: AddonDecision, option: string) => ({ id: d.id, option, ...(d.ticket ? { ticket: d.ticket } : {}), ...(d.terms ? { terms: { ...d.terms } } : {}), digest: decisionDigest(d), confirmed: true })

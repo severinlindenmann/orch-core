@@ -116,7 +116,7 @@
         }
       }
     ],
-    "actions": {
+    "actions": { "add": { "minRole": "member" },
       "open_terminal": {
         "minRole": "member",
         "label": "Open terminal here"
@@ -230,7 +230,7 @@
         }
       }
     ],
-    "actions": {
+    "actions": { "add": { "minRole": "member" }, "claim": { "minRole": "member" }, "close": { "minRole": "member" }, "make_ticket": { "minRole": "member" },
       "save_settings": { "minRole": "owner" },
       "decide": { "minRole": "maintainer", "decision": true }
     }
@@ -353,7 +353,7 @@
       { "id": "commit", "title": "Commit records", "action": "commit" },
       { "id": "push", "title": "Push records", "action": "push" }
     ],
-    "actions": { "save_settings": { "minRole": "owner" } }
+    "actions": { "commit": { "minRole": "member" }, "push": { "minRole": "member" }, "pull": { "minRole": "member" }, "save_settings": { "minRole": "owner" } }
   },
   {
     "name": "activity",

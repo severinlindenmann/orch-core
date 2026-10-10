@@ -1,5 +1,6 @@
 import { plain } from '@/components/sign/visible'
 // Derives the ticket document (§7) from definitions + events. Events are the only truth for state (T14).
+import { sha256Hex } from '@/api/sha256'
 import { codeReviewApplies, commitCover, DEFAULT_CODE_POLICY, GATE_ORDER, gateSignedContent } from '@/api/gates'
 import { branchOf, commitOf, firstCommit, type Commit } from './changes'
 import type {
@@ -26,6 +27,27 @@ import type {
   Turn,
   Workspace,
 } from '@/api/types'
+
+/**
+ * sha256 of a content string, memoised per slot: derive runs on every read and the same material comes back each time
+ * (questions and requirements/plan gates bind a full content hash, security review #2/#7). Only the latest material of
+ * each slot (ticket uid + gate or question) is kept, so the cache holds at most one copy of each live text and never
+ * grows with edits; `clearContentHashes` empties it (store reset).
+ */
+const contentHashes = new Map<string, { material: string; hash: string }>()
+export function contentHash(slot: string, material: string, input: () => string = () => material): string {
+  const hit = contentHashes.get(slot)
+  if (hit && hit.material === material) return hit.hash
+  // `input` (what is hashed) is built only on a miss; `material` alone decides whether the slot's hash still holds.
+  const hash = 'sha256:' + sha256Hex(input())
+  contentHashes.set(slot, { material, hash })
+  return hash
+}
+/** How many slots the cache holds (tests). */
+export const contentHashSlots = () => contentHashes.size
+export function clearContentHashes(): void {
+  contentHashes.clear()
+}
 
 export function fnvHex(input: string, len = 12): string {
   let h1 = 0x811c9dc5
@@ -299,7 +321,8 @@ export function deriveTicket(
     return {
       ...q,
       state: answer ? 'answered' : 'open',
-      hash: 'sha256:' + fnvHex(def.uid + q.id + q.text + JSON.stringify(q.options ?? []), 12) + '…',
+      // A full content hash: an answer binds it (the host compares it, security review #7).
+      hash: contentHash(`${def.uid}|q|${q.id}`, JSON.stringify([def.uid, q.id, q.to, q.text, q.options ?? []])),
       asked_at: a?.at ?? created,
       asked_by: a?.by ?? (people.owner ?? 'unknown'),
       answer,
@@ -333,7 +356,9 @@ export function deriveTicket(
       note: changes?.text,
       reason: invalid?.reason,
       ...(gateVoided[g].length ? { voided: gateVoided[g] } : {}),
-      hash: 'sha256:' + fnvHex(def.uid + g + gated.material, 12) + '…',
+      // Requirements and plan: a full content hash an approval binds (security review #2). Verify and code bind the
+      // commit through source_sha; their hash stays the mock's short id.
+      hash: g === 'requirements' || g === 'plan' ? contentHash(`${def.uid}|g|${g}`, gated.material, () => JSON.stringify([def.uid, g, gated.material])) : 'sha256:' + fnvHex(def.uid + g + gated.material, 12) + '…',
       covers: gated.covers,
       ...(signed ? { source_sha: signed } : {}),
       ...(g === 'code' ? { required: codeReviewApplies(policy.applies, def.type) } : {}),
@@ -595,6 +620,8 @@ export function describeEvent(e: Pick<OrchEvent, 'type'> & Record<string, unknow
       return 'linked a workspace'
     case 'links.revoked':
       return 'revoked a workspace link'
+    case 'links.handoff_returned':
+      return 'got a handoff back from a revoked workspace link'
     case 'links.request_received':
       return 'received a request from a linked workspace'
     case 'links.request_accepted':

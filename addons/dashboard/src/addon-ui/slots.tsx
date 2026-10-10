@@ -4,7 +4,7 @@ import { useQueries, useQuery } from '@tanstack/react-query'
 import { addonActive } from '@/api/addons'
 import type { AddonContribution, AddonPackage, AddonSlot, TicketDocument, TicketSummary, Workspace } from '@/api/types'
 import { useWorkspace } from '@/app/workspace'
-import { getPath, resolveBindings } from './bindings'
+import { getPath, nodeBudgetProblem, resolveBindings } from './bindings'
 import { queries } from '@/api/queries'
 
 export interface SlotContext {
@@ -41,8 +41,13 @@ const ADDON_BINDING = /"\$ref":"addon[.]|\$\{addon[.]/
 
 /** Does this contribution read the addon's own state (a `{"$ref":"addon..."}`, `${addon...}` or a `when` on it)? */
 export function bindsAddonState(c: Pick<AddonContribution, 'node' | 'when'>): boolean {
-  return !!c.when?.startsWith('addon.') || ADDON_BINDING.test(JSON.stringify(c.node ?? null))
+  if (c.when?.startsWith('addon.')) return true
+  // A node over budget is never walked (not even stringified): it is drawn as "could not be shown", needing no state.
+  return nodeBudgetProblem(c.node ?? null) === null && ADDON_BINDING.test(JSON.stringify(c.node ?? null))
 }
+
+/** What core draws for a contribution it will not walk: no node type, so the renderer shows "could not be shown". */
+const OVER_BUDGET = Object.freeze({ type: null, reason: 'over budget' })
 
 /** Pure selection (used by the hook and by tests). Only addons active in `ctx.workspace` contribute. */
 export function selectContributions(addons: AddonPackage[], slot: AddonSlot, ctx: SlotContext = {}, waiting?: AddonStateWait): ResolvedContribution[] {
@@ -53,13 +58,21 @@ export function selectContributions(addons: AddonPackage[], slot: AddonSlot, ctx
     for (const c of a.contributions as AddonContribution[]) {
       if (c.slot !== slot) continue
       const base = { addon: a.name, addonTitle: a.title, slot, id: c.id, title: c.title, icon: c.icon }
+      // Bounded before anything walks it (security review #9): only this contribution fails.
+      if (nodeBudgetProblem(c.node ?? null) !== null) {
+        out.push({ ...base, node: OVER_BUDGET })
+        continue
+      }
       // Its state is not here yet (or failed): neither `when` nor the bindings can be judged, so core waits.
       if (waiting && bindsAddonState(c)) {
         out.push({ ...base, node: null, waiting })
         continue
       }
       if (c.when && (getPath(ctx, c.when) ?? null) === null) continue
-      out.push({ ...base, node: resolveBindings(c.node, ctx), ...(c.when ? { guarded: true } : {}) })
+      // A bound value ($ref into state or the ticket) can be anything: the resolved node is budgeted again before
+      // anything (parseNode, rendering, stringify) walks it (round 2 #2). Only this contribution fails.
+      const node = resolveBindings(c.node, ctx)
+      out.push({ ...base, node: nodeBudgetProblem(node) === null ? node : OVER_BUDGET, ...(c.when ? { guarded: true } : {}) })
     }
   }
   return out

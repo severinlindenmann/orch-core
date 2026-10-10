@@ -48,20 +48,40 @@ export function policySentence(label: string, p: GatePolicy): string {
 /** The fields of a ticket that a requirements or plan gate hash covers. */
 export type GateSource = Pick<TicketDefinition, 'acceptance' | 'tasks' | 'type' | 'size'> & { body: BodySections }
 
+/** One field of a signed item: `source` says who wrote it (the ticket's people or agents, or core). */
+export interface SignedField {
+  /** Stable name for the field (tests, data-signed-field). */
+  name: string
+  /** Core's words for the field ("Verify command"); empty for the item's own text. */
+  label: string
+  /** The value exactly as hashed (never trimmed); a list is shown item by item. */
+  value: string | string[]
+  source: 'ticket' | 'core'
+  /** An exact token (a command, ids): shown in mono. */
+  mono?: boolean
+}
+
 export interface SignedSection {
   label: string
+  /** The section's text exactly as hashed (never trimmed; '' when there is none). Empty for an item list. */
   text: string
   /** Shown because the hash covers it, but not content a person wrote (type and size always exist). */
   meta?: boolean
+  /** A list section (tasks, acceptance criteria): one entry per item, each field separately. */
+  items?: { id: string; fields: SignedField[] }[]
 }
+
+/** Does a signed section carry anything a person wrote (whitespace alone is nothing)? */
+export const sectionWritten = (s: SignedSection) => !s.meta && (!!s.text.trim() || !!s.items?.length)
 
 /**
  * What an approval of the requirements or plan gate covers: the words for the hash, the material the mock hashes, and
  * the sections the dialog shows. One function feeds both the hash (mocks/derive.ts) and the signing dialog, so what is
- * shown cannot drift from what is signed.
+ * shown cannot drift from what is signed. Every value is the hashed value itself (never trimmed); the dialog shows each
+ * field separately through the visible-string helpers (security review #4).
  */
 export function gateSignedContent(gate: 'requirements' | 'plan', t: GateSource, personName: (id: string) => string = (id) => id): { covers: string[]; material: string; sections: SignedSection[] } {
-  const text = (k: keyof BodySections) => t.body[k]?.trim() ?? ''
+  const text = (k: keyof BodySections) => t.body[k] ?? ''
   if (gate === 'requirements')
     return {
       covers: ['Section: Requirements', 'Section: Out of scope', `Acceptance criteria (${t.acceptance.length})`, 'Type and size'],
@@ -69,7 +89,7 @@ export function gateSignedContent(gate: 'requirements' | 'plan', t: GateSource, 
       sections: [
         { label: 'Requirements', text: text('requirements') },
         { label: 'Out of scope', text: text('out_of_scope') },
-        { label: 'Acceptance criteria', text: t.acceptance.map((a) => `${a.id}  ${a.text}`).join('\n') },
+        { label: 'Acceptance criteria', text: '', items: t.acceptance.map((a) => ({ id: a.id, fields: [{ name: 'text', label: '', value: a.text, source: 'ticket' as const }] })) },
         { label: 'Type and size', text: `Type: ${t.type} · Size: ${t.size ?? 'not set'}`, meta: true },
       ],
     }
@@ -80,9 +100,16 @@ export function gateSignedContent(gate: 'requirements' | 'plan', t: GateSource, 
       { label: 'Plan', text: text('plan') },
       {
         label: 'Tasks',
-        text: t.tasks
-          .map((k) => [`${k.id}  ${k.text}`, `    Assignee: ${k.assignee ? personName(k.assignee) : 'not assigned'}`, k.verify ? `    Verify: ${k.verify.cmd}` : '    Verify: by a person', k.proves.length ? `    Proves: ${k.proves.join(', ')}` : ''].filter(Boolean).join('\n'))
-          .join('\n'),
+        text: '',
+        items: t.tasks.map((k) => ({
+          id: k.id,
+          fields: [
+            { name: 'text', label: '', value: k.text, source: 'ticket' as const },
+            { name: 'assignee', label: 'Assignee', value: k.assignee ? personName(k.assignee) : 'not assigned', source: 'core' as const },
+            k.verify ? { name: 'verify', label: 'Verify command', value: k.verify.cmd, source: 'ticket' as const, mono: true } : { name: 'verify', label: 'Verify', value: 'by a person', source: 'core' as const },
+            ...(k.proves.length ? [{ name: 'proves', label: 'Proves', value: k.proves, source: 'ticket' as const, mono: true }] : []),
+          ],
+        })),
       },
       { label: 'Decisions', text: text('decisions') },
     ],

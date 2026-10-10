@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { offered } from '@/test/offered'
 import { createApi } from '@/api/client'
 import { createMockTransport } from '@/api/transport'
 import { createMockStore } from '@/mocks/store'
@@ -14,7 +15,8 @@ const setup = (viewer = 'p_sev', install = true, dataset: 'normal' | 'busy' = 'n
 }
 type S = ReturnType<typeof setup>
 type Node = { type: string; [k: string]: unknown }
-const run = (s: S, id: string, body: Record<string, unknown> = {}) => s.api.runAddonAction(s.ws, 'links', id, body)
+// A decision answer carries the digest of the decision as offered (security review #3), as core's prompt posts it.
+const run = (s: S, id: string, body: Record<string, unknown> = {}) => s.api.runAddonAction(s.ws, 'links', id, offered(s.store, s.ws, 'links', id, body))
 const fail = (p: Promise<unknown>) => p.then(() => 'ok', (e: { status: number; code: string }) => `${e.status} ${e.code}`)
 type Raw = Record<string, unknown> & {
   links: { id: string; peer: { name: string }; revoked?: unknown; accepts: string[]; theyAccept: string[]; expires_at: string; paired_at: string }[]

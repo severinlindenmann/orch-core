@@ -189,7 +189,8 @@ describe('new node types', () => {
   it('renders a frame sandboxed without same-origin', () => {
     renderNode({ type: 'frame', title: 'Bars', html: '<p>hi</p>' }, { addon: 'widgets' })
     const f = screen.getByTitle('Bars') as HTMLIFrameElement
-    expect(f.getAttribute('sandbox')).toBe('allow-scripts')
+    // Addon HTML is inert (security review #1): no scripts at all, core's sanitizer and CSP first.
+    expect(f.getAttribute('sandbox')).toBe('')
     expect(f.getAttribute('referrerpolicy')).toBe('no-referrer')
     expect(f.srcdoc).toContain("default-src 'none'")
     expect(f.srcdoc.indexOf('Content-Security-Policy')).toBeLessThan(f.srcdoc.indexOf('<p>hi</p>'))

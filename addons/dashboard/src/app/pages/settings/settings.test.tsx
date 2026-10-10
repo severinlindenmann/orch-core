@@ -234,7 +234,7 @@ describe('Settings', () => {
     const key = 'DEMO-0044'
     const t0 = await api.getTicket(key)
     expect(t0.gates.plan.state).toBe('pending')
-    await api.postAction(key, { action: 'approve', gate: 'plan' })
+    await api.postAction(key, { action: 'approve', gate: 'plan', hash: t0.gates.plan.hash })
     expect((await api.getTicket(key)).gates.plan.state).toBe('approved')
     await api.postSettings(ws, { op: 'gate.policy', gate: 'plan', approvers: 'maintainer', count: 2 })
     expect((await api.getTicket(key)).gates.plan.state).toBe('approved')

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { offered } from '@/test/offered'
 import { createApi } from '@/api/client'
 import { createMockTransport } from '@/api/transport'
 import { createMockStore } from '@/mocks/store'
@@ -64,7 +65,7 @@ describe('addon registry', () => {
     await expect(api.getAddonState(ws, 'wiki')).rejects.toMatchObject({ status: 409, code: 'addon.inactive' })
   })
   it('keeps the six iteration-1 actions working', async () => {
-    const { api, ws } = setup()
+    const { api, ws, store } = setup()
     const calls = [
       ['publish', 'decide', { id: 'dec_publish_failed_build', confirmed: true, option: 'no' }],
       ['estimate', 'save_settings', {}],
@@ -73,6 +74,6 @@ describe('addon registry', () => {
       ['usage', 'save_settings', {}],
       ['wiki', 'open', { slug: 'glossary' }],
     ] as const
-    for (const [a, id, body] of calls) expect((await api.runAddonAction(ws, a, id, { ...body })).ok).toBe(true)
+    for (const [a, id, body] of calls) expect((await api.runAddonAction(ws, a, id, offered(store, ws, a, id, { ...body }))).ok).toBe(true)
   })
 })

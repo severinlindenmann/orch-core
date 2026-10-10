@@ -32,10 +32,10 @@ import type {
   WorkspaceRepo,
 } from '@/api/types'
 import { REPO_NAME, remoteProblem, resolveRepoPath } from '@/api/repos'
-import { addonActive, ARG_KEY, manifestProblem, pendingUpdate, manifestFor, sameSet, sameTerms, viewerActions } from '@/api/addons'
+import { addonActive, ARG_KEY, decisionDigest, manifestProblem, pendingUpdate, manifestFor, sameSet, sameTerms, viewerActions } from '@/api/addons'
 import { getAddon, openDecisions } from './addons'
 import { isCoreNamespace } from './addons/registry'
-import { deriveTicket, describeEvent, fnvHex, parseActor } from './derive'
+import { clearContentHashes, deriveTicket, describeEvent, fnvHex, parseActor } from './derive'
 import { commitOf, nextCommitSha } from './changes'
 import { withinCharterSize } from './addons/registry'
 import addonsFixture from './fixtures/addons.json'
@@ -367,6 +367,7 @@ export class MockStore {
     this.sim.stopAll()
     this.relaySim.clear()
     this.mandatesPreview.reset()
+    clearContentHashes() // the content-hash cache holds ticket texts: nothing of the old dataset survives a reset
     this.dataset = dataset
     this.seed()
     if (!keepViewer) this.viewer = meFixture.person
@@ -1201,9 +1202,13 @@ export class MockStore {
     const role = this.roleIn(ws, this.viewer)
     const pkg = this.addons.find((a) => a.name === name)
     const installed = w.addons[name]
-    const meta = (pkg && installed ? manifestFor(pkg, installed.version).actions : pkg?.actions)?.[id]
-    const min = meta?.minRole ?? 'member'
+    const declared = pkg && installed ? manifestFor(pkg, installed.version).actions : undefined
+    const meta = declared && Object.hasOwn(declared, id) ? declared[id] : undefined
     if (!role) return refuse(403, 'forbidden', 'You are not a member of this workspace.', 'Ask an owner.')
+    // Only an action the installed, granted manifest declares runs (security review #10): an implementation the
+    // manifest leaves out (removed in an update, never declared) fails closed instead of running as a default member action.
+    if (!meta) return refuse(403, 'addon.undeclared_action', `${name} does not declare the action "${id}" in its installed version.`, 'Update or reinstall the addon; nothing was run.')
+    const min = meta.minRole ?? 'member'
     if (!atLeast(role, min)) {
       if (min === 'member') return refuse(403, 'forbidden', 'Viewers cannot do this.', 'Ask an owner or maintainer.')
       return refuse(403, 'forbidden', `Only ${min === 'owner' ? 'owners' : 'owners and maintainers'} can do this.`, min === 'owner' ? 'Ask an owner.' : 'Ask an owner or maintainer.')
@@ -1237,13 +1242,19 @@ export class MockStore {
       if (body.confirmed !== true) return refuse(409, 'confirm.required', 'A decision is answered in orch\'s own signing prompt.', 'Answer it on Today, or press the option and sign in the dialog.')
       // The terms the person saw in core's prompt must be the terms now (core shows and signs them line by line).
       if (!sameTerms(body.terms, decision.terms)) return refuse(409, 'decision.closed', 'The terms of this decision changed since you opened it.', 'Reopen it and check the terms again.')
+      // The answer binds the whole decision core showed (security review #3): its ticket, and its digest (title,
+      // question, detail, options, terms) compared with the decision now. Required on every answer: core's prompt
+      // always sends it (decisionBody), so an answer without one was not shown by core and is refused.
+      if (body.ticket !== undefined && body.ticket !== decision.ticket) return refuse(409, 'decision.closed', 'That decision is about another ticket.', 'Reopen it and check it again.')
+      if (typeof body.digest !== 'string') return refuse(409, 'decision.digest_required', 'A decision is answered with the digest of what core showed.', 'Answer it in orch\'s own signing prompt.')
+      if (body.digest !== decisionDigest(decision)) return refuse(409, 'decision.closed', 'This decision changed since you opened it.', 'Reopen it and check it again.')
     }
     const raw = action({ store: this, ws, viewer: this.viewer, ticket, body, state: this.addonState(ws, name), decision })
     // A refusal changes nothing others need to see: no record, no refresh for other clients, nothing saved.
     if (!raw.ok) return raw
     const res = this.checkedResult(ws, raw)
     // Core's own record of a decision (presence step done in core's prompt): who decided what, never the addon's words.
-    if (decision) this.appendWs(ws, { type: 'addon.decided', name, id: decision.id, option: String(body.option), ...(decision.ticket ? { ticket: decision.ticket } : {}), ...(decision.terms ? { terms: { ...decision.terms } } : {}), presence: 'touchid' })
+    if (decision) this.appendWs(ws, { type: 'addon.decided', name, id: decision.id, option: String(body.option), ...(decision.ticket ? { ticket: decision.ticket } : {}), ...(decision.terms ? { terms: { ...decision.terms } } : {}), digest: decisionDigest(decision), presence: 'touchid' })
     // Core's own record of a signed action (the addon cannot write or hide it): who signed which action with exactly the
     // body that was signed (every arg, uncut; only core's `confirmed` flag left out), whether or not the addon changed anything.
     if (meta?.confirm === 'sign') {

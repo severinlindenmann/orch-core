@@ -1086,3 +1086,47 @@ The owner answered the eight open questions of REVIEW.md. Items 1, 2, 5 and 6 ch
   a legacy hold without a wall deadline gets its full window again (never shorter than what was left).
 - **Why:** Codex re-check of U2, controller rulings for fix round 2.
 - **Revert:** revert the fix-round-2 commits.
+
+## Security review fixes (Codex review 2026-10-10)
+
+- **Decision:** the 11 findings of Codex's adversarial review were checked against the code (all real) and fixed, with
+  regression tests in `src/test/security-review.test.ts`, `src/test/security-review-sign.test.tsx`,
+  `src/addon-ui/frameSanitize.test.tsx` and `src/components/sign/visible.test.tsx`:
+  (1) addon frame nodes, agent HTML artifacts and one-off widget pages render inert (`sandbox=""`, core's sanitizer,
+  no-script CSP, fixed height the person can drag); only core's pinned widget templates run scripts. The two seeded
+  agent HTML prototypes on DEMO-0041 are now script-free (details rows, a static table) and re-pinned.
+  (2, 7) `approve` on requirements/plan carries the gate's content hash (now a full sha256) and `answer` the
+  question's hash (full sha256); the host refuses a mismatch (409 `gate.stale` / `question.stale`). The dialog
+  snapshots the ticket when it opens, posts what it shows (the trimmed answer text, never more) and says when the
+  ticket changed underneath. (3, core part) decision answers carry `digest` (the decision as shown); the host compares
+  it and the ticket; `decisionChanged` compares the digest (question, title, detail, ticket included). (4, 8) the
+  signing dialog shows each signed field separately (plan, task text, assignee, verify command, proves; question,
+  option, answer text) with a provenance caption; `visible.tsx` is injective (backslash, `""`, ␠, default-ignorables
+  incl. U+034F, non-ASCII spaces, non-NFC marks) and typed (`RawValue`: strings quoted, numbers/booleans bare); addon
+  prose goes through `Prose`/`Inline`. (5) every package response is the public package without `decisions`.
+  (6) a link revocation's shared row names no ticket; each returned handoff is its own row with its ticket.
+  (9) contributions are bounded (depth 64, 20,000 values, 2 MB) iteratively before binding detection/resolution.
+  (10) undeclared actions are refused (403 `addon.undeclared_action`); the seeded manifests now declare every
+  implemented action. (11) `newShell` checks the pty grant for every shell-creating path.
+- **Not done (#3, factory):** `src/mocks/addons/factory.ts` is being rewritten on another branch. After that merge a
+  permit decision must carry typed `terms` for everything it authorises (`command`, `ticket`, `epic`, `scope` and any
+  other execution parameter), the `permit` action must read the command from the decision's terms (or the signed
+  digest's snapshot), never from live permit state, and the host should then require `digest` on every decision and
+  refuse a privilege-bearing decision without terms. Requiring `digest` now would break the existing addon tests that
+  post decisions directly (factory's among them).
+- **Why:** Codex adversarial review of e2e035e2 (5 High, 6 Medium); controller rulings for #1, #2/#7, #4/#8, #5, #6,
+  #9, #10, #11.
+- **Revert:** revert the "security review" commits on `fix/dashboard-security`.
+
+## Security review fixes, round 2 (Codex re-check 2026-10-11)
+
+- **Decision:** (1) every decision answer must carry the digest (409 `decision.digest_required`), so the factory
+  replay without a digest is refused too; the addon tests post through `test/offered.ts` (digest of the decision as
+  offered). (2) the contribution budget also runs on the node after binding resolution, counts each value before it is
+  queued, and interpolation never stringifies objects. (3) a non-NFC string shows every non-ASCII code point escaped.
+  (4) `open` on a running person shell and `interactive` need the pty grant; transcripts stay readable. (5) the
+  content-hash cache keeps one entry per (ticket, gate/question) slot and is cleared on reset. (6) scripted agent HTML
+  shows core's notice and its source instead of an empty inert frame.
+- **Still open:** factory permits' typed terms (see the round 1 entry), after the factory rewrite merges.
+- **Why:** Codex re-check of the round 1 fixes (1 High, 4 Medium, 1 Low); controller rulings.
+- **Revert:** revert the "round 2" commits on `fix/dashboard-security`.

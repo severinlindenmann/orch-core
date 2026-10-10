@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { offered } from '@/test/offered'
 import { createApi } from '@/api/client'
 import { createMockTransport } from '@/api/transport'
 import { createMockStore } from '@/mocks/store'
@@ -42,7 +43,8 @@ interface State {
   [k: string]: unknown
 }
 const state = async (s: S) => (await s.api.getAddonState(s.ws, 'factory')) as unknown as State
-const run = (s: S, id: string, body: Record<string, unknown> = {}) => s.api.runAddonAction(s.ws, 'factory', id, body)
+// A decision answer carries the digest of the decision as offered (security review #3), as core's prompt posts it.
+const run = (s: S, id: string, body: Record<string, unknown> = {}) => s.api.runAddonAction(s.ws, 'factory', id, offered(s.store, s.ws, 'factory', id, body))
 const permitsOf = async (s: S) => (await s.api.getAddonDecisions(s.ws)).filter((d) => d.addon === 'factory')
 const fail = (p: Promise<unknown>) => p.then(() => 'ok', (e: { status: number; code: string }) => `${e.status} ${e.code}`)
 const labels = async (s: S) => ((await state(s)).controls.children ?? []).map((c) => c.label)
@@ -143,7 +145,7 @@ describe('permits are core decisions', () => {
     expect(s.store.eventsOf(EPIC).filter((e) => e.type === 'factory.permit_refused')).toHaveLength(0)
     const v = setup('p_tom')
     const [vd] = [{ id: 'factory.permit:P-1', ticket: 'DEMO-0052' }]
-    expect(await fail(v.api.runAddonAction(v.ws, 'factory', 'permit', { id: vd.id, confirmed: true, option: 'once' }))).toBe('403 forbidden')
+    expect(await fail(v.api.runAddonAction(v.ws, 'factory', 'permit', offered(v.store, v.ws, 'factory', 'permit', { id: vd.id, confirmed: true, option: 'once' })))).toBe('403 forbidden')
   })
 })
 

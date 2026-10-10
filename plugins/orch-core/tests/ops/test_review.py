@@ -226,7 +226,10 @@ def run_review(*typed: bytes) -> str:
     import sys
     import time
 
-    code = "from orch.ops import human; print('RESULT', human.review_prompt('content', 'DEMO-0001'), flush=True)"
+    code = (
+        "import signal; signal.signal(signal.SIGINT, signal.default_int_handler); from orch.ops import human; "
+        "print('RESULT', human.review_prompt('content', 'DEMO-0001'), flush=True)"
+    )
     r, w = os.pipe()
     pid, tty = pty.fork()
     if pid == 0:
@@ -249,7 +252,17 @@ def run_review(*typed: bytes) -> str:
             if sent < len(typed) and b"anything else stops: " in buf:
                 os.write(tty, typed[sent])
                 sent += 1
-    os.waitpid(pid, 0)
+    import signal
+
+    for _ in range(100):  # hard deadline: a child still waiting is killed and the test fails, it never hangs
+        done, _status = os.waitpid(pid, os.WNOHANG)
+        if done:
+            break
+        time.sleep(0.05)
+    else:
+        os.kill(pid, signal.SIGKILL)
+        os.waitpid(pid, 0)
+        raise AssertionError(f"the review prompt did not finish; it showed {buf!r}")
     out = os.read(r, 4096).decode()
     os.close(r)
     os.close(tty)
@@ -265,7 +278,7 @@ def test_the_terminal_confirmation_needs_the_ticket_key_and_nothing_else_passes(
     assert run_review(b"\n") == "False"
     assert run_review(b"DEMO-0002\n") == "False"
     assert run_review(b"\x04") == "False"  # end of input
-    assert run_review(b"DEMO-0001\x04") == "False"  # the line was cut off by end of input: no Enter was typed
+    assert run_review(b"DEMO-0001\x04\x04") == "False"  # cut off by end of input: no Enter was typed
     assert run_review(b"\x03") == "False"  # Ctrl-C
 
 

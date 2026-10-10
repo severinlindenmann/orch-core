@@ -588,7 +588,7 @@ in `links.branches` before `submit`.
   projection: the first observation (`before: null`), a new commit, a rebase, a force-push, a reset (also back to
   an older commit), a change of `links.repos` or `links.branches`, a change of `settings.repos`, and a change of the
   remote. A decision counts only if its `source_sha` equals the projection at its position.
-- **A missing ref is not a change** (a branch deleted after its PR merged, a remote gone): nothing is appended.
+- **A missing ref is not a change** (a branch deleted after its PR merged, a remote gone): nothing is appended. On a ticket that is not `done`, an approval prompt for `verify` or `code` is refused (`source.missing`) while a source ref is missing; it never shows the last known commit as current.
   **On a `done` ticket only a new `sha` on an existing ref counts**; an identity or ref change there is shown, not
   appended.
 - The host appends any pending `branch.pushed` **before** it builds an approval prompt.
@@ -767,7 +767,7 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
 - **Failure.** An event that fails authorization is treated as absent for state, keeps its place in the chain, and
   is reported as `auth.invalid_event`. The host then refuses new person decisions on that ticket (for an invalid
   event in the workspace log: all person decisions in the workspace) until an owner signs
-  `invalid.acknowledged {log, seq, head}` naming the invalid event, or a `restore`. The acknowledgement keeps the
+  `invalid.acknowledged {seq, head, reason?}` (appended to the log that holds the invalid event) naming it, or a `restore`. The acknowledgement keeps the
   event absent and lifts the freeze; it is in the same log as the invalid event. In P1 an agent with the workspace
   key can cause such a freeze (§12 N4).
 - **Derived fields.** `voided` (in `gate.invalidated`), `voided_gates` and `normalised` (in `edit.external`) are
@@ -1194,7 +1194,7 @@ owner's confirmation.
 | O6 | Unattended evidence | Unattended artifacts carry no `ac`/`task` and are never evidence (§6). | agreed with Opus reviewer |
 | O7 | P1 trust root | The genesis pin is in the host state dir and the person's custody key file, both owned by the same OS user as the agents in P1, so an agent can replace them together; stated plainly next to N14. | agreed with Opus reviewer |
 | R3 | Device recovery and who appends revocations | `device.revoked` may be appended by any member's device or by the host; its authority is the embedded PK-signed revocation (protocol §6.2). A device vouched for by the person key (with `decide`) may add itself when its person has no valid device left (the D50 recovery path); otherwise losing the owner's only device would leave the workspace without owner signatures. | agreed with Opus reviewer |
-| R5 | Decision freeze after an invalid event | An owner signs `invalid.acknowledged {seq, head}` to lift the freeze; the event stays absent. An invalid event in the workspace log freezes all person decisions in the workspace until acknowledged. In P1 an agent with the workspace key can cause the freeze (N4). | agreed with Opus reviewer |
+| R5 | Decision freeze after an invalid event | An owner signs `invalid.acknowledged {seq, head, reason?}` to lift the freeze; the event stays absent. An invalid event in the workspace log freezes all person decisions in the workspace until acknowledged. In P1 an agent with the workspace key can cause the freeze (N4). | agreed with Opus reviewer |
 
 ## 13. Decisions log (F1)
 

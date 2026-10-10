@@ -1,6 +1,7 @@
 // Owner decisions 2026-10-10, items 1 and 6: the verdict signs the commit; a new commit voids it; the opt-in code
 // review gate; the factory charter gives verdicts (never a code review); landing uses the signed commit.
 import { describe, expect, it } from 'vitest'
+import { afterEach, vi } from 'vitest'
 import { createApi } from '@/api/client'
 import { createMockTransport } from '@/api/transport'
 import { describeEvent } from './derive'
@@ -262,15 +263,39 @@ describe('review fixes', () => {
     await expect(s.api.postAction(KEY, { action: 'request_changes', gate: 'verify', text: 'x' })).rejects.toMatchObject({ status: 409, code: 'verdict.exists' })
   })
 
-  it('a code review policy change re-reads tickets: on sends done-unlanded back to testing, off makes waiting ones done', async () => {
+  it('turning the code review on moves back only done tickets with an open landing; others count as landed', async () => {
     const s = setup()
     await pass(s)
     expect(s.store.ticket(KEY)!.status).toBe('done')
-    s.store.setViewer('p_sev')
+    const all = { count: 1, applies: 'all' as const }
+    // No landing record (merged by hand, a pull request, no landing addon): stays done. In the seed only DEMO-0052's
+    // landing is open (queued), so only it would move; DEMO-0042 (pull request) and the landed ones stay done.
+    expect(await s.api.previewCodeReview(s.ws, all)).toEqual({ back: { keys: ['DEMO-0052'], hidden: 0 }, done: { keys: [], hidden: 0 } })
+    await s.api.runAddonAction(s.ws, 'land', 'enqueue', { ticket: KEY })
+    expect(s.store.ticket(KEY)!.landing).toMatchObject({ state: 'queued' })
+    expect((await s.api.previewCodeReview(s.ws, all)).back.keys).toEqual([KEY, 'DEMO-0052'])
     await s.api.postSettings(s.ws, { op: 'gate.policy', gate: 'code', approvers: 'maintainer', count: 1, not: 'assignees', applies: 'all' })
     expect(s.store.ticket(KEY)!.status).toBe('testing')
+    expect(s.store.ticket('DEMO-0042')!.status).toBe('done')
+    expect((await s.api.previewCodeReview(s.ws, { count: 1, applies: 'off' })).done.keys).toEqual([KEY, 'DEMO-0052'])
     await s.api.postSettings(s.ws, { op: 'gate.policy', gate: 'code', approvers: 'maintainer', count: 1, not: 'assignees', applies: 'off' })
     expect(s.store.ticket(KEY)!.status).toBe('done')
+  })
+
+  it('a re-push of an older sha (A, B, then A again) is not a new head and voids nothing', async () => {
+    const s = setup()
+    const a = head(s)
+    const r = s.store.pushCommit(KEY)
+    if (!r.ok) throw new Error(r.message)
+    await pass(s) // on B
+    s.store.append(KEY, { type: 'branch.pushed', actor: 'claude-code:s_x:p_sev', sha: a })
+    expect(s.store.ticket(KEY)!.branch.head).toBe(r.sha)
+    expect(s.store.eventsOf(KEY).some((e) => e.type === 'gate.invalidated' && e.cause === 'new_commits')).toBe(false)
+  })
+
+  it('a charter child\'s size is the one recorded at creation: no ticket action edits it', async () => {
+    const s = setup()
+    await expect(s.api.postAction(KEY, { action: 'set_size', size: 'xs' } as never)).rejects.toMatchObject({ status: 400, code: 'validation' })
   })
 })
 
@@ -282,5 +307,26 @@ describe('the charter covers children up to its size only', () => {
     expect(s.store.autoApprove('DEMO-0053', 'verify', { charter: 'factory', by: 'claude-code:s_f101:p_sev' })).toMatchObject({ ok: false, status: 409, code: 'charter.out_of_scope' })
     def.size = null
     expect(s.store.autoApprove('DEMO-0053', 'verify', { charter: 'factory', by: 'claude-code:s_f101:p_sev' })).toMatchObject({ ok: false, code: 'charter.out_of_scope' })
+  })
+})
+
+describe('the factory demo skips children above the charter size', () => {
+  afterEach(() => vi.useRealTimers())
+  it('gives no verdict to a child of size l waiting in testing', async () => {
+    vi.useFakeTimers()
+    const s = setup('p_sev', true)
+    const def = (s.store as unknown as { defs: Map<string, { size: string | null }> }).defs.get('DEMO-0053')!
+    def.size = 'l'
+    await s.api.runAddonAction(s.ws, 'factory', 'watch', {})
+    vi.advanceTimersByTime(20_000 * 3)
+    expect(s.store.ticket('DEMO-0053')!.verdict).toBeNull()
+    expect(s.store.eventsOf('DEMO-0053').some((e) => e.type === 'verdict.given' && e.via === 'factory_charter')).toBe(false)
+  })
+  it('control: within the size limit the demo gives the charter verdict', async () => {
+    vi.useFakeTimers()
+    const s = setup('p_sev', true)
+    await s.api.runAddonAction(s.ws, 'factory', 'watch', {})
+    vi.advanceTimersByTime(20_000 * 3)
+    expect(s.store.ticket('DEMO-0053')!.verdict).toMatchObject({ via: 'factory_charter' })
   })
 })

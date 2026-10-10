@@ -1,6 +1,6 @@
 // Tiny in-process router for the mock API: (method, path pattern) -> handler(store, ctx).
 import type { HttpMethod, TransportResponse } from '@/api/transport'
-import type { ActionRequest, AddonOpRequest, GateName, Role, SettingsRequest, WorkspaceIdentity, NewTicketRequest, ApiErrorBody, BodySections, OrchEvent, Priority, SavedView, Status, ViewParams, TicketDocument, TicketSummary } from '@/api/types'
+import type { CodeReviewApplies, ActionRequest, AddonOpRequest, GateName, Role, SettingsRequest, WorkspaceIdentity, NewTicketRequest, ApiErrorBody, BodySections, OrchEvent, Priority, SavedView, Status, ViewParams, TicketDocument, TicketSummary } from '@/api/types'
 import { STATUSES } from '@/api/types'
 import type { MockStore } from './store'
 import { atLeast, can } from '@/api/permissions'
@@ -494,6 +494,19 @@ export function buildRouter(): MockRouter {
     return ok(s.eventsOf(c.params.key).filter((e) => e.seq > since))
   })
   r.add('POST', '/api/tickets/:key/actions', postAction)
+  // Dry run of a code review policy: which tickets it would move (for the signing covers). Owners only.
+  r.add('POST', '/api/workspaces/:ws/code-review-preview', (s, c) => {
+    const ws = s.workspaces.find((w) => w.id === c.params.ws)
+    if (!ws) return fail(404, 'not_found', 'No such workspace')
+    if (!can(s.roleIn(ws.id, s.viewer), 'settings')) return fail(403, 'forbidden', 'Only owners change gate policies.')
+    const b = c.body as { count?: number; applies?: CodeReviewApplies } | null
+    const count = Number(b?.count)
+    if (!Number.isInteger(count) || count < 1 || count > 3) return fail(400, 'validation.count', 'A gate needs 1 to 3 approvals.')
+    const moves = s.codeReviewMoves(ws.id, { count, applies: b?.applies ?? 'off' })
+    // Keys the viewer cannot see are counted, never named.
+    const named = (keys: string[]) => ({ keys: keys.filter((k) => s.isVisible(k)), hidden: keys.filter((k) => !s.isVisible(k)).length })
+    return ok({ back: named(moves.back), done: named(moves.done) })
+  })
   // Core's diff of the ticket branch against its base (the Changes view next to the evidence).
   r.add('GET', '/api/tickets/:key/changes', (s, c) => {
     const t = visibleTicket(s, c.params.key)

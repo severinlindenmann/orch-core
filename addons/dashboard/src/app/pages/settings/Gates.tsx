@@ -130,10 +130,22 @@ function CodeReview({ workspace, canEdit, ask }: { workspace: Workspace; canEdit
   const mode = applies === 'off' || applies === 'all' ? applies : 'types'
   const [types, setTypes] = useState<TicketType[]>(Array.isArray(applies) ? applies : ['feature', 'bug', 'chore'])
   const [refused, setRefused] = useState<string | null>(null)
-  const save = (next: { approvers: string; count: number; applies: CodeReviewApplies }) => {
+  const save = async (next: { approvers: string; count: number; applies: CodeReviewApplies }) => {
     const why = unmeetable(workspace, next)
     if (why) return setRefused(why)
     setRefused(null)
+    // Core's dry run: exactly which tickets this policy moves, named in the covers.
+    let moves: Awaited<ReturnType<typeof api.previewCodeReview>>
+    try {
+      moves = await api.previewCodeReview(workspace.id, { count: next.count, applies: next.applies })
+    } catch {
+      return setRefused('Could not work out which tickets this moves. Try again.')
+    }
+    const line = (label: string, m: { keys: string[]; hidden: number }) => {
+      const n = m.keys.length + m.hidden
+      return n ? [`${label}: ${[...m.keys, ...(m.hidden ? [`${m.hidden} you cannot see`] : [])].join(', ')} (${n})`] : []
+    }
+    const moved = [...line('Moves back to testing', moves.back), ...line('Moves to done', moves.done)]
     ask({
       title: 'Change the code review gate',
       covers: [
@@ -143,8 +155,9 @@ function CodeReview({ workspace, canEdit, ask }: { workspace: Workspace; canEdit
         `Approvals needed: ${next.count}`,
         'Never an assignee of the ticket; never auto-approved, not even under a factory charter',
         'It signs the commit the verdict signed; landing needs it',
-        'Turning it on sends done tickets that have not landed back to testing for a review; turning it off makes tickets waiting for one done',
-        'Approvals already given stay valid',
+        ...(moved.length ? moved : ['Moves nothing']),
+        'Only done tickets with an open landing (queued, checking or failed) go back; landed ones stay done',
+        'Code reviews already given stay valid',
       ],
       req: { op: 'gate.policy', gate: 'code', approvers: next.approvers, count: next.count, not: 'assignees', applies: next.applies },
     })

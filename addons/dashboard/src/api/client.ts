@@ -24,6 +24,7 @@ import {
   type ViewParams,
   type Status,
   type TicketChanges,
+  type CodeReviewApplies,
   type TicketDocument,
   type TicketSummary,
   type TodayDocument,
@@ -107,6 +108,9 @@ export function createApi(transport: Transport) {
     getTicket: (key: string) => call<TicketDocument>('GET', `/api/tickets/${key}`),
     getEvents: (key: string, since = 0) => call<OrchEvent[]>('GET', `/api/tickets/${key}/events${qs({ since: String(since) })}`),
     postAction: (key: string, action: ActionRequest) => call<ActionResult>('POST', `/api/tickets/${key}/actions`, action),
+    /** Dry run of a code review policy: the tickets it would move back to testing or to done (owners). */
+    previewCodeReview: (ws: string, req: { count: number; applies: CodeReviewApplies }) =>
+      call<{ back: { keys: string[]; hidden: number }; done: { keys: string[]; hidden: number } }>('POST', `/api/workspaces/${ws}/code-review-preview`, req),
     /** Core's diff of the ticket branch against its base. */
     getChanges: (key: string) => call<TicketChanges>('GET', `/api/tickets/${key}/changes`),
     /** Demo: the ticket's agent pushes a commit to its branch (a standing verdict is then void). */

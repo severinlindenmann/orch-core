@@ -49,7 +49,7 @@ import { roleMeets } from '@/api/roles'
 import { atLeast, can, canRevokeGrant, roleOf } from '@/api/permissions'
 import { Simulator } from './sim'
 import { activeGrantOf, grantTerms } from '@/api/grants'
-import { codeReviewWaits, DEFAULT_CODE_POLICY } from '@/api/gates'
+import { codeReviewApplies, codeReviewWaits, DEFAULT_CODE_POLICY } from '@/api/gates'
 import { isModelName, renderCommand, type LaunchSpec } from '@/api/launch'
 import { HARNESSES, HARNESS_LABEL, MODES, MODE_LABEL, WHERES, WHERE_LABEL, launchSpec, foldSessions, sessionScript, type LaunchPlan, type LaunchRequest, type StartedSession } from './sessions'
 import { clearPersisted, loadPersisted, savePersisted, type PersistedV2 } from './persist'
@@ -492,6 +492,8 @@ export class MockStore {
   private voidForNewCommit(key: string, sha: string): void {
     const t = this.ticket(key)
     if (!t) return
+    // Compare with the head core derives after the append (a re-pushed older sha is not a new head).
+    sha = t.branch.head
     const reason = `New commits after the verdict: ${sha}`
     let voided = false
     // Any approval on another commit, whatever the gate's state (a partial quorum too), and a verdict on another
@@ -512,14 +514,33 @@ export class MockStore {
    * its verdict's commit: it goes back to testing and waits for one. Landed tickets keep their history.
    */
   recheckCodeReview(wsId: string): void {
+    const { back, done } = this.codeReviewMoves(wsId, this.workspaces.find((w) => w.id === wsId)!.gates.code)
+    for (const key of back) this.append(key, { type: 'status.changed', actor: 'host', to: 'testing', reason: 'code review policy' })
+    for (const key of done) this.append(key, { type: 'status.changed', actor: 'host', to: 'done', reason: 'code review policy' })
+  }
+
+  /**
+   * Which tickets a code review policy would move (owner ruling 2026-10-10), as a dry run for the signing covers and
+   * the rule `recheckCodeReview` applies. Back to testing: a done ticket with a pass verdict whose landing is open
+   * (queued, being checked or failed: core's landing record by the landing addon, the same actor rule as derive) and
+   * that would need a review it does not have. A done ticket without an open landing (landed, merged by hand or a
+   * pull request, no landing addon) counts as landed and stays done. To done: a ticket waiting in testing on a pass
+   * verdict whose review would be met or not needed.
+   */
+  codeReviewMoves(wsId: string, next: Pick<Workspace['gates']['code'], 'count' | 'applies'>): { back: string[]; done: string[] } {
+    const back: string[] = []
+    const done: string[] = []
     for (const [key, ws] of this.wsOfKey) {
       if (ws !== wsId) continue
       const t = this.ticket(key)
       if (!t?.verdict || t.verdict.result !== 'pass' || t.gates.verify.state !== 'approved') continue
-      if (t.status === 'testing' && !codeReviewWaits(t)) this.append(key, { type: 'status.changed', actor: 'host', to: 'done', reason: 'code review policy' })
-      else if (t.status === 'done' && t.gates.code.required && t.gates.code.state !== 'approved' && !this.eventsOf(key).some((e) => e.type === 'land.attempt' && e.outcome === 'merged'))
-        this.append(key, { type: 'status.changed', actor: 'host', to: 'testing', reason: 'code review policy' })
+      const headApprovals = t.gates.code.approvals.filter((a) => a.source_sha === t.branch.head).length
+      const met = t.gates.code.state === 'approved' || headApprovals >= next.count
+      const needs = codeReviewApplies(next.applies, t.type) && !met
+      if (t.status === 'done' && needs && t.landing) back.push(key)
+      else if (t.status === 'testing' && !needs) done.push(key)
     }
+    return { back: back.sort(), done: done.sort() }
   }
 
   /**

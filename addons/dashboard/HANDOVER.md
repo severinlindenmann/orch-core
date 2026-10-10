@@ -183,12 +183,17 @@ tab offers it while a verdict stands). **The real host must not have this route.
   verdict: <sha>"}` as host for each, and a done ticket goes back to testing (the landing-resolution path). Any
   approval on another commit is voided, also a partial quorum, and only approvals of the current head count. The mock
   sees commits as `task.done` receipts and `branch.pushed {sha, branch}` (agent); **the host takes the head from git
-  (content-addressed), never from a sha an agent reports.**
+  (content-addressed), never from a sha an agent reports.** A re-push of an older sha is not a new head.
+- **Charter size.** The charter checks the size recorded when the child was created; the mock has no size edit at
+  all. If the host adds one, it must refuse it on charter children (or keep using the creation size).
 - **Code review gate (`code`).** Off by default; on per workspace or per ticket type. When it applies, a pass
   verdict keeps the ticket in testing until the policy's count of people (policy approvers, never an assignee, never a
   charter) approve exactly that commit; landing needs it on the commit the verdict signed. A landing resolution voids
-  it with verify. A policy change re-reads tickets: on, done tickets that have not landed go back to testing; off,
-  tickets waiting for a review are done. Request changes on verify is refused while a verdict stands (409
+  it with verify. A policy change re-reads tickets (owner ruling): turning it on or raising the count moves back
+  **only** done tickets with an open landing (queued, checking or failed, by the landing addon's own records); a done
+  ticket without one (landed, merged by hand or a pull request, no landing addon) counts as landed and stays done.
+  Turning it off or lowering the count makes tickets waiting for a review done. The signed covers name the exact
+  tickets (dry run: proposal `policy.preview`, mock `POST /api/workspaces/:ws/code-review-preview`). Request changes on verify is refused while a verdict stands (409
   `verdict.exists`).
 - **Member grants (`workable`).** The host must check the person's visibility and role on every claim and start
   path (dashboard, CLI, addons), not only in the start dialog.

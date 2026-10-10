@@ -10,6 +10,7 @@ import { wordsAndId } from '@/addon-ui/SignConfirm'
 import { api } from '@/api/client'
 import { approversText } from '@/api/gates'
 import { getAddon } from '@/mocks/addons'
+import { DEMO_REQUEST } from '@/mocks/addons/factory-runs'
 import type { MockStore } from '@/mocks/store'
 import { installAndGrant } from '@/test/installAddon'
 import { renderApp } from '@/test/renderApp'
@@ -289,6 +290,28 @@ const CASES: Case[] = [
     skip: ['confirmed'],
     args: true,
     expectArgs: ['id', 'peer'],
+  },
+  {
+    // Owner decision 2026-10-10 evening (D61 option): one signature covers the goal, how far the factory goes, what
+    // Deliver means (the exact destination the host will deliver to), the hold window and the size cap.
+    name: 'factory full run (confirm: sign)',
+    path: '/addon/factory/factory',
+    setup: (s) => {
+      installAndGrant(s, wsOf(s), 'factory')
+      s.addonState(wsOf(s), 'factory').nav = { p_sev: { runDraft: { ...DEMO_REQUEST } } }
+    },
+    open: async (user) => {
+      await user.click(await screen.findByRole('tab', { name: /^Full runs/ }, T))
+      await user.click(await screen.findByRole('button', { name: 'Sign and start' }, T))
+      return dialogNamed(/^Sign: .* · AI Factory \(factory\)$/)
+    },
+    confirm: press('Sign and run'),
+    method: 'runAddonAction',
+    arg: 3,
+    addon: ['Start a factory full run'],
+    skip: ['confirmed'],
+    args: true,
+    expectArgs: ['goal', 'goes_up_to', 'deliver_means', 'hold_minutes', 'largest_child'],
   },
   {
     name: 'start agent (grant + start)',

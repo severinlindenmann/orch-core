@@ -216,7 +216,7 @@ function Progress({ f, title }: { f: Obj; title?: string }) {
   )
 }
 
-function Diff({ f }: { f: Obj }) {
+export function Diff({ f }: { f: Obj }) {
   const lines = String(f.lines).split('\n')
   return (
     <div className="overflow-hidden rounded-md border border-border">

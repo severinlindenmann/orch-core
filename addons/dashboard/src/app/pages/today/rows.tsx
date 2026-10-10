@@ -6,6 +6,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, FileSearch, HelpCircle, Loader2, ShieldCheck } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/api/client'
+import { diffstat } from '@/api/gates'
 import { ApiError, type AddonDecision, type GateName, type NeedsYouItem, type TicketDocument } from '@/api/types'
 import { AddonBadge } from '@/addon-ui'
 import { addonEdge } from '@/addon-ui/addonClasses'
@@ -202,7 +203,9 @@ export function ApprovalRow({ item, ticket, now, expanded, onToggle, sign, decid
   const covers =
     gate === 'requirements'
       ? `Requirements · ${ticket?.acceptance.length ?? 0} acceptance criteria`
-      : `Plan · ${plural(ticket?.tasks.length ?? 0, 'task')} · ${plural(ticket?.acceptance.length ?? 0, 'acceptance criterion', 'acceptance criteria')}`
+      : gate === 'code'
+        ? `Code review · commit ${ticket?.branch.head ?? ''} · ${ticket ? diffstat(ticket.branch) : ''}`
+        : `Plan · ${plural(ticket?.tasks.length ?? 0, 'task')} · ${plural(ticket?.acceptance.length ?? 0, 'acceptance criterion', 'acceptance criteria')}`
   return (
     <RowShell
       testId={`card-approval:${item.ticket}:${gate}`}

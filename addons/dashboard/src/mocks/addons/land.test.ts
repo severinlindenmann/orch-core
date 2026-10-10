@@ -38,7 +38,7 @@ const drain = (s: S, max = 30) => {
 const verdict = async (s: S, key: string, as = 'p_mara') => {
   const before = s.store.viewer
   s.store.setViewer(as)
-  await s.api.postAction(key, { action: 'verdict', result: 'pass', text: 'Looks right.' })
+  await s.api.postAction(key, { action: 'verdict', result: 'pass', text: 'Looks right.', source_sha: s.store.ticket(key)!.branch.head })
   s.store.setViewer(before)
 }
 

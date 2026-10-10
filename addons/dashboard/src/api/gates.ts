@@ -1,7 +1,34 @@
 // Gate policy wording shared by Settings and the ticket page (part of the API contract).
-import type { BodySections, GateName, TicketDefinition, Workspace } from './types'
+import type { BodySections, CodeReviewApplies, GateName, TicketBranch, TicketDefinition, TicketDocument, TicketType, Workspace } from './types'
 
 export type GatePolicy = Pick<Workspace['gates'][GateName], 'approvers' | 'count' | 'not'>
+
+/** The gates in order: the code review (opt-in) follows the verdict. */
+export const GATE_ORDER: GateName[] = ['requirements', 'plan', 'verify', 'code']
+
+/** The code review gate when a workspace never set it: off, one approval from owners or maintainers, never an assignee. */
+export const DEFAULT_CODE_POLICY: Workspace['gates']['code'] = { approvers: 'maintainer', count: 1, not: 'assignees', applies: 'off' }
+
+/** Does the code review gate apply to a ticket of `type` under `applies`? */
+export const codeReviewApplies = (applies: CodeReviewApplies | undefined, type: TicketType): boolean =>
+  applies === 'all' || (Array.isArray(applies) && applies.includes(type))
+
+/** "Off", "On for every ticket", "On for feature and bug tickets". */
+export function appliesText(applies: CodeReviewApplies | undefined): string {
+  if (applies === 'all') return 'On for every ticket'
+  if (!Array.isArray(applies) || applies.length === 0) return 'Off'
+  const list = applies.length === 1 ? applies[0] : `${applies.slice(0, -1).join(', ')} and ${applies[applies.length - 1]}`
+  return `On for ${list} tickets`
+}
+
+/** "+12 −3" with a real minus sign. */
+export const diffstat = (b: Pick<TicketBranch, 'additions' | 'deletions'>) => `+${b.additions} \u2212${b.deletions}`
+
+/**
+ * The commit line a verdict or code review signs, in core's words, with the full head sha:
+ * "Commit 5be3d10 on feat/DEMO-0041-reconciliation: +40 −12 in 3 files against develop".
+ */
+export const commitCover = (b: TicketBranch) => `Commit ${b.head} on ${b.name}: ${diffstat(b)} in ${b.files} file${b.files === 1 ? '' : 's'} against ${b.base}`
 
 /** The approver groups a gate policy may name, in words. */
 export const APPROVER_GROUPS = [
@@ -77,3 +104,7 @@ export function unmeetablePolicy(workspace: { members: { role: string }[] }, p: 
   const one = p.approvers === 'owner' ? 'owner' : 'owner or maintainer'
   return `Only ${n} ${n === 1 ? one : group} ${n === 1 ? 'exists' : 'exist'}; ${p.count} approvals from ${group} can never be met.`
 }
+
+/** A pass verdict stands and the code review gate applies to this ticket and is not approved yet (the host's rule too). */
+export const codeReviewWaits = (t: Pick<TicketDocument, 'status' | 'verdict' | 'gates'>): boolean =>
+  t.status === 'testing' && t.verdict?.result === 'pass' && !!t.gates.code.required && t.gates.code.state !== 'approved'

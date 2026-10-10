@@ -34,6 +34,7 @@ import { addonActive, ARG_KEY, manifestProblem, pendingUpdate, manifestFor, same
 import { getAddon, openDecisions } from './addons'
 import { isCoreNamespace } from './addons/registry'
 import { deriveTicket, describeEvent, fnvHex, parseActor } from './derive'
+import { commitOf, nextCommitSha } from './changes'
 import addonsFixture from './fixtures/addons.json'
 import catalogFixture from './fixtures/catalog.json'
 import demoFixture from './fixtures/demo.json'
@@ -47,6 +48,7 @@ import { roleMeets } from '@/api/roles'
 import { atLeast, can, canRevokeGrant, roleOf } from '@/api/permissions'
 import { Simulator } from './sim'
 import { activeGrantOf, grantTerms } from '@/api/grants'
+import { codeReviewWaits, DEFAULT_CODE_POLICY } from '@/api/gates'
 import { isModelName, renderCommand, type LaunchSpec } from '@/api/launch'
 import { HARNESSES, HARNESS_LABEL, MODES, MODE_LABEL, WHERES, WHERE_LABEL, launchSpec, foldSessions, sessionScript, type LaunchPlan, type LaunchRequest, type StartedSession } from './sessions'
 import { clearPersisted, loadPersisted, savePersisted, type PersistedV2 } from './persist'
@@ -125,6 +127,7 @@ function awaitingGate(t: TicketDocument): GateName | null {
   if (t.status === 'backlog' && t.gates.requirements.state === 'pending' && t.body.requirements && !/not refined/i.test(t.body.requirements)) return 'requirements'
   if (t.status === 'open' && t.gates.plan.state === 'pending' && t.tasks.length > 0) return 'plan'
   if (t.status === 'testing' && !t.verdict) return 'verify'
+  if (codeReviewWaits(t)) return 'code'
   return null
 }
 
@@ -184,7 +187,11 @@ export class MockStore {
     this.addons = structuredClone([...addonsFixture, ...catalogFixture]) as unknown as AddonPackage[]
     this.busy = this.dataset === 'busy' ? generateBusy() : null
     this.agentRegistry = [...meFixture.agents, ...(this.busy?.agents ?? [])] as unknown as typeof this.agentRegistry
-    this.seedWorkspaces = (workspacesFixture as unknown as Workspace[]).map((w) => ({ ...structuredClone(w), counts: {}, needs_you: 0 }))
+    // The code review gate (opt-in) starts off in every workspace that does not name it.
+    this.seedWorkspaces = (workspacesFixture as unknown as Workspace[]).map((w) => {
+      const c = structuredClone(w)
+      return { ...c, gates: { ...c.gates, code: c.gates.code ?? { ...DEFAULT_CODE_POLICY } }, counts: {}, needs_you: 0 }
+    })
     this.wsEvents.clear()
     for (const w of this.seedWorkspaces) this.wsEvents.set(w.id, [])
     if (this.busy) this.installBusyAddons()
@@ -471,7 +478,43 @@ export class MockStore {
     list.push(event)
     this.bump(this.wsOfKey.get(key))
     this.save()
+    if (commitOf(event)) this.voidForNewCommit(key, commitOf(event)!.sha)
     return event
+  }
+
+  /**
+   * Core's rule for a new commit on the ticket branch (owner decision 2026-10-10): a standing verdict (verify approval)
+   * and code review signed another commit, so they no longer cover what would land. Core appends
+   * `gate.invalidated {gate, cause: 'new_commits', sha, reason}` as host for each, and a done ticket goes back to testing
+   * (the same path as a landing resolution).
+   */
+  private voidForNewCommit(key: string, sha: string): void {
+    const t = this.ticket(key)
+    if (!t) return
+    const reason = `New commits after the verdict: ${sha}`
+    let voided = false
+    for (const gate of ['verify', 'code'] as const) {
+      const g = t.gates[gate]
+      if (g.state !== 'approved' || !g.source_sha || g.source_sha === sha) continue
+      this.append(key, { type: 'gate.invalidated', actor: 'host', gate, reason, cause: 'new_commits', sha })
+      voided = true
+    }
+    if (voided && t.status === 'done') this.append(key, { type: 'status.changed', actor: 'host', to: 'testing' })
+  }
+
+  /**
+   * An agent pushes a commit to the ticket branch (the demo of "new commits after the verdict"). Recorded as
+   * `branch.pushed {sha, branch}` by the agent that last worked on the ticket (else a session of its owner); core's
+   * new-commit rule then voids a standing verdict and code review.
+   */
+  pushCommit(key: string): { ok: true; sha: string } | StoreFailure {
+    const t = this.ticket(key)
+    if (!t) return refuse(404, 'not_found', `No ticket ${key}`)
+    const last = [...this.eventsOf(key)].reverse().find((e) => e.actor.kind === 'agent')?.actor
+    const actor = last && last.kind === 'agent' ? `${last.id}:${last.session}:${last.for}` : `claude-code:s_${key.slice(-4)}:${t.people.owner ?? this.viewer}`
+    const sha = nextCommitSha(t, this.eventsOf(key).filter((e) => e.type === 'branch.pushed').length)
+    this.append(key, { type: 'branch.pushed', actor, sha, branch: t.branch.name })
+    return { ok: true, sha }
   }
 
   // ------------------------------------------------------------ creating tickets
@@ -1100,8 +1143,13 @@ export class MockStore {
    * stopped) and the ticket a child of its epic. Gate policy is not applied: the charter's signer agreed to it for the
    * epic. Recorded as `gate.approved {via: 'factory_charter', charter, charter_signed_by}` with the agent as actor;
    * an approved plan moves a backlog ticket to open, as core does for a person's approval.
+   *
+   * `verify` (owner decision 2026-10-10): the charter also gives the verdict of a child in testing — `verdict.given
+   * {result: 'pass', via: 'factory_charter', source_sha}` plus the verify approval, both signing the branch head now.
+   * The child is done, unless the code review gate applies to it: that one stays human (never auto-approved, `code`
+   * is refused here), so the child waits in testing for a person's code review.
    */
-  autoApprove(key: string, gate: 'requirements' | 'plan', opts: { charter: string; by: string }): { ok: true; event: OrchEvent } | StoreFailure {
+  autoApprove(key: string, gate: 'requirements' | 'plan' | 'verify', opts: { charter: string; by: string }): { ok: true; event: OrchEvent } | StoreFailure {
     const t = this.ticket(key)
     const w = this.workspaceOf(key)
     if (!t || !w) return refuse(404, 'not_found', `No ticket ${key}`)
@@ -1111,6 +1159,16 @@ export class MockStore {
     const ch = mod?.charter && addonActive(w, opts.charter) ? mod.charter(this.addonState(w.id, opts.charter), { store: this, ws: w.id, viewer: actor.for }) : null
     if (!ch || !ch.active) return refuse(409, 'charter.inactive', 'No charter is in force for this epic (not started, paused or stopped).')
     if (t.parent !== ch.epic) return refuse(409, 'charter.out_of_scope', `${key} is not a child of ${ch.epic}.`)
+    if ((gate as string) === 'code') return refuse(403, 'human_only', 'A code review is always a person\'s: the charter never approves it.')
+    if (gate === 'verify') {
+      if (t.status !== 'testing') return refuse(409, 'transition.not_allowed', `${key} is ${t.status}, not testing.`)
+      if (t.verdict) return refuse(409, 'verdict.exists', 'A verdict was already given.')
+      const via = { via: 'factory_charter', charter: ch.epic, charter_signed_by: ch.signedBy, source_sha: t.branch.head }
+      const event = this.append(key, { type: 'verdict.given', actor: opts.by, result: 'pass', ...via })
+      this.append(key, { type: 'gate.approved', actor: opts.by, gate: 'verify', ...via })
+      if (!codeReviewWaits(this.ticket(key)!)) this.append(key, { type: 'status.changed', actor: 'host', to: 'done' })
+      return { ok: true, event }
+    }
     if (t.gates[gate].state === 'approved' || t.gates[gate].approvals.some((a) => a.via === 'factory_charter')) return refuse(409, 'gate.already_approved', `The ${gate} of ${key} is already approved.`)
     const event = this.append(key, { type: 'gate.approved', actor: opts.by, gate, via: 'factory_charter', charter: ch.epic, charter_signed_by: ch.signedBy })
     if (gate === 'plan' && this.ticket(key)!.status === 'backlog') this.append(key, { type: 'status.changed', actor: 'host', to: 'open' })
@@ -1146,6 +1204,8 @@ export class MockStore {
     if (approvedAt && resolved.seq < approvedAt.seq) return refuse(409, 'land.already_voided', `The resolution of attempt #${opts.attempt} predates the approval of ${key} standing now.`)
     const reason = `Landing attempt #${opts.attempt}: a resolution changed the code (${opts.addon}).`
     const event = this.append(key, { type: 'gate.invalidated', actor: 'host', gate: 'verify', reason, addon: opts.addon, attempt: opts.attempt })
+    // The code review signed the same commit: a resolution voids it as well (D53 unchanged).
+    if (t.gates.code.state === 'approved') this.append(key, { type: 'gate.invalidated', actor: 'host', gate: 'code', reason, addon: opts.addon, attempt: opts.attempt })
     if (t.status === 'done') this.append(key, { type: 'status.changed', actor: 'host', to: 'testing' })
     return { ok: true, event }
   }
@@ -1170,7 +1230,7 @@ export class MockStore {
         : policy.approvers === 'maintainer'
           ? 'Only an owner or a maintainer can approve this gate.'
           : `Only the ${policy.approvers} can approve this gate.`
-    if (policy.not === 'assignees' && t.people.assignees.includes(person)) return 'Assignees cannot approve their own work.'
+    if ((policy.not === 'assignees' || gate === 'code') && t.people.assignees.includes(person)) return 'Assignees cannot approve their own work.'
     if (t.gates[gate].approvals.some((a) => a.by === person)) return 'You already approved this gate.'
     return null
   }
@@ -1240,6 +1300,8 @@ export class MockStore {
         items.push({ kind: 'approval', ticket: t.key, title: t.title, text: 'Approve the requirements.', since: this.lastEventAt(t.key, (e) => (e.type === 'section.edited' && e.section === 'requirements') || ((e.type === 'gate.invalidated' || e.type === 'gate.changes_requested') && e.gate === 'requirements'), t.created_at), ref: 'requirements', hash: t.gates.requirements.hash })
       if (t.status === 'open' && t.gates.plan.state === 'pending' && t.tasks.length > 0 && can('plan'))
         items.push({ kind: 'approval', ticket: t.key, title: t.title, text: 'Approve the plan.', since: this.lastEventAt(t.key, (e) => (e.type === 'status.changed' && e.to === 'open') || (e.type === 'section.edited' && e.section === 'plan') || ((e.type === 'gate.invalidated' || e.type === 'gate.changes_requested') && e.gate === 'plan'), t.created_at), ref: 'plan', hash: t.gates.plan.hash })
+      if (codeReviewWaits(t) && can('code'))
+        items.push({ kind: 'approval', ticket: t.key, title: t.title, text: `Review the code: commit ${t.branch.head}.`, since: this.lastEventAt(t.key, (e) => e.type === 'verdict.given', t.created_at), ref: 'code', hash: t.gates.code.hash })
     }
     return items.sort((a, b) => b.since.localeCompare(a.since))
   }

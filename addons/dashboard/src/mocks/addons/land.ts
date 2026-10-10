@@ -16,7 +16,7 @@ import {
   queueFor,
   remoteOf,
   resolve,
-  sourceOf,
+  signedSource,
   step,
   type Attempt,
   type Check,
@@ -471,7 +471,12 @@ registerAddon({
       const state = asLand(s0)
       const c = { store, ws, viewer }
       if (!ticket || !canSeeTicket(c, ticket)) return notFound('Open a ticket to queue it.')
-      if (!approved(store, ticket)) return conflict('land.not_approved', `Only approved tickets enter the queue: ${ticket} has no standing verdict.`, 'Give the verdict first; a voided approval needs a new one.')
+      if (!approved(store, ticket)) {
+        const t = store.ticket(ticket)
+        if (t?.verdict && t.gates.code.required && t.gates.code.state !== 'approved')
+          return conflict('land.not_approved', `${ticket} waits for its code review: landing needs it on commit ${t.branch.head}.`, 'A person approves the code review on the ticket.')
+        return conflict('land.not_approved', `Only approved tickets enter the queue: ${ticket} has no standing verdict.`, 'Give the verdict first; a voided approval needs a new one.')
+      }
       const cur = attemptOf(state, state.worker.current)
       if (cur?.ticket === ticket && !cur.outcome) return { ok: true, message: `${ticket} is being checked now (attempt #${cur.n}).` }
       const at = state.queues.find((q) => q.entries.some((e) => e.ticket === ticket))
@@ -482,8 +487,8 @@ registerAddon({
       const target = state.settings.targets[0]
       if (!target) return conflict('land.no_target', 'No landing target is allowed.', 'An owner allows one in Settings > Addons > Landing.')
       const q = queueFor(state, remoteOf(store, ticket), target)
-      q.entries.push({ ticket, branch: branchOf(store, ticket), source_sha: sourceOf(store, ticket), enqueued: store.now(), by: viewer })
-      store.append(ticket, { type: 'land.queued', actor: ADDON, remote: q.remote, target: q.target, source_sha: sourceOf(store, ticket), by: viewer })
+      q.entries.push({ ticket, branch: branchOf(store, ticket), source_sha: signedSource(store, ticket), enqueued: store.now(), by: viewer })
+      store.append(ticket, { type: 'land.queued', actor: ADDON, remote: q.remote, target: q.target, source_sha: signedSource(store, ticket), by: viewer })
       return { ok: true, message: `${ticket} queued #${q.entries.length} on ${queueName(q)}.`, changed: true }
     },
 

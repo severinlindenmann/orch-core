@@ -1922,16 +1922,21 @@
       },
       {
         "at": "2026-10-07T15:00:00Z",
-        "type": "gate.approved",
-        "actor": "p_mara",
-        "gate": "verify"
+        "type": "verdict.given",
+        "actor": "claude-code:s_f101:p_sev",
+        "result": "pass",
+        "via": "factory_charter",
+        "charter": "DEMO-0050",
+        "charter_signed_by": "p_sev"
       },
       {
-        "at": "2026-10-07T15:01:00Z",
-        "type": "verdict.given",
-        "actor": "p_mara",
-        "result": "pass",
-        "text": "Prices match the finance sheet."
+        "at": "2026-10-07T15:00:01Z",
+        "type": "gate.approved",
+        "actor": "claude-code:s_f101:p_sev",
+        "gate": "verify",
+        "via": "factory_charter",
+        "charter": "DEMO-0050",
+        "charter_signed_by": "p_sev"
       },
       {
         "at": "2026-10-07T15:01:01Z",

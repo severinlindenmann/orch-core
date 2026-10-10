@@ -106,14 +106,32 @@ const CASES: Case[] = [
     path: '/ticket/DEMO-0041',
     open: async (user) => {
       const dialog = await ticketAction(user, /Give verdict/)
-      await user.click(within(dialog).getByRole('radio', { name: /Pass · the evidence is enough/ }))
+      await user.click(within(dialog).getByRole('radio', { name: /^Pass on .*: the evidence is enough$/ }))
       return dialog
     },
     confirm: press('Pass'),
     method: 'postAction',
     arg: 1,
     skip: ['action'],
-    shown: { result: (v) => `${v[0].toUpperCase()}${v.slice(1)} · the evidence` },
+    // The verdict signs the commit (owner decision 2026-10-10): the head is in the choice and the covers, in full.
+    shown: { result: (v) => (v === 'pass' ? 'Pass on ' : 'Send back ·'), source_sha: (v) => `Commit ${v} on ` },
+  },
+  {
+    // Owner decision 2026-10-10 (1): the opt-in code review gate signs exactly the commit the verdict signed.
+    name: 'code review gate approval',
+    path: '/ticket/DEMO-0041',
+    setup: (s) => {
+      s.appendWs(wsOf(s), { type: 'gate.policy_set', gate: 'code', approvers: 'maintainer', count: 1, not: 'assignees', applies: 'all' })
+      const head = s.ticket('DEMO-0041')!.branch.head
+      s.append('DEMO-0041', { type: 'verdict.given', actor: 'p_mara', result: 'pass', source_sha: head })
+      s.append('DEMO-0041', { type: 'gate.approved', actor: 'p_mara', gate: 'verify', source_sha: head, presence: 'touchid' })
+    },
+    open: (user) => ticketAction(user, /Approve code review/),
+    confirm: press('Approve code review'),
+    method: 'postAction',
+    arg: 1,
+    skip: ['action'],
+    shown: { gate: (v) => `Approve ${v}`, source_sha: (v) => `Commit ${v} on ` },
   },
   {
     name: 'addon decision (Today)',

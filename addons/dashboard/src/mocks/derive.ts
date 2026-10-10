@@ -1,5 +1,6 @@
 // Derives the ticket document (§7) from definitions + events. Events are the only truth for state (T14).
-import { gateSignedContent } from '@/api/gates'
+import { codeReviewApplies, commitCover, DEFAULT_CODE_POLICY, GATE_ORDER, gateSignedContent } from '@/api/gates'
+import { branchOf, commitOf, firstCommit, type Commit } from './changes'
 import type {
   AcceptanceStatus,
   Actor,
@@ -18,6 +19,7 @@ import type {
   Status,
   TaskStatus,
   TicketDefinition,
+  TicketBranch,
   TicketDocument,
   TicketLanding,
   Turn,
@@ -73,12 +75,15 @@ export function deriveTicket(
   let verdict: TicketDocument['verdict'] = null
   let handoff: string | null = null
   const artifacts: Artifact[] = []
-  const gateApprovals: Record<GateName, GateStatus['approvals']> = { requirements: [], plan: [], verify: [] }
+  const gateApprovals: Record<GateName, GateStatus['approvals']> = { requirements: [], plan: [], verify: [], code: [] }
   // How many approvals the policy asked for when the latest one was given: a later policy change does not undo it.
   const gateNeeded: Partial<Record<GateName, number>> = {}
   const gateInvalid: Partial<Record<GateName, { reason: string; at: string }>> = {}
   // Approvals an invalidation voided: kept for the record, never counted again.
-  const gateVoided: Record<GateName, GateStatus['approvals']> = { requirements: [], plan: [], verify: [] }
+  const gateVoided: Record<GateName, GateStatus['approvals']> = { requirements: [], plan: [], verify: [], code: [] }
+  // The branch (D53): commits from task receipts and agent pushes. A verdict and a code review sign its head then.
+  const commits: Commit[] = []
+  const headNow = () => commits[commits.length - 1]?.sha ?? firstCommit(def, events[0]?.at ?? '', 'unknown').sha
   const history: NonNullable<TicketDocument['section_history']> = {}
   const gateChanges: Partial<Record<GateName, { text?: string; at: string }>> = {}
   const taskDone = new Map<string, { exit: number; ms: number; commit?: string; at: string }>()
@@ -95,6 +100,8 @@ export function deriveTicket(
   const landingAddon = (e: OrchEvent) => (e.actor.kind === 'addon' && e.type.startsWith(`${e.actor.id}.`) ? e.actor.id : null)
 
   for (const e of events) {
+    const c = commitOf(e)
+    if (c) commits.push(c)
     switch (e.type) {
       case 'ticket.created':
         status = (e.status as Status) ?? 'backlog'
@@ -187,6 +194,8 @@ export function deriveTicket(
           via: (e.via as Via | undefined) ?? 'dashboard',
           ...(e.via === 'factory_charter' ? {} : { presence: (e.presence as Presence | undefined) ?? 'touchid' }),
           sig_ok: (e.sig_ok as boolean | undefined) ?? true,
+          // verify and code sign a commit: the one the event names, else (older records) the branch head then.
+          ...(g === 'verify' || g === 'code' ? { source_sha: (e.source_sha as string | undefined) ?? headNow() } : {}),
         })
         delete gateChanges[g]
         delete gateInvalid[g]
@@ -233,7 +242,14 @@ export function deriveTicket(
         break
       }
       case 'verdict.given':
-        verdict = { result: e.result as 'pass' | 'fail', by: actorLabel(e.actor), at: e.at, text: e.text as string | undefined }
+        verdict = {
+          result: e.result as 'pass' | 'fail',
+          by: actorLabel(e.actor),
+          at: e.at,
+          text: e.text as string | undefined,
+          source_sha: (e.source_sha as string | undefined) ?? headNow(),
+          ...(e.via === 'factory_charter' ? { via: 'factory_charter' as const, charter: e.charter as string, charter_signed_by: e.charter_signed_by as string } : {}),
+        }
         break
       case 'handoff.written': {
         handoff = e.text as string
@@ -289,13 +305,15 @@ export function deriveTicket(
   })
 
   const finalBody: BodySections = { ...body, current_state: handoff ?? body.current_state }
+  const branch = branchOf(def, commits.length ? commits : [firstCommit(def, created, people.owner ?? 'unknown')])
   const gates = {} as Record<GateName, GateStatus>
-  for (const g of ['requirements', 'plan', 'verify'] as GateName[]) {
-    const policy = ctx.gates[g]
+  for (const g of GATE_ORDER) {
+    const policy = ctx.gates[g] ?? DEFAULT_CODE_POLICY
     const approvals = gateApprovals[g]
     const changes = gateChanges[g]
     const invalid = gateInvalid[g]
-    const gated = gateContent(g, def, finalBody, artifacts)
+    const gated = gateContent(g, def, finalBody, artifacts, branch)
+    const signed = approvals[approvals.length - 1]?.source_sha
     gates[g] = {
       state: changes
         ? 'changes_requested'
@@ -313,6 +331,8 @@ export function deriveTicket(
       ...(gateVoided[g].length ? { voided: gateVoided[g] } : {}),
       hash: 'sha256:' + fnvHex(def.uid + g + gated.material, 12) + '…',
       covers: gated.covers,
+      ...(signed ? { source_sha: signed } : {}),
+      ...(g === 'code' ? { required: codeReviewApplies(policy.applies, def.type) } : {}),
     }
   }
 
@@ -331,6 +351,7 @@ export function deriveTicket(
   if (status !== 'done') landing = undefined
   const turn = computeTurn(status, people, claim, openBlocking, verdict, {
     landing,
+    codeReview: gates.code.required && gates.code.state !== 'approved',
     plan: gates.plan.state,
     requirements: gates.requirements.state,
     planApprovers: gates.plan.approvers,
@@ -351,6 +372,7 @@ export function deriveTicket(
     artifacts,
     verdict,
     turn,
+    branch,
     body: finalBody,
     section_history: history,
     head: { seq: last?.seq ?? 0, hash: 'sha256:' + fnvHex(def.uid + (last?.seq ?? 0), 12) + '…' },
@@ -362,17 +384,24 @@ export function deriveTicket(
 }
 
 /** What a gate hash covers (spec section 5, "Gate hash"), as words plus the material the mock hashes. */
-function gateContent(g: GateName, def: TicketDefinition, body: BodySections, artifacts: Artifact[]): { covers: string[]; material: string } {
+function gateContent(g: GateName, def: TicketDefinition, body: BodySections, artifacts: Artifact[], branch: TicketBranch): { covers: string[]; material: string } {
   switch (g) {
     case 'requirements':
     case 'plan': {
       const { covers, material } = gateSignedContent(g, { ...def, body })
       return { covers, material }
     }
+    // The verdict signs the commit too (owner decision 2026-10-10): source_sha is the branch head at verdict time.
     case 'verify':
       return {
-        covers: ['Section: Verification', `Artifacts (${artifacts.length}) by sha256`, 'Acceptance criteria and their evidence'],
-        material: JSON.stringify([body.verification, artifacts.map((a) => a.sha256), def.acceptance]),
+        covers: [commitCover(branch), 'Section: Verification', `Artifacts (${artifacts.length}) by sha256`, 'Acceptance criteria and their evidence'],
+        material: JSON.stringify([branch.head, body.verification, artifacts.map((a) => a.sha256), def.acceptance]),
+      }
+    // The code review signs exactly that commit and its diff against the base (the landing worker re-checks the candidate).
+    case 'code':
+      return {
+        covers: [commitCover(branch), `The diff of ${branch.name} against ${branch.base}, file by file`],
+        material: JSON.stringify([branch.head, branch.base, branch.files, branch.additions, branch.deletions]),
       }
   }
 }
@@ -385,12 +414,15 @@ export function computeTurn(
   verdict: TicketDocument['verdict'],
   {
     landing,
+    codeReview = false,
     plan = 'approved',
     requirements = 'approved',
     planApprovers = 'maintainer',
     taskCount = 1,
   }: {
     landing?: TicketLanding
+    /** A pass verdict stands and the code review gate applies and is not approved yet. */
+    codeReview?: boolean
     plan?: GateStatus['state']
     requirements?: GateStatus['state']
     planApprovers?: GateStatus['approvers']
@@ -401,6 +433,7 @@ export function computeTurn(
   if (status === 'done') return { who: 'nobody', why: 'Done' }
   if (openBlocking) return { who: openBlocking.to, why: `Answer ${openBlocking.id}` }
   if (status === 'testing' && !verdict) return { who: people.reviewers[0] ?? people.owner ?? 'nobody', why: 'Verdict needed' }
+  if (status === 'testing' && verdict?.result === 'pass' && codeReview) return { who: people.owner ?? people.reviewers[0] ?? 'nobody', why: 'Code review needed' }
   if (claim) return { who: `agent:${claim.agent}`, why: 'Working' }
   if (status === 'backlog') return { who: people.owner ?? 'nobody', why: 'Refine' }
   // A plan that still needs a signature is the next step, not "ready to claim" (and it names who may sign it).
@@ -476,7 +509,9 @@ export function describeEvent(e: Pick<OrchEvent, 'type'> & Record<string, unknow
     case 'section.edited':
       return `edited ${t(e.section, 'a section').replace('_', ' ')}`
     case 'gate.invalidated':
-      return `invalidated the ${t(e.gate, 'gate')} approval`
+      return e.cause === 'new_commits' ? `invalidated the ${t(e.gate, 'gate')} approval: new commits after it (${t(e.sha, 'a commit')})` : `invalidated the ${t(e.gate, 'gate')} approval`
+    case 'branch.pushed':
+      return `pushed ${t(e.sha, 'a commit')} to the ticket branch`
     case 'log.added':
       return 'logged a note'
     case 'comment.added':

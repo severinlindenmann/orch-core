@@ -522,6 +522,10 @@
                         "label": "Approval"
                       },
                       {
+                        "key": "verdict",
+                        "label": "Verdict"
+                      },
+                      {
                         "key": "size",
                         "label": "Size"
                       }

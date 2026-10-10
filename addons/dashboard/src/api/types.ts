@@ -11,7 +11,13 @@ export type TicketType = 'feature' | 'bug' | 'chore' | 'spike' | 'epic'
 export type Priority = 'low' | 'medium' | 'high' | 'urgent'
 export type Size = 'xs' | 's' | 'm' | 'l' | 'xl'
 export type Role = 'owner' | 'maintainer' | 'member' | 'viewer'
-export type GateName = 'requirements' | 'plan' | 'verify'
+/**
+ * The gates, in order. `code` is the opt-in code review (owner decision 2026-10-10): off by default, turned on per
+ * workspace or per ticket type; when on it follows the verdict and signs exactly the commit the verdict signed.
+ */
+export type GateName = 'requirements' | 'plan' | 'verify' | 'code'
+/** Where the code review gate applies: nowhere (default), every ticket, or only tickets of these types. */
+export type CodeReviewApplies = 'off' | 'all' | TicketType[]
 
 // ---------------------------------------------------------------- workspace / people
 
@@ -41,7 +47,8 @@ export interface Workspace {
   prefix: string // DEMO
   name: string
   members: Member[]
-  gates: Record<GateName, { approvers: string; count: number; not?: string }>
+  /** Gate policies. `code.applies` says where the code review gate is on (the other gates always apply). */
+  gates: Record<GateName, { approvers: string; count: number; not?: string; applies?: CodeReviewApplies }>
   addons: Record<string, WorkspaceAddon>
   counts: Partial<Record<Status, number>>
   needs_you: number
@@ -238,7 +245,7 @@ export interface Claim {
 export interface GateStatus {
   state: 'pending' | 'approved' | 'invalidated' | 'changes_requested'
   /** `presence` is absent for a charter approval (no person was present; the charter was signed when the epic started). */
-  approvals: { by: string; at: string; via?: Via; presence?: Presence; sig_ok?: boolean }[]
+  approvals: { by: string; at: string; via?: Via; presence?: Presence; sig_ok?: boolean; source_sha?: string }[]
   needed: number
   approvers: string
   /** Excluded group, e.g. "assignees". */
@@ -252,6 +259,35 @@ export interface GateStatus {
   reason?: string
   /** Approvals an invalidation voided (for the record; they never count toward `needed`). */
   voided?: GateStatus['approvals']
+  /** verify and code: the commit (branch head) the standing approval signed. */
+  source_sha?: string
+  /** code only: whether the code review gate applies to this ticket (workspace policy, by ticket type). */
+  required?: boolean
+}
+
+/** The ticket's branch as core sees it (D53): its head is what a verdict and a code review sign. */
+export interface TicketBranch {
+  name: string
+  /** The branch it is compared with (the landing target). */
+  base: string
+  /** The head commit now (short sha). */
+  head: string
+  commits: { sha: string; at: string; by: string; task?: string }[]
+  /** Diffstat of the branch against `base`. */
+  files: number
+  additions: number
+  deletions: number
+}
+
+/** GET /api/tickets/:key/changes: core's diff of the branch against its base (the Changes view). */
+export interface TicketChanges {
+  ticket: string
+  branch: string
+  base: string
+  head: string
+  additions: number
+  deletions: number
+  files: { path: string; additions: number; deletions: number; lines: string }[]
 }
 
 export interface SectionRevision {
@@ -282,7 +318,8 @@ export interface TicketDocument extends TicketDefinition {
   questions_state: QuestionStatus[]
   gates: Record<GateName, GateStatus>
   artifacts: Artifact[]
-  verdict: { result: 'pass' | 'fail'; by: string; at: string; text?: string } | null
+  /** `source_sha`: the commit the verdict signed. `via: 'factory_charter'`: auto-approved under a factory charter (no person reviewed it). */
+  verdict: { result: 'pass' | 'fail'; by: string; at: string; text?: string; source_sha?: string; via?: Via; charter?: string; charter_signed_by?: string } | null
   turn: Turn
   body: BodySections
   head: { seq: number; hash: string }
@@ -294,6 +331,8 @@ export interface TicketDocument extends TicketDefinition {
   section_history?: Partial<Record<keyof BodySections, SectionRevision[]>>
   /** Skills, connections and env this ticket needs, with the connections' last check (core-computed; D55–D57). */
   needs?: TicketNeeds
+  /** The ticket's branch: head commit, commits and diffstat against its base (core-computed). */
+  branch: TicketBranch
   /**
    * Where the ticket is in landing (D53), read by core from the landing records in its own log (`land.*` events by the
    * landing addon), only while that addon is active. A done ticket that is queued, being checked or failed to land is
@@ -566,7 +605,7 @@ export type SettingsRequest =
   | { op: 'member.add'; person: string; name: string; role: Role }
   | { op: 'member.role'; person: string; role: Role }
   | { op: 'member.remove'; person: string }
-  | { op: 'gate.policy'; gate: GateName; approvers: string; count: number; not?: 'assignees' | null }
+  | { op: 'gate.policy'; gate: GateName; approvers: string; count: number; not?: 'assignees' | null; applies?: CodeReviewApplies }
   | { op: 'archive'; prefix: string }
 
 /** POST /api/workspaces/:ws/addons/:name. Owner only; grant and update are signed in the UI. */
@@ -732,9 +771,11 @@ export interface AddonActionResult {
 
 export type ActionRequest =
   | { action: 'answer'; question: string; option?: string; text?: string }
-  | { action: 'approve'; gate: GateName }
+  /** `source_sha` (code gate): the commit the person reviewed; refused when the branch moved since. */
+  | { action: 'approve'; gate: GateName; source_sha?: string }
   | { action: 'request_changes'; gate: GateName; text: string }
-  | { action: 'verdict'; result: 'pass' | 'fail'; text?: string }
+  /** `source_sha`: the branch head the dialog showed; the host refuses a verdict on another commit (`verdict.stale`). */
+  | { action: 'verdict'; result: 'pass' | 'fail'; text?: string; source_sha: string }
   | { action: 'comment'; text: string }
   | { action: 'ask'; to: string; text: string; options?: QuestionOption[]; blocking?: boolean }
   | { action: 'claim' }

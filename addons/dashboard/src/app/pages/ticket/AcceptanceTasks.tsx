@@ -2,6 +2,7 @@ import { ChevronDown, ChevronRight, FileText, ListChecks } from 'lucide-react'
 import { useState } from 'react'
 import type { AcceptanceStatus, TaskStatus, TicketDocument } from '@/api/types'
 import { CodeBlock } from '@/addon-ui/CodeBlock'
+import { diffstat } from '@/api/gates'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { agentName, fmtDuration, Mono, Pill, Section, type Jump, type TabProps } from './shared'
 
@@ -142,6 +143,16 @@ function leaseText(t: TaskStatus): string {
 export function AcceptanceTasks({ ticket, viewer, jump }: TabProps) {
   return (
     <div className="space-y-5">
+      {ticket.status === 'testing' && (
+        <p data-testid="evidence-changes" className="flex flex-wrap items-center gap-x-2 rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-text-muted">
+          <span>
+            Evidence and code together: the verdict signs commit <Mono className="text-text">{ticket.branch.head}</Mono> ({diffstat(ticket.branch)} against {ticket.branch.base}).
+          </span>
+          <button type="button" onClick={() => jump({ tab: 'changes' })} className="text-brand underline-offset-2 hover:underline">
+            Open changes
+          </button>
+        </p>
+      )}
       <Section title={`Acceptance criteria (${ticket.acceptance_state.filter((a) => a.state === 'proven').length}/${ticket.acceptance_state.length} evidenced)`}>
         {ticket.acceptance_state.length === 0 ? (
           <p className="text-[13px] text-text-faint">No acceptance criteria yet.</p>

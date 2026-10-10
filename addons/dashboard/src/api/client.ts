@@ -23,6 +23,7 @@ import {
   type SavedView,
   type ViewParams,
   type Status,
+  type TicketChanges,
   type TicketDocument,
   type TicketSummary,
   type TodayDocument,
@@ -106,6 +107,10 @@ export function createApi(transport: Transport) {
     getTicket: (key: string) => call<TicketDocument>('GET', `/api/tickets/${key}`),
     getEvents: (key: string, since = 0) => call<OrchEvent[]>('GET', `/api/tickets/${key}/events${qs({ since: String(since) })}`),
     postAction: (key: string, action: ActionRequest) => call<ActionResult>('POST', `/api/tickets/${key}/actions`, action),
+    /** Core's diff of the ticket branch against its base. */
+    getChanges: (key: string) => call<TicketChanges>('GET', `/api/tickets/${key}/changes`),
+    /** Demo: the ticket's agent pushes a commit to its branch (a standing verdict is then void). */
+    simulatePush: (key: string) => call<{ ok: true; sha: string; ticket: TicketDocument }>('POST', `/api/dev/tickets/${key}/push`),
     /** Every known addon package (global; no per-workspace state). */
     getAddons: () => call<AddonPackage[]>('GET', '/api/addons'),
     /** Addons installed in a workspace: the package plus that workspace's version, grant and status under `ws`. */

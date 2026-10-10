@@ -11,7 +11,8 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { gateSignedContent, type SignedSection } from '@/api/gates'
+import { commitCover, diffstat, gateSignedContent, type SignedSection } from '@/api/gates'
+import { visible } from '@/components/sign/visible'
 import { GATE_LABEL, policyText } from './actions'
 import type { HumanAction } from './shared'
 
@@ -37,7 +38,14 @@ function describe(ticket: TicketDocument, a: HumanAction): Described {
 
 /** What an approval signs, from the same fields the gate hash covers (api/gates.ts). Type and size are shown but never count as content. */
 function signedSections(ticket: TicketDocument, gate: GateName, personName: (id: string) => string): SignedSection[] | null {
-  return gate === 'verify' ? null : gateSignedContent(gate, ticket, personName).sections
+  if (gate === 'verify') return null
+  // The code review signs exactly the branch head and its diff against the base (the same commit the verdict signed).
+  if (gate === 'code')
+    return [
+      { label: 'Commit', text: visible(commitCover(ticket.branch)) },
+      { label: 'Commits on the branch', text: ticket.branch.commits.map((c) => `${visible(c.sha)}  ${c.task ? `${c.task} · ` : ''}${personName(c.by)}`).join('\n') },
+    ]
+  return gateSignedContent(gate, ticket, personName).sections
 }
 
 const written = (sections: SignedSection[]) => sections.filter((s) => s.text && !s.meta)
@@ -62,7 +70,7 @@ function Signed({ sections }: { sections: SignedSection[] }) {
  * button, keeps the hash in a closed Details, and starts with focus on Cancel (the first radio for a verdict).
  * `onOpenEvidence` lets the ticket page jump to the evidence; without it the dialog closes and opens the ticket.
  */
-export function SignDialog({ ticket, action, onClose, onOpenEvidence, onPending }: { onPending?: (pending: boolean) => void; ticket: TicketDocument; action: HumanAction | null; onClose: () => void; onOpenEvidence?: () => void }) {
+export function SignDialog({ ticket, action, onClose, onOpenEvidence, onOpenChanges, onPending }: { onPending?: (pending: boolean) => void; ticket: TicketDocument; action: HumanAction | null; onClose: () => void; onOpenEvidence?: () => void; onOpenChanges?: () => void }) {
   const qc = useQueryClient()
   const navigate = useNavigate()
   const [phase, setPhase] = useState<'confirm' | 'touch' | 'sending'>('confirm')
@@ -102,17 +110,20 @@ export function SignDialog({ ticket, action, onClose, onOpenEvidence, onPending 
         : null
   const blocked = busy || !!hint
 
+  // The commit a verdict or code review signs: the branch head now, in full (owner decision 2026-10-10).
+  const head = ticket.branch.head
+  const passLabel = `Pass on ${visible(head)} · ${diffstat(ticket.branch)}: the evidence is enough`
   const proven = ticket.acceptance_state.filter((a) => a.state === 'proven').length
   const receipts = ticket.tasks_state.filter((t) => t.receipt).length
 
   const request = (): ActionRequest => {
     switch (action.kind) {
       case 'approve':
-        return { action: 'approve', gate: action.gate }
+        return action.gate === 'code' ? { action: 'approve', gate: 'code', source_sha: head } : { action: 'approve', gate: action.gate }
       case 'request_changes':
         return { action: 'request_changes', gate: action.gate, text }
       case 'verdict':
-        return { action: 'verdict', result: result!, text: text || undefined }
+        return { action: 'verdict', result: result!, text: text || undefined, source_sha: head }
       case 'answer':
         return { action: 'answer', question: action.question, option: action.option, text: action.text }
     }
@@ -143,6 +154,16 @@ export function SignDialog({ ticket, action, onClose, onOpenEvidence, onPending 
     if (onOpenEvidence) onOpenEvidence()
     else void navigate({ to: '/ticket/$key', params: { key: ticket.key } })
   }
+  const openChanges = () => {
+    onClose()
+    if (onOpenChanges) onOpenChanges()
+    else void navigate({ to: '/ticket/$key', params: { key: ticket.key } })
+  }
+  const changesLink = (
+    <Button type="button" variant="link" size="sm" className="h-auto p-0 text-[13px]" onClick={openChanges} disabled={busy}>
+      Open changes
+    </Button>
+  )
 
   return (
     <Dialog open onOpenChange={(open) => !open && !busy && onClose()}>
@@ -165,6 +186,7 @@ export function SignDialog({ ticket, action, onClose, onOpenEvidence, onPending 
         </DialogHeader>
 
         {sections && hasContent && <Signed sections={sections} />}
+        {d.gate === 'code' && <p className="text-[13px] text-text-muted">Read the diff before you approve: {changesLink}</p>}
         {nothing && (
           <p role="status" className="rounded-md border border-dashed border-border px-3 py-2 text-[13px] text-text-muted">
             {hint}
@@ -190,12 +212,18 @@ export function SignDialog({ ticket, action, onClose, onOpenEvidence, onPending 
               <Button type="button" variant="link" size="sm" className="h-auto p-0 text-[13px]" onClick={openEvidence} disabled={busy}>
                 Open evidence
               </Button>
+              {changesLink}
             </p>
+            <section aria-label="Commit" className="rounded-md border border-border bg-bg px-3 py-2 text-[13px]">
+              <h3 className="mb-0.5 text-[12px] font-medium text-text-muted">The verdict signs this commit</h3>
+              <p className="break-words font-mono text-[12px] text-text">{visible(commitCover(ticket.branch))}</p>
+              <p className="mt-1 text-[12px] text-text-muted">A new commit on the branch after the verdict voids it; the ticket goes back to testing.</p>
+            </section>
             <fieldset className="grid gap-2" disabled={busy}>
               <legend className="sr-only">Verdict</legend>
               {(
                 [
-                  ['pass', 'Pass · the evidence is enough'],
+                  ['pass', passLabel],
                   ['fail', 'Send back · something must change'],
                 ] as const
               ).map(([r, label], i) => (

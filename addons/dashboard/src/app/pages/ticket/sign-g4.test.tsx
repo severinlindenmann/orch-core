@@ -47,7 +47,10 @@ describe('G4 signing dialogs say what you sign', () => {
     expect(dialog).toHaveTextContent(/AC \d+\/\d+ evidenced · \d+ receipts?/)
     expect(within(dialog).getByRole('button', { name: /Open evidence/ })).toBeInTheDocument()
     expect(dialog).toHaveTextContent('Choose Pass or Send back')
-    await user.click(within(dialog).getByRole('radio', { name: /Pass · the evidence is enough/ }))
+    // The verdict signs the commit: the head of the branch, with its diffstat, in the choice and in the covers.
+    expect(within(dialog).getByRole('button', { name: 'Open changes' })).toBeInTheDocument()
+    expect(within(dialog).getByRole('region', { name: 'Commit' })).toHaveTextContent(/Commit c90e7a1 on feat\/DEMO-0041-reconciliation: \+\d+ \u2212\d+ in \d+ files? against develop/)
+    await user.click(within(dialog).getByRole('radio', { name: /^Pass on c90e7a1 · \+\d+ \u2212\d+: the evidence is enough$/ }))
     const pass = within(dialog).getByRole('button', { name: 'Pass' })
     expect(pass).toBeEnabled()
     await user.click(within(dialog).getByRole('radio', { name: /Send back · something must change/ }))

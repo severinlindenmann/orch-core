@@ -21,7 +21,7 @@ import {
   REMOTES,
   resolutionDiff,
   sha,
-  sourceOf,
+  signedSource,
   type Attempt,
   type LandState,
   type Script,
@@ -65,7 +65,7 @@ function build(store: MockStore, state: LandState, specs: Spec[], first: number)
   const minutes = state.settings.timeout_minutes
   for (const s of [...specs].sort((a, b) => a.at.localeCompare(b.at))) {
     const q = queueFor(state, s.remote ?? remoteOf(store, s.ticket), 'develop')
-    const source = sourceOf(store, s.ticket)
+    const source = signedSource(store, s.ticket)
     const entry = { ticket: s.ticket, branch: branchOf(store, s.ticket), source_sha: source, enqueued: s.at, by: 'p_sev', ...(s.stacked_on ? { stacked_on: s.stacked_on } : {}) }
     if (s.final === 'queued') {
       q.entries.push({ ...entry, ...(s.plan.length ? { script: [...s.plan] } : {}) })

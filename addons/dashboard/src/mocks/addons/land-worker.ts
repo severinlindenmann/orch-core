@@ -131,10 +131,14 @@ const slug = (title: string) =>
     .replace(/-+$/, '')
 export const branchOf = (store: MockStore, key: string) => `feat/${key}-${slug(store.ticket(key)?.title ?? key)}`
 
-/** The ticket's approved source revision: fixed by the verify approval it carries now. */
-export function sourceOf(store: MockStore, key: string): string {
-  const at = [...store.eventsOf(key)].reverse().find((e) => e.type === 'gate.approved' && e.gate === 'verify')?.at ?? ''
-  return sha(key, 'source', at)
+/**
+ * The commit the verdict signed (owner decision 2026-10-10): the `source_sha` of the ticket's latest verify approval,
+ * read from core's gate record (a voided one too, for the history of earlier attempts). Never inferred.
+ */
+export function signedSource(store: MockStore, key: string): string {
+  const v = store.ticket(key)?.gates.verify
+  const all = [...(v?.voided ?? []), ...(v?.approvals ?? [])].sort((a, b) => a.at.localeCompare(b.at))
+  return all[all.length - 1]?.source_sha ?? ''
 }
 
 /** The last agent that worked on the ticket (`agent:session:person`), or null. */
@@ -143,10 +147,15 @@ export function agentOf(store: MockStore, key: string): string | null {
   return e && e.actor.kind === 'agent' ? `${e.actor.id}:${e.actor.session}:${e.actor.for}` : null
 }
 
-/** Only tickets with a standing verify approval (the verdict) enter and land. */
+/**
+ * Only tickets with a standing verify approval (the verdict) enter and land, on the commit it signed; with the code
+ * review gate on for the ticket, that approval must stand too, on the same commit.
+ */
 export function approved(store: MockStore, key: string): boolean {
   const t = store.ticket(key)
-  return !!t && t.status === 'done' && t.gates.verify.state === 'approved'
+  if (!t || t.status !== 'done' || t.gates.verify.state !== 'approved') return false
+  const code = t.gates.code
+  return !code.required || (code.state === 'approved' && code.source_sha === t.gates.verify.source_sha)
 }
 
 export function queueFor(state: LandState, remote: string, target: string): Queue {
@@ -281,9 +290,9 @@ function nextEntry(store: MockStore, state: LandState): { q: Queue; e: Entry } |
   let best: { q: Queue; e: Entry } | null = null
   for (const q of state.queues) {
     if (!state.settings.targets.includes(q.target)) continue
-    // An entry whose approval no longer stands leaves the queue.
+    // An entry whose approval no longer stands, or stands for another commit, leaves the queue.
     for (const e of [...q.entries]) {
-      if (!approved(store, e.ticket)) {
+      if (!approved(store, e.ticket) || e.source_sha !== signedSource(store, e.ticket)) {
         q.entries = q.entries.filter((x) => x !== e)
         store.append(e.ticket, { type: 'land.dequeued', actor: ADDON, reason: 'the approval no longer stands' })
       }

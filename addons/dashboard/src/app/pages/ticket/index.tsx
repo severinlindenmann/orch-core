@@ -13,6 +13,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { usePageHeader, useTicketOrigin } from '../../shell/ShellUi'
 import { AcceptanceTasks } from './AcceptanceTasks'
 import { Artifacts } from './Artifacts'
+import { Changes, HAS_CHANGES } from './Changes'
+import { diffstat } from '@/api/gates'
 import { GatesStrip } from './Gates'
 import { TicketHeader } from './Header'
 import { History } from './History'
@@ -199,6 +201,12 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
                 {provenCount}/{ticket.acceptance_state.length}
               </span>
             </TabsTrigger>
+            {HAS_CHANGES.has(ticket.status) && (
+              <TabsTrigger value="changes">
+                Changes
+                <span className="font-mono text-[11px] text-text-faint">{diffstat(ticket.branch)}</span>
+              </TabsTrigger>
+            )}
             <TabsTrigger value="questions">
               Questions
               {openQuestions > 0 && <span className="rounded-full bg-warning-soft px-1.5 font-mono text-[11px] text-warning">{openQuestions}</span>}
@@ -216,6 +224,11 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
           <TabsContent value="acceptance">
             <AcceptanceTasks {...props} />
           </TabsContent>
+          {HAS_CHANGES.has(ticket.status) && (
+            <TabsContent value="changes">
+              <Changes {...props} />
+            </TabsContent>
+          )}
           <TabsContent value="questions">
             <Questions {...props} />
           </TabsContent>
@@ -232,7 +245,7 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
         {wide && <Rail ticket={ticket} viewer={viewer} />}
       </div>
 
-      <SignDialog ticket={ticket} action={signing} onClose={() => setSigning(null)} onOpenEvidence={() => jump({ tab: 'acceptance' })} onPending={setSignPending} />
+      <SignDialog ticket={ticket} action={signing} onClose={() => setSigning(null)} onOpenEvidence={() => jump({ tab: 'acceptance' })} onOpenChanges={() => jump({ tab: 'changes' })} onPending={setSignPending} />
     </div>
   )
 }

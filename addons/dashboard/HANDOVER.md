@@ -387,3 +387,35 @@ for G2+ builds. `build-preview.py` still runs, but its output does not load; it 
    - settle event names with issue #338 and rename the provisional ones in the mock and `describeEvent`;
    - move the rules the mock enforces (permissions, visibility, gate policy, addon roles, refusal codes) into the
      host; the UI keeps them only as convenience.
+
+## Repos addon preview (U3)
+
+The declared repo list is the workspace's `settings.repos` (`Workspace.repos`, folded from `settings.changed`
+`set.repos`, ticket format §2/§5.4.2); the addon keeps only observations, jobs, its log, settings and a draft.
+`remote`/`default_branch` per entry are a proposed format amendment. Seeds: `fixtures/workspaces.json` (`repos`,
+`root_folder`); Busy day adds `busy/repos.ts` (every generated `links.repos` name is declared). Proposal:
+[repos-addon-proposal.md](docs/repos-addon-proposal.md).
+
+| Endpoint / action | Minimum role | Behavior |
+|---|---|---|
+| `POST /api/workspaces/:ws/settings` `{op: 'repos', set}` | owner (person) | Core's `settings.changed`; bad name/path/remote 400; same path 409 `settings.repos_same_path`; `store.changeRepos` is the one writer. |
+| `GET …/addons/repos/state` | viewer | Structure, Checks, Activity, Glance, settings, ticket panel. `moving: true` while a clone runs: core's shared query re-reads every 1 s. Buttons only for the roles that may use them. |
+| `POST …/repos/actions/prepare_add`, `add`, `adopt` | **owner** | Host-validated (`src/api/repos.ts`, shared with the UI); add/adopt signed; write `settings.changed` through `changeRepos`. |
+| `POST …/repos/actions/remove`, `remove_anyway` | **owner** | Destructive / options confirm; 409 `repos.linked` with the count of open tickets the owner can see; `settings.changed` with `null`; the disk is untouched. |
+| `POST …/repos/actions/clone`, `clone_all`, `clone_attention` | maintainer | Signed remote, target folder and `clone_as` (the git-login connection); stale plan or identity 409 `repos.changed`; no remote 409 `repos.no_remote`; no login 409 `repos.no_login`. |
+| `POST …/repos/actions/check`, `fetch`, `fetch_all` | member | Re-read / refresh tracking; never pull or discard changes. |
+| `POST …/repos/actions/open_terminal` | member | Repos and Terminals pty grants; dock shell with `cd -- '<path>'` typed, not run. |
+| `POST …/repos/actions/save_settings` | maintainer | Interval, fetch-on-check, git-login connection (gh/glab/git CLI logins only). |
+| `GET /api/workspaces/:ws/tickets?repo=:name` | viewer | Exact `links.repos` filter; visibility enforced. |
+
+Round 2: `settings.changed` is refused by `store.appendWs` unless an owner person signs it, and not folded otherwise
+(replay); `settings`, `branch`, `invalid`, `terminal`, `visibility` are reserved addon names. A queued clone runs only
+its signed spec; a later declaration change cancels it. The shared addon-state query also honours a state's
+`nextRefreshMs` (bounded 30 s – 1 h; `addonRefresh` in queries.ts), which Repos sets for its scheduled check.
+
+Host contract (real host): clone runs `git clone -- <remote> <path>` (with `--`), never through a shell, as the
+connection's own CLI login (D56 A); orch stores no git credentials. Remotes are refused with any userinfo, query,
+fragment, non-ASCII character or a part starting with `-`.
+
+Links: a repo row is `/w/DEMO/addon/repos/repos?tab.repos=structure&row=web-portal` (core opens the row whose key is
+`row`, on any addon page); the ticket list by repo is `/w/DEMO/tickets?repo=web-portal`.

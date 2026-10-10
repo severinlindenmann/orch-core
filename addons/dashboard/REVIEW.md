@@ -328,3 +328,20 @@ Calls made for you (each logged in DECISIONS-LOG.md with how to revert):
 - The terminal dock docks right only when the page keeps at least 720 px; beside the dock the sidebar becomes the rail.
 - The sidebar shows at most 6 addon pages; the pin choice is kept per browser (a stand-in for a workspace setting).
 - Addon settings open in a right-hand drawer (you asked for "a drawer below"; a right drawer fits forms better).
+
+## Repos preview (U3)
+
+Open `/w/DEMO/addon/repos/repos` as Severin. Structure shows the workspace folder, "Clones as" (the `gh` connection,
+the bot account) and the seven repos of `settings.repos` plus the untracked `sandbox`. Expand rows for remote, path,
+branches, ahead/behind, changes, fetch, size, worktrees and linked tickets; `acme-energy-dbt` has no remote (the
+format's own shape). `web-portal` links DEMO-0046; follow "Tickets linking web-portal" and the ticket panel's link back.
+
+Clone billing-api: core's cover shows the full URL, the target folder and the git login. Wait six seconds for queued →
+cloning → present. In Busy day, Clone all missing includes private-api: it fails once, then Retry works. Fetch keeps
+dirty work. Checks → Check now; Activity log records who and when.
+
+Declare a repo (owners only) → a fake HTTPS or SSH remote → Review repo → Sign and declare: core's
+`settings.changed` appears in the workspace log. Try a credential-bearing remote, `git@-oProxyCommand=x:y`, `..` or an
+existing folder. Declare `sandbox`. Remove shared-lib (files stay); web-portal needs "Remove anyway". As Mara
+(maintainer) the declaration controls are gone; as Tom (viewer) only reading. Today shows "5 of 7" and a Clone
+decision for billing-api. Settings → Repos: interval, fetch on check, git login. No git or network commands run.

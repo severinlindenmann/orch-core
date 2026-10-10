@@ -958,3 +958,53 @@ The owner answered the eight open questions of REVIEW.md. Items 1, 2, 5 and 6 ch
 - **Decision:** make `AGENTS.md` the shared app guide, with `CLAUDE.md` pointing to it. Document the signing boundary, host enforcement, addon workflow, G4 loading and 13" layout checks; correct README setup, latency and browser-history routing. Describe `view()` as serializable state containing declarative UI nodes, matching the registry. Mark factory full-run and repos proposals as absent in this checkout instead of linking nonexistent files.
 - **Why:** a new agent session needs current, source-checked instructions without prior conversation context; the README still described the retired sandbox routing and relative build base.
 - **Revert:** remove the two guide files and revert this documentation change; runtime behavior is unchanged.
+## Owner request 2026-10-10 — Repos addon (U3)
+
+- Added the Repos preview, installed in all demo workspaces, with separate declarations and last-check observations under the host's workspace root. The addon returns core UI nodes only.
+- Core signs exact remote and destination values, checks stale clone plans, and enforces roles. Credential-bearing URLs never enter drafts. Removal changes the declaration only; an owner must explicitly override linked open tickets in an options confirmation.
+- Fetch updates remote tracking without pretending to pull or clear dirty work. Clone jobs and scheduled checks use the mock clock; `private-api` demonstrates first-attempt failure and Retry in busy data.
+- Added narrow internal links for repo-filtered tickets and expanded repo rows, using existing permanent workspace URLs. A repo shell reuses Terminals' ownership/grant checks and types a quoted `cd` without Enter.
+- Proposal and unresolved host identity/credentials, naming, scheduling and event decisions: [Repos proposal](docs/repos-addon-proposal.md). Revert by removing the catalog/fixture installation and `repos` registry import, then the narrow core integrations.
+
+- Verification follow-up: the Busy-day 50 ms Today-query budget failed intermittently in the full suite. Today now shares a request-local visible-ticket snapshot and blocker lookup across its attention sections instead of repeatedly deriving every ticket and agent. No cache crosses requests or viewers; the performance thresholds are unchanged.
+
+## U3 review round 2026-10-11 — Repos aligned with the v2 format
+
+- **Declared list = `settings.repos`** (format §2): `Workspace.repos`, folded from core's owner-signed
+  `settings.changed` (`set.repos`, §5.4.2), written only by `store.changeRepos` (owner, person, same-path refusal) and
+  `POST /settings {op: 'repos'}`. The addon's own `declared` list, `repos.added`/`repos.removed` events and the
+  "primary" flag are gone. `remote`/`default_branch` are a proposed format amendment (docs/repos-addon-proposal.md).
+- **Owner only** for add / adopt / remove (manifest and core); clone stays maintainer, fetch/check member.
+- **Clone identity**: the git-login connection (D56 A / D55; DEMO `gh`, the bot account) shown as "Clones as" and
+  bound into the clone signature as `clone_as`; no login, no clone. orch stores no git credentials.
+- **One validator** (`src/api/repos.ts`) for host and UI: repo names per §10, no userinfo in any form, ASCII only, no
+  part starting with `-` (argument injection), strict host; folder = one name, no `..`/slash/absolute.
+- **Restricted tickets**: removal counts only open linked tickets the signer can see (Codex counted hidden ones, which
+  revealed them); hidden ones become stale per §5.11.
+- **Core changes reduced**: the row deep link is the generic `?row=` (no `repo`/`tab.repos` hard-coding in
+  AddonNode); the remove dialogs' sentence comes from one core map (`coreNotes.ts`), not an `addon === 'repos'` branch
+  in each dialog; the shared addon-state query polls on the generic `moving: true` only (it polled every second
+  forever whenever an auto-check interval was set); the ticket `repo` filter is exact (no hidden "not done").
+- Every `links.repos` name in the fixtures and the Busy day is now declared (a test guards it).
+- **Revert:** revert the U3 review-round commit.
+
+## U3 fix round 2 2026-10-11 — Codex re-review of a57bf69d
+
+- `settings` (and `branch`, `invalid`, `terminal`, `visibility`) reserved as core event namespaces; `settings.changed`
+  is refused at `store.appendWs` unless an owner person signs it, and the fold ignores any other signer.
+- Clone jobs snapshot the signed spec. **Chosen rule:** a declaration change, removal or git-login change after signing
+  cancels the queued clone (`repos.clone_cancelled`, recorded); it never clones an unapproved target. (Refusing the
+  settings change instead would make core's settings route depend on an addon's jobs.)
+- `resolveRepoPath` normalises absolute and `~` paths as well as relative ones.
+- Shared addon-state query: generic `nextRefreshMs` (bounded 30 s – 1 h) so an idle scheduled check still runs.
+- Fetch requires a declared git login inside the one fetch operation (check, scheduled check, fetch, fetch all).
+- **Revert:** revert the U3 fix-round-2 commit.
+
+## U3 fix round 3 2026-10-11 — Codex final check of d0d45f89
+
+- `clone_as` is the full git identity (connection · tool · account with host · OS user), signed, snapshotted and
+  compared; `default_branch` is in every clone / clone-all / Today-decision signature (stale prompt → 409).
+- A queued clone also keeps a per-repo declaration revision (count of `settings.changed` naming it): any later
+  change, including remove-then-restore, cancels it. Changes to other repos do not.
+- **Revert:** revert the U3 fix-round-3 commit.
+

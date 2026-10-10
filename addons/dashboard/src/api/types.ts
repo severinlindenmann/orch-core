@@ -43,6 +43,8 @@ export interface WorkspaceAddon {
 }
 
 export interface Workspace {
+  /** The workspace's folder on the host (the harness root that holds its repos); read-only, relative paths resolve against it. */
+  root_folder?: string
   id: string
   prefix: string // DEMO
   name: string
@@ -56,6 +58,23 @@ export interface Workspace {
   relay?: 'on' | 'off'
   /** Default agent grant length in hours (absent: 8); also the longest grant a member may sign for themselves. */
   grant_hours?: number
+  /**
+   * `config.json` → `settings.repos` (ticket format §2): repo name → working copy. Owner-signed (`settings.changed`,
+   * §5.4.2); `links.repos` names must be in it. This is the one declared repo list (the Repos addon shows and edits it,
+   * it keeps no second list).
+   */
+  repos?: Record<string, WorkspaceRepo>
+}
+
+/**
+ * One `settings.repos` entry. `path` is the format's (absolute, or relative to the workspace folder). `remote` and
+ * `default_branch` are a PROPOSED format amendment (docs/repos-addon-proposal.md): the source a missing repo is cloned
+ * from; credential-free, never a secret.
+ */
+export interface WorkspaceRepo {
+  path: string
+  remote?: string
+  default_branch?: string
 }
 
 /** A person this device knows (from any workspace or the identity registry): what the Add member combobox offers. */
@@ -607,6 +626,8 @@ export type SettingsRequest =
   | { op: 'member.remove'; person: string }
   | { op: 'gate.policy'; gate: GateName; approvers: string; count: number; not?: 'assignees' | null; applies?: CodeReviewApplies }
   | { op: 'grant.hours'; hours: number }
+  /** Format §5.4.2 `settings.changed` `set.repos`: repo name → entry, or null to remove it (signed in the UI). */
+  | { op: 'repos'; set: Record<string, WorkspaceRepo | null> }
   | { op: 'archive'; prefix: string }
 
 /** POST /api/workspaces/:ws/addons/:name. Owner only; grant and update are signed in the UI. */
@@ -818,6 +839,8 @@ export class ApiError extends Error {
 // ---------------------------------------------------------------- workspace event log
 
 export type WorkspaceEventType =
+  | 'repos.checked' | 'repos.clone_queued' | 'repos.cloned' | 'repos.clone_failed' | 'repos.clone_cancelled' | 'repos.fetched' | 'repos.terminal_opened'
+  | 'settings.changed'
   | 'member.added' | 'member.role_changed' | 'member.removed'
   | 'gate.policy_set'
   | 'addon.installed' | 'addon.granted' | 'addon.enabled' | 'addon.disabled' | 'addon.updated' | 'addon.uninstalled'

@@ -942,7 +942,21 @@ function StateChip({ text }: { text: string }) {
 function TableNodeView({ n, depth }: { n: NodeOf<'table'>; depth: number }) {
   const [ref, width] = useElementWidth<HTMLDivElement>()
   // rowDetail: the one open row (by its key cell); opening another closes it.
-  const [openRow, setOpenRow] = useState<string | null>(null)
+  const router = useRouter({ warn: false })
+  const history = router?.history
+  // An addon page's `?row=<key>` (a permanent link to one row) opens that row when this table has it.
+  const linked = useSyncExternalStore(history ? (cb) => history.subscribe(cb) : noSubscribe, () => {
+    if (!router || !history) return null
+    const l = router.parseLocation(history.location)
+    const value = (l.search as { row?: unknown }).row
+    return l.pathname.startsWith('/addon/') && typeof value === 'string' ? value : null
+  })
+  const linkedAt = n.rowDetail && linked !== null ? n.rows.findIndex((r) => String(r[n.rowDetail!.key]) === linked) : -1
+  const rowHere = linkedAt >= 0 ? stableKeys(n.rows.map((r) => r.id ?? r[n.columns[0].key]))[linkedAt] : null
+  const [openRow, setOpenRow] = useState<string | null>(rowHere)
+  useEffect(() => {
+    if (rowHere) setOpenRow(rowHere)
+  }, [rowHere])
   const detailId = useId()
   // Still wider than its box after the rule (unbreakable cells): fold one more column until it fits; start over when
   // the width changes.
@@ -1215,10 +1229,14 @@ function CopyableLink({ href, label }: { href: string; label: string }) {
 /** A link to another addon's page: drawn only while that addon is active here (else there is nothing to open). */
 function InternalLink({ href, label }: { href: string; label: string }) {
   const { workspace } = useWorkspace()
-  const [, , name, page] = href.split('/')
+  // INTERNAL_LINK already fixed the only query each form may carry.
+  const [path, query = ''] = href.split('?')
+  const search = Object.fromEntries(new URLSearchParams(query))
+  if (path === '/tickets') return <Link to="/tickets" search={{ repo: search.repo }} className="text-[13px] text-brand hover:underline">{label}</Link>
+  const [, , name, page] = path.split('/')
   if (!addonActive(workspace, name)) return null
   return (
-    <Link to="/addon/$name/$page" params={{ name, page }} className="inline-flex items-center gap-1 text-[13px] text-brand hover:underline">
+    <Link to="/addon/$name/$page" params={{ name, page }} search={search as never} className="inline-flex items-center gap-1 text-[13px] text-brand hover:underline">
       {label}
       <ArrowRight className="size-3" aria-hidden />
     </Link>

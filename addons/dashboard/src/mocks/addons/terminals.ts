@@ -42,6 +42,7 @@ interface Session {
   /** The ended session this one resumed. */
   resumedFrom?: string
   /** A re-login shell: the OS user that runs the agents (the connection's run_as), the connection, and the login command typed but not run. */
+  repoFolder?: string
   login?: { runAs: string; connection: string; command: string }
 }
 
@@ -87,7 +88,7 @@ function shellCtx(c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>, s: Session): She
   const next = doc?.tasks_state.find((t) => t.state === 'doing' || t.state === 'todo')
   return {
     user: s.login ? s.login.runAs : s.kind === 'agent' ? 'claude' : nameOf(c, s.owner).toLowerCase(),
-    cwd: '~/energy',
+    cwd: '~/energy', // a repo shell's cd is typed, not run: the prompt is still where the shell starts
     branch: s.branch,
     owner: s.kind,
     now: store.now(),
@@ -168,6 +169,7 @@ registerAddon({
       summary: s.status === 'stopped' ? (s.summary ?? null) : null,
       resumedFrom: resumedFromView(c, state, s),
       ...(s.login ? { prefill: s.login.command, run_as: s.login.runAs } : {}),
+      ...(s.repoFolder ? { prefill: `cd -- ${shellPath(s.repoFolder)}` } : {}),
     }))
     const myNav = ((state.nav ?? {}) as ReturnType<typeof navOf>)[viewer] // read-only: view() never creates state.nav
     const cur = shown.find((s) => s.id === myNav?.current) ?? shown.find((s) => mine(s) && s.status === 'running') ?? shown[0]
@@ -317,3 +319,15 @@ function newShell(state: Record<string, unknown>, store: AddonCtx['store'], view
   sessionsOf(state).push(s)
   return s
 }
+
+/** Host-owned helper: Repos resolves and validates the folder, terminals keeps session ownership and pty checks. */
+export function openRepoShell(c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>, folder: string) {
+  if (!ptyGranted(c)) return noPty()
+  const state = c.store.addonState(c.ws, 'terminals')
+  const s = newShell(state, c.store, c.viewer, null)
+  s.repoFolder = folder
+  navOf(state)[c.viewer] = { current: s.id }
+  c.store.appendWs(c.ws, { type: 'repos.terminal_opened', actor: { kind: 'addon', id: 'repos' }, person: c.viewer, folder })
+  return { ok: true as const, message: 'Opened the repo shell. The cd command is typed, not run.', changed: true, terminal: s.id }
+}
+const shellPath = (path: string) => path.startsWith('~/') ? `"$HOME"/'${path.slice(2).replaceAll("'", "'\\''")}'` : `'${path.replaceAll("'", "'\\''")}'`

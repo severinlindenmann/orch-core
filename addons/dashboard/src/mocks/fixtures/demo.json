@@ -1133,10 +1133,12 @@
       ],
       "links": {
         "repos": [
-          "acme-energy-dbt"
+          "acme-energy-dbt",
+          "web-portal"
         ],
         "branches": {
-          "acme-energy-dbt": "fix/DEMO-0046-dim-meter-dupes"
+          "acme-energy-dbt": "fix/DEMO-0046-dim-meter-dupes",
+          "web-portal": "fix/meter-display"
         }
       },
       "acceptance": [

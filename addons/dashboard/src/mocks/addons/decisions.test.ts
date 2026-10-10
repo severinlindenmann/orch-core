@@ -10,7 +10,7 @@ import { installAndGrant } from '@/test/installAddon'
 import { refused } from '@/test/refused'
 
 // One decision rule, in core, for every addon that asks a human (manifest `actions[id].decision: true`).
-const DECIDING = ['publish', 'quick', 'models', 'factory', 'schedules'] as const
+const DECIDING = ['publish', 'quick', 'models', 'factory', 'schedules', 'repos'] as const
 
 const setup = (viewer = 'p_sev') => {
   const store = createMockStore({ persist: false })
@@ -23,7 +23,7 @@ const setup = (viewer = 'p_sev') => {
 type S = ReturnType<typeof setup>
 const decisionOf = async (s: S, addon: string) => (await s.api.getAddonDecisions(s.ws)).find((d) => d.addon === addon)!
 /** As core's Today prompt posts it: after signing, with core's `confirmed` flag. */
-const decide = (s: S, d: AddonDecision, option: string, confirmed = true) => s.api.runAddonAction(s.ws, d.addon, d.action, { id: d.id, option, ...(d.ticket ? { ticket: d.ticket } : {}), ...(confirmed ? { confirmed: true } : {}) })
+const decide = (s: S, d: AddonDecision, option: string, confirmed = true) => s.api.runAddonAction(s.ws, d.addon, d.action, { id: d.id, option, ...(d.terms ? { terms: d.terms } : {}), ...(d.ticket ? { ticket: d.ticket } : {}), ...(confirmed ? { confirmed: true } : {}) })
 const decided = (s: S) => s.store.wsEventsOf(s.ws).filter((e) => e.type === 'addon.decided')
 const manifest = (name: string) => ([...addons, ...catalog].find((a) => a.name === name) as unknown as { actions?: Record<string, ActionMeta> }).actions ?? {}
 

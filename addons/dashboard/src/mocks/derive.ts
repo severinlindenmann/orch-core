@@ -646,6 +646,11 @@ export function describeEvent(e: Pick<OrchEvent, 'type'> & Record<string, unknow
       return e.name ? `renamed the workspace to ${t(e.name, '')}` : 'renamed the workspace'
     case 'terminal.shell_opened':
       return `opened a shell as ${t(e.run_as, 'the agent user')} to log ${t(e.connection, 'a connection')} in again`
+    case 'settings.changed': {
+      const repos = (e.set as { repos?: Record<string, { path?: unknown } | null> } | undefined)?.repos
+      const parts = Object.entries(repos ?? {}).map(([name, v]) => (v ? `declared the repo ${t(name, '')} at ${t(v.path, '')}` : `removed the repo ${t(name, '')} from the workspace settings`))
+      return parts.length ? parts.join('; ') : 'changed the workspace settings'
+    }
     case 'workspace.grant_hours_set':
       return typeof e.hours === 'number' ? `set the agent grant length to ${e.hours} h` : 'set the agent grant length'
     case 'skill.credentials_granted': {

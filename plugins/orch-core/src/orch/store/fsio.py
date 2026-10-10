@@ -7,6 +7,7 @@ rename durable); on Windows ``os.replace`` is atomic and a directory cannot be f
 from __future__ import annotations
 
 import contextlib
+import errno
 import os
 import secrets
 from pathlib import Path
@@ -48,7 +49,7 @@ def append_durable(path: Path, data: bytes) -> None:
     """Append ``data`` to ``path`` (created if missing) and fsync the file (and the directory when it is new)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     new = not path.exists()
-    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o644)
     try:
         view = memoryview(data)
         while view:
@@ -62,7 +63,14 @@ def append_durable(path: Path, data: bytes) -> None:
 
 
 def read_or_none(path: Path) -> bytes | None:
+    """The bytes of ``path``; None if it is missing or a symlink (a link is never followed: it counts as absent)."""
     try:
-        return path.read_bytes()
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
     except (FileNotFoundError, NotADirectoryError):
         return None
+    except OSError as e:
+        if e.errno in (errno.ELOOP, errno.EMLINK):
+            return None
+        raise
+    with os.fdopen(fd, "rb") as f:
+        return f.read()

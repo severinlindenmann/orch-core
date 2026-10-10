@@ -26,6 +26,7 @@ from orch import canon, crypto, schema
 
 from .fsio import read_or_none, write_atomic
 from .logs import WORKSPACE, LogInfo
+from .paths import ULID, check_uid
 
 __all__ = ["Checkpoints", "Divergence", "find_divergence", "verify_object"]
 
@@ -59,7 +60,7 @@ class Checkpoints:
         self.workspace_id = workspace_id
 
     def _ticket_path(self, uid: str) -> Path:
-        return self.dir / f"ticket-{uid}.json"
+        return self.dir / f"ticket-{check_uid(uid)}.json"
 
     @property
     def _workspace_path(self) -> Path:
@@ -86,7 +87,8 @@ class Checkpoints:
     def ticket_uids(self) -> list[str]:
         if not self.dir.is_dir():
             return []
-        return sorted(p.name[len("ticket-") : -len(".json")] for p in self.dir.glob("ticket-*.json"))
+        names = (p.name[len("ticket-") : -len(".json")] for p in self.dir.glob("ticket-*.json") if not p.is_symlink())
+        return sorted(n for n in names if ULID.fullmatch(n))
 
     def highest_n(self) -> int:
         """The highest workspace checkpoint number seen, abandoned ones included."""

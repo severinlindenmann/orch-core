@@ -202,6 +202,29 @@ class Env:
             e["sections"] = sections
         return s.append(e, log=uid, body=body)
 
+    def fill(self, uid: str):
+        """Everything the requirements gate needs: one criterion and the four sections."""
+        return self.update(
+            uid,
+            {"ticket.acceptance": [{"id": "AC1", "text": "it works"}]},
+            {"context": "ctx", "requirements": "req", "out_of_scope": "nothing"},
+        )
+
+    def approve(self, uid: str, gate: str = "requirements", p: Person | None = None):
+        s = self.store
+        assert s is not None
+        g = s.state.tickets[uid].gates[gate]
+        return s.append(
+            self.person_event(
+                p or self.owner, uid, "gate.approved", gate=gate, gate_gen=g.gen, hash=g.hash, policy_hash=g.policy_hash
+            ),
+            log=uid,
+        )
+
+    def close(self, uid: str):
+        assert self.store is not None
+        return self.store.append(self.person_event(self.owner, uid, "ticket.closed", resolution="other"), log=uid)
+
     def log(self, uid: str, text: str = "note"):
         assert self.store is not None
         return self.store.append({"type": "log.added", "actor": self.agent, "text": text}, log=uid)

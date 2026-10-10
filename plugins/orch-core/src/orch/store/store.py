@@ -64,6 +64,7 @@ from .fsio import append_durable, fsync_dir, read_or_none, write_atomic
 from .index import Index
 from .lock import FileLock
 from .logs import LogInfo, file_size, read_new_lines
+from .paths import check_artifact, check_uid, safe_join, target_ok
 from .pins import HostPins
 
 __all__ = ["Appended", "BackendSigner", "HostSigner", "Report", "Store"]
@@ -293,10 +294,8 @@ class Store:
 
     def _path_of(self, log: str) -> Path:
         if log == WORKSPACE:
-            return self.root / "events" / "workspace.jsonl"
-        if not _ULID.fullmatch(log):
-            raise StoreError("validation.log", f"{log!r} is not a ticket uid")
-        return self.root / "tickets" / log / "events.jsonl"
+            return safe_join(self.root, "events/workspace.jsonl")
+        return safe_join(self.root, f"tickets/{check_uid(log)}/events.jsonl")
 
     def _report(self, code: str, detail: str, log: str | None = None) -> None:
         r = Report(code, detail, log)
@@ -317,7 +316,7 @@ class Store:
         tickets: dict[str, list[dict[str, Any]]] = {}
         tdir = self.root / "tickets"
         for p in sorted(tdir.iterdir()) if tdir.is_dir() else []:
-            if not _ULID.fullmatch(p.name):
+            if not _ULID.fullmatch(p.name) or p.is_symlink():
                 continue
             info = LogInfo(p.name, p / "events.jsonl")
             if not info.path.exists():
@@ -425,6 +424,7 @@ class Store:
             line = m["line"].encode("utf-8")
             log = m["log"]
             path = self._path_of(log)
+            check_uid(m["id"])
         except (OSError, ValueError, KeyError, StoreError, TypeError):
             shutil.rmtree(d, ignore_errors=True)  # the manifest is written last: the event was never appended
             return
@@ -449,7 +449,7 @@ class Store:
         """Step 4 of the write order (idempotent). Returns the relative paths that could not be installed."""
         torn: list[str] = []
         for f in m["files"]:
-            dest, src = self.root / f["to"], d / str(f["n"])
+            dest, src = safe_join(self.root, target_ok(f["to"])), d / str(int(f["n"]))
             data = read_or_none(src)
             if data is not None and _sha(data) == f["sha256"]:
                 dest.parent.mkdir(parents=True, exist_ok=True)
@@ -461,7 +461,8 @@ class Store:
                     torn.append(f["to"])
         uid = m.get("body_copy")
         if uid:
-            body = read_or_none(self.root / "tickets" / uid / "body.md")
+            check_uid(uid)
+            body = read_or_none(safe_join(self.root, f"tickets/{uid}/body.md"))
             if body is not None and f"tickets/{uid}/body.md" not in torn:
                 write_atomic(self.state_dir / "body" / f"{uid}.md", body)
         self._write_applied(m["id"], m["log"], m["seq"])
@@ -487,13 +488,13 @@ class Store:
 
     def ticket_json(self, uid: str) -> bytes | None:
         """The ``ticket.json`` on disk (None if there is none)."""
-        return read_or_none(self.root / "tickets" / uid / "ticket.json")
+        return read_or_none(safe_join(self.root, f"tickets/{check_uid(uid)}/ticket.json"))
 
     def body_sections(self, uid: str) -> dict[str, str]:
         """The section texts of the ticket's ``body.md`` as on disk. Raises ``StoreError`` if the file is not a body the
         log accounts for (call :meth:`scan` first to have such files answered with host events)."""
         assert self._state is not None
-        raw = read_or_none(self.root / "tickets" / uid / "body.md")
+        raw = read_or_none(safe_join(self.root, f"tickets/{check_uid(uid)}/body.md"))
         if raw is None:
             return {}
         try:
@@ -586,6 +587,8 @@ class Store:
     # -- steps
 
     def _check_writable(self, log: str, typ: str) -> None:
+        if log != WORKSPACE:
+            check_uid(log)
         if self._host is None:
             raise StoreError("store.read_only", "no workspace key signer: this store can only read")
         if log in self._read_errors:
@@ -790,7 +793,7 @@ class Store:
 
     def _merge_body(self, uid: str, e: dict[str, Any], delta: Mapping[str, str | None]) -> dict[str, str]:
         assert self._state is not None
-        cur = self.body_sections(uid) if (self.root / "tickets" / uid / "body.md").exists() else {}
+        cur = self.body_sections(uid) if read_or_none(safe_join(self.root, f"tickets/{check_uid(uid)}/body.md")) is not None else {}
         new = dict(cur)
         for sid, text in delta.items():
             if text is None:
@@ -814,7 +817,8 @@ class Store:
             if artifacts:
                 raise StoreError("validation.artifact", "an addon artifact has no file")
             return {}
-        data = (artifacts or {}).get(e.get("name", ""))
+        check_artifact(e.get("name"))
+        data = (artifacts or {}).get(e["name"])
         if data is None or set(artifacts or {}) != {e["name"]}:
             raise StoreError("validation.artifact", "a file artifact comes with exactly its own bytes")
         if canon.artifact_digest(data) != e["sha256"] or len(data) != e["bytes"]:

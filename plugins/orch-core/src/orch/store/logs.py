@@ -45,6 +45,9 @@ def read_new_lines(info: LogInfo, *, validate: bool = True) -> list[dict[str, An
     Stops at the first line that is not a good event, setting ``info.error`` (a torn final line without LF included).
     """
     try:
+        if os.path.islink(info.path):
+            info.error, info.error_seq = "the log is a symlink", info.seq + 1
+            return []
         with open(info.path, "rb") as f:
             f.seek(info.offset)
             data = f.read()

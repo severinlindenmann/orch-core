@@ -34,10 +34,11 @@ import type {
  * grows with edits; `clearContentHashes` empties it (store reset).
  */
 const contentHashes = new Map<string, { material: string; hash: string }>()
-export function contentHash(slot: string, material: string): string {
+export function contentHash(slot: string, material: string, input: () => string = () => material): string {
   const hit = contentHashes.get(slot)
   if (hit && hit.material === material) return hit.hash
-  const hash = 'sha256:' + sha256Hex(material)
+  // `input` (what is hashed) is built only on a miss; `material` alone decides whether the slot's hash still holds.
+  const hash = 'sha256:' + sha256Hex(input())
   contentHashes.set(slot, { material, hash })
   return hash
 }
@@ -356,7 +357,7 @@ export function deriveTicket(
       ...(gateVoided[g].length ? { voided: gateVoided[g] } : {}),
       // Requirements and plan: a full content hash an approval binds (security review #2). Verify and code bind the
       // commit through source_sha; their hash stays the mock's short id.
-      hash: g === 'requirements' || g === 'plan' ? contentHash(`${def.uid}|g|${g}`, JSON.stringify([def.uid, g, gated.material])) : 'sha256:' + fnvHex(def.uid + g + gated.material, 12) + '…',
+      hash: g === 'requirements' || g === 'plan' ? contentHash(`${def.uid}|g|${g}`, gated.material, () => JSON.stringify([def.uid, g, gated.material])) : 'sha256:' + fnvHex(def.uid + g + gated.material, 12) + '…',
       covers: gated.covers,
       ...(signed ? { source_sha: signed } : {}),
       ...(g === 'code' ? { required: codeReviewApplies(policy.applies, def.type) } : {}),

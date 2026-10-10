@@ -155,7 +155,7 @@ export class MandatesPreviewHost {
 
   private epics(ws: string) {
     const tickets = this.store.listTickets(ws)
-    return tickets.filter((t) => t.type === 'epic').map((e) => ({ key: e.key, title: e.title, children: tickets.filter((t) => t.parent === e.key) }))
+    return tickets.filter((t) => t.type === 'epic').map((e) => ({ key: e.key, title: e.title, children: tickets.filter((t) => t.parent === e.key).sort((a, b) => a.key.localeCompare(b.key)) }))
   }
 
   private orchestrators(ws: string) {
@@ -182,7 +182,8 @@ export class MandatesPreviewHost {
       epics: this.epics(ws).map((e) => ({ key: e.key, title: e.title, children: e.children.length })),
       never: NEVER,
       protected_paths: PROTECTED_PATHS,
-      mandate: s.on ? m : null,
+      // A copy, as a host would serialise it (the cache must never hold the mock's own object).
+      mandate: s.on && m ? structuredClone(m) : null,
     }
   }
 

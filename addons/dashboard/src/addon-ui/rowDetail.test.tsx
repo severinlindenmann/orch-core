@@ -104,3 +104,50 @@ describe('glance presentation', () => {
     expect(parseNode({ type: 'stat', label: 'x', value: 1, trend: ['1'] }).ok).toBe(false)
   })
 })
+
+describe('review fixes', () => {
+  it.each([
+    ['a right-to-left override', 'https://good.example/‮gpj.exe'],
+    ['an isolate', 'https://good.example/⁦x⁩'],
+    ['a zero-width space', 'https://good​.example'],
+    ['a control character', 'https://good.example/\u0007'],
+    ['a space', 'https://good.example/a b'],
+  ])('a link with %s is refused', (_, href) => {
+    expect(parseNode({ type: 'link', label: 'x', href, copy: true }).ok).toBe(false)
+    expect(parseNode({ type: 'link', label: 'x', href }).ok).toBe(false)
+  })
+  it('a long address is shown in full, wrapped and isolated, never cut off', () => {
+    const href = `https://billing.apps.acme.example.attacker.example/${'a'.repeat(300)}`
+    show({ type: 'link', label: 'App address', href, copy: true })
+    const a = screen.getByRole('link', { name: /App address/ })
+    expect(a).toHaveTextContent(href)
+    const bdi = a.querySelector('bdi')!
+    expect(bdi.textContent).toBe(href)
+    expect(bdi.className).toMatch(/break-all/)
+    expect(a.querySelector('.truncate')).toBeNull()
+  })
+  it('rowDetail nodes that are missing (a $ref to no state) drop the chevrons, not the table', () => {
+    const n = table({ rowDetail: { key: 'id', nodes: null } })
+    expect(parseNode(n).ok).toBe(true)
+    show(n)
+    expect(screen.getByText('Alpha')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Details for/ })).toBeNull()
+    expect(parseNode(table({ rowDetail: { key: 'id', nodes: Object.fromEntries(Array.from({ length: 501 }, (_, i) => [`k${i}`, null])) } })).ok).toBe(true)
+  })
+  it('two rows that share a detail key still open one at a time', async () => {
+    const user = userEvent.setup()
+    show(table({ rows: [{ id: 'a', name: 'Alpha', status: 'running' }, { id: 'a', name: 'Alpha copy', status: 'running' }] }))
+    const one = screen.getByRole('button', { name: 'Details for Alpha' })
+    const two = screen.getByRole('button', { name: 'Details for Alpha copy' })
+    await user.click(one)
+    expect(one).toHaveAttribute('aria-expanded', 'true')
+    expect(two).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getAllByText('12 %')).toHaveLength(1)
+  })
+  it('a sparkline of extreme finite values has no NaN coordinates; the label rounds', () => {
+    show({ type: 'stat', label: 'x', value: 1, trend: [-1e12, 1e12, 0.1 + 0.2] }, true)
+    const img = screen.getByRole('img', { name: 'Trend over 3 values, from -1,000,000,000,000 to 0.3' })
+    expect(img.innerHTML).not.toMatch(/NaN|Infinity/)
+    expect(parseNode({ type: 'stat', label: 'x', value: 1, trend: [1e13] }).ok).toBe(false)
+  })
+})

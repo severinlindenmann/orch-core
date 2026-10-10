@@ -63,9 +63,13 @@ function rng(seed: number): () => number {
   }
 }
 
-/** Splits `total` over `weights` (largest remainder), so the parts add up to exactly `total`. */
-function allocate(total: number, weights: number[]): number[] {
+/**
+ * Splits `total` over `weights` (largest remainder), so the parts add up to exactly `total`. With no weight at all
+ * (every weight 0, e.g. a month without cost) every part is 0: nothing to split, never NaN.
+ */
+export function allocate(total: number, weights: number[]): number[] {
   const sum = weights.reduce((a, b) => a + b, 0)
+  if (!(sum > 0)) return weights.map(() => 0)
   const exact = weights.map((w) => (total * w) / sum)
   const out = exact.map(Math.floor)
   let left = total - out.reduce((a, b) => a + b, 0)

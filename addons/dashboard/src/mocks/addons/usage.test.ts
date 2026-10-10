@@ -4,6 +4,7 @@ import { createMockTransport } from '@/api/transport'
 import { createMockStore } from '@/mocks/store'
 import { FORMATTERS } from '@/addon-ui/bindings'
 import { addonActive } from '@/api/addons'
+import { allocate } from './usage'
 
 const setup = () => {
   const store = createMockStore({ persist: false })
@@ -187,5 +188,19 @@ describe('usage by person', () => {
     const tabs = JSON.stringify(nav.node)
     expect(tabs.indexOf('"label":"By person"')).toBeGreaterThan(tabs.indexOf('"label":"By agent"'))
     expect(tabs).toContain('addon.personRows')
+  })
+})
+
+describe('allocate (largest remainder)', () => {
+  it('all-zero or no weights: every part 0, never NaN', () => {
+    expect(allocate(1000, [0, 0])).toEqual([0, 0])
+    expect(allocate(0, [0])).toEqual([0])
+    expect(allocate(5, [])).toEqual([])
+  })
+  it('one person takes all; equal weights with an odd total still add up', () => {
+    expect(allocate(1183, [64])).toEqual([1183])
+    const parts = allocate(7, [1, 1])
+    expect(sum(parts)).toBe(7)
+    expect(parts).toEqual([4, 3])
   })
 })

@@ -34,6 +34,7 @@ import { Collapse } from '@/components/Collapse'
 import { foldedColumns } from '@/lib/columnFold'
 import { useElementWidth } from '@/lib/useElementWidth'
 import { Sparkline } from '@/components/Sparkline'
+import { visible } from '@/components/sign/visible'
 
 // rjsf (with ajv) loads on first form, so it stays out of the main bundle.
 const ThemedForm = lazy(() => import('./AddonForm'))
@@ -323,11 +324,13 @@ function GlanceList({ n, open }: { n: NodeOf<'list'>; open?: Glance['open'] }) {
   if (n.items.length === 0) return <p className="text-[12px] text-text-faint">{n.empty ?? 'Nothing here.'}</p>
   const rest = n.items.length - GLANCE_ROWS
   const more = `${rest} more`
+  const shown = n.items.slice(0, GLANCE_ROWS)
+  const keys = stableKeys(shown.map((it) => it.id ?? it.title))
   return (
     <div>
       <ul className="space-y-1">
-        {n.items.slice(0, GLANCE_ROWS).map((it, i) => (
-          <li key={it.id ?? i} className="flex min-w-0 items-baseline gap-2 text-[13px] leading-5">
+        {shown.map((it, i) => (
+          <li key={keys[i]} className="flex min-w-0 items-baseline gap-2 text-[13px] leading-5">
             {it.status && <StatusDot status={it.status} className="self-center" />}
             <span className="min-w-0 flex-1 truncate text-text" title={it.subtitle ? `${it.title} · ${it.subtitle}` : it.title}>
               {it.title}
@@ -348,7 +351,8 @@ function GlanceList({ n, open }: { n: NodeOf<'list'>; open?: Glance['open'] }) {
   )
 }
 
-const trendLabel = (t: number[]) => `Trend over ${t.length} values, from ${t[0]} to ${t[t.length - 1]}`
+const trendNumber = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 })
+const trendLabel = (t: number[]) => `Trend over ${t.length} values, from ${trendNumber.format(t[0])} to ${trendNumber.format(t[t.length - 1])}`
 
 function Stat({ node }: { node: NodeOf<'stat'> }) {
   const { compact, glance } = useContext(RuntimeCtx)
@@ -901,9 +905,11 @@ function TableNodeView({ n, depth }: { n: NodeOf<'table'>; depth: number }) {
             const row = n.rows[i]
             const cell = n.rowDetail ? row[n.rowDetail.key] : undefined
             const rowKey = typeof cell === 'string' || typeof cell === 'number' ? String(cell) : null
+            // The open row is remembered by its stable row key (not the detail key's value), so two rows that share a
+            // value still open one at a time.
             const detail =
               n.rowDetail && rowKey !== null && Object.hasOwn(n.rowDetail.nodes, rowKey)
-                ? { node: n.rowDetail.nodes[rowKey], open: openRow === rowKey, id: `${detailId}-${i}`, depth, toggle: () => setOpenRow(openRow === rowKey ? null : rowKey) }
+                ? { node: n.rowDetail.nodes[rowKey], open: openRow === k, id: `${detailId}-${i}`, depth, toggle: () => setOpenRow(openRow === k ? null : k) }
                 : undefined
             const props = { columns: n.columns, shown, fold, row, numeric, total: !!n.totalRow && i === n.rows.length - 1, detail, hasDetail: !!n.rowDetail }
             return n.rowActions || n.rowOpen ? <ActionDataRow key={k} {...props} rowActions={n.rowActions} rowOpen={n.rowOpen} /> : <DataRowView key={k} {...props} />
@@ -1101,9 +1107,10 @@ function CopyableLink({ href, label }: { href: string; label: string }) {
     )
   }
   return (
-    <span className="inline-flex min-w-0 max-w-full items-center gap-2 text-[13px]">
+    <span className="inline-flex min-w-0 max-w-full flex-wrap items-center gap-x-2 gap-y-1 text-[13px]">
       <a href={href} target="_blank" rel="noopener noreferrer nofollow" aria-label={`${label}: ${href} (opens in a new tab)`} className="inline-flex min-w-0 items-center gap-1 text-brand hover:underline">
-        <span className="truncate font-mono text-[12px]">{href}</span>
+        {/* In full, wrapped and isolated: never cut off, and nothing around it can reorder it (the schema already refuses hidden characters). */}
+        <bdi className="whitespace-pre-wrap break-all font-mono text-[12px] [unicode-bidi:isolate]">{visible(href)}</bdi>
         <ExternalLink className="size-3 shrink-0" aria-hidden />
       </a>
       <Button type="button" size="sm" variant="ghost" className="h-7 shrink-0 px-2" aria-label={`Copy ${label}`} onClick={copy}>

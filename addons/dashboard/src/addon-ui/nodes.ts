@@ -32,7 +32,7 @@ export const statNode = z.object({
   /** What a card-field stat adds to its Board column's sum, when it differs from `value` (e.g. a t-shirt size's weight). */
   sum: z.union([z.string().max(200), z.number()]).nullable().optional(),
   /** A few recent values, oldest first (e.g. cost per day): core draws them as a small sparkline where the stat is a glance line (Today). */
-  trend: z.array(z.number().finite()).max(60).optional(),
+  trend: z.array(z.number().finite().min(-1e12).max(1e12)).max(60).optional(),
 })
 export const kvNode = z.object({
   type: z.literal('kv'),
@@ -99,7 +99,14 @@ export const tableNode = z.object({
   rowDetail: z
     .object({
       key: z.string().regex(/^[A-Za-z0-9_]{1,64}$/),
-      nodes: z.record(z.string().max(200), z.unknown()).refine((o) => Object.keys(o).length <= 500, 'at most 500 row details'),
+      // State that is missing or out of bounds (a `$ref` resolving to null, too many rows) drops the chevrons only:
+      // the table itself still draws, as `rows` does with orEmpty.
+      nodes: z
+        .record(z.string().max(200), z.unknown())
+        .refine((o) => Object.keys(o).length <= 500, 'at most 500 row details')
+        .nullish()
+        .transform((v) => v ?? {})
+        .catch({}),
     })
     .strict()
     .optional(),
@@ -150,6 +157,9 @@ export const buttonNode = z.object({
   /** Why it cannot be used now: core disables the button and shows this reason with it. */
   disabled: z.string().max(160).optional(),
 })
+/** Characters a link address may not carry (see linkNode.href). */
+const HIDDEN_IN_URL = /[\p{Cc}\p{Cf}\p{Z}\s]/u
+
 /** An addon page inside the app; nothing else internal (no settings, no query strings). */
 export const INTERNAL_LINK = /^\/addon\/[a-z0-9-]{1,40}\/[a-z0-9-]{1,40}$/
 
@@ -157,7 +167,13 @@ export const linkNode = z.object({
   type: z.literal('link'),
   label: z.string().max(120),
   /** An http(s) URL (opens in a new tab), or another addon's page in this app: `/addon/<name>/<page>` (core's router). */
-  href: z.string().max(2000).refine((h) => /^https?:\/\//i.test(h) || INTERNAL_LINK.test(h), 'only http(s) links or /addon/<name>/<page>'),
+  href: z
+    .string()
+    .max(2000)
+    .refine((h) => /^https?:\/\//i.test(h) || INTERNAL_LINK.test(h), 'only http(s) links or /addon/<name>/<page>')
+    // What the person sees must be what opens: no control, format (bidi overrides, isolates, zero-width), separator
+    // or space characters, which could reorder or hide part of the address.
+    .refine((h) => !HIDDEN_IN_URL.test(h), 'no control, bidi, zero-width or space characters in a link'),
   /** An http(s) link only: core shows the address itself and a Copy button beside it (an app's URL). */
   copy: z.boolean().optional(),
 })

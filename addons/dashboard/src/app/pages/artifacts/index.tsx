@@ -33,10 +33,16 @@ function readView(person: string): View {
  */
 export const SPLIT_MIN_PAGE = 960
 
-/** j/k are for the list, not for typing: ignore them in fields, menus and with a modifier. */
-const typing = (e: KeyboardEvent) => {
+/**
+ * j/k are for the list: not while typing, not with a modifier, not when another handler took the key, and not while
+ * any dialog other than this page's own artifact drawer is open (the shell's keyboardBusy rule, with that one
+ * exception so the drawer follows the selection).
+ */
+const busy = (e: KeyboardEvent) => {
+  if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return true
   const t = e.target as HTMLElement | null
-  return e.metaKey || e.ctrlKey || e.altKey || !!t?.closest('input, textarea, select, [contenteditable="true"], [role="combobox"], [role="listbox"], [role="menu"]')
+  if (t?.isContentEditable || t?.closest('input, textarea, select, [role="combobox"], [role="listbox"], [role="menu"]')) return true
+  return [...document.querySelectorAll('[role="dialog"], [role="alertdialog"]')].some((d) => !d.hasAttribute('data-artifact-drawer'))
 }
 
 const SINCE = [
@@ -75,6 +81,10 @@ export function ArtifactsPage() {
     setPage(1)
     setSelected(null)
   }, [ws])
+  // Another filter or page: the selection belonged to the old list, so the pane closes.
+  useEffect(() => {
+    setSelected(null)
+  }, [filters, page])
   // Typing narrows after a short pause.
   useEffect(() => {
     const t = setTimeout(() => {
@@ -124,7 +134,7 @@ export function ArtifactsPage() {
   useEffect(() => {
     if (!listed || !items?.length) return
     const onKey = (e: KeyboardEvent) => {
-      if ((e.key !== 'j' && e.key !== 'k') || typing(e)) return
+      if ((e.key !== 'j' && e.key !== 'k') || busy(e)) return
       e.preventDefault()
       const at = selected ? items.findIndex((x) => artifactKey(x) === artifactKey(selected)) : -1
       const next = items[at < 0 ? 0 : Math.min(items.length - 1, Math.max(0, at + (e.key === 'j' ? 1 : -1)))]

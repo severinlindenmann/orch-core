@@ -360,6 +360,7 @@ export function ArtifactDrawer({
     <Sheet open={!!open} onOpenChange={(o) => !o && onClose()}>
       <SheetContent
         side="right"
+        data-artifact-drawer
         className="w-[640px] max-w-[92vw] gap-0 border-border bg-surface sm:max-w-[640px]"
         onCloseAutoFocus={(e) => {
           e.preventDefault()

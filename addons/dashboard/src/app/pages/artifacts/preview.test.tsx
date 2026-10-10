@@ -82,3 +82,60 @@ describe('Artifacts list preview', () => {
     expect(screen.queryByRole('complementary', { name: /Preview of/ })).toBeNull()
   })
 })
+
+describe('Artifacts list preview: keyboard and list changes', () => {
+  it('j does nothing while another dialog owns the keyboard (the shell rule)', async () => {
+    wide(true)
+    const { user } = renderApp('/artifacts')
+    await user.click(await screen.findByRole('button', { name: 'Open tariff-export.log' }, T))
+    await screen.findByRole('complementary', { name: 'Preview of tariff-export.log' }, T)
+    const before = selectedRow()
+    const dialog = document.createElement('div')
+    dialog.setAttribute('role', 'dialog')
+    document.body.append(dialog)
+    try {
+      await user.keyboard('j')
+      expect(selectedRow()).toBe(before)
+    } finally {
+      dialog.remove()
+    }
+    await user.keyboard('j')
+    await waitFor(() => expect(selectedRow()).not.toBe(before))
+  })
+  it('j still moves while the page’s own artifact drawer is open, and the drawer follows', async () => {
+    wide(false)
+    const { user } = renderApp('/artifacts')
+    await user.click(await screen.findByRole('button', { name: 'Open tariff-export.log' }, T))
+    const sheet = await screen.findByRole('dialog', {}, T)
+    expect(sheet).toHaveAttribute('data-artifact-drawer')
+    const before = selectedRow()
+    await user.keyboard('j')
+    await waitFor(() => expect(selectedRow()).not.toBe(before))
+    await waitFor(() => expect(screen.getByRole('dialog')).not.toHaveTextContent('tariff-export.log'))
+  })
+  it('a handler that already took the key wins', async () => {
+    wide(true)
+    const { user } = renderApp('/artifacts')
+    await user.click(await screen.findByRole('button', { name: 'Open tariff-export.log' }, T))
+    await screen.findByRole('complementary', { name: 'Preview of tariff-export.log' }, T)
+    const before = selectedRow()
+    const take = (e: KeyboardEvent) => e.preventDefault()
+    document.addEventListener('keydown', take, { capture: true })
+    try {
+      await user.keyboard('j')
+      expect(selectedRow()).toBe(before)
+    } finally {
+      document.removeEventListener('keydown', take, { capture: true })
+    }
+  })
+  it('a new search closes the preview: the selection belonged to the old list', async () => {
+    wide(true)
+    const { user } = renderApp('/artifacts')
+    await user.click(await screen.findByRole('button', { name: 'Open tariff-export.log' }, T))
+    await screen.findByRole('complementary', { name: 'Preview of tariff-export.log' }, T)
+    await user.type(screen.getByRole('searchbox', { name: 'Search artifacts' }), 'tolerance')
+    expect(await screen.findByText('1 artifact', {}, T)).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByRole('complementary', { name: /Preview of/ })).toBeNull())
+    expect(selectedRow()).toBeNull()
+  })
+})

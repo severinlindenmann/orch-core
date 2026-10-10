@@ -54,7 +54,7 @@ export function ArtifactList({ items, members, current, onPreview, addonPage, co
             {!compact && <TableHead className="w-[15%]">Added by</TableHead>}
             <TableHead className="w-24">Added (UTC)</TableHead>
             {!compact && <TableHead className="w-18 text-right">Size</TableHead>}
-            <TableHead className="w-30">
+            <TableHead className="w-36">
               <span className="sr-only">Action</span>
             </TableHead>
           </TableRow>
@@ -134,7 +134,7 @@ export function ArtifactGrid({ items, members, current, onPreview, addonPage }: 
             </p>
             {/* One line even without a label, so every card has the same height. */}
             <p className="truncate text-[12px] text-text-muted" title={a.label}>
-              {a.label ?? ' '}
+              {a.label ?? '\u00a0'}
             </p>
             <TicketLink a={a} className="mt-1.5 text-[12px]" />
             <p className="mt-0.5 truncate text-[11px] text-text-faint">

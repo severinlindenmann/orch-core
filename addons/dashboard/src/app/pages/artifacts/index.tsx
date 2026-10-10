@@ -15,7 +15,7 @@ import { useElementWidth } from '@/lib/useElementWidth'
 import { cn } from '@/lib/utils'
 import { useMediaQuery, WIDE_QUERY } from '../today/shared'
 import { useAddonPages } from '../ticket/Artifacts'
-import { ArtifactPane, ArtifactPreview, EmptyPane, openMode } from './Preview'
+import { ArtifactPane, ArtifactPreview, openMode } from './Preview'
 import { artifactKey, previewTarget, useArtifactSelection, type View } from './selection'
 import { ArtifactGrid, ArtifactList } from './views'
 
@@ -90,11 +90,15 @@ export function ArtifactsPage() {
   const dirty = Object.values(filters).some((v) => v !== undefined) || qInput !== ''
 
   // Close (pane or drawer) puts focus back on the item's Preview button, or the results heading if it is gone.
+  const pane = split && current ? current : null
   const restore = useMemo(() => ({ get current() { return previewTarget(lastKey.current) } }), [lastKey])
   const [said, setSaid] = useState('')
+  // The announcement belongs to the item shown: nothing previewed (closed, or cleared by a new context), nothing said.
+  useEffect(() => {
+    if (!current) setSaid('')
+  }, [current])
   const closePane = () => {
     close()
-    setSaid('')
     requestAnimationFrame(() => restore.current?.focus())
   }
 
@@ -176,7 +180,8 @@ export function ArtifactsPage() {
         )}
       </div>
 
-      <h2 id="artifact-results" tabIndex={-1} className="sr-only">
+      {/* Hidden until focus falls back to it (the item it would return to is gone): then it shows where focus is. */}
+      <h2 id="artifact-results" tabIndex={-1} className="sr-only rounded-sm px-1 text-[12px] font-medium text-text-muted outline-none focus:not-sr-only focus:ring-2 focus:ring-ring">
         Results
       </h2>
       <p className="sr-only" aria-live="polite">
@@ -193,16 +198,17 @@ export function ArtifactsPage() {
           {dirty ? 'No artifacts match these filters.' : 'No artifacts yet. Agents attach evidence with orch artifact add.'}
         </p>
       ) : (
-        <div className={cn(split && 'grid grid-cols-[minmax(0,1fr)_minmax(0,44%)] items-start gap-4')}>
+        // The pane exists only while something is previewed; otherwise the results take the whole width.
+        <div className={cn(pane && 'grid grid-cols-[minmax(0,1fr)_minmax(0,44%)] items-start gap-4')}>
           {/* The results: a container (the grid's columns follow its width) and the scope of j/k. */}
           <div className={cn('@container/results min-w-0', updating && 'opacity-60 transition-opacity')} inert={updating} aria-busy={updating || undefined} onKeyDown={onResultsKey}>
             {view === 'grid' ? (
               <ArtifactGrid items={data.items} members={members} current={currentKey} onPreview={preview} addonPage={addonPage} />
             ) : (
-              <ArtifactList items={data.items} members={members} current={currentKey} onPreview={preview} addonPage={addonPage} compact={split || (pageWidth > 0 && pageWidth < LIST_FULL_MIN)} />
+              <ArtifactList items={data.items} members={members} current={currentKey} onPreview={preview} addonPage={addonPage} compact={!!pane || (pageWidth > 0 && pageWidth < LIST_FULL_MIN)} />
             )}
           </div>
-          {split && (current ? <ArtifactPane item={current} members={members} onClose={closePane} /> : <EmptyPane />)}
+          {pane && <ArtifactPane item={pane} members={members} onClose={closePane} />}
         </div>
       )}
 

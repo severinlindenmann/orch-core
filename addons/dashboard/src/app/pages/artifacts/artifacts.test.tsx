@@ -4,7 +4,7 @@ import { api } from '@/api/client'
 import { ApiError, type ArtifactItem } from '@/api/types'
 import type { MockStore } from '@/mocks/store'
 import { renderApp } from '@/test/renderApp'
-import { previewTarget, useArtifactSelection } from './selection'
+import { artifactKey, parseArtifactKey, previewTarget, useArtifactSelection } from './selection'
 
 const T = { timeout: 4000 }
 
@@ -79,7 +79,7 @@ describe('Artifacts page: one action per item', () => {
     })
     it(`${view}: a web link says it opens a new tab and does not preview`, async () => {
       const { user } = renderApp('/artifacts', { storage: { 'orch.artifacts.view.p_sev': view } })
-      const link = await screen.findByRole('link', { name: 'Open dbt docs: tariffs in a new tab' }, T)
+      const link = await screen.findByRole('link', { name: 'Open link dbt docs: tariffs (opens in a new tab)' }, T)
       expect(link).toHaveTextContent('Open link')
       expect(link).toHaveAttribute('href', 'https://docs.acme.example/dbt/tariffs')
       expect(link).toHaveAttribute('target', '_blank')
@@ -92,7 +92,8 @@ describe('Artifacts page: one action per item', () => {
     })
     it(`${view}: an addon's artifact links to its addon's page, never to a preview`, async () => {
       renderApp('/artifacts', { storage: { 'orch.artifacts.view.p_sev': view } })
-      const link = await screen.findByRole('link', { name: /^Open share\/demo-0043-preview in the .+ addon$/ }, T)
+      const link = await screen.findByRole('link', { name: /^Open addon page: .+ \(publish\)$/ }, T)
+      expect(link).toHaveTextContent(/^Open addon page$/)
       expect(link.getAttribute('href')).toMatch(/^\/addon\/publish\//)
       expect(screen.queryByRole('button', { name: /Preview share\/demo-0043-preview/ })).toBeNull()
     })
@@ -107,12 +108,39 @@ describe('Artifacts page: one action per item', () => {
     await waitFor(() => expect(within(rowOf('share/demo-0043-preview')).getByText('Shown in the publish addon')).toBeInTheDocument(), T)
     expect(within(rowOf('share/demo-0043-preview')).queryByRole('button')).toBeNull()
   })
+  it('a long addon title stays plain secondary text: the button keeps its core words', async () => {
+    const real = api.getAddons
+    const long = 'Apps, shares and a very long addon title!!'
+    vi.spyOn(api, 'getAddons').mockImplementation(async () => (await real()).map((a) => (a.name === 'publish' ? { ...a, title: long } : a)))
+    renderApp('/artifacts')
+    const link = await screen.findByRole('link', { name: `Open addon page: ${long} (publish)` }, T)
+    expect(link).toHaveTextContent(/^Open addon page$/)
+    const who = within(rowOf('share/demo-0043-preview')).getByText(`${long} (publish)`)
+    expect(who).toHaveClass('truncate')
+    expect(who).toHaveAttribute('title', `${long} (publish)`)
+  })
   it('the ticket key is a link to the ticket and does not preview', async () => {
     const { user } = renderApp('/artifacts')
     await screen.findByText('12 artifacts', {}, T)
     await user.click(within(rowOf('tariff-export.log')).getByRole('link', { name: 'DEMO-0043' }))
     expect(await screen.findByRole('heading', { level: 1, name: /Load tariff/ }, T)).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).toBeNull()
+  })
+  it('the drawer closes when its artifact leaves the results, and focus falls back to the results heading', async () => {
+    const real = api.listArtifacts
+    let hide = false
+    vi.spyOn(api, 'listArtifacts').mockImplementation(async (ws, q) => {
+      const r = await real(ws, q)
+      return hide ? { ...r, items: r.items.filter((x) => x.name !== 'tariff-export.log') } : r
+    })
+    const { user, client } = renderApp('/artifacts')
+    await user.click(await screen.findByRole('button', { name: 'Preview tariff-export.log' }, T))
+    await screen.findByRole('dialog', {}, T)
+    hide = true
+    await act(() => client.invalidateQueries({ queryKey: ['artifacts'] }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull(), T)
+    await waitFor(() => expect(document.getElementById('artifact-results')).toHaveFocus(), T)
+    expect(document.getElementById('artifact-results')).toHaveClass('focus:not-sr-only')
   })
   it('Enter and Space on Preview open it', async () => {
     const { user } = renderApp('/artifacts')
@@ -187,6 +215,34 @@ describe('useArtifactSelection', () => {
     expect(result.current.current).toBe(b)
     rerender({ context: 'y', items: [a, b] })
     expect(result.current.current).toBeNull()
+  })
+  it('a controlled view is not overridden when the person arrives (localStorage is only the default)', () => {
+    localStorage.setItem('orch.artifacts.view.p_sev', 'grid')
+    const { result, rerender } = renderHook((p: { person?: string }) => useArtifactSelection({ ...p, context: 'x', settled: true, items: [a], view: 'list' }), { initialProps: {} })
+    rerender({ person: 'p_sev' })
+    expect(result.current.view).toBe('list')
+  })
+  it('uncontrolled: the remembered view is read once the person is known', () => {
+    localStorage.setItem('orch.artifacts.view.p_sev', 'grid')
+    const { result, rerender } = renderHook((p: { person?: string }) => useArtifactSelection({ ...p, context: 'x', settled: true, items: [a] }), { initialProps: {} })
+    expect(result.current.view).toBeNull()
+    rerender({ person: 'p_sev' })
+    expect(result.current.view).toBe('grid')
+  })
+  it('a controlled preview: every change, the clearing too, goes through the callback', () => {
+    const onChange = vi.fn()
+    const { result, rerender } = renderHook((p: { context: string; currentKey: string | null }) => useArtifactSelection({ ...p, settled: true, items: [a, b], onCurrentKeyChange: onChange }), { initialProps: { context: 'x', currentKey: artifactKey(b) } })
+    expect(result.current.current).toBe(b)
+    act(() => result.current.setCurrentKey(artifactKey(a)))
+    expect(onChange).toHaveBeenLastCalledWith(artifactKey(a))
+    // Still controlled: nothing changes until the owner passes the new value.
+    expect(result.current.current).toBe(b)
+    rerender({ context: 'y', currentKey: artifactKey(b) })
+    expect(onChange).toHaveBeenLastCalledWith(null)
+  })
+  it('parseArtifactKey reads back an artifactKey (names may hold "/")', () => {
+    expect(parseArtifactKey(artifactKey({ ticket: 'DEMO-1', name: 'share/x.md', sha256: 'abc' }))).toEqual({ ticket: 'DEMO-1', name: 'share/x.md', sha256: 'abc' })
+    expect(parseArtifactKey('nonsense')).toBeNull()
   })
   it('settled results without the item clear it (no stale drawer)', () => {
     const { result, rerender } = renderHook((p: { items: ArtifactItem[]; settled: boolean }) => useArtifactSelection({ ...p, context: 'x' }), { initialProps: { items: [a, b], settled: true } })

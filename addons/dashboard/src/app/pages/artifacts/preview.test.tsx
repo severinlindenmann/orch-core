@@ -47,6 +47,7 @@ beforeEach(() => {
 })
 afterEach(() => {
   window.matchMedia = original
+  vi.restoreAllMocks()
 })
 
 const currentItem = () => document.querySelector('[data-artifact][aria-current="true"]')
@@ -59,7 +60,9 @@ describe('Artifacts preview pane (a wide page)', () => {
     it(`${view}: Preview shows the artifact beside the results, not in a drawer`, async () => {
       wide(true)
       const { user } = renderApp('/artifacts', { storage: { 'orch.artifacts.view.p_sev': view } })
-      expect(await screen.findByText('Select Preview on an artifact to see it here.', {}, T)).toBeInTheDocument()
+      // Nothing previewed: no pane column, the results have the whole width.
+      await screen.findByRole('button', { name: 'Preview tariff-export.log' }, T)
+      expect(screen.queryByRole('complementary', { name: /Preview/ })).toBeNull()
       await user.click(await screen.findByRole('button', { name: 'Preview tariff-export.log' }, T))
       const p = await pane('tariff-export.log')
       expect(screen.queryByRole('dialog')).toBeNull()
@@ -68,11 +71,38 @@ describe('Artifacts preview pane (a wide page)', () => {
       expect(currentItem()).toHaveTextContent('tariff-export.log')
     })
   }
-  it('the list beside the pane keeps Name, Kind, Ticket and Added', async () => {
+  it('the full list until something is previewed; beside the pane it keeps Name, Ticket and Added; Close restores it', async () => {
     wide(true)
-    renderApp('/artifacts')
-    await screen.findByRole('button', { name: 'Preview tariff-export.log' }, T)
-    expect(screen.queryByRole('columnheader', { name: 'Size' })).toBeNull()
+    const { user } = renderApp('/artifacts')
+    const headers = () => screen.getAllByRole('columnheader').map((h) => h.textContent)
+    await user.click(await screen.findByRole('button', { name: 'Preview tariff-export.log' }, T))
+    await pane('tariff-export.log')
+    expect(headers()).toEqual(['Name', 'Ticket', 'Added (UTC)', 'Action'])
+    await user.click(screen.getByRole('button', { name: 'Close the preview' }))
+    expect(headers()).toEqual(['Name', 'Kind', 'Ticket', 'Added by', 'Added (UTC)', 'Size', 'Action'])
+  })
+  it('another page of results clears the preview', async () => {
+    wide(true)
+    const { api } = await import('@/api/client')
+    const real = api.listArtifacts
+    vi.spyOn(api, 'listArtifacts').mockImplementation((ws, q) => real(ws, { ...q, per: 5 }))
+    const { user } = renderApp('/artifacts')
+    const first = (await screen.findAllByRole('button', { name: /^Preview / }, T))[0]
+    await user.click(first)
+    await pane(nameOf(first))
+    await user.click(screen.getByRole('button', { name: 'Next page' }))
+    await waitFor(() => expect(screen.queryByRole('complementary', { name: /Preview of/ })).toBeNull(), T)
+    expect(currentItem()).toBeNull()
+  })
+  it('another workspace clears the preview', async () => {
+    wide(true)
+    const { user } = renderApp('/artifacts')
+    await user.click(await screen.findByRole('button', { name: 'Preview tariff-export.log' }, T))
+    await pane('tariff-export.log')
+    document.body.focus()
+    await user.keyboard('{Meta>}2{/Meta}')
+    await waitFor(() => expect(screen.queryByRole('complementary', { name: /Preview of/ })).toBeNull(), T)
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
   it('an HTML report in the pane runs in the sandboxed frame, as in the drawer', async () => {
     wide(true)
@@ -170,7 +200,7 @@ describe('Artifacts preview: j and k', () => {
     await user.keyboard('j')
     await waitFor(() => expect(previewButtons()[1]).toHaveFocus())
   })
-  it('j does nothing outside the results: in the search box, on the page, or in the pane', async () => {
+  it('j does nothing outside the results: in the search box, on the page body, or in the pane', async () => {
     wide(true)
     const { user } = renderApp('/artifacts')
     await user.click(await screen.findByRole('button', { name: 'Preview tariff-export.log' }, T))
@@ -179,6 +209,11 @@ describe('Artifacts preview: j and k', () => {
     await user.type(screen.getByRole('searchbox', { name: 'Search artifacts' }), 'j')
     expect(currentItem()).toBe(before)
     await user.clear(screen.getByRole('searchbox', { name: 'Search artifacts' }))
+    await waitFor(() => expect(screen.queryByText('Updating…')).toBeNull(), T)
+    await pane('tariff-export.log').catch(() => {})
+    ;(document.activeElement as HTMLElement | null)?.blur()
+    await user.keyboard('j')
+    expect(document.activeElement).toBe(document.body)
     ;(await within(p).findByRole('button', { name: /Copy all/ }, T)).focus()
     await user.keyboard('j')
     expect(currentItem()).toBe(before)

@@ -280,17 +280,27 @@ export function ArtifactAction({ a, onPreview, current = false, addonPage }: { a
   const mode = openMode(a)
   if (mode === 'external')
     return (
-      <a href={a.url} target="_blank" rel="noopener noreferrer nofollow" aria-label={`Open ${a.name} in a new tab`} className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), ACTION)}>
+      <a href={a.url} target="_blank" rel="noopener noreferrer nofollow" aria-label={`Open link ${a.name} (opens in a new tab)`} className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), ACTION)}>
         Open link
         <ArrowUpRight aria-hidden />
       </a>
     )
   if (mode === 'addon') {
     const page = addonPage(a.addon!)
+    // Core words on the button; the addon's own title only as plain text beside it, with its id (no addon text as a verb).
+    const who = `${page?.addonTitle ?? a.addon} (${a.addon})`
     return page ? (
-      <Link to="/addon/$name/$page" params={{ name: page.addon, page: page.id }} aria-label={`Open ${a.name} in the ${page.addonTitle} addon`} className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), ACTION)}>
-        Open in {page.addonTitle}
-      </Link>
+      <span className="flex min-w-0 flex-col items-start gap-1">
+        <Link to="/addon/$name/$page" params={{ name: page.addon, page: page.id }} aria-label={`Open addon page: ${who}`} className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), ACTION)}>
+          Open addon page
+        </Link>
+        <span className="flex w-full min-w-0 items-center gap-1 text-[11px] text-text-muted">
+          <AddonBadge name={a.addon!} title={page.addonTitle} />
+          <span className="min-w-0 truncate" title={who}>
+            {who}
+          </span>
+        </span>
+      </span>
     ) : (
       <span className="text-[12px] text-text-muted">Shown in the {a.addon} addon</span>
     )
@@ -343,44 +353,47 @@ export function Artifacts({ ticket, viewer, jump, focus }: TabProps & { focus?: 
 
   return (
     <>
-      <ul className="grid grid-cols-2 gap-3 xl:grid-cols-3" aria-label="Artifacts">
-        {ticket.artifacts.map((a) => {
-          const Icon = KIND_ICON[a.kind]
-          return (
-            <li
-              key={a.name}
-              id={`artifact-${a.name}`}
-              data-kind={a.kind}
-              aria-current={open?.name === a.name ? 'true' : undefined}
-              className={cn('flex scroll-mt-4 flex-col rounded-lg border bg-surface p-2.5', a.addon ? addonHairline : 'border-border')}
-            >
-              <TypeTile a={a} />
-              <div className="mt-2 flex items-center gap-1.5">
-                <Icon className="size-3.5 shrink-0 text-text-muted" aria-hidden />
-                <span className="min-w-0 flex-1 truncate text-[13px] font-medium" title={a.name}>
-                  {a.name}
-                </span>
-              </div>
-              {a.label && <p className="mt-0.5 line-clamp-2 text-[12px] text-text-muted">{a.label}</p>}
-              <p className="mt-1 truncate text-[11px] text-text-faint">
-                by {viewer.name(a.added_by)} · {ago(a.at)}
-              </p>
-              <Meta a={a} jump={jump} />
-              <div className="mt-auto pt-2">
-                <ArtifactAction
-                  a={a}
-                  addonPage={addonPage}
-                  current={open?.name === a.name}
-                  onPreview={(el) => {
-                    opener.current = el
-                    setOpen(a)
-                  }}
-                />
-              </div>
-            </li>
-          )
-        })}
-      </ul>
+      {/* Columns follow the tab's own width (beside a wide dock there are fewer), as on the Artifacts page. */}
+      <div className="@container/cards">
+        <ul className="grid grid-cols-1 gap-3 @[28rem]/cards:grid-cols-2 @[44rem]/cards:grid-cols-3" aria-label="Artifacts">
+          {ticket.artifacts.map((a) => {
+            const Icon = KIND_ICON[a.kind]
+            return (
+              <li
+                key={a.name}
+                id={`artifact-${a.name}`}
+                data-kind={a.kind}
+                aria-current={open?.name === a.name ? 'true' : undefined}
+                className={cn('flex scroll-mt-4 flex-col rounded-lg border bg-surface p-2.5', a.addon ? addonHairline : 'border-border')}
+              >
+                <TypeTile a={a} />
+                <div className="mt-2 flex items-center gap-1.5">
+                  <Icon className="size-3.5 shrink-0 text-text-muted" aria-hidden />
+                  <span className="min-w-0 flex-1 truncate text-[13px] font-medium" title={a.name}>
+                    {a.name}
+                  </span>
+                </div>
+                {a.label && <p className="mt-0.5 line-clamp-2 text-[12px] text-text-muted">{a.label}</p>}
+                <p className="mt-1 truncate text-[11px] text-text-faint">
+                  by {viewer.name(a.added_by)} · {ago(a.at)}
+                </p>
+                <Meta a={a} jump={jump} />
+                <div className="mt-auto pt-2">
+                  <ArtifactAction
+                    a={a}
+                    addonPage={addonPage}
+                    current={open?.name === a.name}
+                    onPreview={(el) => {
+                      opener.current = el
+                      setOpen(a)
+                    }}
+                  />
+                </div>
+              </li>
+            )
+          })}
+        </ul>
+      </div>
 
       <ArtifactDrawer artifact={open} agentHtml={agentHtml} onClose={() => setOpen(null)} opener={opener} />
     </>

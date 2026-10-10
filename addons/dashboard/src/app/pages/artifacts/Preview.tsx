@@ -71,7 +71,8 @@ export function ArtifactPreview({ item, members, onClose, opener }: { item: Arti
       opener={opener}
       denied={state === 'denied'}
       by={item ? byLabel(item.by, members) : undefined}
-      body={stateBody(state, retry) ?? undefined}
+      // Denied: the header already says it; the body stays empty.
+      body={state === 'denied' ? <></> : (stateBody(state, retry) ?? undefined)}
       context={item && <TicketLink a={item} className="text-[12px]" />}
     />
   )
@@ -111,9 +112,4 @@ export function ArtifactPane({ item, members, onClose }: { item: ArtifactItem; m
       </div>
     </aside>
   )
-}
-
-/** Nothing previewed yet, beside the results: one quiet line, no frame. */
-export function EmptyPane() {
-  return <p className="sticky top-4 px-3 py-2.5 text-[13px] text-text-faint">Select Preview on an artifact to see it here.</p>
 }

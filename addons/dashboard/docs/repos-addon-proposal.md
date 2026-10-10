@@ -55,8 +55,9 @@ remotes, drafts, events or signatures. Without a git-login connection nothing cl
 ## What the real host must implement
 
 - `settings.changed` for `set.repos` exactly as §5.4.2 (owner-only, same-path refusal), plus the two proposed keys.
-- A queued clone carries the exact signed spec (name, remote, normalised path, git login) and runs only that; a
-  declaration change, removal or login change before it runs cancels it (`repos.clone_cancelled`), never re-targets it.
+- A clone signs and snapshots name, remote, default branch, normalised path and the full git identity (connection,
+  tool, account with host, OS user). Any `settings.changed` touching that name after signing (even one restoring the
+  same values), or any identity change, cancels the queued clone (`repos.clone_cancelled`); it never re-targets it.
 - Paths are normalised (`.`, `..`, repeated slashes, `~`) before every duplicate check, disk lookup and clone target.
 - Clone as `git clone -- <remote> <path>` (with `--`), never through a shell, into the resolved declared path only;
   refuse an existing folder, symlink escapes and races (lock the destination); durable progress and cancel.

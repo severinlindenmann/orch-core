@@ -94,6 +94,7 @@ const CASES: Case[] = [
       name: v => `Name (name): ${v}`, remote: v => `Remote (remote): ${v}`,
       target_folder: v => `Target folder (target_folder): ${v}`,
       clone_as: v => `Clone as (clone_as): ${v}`,
+      default_branch: v => `Default branch (default_branch): ${v}`,
     },
   },
   ...(['clone', 'clone_all', 'add', 'adopt', 'remove', 'remove_anyway'] as const).map((action): Case => ({
@@ -126,7 +127,7 @@ const CASES: Case[] = [
     },
     confirm: press(action === 'remove' ? 'Confirm: Remove (remove)' : action === 'remove_anyway' ? 'Continue: Remove anyway (remove_anyway)' : 'Sign and run'),
     method: 'runAddonAction', arg: 3, skip: ['confirmed'], args: true,
-    expectArgs: action === 'clone_all' ? ['targets', 'clone_as'] : action === 'remove' || action === 'remove_anyway' ? ['name', 'target_folder'] : action === 'clone' ? ['remote', 'target_folder', 'clone_as'] : ['name', 'path', 'remote', 'target_folder'],
+    expectArgs: action === 'clone_all' ? ['targets', 'clone_as'] : action === 'remove' || action === 'remove_anyway' ? ['name', 'target_folder'] : action === 'clone' ? ['remote', 'default_branch', 'target_folder', 'clone_as'] : ['name', 'path', 'remote', 'target_folder'],
   })),
 
   {

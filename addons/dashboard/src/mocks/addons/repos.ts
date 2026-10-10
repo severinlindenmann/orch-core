@@ -31,7 +31,7 @@ export interface Observed {
   worktrees: number
 }
 /** A queued clone carries the exact spec that was signed; it never re-reads the declaration when it runs. */
-interface Job { at: string; by: string; attempt: number; error?: string; done?: boolean; spec: { name: string; remote: string; full: string; branch: string; clone_as: string } }
+interface Job { at: string; by: string; attempt: number; error?: string; done?: boolean; spec: { name: string; remote: string; full: string; branch: string; clone_as: string; rev: number } }
 interface Draft { name: string; path: string; remote: string; branch: string }
 export interface ReposState extends Record<string, unknown> {
   /** The simulated file system, by full path. */
@@ -107,8 +107,16 @@ function record(s: ReposState, c: Ctx, verb: Verb, text: string, by = c.viewer) 
  */
 function cloneAs(s: ReposState, c: Ctx) {
   const conn = gitLogins(c).find((x) => x.name === s.settings.connection)
-  return conn ? { name: conn.name, account: conn.target.value, runAs: conn.run_as } : null
+  if (!conn) return null
+  // The whole identity is signed and snapshotted (connection, tool, account incl. host, OS user), not just a name.
+  return { name: conn.name, account: conn.target.value, runAs: conn.run_as, identity: `${conn.name} · tool ${conn.tool} · ${conn.target.value} · OS user ${conn.run_as}` }
 }
+/**
+ * How many declaration changes touched this repo name so far (core's settings.changed events). A queued clone keeps the
+ * number it was signed at: any later change (even one that restores the same values) cancels it.
+ */
+const declRev = (c: Ctx, name: string) =>
+  c.store.wsEventsOf(c.ws).filter((e) => e.type === 'settings.changed' && Object.hasOwn((e.set as { repos?: object } | undefined)?.repos ?? {}, name)).length
 /** Connections that are a git CLI login (gh, glab, git): the only ones clone and fetch may run as. */
 const gitLogins = (c: Ctx) => c.store.conn.connections(c.ws).filter((x) => x.kind === 'cli_login' && ['gh', 'glab', 'git'].includes(x.tool))
 const loginChoices = (c: Ctx) => gitLogins(c).map((x) => x.name)
@@ -116,10 +124,10 @@ const loginChoices = (c: Ctx) => gitLogins(c).map((x) => x.name)
 /** Open tickets this viewer can see that link the repo (restricted tickets they cannot see are never counted). */
 const linkedOpen = (c: Ctx, name: string) => c.store.listTickets(c.ws).filter((t) => t.status !== 'done' && t.links.repos.includes(name) && canSeeTicket(c, t.key))
 
-const cloneArgs = (s: ReposState, c: Ctx, r: Repo) => ({ name: r.name, remote: r.remote ?? '', target_folder: r.full, clone_as: cloneAs(s, c)?.name ?? '' })
+const cloneArgs = (s: ReposState, c: Ctx, r: Repo) => ({ name: r.name, remote: r.remote ?? '', default_branch: r.branch, target_folder: r.full, clone_as: cloneAs(s, c)?.identity ?? '' })
 const running = (job?: Job) => !!job && !job.done && !job.error
 const missing = (s: ReposState, c: Pick<Ctx, 'store' | 'ws'>) => declaredOf(c).filter((r) => r.remote && !s.observed[r.full] && !running(s.jobs[r.name]))
-const plan = (s: ReposState, c: Ctx) => missing(s, c).map((r) => `${r.remote} → ${r.full}`).join('\n')
+const plan = (s: ReposState, c: Ctx) => missing(s, c).map((r) => `${r.remote} @ ${r.branch} → ${r.full}`).join('\n')
 
 function tick(s: ReposState, c: Ctx) {
   const now = Date.parse(c.store.now())
@@ -129,7 +137,7 @@ function tick(s: ReposState, c: Ctx) {
     // Chosen rule (U3 round 2): a declaration change or removal after signing cancels the queued clone. The clone only
     // ever runs the signed spec, and only while the declaration still says exactly that.
     const r = declared.get(name)
-    if (!r || r.remote !== j.spec.remote || r.full !== j.spec.full || cloneAs(s, c)?.name !== j.spec.clone_as) {
+    if (!r || declRev(c, name) !== j.spec.rev || r.remote !== j.spec.remote || r.full !== j.spec.full || r.branch !== j.spec.branch || cloneAs(s, c)?.identity !== j.spec.clone_as) {
       j.error = 'The declaration or git login changed after it was signed; the clone was cancelled.'
       record(s, c, 'clone_cancelled', `${name}: clone cancelled, the declaration changed after signing.`, j.by)
       continue
@@ -173,7 +181,7 @@ function fetchRepos(s: ReposState, c: Ctx, repos: Repo[], by = c.viewer): boolea
   return true
 }
 function queue(s: ReposState, c: Ctx, r: Repo) {
-  const spec = { name: r.name, remote: r.remote!, full: r.full, branch: r.branch, clone_as: cloneAs(s, c)!.name }
+  const spec = { name: r.name, remote: r.remote!, full: r.full, branch: r.branch, clone_as: cloneAs(s, c)!.identity, rev: declRev(c, r.name) }
   s.jobs[r.name] = { at: c.store.now(), by: c.viewer, attempt: (s.jobs[r.name]?.attempt ?? 0) + 1, spec }
   record(s, c, 'clone_queued', `Queued ${r.name}.`)
 }
@@ -302,8 +310,8 @@ function view(s: ReposState, c: Ctx) {
         id: 'structure',
         label: 'Structure',
         node: stack(
-          kv({ 'Workspace folder': rootOf(c), 'Clones as': identity ? `${identity.name} · ${identity.account} · OS user ${identity.runAs}` : 'No git login declared as a connection' }),
-          ...(atLeast(role, 'member') ? [{ type: 'stack', direction: 'row', fit: true, children: [...(atLeast(role, 'maintainer') && missing(s, c).length ? [button('Clone all missing', 'clone_all', { targets: plan(s, c), clone_as: identity?.name ?? '' })] : []), button('Fetch all', 'fetch_all')] }] : []),
+          kv({ 'Workspace folder': rootOf(c), 'Clones as': identity ? identity.identity : 'No git login declared as a connection' }),
+          ...(atLeast(role, 'member') ? [{ type: 'stack', direction: 'row', fit: true, children: [...(atLeast(role, 'maintainer') && missing(s, c).length ? [button('Clone all missing', 'clone_all', { targets: plan(s, c), clone_as: identity?.identity ?? '' })] : []), button('Fetch all', 'fetch_all')] }] : []),
           { type: 'table', columns: [{ key: 'repo', label: 'Repo' }, { key: 'path', label: 'Folder', hideBelow: 600 }, { key: 'state', label: 'State', cell: 'state' }], rows: [...declaredRows, ...untrackedRows], rowDetail: { key: 'id', nodes: details } },
           add,
         ),
@@ -402,7 +410,7 @@ registerAddon({
       tick(s, c)
       const repos = missing(s, c)
       if (!repos.length) return conflict('repos.none_missing', 'No missing repos to clone.')
-      if (c.body.targets !== plan(s, c) || c.body.clone_as !== (cloneAs(s, c)?.name ?? '')) return conflict('repos.changed', 'The missing repos or the git login changed. Review the clone targets again.')
+      if (c.body.targets !== plan(s, c) || c.body.clone_as !== (cloneAs(s, c)?.identity ?? '')) return conflict('repos.changed', 'The missing repos or the git login changed. Review the clone targets again.')
       for (const r of repos) {
         const blocked = cloneBlocked(s, c, r, cloneArgs(s, c, r))
         if (blocked) return blocked

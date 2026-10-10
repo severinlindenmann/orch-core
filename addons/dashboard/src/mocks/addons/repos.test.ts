@@ -5,8 +5,11 @@ import { createMockTransport } from '@/api/transport'
 import { createMockStore } from '@/mocks/store'
 import { getAddon } from './registry'
 import { declaredOf, repoStatus, type ReposState } from './repos'
+import connectionsFixture from '../fixtures/connections.json'
 
 const ROOT = '~/work/acme'
+/** The full git identity a clone is signed with: connection, tool, account (with host), OS user. */
+const GH = 'gh · tool gh · orch-agent-acme on github.com · OS user orch-agent'
 const setup = (dataset: 'normal' | 'busy' = 'normal') => {
   const store = createMockStore({ persist: false, dataset })
   const ws = store.workspaces.find((w) => w.prefix === 'DEMO')!.id
@@ -14,7 +17,7 @@ const setup = (dataset: 'normal' | 'busy' = 'normal') => {
   const state = store.addonState(ws, 'repos') as ReposState
   const run = (action: string, body: Record<string, unknown> = {}) => api.runAddonAction(ws, 'repos', action, body)
   const declared = () => store.workspaces.find((w) => w.id === ws)!.repos ?? {}
-  const args = (name: string) => ({ name, remote: declared()[name].remote, target_folder: `${ROOT}/${declared()[name].path}`, clone_as: 'gh' })
+  const args = (name: string) => ({ name, remote: declared()[name].remote, default_branch: declared()[name].default_branch ?? 'main', target_folder: `${ROOT}/${declared()[name].path}`, clone_as: GH })
   const as = (person: string) => store.setViewer(person)
   return { store, ws, api, state, run, args, declared, as, view: () => api.getAddonState(ws, 'repos') }
 }
@@ -117,7 +120,7 @@ describe('Repos host: clone, fetch, check', () => {
 
   it('shows the clone identity from the connection; without a git login nothing clones', async () => {
     const s = setup()
-    expect(JSON.stringify(await s.view())).toContain('gh · orch-agent-acme on github.com · OS user orch-agent')
+    expect(JSON.stringify(await s.view())).toContain(GH)
     s.state.settings.connection = 'missing'
     await expect(s.run('clone', { ...s.args('billing-api'), clone_as: '', confirmed: true })).rejects.toMatchObject({ status: 409, code: 'repos.no_login' })
     expect((await s.api.getAddonDecisions(s.ws)).filter((d) => d.addon === 'repos')).toEqual([])
@@ -126,15 +129,15 @@ describe('Repos host: clone, fetch, check', () => {
   it('a declared repo without a remote cannot be cloned', async () => {
     const s = setup()
     await s.api.postSettings(s.ws, { op: 'repos', set: { bare: { path: 'bare' } } })
-    await expect(s.run('clone', { name: 'bare', remote: '', target_folder: `${ROOT}/bare`, clone_as: 'gh', confirmed: true })).rejects.toMatchObject({ status: 409, code: 'repos.no_remote' })
+    await expect(s.run('clone', { name: 'bare', remote: '', default_branch: 'main', target_folder: `${ROOT}/bare`, clone_as: GH, confirmed: true })).rejects.toMatchObject({ status: 409, code: 'repos.no_remote' })
   })
 
   it('clone all signs every target, fails one seeded clone and retries it', async () => {
     vi.useFakeTimers()
     const s = setup('busy')
-    const targets = ['billing-api', 'private-api'].map((n) => `${s.args(n).remote} → ${s.args(n).target_folder}`).join('\n')
-    await expect(s.run('clone_all', { targets: 'wrong', clone_as: 'gh', confirmed: true })).rejects.toMatchObject({ status: 409 })
-    await s.run('clone_all', { targets, clone_as: 'gh', confirmed: true })
+    const targets = ['billing-api', 'private-api'].map((n) => `${s.args(n).remote} @ main → ${s.args(n).target_folder}`).join('\n')
+    await expect(s.run('clone_all', { targets: 'wrong', clone_as: GH, confirmed: true })).rejects.toMatchObject({ status: 409 })
+    await s.run('clone_all', { targets, clone_as: GH, confirmed: true })
     vi.advanceTimersByTime(7000)
     await s.view()
     expect(s.state.jobs['private-api'].error).toBe('Repository not found or no access')
@@ -375,6 +378,69 @@ describe('Repos fix round 2', () => {
     expect(s.state.observed[`${ROOT}/meter-ingest`].behind).toBe(3)
     expect(s.state.log.some((l) => l.type === 'repos.fetched')).toBe(false)
     expect(s.state.log[0].text).toMatch(/no git login/)
+  })
+})
+
+describe('Repos fix round 3', () => {
+  const gh = () => (connectionsFixture as unknown as Record<string, { connections: { name: string; tool: string; target: { value: string } }[]; run_as: string }>).DEMO
+  it('signs and snapshots the full git identity: a changed account behind the same connection name cancels', async () => {
+    vi.useFakeTimers()
+    const s = setup()
+    const conn = gh().connections.find((x) => x.name === 'gh')!
+    const before = conn.target.value
+    try {
+      await s.run('clone', { ...s.args('billing-api'), confirmed: true })
+      conn.target.value = 'someone-else on github.com'
+      vi.advanceTimersByTime(7000)
+      await s.view()
+      expect(s.state.disk[`${ROOT}/billing-api`]).toBeUndefined()
+      expect(s.state.jobs['billing-api'].error).toMatch(/cancelled/)
+      await expect(s.run('clone', { ...s.args('billing-api'), confirmed: true })).rejects.toMatchObject({ status: 409, code: 'repos.changed' })
+    } finally {
+      conn.target.value = before
+    }
+  })
+  it('the OS user is part of the identity too', async () => {
+    const s = setup()
+    const before = gh().run_as
+    try {
+      gh().run_as = 'root'
+      await expect(s.run('clone', { ...s.args('billing-api'), confirmed: true })).rejects.toMatchObject({ status: 409, code: 'repos.changed' })
+    } finally {
+      gh().run_as = before
+    }
+  })
+  it('default_branch is signed: a stale prompt is 409; a change after signing cancels the clone', async () => {
+    vi.useFakeTimers()
+    const s = setup()
+    await expect(s.run('clone', { ...s.args('billing-api'), default_branch: 'develop', confirmed: true })).rejects.toMatchObject({ status: 409, code: 'repos.changed' })
+    await s.run('clone', { ...s.args('billing-api'), confirmed: true })
+    await s.api.postSettings(s.ws, { op: 'repos', set: { 'billing-api': { ...s.declared()['billing-api'], default_branch: 'develop' } } })
+    vi.advanceTimersByTime(7000)
+    await s.view()
+    expect(s.state.disk[`${ROOT}/billing-api`]).toBeUndefined()
+    expect(JSON.stringify((await s.view()).page)).toContain('@ develop')
+  })
+  it('remove then restore the same declaration between ticks never revives the signed job', async () => {
+    vi.useFakeTimers()
+    const s = setup()
+    const entry = s.declared()['billing-api']
+    await s.run('clone', { ...s.args('billing-api'), confirmed: true })
+    await s.api.postSettings(s.ws, { op: 'repos', set: { 'billing-api': null } })
+    await s.api.postSettings(s.ws, { op: 'repos', set: { 'billing-api': entry } })
+    vi.advanceTimersByTime(7000)
+    await s.view()
+    expect(s.state.disk[`${ROOT}/billing-api`]).toBeUndefined()
+    expect(s.state.jobs['billing-api'].error).toMatch(/cancelled/)
+  })
+  it('a change to another repo does not cancel this clone', async () => {
+    vi.useFakeTimers()
+    const s = setup()
+    await s.run('clone', { ...s.args('billing-api'), confirmed: true })
+    await s.api.postSettings(s.ws, { op: 'repos', set: { tools: { path: 'tools' } } })
+    vi.advanceTimersByTime(7000)
+    await s.view()
+    expect(s.state.disk[`${ROOT}/billing-api`]).toBeDefined()
   })
 })
 

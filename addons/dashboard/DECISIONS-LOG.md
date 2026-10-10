@@ -980,3 +980,11 @@ The owner answered the eight open questions of REVIEW.md. Items 1, 2, 5 and 6 ch
 - Fetch requires a declared git login inside the one fetch operation (check, scheduled check, fetch, fetch all).
 - **Revert:** revert the U3 fix-round-2 commit.
 
+## U3 fix round 3 2026-10-11 — Codex final check of d0d45f89
+
+- `clone_as` is the full git identity (connection · tool · account with host · OS user), signed, snapshotted and
+  compared; `default_branch` is in every clone / clone-all / Today-decision signature (stale prompt → 409).
+- A queued clone also keeps a per-repo declaration revision (count of `settings.changed` naming it): any later
+  change, including remove-then-restore, cancels it. Changes to other repos do not.
+- **Revert:** revert the U3 fix-round-3 commit.
+

@@ -15,7 +15,7 @@ describe('Repos page', () => {
     await user.click(screen.getByRole('button', { name: 'Details for web-portal' }))
     expect(screen.getByRole('button', { name: 'Copy Remote URL' })).toBeInTheDocument()
     expect(screen.getByText('https://git.example.test/acme/web-portal.git')).toBeInTheDocument()
-    expect(screen.getByText('gh · orch-agent-acme on github.com · OS user orch-agent')).toBeInTheDocument()
+    expect(screen.getByText('gh · tool gh · orch-agent-acme on github.com · OS user orch-agent')).toBeInTheDocument()
     await user.click(screen.getByRole('link', { name: 'Tickets linking web-portal' }))
     expect(await screen.findByText('Repo: web-portal ×', {}, T)).toBeInTheDocument()
     expect(await screen.findByText('DEMO-0046', {}, T)).toBeInTheDocument()

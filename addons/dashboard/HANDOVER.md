@@ -295,13 +295,14 @@ the same view after a reload or pasted into a new tab. **The host serves `index.
   → `/ticket/<KEY>`.
 - **Not found:** an unknown `/w/<PREFIX>` shows "No workspace <PREFIX>" (the address stays); an unknown ticket,
   a restricted one, an addon that is off or a missing addon page show their existing states. An unknown settings tab
-  still goes to General.
+  still goes to General (in the address's workspace: the router's redirects keep `/w/<PREFIX>`). Prefixes match
+  in any case (`/w/demo` → `/w/DEMO`); `/w/` is Today.
 - **View state** is in search params, each validated on its own (`src/app/search.ts`, zod): an invalid value is
   dropped and the default applies. Dialogs, signing prompts, the terminal dock and the demo dataset are not in the URL.
 - **Privacy:** addresses carry keys and ids only (ticket keys, workspace prefixes, addon names, artifact
   `<ticket>.<hash prefix>`), and the search text a person typed; never titles, tokens or signed values.
-- **Copy link** (ticket header, Settings, addon pages, ⌘K "Copy link to this page") copies the current page's
-  permanent link (`useCopyLink`, `src/app/copyLink.ts`).
+- **Copy link** (ticket header, Settings, addon pages, ⌘K "Copy link to this page") copies the address bar
+  exactly, as origin + address (`useCopyLink`, `src/app/copyLink.ts`).
 - **Tests** pass an initial path to `createAppRouter(path)` (memory history; in-app or `/w/…` paths both work);
   `renderApp` returns `address()` (the address bar as the person sees it).
 
@@ -334,15 +335,11 @@ Options: `--quick` (one configuration), `--docks min,max`, `--dataset busy`, `--
 tests after each small change; full suite, typecheck and build at the end of a group. Commit only `addons/dashboard`
 paths; never commit `.design-drafts/`. No realistic-looking secrets in seeds (GitHub push protection).
 
-**Preview for the owner.** Hosted preview: https://claude.ai/artifact/QvyFVD1JtFPyb3MegNXjgT (private to the owner's claude.ai account until shared). Local: http://127.0.0.1:5180/ (live) and
-http://127.0.0.1:5181/ (stable snapshot). To publish a new version:
-
-1. `npm run build`.
-2. `python3 scripts/build-preview.py dist <preview-folder>`: copies the JS chunks, inlines the built CSS into a small
-   `index.html` (title, Google Fonts, dark background, `dark` class, module preloads, root, entry script), and
-   escapes every U+FFFD and C0/C1 control character in every `.js` as `\uXXXX` (the publisher refuses them; they sit
-   inside strings, so escaping is safe). It prints the new files and the old ones to remove.
-3. Publish to the same artifact URL, passing the new hashed files in `files` and `null` for the old ones.
+**Preview for the owner.** Local: http://127.0.0.1:5180/ (live) and http://127.0.0.1:5181/ (stable snapshot). The
+hosted preview (https://claude.ai/artifact/QvyFVD1JtFPyb3MegNXjgT) is **frozen at 98151971**: since G2 the build
+uses `base: '/'` and lazy chunks import `/assets/…`, which the sandboxed viewer does not serve, so the old publish
+steps (`npm run build`, `python3 scripts/build-preview.py dist <folder>`, publish to the artifact URL) are obsolete
+for G2+ builds. `build-preview.py` still runs, but its output does not load; it is kept only for reference.
 
 ## Known gaps and notes
 

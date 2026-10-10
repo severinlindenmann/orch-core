@@ -18,17 +18,24 @@ export function useArtifactsUrl() {
   const latest = useRef(search)
   latest.current = search
   const set = useCallback(
-    (patch: Partial<ArtifactsSearch>) =>
+    (patch: Partial<ArtifactsSearch>, replace = true) =>
       void navigate({
         to: '/artifacts',
         search: Object.fromEntries(Object.entries({ ...latest.current, ...patch }).filter(([, v]) => v !== undefined)) as ArtifactsSearch,
-        replace: true,
+        replace,
       }),
     [navigate],
   )
 
   const pending = useRef(search.a)
-  return { view: search.view, setView: (view: 'list' | 'grid') => set({ view }), a: search.a, set, pending }
+  return {
+    view: search.view,
+    // The layout pushes (Back returns to the other one, like the board's view); the shown artifact replaces.
+    setView: (view: 'list' | 'grid') => set({ view }, false),
+    a: search.a,
+    set,
+    pending,
+  }
 }
 
 /** Opens the artifact an `a` from the address names once the list is there; after that the address follows the page. */

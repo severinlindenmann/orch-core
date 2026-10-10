@@ -6,10 +6,11 @@ are in. Branch `feat/dashboard-mockup`. Everything runs on simulated data in the
 
 ## Open the preview
 
-- Hosted preview: https://claude.ai/artifact/QvyFVD1JtFPyb3MegNXjgT (private to the owner's claude.ai account until shared)
 - Local dev server: http://127.0.0.1:5180/ (live; it may be stale for a minute while branches are merged)
 - Stable snapshot: http://127.0.0.1:5181/ (refreshed after each tested merge; use this one for a calm review)
 - On your own machine: `cd addons/dashboard && npm install && npm run dev`, then open the address it prints.
+- The hosted claude.ai preview (https://claude.ai/artifact/QvyFVD1JtFPyb3MegNXjgT) is frozen at commit 98151971,
+  before permanent URLs; builds since then do not load there (your decision: the local setup is the target).
 
 Things to know before you start:
 

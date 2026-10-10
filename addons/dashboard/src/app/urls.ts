@@ -15,6 +15,8 @@ const WS_PATH = /^\/w\/([^/?#]+)(\/.*)?$/
 
 /** The workspace prefix of an address-bar path and the in-app path after it (`/w/DEMO/board` -> DEMO, `/board`). */
 export function splitWorkspacePath(pathname: string): { prefix?: string; path: string } {
+  // `/w` or `/w/` alone names no workspace: Today of the current one.
+  if (pathname === '/w' || pathname === '/w/') return { path: '/' }
   const m = WS_PATH.exec(pathname)
   if (!m) return { path: pathname }
   let prefix: string
@@ -40,6 +42,10 @@ export function toPublicPath(path: string, prefix: string | null | undefined): s
 /** Per-router URL state the rewrite reads: the workspace that in-app links point into. */
 export interface UrlState {
   prefix: string | null
+  /** Set when an incoming address changed `prefix` behind the router's back: its cached link addresses are stale. */
+  stale?: boolean
+  /** The last address the rewrite read. */
+  lastInput?: string
 }
 
 /** The router rewrite: strips `/w/<PREFIX>` on the way in, adds the current workspace on the way out. */
@@ -47,7 +53,16 @@ export function workspaceRewrite(state: UrlState): LocationRewrite {
   return {
     input: ({ url }) => {
       const { prefix, path } = splitWorkspacePath(url.pathname)
-      if (prefix !== undefined) url.pathname = path
+      // The incoming address wins: a redirect the router builds while loading it (`/w/INT/settings` ->
+      // settings/general) stays in that workspace. WorkspaceProvider corrects it right after (unknown prefix).
+      // Only for a new address: the router parses the same one again on reloads and invalidations.
+      const fresh = url.href !== state.lastInput
+      state.lastInput = url.href
+      if (fresh && prefix !== undefined && prefix !== state.prefix) {
+        state.prefix = prefix
+        state.stale = true
+      }
+      url.pathname = path
       return url
     },
     output: ({ url }) => {
@@ -63,8 +78,9 @@ export function workspaceRewrite(state: UrlState): LocationRewrite {
  * event handler, never during render.
  */
 export function setLinkWorkspace(router: AnyRouter, urls: UrlState, prefix: string | null) {
-  if (urls.prefix === prefix) return
+  if (urls.prefix === prefix && !urls.stale) return
   urls.prefix = prefix
+  urls.stale = false
   router.update({ ...router.options, rewrite: workspaceRewrite(urls) })
 }
 

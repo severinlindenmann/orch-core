@@ -1,7 +1,7 @@
 import { useCallback } from 'react'
 import { useRouter } from '@tanstack/react-router'
 import { toast } from 'sonner'
-import { shareableLink, toPublicPath } from './urls'
+import { shareableLink } from './urls'
 
 /** Copies text; falls back to a hidden text area where the Clipboard API is missing or refused. */
 export async function copyText(text: string): Promise<boolean> {
@@ -28,16 +28,13 @@ export async function copyText(text: string): Promise<boolean> {
 }
 
 /**
- * The permanent link of the current page: its path with the workspace (a ticket's key names its own), and the
- * view state in the search params. Never a dialog, a token or a title.
+ * The permanent link of the current page: the address as shown (path with the workspace, a ticket's key naming its
+ * own, view state in the search params). Never a dialog, a token or a title.
  */
 export function useCurrentLink() {
   const router = useRouter()
-  return useCallback(() => {
-    const l = router.state.location
-    const path = toPublicPath(l.pathname, router.options.context.urls.prefix)
-    return shareableLink(`${path}${l.searchStr}${l.hash ? `#${l.hash}` : ''}`)
-  }, [router])
+  // Exactly what the address bar holds (on "No workspace NOPE" that is the NOPE address, not another valid page).
+  return useCallback(() => shareableLink(router.history.location.href), [router])
 }
 
 /** "Copy link": copies the current page's link and says so (or shows the link when the copy failed). */

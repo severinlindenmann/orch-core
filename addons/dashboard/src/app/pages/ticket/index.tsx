@@ -12,6 +12,8 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { usePageHeader, useTicketOrigin } from '../../shell/ShellUi'
+import { BOARD_ORIGIN } from '../../shell/origin'
+import { toPublicPath } from '@/app/urls'
 import { AcceptanceTasks } from './AcceptanceTasks'
 import { Artifacts } from './Artifacts'
 import { Changes, HAS_CHANGES } from './Changes'
@@ -110,8 +112,10 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
   const search = validateTicketSearch(useSearch({ strict: false }))
   const navigate = useNavigate()
   const tab: TabId = search.tab ?? (questionOf(hash) ? 'questions' : 'overview')
+  // A tab click drops a `#question-…` hash; a jump (to a question, the evidence) keeps it so its highlight stays.
   const setTab = useCallback(
-    (next: TabId) => void navigate({ to: '/ticket/$key', params: { key: ticketKey }, search: next === 'overview' ? {} : { tab: next }, replace: true }),
+    (next: TabId, keepHash = false) =>
+      void navigate({ to: '/ticket/$key', params: { key: ticketKey }, search: next === 'overview' ? {} : { tab: next }, hash: keepHash ? true : undefined, replace: true }),
     [navigate, ticketKey],
   )
   const [focus, setFocus] = useState<string | undefined>(() => questionOf(hash))
@@ -122,8 +126,14 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
   const wide = useWideLayout()
 
   // Back to where the ticket was opened from (Today, Board, Tickets, Artifacts, an addon page), filters included.
-  const origin = useTicketOrigin()
+  const shellOrigin = useTicketOrigin()
   const router = useRouter()
+  const linkPrefix = useWorkspace().workspace?.prefix
+  // The default origin (a ticket opened first) is an in-app path: show its permanent address.
+  const origin = useMemo(
+    () => (shellOrigin.href === BOARD_ORIGIN.href ? { ...shellOrigin, href: toPublicPath(BOARD_ORIGIN.href, linkPrefix) } : shellOrigin),
+    [shellOrigin, linkPrefix],
+  )
   const breadcrumb = useMemo(
     () => (
       <>
@@ -154,7 +164,7 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
   }, [ticketKey, hash])
 
   const jump = useCallback((j: Jump) => {
-    setTab(j.tab)
+    setTab(j.tab, true)
     setFocus(j.id)
   }, [setTab])
 

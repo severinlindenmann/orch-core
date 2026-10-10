@@ -274,7 +274,7 @@ describe('ticket page structure: next action first, gates as a stepper, a rail t
     renderApp('/ticket/DEMO-0043', { viewer: 'p_sev' })
     await screen.findByRole('heading', { level: 1, name: /Load tariff tables/ }, T)
     const topbar = screen.getByTestId('topbar-title').parentElement as HTMLElement
-    expect(within(topbar).getByRole('link', { name: 'Board' })).toHaveAttribute('href', '/board')
+    expect(within(topbar).getByRole('link', { name: 'Board' })).toHaveAttribute('href', '/w/DEMO/board')
   })
 
   it('shows at most 3 labels and "+n"', async () => {

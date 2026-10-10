@@ -1,10 +1,12 @@
 import { act, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import workspacesFixture from '@/mocks/fixtures/workspaces.json'
 import { renderApp } from '@/test/renderApp'
 import { validateArtifactsSearch, validateBoardSearch, validateTicketSearch } from './search'
 import { isWorkspacePath, shareableLink, splitWorkspacePath, toPublicPath } from './urls'
 
 const T = { timeout: 8000 }
+const DEMO_ID = (workspacesFixture as { id: string; prefix: string }[]).find((w) => w.prefix === 'DEMO')!.id
 const switcher = () => screen.getByRole('button', { name: 'Switch workspace' })
 
 describe('permanent URLs: the address <-> in-app path mapping', () => {
@@ -90,8 +92,10 @@ describe('permanent URLs in the app', () => {
     const { user, address } = renderApp('/w/DEMO/agents', { viewer: 'p_sev' })
     await screen.findByRole('heading', { level: 1, name: 'Agents' }, T)
     await user.click(switcher())
-    await user.click(await screen.findByRole('option', { name: /Client/ }, T).catch(() => screen.findByText(/Client/, {}, T)))
+    await user.click(within(await screen.findByRole('group', { name: /^CLI ·/ }, T)).getAllByRole('button')[0])
     await waitFor(() => expect(address()).toBe('/w/CLI/agents'), T)
+    // In-app links follow the switch (the router's cached link addresses are dropped).
+    await waitFor(() => expect(screen.getByRole('link', { name: 'Board' })).toHaveAttribute('href', '/w/CLI/board'), T)
   })
 
   it('a ticket URL keeps its key, opens the tab from ?tab= and writes the tab back', async () => {
@@ -134,7 +138,7 @@ describe('permanent URLs in the app', () => {
     await waitFor(() => expect(address()).toBe('/w/DEMO/board'), T)
   })
 
-  it('settings tab and the open addon row are the URL; an unknown addon there is not a crash', async () => {
+  it('settings tab and the open addon row are the URL', async () => {
     const { address } = renderApp('/w/DEMO/settings/addon/publish', { viewer: 'p_sev' })
     await screen.findByRole('navigation', { name: 'Settings' }, T)
     expect(address()).toBe('/w/DEMO/settings/addon/publish')
@@ -186,5 +190,65 @@ describe('permanent URLs in the app', () => {
   it('an unknown addon tab in the URL falls back to the first tab', async () => {
     renderApp('/w/DEMO/addon/publish/shares?tab.publish=nope', { viewer: 'p_sev' })
     expect(await screen.findByRole('tab', { name: /^Apps/ }, T)).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('an unknown addon in a settings address is not a crash', async () => {
+    const { address } = renderApp('/w/DEMO/settings/addon/nope', { viewer: 'p_sev' })
+    await screen.findByRole('navigation', { name: 'Settings' }, T)
+    expect(address()).toBe('/w/DEMO/settings/addon/nope')
+  })
+
+  describe('redirects keep the workspace of the address (DEMO is the current one)', () => {
+    const cases: [string, string][] = [
+      ['/w/INT/settings', '/w/INT/settings/general'],
+      ['/w/INT/settings/addons/publish', '/w/INT/settings/addon/publish'],
+      ['/w/INT/settings/bogus', '/w/INT/settings/general'],
+    ]
+    it.each(cases)('%s -> %s', async (from, to) => {
+      const { address } = renderApp(from, { viewer: 'p_sev', storage: { 'orch.workspace': DEMO_ID } })
+      await screen.findByRole('navigation', { name: 'Settings' }, T)
+      await waitFor(() => expect(address()).toBe(to), T)
+      await waitFor(() => expect(within(switcher()).getByText('INT')).toBeInTheDocument(), T)
+    })
+  })
+
+  it('a workspace prefix in another case opens that workspace and the address is corrected', async () => {
+    const { address } = renderApp('/w/int/board', { viewer: 'p_sev' })
+    await screen.findByRole('heading', { level: 1, name: 'Board' }, T)
+    await waitFor(() => expect(address()).toBe('/w/INT/board'), T)
+  })
+
+  it('/w/ alone is Today of the current workspace', async () => {
+    const { address } = renderApp('/w/', { viewer: 'p_sev' })
+    await waitFor(() => expect(address()).toBe('/w/DEMO'), T)
+  })
+
+  it('Copy link copies the address as shown, also on "No workspace NOPE" (button-free: from ⌘K)', async () => {
+    const { user } = renderApp('/w/NOPE/board?view=list', { viewer: 'p_sev' })
+    await screen.findByRole('heading', { name: 'No workspace NOPE' }, T)
+    const writeText = vi.spyOn(navigator.clipboard, 'writeText')
+    await user.keyboard('{Control>}k{/Control}')
+    await user.click(await screen.findByRole('option', { name: /Copy link to this page/ }, T))
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/w/NOPE/board?view=list`), T)
+  })
+
+  it('⌘K "Copy link to this page" on a ticket copies its address with the tab', async () => {
+    const { user } = renderApp('/ticket/DEMO-0043?tab=history', { viewer: 'p_sev' })
+    await screen.findByRole('heading', { level: 1, name: /Load tariff tables/ }, T)
+    const writeText = vi.spyOn(navigator.clipboard, 'writeText')
+    await user.keyboard('{Control>}k{/Control}')
+    await user.click(await screen.findByRole('option', { name: /Copy link to this page/ }, T))
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/ticket/DEMO-0043?tab=history`), T)
+  })
+
+  it('an addon tab stays in the address when the address loses it (same page again)', async () => {
+    const { router, address } = renderApp('/w/DEMO/addon/publish/shares?tab.publish=shares', { viewer: 'p_sev' })
+    expect(await screen.findByRole('tab', { name: /^Shares/ }, T)).toHaveAttribute('aria-selected', 'true')
+    await act(async () => void router.history.push('/w/DEMO/addon/publish/shares'))
+    await waitFor(() => expect(address()).toBe('/w/DEMO/addon/publish/shares?tab.publish=shares'), T)
+    expect(screen.getByRole('tab', { name: /^Shares/ })).toHaveAttribute('aria-selected', 'true')
+    // And a tab named by the address wins over the one on screen (Back, a pasted link).
+    await act(async () => void router.history.push('/w/DEMO/addon/publish/shares?tab.publish=apps'))
+    await waitFor(() => expect(screen.getByRole('tab', { name: /^Apps/ })).toHaveAttribute('aria-selected', 'true'), T)
   })
 })

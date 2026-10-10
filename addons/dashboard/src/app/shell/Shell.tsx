@@ -38,9 +38,10 @@ function PageSkeleton() {
   )
 }
 
-/** The page, or "no such workspace" when the address names a workspace the viewer does not have. */
+/** The page, or "no such workspace" when the address names a workspace the viewer does not have (a skeleton until known). */
 function PageOutlet() {
-  const { missingPrefix } = useWorkspace()
+  const { missingPrefix, pendingPrefix } = useWorkspace()
+  if (pendingPrefix) return <PageSkeleton />
   return missingPrefix !== undefined ? <WorkspaceNotFound prefix={missingPrefix} /> : <Outlet />
 }
 

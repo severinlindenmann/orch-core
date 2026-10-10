@@ -106,7 +106,8 @@ export function ReviewTour() {
         const viewer = g.viewer ?? 'p_sev'
         if (switchTo || viewer !== me) await api.setViewer(viewer)
         const ws = workspaces.find((w) => w.prefix === (g.workspace ?? 'DEMO'))
-        if (ws && ws.id !== workspace?.id) setWorkspaceId(ws.id)
+        // Replace: the tour already navigated to this page; the step's workspace is the same entry, not a new one.
+        if (ws && ws.id !== workspace?.id) setWorkspaceId(ws.id, { url: 'replace' })
         await qc.invalidateQueries()
       } catch (e) {
         toastApiError(e, 'Could not set up that step')

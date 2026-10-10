@@ -20,11 +20,13 @@ interface WorkspaceCtx {
   workspaces: Workspace[]
   /** The prefix of a `/w/<PREFIX>/…` address that names no workspace of the viewer's (the page shows "not found"). */
   missingPrefix?: string
+  /** A `/w/<PREFIX>` address while the workspaces are still loading (the page shows a skeleton). */
+  pendingPrefix?: boolean
   /**
    * Switches the current (mock) workspace; every workspace-keyed query refetches. Keeps the page; on a workspace page
    * the address moves to the new workspace (a new history entry, so Back returns to the old one).
    */
-  setWorkspaceId: (id: string, opts?: { url?: 'push' | 'none' }) => void
+  setWorkspaceId: (id: string, opts?: { url?: 'push' | 'replace' | 'none' }) => void
   /** The user-facing switch: keeps the page where it still makes sense, otherwise leaves it with a toast. */
   switchWorkspace: (id: string, opts?: SwitchOptions) => void
 }
@@ -96,14 +98,18 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const split = ownsUrl ? splitWorkspacePath(publicPathOf(publicHref)) : { prefix: undefined, path: publicPathOf(publicHref) }
   const { prefix: urlPrefix, path: inAppPath } = split
   const scoped = isWorkspacePath(inAppPath)
-  const fromUrl = scoped && urlPrefix !== undefined ? data.find((w) => w.prefix === urlPrefix) : undefined
+  // Prefixes match regardless of case (`/w/demo/board`); the address is then corrected to the real one.
+  const fromUrl = scoped && urlPrefix !== undefined ? data.find((w) => w.prefix.toUpperCase() === urlPrefix.toUpperCase()) : undefined
   const missingPrefix = scoped && urlPrefix !== undefined && isSuccess && !fromUrl ? urlPrefix : undefined
+  /** A `/w/<PREFIX>` address whose workspace is not known yet: the page waits instead of showing another workspace. */
+  const pendingPrefix = ownsUrl && scoped && urlPrefix !== undefined && !isSuccess
   const workspace = fromUrl ?? data.find((w) => w.id === id) ?? data[0]
   // In-app links point into this workspace (the router's rewrite reads it when it builds an address).
   const linkPrefix = workspace?.prefix ?? null
+  // After every render: an incoming address may have pointed the rewrite at its own prefix (an unknown one too).
   useLayoutEffect(() => {
     if (router && ownsUrl) setLinkWorkspace(router, urls, linkPrefix)
-  }, [router, ownsUrl, urls, linkPrefix])
+  })
 
   // An address for another workspace (pasted, Back/Forward) makes it the remembered one too.
   useEffect(() => {
@@ -114,11 +120,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   // Old and short addresses (`/board`, `/`) get the workspace; a ticket address loses one (its key names it).
   useEffect(() => {
     if (!workspace || missingPrefix) return
-    if (!router || !ownsUrl || scoped === (urlPrefix !== undefined)) return
+    const miscased = !!fromUrl && fromUrl.prefix !== urlPrefix
+    if (!router || !ownsUrl || (!miscased && scoped === (urlPrefix !== undefined))) return
     const l = router.latestLocation
     // The same page under its full address: not a navigation a page with unsaved work needs to ask about.
     router.history.replace(`${toPublicPath(l.pathname, workspace.prefix)}${l.searchStr}${l.hash ? `#${l.hash}` : ''}`, l.state, { ignoreBlocker: true })
-  }, [workspace, missingPrefix, scoped, urlPrefix, router, ownsUrl])
+  }, [workspace, fromUrl, missingPrefix, scoped, urlPrefix, router, ownsUrl])
 
   // Latest values for switchWorkspace, so its identity stays stable for key handlers.
   const latest = useRef({ data, workspace })
@@ -127,7 +134,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   })
 
   const setWorkspaceId = useCallback(
-    (next: string, opts: { url?: 'push' | 'none' } = {}) => {
+    (next: string, opts: { url?: 'push' | 'replace' | 'none' } = {}) => {
       const target = latest.current.data.find((w) => w.id === next)
       remember(next)
       // Links and the navigation that may follow point into the new workspace right away.
@@ -135,7 +142,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       const l = router?.latestLocation
       if (router && l && urls !== NO_URLS && target && opts.url !== 'none' && isWorkspacePath(l.pathname)) {
         // The switch guards (useSwitchGuard) have already asked about unsaved work.
-        router.history.push(`${toPublicPath(l.pathname, target.prefix)}${l.searchStr}${l.hash ? `#${l.hash}` : ''}`, undefined, { ignoreBlocker: true })
+        const href = `${toPublicPath(l.pathname, target.prefix)}${l.searchStr}${l.hash ? `#${l.hash}` : ''}`
+        if (opts.url === 'replace') router.history.replace(href, l.state, { ignoreBlocker: true })
+        else router.history.push(href, undefined, { ignoreBlocker: true })
       }
       void qc.invalidateQueries()
     },
@@ -182,8 +191,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   )
 
   const value = useMemo<WorkspaceCtx>(
-    () => ({ workspaces: data, workspace, missingPrefix, setWorkspaceId, switchWorkspace }),
-    [data, workspace, missingPrefix, setWorkspaceId, switchWorkspace],
+    () => ({ workspaces: data, workspace, missingPrefix, pendingPrefix, setWorkspaceId, switchWorkspace }),
+    [data, workspace, missingPrefix, pendingPrefix, setWorkspaceId, switchWorkspace],
   )
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

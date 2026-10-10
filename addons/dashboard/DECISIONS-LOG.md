@@ -736,7 +736,7 @@ The owner answered the eight open questions of REVIEW.md. Items 1, 2, 5 and 6 ch
   search params**, validated per field with zod (invalid → default): ticket `tab`; board `view`, `mine`, `type`,
   `label`, `person`, `epic`, `q`; tickets filters (already); artifacts `view` and `a` (the shown artifact as
   `<ticket>.<sha256[:12]>`, no file name); the settings addon row is the existing `/settings/addon/<name>` path. Tab
-  and artifact changes replace the history entry; filter and view changes push (like the tickets list); search text
+  and artifact changes replace the history entry; filter and view changes push (like the tickets list; the artifacts layout pushes since the review fixes); search text
   replaces after 200 ms. Not in the URL: dialogs, signing prompts, the terminal dock, the demo dataset (Normal/Busy
   day is mock data, not a place) and the review tour step. Addon page tabs (core's `tabs` node, e.g. Usage's
   Overview / By model) are `?tab.<node id>=<tab id>` on addon pages (the remembered per-viewer tab still applies
@@ -749,3 +749,25 @@ The owner answered the eight open questions of REVIEW.md. Items 1, 2, 5 and 6 ch
   then "we don't care about the artifact on claude, we care about the local setup".
 - **Revert:** revert the G2 commits (router back to `createMemoryHistory({ initialEntries: ['/'] })`, `base: './'`,
   drop `urls.ts`, `search.ts`, `copyLink.ts`, the URL hooks in board/artifacts and the ticket tab param).
+
+## G2 permanent URLs: review fixes
+
+- **Decision:** (1) **Redirects keep the address's workspace**: the router rewrite's input points the link workspace
+  at the prefix of each new incoming address (marking the cached link addresses stale), so a redirect built while
+  that address loads (`/w/INT/settings` → `/w/INT/settings/general`, `/w/INT/settings/addons/x` →
+  `/w/INT/settings/addon/x`, an unknown tab → General) stays in INT; `WorkspaceProvider` re-points links at the shown
+  workspace after every render (an unknown prefix). Repeated parses of the same address do not touch it. (2) **Copy
+  link copies the address bar exactly** (`router.history.location.href`), so on "No workspace NOPE" it copies the
+  NOPE address. (3) Prefixes match case-insensitively; the address is corrected to the real prefix. `/w` and `/w/`
+  are Today. (4) The artifacts layout (`view`) now pushes, like the board's view; the shown artifact replaces.
+  (5) An addon page tab follows the address (subscribed to the history); when the address has none, the shown tab is
+  put in (replace). (6) `setWorkspaceId` gains `url: 'replace'`; the Review tour uses it (no extra history entry).
+  (7) The default ticket breadcrumb (a ticket opened first) is the permanent `/w/<PREFIX>/board`. (8) A jump on a
+  ticket (to a question, to the evidence) keeps the `#question-…` hash; a tab click drops it. (9) While the workspaces
+  load, a `/w/<PREFIX>` address shows the page skeleton instead of the remembered workspace's page. (10) The hosted
+  preview is frozen at 98151971; the publish steps are marked obsolete.
+- **Not done:** invalid search params stay in the address until the page writes it (they never apply; dropping them
+  needs a replace on every route); `/nonsense` still becomes `/w/DEMO/nonsense` (the router's not-found page, as
+  before G2); ticket keys stay case-sensitive (predates G2).
+- **Why:** review G2 (2 Important, 11 Minor).
+- **Revert:** revert the review-fix commit.

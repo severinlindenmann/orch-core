@@ -26,12 +26,21 @@ describe('the router owns page loading', () => {
       await gate
       return real(ws)
     })
+    // When the skeleton first shows, measured from the navigation (timers in a loaded test run can overshoot, so the
+    // time is taken by an observer, not by sleeping to just under PENDING_MS).
+    let shownAt: number | null = null
+    const watch = new MutationObserver(() => {
+      if (shownAt === null && loading()) shownAt = performance.now()
+    })
+    watch.observe(document.body, { childList: true, subtree: true })
+    const start = performance.now()
     act(() => void router.navigate({ to: '/agents' }))
-    await sleep(PENDING_MS / 2)
-    // Under PENDING_MS: the board is still there, nothing in between.
-    expect(screen.getByTestId('card-DEMO-0043')).toBeInTheDocument()
-    expect(loading()).toBeNull()
-    await sleep(PENDING_MS)
+    await sleep(PENDING_MS / 4)
+    // Well under PENDING_MS: the board is still there.
+    expect(screen.getByTestId('card-DEMO-0043')).toBeVisible()
+    await waitFor(() => expect(loading()).toBeInTheDocument(), T)
+    watch.disconnect()
+    expect(shownAt! - start).toBeGreaterThanOrEqual(PENDING_MS - 5)
     // Past it: one skeleton in the page's shape (its heading included), never a blank page.
     expect(loading()).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Agents', level: 1 })).toBeInTheDocument()
@@ -98,6 +107,38 @@ describe('scroll on page changes', () => {
     await screen.findByTestId('card-DEMO-0043', {}, T)
     expect(main.scrollTop).toBe(0)
     // Back: where the list was left.
+    act(() => router.history.back())
+    await screen.findByText('DEMO-0043', {}, T)
+    await waitFor(() => expect(main.scrollTop).toBe(300), T)
+  })
+})
+
+describe('scroll while the next page is pending (G4 review I1)', () => {
+  it('the skeleton starts at the top, and Back restores the offset the page was left at, not a clamped one', async () => {
+    await import('./pages/agents')
+    const { router } = renderApp('/tickets')
+    await screen.findByText('DEMO-0043', {}, T)
+    const main = document.getElementById('main')!
+    main.scrollTop = 300
+    main.dispatchEvent(new Event('scroll'))
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    const real = api.getAgentActivity.bind(api)
+    vi.spyOn(api, 'getAgentActivity').mockImplementation(async (ws) => {
+      await gate
+      return real(ws)
+    })
+    act(() => void router.navigate({ to: '/agents' }))
+    await sleep(PENDING_MS + 100)
+    expect(loading()).toBeInTheDocument()
+    expect(main.scrollTop).toBe(0)
+    // What a browser does when the hidden old page leaves a short skeleton: the scroll is clamped (and reported).
+    main.scrollTop = 40
+    main.dispatchEvent(new Event('scroll'))
+    main.scrollTop = 0
+    release()
+    await screen.findByText(/agent sessions? ·/, {}, T)
+    expect(main.scrollTop).toBe(0)
     act(() => router.history.back())
     await screen.findByText('DEMO-0043', {}, T)
     await waitFor(() => expect(main.scrollTop).toBe(300), T)

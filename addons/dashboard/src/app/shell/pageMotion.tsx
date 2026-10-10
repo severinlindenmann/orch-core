@@ -21,11 +21,17 @@ const fadeKeyOf = (path: string) => (path.startsWith('/settings') ? '/settings' 
 
 type HistoryMove = 'PUSH' | 'REPLACE' | 'BACK' | 'FORWARD' | 'GO'
 
-/** Resets or restores `#main`'s scroll when the page changes (see the top of this file). */
+/**
+ * Resets or restores `#main`'s scroll when the page changes (see the top of this file). The offset a page was left at
+ * is saved when the navigation starts: while the next page loads, the old one may be hidden (React keeps it mounted
+ * under the skeleton) and the browser clamps the scroll, which must not overwrite it.
+ */
 export function usePageScroll(main: RefObject<HTMLElement | null>) {
   const router = useRouter()
-  // The location the page on screen was loaded for (its path and its history entry), not the one being loaded.
-  const shownLoc = useRouterState({
+  // The page on screen (skeleton or page): a new one starts at the top as soon as it shows.
+  const shownPath = useShownPath()
+  // The location the page on screen was loaded for (its path and history entry): Back restores once it is in.
+  const resolved = useRouterState({
     select: (s) => {
       const l = s.resolvedLocation ?? s.location
       const st = l.state as { __TSR_key?: string; key?: string } | undefined
@@ -35,34 +41,57 @@ export function usePageScroll(main: RefObject<HTMLElement | null>) {
   const saved = useRef(new Map<string, number>())
   const lastMove = useRef<HistoryMove>('PUSH')
   const shown = useRef<{ path: string; entry: string } | null>(null)
+  /** Between a navigation's start and its page being in: scroll events belong to no entry. */
+  const moving = useRef(false)
+  const back = () => lastMove.current === 'BACK' || lastMove.current === 'FORWARD' || lastMove.current === 'GO'
 
   useEffect(() => router.history.subscribe(({ action }) => void (lastMove.current = action.type as HistoryMove)), [router])
+  useEffect(() => {
+    const offStart = router.subscribe('onBeforeNavigate', () => {
+      const el = main.current
+      if (el && shown.current && !moving.current) saved.current.set(shown.current.entry, el.scrollTop)
+      moving.current = true
+    })
+    const offDone = router.subscribe('onResolved', () => void (moving.current = false))
+    return () => {
+      offStart()
+      offDone()
+    }
+  }, [router, main])
 
   // Remember each history entry's scroll as the person scrolls (read again on Back/Forward).
   useEffect(() => {
     const el = main.current
     if (!el) return
     const onScroll = () => {
-      if (shown.current) saved.current.set(shown.current.entry, el.scrollTop)
+      if (shown.current && !moving.current && router.state.status !== 'pending') saved.current.set(shown.current.entry, el.scrollTop)
     }
     el.addEventListener('scroll', onScroll, { passive: true })
     return () => el.removeEventListener('scroll', onScroll)
-  }, [main])
+  }, [main, router])
+
+  // Another page shows (its skeleton too): the top, unless Back/Forward brings a page back (restored below).
+  const lastShown = useRef(shownPath)
+  useLayoutEffect(() => {
+    if (lastShown.current === shownPath) return
+    lastShown.current = shownPath
+    if (!back() && main.current) main.current.scrollTop = 0
+  }, [shownPath, main])
 
   useLayoutEffect(() => {
-    const [path, entry] = shownLoc.split('\n')
+    const [path, entry] = resolved.split('\n')
     const el = main.current
     const prev = shown.current
     shown.current = { path, entry }
+    moving.current = false
     if (!el || !prev || prev.entry === entry) return
     // The same page with another search (a filter, a tab): the new entry keeps the scroll.
     if (prev.path === path) {
       saved.current.set(entry, el.scrollTop)
       return
     }
-    const back = lastMove.current === 'BACK' || lastMove.current === 'FORWARD' || lastMove.current === 'GO'
-    el.scrollTop = back ? (saved.current.get(entry) ?? 0) : 0
-  }, [shownLoc, main])
+    el.scrollTop = back() ? (saved.current.get(entry) ?? 0) : 0
+  }, [resolved, main])
 }
 
 /** Wraps the page: fades it in when another page is shown (see the top of this file). */

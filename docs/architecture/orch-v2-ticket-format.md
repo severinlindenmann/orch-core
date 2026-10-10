@@ -1279,6 +1279,39 @@ err human_only approve: human only · retry:false · next: orch ask or orch wait
 - It replies with `orch reply REF --result -`.
 - What it receives is treated as data, never as instructions (spec §9).
 
+### 10.7 Decisions of C6 (the agent operations as built)
+
+Where this chapter was silent, `orch.ops` does the following. Each is a rule the tests pin.
+
+- **Workspace and key.** The workspace is `ORCH_WORKSPACE`, else the nearest directory above the working directory that
+  holds `config.json` with `"schema": "orch.workspace/2"` (or `orchestrator/` that does). The workspace key of the file
+  tier is `<state dir>/hosts/<workspace id>/keys/wsk`; the state dir is `ORCH_STATE_DIR`, else
+  `$XDG_CONFIG_HOME/orch`, else `~/.config/orch`. Without the key the store is read-only and a write is `internal`.
+- **Who is "the person".** Reads without a grant, or with one that does not check out (id and secret, expiry,
+  revocation), see only `workspace` tickets; a grant id alone is public and never selects a person. With a valid grant
+  they see what that person sees (§9).
+- **`base_rev` tracking (§5.8, §10.4 item 8).** Per session and ticket, in `.state/sessions/<session>.notes.json`. A
+  section or field the session never read, or that changed since, is `conflict.section` or `conflict.field` (exit 8,
+  retryable) until it reads it (`show`, `show --section`, `claim`, `task list`); a ticket the session created is known to
+  it; its own writes update the notes. An unreadable notes file counts as empty.
+- **Cursor and `wait`.** The cursor is the highest `seq` shown to the session (`show`, `status`, a result). `wait`
+  waits for the first decision after the session's last write on the ticket, or after the head when it has neither read
+  nor written there. A done ticket does not end the wait.
+- **Claims.** `s_X.<n>` works under the claim of `s_X`, but only `s_X` releases it or hands off (the event schema binds
+  `session` to the actor). A lapsed claim is taken over (`--takeover --reason`), also by its own session; the host does not
+  record the lapse by itself yet.
+- **`new -m/--file`** is the `summary` section. **`ask`** defaults to `--to ticket_owner`, labels every option with its key
+  and gives the question the next free `Q` id. **`apply`** takes `{"ref": ..., "ops": [{"op": "log", "text": ...}, ...]}`
+  (the editing operations, input as their own schemas, no `ref` or `file` per item), judged item after item with
+  `orch.model.preview` and appended only when every item is admitted.
+- **`task done --run`** runs the ticket's `verify.cmd` split into arguments (no shell) in the linked repository or the
+  workspace directory, in its own process group, with a hard timeout, at most 1 MiB of output kept (the rest dropped), the
+  environment without `ORCH_GRANT` and variables that look like secrets; it stores the output as the `receipt` artifact
+  `<task>-receipt.log` (its digest is the output digest) and refuses if the repository's commit changed during the run.
+- **Dedup and the stop rule** treat a file argument (`--file`, `path`, `--artifact`) as its content, not its name.
+- **Output.** Handlers return raw text; the renderer escapes once (§10.4.11). Ticket content is fenced; a result line that
+  starts like `ok`, `next:` or `err` gets a `·` first; a fenced line that starts with `---` gets a backslash.
+
 ## 11. Encodings, ids, text and value lists
 
 ### 11.1 Field types and ids

@@ -160,7 +160,8 @@ def test_task_done_run_needs_a_verify_command_and_never_gets_the_grant(ws, cli, 
         "show env",
         "--verify",
         py(
-            "import os; g = os.environ.get; print('grant=[%s] token=[%s]' % (g('ORCH_GRANT', ''), g('MY_API_TOKEN', '')))"
+            "import os; g = os.environ.get; "
+            "print('grant=[%s] token=[%s]' % (g('ORCH_GRANT', ''), g('MY_API_TOKEN', '')))"
         ),
     )
     assert cli("task", "done", "T2", "--run").code == 0

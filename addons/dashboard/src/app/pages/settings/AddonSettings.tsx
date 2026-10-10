@@ -4,10 +4,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AddonContributionView } from '@/addon-ui/AddonSlot'
 import { useAddons, useSlot } from '@/addon-ui/slots'
 import { addonActive } from '@/api/addons'
-import { api } from '@/api/client'
 import type { Workspace } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { queries } from '@/api/queries'
 
 function Loading() {
   return (
@@ -49,12 +49,7 @@ export function AddonSettings({
   const c = contributions.find((x) => x.addon === name)
   const active = addonActive(workspace, name)
   // Wait for the saved values: the form is keyed on its data and must not remount under the user's hands.
-  const state = useQuery({
-    queryKey: ['addon-state', workspace.id, name],
-    queryFn: () => api.getAddonState(workspace.id, name),
-    enabled: active,
-    retry: false,
-  })
+  const state = useQuery({ ...queries.addonState(workspace.id, name), enabled: active })
   const body = useRef<HTMLDivElement>(null)
   const [dirty, setDirty] = useState(false)
   const saved = JSON.stringify(state.data?.settings ?? null)

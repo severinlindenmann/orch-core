@@ -15,6 +15,7 @@ import { AddonSettingsPanel, requestSettingsFocus } from './AddonSettingsPanel'
 import { Catalog } from './Catalog'
 import { GrantDialog, type GrantAsk } from './GrantDialog'
 import { toastApiError } from '@/app/toast'
+import { queries } from '@/api/queries'
 
 /** The queries an install, enable, disable or uninstall can change. */
 const ADDON_OP_KEYS = ['workspace-addons', 'workspaces', 'addons', 'addon-state', 'addon-decisions', 'today', 'ticket', 'board', 'agents']
@@ -25,7 +26,7 @@ export function AddonManager({ workspace, canEdit, settingsOf }: { workspace: Wo
   const ws = workspace.id
   const qc = useQueryClient()
   const signed = useSignedAction()
-  const installed = useQuery({ queryKey: ['workspace-addons', ws], queryFn: () => api.getWorkspaceAddons(ws) })
+  const installed = useQuery(queries.workspaceAddons(ws))
   const [browsing, setBrowsing] = useState(false)
   const [ask, setAsk] = useState<GrantAsk | null>(null)
   const [removing, setRemoving] = useState<InstalledAddon | null>(null)

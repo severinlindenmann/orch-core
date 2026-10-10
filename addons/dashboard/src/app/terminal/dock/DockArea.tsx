@@ -6,7 +6,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { ChevronLeft, ChevronUp, SquareTerminal } from 'lucide-react'
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import { api } from '@/api/client'
 import type { TerminalSessionView } from '@/api/terminals'
 import { AddonBadge } from '@/addon-ui/AddonBadge'
 import { addonHairline } from '@/addon-ui/addonClasses'
@@ -20,6 +19,7 @@ import { clampDock, DOCK_BAR, dockSqueezesSidebar, readDockPrefs, rightFits, use
 import { onDockRequest } from './request'
 import { useShellState } from '../../shell/ShellUi'
 import { RAIL_SQUEEZE, SIDEBAR_RAIL, SIDEBAR_WIDE } from '../../shell/railRule'
+import { queries } from '@/api/queries'
 
 const TerminalDock = lazy(() => import('./TerminalDock'))
 
@@ -41,7 +41,7 @@ export function useDockAllowed(): boolean {
  */
 export function useDockSqueezesNow(): boolean {
   const allowed = useDockAllowed()
-  const me = useQuery({ queryKey: ['me'], queryFn: api.getMe })
+  const me = useQuery(queries.me())
   if (!allowed || typeof window === 'undefined') return false
   const view = { width: window.innerWidth, height: window.innerHeight }
   return dockSqueezesSidebar(readDockPrefs(me.data?.person), view, { wide: SIDEBAR_WIDE, rail: SIDEBAR_RAIL, squeeze: RAIL_SQUEEZE })
@@ -85,7 +85,7 @@ function useAreaWidth(ref: React.RefObject<HTMLDivElement | null>, viewWidth: nu
 
 export function DockArea({ children }: { children: ReactNode }) {
   const allowed = useDockAllowed()
-  const me = useQuery({ queryKey: ['me'], queryFn: api.getMe })
+  const me = useQuery(queries.me())
   const [prefs, setPrefs] = useDockPrefs(me.data?.person)
   const view = useViewport()
   const root = useRef<HTMLDivElement>(null)

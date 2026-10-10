@@ -19,6 +19,7 @@ import { CopyButton } from '../ticket/Header'
 import { Mono, Pill, Section } from '../ticket/shared'
 import { toast } from 'sonner'
 import { CheckChip, checkTime, DEMO_RELOGIN, DemoChip, invalidateConnectionData, KIND_LABEL, PhaseChip, useConnections } from './connectionUi'
+import { queries } from '@/api/queries'
 
 const TRIGGER_LABEL = { on_demand: 'run by hand', doctor: 'doctor', session_start: 'session start', claim: 'before a claim', relogin: 'after re-login' } as const
 export const VIEWER_CHECK_REASON = 'Viewers cannot run checks.'
@@ -37,7 +38,7 @@ export function useRunCheck(ws: string) {
 }
 
 function useNow(ws: string) {
-  return useQuery({ queryKey: ['today', ws], queryFn: () => api.getToday(ws) }).data?.now
+  return useQuery(queries.today(ws)).data?.now
 }
 
 export function Connections({ workspace, canEdit }: { workspace: Workspace; canEdit: boolean }) {

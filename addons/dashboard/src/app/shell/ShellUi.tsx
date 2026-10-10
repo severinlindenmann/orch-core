@@ -1,10 +1,10 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRouterState } from '@tanstack/react-router'
-import { api } from '@/api/client'
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { BOARD_ORIGIN, originOf, type PageOrigin } from './origin'
 import { railCollapsed, railToggle, type RailPref } from './railRule'
 import { useDockSqueezesNow } from '../terminal/dock/DockArea'
+import { queries } from '@/api/queries'
 
 interface ShellUi {
   paletteOpen: boolean
@@ -70,7 +70,7 @@ function settleViewer(viewer: string) {
 /** Wide or narrow (icon rail). Lives in the shell so the sidebar, the toaster and the dock agree on the rail width. */
 function useRailState() {
   const qc = useQueryClient()
-  const fetched = useQuery({ queryKey: ['me'], queryFn: api.getMe }).data?.person
+  const fetched = useQuery(queries.me()).data?.person
   // The cache may already know the viewer before this query settles (another component asked first).
   const viewer = fetched ?? qc.getQueryData<{ person: string }>(['me'])?.person
   const [stored, setStored] = useState(() => readRailPrefs(viewer))

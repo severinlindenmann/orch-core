@@ -1,13 +1,13 @@
 import { useQuery } from '@tanstack/react-query'
 import { Bot, Cpu, User } from 'lucide-react'
 import { type ReactNode } from 'react'
-import { api } from '@/api/client'
 import { roleOf } from '@/api/permissions'
 import { workspaceOfTicket } from '@/api/workspaces'
 import type { Member, Priority, Role, Status, TicketDocument, TicketLanding } from '@/api/types'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
 import { usePageWidth } from '../../pageWidth'
+import { queries } from '@/api/queries'
 
 // ------------------------------------------------------------------ viewer + people
 
@@ -22,8 +22,8 @@ export interface Viewer {
 
 /** The viewer's role in the ticket's home workspace (`workspaceOfTicket`) and a name lookup for person ids. */
 export function useViewer(ticketKey: string): Viewer {
-  const ws = useQuery({ queryKey: ['workspaces'], queryFn: api.getWorkspaces })
-  const me = useQuery({ queryKey: ['me'], queryFn: api.getMe })
+  const ws = useQuery(queries.workspaces())
+  const me = useQuery(queries.me())
   const workspace = workspaceOfTicket(ticketKey, ws.data ?? [])
   const members = workspace?.members ?? []
   const person = me.data?.person ?? ''

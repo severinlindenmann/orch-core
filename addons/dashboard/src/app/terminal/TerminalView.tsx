@@ -22,6 +22,7 @@ import { screenDriver } from './harnessView'
 import { SessionList } from './SessionList'
 import { SessionStrip } from './SessionStrip'
 import { TerminalHeader } from './TerminalHeader'
+import { queries } from '@/api/queries'
 
 const token = (el: HTMLElement, name: string) => getComputedStyle(el).getPropertyValue(name).trim() || undefined
 const NO_LINKS = { activate: () => {}, hover: () => {}, leave: () => {} }
@@ -59,7 +60,7 @@ export interface DockOptions {
 export default function TerminalView({ addon, session, fallback, placement = 'page', dock }: { addon: string; session: string; fallback: ReactNode; placement?: 'page' | 'rail' | 'dock'; dock?: DockOptions }) {
   const { workspace } = useWorkspace()
   const { [addon]: state } = useAddonStates(workspace?.id, [addon])
-  const me = useQuery({ queryKey: ['me'], queryFn: api.getMe })
+  const me = useQuery(queries.me())
   const role = useRole()
   const qc = useQueryClient()
   const wide = usePageWidth() >= 1280

@@ -11,6 +11,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '
 import { Skeleton } from '@/components/ui/skeleton'
 import { useWorkspace } from '../workspace'
 import { keyboardBusy } from './shortcuts'
+import { queries } from '@/api/queries'
 
 interface GuideState {
   help?: { routes: HelpRoute[]; pages: { slug: string; title: string; markdown: string }[] }
@@ -27,12 +28,7 @@ export function HelpSheet() {
   const { workspace } = useWorkspace()
   const path = useRouterState({ select: (s) => s.location.pathname })
   const active = !!workspace && addonActive(workspace, 'guide')
-  const state = useQuery({
-    queryKey: ['addon-state', workspace?.id, 'guide'],
-    queryFn: () => api.getAddonState(workspace!.id, 'guide') as Promise<GuideState>,
-    enabled: open && active,
-    retry: false,
-  })
+  const state = useQuery({ ...queries.addonState(workspace?.id as string, 'guide'), enabled: open && active })
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -44,7 +40,7 @@ export function HelpSheet() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  const help = state.data?.help
+  const help = (state.data as GuideState | undefined)?.help
   const slug = help ? helpPageFor(help.routes, path) : undefined
   const page = help?.pages.find((p) => p.slug === slug)
   // Open the guide on the page the sheet showed.

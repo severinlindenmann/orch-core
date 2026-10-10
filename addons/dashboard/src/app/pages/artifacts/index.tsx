@@ -1,7 +1,6 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { ChevronLeft, ChevronRight, LayoutGrid, List, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { api } from '@/api/client'
 import type { ArtifactQuery } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -18,6 +17,7 @@ import { useAddonPages } from '../ticket/Artifacts'
 import { ArtifactPane, ArtifactPreview, openMode } from './Preview'
 import { artifactKey, previewTarget, useArtifactSelection, type View } from './selection'
 import { ArtifactGrid, ArtifactList } from './views'
+import { queries } from '@/api/queries'
 
 /**
  * The preview sits beside the results on a window of at least 1280 px (the Today rule) whose page area still has
@@ -38,7 +38,7 @@ const SINCE = [
 export function ArtifactsPage() {
   usePageHeader('Artifacts')
   const { workspace } = useWorkspace()
-  const me = useQuery({ queryKey: ['me'], queryFn: api.getMe })
+  const me = useQuery(queries.me())
   const ws = workspace?.id
   const person = me.data?.person
   const [filters, setFilters] = useState<Omit<ArtifactQuery, 'page' | 'per'>>({})
@@ -65,8 +65,7 @@ export function ArtifactsPage() {
 
   const query = { ...filters, page }
   const list = useQuery({
-    queryKey: ['artifacts', ws, query],
-    queryFn: () => api.listArtifacts(ws!, query),
+    ...queries.artifacts(ws!, query),
     enabled: !!ws,
     placeholderData: keepPreviousData,
   })

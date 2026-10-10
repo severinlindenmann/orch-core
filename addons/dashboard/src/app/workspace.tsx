@@ -3,10 +3,10 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRouter } from '@tanstack/react-router'
 import { toast } from 'sonner'
 import { addonActive } from '@/api/addons'
-import { api } from '@/api/client'
 import { workspaceOfTicket } from '@/api/workspaces'
 import type { Workspace } from '@/api/types'
 import { isWorkspacePath, setLinkWorkspace, splitWorkspacePath, toPublicPath, type UrlState } from './urls'
+import { queries } from '@/api/queries'
 
 interface SwitchOptions {
   /** Open this ticket in the target workspace instead of keeping the current page. */
@@ -79,7 +79,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const qc = useQueryClient()
   const router = useRouter()
   const urls = (router?.options.context as { urls?: UrlState } | undefined)?.urls ?? NO_URLS
-  const { data = [], isSuccess } = useQuery({ queryKey: ['workspaces'], queryFn: api.getWorkspaces })
+  const { data = [], isSuccess } = useQuery(queries.workspaces())
   const [id, setId] = useState<string | null>(readStored)
   const remember = useCallback((next: string) => {
     setId(next)

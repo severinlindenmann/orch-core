@@ -15,6 +15,7 @@ import { commitCover, diffstat, gateSignedContent, type SignedSection } from '@/
 import { visible } from '@/components/sign/visible'
 import { GATE_LABEL, policyText } from './actions'
 import type { HumanAction } from './shared'
+import { queries } from '@/api/queries'
 
 type Described = { title: string; gate?: GateName; hash: string; covers: string[]; policy?: string }
 
@@ -77,7 +78,7 @@ export function SignDialog({ ticket, action, onClose, onOpenEvidence, onOpenChan
   const [text, setText] = useState('')
   const [result, setResult] = useState<'pass' | 'fail' | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const workspaces = useQuery({ queryKey: ['workspaces'], queryFn: api.getWorkspaces })
+  const workspaces = useQuery(queries.workspaces())
   const members = workspaceOfTicket(ticket.key, workspaces.data ?? [])?.members ?? []
   const personName = (id: string) => (workspaces.data ? (members.find((m) => m.person === id)?.name ?? id) : '…') // not the raw id while the workspaces load
   const cancel = useRef<HTMLButtonElement>(null)

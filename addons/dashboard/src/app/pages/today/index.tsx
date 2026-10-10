@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useQueries, useQuery } from '@tanstack/react-query'
 import { ChevronDown, Eye } from 'lucide-react'
-import { api } from '@/api/client'
 import { can } from '@/api/permissions'
 import type { AddonDecision, NeedsYouItem, TicketDocument } from '@/api/types'
 import { useAddons } from '@/addon-ui'
@@ -20,6 +19,7 @@ import { ReloginGroup } from './relogin'
 import { ApprovalRow, DecisionRow, FoldRow, NewItemContext, SigningContext, QuestionRow, VerdictRow } from './rows'
 import { AgentsBar, AgentsPanel, Glance, GLANCE_TILES, Recently } from './side'
 import { displayName, useMediaQuery, useSessionState, WIDE_QUERY, type Directory } from './shared'
+import { queries } from '@/api/queries'
 
 function dateLine(now: string) {
   return new Date(now).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' })
@@ -78,13 +78,13 @@ export function TodayPage() {
   usePageHeader('Today')
   const { workspace } = useWorkspace()
   const ws = workspace?.id
-  const today = useQuery({ queryKey: ['today', ws], queryFn: () => api.getToday(ws!), enabled: !!ws })
-  const agentsQ = useQuery({ queryKey: ['agents', ws], queryFn: () => api.getAgents(ws!), enabled: !!ws })
-  const me = useQuery({ queryKey: ['me'], queryFn: api.getMe })
-  const decisionsQ = useQuery({ queryKey: ['addon-decisions', ws], queryFn: () => api.getAddonDecisions(ws!), enabled: !!ws })
+  const today = useQuery({ ...queries.today(ws!), enabled: !!ws })
+  const agentsQ = useQuery({ ...queries.agents(ws!), enabled: !!ws })
+  const me = useQuery(queries.me())
+  const decisionsQ = useQuery({ ...queries.addonDecisions(ws!), enabled: !!ws })
   // Mock only: switching the demo dataset is a fresh start for the queue, not a wave of "new" items. The queue waits
   // until Today and the decisions have been read after the switch, so it never starts from the other dataset's items.
-  const dataset = useQuery({ queryKey: ['dev-dataset'], queryFn: () => api.getDataset() })
+  const dataset = useQuery(queries.devDataset())
   const generation = useTodayGeneration()
   const ds = dataset.data?.dataset
   const [switched, setSwitched] = useState<{ ds?: string; at: number }>({ ds, at: 0 })
@@ -130,8 +130,8 @@ function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention, g
 }) {
   const { workspace } = useWorkspace()
   const ws = workspace?.id
-  const today = useQuery({ queryKey: ['today', ws], queryFn: () => api.getToday(ws!), enabled: !!ws })
-  const agentsQ = useQuery({ queryKey: ['agents', ws], queryFn: () => api.getAgents(ws!), enabled: !!ws })
+  const today = useQuery({ ...queries.today(ws!), enabled: !!ws })
+  const agentsQ = useQuery({ ...queries.agents(ws!), enabled: !!ws })
   const addons = useAddons()
   const wide = useMediaQuery(WIDE_QUERY)
   const now = today.data!.now
@@ -183,7 +183,7 @@ function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention, g
 
   const claimTickets = sessions.flatMap((a) => a.claims.map((c) => c.ticket))
   const keys = [...new Set([...entries.flatMap((e) => (e.group === 'addons' ? (e.decision.ticket ? [e.decision.ticket] : []) : [e.item.ticket])), ...claimTickets])]
-  const ticketQs = useQueries({ queries: keys.map((k) => ({ queryKey: ['ticket', k], queryFn: () => api.getTicket(k) })) })
+  const ticketQs = useQueries({ queries: keys.map((k) => queries.ticket(k)) })
   const byKey: Record<string, TicketDocument | undefined> = {}
   keys.forEach((k, i) => (byKey[k] = ticketQs[i]?.data))
 

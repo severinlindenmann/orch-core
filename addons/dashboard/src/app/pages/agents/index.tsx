@@ -1,6 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
-import { api } from '@/api/client'
 import { activeGrantOf } from '@/api/grants'
 import { can, canRevokeGrant, roleOf } from '@/api/permissions'
 import type { GrantInfo } from '@/api/types'
@@ -15,18 +14,19 @@ import { GrantDialog, useSignGrant, type GrantAction } from './GrantDialog'
 import { Grants } from './Grants'
 import { SessionGroup, type SessionContext } from './Sessions'
 import { fmtClock, fmtDateTime } from '@/lib/time'
+import { queries } from '@/api/queries'
 
 export function AgentsPage() {
   usePageHeader('Agents')
   const { workspace } = useWorkspace()
   const ws = workspace?.id
-  const me = useQuery({ queryKey: ['me'], queryFn: api.getMe })
-  const today = useQuery({ queryKey: ['today', ws], queryFn: () => api.getToday(ws!), enabled: !!ws })
-  const sessions = useQuery({ queryKey: ['agents', ws], queryFn: () => api.getAgents(ws!), enabled: !!ws })
-  const grants = useQuery({ queryKey: ['grants', ws], queryFn: () => api.listGrants(ws!), enabled: !!ws })
+  const me = useQuery(queries.me())
+  const today = useQuery({ ...queries.today(ws!), enabled: !!ws })
+  const sessions = useQuery({ ...queries.agents(ws!), enabled: !!ws })
+  const grants = useQuery({ ...queries.grants(ws!), enabled: !!ws })
   const attention = useAttention(ws)
-  const tickets = useQuery({ queryKey: ['tickets', ws, 'all'], queryFn: () => api.listTickets(ws!), enabled: !!ws })
-  const activity = useQuery({ queryKey: ['agent-activity', ws], queryFn: () => api.getAgentActivity(ws!), enabled: !!ws })
+  const tickets = useQuery({ ...queries.ticketsAll(ws!), enabled: !!ws })
+  const activity = useQuery({ ...queries.agentActivity(ws!), enabled: !!ws })
   const [action, setAction] = useState<GrantAction | null>(null)
   const sign = useSignGrant(ws ?? '')
 

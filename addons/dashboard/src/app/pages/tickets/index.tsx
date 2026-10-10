@@ -24,10 +24,11 @@ import { SavedViews } from './SavedViews'
 import { useElementWidth } from '@/lib/useElementWidth'
 import { TicketRowsSkeleton } from '../skeletons'
 import { TICKETS_FOLD_BELOW, TicketsTable, type AddonColumn } from './TicketsTable'
-import { hasFilters, type SortKey, type TicketsSearch } from './search'
+import { hasFilters, type SortKey, type TicketsSearch, ticketsServerParams } from './search'
 import { toastApiError } from '@/app/toast'
 import { LoadFailed } from '@/components/LoadFailed'
 import { plural } from '@/lib/time'
+import { queries } from '@/api/queries'
 
 const CLI_HINT = 'orch list --status open'
 
@@ -119,24 +120,24 @@ export function TicketsPage() {
   const wsId = workspace?.id
   const { data: addons = [] } = useAddons()
 
-  const meQ = useQuery({ queryKey: ['me'], queryFn: api.getMe })
+  const meQ = useQuery(queries.me())
   const me = meQ.data
   const role = useRole()
   const canBulk = can(role, 'ticket.move')
 
   // Status is filtered here (not on the server) so the status chips can show counts for the other filters.
   const serverParams = useMemo(
-    () => ({ q: search.q, type: search.type, priority: search.priority, person: search.person, needs: search.needs, label: search.label, sort: search.sort }),
+    () => ticketsServerParams(search),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [search.q, search.type, search.priority, search.person, search.needs, search.label, search.sort],
   )
   const { data: all, isPending } = useQuery({
-    queryKey: ['tickets', wsId, serverParams],
-    queryFn: () => api.listTickets(wsId!, serverParams),
+    ...queries.tickets(wsId!, serverParams),
     enabled: !!wsId,
     placeholderData: (prev) => prev,
   })
   // Options for the selects come from the unfiltered list.
-  const { data: everything = [] } = useQuery({ queryKey: ['tickets', wsId, 'all'], queryFn: () => api.listTickets(wsId!), enabled: !!wsId })
+  const { data: everything = [] } = useQuery({ ...queries.ticketsAll(wsId!), enabled: !!wsId })
 
   const rows = useMemo(() => (all ?? []).filter((t) => !search.status?.length || search.status.includes(t.status)), [all, search.status])
   const [grouping, setGrouping] = useTicketsGroup(me?.person)

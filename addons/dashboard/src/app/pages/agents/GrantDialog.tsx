@@ -8,6 +8,7 @@ import { fmtExact } from '@/lib/time'
 import { SignPrompt, useSignedAction } from '@/components/sign/SignPrompt'
 import { Label } from '@/components/ui/label'
 import { useWorkspace } from '../../workspace'
+import { queries } from '@/api/queries'
 
 export type GrantAction = { kind: 'issue' } | { kind: 'revoke'; grant: GrantInfo }
 
@@ -30,7 +31,7 @@ export function GrantDialog({ action, now, onSign, onClose }: { action: GrantAct
   const terms = grantTerms(useRole(), workspace) ?? { scope: 'workable' as const, maxHours: 0, defaultHours: 0 }
   const [hours, setHours] = useState(terms.defaultHours)
   const ws = workspace?.id
-  const sessions = useQuery({ queryKey: ['agents', ws], queryFn: () => api.getAgents(ws!), enabled: !!ws && action?.kind === 'revoke' })
+  const sessions = useQuery({ ...queries.agents(ws!), enabled: !!ws && action?.kind === 'revoke' })
   const person = (id: string) => (workspace ? (workspace.members.find((m) => m.person === id)?.name ?? id) : '…')
 
   useEffect(() => setHours(terms.defaultHours), [action, terms.defaultHours])

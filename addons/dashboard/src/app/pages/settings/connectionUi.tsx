@@ -1,10 +1,10 @@
 // Shared bits of the Skills and Connections tabs, the ticket rail and Today (D55–D57).
 import { useQuery, type QueryClient } from '@tanstack/react-query'
 import { CircleCheck, CircleHelp, CloudOff, KeyRound, UserX } from 'lucide-react'
-import { api } from '@/api/client'
 import { CHECK_LABEL, type CheckStatus } from '@/api/connections'
 import { cn } from '@/lib/utils'
 import { fmtWhen } from '@/lib/time'
+import { queries } from '@/api/queries'
 
 const TONE: Record<CheckStatus, string> = {
   ok: 'border-success/40 bg-success-soft text-success',
@@ -52,8 +52,8 @@ export function invalidateConnectionData(qc: QueryClient) {
 
 export const KIND_LABEL = { cli_login: 'CLI login', api_token: 'API token' } as const
 
-export const useConnections = (ws: string | undefined) => useQuery({ queryKey: ['connections', ws], queryFn: () => api.getConnections(ws!), enabled: !!ws })
-export const useSkills = (ws: string | undefined) => useQuery({ queryKey: ['skills', ws], queryFn: () => api.getSkills(ws!), enabled: !!ws })
+export const useConnections = (ws: string | undefined) => useQuery({ ...queries.connections(ws!), enabled: !!ws })
+export const useSkills = (ws: string | undefined) => useQuery({ ...queries.skills(ws!), enabled: !!ws })
 
 /** When a check ran, in the one format (src/lib/time.ts): "5 min ago", or "2 Oct 10:47" when older than a week. */
 export function checkTime(iso: string, now?: string): string {

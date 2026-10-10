@@ -4,7 +4,6 @@ import { Link, useBlocker, useRouter } from '@tanstack/react-router'
 import { createContext, Suspense, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { ArrowRight, ChevronRight, Copy, Ellipsis, ExternalLink, TriangleAlert } from 'lucide-react'
 import { addonActive } from '@/api/addons'
-import { api } from '@/api/client'
 import { useWorkspace } from '@/app/workspace'
 import { Badge } from '@/components/ui/badge'
 import { STATUS_LABEL } from '@/app/pages/ticket/shared'
@@ -36,6 +35,7 @@ import { useElementWidth } from '@/lib/useElementWidth'
 import { Sparkline } from '@/components/Sparkline'
 import { visible } from '@/components/sign/visible'
 import { lazyWithPreload } from '@/lib/lazyPreload'
+import { queries } from '@/api/queries'
 
 // rjsf (with ajv) loads on first form, so it stays out of the main bundle.
 const ThemedForm = lazyWithPreload(() => import('./AddonForm'))
@@ -272,7 +272,7 @@ function readTab(key: string): string | null {
 function TabsView({ node, depth }: { node: NodeOf<'tabs'>; depth: number }) {
   const { addon } = useContext(RuntimeCtx)
   const { workspace } = useWorkspace()
-  const me = useQuery({ queryKey: ['me'], queryFn: api.getMe })
+  const me = useQuery(queries.me())
   // The remembered tab is read once we know who is looking (the viewer is cached after the first load); if that fails, nobody in particular.
   if (!me.data && !me.isError) return <Skeleton className="h-8 w-full" />
   const key = tabKey(workspace?.id ?? '', me.data?.person ?? '', addon, node.id)

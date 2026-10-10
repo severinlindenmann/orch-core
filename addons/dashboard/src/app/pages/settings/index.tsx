@@ -1,6 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import { api } from '@/api/client'
 import { can, roleOf } from '@/api/permissions'
 import { SettingsSkeleton } from '../skeletons'
 import { cn } from '@/lib/utils'
@@ -15,6 +14,7 @@ import { Skills } from './Skills'
 import { Connections } from './Connections'
 import { TABS } from './tabs'
 import { CopyLinkButton } from '../../shell/CopyLinkButton'
+import { queries } from '@/api/queries'
 
 export const ONLY_OWNERS = 'Only owners change settings.'
 
@@ -25,7 +25,7 @@ const active = 'bg-surface-2 text-text'
 export function SettingsPage({ tab, addon }: { tab?: string; addon?: string }) {
   usePageHeader('Settings')
   const { workspace } = useWorkspace()
-  const me = useQuery({ queryKey: ['me'], queryFn: api.getMe })
+  const me = useQuery(queries.me())
 
   if (!workspace || !me.data) {
     return <SettingsSkeleton inPage />

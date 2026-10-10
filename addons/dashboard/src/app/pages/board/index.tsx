@@ -41,6 +41,7 @@ import { useBoardUrlState } from './urlState'
 import { applyFilters, DONE_LIMIT, NO_FILTERS, STATUS_LABEL, useBoardDisplay, type BoardDisplay } from './lib'
 import { toastApiError } from '@/app/toast'
 import { LoadFailed } from '@/components/LoadFailed'
+import { queries } from '@/api/queries'
 
 /** Left/right jump to the neighbouring column; up/down nudge. Without this the keyboard moves 25px per press. */
 const columnJump: KeyboardCoordinateGetter = (event, { context, currentCoordinates }) => {
@@ -176,16 +177,12 @@ export function BoardPage() {
   const refocus = useRef<{ key: string; status: Status } | null>(null)
   const [overlayWidth, setOverlayWidth] = useState<number | undefined>()
 
-  const meQ = useQuery({ queryKey: ['me'], queryFn: api.getMe })
+  const meQ = useQuery(queries.me())
   const me = meQ.data
   const [display, setDisplay] = useBoardDisplay(me?.person)
-  const ticketsKey = ['board', wsId] as const
-  const { data: tickets = [], isPending } = useQuery({
-    queryKey: ticketsKey,
-    queryFn: () => api.listTickets(wsId!),
-    enabled: !!wsId,
-  })
-  const { data: agents = [] } = useQuery({ queryKey: ['agents', wsId], queryFn: () => api.getAgents(wsId!), enabled: !!wsId })
+  const ticketsKey = queries.board(wsId!).queryKey
+  const { data: tickets = [], isPending } = useQuery({ ...queries.board(wsId!), enabled: !!wsId })
+  const { data: agents = [] } = useQuery({ ...queries.agents(wsId!), enabled: !!wsId })
 
   const people = useMemo<BoardPeople>(() => {
     const byId = new Map(workspace?.members.map((m) => [m.person, m.name]))

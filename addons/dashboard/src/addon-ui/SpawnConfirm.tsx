@@ -15,8 +15,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { AddonBadge } from './AddonBadge'
 import { addonName } from './SignConfirm'
 import { canSpawnAgent } from './capabilities'
-import { addonStateKey, useAddons } from './slots'
+import { useAddons } from './slots'
 import { fmtClock, fmtExact } from '@/lib/time'
+import { queries } from '@/api/queries'
 
 const timeOfDay = (iso: string) => fmtClock(iso)
 const withId = (label: string, id: string) => (label === id ? label : `${label} (${id})`)
@@ -83,11 +84,11 @@ export function SpawnConfirm({ addon, ticketKey, onStart, onClose }: { addon: st
   const role = useRole()
   const signed = useSignedAction()
   const { data: addons } = useAddons()
-  const me = useQuery({ queryKey: ['me'], queryFn: api.getMe })
-  const today = useQuery({ queryKey: ['today', ws], queryFn: () => api.getToday(ws!), enabled: !!ws })
-  const grants = useQuery({ queryKey: ['grants', ws], queryFn: () => api.listGrants(ws!), enabled: !!ws })
+  const me = useQuery(queries.me())
+  const today = useQuery({ ...queries.today(ws!), enabled: !!ws })
+  const grants = useQuery({ ...queries.grants(ws!), enabled: !!ws })
   // The same request as the ticket panel (per ticket), or the page's (the ticket picked there).
-  const state = useQuery({ queryKey: addonStateKey(ws, addon, ticketKey), queryFn: () => api.getAddonState(ws!, addon, ticketKey), enabled: !!ws, retry: false })
+  const state = useQuery({ ...queries.addonState(ws!, addon, ticketKey), enabled: !!ws })
 
   // The request, from the addon (untrusted): a ticket key and three ids. Core validates them below.
   const previews = (state.data?.previews ?? {}) as Record<string, LaunchPreview>
@@ -104,7 +105,7 @@ export function SpawnConfirm({ addon, ticketKey, onStart, onClose }: { addon: st
     retry: false,
   })
   // The ticket as core reads it (the same query as the ticket page): the claim precheck and the gate warning.
-  const doc = useQuery({ queryKey: ['ticket', request?.ticket], queryFn: () => api.getTicket(request!.ticket), enabled: !!request, retry: false })
+  const doc = useQuery({ ...queries.ticket(request?.ticket as string), enabled: !!request })
   const allowed = canSpawnAgent(addons?.find((a) => a.name === addon), workspace?.addons[addon])
 
   const plain = (title: string, text: string) => (

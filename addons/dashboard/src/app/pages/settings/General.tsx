@@ -15,6 +15,7 @@ import { DangerZone } from './DangerZone'
 import { OwnerNote } from './OwnerNote'
 import { toastApiError } from '@/app/toast'
 import { useSettingsSign } from './useSettingsSign'
+import { queries } from '@/api/queries'
 
 export function CopyButton({ value, label }: { value: string; label: string }) {
   const [done, setDone] = useState(false)
@@ -45,7 +46,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 
 export function General({ workspace, canEdit }: { workspace: Workspace; canEdit: boolean }) {
   const qc = useQueryClient()
-  const identity = useQuery({ queryKey: ['identity', workspace.id], queryFn: () => api.getIdentity(workspace.id) })
+  const identity = useQuery(queries.identity(workspace.id))
   const [name, setName] = useState<string | null>(null)
   const value = name ?? workspace.name
 

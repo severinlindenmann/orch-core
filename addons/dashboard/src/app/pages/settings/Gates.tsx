@@ -7,6 +7,7 @@ import { Section } from '../ticket/shared'
 import { cn } from '@/lib/utils'
 import { OwnerNote } from './OwnerNote'
 import { useSettingsSign } from './useSettingsSign'
+import { queries } from '@/api/queries'
 
 type Policy = Workspace['gates'][GateName]
 
@@ -21,7 +22,7 @@ const GATES: { id: GateName; label: string }[] = [
 export function Gates({ workspace, canEdit }: { workspace: Workspace; canEdit: boolean }) {
   const { ask, prompt } = useSettingsSign(workspace.id)
   const [refused, setRefused] = useState<{ gate: GateName; why: string } | null>(null)
-  const tickets = useQuery({ queryKey: ['tickets', workspace.id, 'all'], queryFn: () => api.listTickets(workspace.id) })
+  const tickets = useQuery(queries.ticketsAll(workspace.id))
 
   const change = (gate: GateName, label: string, next: Policy) => {
     const why = unmeetable(workspace, next)

@@ -254,7 +254,42 @@
         ]
       }
     },
-    "root_folder": "~/work/acme"
+    "root_folder": "~/work/acme",
+    "repos": {
+      "acme-energy-dbt": {
+        "path": "acme-energy-dbt"
+      },
+      "billing-api": {
+        "path": "billing-api",
+        "remote": "https://git.example.test/acme/billing-api.git",
+        "default_branch": "main"
+      },
+      "docs-site": {
+        "path": "docs-site",
+        "remote": "https://git.example.test/acme/docs-site.git",
+        "default_branch": "main"
+      },
+      "infra": {
+        "path": "infra",
+        "remote": "git@git.example.test:acme/infra.git",
+        "default_branch": "main"
+      },
+      "meter-ingest": {
+        "path": "meter-ingest",
+        "remote": "https://git.example.test/acme/meter-ingest.git",
+        "default_branch": "main"
+      },
+      "shared-lib": {
+        "path": "shared-lib",
+        "remote": "https://git.example.test/acme/shared-lib.git",
+        "default_branch": "main"
+      },
+      "web-portal": {
+        "path": "web-portal",
+        "remote": "https://git.example.test/acme/web-portal.git",
+        "default_branch": "main"
+      }
+    }
   },
   {
     "id": "0a5e7c31-2d9f-4b68-8e1a-5c3f7d9b2e44",
@@ -393,7 +428,19 @@
         ]
       }
     },
-    "root_folder": "~/work/internal"
+    "root_folder": "~/work/internal",
+    "repos": {
+      "service": {
+        "path": "service",
+        "remote": "https://git.example.test/int/service.git",
+        "default_branch": "main"
+      },
+      "tooling": {
+        "path": "tooling",
+        "remote": "https://git.example.test/int/tooling.git",
+        "default_branch": "main"
+      }
+    }
   },
   {
     "id": "c7d2b9e4-6f13-4a85-b0c8-1e9a3d5f7b66",
@@ -516,6 +563,18 @@
         ]
       }
     },
-    "root_folder": "~/work/client"
+    "root_folder": "~/work/client",
+    "repos": {
+      "service": {
+        "path": "service",
+        "remote": "https://git.example.test/cli/service.git",
+        "default_branch": "main"
+      },
+      "tooling": {
+        "path": "tooling",
+        "remote": "https://git.example.test/cli/tooling.git",
+        "default_branch": "main"
+      }
+    }
   }
 ]

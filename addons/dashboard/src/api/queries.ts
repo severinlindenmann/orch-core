@@ -35,9 +35,12 @@ export const queries = {
   /** The relay state with the time it was read (the page polls while something moves). */
   relay: (ws: string) => queryOptions({ queryKey: ['relay', ws], queryFn: async () => ({ state: await api.getRelay(ws), at: Date.now() }) }),
   workspaceAddons: (ws: string) => queryOptions({ queryKey: ['workspace-addons', ws], queryFn: () => api.getWorkspaceAddons(ws) }),
-  /** An addon's state; per-ticket requests sit under the addon's key, so invalidating it covers them. */
+  /**
+   * An addon's state; per-ticket requests sit under the addon's key, so invalidating it covers them. While the state
+   * says `moving: true` (work the host runs in the background, e.g. a clone in progress) it is read again every second.
+   */
   addonState: (ws: string, name: string, ticket?: string) =>
-    queryOptions({ queryKey: addonStateKey(ws, name, ticket), queryFn: () => api.getAddonState(ws, name, ticket), staleTime: 10_000, refetchInterval: (q) => name === 'repos' && (q.state.data?.moving === true || ['15 min', '1 h', 'daily'].includes(String((q.state.data?.settings as { interval?: string } | undefined)?.interval))) ? 1000 : false, retry: false }),
+    queryOptions({ queryKey: addonStateKey(ws, name, ticket), queryFn: () => api.getAddonState(ws, name, ticket), staleTime: 10_000, refetchInterval: (q) => (q.state.data?.moving === true ? 1000 : false), retry: false }),
   /** Mandates, PREVIEW ONLY: the shell banner, Today's digest and Agents → Mandates read this one entry. */
   mandatesPreview: (ws: string) => queryOptions({ queryKey: ['mandates-preview', ws], queryFn: () => api.getMandatesPreview(ws), retry: false }),
   artifacts: (ws: string, query: ArtifactQuery) => queryOptions({ queryKey: ['artifacts', ws, query], queryFn: () => api.listArtifacts(ws, query) }),

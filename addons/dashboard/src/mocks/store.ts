@@ -29,7 +29,9 @@ import type {
   GrantInfo,
   Workspace,
   WorkspaceEvent,
+  WorkspaceRepo,
 } from '@/api/types'
+import { REPO_NAME, remoteProblem, resolveRepoPath } from '@/api/repos'
 import { addonActive, ARG_KEY, manifestProblem, pendingUpdate, manifestFor, sameSet, sameTerms, viewerActions } from '@/api/addons'
 import { getAddon, openDecisions } from './addons'
 import { isCoreNamespace } from './addons/registry'
@@ -55,6 +57,7 @@ import { HARNESSES, HARNESS_LABEL, MODES, MODE_LABEL, WHERES, WHERE_LABEL, launc
 import { clearPersisted, loadPersisted, savePersisted, type PersistedV2 } from './persist'
 import { foldGrants, foldViews, foldWorkspace } from './workspace-log'
 import { BUSY_SEED, generateBusy, type BusyData } from './busy/generate'
+import { busyRepos } from './busy/repos'
 import { startLive } from './busy/live'
 import { ConnectionsHost } from './connections'
 import { makeRng } from './busy/rng'
@@ -216,6 +219,7 @@ export class MockStore {
     this.wsEvents.clear()
     for (const w of this.seedWorkspaces) this.wsEvents.set(w.id, [])
     if (this.busy) this.installBusyAddons()
+    if (this.busy) for (const w of this.seedWorkspaces) w.repos = { ...busyRepos(w.prefix), ...w.repos }
     this.created = {}
     this.addonStates = {}
     this.refoldWorkspaces()
@@ -745,6 +749,48 @@ export class MockStore {
   grants(wsId: string): GrantInfo[] {
     const seed = ((grantsFixture as unknown as Record<string, GrantInfo[]>)[wsId] ?? []).map((g) => ({ ...g, sessions: [...g.sessions, ...(this.busy?.grantSessions[g.id] ?? [])] }))
     return foldGrants(seed, this.wsEvents.get(wsId) ?? [])
+  }
+
+  /**
+   * Format §5.4.2 `settings.changed` with `set.repos`: the owner's signed change of the declared repos (`settings.repos`).
+   * Owners only, people only (never an agent or an addon on its own). `null` removes a name. Refused: a bad name, a path
+   * that is not a plain string, a remote with credentials, a name that is not there to remove, and two repos that
+   * resolve to the same path (case-insensitive: the host's file system may be). The addon's own refusals (linked
+   * tickets, duplicate remotes) come before this; this is the rule every writer meets.
+   */
+  changeRepos(wsId: string, set: Record<string, WorkspaceRepo | null>, actor: Actor): { ok: true } | StoreFailure {
+    const ws = this.workspaces.find((w) => w.id === wsId)
+    if (!ws) return refuse(404, 'not_found', 'No such workspace')
+    if (actor.kind !== 'person') return refuse(403, 'human_only', 'Only a person changes the workspace settings.')
+    if (!can(this.roleIn(wsId, actor.id), 'settings')) return refuse(403, 'forbidden', 'Only owners change the declared repos.', 'Ask an owner.')
+    const entries = Object.entries(set ?? {})
+    if (!entries.length || entries.length > 50) return refuse(400, 'validation', 'Name 1 to 50 repos to change.')
+    const next: Record<string, WorkspaceRepo> = { ...(ws.repos ?? {}) }
+    for (const [name, entry] of entries) {
+      if (!REPO_NAME.test(name)) return refuse(400, 'validation.repo_name', `"${name.slice(0, 100)}" is not a repo name.`, 'Letters, digits, dots, underscores and dashes, starting with a letter or digit (at most 100).')
+      if (entry === null) {
+        if (!next[name]) return refuse(404, 'not_found', `No declared repo ${name}.`)
+        delete next[name]
+        continue
+      }
+      const { path, remote, default_branch } = (entry ?? {}) as Partial<WorkspaceRepo>
+      if (typeof path !== 'string' || !path.length || path.length > 400 || !/^[\x21-\x7e]+$/.test(path)) return refuse(400, 'validation.repo_path', 'A repo path is 1 to 400 plain characters.')
+      const problem = remote === undefined ? null : remoteProblem(remote)
+      if (problem) return refuse(400, 'validation.remote', problem)
+      if (default_branch !== undefined && (typeof default_branch !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/.test(default_branch) || default_branch.includes('..') || default_branch.endsWith('/')))
+        return refuse(400, 'validation.branch', 'Write a valid default branch name.')
+      next[name] = { path, ...(remote !== undefined ? { remote } : {}), ...(default_branch !== undefined ? { default_branch } : {}) }
+    }
+    const root = ws.root_folder ?? '.'
+    const seen = new Map<string, string>()
+    for (const [name, e] of Object.entries(next)) {
+      const at = resolveRepoPath(root, e.path).toLowerCase()
+      const other = seen.get(at)
+      if (other) return refuse(409, 'settings.repos_same_path', `${other} and ${name} would use the same folder.`)
+      seen.set(at, name)
+    }
+    this.appendWs(wsId, { type: 'settings.changed', actor, set: { repos: structuredClone(set) }, presence: 'touchid' })
+    return { ok: true }
   }
 
   /**

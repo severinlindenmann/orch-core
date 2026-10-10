@@ -390,19 +390,27 @@ for G2+ builds. `build-preview.py` still runs, but its output does not load; it 
 
 ## Repos addon preview (U3)
 
-All endpoints use the existing shared query factories/loaders and generic addon page skeleton. The preview is installed in normal/busy DEMO and INT/CLI. `root_folder` is host workspace metadata. Proposal: [repos-addon-proposal.md](docs/repos-addon-proposal.md).
+The declared repo list is the workspace's `settings.repos` (`Workspace.repos`, folded from `settings.changed`
+`set.repos`, ticket format §2/§5.4.2); the addon keeps only observations, jobs, its log, settings and a draft.
+`remote`/`default_branch` per entry are a proposed format amendment. Seeds: `fixtures/workspaces.json` (`repos`,
+`root_folder`); Busy day adds `busy/repos.ts` (every generated `links.repos` name is declared). Proposal:
+[repos-addon-proposal.md](docs/repos-addon-proposal.md).
 
 | Endpoint / action | Minimum role | Behavior |
 |---|---|---|
-| `GET /api/workspaces/:ws/addons/repos/state` | viewer | Structure, Checks, Activity, Glance, settings; optional ticket-scoped panel. Mock jobs advance on the shared state's 1 s poll. |
-| `POST …/repos/actions/clone`, `clone_all` | maintainer | Core signature binds every remote and target folder; stale plans refused. |
-| `POST …/repos/actions/prepare_add`, `add`, `adopt` | maintainer | Host-validates a draft; add/adopt require signatures. |
-| `POST …/repos/actions/check`, `fetch`, `fetch_all` | member | Reread disk / refresh tracking; never pull or discard changes. |
-| `POST …/repos/actions/remove` | owner | Destructive confirm; 409 with linked open ticket count; no disk deletion. |
-| `POST …/repos/actions/remove_anyway` | owner | Options confirm must choose `choice: remove`; files remain. |
-| `POST …/repos/actions/clone_attention` | maintainer | Today core decision; exact remote/target terms checked again. |
-| `POST …/repos/actions/open_terminal` | member | Repos and Terminals pty grants required; opens owned dock shell with cd typed. |
-| `POST …/repos/actions/save_settings` | maintainer | Validated interval and fetch toggle; root is read-only. |
-| `GET /api/workspaces/:ws/tickets?repo=:name` | viewer | Exact repo-name filter, open tickets only, visibility enforced. |
+| `POST /api/workspaces/:ws/settings` `{op: 'repos', set}` | owner (person) | Core's `settings.changed`; bad name/path/remote 400; same path 409 `settings.repos_same_path`; `store.changeRepos` is the one writer. |
+| `GET …/addons/repos/state` | viewer | Structure, Checks, Activity, Glance, settings, ticket panel. `moving: true` while a clone runs: core's shared query re-reads every 1 s. Buttons only for the roles that may use them. |
+| `POST …/repos/actions/prepare_add`, `add`, `adopt` | **owner** | Host-validated (`src/api/repos.ts`, shared with the UI); add/adopt signed; write `settings.changed` through `changeRepos`. |
+| `POST …/repos/actions/remove`, `remove_anyway` | **owner** | Destructive / options confirm; 409 `repos.linked` with the count of open tickets the owner can see; `settings.changed` with `null`; the disk is untouched. |
+| `POST …/repos/actions/clone`, `clone_all`, `clone_attention` | maintainer | Signed remote, target folder and `clone_as` (the git-login connection); stale plan or identity 409 `repos.changed`; no remote 409 `repos.no_remote`; no login 409 `repos.no_login`. |
+| `POST …/repos/actions/check`, `fetch`, `fetch_all` | member | Re-read / refresh tracking; never pull or discard changes. |
+| `POST …/repos/actions/open_terminal` | member | Repos and Terminals pty grants; dock shell with `cd -- '<path>'` typed, not run. |
+| `POST …/repos/actions/save_settings` | maintainer | Interval, fetch-on-check, git-login connection (gh/glab/git CLI logins only). |
+| `GET /api/workspaces/:ws/tickets?repo=:name` | viewer | Exact `links.repos` filter; visibility enforced. |
 
-Permanent row URL: `/w/DEMO/addon/repos/repos?repo=web-portal&tab.repos=structure`. Ticket links use `/w/DEMO/tickets?repo=web-portal`. Existing legacy fixture repo names are explicitly shown as not declared. Git state, credentials, filesystem execution and durable scheduling remain real-host work.
+Host contract (real host): clone runs `git clone -- <remote> <path>` (with `--`), never through a shell, as the
+connection's own CLI login (D56 A); orch stores no git credentials. Remotes are refused with any userinfo, query,
+fragment, non-ASCII character or a part starting with `-`.
+
+Links: a repo row is `/w/DEMO/addon/repos/repos?tab.repos=structure&row=web-portal` (core opens the row whose key is
+`row`, on any addon page); the ticket list by repo is `/w/DEMO/tickets?repo=web-portal`.

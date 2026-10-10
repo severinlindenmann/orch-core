@@ -88,7 +88,7 @@ function shellCtx(c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>, s: Session): She
   const next = doc?.tasks_state.find((t) => t.state === 'doing' || t.state === 'todo')
   return {
     user: s.login ? s.login.runAs : s.kind === 'agent' ? 'claude' : nameOf(c, s.owner).toLowerCase(),
-    cwd: s.repoFolder ?? '~/energy',
+    cwd: '~/energy', // a repo shell's cd is typed, not run: the prompt is still where the shell starts
     branch: s.branch,
     owner: s.kind,
     now: store.now(),

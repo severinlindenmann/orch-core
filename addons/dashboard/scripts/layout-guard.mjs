@@ -370,8 +370,8 @@ async function main() {
             ['new-ticket-page', '/tickets/new'],
             ...addonPages.map((h) => [`addon-${h.split('/').slice(2).join('-')}`, h]),
             // Repos details must fit beside the maximum dock too (720 px page).
-            ['repos-expanded', '/addon/repos/repos?repo=web-portal&tab.repos=structure'],
-            ['repos-ssh', '/addon/repos/repos?repo=infra&tab.repos=structure'],
+            ['repos-expanded', '/addon/repos/repos?tab.repos=structure&row=web-portal'],
+            ['repos-ssh', '/addon/repos/repos?tab.repos=structure&row=infra'],
             ['repos-checks', '/addon/repos/repos?tab.repos=checks'],
             ['repos-activity', '/addon/repos/repos?tab.repos=activity'],
             ...['general', 'members', 'gates', 'relay', 'addons', 'skills', 'connections'].map((t) => [`settings-${t}`, `/settings/${t}`]),

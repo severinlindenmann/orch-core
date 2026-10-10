@@ -947,3 +947,24 @@ The owner answered the eight open questions of REVIEW.md. Items 1, 2, 5 and 6 ch
 - Proposal and unresolved host identity/credentials, naming, scheduling and event decisions: [Repos proposal](docs/repos-addon-proposal.md). Revert by removing the catalog/fixture installation and `repos` registry import, then the narrow core integrations.
 
 - Verification follow-up: the Busy-day 50 ms Today-query budget failed intermittently in the full suite. Today now shares a request-local visible-ticket snapshot and blocker lookup across its attention sections instead of repeatedly deriving every ticket and agent. No cache crosses requests or viewers; the performance thresholds are unchanged.
+
+## U3 review round 2026-10-11 — Repos aligned with the v2 format
+
+- **Declared list = `settings.repos`** (format §2): `Workspace.repos`, folded from core's owner-signed
+  `settings.changed` (`set.repos`, §5.4.2), written only by `store.changeRepos` (owner, person, same-path refusal) and
+  `POST /settings {op: 'repos'}`. The addon's own `declared` list, `repos.added`/`repos.removed` events and the
+  "primary" flag are gone. `remote`/`default_branch` are a proposed format amendment (docs/repos-addon-proposal.md).
+- **Owner only** for add / adopt / remove (manifest and core); clone stays maintainer, fetch/check member.
+- **Clone identity**: the git-login connection (D56 A / D55; DEMO `gh`, the bot account) shown as "Clones as" and
+  bound into the clone signature as `clone_as`; no login, no clone. orch stores no git credentials.
+- **One validator** (`src/api/repos.ts`) for host and UI: repo names per §10, no userinfo in any form, ASCII only, no
+  part starting with `-` (argument injection), strict host; folder = one name, no `..`/slash/absolute.
+- **Restricted tickets**: removal counts only open linked tickets the signer can see (Codex counted hidden ones, which
+  revealed them); hidden ones become stale per §5.11.
+- **Core changes reduced**: the row deep link is the generic `?row=` (no `repo`/`tab.repos` hard-coding in
+  AddonNode); the remove dialogs' sentence comes from one core map (`coreNotes.ts`), not an `addon === 'repos'` branch
+  in each dialog; the shared addon-state query polls on the generic `moving: true` only (it polled every second
+  forever whenever an auto-check interval was set); the ticket `repo` filter is exact (no hidden "not done").
+- Every `links.repos` name in the fixtures and the Busy day is now declared (a test guards it).
+- **Revert:** revert the U3 review-round commit.
+

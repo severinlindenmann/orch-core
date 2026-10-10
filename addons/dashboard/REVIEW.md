@@ -331,10 +331,17 @@ Calls made for you (each logged in DECISIONS-LOG.md with how to revert):
 
 ## Repos preview (U3)
 
-Open `/w/DEMO/addon/repos/repos` as Severin. Structure shows six declarations and the untracked sandbox. Expand rows for origin, branches, ahead/behind, changes, fetch, size, linked tickets and worktrees. `web-portal` links DEMO-0046; follow its filtered ticket link and the ticket panel's return link.
+Open `/w/DEMO/addon/repos/repos` as Severin. Structure shows the workspace folder, "Clones as" (the `gh` connection,
+the bot account) and the seven repos of `settings.repos` plus the untracked `sandbox`. Expand rows for remote, path,
+branches, ahead/behind, changes, fetch, size, worktrees and linked tickets; `acme-energy-dbt` has no remote (the
+format's own shape). `web-portal` links DEMO-0046; follow "Tickets linking web-portal" and the ticket panel's link back.
 
-Clone billing-api and inspect core's full URL and destination cover. Wait six seconds for queued → cloning → present. In Busy day, Clone all missing includes private-api: it fails once, then succeeds after Retry. Fetch preserves dirty work. Checks → Check now refreshes observations; Activity log records the actor and time.
+Clone billing-api: core's cover shows the full URL, the target folder and the git login. Wait six seconds for queued →
+cloning → present. In Busy day, Clone all missing includes private-api: it fails once, then Retry works. Fetch keeps
+dirty work. Checks → Check now; Activity log records who and when.
 
-Add repo → enter a fake HTTPS or SSH remote, leave folder blank to derive it → Review repo → Sign and add. Try a credential-bearing remote, `..`, or an existing folder to see host refusal. Adopt sandbox. Remove shared-lib: the files remain and its row becomes untracked. Try removing web-portal: its open ticket blocks removal; only the owner's explicit Remove anyway choice proceeds.
-
-Today has a calm Repos readiness line and a missing-repo Clone decision. `/w/DEMO/settings/addon/repos` holds interval and fetch settings plus the read-only root. Try Tom (viewer), Mara (maintainer), and Severin (owner) for role boundaries. Open in terminal on a present repo opens the dock with a quoted `cd` typed, not run. INT/CLI have smaller sets. No git or network commands actually run.
+Declare a repo (owners only) → a fake HTTPS or SSH remote → Review repo → Sign and declare: core's
+`settings.changed` appears in the workspace log. Try a credential-bearing remote, `git@-oProxyCommand=x:y`, `..` or an
+existing folder. Declare `sandbox`. Remove shared-lib (files stay); web-portal needs "Remove anyway". As Mara
+(maintainer) the declaration controls are gone; as Tom (viewer) only reading. Today shows "5 of 7" and a Clone
+decision for billing-api. Settings → Repos: interval, fetch on check, git login. No git or network commands run.

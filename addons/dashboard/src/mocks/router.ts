@@ -245,7 +245,7 @@ function searchTickets(s: MockStore, ws: string, query: URLSearchParams): Ticket
     .filter((t) => !type || t.type === type)
     .filter((t) => !parent || t.parent === parent)
     .filter((t) => !label || t.labels.includes(label))
-    .filter((t) => !repo || (t.links.repos.includes(repo) && t.status !== 'done'))
+    .filter((t) => !repo || t.links.repos.includes(repo))
     .filter((t) => !person || t.people.owner === person || t.people.assignees.includes(person) || t.claim?.for === person)
     .filter((t) => !needs || (needs === 'me' ? t.turn.who === s.viewer : needs === 'agent' ? t.turn.who.startsWith('agent:') : t.turn.who === 'nobody'))
     .filter((t) => restricted === null || t.restricted === (restricted === 'true'))
@@ -309,6 +309,10 @@ function postSettings(store: MockStore, ctx: RouteContext): TransportResponse {
       if (!Number.isInteger(b.hours) || b.hours < 1 || b.hours > GRANT_MAX_HOURS) return fail(400, 'validation.hours', `The agent grant length is 1 to ${GRANT_MAX_HOURS} hours.`)
       store.appendWs(wsId, { type: 'workspace.grant_hours_set', hours: b.hours })
       return done()
+    }
+    case 'repos': {
+      const r = store.changeRepos(wsId, b.set, { kind: 'person', id: store.viewer })
+      return r.ok ? done() : fail(r.status, r.code, r.message, r.hint)
     }
     case 'member.add': {
       const person = String(b.person ?? '').trim()

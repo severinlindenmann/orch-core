@@ -1262,7 +1262,7 @@
     "title": "Repos",
     "version": "0.1.0",
     "preview": true,
-    "description": "Declare workspace repos, check local folders, and clone missing repos. Simulated preview.",
+    "description": "See and check the workspace repos (settings.repos) and clone missing ones. Simulated preview.",
     "capabilities": [
       "network",
       "pty"
@@ -1320,20 +1320,19 @@
         "confirm": "sign"
       },
       "add": {
-        "minRole": "maintainer",
-        "label": "Add repo",
+        "minRole": "owner",
+        "label": "Declare repo",
         "confirm": "sign"
       },
       "adopt": {
-        "minRole": "maintainer",
-        "label": "Adopt untracked repo",
+        "minRole": "owner",
+        "label": "Declare untracked repo",
         "confirm": "sign"
       },
       "remove": {
         "minRole": "owner",
-        "label": "Remove from list",
-        "confirm": "destructive",
-        "confirmText": "The folder and its files stay on disk."
+        "label": "Remove from declared repos",
+        "confirm": "destructive"
       },
       "remove_anyway": {
         "minRole": "owner",
@@ -1372,7 +1371,7 @@
         "label": "Fetch all repos"
       },
       "prepare_add": {
-        "minRole": "maintainer",
+        "minRole": "owner",
         "label": "Review repo",
         "kind": "navigation"
       },

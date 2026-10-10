@@ -1,33 +1,72 @@
 # Repos addon — preview proposal
 
-Owner request, 2026-10-10 (U3). A workspace is often a harness root containing several independent repositories. Repos makes that structure visible and lets a person declare, check, clone, fetch, adopt, and remove declarations through core's existing action surfaces. It is installed in the normal and busy demo datasets; all git operations are simulated.
+Owner request, 2026-10-10 (U3); aligned with the v2 format in the review round of 2026-10-11. A workspace is often a
+harness folder holding several independent repositories. Repos shows that structure, checks it, and clones what is
+missing. All git operations in the mockup are simulated; no network, no credentials.
 
 ## Declared and observed
 
-The workspace provides a read-only `root_folder`. Each declaration has a stable repo name, a single relative folder, a credential-free remote, a default branch, and an optional primary flag (at most one). Observations are a separate last-check snapshot: folder existence, git presence, actual origin, branch, ahead/behind, changed files, last fetch, size, and worktrees. A mock disk snapshot lets checks discover changed state without changing declarations. Undeclared git folders are untracked; removing a declaration leaves the folder intact.
+**Declared = the workspace's `settings.repos`** (`config.json`, ticket format §2): repo name → working copy
+`{path}`, the path absolute or relative to the workspace folder. It is owner-signed (`settings.changed` with
+`set.repos`, §5.4.2; `null` removes a name; two repos resolving to one path are refused) and it is the list
+`links.repos` must name (§5.11). There is no second list: the addon's state holds only what it **observed** at the last
+check (git or not, origin, current branch, ahead/behind, uncommitted changes, last fetch, size, worktrees), clone jobs,
+its activity log, its settings and an owner's unsigned draft. A git folder in the workspace folder that no entry names
+is **untracked**. Repo identity is read from git (§5.7), never from the declaration.
 
-Structure shows one expandable row per folder. Checks lists missing folders, remote mismatches, behind branches, and uncommitted work. Activity records who requested each operation and when. Today shows readiness and offers core-signed clone decisions only for missing repos. Linked ticket panels are read-only and link to the corresponding expanded row. Settings choose off / 15 min / 1 h / daily and fetch-on-check. This mock advances jobs and automatic checks on state reads while mounted; the real host must schedule them independently of the browser.
+States: `present`, `missing` (declared, no folder), `not a repo`, `remote differs` (only when a remote is declared),
+`untracked`; a running or failed clone shows `queued`, `cloning n%`, `clone failed`.
 
-Clone jobs run queued → cloning → present in six seconds of the mock clock. Busy DEMO's `private-api` fails its first attempt with “Repository not found or no access”; Retry succeeds to demonstrate recovery. No credentials or network are used. Fetch simulates a new remote commit and refreshes tracking data; it does not pull, merge, or discard local edits.
+### Proposal (format amendment): `remote` and `default_branch`
 
-## Ticket format relationship
+Cloning needs a source the format lacks. Proposed: two optional keys per entry,
 
-`links.repos` names the workspace declarations; the Repos panel uses exact names, not basename guesses. DEMO-0046 links `web-portal`. Existing legacy fixture repo names remain visible as “not declared” rather than silently resolving to another repo.
+```json
+"repos": {"billing-api": {"path": "billing-api", "remote": "https://git.example.test/acme/billing-api.git", "default_branch": "main"}}
+```
 
-This list is a proposed UI for host-managed `settings.repos`, not a new ticket source of truth. In orch-v2-ticket-format §5.7 (D58/D59), repo identity is a canonical credential-free HTTPS origin (or `local:<name>`), distinct from a local folder and display name. The source list contains identity, ref, and SHA for each name in `links.repos`; it is projected from host-observed `branch.pushed {repo_name, repo_id, ref, sha}`. The real host must reread git at signing, decision append, and landing, and invalidate stale gates. This preview does not write `branch.pushed` or manufacture source SHAs.
+`remote` is credential-free (HTTPS, `ssh://host/path` or `git@host:path`; any userinfo, query, fragment, non-ASCII or
+a part starting with `-` is refused) and is not identity: identity stays what git reports. An entry without `remote`
+is valid (the format's own shape, e.g. DEMO's `acme-energy-dbt`): it is shown and checked but cannot be cloned.
+Until the owner ratifies the amendment, the mock writes the two keys into `settings.changed` as proposed fields.
 
-## Host enforcement and real implementation
+## Who does what
 
-The host checks manifest roles and core confirmation before actions. Clones, bulk clones, adds, and adoption bind full remote URLs and target folders; a changed target is refused. Removal is owner-only and destructive-confirmed, refuses linked open tickets with a count (409), and has a separate options confirmation with an explicit “Remove anyway” choice. Core's cover says “The folder and its files stay on disk.” No action deletes files.
+| Action | Who | Signed | What changes |
+|---|---|---|---|
+| Declare a repo, declare an untracked folder, remove a declaration | **owners only**, a person (never an agent, never the addon on its own) | yes (`sign`; remove: `destructive`, or `options` "Remove anyway") | core's `settings.changed` on `settings.repos`, signed by the owner |
+| Clone, clone all missing, the Today clone decision | maintainers and owners | yes (`sign`): every remote, target folder and the git login in full | the folder at the declared path only |
+| Fetch, fetch all, check now | members and up | no | tracking data / the observed snapshot |
+| Status, ahead/behind, dirty, activity | anyone who can see the workspace | — | read-only |
 
-Both draft preparation and signed add validate inputs. HTTPS and `ssh://` URLs reject all userinfo, including username-only authorities; `git@host:path` is the supported SSH transport spelling. Folder names match `^[a-z0-9][a-z0-9._-]{0,63}$`, contain no `..` or slash, and cannot reuse an existing folder. Duplicate remotes are refused. Credential values never enter a persisted draft. The host must additionally resolve filesystem paths safely, refuse symlink escapes, lock clone destinations, and prevent races with external filesystem changes.
+Removal never touches the disk; core's dialog says so in core's words ("The folder and its files stay on disk."),
+because the removal is core's own settings change. Removal is refused (409, with the count) while open tickets **the
+signer can see** link the repo; "Remove anyway" is a separate options confirm. Restricted tickets the signer cannot see
+are never counted or revealed; per §5.11 a stale repo then blocks only edits that touch links.
 
-The real host needs persistent declarations; filesystem/git scanning; cancellation and durable clone progress; credential-provider integration; fetch scheduling; disk/worktree measurements; a terminal opened under the proper OS identity; and activity delivery. Provisional events are `repos.added`, `repos.removed`, `repos.checked`, `repos.clone_queued`, `repos.cloned`, `repos.clone_failed`, `repos.fetched`, and `repos.terminal_opened`, with actor `addon:repos` and the requesting person separately recorded. Repos needs `network` and `pty`; opening the dock also checks Terminals' current pty grant. The shell has `cd` typed but not executed.
+## Clone identity (D56 A, D55)
 
-## Owner decisions
+Clone and fetch run with the CLI's own login of the user running orch, declared as a connection: on the dev machine
+the workspace bot account (owner's answer: "workspace bot account"), in a real workspace the owner's (or, from P2,
+the agent user's) git/gh login. The Structure tab shows "Clones as: gh · orch-agent-acme on github.com · OS user
+orch-agent"; the signature binds the connection name (`clone_as`). **orch stores no git credentials**: no tokens in
+remotes, drafts, events or signatures. Without a git-login connection nothing clones (409 `repos.no_login`).
 
-- Which OS user runs clone/fetch, and whose SSH agent, keychain, credential helper, or host connection supplies credentials? Never accept secrets embedded in a remote URL.
-- Confirm ownership of declarations in `settings.repos`, repo-name migration rules, and remote canonicalization/alias policy.
-- Confirm default auto-check frequency, fetch-on-check policy, resource limits, and behavior while offline.
-- Confirm whether remote mismatch blocks all agent starts, how primary influences new tickets, and whether forced declaration removal should also offer ticket relinking.
-- Ratify the provisional event names and the `network`/`pty` capability boundary before implementing a real host.
+## What the real host must implement
+
+- `settings.changed` for `set.repos` exactly as §5.4.2 (owner-only, same-path refusal), plus the two proposed keys.
+- Clone as `git clone -- <remote> <path>` (with `--`), never through a shell, into the resolved declared path only;
+  refuse an existing folder, symlink escapes and races (lock the destination); durable progress and cancel.
+- Fetch (`git fetch` only: never pull, merge or touch local changes), the scheduled check (off / 15 min / 1 h / daily,
+  independent of any browser), worktree and size measurement, and a dock shell with `cd -- '<path>'` typed, not run.
+- Provisional addon events, actor `addon:repos`, the requesting person recorded separately: `repos.checked`,
+  `repos.clone_queued`, `repos.cloned`, `repos.clone_failed`, `repos.fetched`, `repos.terminal_opened`. Declaration
+  changes are core's `settings.changed`, not addon events.
+
+## Open points for the owner
+
+- Ratify `remote` / `default_branch` as a format amendment (or keep sources outside the format).
+- Should a "primary" repo exist (the brief asked for it; it is not in the format and was left out)?
+- Remote canonicalisation for duplicate checks (host lowercase, `.git` and default ports ignored, scp ≡ ssh ≡ https).
+- Whether `remote differs` should block agent starts on tickets that link the repo.
+- Ratify the provisional event names and the `network`/`pty` capability boundary.

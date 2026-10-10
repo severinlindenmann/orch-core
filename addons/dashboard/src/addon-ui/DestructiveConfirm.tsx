@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { addonName, argLines, FromAddon, wordsAndId } from './SignConfirm'
 import { SentArgs } from './SentArgs'
+import { coreNote } from './coreNotes'
 
 const MAX = 160
 const cap = (v: string) => (v.length > MAX ? `${v.slice(0, MAX)}…` : v)
@@ -70,7 +71,7 @@ export function DestructiveConfirm({
         </DialogHeader>
         {addon && action && (
           <>
-            {addon === 'repos' && (action === 'remove' || action === 'remove_anyway') && <p className="text-[13px]">The folder and its files stay on disk.</p>}
+            {coreNote(addon, action) && <p className="text-[13px]" data-testid="core-note">{coreNote(addon, action)}</p>}
             <SentArgs lines={argLines(args)} />
             <FromAddon addon={addon} addonTitle={addonTitle ?? addon} label={label} text={text} subject={subject} />
           </>

@@ -1,6 +1,6 @@
 // Pure reducers: workspace state and grants are derived from seed + workspace events.
 import { addonStatus } from '@/api/addons'
-import type { CodeReviewApplies, GateName, GrantInfo, Role, SavedView, ViewParams, Workspace, WorkspaceEvent } from '@/api/types'
+import type { CodeReviewApplies, GateName, GrantInfo, Role, SavedView, ViewParams, Workspace, WorkspaceEvent, WorkspaceRepo } from '@/api/types'
 
 export function foldWorkspace(seed: Workspace, events: WorkspaceEvent[]): Workspace {
   const ws: Workspace = structuredClone(seed)
@@ -86,6 +86,18 @@ export function foldWorkspace(seed: Workspace, events: WorkspaceEvent[]): Worksp
       case 'workspace.grant_hours_set':
         ws.grant_hours = Number(e.hours)
         break
+      // Format §5.4.2: `set.repos` maps a repo name to its entry, or null to remove it (owner-signed, checked by the host).
+      case 'settings.changed': {
+        const repos = (e.set as { repos?: Record<string, WorkspaceRepo | null> } | undefined)?.repos
+        if (!repos || typeof repos !== 'object') break
+        const next = { ...(ws.repos ?? {}) }
+        for (const [name, entry] of Object.entries(repos)) {
+          if (entry === null) delete next[name]
+          else if (entry && typeof entry.path === 'string') next[name] = { ...entry }
+        }
+        ws.repos = next
+        break
+      }
       // Relay & devices (simulated): the link switch and each member's device count.
       case 'relay.connected':
       case 'relay.stopped':

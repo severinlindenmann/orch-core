@@ -298,7 +298,7 @@ const CASES: Case[] = [
     path: '/addon/factory/factory',
     setup: (s) => {
       installAndGrant(s, wsOf(s), 'factory')
-      s.addonState(wsOf(s), 'factory').nav = { p_sev: { runDraft: { ...DEMO_REQUEST } } }
+      s.addonState(wsOf(s), 'factory').nav = { p_sev: { runDraft: { ...DEMO_REQUEST, request: 'rq-7' } } }
     },
     open: async (user) => {
       await user.click(await screen.findByRole('tab', { name: /^Full runs/ }, T))
@@ -311,7 +311,7 @@ const CASES: Case[] = [
     addon: ['Start a factory full run'],
     skip: ['confirmed'],
     args: true,
-    expectArgs: ['goal', 'goes_up_to', 'deliver_means', 'hold_minutes', 'largest_child'],
+    expectArgs: ['request', 'goal', 'goes_up_to', 'deliver_means', 'hold_minutes', 'largest_child'],
   },
   {
     name: 'start agent (grant + start)',

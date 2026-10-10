@@ -83,6 +83,11 @@ export interface MockAddon {
    * force now (started, not paused or stopped). Core's `store.autoApprove` reads it; nothing else may auto-approve.
    */
   charter?(state: Record<string, unknown>, ctx: Omit<AddonCtx, 'body' | 'state'>): Charter | null
+  /**
+   * Why core must refuse to disable, update or uninstall this addon now (a sentence in core's words), or null. The
+   * factory uses it while a delivery is on hold: turning the addon off would take the Stop away while the clock runs.
+   */
+  offBlocked?(state: Record<string, unknown>): string | null
   launch?(state: Record<string, unknown>, req: LaunchRequest, ctx: Omit<AddonCtx, 'body' | 'state'> & { commit: boolean; lastTier?: string }): LaunchPlan
   actions: Record<string, AddonAction>
 }

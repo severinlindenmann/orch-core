@@ -1,7 +1,8 @@
 // The shell notice while a delivery waits out its hold window (factory full run, owner decision 2026-10-10 evening;
 // docs/factory-full-run-proposal.md). Core's own words, calm (never orange, never a warning colour), one line that
 // truncates, like the mandate banner. "Stop…" opens core's decision prompt for that hold (the one option `stop`); the
-// person signs it there. Shown to the people who may answer it (core's decisions list is per caller).
+// person signs it there. Shown to the people who may answer it (core's decisions list is per caller). The line wraps:
+// the destination is never truncated.
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { Timer } from 'lucide-react'
@@ -46,9 +47,10 @@ function HoldLine({ d, more, now }: { d: AddonDecision & { hold: NonNullable<Add
   const mins = holdMinutesLeft(d.hold.until, now)
   const text = `Delivering in ${mins} min · ${plain(d.hold.deliver_means)} · at ${fmtClock(d.hold.until)} · ${addonName(pkg?.title ?? d.addon, d.addon)}${more > 0 ? ` · ${more} more on hold` : ''}`
   return (
-    <div role="region" aria-label="Delivery on hold" data-testid="delivery-hold-banner" className="flex h-9 shrink-0 items-center gap-2 border-b border-border bg-surface px-4 text-[13px]">
-      <Timer className="size-4 shrink-0 text-text-muted" aria-hidden />
-      <span className="min-w-0 flex-1 truncate text-text" title={`${text}. It goes out on its own unless a person stops it.`} aria-live="polite">
+    <div role="region" aria-label="Delivery on hold" data-testid="delivery-hold-banner" className="flex min-h-9 shrink-0 items-start gap-2 border-b border-border bg-surface px-4 py-2 text-[13px]">
+      <Timer className="mt-0.5 size-4 shrink-0 text-text-muted" aria-hidden />
+      {/* Never cut: the destination is what goes out, so the line wraps (values made visible by plain()). */}
+      <span className="min-w-0 flex-1 whitespace-normal text-text [overflow-wrap:anywhere]" aria-live="polite">
         {text}
       </span>
       <Button size="xs" variant="outline" className="shrink-0" disabled={busy} onClick={() => choose(d.options[0])}>

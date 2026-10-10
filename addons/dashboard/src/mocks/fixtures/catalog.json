@@ -609,6 +609,7 @@
       "demo_run": { "minRole": "maintainer", "label": "Fill in a demo full-run request" },
       "start_run": { "minRole": "maintainer", "confirm": "sign", "label": "Start a factory full run" },
       "hold": { "minRole": "maintainer", "decision": true },
+      "code_review": { "minRole": "maintainer", "decision": true },
       "simulate_time": { "minRole": "owner", "label": "Simulate: let the hold time pass (demo)" }
     }
   },

@@ -5,7 +5,7 @@ import type { MockStore } from '../store'
 import type { Rng } from '../busy/rng'
 import { canSeeTicket, conflict, notFound, refusal, registerAddon, withinCharterSize, type AddonCtx } from './registry'
 import { fmtDateTime, fmtWhen } from '@/lib/time'
-import { checkRequest, visibleEpic, DEMO_DATASETS, DEMO_REQUEST, ensureChain, holdDecisions, runsOf, runsView, seedRuns, settleRuns, staleRunKeys, startRun, type RunDraft } from './factory-runs'
+import { approveReview, checkRequest, visibleEpic, DEMO_DATASETS, DEMO_REQUEST, ensureChain, holdBlocksOff, holdDecisions, hoursUsed, issueRequest, MAX_CHILDREN, MAX_HOURS, runsOf, runsView, seedRuns, settleRuns, staleRunKeys, startRun, type RunDraft } from './factory-runs'
 
 // factory (AI Factory, Phase 2 preview; v1 docs/factory.md): one factory epic, DEMO-0050 "Monthly billing v2".
 //  - The charter (25 children or 72 hours, children of size m or smaller) was signed when the epic started. The
@@ -23,15 +23,12 @@ import { checkRequest, visibleEpic, DEMO_DATASETS, DEMO_REQUEST, ensureChain, ho
 //  - Open permits are answered in place: the page carries `decision` nodes for them (core draws and signs), as well as Today.
 
 const EPIC_TITLE = 'Monthly billing v2'
-const MAX_CHILDREN = 25
-const MAX_HOURS = 72
 const MAX_SIZE = 'm' as const
 const WATCH_STEPS = 10 // simulated steps per workspace per hour
 const STEP_MS = 20_000
 const MAX_PERMITS_SHOWN = 5
 const SIZES = ['xs', 's', 'm', 'l', 'xl']
 const WATCH_WINDOW_MS = 3_600_000 // the cap below counts per workspace over this window
-const HOUR = 3_600_000
 
 type Ctx = Pick<AddonCtx, 'store' | 'ws' | 'viewer'>
 type Mode = 'running' | 'paused' | 'stopped'
@@ -94,11 +91,6 @@ const epicOf = (c: Ctx, state: Record<string, unknown>): string | null => {
   return key && canSeeTicket(c, key) ? key : null
 }
 
-function hoursUsed(state: Record<string, unknown>, now: string): number {
-  const paused = state.paused as { at: string } | null
-  const end = Date.parse(paused ? paused.at : now)
-  return Math.max(0, (end - Date.parse(state.startedAt as string) - (state.pausedMs as number)) / HOUR)
-}
 function modeOf(state: Record<string, unknown>, now: string): Mode {
   if ((state.used as number) >= MAX_CHILDREN || hoursUsed(state, now) >= MAX_HOURS) return 'stopped'
   return state.paused ? 'paused' : 'running'
@@ -275,14 +267,14 @@ function seedBase(ws: string, store: MockStore) {
 
 registerAddon({
   name: 'factory',
-  stateVersion: 2, // full runs (`runs`, `runSeq`) added
+  stateVersion: 3, // full runs (`runs`, `runSeq`, request ids, holds on the wall clock)
   seed: seedBase,
   seedBusy,
 
   view(state, c) {
     const now = c.store.now()
     if (state.epic) {
-      settleRuns(c.store, state, !!state.paused)
+      settleRuns(c.store, state)
       ensureChain(c.store, c.ws, state)
     }
     const epic = epicOf(c, state)
@@ -402,6 +394,11 @@ registerAddon({
     }
   },
 
+  // Core refuses to turn the factory off or change it while a delivery is on hold (its Stop would go with it).
+  offBlocked(state) {
+    return holdBlocksOff(state)
+  },
+
   // The charter signed when the epic started; in force while the factory runs (not paused, not stopped).
   charter(state, c) {
     const epic = state.epic as string | null
@@ -413,7 +410,7 @@ registerAddon({
     if (!atLeast(c.store.roleIn(c.ws, c.viewer), 'maintainer')) return []
     // The epic is named only to people who can see it (a child can be visible while its epic is not).
     const epic = epicOf(c, state)
-    if (state.epic) settleRuns(c.store, state, !!state.paused)
+    if (state.epic) settleRuns(c.store, state)
     const holds = state.epic ? holdDecisions(c, state, epic) : []
     return holds.concat(permitsOf(state)
       .filter((p) => p.state === 'open' && canSeeTicket(c, p.ticket))
@@ -459,7 +456,8 @@ registerAddon({
       if (typeof epic !== 'string') return epic
       const d = checkRequest(c, (c.body.formData ?? {}) as Record<string, unknown>)
       if ('ok' in d) return d
-      setNav(c.state, c.viewer, { ...navOf(c.state, c.viewer), runDraft: d })
+      // Every review issues a new single-use request id: the signature binds it, the start consumes it.
+      setNav(c.state, c.viewer, { ...navOf(c.state, c.viewer), runDraft: issueRequest(c.state, d) })
       return { ok: true, message: 'Review and sign the request.' }
     },
     clear_run(c) {
@@ -471,7 +469,7 @@ registerAddon({
       if (typeof epic !== 'string') return epic
       const d = checkRequest(c, { ...DEMO_REQUEST })
       if ('ok' in d) return d
-      setNav(c.state, c.viewer, { ...navOf(c.state, c.viewer), runDraft: d })
+      setNav(c.state, c.viewer, { ...navOf(c.state, c.viewer), runDraft: issueRequest(c.state, d) })
       return { ok: true, message: 'Demo request filled in: review and sign it.' }
     },
     // Signed in core's prompt (`confirm: 'sign'`): the covers list the goal, how far it goes, what Deliver means and the hold.
@@ -479,14 +477,18 @@ registerAddon({
       const { state, store, ws, viewer, body } = c
       const epic = visibleEpic(c, state)
       if (typeof epic !== 'string') return epic
-      if (modeOf(state, store.now()) !== 'running') return conflict('factory.not_running', 'The factory is not running: resume it before starting a full run.')
       const d = checkRequest(c, body)
       if ('ok' in d) return d
+      // A request id is single use: a replayed signature is refused, whatever the draft holds now.
+      if (typeof body.request === 'string' && ((state.usedRequests as string[] | undefined) ?? []).includes(body.request))
+        return conflict('factory.request_used', `Request ${body.request} was already used to start a run.`, 'Review the request again and sign the new one.')
       const draft = navOf(state, viewer).runDraft
       if (!draft) return conflict('factory.no_request', 'Review the request first.', 'Fill in the form and press Review request.')
       const off = staleRunKeys(body, draft)
       if (off.length) return conflict('factory.stale', `What you signed no longer matches the request: ${off.join(', ')}.`, 'Review it again and sign.')
+      // One step: the charter check, the request consumed, the children reserved, the run created (or nothing).
       const run = startRun(store, ws, state, draft, viewer)
+      if ('ok' in run) return run
       setNav(state, viewer, { ...navOf(state, viewer), runDraft: undefined })
       return { ok: true, message: run.goesUpTo === 'Deliver' ? `Full run ${run.id} started. It holds before Deliver (${run.holdMinutes} min) with a notice and Stop.` : `Full run ${run.id} started. It ends at Preview.`, changed: true }
     },
@@ -495,7 +497,7 @@ registerAddon({
       const { state, store, body, viewer } = ctx
       const epic = visibleEpic(ctx, state)
       if (typeof epic !== 'string') return epic
-      settleRuns(store, state, !!state.paused)
+      settleRuns(store, state)
       const run = ctx.decision && runsOf(state).find((r) => `factory.hold:${r.id}` === ctx.decision!.id)
       if (!run || run.stage !== 'holding') return conflict('decision.closed', 'That delivery is no longer on hold.')
       if (body.option !== 'stop') return conflict('decision.closed', 'That decision is closed.')
@@ -503,6 +505,16 @@ registerAddon({
       run.stopped = { at: store.now(), by: viewer }
       store.append(state.epic as string, { type: 'factory.deliver_stopped', actor: ADDON, run: run.id })
       return { ok: true, message: `Stopped the delivery of ${run.id}. Nothing went out; the run stays at Preview.`, changed: true }
+    },
+    // A code review on a full run's child (a decision, signed by a person in core's prompt; core records addon.decided).
+    code_review(ctx) {
+      const { state, store, viewer } = ctx
+      const epic = visibleEpic(ctx, state)
+      if (typeof epic !== 'string') return epic
+      if (!ctx.decision || ctx.body.option !== 'approve') return conflict('decision.closed', 'That decision is closed.')
+      const done = approveReview(store, state, ctx.decision.id, viewer)
+      if ('ok' in done) return done
+      return { ok: true, message: `Code review approved for ${done.run.id}. The child goes on to Validate.`, changed: true }
     },
     // A SIMULATOR control of the mock, not an operation: no host operation shortens a Deliver hold (the only human
     // act during the hold is a signed Stop). The mock clock runs in real time, so the demo lets the simulated time of
@@ -517,7 +529,9 @@ registerAddon({
       if (!run || run.stage !== 'holding') return conflict('factory.not_holding', 'That run is not on hold.')
       if (state.paused) return conflict('factory.paused', 'The factory is paused: the hold clock does not run.')
       run.holdUntil = store.now() // the simulated time of the hold has passed
-      settleRuns(store, state, false)
+      run.holdWallUntil = Date.now()
+      settleRuns(store, state)
+      if ((run.stage as string) !== 'delivered') return conflict('factory.not_running', 'The charter is stopped: the hold ended without delivery.')
       return { ok: true, message: `Simulated: the hold time of ${run.id} passed. Delivered: ${run.deliverMeans}.`, changed: true }
     },
 
@@ -541,7 +555,11 @@ registerAddon({
       state.pausedMs = (state.pausedMs as number) + pausedFor
       state.paused = null
       // The hold clock does not run while paused: a run that holds before Deliver gets the paused time back.
-      for (const r of runsOf(state)) if (r.stage === 'holding' && r.holdUntil) r.holdUntil = new Date(Date.parse(r.holdUntil) + pausedFor).toISOString().replace(/\.\d{3}Z$/, 'Z')
+      for (const r of runsOf(state))
+        if (r.stage === 'holding' && r.holdUntil) {
+          r.holdUntil = new Date(Date.parse(r.holdUntil) + pausedFor).toISOString().replace(/\.\d{3}Z$/, 'Z')
+          if (r.holdWallUntil !== undefined) r.holdWallUntil += pausedFor
+        }
       store.append(epic, { type: 'factory.resumed', actor: ADDON })
       return { ok: true, message: 'Factory resumed.', changed: true }
     },

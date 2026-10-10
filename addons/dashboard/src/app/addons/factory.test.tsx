@@ -163,7 +163,7 @@ describe('factory full runs', () => {
     await user.click(await screen.findByRole('button', { name: 'Sign and start' }, T))
     const dialog = await screen.findByRole('dialog', { name: /^Sign: Start run \(start_run\) · AI Factory \(factory\)$/ }, T)
     const lines = [...dialog.querySelectorAll('[data-arg-key]')].map((e) => [e.getAttribute('data-arg-key'), e.getAttribute('data-arg-value')])
-    expect(lines).toEqual([['goal', 'Autumn tariff campaign'], ['goes_up_to', 'Deliver'], ['deliver_means', 'Publish campaign'], ['hold_minutes', '60'], ['largest_child', 'm']])
+    expect(lines).toEqual([['request', 'rq-1'], ['goal', 'Autumn tariff campaign'], ['goes_up_to', 'Deliver'], ['deliver_means', 'Publish campaign'], ['hold_minutes', '60'], ['largest_child', 'm']])
     expect(dialog.textContent).toContain('Deliver means (deliver_means): Publish campaign')
     await user.click(within(dialog).getByRole('button', { name: 'Sign and run' }))
     await waitFor(() => expect(mockStore.eventsOf('DEMO-0050').some((e) => e.type === 'factory.run_requested' && e.deliver_means === 'Publish campaign')).toBe(true), T)
@@ -176,6 +176,8 @@ describe('factory full runs', () => {
     const banner = await screen.findByTestId('delivery-hold-banner', {}, T)
     expect(banner).toHaveTextContent(/^Delivering in 28 min · Publish campaign to the newsletter list · at \d\d:\d\d · AI Factory \(factory\)/)
     expect(banner.className).not.toMatch(/warning|danger|orange/)
+    // The destination is never cut: the line wraps.
+    expect(banner.querySelector('.truncate')).toBeNull()
     await user.click(within(banner).getByRole('button', { name: 'Stop…' }))
     const dialog = await screen.findByRole('dialog', { name: 'Decide for AI Factory (factory)' }, T)
     expect(dialog.textContent).toContain('Deliver means (deliver_means): Publish campaign to the newsletter list')

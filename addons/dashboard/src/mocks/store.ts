@@ -1063,6 +1063,12 @@ export class MockStore {
     if (!st || !pkg) return refuse(404, 'not_found', `${name} is not installed in this workspace.`)
     const v: InstalledAddon = { ...pkg, ws: st }
     const update = pendingUpdate(v)
+    // A delivery on hold keeps its addon on: turning it off or changing it would take the Stop away mid-hold.
+    if (req.op === 'disable' || req.op === 'update' || req.op === 'uninstall') {
+      const mod = getAddon(name)
+      const why = mod?.offBlocked && this.addonStates[`${wsId}/${name}`] ? mod.offBlocked(this.addonStates[`${wsId}/${name}`]) : null
+      if (why) return refuse(409, 'addon.delivery_on_hold', why, 'Stop the delivery first (or wait for the hold to end).')
+    }
     switch (req.op) {
       case 'grant':
         if (req.op !== 'grant') break

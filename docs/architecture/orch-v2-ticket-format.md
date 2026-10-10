@@ -9,7 +9,7 @@ reviews), adds D58–D60 (verdict binds to the commit, the optional code gate, g
 orch-relay `docs/protocol-v2.md`. D61 (factory auto-approval) and D62 (mandates) are not part of the format in P1.
 What changed and why is in the decisions log (§13). Points that change the security model are listed in §12 and
 need the owner's confirmation. Revised the same day after an adversarial Codex review (§13, rows 56–80) and an independent Opus security review
-with a re-review (rows 81–126).
+with a re-review (rows 81–126). Rows 127–138 record the C4 and C5 contract decisions (#346, #347).
 
 Build order: **minimal core → workspace frontend → relay → mobile → apps → everything else.** The format supports
 several people in one workspace from day one (D39). The flows for colleagues are built in P8.
@@ -434,8 +434,8 @@ Workspace views, agent starts, relay links, epochs and terminal events are defin
   of the last event. An empty log has no head.
 - **Merged order.** `ws_seq` is non-decreasing along a ticket log and at most the workspace log's last `seq`;
   otherwise the line fails like a bad `host_sig`. The merged order of all logs is by `ws_seq`, the workspace log
-  first, then ticket events by `seq`: an event with `ws_seq = k` is evaluated against the workspace state after
-  workspace event `k`. The host holds the workspace-log lock (shared) while it appends a ticket event. `ws_seq` and
+  first, then ticket events ordered by `(at, uid, seq)` (§5.11): an event with `ws_seq = k` is evaluated against the
+  workspace state after workspace event `k`. The host holds the workspace-log lock (shared) while it appends a ticket event. `ws_seq` and
   `at` are chosen by the host and not signed by the person (§12 N4).
 - **Reading** a log: strictly parse each line, check that it is `cj`, check the field set, `seq`, `prev`, `ws_seq`
   and `host_sig`, then `sig` against the device certificate, then replay authorization (§5.11). A line that fails
@@ -720,7 +720,7 @@ stays unchanged).
 | `ticket.reopened` | `done`, `closed` | `open` |
 
 Verdicts and `code` approvals and change requests are accepted only in `testing`. The **done rule**: `verify` has its count of `pass` verdicts, and `code` has its count where it applies, all at the
-current generations. `gate.invalidated` changes no status. "Waiting" (a blocking question is open, or a gate waits
+current generations. A duplicate approval by one person counts once. `gate.invalidated` changes no status. "Waiting" (a blocking question is open, or a gate waits
 for a person) is derived and shown, not a status. A claim lapses when its session appended nothing for
 `claim_ttl_min`, or when its grant ends; a task lease lapses after `lease_ttl_min`. The host appends
 `claim.released` (`expired` or `grant_ended`) with the next write.
@@ -775,6 +775,27 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
   scopes the event needs (§5.3), and was not removed or revoked at that point; `roster_v` is current and the person
   held the role the event needs; an agent's grant was valid, in scope and covered the verb; the policy, generation,
   completeness and source list allowed the decision (§5.7); and the status transition was allowed (§5.9).
+- **Rules replay also checks** (C4, #347):
+  - The last owner can't be removed or demoted (`members.last_owner`).
+  - A viewer can't write, except answers addressed to them and device events.
+  - `binds.fields` keys belong to the addon named in the same event.
+  - `links.repos` must be in `settings.repos`. A stale repo (one no longer in `settings.repos`) blocks only edits that
+    touch links.
+  - The initial workspace policies are the §2 config defaults.
+  - The merged order is `(ws_seq, at, uid, seq)`. An append that sorts before the last one is refused
+    (`chain.bad_ws_seq`).
+  - A cross-ticket reference (`parent`, `blocked_by`, `duplicate_of`) must point to a ticket created earlier in the
+    merged order.
+  - `replay` requires the expected workspace id and refuses a genesis that doesn't match the pin
+    (`trust.genesis_mismatch`).
+- **Verifier interface.** Signature checks are injected into replay:
+
+  | Method | Arguments |
+  |---|---|
+  | `verify_person` | `(event, context)` |
+  | `verify_host` | `(event, *, log, wsk_pub, workspace_id)`; `workspace_id` never comes from the event |
+  | `verify_embedded` | `(event, *, pk_pub, device_cert=None)`; `device_cert` is required for `device.revoked` |
+
 - **Failure.** An event that fails authorization is treated as absent for state, keeps its place in the chain, and
   is reported as `auth.invalid_event`. The host then refuses new person decisions on that ticket (for an invalid
   event in the workspace log: all person decisions in the workspace) until an owner signs
@@ -986,7 +1007,7 @@ claim"**, if the session holds exactly one; otherwise `ambiguous_ref` comes back
 | Context | `status` (also shows who the agent is, its grant and its cursor), `describe [cmd]`, `help <workflow>` |
 | Read | `show [REF] [--section A,B \| --full \| --log --since N \| --diff --since N]`, `list`, `search`, `next`, `inbox` |
 | Lifecycle | `new`, `claim [REF \| --next \| --takeover --reason]`, `release`, `handoff -m`, `submit`, `ask "…" --options a,b --rec a [--to p]`, `wait` |
-| Edit | `set REF key=value` (title, priority, labels, due, links), `section set`, `ac add\|edit`, `task list\|next\|add\|start\|done\|skip\|block\|reopen`, `artifact add\|replace\|list`, `log`, `apply --file -` (an atomic batch) |
+| Edit | `set REF key=value` (keys: title, priority, size, labels, due, links, parent, blocked_by; person-only fields have their own operations), `section set`, `ac add\|edit`, `task list\|next\|add\|start\|done\|skip\|block\|reopen`, `artifact add\|replace\|list`, `log`, `apply --file -` (an atomic batch) |
 | Human only | `approve`, `request-changes`, `verdict`, `answer`, `close`, `reopen`, `grant`, `member`. Agents get `human_only`, `retry:false`. |
 | Admin | `init`, `doctor`, `check`, `instructions sync`, `import v1`, `addon …` |
 
@@ -1000,17 +1021,23 @@ Combined calls for the common loops:
 ### 10.4 Output and errors
 
 1. stdout carries only the result; stderr carries diagnostics.
-2. **Text by default, as short as possible.** The first line is `ok <KEY> <event> <detail> seq=<n>`, optionally
-   followed by one `next:` line.
+2. **Text by default, as short as possible.** Every success template starts with `ok`. For a write the first line is
+   `ok <KEY> <event> <detail> seq=<n>`, optionally followed by one `next:` line. A read operation (`status`, `show`,
+   `list`, …) puts its body in result lines between the `ok` line and `next:`. A deduplicated retry adds ` duplicate`
+   to the first line.
 3. `--json` (or `ORCH_OUTPUT=json`) gives `{"v":"orch.cli/2.0","ok":true,"data":…,"key":…,"seq":…,"cursor":…,"hints":[]}`.
 4. An error is `{"ok":false,"error":{"code":"conflict.section","message":…,"hint":…,"fix":{"argv":[…]},"retryable":bool}}`.
    The `code` strings are the stable contract.
+   - **Text form**, exactly: `err <code> <message> · retry:<bool> · next: <hint> · fix: <cmd>`. The separators are
+     fixed. A literal `·` in a value is escaped. `fix` is left out when it equals the hint.
+   - **Streams.** The text error goes to stderr. With `--json` the error envelope goes to stdout, as one JSON document.
+   - `ok:false` and a non-zero exit code always come together.
 5. Exit codes:
 
    | Code | Meaning |
    |---|---|
    | 0 | ok |
-   | 1 | internal error |
+   | 1 | internal error (`not_implemented` too) |
    | 2 | usage or not found |
    | 3 | not allowed (transition or human-only) |
    | 4 | claim, lease or lock |
@@ -1020,7 +1047,13 @@ Combined calls for the common loops:
    | 8 | `base_rev` conflict |
    | 9 | retryable |
 
-6. **Stop rule:** the same refusal three times in a row in one session returns `STOP: report to the user`.
+6. **Stop rule (advisory).** The same refusal three times within 15 minutes returns `stop` (`STOP: report to the user`).
+   - "Same" means the operation, its normalised arguments (with `REF` normalised to the ticket key) and the code.
+     `human_only` counts by operation and code and ignores the arguments.
+   - The count expires after 15 minutes.
+   - Only a successful write that is not a `--dry-run` resets it. Usage errors, retryable errors and internal errors
+     (`not_implemented` included) neither count nor reset it.
+   - Without a session there is no stop rule and no dedup. A malformed `ORCH_SESSION` is invalid.input.
 7. `orch wait` returns `{kind: answered | approved | changes_requested | verdict | invalidated | timeout, …, cursor, next}`.
    - Its default timeout is 540 s, which stays under harness tool limits.
    - `timeout` exits 0, so the agent loops.
@@ -1031,10 +1064,22 @@ Combined calls for the common loops:
      id) with every human decision. Nothing else.
    - `cursor` is the highest ticket `seq` this session has been shown for that ticket.
 8. **`base_rev` is tracked by orch per session and section.** Agents never pass it themselves.
-9. **Retries:** the same session, operation and arguments within 15 minutes return the original event with
-   `"duplicate":true`.
+9. **Retry dedup.** A repeated write returns the original event with `"duplicate":true`.
+   - The key is: session, grant id (or `none`), attended or unattended mode, operation, normalised arguments, and for
+     ticket-scoped writes the ticket's head `seq`.
+   - It holds for 15 minutes. It covers writes only and never applies with `--dry-run`.
+   - The grant is checked again before a duplicate is returned. Results are redacted before they are cached.
 10. Every write supports `--dry-run`. Free text comes from `-m` or `--file PATH|-`, and structured input is JSON only.
 11. Ticket content in output is data: it is fenced and sanitised, never instructions.
+    - All agent-supplied text that is echoed is escaped: invisible and bidi characters show as `⟨U+…⟩`, C0 and C1
+      controls and ESC are escaped. JSON output escapes C1 controls, bidi characters and line separators.
+    - `fix.argv` starts with `orch` and every element is clean text; otherwise the error is `internal`.
+12. **Grant secrets.** A malformed `ORCH_GRANT` is refused for every write, unattended writes included; reads ignore
+    it. Any argument shaped like a grant secret is refused before parsing with grant.secret_in_args (exit 2).
+    Secrets are redacted before any truncation, everywhere. Handlers run with an environment without `ORCH_GRANT`.
+13. **Arguments.** `--json`, `--help` and `-h` are recognised only before `--` and never as an option value. A scalar
+    flag given twice is a usage error. `ask --options` splits on commas, and each option must match the token pattern
+    (no whitespace inside a token).
 
 ### 10.4a Refusal codes of the model
 
@@ -1126,7 +1171,7 @@ these codes; they are the stable `error.code` strings of §10.4 for these refusa
 
 ```
 $ orch status
-for Severin · grant gr_01J9Z8 until 18:00 · cursor 14
+ok status for Severin · grant gr_01J9Z8 until 18:00 · cursor 14
 DEMO-0043 in-progress (your claim) · T3 next · 2 new events
 $ orch task next
 T3 Join in fct_billing, add tests · proves AC2 · verify: dbt test --select fct_billing
@@ -1134,7 +1179,7 @@ $ orch task done T3 --run --artifact target/tests.log --ac AC2 -m "112 passed"
 ok DEMO-0043 task.done T3 receipt=exit0/41000ms artifact=tests.log seq=18
 next: T4 Document the refresh command (@p_mara) · or orch handoff
 $ orch approve plan
-err human_only approve · retry:false · next: orch ask or orch wait
+err human_only approve: human only · retry:false · next: orch ask or orch wait
 ```
 
 ### 10.6 Agents in other workspaces
@@ -1426,6 +1471,18 @@ A1–A20 (PR body), HO (dashboard handover, input only), D58–D60, the adversar
 | 124 | New event `invalid.acknowledged` | Both logs, owner only, needs `operate`; prefix `invalid` reserved. | S-h needs a signed, replayable way out. |
 | 125 | Host appending `device.revoked` | Allowed only for a PK-signed revocation it holds (§5.12). | The host never makes up a revocation. |
 | 126 | Vectors | `generation` (multi-row, deleted ref, reopen), `status`, `revocation`, token URL, bad `refs` added to §11.5. | The fixes are pinned before the freeze. |
+| 127 | Text outputs of reads vs the `ok` line (#346) | Every success template starts with `ok`; reads put their body in result lines; the §10.5 `status` sample is fixed (§10.4 item 2). | The `operation` schema pattern and §10.4 already required `ok`. |
+| 128 | Text error format and streams (#346) | `err <code> <message> · retry:<bool> · next: <hint> · fix: <cmd>`, fixed separators, `·` escaped; text on stderr, JSON envelope on stdout; `ok:false` and a non-zero exit together (§10.4 item 4). | One parseable line; one JSON document on one stream. |
+| 129 | Retry dedup key (#346) | Session, grant id or `none`, attended mode, operation, normalised args, head `seq` for ticket writes; 15 min; writes only; not with `--dry-run`; grant re-checked; redacted before caching (§10.4 item 9). | A duplicate can't outlive a grant or leak a secret, and a changed ticket is a new write. |
+| 130 | Stop rule details (#346) | Advisory; same refusal three times in 15 min returns `stop`; `human_only` ignores args; only a successful non-dry-run write resets; usage, retryable and internal errors (incl. `not_implemented`, exit 1) don't count; no session means no stop rule and no dedup; malformed `ORCH_SESSION` is invalid.input (§10.4 items 5, 6). | "Three in a row" needed a definition of same, window and reset. |
+| 131 | Grant secrets in arguments and environment (#346) | grant.secret_in_args (exit 2) before parsing; redaction before truncation everywhere; handlers get no `ORCH_GRANT`; a malformed `ORCH_GRANT` is refused for every write, reads ignore it (§10.4 item 12). | N4: a secret must not reach logs, output or child processes. |
+| 132 | Echoed text and `fix.argv` (#346) | Echoed agent text escaped (`⟨U+…⟩`, C0/C1/ESC); JSON escapes C1, bidi and line separators; `fix.argv` starts with `orch` with clean elements, else `internal` (§10.4 item 11). | Terminal escape and bidi tricks in error output. |
+| 133 | Argument parsing rules (#346) | `--json`, `--help`, `-h` only before `--` and never as an option value; a scalar flag twice is a usage error; `ask --options` splits on commas with token-pattern options; `set` keys are title, priority, size, labels, due, links, parent, blocked_by (§10.3, §10.4 item 13). | Free text with commas or flag-like values must not change the command. |
+| 134 | Last owner, viewers, duplicate approvals (#347) | The last owner can't be removed or demoted (`members.last_owner`); a viewer writes only answers addressed to them and device events; a duplicate approval by one person counts once (§5.9, §5.11). | A workspace keeps an owner; counts are by person. |
+| 135 | Addon binds and repo links (#347) | `binds.fields` keys belong to the addon in the same event; `links.repos` must be in `settings.repos`, and a stale repo blocks only edits touching links (§5.11). | One addon can't bind another's fields; an old repo doesn't freeze unrelated edits. |
+| 136 | Initial policies and merged order (#347) | Initial workspace policies are the §2 config defaults; merged order `(ws_seq, at, uid, seq)`; an append sorting before the last is refused (`chain.bad_ws_seq`) (§5.11). | A total order every reader computes the same way. |
+| 137 | Cross-ticket references (#347) | `parent`, `blocked_by`, `duplicate_of` must point to a ticket created earlier in merged order (§5.11). | No forward or dangling references on replay. |
+| 138 | Replay pin and Verifier interface (#347) | `replay` requires the expected workspace id and refuses a genesis that differs from the pin (`trust.genesis_mismatch`); `verify_person(event, context)`, `verify_host(event, *, log, wsk_pub, workspace_id)` (never from the event), `verify_embedded(event, *, pk_pub, device_cert=None)` (cert required for `device.revoked`) (§5.11). | The caller supplies the trust anchors; the event can't. |
 Open after F1 (not settled here):
 
 - The P3 envelope for phone decisions (`evidence`); the `qid` mapping itself is settled (§5.6).

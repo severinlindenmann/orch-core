@@ -2,7 +2,7 @@ import { useId, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import type { ParsedOptions } from './optionsSchema'
-import { plain } from '@/components/sign/visible'
+import { Inline, plain } from '@/components/sign/visible'
 import { addonName, argLines, FromAddon, wordsAndId } from './SignConfirm'
 import { SentArgs } from './SentArgs'
 
@@ -71,7 +71,7 @@ export function OptionsConfirm({
             {options.fields.map((f) => (
               <div key={f.key} className="grid gap-1">
                 <label htmlFor={`${id}-${f.key}`} className="text-[13px] text-text-muted">
-                  {f.label}
+                  <Inline>{f.label}</Inline>
                 </label>
                 <select
                   id={`${id}-${f.key}`}
@@ -85,7 +85,7 @@ export function OptionsConfirm({
                 >
                   {f.choices.map((c) => (
                     <option key={String(c.value)} value={String(c.value)}>
-                      {c.label}
+                      {plain(c.label)}
                     </option>
                   ))}
                 </select>

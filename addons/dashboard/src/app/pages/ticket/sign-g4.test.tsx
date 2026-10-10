@@ -186,7 +186,7 @@ describe('G4 the dialog shows everything the gate hash covers', () => {
     const dialog = await renderDialog((t) => t, { kind: 'approve', gate: 'plan' })
     await waitFor(() => expect(dialog).toHaveTextContent('Assignee: Severin'), T)
     expect(dialog).toHaveTextContent('Assignee: Mara')
-    expect(dialog).toHaveTextContent('Verify: gh workflow run nightly')
+    expect(dialog).toHaveTextContent('Verify command: gh workflow run nightly')
     expect(dialog).toHaveTextContent('Proves: AC1')
   })
   it('requirements: out of scope, acceptance criteria, type and size appear', async () => {

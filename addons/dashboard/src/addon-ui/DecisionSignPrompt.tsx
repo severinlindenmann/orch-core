@@ -1,7 +1,7 @@
 import type { AddonDecision } from '@/api/types'
 import { SignPrompt } from '@/components/sign/SignPrompt'
 import { AddonBadge } from './AddonBadge'
-import { plain } from '@/components/sign/visible'
+import { plain, Prose, RawValue } from '@/components/sign/visible'
 import { addonName, Raw, TERMS_LEAD, words } from './SignConfirm'
 import { useAddons } from './slots'
 
@@ -30,7 +30,7 @@ export function DecisionSignPrompt({ d, option, workspacePrefix, onSign, onClose
         ...(d.terms && Object.keys(d.terms).length ? [TERMS_LEAD] : []),
         ...Object.entries(d.terms ?? {}).map(([k, v]) => (
           <span key={`term-${k}`} data-term-key={k} data-term-value={String(v)}>
-            {words(k) === k ? <Raw>{k}</Raw> : <>{plain(words(k))} (<Raw>{k}</Raw>)</>}: <Raw>{String(v)}</Raw>
+            {words(k) === k ? <Raw>{k}</Raw> : <>{plain(words(k))} (<Raw>{k}</Raw>)</>}: <RawValue value={v} />
           </span>
         )),
         <>
@@ -55,15 +55,15 @@ export function DecisionSignPrompt({ d, option, workspacePrefix, onSign, onClose
           <span>From the addon {named}</span>
         </p>
         <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">
-          Title: <span className="text-text">{d.title}</span>
+          Title: <Prose inline className="text-text">{d.title}</Prose>
         </p>
         <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">
-          Question: <span className="text-text">{d.question}</span>
+          Question: <Prose inline className="text-text">{d.question}</Prose>
         </p>
         <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">
-          Option <Raw>{option.key}</Raw> is labelled: <span className="text-text">{option.label}</span>
+          Option <Raw>{option.key}</Raw> is labelled: <Prose inline className="text-text">{option.label}</Prose>
         </p>
-        {d.detail && <p className="whitespace-pre-wrap text-text [overflow-wrap:anywhere]">{d.detail}</p>}
+        {d.detail && <Prose className="text-text">{d.detail}</Prose>}
       </section>
     </SignPrompt>
   )

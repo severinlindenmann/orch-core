@@ -131,3 +131,41 @@ describe('#9 a pathological contribution fails only its own surface, before bind
     expect(nodeBudgetProblem(deep(20))).toBeNull()
   })
 })
+
+describe('#2 #7 approvals and answers bind the content the person reviewed', () => {
+  const editPlan = (s: MockStore, key: string, text: string) => {
+    ;(s as unknown as { bodies: Map<string, Record<string, string>> }).bodies.get(key)!.plan = text
+    s.append(key, { type: 'section.edited', actor: 'claude-code:attack:p_sev', section: 'plan', text })
+  }
+  it('a plan edited after the person read it is refused (409 gate.stale) and stays unapproved', async () => {
+    const { s, api } = setup()
+    const key = 'DEMO-0044'
+    const reviewed = s.ticket(key)!.gates.plan.hash!
+    expect(reviewed).toMatch(/^sha256:[0-9a-f]{64}$/) // a full content hash, not a short display id
+    editPlan(s, key, 'NEW ATTACKER PLAN')
+    expect(s.ticket(key)!.gates.plan.hash).not.toBe(reviewed)
+    const r = await api('POST', `/api/tickets/${key}/actions`, { action: 'approve', gate: 'plan', hash: reviewed })
+    expect(r.status).toBe(409)
+    expect((r.json as { error: { code: string } }).error.code).toBe('gate.stale')
+    expect(s.ticket(key)!.gates.plan.state).not.toBe('approved')
+  })
+  it('an approval without the reviewed hash is refused; with the current one it is recorded with that hash', async () => {
+    const { s, api } = setup()
+    const key = 'DEMO-0044'
+    expect((await api('POST', `/api/tickets/${key}/actions`, { action: 'approve', gate: 'plan' })).status).toBe(409)
+    const hash = s.ticket(key)!.gates.plan.hash!
+    const r = await api('POST', `/api/tickets/${key}/actions`, { action: 'approve', gate: 'plan', hash })
+    expect(r.status).toBe(200)
+    expect(s.eventsOf(key).some((e) => e.type === 'gate.approved' && e.gate === 'plan' && e.hash === hash)).toBe(true)
+  })
+  it('an answer to a question that changed since it was shown is refused (409 question.stale)', async () => {
+    const { s, api } = setup()
+    const key = 'DEMO-0043'
+    const q = s.ticket(key)!.questions_state.find((x) => x.state === 'open')!
+    const opt = q.options![0].key
+    expect((await api('POST', `/api/tickets/${key}/actions`, { action: 'answer', question: q.id, option: opt })).status).toBe(409)
+    expect((await api('POST', `/api/tickets/${key}/actions`, { action: 'answer', question: q.id, option: opt, hash: 'sha256:' + '0'.repeat(64) })).status).toBe(409)
+    const ok = await api('POST', `/api/tickets/${key}/actions`, { action: 'answer', question: q.id, option: opt, hash: q.hash })
+    expect(ok.status).toBe(200)
+  })
+})

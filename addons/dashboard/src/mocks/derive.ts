@@ -1,4 +1,5 @@
 // Derives the ticket document (§7) from definitions + events. Events are the only truth for state (T14).
+import { sha256Hex } from '@/api/sha256'
 import { codeReviewApplies, commitCover, DEFAULT_CODE_POLICY, GATE_ORDER, gateSignedContent } from '@/api/gates'
 import { branchOf, commitOf, firstCommit, type Commit } from './changes'
 import type {
@@ -298,7 +299,8 @@ export function deriveTicket(
     return {
       ...q,
       state: answer ? 'answered' : 'open',
-      hash: 'sha256:' + fnvHex(def.uid + q.id + q.text + JSON.stringify(q.options ?? []), 12) + '…',
+      // A full content hash: an answer binds it (the host compares it, security review #7).
+      hash: 'sha256:' + sha256Hex(JSON.stringify([def.uid, q.id, q.to, q.text, q.options ?? []])),
       asked_at: a?.at ?? created,
       asked_by: a?.by ?? (people.owner ?? 'unknown'),
       answer,
@@ -332,7 +334,9 @@ export function deriveTicket(
       note: changes?.text,
       reason: invalid?.reason,
       ...(gateVoided[g].length ? { voided: gateVoided[g] } : {}),
-      hash: 'sha256:' + fnvHex(def.uid + g + gated.material, 12) + '…',
+      // Requirements and plan: a full content hash an approval binds (security review #2). Verify and code bind the
+      // commit through source_sha; their hash stays the mock's short id.
+      hash: g === 'requirements' || g === 'plan' ? 'sha256:' + sha256Hex(JSON.stringify([def.uid, g, gated.material])) : 'sha256:' + fnvHex(def.uid + g + gated.material, 12) + '…',
       covers: gated.covers,
       ...(signed ? { source_sha: signed } : {}),
       ...(g === 'code' ? { required: codeReviewApplies(policy.applies, def.type) } : {}),

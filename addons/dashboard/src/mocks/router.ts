@@ -106,7 +106,9 @@ function postAction(store: MockStore, ctx: RouteContext): TransportResponse {
       if (q.to !== me && !can(role, 'question.answer.any')) return fail(403, 'question.not_addressee', `${q.id} is addressed to ${q.to}.`)
       if (a.option && !q.options?.some((o) => o.key === a.option)) return fail(400, 'validation', `Unknown option ${a.option}`)
       if (!a.option && !a.text?.trim()) return fail(400, 'validation', 'Pick an option or write an answer.')
-      const event = store.append(key, { type: 'question.answered', question: q.id, option: a.option, text: a.text?.trim() || undefined })
+      // The answer binds the question the person read (security review #7): its hash then must be its hash now.
+      if (typeof a.hash !== 'string' || a.hash !== q.hash) return fail(409, 'question.stale', `${q.id} changed since you opened it.`, 'Open the question again and answer the current one.')
+      const event = store.append(key, { type: 'question.answered', question: q.id, option: a.option, text: a.text?.trim() || undefined, hash: q.hash })
       const stillBlocked = store.ticket(key)!.questions_state.some((x) => x.state === 'open' && x.blocking)
       if (!stillBlocked && t.status === 'waiting') store.append(key, { type: 'status.changed', actor: 'host', to: 'open' })
       return finish(event)
@@ -127,7 +129,11 @@ function postAction(store: MockStore, ctx: RouteContext): TransportResponse {
       }
       const why = store.canApprove(t, a.gate, me)
       if (why) return fail(403, 'gate.not_eligible', why, 'See the gate policy in the workspace settings.')
-      const event = store.append(key, { type: 'gate.approved', gate: a.gate, presence: 'touchid' })
+      // The approval binds the content the person reviewed (security review #2): the hash the dialog showed must be the
+      // gate's content hash now, compared in the same step that appends the approval.
+      if (typeof a.hash !== 'string' || a.hash !== t.gates[a.gate].hash)
+        return fail(409, 'gate.stale', `The ${a.gate} changed since you opened it.`, 'Open it again and review the current text.')
+      const event = store.append(key, { type: 'gate.approved', gate: a.gate, presence: 'touchid', hash: a.hash })
       if (a.gate === 'plan' && t.status === 'backlog') store.append(key, { type: 'status.changed', actor: 'host', to: 'open' })
       return finish(event)
     }

@@ -46,7 +46,8 @@ export function manifestFor(pkg: Pick<AddonPackage, 'actions' | 'update'>, insta
 export const PACKAGE_NAME = /^[a-z][a-z0-9-]{0,39}$/
 /** An arg key an addon may send with an action (node args, signed args). */
 export const ARG_KEY = /^[A-Za-z][A-Za-z0-9_]{0,31}$/
-const HIDDEN_CHAR = new RegExp('[\\p{Cc}\\p{Cf}\\u2028\\u2029]', 'u')
+// The same characters core's visible-string helpers escape (components/sign/visible.tsx): never in a title.
+const HIDDEN_CHAR = new RegExp('[\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}\\p{Default_Ignorable_Code_Point}\\p{Co}\\p{Cn}\\p{Cs}\\u2420]|(?! )\\p{Zs}', 'u')
 
 /** At most this many terms on one decision (as for signed args). */
 export const MAX_DECISION_TERMS = 12

@@ -55,6 +55,8 @@ interface Case {
 const wsOf = (s: MockStore) => s.workspaces.find((w) => w.prefix === 'DEMO')!.id
 const dialogNamed = (name: string | RegExp) => screen.findByRole('dialog', { name }, T)
 const press = (name: string | RegExp) => async (user: User, dialog: HTMLElement) => user.click(within(dialog).getByRole('button', { name }))
+/** A typed signed value's line (security review #8): a string quoted, a number or boolean bare. */
+const typed = (label: string) => (v: string) => (l: string) => l === `${label}: "${v}"` || (/^(-?\d+(\.\d+)?|true|false)$/.test(v) && l === `${label}: ${v}`)
 const line = (prefix: string, has: (v: string) => string) => (v: string) => (l: string) => l.startsWith(prefix) && l.includes(has(v))
 
 async function ticketAction(user: User, name: RegExp) {
@@ -86,7 +88,8 @@ const CASES: Case[] = [
     method: 'postAction',
     arg: 1,
     skip: ['action'],
-    shown: { gate: (v) => `Approve ${v}` },
+    // The content hash it binds (security review #2) is the one in the dialog's Details.
+    shown: { gate: (v) => `Approve ${v}`, hash: (v) => v },
   },
   {
     name: 'answer',
@@ -101,7 +104,7 @@ const CASES: Case[] = [
     method: 'postAction',
     arg: 1,
     skip: ['action'],
-    shown: { question: (v) => `Question ${v}:`, option: (v) => `(option ${v})` },
+    shown: { question: (v) => `Question ${v}:`, option: (v) => `(option ${v})`, hash: (v) => v },
   },
   {
     name: 'verdict',
@@ -219,12 +222,12 @@ const CASES: Case[] = [
     shown: {
       id: (v) => (v.endsWith('.relay.recv-question+drop.send-handoff+question.90d') ? `Decision ${v}` : `unexpected id ${v}`),
       option: (v) => `Answer: option ${v}`,
-      peer: (v) => `Peer (peer): ${v}`,
-      comparison_code: (v) => `Comparison code (comparison_code): ${v}`,
-      carrier: (v) => `Carrier (carrier): ${v}`,
-      they_may_send_us: (v) => `They may send us (they_may_send_us): ${v}`,
-      we_may_send_them: (v) => `We may send them (we_may_send_them): ${v}`,
-      expires_after: (v) => `Expires after (expires_after): ${v}`,
+      peer: typed('Peer (peer)'),
+      comparison_code: typed('Comparison code (comparison_code)'),
+      carrier: typed('Carrier (carrier)'),
+      they_may_send_us: typed('They may send us (they_may_send_us)'),
+      we_may_send_them: typed('We may send them (we_may_send_them)'),
+      expires_after: typed('Expires after (expires_after)'),
     },
   },
   {

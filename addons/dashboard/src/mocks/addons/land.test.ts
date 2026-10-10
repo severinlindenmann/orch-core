@@ -465,9 +465,10 @@ describe('a void resets the quorum (core)', () => {
     w.gates.plan.count = 2
     // DEMO-0046: Severin approved the plan, then it was invalidated (plan changed).
     expect(s.store.ticket('DEMO-0046')!.gates.plan).toMatchObject({ state: 'invalidated', approvals: [] })
-    await s.api.postAction('DEMO-0046', { action: 'approve', gate: 'plan' })
+    const hash = s.store.ticket('DEMO-0046')!.gates.plan.hash
+    await s.api.postAction('DEMO-0046', { action: 'approve', gate: 'plan', hash })
     expect(s.store.ticket('DEMO-0046')!.gates.plan).toMatchObject({ state: 'pending', approvals: [{ by: 'p_sev' }] })
-    expect((await refused(s.api.postAction('DEMO-0046', { action: 'approve', gate: 'plan' }))).code).toBe('gate.not_eligible')
+    expect((await refused(s.api.postAction('DEMO-0046', { action: 'approve', gate: 'plan', hash }))).code).toBe('gate.not_eligible')
   })
 
   it('client and server agree: Mara may give the verdict on DEMO-0053 after the void', () => {

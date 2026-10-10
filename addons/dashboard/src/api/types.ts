@@ -777,9 +777,13 @@ export interface AddonActionResult {
 // ---------------------------------------------------------------- actions & errors
 
 export type ActionRequest =
-  | { action: 'answer'; question: string; option?: string; text?: string }
-  /** `source_sha` (code gate): the commit the person reviewed; refused when the branch moved since. */
-  | { action: 'approve'; gate: GateName; source_sha?: string }
+  /** `hash`: the question's hash as the dialog showed it; refused when the question changed since (`question.stale`). */
+  | { action: 'answer'; question: string; option?: string; text?: string; hash: string }
+  /**
+   * `source_sha` (code gate): the commit the person reviewed; refused when the branch moved since. `hash` (requirements
+   * and plan): the gate's content hash as the dialog showed it; required, refused when the content changed (`gate.stale`).
+   */
+  | { action: 'approve'; gate: GateName; source_sha?: string; hash?: string }
   | { action: 'request_changes'; gate: GateName; text: string }
   /** `source_sha`: the branch head the dialog showed; the host refuses a verdict on another commit (`verdict.stale`). */
   | { action: 'verdict'; result: 'pass' | 'fail'; text?: string; source_sha: string }

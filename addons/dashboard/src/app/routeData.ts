@@ -13,6 +13,7 @@ import { api } from '@/api/client'
 import { can, roleOf } from '@/api/permissions'
 import type { AddonContribution, AddonPackage, AddonSlot, Workspace } from '@/api/types'
 import { addonStateKey, bindsAddonState } from '@/addon-ui/slots'
+import type { TicketsSearch } from './pages/tickets/search'
 import type { UrlState } from './urls'
 
 export interface LoaderContext {
@@ -34,6 +35,13 @@ const storedWorkspace = (): string | null => {
 /** Waits for all, never rejects (each page shows its own error for a request that failed). */
 const settle = (parts: Ensure[]) => Promise.allSettled(parts).then(() => undefined)
 
+/**
+ * The longest a loader holds a page for its data. A request slower than this (a host under load, an addon that does
+ * not answer) no longer keeps the page away: it shows with its own placeholders for what is still missing.
+ */
+export const LOADER_WAIT_MS = 1500
+const atMost = (p: Promise<unknown>, ms = LOADER_WAIT_MS) => Promise.race([p, new Promise((res) => setTimeout(res, ms))]).then(() => undefined)
+
 const me = (qc: QueryClient) => qc.ensureQueryData({ queryKey: ['me'], queryFn: api.getMe })
 const workspaces = (qc: QueryClient) => qc.ensureQueryData({ queryKey: ['workspaces'], queryFn: api.getWorkspaces })
 const addons = (qc: QueryClient) => qc.ensureQueryData({ queryKey: ['addons'], queryFn: api.getAddons, staleTime: 30_000 })
@@ -48,7 +56,7 @@ function pickWorkspace(list: Workspace[], urls: UrlState): Workspace | undefined
 export async function loadShell(ctx: LoaderContext): Promise<void> {
   const qc = ctx.queryClient
   if (!qc) return
-  await settle([me(qc), workspaces(qc), addons(qc), qc.ensureQueryData({ queryKey: ['dev-dataset'], queryFn: () => api.getDataset() })])
+  await atMost(settle([me(qc), workspaces(qc), addons(qc), qc.ensureQueryData({ queryKey: ['dev-dataset'], queryFn: () => api.getDataset() })]))
 }
 
 /** The workspace-scoped parts of the shell (sidebar grant line, the dock's sessions, addon nav badges). */
@@ -87,15 +95,14 @@ export function pageLoader(parts: (s: PageScope) => Ensure[], chunks: (() => Pro
       await code
       return
     }
-    const [person, list, pkgs] = await Promise.all([me(qc).catch(() => undefined), workspaces(qc).catch(() => []), addons(qc).catch(() => [])])
-    const ws = pickWorkspace(list, context.urls)
-    if (!ws) {
-      await code
-      return
+    const data = async () => {
+      const [person, list, pkgs] = await Promise.all([me(qc).catch(() => undefined), workspaces(qc).catch(() => []), addons(qc).catch(() => [])])
+      const ws = pickWorkspace(list, context.urls)
+      if (!ws) return
+      const owner = can(roleOf(ws, person?.person), 'settings')
+      await settle([...shellScoped(qc, ws, pkgs), ...parts({ qc, ws, pkgs, owner })])
     }
-    const owner = can(roleOf(ws, person?.person), 'settings')
-    const scope = { qc, ws, pkgs, owner }
-    await Promise.all([code, settle([...shellScoped(qc, ws, pkgs), ...parts(scope)])])
+    await Promise.all([code, atMost(data())])
   }
 }
 
@@ -131,9 +138,17 @@ export const boardData = ({ qc, ws, pkgs }: PageScope): Ensure[] => [
   ...slotStates(qc, ws, pkgs, 'board.card_field'),
 ]
 
-export const ticketsData = ({ qc, ws }: PageScope): Ensure[] => [
-  qc.ensureQueryData({ queryKey: ['tickets', ws.id, 'all'], queryFn: () => api.listTickets(ws.id) }),
-]
+/** The Tickets list: the unfiltered list (filter options, counts) and the list for the address's filters. */
+export const ticketsData =
+  (search: TicketsSearch) =>
+  ({ qc, ws }: PageScope): Ensure[] => {
+    // The same object (and so the same query key) the page builds from its search.
+    const params = { q: search.q, type: search.type, priority: search.priority, person: search.person, needs: search.needs, label: search.label, sort: search.sort }
+    return [
+      qc.ensureQueryData({ queryKey: ['tickets', ws.id, 'all'], queryFn: () => api.listTickets(ws.id) }),
+      qc.ensureQueryData({ queryKey: ['tickets', ws.id, params], queryFn: () => api.listTickets(ws.id, params) }),
+    ]
+  }
 
 export const agentsData = ({ qc, ws, owner }: PageScope): Ensure[] => [
   qc.ensureQueryData({ queryKey: ['agents', ws.id], queryFn: () => api.getAgents(ws.id) }),
@@ -184,4 +199,10 @@ export const addonPageData =
 /** A ticket page: the ticket itself (its key names its workspace, so it does not wait for the page's workspace). */
 export const ticketData =
   (key: string) =>
-  ({ qc }: PageScope): Ensure[] => [qc.ensureQueryData({ queryKey: ['ticket', key], queryFn: () => api.getTicket(key), retry: false })]
+  ({ qc, ws, pkgs }: PageScope): Ensure[] => [
+    qc.ensureQueryData({ queryKey: ['ticket', key], queryFn: () => api.getTicket(key), retry: false }),
+    // The ticket's addon panels (their count shows in the header's Panels button).
+    ...pkgs
+      .filter((a) => addonActive(ws, a.name) && (a.contributions as AddonContribution[]).some((c) => c.slot === 'ticket.panel' && bindsAddonState(c)))
+      .map((a) => qc.ensureQueryData({ queryKey: addonStateKey(ws.id, a.name, key), queryFn: () => api.getAddonState(ws.id, a.name, key), staleTime: 10_000 })),
+  ]

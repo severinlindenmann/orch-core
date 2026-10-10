@@ -183,7 +183,8 @@ describe('Tickets grouped by epic (N2)', () => {
   })
 
   it('if the viewer cannot be loaded the list shows an error with Retry', async () => {
-    vi.spyOn(api, 'getMe').mockRejectedValueOnce(new Error('down'))
+    // Down until restored: the route loader asks first, the page asks again when it mounts (G4).
+    vi.spyOn(api, 'getMe').mockRejectedValue(new Error('down'))
     renderApp('/tickets')
     expect(await screen.findByRole('alert')).toHaveTextContent(/Could not load tickets/)
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()

@@ -48,7 +48,8 @@ const ticketsRoute = createRoute({
   getParentRoute: () => rootRoute, path: 'tickets',
   validateSearch: validateTicketsSearch,
   component: TicketsPage,
-  loader: pageLoader(ticketsData, [TicketsPage.preload]),
+  // The search is read once, on entering the page: a filter change keeps the page and refetches in place.
+  loader: ({ context, location }) => pageLoader(ticketsData(validateTicketsSearch(location.search as Record<string, unknown>)), [TicketsPage.preload])({ context }),
   pendingComponent: TicketsSkeleton,
 })
 const newTicketRoute = createRoute({ getParentRoute: () => rootRoute, path: 'tickets/new', component: NewTicketPage, loader: pageLoader(() => [], [NewTicketPage.preload]) })

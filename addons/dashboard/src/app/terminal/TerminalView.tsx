@@ -206,7 +206,8 @@ function XtermSession({ addon, session, interactive, fontSize, placement, picker
       // xterm sizes its viewport over the next frames: keep it hidden until the viewport has its size, so it appears
       // at its final size instead of growing in place (the host's background is the terminal's: nothing flashes).
       const drawn = term.element
-      if (drawn) {
+      // Only where there is real layout (not in jsdom, where nothing is ever measured).
+      if (drawn && el.getBoundingClientRect().height > 0) {
         drawn.style.visibility = 'hidden'
         let frames = 0
         let last = ''

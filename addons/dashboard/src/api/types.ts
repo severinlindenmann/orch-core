@@ -823,6 +823,8 @@ export type WorkspaceEventType =
   | 'relay.connected' | 'relay.stopped' | 'device.paired' | 'device.removed' | 'epoch.rotated'
   | 'skill.credentials_granted' | 'connection.checked'
   | 'records.committed' | 'records.pushed' | 'records.pulled'
+  | 'links.pairing_started' | 'links.pairing_cancelled' | 'links.pairing_denied' | 'links.paired' | 'links.revoked'
+  | 'links.request_received' | 'links.request_accepted' | 'links.request_denied' | 'links.answered' | 'links.scope_changed' | 'links.sent'
 export interface WorkspaceEvent {
   v: 2
   id: string

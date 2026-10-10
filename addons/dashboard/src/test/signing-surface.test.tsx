@@ -198,6 +198,81 @@ const CASES: Case[] = [
     args: true,
   },
   {
+    // Workspace links (owner feedback 2026-10-10 B): an incoming pairing request is an owner's decision; its id carries the comparison code.
+    name: 'links pairing request (decision node)',
+    path: '/addon/links/links',
+    setup: (s) => installAndGrant(s, wsOf(s), 'links'),
+    open: async (user) => {
+      await user.click(await screen.findByRole('tab', { name: /^Requests/ }, T))
+      await user.click(await screen.findByRole('button', { name: 'Codes match: link' }, T))
+      return dialogNamed('Decide for Workspace links (links)')
+    },
+    confirm: press('Send answer'),
+    method: 'runAddonAction',
+    arg: 3,
+    addon: ['Link request from Fabrikam Energy', 'Codes match: link', 'Jonas Weber'],
+    skip: ['confirmed'],
+    shown: { id: (v) => `Decision ${v}`, option: (v) => `Answer: option ${v}` },
+  },
+  {
+    name: 'links confirm pairing (confirm: sign)',
+    path: '/addon/links/links',
+    setup: (s) => {
+      installAndGrant(s, wsOf(s), 'links')
+      s.addonState(wsOf(s), 'links').pending = {
+        id: 'pr_9', carrier: 'local', peer: { name: 'CLI · Client VM', ws: 'CLI', owner: 'Severin' }, accepts: ['status'], days: 30, pairing_code: 'ABC-DEF',
+        started_at: '2026-10-09T11:29:00Z', started_by: 'p_sev', joined: { at: '2026-10-09T11:29:30Z', fingerprint: 'K7M2QX', theyAccept: ['status'] },
+      }
+    },
+    open: async (user) => {
+      await user.click(await screen.findByRole('tab', { name: /^Set up/ }, T))
+      await user.click(await screen.findByRole('button', { name: 'Codes match: sign' }, T))
+      return dialogNamed(/^Sign: .* · Workspace links \(links\)$/)
+    },
+    confirm: press('Sign and run'),
+    method: 'runAddonAction',
+    arg: 3,
+    addon: ['Link the two workspaces'],
+    skip: ['confirmed'],
+    args: true,
+  },
+  {
+    name: 'links hand off a ticket (confirm: sign)',
+    path: '/addon/links/links',
+    setup: (s) => {
+      installAndGrant(s, wsOf(s), 'links')
+      s.addonState(wsOf(s), 'links').nav = { p_sev: { draft: { link: 'ln_int', ticket: 'DEMO-0045' } } }
+    },
+    open: async (user) => {
+      await user.click(await screen.findByRole('tab', { name: /^Requests/ }, T))
+      await user.click(await screen.findByRole('button', { name: 'Sign and send' }, T))
+      return dialogNamed(/^Sign: .* · Workspace links \(links\)$/)
+    },
+    confirm: press('Sign and run'),
+    method: 'runAddonAction',
+    arg: 3,
+    addon: ['Hand off a ticket'],
+    skip: ['confirmed'],
+    args: true,
+  },
+  {
+    name: 'links revoke (confirm: destructive)',
+    path: '/addon/links/links',
+    setup: (s) => installAndGrant(s, wsOf(s), 'links'),
+    open: async (user) => {
+      const row = (await screen.findByText('INT · Internal', {}, T)).closest('tr')!
+      await user.click(within(row).getByRole('button', { name: /More actions/ }))
+      await user.click(await screen.findByRole('menuitem', { name: 'Revoke' }, T))
+      return screen.findByRole('alertdialog', {}, T)
+    },
+    confirm: press('Confirm: Revoke (revoke)'),
+    method: 'runAddonAction',
+    arg: 3,
+    addon: ['Revoke link', 'Nothing crosses this link from now on'],
+    skip: ['confirmed'],
+    args: true,
+  },
+  {
     name: 'start agent (grant + start)',
     path: '/ticket/DEMO-0044',
     wide: true,

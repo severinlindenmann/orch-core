@@ -772,6 +772,7 @@ const CHIP_TONE: Record<string, string> = {
   failed: 'bg-danger', failing: 'bg-danger', error: 'bg-danger', refused: 'bg-danger', rejected: 'bg-danger',
   pending: 'bg-warning', open: 'bg-warning', waiting: 'bg-warning', blocked: 'bg-warning', review: 'bg-warning',
   pass: 'bg-success', fail: 'bg-danger', requested: 'bg-warning', 'changes requested': 'bg-danger', enabled: 'bg-success', 'granted once': 'bg-success', 'granted for this epic': 'bg-success',
+  active: 'bg-success', accepted: 'bg-success', answered: 'bg-success', expiring: 'bg-warning', queued: 'bg-warning', denied: 'bg-danger',
 }
 /** State words in a `status`/`state` column read as a small chip with a dot (neutral surface, no orange). */
 function StateChip({ text }: { text: string }) {

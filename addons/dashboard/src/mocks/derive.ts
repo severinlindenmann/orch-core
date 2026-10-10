@@ -565,6 +565,30 @@ export function describeEvent(e: Pick<OrchEvent, 'type'> & Record<string, unknow
       return `pushed ${t(e.commit, 'the record commits')} to the remote (${who})`
     case 'records.pulled':
       return `pulled the remote's record commits (${who})`
+    case 'links.pairing_started':
+      return 'started pairing a workspace link'
+    case 'links.pairing_cancelled':
+      return 'cancelled a workspace link pairing'
+    case 'links.pairing_denied':
+      return 'denied a workspace link request'
+    case 'links.paired':
+      return 'linked a workspace'
+    case 'links.revoked':
+      return 'revoked a workspace link'
+    case 'links.request_received':
+      return 'received a request from a linked workspace'
+    case 'links.request_accepted':
+      return 'accepted a request from a linked workspace'
+    case 'links.request_denied':
+      return 'denied a request from a linked workspace'
+    case 'links.answered':
+      return 'answered a linked workspace'
+    case 'links.scope_changed':
+      return 'widened what a linked workspace may send'
+    case 'links.sent':
+      return e.to ? `handed off to ${t(e.to, 'a linked workspace')}` : 'handed off to a linked workspace'
+    case 'links.received':
+      return e.from ? `received from ${t(e.from, 'a linked workspace')}` : 'received from a linked workspace'
     case 'wiki.linked':
       return 'linked a wiki page'
     case 'land.queued':

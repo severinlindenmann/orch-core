@@ -254,7 +254,7 @@ export class MockStore {
   private installBusyAddons() {
     const demo = this.seedWorkspaces.find((w) => w.prefix === 'DEMO')
     if (!demo) return
-    for (const name of ['activity', 'records', 'worktrees', 'quick', 'models', 'schedules', 'factory']) {
+    for (const name of ['activity', 'records', 'worktrees', 'quick', 'models', 'schedules', 'factory', 'links']) {
       const pkg = this.addons.find((a) => a.name === name)
       if (!pkg || demo.addons[name]) continue
       demo.addons[name] = {

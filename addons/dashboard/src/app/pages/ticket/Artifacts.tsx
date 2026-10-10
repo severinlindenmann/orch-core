@@ -167,7 +167,7 @@ const isHtmlDocument = (a: Artifact) => DOCUMENT_KINDS.includes(a.kind) && /\.ht
  */
 function HtmlViewer({ a, agentHtml }: { a: Artifact; agentHtml: boolean }) {
   const [source, setSource] = useState(false)
-  const node = frameNode.safeParse({ type: 'frame', title: `Sandboxed preview of ${a.name}`, html: frameDocument(a.preview!, {}), height: 520 })
+  const node = frameNode.safeParse({ type: 'frame', title: `Sandboxed preview of ${a.name}`, html: frameDocument(a.preview!, {}, 520), height: 520 })
   const framed = agentHtml && !source && node.success
   return (
     <div className={cn('space-y-2', agentHtml && 'rounded-lg border p-2', agentHtml && addonHairline)} data-addon={agentHtml ? 'widgets' : undefined}>

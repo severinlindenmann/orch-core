@@ -18,20 +18,57 @@ export function FrameNode({ node, fallback, fitContent = false }: { node: NodeOf
 }
 
 /** The smallest height a fitted frame takes, whatever it reports. */
-const MIN_FIT = 48
+export const MIN_FIT = 48
+/** A shrink reported this soon after the frame's own shrink is taken as the document answering that shrink. */
+const LOOP_MS = 500
+
+/** How a fitted frame follows its document's reported heights (see `stepFit`). */
+export interface FitState {
+  /** The height applied; null until the first report (the frame then has `node.height`). */
+  fit: number | null
+  /** When the last shrink was applied, and by how much. */
+  shrankAt: number | null
+  shrankBy: number
+  /** Shrinks in a row that answered the frame's own shrink, and the height before the first shrink of that run. */
+  streak: number
+  before: number
+  /** A feedback loop was seen: the frame keeps its height and takes no more shrinks (it still grows). */
+  frozen: boolean
+}
+export const FIT_START: FitState = { fit: null, shrankAt: null, shrankBy: 0, streak: 0, before: 0, frozen: false }
+
+/**
+ * One reported content height → the frame's next state. Bounded to [MIN_FIT, max]; changes under 2 px are ignored.
+ * A document that sizes itself from its own viewport (100vh, height:100%) reports a smaller height after every shrink
+ * of the frame, which shrinks it again, round after round: a shrink that comes within LOOP_MS of the frame's own
+ * shrink and is at least half as big counts as an answer to it, and the second such answer in a row stops it. The
+ * frame goes back to its height before that run and takes no more shrinks, so it never ends up tiny. Pure (tested).
+ */
+export function stepFit(s: FitState, reported: number, max: number, now: number): FitState {
+  const next = Math.max(MIN_FIT, Math.min(max, Math.ceil(reported)))
+  const cur = s.fit ?? max
+  if (s.fit !== null && Math.abs(cur - next) < 2) return s
+  if (next >= cur) return { ...s, fit: next, streak: 0 }
+  if (s.frozen) return s
+  const answers = s.shrankAt !== null && now - s.shrankAt <= LOOP_MS && cur - next >= s.shrankBy / 2
+  if (!answers) return { ...s, fit: next, shrankAt: now, shrankBy: cur - next, streak: 0, before: cur }
+  if (s.streak + 1 >= 2) return { ...s, fit: s.before, frozen: true }
+  return { ...s, fit: next, shrankAt: now, shrankBy: cur - next, streak: s.streak + 1 }
+}
 
 /** The first load is the srcdoc itself; any later load means the frame navigated somewhere else. */
 function SandboxFrame({ node, srcDoc, fallback, fitContent }: { node: NodeOf<'frame'>; srcDoc: string; fallback: ReactNode; fitContent: boolean }) {
   const loads = useRef(0)
   const ref = useRef<HTMLIFrameElement>(null)
   const [navigated, setNavigated] = useState(false)
-  const [fit, setFit] = useState<number | null>(null)
+  const [fit, setFit] = useState<FitState>(FIT_START)
   // `fitContent`: the document is core's frame document, whose size reporter posts its content height. Only messages
-  // from this frame's own window count, and only a number: the frame shrinks to it, never past `node.height`.
+  // from this frame's own window count, and only a number: the frame shrinks to it, never past `node.height`, and
+  // never in a loop (stepFit).
   useEffect(() => {
     if (!fitContent) return
-    // At most one height per animation frame (the last one wins), and changes under 2 px are ignored: a chatty or
-    // oscillating frame cannot make the page re-layout on every message.
+    // At most one height per animation frame (the last one wins): a chatty frame cannot make the page re-layout on
+    // every message.
     let pending: number | null = null
     let raf = 0
     const apply = () => {
@@ -39,13 +76,13 @@ function SandboxFrame({ node, srcDoc, fallback, fitContent }: { node: NodeOf<'fr
       const next = pending
       pending = null
       if (next === null) return
-      setFit((cur) => (cur !== null && Math.abs(cur - next) < 2 ? cur : next))
+      setFit((cur) => stepFit(cur, next, node.height, performance.now()))
     }
     const onMessage = (e: MessageEvent) => {
       if (!ref.current || e.source !== ref.current.contentWindow) return
       const h = (e.data as { orch?: unknown; height?: unknown } | null)?.height
       if ((e.data as { orch?: unknown } | null)?.orch !== 'size' || typeof h !== 'number' || !Number.isFinite(h)) return
-      pending = Math.max(MIN_FIT, Math.min(node.height, Math.ceil(h)))
+      pending = h
       if (!raf) raf = requestAnimationFrame(apply)
     }
     window.addEventListener('message', onMessage)
@@ -63,7 +100,7 @@ function SandboxFrame({ node, srcDoc, fallback, fitContent }: { node: NodeOf<'fr
       srcDoc={srcDoc}
       referrerPolicy="no-referrer"
       loading="lazy"
-      style={{ height: fit ?? node.height }}
+      style={{ height: fit.fit ?? node.height }}
       className="w-full rounded-md border border-border bg-bg"
       onLoad={() => {
         loads.current += 1

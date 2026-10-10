@@ -303,6 +303,7 @@ class Projection:
         self._at, self._ws_seq = stamp["at"], stamp["ws_seq"]
         self._state = store.state
         self.planned: list[Planned] = []
+        self._probes: list[dict[str, Any]] = []
         self.bases: dict[str, str] = {}
         self.first_seq = stamp["seq"]
         self.last_view = view
@@ -333,6 +334,9 @@ class Projection:
         from orch.store import StoreError
 
         ev = {**event, "actor": self.call.actor()}
+        # a ticket the builder just loaded (a parent, a blocker) can move the merged order: stamp again, never earlier
+        stamp = self.call.store.peek_stamp(self.uid)
+        self._at = max(self._at, stamp["at"])
         probe = {
             **ev,
             "v": 2,
@@ -348,11 +352,27 @@ class Projection:
         if isinstance(r, Refusal):
             raise StoreError.from_refusal(r)
         self._state, self._seq, self._prev = r, self._seq + 1, canon.event_head(probe)
+        self._probes.append(probe)
         self.planned.append(Planned(ev, body, artifacts))
         self.last_view = r.tickets[self.uid]
         for path in ev.get("base_rev", {}):
             self.bases[path] = path_hash(self.last_view, path)
         return self.last_view
+
+    def refresh(self) -> None:
+        """Judge from the store's current state again, with the events planned so far replayed on top. A builder calls
+        this after it loaded another ticket (a parent, a blocker): the state it planned on did not have it yet."""
+        from orch.model import Refusal, preview
+        from orch.store import StoreError
+
+        state = self.call.store.state
+        for probe in self._probes:
+            r = preview(state, probe, log=self.uid)
+            if isinstance(r, Refusal):
+                raise StoreError.from_refusal(r)
+            state = r
+        self._state = state
+        self.last_view = state.tickets[self.uid]
 
     @property
     def last_seq(self) -> int:
@@ -489,12 +509,15 @@ class Call:
             self.require_claim(view)
         return view
 
-    def require_claim(self, view: Any, *, live_only: bool = True) -> None:
+    def require_claim(self, view: Any, *, live_only: bool = True, own: bool = False) -> None:
+        """The session (or, unless ``own``, its parent: ``s_X.1`` works under ``s_X``'s claim) holds the claim."""
         from orch.model.claims import in_family
 
         c, s = view.claim, self.ctx.session
         if c is None or not s or not in_family(s, c.session) or (live_only and not c.live):
             raise OrchError("claim.required", f"you hold no live claim on {view.key}")
+        if own and s != c.session:  # the schema lets an agent release only the claim of its own session
+            raise OrchError("claim.required", f"{view.key} is claimed by {c.session}; only that session lets go of it")
 
     def ticket_of_task(self, task: str) -> tuple[Any, str]:
         """``T3`` (my claim) or ``DEMO-0043/T3`` as ``(view, "T3")``."""

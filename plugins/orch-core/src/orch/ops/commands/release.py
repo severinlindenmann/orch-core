@@ -13,7 +13,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
 
 
 def build(c: Call, p: Projection, args: dict[str, Any]) -> plans.Out:
-    c.require_claim(p.view, live_only=False)
+    c.require_claim(p.view, live_only=False, own=True)
     p.add({"type": "claim.released", "session": p.view.claim.session, "reason": "released"})
     return plans.Out({"released": True}, ["orch claim --next"])
 

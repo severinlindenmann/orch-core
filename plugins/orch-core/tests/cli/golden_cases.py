@@ -44,4 +44,4 @@ def _raw_cases() -> Iterator[tuple[str, str]]:
     yield "errors/_human-only.json", run_cli("approve", "plan", "--json").out
     yield "errors/_usage.txt", run_cli("task", "done").err
     yield "errors/_unknown.txt", run_cli("frobnicate").err
-    yield "errors/_not-implemented.txt", run_cli("status").err
+    yield "errors/_not-implemented.txt", run_cli("doctor").err

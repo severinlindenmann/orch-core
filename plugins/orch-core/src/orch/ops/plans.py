@@ -141,7 +141,7 @@ def _none(v: str) -> bool:
     return v in ("none", "null")
 
 
-def _keys(c: Call, v: str, what: str) -> list[str]:
+def _keys(c: Call, p: Projection, v: str, what: str) -> list[str]:
     if _none(v):
         return []
     out = []
@@ -149,9 +149,13 @@ def _keys(c: Call, v: str, what: str) -> list[str]:
         key = c.store.normalise_ref(item)
         if not _KEY.fullmatch(key):
             raise OrchError("invalid.input", f"{what}: {short(item, 40)!r} is not a ticket key")
+        other = c.store.ticket(key)  # loads it: the model judges the reference against its place in the order
+        if other is None or not c.sees(other):
+            raise OrchError("not_found", f"{what}: no ticket {key}")
         out.append(key)
     if len(set(out)) != len(out):
         raise OrchError("invalid.input", f"{what}: a key is given twice")
+    p.refresh()  # the referenced tickets are loaded now: judge against a state that has them
     return out
 
 
@@ -188,12 +192,12 @@ def parse_pair(c: Call, p: Projection, key: str, raw: str) -> Any:
             raise OrchError("invalid.input", "due is YYYY-MM-DD") from None
         return raw
     if key == "parent":
-        got = _keys(c, raw, "parent")
+        got = _keys(c, p, raw, "parent")
         if len(got) > 1:
             raise OrchError("invalid.input", "parent is one ticket key")
         return got[0] if got else None
     if key == "blocked_by":
-        return _keys(c, raw, "blocked_by")
+        return _keys(c, p, raw, "blocked_by")
     if key == "links":
         try:
             doc = canon.loads_strict(raw.encode())

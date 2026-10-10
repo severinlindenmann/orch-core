@@ -29,6 +29,20 @@ class Ws(Env):
         self.wsk_pub = self.host_backend.create("wsk")
         self.signer = BackendSigner(self.host_backend, "wsk")
 
+    def view(self, ref: str):
+        """The ticket as a fresh process sees it (``Env.store`` does not rescan the directory for new tickets)."""
+        s = self.other()
+        try:
+            return s.ticket(ref)
+        finally:
+            s.close()
+
+    def uid(self, ref: str) -> str:
+        return self.view(ref).uid
+
+    def events(self, ref: str) -> list[dict[str, Any]]:
+        return self.read_events(self.uid(ref))
+
     @property
     def grant(self) -> str:
         return f"{self.grant_id}.{crypto.b64u(GRANT_SECRET)}"
@@ -71,6 +85,7 @@ class Cli:
         import sys
 
         out, err = io.StringIO(), io.StringIO()
+        self.ws.tick()  # commands are seconds apart: two events never share an `at` by accident
         old = sys.stdin
         if stdin is not None:
             sys.stdin = io.TextIOWrapper(io.BytesIO(stdin.encode()))

@@ -14,6 +14,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
 
 
 def build(c: Call, p: Projection, args: dict[str, Any]) -> plans.Out:
+    c.require_claim(p.view, own=True)
     text = c.text(c.read_text_source(args, ("message", "file")) or "", limit=2048, what="handoff").strip("\n")
     if not text:
         raise OrchError("invalid.input", "the handoff is empty")

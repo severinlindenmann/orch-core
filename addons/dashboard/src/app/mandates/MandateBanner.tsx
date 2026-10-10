@@ -1,4 +1,4 @@
-// The shell banner while the preview mandate is in force (concept-mandates.md §3), PREVIEW ONLY. Calm (never orange,
+// The shell banner while the preview mandate is in force (concept-mandates.md §3), PREVIEW ONLY (the wide mandate, owner decision 10 Oct evening). Calm (never orange,
 // never a warning colour), one line that truncates, so it fits the 13" page beside the dock. Dismissible for the
 // browser session (per mandate and per phase: a Stop shows it again). Nothing here signs.
 import { Link } from '@tanstack/react-router'
@@ -34,7 +34,7 @@ export function MandateBanner() {
 
   const live = m.decisions.filter((d) => !d.voided).length
   const phase = m.state === 'stopping' ? 'Stopping…' : m.state === 'stopped' ? `Stopped at #${m.stop?.boundary_seq}` : `until ${weekday(m.expires)}`
-  const text = `Mandate ${plain(m.id)} · for ${plain(m.issuer)} · epic ${plain(m.epic.key)} · ${live} decision${live === 1 ? '' : 's'} · ${phase}`
+  const text = `Mandate ${plain(m.id)} · for ${plain(m.issuer)} · whole workspace · ${live} decision${live === 1 ? '' : 's'} · ${phase}`
   return (
     <div role="region" aria-label="Mandate in force (preview)" data-testid="mandate-banner" className="flex h-9 shrink-0 items-center gap-2 border-b border-border bg-surface px-4 text-[13px]">
       <ShieldCheck className="size-4 shrink-0 text-text-muted" aria-hidden />

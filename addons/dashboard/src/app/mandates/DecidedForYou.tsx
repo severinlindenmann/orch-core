@@ -23,6 +23,12 @@ const ASK: Record<PreviewMandate['decisions'][number]['kind'], string> = {
   requirements: 'Approve requirements',
   plan: 'Approve plan',
   verdict: 'Give the verdict',
+  code_review: 'Approve the code review',
+  unblock: 'Unblock',
+  permit: 'Answer the permit',
+  factory_enabled: 'Enable the factory',
+  factory_run: 'Start the factory run',
+  grant: 'Issue the grant',
 }
 
 const rowCls = 'flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-3 py-2 last:border-b-0'
@@ -66,13 +72,17 @@ export function DecidedForYou({ ws, now }: { ws: string; now: string }) {
           {shown.length > 0 && (
             <ul className="border-t border-border" aria-label="Decided for you">
               {shown.map((d) => {
-                const what = `${d.ticket} ${DECISION_KIND_LABEL[d.kind].toLowerCase()}`
+                const what = `${d.ticket ?? 'workspace'} ${DECISION_KIND_LABEL[d.kind].toLowerCase()}`
                 return (
                   <li key={d.id} data-testid={`mandate-decision:${d.id}`} className={rowCls}>
                     <div className="flex min-w-[16rem] flex-1 gap-2 text-[13px] leading-5">
-                      <Link to="/ticket/$key" params={{ key: d.ticket }} className="shrink-0 rounded outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring">
-                        <Raw>{d.ticket}</Raw>
-                      </Link>
+                      {d.ticket ? (
+                        <Link to="/ticket/$key" params={{ key: d.ticket }} className="shrink-0 rounded outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring">
+                          <Raw>{d.ticket}</Raw>
+                        </Link>
+                      ) : (
+                        <span className="shrink-0 text-text-muted">workspace</span>
+                      )}
                       <span className="min-w-0 flex-1">
                         <DecisionLine m={m} d={d} className="block font-medium text-text" />
                         <span className="block text-xs text-text-muted">
@@ -84,7 +94,7 @@ export function DecidedForYou({ ws, now }: { ws: string; now: string }) {
                       <Button size="xs" variant="outline" aria-label={`Looks right: ${what}`} onClick={() => void op({ op: 'review', decision: d.id, review: 'looks_right' })}>
                         Looks right
                       </Button>
-                      <Button size="xs" variant="ghost" aria-label={`Veto: ${what}`} onClick={() => void op({ op: 'review', decision: d.id, review: 'veto' }, `Veto recorded on ${plain(d.ticket)}`)}>
+                      <Button size="xs" variant="ghost" aria-label={`Veto: ${what}`} onClick={() => void op({ op: 'review', decision: d.id, review: 'veto' }, `Veto recorded on ${plain(d.ticket ?? DECISION_KIND_LABEL[d.kind])}`)}>
                         Veto
                       </Button>
                     </div>
@@ -101,8 +111,14 @@ export function DecidedForYou({ ws, now }: { ws: string; now: string }) {
                   <li key={r.id} data-testid={`mandate-refused:${r.id}`} className={rowCls}>
                     <div className="min-w-[16rem] flex-1 text-[13px] leading-5">
                       <p className="font-medium text-text">
-                        {ASK[r.kind]} on <Raw>{r.ticket}</Raw>
-                        {r.title ? ` · ${plain(r.title)}` : ''}
+                        {r.ticket && r.kind ? (
+                          <>
+                            {ASK[r.kind]} on <Raw>{r.ticket}</Raw>
+                            {r.title ? ` · ${plain(r.title)}` : ''}
+                          </>
+                        ) : (
+                          plain(r.asked ?? REFUSAL_LABEL[r.reason])
+                        )}
                       </p>
                       {/* Core's reason, in full: why the item came to you. */}
                       <p className="text-xs text-text-muted">
@@ -110,11 +126,13 @@ export function DecidedForYou({ ws, now }: { ws: string; now: string }) {
                         {r.detail} · {fmtWhen(r.at, now)}
                       </p>
                     </div>
-                    <Button size="xs" variant="outline" asChild>
-                      <Link to="/ticket/$key" params={{ key: r.ticket }} aria-label={`Open ${r.ticket}`}>
-                        Open
-                      </Link>
-                    </Button>
+                    {r.ticket && (
+                      <Button size="xs" variant="outline" asChild>
+                        <Link to="/ticket/$key" params={{ key: r.ticket }} aria-label={`Open ${r.ticket}`}>
+                          Open
+                        </Link>
+                      </Button>
+                    )}
                   </li>
                 ))}
               </ul>

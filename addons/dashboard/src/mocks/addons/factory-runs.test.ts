@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMockStore } from '@/mocks/store'
 import { installAndGrant } from '@/test/installAddon'
-import { RUN_STEP_MS, runArgs, type Run } from './factory-runs'
+import { RUN_STEP_MS, runArgs, type Run, type RunDraft } from './factory-runs'
 
 const EPIC = 'DEMO-0050'
 const DELIVER = { goal: 'Release monthly billing v2', goes_up_to: 'Deliver', deliver_means: 'Deploy to production', hold_minutes: 30 }
@@ -24,7 +24,7 @@ type S = ReturnType<typeof setup>
 /** Review the request, then sign and start it (core's `confirmed`), as the page does. */
 function startDeliverRun(s: S, form: Record<string, unknown> = DELIVER) {
   expect(s.run('prepare_run', { formData: form })).toMatchObject({ ok: true })
-  const res = s.run('start_run', { ...runArgs({ ...(form as never) }), confirmed: true })
+  const res = s.run('start_run', { ...runArgs(form as unknown as RunDraft), confirmed: true })
   expect(res).toMatchObject({ ok: true })
   return s.runs()[0]
 }
@@ -52,7 +52,7 @@ describe('factory full run: the request', () => {
   it('start needs core\'s signature and exactly the reviewed values', () => {
     const s = setup()
     s.run('prepare_run', { formData: DELIVER })
-    const args = runArgs(DELIVER as never)
+    const args = runArgs(DELIVER as unknown as RunDraft)
     expect(s.run('start_run', args)).toMatchObject({ ok: false, code: 'confirm.required' })
     expect(s.run('start_run', { ...args, deliver_means: 'Deploy to staging', confirmed: true })).toMatchObject({ ok: false, code: 'factory.stale' })
     expect(s.run('start_run', { ...args, confirmed: true })).toMatchObject({ ok: true })

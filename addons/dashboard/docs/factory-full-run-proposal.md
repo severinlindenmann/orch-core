@@ -25,9 +25,9 @@ One form, one signature:
 | What Deliver means | Required for Deliver. The concrete destination: "Deploy to production", "Publish campaign to the newsletter list", "Send to finance@example.test (boss)". |
 | Hold window | 15 min, **30 min** (default), 1 h or 4 h: how long Deliver waits, with a notice and Stop, before it goes out. |
 | Size cap | As the charter: children of size m or smaller; larger ones wait for you. |
-| Request id | Issued by the host when you review the request (`rq-7`); signed with the rest and **single use**. |
+| Request id | Issued by the host when you review the request (`rq-DEMO-3f9a2c1d-7`: workspace, a nonce, a number); signed with the rest and **single use**. |
 
-Core's signing prompt names every value in core lines ("Request (request): rq-7", "Goal (goal): …", "Goes up to (goes_up_to): Deliver",
+Core's signing prompt names every value in core lines ("Request (request): rq-DEMO-3f9a2c1d-7", "Goal (goal): …", "Goes up to (goes_up_to): Deliver",
 "Deliver means (deliver_means): …", "Hold minutes (hold_minutes): 30", "Largest child (largest_child): m"), with each
 value shown exactly (invisible characters made visible). The host records the signature (`addon.action_signed`).
 The host consumes the request id together with creating the run, in one step; a replayed signature is refused
@@ -39,8 +39,10 @@ the charter's child budget (refused, 409 `factory.budget`, when they do not fit)
 1. **Plan** — splits the goal into children within the size cap.
 2. **Requirements** — writes and approves each child's requirements.
 3. **Build and test** — agents do the work and run the checks.
-   **Code review** — when the workspace's code review policy applies (Settings → Gates), each child waits here for a
-   **person** (a core decision, signed with Touch ID). The factory never signs it, and neither does a mandate.
+   **Code review** — when the workspace's code review policy applies (Settings → Gates), each child waits here for
+   **people**, under the same rule as a ticket's code gate (D59): the policy's approver group, the number of distinct
+   approvals it asks for, never the run's requester or the child's author. Each approval signs the child's commit; a
+   new commit voids it. The factory never signs it, and neither does a mandate.
 4. **Validate** — the verdict on each child (on the signed commit, D53).
 5. **Evidence** — collects what proves each acceptance criterion.
 6. **Preview** — made and checked, visible inside the workspace. A run that stops at Preview ends here and waits for

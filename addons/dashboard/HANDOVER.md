@@ -257,7 +257,7 @@ Owner decision 10 Oct 2026 evening (D61 option); proposal `docs/factory-full-run
 factory addon's (`src/mocks/addons/factory-runs.ts`); the hold is meant to be **host-enforced**.
 
 - **Request** (signed, `start_run`, `confirm: 'sign'`, maintainer+; a Deliver target owner-only in the mock): the
-  signed args are exactly `request` (a single-use id the host issued at review: `rq-<n>`), `goal` (≤ 200 chars), `goes_up_to` (`Preview` | `Deliver`), and for Deliver
+  signed args are exactly `request` (a single-use id the host issued at review: `rq-<PREFIX>-<nonce>-<n>`, the nonce new for every seeding of the state, so a reset never reissues an id), `goal` (≤ 200 chars), `goes_up_to` (`Preview` | `Deliver`), and for Deliver
   `deliver_means` (the concrete destination, ≤ 160 chars, required) and `hold_minutes` (15 | 30 | 60 | 240, default
   30), plus `largest_child: 'm'`. Core records them in `addon.action_signed {args}`. The form (`prepare_run`) stores a
   per-viewer draft; the host refuses a signature whose values differ from the reviewed draft (409 `factory.stale`),
@@ -269,9 +269,14 @@ factory addon's (`src/mocks/addons/factory-runs.ts`); the hold is meant to be **
   charter stopped by time (or an over-committed budget) stops progress and ends a hold `factory.deliver_cancelled
   {run, reason: 'charter_stopped'}` ("Not delivered: the charter stopped"). Nothing is delivered after it stops.
 - **Code review (D61 "never the code gate"):** when the workspace code review policy applies, each child waits at a
-  Code review step for a person: core decision `factory.code:<run>:<n>` (option `approve`, terms `{run, child,
-  child_title}`, maintainer+, signed in core's prompt; `addon.decided` with presence) → `factory.code_reviewed {run,
-  child}`. Validate and Preview wait for every review; neither the factory nor a mandate satisfies it.
+  Code review step for people: core decision `factory.code:<run>:<n>` (option `approve`, terms `{run, child,
+  child_title, commit}`, signed in core's prompt; `addon.decided` with presence) → `factory.code_reviewed {run, child,
+  commit, approvals, needed}`. Eligibility is core's D59 rule (`store.gateEligibility`, the same as a ticket's code
+  gate): the policy's approver group, the run's requester and the child's author count as its assignees (never
+  reviewers), one approval per person, and the policy's `count` of distinct people. The decision is offered only to
+  people who are eligible. Each approval signs the child's commit; a new commit (`factory.child_pushed {run, child,
+  commit}`) voids the approvals and sends the child back to wait before Validate (D58/D59). Validate and Preview wait
+  for every review; neither the factory nor a mandate satisfies it.
 - **Events** on the factory epic, by the addon: `factory.run_requested {run, request, goal, goes_up_to, children,
   deliver_means?, hold_minutes?}`, `factory.code_reviewed {run, child}`, `factory.deliver_cancelled {run, reason}`, `factory.run_step {run, step: 'Plan' | 'Preview'}`, `factory.deliver_held {run, deliver_means,
   until}`, `factory.deliver_stopped {run}`, `factory.delivered {run, deliver_means}`. Children's steps
@@ -285,19 +290,25 @@ factory addon's (`src/mocks/addons/factory-runs.ts`); the hold is meant to be **
   decision prompt (`addon.decided`, presence Touch ID) and cancels: no `factory.delivered`, the run stays at
   Preview. When `until` passes with no Stop the host delivers to exactly `deliver_means` (it refuses any other
   destination, `factory.deliver_mismatch`) and writes `factory.delivered`. While the factory is paused nothing is
-  delivered and the paused time is added to `until`. Agents never hold the delivery credential: the host delivers.
+  delivered: Pause keeps what is left of the hold (`holdRemainingMs`, from the wall clock), and Resume rebuilds both
+  deadlines from it, so a reload while paused never ends or shortens the hold. Agents never hold the delivery credential: the host delivers.
 - **The factory stays on during a hold.** Disable, update and uninstall are refused (409 `addon.delivery_on_hold`,
   core's sentence names the run) while a delivery holds (mock: `MockAddon.offBlocked`). The real host keeps Stop
   available independently of the addon's activation (Stop is a core decision on a core-held deadline), so even an
   addon that crashed or was removed cannot take the Stop away.
 - **Reloads:** the hold's deadline is held on the host's real clock. The mock keeps a wall-clock deadline next to the
   mock one (`holdWallUntil`) and re-derives the mock deadline from it when the mock clock restarts on a reload, so a
-  reload never extends a hold.
+  reload never extends a hold. Seeded factory state is saved as soon as it is seeded (`MockAddon.saveOnSeed`), so the
+  busy day's hold is not seeded again on a reload. Factory state version 4; versions 2 and 3 are migrated
+  (`MockAddon.migrate`): runs, holds and counters kept; a hold saved without a wall deadline gets its full window again
+  from the reload (conservative: never shorter than what was left).
+- Disable / update / uninstall initialise and settle the factory state before the hold check, so a seeded hold nobody
+  looked at still blocks them.
 - **No operation shortens a Deliver hold.** During the hold the only human act is a signed Stop; there is no
   "deliver now". The mock's "Simulate: let the hold time pass (demo)" is a simulator control of the demo data (owner
   only, refused outside the demo datasets), not a host operation: a host implements nothing for it.
-- **Demo only:** "Fill in a demo request" (`demo_run`, prefills the form; still signed); the busy day seeds run R-2 on
-  hold (28 min left) and R-1 delivered.
+- **Demo only:** "Fill in a demo request" (`demo_run`, prefills the form; still signed); the busy day seeds run R-1 on
+  hold (28 min left); its 3 children are reserved in the budget (23 of 25 used), a valid charter state.
 
 ## Sign dialogs and landing against D41 / D49 / D53
 

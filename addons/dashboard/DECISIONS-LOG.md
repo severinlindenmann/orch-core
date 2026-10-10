@@ -999,3 +999,20 @@ The owner answered the eight open questions of REVIEW.md. Items 1, 2, 5 and 6 ch
   table.
 - **Why:** Codex review of U2 (findings 1–8), controller rulings.
 - **Revert:** revert the fix-round commits.
+
+## U2 fix round 2 (Codex re-check, controller rulings)
+
+- **Decision:** (1) Full-run code reviews use core's D59 rule: `store.gateEligibility` (extracted from `canApprove`, so
+  tickets and run children share it): the policy's approver group, the requester and the child's author count as
+  assignees, one approval per person, the policy's `count` of distinct people; the decision is offered only to eligible
+  people. (2) Pause keeps the remaining hold (`holdRemainingMs`, wall clock); Resume rebuilds both deadlines; pause →
+  reload 40 min → resume keeps about 30 min. (3) A review signs the child's commit (mock sha, in the terms); a new commit
+  (`factory.child_pushed`) voids the approvals and sends the child back before Validate. (4) Request ids are
+  `rq-<PREFIX>-<nonce>-<n>`, the nonce new per seeding (a reset never reissues one). (5) `addonOp` initialises and the
+  factory settles its state before `offBlocked`. (6) `MockAddon.saveOnSeed`: the factory's seeded state is saved at
+  once. (7) The busy seed is a valid charter: one run on hold (R-1), its 3 children reserved (23 of 25); the delivered
+  example run was dropped (25 would be exceeded). (8) `plain()` at the event-summary and simulator-toast boundaries;
+  events keep the exact value. (9) Factory state version 4 with `MockAddon.migrate` for 2 and 3: runs and counters kept,
+  a legacy hold without a wall deadline gets its full window again (never shorter than what was left).
+- **Why:** Codex re-check of U2, controller rulings for fix round 2.
+- **Revert:** revert the fix-round-2 commits.

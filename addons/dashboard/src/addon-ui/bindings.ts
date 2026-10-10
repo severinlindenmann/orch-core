@@ -57,3 +57,39 @@ export function resolveBindings(node: unknown, ctx: unknown): unknown {
   }
   return node
 }
+
+/** What an addon's contribution may weigh before core walks it (bindings, the state check, rendering). */
+export const NODE_BUDGET = { depth: 64, nodes: 20_000, bytes: 2_000_000 } as const
+
+/**
+ * Why core will not walk this untrusted value at all (null when it fits): nested deeper than `depth` objects/arrays,
+ * more than `nodes` values in all, or more than `bytes` of strings and keys. Iterative, so no input can exhaust the
+ * stack, and it stops at the first limit hit (security review #9). Core checks it before binding detection and
+ * resolution; a contribution over budget becomes that addon's "could not be shown" box, nothing else fails.
+ */
+export function nodeBudgetProblem(root: unknown): string | null {
+  const stack: [unknown, number][] = [[root, 0]]
+  let nodes = 0
+  let bytes = 0
+  while (stack.length) {
+    const [v, depth] = stack.pop()!
+    if (++nodes > NODE_BUDGET.nodes) return `more than ${NODE_BUDGET.nodes} nodes`
+    if (typeof v === 'string') {
+      bytes += v.length
+      if (bytes > NODE_BUDGET.bytes) return 'too large'
+      continue
+    }
+    if (v === null || typeof v !== 'object') continue
+    if (depth >= NODE_BUDGET.depth) return `nested deeper than ${NODE_BUDGET.depth}`
+    if (Array.isArray(v)) {
+      for (const x of v) stack.push([x, depth + 1])
+      continue
+    }
+    for (const k of Object.keys(v)) {
+      bytes += k.length
+      if (bytes > NODE_BUDGET.bytes) return 'too large'
+      stack.push([(v as Record<string, unknown>)[k], depth + 1])
+    }
+  }
+  return null
+}

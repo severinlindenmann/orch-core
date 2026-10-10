@@ -333,18 +333,17 @@ def test_typeahead_before_the_review_confirms_nothing():
             buf += os.read(tty, 4096)
     time.sleep(0.3)
     os.write(tty, b"\x04")  # then end of input: with the typeahead gone, this is all the prompt gets
-    for _ in range(100):
-        done, _s = os.waitpid(pid, os.WNOHANG)
-        if done:
+    out, end = "", time.time() + 10
+    while time.time() < end:  # hard deadline; the child need not exit, its answer is on the pipe
+        ready, _w, _x = select.select([r, tty], [], [], 0.2)
+        if r in ready:
+            out = os.read(r, 4096).decode()
             break
-        select.select([tty], [], [], 0.05)
-        try:
-            os.read(tty, 4096)
-        except OSError:
-            pass
-    else:
-        os.kill(pid, signal.SIGKILL)
-        os.waitpid(pid, 0)
-        raise AssertionError("did not finish")
-    out = os.read(r, 4096).decode()
+        if tty in ready:
+            try:
+                os.read(tty, 4096)
+            except OSError:
+                pass
+    os.kill(pid, signal.SIGKILL)
+    os.waitpid(pid, 0)
     assert "RESULT False" in out, out

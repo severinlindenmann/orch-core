@@ -17,7 +17,6 @@ from pathlib import Path
 import pytest
 
 from tests.ops.helpers import OTHER, Cli, Ws
-from tests.ops.test_task_ac import py
 
 GOLDEN = Path(__file__).parent / "golden"
 SEQ = {}
@@ -44,9 +43,9 @@ def build(tmp: Path) -> Ws:
         ["section", "set", "plan", "-m", "1. export the CSVs\n2. seed them"],
         ["ac", "add", "`dbt seed` loads all 40 tariff tables"],
         ["ac", "add", "The refresh command is documented"],
-        ["task", "add", "Export CSVs into seeds/tariffs", "--verify", py("print('exported 40')"), "--proves", "AC1"],
+        ["task", "add", "Export CSVs into seeds/tariffs", "--verify", "echo exported 40", "--proves", "AC1"],
         ["task", "add", "Document the refresh command", "--proves", "AC2"],
-        ["task", "add", "Join in fct_billing", "--verify", py("print('joined')")],
+        ["task", "add", "Join in fct_billing", "--verify", "echo joined"],
         ["task", "start", "T1"],
         ["task", "done", "T1", "--run", "-m", "40 files"],
         ["log", "Seeds are in; the join is next."],

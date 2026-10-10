@@ -49,6 +49,7 @@ def test_append_latency_at_1000_tickets(env, monkeypatch, capsys):
     from orch.store import fsio
 
     monkeypatch.setattr(fsio, "fsync_dir", lambda p: None)
+    monkeypatch.setattr(fsio, "_full_fsync", lambda fd: None)  # F_FULLFSYNC counts as a flush too
     import orch.store.store as sm
 
     monkeypatch.setattr(sm, "fsync_dir", lambda p: None)

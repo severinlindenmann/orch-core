@@ -124,19 +124,27 @@ log says (rebuilt `ticket.json`, a body with the log's section hashes, an artifa
 Recovery never appends an event of its own. A ticket whose files cannot be answered (nothing trustworthy to revert to)
 takes no new event until they match the log again.
 
-**Freshness.** Before every decision, under the lock, the store compares size and inode of the workspace log and of every
-loaded ticket log with what it read and reloads on any difference; `.state/applied` is never the signal. The directory
-scan (a stat per ticket) keeps the merged order right: `at` is the maximum of the clock and everything written so far, plus
-one second only when `(ws_seq, at, uid, seq)` would not grow. Lines are read one at a time and capped at the event line
-limit; a longer line, deep nesting, or a bad line breaks that log (reported) and no other.
+**Freshness and order.** Before every decision, under the lock, the store compares size and inode of the workspace log and of
+every loaded ticket log with what it read and reloads on any difference; `.state/applied` is never the signal. `at` and the
+merged order come from verified data only (the workspace log, the loaded tickets, the store's own appends): `at` is the
+clock or the latest verified `at`, and moves one second past the latest verified position only when
+`(ws_seq, at, uid, seq)` would not grow, computed directly. Unloaded ticket logs are not consulted; only if `admit` refuses an
+order does the store look at the last line of every ticket, and then only lines whose `host_sig` verifies, whose `ws_seq` is
+not above the workspace head and whose `at` is not later than the host clock plus two minutes (such a log is reported, its
+date not adopted). Lines are read one at a time and capped at the event line limit; a longer line, deep nesting or a bad
+line breaks that log (reported) and no other.
 
 **Lazy replay.** The workspace log is always replayed and verified in full. A ticket log is replayed and verified when a
-command touches it, together with the tickets it names (`parent`, `blocked_by`, `duplicate_of`); a ref is resolved from
-verified state only (a first-line hint names a candidate, the replay confirms its key; duplicate or unreadable hints make
-every ticket load). `load_all`, `scan` and the index rebuild load everything; an unattended event does too (its quota
-counts the whole workspace). Measured at 1000 tickets on a laptop: cold open 130 ms, open + read + append one ticket
-190 ms, reload after another process appended 5 ms, full load (every event verified) 1.8 s, append 15 ms median
-(flush excluded), a workspace-wide event such as a role change 0.85 s.
+command touches it, together with the tickets it names (`parent`, `blocked_by`, `duplicate_of`), which are found through the
+`host_sig`-checked creation line of every ticket (never a hint, `keys.jsonl` or the index). If a key is missing there, two
+creations claim one key, or a log has no verified creation line, every ticket is loaded. A host event
+(`projection.repaired`, `edit.external`) is written only from the full replay or from a state that is equal to it. `load_all`,
+`scan` and the index rebuild load everything; an unattended event does too (its quota counts the whole workspace). No new
+ticket is created while a log lacks a verified creation line or is diverged, since it could own a key nobody can see.
+Costs on a laptop at 1000 tickets (they vary with the machine): opening a workspace and reading, appending to one ticket by
+uid is about a tenth of a second; resolving a ticket by key checks one signature per ticket first (a few tenths of a second);
+a ticket event is a few milliseconds beyond the drive flush; a workspace-wide event such as a role change takes under a
+second; loading and verifying everything takes seconds.
 
 **Checkpoints.** A ticket checkpoint after every append to that log; a workspace checkpoint after every workspace append,
 after every 50 ticket appends and when the store is opened with everything loaded; entries of tickets that are not loaded

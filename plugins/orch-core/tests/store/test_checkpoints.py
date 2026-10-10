@@ -76,7 +76,10 @@ def test_truncating_a_log_below_its_checkpoint_is_divergence_and_refuses_events(
     with pytest.raises(StoreError) as e:
         env.log(uid)
     assert e.value.code == "chain.diverged"
-    assert env.log(env.new_ticket())  # other tickets are not affected
+    other = next(u for u in s.state.tickets if u != uid) if len(s.state.tickets) > 1 else None
+    assert other is None  # (only one ticket here)
+    with pytest.raises(StoreError):  # a diverged log might hide a key: no new ticket until it is restored
+        s.create_ticket(actor=env.agent, ticket_type="chore", title="n", owner=env.owner.ref)
 
 
 def test_a_missing_ticket_log_is_divergence(env):

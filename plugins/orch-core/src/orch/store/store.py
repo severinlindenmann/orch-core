@@ -147,7 +147,9 @@ def _sha(data: bytes) -> str:
 
 _default_verifier: Callable[[], Verifier] = CryptoVerifier  # test seam (a module attribute, never set from src/)
 LOCK_TIMEOUT = 10.0  # seconds a call waits for the workspace lock before it fails with ``store.busy``
-_FUTURE = 86_400  # a last-line `at` this far ahead of the clock is not believed (see Store._scan_dirs)
+FUTURE_SLACK = (
+    120  # seconds: an `at` further ahead of the host clock is not believed (honest same-second bumps stay below)
+)
 
 
 @dataclass
@@ -159,7 +161,6 @@ class _Hint:
     ino: int
     key: str | None
     created_at: str | None
-    pos: tuple[int, int, str, int] | None  # position of the last line (ws_seq, at, uid, seq)
 
 
 class Store:
@@ -210,6 +211,9 @@ class Store:
         self._json_cache: dict[str, tuple[Any, bytes]] = {}
         self._applied_n = 0
         self._ws_last_at = 0
+        self._loaded_at = 0
+        self._loaded_pos: tuple[int, int, str, int] | None = None
+        self._last_ok: dict[str, tuple[tuple[int, int], tuple[int, int, str, int] | None]] = {}
         self._own_pos: tuple[int, int, str, int] | None = None
         self._own_at = 0
         self._needs_reload = False
@@ -223,6 +227,7 @@ class Store:
         self._pending_revs: list[dict[str, Any]] = []
         self._ws_restore_at = ""
         self._created_ok: dict[str, tuple[int, str]] = {}  # uid -> (inode, key) of a first line whose host_sig verified
+        self._unverified: set[str] = set()  # ticket logs without a verified creation line
         self._suspect = False  # duplicate or missing keys among the hints
         self._hint_mismatch = False  # a verified ticket whose key its hint did not say
 
@@ -379,12 +384,11 @@ class Store:
             entries = list(os.scandir(tdir))
         except FileNotFoundError:
             entries = []
-        limit = int(self._clock()) + _FUTURE
         for ent in entries:
             uid = ent.name
             if not _ULID.fullmatch(uid) or ent.is_symlink():
                 continue
-            try:  # one lstat per ticket: this runs under every lock
+            try:  # one lstat per ticket
                 st = os.lstat(ent.path + "/events.jsonl")
             except OSError:
                 continue
@@ -408,29 +412,50 @@ class Store:
                         key, created = f.get("key"), f.get("at")
                 except ValueError:
                     pass
-            pos = None
-            last = last_line(path)
-            try:
-                e = loads(last) if last else None
-                if isinstance(e, dict):
-                    p = (int(e["ws_seq"]), _epoch(e["at"]), uid, int(e["seq"]))
-                    if p[1] <= limit:
-                        pos = p
-                    else:
-                        self._report("store.torn_write", f"the last line of {uid} has an `at` far in the future", uid)
-            except (ValueError, KeyError, TypeError):
-                pass
-            seen[uid] = _Hint(sig, sig[1], key if isinstance(key, str) else None, created, pos)
+            seen[uid] = _Hint(sig, sig[1], key if isinstance(key, str) else None, created)
         self._hints, self._sizes = seen, sizes
         self._exists = set(seen)
         self._key_uid = {h.key: u for u, h in seen.items() if h.key}
         self._suspect = len(self._key_uid) != len(seen)  # a log without a readable first line, or two with one key
 
     def _order(self) -> tuple[int, tuple[int, int, str, int] | None]:
-        """The latest `at` and merged position of everything written so far (all logs, from the hints)."""
-        at_ = max([self._ws_last_at, self._own_at, *(h.pos[1] for h in self._hints.values() if h.pos)])
-        pos = max([p for p in (*(h.pos for h in self._hints.values()), self._own_pos) if p], default=None)
-        return at_, pos
+        """The latest `at` and merged position of what was **verified** (the workspace log, the loaded tickets, our own
+        appends). Unloaded tickets do not count here; see :meth:`_global_floor` for the one case that asks them."""
+        pos = max([p for p in (self._loaded_pos, self._own_pos) if p], default=None)
+        return max(self._ws_last_at, self._loaded_at, self._own_at), pos
+
+    def _global_floor(self, wsh: int) -> tuple[int, str, int] | None:
+        """After ``admit`` refused an order: the latest position of **every** ticket log, taken from last lines whose
+        ``host_sig`` verifies (cached by size and inode), ignoring a ``ws_seq`` above the verified workspace head and an
+        ``at`` later than the host clock (that log is reported, nothing is adopted)."""
+        self._scan_dirs()
+        wsk = self._wsk_pub()
+        limit = int(self._clock()) + FUTURE_SLACK
+        best: tuple[int, int, str, int] | None = None
+        for uid, h in self._hints.items():
+            hit = self._last_ok.get(uid)
+            if hit is None or hit[0] != h.sig:
+                pos = None
+                line = last_line(safe_join(self.root, f"tickets/{uid}/events.jsonl"))
+                try:
+                    e = canon.parse_event_line(line) if line else None
+                    if (
+                        e is not None
+                        and wsk is not None
+                        and self._verifier.verify_host(e, log=uid, wsk_pub=wsk, workspace_id=self.workspace_id)
+                    ):
+                        pos = (int(e["ws_seq"]), _epoch(e["at"]), uid, int(e["seq"]))
+                except (canon.HashError, KeyError, TypeError, ValueError):
+                    pos = None
+                hit = self._last_ok[uid] = (h.sig, pos)
+            pos = hit[1]
+            if pos is None or pos[0] > wsh:
+                continue
+            if pos[1] > limit:
+                self._report("store.torn_write", f"the last event of {uid} is dated after the host clock", uid)
+                continue
+            best = pos if best is None or pos > best else best
+        return best
 
     # ------------------------------------------------------------------ loading
 
@@ -455,6 +480,7 @@ class Store:
         if self._expected_genesis is not None and pin is not None and pin != self._expected_genesis:
             raise StoreError("trust.genesis_mismatch", "the genesis pin file differs from the genesis given")
         self._pin = self._expected_genesis or pin
+        self._scan_dirs()  # who exists now (a stat per ticket); a reload is not the hot path
         self._logs = {WORKSPACE: LogInfo(WORKSPACE, self._path_of(WORKSPACE))}
         self._read_errors = {}
         ws_events = read_new_lines(self._logs[WORKSPACE])
@@ -467,12 +493,14 @@ class Store:
             info = LogInfo(uid, safe_join(self.root, f"tickets/{uid}/events.jsonl"))
             tickets[uid] = read_new_lines(info)
             self._logs[uid] = info
-            for key in self._read_refs(tickets[uid]):
-                dep = self._key_uid.get(key)
-                if dep is not None and dep not in tickets:
-                    todo.append(dep)
-                elif dep is None and self._unsure():
-                    todo.extend(u for u in self._exists if u not in tickets)  # hints cannot be believed: load them all
+            refs = self._read_refs(tickets[uid])
+            if not refs:
+                continue
+            owners = self._verified_keys()  # key -> uid by verified creation lines, not by hints
+            if self._unsure() or any(k not in owners for k in refs):
+                todo.extend(u for u in self._exists if u not in tickets)  # doubt: every ticket, then the replay decides
+                continue
+            todo.extend(owners[k] for k in refs if owners[k] not in tickets)
         self._loaded = set(tickets)
         for name, info in self._logs.items():
             if info.error:
@@ -499,6 +527,9 @@ class Store:
             if v is not None and h is not None and h.key != v.key and h.sig != (0, 0):
                 self._hint_mismatch = True  # a first line said another key than the verified ticket has
         self._ws_last_at = max((_epoch(e["at"]) for e in ws_events), default=0)
+        lasts = [(e["ws_seq"], _epoch(e["at"]), u, e["seq"]) for u, evs in tickets.items() for e in evs[-1:]]
+        self._loaded_pos = max(lasts, default=None)
+        self._loaded_at = max((p[1] for p in lasts), default=0)
         # a grant's secret hash counts only from a grant.issued the model accepted (not invalid, and the grant exists)
         invalid = {i.id for i in ws.invalid}
         self._grant_hashes = {}
@@ -548,6 +579,8 @@ class Store:
 
     def _ensure(self, uids: set[str]) -> None:
         """Make sure these tickets (and the tickets they refer to) are replayed and checked."""
+        if any(u not in self._exists for u in uids):
+            self._scan_dirs()  # a ticket another process created since the last scan
         need = {u for u in uids if u in self._exists and u not in self._loaded}
         if need:
             self._loaded |= need
@@ -572,8 +605,7 @@ class Store:
                     self._heal_ticket(uid)
                 except StoreError as e:
                     self._report(e.code, e.detail, uid)
-            assert self._state is not None
-            return self._state.tickets.get(uid)
+            return self.state.tickets.get(uid)  # at the current clock: claims, leases and grants lapse by it
 
     def _index_fresh(self) -> Index:
         """The index, current: if it is not, every ticket is loaded and it is rebuilt."""
@@ -616,7 +648,6 @@ class Store:
         with self._lock:
             check_state_dirs(self.root)
             pend = self._recover_pending()
-            self._scan_dirs()
             self._loaded |= {m["log"] for _, m in pend if m["log"] != WORKSPACE}
             reloaded = bool(pend) or self._needs_reload or not self._fresh()
             if reloaded:
@@ -828,7 +859,9 @@ class Store:
         index."""
         wsk = self._wsk_pub()
         out: dict[str, str] = {}
+        dup: set[str] = set()
         if wsk is None:
+            self._unverified = set(self._hints)
             return out
         for uid, h in self._hints.items():
             hit = self._created_ok.get(uid)
@@ -852,13 +885,17 @@ class Store:
                     self._created_ok.pop(uid, None)
                     continue
                 self._created_ok[uid] = hit
-            out.setdefault(hit[1], uid)
+            if hit[1] in out:
+                dup.add(uid)  # two verified creations of one key: the replay (merged order) must decide
+            else:
+                out[hit[1]] = uid
+        self._unverified = (set(self._hints) - set(out.values())) | dup
         return out
 
     def _unsure(self) -> bool:
-        """Can the key hints (first lines of unverified logs) not be believed? Duplicates, missing keys, or a verified
-        ticket that contradicted its hint."""
-        return self._suspect or self._hint_mismatch
+        """Can the key hints (first lines of unverified logs) not be believed? Duplicates, missing keys, a verified
+        ticket that contradicted its hint, or a log whose creation line did not verify (after ``_verified_keys``)."""
+        return self._suspect or self._hint_mismatch or bool(self._unverified)
 
     def _resolve(self, ref: str) -> str | None:
         """The uid of the ticket ``ref``, from **verified** state only: a hint names a candidate, the candidate is
@@ -871,16 +908,17 @@ class Store:
                 return None
             self._ensure({r})
             return r if r in self._state.tickets else None
-        cand = self._key_uid.get(r)
-        if cand is not None and not self._unsure():
+        owners = self._verified_keys()  # key -> uid by host_sig-checked creation lines (hints only ever say less)
+        if not self._unsure():
+            cand = owners.get(r)
+            if cand is None:
+                return None  # every log has a verified creation and none carries this key
             self._ensure({cand})
             v = self._state.tickets.get(cand)
             if v is not None and v.key == r:
                 return cand
             self._hint_mismatch = True
-        if cand is None and not self._unsure():
-            return None  # every ticket has a distinct, readable key hint and none says `r`
-        self._ensure(set(self._exists))
+        self._ensure(set(self._exists))  # doubt: load everything and let the replay say
         return next((u for u, v in self._state.tickets.items() if v.key == r), None)
 
     def _text_ref(self, ref: str) -> str:
@@ -962,6 +1000,11 @@ class Store:
         """Append a ``ticket.created`` for an actor nobody signs (an agent with a grant): allocates the key and the
         uid under the lock, so two processes never take the same number."""
         with self._locked():
+            self._scan_dirs()
+            self._verified_keys()
+            bad = sorted(self._unverified | {u for u in self._diverged if u != WORKSPACE})
+            if bad:  # a log with no verified creation line (or a diverged one) might own a key we cannot see
+                raise StoreError("chain.broken", f"no new ticket while {bad[0]} has no verified creation or diverged")
             new_uid = uid or self._uid_for_idem(idem) or new_ulid()
             ev = {
                 "type": "ticket.created",
@@ -1090,9 +1133,10 @@ class Store:
         if genesis and self._host.public_key != crypto.unb64u(e.get("wsk_pub", ""), crypto.PUB_LEN):
             raise StoreError("validation.host_key", "the genesis names a workspace key other than this host's")
         ev: dict[str, Any] = {}
+        floor = None
         for attempt in (0, 1):
             ev = dict(e)
-            self._stamp(ev, log, bump=attempt)
+            self._stamp(ev, log, floor=floor)
             try:
                 schema.validate("event", {**ev, "host_sig": _PLACEHOLDER_SIG}, log=kind)
             except schema.SchemaError as err:
@@ -1101,8 +1145,9 @@ class Store:
                 self._host_sign(ev, log)
             r = admit(old_state, ev, log=log)
             if isinstance(r, Refusal):
-                if r.code == Code.CHAIN_BAD_WS_SEQ and attempt == 0:
-                    continue  # the store's own ordering: stamp one second later, once
+                if r.code == Code.CHAIN_BAD_WS_SEQ and attempt == 0 and log != WORKSPACE:
+                    floor = self._global_floor(self._logs[WORKSPACE].seq)  # verified last lines of every ticket
+                    continue  # the store's own ordering: stamp again, once
                 raise StoreError.from_refusal(r)
             break
         if not genesis:
@@ -1119,9 +1164,10 @@ class Store:
         writes = self._projection(old_state, new_state, ev, log, new_texts, files, force)
         info = self._logs.get(log)
         path = self._path_of(log)
-        if not self._fresh():  # last look, right before the write: the files must still be what was judged
+        wsi = self._logs[WORKSPACE]  # last look, right before the write: the logs this event rests on are unchanged
+        if stat_sig(wsi.path) != ((wsi.seen_size, wsi.ino) if wsi.ino is not None else None):
             self._needs_reload = True
-            raise StoreError("chain.broken", f"{log}: a log changed on disk while the store held the lock")
+            raise StoreError("chain.broken", f"{log}: the workspace log changed on disk while the store held the lock")
         if stat_sig(path) != ((info.seen_size, info.ino) if info and info.ino is not None else None):
             self._needs_reload = True
             raise StoreError("chain.broken", f"{log}: the log changed on disk while the store held the lock")
@@ -1141,13 +1187,18 @@ class Store:
         ev.pop("host_sig", None)
         ev["host_sig"] = crypto.b64u(self._host.sign(canon.host_signing_bytes(self.workspace_id, log, ev)))
 
-    def _stamp(self, ev: dict[str, Any], log: str, *, bump: int) -> None:
+    def _stamp(self, ev: dict[str, Any], log: str, *, floor: tuple[int, int, str, int] | None = None) -> None:
+        """Stamp ``seq``, ``prev``, ``at`` and ``ws_seq``. ``at`` is the clock or the latest verified `at`, one second
+        past the latest verified position only when the merged order would not grow: computed, no loop."""
         info = self._logs.get(log)
         seq = (info.seq if info else 0) + 1
         ev["seq"] = seq
         ev["prev"] = info.head if info else None
         last_at, last_pos = self._order()
-        t = max(int(self._clock()), last_at) + bump
+        if floor is not None:
+            last_pos = floor if last_pos is None or floor > last_pos else last_pos
+            last_at = max(last_at, floor[1])
+        t = max(int(self._clock()), last_at)
         if (
             ev["type"] == "restore" and log == WORKSPACE and self._pins is not None
         ):  # after every revocation it re-appends
@@ -1155,8 +1206,11 @@ class Store:
         if log != WORKSPACE:
             wsh = self._logs[WORKSPACE].seq if WORKSPACE in self._logs else 0
             ev["ws_seq"] = wsh
-            while last_pos is not None and (wsh, t, log, seq) <= last_pos:  # minimal bump: the merged order must grow
-                t += 1
+            if last_pos is not None and last_pos[0] == wsh:  # an earlier workspace head leaves any `at` free
+                if t < last_pos[1]:
+                    t = last_pos[1]
+                if t == last_pos[1] and (log, seq) <= (last_pos[2], last_pos[3]):
+                    t += 1
         ev["at"] = _fmt(t)
 
     # -- text, artifacts
@@ -1370,7 +1424,7 @@ class Store:
             self._exists.add(log)
             self._sizes[log] = self._logs[log].offset
             if ev["type"] == "ticket.created" and log not in self._hints:
-                self._hints[log] = _Hint((0, 0), 0, ev["key"], ev["at"], pos)
+                self._hints[log] = _Hint((0, 0), 0, ev["key"], ev["at"])
                 self._key_uid[ev["key"]] = log
         typ = ev["type"]
         if typ == "workspace.created":
@@ -1588,6 +1642,10 @@ class Store:
         return [] if host_event and typ in _TICKET_HOST_EVENTS else self._heal_ticket(log)
 
     def _host_append(self, typ: str, log: str, payload: dict[str, Any], **kw: Any) -> dict[str, Any]:
+        if not self._loaded >= self._exists:  # a host write comes only from state equal to the full replay
+            self._verified_keys()
+            if self._unsure() or (log != WORKSPACE and log not in self._loaded):
+                self._ensure(set(self._exists))
         was, self._healing = self._healing, True
         try:
             info = self._logs.get(log)

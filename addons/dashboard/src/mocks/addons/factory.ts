@@ -77,6 +77,8 @@ const setNav = (state: Record<string, unknown>, viewer: string, nav: Nav) => {
   ;((state.nav ??= {}) as Record<string, Nav>)[viewer] = nav
 }
 const permitsOf = (state: Record<string, unknown>) => state.permits as Permit[]
+/** A permit's `scope` term: it covers exactly the command shown ("Grant for this epic" answers that command until the epic ends). */
+const PERMIT_SCOPE = 'this exact command'
 const sizeRank = (s: string | null) => (s ? SIZES.indexOf(s) : -1)
 
 /** Child tickets of the epic in this workspace (all of them: the caller filters what a viewer may see). */
@@ -437,6 +439,9 @@ registerAddon({
           { key: 'epic', label: 'Grant for this epic' },
           { key: 'refuse', label: 'Refuse' },
         ],
+        // Everything the answer authorises, as typed terms core shows line by line and the host checks again (security
+        // review #3). The permit action runs from these, never from the live permit.
+        terms: { command: p.command, ticket: p.ticket, epic: epic ?? 'not visible to you', scope: PERMIT_SCOPE },
         action: 'permit',
       })))
   },
@@ -445,18 +450,25 @@ registerAddon({
     permit(ctx) {
       // A decision action: core checked who decides, that it is open and that the option is one of its options.
       const { state, store, body } = ctx
-      const permit = ctx.decision && permitsOf(state).find((p) => `factory.permit:${p.id}` === ctx.decision!.id)
+      const permit = ctx.decision && permitsOf(state).find((p) => `factory.permit:${p.id}` === ctx.decision!.id && p.state === 'open')
       if (!permit) return conflict('decision.closed', 'That decision is closed.') // only when the manifest lacks `decision: true`
+      // Run from what was signed (the decision's terms), never from live permit state; if the live permit no longer
+      // matches them, nothing runs (security review #3).
+      const terms = ctx.decision!.terms ?? {}
+      const command = terms.command
+      const child = terms.ticket
+      if (typeof command !== 'string' || typeof child !== 'string' || terms.scope !== PERMIT_SCOPE || command !== permit.command || child !== permit.ticket)
+        return conflict('decision.closed', 'That permit changed since it was shown.', 'Reopen it and check the command again.')
       const epic = state.epic as string
       if (body.option === 'refuse') {
         permit.state = 'refused'
-        store.append(epic, { type: 'factory.permit_refused', actor: ADDON, permit: permit.id, child: permit.ticket, command: permit.command })
+        store.append(epic, { type: 'factory.permit_refused', actor: ADDON, permit: permit.id, child, command })
         return { ok: true, message: `Refused ${permit.id}.`, changed: true }
       }
       const scope = body.option
       permit.state = scope === 'epic' ? 'granted for this epic' : 'granted once'
-      if (scope === 'epic') (state.epicGrants as string[]).push(permit.command)
-      store.append(epic, { type: 'factory.permit_granted', actor: ADDON, permit: permit.id, scope, child: permit.ticket, command: permit.command })
+      if (scope === 'epic') (state.epicGrants as string[]).push(command)
+      store.append(epic, { type: 'factory.permit_granted', actor: ADDON, permit: permit.id, scope, child, command })
       return { ok: true, message: scope === 'epic' ? `Granted ${permit.id} for this epic.` : `Granted ${permit.id} once.`, changed: true }
     },
 

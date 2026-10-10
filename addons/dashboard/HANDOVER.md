@@ -169,9 +169,12 @@ title, question, detail, options and terms, exactly as core's prompt showed them
 it with 409 `decision.closed` unless it equals the digest of the decision now, and refuses a body whose `ticket` is not
 the decision's (security review #3). The digest is **required** on every decision answer (409
 `decision.digest_required` without one; tests post through `test/offered.ts`, which computes it from the decision as
-offered). **Open (#3):** a privilege-bearing decision (a factory permit) must
-carry its execution parameters as typed `terms` (command, ticket, epic, scope), and the host should refuse such a
-decision without them; the factory module is being rewritten on another branch, see DECISIONS-LOG. The
+offered). A decision action the manifest marks
+`authorises: true` (the factory `permit`) must carry what it authorises as typed `terms` — a permit's are `command`,
+`ticket`, `epic`, `scope` — else the host refuses the answer (409 `decision.terms_required`); such a decision is
+answered once (a second answer: 409 `decision.closed`, from core's `addon.decided` record), and the permit action
+runs the command from the matched decision's terms, never from live permit state (it refuses when the live permit no
+longer matches them). The
 id still binds the decision; terms make what it binds legible. On an addon page, a decision node's primary option is
 disabled while a form on that page that names it (`guards: <decision id>`, with `cancel`) holds unsaved edits
 ("Unsaved changes to the terms: save or cancel them before you accept."); other options stay.

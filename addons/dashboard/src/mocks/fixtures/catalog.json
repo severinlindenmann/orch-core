@@ -601,7 +601,7 @@
     "actions": {
       "pause": { "minRole": "maintainer", "confirm": "sign", "label": "Pause the AI Factory" },
       "resume": { "minRole": "maintainer", "confirm": "sign", "label": "Resume the AI Factory" },
-      "permit": { "minRole": "maintainer", "decision": true },
+      "permit": { "minRole": "maintainer", "decision": true, "authorises": true },
       "watch": { "minRole": "member", "label": "Run demo activity" },
       "stop_watching": { "minRole": "member", "label": "Stop demo activity" },
       "prepare_run": { "minRole": "maintainer", "label": "Review a full-run request" },

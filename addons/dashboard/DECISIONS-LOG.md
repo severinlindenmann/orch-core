@@ -1130,3 +1130,18 @@ The owner answered the eight open questions of REVIEW.md. Items 1, 2, 5 and 6 ch
 - **Still open:** factory permits' typed terms (see the round 1 entry), after the factory rewrite merges.
 - **Why:** Codex re-check of the round 1 fixes (1 High, 4 Medium, 1 Low); controller rulings.
 - **Revert:** revert the "round 2" commits on `fix/dashboard-security`.
+
+## Security review #3 completed: factory permits (after the factory rewrite)
+
+- **Decision:** a factory permit decision carries typed terms `command`, `ticket`, `epic` (or "not visible to you"),
+  `scope` ("this exact command"); core shows each as its own covers line and the host compares them with the
+  decision now. The `permit` action grants and logs the command and child from the matched decision's terms and fails
+  closed when the live permit differs. The manifest marks the action `authorises: true`: the host refuses an answer to
+  such a decision without terms (409 `decision.terms_required`) and refuses a second answer to the same decision
+  (409 `decision.closed`). Tests: `src/mocks/addons/factory-permit-terms.test.ts` (terms, the Codex replay with and
+  without the digest, run-from-terms, single use, termless refusal).
+- **Merge note:** `fix/dashboard-security` merged into `feat/dashboard-round3`; the round-3 decision paths (factory
+  hold and code-review decisions, repos clone decisions) post the digest as offered (`test/offered.ts`), Repos'
+  `openRepoShell` goes through the central `newShell` pty check, and the factory/repos tests read typed (quoted) values.
+- **Why:** Codex review 2026-10-10 #3; controller ruling after the factory rewrite merged.
+- **Revert:** revert the "#3 completed" commit (the merge stays).

@@ -1246,6 +1246,9 @@ export class MockStore {
       // question, detail, options, terms) compared with the decision now. Required on every answer: core's prompt
       // always sends it (decisionBody), so an answer without one was not shown by core and is refused.
       if (body.ticket !== undefined && body.ticket !== decision.ticket) return refuse(409, 'decision.closed', 'That decision is about another ticket.', 'Reopen it and check it again.')
+      // A privilege-bearing decision binds what it authorises as typed terms, and is answered once (security review #3).
+      if (meta.authorises && (!decision.terms || !Object.keys(decision.terms).length)) return refuse(409, 'decision.terms_required', 'This decision would authorise something without naming it, so orch will not sign it.', 'The addon must name what it authorises in the decision\'s terms.')
+      if (meta.authorises && this.wsEventsOf(ws).some((e) => e.type === 'addon.decided' && e.name === name && e.id === decision!.id)) return refuse(409, 'decision.closed', 'That decision was already answered.')
       if (typeof body.digest !== 'string') return refuse(409, 'decision.digest_required', 'A decision is answered with the digest of what core showed.', 'Answer it in orch\'s own signing prompt.')
       if (body.digest !== decisionDigest(decision)) return refuse(409, 'decision.closed', 'This decision changed since you opened it.', 'Reopen it and check it again.')
     }

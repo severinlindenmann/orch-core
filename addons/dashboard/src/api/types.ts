@@ -745,6 +745,12 @@ export interface ActionMeta {
    * records `addon.decided` in the workspace log. Today asks for presence (core's signing prompt) first.
    */
   decision?: boolean
+  /**
+   * The decision authorises something to run (a factory permit). Core requires such a decision to carry its execution
+   * values as typed `terms` and refuses an answer to one without them (409 decision.terms_required); the host records
+   * each answer once (a second answer to the same decision is 409 decision.closed). Security review #3.
+   */
+  authorises?: boolean
 }
 
 export interface AddonUpdate {

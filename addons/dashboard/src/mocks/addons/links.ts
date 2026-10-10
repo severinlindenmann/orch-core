@@ -893,7 +893,10 @@ registerAddon({
       // Handoffs still waiting there come back to their people (as when a deadline passes, §9).
       const back = sentOf(c.state).filter((s) => s.link === l.id && s.state === 'waiting')
       for (const s of back) s.state = 'cancelled'
-      record(c, l.id, 'revoked', `Revoked the link. ${l.peer.name} was told with a signed revoke envelope${closed ? `; ${closed} open ${closed === 1 ? 'request' : 'requests'} closed` : ''}${back.length ? `; ${back.length} waiting ${back.length === 1 ? 'handoff' : 'handoffs'} came back (${back.map((s) => s.ticket).join(', ')})` : ''}.`, { by: c.viewer })
+      // The shared row names no ticket and counts none (a hidden one would leak through it, security review #6): each
+      // returned handoff is its own row carrying its ticket, so the per-viewer log filter applies to it.
+      record(c, l.id, 'revoked', `Revoked the link. ${l.peer.name} was told with a signed revoke envelope${closed ? `; ${closed} open ${closed === 1 ? 'request' : 'requests'} closed` : ''}.`, { by: c.viewer })
+      for (const s of back) record(c, l.id, 'handoff_returned', `The handoff of ${s.ticket} came back: the link was revoked before ${l.peer.name} took it.`, { by: c.viewer, ticket: s.ticket })
       return { ok: true, message: `Revoked the link with ${l.peer.name}. Nothing crosses it from now on.`, changed: true }
     },
 

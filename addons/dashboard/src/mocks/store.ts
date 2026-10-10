@@ -1133,9 +1133,13 @@ export class MockStore {
     const role = this.roleIn(ws, this.viewer)
     const pkg = this.addons.find((a) => a.name === name)
     const installed = w.addons[name]
-    const meta = (pkg && installed ? manifestFor(pkg, installed.version).actions : pkg?.actions)?.[id]
-    const min = meta?.minRole ?? 'member'
+    const declared = pkg && installed ? manifestFor(pkg, installed.version).actions : undefined
+    const meta = declared && Object.hasOwn(declared, id) ? declared[id] : undefined
     if (!role) return refuse(403, 'forbidden', 'You are not a member of this workspace.', 'Ask an owner.')
+    // Only an action the installed, granted manifest declares runs (security review #10): an implementation the
+    // manifest leaves out (removed in an update, never declared) fails closed instead of running as a default member action.
+    if (!meta) return refuse(403, 'addon.undeclared_action', `${name} does not declare the action "${id}" in its installed version.`, 'Update or reinstall the addon; nothing was run.')
+    const min = meta.minRole ?? 'member'
     if (!atLeast(role, min)) {
       if (min === 'member') return refuse(403, 'forbidden', 'Viewers cannot do this.', 'Ask an owner or maintainer.')
       return refuse(403, 'forbidden', `Only ${min === 'owner' ? 'owners' : 'owners and maintainers'} can do this.`, min === 'owner' ? 'Ask an owner.' : 'Ask an owner or maintainer.')

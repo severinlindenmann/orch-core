@@ -832,7 +832,7 @@ export type WorkspaceEventType =
   | 'skill.credentials_granted' | 'connection.checked'
   | 'records.committed' | 'records.pushed' | 'records.pulled'
   | 'links.pairing_started' | 'links.pairing_cancelled' | 'links.terms_set' | 'links.pairing_denied' | 'links.paired' | 'links.revoked'
-  | 'links.request_received' | 'links.request_accepted' | 'links.request_denied' | 'links.answered' | 'links.scope_changed' | 'links.sent'
+  | 'links.request_received' | 'links.request_accepted' | 'links.request_denied' | 'links.answered' | 'links.scope_changed' | 'links.sent' | 'links.handoff_returned'
 export interface WorkspaceEvent {
   v: 2
   id: string

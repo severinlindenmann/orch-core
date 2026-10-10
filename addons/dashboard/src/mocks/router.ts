@@ -1,6 +1,6 @@
 // Tiny in-process router for the mock API: (method, path pattern) -> handler(store, ctx).
 import type { HttpMethod, TransportResponse } from '@/api/transport'
-import type { CodeReviewApplies, ActionRequest, AddonOpRequest, GateName, Role, SettingsRequest, WorkspaceIdentity, NewTicketRequest, ApiErrorBody, BodySections, OrchEvent, Priority, SavedView, Status, ViewParams, TicketDocument, TicketSummary } from '@/api/types'
+import type { AddonPackage, CodeReviewApplies, ActionRequest, AddonOpRequest, GateName, Role, SettingsRequest, WorkspaceIdentity, NewTicketRequest, ApiErrorBody, BodySections, OrchEvent, Priority, SavedView, Status, ViewParams, TicketDocument, TicketSummary } from '@/api/types'
 import { STATUSES } from '@/api/types'
 import type { MockStore } from './store'
 import { atLeast, can } from '@/api/permissions'
@@ -68,6 +68,12 @@ export class MockRouter {
 }
 
 // ------------------------------------------------------------------ routes
+
+/** A package as a client may see it: everything but its decisions (served filtered by addon-decisions only). */
+function publicPackage<P extends AddonPackage>(p: P): Omit<P, 'decisions'> {
+  const { decisions: _decisions, ...pub } = p
+  return pub
+}
 
 function visibleTicket(store: MockStore, key: string): TicketDocument | TransportResponse {
   if (!store.hasTicket(key)) return fail(404, 'not_found', `No ticket ${key}`)
@@ -536,19 +542,21 @@ export function buildRouter(): MockRouter {
     const res = s.pushCommit(t.key)
     return res.ok ? ok({ ok: true, sha: res.sha, ticket: s.servedTicket(t.key) }) : fail(res.status, res.code, res.message, res.hint)
   })
-  r.add('GET', '/api/addons', (s) => ok(s.addons))
+  // Every package response is the public package (security review #5): decisions are runtime, ticket-bound state and
+  // reach a client only through the viewer- and workspace-filtered addon-decisions endpoint below.
+  r.add('GET', '/api/addons', (s) => ok(s.addons.map(publicPackage)))
   readOf('/api/workspaces/:ws/addons', (s, c) =>
-    ok(s.workspaceAddons(c.params.ws)),
+    ok(s.workspaceAddons(c.params.ws).map(publicPackage)),
   )
   // Decisions and the catalog sit outside /addons/:name, so no addon name can collide with them.
   readOf('/api/workspaces/:ws/addon-catalog', (s, c) =>
-    ok(s.workspaceCatalog(c.params.ws)),
+    ok(s.workspaceCatalog(c.params.ws).map(publicPackage)),
   )
   r.add('POST', '/api/workspaces/:ws/addons/:name', (s, c) => {
     const b = c.body as AddonOpRequest | null
     if (!b || typeof b !== 'object' || !('op' in b)) return fail(400, 'validation', 'Body must be {op, ...}')
     const res = s.addonOp(c.params.ws, c.params.name, b, person(s))
-    return res.ok ? ok(res.addon) : fail(res.status, res.code, res.message, res.hint)
+    return res.ok ? ok(publicPackage(res.addon)) : fail(res.status, res.code, res.message, res.hint)
   })
   readOf('/api/workspaces/:ws/addon-decisions', (s, c) =>
     ok(s.addonDecisions(c.params.ws)),

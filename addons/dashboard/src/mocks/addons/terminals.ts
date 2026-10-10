@@ -198,8 +198,10 @@ registerAddon({
       navOf(state)[viewer] = { current: s.id }
       return { ok: true, message: `Opened ${sessionTitle(s)}.`, changed: true }
     },
-    new({ state, store, viewer }) {
-      const s = newShell(state, store, viewer, null)
+    new(ctx) {
+      const { state, viewer } = ctx
+      const s = newShell(ctx, null)
+      if ('ok' in s) return s
       navOf(state)[viewer] = { current: s.id }
       return { ok: true, message: `Started ${sessionTitle(s)}.`, changed: true }
     },
@@ -212,9 +214,12 @@ registerAddon({
       return { ok: true, message: `Closed ${sessionTitle(s)}.`, changed: true }
     },
     open_ticket(ctx) {
-      const { state, store, viewer, ticket } = ctx
+      const { state, viewer, ticket } = ctx
       if (!ticket || !canSeeTicket(ctx, ticket)) return invalid('Pick a ticket first.')
-      const s = sessionsOf(state).find((x) => x.kind === 'person' && x.owner === viewer && x.status === 'running' && x.ticket === ticket) ?? newShell(state, store, viewer, ticket)
+      // Attaching to a running shell is a pty use too: checked before reuse, not only when a new one is made.
+      if (!ptyGranted(ctx)) return noPty()
+      const s = sessionsOf(state).find((x) => x.kind === 'person' && x.owner === viewer && x.status === 'running' && x.ticket === ticket) ?? newShell(ctx, ticket)
+      if ('ok' in s) return s
       navOf(state)[viewer] = { current: s.id }
       return { ok: true, message: `Terminal open in the ${ticket} worktree.`, changed: true, terminal: s.id }
     },
@@ -223,12 +228,13 @@ registerAddon({
      * workspace; `context: true` also loads the ticket's current-state summary (harnesses with contextInjection only).
      */
     start(ctx) {
-      const { state, store, viewer, ticket, body } = ctx
+      const { state, viewer, ticket, body } = ctx
       if (!ptyGranted(ctx)) return noPty()
       const h = isHarness(body.harness) ? findHarness(body.harness) : undefined
       if (!h || !h.capabilities.interactive) return invalid('Pick Shell, Claude Code or Codex.')
       if (ticket && !canSeeTicket(ctx, ticket)) return notFound('No such ticket.')
-      const s = newShell(state, store, viewer, ticket ?? null)
+      const s = newShell(ctx, ticket ?? null)
+      if ('ok' in s) return s
       s.harness = h.id
       s.context = !!ticket && body.context === true && h.capabilities.contextInjection
       navOf(state)[viewer] = { current: s.id }
@@ -236,14 +242,15 @@ registerAddon({
     },
     /** Continue from an ended session's summary: a new session of the same harness, seeded with that summary. */
     resume(ctx) {
-      const { state, store, viewer, body } = ctx
+      const { state, viewer, body } = ctx
       if (!ptyGranted(ctx)) return noPty()
       const old = sessionsOf(state).find((x) => x.id === body.session && visibleTo(ctx, x))
       if (!old) return notFound('No such terminal session.')
       if (old.status !== 'stopped') return refusal(409, 'terminals.running', 'That session is still running: join it instead.')
       const h = findHarness(harnessOfSession(old))
       if (!h || !h.capabilities.interactive) return refusal(409, 'terminals.unsupported', `This dashboard cannot start ${harnessOfSession(old)} sessions.`)
-      const s = newShell(state, store, viewer, old.ticket)
+      const s = newShell(ctx, old.ticket)
+      if ('ok' in s) return s
       s.harness = h.id
       s.context = !!old.ticket && h.capabilities.contextInjection
       s.resumedFrom = old.id
@@ -262,7 +269,8 @@ registerAddon({
       const c = store.conn.connections(ws).find((x) => x.name === body.connection)
       if (!c) return notFound('No such connection.')
       if (c.kind !== 'cli_login' || !c.login_hint) return invalid('This connection has no login command.')
-      const s = newShell(state, store, viewer, null)
+      const s = newShell(ctx, null)
+      if ('ok' in s) return s
       s.login = { runAs: c.run_as, connection: c.name, command: c.login_hint }
       navOf(state)[viewer] = { current: s.id }
       // A cross-user shell leaves a trace: the owner opened it, nothing was run (provisional event type).
@@ -302,7 +310,13 @@ function sessionTitle(s: Pick<Session, 'kind' | 'owner' | 'ticket' | 'harness' |
   return s.ticket ? `${s.ticket} · ${agent}` : agent
 }
 
-function newShell(state: Record<string, unknown>, store: AddonCtx['store'], viewer: string, ticket: string | null): Session {
+/**
+ * The one place a person's interactive shell is created. It checks the pty grant itself (security review #11), so no
+ * path (new, open_ticket, start, resume, login_shell, another addon calling through runAddon) can create one without it.
+ */
+function newShell(ctx: Pick<AddonCtx, 'state' | 'store' | 'viewer' | 'ws'>, ticket: string | null): Session | ReturnType<typeof noPty> {
+  if (!ptyGranted(ctx)) return noPty()
+  const { state, store, viewer } = ctx
   const n = ((state.seq as number) ?? 1) + 1
   state.seq = n
   const s: Session = {

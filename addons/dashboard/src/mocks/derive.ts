@@ -577,6 +577,8 @@ export function describeEvent(e: Pick<OrchEvent, 'type'> & Record<string, unknow
       return 'linked a workspace'
     case 'links.revoked':
       return 'revoked a workspace link'
+    case 'links.handoff_returned':
+      return 'got a handoff back from a revoked workspace link'
     case 'links.request_received':
       return 'received a request from a linked workspace'
     case 'links.request_accepted':

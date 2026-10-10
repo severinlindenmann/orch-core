@@ -125,6 +125,21 @@ describe('permanent URLs in the app', () => {
     expect(router.history.length).toBe(1)
   })
 
+  it.each([
+    ['/ticket/DEMO-0043/?tab=history', '/w/DEMO/ticket/DEMO-0043?tab=history'],
+    ['/w/INT/ticket/DEMO-0043/?tab=history', '/w/DEMO/ticket/DEMO-0043?tab=history'],
+    ['/w/DEMO/ticket/DEMO-0043/?tab=history', '/w/DEMO/ticket/DEMO-0043?tab=history'],
+  ])('a ticket address with a trailing slash (%s) is redirected to the canonical one', async (from, to) => {
+    const { address } = renderApp(from, { viewer: 'p_sev' })
+    await screen.findByRole('heading', { level: 1, name: /Load tariff tables/ }, T)
+    await waitFor(() => expect(address()).toBe(to), T)
+  })
+
+  it('the prefix of a key may contain a dash', () => {
+    expect(toPublicPath('/ticket/MY-APP-0007', 'DEMO')).toBe('/w/MY-APP/ticket/MY-APP-0007')
+    expect(toPublicPath('/ticket/DEMO-0043/', 'INT')).toBe('/w/DEMO/ticket/DEMO-0043')
+  })
+
   it('a ticket under another workspace prefix redirects to the key\'s own workspace', async () => {
     const { address } = renderApp('/w/INT/ticket/DEMO-0043?tab=history', { viewer: 'p_sev' })
     await screen.findByRole('heading', { level: 1, name: /Load tariff tables/ }, T)

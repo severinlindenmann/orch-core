@@ -31,7 +31,7 @@ export function splitWorkspacePath(pathname: string): { prefix?: string; path: s
 
 /** The key of an in-app ticket path (`/ticket/DEMO-0043` -> DEMO-0043). */
 export function ticketKeyOf(path: string): string | undefined {
-  const m = /^\/ticket\/([^/]+)$/.exec(path)
+  const m = /^\/ticket\/([^/]+)\/?$/.exec(path)
   if (!m) return undefined
   try {
     return decodeURIComponent(m[1])
@@ -52,7 +52,7 @@ export function isWorkspacePath(path: string): boolean {
 export function toPublicPath(path: string, prefix: string | null | undefined): string {
   const key = ticketKeyOf(path)
   const own = key === undefined ? undefined : prefixOfKey(key)
-  if (own) return `/w/${encodeURIComponent(own)}${path}`
+  if (own) return `/w/${encodeURIComponent(own)}/ticket/${encodeURIComponent(key!)}`
   if (!prefix || !isWorkspacePath(path)) return path
   return `/w/${encodeURIComponent(prefix)}${path === '/' ? '' : path}`
 }

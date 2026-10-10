@@ -125,7 +125,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     if (!workspace || missingPrefix) return
     let target: string | undefined
     if (ticketKey !== undefined) {
-      if (keyHome && keyHome.prefix !== urlPrefix) target = keyHome.prefix
+      if (keyHome && (keyHome.prefix !== urlPrefix || inAppPath.endsWith('/'))) target = keyHome.prefix
     } else {
       const miscased = !!fromUrl && fromUrl.prefix !== urlPrefix
       if (miscased || scoped !== (urlPrefix !== undefined)) target = workspace.prefix
@@ -134,7 +134,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     const l = router.latestLocation
     // The same page under its full address: not a navigation a page with unsaved work needs to ask about.
     router.history.replace(`${toPublicPath(l.pathname, target)}${l.searchStr}${l.hash ? `#${l.hash}` : ''}`, l.state, { ignoreBlocker: true })
-  }, [workspace, fromUrl, missingPrefix, scoped, urlPrefix, router, ownsUrl, ticketKey, keyHome?.prefix])
+  }, [workspace, fromUrl, missingPrefix, scoped, urlPrefix, router, ownsUrl, ticketKey, keyHome?.prefix, inAppPath])
 
   // Latest values for switchWorkspace, so its identity stays stable for key handlers.
   const latest = useRef({ data, workspace })

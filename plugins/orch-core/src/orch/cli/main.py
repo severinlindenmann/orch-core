@@ -136,6 +136,13 @@ def run(parsed: parser.Parsed, ctx: Context, records: MemoryRecords, hooks: Hook
     _check_input(op, args, secrets)
     _check_who(op, ctx, args, hooks)
     session = ctx.session
+    if session:  # a file argument is its content for the stop rule and the dedup key, not its name
+        from orch.ops.runtime import keyed
+
+        args = keyed(ctx, args)
+        res_args = parsed.args
+    else:
+        res_args = args
     if session and records.stopped(session, op.name, _normalised(op, args, hooks), ctx.now()):
         raise OrchError("stop")
     caching = bool(session) and op.is_write and not ctx.dry_run
@@ -147,7 +154,7 @@ def run(parsed: parser.Parsed, ctx: Context, records: MemoryRecords, hooks: Hook
     base = _dedup_key(op, ctx, args, hooks, with_head=False) if caching else ""
     idem = records.attempt(session, base, ctx.now()) if caching else None  # type: ignore[arg-type]
     try:
-        res = _call(op, dataclasses.replace(ctx, idem=idem) if caching else ctx, args)
+        res = _call(op, dataclasses.replace(ctx, idem=idem) if caching else ctx, res_args)
     except OrchError as e:
         if e.code not in GLOBAL_ERRORS and not any(d["code"] == e.code for d in op.errors):
             raise OrchError("internal", f"{op.cli} returned undeclared error {e.code}") from e
@@ -219,6 +226,7 @@ def main(
 
     op: Operation | None = None
     parsed: parser.Parsed | None = None
+    ctx: Context | None = None
     try:
         for t in args:
             if _GRANT.search(t) or any(len(s) >= 8 and s in t for s in secrets):
@@ -255,7 +263,9 @@ def main(
     except OrchError as e:
         session = env.get("ORCH_SESSION") or None
         if op is not None and parsed is not None and session and _is_refusal(e):
-            norm = _normalised(op, parsed.args, hooks)
+            from orch.ops.runtime import keyed
+
+            norm = _normalised(op, keyed(ctx, parsed.args) if ctx is not None else parsed.args, hooks)
             try:
                 if records.refused(session, op.name, norm, e.code, now()) >= STOP_AFTER:
                     e = OrchError("stop")

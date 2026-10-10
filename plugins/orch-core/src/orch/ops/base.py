@@ -36,6 +36,8 @@ class Context:
     #: The workspace of this call (``orch.ops.runtime.Workspace``), set by the CLI: opened lazily, shared by the hooks
     #: and the handler, so one call opens the store once. ``None`` in a test that builds a Context by hand.
     workspace: Any = field(default=None, repr=False)
+    #: Standard input read once (``--file -``), so the dedup key and the handler see the same bytes.
+    files: dict[str, bytes] = field(default_factory=dict, repr=False)
 
 
 @dataclass

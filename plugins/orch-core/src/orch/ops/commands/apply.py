@@ -7,6 +7,7 @@ from jsonschema import Draft202012Validator
 import orch.ops as ops
 from orch import canon
 from orch.canon.text import clean_line
+from orch.cli.store_errors import to_orch_error
 from orch.ops import plans, views
 from orch.ops._dsl import FILE, INT, STR, arr, err, obj, operation
 from orch.ops.base import Context, Result
@@ -65,11 +66,13 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         for i, (name, a) in enumerate(checked, 1):
             try:
                 table[name][1](c, p, a)
-            except (OrchError, StoreError) as e:
-                where = f"item {i} ({name}): "
-                if isinstance(e, StoreError):
-                    raise
-                raise OrchError(e.code, where + e.message, hint=e.hint, fix=e.fix, retryable=e.retryable) from None
+            except StoreError as e:
+                e = to_orch_error(e, c.declared)
+                raise OrchError(e.code, f"item {i} ({name}): {e.message}", retryable=e.retryable) from None
+            except OrchError as e:
+                raise OrchError(
+                    e.code, f"item {i} ({name}): {e.message}", hint=e.hint, fix=e.fix, retryable=e.retryable
+                ) from None
         done = p.commit()
         seq = done[-1].event["seq"] if done else p.last_seq
         types = [x.event["type"] for x in p.planned]
@@ -105,6 +108,9 @@ OP = operation(
     data=obj({"count": INT, "events": arr(STR)}),
     errors=(
         err("parse.json"),
+        err("parse.text"),
+        err("claim.required"),
+        err("lease.held"),
         err("conflict.section"),
         err("conflict.field"),
         err("transition.refused"),

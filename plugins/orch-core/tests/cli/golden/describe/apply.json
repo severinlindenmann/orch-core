@@ -116,6 +116,27 @@
         ]
       },
       {
+        "code": "claim.required",
+        "exit": 4,
+        "retryable": false,
+        "hint": "orch claim",
+        "fix": [
+          "orch",
+          "claim"
+        ]
+      },
+      {
+        "code": "lease.held",
+        "exit": 4,
+        "retryable": false,
+        "hint": "pick another task: orch task next",
+        "fix": [
+          "orch",
+          "task",
+          "next"
+        ]
+      },
+      {
         "code": "lock.busy",
         "exit": 4,
         "retryable": true,
@@ -127,6 +148,17 @@
       },
       {
         "code": "parse.json",
+        "exit": 6,
+        "retryable": false,
+        "hint": "orch describe apply",
+        "fix": [
+          "orch",
+          "describe",
+          "apply"
+        ]
+      },
+      {
+        "code": "parse.text",
         "exit": 6,
         "retryable": false,
         "hint": "orch describe apply",

@@ -580,16 +580,16 @@ class Call:
 
     def _read_limited(self, source: str) -> bytes:
         if source == "-":
-            stream = getattr(sys.stdin, "buffer", None)
-            data = stream.read(FILE_LIMIT + 1) if stream is not None else sys.stdin.read(FILE_LIMIT + 1).encode()
+            data = read_stdin(self.ctx)
         else:
             try:
                 fd = os.open(source, os.O_RDONLY | os.O_NONBLOCK)
             except OSError as e:
                 raise OrchError("invalid.input", f"cannot read {clean_line(source)[:80]}: {e.strerror}") from None
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                os.close(fd)
+                raise OrchError("invalid.input", f"{clean_line(source)[:80]} is not a regular file")
             with os.fdopen(fd, "rb") as f:
-                if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
-                    raise OrchError("invalid.input", f"{clean_line(source)[:80]} is not a regular file")
                 data = f.read(FILE_LIMIT + 1)
         if len(data) > FILE_LIMIT:
             raise OrchError("invalid.input", f"the text is longer than {FILE_LIMIT} bytes")
@@ -619,12 +619,12 @@ class Call:
             fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
         except OSError as e:
             raise OrchError("invalid.input", f"cannot read {clean_line(path)[:80]}: {e.strerror}") from None
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > ARTIFACT_LIMIT:
+            os.close(fd)
+            why = "is not a regular file" if not stat.S_ISREG(st.st_mode) else f"is larger than {ARTIFACT_LIMIT} bytes"
+            raise OrchError("invalid.input", f"{clean_line(path)[:80]} {why}")
         with os.fdopen(fd, "rb") as f:
-            st = os.fstat(f.fileno())
-            if not stat.S_ISREG(st.st_mode):
-                raise OrchError("invalid.input", f"{clean_line(path)[:80]} is not a regular file")
-            if st.st_size > ARTIFACT_LIMIT:
-                raise OrchError("invalid.input", f"{clean_line(path)[:80]} is larger than {ARTIFACT_LIMIT} bytes")
             data = f.read(ARTIFACT_LIMIT + 1)
         if len(data) > ARTIFACT_LIMIT:
             raise OrchError("invalid.input", f"{clean_line(path)[:80]} is larger than {ARTIFACT_LIMIT} bytes")
@@ -662,6 +662,49 @@ class Call:
             hints=hints or [],
             lines=lines,
         )
+
+
+def read_stdin(ctx: Context) -> bytes:
+    """Standard input, read once per call (the dedup key and the handler share it); more than 1 MiB is refused."""
+    if "-" not in ctx.files:
+        stream = getattr(sys.stdin, "buffer", None)
+        ctx.files["-"] = stream.read(FILE_LIMIT + 1) if stream is not None else sys.stdin.read(FILE_LIMIT + 1).encode()
+    return ctx.files["-"]
+
+
+def input_digest(ctx: Context, source: str) -> str | None:
+    """A digest of what a file argument names (``-`` is stdin), or ``None`` if it cannot be read: part of the dedup and
+    stop-rule keys, so two calls with the same path but other content are not the same call."""
+    import hashlib
+
+    try:
+        if source == "-":
+            return hashlib.sha256(read_stdin(ctx)).hexdigest()
+        h = hashlib.sha256()
+        fd = os.open(source, os.O_RDONLY | os.O_NONBLOCK)
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            os.close(fd)
+            return None
+        with os.fdopen(fd, "rb") as f:
+            while chunk := f.read(1 << 20):
+                h.update(chunk)
+        return h.hexdigest()
+    except (OSError, ValueError):
+        return None
+
+
+FILE_ARGS = ("file", "path", "artifact")
+
+
+def keyed(ctx: Context, args: dict[str, Any]) -> dict[str, Any]:
+    """``args`` with every file argument replaced by the digest of its content, for dedup and the stop rule."""
+    out = dict(args)
+    for name in FILE_ARGS:
+        if isinstance(out.get(name), str):
+            d = input_digest(ctx, out[name])
+            if d is not None:
+                out[name] = f"sha256:{d}"
+    return out
 
 
 def short(text: str, n: int = 70) -> str:

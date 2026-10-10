@@ -21,6 +21,7 @@ from orch.ops import views
 from orch.ops.base import Context, Result
 from orch.ops.errors import OrchError
 from orch.ops.runtime import Call, Projection, short
+from orch.schema import SECTIONS_BY_TYPE
 from orch.store.render import section_entry, thaw
 
 ARTIFACT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
@@ -122,6 +123,8 @@ def ask(c: Call, p: Projection, args: dict[str, Any]) -> Out:
 
 def section_set(c: Call, p: Projection, args: dict[str, Any]) -> Out:
     sid = args["section"]
+    if sid not in SECTIONS_BY_TYPE[p.view.type]:
+        raise OrchError("invalid.input", f"a {p.view.type} ticket has no section {sid}")
     text = c.text(c.read_text_source(args, ("message", "file")) or "", limit=65536, what=f"section {sid}").strip("\n")
     p.add(
         {

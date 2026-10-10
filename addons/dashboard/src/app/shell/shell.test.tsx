@@ -292,25 +292,36 @@ describe('app shell', () => {
   })
 
   describe('workspace switcher', () => {
-    it('shows needs-you previews per workspace and opens one directly', async () => {
+    it('is calm: one row per workspace (prefix, name, check, needs-you count), no recent tickets, no role line', async () => {
       const { user } = renderApp('/')
       await user.click(await screen.findByRole('button', { name: 'Switch workspace' }))
-      const int = await screen.findByRole('group', { name: /INT/ })
-      await user.click((await within(int).findAllByRole('link'))[0])
-      // Today's h1 is still on screen until the navigation lands, so wait for the ticket heading.
-      await waitFor(() => expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Rotate shared Slack webhook'))
-      // The ticket page's h1 is the title (the key is shown beside it), so the INT ticket is identified by its title.
-      expect(screen.getAllByText('INT-0007').length).toBeGreaterThan(0)
-      expect(screen.getByRole('button', { name: 'Switch workspace' })).toHaveTextContent(/Internal/)
+      const list = await screen.findByRole('list', { name: 'Workspaces' })
+      const rows = within(list).getAllByRole('listitem')
+      expect(rows).toHaveLength(3)
+      const demo = within(rows[0]).getByRole('button', { name: /^DEMO · Acme energy data/ })
+      expect(within(demo).getByRole('img', { name: 'Current workspace' })).toBeInTheDocument()
+      // The count is the same "needs you" number as the sidebar badge, shown only when there is something.
+      await waitFor(() => expect(within(rows[0]).getByLabelText(/^\d+ need you$/)).toBeInTheDocument())
+      for (const r of rows) {
+        expect(within(r).queryAllByRole('link')).toHaveLength(0) // no recent tickets
+        expect(within(r).queryByText(/^(owner|maintainer|member|viewer)$/)).toBeNull() // the role is in the tooltip
+        expect(within(r).queryByLabelText(/Relay/)).toBeNull()
+      }
+      // The shortcut is a hint on the button (shown on hover/focus), and keyboard users get it as aria-keyshortcuts.
+      expect(demo).toHaveAttribute('aria-keyshortcuts', expect.stringMatching(/^(Meta|Control)\+1$/))
     })
 
-    it('shows role, needs-you count and a muted relay dot per workspace', async () => {
+    it('the role and the relay are in the row\'s tooltip; arrow keys move between workspaces; Enter switches', async () => {
       const { user } = renderApp('/')
       await user.click(await screen.findByRole('button', { name: 'Switch workspace' }))
-      const demo = await screen.findByRole('group', { name: /DEMO/ })
-      expect(within(demo).getByText('owner')).toBeInTheDocument()
-      expect(within(demo).getByLabelText(/\d+ need you/)).toBeInTheDocument()
-      expect(within(demo).getByLabelText('Relay not connected')).toBeInTheDocument()
+      const list = await screen.findByRole('list', { name: 'Workspaces' })
+      const [demo, int] = within(list).getAllByRole('button')
+      await waitFor(() => expect(demo).toHaveFocus())
+      expect(await screen.findByRole('tooltip')).toHaveTextContent(/Your role: owner.*Relay not connected/)
+      await user.keyboard('{ArrowDown}')
+      expect(int).toHaveFocus()
+      await user.keyboard('{Enter}')
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Switch workspace' })).toHaveTextContent(/Internal/))
     })
 
     it('keeps the board when switching (waits on the topbar title: Board has no h1)', async () => {

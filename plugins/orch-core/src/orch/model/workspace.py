@@ -175,7 +175,7 @@ def device_revoked(core: Core, e: dict[str, Any], v: Verifier) -> Refusal | None
     holder = ws.members.get(dev.person) or ws.former.get(dev.person)
     if holder is None or "p_" + e["revocation"]["o"]["person_id"] != dev.person:
         return Refusal(Code.DEVICE_CERT, "the revocation is not for a device of this person")
-    if not v.verify_embedded(e, pk_pub=holder.pk_pub):
+    if not v.verify_embedded(e, pk_pub=holder.pk_pub, device_cert=dev.cert):
         return Refusal(Code.DEVICE_CERT, "the revocation is not signed by the person key")
 
     def change() -> None:

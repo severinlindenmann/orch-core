@@ -118,7 +118,9 @@ class World:
 
     # ---- inspection
     def state(self, now: str | None = None):
-        return replay(self.ws, self.tl, verifier=self.verifier, now=now or self.at())
+        return replay(
+            self.ws, self.tl, verifier=self.verifier, now=now or self.at(), expected_workspace_id=self.workspace_id
+        )
 
     def build_unappended(self, log: str, typ: str, actor, **payload):
         a = self.actor(actor) if isinstance(actor, str) else actor

@@ -81,6 +81,7 @@ def replay(
     *,
     verifier: Verifier,
     now: str,
+    expected_workspace_id: str,
     expected_genesis: str | None = None,
 ) -> State:
     """Derive the state from the parsed events of the workspace log and the ticket logs (schema-valid).
@@ -88,11 +89,12 @@ def replay(
     The logs are walked in the merged order of §5.5: the workspace log first (by ``seq``), and ticket events by
     ``ws_seq``, then ``at``, then ticket uid, then ``seq`` (an event with ``ws_seq = k`` follows workspace event
     ``k``). ``admit`` only accepts an append that sorts after every earlier append, so for any log the host wrote,
-    this order is the append order. ``now`` is a timestamp string (the model reads no clock); it decides what is
+    this order is the append order. ``expected_workspace_id`` and ``expected_genesis`` are the store's pins (from
+    ``config.json`` and the host state dir); a genesis that does not match is refused before it is trusted. ``now`` is a timestamp string (the model reads no clock); it decides what is
     live in the views. Events that fail authorization are absent for state and reported (``workspace.invalid``,
     the tickets' ``frozen``); a broken chain stops that log (``chain_errors``).
     """
-    ctx = Ctx(verifier, expected_genesis)
+    ctx = Ctx(verifier, expected_workspace_id, expected_genesis)
     core = Core()
     merged: list[tuple[tuple[int, int, int, str, int], str, dict[str, Any]]] = [
         ((e["seq"], 0, 0, "", e["seq"]), WORKSPACE, e) for e in workspace_events
@@ -112,7 +114,7 @@ def admit(state: State, event: dict[str, Any], *, log: str) -> Ok | Refusal:
     shapes the views. It needs no ``host_sig`` yet. ``O(event)`` for a ticket event; a workspace event that changes
     every ticket (member, role, policy, addon, restore, compromised device) copies all tickets.
     """
-    ctx = Ctx(state._ctx.verifier, state._ctx.expected_genesis, admit=True)
+    ctx = Ctx(state._ctx.verifier, state._ctx.expected_workspace_id, state._ctx.expected_genesis, admit=True)
     r = apply_event(copy.copy(state._core), log, event, ctx, commit=False)
     return OK if r is None else r
 

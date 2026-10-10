@@ -416,10 +416,41 @@ def test_genesis_pin(w):
     from orch import canon
     from orch.model import replay
 
-    ok = replay(w.ws, w.tl, verifier=w.verifier, now=w.at(), expected_genesis=canon.event_head(w.ws[0]))
+    ok = replay(
+        w.ws,
+        w.tl,
+        verifier=w.verifier,
+        now=w.at(),
+        expected_workspace_id=w.workspace_id,
+        expected_genesis=canon.event_head(w.ws[0]),
+    )
     assert not ok.workspace.invalid and ok.workspace.members
-    bad = replay(w.ws, w.tl, verifier=w.verifier, now=w.at(), expected_genesis="sha256:" + "0" * 64)
-    assert not bad.workspace.members and bad.workspace.invalid[0].code == "trust.genesis_mismatch"
+    bad = replay(
+        w.ws,
+        w.tl,
+        verifier=w.verifier,
+        now=w.at(),
+        expected_workspace_id=w.workspace_id,
+        expected_genesis="sha256:" + "0" * 64,
+    )
+    assert not bad.workspace.members and "pinned" in bad.chain_errors[0].detail
+    assert not bad.tickets  # nothing after an untrusted genesis counts
+    # a genesis for another workspace id is refused before the verifier ever sees it
+    v = FakeVerifier()
+    other = replay(w.ws, w.tl, verifier=v, now=w.at(), expected_workspace_id="f" * 32)
+    assert not other.workspace.members and v.host_calls == []
+    # the workspace id handed to verify_host is the pinned/replayed one, never the event's
+    v2 = FakeVerifier()
+    replay(w.ws, w.tl, verifier=v2, now=w.at(), expected_workspace_id=w.workspace_id)
+    assert set(v2.host_workspace_ids) == {w.workspace_id}
+
+
+def test_device_revoked_gets_the_roster_certificate(w):
+    rev = revocation(w.people["tom"][2:], w.dev["tom"][2:], "lost")
+    w.wev("device.revoked", w.HOST, device=w.dev["tom"], reason="lost", revocation=rev)
+    w.state()
+    (_, cert_given) = [c for c in w.verifier.embedded_certs if c[0] == w.ws[-1]["id"]][0]
+    assert cert_given["o"]["device_id"] == w.dev["tom"][2:]
 
 
 def test_unattended_quotas(w):
@@ -522,7 +553,7 @@ def test_verifier_exceptions_are_not_success():
     with pytest.raises(RuntimeError):
         from orch.model import replay
 
-        replay(w.ws, w.tl, verifier=Boom(), now=w.at())
+        replay(w.ws, w.tl, verifier=Boom(), now=w.at(), expected_workspace_id=w.workspace_id)
 
 
 def test_the_fake_verifier_is_not_part_of_the_public_api():

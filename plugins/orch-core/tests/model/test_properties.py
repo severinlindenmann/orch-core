@@ -458,7 +458,7 @@ def run(steps):
                 ws2, tl2 = copy.deepcopy(w.ws), copy.deepcopy(w.tl)
                 e["host_sig"] = sig("host-refused")
                 (ws2 if log == "workspace" else tl2.setdefault(log, [])).append(e)
-                s2 = replay(ws2, tl2, verifier=w.verifier, now=w.at())
+                s2 = replay(ws2, tl2, verifier=w.verifier, now=w.at(), expected_workspace_id=w.workspace_id)
                 hit = [i for i in s2._core.logs[log].invalid if i.id == e["id"]]
                 assert hit and hit[0].code == res.code.value, (typ, res)
                 for uid in uids:

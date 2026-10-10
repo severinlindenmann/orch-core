@@ -257,13 +257,23 @@ Owner decision 10 Oct 2026 evening (D61 option); proposal `docs/factory-full-run
 factory addon's (`src/mocks/addons/factory-runs.ts`); the hold is meant to be **host-enforced**.
 
 - **Request** (signed, `start_run`, `confirm: 'sign'`, maintainer+; a Deliver target owner-only in the mock): the
-  signed args are exactly `goal` (≤ 200 chars), `goes_up_to` (`Preview` | `Deliver`), and for Deliver
+  signed args are exactly `request` (a single-use id the host issued at review: `rq-<n>`), `goal` (≤ 200 chars), `goes_up_to` (`Preview` | `Deliver`), and for Deliver
   `deliver_means` (the concrete destination, ≤ 160 chars, required) and `hold_minutes` (15 | 30 | 60 | 240, default
   30), plus `largest_child: 'm'`. Core records them in `addon.action_signed {args}`. The form (`prepare_run`) stores a
   per-viewer draft; the host refuses a signature whose values differ from the reviewed draft (409 `factory.stale`),
-  a Deliver without a destination (400 `validation`), and a run while the factory is paused or stopped (409).
-- **Events** on the factory epic, by the addon: `factory.run_requested {run, goal, goes_up_to, deliver_means?,
-  hold_minutes?}`, `factory.run_step {run, step: 'Plan' | 'Preview'}`, `factory.deliver_held {run, deliver_means,
+  a Deliver without a destination (400 `validation`), a run while the factory is paused or stopped (409
+  `factory.not_running`), a reused request id (409 `factory.request_used`; the id is consumed with the run's creation in
+  one step) and a run whose children do not fit the charter's child budget (409 `factory.budget`; admission reserves
+  them, `used += 3`).
+- **Charter:** one check at admission, every step and settlement: paused holds everything, the hold clock too; a
+  charter stopped by time (or an over-committed budget) stops progress and ends a hold `factory.deliver_cancelled
+  {run, reason: 'charter_stopped'}` ("Not delivered: the charter stopped"). Nothing is delivered after it stops.
+- **Code review (D61 "never the code gate"):** when the workspace code review policy applies, each child waits at a
+  Code review step for a person: core decision `factory.code:<run>:<n>` (option `approve`, terms `{run, child,
+  child_title}`, maintainer+, signed in core's prompt; `addon.decided` with presence) → `factory.code_reviewed {run,
+  child}`. Validate and Preview wait for every review; neither the factory nor a mandate satisfies it.
+- **Events** on the factory epic, by the addon: `factory.run_requested {run, request, goal, goes_up_to, children,
+  deliver_means?, hold_minutes?}`, `factory.code_reviewed {run, child}`, `factory.deliver_cancelled {run, reason}`, `factory.run_step {run, step: 'Plan' | 'Preview'}`, `factory.deliver_held {run, deliver_means,
   until}`, `factory.deliver_stopped {run}`, `factory.delivered {run, deliver_means}`. Children's steps
   (Requirements, Build and test, Validate, Evidence) are in the addon state in the mock; a real host writes them on
   child tickets with `via: 'factory_full_run'`. Every decided step is labelled "via the factory full run <you|name>
@@ -276,6 +286,13 @@ factory addon's (`src/mocks/addons/factory-runs.ts`); the hold is meant to be **
   Preview. When `until` passes with no Stop the host delivers to exactly `deliver_means` (it refuses any other
   destination, `factory.deliver_mismatch`) and writes `factory.delivered`. While the factory is paused nothing is
   delivered and the paused time is added to `until`. Agents never hold the delivery credential: the host delivers.
+- **The factory stays on during a hold.** Disable, update and uninstall are refused (409 `addon.delivery_on_hold`,
+  core's sentence names the run) while a delivery holds (mock: `MockAddon.offBlocked`). The real host keeps Stop
+  available independently of the addon's activation (Stop is a core decision on a core-held deadline), so even an
+  addon that crashed or was removed cannot take the Stop away.
+- **Reloads:** the hold's deadline is held on the host's real clock. The mock keeps a wall-clock deadline next to the
+  mock one (`holdWallUntil`) and re-derives the mock deadline from it when the mock clock restarts on a reload, so a
+  reload never extends a hold.
 - **No operation shortens a Deliver hold.** During the hold the only human act is a signed Stop; there is no
   "deliver now". The mock's "Simulate: let the hold time pass (demo)" is a simulator control of the demo data (owner
   only, refused outside the demo datasets), not a host operation: a host implements nothing for it.

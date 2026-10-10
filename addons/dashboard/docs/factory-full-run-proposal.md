@@ -25,16 +25,22 @@ One form, one signature:
 | What Deliver means | Required for Deliver. The concrete destination: "Deploy to production", "Publish campaign to the newsletter list", "Send to finance@example.test (boss)". |
 | Hold window | 15 min, **30 min** (default), 1 h or 4 h: how long Deliver waits, with a notice and Stop, before it goes out. |
 | Size cap | As the charter: children of size m or smaller; larger ones wait for you. |
+| Request id | Issued by the host when you review the request (`rq-7`); signed with the rest and **single use**. |
 
-Core's signing prompt names every value in core lines ("Goal (goal): …", "Goes up to (goes_up_to): Deliver",
+Core's signing prompt names every value in core lines ("Request (request): rq-7", "Goal (goal): …", "Goes up to (goes_up_to): Deliver",
 "Deliver means (deliver_means): …", "Hold minutes (hold_minutes): 30", "Largest child (largest_child): m"), with each
 value shown exactly (invisible characters made visible). The host records the signature (`addon.action_signed`).
+The host consumes the request id together with creating the run, in one step; a replayed signature is refused
+(409 `factory.request_used`), and reviewing again issues a new id. Admission also reserves the run's children against
+the charter's child budget (refused, 409 `factory.budget`, when they do not fit).
 
 ## What the factory does, step by step
 
 1. **Plan** — splits the goal into children within the size cap.
 2. **Requirements** — writes and approves each child's requirements.
 3. **Build and test** — agents do the work and run the checks.
+   **Code review** — when the workspace's code review policy applies (Settings → Gates), each child waits here for a
+   **person** (a core decision, signed with Touch ID). The factory never signs it, and neither does a mandate.
 4. **Validate** — the verdict on each child (on the signed commit, D53).
 5. **Evidence** — collects what proves each acceptance criterion.
 6. **Preview** — made and checked, visible inside the workspace. A run that stops at Preview ends here and waits for
@@ -64,6 +70,13 @@ signed on 10 Oct 2026 14:02 UTC — no person reviewed this step"** (or "… Sev
 | Marketing campaign: "Autumn tariff campaign" | the campaign as a draft | "Publish campaign to the newsletter list" |
 | Finance report: "September cost report for my boss" | the report as a preview | "Send to finance@example.test (boss)" |
 
+## The charter, checked every time
+
+One charter check runs at admission, at every step and when a hold settles: paused holds everything (the hold
+clock too); a charter stopped by time (72 hours) or an over-committed child budget stops the run where it is, and a
+hold then ends **"not delivered: charter stopped"** (`factory.deliver_cancelled {run, reason: charter_stopped}`).
+Nothing is delivered after the charter stops.
+
 ## How it relates to D61's charter
 
 It is an **extra option**, not a replacement. The charter's limits stay: 25 children or 72 hours, children of size m
@@ -81,7 +94,12 @@ hold with Stop. A run that goes "Up to Preview" behaves like today's charter plu
 - Stop during the hold cancels; after `factory.delivered` there is nothing to stop.
 - **No operation shortens a hold.** There is no "deliver now": during the window the only human act is a signed Stop.
   (The mockup's "Simulate: let the hold time pass (demo)" is a demo-data simulator control, not an operation.)
-- A paused or stopped factory holds every run where it is; the hold clock does not run while paused.
+- A paused factory holds every run where it is; the hold clock does not run while paused. A stopped charter ends a
+  hold not delivered.
+- **The factory cannot be turned off or changed during a hold.** Disable, update and uninstall are refused (409
+  `addon.delivery_on_hold`, naming the run) while a delivery holds. The real host keeps Stop available independently
+  of the addon's activation: a Stop is core's, not the addon's.
+- A hold runs on the host's real clock: a restart or reload never extends or restarts it.
 
 ## Mandates (owner decision, 10 Oct evening)
 

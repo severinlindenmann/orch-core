@@ -103,15 +103,15 @@ mandate {
   effects:      { "gate.approve:requirements": {...}, "gate.approve:plan": {...}, "verdict.pass": {...} },
   addon_pins:   { factory: "sha256:…" },        // package + manifest + effect schema hashes (§2.4)
   limits:       { see §2.8 },
-  not_before, expires, max_until,              // max_until immutable across revisions
+  not_before, expires, max_until?,             // max_until: OPTIONAL, pending the owner (§6 point 3); fixed once set
   policy_hash, people_hash, list_seq, checkpoint,
   delegation_pub
 }
 ```
 
 You sign it on the Mac with Touch ID (D41), under context `orch/v2/mandate|<workspace_id>`. The Touch ID prompt names
-the effects, the admitted tickets and `max_until`. **Issuer:** owners only, for themselves. **Issue, extend or widen:**
-Mac only. Under D49 the phone signs whenever it is unlocked, so it may only **acknowledge, suspend, stop and veto**,
+the effects, the scope and `expires`, and `max_until` only when one is set (optional, pending §6 point 3). **Issuer:**
+owners only, for themselves. **Issue, renew or widen:** Mac only. Under D49 the phone signs whenever it is unlocked, so it may only **acknowledge, suspend, stop and veto**,
 and none of these widen anything.
 
 ### 2.2 Execution boundary (Critical #1)
@@ -166,13 +166,13 @@ and what it can change. Core validates every request against it. Anything not li
 | Effect | Wide mandate (10 Oct evening) | Always human |
 |---|---|---|
 | `gate.approve` requirements / plan, `verdict.pass` on `source_sha` | yes (with checker on verdicts) | when the diff touches protected paths |
-| `gate.approve:code` (code review gate) | yes: the owner did not keep it human | when the diff touches protected paths |
+| `gate.approve:code` (code review gate) | yes: the owner did not keep it human (open point 1) | when the diff touches protected paths; inside a factory run (D61) |
 | `gate.request_changes` | yes, at most 3 cycles per ticket | |
 | `question.answer` | yes, typed `choice` with options fixed by the asker; never free text that grants a permit, credential or D55 approval | |
 | unblock a ticket (approve what blocks it) | yes | a block on secrets/connections (D55) |
 | `addon.decide` (incl. factory permits) | only effects an addon declares in its **pinned** manifest as core effect types; an addon update unpins it until you re-sign | anything that maps to an always-human effect |
 | enable a factory, start a factory run (Preview or Deliver, D61) | yes; a Deliver still waits out the hold window with Stop (§2.16) | |
-| `land.enqueue` | yes, with checker | |
+| `land.enqueue` | yes, with checker, to `develop` and listed targets | `main`: refused until the owner decides (§6 point 2) |
 | `ticket.create` / `close` / `reopen` | yes | dismissing open findings, questions or vetoes |
 | `grant.issue` (start agents) | yes, within the mandate's own limits | |
 | `mandate.issue` / `extend` | **no** (§2.15) | always |
@@ -244,8 +244,10 @@ it on the Mac.
   keeps the lifetime counters and pins the current policy and addon semantics. If anything widens, the Touch ID prompt
   shows the difference. The phone cannot renew (D49: it acknowledges, stops and vetoes only).
 - Each renewal again runs the preflight (§2.12); a failed check means the mandate ends at `expires`.
-- Revision 2 had a 180-day `max_until` ceiling and a weekly acknowledgement. The owner's decision does not include
-  them; they are listed as open points (§6).
+- **`max_until` is optional and pending** (§6 point 3). When the owner keeps a ceiling, it is set at issuance, shown
+  in every issue and renew prompt, never moved by a renewal (a renewal past it is refused), and covered by the
+  signature. Without one, each renewal is bounded only by its own 30 days. Revision 2 had a 180-day ceiling and a
+  weekly acknowledgement; the owner's decision does not include them, so both are open points, not rules.
 
 ### 2.12 Custody prerequisites, enforced (High #5)
 
@@ -280,7 +282,7 @@ click past.
 - **Code review gate:** revision 2 kept it never delegable. Under the wide mandate the owner did not keep it human, so
   a mandate may sign it (open point 1 in §6 recommends keeping it human). The factory never signs it (D61).
 - **D53:** unchanged. The verdict signs `source_sha`, new commits void it, and the land worker uses the signed
-  commit and re-checks the mandate right before merging (§2.13). `main` is a target only if the owner confirms open point 2 (§6).
+  commit and re-checks the mandate right before merging (§2.13). `main` is never a target until the owner decides (§6 point 2): the host refuses it (D33), mandate or not.
 - **D41:** every *human* signature still needs Touch ID. A mandate signature is a third kind (`presence: "none"`,
   `via: "mandate"`). Its human moments, issuance and extension, use Touch ID. **D49:** the phone acknowledges, stops
   and vetoes. Phone batch taps (a second key for later steps) show the **exact effect and the immutable item digest**
@@ -303,7 +305,10 @@ a production deploy, a publish or a send can happen with no person signing anyth
 - the **hold window** (default 30 min, set in the request): a calm "Delivering in 28 min · Stop" notice on Today, on the
   factory page and in the shell; you can Stop it until the window ends;
 - the run is labelled "via mandate md_3, for Severin — no person reviewed this", step by step;
-- protected paths and the code-gate rules of the factory still apply.
+- protected paths and the code-gate rules of the factory still apply: in a full run, when the code review policy
+  applies, each child waits at a Code review step for a **person** (D61 "never the code gate"); a mandate does not
+  satisfy that step, even though it may sign the code gate elsewhere (§2.4, open point 1);
+- a stopped charter (time or budget) stops the run and ends a hold "not delivered".
 Said plainly: the hold notice is the only human checkpoint, and it only helps if someone looks.
 
 ## 3. How it shows in the dashboard
@@ -355,9 +360,10 @@ allowed, no mandate → mandate chains. Still open:
 1. **Code review gate:** you did not keep it human, so a mandate may sign it. Recommended: keep it human (it marks
    exactly where you said you want to look). Your call.
 2. **Old "never" items you did not name either way:** `restore`, purge, a first send to a peer, public publish, landing
-   on `main`. This revision treats restore and purge as settings (always human) and the other three as delegable
-   effects. Confirm?
-3. A ceiling across renewals (revision 2 had 180 days) and a weekly acknowledgement: keep either?
+   on `main`. This revision treats restore and purge as settings (always human), a first send to a peer and public
+   publish as delegable, and keeps **landing on `main` refused** (D33) until you decide. Confirm, or say otherwise?
+3. A ceiling across renewals (`max_until`, optional in the schema until you decide; revision 2 had 180 days) and a
+   weekly acknowledgement: keep either?
 4. Owners only as issuers (recommended), or maintainers too?
 5. Is the default protected-path list right (CI, build/test, deploy, manifests and lockfiles, orch config, skills,
    hooks, security-classed code)?
@@ -404,7 +410,7 @@ All 15 findings were adopted. Where an adoption is only partial, the row says wh
 | 5 | Custody prerequisites | `mandate.preflight` refuses issuance on unsupported configs (§2.12). |
 | 6 | Replay / cross-log | Canonical payload, one digest for all signatures, durable decision ids, atomic reservation (§2.6). |
 | 7 | Stop leaves work running | Acknowledged boundary, queued effects cancelled, execution-time recheck, relay lease (§2.13). |
-| 8 | Renewal extends authority | Acknowledgement separate from extension, revisions bound to the root, immutable `max_until`, lifetime counters (§2.11). |
+| 8 | Renewal extends authority | Revisions bound to the root, lifetime counters, a renewal is a new Mac signature; `max_until` (immutable when set) and the weekly acknowledgement are now optional, pending the owner (§2.11, §6 point 3). |
 | 9 | Veto persistence | Persistent `veto` flag, cleared only by a person, rechecked at execution (§2.7). |
 | 10 | Budgets bound signatures | Aggregate limits, reservation, retries and descendants counted, caps through execution grants. Money is not shown until enforced (§2.8). |
 | 11 | Rates are detection | Stated as detection only, with rolling aggregates, provenance-aware freshness and rework caps (§2.9). |

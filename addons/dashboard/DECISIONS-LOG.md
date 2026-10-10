@@ -975,3 +975,27 @@ The owner answered the eight open questions of REVIEW.md. Items 1, 2, 5 and 6 ch
 - **Revert:** revert the U2 commits (delete `src/mocks/addons/factory-runs.ts`, `src/app/shell/DeliveryHoldBanner.tsx`,
   `docs/factory-full-run-proposal.md`; restore the factory manifest, `AddonDecision.hold`, the mandates preview types
   and pages, concept revision 2).
+
+## U2 fix round 1 (Codex review, controller rulings)
+
+- **Decision:** (1) **One charter check** for full runs (`runGate`): at admission, every simulator step and every
+  settlement. Paused holds everything (the hold clock too); a charter stopped by time, or an over-committed child
+  budget, stops progress and ends a hold "Not delivered: the charter stopped" (`factory.deliver_cancelled`). A run
+  reserves its 3 children against the shared 25-child budget at admission, in the same step that consumes the request
+  id and creates the run (refused whole, 409 `factory.budget`). Reaching the budget stops new children (the page's
+  mode); admitted children are inside it and go on. (2) **Code review stays human** (D61): when the workspace code
+  review policy applies, each child waits at "Code review (waits for a person)" before Validate; a core decision
+  `factory.code:<run>:<n>` (maintainer+, signed); Preview needs every review; the policy is sticky for a run once on.
+  The form says so. (3) **Single-use request ids:** Review request issues `rq-<n>`; it is a signed arg; consumed with the
+  run's creation; a replay is 409 `factory.request_used`; reviewing again issues a new id. (4) **The factory stays on
+  during a hold:** disable / update / uninstall → 409 `addon.delivery_on_hold` naming the run (`MockAddon.offBlocked`,
+  checked in `store.addonOp`); HANDOVER: the real host keeps Stop independent of addon activation. (5) **Reloads:** a
+  hold keeps a wall-clock deadline (`holdWallUntil`); the mock deadline is re-derived from it when the mock clock
+  restarted, so a reload never extends a hold (factory state version 3). (6) **Values via visible.tsx:** the goal,
+  destination and child titles go through `plain()` in the run view, the alerts, the kv, the hold and review decisions'
+  question and detail (markdown-escaped in headings); the signed terms keep the exact value; the shell hold line wraps
+  instead of truncating. (7) Concept: landing on `main` is refused until the owner decides (§2.4, §2.14, §6 point 2).
+  (8) Concept: `max_until` is optional and pending, consistently in the schema, the prompt text, §2.11 and the review
+  table.
+- **Why:** Codex review of U2 (findings 1–8), controller rulings.
+- **Revert:** revert the fix-round commits.

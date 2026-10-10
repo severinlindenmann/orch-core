@@ -29,6 +29,16 @@ class Ws(Env):
         self.wsk_pub = self.host_backend.create("wsk")
         self.signer = BackendSigner(self.host_backend, "wsk")
 
+    def human(self, method: str, uid: str, *a: Any, **kw: Any) -> Any:
+        """``Env.approve`` and friends on a store that has scanned the directory since the CLI created the ticket."""
+        old, self.store = self.store, self.other()
+        try:
+            self.store.ticket(uid)
+            return getattr(Env, method)(self, uid, *a, **kw)
+        finally:
+            self.store.close()
+            self.store = old
+
     def view(self, ref: str):
         """The ticket as a fresh process sees it (``Env.store`` does not rescan the directory for new tickets)."""
         s = self.other()
@@ -39,6 +49,9 @@ class Ws(Env):
 
     def uid(self, ref: str) -> str:
         return self.view(ref).uid
+
+    def ticket_json(self, ref: str) -> dict[str, Any]:
+        return json.loads((self.root / "tickets" / self.uid(ref) / "ticket.json").read_text())
 
     def events(self, ref: str) -> list[dict[str, Any]]:
         return self.read_events(self.uid(ref))

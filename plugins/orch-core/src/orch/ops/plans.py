@@ -272,10 +272,7 @@ def task_add(c: Call, p: Projection, args: dict[str, Any]) -> Out:
     p.add(
         {
             "type": "ticket.updated",
-            "base_rev": {
-                "ticket.tasks": p.base("ticket.tasks"),
-                **({"ticket.acceptance": p.base("ticket.acceptance")} if proves else {}),
-            },
+            "base_rev": {"ticket.tasks": p.base("ticket.tasks")},
             "set": {"ticket.tasks": [*tasks, task]},
         }
     )
@@ -295,7 +292,9 @@ def _task(p: Projection, tid: str) -> Any:
 def task_state(c: Call, p: Projection, args: dict[str, Any], event: str) -> Out:
     """``task.started``, ``task.skipped``, ``task.blocked`` and ``task.reopened`` (``task.done`` has its own)."""
     tid = args["task"].rpartition("/")[2]
-    _task(p, tid)
+    t = _task(p, tid)
+    if event == "task.started" and t.state == "started" and t.leased_by not in (None, c.ctx.session):
+        raise OrchError("lease.held", f"{tid} is leased by {t.leased_by}")
     ev: dict[str, Any] = {"type": event, "task": tid}
     if event in ("task.skipped", "task.blocked"):
         ev["reason"] = c.text(args["reason"], one_line=True, what="reason")

@@ -27,6 +27,12 @@ OP = operation(
     emits=("task.reopened",),
     text="ok {key} task.reopened {task} seq={seq}\nnext: {next}",
     data=obj({"task": STR}),
-    errors=(err("lease.required"), err("claim.required"), err("not_found"), err("transition.refused")),
+    errors=(
+        err("lease.required"),
+        err("lease.held"),
+        err("claim.required"),
+        err("not_found"),
+        err("transition.refused"),
+    ),
     handler=handle,
 )

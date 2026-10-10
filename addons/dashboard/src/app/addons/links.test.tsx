@@ -1,5 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { api } from '@/api/client'
+import { getAddon } from '@/mocks/addons'
 import type { MockStore } from '@/mocks/store'
 import { installAndGrant } from '@/test/installAddon'
 import { renderApp } from '@/test/renderApp'
@@ -7,6 +9,7 @@ import { renderApp } from '@/test/renderApp'
 const T = { timeout: 6000 }
 const on = (s: MockStore) => installAndGrant(s, s.workspaces.find((w) => w.prefix === 'DEMO')!.id, 'links')
 const PATH = '/addon/links/links'
+afterEach(() => vi.restoreAllMocks())
 
 describe('Workspace links page (Preview)', () => {
   it('shows one A, a Preview chip, the tabs and the links with their carrier', async () => {
@@ -31,8 +34,8 @@ describe('Workspace links page (Preview)', () => {
     const { user } = renderApp(PATH, { viewer: 'p_sev', setup: on })
     await user.click(await screen.findByRole('tab', { name: /^Requests/ }, T))
     expect(await screen.findByRole('button', { name: 'Codes match: link on these terms' }, T)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Accept into Backlog' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Review handoff' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Accept into Backlog' }, T)).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Review handoff' }, T)).toBeInTheDocument()
   })
   it('the terms form sits above the pairing decision; accepting is off while it holds unsaved changes', async () => {
     const { user } = renderApp(PATH, { viewer: 'p_sev', setup: on })
@@ -48,12 +51,31 @@ describe('Workspace links page (Preview)', () => {
     // Only the decision whose terms the form sets is held; Deny and the other decisions stay usable.
     expect(screen.getByText('Unsaved changes to the terms: save or cancel them before you accept.')).toBeInTheDocument()
     expect(screen.getAllByRole('button', { name: 'Deny' })[0]).toBeEnabled()
-    expect(screen.getByRole('button', { name: 'Accept into Backlog' })).toBeEnabled()
+    expect(await screen.findByRole('button', { name: 'Accept into Backlog' }, T)).toBeEnabled()
     await user.click(screen.getByRole('button', { name: 'Cancel changes' }))
     // Core asks before the cancel discards the edits.
     await user.click(await screen.findByRole('button', { name: 'Discard changes' }, T))
     await waitFor(() => expect(screen.getByRole('button', { name: 'Codes match: link on these terms' })).toBeEnabled(), T)
     expect(screen.getByRole('checkbox', { name: 'They may send us Drop files' })).toBeChecked()
+  })
+  it('an open prompt keeps the decision it was opened on: terms that change underneath are shown as changed, and the host refuses the old ones', async () => {
+    const { user, client } = renderApp(PATH, { viewer: 'p_sev', setup: on })
+    await user.click(await screen.findByRole('tab', { name: /^Requests/ }, T))
+    await user.click(await screen.findByRole('button', { name: 'Codes match: link on these terms' }, T))
+    const dialog = await screen.findByRole('dialog', { name: 'Decide for Workspace links (links)' }, T)
+    expect(within(dialog).getByText('Terms set by the addon (checked again when you answer):')).toBeInTheDocument()
+    // The terms change under the open prompt (same id): the live decision now says 365 days.
+    const mod = getAddon('links')!
+    const original = mod.decisions!.bind(mod)
+    vi.spyOn(mod, 'decisions').mockImplementation((st, pkg, c) => original(st, pkg, c).map((d) => (d.terms ? { ...d, terms: { ...d.terms, expires_after: '365 days' } } : d)))
+    await client.invalidateQueries({ queryKey: ['addon-decisions'] })
+    expect(await within(dialog).findByText(/This decision changed after you opened this prompt/, {}, T)).toBeInTheDocument()
+    expect(within(dialog).getByText('90 days')).toBeInTheDocument()
+    const post = vi.spyOn(api, 'runAddonAction')
+    await user.click(within(dialog).getByRole('button', { name: 'Send answer' }))
+    await waitFor(() => expect(post).toHaveBeenCalled(), T)
+    expect((post.mock.calls[0][3] as { terms: Record<string, string> }).terms.expires_after).toBe('90 days')
+    expect(await screen.findByText('The terms of this decision changed since you opened it.', {}, T)).toBeInTheDocument()
   })
   it('Set up: an owner gets the pairing form; a maintainer reads that owners set up links', async () => {
     const owner = renderApp(PATH, { viewer: 'p_sev', setup: on })

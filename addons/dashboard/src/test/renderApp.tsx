@@ -23,5 +23,5 @@ export function renderApp(path = '/', opts: { viewer?: string; setup?: (store: M
       <RouterProvider router={createAppRouter(path)} />
     </QueryClientProvider>,
   )
-  return { ...r, user }
+  return { ...r, user, client }
 }

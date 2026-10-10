@@ -12,7 +12,7 @@ import { AddonBadge } from '@/addon-ui'
 import { addonEdge } from '@/addon-ui/addonClasses'
 import { ErrorAlert } from '@/addon-ui/ErrorAlert'
 import type { ActionError } from '@/addon-ui/useRunAddonAction'
-import { DecisionSignPrompt, decisionBody, decisionToast } from '@/addon-ui/DecisionSignPrompt'
+import { DecisionSignPrompt, decisionBody, decisionChanged, decisionToast } from '@/addon-ui/DecisionSignPrompt'
 import { useAddons } from '@/addon-ui/slots'
 import { TOUCH_ID_MS } from '@/components/sign/SignPrompt'
 import { Button } from '@/components/ui/button'
@@ -289,16 +289,18 @@ function useDecide(d: AddonDecision, onError?: (e: unknown) => void, onDone?: ()
   const qc = useQueryClient()
   const { workspace } = useWorkspace()
   const { data: packages } = useAddons()
-  const [signing, setSigning] = useState<AddonDecision['options'][number] | null>(null)
+  // The decision as it was when the person chose an option: the prompt shows it and the post sends it, never a later
+  // render (a refresh while the prompt is open must not change what is signed; the host refuses a stale snapshot).
+  const [signing, setSigning] = useState<{ o: AddonDecision['options'][number]; d: AddonDecision } | null>(null)
   // From the click until the post resolves the options are off: no second prompt, no second post.
   const [pending, setPending] = useState(false)
-  const sign = async (o: AddonDecision['options'][number]) => {
+  const sign = async ({ o, d: opened }: { o: AddonDecision['options'][number]; d: AddonDecision }) => {
     setSigning(null)
     if (!workspace) return
     setPending(true)
     try {
       await new Promise((r) => setTimeout(r, TOUCH_ID_MS))
-      const res = await api.runAddonAction(workspace.id, d.addon, d.action, decisionBody(d, o.key))
+      const res = await api.runAddonAction(workspace.id, opened.addon, opened.action, decisionBody(opened, o.key))
       // Core's sentence is the title; the addon's own answer rides below it, labelled as the addon's.
       const t = decisionToast(packages?.find((p) => p.name === d.addon)?.title ?? d.addon, d.addon, o.key, res.message)
       toast.success(t.message, { description: t.description })
@@ -313,9 +315,9 @@ function useDecide(d: AddonDecision, onError?: (e: unknown) => void, onDone?: ()
     }
   }
   const prompt = signing && (
-    <DecisionSignPrompt d={d} option={signing} workspacePrefix={workspace?.prefix ?? ''} onClose={() => setSigning(null)} onSign={() => void sign(signing)} />
+    <DecisionSignPrompt d={signing.d} option={signing.o} changed={decisionChanged(signing.d, d)} workspacePrefix={workspace?.prefix ?? ''} onClose={() => setSigning(null)} onSign={() => void sign(signing)} />
   )
-  return { choose: setSigning, busy: pending || !!signing, pending, prompt }
+  return { choose: (o: AddonDecision['options'][number]) => setSigning({ o, d }), busy: pending || !!signing, pending, prompt }
 }
 
 function DecisionBody({ d, readOnly, showQuestion = true, inlineErrors, onPending, blockedReason }: { d: AddonDecision; readOnly: boolean; showQuestion?: boolean; inlineErrors?: boolean; onPending?: (pending: boolean) => void; blockedReason?: string }) {

@@ -677,3 +677,9 @@ The owner answered the eight open questions of REVIEW.md. Items 1, 2, 5 and 6 ch
 - **Also (core fix found on the way):** a form with `cancel` lost its first edit — the re-render for "Unsaved changes" re-read the form's props and put the addon's data back (a ticked checkbox sprang back). Core now keeps a guarded form's draft until the addon sends new data, and compares edits with keys sorted (a reordering is not an edit).
 - **Why:** re-review F3 round 1, finding 3 (legibility of the pairing cover); the controller chose the reviewer's preferred fix.
 - **Revert:** revert this commit (the links decision then signs only its id).
+
+## 2026-10-10 F3 workspace links: review round 3 (N3–N5)
+
+- **Decision:** (N3) core lead lines group what the addon set: "Terms set by the addon (checked again when you answer):" before a decision's term lines, and "Values set by the addon (sent exactly as shown):" before the arg lines of a `confirm: 'sign'` prompt (SignConfirm; the destructive/options "Sends" lists are unchanged). (N4) Today's and the decision node's `useDecide` snapshot the decision (id, terms, options) when an option is chosen: the prompt shows the snapshot, the post sends it, and if the live decision changed meanwhile the prompt says so ("This decision changed after you opened this prompt…") so the host's check (409 `decision.closed`) catches a stale signature. `useRunAddonAction` already posted its own snapshot. `renderApp` returns its query client for tests. (N5) the links page test waits for the lazily drawn decisions (`findByRole`); 5 of 5 parallel runs of `src/app/addons` + `src/app/pages/today` pass.
+- **Why:** re-review F3 round 2 (approved, follow-ups N3–N5).
+- **Revert:** revert this commit.

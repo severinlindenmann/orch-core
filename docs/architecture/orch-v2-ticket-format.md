@@ -505,7 +505,7 @@ their fields and sections join one of these (`binds`).
   even when it names every type). An override can never end up looser, even after a later workspace change.
   "No eligible approver" is judged on tokens, not persons: an override that leaves no token is refused; if a later
   workspace change empties the set, the gate is blocked (`gate.no_eligible`) until someone fixes the policy.
-- **Canonical form** for hashing: all five keys, `approvers` and `not` sorted and de-duplicated.
+- **Canonical form** for hashing: all five keys, `approvers` and `not` sorted and de-duplicated, `applies` a non-empty list. Policies and people lists are author input, so hashing applies this canonical form; every other list this document calls "sorted" (for example `source_sha`, `prior.approvals`) must already be sorted and is refused otherwise. "Sorted" always means by Unicode code point (equal to UTF-8 byte order).
 - For `code`, `not` always includes `assignees` and `independent` is `true`; the host refuses a policy without them
   (D59).
 
@@ -1241,7 +1241,7 @@ A1–A20 (PR body), HO (dashboard handover, input only), D58–D60, the adversar
 | 36 | What callers enforce (SR 10) | Roots are objects; sizes are checked before parsing (§11.2). | Written down once for every caller. |
 | 37 | `policy_hash`/`people_hash` unchecked (CR 4) | Both are defined labelled hashes (§5.6) and validated as hashes. | A gate hash can't be built from arbitrary strings. |
 | 38 | Missing signature labels (SR 2) | `orch/v2/sig/ticket-event\|`, `sig/ws-event\|`, `sig/host-event\|`, `sig/checkpoint\|`. | Each signer and object kind has its own domain. |
-| 39 | Signing context form | `label \|\| cj({v, suite, workspace_id, log, event})` instead of `…\|<workspace_id>\|<uid>` fields; `v` is the signed-event contract version (1). | Protocol §2.4 style; no delimiter rules; the suite and contract version are bound. |
+| 39 | Signing context form | `label \|\| cj({contract, suite, workspace_id, log, event})` instead of `…\|<workspace_id>\|<uid>` fields; `contract` is the signed-event contract version (1). | Protocol §2.4 style; no delimiter rules; the suite and contract version are bound. |
 | 40 | `owner` in policies: workspace role or ticket owner? | `owner` is the workspace role; the ticket's owner is `ticket_owner`. | The config example meant the workspace owner. |
 | 41 | Verify gate vs verdict | `verdict.given` is the verify decision; no `gate.approved` for `verify`. | §12 N7; one event per meaning. |
 | 42 | D58 | The source list `[{repo identity, ref, sha}]` in the verify and code gate hash, read from git at prompt, append and landing; any ref-value change is a new head; host events `branch.pushed` and `gate.invalidated` (`new_commits`). | A ticket may link several repos; the host never trusts an agent's SHA. |

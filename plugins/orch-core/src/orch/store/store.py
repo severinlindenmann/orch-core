@@ -37,7 +37,7 @@ import os
 import re
 import shutil
 import time
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from stat import S_ISLNK as _S_ISLNK
@@ -679,6 +679,11 @@ class Store:
             self._loaded |= need
             self._load()
             self._enforce_revocations()
+
+    def load(self, uids: Iterable[str]) -> None:
+        """Replay and check these tickets in one go (one at a time each load replays everything loaded again)."""
+        with self._locked():
+            self._ensure({u for u in uids if isinstance(u, str)})
 
     def load_all(self) -> None:
         """Replay and check every ticket log (cold cost: every event is verified)."""

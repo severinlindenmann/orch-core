@@ -106,6 +106,23 @@ def event_line(e: dict[str, Any]) -> str:
     return f"#{e['seq']} {t} {who}" + (f" {detail}" if detail else "")
 
 
+def verified(c: Any, uids: Any, chunk: int = 40) -> Any:
+    """Yield ``(uid, view)`` for candidates (from the index or a file scan, hints), loading and verifying them a chunk
+    at a time; a ticket that is gone or that the actor may not see is skipped, so nothing unverified or hidden gets
+    through to a caller that prints."""
+    batch: list[str] = []
+    it = iter(uids)
+    while True:
+        batch = [u for _, u in zip(range(chunk), it, strict=False)]
+        if not batch:
+            return
+        c.store.load(batch)
+        for uid in batch:
+            v = c.store.ticket(uid)
+            if v is not None and c.sees(v):
+                yield uid, v
+
+
 def next_ticket(c: Any, *, mine_first: bool = True) -> Any | None:
     """The ticket to work on: the session's own claim (``mine_first``), else the best free one the actor may see.
 
@@ -118,9 +135,8 @@ def next_ticket(c: Any, *, mine_first: bool = True) -> Any | None:
             return mine[0]
     rows = c.store.index.query("SELECT uid, key, priority FROM tickets WHERE status = 'open'")
     rows.sort(key=lambda r: (PRIORITY.get(r[2], 2), key_number(r[1])))
-    for uid, _key, _prio in rows:
-        v = c.store.ticket(uid)
-        if v is None or not c.sees(v) or v.status != "open" or (v.claim is not None and v.claim.live):
+    for _uid, v in verified(c, (r[0] for r in rows)):
+        if v.status != "open" or (v.claim is not None and v.claim.live):
             continue
         blockers = [c.store.ticket(k) for k in v.fields["blocked_by"]]
         if all(b is None or b.status in ("done", "closed") for b in blockers):

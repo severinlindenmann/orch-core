@@ -11,7 +11,7 @@ from orch.store import StoreError
 
 
 def handle(ctx: Context, args: dict[str, Any]) -> Result:
-    return plans.run(ctx, "submit", args, build, claim=True)
+    return plans.run(ctx, "submit", args, build, claim=True, observe_repos=True)
 
 
 def build(c: Call, p: Projection, args: dict[str, Any]) -> plans.Out:

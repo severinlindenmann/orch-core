@@ -30,7 +30,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     loops, or in ``wait.timeout`` (exit 7) with ``--strict-timeout``."""
     c = Call.of(ctx, "wait")
     view = c.resolve(args.get("ref"), live_only=False)  # a done ticket ended the claim, not the wait
-    observe.observe(c.store, view.key)
+    observe.observe(c.store, view.uid)
     note = c.notes.get(view.uid)
     start = c.store.head_seq(view.uid)
     if note["decided"] is None:  # the session never touched this ticket: wait for what is decided from now on
@@ -40,7 +40,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     pause = iter(POLL)
     wait = POLL[0]
     while True:
-        for e in c.store.events(view.key, after=after):
+        for e in c.store.events(view.uid, after=after):
             got = decision(e, view.key)
             if got is None:
                 continue

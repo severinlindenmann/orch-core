@@ -63,4 +63,4 @@ def undelivered(c: Call, view: Any, head: int | None = None) -> list[dict[str, A
     after = note["decided"]
     if after is None:
         return []
-    return [e for e in c.store.events(view.key, after=after) if e["type"] in TYPES]
+    return [e for e in c.store.events(view.uid, after=after) if e["type"] in TYPES]

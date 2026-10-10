@@ -36,7 +36,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     if not needle.strip():
         raise OrchError("invalid.input", "query is empty")
     cands = c.store.raw_matches(needle)
-    views_ = [v for u in cands if (v := c.store.ticket(u)) is not None and c.sees(v)]
+    views_ = [v for _u, v in views.verified(c, cands)]
     views_.sort(key=lambda v: views.key_number(v.key), reverse=True)
     hits: list[dict[str, str]] = []
     limit = args.get("limit", 10)

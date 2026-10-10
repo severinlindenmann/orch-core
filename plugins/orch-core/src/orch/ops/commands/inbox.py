@@ -18,9 +18,8 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     c = Call.of(ctx, "inbox")
     uids = [u for (u,) in c.store.index.query("SELECT uid FROM ticket_labels WHERE label = ?", (PEER_LABEL,))]
     found = []
-    for uid in uids:
-        v = c.store.ticket(uid)
-        if v is not None and c.sees(v) and PEER_LABEL in v.fields["labels"] and v.status not in ("done", "closed"):
+    for _uid, v in views.verified(c, uids):
+        if PEER_LABEL in v.fields["labels"] and v.status not in ("done", "closed"):
             found.append(v)
     items = []
     for v in sorted(found, key=lambda v: views.key_number(v.key)):

@@ -80,7 +80,7 @@ def _header(c: Call, view: Any) -> str:
 
 def _default(c: Call, view: Any, head: int) -> tuple[list[str], dict[str, Any]]:
     texts = c.store.body_sections(view.uid)
-    events = c.store.events(view.key, after=max(0, head - LAST))
+    events = c.store.events(view.uid, after=max(0, head - LAST))
     pending = decisions.undelivered(c, view)
     body = [f"title: {views.short(view.title, 100)}"]
     if pending:  # an answer or a change request the agent was not handed yet: `orch wait` hands it over
@@ -148,7 +148,7 @@ def _sections(
         sections=tuple(wanted),
         seq=head,
     )
-    events = c.store.events(view.key, after=max(0, head - LAST))
+    events = c.store.events(view.uid, after=max(0, head - LAST))
     return lines, _document(view, texts, events, wanted)
 
 
@@ -157,7 +157,7 @@ def _events(c: Call, view: Any, head: int, args: dict[str, Any], *, diff: bool) 
     if since is None:
         cur = c.cursor(view.uid)
         since = cur if diff and cur else max(0, head - LOG_DEFAULT)
-    events = c.store.events(view.key, after=since)
+    events = c.store.events(view.uid, after=since)
     rows = []
     for e in events:
         line = views.event_line(e)
@@ -180,7 +180,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     if args.get("since") is not None and not (args.get("log") or args.get("diff")):
         raise OrchError("invalid.input", "--since goes with --log or --diff")
     view = c.resolve(args.get("ref"))
-    if observe.observe(c.store, view.key):  # a repository moved since the last look: show what is there now
+    if observe.observe(c.store, view.uid):  # a repository moved since the last look: show what is there now
         view = c.resolve(args.get("ref"))
     head = c.store.head_seq(view.uid)
     name = modes[0] if modes else "default"

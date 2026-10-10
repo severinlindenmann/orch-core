@@ -262,3 +262,20 @@ def test_the_default_show_stays_within_the_context_budget(ws, cli):
     out = cli("show").out
     tokens = math.ceil(len(out) / 4)
     assert tokens <= 350, f"{tokens} tokens\n{out}"
+
+
+def test_list_prints_and_counts_only_what_the_actor_can_see(ws, cli, anon):
+    for i in range(6):
+        cli("new", f"Ticket {i}")
+    for ref in ("1", "2", "3", "4"):  # four of six are restricted to the owner
+        ws.sign(ref, "visibility.changed", visibility={"restricted": [ws.owner.ref]})
+    r = anon("list", "--limit", "1")
+    assert "Ticket 5" in r.out and "+1 more" in r.out  # DEMO-0005 and DEMO-0006 are visible: one beyond the limit
+    for hidden in ("Ticket 0", "Ticket 1", "Ticket 2", "Ticket 3", "DEMO-0001", "DEMO-0004"):
+        assert hidden not in r.out
+    r = anon("list", "--limit", "2")
+    assert "more" not in r.out  # nothing visible is left: no count, no hint that something is
+    assert anon.j("list", "--limit", "2").data["count"] == 2
+    d = anon.j("list", "--limit", "1")
+    assert [t["key"] for t in d.data["tickets"]] == ["DEMO-0006"] and "Ticket 0" not in d.out
+    assert "+4 more" in cli("list", "--limit", "2").out  # the owner's agent sees all six

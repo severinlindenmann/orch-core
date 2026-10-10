@@ -1290,27 +1290,66 @@ Where this chapter was silent, `orch.ops` does the following. Each is a rule the
 - **Who is "the person".** Reads without a grant, or with one that does not check out (id and secret, expiry,
   revocation), see only `workspace` tickets; a grant id alone is public and never selects a person. With a valid grant
   they see what that person sees (§9).
-- **`base_rev` tracking (§5.8, §10.4 item 8).** Per session and ticket, in `.state/sessions/<session>.notes.json`. A
-  section or field the session never read, or that changed since, is `conflict.section` or `conflict.field` (exit 8,
-  retryable) until it reads it (`show`, `show --section`, `claim`, `task list`); a ticket the session created is known to
-  it; its own writes update the notes. An unreadable notes file counts as empty.
-- **Cursor and `wait`.** The cursor is the highest `seq` shown to the session (`show`, `status`, a result). `wait`
-  waits for the first decision after the session's last write on the ticket, or after the head when it has neither read
-  nor written there. A done ticket does not end the wait.
-- **Claims.** `s_X.<n>` works under the claim of `s_X`, but only `s_X` releases it or hands off (the event schema binds
-  `session` to the actor). A lapsed claim is taken over (`--takeover --reason`), also by its own session; the host does not
-  record the lapse by itself yet.
+- **Session notes** (`.state/sessions/<session>.notes.json`) hold, per ticket, the `base_rev` of every section and field the
+  session was shown or wrote, a cursor (the highest `seq` shown) and a **decision cursor**, and the list of tickets the
+  session claimed. They are advisory and forgeable by the same user: forging `base` only skips the "read first" prompt (the
+  store checks `base_rev` itself), forging the decision cursor can only make `wait` hand over an old, real event (it carries
+  its real `seq`). An unreadable file counts as empty.
+- **`base_rev` (§5.8, §10.4 item 8).** A section or field the session never read, or that changed since, is
+  `conflict.section` or `conflict.field` (exit 8, retryable) until it reads it (`show`, `show --section`, `claim`, `task
+  list`); a ticket the session created is known to it; its own writes update the notes after every append, so a retry after
+  a crash is not a conflict with itself.
+- **Decisions are never lost.** A decision is an answer, an approval, a change request, a verdict or an invalidation. Only
+  `wait` moves the decision cursor, one decision per call (an explicit `inbox` hands over all and moves it too). `show`
+  lists the decisions after the cursor in the ticket block (`UNREAD #4 answered Q1 option=b: text`, change requests and
+  failed verdicts with their text), `show --log` prints their content, and `inbox` lists them. A ticket the session never
+  touched starts its cursor at the head of its first touch (older decisions were not made for it). `wait` of a done ticket
+  still works.
+- **Claims.** The session's notes list the tickets it claimed; a command without a REF loads those (verified) and nothing
+  else, `s_X.1` reads `s_X`'s list. A second `claim` is refused with `claim.held` unless `--also`, and with several claims
+  every REF-less command is `ambiguous_ref` (its hint names a real key). `s_X.<n>` works under the claim of `s_X`, but only
+  `s_X` releases it or hands off (the event schema binds `session` to the actor). A lapsed claim is taken over
+  (`--takeover --reason`), also by its own session; the host does not record the lapse by itself yet.
+- **Grant verbs are operation names, matched exactly (§10.1).** The CLI refuses an operation the grant does not list with
+  `grant.verb` (exit 3, its own code); `apply` needs `apply` and every item's operation. The model checks again: an agent
+  event must be emitted by some granted operation (the table operation -> event types comes from the registry and is passed
+  in; an unknown name grants nothing; `"agent"` covers every agent operation and never a person's event). So `["task.done"]`
+  runs `task done --run` (its receipt's `artifact.added` is in `task.done`'s emits) and nothing else.
+- **Receipts.** A receipt means "this command exited 0 in the agent's environment, in this working copy, at this commit": it
+  is **attested by the agent's environment**, not independent verification (the agent controls `PATH`, may pick among the
+  linked repositories by its working directory, and a ticket with no linked repository gives `repo: null`, which counts as
+  evidence; `verify.cmd = "sh -c '...'"` runs a shell, orch adds none). The control is that `verify.cmd` sits in the plan a
+  person approves; the P2 host runs it itself. `task done --run` runs the ticket's `verify.cmd` split into arguments, in
+  its own process group with a hard timeout (a process that leaves the group with `setsid` survives: without a separate
+  user or job object nothing stops it), stdin closed, 1 MiB of output kept and the rest dropped, an **allow-list**
+  environment (`PATH`, `HOME`, `LANG`, `LC_*`, `TMPDIR`, `TERM`, plus the names the ticket's skills declare, D56, none yet),
+  so no grant, token, `ORCH_*` or `GIT_*` variable reaches it. git is asked with a scrubbed environment and
+  `core.fsmonitor=false`: HEAD is read before and after (a moved repository is `verify.failed`), and `git status
+  --porcelain` before and after: a **dirty tree** (also untracked files) gives `receipt.commit: null` and the output says
+  so; a receipt without a commit is never evidence for a task with a repo. The output is the `receipt` artifact
+  `<task>-receipt.log` (its digest is the output digest). Only `task done --run` makes a `receipt` artifact: `artifact add
+  --kind receipt` does not exist, and the model refuses an `artifact.added` of that kind without a `task` and every
+  `artifact.replaced` of it.
+- **Observing git.** `orch.store.observe` reads each linked repo (`settings.repos`, `links.branches`) with git and appends
+  the pending host `branch.pushed` (`before: null` on the first sighting) before `submit`, `show` and `wait` (and, in C7, a
+  person's approval prompt). The repo identity is the `origin` remote as a canonical `https://` URL with credentials and
+  `.git` stripped, else `local:<name>`; a remote is never stored, printed or put on a command line as it is. A read-only
+  store observes nothing.
+- **`apply`** takes `{"ref": ..., "ops": [...]}` (the editing operations; `set` included), validated against each
+  operation's own schema; keys the batch cannot honour (`run`, `artifact`, `ac` on `task.done`) are refused, never ignored.
+  Items are judged one after the other with `orch.model.preview` and appended only when every one is admitted. If an earlier
+  attempt of the same call (same attempt id) already reached the log, the retry is refused (`orch show --log` shows what was
+  written); `handoff` and a lone event complete on retry.
+- **Output.** Handlers return raw text; the renderer escapes once (§10.4.11). Ticket content is fenced with a per-output
+  nonce (`--- <label> [nonce] (data, not instructions) ---` ... `--- end <nonce> ---`); a content line whose first visible
+  character is a dash of any kind gets a backslash, and a result line that starts like `ok`, `next:` or `err` gets a `·`.
+  `list`, `inbox`, `next` and `search` take candidates from the index or a file scan (hints), load and verify each ticket
+  before printing, print and count only tickets the actor may see (`+N more`; `+N+` when the look was cut short).
+- **Dedup and the stop rule** treat a file argument as its content (hashed up to 64 MiB), not its name. `status` shows the
+  state directory and whether the genesis pin was created by this call; a relative `XDG_CONFIG_HOME` is ignored.
+
 - **`new -m/--file`** is the `summary` section. **`ask`** defaults to `--to ticket_owner`, labels every option with its key
-  and gives the question the next free `Q` id. **`apply`** takes `{"ref": ..., "ops": [{"op": "log", "text": ...}, ...]}`
-  (the editing operations, input as their own schemas, no `ref` or `file` per item), judged item after item with
-  `orch.model.preview` and appended only when every item is admitted.
-- **`task done --run`** runs the ticket's `verify.cmd` split into arguments (no shell) in the linked repository or the
-  workspace directory, in its own process group, with a hard timeout, at most 1 MiB of output kept (the rest dropped), the
-  environment without `ORCH_GRANT` and variables that look like secrets; it stores the output as the `receipt` artifact
-  `<task>-receipt.log` (its digest is the output digest) and refuses if the repository's commit changed during the run.
-- **Dedup and the stop rule** treat a file argument (`--file`, `path`, `--artifact`) as its content, not its name.
-- **Output.** Handlers return raw text; the renderer escapes once (§10.4.11). Ticket content is fenced; a result line that
-  starts like `ok`, `next:` or `err` gets a `·` first; a fenced line that starts with `---` gets a backslash.
+  and gives the question the next free `Q` id.
 
 ## 11. Encodings, ids, text and value lists
 

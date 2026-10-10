@@ -23,9 +23,17 @@ _HEX = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 _TIMEOUT = 30
 
 
+_ENV_ALLOW = ("PATH", "HOME", "LANG", "TMPDIR", "TERM")
+
+
 def git_env(base: Mapping[str, str] | None = None) -> dict[str, str]:
-    """``base`` (default: ``os.environ``) without any ``GIT_*`` variable."""
-    return {k: v for k, v in (os.environ if base is None else base).items() if not k.upper().startswith("GIT_")}
+    """The environment git runs in: an allow-list (``PATH``, ``HOME``, ``LANG``, ``LC_*``, ``TMPDIR``, ``TERM``). No
+    ``GIT_*`` variable (a caller cannot choose the repository, the index or a credential helper through them) and no
+    token, key or ``ORCH_*`` variable reaches git or the hooks and helpers it may start."""
+    src = os.environ if base is None else base
+    return {
+        k: v for k, v in src.items() if (k in _ENV_ALLOW or k.startswith("LC_")) and not k.upper().startswith("GIT_")
+    }
 
 
 def git(path: Path, *args: str) -> str | None:
@@ -64,8 +72,11 @@ def repo_path(root: Path, repos: Mapping[str, str], name: str) -> Path | None:
 
 def repo_identity(path: Path, name: str) -> str:
     """The canonical identity of the repository (F1 5.7): its ``origin`` remote as an ``https://`` URL when that is
-    canonical, else ``local:<name>``."""
+    canonical, else ``local:<name>``. Credentials in the remote (``https://user:token@host/...``) are stripped before
+    the URL is looked at and never stored, printed or put on a command line; a remote that is not canonical after
+    that is ``local:<name>``, never the raw URL."""
     url = git(path, "remote", "get-url", "origin") or ""
+    url = re.sub(r"^(https?://)[^/@]*@", r"\1", url)  # userinfo (a user:token pair) is dropped before anything else
     m = re.fullmatch(r"(?:ssh://)?git@([^:/]+)[:/](.+)", url)
     if m:
         url = f"https://{m.group(1)}/{m.group(2)}"

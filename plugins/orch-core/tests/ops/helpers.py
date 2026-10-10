@@ -62,6 +62,57 @@ class Ws(Env):
             self.store.close()
             self.store = old
 
+    def narrow_grant(self, verbs: list[str], *, hours: int = 8) -> str:
+        """A grant for the owner that lists operation names (a CI grant); returns the ``ORCH_GRANT`` value."""
+        from orch import canon
+        from orch.identity import new_ulid
+        from tests.store.helpers import ts
+
+        gid = "gr_" + new_ulid()
+        issued = self.clock[0]
+        self.store.append(
+            self.person_event(
+                self.owner,
+                "workspace",
+                "grant.issued",
+                grant=gid,
+                scope="all",
+                verbs=verbs,
+                issued_at=ts(issued),
+                hours=hours,
+                expires_at=ts(issued + 3600 * hours),
+                secret_hash=canon.grant_secret_hash(GRANT_SECRET),
+                label="ci",
+            ),
+            log="workspace",
+        )
+        return f"{gid}.{crypto.b64u(GRANT_SECRET)}"
+
+    def repo(self, name: str = "proj", *, branch: str = "feat/x") -> Path:
+        """A git repository registered in ``settings.repos`` (owner-signed), with one commit on ``branch``."""
+        import subprocess
+
+        path = self.tmp / name
+        path.mkdir()
+
+        def g(*a: str) -> str:
+            return subprocess.run(
+                ["git", "-C", str(path), *a], check=True, capture_output=True, text=True
+            ).stdout.strip()
+
+        g("init", "-q", "-b", branch)
+        g("config", "user.email", "t@t")
+        g("config", "user.name", "t")
+        (path / "impl.txt").write_text("broken\n")
+        g("add", "impl.txt")
+        g("commit", "-qm", "c")
+        self.store.append(
+            self.person_event(self.owner, "workspace", "settings.changed", set={"repos": {name: {"path": str(path)}}}),
+            log="workspace",
+        )
+        self.git = g
+        return path
+
     def view(self, ref: str):
         """The ticket as a fresh process sees it (``Env.store`` does not rescan the directory for new tickets)."""
         s = self.other()

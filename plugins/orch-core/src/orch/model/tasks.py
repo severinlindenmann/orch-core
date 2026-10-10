@@ -104,8 +104,8 @@ def ac_evidence(ws: WsCore, t: TCore) -> dict[str, list[str]]:
         if tk is None or tk.state != "done" or tk.receipt is None or tk.receipt["exit"] != 0:
             continue
         repo = tk.receipt["repo"]
-        if repo is not None and tk.receipt["commit"] != source.repo_sha(t, repo):
-            continue
+        if repo is not None and (tk.receipt["commit"] is None or tk.receipt["commit"] != source.repo_sha(t, repo)):
+            continue  # no commit (a dirty tree) or not the code the host observed: not evidence
         for ac in task["proves"]:
             if ac in out:
                 out[ac].append(f"task:{task['id']}")

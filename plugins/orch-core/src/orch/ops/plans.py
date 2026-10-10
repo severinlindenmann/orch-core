@@ -22,6 +22,7 @@ from orch.ops.errors import OrchError
 from orch.ops.runtime import Call, Projection, short
 from orch.ops.views import fence
 from orch.schema import SECTIONS_BY_TYPE
+from orch.store import observe
 from orch.store.render import section_entry, thaw
 
 ARTIFACT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
@@ -63,11 +64,14 @@ def run(
     claim: bool = False,
     ref_key: str = "ref",
     live_only: bool = True,
+    observe_repos: bool = False,
 ) -> Result:
     """The frame of an editing operation: lock, resolve the ticket, (check the claim), build, append, answer."""
     c = Call.of(ctx, op)
     with c.locked():
         view = c.resolve(args.get(ref_key), live_only=live_only)
+        if observe_repos and observe.observe(c.store, view.uid):  # judge the code that is there now
+            view = c.resolve(args.get(ref_key), live_only=live_only)
         if claim:
             c.require_claim(view)
         p = c.projection(view)

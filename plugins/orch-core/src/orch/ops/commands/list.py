@@ -8,6 +8,8 @@ from orch.ops.base import Context, Result
 from orch.ops.runtime import Call, flat
 from orch.ops.views import fence
 
+MORE_SCAN = 50  # candidates looked at beyond the limit to count what is left
+
 
 def handle(ctx: Context, args: dict[str, Any]) -> Result:
     """Candidates come from the index (a hint); every ticket printed is loaded and verified first, and checked again
@@ -34,14 +36,14 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     sql = "SELECT uid, key FROM tickets" + (" WHERE " + " AND ".join(where) if where else "")
     cands = sorted(c.store.index.query(sql, params), key=lambda r: views.key_number(r[1]), reverse=True)
     limit = args.get("limit", 20)
-    rows, seen = [], 0
-    for uid, _key in cands:
-        if len(rows) >= limit:
+    rows: list[Any] = []
+    extra = 0  # visible, matching tickets beyond the limit, counted only from verified tickets
+    scanned_extra = 0
+    for _uid, v in views.verified(c, (r[0] for r in cands)):
+        if len(rows) >= limit and scanned_extra >= MORE_SCAN:
             break
-        seen += 1
-        v = c.store.ticket(uid)
-        if v is None or not c.sees(v):
-            continue
+        if len(rows) >= limit:
+            scanned_extra += 1
         if args.get("status") and v.status != args["status"]:
             continue
         if args.get("label") and args["label"] not in v.fields["labels"]:
@@ -50,12 +52,18 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
             v.key in mine_keys or (me is not None and (v.owner == me or me in v.people["assignees"]))
         ):
             continue
-        rows.append(v)
+        if len(rows) < limit:
+            rows.append(v)
+        else:
+            extra += 1
+    exhausted = scanned_extra < MORE_SCAN
     tickets = [{"key": v.key, "title": flat(v.title), "status": v.status} for v in rows]
     body = "\n".join(f"{v.key} {v.status} {v.fields['priority']}: {views.short(v.title, 80)}" for v in rows)
     lines = fence(body, "tickets") if rows else ["no tickets"]
-    if len(cands) > seen:
-        lines.append(f"+{len(cands) - seen} more (orch list --limit N, or narrow it with --status or --label)")
+    if extra:  # only tickets the actor can see are counted: "N+" when the look was cut short
+        lines.append(
+            f"+{extra}{'' if exhausted else '+'} more (orch list --limit N, or narrow it with --status or --label)"
+        )
     return Result(
         data={"count": len(rows), "tickets": tickets},
         hints=[f"orch show {rows[0].key}" if rows else "orch new TITLE"],

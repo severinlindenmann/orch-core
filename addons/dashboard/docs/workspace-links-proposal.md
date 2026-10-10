@@ -52,22 +52,48 @@ queue (Settings → Relay); same-machine links are not affected.
 
 - **Pairing is mutual and owner-only.** An owner of each workspace signs it (Touch ID / Secure Enclave). One side
   starts it (carrier, peer, the scopes it accepts, an expiry) and gets a one-time **pairing code** (10 minutes, one
-  use); the other owner enters it, or, on the same machine, sees the request in their dashboard. Both screens then
-  show the same 6-character **comparison code** derived from both workspace keys, as in device pairing (D6). The owners
-  compare it (read aloud, chat), then each signs. A mismatch cancels.
-- **An incoming pairing request is a decision**, shown on Today to owners only and signed by core. Its id carries the
-  comparison code, so the signature covers it.
-- **Scopes per link and per direction**; widening a scope is a request the receiving owner signs. Narrowing is
-  immediate.
-- **Expiry**: 30, 90 or 365 days. An expired link stops; pairing again renews it. The Links tab marks it "expiring" 7 days ahead.
-- **Revoke** (owner): unpins the peer at once and tells it with a host-signed revoke envelope; open requests from it
-  close. It is a core confirm, not a signature: cutting trust must be fast, and nothing new is authorised by it.
-- **Sending is human-signed**: a person co-signs each handoff (§9 "human co-signature"). An agent may send to a
-  pinned peer only within the charter (D12); the first send to a new peer always needs a person.
-- **Visibility**: restricted tickets never cross. The host refuses to send one (409 `links.restricted`), and a
-  log entry or request tied to a local ticket is shown only to people who can see that ticket.
+  use, rate-limited); the other owner enters it, or, on the same machine, sees the request in their dashboard. The real
+  host draws the code from a CSPRNG (at least 40 bits, e.g. 8 Crockford base32 characters); the mock derives it from a
+  counter. Both screens then show a 6-character **comparison code** that **each host works out itself** from both
+  pinned workspace keys and the pairing transcript, as in device pairing (D6). It is never taken from what the other
+  side sends. The owners compare it (read aloud, chat), then each signs within 10 minutes of the other side joining.
+  A mismatch or a late signature cancels.
+- **The signature names the terms.** "Codes match: sign" covers, in core's words, the pairing, the comparison code,
+  the peer, the carrier, what they may send us, what we may send them and the expiry. The host refuses the signature
+  when any of these no longer matches (409 `links.stale`).
+- **An incoming pairing request is a decision** for owners only (its own action, so Today never folds it with
+  routine requests). The terms are part of its id, which core shows in full in the covers:
+  `pair.<request>.<comparison code>.<carrier>.recv-<kinds>.send-<kinds>.<days>d`. The owner may narrow what the
+  peer asked for and pick the expiry (default 90 days) before accepting, never widen it; changing the terms changes
+  the id, so a prompt opened on old terms is refused. Accepting is refused while a link to that peer exists or, for a
+  relay carrier, while the relay is offline.
+- **Scopes per link and per direction**; widening a scope is a request the receiving owner signs (its own action).
+  Narrowing is not in the mock (open point).
+- **Expiry**: 30, 90 or 365 days. An expired link stops; pairing again renews it. The Links tab marks it "expiring"
+  7 days ahead. Requests on a revoked or expired link are not offered for a decision.
+- **Revoke** (owner) **is signed**: the covers name the link and its peer, and the host refuses a mismatch. It unpins
+  the peer at once and tells it with a host-signed revoke envelope; open requests from it close, and handoffs still
+  waiting there come back to their people. Cutting trust stays one step.
+- **Sending is human-signed**: a person co-signs each handoff. The covers name the peer, the carrier, the ticket and
+  exactly what crosses (title, the filled sections, the attachments) and the deadline; the host refuses any
+  difference (409 `links.stale`).
+- **Visibility**: restricted tickets never cross. They are not offered in the handoff form, and the host refuses
+  them (409 `links.restricted`). A log entry or request tied to a local ticket is shown only to people who can see it.
+  Peer names and owners with invisible, direction or control characters are refused; peer text is escaped wherever
+  it is drawn as markdown.
 - **Who decides**: pairing and scope requests: owners. Handoffs and questions: owners and maintainers (core's
   `addon.decide`). Members send handoffs; viewers read the links and the log.
+
+### Where this departs from orch v2 (for the owner to confirm)
+
+- **D12** lets an agent send to an already pinned peer after the first human confirmation. This proposal has a
+  person co-sign every handoff in the dashboard; agent sends within a charter stay as D12 says (open point 4).
+- **§9 receiving**: a peer ticket lands in the inbox and charter auto-start may start it. Here a person accepts it
+  into the Backlog first (a request); auto-start is not mocked.
+- **§9 sending**: the sender's ticket moves to `waiting_on_peer` with a deadline that returns it to its human. The mock
+  shows the handoff as "waiting" in Requests → Sent but does not change the ticket's status.
+- **§9 address book**: peers are added from a directory card or by QR between hosts. The 10-minute pairing code
+  with two owner signatures and a comparison code is a proposed addition, modelled on device pairing (D6).
 
 ## 5. Audit log
 
@@ -91,3 +117,7 @@ requests as core-signed decisions. Everything is simulated: nothing leaves the m
 1. Read-only views (`view`) across workspaces: worth it before P8?
 2. Should an accepted handoff ever auto-start (charter `auto_start`) in the first release, or always wait for a person?
 3. Default expiry: 90 days proposed; same-machine links could be "until revoked".
+4. D12: may an agent send to a pinned peer under the charter without a person co-signing each handoff?
+5. Expiry: renew in place (one signature on both sides) or always pair again?
+6. Narrowing scopes on a live link: immediate on one side, and how is the peer told?
+7. What exactly the `status` scope carries (status changes only, or also the `result` summary and Drop references).

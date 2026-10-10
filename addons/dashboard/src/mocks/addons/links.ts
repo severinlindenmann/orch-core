@@ -1,9 +1,10 @@
-import type { AddonDecision } from '@/api/types'
+import { can } from '@/api/permissions'
+import type { AddonActionResult, AddonDecision } from '@/api/types'
 import { fmtWhen } from '@/lib/time'
 import type { Rng } from '../busy/rng'
 import { briefs } from '../busy/helpers'
 import { fingerprintOf, relayEpoch, relayState, RELAY_URL } from '../relay'
-import type { MockStore } from '../store'
+import type { MockStore, StoreFailure } from '../store'
 import { canSeeTicket, conflict, invalid, notFound, registerAddon, type AddonCtx } from './registry'
 
 // links (Preview; owner feedback 2026-10-10 B, docs/workspace-links-proposal.md; orch v2 §9 linked workspaces, D11-D13):
@@ -57,15 +58,24 @@ interface Request {
   decided?: { at: string; by: string; option: string }
   // pairing
   carrier?: Carrier
-  code?: string
+  /** What the peer asked for: the upper bound of the terms (we never accept more). */
   wants?: Kind[]
   offers?: Kind[]
+  /** The terms the owner signs (narrowed from wants/offers, expiry chosen); default: as asked, 90 days. */
+  terms?: Terms
   // question
   options?: { key: string; label: string }[]
   // scope
   scope?: Kind
   // handoff: the ticket made from it
   ticket?: string
+}
+interface Terms {
+  /** They may send us. */
+  recv: Kind[]
+  /** We may send them. */
+  send: Kind[]
+  days: number
 }
 interface Sent {
   id: string
@@ -75,7 +85,7 @@ interface Sent {
   at: string
   by: string
   deadline: string
-  state: 'waiting' | 'accepted' | 'denied' | 'done'
+  state: 'waiting' | 'accepted' | 'denied' | 'done' | 'cancelled'
 }
 interface LogEntry {
   id: string
@@ -159,7 +169,7 @@ function seedState(ws: string, store: MockStore) {
   ]
   const requests: Request[] = [
     {
-      id: 'rq_fab', kind: 'pairing', from: FABRIKAM, at: '2026-10-09T10:52:00Z', expires_at: at('2026-10-09T10:52:00Z', 1), carrier: 'relay', code: fingerprintOf('pair|DEMO|fabrikam'), wants: ['question', 'drop'], offers: ['handoff', 'question'],
+      id: 'rq_fab', kind: 'pairing', from: FABRIKAM, at: '2026-10-09T10:52:00Z', expires_at: at('2026-10-09T10:52:00Z', 1), carrier: 'relay', wants: ['question', 'drop'], offers: ['handoff', 'question'],
       title: 'Link request from Fabrikam Energy · DATA', text: 'Jonas Weber (Fabrikam Energy GmbH) wants to link through the relay. They would send questions and Drop files; they accept ticket handoffs and questions from you.', state: 'open',
     },
     { id: 'rq_int_meter', kind: 'handoff', link: 'ln_int', from: ownWs('INT'), at: '2026-10-09T10:20:00Z', expires_at: at('2026-10-09T10:20:00Z', 3), title: 'Meter schema v3: update the DEMO import', text: 'INT changed the meter schema: v3 adds register_id and renames read_at to read_ts. Update the DEMO import and its tests before Monday.', state: 'open' },
@@ -217,11 +227,12 @@ function seedBusy(ws: string, store: MockStore, rng: Rng) {
     const paired = at(NOW, -rng.int(20, 300))
     state.links.push(link(`ln_b${i + 1}`, p, 'relay', rng.sample(KINDS, rng.int(1, 3)), rng.sample(KINDS, rng.int(1, 3)), paired, rng.pick([90, 365]), at(NOW, -rng.next() * 9), i === 4 ? { revoked: { at: at(NOW, -12), by: 'p_sev' } } : {}))
   })
-  const live = state.links.filter((l) => !l.revoked)
+  // Only usable links carry traffic: requests and handoffs never go over a revoked or expired link.
+  const live = state.links.filter((l) => usable(l, NOW))
   const from = (l: Link) => l.peer
   // More open requests between DEMO, INT and CLI, and from the organisations.
   for (let i = 0; i < 7; i++) {
-    const l = i < 4 ? state.links.find((x) => x.id === (i % 2 ? 'ln_cli' : 'ln_int'))! : rng.pick(live)
+    const l = i < 4 ? live.find((x) => x.id === (i % 2 ? 'ln_cli' : 'ln_int'))! : rng.pick(live)
     const when = at(NOW, -rng.next() * 2)
     const handoff = i < 4 || rng.chance(0.5)
     state.requests.push(
@@ -298,7 +309,30 @@ const left = (iso: string, now: string) => {
   if (d >= 1) return `in ${d} ${d === 1 ? 'day' : 'days'}`
   return ms >= 3_600_000 ? `in ${Math.round(ms / 3_600_000)} h` : `in ${Math.max(1, Math.ceil(ms / 60_000))} min`
 }
-const decisionId = (r: Request) => (r.kind === 'pairing' ? `pair.${r.id}.${r.code}` : `req.${r.id}`)
+/**
+ * The comparison code both screens show. Each host derives it on its own from both sides' pairing values (in v2: both
+ * pinned workspace keys and the pairing transcript); it is never taken from what the other side sends. The mock derives
+ * it from the two workspace names, the same way on both sides.
+ */
+export const comparisonCode = (prefix: string, peer: Peer) => fingerprintOf(['ws:' + prefix, 'peer:' + (peer.ws ?? peer.name)].sort().join('|'))
+const termsOf = (r: Request): Terms => r.terms ?? { recv: r.wants ?? [], send: r.offers ?? [], days: 90 }
+const kindsTag = (k: Kind[]) => (k.length ? k.join('+') : 'none')
+/**
+ * A decision's id. A pairing request's id carries everything the signature authorises (core shows the id in full in
+ * its covers): the comparison code, the carrier, what they may send us, what we may send them and the expiry. Changing
+ * the terms changes the id, so a prompt opened on old terms is refused by core (409 decision.closed).
+ */
+const decisionId = (r: Request, prefix: string) => {
+  if (r.kind !== 'pairing') return `req.${r.id}`
+  const t = termsOf(r)
+  return `pair.${r.id}.${comparisonCode(prefix, r.from)}.${r.carrier === 'local' ? 'spool' : 'relay'}.recv-${kindsTag(t.recv)}.send-${kindsTag(t.send)}.${t.days}d`
+}
+const DECISION_ACTION: Record<Request['kind'], string> = { pairing: 'decide_pairing', scope: 'decide_scope', handoff: 'decide', question: 'decide' }
+/** Text a peer chose (a name, an owner): refused when it hides characters (bidi overrides, zero-width marks, controls). */
+const HIDDEN_CHAR = /[\p{Cc}\p{Cf}\u2028\u2029]/u
+/** Peer text inside markdown: every markdown punctuation character escaped, so a name never becomes a link or a heading. */
+const md = (s: string) => s.replace(/[\\`*_{}\[\]()#+\-.!|<>~]/g, (ch) => `\\${ch}`)
+const prefixOf = (c: Pick<AddonCtx, 'store' | 'ws'>) => c.store.workspaces.find((w) => w.id === c.ws)?.prefix ?? ''
 
 /** Write one record: the addon's own log (per link) and, for live actions, the workspace log (Activity). */
 function record(c: AddonCtx, linkId: string | null, verb: string, text: string, extra: { by?: string; ticket?: string } = {}) {
@@ -309,16 +343,18 @@ function record(c: AddonCtx, linkId: string | null, verb: string, text: string, 
 
 // ------------------------------------------------------------------ decisions (core renders and signs them)
 
-function toDecision(r: Request, l: Link | undefined, now: string): AddonDecision {
-  const base = { kind: 'decision' as const, id: decisionId(r), addon: 'links', action: 'decide' }
-  if (r.kind === 'pairing')
+function toDecision(r: Request, l: Link | undefined, now: string, prefix: string): AddonDecision {
+  const base = { kind: 'decision' as const, id: decisionId(r, prefix), addon: 'links', action: DECISION_ACTION[r.kind] }
+  if (r.kind === 'pairing') {
+    const t = termsOf(r)
     return {
       ...base,
       title: `Link request from ${r.from.name}`,
-      question: `Link ${r.from.name} with this workspace ${r.carrier === 'local' ? 'on this machine' : 'through the relay'}?`,
-      detail: `Comparison code ${r.code}. Ask ${r.from.owner}${r.from.org ? ` (${r.from.org})` : ''} to read the code on their screen and accept only if it is the same. They would send you: ${kindsText(r.wants ?? [])}. They accept from you: ${kindsText(r.offers ?? [])}. The request expires ${left(r.expires_at, now)}.`,
-      options: [{ key: 'accept', label: 'Codes match: link', primary: true }, { key: 'deny', label: 'Deny' }],
+      question: `Link ${r.from.name} with this workspace ${r.carrier === 'local' ? 'on this machine' : 'through the relay'} on these terms?`,
+      detail: `Comparison code ${comparisonCode(prefix, r.from)} (worked out on this machine). Ask ${r.from.owner}${r.from.org ? ` (${r.from.org})` : ''} to read the code on their screen and accept only if it is the same. Terms you sign: they may send you ${kindsText(t.recv)}; you may send them ${kindsText(t.send)}; the link expires after ${t.days} days. They asked to send ${kindsText(r.wants ?? [])} and to receive ${kindsText(r.offers ?? [])}: narrow the terms or change the expiry in Workspace links → Requests before you accept. The request expires ${left(r.expires_at, now)}.`,
+      options: [{ key: 'accept', label: 'Codes match: link on these terms', primary: true }, { key: 'deny', label: 'Deny' }],
     }
+  }
   if (r.kind === 'scope')
     return {
       ...base,
@@ -337,11 +373,40 @@ function toDecision(r: Request, l: Link | undefined, now: string): AddonDecision
   }
 }
 
+/** Requests this viewer may decide now: open, on a usable link (a pairing request has none yet), and theirs to decide. */
 function openRequestsFor(state: Record<string, unknown>, c: Omit<AddonCtx, 'body' | 'state'>): Request[] {
   const now = c.store.now()
-  const owner = isOwner(c)
-  return requestsOf(state).filter((r) => isOpen(r, now) && (owner || !OWNER_KINDS.includes(r.kind)))
+  const role = c.store.roleIn(c.ws, c.viewer)
+  if (!role || !can(role, 'addon.decide')) return []
+  const owner = role === 'owner'
+  const links = new Map(linksOf(state).map((l) => [l.id, l]))
+  return requestsOf(state).filter((r) => isOpen(r, now) && (!r.link || (links.has(r.link) && usable(links.get(r.link)!, now))) && (owner || !OWNER_KINDS.includes(r.kind)))
 }
+
+// ------------------------------------------------------------------ what a signature covers
+
+/** The carrier as the signature names it. */
+const carrierArg = (carrier: Carrier) => (carrier === 'local' ? 'spool (same machine)' : `relay ${RELAY_URL}`)
+/**
+ * The args of "Codes match: sign": everything the link authorises, so core's covers name it (and the host refuses the
+ * signature when any of it no longer matches the pairing, 409 links.stale).
+ */
+function pairingArgs(p: Pending) {
+  return { pairing: p.id, code: p.joined?.fingerprint ?? '', peer: p.peer.name, carrier: carrierArg(p.carrier), they_may_send: kindsText(p.accepts), we_may_send: kindsText(p.joined?.theyAccept ?? []), expires_days: p.days }
+}
+/** What a handoff sends, in words: the title, the body sections that are filled and the attachments. */
+function sendsOf(t: { body: Record<string, string | undefined>; artifacts: { name: string }[] }) {
+  const sections = Object.entries(t.body).filter(([, v]) => !!v?.trim()).map(([k]) => k.replace(/_/g, ' '))
+  return `title; sections: ${sections.length ? sections.join(', ') : 'none'}; attachments: ${t.artifacts.length ? t.artifacts.map((a) => a.name).join(', ') : 'none'}`
+}
+const HANDOFF_DEADLINE = '3 days after sending'
+/** The args of "Sign and send": the link and peer, the carrier, the ticket and exactly what crosses, and the deadline. */
+function handoffArgs(l: Link, t: { key: string; title: string; body: Record<string, string | undefined>; artifacts: { name: string }[] }) {
+  return { link: l.id, to: l.peer.name, carrier: carrierArg(l.carrier), ticket_key: t.key, title: t.title, sends: sendsOf(t), deadline: HANDOFF_DEADLINE }
+}
+/** The keys whose posted value differs from what the host would sign now (empty: the signature still matches). */
+const staleKeys = (body: Record<string, unknown>, want: Record<string, string | number>) => Object.keys(want).filter((k) => String(body[k] ?? '') !== String(want[k]))
+const stale = (keys: string[]) => conflict('links.stale', `What you signed no longer matches: ${keys.join(', ')}.`, 'Reload and sign again.')
 
 // ------------------------------------------------------------------ the page (built here, drawn by core)
 
@@ -395,12 +460,12 @@ function page(state: Record<string, unknown>, c: Omit<AddonCtx, 'body' | 'state'
     rowOpen: { action: 'select_link', args: { id: '$row.id' } },
     rowActions: [
       { label: 'Details', action: 'select_link', args: { id: '$row.id' }, variant: 'ghost', primary: true },
-      { label: 'Revoke', action: 'revoke', args: { id: '$row.id' }, variant: 'danger', when: '$row.canRevoke' },
+      { label: 'Revoke', action: 'revoke', args: { id: '$row.id', peer: '$row.peer' }, variant: 'danger', when: '$row.canRevoke' },
     ],
   }
   const detail = selected
     ? [
-        { type: 'markdown', text: `### ${selected.peer.name}` },
+        { type: 'markdown', text: `### ${md(selected.peer.name)}` },
         {
           type: 'kv',
           pairs: [
@@ -422,7 +487,32 @@ function page(state: Record<string, unknown>, c: Omit<AddonCtx, 'body' | 'state'
 
   // Requests: core draws each open one as a decision (signed in core's prompt); a table lists them all.
   const deciders = openRequestsFor(state, c)
+  const canDecide = !!role && can(role, 'addon.decide')
+  const prefix = prefixOf(c)
   const requests = requestsOf(state).slice().sort((a, b) => b.at.localeCompare(a.at))
+  const onLiveLink = (r: Request) => !r.link || (byId.has(r.link) && usable(byId.get(r.link)!, now))
+  // Pairing requests: the owner may narrow the terms and pick the expiry before signing (never more than asked).
+  const termsForms = new Map(deciders
+    .filter((r) => r.kind === 'pairing')
+    .map((r) => {
+      const t = termsOf(r)
+      const props: Record<string, unknown> = { request: { type: 'string', enum: [r.id], default: r.id } }
+      for (const k of r.wants ?? []) props[`recv_${k}`] = { type: 'boolean', title: `They may send us ${KIND_LABEL[k]}`, default: t.recv.includes(k) }
+      for (const k of r.offers ?? []) props[`send_${k}`] = { type: 'boolean', title: `We may send them ${KIND_LABEL[k]}`, default: t.send.includes(k) }
+      props.days = { type: 'integer', title: 'Link expires after', enum: [30, 90, 365], default: t.days }
+      const nodes: unknown[] = [
+        { type: 'markdown', text: `### Terms for ${md(r.from.name)}\nYou can narrow what they asked for and pick the expiry. The decision you sign names these terms.` },
+        {
+          type: 'form',
+          schema: { type: 'object', properties: props },
+          uiSchema: { request: { 'ui:widget': 'hidden' }, days: { 'ui:enumNames': ['30 days', '90 days', '365 days'] } },
+          formData: { request: r.id, days: t.days, ...Object.fromEntries((r.wants ?? []).map((k) => [`recv_${k}`, t.recv.includes(k)])), ...Object.fromEntries((r.offers ?? []).map((k) => [`send_${k}`, t.send.includes(k)])) },
+          action: 'set_pairing_terms',
+          submitLabel: 'Use these terms',
+        },
+      ]
+      return [r.id, nodes] as const
+    }))
   const requestRows = requests.map((r) => ({
     id: r.id,
     kind: KIND_WORD[r.kind],
@@ -430,7 +520,7 @@ function page(state: Record<string, unknown>, c: Omit<AddonCtx, 'body' | 'state'
     title: r.title,
     received: fmtWhen(r.at, now),
     decides: OWNER_KINDS.includes(r.kind) ? 'An owner' : 'Owner or maintainer',
-    state: r.state === 'open' && !isOpen(r, now) ? 'expired' : r.state === 'open' ? 'open' : r.decided ? `${r.state} by ${nameIn(c, r.decided.by)}` : r.state,
+    state: r.state === 'open' && !isOpen(r, now) ? 'expired' : r.state === 'open' && !onLiveLink(r) ? 'closed' : r.state === 'open' ? 'open' : r.decided ? `${r.state} by ${nameIn(c, r.decided.by)}` : r.state,
   }))
   const sentRows = sentOf(state)
     .filter((s) => canSeeTicket(c, s.ticket))
@@ -440,7 +530,8 @@ function page(state: Record<string, unknown>, c: Omit<AddonCtx, 'body' | 'state'
       return { id: s.id, ticket: s.ticket, title: s.title, to: l?.peer.name ?? s.link, by: nameIn(c, s.by), sent: fmtWhen(s.at, now), state: s.state === 'waiting' && l?.carrier === 'relay' && relay !== 'online' ? 'queued' : s.state }
     })
   const handoffLinks = active.filter((l) => l.theyAccept.includes('handoff'))
-  const tickets = c.store.listTickets(c.ws).slice(0, 60)
+  // Restricted tickets never leave this workspace, so they are not offered at all.
+  const tickets = c.store.listTickets(c.ws).filter((t) => !t.restricted).slice(0, 60)
   const draft = nav.draft && byId.get(nav.draft.link) && canSeeTicket(c, nav.draft.ticket) ? nav.draft : undefined
   const handoff = role === 'viewer'
     ? []
@@ -456,7 +547,7 @@ function page(state: Record<string, unknown>, c: Omit<AddonCtx, 'body' | 'state'
               ticket: { type: 'string', title: 'Ticket', enum: tickets.map((t) => t.key) },
             },
           },
-          uiSchema: { link: { 'ui:enumNames': handoffLinks.map((l) => `${l.peer.name} (${carrierText(l.carrier)})`) }, ticket: { 'ui:enumNames': tickets.map((t) => `${t.key} · ${t.title}${t.restricted ? ' (restricted)' : ''}`) } },
+          uiSchema: { link: { 'ui:enumNames': handoffLinks.map((l) => `${l.peer.name} (${carrierText(l.carrier)})`) }, ticket: { 'ui:enumNames': tickets.map((t) => `${t.key} · ${t.title}`) } },
           formData: draft ?? {},
           action: 'prepare_handoff',
           submitLabel: 'Review handoff',
@@ -467,14 +558,14 @@ function page(state: Record<string, unknown>, c: Omit<AddonCtx, 'body' | 'state'
                 type: 'alert',
                 tone: 'info',
                 title: `Ready: ${draft.ticket} to ${byId.get(draft.link)!.peer.name}`,
-                text: `The ticket's title and sections cross ${byId.get(draft.link)!.carrier === 'local' ? 'on this machine' : 'through the relay'}, sealed to their exchange key. They decide whether to accept it; you get the result back.`,
+                text: `What crosses is listed in the signing prompt: the title, the sections and the attachments, sealed to their exchange key ${byId.get(draft.link)!.carrier === 'local' ? 'on this machine' : 'through the relay'}. They decide whether to accept it; you get the result back.`,
               },
               {
                 type: 'stack',
                 direction: 'row',
                 fit: true,
                 children: [
-                  { type: 'button', label: 'Sign and send', action: 'send_handoff', variant: 'primary', args: { link: draft.link, ticket: draft.ticket } },
+                  { type: 'button', label: 'Sign and send', action: 'send_handoff', variant: 'primary', args: handoffArgs(byId.get(draft.link)!, c.store.ticket(draft.ticket)!) },
                   { type: 'button', label: 'Cancel', action: 'clear_handoff', variant: 'ghost' },
                 ],
               },
@@ -488,8 +579,6 @@ function page(state: Record<string, unknown>, c: Omit<AddonCtx, 'body' | 'state'
 
   // Set up: the pairing in progress (one at a time), else the form.
   const pending = state.pending as Pending | undefined
-  const ws = c.store.workspaces.find((w) => w.id === c.ws)
-  const prefix = ws?.prefix ?? ''
   const linkedWs = new Set(links.filter((l) => usable(l, now) && l.peer.ws).map((l) => l.peer.ws!))
   const ownPeers = c.store.workspaces.filter((w) => w.id !== c.ws && w.members.some((m) => m.person === c.viewer && m.role === 'owner') && !linkedWs.has(w.prefix))
   const peerChoices = [...ownPeers.map((w) => `ws:${w.prefix}`), 'other']
@@ -499,9 +588,10 @@ function page(state: Record<string, unknown>, c: Omit<AddonCtx, 'body' | 'state'
   if (!owner) setup = [{ type: 'alert', tone: 'info', title: 'Owners set up links', text: 'Pairing links two workspaces\' trust, so an owner of each side signs it. Ask an owner of this workspace.' }]
   else if (pending) {
     const expired = Date.parse(pending.started_at) + PAIRING_MS <= Date.parse(now) && !pending.joined
+    const joinExpired = !!pending.joined && Date.parse(pending.joined.at) + PAIRING_MS <= Date.parse(now)
     const waitRelay = pending.carrier === 'relay' && relay !== 'online'
     setup = [
-      { type: 'markdown', text: `## Pairing with ${pending.peer.name}` },
+      { type: 'markdown', text: `## Pairing with ${md(pending.peer.name)}` },
       {
         type: 'kv',
         pairs: [
@@ -521,7 +611,7 @@ function page(state: Record<string, unknown>, c: Omit<AddonCtx, 'body' | 'state'
               direction: 'row',
               fit: true,
               children: [
-                { type: 'button', label: 'Codes match: sign', action: 'confirm_pairing', variant: 'primary', args: { pairing: pending.id, code: pending.joined.fingerprint } },
+                { type: 'button', label: 'Codes match: sign', action: 'confirm_pairing', variant: 'primary', args: pairingArgs(pending), ...(joinExpired ? { disabled: 'More than 10 minutes since they joined: cancel and pair again.' } : {}) },
                 { type: 'button', label: 'Codes differ: cancel', action: 'cancel_pairing', variant: 'ghost' },
               ],
             },
@@ -531,8 +621,8 @@ function page(state: Record<string, unknown>, c: Omit<AddonCtx, 'body' | 'state'
               type: 'markdown',
               text:
                 pending.carrier === 'local'
-                  ? `${pending.peer.name} runs on this machine: its owner sees the request in its own dashboard (Workspace links → Set up) and enters the code there.`
-                  : `Give the pairing code to ${pending.peer.owner === '?' ? 'the other owner' : pending.peer.owner}. They enter it in their own dashboard (Workspace links → Set up); their host finds this workspace's card in the relay directory.`,
+                  ? `${md(pending.peer.name)} runs on this machine: its owner sees the request in its own dashboard (Workspace links → Set up) and enters the code there.`
+                  : `Give the pairing code to ${pending.peer.owner === '?' ? 'the other owner' : md(pending.peer.owner)}. They enter it in their own dashboard (Workspace links → Set up); their host finds this workspace's card in the relay directory.`,
             },
             {
               type: 'stack',
@@ -572,7 +662,7 @@ function page(state: Record<string, unknown>, c: Omit<AddonCtx, 'body' | 'state'
       },
     ]
 
-  const openCount = requests.filter((r) => isOpen(r, now)).length
+  const openCount = requests.filter((r) => isOpen(r, now) && onLiveLink(r)).length
   return {
     type: 'stack',
     children: [
@@ -582,7 +672,7 @@ function page(state: Record<string, unknown>, c: Omit<AddonCtx, 'body' | 'state'
         direction: 'row',
         children: [
           { type: 'stat', label: 'Active links', value: active.length, hint: `${links.filter((l) => linkState(l, now) === 'expiring').length} expiring within 7 days` },
-          { type: 'stat', label: 'Open requests', value: openCount, hint: deciders.length === openCount ? 'waiting for a decision' : `${deciders.length} for you to decide` },
+          { type: 'stat', label: 'Open requests', value: openCount, hint: !canDecide ? 'owners and maintainers decide them' : deciders.length === openCount ? 'waiting for a decision' : `${deciders.length} for you to decide` },
           { type: 'stat', label: 'Relay', value: relay, hint: 'same-machine links do not need it' },
         ],
       },
@@ -598,7 +688,7 @@ function page(state: Record<string, unknown>, c: Omit<AddonCtx, 'body' | 'state'
             node: {
               type: 'stack',
               children: [
-                ...(deciders.length ? [{ type: 'markdown', text: '## Waiting for you\nSigned in orch\'s own prompt. Accepted tickets land in the Backlog as untrusted data.' }, ...deciders.map((r) => ({ type: 'decision', id: decisionId(r) }))] : []),
+                ...(deciders.length ? [{ type: 'markdown', text: '## Waiting for you\nSigned in orch\'s own prompt. Accepted tickets land in the Backlog as untrusted data.' }, ...deciders.flatMap((r) => [{ type: 'decision', id: decisionId(r, prefix) }, ...(termsForms.get(r.id) ?? [])])] : []),
                 { type: 'markdown', text: '## All requests' },
                 {
                   type: 'table',
@@ -670,7 +760,7 @@ registerAddon({
 
   decisions(state, _pkg, c) {
     const byId = new Map(linksOf(state).map((l) => [l.id, l]))
-    return openRequestsFor(state, c).map((r) => toDecision(r, r.link ? byId.get(r.link) : undefined, c.store.now()))
+    return openRequestsFor(state, c).map((r) => toDecision(r, r.link ? byId.get(r.link) : undefined, c.store.now(), prefixOf(c)))
   },
 
   view(state, c) {
@@ -684,7 +774,7 @@ registerAddon({
       nav: {},
       pending: isOwner(c) ? ((state.pending as Pending | undefined)?.id ?? null) : null,
       activeCount: linksOf(state).filter((l) => usable(l, now)).length,
-      openCount: requestsOf(state).filter((r) => isOpen(r, now)).length,
+      openCount: requestsOf(state).filter((r) => isOpen(r, now) && (!r.link || linksOf(state).some((l) => l.id === r.link && usable(l, now)))).length,
       page: page(state, c),
     }
   },
@@ -722,9 +812,12 @@ registerAddon({
         peer = ownWs(other.prefix)
       } else if (raw === 'other') {
         if (carrier === 'local') return invalid('Same machine works only between your own workspaces on this machine: pick the relay.')
-        const name = typeof f.name === 'string' ? f.name.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim() : ''
+        const name = typeof f.name === 'string' ? f.name.trim() : ''
+        const owner = typeof f.owner === 'string' ? f.owner.trim() : ''
+        if (HIDDEN_CHAR.test(name) || HIDDEN_CHAR.test(owner)) return invalid('Names may not contain invisible, direction or control characters.')
         if (name.length < 2 || name.length > 60) return invalid('Name the other side (2 to 60 characters).')
-        const owner = typeof f.owner === 'string' ? f.owner.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 60) : ''
+        if (owner.length > 60) return invalid('The owner\'s name has at most 60 characters.')
+        if (linksOf(c.state).some((l) => !l.peer.ws && l.peer.name === name && usable(l, c.store.now()))) return conflict('links.exists', `${name} is linked already.`, 'Revoke the link first to pair again.')
         peer = { name, owner: owner || '?' }
       } else return invalid('Pick who to link with.')
       const id = nextId(c.state, 'pr')
@@ -739,15 +832,19 @@ registerAddon({
       if (p.joined) return { ok: true, message: `${p.peer.name} already entered the code.` }
       if (Date.parse(p.started_at) + PAIRING_MS <= Date.parse(c.store.now())) return conflict('links.code_expired', 'The pairing code expired.', 'Cancel and start again.')
       if (p.carrier === 'relay' && relayLink(c) !== 'online') return conflict('links.relay_offline', `The relay is ${relayLink(c)}.`, 'Connect it in Settings → Relay, then try again.')
-      p.joined = { at: c.store.now(), fingerprint: fingerprintOf(`${p.id}|${p.pairing_code}|${p.peer.name}`), theyAccept: p.peer.ws ? ['handoff', 'question', 'status'] : ['question', 'drop'] }
+      // Each side works the comparison code out itself from both pairing values; nothing the other side sends sets it.
+      p.joined = { at: c.store.now(), fingerprint: comparisonCode(prefixOf(c), p.peer), theyAccept: p.peer.ws ? ['handoff', 'question', 'status'] : ['question', 'drop'] }
       return { ok: true, message: `${p.peer.name} entered the code. Compare the codes.`, changed: true }
     },
-    // Signed in core's prompt (manifest confirm: 'sign'): the pairing id and the comparison code are what is signed.
+    // Signed in core's prompt (manifest confirm: 'sign'): the covers name the peer, carrier, scopes both ways and expiry.
     confirm_pairing(c) {
       const p = c.state.pending as Pending | undefined
       if (!p || p.id !== c.body.pairing) return notFound('That pairing is not in progress.')
       if (!p.joined) return conflict('links.not_joined', `${p.peer.name} has not entered the code yet.`)
       if (c.body.code !== p.joined.fingerprint) return conflict('links.code_mismatch', 'That is not the comparison code of this pairing.', 'Cancel and start again.')
+      if (Date.parse(p.joined.at) + PAIRING_MS <= Date.parse(c.store.now())) return conflict('links.join_expired', 'More than 10 minutes passed since the other owner joined.', 'Cancel and pair again.')
+      const off = staleKeys(c.body, pairingArgs(p))
+      if (off.length) return stale(off)
       const l: Link = { id: nextId(c.state, 'ln'), peer: p.peer, carrier: p.carrier, accepts: p.accepts, theyAccept: p.joined.theyAccept, fingerprint: p.joined.fingerprint, paired_at: c.store.now(), paired_by: c.viewer, expires_at: at(c.store.now(), p.days), last_at: c.store.now() }
       linksOf(c.state).push(l)
       delete c.state.pending
@@ -763,9 +860,11 @@ registerAddon({
       return { ok: true, message: `Cancelled pairing with ${p.peer.name}.`, changed: true }
     },
 
+    // Signed in core's prompt (manifest confirm: 'sign'): the covers name the link and its peer; the host checks both.
     revoke(c) {
       const l = linksOf(c.state).find((x) => x.id === c.body.id)
       if (!l) return notFound('No such link.')
+      if (c.body.peer !== l.peer.name) return stale(['peer'])
       if (l.revoked) return { ok: true, message: `The link with ${l.peer.name} is already revoked.` }
       l.revoked = { at: c.store.now(), by: c.viewer }
       let closed = 0
@@ -774,7 +873,10 @@ registerAddon({
         r.state = 'closed'
         closed++
       }
-      record(c, l.id, 'revoked', `Revoked the link. ${l.peer.name} was told with a signed revoke envelope${closed ? `; ${closed} open ${closed === 1 ? 'request' : 'requests'} closed` : ''}.`, { by: c.viewer })
+      // Handoffs still waiting there come back to their people (as when a deadline passes, §9).
+      const back = sentOf(c.state).filter((s) => s.link === l.id && s.state === 'waiting')
+      for (const s of back) s.state = 'cancelled'
+      record(c, l.id, 'revoked', `Revoked the link. ${l.peer.name} was told with a signed revoke envelope${closed ? `; ${closed} open ${closed === 1 ? 'request' : 'requests'} closed` : ''}${back.length ? `; ${back.length} waiting ${back.length === 1 ? 'handoff' : 'handoffs'} came back (${back.map((s) => s.ticket).join(', ')})` : ''}.`, { by: c.viewer })
       return { ok: true, message: `Revoked the link with ${l.peer.name}. Nothing crosses it from now on.`, changed: true }
     },
 
@@ -797,10 +899,13 @@ registerAddon({
       const l = usableLink(c, c.body.link)
       if ('ok' in l) return l
       if (!l.theyAccept.includes('handoff')) return conflict('links.scope', `${l.peer.name} does not accept ticket handoffs from this workspace.`)
-      const key = crossable(c, c.body.ticket)
+      // `ticket` is core's reserved arg (the render context), so the handoff names its ticket as `ticket_key`.
+      const key = crossable(c, c.body.ticket_key)
       if (typeof key !== 'string') return key
-      if (sentOf(c.state).some((s) => s.ticket === key && s.link === l.id && s.state === 'waiting')) return conflict('links.already_sent', `${key} is already waiting at ${l.peer.name}.`)
       const t = c.store.ticket(key)!
+      const off = staleKeys(c.body, handoffArgs(l, t))
+      if (off.length) return stale(off)
+      if (sentOf(c.state).some((s) => s.ticket === key && s.link === l.id && s.state === 'waiting')) return conflict('links.already_sent', `${key} is already waiting at ${l.peer.name}.`)
       const now = c.store.now()
       sentOf(c.state).push({ id: nextId(c.state, 'out'), link: l.id, ticket: key, title: t.title, at: now, by: c.viewer, deadline: at(now, 3), state: 'waiting' })
       l.last_at = now
@@ -824,60 +929,91 @@ registerAddon({
       return { ok: true, message: `INT handed over "${title}". It is on Today.`, changed: true }
     },
 
-    // A decision (manifest decision: true): core checked who may decide, that it is open and the option; this applies it.
-    decide(c) {
-      const r = requestsOf(c.state).find((x) => decisionId(x) === c.decision?.id)
-      if (!r) return notFound('That request is gone.')
-      const option = String(c.body.option)
-      const now = c.store.now()
-      const l = r.link ? linksOf(c.state).find((x) => x.id === r.link) : undefined
-      if (r.kind !== 'pairing' && (!l || !usable(l, now))) return conflict('links.inactive', 'The link this request came through is no longer active.')
-      const yes = r.kind === 'question' || option === 'accept' || option === 'allow'
-      r.state = r.kind === 'question' ? 'answered' : yes ? 'accepted' : 'denied'
-      r.decided = { at: now, by: c.viewer, option }
-      if (l) l.last_at = now
-      if (r.kind === 'pairing') {
-        if (!yes) {
-          record(c, null, 'pairing_denied', `Denied the link request from ${r.from.name}.`, { by: c.viewer })
-          return { ok: true, message: `Denied ${r.from.name}.`, changed: true }
-        }
-        const nl: Link = { id: nextId(c.state, 'ln'), peer: r.from, carrier: r.carrier ?? 'relay', accepts: r.wants ?? [], theyAccept: r.offers ?? [], fingerprint: r.code ?? '', paired_at: now, paired_by: c.viewer, expires_at: at(now, 90), last_at: now }
-        linksOf(c.state).push(nl)
-        record(c, nl.id, 'paired', `Linked with ${r.from.name} through the relay. Comparison code ${r.code} matched; both owners signed.`, { by: c.viewer })
-        return { ok: true, message: `Linked with ${r.from.name}.`, changed: true }
+    // Owner only: narrow what a pairing request asked for and pick the expiry. The decision's id then names these terms.
+    set_pairing_terms(c) {
+      const f = (c.body.formData ?? {}) as Record<string, unknown>
+      const r = requestsOf(c.state).find((x) => x.id === f.request && x.kind === 'pairing' && isOpen(x, c.store.now()))
+      if (!r) return notFound('That link request is no longer open.')
+      const days = Number(f.days ?? 90)
+      if (![30, 90, 365].includes(days)) return invalid('A link expires after 30, 90 or 365 days.')
+      const pick = (prefix: string, bound: Kind[]) => {
+        const keys = Object.keys(f).filter((k) => k.startsWith(prefix) && f[k] === true).map((k) => k.slice(prefix.length) as Kind)
+        return keys.every((k) => bound.includes(k)) ? KINDS.filter((k) => keys.includes(k)) : null
       }
-      if (r.kind === 'scope') {
-        if (yes && r.scope && !l!.accepts.includes(r.scope)) l!.accepts = [...l!.accepts, r.scope]
-        record(c, l!.id, yes ? 'scope_changed' : 'request_denied', yes ? `${l!.peer.name} may now send ${KIND_LABEL[r.scope!]}.` : `Denied ${l!.peer.name}'s request to send ${KIND_LABEL[r.scope!]}.`, { by: c.viewer })
-        return { ok: true, message: yes ? `${l!.peer.name} may now send ${KIND_LABEL[r.scope!]}.` : 'Denied.', changed: true }
-      }
-      if (r.kind === 'question') {
-        const label = r.options?.find((o) => o.key === option)?.label ?? option
-        record(c, l!.id, 'answered', `Answered "${r.title}": ${label}. Sent back ${l!.carrier === 'local' ? 'on this machine' : 'through the relay'}.`, { by: c.viewer })
-        return { ok: true, message: `Answered ${r.from.name}.`, changed: true }
-      }
-      if (!yes) {
-        record(c, l!.id, 'request_denied', `Denied the ticket "${r.title}" from ${r.from.name}. Their ticket goes back to their people.`, { by: c.viewer })
-        return { ok: true, message: `Denied the ticket from ${r.from.name}.`, changed: true }
-      }
-      const made = c.store.createFromRequest(c.ws, {
-        type: 'chore',
-        title: r.title,
-        priority: 'medium',
-        size: null,
-        labels: ['from-peer'],
-        parent: null,
-        due: null,
-        visibility: 'workspace',
-        people: { owner: null, assignees: [], reviewers: [] },
-        sections: { requirements: r.text },
-        acceptance: [],
-      })
-      if (!made.ok) return made
-      r.ticket = made.ticket.key
-      c.store.append(made.ticket.key, { type: 'links.received', actor: ADDON, from: r.from.name, person: c.viewer })
-      record(c, l!.id, 'request_accepted', `Accepted "${r.title}" from ${r.from.name} as ${made.ticket.key} (Backlog).`, { by: c.viewer, ticket: made.ticket.key })
-      return { ok: true, message: `Accepted as ${made.ticket.key} in the Backlog.`, changed: true, ticket: made.ticket.key }
+      const recv = pick('recv_', r.wants ?? [])
+      const send = pick('send_', r.offers ?? [])
+      if (!recv || !send) return invalid('Terms can only narrow what the other side asked for.')
+      r.terms = { recv, send, days }
+      return { ok: true, message: `Terms set: they may send ${kindsText(recv)}; you may send ${kindsText(send)}; ${days} days. Accept to sign them.`, changed: true }
     },
+
+    // Decisions (manifest decision: true): core checked who may decide, that it is open and the option; this applies it.
+    // Pairing and scope requests have their own actions so Today never folds them with routine handoffs.
+    decide_pairing: (c) => decideRequest(c),
+    decide_scope: (c) => decideRequest(c),
+    decide: (c) => decideRequest(c),
   },
 })
+
+function decideRequest(c: AddonCtx): AddonActionResult | StoreFailure {
+  const prefix = prefixOf(c)
+  const r = requestsOf(c.state).find((x) => decisionId(x, prefix) === c.decision?.id)
+  if (!r) return notFound('That request is gone.')
+  const option = String(c.body.option)
+  const now = c.store.now()
+  const l = r.link ? linksOf(c.state).find((x) => x.id === r.link) : undefined
+  if (r.kind !== 'pairing' && (!l || !usable(l, now))) return conflict('links.inactive', 'The link this request came through is no longer active.')
+  if (r.kind === 'pairing' && option === 'accept') {
+    if (linksOf(c.state).some((x) => usable(x, now) && (r.from.ws ? x.peer.ws === r.from.ws : !x.peer.ws && x.peer.name === r.from.name))) return conflict('links.exists', `${r.from.name} is linked already.`, 'Revoke that link first, or deny this request.')
+    if ((r.carrier ?? 'relay') === 'relay' && relayLink(c) !== 'online') return conflict('links.relay_offline', `The relay is ${relayLink(c)}: the link cannot be confirmed to ${r.from.name}.`, 'Connect it in Settings → Relay, then accept again.')
+  }
+  const yes = r.kind === 'question' || option === 'accept' || option === 'allow'
+  r.state = r.kind === 'question' ? 'answered' : yes ? 'accepted' : 'denied'
+  r.decided = { at: now, by: c.viewer, option }
+  if (l) l.last_at = now
+  if (r.kind === 'pairing') {
+    if (!yes) {
+      record(c, null, 'pairing_denied', `Denied the link request from ${r.from.name}.`, { by: c.viewer })
+      return { ok: true, message: `Denied ${r.from.name}.`, changed: true }
+    }
+    // The terms applied are the ones the signed decision id names (a change of terms changes the id).
+    const t = termsOf(r)
+    const carrier = r.carrier ?? 'relay'
+    const nl: Link = { id: nextId(c.state, 'ln'), peer: r.from, carrier, accepts: t.recv, theyAccept: t.send, fingerprint: comparisonCode(prefix, r.from), paired_at: now, paired_by: c.viewer, expires_at: at(now, t.days), last_at: now }
+    linksOf(c.state).push(nl)
+    record(c, nl.id, 'paired', `Linked with ${r.from.name} ${carrier === 'local' ? 'on this machine' : 'through the relay'}. Comparison code ${nl.fingerprint} matched; both owners signed. They may send ${kindsText(t.recv)}; we may send ${kindsText(t.send)}; ${t.days} days.`, { by: c.viewer })
+    return { ok: true, message: `Linked with ${r.from.name}.`, changed: true }
+  }
+  if (r.kind === 'scope') {
+    if (yes && r.scope && !l!.accepts.includes(r.scope)) l!.accepts = [...l!.accepts, r.scope]
+    record(c, l!.id, yes ? 'scope_changed' : 'request_denied', yes ? `${l!.peer.name} may now send ${KIND_LABEL[r.scope!]}.` : `Denied ${l!.peer.name}'s request to send ${KIND_LABEL[r.scope!]}.`, { by: c.viewer })
+    return { ok: true, message: yes ? `${l!.peer.name} may now send ${KIND_LABEL[r.scope!]}.` : 'Denied.', changed: true }
+  }
+  if (r.kind === 'question') {
+    const label = r.options?.find((o) => o.key === option)?.label ?? option
+    record(c, l!.id, 'answered', `Answered "${r.title}": ${label}. Sent back ${l!.carrier === 'local' ? 'on this machine' : 'through the relay'}.`, { by: c.viewer })
+    return { ok: true, message: `Answered ${r.from.name}.`, changed: true }
+  }
+  if (!yes) {
+    record(c, l!.id, 'request_denied', `Denied the ticket "${r.title}" from ${r.from.name}. Their ticket goes back to their people.`, { by: c.viewer })
+    return { ok: true, message: `Denied the ticket from ${r.from.name}.`, changed: true }
+  }
+  const made = c.store.createFromRequest(c.ws, {
+    type: 'chore',
+    title: r.title,
+    priority: 'medium',
+    size: null,
+    labels: ['from-peer'],
+    parent: null,
+    due: null,
+    visibility: 'workspace',
+    people: { owner: null, assignees: [], reviewers: [] },
+    sections: { requirements: r.text },
+    acceptance: [],
+  })
+  if (!made.ok) return made
+  r.ticket = made.ticket.key
+  c.store.append(made.ticket.key, { type: 'links.received', actor: ADDON, from: r.from.name, person: c.viewer })
+  record(c, l!.id, 'request_accepted', `Accepted "${r.title}" from ${r.from.name} as ${made.ticket.key} (Backlog).`, { by: c.viewer, ticket: made.ticket.key })
+  return { ok: true, message: `Accepted as ${made.ticket.key} in the Backlog.`, changed: true, ticket: made.ticket.key }
+}

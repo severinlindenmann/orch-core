@@ -1211,9 +1211,8 @@
       },
       "revoke": {
         "minRole": "owner",
-        "confirm": "destructive",
-        "confirmLabel": "Revoke link",
-        "confirmText": "Nothing crosses this link from now on. The other side is told; open requests from it close. Pair again to restore it."
+        "confirm": "sign",
+        "label": "Revoke a link: nothing crosses it from now on; open requests close and waiting handoffs come back"
       },
       "prepare_handoff": {
         "minRole": "member",
@@ -1237,6 +1236,18 @@
       "decide": {
         "minRole": "member",
         "decision": true
+      },
+      "decide_pairing": {
+        "minRole": "owner",
+        "decision": true
+      },
+      "decide_scope": {
+        "minRole": "owner",
+        "decision": true
+      },
+      "set_pairing_terms": {
+        "minRole": "owner",
+        "label": "Set the terms of a link request"
       }
     },
     "package_sha256": "9395d3ff43d09f8372895d9387287a801f0c69dc021d545c391ef3683867d5d9"

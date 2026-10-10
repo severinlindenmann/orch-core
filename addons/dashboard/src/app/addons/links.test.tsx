@@ -30,7 +30,7 @@ describe('Workspace links page (Preview)', () => {
   it('Requests draws the open requests as core decisions', async () => {
     const { user } = renderApp(PATH, { viewer: 'p_sev', setup: on })
     await user.click(await screen.findByRole('tab', { name: /^Requests/ }, T))
-    expect(await screen.findByRole('button', { name: 'Codes match: link' }, T)).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Codes match: link on these terms' }, T)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Accept into Backlog' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Review handoff' })).toBeInTheDocument()
   })
@@ -43,6 +43,19 @@ describe('Workspace links page (Preview)', () => {
     const m = renderApp(PATH, { viewer: 'p_mara', setup: on })
     await m.user.click(await screen.findByRole('tab', { name: /^Set up/ }, T))
     expect(await screen.findByText('Owners set up links', {}, T)).toBeInTheDocument()
+  })
+  it('Sign and send goes through end to end (the signed args reach the host intact)', async () => {
+    const { user } = renderApp(PATH, {
+      viewer: 'p_sev',
+      setup: (s) => {
+        on(s)
+        s.addonState(s.workspaces.find((w) => w.prefix === 'DEMO')!.id, 'links').nav = { p_sev: { draft: { link: 'ln_int', ticket: 'DEMO-0045' } } }
+      },
+    })
+    await user.click(await screen.findByRole('tab', { name: /^Requests/ }, T))
+    await user.click(await screen.findByRole('button', { name: 'Sign and send' }, T))
+    await user.click(within(await screen.findByRole('dialog', {}, T)).getByRole('button', { name: 'Sign and run' }))
+    expect(await screen.findByText(/Handed off DEMO-0045 to INT/, {}, T)).toBeInTheDocument()
   })
   it('a viewer reads the log without the restricted ticket and cannot revoke', async () => {
     const { user } = renderApp(PATH, { viewer: 'p_tom', setup: on })

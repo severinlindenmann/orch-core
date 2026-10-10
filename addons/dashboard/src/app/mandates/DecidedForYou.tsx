@@ -29,7 +29,7 @@ export function DecidedForYou({ ws, now }: { ws: string; now: string }) {
     <>
       <section role="region" aria-labelledby="today-decided-for-you" className="overflow-hidden rounded-lg border border-border bg-surface" data-testid="decided-for-you">
         <h2 id="today-decided-for-you" className="flex items-center gap-1 px-3 py-2.5 text-[13px]">
-          <span className="font-semibold text-text">Decided for you</span>{' '}
+          <span className="shrink-0 whitespace-nowrap font-semibold text-text">Decided for you</span>{' '}
           <span className="min-w-0 truncate tabular-nums text-text-muted">
             · {fresh.length} since you last looked · via mandate {m.id}, epic {m.epic.key}
           </span>
@@ -74,7 +74,7 @@ export function DecidedForYou({ ws, now }: { ws: string; now: string }) {
       {m.refused.length > 0 && (
         <section role="region" aria-labelledby="today-mandate-refused" className="overflow-hidden rounded-lg border border-border bg-surface" data-testid="mandate-refused-today">
           <h2 id="today-mandate-refused" className="flex items-center gap-1 px-3 py-2.5 text-[13px]">
-            <span className="font-semibold text-text">Refused or skipped by the mandate</span>{' '}
+            <span className="min-w-0 truncate font-semibold text-text">Refused or skipped by the mandate</span>{' '}
             <span className="min-w-0 truncate tabular-nums text-text-muted">· {m.refused.length} · you decide these</span>
             <Pill className="ml-auto shrink-0">Preview</Pill>
           </h2>

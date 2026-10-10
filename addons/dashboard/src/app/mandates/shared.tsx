@@ -71,9 +71,8 @@ export function PreviewNote({ className, chip = true }: { className?: string; ch
 export function DecisionLine({ m, d, className }: { m: PreviewMandate; d: PreviewMandate['decisions'][number]; className?: string }) {
   return (
     <span className={cn('min-w-0', className)}>
-      <span className="block truncate" title={decisionLabel(d, m.id, m.issuer)}>
-        {decisionLabel(d, m.id, m.issuer)}
-      </span>
+      {/* Core's label in full (it wraps, never truncates): it must never pass for the owner's own signature. */}
+      <span className="block break-words">{decisionLabel(d, m.id, m.issuer)}</span>
       <span className="block truncate text-text-muted">
         checked by checker {d.checker.identity} ({d.checker.result})
       </span>
@@ -109,7 +108,7 @@ export function PreviewPrompt({
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent
         role={destructive ? 'alertdialog' : 'dialog'}
-        className="max-h-[90vh] max-w-lg gap-4 overflow-y-auto border-border bg-surface"
+        className="max-h-[90vh] max-w-lg grid-cols-[minmax(0,1fr)] gap-4 overflow-y-auto border-border bg-surface"
         onOpenAutoFocus={(e) => {
           e.preventDefault()
           cancel.current?.focus({ preventScroll: true })
@@ -125,7 +124,7 @@ export function PreviewPrompt({
             <span>{PREVIEW_LINE}</span>
           </DialogDescription>
         </DialogHeader>
-        <dl className="grid grid-cols-[88px_1fr] gap-x-3 rounded-md border border-border bg-bg p-3 text-[13px]">
+        <dl className="grid grid-cols-[88px_minmax(0,1fr)] gap-x-3 rounded-md border border-border bg-bg p-3 text-[13px]">
           <dt className="text-text-muted">Covers</dt>
           <dd>
             <ul className="list-disc space-y-0.5 pl-4" data-testid="preview-covers">
@@ -136,7 +135,7 @@ export function PreviewPrompt({
           </dd>
         </dl>
         {children}
-        <DialogFooter className="gap-2">
+        <DialogFooter className="flex-wrap gap-2">
           <Button ref={cancel} variant="ghost" onClick={onClose}>
             Cancel
           </Button>

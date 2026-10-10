@@ -129,6 +129,7 @@ All workspace reads are members only (404 unknown workspace, 403 non-member); hi
 | GET `/api/workspaces/:ws/agents`, `…/agents/activity` | no operation yet — proposal `session.list`, `session.refusals` |
 | GET `/api/workspaces/:ws/agents/launch?ticket&mode&harness&where` | no operation yet — proposal `session.preview` (core-computed facts for the start dialog) |
 | (start/stop run through the start-agent addon actions) | no operation yet — proposal `session.start` / `session.stop` (human; needs `spawn_agent`, a grant, a server-issued single-use confirmation) |
+| GET/POST `/api/workspaces/:ws/preview/mandates` | **PREVIEW ONLY — not part of the contract.** Served by the mock for the non-functional mandates preview (M1, `docs/concept-mandates.md` Step 1); nothing is signed. A host implements nothing here until core specifies mandates (D62 draft, PR #340); the shape will change. |
 | GET/POST `/api/workspaces/:ws/grants`, POST `…/grants/:id/revoke` | `grant` (human, signed; revoke stops its sessions). Terms by role (`grantTerms`): owners and maintainers scope `all`, 1–24 h; **members grant themselves** scope `workable` (the tickets they may work on), 1 h up to the workspace default (`grant_hours`, 8); viewers none (403). Wrong scope 403 `grant.scope`. Members revoke their own; owners revoke any |
 
 **Skills, connections, relay (D54–D57)**
@@ -280,7 +281,7 @@ the same view after a reload or pasted into a new tab. **The host serves `index.
 | `/w/<PREFIX>/tickets/new` | New ticket page |
 | `/ticket/<KEY>?tab=acceptance\|changes\|questions\|artifacts\|history\|raw` | A ticket and its tab (Overview without `tab`); `#question-<id>` opens that question. The key names the workspace. |
 | `/w/<PREFIX>/artifacts?view=list\|grid&a=<KEY>.<sha256[:12]>` | Artifacts, layout and the shown artifact |
-| `/w/<PREFIX>/agents` | Agents |
+| `/w/<PREFIX>/agents?tab=mandates` | Agents (Sessions without `tab`); `mandates` is the **preview** tab (not part of the contract) |
 | `/w/<PREFIX>/settings/<tab>` | Settings tab (general, members, gates, relay, addons, skills, connections) |
 | `/w/<PREFIX>/settings/addon/<name>` | Settings > Addons with that addon's row open |
 | `/w/<PREFIX>/addon/<name>/<page>?tab.<node>=<tab>` | An addon page, and the open tab of core's tabs node `<node>` |
@@ -366,6 +367,12 @@ for G2+ builds. `build-preview.py` still runs, but its output does not load; it 
   time too (see DECISIONS-LOG "N9 review fixes").
 - Addon settings drawer: a save by someone else while you edit resets your edits (needs an "Updated elsewhere" design).
 - The simulated Claude welcome box clips in a very narrow terminal (allowed: terminal content).
+- **Mandates are a preview only (M1), not part of the contract.** Agents → Mandates, the shell's mandate banner,
+  Today's "Decided for you" and Demo data → "Preview: mandates" show how the owner-approved Step 1 pilot
+  (`docs/concept-mandates.md`) would look. Nothing signs; the preview endpoint, its types (`src/api/mandatesPreview.ts`)
+  and words are provisional. Off by default; a host ships none of it until core specifies mandates. The real build
+  needs the four prerequisites (P2 custody, isolated execution, host-minted identities and checker, typed effects with
+  durable counters and a time guard) before any of it can be enabled.
 
 ## Next
 

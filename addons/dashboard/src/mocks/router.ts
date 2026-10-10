@@ -12,6 +12,7 @@ import type { RelayRequest, RelaySimRequest } from '@/api/types'
 import { listArtifacts } from './artifacts'
 import { relayEpoch, relayRequest, relaySim, relayState } from './relay'
 import { changesOf } from './changes'
+import { createLatency, readLatencySettings, type LatencySettings } from './latency'
 
 export interface RouteContext {
   params: Record<string, string>
@@ -585,12 +586,12 @@ export function buildRouter(): MockRouter {
   return r
 }
 
-/** Handler with simulated latency (120-300 ms). Pass { latency: false } in tests. */
-export function createMockHandler(store: MockStore, opts: { latency?: boolean } = {}) {
+/** Handler with simulated latency: one shared delay per burst of requests (see latency.ts). Pass { latency: false } in tests. */
+export function createMockHandler(store: MockStore, opts: { latency?: boolean | LatencySettings } = {}) {
   const router = buildRouter()
-  const latency = opts.latency ?? true
+  const latency = opts.latency === false ? null : createLatency(opts.latency === true || opts.latency === undefined ? readLatencySettings() : opts.latency)
   return async (method: HttpMethod, path: string, body?: unknown): Promise<TransportResponse> => {
-    if (latency) await new Promise((res) => setTimeout(res, 120 + Math.random() * 180))
+    if (latency) await latency()
     const m = router.match(method, path, body)
     if (!m) return fail(404, 'not_found', `No route for ${method} ${path}`)
     try {

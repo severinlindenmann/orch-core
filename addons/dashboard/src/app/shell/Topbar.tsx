@@ -14,6 +14,7 @@ import { useRole } from '../useRole'
 import { ReviewTour } from '../review/ReviewTour'
 import { useShellActions, useShellState } from './ShellUi'
 import { toastApiError } from '@/app/toast'
+import { queries } from '@/api/queries'
 
 const TITLES: Record<string, string> = {
   '/': 'Today',
@@ -35,7 +36,7 @@ export function Topbar() {
   const { openPalette, openNewTicket } = useShellActions()
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   const qc = useQueryClient()
-  const dataset = useQuery({ queryKey: ['dev-dataset'], queryFn: () => api.getDataset() })
+  const dataset = useQuery(queries.devDataset())
   const mode: Dataset = dataset.data?.dataset ?? 'normal'
   const [pending, setPending] = useState<Dataset | 'reset' | null>(null)
   const role = useRole()

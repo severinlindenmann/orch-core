@@ -1,10 +1,9 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { ChevronLeft, ChevronRight, LayoutGrid, List, X } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { api } from '@/api/client'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ArtifactQuery } from '@/api/types'
 import { Button } from '@/components/ui/button'
-import { Skeleton } from '@/components/ui/skeleton'
+import { ArtifactsBodySkeleton } from '../skeletons'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { usePageHeader } from '../../shell/ShellUi'
 import { useWorkspace } from '../../workspace'
@@ -18,6 +17,7 @@ import { useAddonPages } from '../ticket/Artifacts'
 import { ArtifactPane, ArtifactPreview, openMode } from './Preview'
 import { artifactKey, previewTarget, useArtifactSelection, type View } from './selection'
 import { ArtifactGrid, ArtifactList } from './views'
+import { queries } from '@/api/queries'
 
 /**
  * The preview sits beside the results on a window of at least 1280 px (the Today rule) whose page area still has
@@ -38,7 +38,7 @@ const SINCE = [
 export function ArtifactsPage() {
   usePageHeader('Artifacts')
   const { workspace } = useWorkspace()
-  const me = useQuery({ queryKey: ['me'], queryFn: api.getMe })
+  const me = useQuery(queries.me())
   const ws = workspace?.id
   const person = me.data?.person
   const [filters, setFilters] = useState<Omit<ArtifactQuery, 'page' | 'per'>>({})
@@ -65,8 +65,7 @@ export function ArtifactsPage() {
 
   const query = { ...filters, page }
   const list = useQuery({
-    queryKey: ['artifacts', ws, query],
-    queryFn: () => api.listArtifacts(ws!, query),
+    ...queries.artifacts(ws!, query),
     enabled: !!ws,
     placeholderData: keepPreviousData,
   })
@@ -81,6 +80,7 @@ export function ArtifactsPage() {
     items,
     settled: !!data && !updating,
     context: JSON.stringify([ws, filters, page]),
+    viewerFailed: me.isError,
   })
 
   const set = (patch: Partial<ArtifactQuery>) => {
@@ -101,6 +101,15 @@ export function ArtifactsPage() {
     close()
     requestAnimationFrame(() => restore.current?.focus())
   }
+  // The pane can also go without Close (its artifact left the results): focus inside it would fall to the page body,
+  // so it goes back to the item's Preview button, or the results heading.
+  const focusInPane = useRef(false)
+  const hadPane = useRef(false)
+  useLayoutEffect(() => {
+    if (hadPane.current && !pane && focusInPane.current && (document.activeElement === document.body || !document.activeElement)) restore.current?.focus()
+    if (!pane) focusInPane.current = false
+    hadPane.current = !!pane
+  }, [pane, restore])
 
   // j / k inside the results: the next / previous artifact with a preview. Focus moves to its Preview button and the
   // pane follows (a drawer would take the focus away, so beside a narrow page j/k only move the focus).
@@ -188,11 +197,7 @@ export function ArtifactsPage() {
         {said}
       </p>
       {!data || !view ? (
-        <div aria-busy="true" className="space-y-2">
-          <Skeleton className="h-10 w-full" />
-          <Skeleton className="h-10 w-full" />
-          <Skeleton className="h-10 w-full" />
-        </div>
+        <ArtifactsBodySkeleton view={view ?? 'list'} />
       ) : data.total === 0 && !updating ? (
         <p className="rounded-lg border border-dashed border-border px-4 py-8 text-center text-[13px] text-text-faint">
           {dirty ? 'No artifacts match these filters.' : 'No artifacts yet. Agents attach evidence with orch artifact add.'}
@@ -208,7 +213,17 @@ export function ArtifactsPage() {
               <ArtifactList items={data.items} members={members} current={currentKey} onPreview={preview} addonPage={addonPage} compact={!!pane || (pageWidth > 0 && pageWidth < LIST_FULL_MIN)} />
             )}
           </div>
-          {pane && <ArtifactPane item={pane} members={members} onClose={closePane} />}
+          {pane && (
+            <div
+              className="contents"
+              onFocusCapture={() => (focusInPane.current = true)}
+              onBlurCapture={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget as Node | null)) focusInPane.current = false
+              }}
+            >
+              <ArtifactPane item={pane} members={members} onClose={closePane} />
+            </div>
+          )}
         </div>
       )}
 

@@ -26,6 +26,7 @@ import { Group, matches, ticketRank, type Entry } from './groups'
 import { describePath, loadRecent, recordRecent, type RecentItem } from './recent'
 import { toastApiError } from '@/app/toast'
 import { useCopyLink } from '../../copyLink'
+import { queries } from '@/api/queries'
 
 type Mode = null | 'comment' | 'move' | 'move-pick' | 'ask-to' | 'quick' | { ask: string }
 
@@ -56,7 +57,7 @@ export function CommandPalette() {
   const focusedCard = useRef<{ key: string; status: Status } | null>(null)
   const { data: addons = [] } = useAddons()
   const addonNav = useSlot('nav')
-  const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.getMe })
+  const { data: me } = useQuery(queries.me())
   const person = me?.person
   const role = useRole()
   const runAddon = useRunAddonAction(ticketKey)
@@ -118,10 +119,8 @@ export function CommandPalette() {
   })
 
   const ticket = useQuery({
-    queryKey: ['ticket', ticketKey],
-    queryFn: () => api.getTicket(ticketKey!),
+    ...queries.ticket(ticketKey as string),
     enabled: paletteOpen && !!ticketKey,
-    retry: false,
   })
   const viewer = useViewer(ticketKey ?? '')
 

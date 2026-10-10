@@ -3,7 +3,6 @@ import { Link, useNavigate, useRouter, useRouterState, useSearch } from '@tansta
 import { ChevronRight, Lock, TriangleAlert } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { api } from '@/api/client'
 import { ApiError } from '@/api/types'
 import { workspaceOfTicket } from '@/api/workspaces'
 import { useWorkspace } from '@/app/workspace'
@@ -27,6 +26,7 @@ import { Raw } from './Raw'
 import { PropertiesStrip, Rail } from './Rail'
 import { SignDialog } from './SignDialog'
 import { useViewer, useWideLayout, type HumanAction, type Jump, type TabId, type TabProps } from './shared'
+import { queries } from '@/api/queries'
 
 function TicketSkeleton() {
   return (
@@ -101,11 +101,7 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
   const hash = useRouterState({ select: s => s.location.hash })
   const home = useHomeWorkspace(ticketKey)
   const viewer = useViewer(ticketKey)
-  const q = useQuery({
-    queryKey: ['ticket', ticketKey],
-    queryFn: () => api.getTicket(ticketKey),
-    retry: false,
-  })
+  const q = useQuery(queries.ticket(ticketKey))
   // The tab is in the address (`?tab=history`, Overview when absent). A `#question-Q2` link (Today's Agents panel)
   // opens the Questions tab on that question from the first paint.
   // Read through the route's validator again: a parent match passes the raw params on.

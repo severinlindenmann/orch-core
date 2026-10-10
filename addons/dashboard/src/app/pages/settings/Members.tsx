@@ -1,7 +1,6 @@
 import { HelpCircle, Trash2, UserPlus } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { useId, useRef, useState } from 'react'
-import { api } from '@/api/client'
 import type { KnownPerson, Role, Workspace } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -13,6 +12,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { ago, PersonAvatar } from '../ticket/shared'
 import { OwnerNote } from './OwnerNote'
 import { useSettingsSign } from './useSettingsSign'
+import { queries } from '@/api/queries'
 
 const ROLES: Role[] = ['owner', 'maintainer', 'member', 'viewer']
 const ROLE_HELP: Record<Role, string> = {
@@ -55,7 +55,7 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 /** Add by name or email: a combobox over the people this device knows. Enter adds the highlighted person (or the one chosen). */
 function AddMember({ workspaceId, members, onSubmit, onClose }: { workspaceId: string; members: Workspace['members']; onSubmit: (v: { person: string; name: string; email: string; role: Exclude<Role, 'owner'> }) => void; onClose: () => void }) {
-  const known = useQuery({ queryKey: ['people', workspaceId], queryFn: () => api.listPeople(workspaceId) })
+  const known = useQuery(queries.people(workspaceId))
   const [text, setText] = useState('')
   const [chosen, setChosen] = useState<KnownPerson | null>(null)
   const [open, setOpen] = useState(false)

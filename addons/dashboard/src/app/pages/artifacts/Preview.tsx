@@ -2,7 +2,6 @@ import { useQuery } from '@tanstack/react-query'
 import { X } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { addonActive } from '@/api/addons'
-import { api } from '@/api/client'
 import { ApiError, type Artifact, type ArtifactItem, type Member } from '@/api/types'
 import { workspaceOfTicket } from '@/api/workspaces'
 import { Button } from '@/components/ui/button'
@@ -11,6 +10,7 @@ import { ArtifactDrawer, ArtifactFacts, Viewer } from '../ticket/Artifacts'
 import { fmtBytes, Pill } from '../ticket/shared'
 import { byLabel } from './label'
 import { TicketLink } from './views'
+import { queries } from '@/api/queries'
 
 export { openMode } from '../ticket/Artifacts'
 
@@ -22,8 +22,8 @@ type State = 'loading' | 'ready' | 'missing' | 'failed' | 'denied'
  * Fails closed: an error never shows cached content, and a ticket the viewer may no longer see shows nothing about it.
  */
 function useArtifactContent(item: ArtifactItem | null) {
-  const ticket = useQuery({ queryKey: ['ticket', item?.ticket], queryFn: () => api.getTicket(item!.ticket), enabled: !!item })
-  const workspaces = useQuery({ queryKey: ['workspaces'], queryFn: api.getWorkspaces })
+  const ticket = useQuery({ ...queries.ticket(item?.ticket as string), enabled: !!item })
+  const workspaces = useQuery(queries.workspaces())
   const agentHtml = !!item && addonActive(workspaceOfTicket(item.ticket, workspaces.data ?? []), 'widgets')
   const err = ticket.error
   const state: State = err

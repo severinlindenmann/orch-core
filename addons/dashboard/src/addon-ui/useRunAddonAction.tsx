@@ -23,6 +23,7 @@ import { SecretDialog } from './SecretDialog'
 import { addonName, SignConfirm, signArgsProblem, signTitle, wordsAndId } from './SignConfirm'
 import { SpawnConfirm, type ConfirmedLaunch } from './SpawnConfirm'
 import { addonStateKey, useAddons } from './slots'
+import { queries } from '@/api/queries'
 
 const TICKET_KEY = /^[A-Z][A-Z0-9]{0,9}-\d{1,6}$/
 
@@ -191,7 +192,7 @@ export function useRunAddonAction(ticket?: string, opts: RunOptions = {}): RunAd
   const openDecision = async (addon: string, action: string, extra?: Record<string, unknown>) => {
     if (!workspace) return
     try {
-      const open = await qc.fetchQuery({ queryKey: ['addon-decisions', workspace.id], queryFn: () => api.getAddonDecisions(workspace.id) })
+      const open = await qc.fetchQuery(queries.addonDecisions(workspace.id))
       const d = open.find((x) => x.addon === addon && x.action === action && x.id === extra?.id)
       const option = d?.options.find((o) => o.key === extra?.option)
       if (!d) return fail(new ApiError(409, { code: 'decision.closed', message: 'That decision is closed.', retryable: false }), 'That decision is closed.')

@@ -2,7 +2,6 @@ import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { NotebookPen } from 'lucide-react'
 import { addonActive } from '@/api/addons'
-import { api } from '@/api/client'
 import { workspaceOfTicket } from '@/api/workspaces'
 import type { BodySections, TicketDocument, TicketType } from '@/api/types'
 import { SafeMarkdown } from '@/addon-ui/SafeMarkdown'
@@ -11,6 +10,7 @@ import { cn } from '@/lib/utils'
 import { ago, Pill, type TabProps } from './shared'
 import { resolveTicketWidgets, type Segment, type WidgetSpec } from './widgets/parse'
 import { WidgetBlock, type PrototypeOf } from './widgets/WidgetBlock'
+import { queries } from '@/api/queries'
 
 type SectionKey = keyof BodySections
 
@@ -116,7 +116,7 @@ function SectionBody({ segments, ticket, agentHtml, label, list, maxWidgets, jum
 const SHOW_ORDER: SectionKey[] = ['current_state', ...SECTION_ORDER.filter((k) => k !== 'current_state')]
 
 export function Overview({ ticket, jump }: TabProps) {
-  const workspaces = useQuery({ queryKey: ['workspaces'], queryFn: api.getWorkspaces })
+  const workspaces = useQuery(queries.workspaces())
   const agentHtml = addonActive(workspaceOfTicket(ticket.key, workspaces.data ?? []), 'widgets')
   const widgets = useMemo(() => resolveTicketWidgets(ticket.body, { order: SECTION_ORDER, label: (k) => sectionTitle(k as SectionKey, ticket.type) }), [ticket.body, ticket.type])
   const needs = NEEDS[ticket.type]

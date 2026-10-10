@@ -1,11 +1,12 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
-import { api } from '@/api/client'
 import { activeGrantOf } from '@/api/grants'
 import { can, canRevokeGrant, roleOf } from '@/api/permissions'
 import type { GrantInfo } from '@/api/types'
 import { Button } from '@/components/ui/button'
-import { Skeleton } from '@/components/ui/skeleton'
+import { AgentsSkeleton } from '../skeletons'
+import { LoadFailed } from '@/components/LoadFailed'
+import { useLoadFailure } from '../../useLoadFailure'
 import { useWorkspace } from '../../workspace'
 import { usePageHeader } from '../../shell/ShellUi'
 import { Section } from '../ticket/shared'
@@ -15,29 +16,26 @@ import { GrantDialog, useSignGrant, type GrantAction } from './GrantDialog'
 import { Grants } from './Grants'
 import { SessionGroup, type SessionContext } from './Sessions'
 import { fmtClock, fmtDateTime } from '@/lib/time'
+import { queries } from '@/api/queries'
 
 export function AgentsPage() {
   usePageHeader('Agents')
   const { workspace } = useWorkspace()
   const ws = workspace?.id
-  const me = useQuery({ queryKey: ['me'], queryFn: api.getMe })
-  const today = useQuery({ queryKey: ['today', ws], queryFn: () => api.getToday(ws!), enabled: !!ws })
-  const sessions = useQuery({ queryKey: ['agents', ws], queryFn: () => api.getAgents(ws!), enabled: !!ws })
-  const grants = useQuery({ queryKey: ['grants', ws], queryFn: () => api.listGrants(ws!), enabled: !!ws })
+  const me = useQuery(queries.me())
+  const today = useQuery({ ...queries.today(ws!), enabled: !!ws })
+  const sessions = useQuery({ ...queries.agents(ws!), enabled: !!ws })
+  const grants = useQuery({ ...queries.grants(ws!), enabled: !!ws })
   const attention = useAttention(ws)
-  const tickets = useQuery({ queryKey: ['tickets', ws, 'all'], queryFn: () => api.listTickets(ws!), enabled: !!ws })
-  const activity = useQuery({ queryKey: ['agent-activity', ws], queryFn: () => api.getAgentActivity(ws!), enabled: !!ws })
+  const tickets = useQuery({ ...queries.ticketsAll(ws!), enabled: !!ws })
+  const activity = useQuery({ ...queries.agentActivity(ws!), enabled: !!ws })
   const [action, setAction] = useState<GrantAction | null>(null)
   const sign = useSignGrant(ws ?? '')
 
+  const failure = useLoadFailure(today, sessions, grants, activity)
+  if (failure.failed) return <LoadFailed what="agents" onRetry={failure.retry} />
   if (!ws || !me.data || !today.data || !sessions.data || !grants.data || !activity.data) {
-    return (
-      <div className="space-y-4" aria-busy="true">
-        <h1 className="text-xl font-semibold tracking-tight">Agents</h1>
-        <Skeleton className="h-5 w-96" />
-        <Skeleton className="h-40 w-full max-w-4xl" />
-      </div>
-    )
+    return <AgentsSkeleton inPage />
   }
 
   const now = today.data.now

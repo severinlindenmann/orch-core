@@ -19,6 +19,7 @@ import { usePageHeader } from '../../shell/ShellUi'
 import { PRIORITY_RANK, TYPE_ICON } from '../board/lib'
 import { PeoplePicker, fieldCls, type PeopleValue } from './PeoplePicker'
 import { SectionsEditor } from './SectionsEditor'
+import { queries } from '@/api/queries'
 
 const TYPES: TicketType[] = ['feature', 'bug', 'chore', 'spike', 'epic']
 const PRIORITIES = (Object.keys(PRIORITY_RANK) as Priority[]).sort((a, b) => PRIORITY_RANK[b] - PRIORITY_RANK[a])
@@ -251,7 +252,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
   const patch = useCallback((p: Partial<Draft>) => setDraft((d) => ({ ...d, ...p })), [])
   useEffect(() => writeDraft(key, draft), [key, draft])
 
-  const { data: all = [] } = useQuery({ queryKey: ['tickets', workspace.id, 'all'], queryFn: () => api.listTickets(workspace.id) })
+  const { data: all = [] } = useQuery(queries.ticketsAll(workspace.id))
   const labels = useMemo(() => [...new Set(all.flatMap((t) => t.labels))].sort(), [all])
   const epics = all.filter((t) => t.type === 'epic')
 
@@ -485,7 +486,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
 
 export function NewTicketPage() {
   const { workspace } = useWorkspace()
-  const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.getMe })
+  const { data: me } = useQuery(queries.me())
   usePageHeader('New ticket')
   if (!me || !workspace) return <Skeleton className="mx-auto h-96 max-w-[1100px]" aria-label="Loading" />
   return <NewTicketForm key={`${workspace.id}:${me.person}`} me={me} workspace={workspace} />

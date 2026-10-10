@@ -3,7 +3,6 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { addonActive } from '@/api/addons'
-import { api } from '@/api/client'
 import { workspaceOfTicket } from '@/api/workspaces'
 import { frameDocument } from '@/api/widgetTemplates'
 import { FrameNode } from '@/addon-ui/FrameNode'
@@ -18,6 +17,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { cn } from '@/lib/utils'
 import { agentName, ago, fmtBytes, Mono, Pill, shortHash, type Jump, type TabProps } from './shared'
 import { addonHairline, addonTile } from '@/addon-ui/addonClasses'
+import { queries } from '@/api/queries'
 
 export const KIND_ICON: Record<Artifact['kind'], typeof FileText> = {
   screenshot: ImageIcon,
@@ -336,7 +336,7 @@ export function Artifacts({ ticket, viewer, jump, focus }: TabProps & { focus?: 
   const [open, setOpen] = useState<Artifact | null>(null)
   /** The Preview button that opened the drawer; closing returns focus to it. */
   const opener = useRef<HTMLElement | null>(null)
-  const workspaces = useQuery({ queryKey: ['workspaces'], queryFn: api.getWorkspaces })
+  const workspaces = useQuery(queries.workspaces())
   const agentHtml = addonActive(workspaceOfTicket(ticket.key, workspaces.data ?? []), 'widgets')
   const addonPage = useAddonPages()
   useEffect(() => {

@@ -150,7 +150,8 @@ describe('board grouped by epic (N2)', () => {
 
   it('if the viewer cannot be loaded the board shows an error with Retry, not Loading forever', async () => {
     const real = api.getMe.bind(api)
-    const spy = vi.spyOn(api, 'getMe').mockRejectedValueOnce(new Error('down'))
+    // Down until restored: the route loader asks first, the page asks again when it mounts (G4).
+    const spy = vi.spyOn(api, 'getMe').mockRejectedValue(new Error('down'))
     const { user } = renderApp('/board')
     expect(await screen.findByRole('alert', {}, T)).toHaveTextContent(/Could not load the board/)
     spy.mockImplementation(real)

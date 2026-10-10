@@ -1,10 +1,10 @@
 import { useQuery } from '@tanstack/react-query'
 import { countAttention } from '@/api/attention'
-import { api } from '@/api/client'
 import { can } from '@/api/permissions'
 import type { AgentSession } from '@/api/types'
 import { useConnections } from './pages/settings/connectionUi'
 import { useRole } from './useRole'
+import { queries } from '@/api/queries'
 
 export interface Attention {
   /** Everything Today lists for the viewer: open questions, gates and verdicts, open addon decisions (both
@@ -32,10 +32,10 @@ export function groupOf(root: AgentSession, all: AgentSession[], viewer: string 
 
 /** The three nouns of the dashboard, defined once: what needs you, what waits on others, and the agent sessions. */
 export function useAttention(ws: string | undefined): Attention {
-  const me = useQuery({ queryKey: ['me'], queryFn: api.getMe })
-  const today = useQuery({ queryKey: ['today', ws], queryFn: () => api.getToday(ws!), enabled: !!ws })
-  const decisions = useQuery({ queryKey: ['addon-decisions', ws], queryFn: () => api.getAddonDecisions(ws!), enabled: !!ws })
-  const agents = useQuery({ queryKey: ['agents', ws], queryFn: () => api.getAgents(ws!), enabled: !!ws })
+  const me = useQuery(queries.me())
+  const today = useQuery({ ...queries.today(ws!), enabled: !!ws })
+  const decisions = useQuery({ ...queries.addonDecisions(ws!), enabled: !!ws })
+  const agents = useQuery({ ...queries.agents(ws!), enabled: !!ws })
 
   const viewer = me.data?.person
   const owner = can(useRole(ws), 'settings')

@@ -43,6 +43,8 @@ export interface ArtifactSelectionOptions {
   settled: boolean
   /** Workspace, filters and page: a change clears the preview. */
   context: string
+  /** The viewer could not be read: without `?view=` the page shows the list instead of waiting for good. */
+  viewerFailed?: boolean
 }
 
 /**
@@ -55,7 +57,7 @@ export interface ArtifactSelectionOptions {
  * deep link to another page, a filtered-out or no longer visible artifact: fails closed, with a toast for a link
  * that never showed); every clearing replaces.
  */
-export function useArtifactSelection({ person, items, settled, context }: ArtifactSelectionOptions) {
+export function useArtifactSelection({ person, items, settled, context, viewerFailed = false }: ArtifactSelectionOptions) {
   // Read through the route's validator again: a parent match passes the raw params on.
   const search = validateArtifactsSearch(useSearch({ strict: false }))
   const navigate = useNavigate()
@@ -74,7 +76,7 @@ export function useArtifactSelection({ person, items, settled, context }: Artifa
   useEffect(() => {
     if (person) setRemembered(readView(person))
   }, [person])
-  const view: View | null = search.view ?? remembered
+  const view: View | null = search.view ?? remembered ?? (viewerFailed ? 'list' : null)
   const chooseView = useCallback(
     (v: View) => {
       // Remembered for the next visit only: an entry without `?view=` keeps the default it loaded with, so Back
@@ -90,10 +92,12 @@ export function useArtifactSelection({ person, items, settled, context }: Artifa
   )
 
   const want = search.a
-  const current = (want && items?.find((a) => artifactUrlId(a) === want)) || null
-  const currentKey = current ? artifactKey(current) : null
   /** The item last shown: Close returns focus to its Preview button. */
   const lastKey = useRef<string | null>(null)
+  // Two files with the same content on one ticket share an address id: the one last chosen wins, else the first.
+  const matches = want ? (items ?? []).filter((a) => artifactUrlId(a) === want) : []
+  const current = matches.find((a) => artifactKey(a) === lastKey.current) ?? matches[0] ?? null
+  const currentKey = current ? artifactKey(current) : null
   useEffect(() => {
     if (currentKey) lastKey.current = currentKey
   }, [currentKey])

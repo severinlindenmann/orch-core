@@ -22,6 +22,7 @@ import { screenDriver } from './harnessView'
 import { SessionList } from './SessionList'
 import { SessionStrip } from './SessionStrip'
 import { TerminalHeader } from './TerminalHeader'
+import { queries } from '@/api/queries'
 
 const token = (el: HTMLElement, name: string) => getComputedStyle(el).getPropertyValue(name).trim() || undefined
 const NO_LINKS = { activate: () => {}, hover: () => {}, leave: () => {} }
@@ -59,7 +60,7 @@ export interface DockOptions {
 export default function TerminalView({ addon, session, fallback, placement = 'page', dock }: { addon: string; session: string; fallback: ReactNode; placement?: 'page' | 'rail' | 'dock'; dock?: DockOptions }) {
   const { workspace } = useWorkspace()
   const { [addon]: state } = useAddonStates(workspace?.id, [addon])
-  const me = useQuery({ queryKey: ['me'], queryFn: api.getMe })
+  const me = useQuery(queries.me())
   const role = useRole()
   const qc = useQueryClient()
   const wide = usePageWidth() >= 1280
@@ -203,6 +204,27 @@ function XtermSession({ addon, session, interactive, fontSize, placement, picker
       term.loadAddon(search.current)
       term.open(el)
       fit.fit()
+      // xterm sizes its viewport over the next frames: keep it hidden until the viewport has its size, so it appears
+      // at its final size instead of growing in place (the host's background is the terminal's: nothing flashes).
+      const drawn = term.element
+      // Only where there is real layout (not in jsdom, where nothing is ever measured).
+      if (drawn && el.getBoundingClientRect().height > 0) {
+        drawn.style.visibility = 'hidden'
+        let frames = 0
+        let last = ''
+        // Shown once the viewport sits inside the host at (about) its full height, the same for two frames in a row.
+        const reveal = () => {
+          if (disposed) return
+          const v = drawn.querySelector<HTMLElement>('.xterm-viewport')?.getBoundingClientRect()
+          const h = el.getBoundingClientRect()
+          const now = v ? `${Math.round(v.top)}:${Math.round(v.height)}` : ''
+          const settled = !!v && v.height >= h.height / 2 && v.top >= h.top - 1 && v.bottom <= h.bottom + 1 && now === last
+          last = now
+          if (settled || ++frames > 30) drawn.style.visibility = ''
+          else requestAnimationFrame(reveal)
+        }
+        requestAnimationFrame(reveal)
+      }
       if (cached === undefined) output.current = driver.first()
       term.textarea?.setAttribute('aria-label', `${session.label} input`)
       // The first time you are in your own terminal: say how to get out (Tab belongs to the shell here).

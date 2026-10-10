@@ -85,13 +85,14 @@ describe('Addon manager', () => {
   })
   it('a disabled addon shows no decision on Today', async () => {
     const { user } = renderApp('/')
-    expect(await screen.findByText(/Publish report/)).toBeInTheDocument()
+    // The publish addon's decision (its ticket's title shows beside it once the ticket is read, G4: at once).
+    expect(await screen.findByText(/Before\/after report as secret link/)).toBeInTheDocument()
     await user.click(await screen.findByRole('link', { name: 'Settings' }))
     await user.click(await screen.findByRole('link', { name: 'Addons' }))
     await user.click(within(await screen.findByRole('row', { name: /Publish/ })).getByRole('switch', { name: /(enabled|disabled)$/ }))
     await user.click(await screen.findByRole('link', { name: /^Today/ }))
     await screen.findByRole('heading', { name: 'Today' })
-    await waitFor(() => expect(screen.queryByText(/Publish report/)).toBeNull())
+    await waitFor(() => expect(screen.queryByText(/Before\/after report as secret link/)).toBeNull())
   })
 })
 

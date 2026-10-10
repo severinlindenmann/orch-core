@@ -306,6 +306,19 @@ the same view after a reload or pasted into a new tab. **The host serves `index.
 - **Tests** pass an initial path to `createAppRouter(path)` (memory history; in-app or `/w/…` paths both work);
   `renderApp` returns `address()` (the address bar as the person sees it).
 
+## Page loading (G4): what the host maps
+
+- **Route loaders = the host's GET endpoints.** Each page route's loader (`src/app/routeData.ts`) warms the queries
+  the page needs, through the same `api.*` calls the components use. With a real host they become real requests;
+  nothing else changes. Keep each page's first screen to one or two round trips (the shell's `me`, workspaces and
+  addons, then the page's own data in parallel), or pages wait for the skeleton more often.
+- **Latency the UI is tuned for:** under 200 ms the old page stays and the new one replaces it in one step; past
+  200 ms the page's skeleton shows (at least 300 ms); a loader holds a page at most 1.5 s, then the page shows with
+  its own placeholders. A local daemon answering in ~50–150 ms gives the one-step case nearly always. The mock uses
+  120 ms per burst; `?jitter=1` (120–300 ms per request) and `?latency=<ms>` test slower hosts.
+- **Shell data before the first paint:** the first screen waits for `me`, the workspaces, the addons and the demo
+  dataset (the demo one only exists in the mock). A host should answer these fast; they are the cold-start cost.
+
 ## How to run, test and preview
 
 ```

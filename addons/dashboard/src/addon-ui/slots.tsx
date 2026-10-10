@@ -2,10 +2,10 @@
 // lane...) the contributions of the addons active in the workspace, with bindings resolved against the slot context.
 import { useQueries, useQuery } from '@tanstack/react-query'
 import { addonActive } from '@/api/addons'
-import { api } from '@/api/client'
 import type { AddonContribution, AddonPackage, AddonSlot, TicketDocument, TicketSummary, Workspace } from '@/api/types'
 import { useWorkspace } from '@/app/workspace'
 import { getPath, resolveBindings } from './bindings'
+import { queries } from '@/api/queries'
 
 export interface SlotContext {
   ticket?: TicketDocument | TicketSummary
@@ -72,7 +72,7 @@ export interface AddonStateEntry {
 }
 
 export function useAddons() {
-  return useQuery({ queryKey: ['addons'], queryFn: api.getAddons, staleTime: 30_000 })
+  return useQuery(queries.addons())
 }
 
 /**
@@ -96,23 +96,14 @@ export function useSlot(name: AddonSlot, ctx: Omit<SlotContext, 'workspace' | 'a
   return out
 }
 
-/** Query key of an addon's state; per-ticket requests sit under the addon's key, so invalidating it covers them. */
-export function addonStateKey(ws: string | undefined, name: string, ticket?: string): unknown[] {
-  return ticket ? ['addon-state', ws, name, { ticket }] : ['addon-state', ws, name]
-}
+export { addonStateKey } from '@/api/queries'
 
 /** Fetches the per-workspace state of each named addon, with its loading/error marker (see `AddonStateWait`). */
 export function useAddonStateEntries(ws: string | undefined, names: string[], ticket?: string): Record<string, AddonStateEntry> {
   const results = useQueries({
-    queries: names.map((name) => ({
-      queryKey: addonStateKey(ws, name, ticket),
-      queryFn: () => api.getAddonState(ws as string, name, ticket),
-      enabled: !!ws,
-      retry: false,
-      // Many surfaces read the same state (sidebar, lanes, every card): a newly mounted one reuses it. Changes arrive
-      // by invalidation (actions, the live cursor), not by refetch-on-mount.
-      staleTime: 10_000,
-    })),
+    // Many surfaces read the same state (sidebar, lanes, every card): a newly mounted one reuses it (staleTime in the
+    // factory). Changes arrive by invalidation (actions, the live cursor), not by refetch-on-mount.
+    queries: names.map((name) => ({ ...queries.addonState(ws as string, name, ticket), enabled: !!ws })),
   })
   return Object.fromEntries(
     names.map((n, i) => {

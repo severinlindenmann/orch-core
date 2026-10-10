@@ -1,17 +1,20 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useQueries, useQuery } from '@tanstack/react-query'
 import { ChevronDown, Eye } from 'lucide-react'
-import { api } from '@/api/client'
 import { can } from '@/api/permissions'
 import type { AddonDecision, NeedsYouItem, TicketDocument } from '@/api/types'
-import { useAddons } from '@/addon-ui'
-import { Skeleton } from '@/components/ui/skeleton'
+import { useAddons, useSlot } from '@/addon-ui'
 import { cn } from '@/lib/utils'
 import { useWorkspace } from '../../workspace'
 import { useRole } from '../../useRole'
 import { useAttention, type Attention } from '../../attention'
 import { SEEN_PREFIX, useTodayGeneration } from '../../todayRestart'
 import { usePageHeader } from '../../shell/ShellUi'
+import { TodaySkeleton } from '../skeletons'
+import { LoadFailed } from '@/components/LoadFailed'
+import { LOADER_WAIT_MS } from '../../routeData'
+import { useLoadFailure, useWaitAtMost } from '../../useLoadFailure'
+import { useConnections } from '../settings/connectionUi'
 import { SignDialog } from '../ticket/SignDialog'
 import type { HumanAction } from '../ticket/shared'
 import { QueueGroup } from './groups'
@@ -20,6 +23,7 @@ import { ReloginGroup } from './relogin'
 import { ApprovalRow, DecisionRow, FoldRow, NewItemContext, SigningContext, QuestionRow, VerdictRow } from './rows'
 import { AgentsBar, AgentsPanel, Glance, GLANCE_TILES, Recently } from './side'
 import { displayName, useMediaQuery, useSessionState, WIDE_QUERY, type Directory } from './shared'
+import { queries } from '@/api/queries'
 
 function dateLine(now: string) {
   return new Date(now).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' })
@@ -78,13 +82,13 @@ export function TodayPage() {
   usePageHeader('Today')
   const { workspace } = useWorkspace()
   const ws = workspace?.id
-  const today = useQuery({ queryKey: ['today', ws], queryFn: () => api.getToday(ws!), enabled: !!ws })
-  const agentsQ = useQuery({ queryKey: ['agents', ws], queryFn: () => api.getAgents(ws!), enabled: !!ws })
-  const me = useQuery({ queryKey: ['me'], queryFn: api.getMe })
-  const decisionsQ = useQuery({ queryKey: ['addon-decisions', ws], queryFn: () => api.getAddonDecisions(ws!), enabled: !!ws })
+  const today = useQuery({ ...queries.today(ws!), enabled: !!ws })
+  const agentsQ = useQuery({ ...queries.agents(ws!), enabled: !!ws })
+  const me = useQuery(queries.me())
+  const decisionsQ = useQuery({ ...queries.addonDecisions(ws!), enabled: !!ws })
   // Mock only: switching the demo dataset is a fresh start for the queue, not a wave of "new" items. The queue waits
   // until Today and the decisions have been read after the switch, so it never starts from the other dataset's items.
-  const dataset = useQuery({ queryKey: ['dev-dataset'], queryFn: () => api.getDataset() })
+  const dataset = useQuery(queries.devDataset())
   const generation = useTodayGeneration()
   const ds = dataset.data?.dataset
   const [switched, setSwitched] = useState<{ ds?: string; at: number }>({ ds, at: 0 })
@@ -101,14 +105,19 @@ export function TodayPage() {
   const role = useRole()
   const readOnly = !can(role, 'ticket.act')
 
-  if (!today.data || !agentsQ.data || !me.data || !decisionsQ.data || !role || dataset.isPending || stale || !attention.ready) {
-    return (
-      <div className="space-y-4" aria-busy="true">
-        <h1 className="text-xl font-semibold tracking-tight">Today</h1>
-        <Skeleton className="h-5 w-96" />
-        <Skeleton className="h-40 w-full max-w-3xl" />
-      </div>
-    )
+  // The Glance is part of the first screen: Today waits for its addon states too (at most LOADER_WAIT_MS, then it
+  // shows with the Glance's own placeholders), so nothing appears beside the queue a moment later.
+  // Also while the addons themselves are not known yet (no Glance items to wait for so far).
+  const addonList = useAddons()
+  const glancePending = useSlot('today.card').some((c) => c.waiting?.status === 'pending')
+  const glanceWaiting = useWaitAtMost((addonList.isPending && !addonList.isError) || glancePending, LOADER_WAIT_MS)
+  // The owner's connections are part of Today's first screen (attention.ready): a failure there says so too.
+  const connectionsQ = useConnections(can(role, 'settings') ? ws : undefined)
+  const failure = useLoadFailure(today, agentsQ, decisionsQ, connectionsQ)
+
+  if (failure.failed) return <LoadFailed what="Today" onRetry={failure.retry} />
+  if (!today.data || !agentsQ.data || !me.data || !decisionsQ.data || !role || dataset.isPending || stale || !attention.ready || glanceWaiting) {
+    return <TodaySkeleton inPage />
   }
   // A new workspace or person starts a new queue (its own accepted order and open row).
   return (
@@ -136,8 +145,8 @@ function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention, g
 }) {
   const { workspace } = useWorkspace()
   const ws = workspace?.id
-  const today = useQuery({ queryKey: ['today', ws], queryFn: () => api.getToday(ws!), enabled: !!ws })
-  const agentsQ = useQuery({ queryKey: ['agents', ws], queryFn: () => api.getAgents(ws!), enabled: !!ws })
+  const today = useQuery({ ...queries.today(ws!), enabled: !!ws })
+  const agentsQ = useQuery({ ...queries.agents(ws!), enabled: !!ws })
   const addons = useAddons()
   const wide = useMediaQuery(WIDE_QUERY)
   const now = today.data!.now
@@ -189,7 +198,7 @@ function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention, g
 
   const claimTickets = sessions.flatMap((a) => a.claims.map((c) => c.ticket))
   const keys = [...new Set([...entries.flatMap((e) => (e.group === 'addons' ? (e.decision.ticket ? [e.decision.ticket] : []) : [e.item.ticket])), ...claimTickets])]
-  const ticketQs = useQueries({ queries: keys.map((k) => ({ queryKey: ['ticket', k], queryFn: () => api.getTicket(k) })) })
+  const ticketQs = useQueries({ queries: keys.map((k) => queries.ticket(k)) })
   const byKey: Record<string, TicketDocument | undefined> = {}
   keys.forEach((k, i) => (byKey[k] = ticketQs[i]?.data))
 

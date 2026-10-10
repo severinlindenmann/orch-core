@@ -46,6 +46,7 @@ import { useShellState } from './ShellUi'
 import { WorkspaceSwitcher } from './WorkspaceSwitcher'
 import { PIN_ADDON_EVENT } from './pinEvent'
 import { fmtClock, fmtDateTime } from '@/lib/time'
+import { queries } from '@/api/queries'
 
 const RailContext = createContext(false)
 
@@ -153,7 +154,7 @@ const PEOPLE = [
 export function Sidebar() {
   const { workspace } = useWorkspace()
   const qc = useQueryClient()
-  const { data: me } = useQuery({ queryKey: ['me'], queryFn: api.getMe })
+  const { data: me } = useQuery(queries.me())
   const navItems = useSlot('nav')
   const { data: packages } = useAddons()
   const previews = new Set(packages?.filter((a) => a.preview).map((a) => a.name))
@@ -161,12 +162,12 @@ export function Sidebar() {
   const attention = useAttention(workspace?.id)
   // The viewer's own active grant in the current workspace (revoke, re-issue and switching all show).
   const ws = workspace?.id
-  const grants = useQuery({ queryKey: ['grants', ws], queryFn: () => api.listGrants(ws!), enabled: !!ws })
-  const today = useQuery({ queryKey: ['today', ws], queryFn: () => api.getToday(ws!), enabled: !!ws })
+  const grants = useQuery({ ...queries.grants(ws!), enabled: !!ws })
+  const today = useQuery({ ...queries.today(ws!), enabled: !!ws })
   const grant = grants.data && today.data ? activeGrantOf(grants.data, me?.person, Date.parse(today.data.now)) : undefined
   // A grant that ends on another day says the date (grants run up to 24 h).
   const grantTime = grant ? (today.data && grant.until.slice(0, 10) !== today.data.now.slice(0, 10) ? fmtDateTime(grant.until) : fmtClock(grant.until)) : undefined
-  const { railCollapsed: collapsed, toggleRail: toggle } = useShellState()
+  const { railCollapsed: collapsed, railAnimating, toggleRail: toggle } = useShellState()
   const itemKey = (i: { addon: string; id: string }) => `${i.addon}/${i.id}`
   const { pinned, toggle: togglePin } = usePinnedAddons(me?.person, ws, navItems.map(itemKey))
   const shown = navItems.filter((i) => pinned.includes(itemKey(i)))
@@ -203,7 +204,8 @@ export function Sidebar() {
     <RailContext.Provider value={collapsed}>
       <aside
         data-collapsed={collapsed}
-        className={cn('flex shrink-0 flex-col border-r border-border bg-sidebar transition-[width] duration-150', collapsed ? 'w-14' : 'w-[232px]')}
+        // The width animates only when the person toggles it: on load and on automatic changes it is right at once.
+        className={cn('flex shrink-0 flex-col border-r border-border bg-sidebar', railAnimating && 'transition-[width] duration-150', collapsed ? 'w-14' : 'w-[232px]')}
       >
         <div className={cn('flex h-12 items-center gap-2', collapsed ? 'justify-center' : 'px-3.5')}>
           <OrbitMark size={24} />

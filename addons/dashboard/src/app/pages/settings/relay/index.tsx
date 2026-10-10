@@ -12,6 +12,7 @@ import { ago, fmtTime, Mono, Pill, Section } from '../../ticket/shared'
 import { PairDialog } from './PairDialog'
 import { SignPrompt, useSignedAction } from '@/components/sign/SignPrompt'
 import { fmtDay } from '@/lib/time'
+import { queries } from '@/api/queries'
 
 const LINK: Record<RelayLink, { word: string; dot: string; text: string }> = {
   off: { word: 'Not connected', dot: 'border border-text-faint', text: 'The workspace has never been linked to the relay.' },
@@ -51,8 +52,7 @@ export function Relay({ workspace, canEdit, viewer }: { workspace: Workspace; ca
   const [stopping, setStopping] = useState(false)
   const [connecting, setConnecting] = useState(false)
   const relay = useQuery({
-    queryKey: ['relay', workspace.id],
-    queryFn: async () => ({ state: await api.getRelay(workspace.id), at: Date.now() }),
+    ...queries.relay(workspace.id),
     // Poll while something is moving: the link settling, the queue draining, a pairing code open.
     refetchInterval: (q) => {
       const r = q.state.data?.state

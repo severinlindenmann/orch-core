@@ -1,8 +1,9 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import { api } from '@/api/client'
 import { can, roleOf } from '@/api/permissions'
-import { Skeleton } from '@/components/ui/skeleton'
+import { SettingsSkeleton } from '../skeletons'
+import { LoadFailed } from '@/components/LoadFailed'
+import { useLoadFailure } from '../../useLoadFailure'
 import { cn } from '@/lib/utils'
 import { useWorkspace } from '../../workspace'
 import { usePageHeader } from '../../shell/ShellUi'
@@ -15,6 +16,7 @@ import { Skills } from './Skills'
 import { Connections } from './Connections'
 import { TABS } from './tabs'
 import { CopyLinkButton } from '../../shell/CopyLinkButton'
+import { queries } from '@/api/queries'
 
 export const ONLY_OWNERS = 'Only owners change settings.'
 
@@ -25,15 +27,12 @@ const active = 'bg-surface-2 text-text'
 export function SettingsPage({ tab, addon }: { tab?: string; addon?: string }) {
   usePageHeader('Settings')
   const { workspace } = useWorkspace()
-  const me = useQuery({ queryKey: ['me'], queryFn: api.getMe })
+  const me = useQuery(queries.me())
 
+  const failure = useLoadFailure()
+  if (failure.failed) return <LoadFailed what="settings" onRetry={failure.retry} />
   if (!workspace || !me.data) {
-    return (
-      <div className="space-y-4" aria-busy="true">
-        <h1 className="text-xl font-semibold tracking-tight">Settings</h1>
-        <Skeleton className="h-40 w-full max-w-3xl" />
-      </div>
-    )
+    return <SettingsSkeleton inPage />
   }
   const isOwner = can(roleOf(workspace, me.data.person), 'settings')
   // An addon's own settings page belongs to Addons: that stays the marked section.

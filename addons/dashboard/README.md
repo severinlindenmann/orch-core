@@ -36,7 +36,7 @@ serve `index.html` for app paths. See AGENTS.md for worktree ports and cache tro
 - **Addons:** `src/mocks/fixtures/addons.json` declares installed addons and their UI contributions as JSON
   (slots `nav`, `today.card`, `ticket.panel`, `board.lane`, `settings`). Anything an addon contributes is marked
   with the orange `A` badge (`src/addon-ui`).
-- **Routing:** TanStack Router with browser history and permanent `/w/<PREFIX>/…` and `/ticket/<KEY>` URLs; tests use memory history.
+- **Routing:** TanStack Router with browser history and permanent `/w/<PREFIX>/…` URLs (tickets at `/w/<PREFIX>/ticket/<KEY>`); tests use memory history.
 - **Clock:** the mock "now" starts at 2026-10-09 11:30 UTC to match the fixtures.
 
 ## Layout

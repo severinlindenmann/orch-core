@@ -60,7 +60,7 @@ and Review tour for repeatable manual checks. Mock time starts at `2026-10-09T11
 ## Architecture map
 
 - `src/app/router.tsx`, `src/app/urls.ts`: route tree and permanent workspace URLs
-  `/w/<PREFIX>/…`; ticket URLs remain `/ticket/<KEY>`. Keep keys/ids in addresses.
+  `/w/<PREFIX>/…`, tickets at `/w/<PREFIX>/ticket/<KEY>` (`/ticket/<KEY>` redirects). Keep keys/ids in addresses.
 - `src/app/shell/`, `src/app/pages/`: shell and core pages; `src/app/terminal/` owns the dock.
 - `src/app/routeData.ts`: loaders warm the page's data; `src/app/pages/skeletons.tsx`
   supplies matching page placeholders; `src/app/pages/lazyPage.tsx` preloads chunks.

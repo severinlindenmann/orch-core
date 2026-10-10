@@ -31,8 +31,11 @@ export const statNode = z.object({
   hint: text.optional(),
   /** What a card-field stat adds to its Board column's sum, when it differs from `value` (e.g. a t-shirt size's weight). */
   sum: z.union([z.string().max(200), z.number()]).nullable().optional(),
-  /** A few recent values, oldest first (e.g. cost per day): core draws them as a small sparkline where the stat is a glance line (Today). */
-  trend: z.array(z.number().finite().min(-1e12).max(1e12)).max(60).optional(),
+  /**
+   * A few recent values, oldest first (e.g. cost per day): core draws them as a small sparkline where the stat is a
+   * glance line (Today). Null (a `$ref` to state that is not there) draws no sparkline; bad values still fail closed.
+   */
+  trend: z.array(z.number().finite().min(-1e12).max(1e12)).max(60).nullish(),
 })
 export const kvNode = z.object({
   type: z.literal('kv'),

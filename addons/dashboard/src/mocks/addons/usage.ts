@@ -205,6 +205,8 @@ function budgetOf(state: Record<string, unknown>): number {
 
 registerAddon({
   name: 'usage',
+  // 2: per-day cents and tokens keyed by the full model ids (was opus/sonnet/haiku before N3).
+  stateVersion: 2,
   seed: () => seedState(),
   seedBusy: (ws, store, r) => seedBusyState(ws, store, r),
 

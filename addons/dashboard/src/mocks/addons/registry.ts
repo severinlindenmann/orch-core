@@ -47,6 +47,12 @@ export type AddonAction = AddonActionFn
 
 export interface MockAddon {
   name: string
+  /**
+   * The shape of this module's state. Bump it when the seed's shape changes (renamed keys, other models): state a
+   * browser saved under another version is dropped on load and seeded again, so a view never reads an old shape.
+   * Default 1.
+   */
+  stateVersion?: number
   /** Initial state per workspace (seed). */
   seed(ws: string, store: MockStore): Record<string, unknown>
   /**

@@ -1,4 +1,5 @@
-> **develop = orch v2 in progress; v1 lives on `main`.** This README describes v1.
+> **develop = orch v2 in progress; v1 lives on `main`.** This README describes v1. In v2 orch is an agent-agnostic
+> CLI with a Claude Code plugin as one way to install it; see [harnesses and enforcement tiers](docs/architecture/orch-v2-harnesses.md).
 
 # orch-core
 

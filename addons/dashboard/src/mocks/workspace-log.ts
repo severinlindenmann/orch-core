@@ -89,6 +89,9 @@ export function foldWorkspace(seed: Workspace, events: WorkspaceEvent[]): Worksp
       // Format §5.4.2: `set.repos` maps a repo name to its entry, or null to remove it (owner-signed, checked by the host).
       case 'settings.changed': {
         const repos = (e.set as { repos?: Record<string, WorkspaceRepo | null> } | undefined)?.repos
+        // Replay checks authority at the event's position: an owner, a person. Anything else is not folded.
+        const signer = ws.members.find((m) => m.person === e.actor?.id)
+        if (e.actor?.kind !== 'person' || signer?.role !== 'owner') break
         if (!repos || typeof repos !== 'object') break
         const next = { ...(ws.repos ?? {}) }
         for (const [name, entry] of Object.entries(repos)) {

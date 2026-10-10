@@ -839,7 +839,7 @@ export class ApiError extends Error {
 // ---------------------------------------------------------------- workspace event log
 
 export type WorkspaceEventType =
-  | 'repos.checked' | 'repos.clone_queued' | 'repos.cloned' | 'repos.clone_failed' | 'repos.fetched' | 'repos.terminal_opened'
+  | 'repos.checked' | 'repos.clone_queued' | 'repos.cloned' | 'repos.clone_failed' | 'repos.clone_cancelled' | 'repos.fetched' | 'repos.terminal_opened'
   | 'settings.changed'
   | 'member.added' | 'member.role_changed' | 'member.removed'
   | 'gate.policy_set'

@@ -968,3 +968,15 @@ The owner answered the eight open questions of REVIEW.md. Items 1, 2, 5 and 6 ch
 - Every `links.repos` name in the fixtures and the Busy day is now declared (a test guards it).
 - **Revert:** revert the U3 review-round commit.
 
+## U3 fix round 2 2026-10-11 — Codex re-review of a57bf69d
+
+- `settings` (and `branch`, `invalid`, `terminal`, `visibility`) reserved as core event namespaces; `settings.changed`
+  is refused at `store.appendWs` unless an owner person signs it, and the fold ignores any other signer.
+- Clone jobs snapshot the signed spec. **Chosen rule:** a declaration change, removal or git-login change after signing
+  cancels the queued clone (`repos.clone_cancelled`, recorded); it never clones an unapproved target. (Refusing the
+  settings change instead would make core's settings route depend on an addon's jobs.)
+- `resolveRepoPath` normalises absolute and `~` paths as well as relative ones.
+- Shared addon-state query: generic `nextRefreshMs` (bounded 30 s – 1 h) so an idle scheduled check still runs.
+- Fetch requires a declared git login inside the one fetch operation (check, scheduled check, fetch, fetch all).
+- **Revert:** revert the U3 fix-round-2 commit.
+

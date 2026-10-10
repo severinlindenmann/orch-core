@@ -49,14 +49,18 @@ export function repoFolderProblem(folder: unknown): string | null {
   return null
 }
 
-/** The working copy's full path: absolute (`/…`, `~/…`) as is, else resolved against the workspace folder. */
+/**
+ * The working copy's full path, normalised (`.`, `..`, repeated and trailing slashes): absolute (`/…`, `~/…`) as is,
+ * else resolved against the workspace folder. Every duplicate check, disk lookup and clone target uses this form.
+ */
 export function resolveRepoPath(root: string, path: string): string {
-  if (path.startsWith('/') || path.startsWith('~/')) return path.replace(/\/+$/, '')
-  const out = root.replace(/\/+$/, '').split('/')
-  for (const part of path.split('/')) {
+  const full = path.startsWith('/') || path.startsWith('~/') || path === '~' ? path : `${root.replace(/\/+$/, '')}/${path}`
+  const base = full.startsWith('~') ? '~' : full.startsWith('/') ? '' : '.'
+  const out: string[] = []
+  for (const part of full.slice(base === '.' ? 0 : base.length).split('/')) {
     if (part === '' || part === '.') continue
-    if (part === '..') out.length > 1 && out[out.length - 1] !== '~' ? out.pop() : out.push(part)
+    if (part === '..') out.length && out[out.length - 1] !== '..' ? out.pop() : base === '' ? undefined : out.push('..')
     else out.push(part)
   }
-  return out.join('/')
+  return base === '' ? `/${out.join('/')}` : [base === '.' ? null : base, ...out].filter((x) => x !== null).join('/') || '.'
 }

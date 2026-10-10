@@ -55,9 +55,13 @@ remotes, drafts, events or signatures. Without a git-login connection nothing cl
 ## What the real host must implement
 
 - `settings.changed` for `set.repos` exactly as §5.4.2 (owner-only, same-path refusal), plus the two proposed keys.
+- A queued clone carries the exact signed spec (name, remote, normalised path, git login) and runs only that; a
+  declaration change, removal or login change before it runs cancels it (`repos.clone_cancelled`), never re-targets it.
+- Paths are normalised (`.`, `..`, repeated slashes, `~`) before every duplicate check, disk lookup and clone target.
 - Clone as `git clone -- <remote> <path>` (with `--`), never through a shell, into the resolved declared path only;
   refuse an existing folder, symlink escapes and races (lock the destination); durable progress and cancel.
-- Fetch (`git fetch` only: never pull, merge or touch local changes), the scheduled check (off / 15 min / 1 h / daily,
+- Fetch (`git fetch` only: never pull, merge or touch local changes; only as a declared git login, for every entry
+  point incl. fetch-on-check), the scheduled check (off / 15 min / 1 h / daily,
   independent of any browser), worktree and size measurement, and a dock shell with `cd -- '<path>'` typed, not run.
 - Provisional addon events, actor `addon:repos`, the requesting person recorded separately: `repos.checked`,
   `repos.clone_queued`, `repos.cloned`, `repos.clone_failed`, `repos.fetched`, `repos.terminal_opened`. Declaration

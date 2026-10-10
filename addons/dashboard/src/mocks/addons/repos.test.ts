@@ -308,3 +308,73 @@ describe('Repos host: roles, terminal, Today', () => {
     expect(getAddon('repos')).toBeDefined()
   })
 })
+
+describe('Repos fix round 2', () => {
+  it('core refuses a settings.changed that is not an owner person, at the write and at the fold', () => {
+    const s = setup()
+    expect(() => s.store.appendWs(s.ws, { type: 'settings.changed', actor: { kind: 'addon', id: 'settings' }, set: { repos: { evil: { path: '/etc' } } } })).toThrow(/owner/)
+    expect(() => s.store.appendWs(s.ws, { type: 'settings.changed', actor: { kind: 'person', id: 'p_mara' }, set: { repos: { evil: { path: '/etc' } } } })).toThrow(/owner/)
+    expect(s.declared().evil).toBeUndefined()
+    // A forged event already in the log (e.g. a tampered browser store) is not folded either.
+    const list = (s.store as unknown as { wsEvents: Map<string, unknown[]> }).wsEvents.get(s.ws)!
+    list.push({ v: 2, id: 'x', seq: 9999, at: '2026-10-09T12:00:00Z', type: 'settings.changed', actor: { kind: 'addon', id: 'settings' }, set: { repos: { evil: { path: '/etc' } } } })
+    s.store.setViewer('p_sev')
+    expect(s.declared().evil).toBeUndefined()
+  })
+
+  it('a queued clone runs exactly the signed spec; a declaration change after signing cancels it', async () => {
+    vi.useFakeTimers()
+    const s = setup()
+    await s.run('clone', { ...s.args('billing-api'), confirmed: true })
+    await s.api.postSettings(s.ws, { op: 'repos', set: { 'billing-api': { path: 'elsewhere', remote: 'https://git.example.test/acme/other.git' } } })
+    vi.advanceTimersByTime(7000)
+    const view = await s.view()
+    expect(s.state.disk[`${ROOT}/elsewhere`]).toBeUndefined()
+    expect(s.state.disk[`${ROOT}/billing-api`]).toBeUndefined()
+    expect(s.state.jobs['billing-api'].error).toMatch(/changed after it was signed/)
+    expect(view.moving).toBe(false)
+    expect(s.state.log.some((l) => l.type === 'repos.clone_cancelled')).toBe(true)
+  })
+
+  it('removing the declaration cancels its queued clone (moving stops)', async () => {
+    vi.useFakeTimers()
+    const s = setup()
+    await s.run('clone', { ...s.args('billing-api'), confirmed: true })
+    await s.api.postSettings(s.ws, { op: 'repos', set: { 'billing-api': null } })
+    vi.advanceTimersByTime(7000)
+    expect((await s.view()).moving).toBe(false)
+    expect(s.state.disk[`${ROOT}/billing-api`]).toBeUndefined()
+  })
+
+  it.each(['~/work/acme/./web-portal', '~/work/acme/x/../web-portal', '/Users/x/../../Users/y/./a/..'])('normalises absolute paths too (%s)', async (path) => {
+    const s = setup()
+    if (path.startsWith('~')) {
+      await expect(s.api.postSettings(s.ws, { op: 'repos', set: { dup: { path, remote: 'https://git.example.test/acme/dup.git' } } })).rejects.toMatchObject({ status: 409, code: 'settings.repos_same_path' })
+    } else {
+      await s.api.postSettings(s.ws, { op: 'repos', set: { dup: { path } } })
+      expect(declaredOf({ store: s.store, ws: s.ws }).find((r) => r.name === 'dup')!.full).toBe('/Users/y')
+    }
+  })
+
+  it('exposes a bounded next refresh for an idle scheduled check', async () => {
+    const s = setup()
+    expect((await s.view()).nextRefreshMs).toBeUndefined()
+    await s.run('save_settings', { formData: { interval: '15 min', fetch: false, connection: 'gh' } })
+    expect((await s.view()).nextRefreshMs).toBe(900_000)
+  })
+
+  it('fetch-on-check never fetches without a git login, whatever the entry point', async () => {
+    vi.useFakeTimers()
+    const s = setup()
+    await s.run('save_settings', { formData: { interval: '15 min', fetch: true, connection: 'gh' } })
+    s.state.settings.connection = 'gone'
+    await s.run('check')
+    expect(s.state.observed[`${ROOT}/meter-ingest`].behind).toBe(3)
+    vi.advanceTimersByTime(900_001)
+    await s.view()
+    expect(s.state.observed[`${ROOT}/meter-ingest`].behind).toBe(3)
+    expect(s.state.log.some((l) => l.type === 'repos.fetched')).toBe(false)
+    expect(s.state.log[0].text).toMatch(/no git login/)
+  })
+})
+

@@ -17,8 +17,8 @@ describe('addon registry', () => {
       expect(() => registerAddon({ name, seed: () => ({}), actions: {} }), name).toThrow(/core event namespace/)
     for (const p of [...addonsFixture, ...catalogFixture]) expect(CORE_EVENT_NAMESPACES, p.name).not.toContain(p.name)
   })
-  it('knows every core namespace of the ticket format (§5): role, policy, edit, projection, restore', () => {
-    for (const name of ['role', 'policy', 'edit', 'projection', 'restore']) {
+  it('knows every core namespace of the ticket format (§5): role, policy, edit, projection, restore, settings, …', () => {
+    for (const name of ['role', 'policy', 'edit', 'projection', 'restore', 'settings', 'branch', 'visibility', 'invalid', 'terminal']) {
       expect(CORE_EVENT_NAMESPACES, name).toContain(name)
       expect(() => registerAddon({ name, seed: () => ({}), actions: {} }), name).toThrow(/core event namespace/)
     }

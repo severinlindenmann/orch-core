@@ -408,6 +408,11 @@ The declared repo list is the workspace's `settings.repos` (`Workspace.repos`, f
 | `POST …/repos/actions/save_settings` | maintainer | Interval, fetch-on-check, git-login connection (gh/glab/git CLI logins only). |
 | `GET /api/workspaces/:ws/tickets?repo=:name` | viewer | Exact `links.repos` filter; visibility enforced. |
 
+Round 2: `settings.changed` is refused by `store.appendWs` unless an owner person signs it, and not folded otherwise
+(replay); `settings`, `branch`, `invalid`, `terminal`, `visibility` are reserved addon names. A queued clone runs only
+its signed spec; a later declaration change cancels it. The shared addon-state query also honours a state's
+`nextRefreshMs` (bounded 30 s – 1 h; `addonRefresh` in queries.ts), which Repos sets for its scheduled check.
+
 Host contract (real host): clone runs `git clone -- <remote> <path>` (with `--`), never through a shell, as the
 connection's own CLI login (D56 A); orch stores no git credentials. Remotes are refused with any userinfo, query,
 fragment, non-ASCII character or a part starting with `-`.

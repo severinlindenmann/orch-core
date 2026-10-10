@@ -30,7 +30,8 @@ export interface Observed {
   size: string
   worktrees: number
 }
-interface Job { at: string; by: string; attempt: number; error?: string; done?: boolean }
+/** A queued clone carries the exact spec that was signed; it never re-reads the declaration when it runs. */
+interface Job { at: string; by: string; attempt: number; error?: string; done?: boolean; spec: { name: string; remote: string; full: string; branch: string; clone_as: string } }
 interface Draft { name: string; path: string; remote: string; branch: string }
 export interface ReposState extends Record<string, unknown> {
   /** The simulated file system, by full path. */
@@ -45,6 +46,7 @@ export interface ReposState extends Record<string, unknown> {
 }
 type Ctx = Pick<AddonCtx, 'store' | 'ws' | 'viewer'>
 const INTERVALS = ['off', '15 min', '1 h', 'daily']
+const INTERVAL_MS: Record<string, number> = { '15 min': 900_000, '1 h': 3_600_000, daily: 86_400_000 }
 const stateOf = (s: Record<string, unknown>) => s as ReposState
 const wsOf = (c: Pick<Ctx, 'store' | 'ws'>) => c.store.workspaces.find((w) => w.id === c.ws)
 const rootOf = (c: Pick<Ctx, 'store' | 'ws'>) => wsOf(c)?.root_folder ?? '~/work/workspace'
@@ -88,7 +90,7 @@ export function seedRepos(ws: string, store: MockStore): ReposState {
 }
 
 const ok = (message: string) => ({ ok: true as const, message, changed: true })
-type Verb = 'declared' | 'removed' | 'checked' | 'clone_queued' | 'cloned' | 'clone_failed' | 'fetched'
+type Verb = 'declared' | 'removed' | 'checked' | 'clone_queued' | 'cloned' | 'clone_failed' | 'clone_cancelled' | 'fetched'
 /**
  * The activity log, and the addon's own `repos.<verb>` record (actor addon:repos). A declaration change is core's
  * `settings.changed`, signed by the owner, so `declared`/`removed` go only into this log, not into a second event.
@@ -121,33 +123,44 @@ const plan = (s: ReposState, c: Ctx) => missing(s, c).map((r) => `${r.remote} â†
 
 function tick(s: ReposState, c: Ctx) {
   const now = Date.parse(c.store.now())
-  for (const r of declaredOf(c)) {
-    const j = s.jobs[r.name]
-    if (!running(j) || now - Date.parse(j.at) < 6000) continue
-    if (r.name === 'private-api' && j.attempt === 1) {
+  const declared = new Map(declaredOf(c).map((r) => [r.name, r]))
+  for (const [name, j] of Object.entries(s.jobs)) {
+    if (!running(j)) continue
+    // Chosen rule (U3 round 2): a declaration change or removal after signing cancels the queued clone. The clone only
+    // ever runs the signed spec, and only while the declaration still says exactly that.
+    const r = declared.get(name)
+    if (!r || r.remote !== j.spec.remote || r.full !== j.spec.full || cloneAs(s, c)?.name !== j.spec.clone_as) {
+      j.error = 'The declaration or git login changed after it was signed; the clone was cancelled.'
+      record(s, c, 'clone_cancelled', `${name}: clone cancelled, the declaration changed after signing.`, j.by)
+      continue
+    }
+    if (now - Date.parse(j.at) < 6000) continue
+    if (name === 'private-api' && j.attempt === 1) {
       j.error = 'Repository not found or no access'
-      record(s, c, 'clone_failed', `${r.name}: ${j.error}`, j.by)
-    } else if (s.disk[r.full]) {
+      record(s, c, 'clone_failed', `${name}: ${j.error}`, j.by)
+    } else if (s.disk[j.spec.full]) {
       // Never overwrite a folder that appeared after the clone was queued.
       j.error = 'The target folder exists now. Check before retrying.'
     } else {
-      s.disk[r.full] = { ...observation(r.remote ?? fake(r.name), c.store.now()), branch: r.branch }
-      s.observed[r.full] = structuredClone(s.disk[r.full])
+      s.disk[j.spec.full] = { ...observation(j.spec.remote, c.store.now()), branch: j.spec.branch }
+      s.observed[j.spec.full] = structuredClone(s.disk[j.spec.full])
       j.done = true
-      record(s, c, 'cloned', `Cloned ${r.name} into ${r.full}.`, j.by)
+      record(s, c, 'cloned', `Cloned ${name} into ${j.spec.full}.`, j.by)
     }
   }
-  const ms: Record<string, number> = { '15 min': 900_000, '1 h': 3_600_000, daily: 86_400_000 }
-  // The real host schedules this itself; the mock runs a due check on the next read.
-  if (ms[s.settings.interval] && now - Date.parse(s.checked) >= ms[s.settings.interval]) check(s, c, 'orch')
+  // The real host schedules this itself; the mock runs a due check on the next read (nextRefreshMs asks for that read).
+  const every = INTERVAL_MS[s.settings.interval]
+  if (every && now - Date.parse(s.checked) >= every) check(s, c, 'orch')
 }
 function check(s: ReposState, c: Ctx, by = c.viewer) {
-  if (s.settings.fetch) fetchRepos(s, c, declaredOf(c), by)
+  const fetched = s.settings.fetch ? fetchRepos(s, c, declaredOf(c), by) : true
   s.observed = structuredClone(s.disk)
   s.checked = c.store.now()
-  record(s, c, 'checked', 'Checked all repo folders.', by)
+  record(s, c, 'checked', fetched ? 'Checked all repo folders.' : 'Checked all repo folders; fetch skipped: no git login is declared as a connection.', by)
 }
-function fetchRepos(s: ReposState, c: Ctx, repos: Repo[], by = c.viewer) {
+/** The one fetch operation (every entry point): runs only as a declared git login; false when there is none. */
+function fetchRepos(s: ReposState, c: Ctx, repos: Repo[], by = c.viewer): boolean {
+  if (!cloneAs(s, c)) return false
   for (const r of repos) {
     const o = s.disk[r.full]
     if (repoStatus(r, o) !== 'present') continue
@@ -157,9 +170,11 @@ function fetchRepos(s: ReposState, c: Ctx, repos: Repo[], by = c.viewer) {
     s.observed[r.full] = structuredClone(o)
     record(s, c, 'fetched', `Fetched ${r.name}.`, by)
   }
+  return true
 }
 function queue(s: ReposState, c: Ctx, r: Repo) {
-  s.jobs[r.name] = { at: c.store.now(), by: c.viewer, attempt: (s.jobs[r.name]?.attempt ?? 0) + 1 }
+  const spec = { name: r.name, remote: r.remote!, full: r.full, branch: r.branch, clone_as: cloneAs(s, c)!.name }
+  s.jobs[r.name] = { at: c.store.now(), by: c.viewer, attempt: (s.jobs[r.name]?.attempt ?? 0) + 1, spec }
   record(s, c, 'clone_queued', `Queued ${r.name}.`)
 }
 /** Refuses a clone the host cannot run as signed: no remote declared, no git login, or a changed identity. */
@@ -314,6 +329,8 @@ function view(s: ReposState, c: Ctx) {
     byTicket,
     drafts: {},
     moving: Object.values(s.jobs).some(running),
+    // Generic contract with core's shared query: read again when the next scheduled check is due (core bounds it).
+    ...(INTERVAL_MS[s.settings.interval] ? { nextRefreshMs: Math.max(0, Date.parse(s.checked) + INTERVAL_MS[s.settings.interval] - Date.parse(c.store.now())) } : {}),
     glance: { type: 'stat', label: 'repos ready', value: `${ready} of ${declared.length}`, hint: `${declared.filter((r) => !s.observed[r.full]).length} missing Â· ${declared.filter((r) => s.observed[r.full]?.behind).length} behind` },
     settingsPanel: stack(
       kv({ 'Workspace folder': rootOf(c) }),
@@ -344,7 +361,7 @@ function remove(c: AddonCtx, anyway: boolean) {
 
 registerAddon({
   name: 'repos',
-  stateVersion: 2,
+  stateVersion: 3,
   seed: seedRepos,
   view: (s, c) => view(stateOf(s), c),
   decisions(state, _pkg, c) {

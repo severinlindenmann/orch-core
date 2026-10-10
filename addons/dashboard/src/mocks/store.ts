@@ -730,6 +730,11 @@ export class MockStore {
     if (!list) throw new Error(`unknown workspace ${wsId}`)
     const seq = (list[list.length - 1]?.seq ?? 0) + 1
     const { actor, ...rest } = input
+    // Core's boundary for settings.changed (format §5.4.2 "who may sign"): owners, people only. Whatever calls this.
+    if (input.type === 'settings.changed') {
+      const a = typeof actor === 'string' ? parseActor(actor) : actor
+      if (a?.kind !== 'person' || this.roleIn(wsId, a.id) !== 'owner') throw new Error('settings.changed is signed by an owner (a person) only')
+    }
     const event = {
       v: 2,
       id: wsId.slice(0, 8) + String(seq).padStart(8, '0'),

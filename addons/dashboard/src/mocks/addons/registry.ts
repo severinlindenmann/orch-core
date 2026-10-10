@@ -135,6 +135,8 @@ export const CORE_EVENT_NAMESPACES: readonly string[] = [
   'addon', 'agent', 'artifact', 'claim', 'comment', 'connection', 'decision', 'device', 'edit', 'epoch', 'gate', 'grant',
   'handoff', 'host', 'labels', 'lease', 'log', 'member', 'pair', 'people', 'policy', 'projection', 'question', 'relay',
   'restore', 'role', 'section', 'skill', 'status', 'task', 'ticket', 'verdict', 'verify', 'view', 'workspace',
+  // Also reserved by the ticket format (§5.4.2 "Unknown types"), or written by core in this mock (terminal.shell_opened).
+  'branch', 'invalid', 'settings', 'terminal', 'visibility',
 ]
 
 /** A package name the host refuses (install and registration alike): one of core's own event namespaces. */

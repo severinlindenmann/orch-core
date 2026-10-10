@@ -60,6 +60,11 @@ describe('repo rules (settings.repos)', () => {
     expect(resolveRepoPath('~/work/acme', './billing-api/')).toBe('~/work/acme/billing-api')
     expect(resolveRepoPath('~/work/acme', '../shared/lib')).toBe('~/work/shared/lib')
     expect(resolveRepoPath('~/work/acme', '/srv/repos/x')).toBe('/srv/repos/x')
+    expect(resolveRepoPath('~/work/acme', '~/work/acme/./web-portal')).toBe('~/work/acme/web-portal')
+    expect(resolveRepoPath('~/work/acme', '~/work/acme/x/../web-portal/')).toBe('~/work/acme/web-portal')
+    expect(resolveRepoPath('~/work/acme', '/srv/x/../repos//y/.')).toBe('/srv/repos/y')
+    expect(resolveRepoPath('~/work/acme', '/../..')).toBe('/')
+    expect(resolveRepoPath('/srv/ws/', 'a/./b/../c')).toBe('/srv/ws/a/c')
   })
 
   it('canonical remote identity unifies transports and spellings', () => {

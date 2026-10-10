@@ -1,6 +1,7 @@
 // Factory full runs (owner decision 2026-10-10 evening, D61 option): the request, the signed start, the steps with
 // their labels, the hold before Deliver, Stop during the hold and the delivery after it.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { offered } from '@/test/offered'
 import { describeEvent } from '@/mocks/derive'
 import { createMockStore } from '@/mocks/store'
 import { installAndGrant } from '@/test/installAddon'
@@ -14,7 +15,8 @@ function setup(viewer = 'p_sev') {
   const ws = store.workspaces.find((w) => w.prefix === 'DEMO')!.id
   installAndGrant(store, ws, 'factory')
   store.setViewer(viewer)
-  const run = (id: string, body: Record<string, unknown>) => store.runAddon(ws, 'factory', id, body)!
+  // A decision answer carries the digest of the decision as offered (security review #3), as core's prompt posts it.
+  const run = (id: string, body: Record<string, unknown>) => store.runAddon(ws, 'factory', id, offered(store, ws, 'factory', id, body))!
   const view = () => store.addonStateView(ws, 'factory')!
   const runs = () => store.addonState(ws, 'factory').runs as Run[]
   const events = (type: string) => store.eventsOf(EPIC).filter((e) => e.type === type)

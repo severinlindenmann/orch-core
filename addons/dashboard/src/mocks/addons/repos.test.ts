@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { offered } from '@/test/offered'
 import type { TicketDefinition } from '@/api/types'
 import { createApi } from '@/api/client'
 import { createMockTransport } from '@/api/transport'
@@ -15,7 +16,7 @@ const setup = (dataset: 'normal' | 'busy' = 'normal') => {
   const ws = store.workspaces.find((w) => w.prefix === 'DEMO')!.id
   const api = createApi(createMockTransport(store, { latency: false }))
   const state = store.addonState(ws, 'repos') as ReposState
-  const run = (action: string, body: Record<string, unknown> = {}) => api.runAddonAction(ws, 'repos', action, body)
+  const run = (action: string, body: Record<string, unknown> = {}) => api.runAddonAction(ws, 'repos', action, offered(store, ws, 'repos', action, body))
   const declared = () => store.workspaces.find((w) => w.id === ws)!.repos ?? {}
   const args = (name: string) => ({ name, remote: declared()[name].remote, default_branch: declared()[name].default_branch ?? 'main', target_folder: `${ROOT}/${declared()[name].path}`, clone_as: GH })
   const as = (person: string) => store.setViewer(person)

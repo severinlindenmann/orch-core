@@ -93,11 +93,11 @@ const CASES: Case[] = [
     confirm: press('Send answer'), method: 'runAddonAction', arg: 3, skip: ['confirmed'],
     addon: ['Clone billing-api?'],
     shown: {
-      id: v => `Decision ${v}`, option: v => `Answer: option ${v}`,
-      name: v => `Name (name): ${v}`, remote: v => `Remote (remote): ${v}`,
-      target_folder: v => `Target folder (target_folder): ${v}`,
-      clone_as: v => `Clone as (clone_as): ${v}`,
-      default_branch: v => `Default branch (default_branch): ${v}`,
+      id: v => `Decision ${v}`, option: v => `Answer: option ${v}`, digest: v => v,
+      name: typed('Name (name)'), remote: typed('Remote (remote)'),
+      target_folder: typed('Target folder (target_folder)'),
+      clone_as: typed('Clone as (clone_as)'),
+      default_branch: typed('Default branch (default_branch)'),
     },
   },
   ...(['clone', 'clone_all', 'add', 'adopt', 'remove', 'remove_anyway'] as const).map((action): Case => ({

@@ -27,6 +27,10 @@ adds a **landing record** event per attempt:
 - **Any conflict resolution** (by an agent or a person) voids the approval: the ticket goes back to review with the
   resolution diff.
 - What was approved, what was tested and what was merged are the same `candidate_sha`, recorded in the event.
+- **The verdict itself binds to the branch head (D58):** the verify gate's hash material includes `source_sha`,
+  read by the host from git, and the Touch ID prompt shows the commit and diffstat. A new commit on the ticket branch
+  after the verdict appends `gate.invalidated` (verify, `new_commits`) and sends the ticket back to testing. With
+  the optional code gate on (D59), landing also needs a code approval on the same commit.
 
 **Scheduling.**
 - One queue per **(canonical remote URL, target branch)**, shared across workspaces on the same machine (file lock in

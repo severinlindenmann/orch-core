@@ -9,7 +9,7 @@ What happens, in this order, and what is refused before any key exists:
    directory inside the workspace (the workspace key would be committed with it), an instruction file path that is or
    lies below a symbolic link. A lock directory keeps two inits in one directory apart (one rollback must never delete
    the other's files); keys of an interrupted init (``.init-incomplete`` marker, dead process) are swept.
-2. **The passphrase first.** ``/dev/tty`` shows a generated passphrase (five words of the BIP-39 list); the person types
+2. **The passphrase first.** ``/dev/tty`` shows a generated passphrase (six words of the BIP-39 list); the person types
    it back, or types their own, which must pass :func:`orch.custody.strength.check_strength` and is asked twice.
 3. **Then the recovery code.** A new 24-word code is shown on ``/dev/tty`` and nowhere else, never written. The person
    types three words back from random positions; then the screen and the scrollback are cleared. The person key derived

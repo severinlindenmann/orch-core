@@ -1381,8 +1381,8 @@ Where this chapter was silent, `orch.ops` does the following. Each is a rule the
   was created`), no traceback. Key directories of an init that was killed (SIGKILL, power loss) carry an
   `.init-incomplete` marker with the process id; the next `init` removes those whose process is gone. Every failure after
   a passphrase or the code was shown says that what was shown is void.
-- **The passphrase comes first.** `/dev/tty` shows a generated passphrase (five distinct words of the BIP-39 list, about
-  55 bits, shown once); the person types it back to confirm, or types one of their own instead (asked twice). Only then
+- **The passphrase comes first.** `/dev/tty` shows a generated passphrase (six distinct words of the BIP-39 list, about
+  66 bits, shown once); the person types it back to confirm, or types one of their own instead (asked twice). Only then
   is the recovery code made. Three tries, then `init` stops with nothing created.
 - **The recovery code is confirmed and then wiped.** The 24-word code is shown on `/dev/tty` and nowhere else (never
   stdout, stderr, a file or the result), the person writes it down and types **three words from random positions** back
@@ -1408,7 +1408,7 @@ Where this chapter was silent, `orch.ops` does the following. Each is a rule the
   vendored list of the 5000 most common passwords (also with leet substitutions), and an entropy estimate of at least
   60 bits, where the estimate is the cheapest parse of the text into common words (12 bits each), ascending, descending
   and keyboard runs (5 bits), repeats (1 to 2), years (7) and single characters (log2 of the character pool). The
-  generated five-word phrase is the one exception to the floor (55 bits).
+  generated six-word phrase (about 66 bits) is judged by the same rule.
 - **Files written, never through a link.** `AGENTS.orch.md` (workspace root), the three built-in skills in
   `.claude/skills/<name>/` with their `orch.skill.json` (scope `builtin`), one line `Before working on tickets, read
   AGENTS.orch.md (orch).` in `AGENTS.md` (Codex and others), `@AGENTS.orch.md` in `CLAUDE.md` (Claude Code) and `.state/`

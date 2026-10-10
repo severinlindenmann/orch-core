@@ -51,11 +51,11 @@ def test_reasonable_passphrases_pass(good):
     check_strength(good)
 
 
-def test_the_generated_passphrase_always_passes_and_is_five_distinct_words():
+def test_the_generated_passphrase_always_passes_and_is_six_distinct_words():
     for _ in range(50):
         p = generate_passphrase()
         words = p.split(" ")
-        assert len(words) == 5 and len(set(words)) == 5 and all(w in WORDS for w in words)
+        assert len(words) == 6 and len(set(words)) == 6 and all(w in WORDS for w in words)
         check_strength(p)
 
 

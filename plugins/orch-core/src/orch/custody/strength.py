@@ -13,9 +13,8 @@ programming over its characters:
 * any other character costs ``log2`` of the character pool the whole text draws on (lower case, upper case, digits,
   other), a separator (space, ``-``, ``_``, ``.``, ``,``) 3 bits.
 
-The one exception is a **generated passphrase**: five or more distinct words of the BIP-39 list separated by single
-spaces. It is worth 11 bits a word (a random draw, which is what ``orch init`` offers by default); the floor for it is
-:data:`MIN_PHRASE_BITS` (five words are about 55 bits). The common-password list is vendored next to this file
+The generated passphrase of ``orch init`` (six distinct BIP-39 words, about 66 bits) is judged by the same rule.
+The common-password list is vendored next to this file
 (``common_passwords.txt``, the first 5000 entries of the SecLists 10k list, MIT licence).
 
 This is an estimate against offline guessing of a stolen key file, not a proof.
@@ -32,12 +31,11 @@ from orch import canon
 
 from .base import CustodyError
 
-__all__ = ["MIN_CHARS", "MIN_ENTROPY_BITS", "MIN_PHRASE_BITS", "check_strength", "entropy_bits", "generate_passphrase"]
+__all__ = ["MIN_CHARS", "MIN_ENTROPY_BITS", "check_strength", "entropy_bits", "generate_passphrase"]
 
 MIN_CHARS = 14
 MIN_ENTROPY_BITS = 60.0
-MIN_PHRASE_BITS = 55.0
-PHRASE_WORDS = 5
+PHRASE_WORDS = 6
 _SEPARATORS = " -_.,"
 _ROWS = ("qwertyuiop", "asdfghjkl", "zxcvbnm", "1234567890")
 _LEET = str.maketrans(
@@ -135,13 +133,6 @@ def entropy_bits(text: str) -> float:
     return best[n]
 
 
-def _is_generated_phrase(text: str) -> int:
-    parts = text.split(" ")
-    if len(parts) >= PHRASE_WORDS and len(set(parts)) == len(parts) and all(p in _bip() for p in parts):
-        return len(parts)
-    return 0
-
-
 def check_strength(passphrase: str) -> None:
     """Raise :class:`CustodyError` unless ``passphrase`` meets the rules in the module docstring."""
     text = canon.nfc(passphrase)
@@ -150,10 +141,6 @@ def check_strength(passphrase: str) -> None:
     folded = re.sub(r"[\s\-_.,]", "", text).lower().translate(_LEET)
     if folded in _common():
         raise CustodyError("that passphrase is on the list of common ones")
-    phrase = _is_generated_phrase(text)
-    if phrase:
-        if phrase * 11.0 >= MIN_PHRASE_BITS:
-            return
     if entropy_bits(text) < MIN_ENTROPY_BITS:
         raise CustodyError(
             "passphrase is too predictable (common words, runs, repeats or too short): "

@@ -231,8 +231,30 @@
           "network",
           "git_push"
         ]
+      },
+      "repos": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "0.1.0",
+          "capabilities": [
+            "network",
+            "pty"
+          ],
+          "package_sha256": "6bb373cd1b090bd528a53b8e5290bc34894cfab2c2557446e03e482a54289bf9",
+          "at": "2026-10-09T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "0.1.0",
+        "package_sha256": "6bb373cd1b090bd528a53b8e5290bc34894cfab2c2557446e03e482a54289bf9",
+        "capabilities": [
+          "network",
+          "pty"
+        ]
       }
-    }
+    },
+    "root_folder": "~/work/acme"
   },
   {
     "id": "0a5e7c31-2d9f-4b68-8e1a-5c3f7d9b2e44",
@@ -348,8 +370,30 @@
         "version": "0.1.5",
         "package_sha256": "12b9025be128bb7a6b74b9a1b80bb948db8d186a0ab470110811d0cbe4ccef19",
         "capabilities": []
+      },
+      "repos": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "0.1.0",
+          "capabilities": [
+            "network",
+            "pty"
+          ],
+          "package_sha256": "6bb373cd1b090bd528a53b8e5290bc34894cfab2c2557446e03e482a54289bf9",
+          "at": "2026-10-09T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "0.1.0",
+        "package_sha256": "6bb373cd1b090bd528a53b8e5290bc34894cfab2c2557446e03e482a54289bf9",
+        "capabilities": [
+          "network",
+          "pty"
+        ]
       }
-    }
+    },
+    "root_folder": "~/work/internal"
   },
   {
     "id": "c7d2b9e4-6f13-4a85-b0c8-1e9a3d5f7b66",
@@ -449,7 +493,29 @@
         "capabilities": [
           "pty"
         ]
+      },
+      "repos": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "0.1.0",
+          "capabilities": [
+            "network",
+            "pty"
+          ],
+          "package_sha256": "6bb373cd1b090bd528a53b8e5290bc34894cfab2c2557446e03e482a54289bf9",
+          "at": "2026-10-09T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "0.1.0",
+        "package_sha256": "6bb373cd1b090bd528a53b8e5290bc34894cfab2c2557446e03e482a54289bf9",
+        "capabilities": [
+          "network",
+          "pty"
+        ]
       }
-    }
+    },
+    "root_folder": "~/work/client"
   }
 ]

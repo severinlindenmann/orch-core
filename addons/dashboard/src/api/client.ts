@@ -41,6 +41,7 @@ import type { MandatesPreviewRequest, MandatesPreviewState } from './mandatesPre
 import { connectionInfo, connectionList, doctorReport, secretsFileInfo, skillInfo, skillList, type SkillGrantRequest } from './connections'
 
 export interface ListTicketsParams {
+  repo?: string
   status?: Status | Status[]
   q?: string
   type?: string
@@ -94,6 +95,7 @@ export function createApi(transport: Transport) {
             parent: p.parent,
             priority: p.priority?.join(','),
             label: p.label,
+            repo: p.repo,
             person: p.person,
             needs: p.needs,
             sort: p.sort,

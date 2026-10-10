@@ -70,6 +70,7 @@ export function DestructiveConfirm({
         </DialogHeader>
         {addon && action && (
           <>
+            {addon === 'repos' && (action === 'remove' || action === 'remove_anyway') && <p className="text-[13px]">The folder and its files stay on disk.</p>}
             <SentArgs lines={argLines(args)} />
             <FromAddon addon={addon} addonTitle={addonTitle ?? addon} label={label} text={text} subject={subject} />
           </>

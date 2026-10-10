@@ -1256,5 +1256,140 @@
       }
     },
     "package_sha256": "9395d3ff43d09f8372895d9387287a801f0c69dc021d545c391ef3683867d5d9"
+  },
+  {
+    "name": "repos",
+    "title": "Repos",
+    "version": "0.1.0",
+    "preview": true,
+    "description": "Declare workspace repos, check local folders, and clone missing repos. Simulated preview.",
+    "capabilities": [
+      "network",
+      "pty"
+    ],
+    "first_party": true,
+    "update": null,
+    "contributions": [
+      {
+        "slot": "nav",
+        "id": "repos",
+        "title": "Repos",
+        "icon": "GitBranch",
+        "node": {
+          "$ref": "addon.page"
+        }
+      },
+      {
+        "slot": "today.card",
+        "id": "ready",
+        "title": "Repos",
+        "icon": "GitBranch",
+        "node": {
+          "$ref": "addon.glance"
+        }
+      },
+      {
+        "slot": "ticket.panel",
+        "id": "repos",
+        "title": "Repos",
+        "icon": "GitBranch",
+        "node": {
+          "$ref": "addon.byTicket.$ticket"
+        },
+        "when": "addon.byTicket.$ticket"
+      },
+      {
+        "slot": "settings",
+        "id": "repos",
+        "title": "Repos",
+        "icon": "GitBranch",
+        "node": {
+          "$ref": "addon.settingsPanel"
+        }
+      }
+    ],
+    "actions": {
+      "clone": {
+        "minRole": "maintainer",
+        "label": "Clone repo",
+        "confirm": "sign"
+      },
+      "clone_all": {
+        "minRole": "maintainer",
+        "label": "Clone all missing repos",
+        "confirm": "sign"
+      },
+      "add": {
+        "minRole": "maintainer",
+        "label": "Add repo",
+        "confirm": "sign"
+      },
+      "adopt": {
+        "minRole": "maintainer",
+        "label": "Adopt untracked repo",
+        "confirm": "sign"
+      },
+      "remove": {
+        "minRole": "owner",
+        "label": "Remove from list",
+        "confirm": "destructive",
+        "confirmText": "The folder and its files stay on disk."
+      },
+      "remove_anyway": {
+        "minRole": "owner",
+        "label": "Remove despite linked tickets",
+        "confirm": "options",
+        "options": {
+          "fields": [
+            {
+              "key": "choice",
+              "label": "Linked tickets still refer to this repo",
+              "choices": [
+                {
+                  "value": "keep",
+                  "label": "Keep declaration"
+                },
+                {
+                  "value": "remove",
+                  "label": "Remove anyway"
+                }
+              ],
+              "default": "keep"
+            }
+          ]
+        }
+      },
+      "check": {
+        "minRole": "member",
+        "label": "Check now"
+      },
+      "fetch": {
+        "minRole": "member",
+        "label": "Fetch repo"
+      },
+      "fetch_all": {
+        "minRole": "member",
+        "label": "Fetch all repos"
+      },
+      "prepare_add": {
+        "minRole": "maintainer",
+        "label": "Review repo",
+        "kind": "navigation"
+      },
+      "save_settings": {
+        "minRole": "maintainer",
+        "label": "Save repo settings"
+      },
+      "open_terminal": {
+        "minRole": "member",
+        "label": "Open in terminal"
+      },
+      "clone_attention": {
+        "minRole": "maintainer",
+        "label": "Clone missing repo",
+        "decision": true
+      }
+    },
+    "package_sha256": "6bb373cd1b090bd528a53b8e5290bc34894cfab2c2557446e03e482a54289bf9"
   }
 ]

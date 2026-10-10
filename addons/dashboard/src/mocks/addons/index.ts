@@ -20,3 +20,5 @@ import './schedules'
 import './drop'
 import './land'
 import './links'
+
+import './repos'

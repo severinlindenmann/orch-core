@@ -75,6 +75,7 @@ export function Filters({
 }) {
   const selects = (
     <>
+      {search.repo && <Button size="sm" variant="secondary" onClick={() => onSearch({ repo: undefined })}>Repo: {search.repo} ×</Button>}
       <FilterSelect label="Type" value={search.type ?? 'all'} onChange={(v) => onSearch({ type: v === 'all' ? undefined : v })} options={options.types.map((t) => ({ value: t, label: t }))} />
       <FilterSelect label="People" value={search.person ?? 'all'} onChange={(v) => onSearch({ person: v === 'all' ? undefined : v })} options={options.people} />
       <FilterSelect
@@ -121,7 +122,7 @@ export function Filters({
     </div>
   )
   if (compact) {
-    const active = [search.type, search.person, search.needs, search.label].filter(Boolean).length + (search.priority?.length ?? 0) + (search.status?.length ?? 0)
+    const active = [search.repo, search.type, search.person, search.needs, search.label].filter(Boolean).length + (search.priority?.length ?? 0) + (search.status?.length ?? 0)
     return (
       <div className="flex flex-wrap items-center gap-2" role="toolbar" aria-label="Ticket filters">
         <SearchBox ref={searchRef} value={qInput} onChange={onQInput} />

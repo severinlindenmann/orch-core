@@ -1355,10 +1355,9 @@ export class MockStore {
   }
 
   /** Open questions, pending gates and verdicts on the workspace's tickets; `eligible` filters to what that person can act on. */
-  private openItems(workspaceId: string, eligible?: string): NeedsYouItem[] {
+  private openItems(workspaceId: string, eligible?: string, tickets = this.listTickets(workspaceId), blocks = this.blockingCheck(workspaceId)): NeedsYouItem[] {
     const items: NeedsYouItem[] = []
-    const blocks = this.blockingCheck(workspaceId)
-    for (const t of this.listTickets(workspaceId)) {
+    for (const t of tickets) {
       if (t.status === 'done') continue
       const can = (gate: GateName) => !eligible || !this.canApprove(t, gate, eligible)
       for (const q of t.questions_state) {
@@ -1391,12 +1390,21 @@ export class MockStore {
 
   /** Open items the viewer cannot act on, and the people who can (ids). */
   waitingOnOthers(workspaceId: string, person = this.viewer): NonNullable<TodayDocument['waiting_on_others']> {
-    const mine = new Set(this.needsYou(workspaceId, person).map(itemKey))
+    const tickets = this.listTickets(workspaceId)
+    const blocks = this.blockingCheck(workspaceId)
+    const mine = can(this.roleIn(workspaceId, person), 'ticket.act') ? this.openItems(workspaceId, person, tickets, blocks) : []
+    return this.waitingOnOthersFrom(workspaceId, person, mine, this.openItems(workspaceId, undefined, tickets, blocks), tickets)
+  }
+
+  /** Reuse one request's visible ticket snapshot and open items; no cache survives a request or viewer change. */
+  private waitingOnOthersFrom(workspaceId: string, person: string, mineItems: NeedsYouItem[], open: NeedsYouItem[], tickets: TicketDocument[]): NonNullable<TodayDocument['waiting_on_others']> {
+    const mine = new Set(mineItems.map(itemKey))
+    const byKey = new Map(tickets.map(t => [t.key, t]))
     const w = this.workspaces.find((x) => x.id === workspaceId)
-    const others = this.openItems(workspaceId).filter((i) => !mine.has(itemKey(i)))
+    const others = open.filter((i) => !mine.has(itemKey(i)))
     const people = new Set<string>()
     for (const i of others) {
-      const t = this.ticket(i.ticket)
+      const t = byKey.get(i.ticket)
       if (!t || !w) continue
       for (const m of w.members) {
         if (m.person === person || !can(this.roleIn(workspaceId, m.person), 'ticket.act')) continue
@@ -1436,12 +1444,17 @@ export class MockStore {
       }
     }
     recent.sort((a, b) => b.at.localeCompare(a.at))
+    // Today formerly folded every ticket again for each attention section, and derived agent blockers repeatedly.
+    // All sections describe this same synchronous request: share its visible documents and lazy blocker lookup.
+    const mayAct = can(this.roleIn(workspaceId, this.viewer), 'ticket.act')
+    const mine = mayAct ? this.openItems(workspaceId, this.viewer, tickets, blocks) : []
+    const open = this.openItems(workspaceId, undefined, tickets, blocks)
     return {
       now: this.now(),
       workspace: workspaceId,
-      needs_you: this.needsYou(workspaceId),
-      read_only_open: this.readOnlyOpen(workspaceId),
-      waiting_on_others: this.waitingOnOthers(workspaceId),
+      needs_you: mine,
+      read_only_open: mayAct ? [] : open,
+      waiting_on_others: this.waitingOnOthersFrom(workspaceId, this.viewer, mine, open, tickets),
       working: tickets.filter((t) => t.claim).map((t) => this.summary(t, blocks)),
       recent: recent.slice(0, 15),
       counts,

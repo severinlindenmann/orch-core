@@ -387,3 +387,22 @@ for G2+ builds. `build-preview.py` still runs, but its output does not load; it 
    - settle event names with issue #338 and rename the provisional ones in the mock and `describeEvent`;
    - move the rules the mock enforces (permissions, visibility, gate policy, addon roles, refusal codes) into the
      host; the UI keeps them only as convenience.
+
+## Repos addon preview (U3)
+
+All endpoints use the existing shared query factories/loaders and generic addon page skeleton. The preview is installed in normal/busy DEMO and INT/CLI. `root_folder` is host workspace metadata. Proposal: [repos-addon-proposal.md](docs/repos-addon-proposal.md).
+
+| Endpoint / action | Minimum role | Behavior |
+|---|---|---|
+| `GET /api/workspaces/:ws/addons/repos/state` | viewer | Structure, Checks, Activity, Glance, settings; optional ticket-scoped panel. Mock jobs advance on the shared state's 1 s poll. |
+| `POST …/repos/actions/clone`, `clone_all` | maintainer | Core signature binds every remote and target folder; stale plans refused. |
+| `POST …/repos/actions/prepare_add`, `add`, `adopt` | maintainer | Host-validates a draft; add/adopt require signatures. |
+| `POST …/repos/actions/check`, `fetch`, `fetch_all` | member | Reread disk / refresh tracking; never pull or discard changes. |
+| `POST …/repos/actions/remove` | owner | Destructive confirm; 409 with linked open ticket count; no disk deletion. |
+| `POST …/repos/actions/remove_anyway` | owner | Options confirm must choose `choice: remove`; files remain. |
+| `POST …/repos/actions/clone_attention` | maintainer | Today core decision; exact remote/target terms checked again. |
+| `POST …/repos/actions/open_terminal` | member | Repos and Terminals pty grants required; opens owned dock shell with cd typed. |
+| `POST …/repos/actions/save_settings` | maintainer | Validated interval and fetch toggle; root is read-only. |
+| `GET /api/workspaces/:ws/tickets?repo=:name` | viewer | Exact repo-name filter, open tickets only, visibility enforced. |
+
+Permanent row URL: `/w/DEMO/addon/repos/repos?repo=web-portal&tab.repos=structure`. Ticket links use `/w/DEMO/tickets?repo=web-portal`. Existing legacy fixture repo names are explicitly shown as not declared. Git state, credentials, filesystem execution and durable scheduling remain real-host work.

@@ -168,8 +168,8 @@ export const buttonNode = z.object({
 /** Characters a link address may not carry (see linkNode.href). */
 const HIDDEN_IN_URL = /[\p{Cc}\p{Cf}\p{Z}\s]/u
 
-/** An addon page inside the app; nothing else internal (no settings, no query strings). */
-export const INTERNAL_LINK = /^\/addon\/[a-z0-9-]{1,40}\/[a-z0-9-]{1,40}$/
+/** An addon page or exact repo-filtered ticket list; the only permitted query is a repo name. No settings or arbitrary URLs. */
+export const INTERNAL_LINK = /^(?:\/addon\/[a-z0-9-]{1,40}\/[a-z0-9-]{1,40}(?:\?repo=[a-z0-9][a-z0-9._-]{0,63})?|\/tickets\?repo=[a-z0-9][a-z0-9._-]{0,63})$/
 
 export const linkNode = z.object({
   type: z.literal('link'),

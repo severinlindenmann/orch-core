@@ -937,3 +937,13 @@ The owner answered the eight open questions of REVIEW.md. Items 1, 2, 5 and 6 ch
   M3's seeded times still follow the demo clock after a reload (the log is seeded relative to "now" when turned on).
 - **Why:** review M1, controller rulings for fix round 1.
 - **Revert:** revert the M1 fix-round commit.
+
+## Owner request 2026-10-10 — Repos addon (U3)
+
+- Added the Repos preview, installed in all demo workspaces, with separate declarations and last-check observations under the host's workspace root. The addon returns core UI nodes only.
+- Core signs exact remote and destination values, checks stale clone plans, and enforces roles. Credential-bearing URLs never enter drafts. Removal changes the declaration only; an owner must explicitly override linked open tickets in an options confirmation.
+- Fetch updates remote tracking without pretending to pull or clear dirty work. Clone jobs and scheduled checks use the mock clock; `private-api` demonstrates first-attempt failure and Retry in busy data.
+- Added narrow internal links for repo-filtered tickets and expanded repo rows, using existing permanent workspace URLs. A repo shell reuses Terminals' ownership/grant checks and types a quoted `cd` without Enter.
+- Proposal and unresolved host identity/credentials, naming, scheduling and event decisions: [Repos proposal](docs/repos-addon-proposal.md). Revert by removing the catalog/fixture installation and `repos` registry import, then the narrow core integrations.
+
+- Verification follow-up: the Busy-day 50 ms Today-query budget failed intermittently in the full suite. Today now shares a request-local visible-ticket snapshot and blocker lookup across its attention sections instead of repeatedly deriving every ticket and agent. No cache crosses requests or viewers; the performance thresholds are unchanged.

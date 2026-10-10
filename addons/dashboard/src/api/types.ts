@@ -43,6 +43,8 @@ export interface WorkspaceAddon {
 }
 
 export interface Workspace {
+  /** Host workspace root; read-only in the Repos addon. */
+  root_folder?: string
   id: string
   prefix: string // DEMO
   name: string
@@ -818,6 +820,7 @@ export class ApiError extends Error {
 // ---------------------------------------------------------------- workspace event log
 
 export type WorkspaceEventType =
+  | 'repos.added' | 'repos.removed' | 'repos.checked' | 'repos.clone_queued' | 'repos.cloned' | 'repos.clone_failed' | 'repos.fetched' | 'repos.terminal_opened'
   | 'member.added' | 'member.role_changed' | 'member.removed'
   | 'gate.policy_set'
   | 'addon.installed' | 'addon.granted' | 'addon.enabled' | 'addon.disabled' | 'addon.updated' | 'addon.uninstalled'

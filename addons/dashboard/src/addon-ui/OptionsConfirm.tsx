@@ -56,6 +56,7 @@ export function OptionsConfirm({
           <DialogTitle>{chooseTitle(action, addonTitle, addon)}</DialogTitle>
           <DialogDescription>{ticket ? `About ${ticket}. ` : ''}Choose, then continue: the choices are sent with the action.</DialogDescription>
         </DialogHeader>
+        {addon === 'repos' && (action === 'remove' || action === 'remove_anyway') && <p className="text-[13px]">The folder and its files stay on disk.</p>}
         <SentArgs lines={argLines({ ...args, ...values })} />
         <FromAddon addon={addon} addonTitle={addonTitle} label={label} text={options.note} subject={subject} />
         <form

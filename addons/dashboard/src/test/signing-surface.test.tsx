@@ -79,6 +79,50 @@ const LINE = 'Routing picked this model for you, LINE-MARK'
 
 const CASES: Case[] = [
   {
+    name: 'repos clone attention decision', path: '/',
+    open: async user => {
+      const row = await screen.findByTestId('card-addon:repos.clone.billing-api', {}, T)
+      const decide = within(row).queryByRole('button', { name: 'Decide' })
+      if (decide) await user.click(decide)
+      await user.click(await within(row).findByRole('button', { name: 'Clone' }, T))
+      return dialogNamed('Decide for Repos (repos)')
+    },
+    confirm: press('Send answer'), method: 'runAddonAction', arg: 3, skip: ['confirmed'],
+    addon: ['Clone billing-api?'],
+    shown: {
+      id: v => `Decision ${v}`, option: v => `Answer: option ${v}`,
+      name: v => `Name (name): ${v}`, remote: v => `Remote (remote): ${v}`,
+      target_folder: v => `Target folder (target_folder): ${v}`,
+    },
+  },
+  ...(['clone', 'clone_all', 'add', 'adopt', 'remove', 'remove_anyway'] as const).map((action): Case => ({
+    name: `repos ${action}`,
+    path: '/addon/repos/repos',
+    setup: s => {
+      if (action === 'add') s.addonState(wsOf(s), 'repos').drafts = { p_sev: { name: 'new-repo', folder: 'new-repo', remote: 'https://git.example.test/acme/new-repo.git', branch: 'main', primary: false } }
+    },
+    open: async user => {
+      await screen.findByRole('tab', { name: 'Structure' }, T)
+      if (action === 'clone_all') await user.click(screen.getByRole('button', { name: 'Clone all missing' }))
+      else if (action === 'add') {
+        await user.click(screen.getByRole('button', { name: /Add repo/ }))
+        await user.click(await screen.findByRole('button', { name: 'Sign and add' }, T))
+      } else {
+        const folder = action === 'clone' ? 'billing-api' : action === 'adopt' ? 'sandbox' : action === 'remove_anyway' ? 'web-portal' : 'shared-lib'
+        await user.click(screen.getByRole('button', { name: `Details for ${folder}` }))
+        await user.click(screen.getByRole('button', { name: action === 'clone' ? 'Clone' : action === 'adopt' ? 'Adopt untracked' : action === 'remove_anyway' ? 'Remove anyway…' : 'Remove from list' }))
+      }
+      if (action === 'remove') return screen.findByRole('alertdialog', {}, T)
+      const dialog = await screen.findByRole('dialog', {}, T)
+      if (action === 'remove_anyway') await user.selectOptions(within(dialog).getByRole('combobox'), 'remove')
+      return dialog
+    },
+    confirm: press(action === 'remove' ? 'Confirm: Remove (remove)' : action === 'remove_anyway' ? 'Continue: Remove anyway (remove_anyway)' : 'Sign and run'),
+    method: 'runAddonAction', arg: 3, skip: ['confirmed'], args: true,
+    expectArgs: action === 'clone_all' ? ['targets'] : action === 'remove' || action === 'remove_anyway' ? ['name', 'target_folder'] : ['remote', 'target_folder'],
+  })),
+
+  {
     name: 'gate approve',
     path: '/ticket/DEMO-0044',
     open: (user) => ticketAction(user, /Approve plan/),

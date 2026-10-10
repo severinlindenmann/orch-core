@@ -6,7 +6,8 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { retryFailedPageLoads } from '../pages/lazyPage'
 import { DockArea } from '../terminal/dock/DockArea'
 import { useLiveUpdates } from '../live'
-import { WorkspaceProvider } from '../workspace'
+import { useWorkspace, WorkspaceProvider } from '../workspace'
+import { WorkspaceNotFound } from './WorkspaceNotFound'
 import { HelpSheet } from './HelpSheet'
 import { NewTicketHost } from './NewTicketHost'
 import { CommandPalette } from './palette'
@@ -37,6 +38,12 @@ function PageSkeleton() {
   )
 }
 
+/** The page, or "no such workspace" when the address names a workspace the viewer does not have. */
+function PageOutlet() {
+  const { missingPrefix } = useWorkspace()
+  return missingPrefix !== undefined ? <WorkspaceNotFound prefix={missingPrefix} /> : <Outlet />
+}
+
 export function Shell() {
   const path = useRouterState({ select: (s) => s.resolvedLocation?.href ?? s.location.href })
   return (
@@ -48,7 +55,7 @@ export function Shell() {
           <a
             href="#main"
             onClick={(e) => {
-              // Memory history: a hash link would navigate nowhere, so move the focus by hand.
+              // A hash link would become a router navigation: move the focus by hand.
               e.preventDefault()
               document.getElementById('main')?.focus()
             }}
@@ -71,7 +78,7 @@ export function Shell() {
                     />
                   )}>
                   <Suspense fallback={<PageSkeleton />}>
-                    <Outlet />
+                    <PageOutlet />
                   </Suspense>
                 </ErrorBoundary>
               </main>

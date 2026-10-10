@@ -1,6 +1,6 @@
 import type { RJSFValidationError } from '@rjsf/utils'
 import { useQuery } from '@tanstack/react-query'
-import { Link, useBlocker } from '@tanstack/react-router'
+import { Link, useBlocker, useRouter } from '@tanstack/react-router'
 import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { ArrowRight, ChevronRight, Copy, Ellipsis, ExternalLink, TriangleAlert } from 'lucide-react'
 import { addonActive } from '@/api/addons'
@@ -273,11 +273,29 @@ function TabsView({ node, depth }: { node: NodeOf<'tabs'>; depth: number }) {
   return <TabsBody key={key} storageKey={key} node={node} depth={depth} />
 }
 
+/**
+ * On an addon page the open tab is also in the address (`?tab.<node id>=<tab id>`), so a copied link opens it; an
+ * unknown tab id there falls back like any other. Elsewhere (Today, a ticket) only the remembered tab applies.
+ */
+function useTabInUrl(nodeId: string) {
+  const router = useRouter({ warn: false })
+  const loc = router?.state.location
+  const onPage = !!loc && loc.pathname.startsWith('/addon/')
+  const param = `tab.${nodeId}`
+  const fromUrl = onPage ? (loc.search as Record<string, unknown>)[param] : undefined
+  const write = (id: string) => {
+    if (onPage) void router.navigate({ to: '.', search: (prev: Record<string, unknown>) => ({ ...prev, [param]: id }), replace: true } as never)
+  }
+  return [typeof fromUrl === 'string' ? fromUrl : null, write] as const
+}
+
 function TabsBody({ storageKey, node, depth }: { storageKey: string; node: NodeOf<'tabs'>; depth: number }) {
-  const [chosen, setChosen] = useState<string | null>(() => readTab(storageKey))
+  const [urlTab, writeUrlTab] = useTabInUrl(node.id)
+  const [chosen, setChosen] = useState<string | null>(() => urlTab ?? readTab(storageKey))
   const active = node.tabs.find((t) => t.id === chosen) ?? node.tabs[0]
   const pick = (id: string) => {
     setChosen(id)
+    writeUrlTab(id)
     try {
       localStorage.setItem(storageKey, id)
     } catch {

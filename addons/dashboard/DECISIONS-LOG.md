@@ -718,3 +718,34 @@ The owner answered the eight open questions of REVIEW.md. Items 1, 2, 5 and 6 ch
 - **Decision:** (N3) core lead lines group what the addon set: "Terms set by the addon (checked again when you answer):" before a decision's term lines, and "Values set by the addon (sent exactly as shown):" before the arg lines of a `confirm: 'sign'` prompt (SignConfirm; the destructive/options "Sends" lists are unchanged). (N4) Today's and the decision node's `useDecide` snapshot the decision (id, terms, options) when an option is chosen: the prompt shows the snapshot, the post sends it, and if the live decision changed meanwhile the prompt says so ("This decision changed after you opened this prompt…") so the host's check (409 `decision.closed`) catches a stale signature. `useRunAddonAction` already posted its own snapshot. `renderApp` returns its query client for tests. (N5) the links page test waits for the lazily drawn decisions (`findByRole`); 5 of 5 parallel runs of `src/app/addons` + `src/app/pages/today` pass.
 - **Why:** re-review F3 round 2 (approved, follow-ups N3–N5).
 - **Revert:** revert this commit.
+
+## Owner request 2026-10-10 — G2 permanent URLs
+
+- **Decision:** (1) **Browser history, real paths**, is the app's only mode (local dev, `npm run preview`, a real
+  host); memory history only where a test passes an initial path. This **supersedes** the G7 note "Deep link
+  `/ticket/X` lands on Today … memory history on purpose (sandboxed viewer)". Per the owner ("we care about the local
+  setup") there is no iframe/hash fallback for the claude.ai preview; Vite `base` is now `/` so a reload on a deep
+  path finds `/assets/`. (2) **Workspace in the address** for every workspace page: `/w/<PREFIX>/…`, done with a
+  router rewrite (`src/app/urls.ts`) so the route tree and the ~60 in-app links keep their short paths. **Today is
+  per workspace** (its queries are keyed by the workspace), so it is `/w/<PREFIX>`, and `/` goes there. **Settings
+  are per workspace** too (`/w/<PREFIX>/settings/<tab>`). Tickets stay `/ticket/<KEY>` (the key names the workspace;
+  a `/w/X/ticket/K` address drops the `/w/X`). On a `/w/…` address the address is the source of truth for the
+  workspace (Back/Forward and pasted links switch); a switch on a workspace page pushes the same page in the new
+  workspace (Back returns); elsewhere the remembered workspace applies. Old paths are replaced with the current
+  workspace's address. An unknown prefix shows "No workspace <PREFIX>" and keeps the address. (3) **View state in
+  search params**, validated per field with zod (invalid → default): ticket `tab`; board `view`, `mine`, `type`,
+  `label`, `person`, `epic`, `q`; tickets filters (already); artifacts `view` and `a` (the shown artifact as
+  `<ticket>.<sha256[:12]>`, no file name); the settings addon row is the existing `/settings/addon/<name>` path. Tab
+  and artifact changes replace the history entry; filter and view changes push (like the tickets list); search text
+  replaces after 200 ms. Not in the URL: dialogs, signing prompts, the terminal dock, the demo dataset (Normal/Busy
+  day is mock data, not a place) and the review tour step. Addon page tabs (core's `tabs` node, e.g. Usage's
+  Overview / By model) are `?tab.<node id>=<tab id>` on addon pages (the remembered per-viewer tab still applies
+  when the address has none; on Today and tickets addon tabs stay local). Agents has no tabs, so no param. (4) **Copy link** on the ticket header, Settings, addon
+  pages and in ⌘K; it copies `origin + address` of the page as shown. (5) Links in the app follow the workspace: the
+  router caches built link addresses, so a workspace change gives the router a fresh rewrite (`setLinkWorkspace`),
+  which TanStack uses to drop that cache. The address replace that adds `/w/<PREFIX>` ignores navigation blockers
+  (same page, not a navigation).
+- **Why:** owner request 2026-10-10 16:52 ("copy paste a url and come back to the same page, ticket, settings etc."),
+  then "we don't care about the artifact on claude, we care about the local setup".
+- **Revert:** revert the G2 commits (router back to `createMemoryHistory({ initialEntries: ['/'] })`, `base: './'`,
+  drop `urls.ts`, `search.ts`, `copyLink.ts`, the URL hooks in board/artifacts and the ticket tab param).

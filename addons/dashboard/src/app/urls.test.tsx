@@ -174,4 +174,17 @@ describe('permanent URLs in the app', () => {
     await waitFor(() => expect(within(switcher()).getByText('DEMO')).toBeInTheDocument(), T)
     expect(address()).toBe('/w/DEMO/board')
   })
+
+  it('an addon page tab (core\'s tabs node) is in the URL: opened from it and written back', async () => {
+    const { user, address } = renderApp('/w/DEMO/addon/publish/shares?tab.publish=shares', { viewer: 'p_sev' })
+    const shares = await screen.findByRole('tab', { name: /^Shares/ }, T)
+    expect(shares).toHaveAttribute('aria-selected', 'true')
+    await user.click(screen.getByRole('tab', { name: /^Apps/ }))
+    await waitFor(() => expect(address()).toBe('/w/DEMO/addon/publish/shares?tab.publish=apps'), T)
+  })
+
+  it('an unknown addon tab in the URL falls back to the first tab', async () => {
+    renderApp('/w/DEMO/addon/publish/shares?tab.publish=nope', { viewer: 'p_sev' })
+    expect(await screen.findByRole('tab', { name: /^Apps/ }, T)).toHaveAttribute('aria-selected', 'true')
+  })
 })

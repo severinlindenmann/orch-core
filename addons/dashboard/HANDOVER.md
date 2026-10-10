@@ -294,7 +294,7 @@ Options: `--quick` (one configuration), `--docks min,max`, `--dataset busy`, `--
 tests after each small change; full suite, typecheck and build at the end of a group. Commit only `addons/dashboard`
 paths; never commit `.design-drafts/`. No realistic-looking secrets in seeds (GitHub push protection).
 
-**Preview for the owner.** Hosted preview: https://claude.ai/artifact/GrZ7aDDxWJkZcDkhtzZ4az (private to the owner's claude.ai account until shared). Local: http://127.0.0.1:5180/ (live) and
+**Preview for the owner.** Hosted preview: https://claude.ai/artifact/QvyFVD1JtFPyb3MegNXjgT (private to the owner's claude.ai account until shared). Local: http://127.0.0.1:5180/ (live) and
 http://127.0.0.1:5181/ (stable snapshot). To publish a new version:
 
 1. `npm run build`.

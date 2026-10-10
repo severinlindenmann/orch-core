@@ -108,7 +108,7 @@ describe('spark', () => {
 
 describe('stats', () => {
   it('accepts label, value, delta and role', () => {
-    ok({ type: 'stats', items: [{ label: 'Seeds', value: 31, delta: 9, role: 'ok' }, { label: 'Status', value: 'green', delta: '+2 today' }, { label: 'Old', value: 1, role: 'note' }] })
+    ok({ type: 'stats', items: [{ label: 'Seeds', value: 31, delta: 9, role: 'ok' }, { label: 'Status', value: 'green', delta: '+2 today' }, { label: 'Old', value: 1, role: 'info' }] })
   })
   it('accepts a blank value, as orch.widgets.v1 does', () => {
     ok({ type: 'stats', items: [{ label: 'a', value: '' }, { label: 'b', value: '   ' }] })
@@ -117,14 +117,18 @@ describe('stats', () => {
     expect(reason({ type: 'stats', items: [] })).toMatch(/1 to 12 numbers/)
     expect(reason({ type: 'stats', items: [{ label: 'a', value: 'x'.repeat(201) }] })).toMatch(/at most 200 characters/)
     expect(reason({ type: 'stats', items: [{ label: 'a', value: 1, role: 'decision' }] })).toMatch(/role must be ok, info, warn, err or neu/)
+    expect(reason({ type: 'stats', items: [{ label: 'a', value: 1, role: 'note' }] })).toMatch(/role must be ok, info, warn, err or neu/)
     expect(reason({ type: 'stats', items: [{ label: 'a', value: 1, unit: 'kB' }] })).toMatch(/unknown key "unit" in a stat/)
     expect(reason({ type: 'stats', items: [{ value: 1 }] })).toMatch(/label/)
   })
 })
 
 describe('gates', () => {
-  it('accepts pass/fail/skip/running with seconds; ok is another name for pass', () => {
-    ok({ type: 'gates', items: [{ name: 'build', status: 'pass', seconds: 252 }, { name: 'lint', status: 'ok' }, { name: 'test', status: 'fail' }, { name: 'docs', status: 'skip' }, { name: 'e2e', status: 'running' }] })
+  it('accepts pass/fail/skip/running with seconds', () => {
+    ok({ type: 'gates', items: [{ name: 'build', status: 'pass', seconds: 252 }, { name: 'test', status: 'fail' }, { name: 'docs', status: 'skip' }, { name: 'e2e', status: 'running' }] })
+  })
+  it('has one name per state: ok is not another name for pass', () => {
+    expect(reason({ type: 'gates', items: [{ name: 'lint', status: 'ok' }] })).toMatch(/status must be pass, fail, skip or running/)
   })
   it('refuses other states, bad seconds and unknown keys', () => {
     expect(reason({ type: 'gates', items: [{ name: 'a', status: 'warn' }] })).toMatch(/status must be pass, fail, skip or running/)
@@ -146,8 +150,9 @@ describe('diff', () => {
 })
 
 describe('callout', () => {
-  it('accepts the widgets.md roles, and note as another name for info', () => {
-    for (const role of ['ok', 'info', 'warn', 'err', 'neu', 'note']) ok({ type: 'callout', role, text: 'Mask by hour.' })
+  it('accepts the widgets.md roles, and only those (note is not another name for info)', () => {
+    for (const role of ['ok', 'info', 'warn', 'err', 'neu']) ok({ type: 'callout', role, text: 'Mask by hour.' })
+    expect(reason({ type: 'callout', role: 'note', text: 'x' })).toMatch(/role must be ok, info, warn, err or neu/)
   })
   it('refuses other roles and empty text', () => {
     expect(reason({ type: 'callout', role: 'decision', text: 'x' })).toMatch(/role must be ok, info, warn, err or neu/)

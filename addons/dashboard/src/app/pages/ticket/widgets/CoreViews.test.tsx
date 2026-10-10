@@ -100,8 +100,8 @@ describe('newer core types are drawn by core, without a frame, with words as wel
     expect(p.textContent).toMatch(/^CI time over the last 12 runs\s*\d.*now 6\.1 min\.$/s)
     expect(p.querySelector('svg[role="img"] title')!.textContent).toMatch(/min 6\.1, max 9\.1/)
   })
-  it('callout note is shown as Info', () => {
-    const { container } = draw(JSON.stringify({ type: 'callout', role: 'note', text: 'x' }))
+  it('callout info is shown as Info', () => {
+    const { container } = draw(JSON.stringify({ type: 'callout', role: 'info', text: 'x' }))
     expect(container.querySelector('[data-callout="info"]')).toHaveTextContent('Info: x')
   })
 })

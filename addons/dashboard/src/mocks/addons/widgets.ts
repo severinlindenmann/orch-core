@@ -24,7 +24,7 @@ const entry = (c: CatalogEntry) => {
   return {
     type: 'stack',
     children: [
-      { type: 'markdown', text: `### ${c.title} · \`${c.ref}\`\n\n${c.proposed ? `\`${PROPOSED_NOTE}\` ` : ''}${c.shows}${allowedNote(c)}${pin}` },
+      { type: 'markdown', text: `### ${c.title} · \`${c.ref}\`\n\n${c.proposed ? `\`${PROPOSED_NOTE}\` ` : ''}${c.shows}${c.proposedForm ? ` \`${PROPOSED_NOTE}\`: ${c.proposedForm}.` : ''}${allowedNote(c)}${pin}` },
       { type: 'widget', block: blockText(c.example), source: true },
     ],
   }

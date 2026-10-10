@@ -91,14 +91,15 @@ export function ArtifactsPage() {
 
   // Close (pane or drawer) puts focus back on the item's Preview button, or the results heading if it is gone.
   const restore = useMemo(() => ({ get current() { return previewTarget(lastKey.current) } }), [lastKey])
+  const [said, setSaid] = useState('')
   const closePane = () => {
     close()
+    setSaid('')
     requestAnimationFrame(() => restore.current?.focus())
   }
 
   // j / k inside the results: the next / previous artifact with a preview. Focus moves to its Preview button and the
   // pane follows (a drawer would take the focus away, so beside a narrow page j/k only move the focus).
-  const [said, setSaid] = useState('')
   const onResultsKey = (e: React.KeyboardEvent) => {
     if ((e.key !== 'j' && e.key !== 'k') || e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || !items) return
     const t = e.target as HTMLElement

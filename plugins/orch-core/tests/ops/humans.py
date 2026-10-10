@@ -66,6 +66,7 @@ class HumanWs(Ws):
         self.shown_secrets: list[str] = []
         self.reviews: list[str] = []  # what the terminal showed before the passphrase prompt
         self.confirm = True
+        self.expects: list[str] = []  # what the person has to type to go on: the ticket key
         self.on_review: Callable[[str], None] | None = None
         self.owner = BackedPerson(tmp_path / "keys-owner", self.provider)
         self.people = {"owner": self.owner}
@@ -82,8 +83,9 @@ class HumanWs(Ws):
         )
         return s
 
-    def review_prompt(self, text: str) -> bool:
+    def review_prompt(self, text: str, expect: str) -> bool:
         self.reviews.append(text)
+        self.expects.append(expect)
         if self.on_review is not None:
             self.on_review(text)
         return self.confirm

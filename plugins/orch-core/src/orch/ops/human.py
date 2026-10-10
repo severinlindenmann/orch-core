@@ -88,10 +88,11 @@ class _AcceptAll:
         return True
 
 
-def review_prompt(text: str) -> bool:
-    """Show ``text`` on the person's own terminal and ask whether to go on. ``/dev/tty`` only (like the passphrase), so
-    an agent holding stdin and stdout sees none of it and cannot answer; no terminal is :class:`NoPrompt`. Tests
-    replace this function."""
+def review_prompt(text: str, expect: str) -> bool:
+    """Show ``text`` on the person's own terminal and go on only if the person types ``expect`` (the ticket key) and
+    Enter after reading it. ``/dev/tty`` only (like the passphrase), so an agent holding stdin and stdout sees none of
+    it and cannot answer; no terminal is :class:`NoPrompt`. Anything else (another word, end of input, a line cut off
+    by end of input, Ctrl-C) is ``False``: nothing is signed. No flag or variable skips it. Tests replace this."""
     if os.name == "nt":  # pragma: no cover
         raise NoPrompt("no terminal to show the review on")
     try:
@@ -101,14 +102,20 @@ def review_prompt(text: str) -> bool:
     try:
         if not os.isatty(fd):
             raise NoPrompt("/dev/tty is not a terminal")
-        os.write(
-            fd,
-            ("\n=== orch: read before you sign ===\n" + text + "Continue and ask for your passphrase? [y/N] ").encode(),
-        )
+        prompt = f"Type {expect} and Enter to continue to the passphrase; anything else stops: "
+        os.write(fd, ("\n=== orch: read before you sign ===\n" + text + prompt).encode())
         line = bytearray()
-        while (c := os.read(fd, 1)) and c != b"\n":
-            line += c
-        return bytes(line).strip().lower() in (b"y", b"yes")
+        try:
+            while True:
+                c = os.read(fd, 1)
+                if not c:
+                    return False  # end of input: no newline came
+                if c == b"\n":
+                    break
+                line += c
+        except (KeyboardInterrupt, OSError):
+            return False
+        return bytes(line).strip().decode("utf-8", "replace") == expect
     finally:
         os.close(fd)
 
@@ -366,8 +373,10 @@ class Human:
         self.precheck(event, log)
         if self.ctx.dry_run:
             return None
-        if review is not None and not review_prompt("\n".join(review)):
-            raise OrchError("invalid.input", "not confirmed: nothing was signed")
+        if review is not None:
+            view = self.store.ticket(log)  # the key the person types is the verified key of the log being signed
+            if view is None or not review_prompt("\n".join(review), view.key):
+                raise OrchError("invalid.input", "not confirmed: nothing was signed")
         return self._sign_and_append(event, log, action, precommit)
 
     def recheck_source(self, view: Any, signed: list[dict[str, str]]) -> Callable[[], None]:

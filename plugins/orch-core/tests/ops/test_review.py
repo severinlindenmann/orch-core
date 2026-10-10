@@ -9,7 +9,7 @@ from tests.ops.test_verdict import repo_ticket, verdicts
 
 
 def short_hash_in(text):
-    return re.search(r"gate hash ([0-9a-f]{8}) ", text).group(1)
+    return re.search(r"gate hash ([0-9a-f]{12}) ", text).group(1)
 
 
 def test_the_review_shows_the_bound_text_and_the_hash_that_show_prints(hws, agent, me):
@@ -32,7 +32,7 @@ def test_show_prints_the_short_gate_hash_default_and_full_and_the_uid(hws, agent
     key = make_ticket(agent)
     default = agent("show", key).out
     full = agent("show", key, "--full").out
-    h = hws.view("1").gates["plan"].hash.removeprefix("sha256:")[:8]
+    h = hws.view("1").gates["plan"].hash.removeprefix("sha256:")[:12]
     assert f"plan:open#{h}" in default and f"plan:waiting#{h}" in full or f"plan:open#{h}" in full
     assert f"uid: {hws.uid('1')}" in full
 
@@ -188,3 +188,93 @@ def test_a_fail_verdict_is_not_blocked_by_an_earlier_pass_of_the_same_person(hws
     key = make_ticket(agent)
     to_testing(agent, me, hws.tmp, key)
     assert me("verdict", "fail", "--ref", key, "-m", "no").code == 0
+
+
+# ---- the confirmation on the terminal cannot be skipped
+
+
+def test_the_short_gate_hash_is_48_bits_from_the_verified_hash(hws, agent, me):
+    from orch.ops import views
+
+    key = make_ticket(agent)
+    full = hws.view("1").gates["plan"].hash
+    assert len(views.short_gate_hash(full)) == 12 and full.removeprefix("sha256:").startswith(
+        views.short_gate_hash(full)
+    )
+    assert me("approve", "requirements", "--ref", key).code == 0
+    assert len(short_hash_in(hws.reviews[0])) == 12  # the same length and function in show and in the review
+    shown = agent("show", key).out
+    assert re.search(r"plan:open#[0-9a-f]{12}\b", shown)
+
+
+def test_a_review_that_is_not_confirmed_signs_nothing(hws, agent, me):
+    key = make_ticket(agent)
+    hws.confirm = False
+    for argv in (("approve", "requirements"), ("request-changes", "plan", "-m", "x"), ("verdict", "pass")):
+        r = me(*argv, "--ref", key, "--json")
+        assert r.code != 0 and hws.provider.requests == []
+    assert me("close", key, "--json").code != 0 and hws.expects[-1] == key  # what the person types is the ticket key
+    assert len(hws.events("1")) == len([e for e in hws.events("1") if e["actor"]["kind"] != "person"])
+
+
+def run_review(*typed: bytes) -> str:
+    """``human.review_prompt`` in a child process on a real pty; ``typed`` is written one chunk at a time after the
+    prompt. Returns what the child printed: True or False."""
+    import os
+    import pty
+    import select
+    import sys
+    import time
+
+    code = "from orch.ops import human; print('RESULT', human.review_prompt('content', 'DEMO-0001'), flush=True)"
+    r, w = os.pipe()
+    pid, tty = pty.fork()
+    if pid == 0:
+        os.dup2(w, 1)
+        os.execv(sys.executable, [sys.executable, "-c", code])
+    os.close(w)
+    buf = b""
+    sent = 0
+    end = time.time() + 20
+    while time.time() < end:
+        ready, _, _ = select.select([tty], [], [], 0.2)
+        if ready:
+            try:
+                chunk = os.read(tty, 4096)
+            except OSError:
+                break
+            if not chunk:
+                break
+            buf += chunk
+            if sent < len(typed) and b"anything else stops: " in buf:
+                os.write(tty, typed[sent])
+                sent += 1
+    os.waitpid(pid, 0)
+    out = os.read(r, 4096).decode()
+    os.close(r)
+    os.close(tty)
+    assert "RESULT" in out, (out, buf)
+    return out.split()[-1]
+
+
+def test_the_terminal_confirmation_needs_the_ticket_key_and_nothing_else_passes():
+    assert run_review(b"DEMO-0001\n") == "True"
+    assert run_review(b"y\n") == "False"
+    assert run_review(b"yes\n") == "False"
+    assert run_review(b"q\n") == "False"
+    assert run_review(b"\n") == "False"
+    assert run_review(b"DEMO-0002\n") == "False"
+    assert run_review(b"\x04") == "False"  # end of input
+    assert run_review(b"DEMO-0001\x04") == "False"  # the line was cut off by end of input: no Enter was typed
+    assert run_review(b"\x03") == "False"  # Ctrl-C
+
+
+def test_without_a_terminal_there_is_no_confirmation():
+    import subprocess
+    import sys
+
+    code = "from orch.ops import human; human.review_prompt('x', 'DEMO-0001')"
+    p = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, start_new_session=True, input="DEMO-0001\n"
+    )
+    assert p.returncode != 0 and "NoPrompt" in p.stderr

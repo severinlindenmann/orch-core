@@ -99,7 +99,7 @@ class Fork(Ws):
 NORMAL = [
     (re.compile(r"p_[0-9a-f]{32}"), "p_PERSON"),
     (re.compile(r"gr_[0-7][0-9A-HJKMNP-TV-Z]{25}"), "gr_GRANT"),
-    (re.compile(r"#[0-9a-f]{8}\b"), "#GATEHASH"),
+    (re.compile(r"#[0-9a-f]{12}\b"), "#GATEHASH"),
     (re.compile(r"exit0/[0-9]+ms"), "exit0/Nms"),
     (re.compile(r'"ms":[0-9]+'), '"ms":N'),
     (re.compile(r"\[[0-9a-f]{8}\]"), "[NONCE]"),

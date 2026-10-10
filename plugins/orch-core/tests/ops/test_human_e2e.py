@@ -45,7 +45,14 @@ def agent_bin(ws, grant, *argv, stdin=None):
     return p
 
 
-def person(ws, *argv, passphrase=PASSPHRASE, answer="y"):
+def key_of(argv):
+    """The ticket key a person types to go on (the review names it): the --ref value, or the REF argument."""
+    if "--ref" in argv:
+        return argv[argv.index("--ref") + 1]
+    return next(a for a in argv if re.fullmatch(r"DEMO-\d+", a))
+
+
+def person(ws, *argv, passphrase=PASSPHRASE, answer=None):
     """Run ``orch`` as the person at a terminal. Returns ``(exit code, stdout, stderr, what the terminal showed)``."""
     env = {"PATH": "/usr/bin:/bin", "HOME": str(ws.tmp), "ORCH_STATE_DIR": str(ws.host_state), "TERM": "dumb"}
     out_r, out_w = os.pipe()
@@ -75,8 +82,8 @@ def person(ws, *argv, passphrase=PASSPHRASE, answer="y"):
             if not chunk:
                 break
             shown += chunk
-            if answer is not None and not confirmed and b"[y/N] " in shown:
-                os.write(tty, answer.encode() + b"\n")  # read after the review, as a person does
+            if not confirmed and b"and Enter to continue to the passphrase; anything else stops: " in shown:
+                os.write(tty, (answer or key_of(argv)).encode() + b"\n")  # read after the review, as a person does
                 confirmed = True
             if not typed and b"Passphrase: " in shown:
                 # a person types after the prompt is up and the terminal no longer echoes (the prompt flushes input

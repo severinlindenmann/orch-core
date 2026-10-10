@@ -1392,11 +1392,12 @@ operation).
   for any of them. The ticket is named with `--ref` (a person has no claim, so there is no "my claim" default:
   ambiguous_ref); a ticket the signer may not see, and a key that does not exist, give the same not_found (§9).
 - **The review (§5.7: "the prompt shows the text").** For `approve`, `request-changes` and `verdict`, before the
-  passphrase prompt, orch writes the gated content to `/dev/tty` exactly as the gate hash binds it and asks "Continue?
-  [y/N]": the ticket key (derived by orch from the log id, labelled as not signed) and the log id, then the gate's section
+  passphrase prompt, orch writes the gated content to `/dev/tty` exactly as the gate hash binds it and asks the person to
+  type the ticket key and Enter (anything else, end of input, Ctrl-C: nothing is signed; no flag or variable skips it;
+  no terminal is custody.no_prompt): the ticket key (derived by orch from the log id, labelled as not signed) and the log id, then the gate's section
   texts (each checked against its hash), acceptance criteria, tasks with their verify commands, links, the source list
-  and the artifact names with digests, then the short gate hash (the first 8 hex digits). `orch show` prints the same
-  8 digits per open gate (`plan:open#8163ab12`), and `show --full` prints the ticket's log id, so a person can compare
+  and the artifact names with digests, then the short gate hash (the first 12 hex digits, 48 bits, of the verified gate hash). `orch show`
+  prints the same 12 digits per open gate (`plan:open#8163ab12cd34`), and `show --full` prints the ticket's log id, so a person can compare
   what they read earlier with what they sign. Ticket text is data: every line is escaped and starts with `| `. The other
   ticket operations show the key, the log id and the title or question. There is no pager: a long text scrolls. If the
   content changes while the person reads or types, the append is refused as gate.stale. The decisive fields of the

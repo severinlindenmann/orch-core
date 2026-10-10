@@ -13,9 +13,9 @@ from orch.ops.runtime import short
 
 
 def short_gate_hash(h: str | None) -> str:
-    """The first 8 hex digits of a gate hash: what ``orch show`` prints per open gate and what the signing review
-    prints last, so a person can compare the two (F1 5.7)."""
-    return (h or "").removeprefix("sha256:")[:8] or "-"
+    """The first 12 hex digits (48 bits) of the verified gate hash: what ``orch show`` prints per open gate and
+    what the signing review prints last, so a person can compare the two (F1 5.7)."""
+    return (h or "").removeprefix("sha256:")[:12] or "-"
 
 
 def fence(text: str, label: str = "ticket") -> list[str]:

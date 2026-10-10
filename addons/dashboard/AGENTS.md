@@ -177,10 +177,12 @@ and Review tour for repeatable manual checks. Mock time starts at `2026-10-09T11
   is mirrored by `src/app/review/scenarios.ts`; keep them consistent.
 - `HANDOVER.md`: backend contract, endpoint-to-operation mapping, routes, provisional event
   types and known gaps. Mock behavior is not automatically an accepted core contract.
-- `docs/concept-mandates.md`: Step 1 pilot concept; later steps remain future decisions.
+- `docs/concept-mandates.md`: mandates (owner decision 10 Oct evening: workspace-wide, renewable, never another
+  mandate; protected paths always human). The dashboard shows it only as a labelled preview.
+- `docs/factory-full-run-proposal.md`: the factory full run (Preview / Deliver, hold with Stop; no operation shortens a hold).
+- `docs/repos-addon-proposal.md`: the Repos addon over the format's `settings.repos` (remote/default_branch are a proposed amendment).
 - `docs/workspace-links-proposal.md`: peer trust, signed terms, scopes and open questions.
 - `docs/widgets-v1-proposal.md`: proposed widget additions, not an already changed v1 spec.
 - `docs/plans/2026-10-08-complete-mockup.md`: historical implementation plan; current code
   and later decisions supersede old routing/publishing instructions.
-- Factory full-run and repos proposals are not present in this checkout. Check `docs/` when
-  those tasks land; do not invent filenames or treat planned behavior as implemented.
+- Mock behaviour described in these proposals is not an accepted core contract until it is in docs/architecture.

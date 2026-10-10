@@ -128,8 +128,9 @@ function SandboxFrame({ node, srcDoc, fallback, fitContent }: { node: NodeOf<'fr
     return known === undefined ? FIT_START : { ...FIT_START, fit: Math.min(node.height, known) }
   })
   useEffect(() => {
-    if (fitContent && fit.fit !== null) rememberFit(srcDoc, fit.fit)
-  }, [fitContent, srcDoc, fit.fit])
+    // Only a height the frame settled at: not a probe that may be rolled back, nor while a shrink is held.
+    if (fitContent && fit.fit !== null && !fit.probing && fit.held === null) rememberFit(srcDoc, fit.fit)
+  }, [fitContent, srcDoc, fit.fit, fit.probing, fit.held])
   // `fitContent`: the document is core's frame document, whose size reporter posts its content height. Only messages
   // from this frame's own window count, and only a number: the frame shrinks to it, never past `node.height`, and
   // never in a loop (stepFit).

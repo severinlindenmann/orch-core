@@ -7,6 +7,7 @@ import type { ReactNode } from 'react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { usePageHeader } from '../shell/ShellUi'
 import { TABS } from './settings/tabs'
+import { WIDE_QUERY } from './today/shared'
 
 /** As the router's pending component the skeleton sets the topbar title; inside a page (`inPage`) the page does. */
 function Title({ title }: { title: string }) {
@@ -49,7 +50,7 @@ function Panel({ rows, rowH = 'h-11' }: { rows: number; rowH?: string }) {
   )
 }
 
-export function TodaySkeleton({ wide = typeof window === 'undefined' || window.matchMedia?.('(min-width: 1280px)').matches !== false, inPage }: { wide?: boolean } & Placement) {
+export function TodaySkeleton({ wide = typeof window === 'undefined' || window.matchMedia?.(WIDE_QUERY).matches !== false, inPage }: { wide?: boolean } & Placement) {
   const queue = (
     <div className="min-w-0 space-y-3">
       <Panel rows={3} />

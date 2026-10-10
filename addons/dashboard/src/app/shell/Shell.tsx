@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import { Outlet, useRouterState } from '@tanstack/react-router'
 import { ErrorBoundary, PageProblem } from '@/components/ErrorBoundary'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -24,6 +24,23 @@ function Shortcuts() {
   return null
 }
 
+/** The addon renderers (widgets, forms, markdown, charts, terminal) load once the app is idle: ticket panels and
+ * addon blocks then render at once, without a placeholder of another size. */
+function PreloadAddonNodes() {
+  useEffect(() => {
+    if (import.meta.env.MODE === 'test') return
+    const go = () => void import('@/addon-ui/preloadNodes').then((m) => m.preloadAddonNodes())
+    const w = window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number; cancelIdleCallback?: (id: number) => void }
+    if (w.requestIdleCallback) {
+      const id = w.requestIdleCallback(go, { timeout: 3000 })
+      return () => w.cancelIdleCallback?.(id)
+    }
+    const t = setTimeout(go, 1500)
+    return () => clearTimeout(t)
+  }, [])
+  return null
+}
+
 function LiveUpdates() {
   useLiveUpdates()
   return null
@@ -43,6 +60,7 @@ export function Shell() {
   return (
     <WorkspaceProvider>
       <LiveUpdates />
+      <PreloadAddonNodes />
       <ShellUiProvider>
         <Shortcuts />
         <TooltipProvider delayDuration={250}>

@@ -5,7 +5,7 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { ChevronLeft, ChevronUp, SquareTerminal } from 'lucide-react'
-import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { TerminalSessionView } from '@/api/terminals'
 import { AddonBadge } from '@/addon-ui/AddonBadge'
 import { addonHairline } from '@/addon-ui/addonClasses'
@@ -41,10 +41,12 @@ export function useDockAllowed(): boolean {
  */
 export function useDockSqueezesNow(): boolean {
   const allowed = useDockAllowed()
-  const me = useQuery(queries.me())
+  const person = useQuery(queries.me()).data?.person
+  // Read from storage once per viewer, not on every render of the shell.
+  const prefs = useMemo(() => readDockPrefs(person), [person])
   if (!allowed || typeof window === 'undefined') return false
   const view = { width: window.innerWidth, height: window.innerHeight }
-  return dockSqueezesSidebar(readDockPrefs(me.data?.person), view, { wide: SIDEBAR_WIDE, rail: SIDEBAR_RAIL, squeeze: RAIL_SQUEEZE })
+  return dockSqueezesSidebar(prefs, view, { wide: SIDEBAR_WIDE, rail: SIDEBAR_RAIL, squeeze: RAIL_SQUEEZE })
 }
 
 /** Ctrl+` opens or collapses the dock, from anywhere (also from inside a terminal), unless a dialog is open. */

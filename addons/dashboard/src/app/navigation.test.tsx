@@ -213,3 +213,12 @@ describe('pages say when they could not load (G4 review M5)', () => {
     }
   })
 })
+
+describe('a workspace switch is another page (G4 review M7)', () => {
+  it('samePage: the workspace counts only when both addresses name one', async () => {
+    const { samePage } = await import('./shell/pageMotion')
+    expect(samePage('|/board', 'DEMO|/board')).toBe(true)
+    expect(samePage('DEMO|/board', 'OPS|/board')).toBe(false)
+    expect(samePage('DEMO|/board', 'DEMO|/tickets')).toBe(false)
+  })
+})

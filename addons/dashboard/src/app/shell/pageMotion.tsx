@@ -8,16 +8,30 @@
 import { useRouter, useRouterState } from '@tanstack/react-router'
 import { useEffect, useLayoutEffect, useRef, type ReactNode, type RefObject } from 'react'
 import { canAnimate, DURATION, EASE_OUT } from '@/lib/motion'
+import { splitWorkspacePath } from '../urls'
 
 export const FADE_MS = DURATION.base
 
-/** The page the router shows (skeleton or page): the leaf match's path, without the search. */
+/** The workspace part of an address (`/w/DEMO/board` → DEMO): the same in-app path in another workspace is another page. */
+const prefixOf = (publicHref: string) => splitWorkspacePath(new URL(publicHref, 'http://x').pathname).prefix ?? ''
+
+/** The page the router shows (skeleton or page): the leaf match's path and the address's workspace, without the search. */
 function useShownPath(): string {
-  return useRouterState({ select: (s) => s.matches.at(-1)?.pathname ?? s.location.pathname })
+  return useRouterState({ select: (s) => `${prefixOf(s.location.publicHref)}|${s.matches.at(-1)?.pathname ?? s.location.pathname}` })
 }
 
 /** The settings sections are one page with a sub-nav: switching them is not a page change for the fade. */
-const fadeKeyOf = (path: string) => (path.startsWith('/settings') ? '/settings' : path)
+const fadeKeyOf = (key: string) => key.replace(/\|\/settings.*$/, '|/settings')
+
+/**
+ * Whether two `<prefix>|<path>` keys are the same page. The workspace counts only when both addresses name one: an
+ * address the app completes (`/board` → `/w/DEMO/board`) is the same page, a switch DEMO → OPS is another.
+ */
+export function samePage(a: string, b: string): boolean {
+  const [pa, ...ra] = a.split('|')
+  const [pb, ...rb] = b.split('|')
+  return ra.join('|') === rb.join('|') && (!pa || !pb || pa === pb)
+}
 
 type HistoryMove = 'PUSH' | 'REPLACE' | 'BACK' | 'FORWARD' | 'GO'
 
@@ -35,7 +49,7 @@ export function usePageScroll(main: RefObject<HTMLElement | null>) {
     select: (s) => {
       const l = s.resolvedLocation ?? s.location
       const st = l.state as { __TSR_key?: string; key?: string } | undefined
-      return `${l.pathname}\n${st?.__TSR_key ?? st?.key ?? l.href}`
+      return `${prefixOf(l.publicHref)}|${l.pathname}\n${st?.__TSR_key ?? st?.key ?? l.href}`
     },
   })
   const saved = useRef(new Map<string, number>())
@@ -73,8 +87,9 @@ export function usePageScroll(main: RefObject<HTMLElement | null>) {
   // Another page shows (its skeleton too): the top, unless Back/Forward brings a page back (restored below).
   const lastShown = useRef(shownPath)
   useLayoutEffect(() => {
-    if (lastShown.current === shownPath) return
+    const was = lastShown.current
     lastShown.current = shownPath
+    if (samePage(was, shownPath)) return
     if (!back() && main.current) main.current.scrollTop = 0
   }, [shownPath, main])
 
@@ -86,7 +101,7 @@ export function usePageScroll(main: RefObject<HTMLElement | null>) {
     moving.current = false
     if (!el || !prev || prev.entry === entry) return
     // The same page with another search (a filter, a tab): the new entry keeps the scroll.
-    if (prev.path === path) {
+    if (samePage(prev.path, path)) {
       saved.current.set(entry, el.scrollTop)
       return
     }
@@ -104,7 +119,7 @@ export function PageFade({ children }: { children: ReactNode }) {
     last.current = fadeKey
     // Not on the first page of the session (the app's own first paint), nor without a page change.
     const el = box.current
-    if (prev === null || prev === fadeKey || !canAnimate(el)) return
+    if (prev === null || samePage(prev, fadeKey) || !canAnimate(el)) return
     el.getAnimations?.().forEach((a) => a.cancel())
     el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: FADE_MS, easing: EASE_OUT })
   }, [fadeKey])

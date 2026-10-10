@@ -57,7 +57,8 @@ const ticketRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'ticket/$key',
   validateSearch: validateTicketSearch,
-  loader: ({ context, params }) => pageLoader(ticketData(params.key), [TicketPage.preload, addonNodes])({ context }),
+  // The addon renderers a ticket's panels use load when the app is idle (Shell), not on every hovered ticket link.
+  loader: ({ context, params }) => pageLoader(ticketData(params.key), [TicketPage.preload])({ context }),
   pendingComponent: function TicketPending() {
     const { key } = ticketRoute.useParams()
     return <TicketSkeleton title={key} />
@@ -147,7 +148,8 @@ export function createAppRouter(initialPath?: string, queryClient?: QueryClient,
     rewrite: workspaceRewrite(urls),
     // Hovering or focusing a link loads the page's code and data, so the click usually shows the page at once.
     defaultPreload: 'intent',
-    defaultPreloadDelay: 50,
+    // Long enough that moving the pointer down a list of ticket links does not load each of them.
+    defaultPreloadDelay: 100,
     // The query cache decides freshness; the router keeps a preloaded result long enough for the click that follows.
     defaultPreloadStaleTime: 0,
     defaultPendingMs: opts.pendingMs ?? PENDING_MS,

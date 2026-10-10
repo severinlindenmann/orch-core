@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useNavigate, useSearch } from '@tanstack/react-router'
+import { useNavigate, useRouter, useSearch } from '@tanstack/react-router'
 import { ChevronDown, Tag, Terminal, X } from 'lucide-react'
 import { addonActive } from '@/api/addons'
 import { api } from '@/api/client'
@@ -222,9 +222,12 @@ export function TicketsPage() {
   const searchRef = useRef<HTMLInputElement>(null)
   const state = useRef({ rows: navRows, focusKey, canBulk })
   state.current = { rows: navRows, focusKey, canBulk }
+  const router = useRouter()
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented) return
+      // Another page is loading: this one may be hidden under its skeleton, so its keys are off (G4 review M4).
+      if (router.state.status === 'pending' && router.state.location.pathname !== '/tickets') return
       const target = e.target as HTMLElement | null
       if (typingTarget(target)) return
       const { rows: list, focusKey: cur, canBulk: bulk } = state.current

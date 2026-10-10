@@ -15,6 +15,8 @@ import { ReviewTour } from '../review/ReviewTour'
 import { useShellActions, useShellState } from './ShellUi'
 import { toastApiError } from '@/app/toast'
 import { queries } from '@/api/queries'
+import { useMandatesOp, useMandatesPreview } from '../mandates/shared'
+import { useWorkspace } from '../workspace'
 
 const TITLES: Record<string, string> = {
   '/': 'Today',
@@ -100,6 +102,7 @@ export function Topbar() {
             <RotateCcw className="size-3" />
             Reset demo
           </button>
+          <MandatesPreviewToggle />
           <ReviewTour />
         </Badge>
       </div>
@@ -135,5 +138,27 @@ export function Topbar() {
         </Button>
       )}
     </header>
+  )
+}
+
+/** Demo data: "Preview: mandates" turns the mandates preview on with a seeded mandate in force (owners only). */
+function MandatesPreviewToggle() {
+  const { workspace } = useWorkspace()
+  const role = useRole()
+  const ws = workspace?.id
+  const q = useMandatesPreview(ws, { poll: false })
+  const op = useMandatesOp(ws)
+  if (!role || !can(role, 'settings') || !q.data) return null
+  const on = q.data.on
+  return (
+    <button
+      type="button"
+      aria-pressed={on}
+      title="A non-functional preview of the proposed mandates pilot. Nothing signs."
+      onClick={() => void op(on ? { op: 'disable' } : { op: 'enable', seed: true }, on ? 'Mandates preview off' : 'Mandates preview on')}
+      className={cn('rounded-sm px-1 text-[11px]', on ? 'bg-surface-3 text-text' : 'text-text-muted hover:bg-surface-3 hover:text-text')}
+    >
+      Preview: mandates
+    </button>
   )
 }

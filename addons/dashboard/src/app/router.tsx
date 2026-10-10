@@ -7,7 +7,7 @@ import { AddonPageSkeleton, AgentsSkeleton, ArtifactsSkeleton, BoardSkeleton, Ge
 import { SETTINGS_TABS } from './pages/settings/tabs'
 import { validateTicketsSearch } from './pages/tickets/search'
 import { addonPageData, agentsData, artifactsData, boardData, loadShell, pageLoader, settingsData, ticketData, ticketsData, todayData, type LoaderContext } from './routeData'
-import { validateArtifactsSearch, validateBoardSearch, validateTicketSearch } from './search'
+import { validateAgentsSearch, validateArtifactsSearch, validateBoardSearch, validateTicketSearch } from './search'
 import { workspaceRewrite, type UrlState } from './urls'
 
 // Every page is its own chunk. The route loaders load it (and warm the page's data) before the router shows the page:
@@ -82,7 +82,17 @@ const artifactsRoute = createRoute({
     return <ArtifactsSkeleton view={view ?? 'list'} />
   },
 })
-const agentsRoute = createRoute({ getParentRoute: () => rootRoute, path: 'agents', component: AgentsPage, loader: pageLoader(agentsData, [AgentsPage.preload]), pendingComponent: AgentsSkeleton })
+const agentsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'agents',
+  validateSearch: validateAgentsSearch,
+  component: AgentsPage,
+  loader: pageLoader(agentsData, [AgentsPage.preload]),
+  pendingComponent: function AgentsPending() {
+    const { tab } = agentsRoute.useSearch()
+    return <AgentsSkeleton tab={tab ?? 'sessions'} />
+  },
+})
 const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'settings',

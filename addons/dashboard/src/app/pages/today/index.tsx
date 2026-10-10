@@ -24,6 +24,8 @@ import { ApprovalRow, DecisionRow, FoldRow, NewItemContext, SigningContext, Ques
 import { AgentsBar, AgentsPanel, Glance, GLANCE_TILES, Recently } from './side'
 import { displayName, useMediaQuery, useSessionState, WIDE_QUERY, type Directory } from './shared'
 import { queries } from '@/api/queries'
+import { DecidedForYou } from '../../mandates/DecidedForYou'
+import { useMandatesPreview } from '../../mandates/shared'
 
 function dateLine(now: string) {
   return new Date(now).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' })
@@ -114,9 +116,11 @@ export function TodayPage() {
   // The owner's connections are part of Today's first screen (attention.ready): a failure there says so too.
   const connectionsQ = useConnections(can(role, 'settings') ? ws : undefined)
   const failure = useLoadFailure(today, agentsQ, decisionsQ, connectionsQ)
+  // Mandates, PREVIEW ONLY: the digest is part of the first screen when the preview is on (warmed by the shell loader).
+  const mandatesQ = useMandatesPreview(ws, { poll: false })
 
   if (failure.failed) return <LoadFailed what="Today" onRetry={failure.retry} />
-  if (!today.data || !agentsQ.data || !me.data || !decisionsQ.data || !role || dataset.isPending || stale || !attention.ready || glanceWaiting) {
+  if (!today.data || !agentsQ.data || !me.data || !decisionsQ.data || !role || dataset.isPending || stale || !attention.ready || glanceWaiting || (mandatesQ.isPending && !!ws)) {
     return <TodaySkeleton inPage />
   }
   // A new workspace or person starts a new queue (its own accepted order and open row).
@@ -313,6 +317,7 @@ function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention, g
         )}
       </div>
       <ReloginGroup now={now} />
+      {!readOnly && ws && <DecidedForYou ws={ws} now={now} />}
       {readOnly ? [...byPerson].map(([person, personEntries]) => (
         <PersonSummary key={person} person={person} entries={personEntries} scope={scope} renderRow={renderRow} />
       )) : groups.map((g) => (

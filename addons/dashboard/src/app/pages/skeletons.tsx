@@ -169,15 +169,34 @@ export function TicketSkeleton({ title, inPage }: { title: string } & Placement)
   )
 }
 
-export function AgentsSkeleton({ inPage }: Placement = {}) {
+/** The Agents tabs, drawn for real in the skeleton (their names are known up front). */
+export const AGENTS_TAB_ROW = 'flex h-9 items-center gap-1 border-b border-border'
+
+export function AgentsSkeleton({ inPage, tab = 'sessions' }: Placement & { tab?: 'sessions' | 'mandates' }) {
   return (
     <Loading title="Agents" className="max-w-[1040px] space-y-5" inPage={inPage}>
       <div>
         <H1>Agents</H1>
         <Skeleton className="mt-1 h-4 w-80" />
       </div>
-      <Panel rows={3} />
-      <Panel rows={2} />
+      <div className="space-y-4">
+        <div className={AGENTS_TAB_ROW}>
+          <span className="px-2 text-sm font-medium text-text-muted">Sessions</span>
+          <span className="px-2 text-sm font-medium text-text-muted">Mandates</span>
+        </div>
+        {tab === 'mandates' ? (
+          <>
+            <Skeleton className="h-5 w-full max-w-xl" />
+            <Panel rows={4} rowH="h-12" />
+            <Panel rows={2} />
+          </>
+        ) : (
+          <>
+            <Panel rows={3} />
+            <Panel rows={2} />
+          </>
+        )}
+      </div>
     </Loading>
   )
 }

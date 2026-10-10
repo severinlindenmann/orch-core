@@ -43,3 +43,9 @@ export type BoardSearch = ReturnType<typeof validateBoardSearch>
 /** /artifacts?view=grid&a=<artifact id> */
 export const validateArtifactsSearch = tolerant({ view: z.enum(ARTIFACT_VIEWS), a: text })
 export type ArtifactsSearch = ReturnType<typeof validateArtifactsSearch>
+
+/** /agents?tab=mandates (Sessions is the default and is left out). Mandates is a PREVIEW (docs/concept-mandates.md). */
+export const AGENTS_TABS = ['sessions', 'mandates'] as const
+export type AgentsTab = (typeof AGENTS_TABS)[number]
+export const validateAgentsSearch = tolerant({ tab: z.enum(AGENTS_TABS) })
+export type AgentsSearch = ReturnType<typeof validateAgentsSearch>

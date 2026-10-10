@@ -854,3 +854,27 @@ The owner answered the eight open questions of REVIEW.md. Items 1, 2, 5 and 6 ch
   better when navigating through the app"). Before/after numbers in the G4 hand-back.
 - **Revert:** revert the G4 commits on `ux/g4` (router back to plain `lazyPage` without loaders/pending options, the
   Shell's `<Suspense fallback={<PageSkeleton />}>`, per-request mock latency).
+
+## G4 calm navigation: review fixes (round 1)
+
+- **Decision:** (1) **One definition per query** (`src/api/queries.ts`, TanStack `queryOptions`): the pages
+  (`useQuery({ ...queries.today(ws!), enabled: !!ws })`) and the route loaders (`ensureQueryData(queries.today(id))`)
+  use the same factory, so their keys and functions cannot drift; keys are unchanged; `addonStateKey` lives there now.
+  (2) **Scroll with a pending page:** the offset is saved when a navigation starts and scroll events are ignored
+  while the next page loads (the hidden old page made the browser clamp it), a new page starts at the top as soon as
+  its skeleton shows, Back restores once the page is in. (3) **Artifacts** gets a loader (the unfiltered first page,
+  G3's key) and an `ArtifactsSkeleton` (list or grid by `?view=`) as the route's pending component and in place of
+  the 3 × h-10 placeholders; G3's interaction model is unchanged. (4) G3 nits: `?a=` shared by two files with the same
+  content picks the one last chosen; when the shown artifact leaves the results while focus is in the wide pane,
+  focus goes to its Preview button or the results heading; without the viewer the page shows the list. (5) Today's
+  first screen also waits for the Glance's addon states (at most 1.5 s, once; a later reload never sends it back to
+  the skeleton). Today, Agents and Settings show "Could not load …" with Retry when the viewer, the workspaces or
+  their own data fail. The ticket loader reads the ticket's own workspace from its key; Today's loader reads the
+  tickets of the list it shows (by role). A workspace switch on the same page is a page change (top, fade). The
+  Tickets page's keys are off while another page loads. Fitted frames remember settled heights only. The addon
+  renderers load when the app is idle instead of with every hovered ticket link; intent preload waits 100 ms. The
+  dock squeeze reads storage once per viewer; the Today skeleton uses `WIDE_QUERY`.
+- **Not done:** the root's blank wait for the shell data keeps its 1.5 s cap (a shorter one would trade a blank
+  moment for a shell that fills in after paint); the hidden old page's queries keep polling while the next loads.
+- **Why:** review G4 (I1, I2, M1–M10) and review G3 re-review nits N1–N3; controller fix round 1.
+- **Revert:** revert the G4 fix-round commits.

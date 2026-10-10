@@ -36,7 +36,7 @@ describe('widgets addon page', () => {
     const core = screen.getByRole('heading', { level: 2, name: `Core types (${CORE_TYPES.length})` })
     const templates = screen.getByRole('heading', { level: 2, name: /Templates/ })
     expect(core.compareDocumentPosition(templates)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
-    expect(screen.getAllByText(PROPOSED_NOTE)).toHaveLength(CATALOG.filter((c) => c.proposed).length)
+    expect(screen.getAllByText(PROPOSED_NOTE)).toHaveLength(CATALOG.filter((c) => c.proposed || c.proposedForm).length)
     // Said once per section; an entry repeats it only when its rule differs (checks), or adds to it ("Also:").
     const own = CATALOG.filter((c) => ![CORE_ALLOWED, TEMPLATE_ALLOWED].some((base) => c.allowed.startsWith(base)))
     expect(screen.getAllByText(/Where it's allowed:/)).toHaveLength(2 + own.length)

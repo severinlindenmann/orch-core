@@ -15,6 +15,21 @@ interface App {
   status: 'running' | 'stopped' | 'failed'
   recipients: number
   log: string[]
+  /** Simulated host numbers for the row's details (see appStats); seeded, changed by start/stop/redeploy. */
+  stats?: AppStats
+}
+interface AppStats {
+  /** When the app got its current status. */
+  since: string
+  deploy: { commit: string; at: string; ok: boolean }
+  /** CPU % and memory while running. */
+  cpu: number
+  mem_mb: number
+  mem_quota_mb: number
+  disk_mb: number
+  disk_quota_mb: number
+  /** Requests per hour over the last 24 hours, oldest first. */
+  requests: number[]
 }
 type ShareKind = 'public link' | 'secret link' | 'sealed' | 'show-once'
 interface Share {
@@ -51,6 +66,97 @@ const seedApps = (): App[] => [
     log: ['Installing requirements.txt', 'ERROR: pandas==2.3.1 requires numpy>=2.0', 'Traceback (most recent call last):', "ModuleNotFoundError: No module named 'meter_utils'", 'Build failed (exit 1)'],
   },
 ]
+/** The mock's "now" (store MOCK_EPOCH), which the seeded app times count back from. */
+const SEED_NOW = Date.parse('2026-10-09T11:30:00Z')
+
+/**
+ * Seeded, stable host numbers for an app (mock only): disk, memory, CPU, the last deploy and 24 hours of requests
+ * (an app that is not running served nothing). `seedIndex` picks the demo apps' fixed "since" times.
+ */
+function appStats(x: Pick<App, 'id' | 'status'>, seedIndex: number): AppStats {
+  let h = 0
+  for (const ch of x.id) h = (h * 31 + ch.charCodeAt(0)) % 2147483647
+  const rand = () => {
+    h = (h * 1103515245 + 12345) % 2147483648
+    return h / 2147483648
+  }
+  const hex = Array.from({ length: 7 }, () => '0123456789abcdef'[Math.floor(rand() * 16)]).join('')
+  const sinceH = [27.8, 43.4, 3.3][seedIndex] ?? 2 + Math.floor(rand() * 60)
+  const since = new Date(SEED_NOW - sinceH * 3_600_000).toISOString().replace(/:\d{2}\.\d{3}Z$/, ':00Z')
+  const deployAt = new Date(Date.parse(since) - 2 * 60_000).toISOString()
+  const quota = x.status === 'running' ? 5120 : 2048
+  const ranHours = x.status === 'running' ? 24 : 0
+  return {
+    since,
+    deploy: { commit: hex, at: deployAt.replace(/\.\d{3}Z$/, 'Z'), ok: x.status !== 'failed' },
+    cpu: 4 + Math.floor(rand() * 30),
+    mem_mb: 180 + Math.floor(rand() * 600),
+    mem_quota_mb: 1024,
+    disk_mb: 300 + Math.floor(rand() * 1700),
+    disk_quota_mb: quota,
+    requests: Array.from({ length: 24 }, (_, i) => (i >= 24 - ranHours ? Math.round((20 + rand() * 60) * (i % 24 > 8 && i % 24 < 20 ? 1.6 : 0.5)) : 0)),
+  }
+}
+const withStats = (list: App[]): App[] => list.map((x, i) => ({ ...x, stats: x.stats ?? appStats(x, i) }))
+const statsOf = (x: App): AppStats => (x.stats ??= appStats(x, -1))
+
+const RECIPIENTS = ['Mara', 'Severin', 'Tom', 'Ida', 'Jonas']
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+/** "8 Oct, 07:40 UTC". */
+const when = (iso: string) => {
+  const d = new Date(iso)
+  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}, ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')} UTC`
+}
+/** "1 day 3 h", "3 h 18 min", "12 min". */
+const span = (ms: number) => {
+  const min = Math.max(0, Math.round(ms / 60_000))
+  const d = Math.floor(min / 1440)
+  const hh = Math.floor((min % 1440) / 60)
+  if (d) return `${plural(d, 'day', 'days')} ${hh} h`
+  return hh ? `${hh} h ${min % 60} min` : `${min} min`
+}
+const size = (mb: number) => (mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`)
+const slug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+const appUrl = (s: Settings, x: App) => `https://${slug(x.name)}.apps.${s.namespace}.example`
+
+/** The node an app row opens to (table `rowDetail`): its address, host numbers, last deploy and who it is served to. */
+function appDetail(x: App, s: Settings, now: string) {
+  const st = statsOf(x)
+  const running = x.status === 'running'
+  const requests = st.requests.reduce((a, b) => a + b, 0)
+  const statusWord = { running: 'Running', stopped: 'Stopped', failed: 'Failed' }[x.status]
+  return {
+    type: 'stack',
+    children: [
+      { type: 'link', label: `${x.name} address`, href: appUrl(s, x), copy: true },
+      {
+        type: 'stack',
+        direction: 'row',
+        children: [
+          {
+            type: 'kv',
+            pairs: [
+              { label: 'Status', value: `${statusWord} since ${when(st.since)}` },
+              { label: 'Uptime', value: running ? span(Date.parse(now) - Date.parse(st.since)) : '–' },
+              { label: 'CPU', value: running ? `${st.cpu} %` : '–' },
+              { label: 'Memory', value: running ? `${size(st.mem_mb)} of ${size(st.mem_quota_mb)}` : '–' },
+            ],
+          },
+          {
+            type: 'kv',
+            pairs: [
+              { label: 'Disk', value: `${size(st.disk_mb)} of ${size(st.disk_quota_mb)}` },
+              { label: 'Last deploy', value: `${st.deploy.commit} · ${st.deploy.ok ? '' : 'failed · '}${when(st.deploy.at)}` },
+              { label: 'Recipients', value: x.recipients ? RECIPIENTS.slice(0, x.recipients).join(', ') : 'nobody yet' },
+            ],
+          },
+          { type: 'stat', label: 'Requests · last 24 h', value: requests.toLocaleString('en-US'), hint: running ? 'per hour' : 'not served now', trend: st.requests },
+        ],
+      },
+    ],
+  }
+}
+
 const seedShares = (): Share[] => [
   { id: 'sh_report', ticket: 'DEMO-0041', title: 'Before/after report', kind: 'secret link', expires_in_days: 6, views: 14, last_viewer: 'Mara, 2 h ago', token: 'Qm4x9TbA2c' },
   { id: 'sh_utc', ticket: 'DEMO-0042', title: 'UTC migration summary', kind: 'secret link', expires_in_days: 3, views: 5, last_viewer: 'anonymous, yesterday', token: 'Rj7pLw3Yd8' },
@@ -113,7 +219,7 @@ const shareItem = (x: Share) => ({
 })
 
 const seedState = () => ({
-  apps: seedApps(),
+  apps: withStats(seedApps()),
   shares: seedShares(),
   settings: { default_expiry_days: 7, namespace: 'acme', allow_artifacts: false },
   decided: [],
@@ -160,9 +266,16 @@ function seedBusy(ws: string, store: MockStore, rng: Rng) {
       token: kind === 'sealed' || kind === 'show-once' ? null : tokenOf(i, 11),
     }
   })
-  state.apps.push(...apps.slice(0, demo ? 9 : 2))
+  state.apps.push(...apps.slice(0, demo ? 9 : 2).map((x, i) => ({ ...x, stats: appStats(x, 100 + i) })))
   state.shares.push(...(demo ? shares : shares.slice(0, 10)))
   return state
+}
+
+/** A rebuild: running from now, a new (simulated) commit that went through. */
+function redeployed(x: App, now: string) {
+  const st = statsOf(x)
+  st.since = now
+  st.deploy = { commit: appStats({ id: `${x.id}.${now}`, status: 'running' }, -1).deploy.commit, at: now, ok: true }
 }
 
 registerAddon({
@@ -183,6 +296,8 @@ registerAddon({
       // a member gets a link from copy_link or share_once, in the action's answer.
       shares: sh.map(({ token: _token, ...x }) => x),
       summary: `${plural(running, 'app', 'apps')} running · ${plural(failed.length, 'failed build', 'failed builds')}`,
+      // Today's glance line under "n of m apps running": a failed build first, then the shares.
+      todayHint: [failed.length ? plural(failed.length, 'failed build', 'failed builds') : null, plural(sh.length, 'live share', 'live shares'), plural(sh.reduce((n, x) => n + x.views, 0), 'view', 'views')].filter(Boolean).join(' · '),
       liveShares: sh.length,
       views: sh.reduce((n, x) => n + x.views, 0),
       appCount: a.length,
@@ -201,6 +316,8 @@ registerAddon({
         canCopy: x.kind !== 'show-once',
         shownOnce: x.kind === 'show-once',
       })),
+      // The Apps rows' details (table rowDetail, keyed by the row's id).
+      appDetails: Object.fromEntries(a.map((x) => [x.id, appDetail(x, settingsOf(state), c.store.now())])),
       // Failed builds, once, above the tabs (it needs a person). Empty while nothing failed. The full log is behind "Show log".
       attentionNode: failed.length
         ? {
@@ -295,18 +412,20 @@ registerAddon({
       if (x.ticket && store.hasTicket(x.ticket)) store.append(x.ticket, { type: 'publish.revoked', actor: { kind: 'addon', id: 'publish' } })
       return { ok: true, message: `Revoked ${x.title}. The link stops working now.`, changed: true }
     },
-    start({ state, body }) {
+    start({ state, body, store }) {
       const x = apps(state).find((a) => a.id === body.id)
       if (!x) return notFound('No such app.')
       if (x.status === 'failed') return conflict('publish.build_failed', `${x.name} failed to build.`, 'Redeploy it first.')
       x.status = 'running'
+      statsOf(x).since = store.now()
       x.log.push('Started')
       return { ok: true, message: `${x.name} is running.`, changed: true }
     },
-    stop({ state, body }) {
+    stop({ state, body, store }) {
       const x = apps(state).find((a) => a.id === body.id)
       if (!x) return notFound('No such app.')
       x.status = 'stopped'
+      statsOf(x).since = store.now()
       x.log.push('Stopped')
       // Acts at once; the toast carries Undo, which starts it again.
       return { ok: true, message: `${x.name} stopped.`, changed: true, undo: { action: 'start', args: { id: x.id } } }
@@ -316,10 +435,11 @@ registerAddon({
       if (!x) return notFound('No such app.')
       return { ok: true, message: `${x.name}: ${x.log.slice(-3).join(' / ')}` }
     },
-    redeploy({ state, body }) {
+    redeploy({ state, body, store }) {
       const x = apps(state).find((a) => a.id === body.id)
       if (!x) return notFound('No such app.')
       x.status = 'running'
+      redeployed(x, store.now())
       x.log.push('Redeployed', 'Started')
       return { ok: true, message: `${x.name} rebuilt and running.`, changed: true }
     },
@@ -335,6 +455,7 @@ registerAddon({
         const ops = apps(state).find((a) => a.id === 'app_ops')
         if (option === 'retry' && ops) {
           ops.status = 'running'
+          redeployed(ops, store.now())
           ops.log.push('Rebuilt from the last good version', 'Started')
         }
         return { ok: true, message: option === 'retry' ? 'Ops notebook rebuilt from the last good version.' : 'Left as it is.', changed: true }

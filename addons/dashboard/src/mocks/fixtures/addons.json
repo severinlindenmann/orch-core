@@ -106,6 +106,12 @@
                           "$ref": "addon.appRows"
                         },
                         "empty": "No apps yet. Put a small app in a workspace folder and it appears here.",
+                        "rowDetail": {
+                          "key": "id",
+                          "nodes": {
+                            "$ref": "addon.appDetails"
+                          }
+                        },
                         "rowActions": [
                           {
                             "label": "Start",
@@ -232,9 +238,9 @@
         "icon": "Share2",
         "node": {
           "type": "stat",
-          "label": "Apps",
-          "value": "${addon.summary}",
-          "hint": "${addon.liveShares} live shares · ${addon.views} views"
+          "label": "apps running",
+          "value": "${addon.runningCount} of ${addon.appCount}",
+          "hint": "${addon.todayHint}"
         }
       },
       {
@@ -981,6 +987,53 @@
                       }
                     ]
                   }
+                },
+                {
+                  "id": "person",
+                  "label": "By person",
+                  "node": {
+                    "type": "stack",
+                    "children": [
+                      {
+                        "type": "markdown",
+                        "text": "**Last 30 days.** An agent session counts for the person whose grant it ran under."
+                      },
+                      {
+                        "type": "table",
+                        "totalRow": true,
+                        "columns": [
+                          {
+                            "key": "person",
+                            "label": "Person"
+                          },
+                          {
+                            "key": "sessions",
+                            "label": "Sessions",
+                            "align": "right"
+                          },
+                          {
+                            "key": "tokens",
+                            "label": "Tokens (M)",
+                            "align": "right"
+                          },
+                          {
+                            "key": "cost",
+                            "label": "Cost (CHF)",
+                            "align": "right"
+                          },
+                          {
+                            "key": "share",
+                            "label": "Share of cost",
+                            "align": "right"
+                          }
+                        ],
+                        "rows": {
+                          "$ref": "addon.personRows"
+                        },
+                        "empty": "No agent work yet."
+                      }
+                    ]
+                  }
                 }
               ]
             }
@@ -994,9 +1047,12 @@
         "icon": "Gauge",
         "node": {
           "type": "stat",
-          "label": "Last 7 days",
+          "label": "last 7 days",
           "value": "${addon.weekCents|chf}",
-          "hint": "${addon.monthCents|chf} this month"
+          "hint": "${addon.monthCents|chf} this month",
+          "trend": {
+            "$ref": "addon.weekTrend"
+          }
         }
       },
       {

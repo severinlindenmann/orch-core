@@ -2,7 +2,7 @@ import type { RJSFValidationError } from '@rjsf/utils'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useBlocker } from '@tanstack/react-router'
 import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import { ArrowRight, ChevronRight, Ellipsis, ExternalLink, TriangleAlert } from 'lucide-react'
+import { ArrowRight, ChevronRight, Copy, Ellipsis, ExternalLink, TriangleAlert } from 'lucide-react'
 import { addonActive } from '@/api/addons'
 import { api } from '@/api/client'
 import { useWorkspace } from '@/app/workspace'
@@ -33,6 +33,8 @@ import { DestructiveConfirm } from './DestructiveConfirm'
 import { Collapse } from '@/components/Collapse'
 import { foldedColumns } from '@/lib/columnFold'
 import { useElementWidth } from '@/lib/useElementWidth'
+import { Sparkline } from '@/components/Sparkline'
+import { visible } from '@/components/sign/visible'
 
 // rjsf (with ajv) loads on first form, so it stays out of the main bundle.
 const ThemedForm = lazy(() => import('./AddonForm'))
@@ -47,6 +49,8 @@ interface Runtime {
   addon: string
   ctx: SlotContext
   compact: boolean
+  /** Drawn as one calm line of a glance list (Today): a stat without its box, a list cut to GLANCE_ROWS. */
+  glance?: Glance
   /** Core says the viewer may not change anything: forms, buttons and item actions render disabled. */
   readOnly: boolean
   formControl?: FormControl
@@ -55,6 +59,12 @@ interface Runtime {
   /** Which form took the drawer's form control (see FormNode), and the forms waiting to take it when it is released. */
   formControlClaim: FormControlClaim
 }
+/** Where the glance's "n more" leads (the addon's own page), when it has one. */
+export interface Glance {
+  open?: { name: string; page: string }
+}
+/** Rows a list shows in a glance before "n more". */
+export const GLANCE_ROWS = 3
 interface FormControlClaim {
   current: string | null
   waiting: Set<() => void>
@@ -91,18 +101,18 @@ export function AddonUnavailable({ addon }: { addon: string }) {
  * Renders one declarative node tree from an addon. The node is untrusted: it is validated against the closed
  * set of node types (nodes.ts) and anything unknown or malformed becomes the "could not be shown" box.
  */
-export function AddonNode({ node, addon, ctx = {}, compact = false, readOnly = false, formControl }: { node: unknown; addon: string; ctx?: SlotContext; compact?: boolean; readOnly?: boolean; formControl?: FormControl }) {
+export function AddonNode({ node, addon, ctx = {}, compact = false, readOnly = false, formControl, glance }: { node: unknown; addon: string; ctx?: SlotContext; compact?: boolean; readOnly?: boolean; formControl?: FormControl; glance?: Glance }) {
   const dirty = useRef(new Set<string>()).current
   const formControlClaim = useRef(newClaim()).current
   return (
-    <RuntimeCtx.Provider value={{ addon, ctx, compact, readOnly, formControl, dirty, formControlClaim }}>
+    <RuntimeCtx.Provider value={{ addon, ctx, compact, readOnly, formControl, dirty, formControlClaim, glance }}>
       <NodeView node={node} depth={0} />
     </RuntimeCtx.Provider>
   )
 }
 
 function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
-  const { addon } = useContext(RuntimeCtx)
+  const { addon, glance } = useContext(RuntimeCtx)
   const parsed = depth > MAX_DEPTH ? ({ ok: false } as const) : parseNode(raw)
   if (!parsed.ok) return <AddonUnavailable addon={addon} />
   const n = parsed.node
@@ -120,7 +130,7 @@ function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
       return <Stat node={n} />
     case 'kv':
       return (
-        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-[13px]">
+        <dl className="grid grid-cols-[auto_1fr] content-start gap-x-4 gap-y-1.5 text-[13px]">
           {n.pairs.map((p, i) => (
             <div key={i} className="contents">
               <dt className="text-text-muted">{p.label}</dt>
@@ -130,6 +140,7 @@ function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
         </dl>
       )
     case 'list':
+      if (glance) return <GlanceList n={n} open={glance.open} />
       return n.items.length === 0 ? (
         <p className="text-[13px] text-text-faint">{n.empty ?? 'Nothing here.'}</p>
       ) : (
@@ -141,7 +152,7 @@ function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
       )
     case 'table':
       if (n.rows.length === 0) return <p className="text-[13px] text-text-faint">{n.empty ?? 'Nothing here.'}</p>
-      return <TableNodeView n={n} />
+      return <TableNodeView n={n} depth={depth} />
     case 'markdown':
       return (
         <div className={n.toc ? undefined : 'max-w-[72ch]'}>
@@ -194,6 +205,7 @@ function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
       return <PopoverView node={n} depth={depth} />
     case 'link':
       if (INTERNAL_LINK.test(n.href)) return <InternalLink href={n.href} label={n.label} />
+      if (n.copy) return <CopyableLink href={n.href} label={n.label} />
       return (
         <a href={n.href} target="_blank" rel="noopener noreferrer nofollow" className="inline-flex items-center gap-1 text-[13px] text-brand hover:underline">
           {n.label}
@@ -307,9 +319,57 @@ function FoldView({ node, depth }: { node: NodeOf<'fold'>; depth: number }) {
   )
 }
 
+/** A list as glance rows: one line each (title, the badge as quiet text), at most GLANCE_ROWS, then "n more". */
+function GlanceList({ n, open }: { n: NodeOf<'list'>; open?: Glance['open'] }) {
+  if (n.items.length === 0) return <p className="text-[12px] text-text-faint">{n.empty ?? 'Nothing here.'}</p>
+  const rest = n.items.length - GLANCE_ROWS
+  const more = `${rest} more`
+  const shown = n.items.slice(0, GLANCE_ROWS)
+  const keys = stableKeys(shown.map((it) => it.id ?? it.title))
+  return (
+    <div>
+      <ul className="space-y-1">
+        {shown.map((it, i) => (
+          <li key={keys[i]} className="flex min-w-0 items-baseline gap-2 text-[13px] leading-5">
+            {it.status && <StatusDot status={it.status} className="self-center" />}
+            <span className="min-w-0 flex-1 truncate text-text" title={it.subtitle ? `${it.title} · ${it.subtitle}` : it.title}>
+              {it.title}
+            </span>
+            {it.badge && <span className="shrink-0 text-[12px] text-text-muted">{it.badge}</span>}
+          </li>
+        ))}
+      </ul>
+      {rest > 0 &&
+        (open ? (
+          <Link to="/addon/$name/$page" params={open} className="mt-1 inline-block rounded text-[12px] text-text-muted outline-none hover:text-text focus-visible:ring-2 focus-visible:ring-ring">
+            {more}
+          </Link>
+        ) : (
+          <p className="mt-1 text-[12px] text-text-muted">{more}</p>
+        ))}
+    </div>
+  )
+}
+
+const trendNumber = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 })
+const trendLabel = (t: number[]) => `Trend over ${t.length} values, from ${trendNumber.format(t[0])} to ${trendNumber.format(t[t.length - 1])}`
+
 function Stat({ node }: { node: NodeOf<'stat'> }) {
-  const { compact } = useContext(RuntimeCtx)
+  const { compact, glance } = useContext(RuntimeCtx)
   const value = node.value === null || node.value === '' ? '–' : node.value
+  if (glance)
+    return (
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[13px] leading-5">
+            <span className="text-[15px] font-semibold tabular-nums text-text">{value}</span>
+            {node.label && <span className="text-text-muted"> {node.label}</span>}
+          </p>
+          {node.hint && <p className="truncate text-[12px] leading-4 text-text-muted">{node.hint}</p>}
+        </div>
+        {node.trend && node.trend.length > 1 && <Sparkline values={node.trend} label={trendLabel(node.trend)} />}
+      </div>
+    )
   if (compact)
     return (
       <span className="inline-flex items-baseline gap-1 text-[12px]">
@@ -320,7 +380,10 @@ function Stat({ node }: { node: NodeOf<'stat'> }) {
   return (
     <div className="rounded-md border border-border bg-bg px-3 py-2.5">
       <div className="text-[12px] text-text-muted">{node.label}</div>
-      <div className="mt-0.5 text-xl font-semibold tracking-tight text-text">{value}</div>
+      <div className="mt-0.5 flex items-center justify-between gap-3">
+        <span className="text-xl font-semibold tracking-tight text-text">{value}</span>
+        {node.trend && node.trend.length > 1 && <Sparkline values={node.trend} label={trendLabel(node.trend)} />}
+      </div>
       {node.hint && <div className="mt-0.5 text-[12px] text-text-faint">{node.hint}</div>}
     </div>
   )
@@ -788,8 +851,11 @@ function StateChip({ text }: { text: string }) {
  * A table node. Core folds columns by the table's own width (N11, src/lib/columnFold.ts): what does not fit moves into
  * the row's second line under the first column, so the table never scrolls sideways in a narrow page area.
  */
-function TableNodeView({ n }: { n: NodeOf<'table'> }) {
+function TableNodeView({ n, depth }: { n: NodeOf<'table'>; depth: number }) {
   const [ref, width] = useElementWidth<HTMLDivElement>()
+  // rowDetail: the one open row (by its key cell); opening another closes it.
+  const [openRow, setOpenRow] = useState<string | null>(null)
+  const detailId = useId()
   // Still wider than its box after the rule (unbreakable cells): fold one more column until it fits; start over when
   // the width changes.
   const [extra, setExtra] = useState({ width, n: 0 })
@@ -817,6 +883,11 @@ function TableNodeView({ n }: { n: NodeOf<'table'> }) {
       <Table>
         <TableHeader>
           <TableRow>
+            {n.rowDetail && (
+              <TableHead className="h-8 w-8 px-1">
+                <span className="sr-only">Details</span>
+              </TableHead>
+            )}
             {shown.map((c) => (
               <TableHead key={c.key} className={cn('h-8 whitespace-normal text-[12px] text-text-muted', numeric.has(c.key) && 'text-right')}>
                 {c.label}
@@ -831,7 +902,16 @@ function TableNodeView({ n }: { n: NodeOf<'table'> }) {
         </TableHeader>
         <TableBody>
           {stableKeys(n.rows.map((r) => r.id ?? r[n.columns[0].key])).map((k, i) => {
-            const props = { columns: n.columns, shown, fold, row: n.rows[i], numeric, total: !!n.totalRow && i === n.rows.length - 1 }
+            const row = n.rows[i]
+            const cell = n.rowDetail ? row[n.rowDetail.key] : undefined
+            const rowKey = typeof cell === 'string' || typeof cell === 'number' ? String(cell) : null
+            // The open row is remembered by its stable row key (not the detail key's value), so two rows that share a
+            // value still open one at a time.
+            const detail =
+              n.rowDetail && rowKey !== null && Object.hasOwn(n.rowDetail.nodes, rowKey)
+                ? { node: n.rowDetail.nodes[rowKey], open: openRow === k, id: `${detailId}-${i}`, depth, toggle: () => setOpenRow(openRow === k ? null : k) }
+                : undefined
+            const props = { columns: n.columns, shown, fold, row, numeric, total: !!n.totalRow && i === n.rows.length - 1, detail, hasDetail: !!n.rowDetail }
             return n.rowActions || n.rowOpen ? <ActionDataRow key={k} {...props} rowActions={n.rowActions} rowOpen={n.rowOpen} /> : <DataRowView key={k} {...props} />
           })}
         </TableBody>
@@ -842,7 +922,9 @@ function TableNodeView({ n }: { n: NodeOf<'table'> }) {
 
 type TableColumn = NodeOf<'table'>['columns'][number]
 
-type DataRowProps = { total?: boolean; columns: TableColumn[]; shown: TableColumn[]; fold: TableColumn[]; row: Record<string, unknown>; rowActions?: ItemAction[]; rowOpen?: NodeOf<'table'>['rowOpen']; numeric: Set<string> }
+/** A row that opens (rowDetail): its node, whether it is the open one, and the id of the detail row. */
+type RowDetail = { node: unknown; open: boolean; id: string; depth: number; toggle: () => void }
+type DataRowProps = { total?: boolean; columns: TableColumn[]; shown: TableColumn[]; fold: TableColumn[]; row: Record<string, unknown>; rowActions?: ItemAction[]; rowOpen?: NodeOf<'table'>['rowOpen']; numeric: Set<string>; detail?: RowDetail; hasDetail?: boolean }
 
 function ActionDataRow(props: DataRowProps) {
   return <DataRowView {...props} act={useAddonAction()} />
@@ -874,11 +956,28 @@ function Cell({ column, row, open, act, label }: { column: NodeOf<'table'>['colu
 
 const SHORT_TOKEN = /^\S{1,24}$/
 
-function DataRowView({ columns, shown, fold, row, rowActions, rowOpen, act, numeric, total }: DataRowProps & { act?: AddonAction }) {
+function DataRowView({ columns, shown, fold, row, rowActions, rowOpen, act, numeric, total, detail, hasDetail }: DataRowProps & { act?: AddonAction }) {
   const label = rowLabel(columns[0]?.key, row)
+  const span = shown.length + (rowActions ? 1 : 0) + (hasDetail ? 1 : 0)
   return (
     <>
-      <TableRow className={total ? 'border-t-2 border-border-strong bg-surface-2/60 font-semibold' : undefined}>
+      <TableRow className={cn(total && 'border-t-2 border-border-strong bg-surface-2/60 font-semibold', detail?.open && 'border-b-0 bg-surface-2/60')}>
+        {hasDetail && (
+          <TableCell className="w-8 px-1 py-1.5">
+            {detail && (
+              <button
+                type="button"
+                aria-expanded={detail.open}
+                aria-controls={detail.id}
+                aria-label={`Details for ${label}`}
+                onClick={detail.toggle}
+                className="flex size-7 items-center justify-center rounded-md text-text-muted outline-none hover:bg-surface-2 hover:text-text focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <ChevronRight aria-hidden className={cn('size-4 transition-transform', detail.open && 'rotate-90')} />
+              </button>
+            )}
+          </TableCell>
+        )}
         {shown.map((c, i) => (
           <TableCell key={c.key} className={cn('whitespace-normal break-words py-1.5 text-[13px] [overflow-wrap:anywhere]', numeric.has(c.key) && 'text-right tabular-nums')}>
             <Cell column={c} row={row} open={c === columns[0] ? rowOpen : undefined} act={act} label={label} />
@@ -902,8 +1001,15 @@ function DataRowView({ columns, shown, fold, row, rowActions, rowOpen, act, nume
       </TableRow>
       {act?.error && (
         <TableRow className="hover:bg-transparent">
-          <TableCell colSpan={shown.length + 1} className="py-1.5">
+          <TableCell colSpan={span} className="py-1.5">
             <ErrorAlert error={act.error} onDismiss={act.dismissError} />
+          </TableCell>
+        </TableRow>
+      )}
+      {detail?.open && (
+        <TableRow id={detail.id} className="bg-surface-2/60 hover:bg-surface-2/60">
+          <TableCell colSpan={span} className="whitespace-normal px-3 pb-3 pt-1 pl-10">
+            <NodeView node={detail.node} depth={detail.depth + 1} />
           </TableCell>
         </TableRow>
       )}
@@ -989,6 +1095,35 @@ function ProgressNode({ node }: { node: NodeOf<'progress'> }) {
  * Only an addon that declares `pty` and holds a current grant may show a terminal; everyone else gets the fallback box.
  * The session id is untrusted: TerminalView resolves it against this addon's own state (this workspace, this viewer).
  */
+/** An http(s) address shown in full (it is what the person shares), opening in a new tab, with a Copy button beside it. */
+function CopyableLink({ href, label }: { href: string; label: string }) {
+  const [copied, setCopied] = useState<'yes' | 'no' | null>(null)
+  const copy = () => {
+    const done = navigator.clipboard?.writeText(href)
+    if (!done) return setCopied('no')
+    void done.then(
+      () => setCopied('yes'),
+      () => setCopied('no'),
+    )
+  }
+  return (
+    <span className="inline-flex min-w-0 max-w-full flex-wrap items-center gap-x-2 gap-y-1 text-[13px]">
+      <a href={href} target="_blank" rel="noopener noreferrer nofollow" aria-label={`${label}: ${href} (opens in a new tab)`} className="inline-flex min-w-0 items-center gap-1 text-brand hover:underline">
+        {/* In full, wrapped and isolated: never cut off, and nothing around it can reorder it (the schema already refuses hidden characters). */}
+        <bdi className="whitespace-pre-wrap break-all font-mono text-[12px] [unicode-bidi:isolate]">{visible(href)}</bdi>
+        <ExternalLink className="size-3 shrink-0" aria-hidden />
+      </a>
+      <Button type="button" size="sm" variant="ghost" className="h-7 shrink-0 px-2" aria-label={`Copy ${label}`} onClick={copy}>
+        <Copy aria-hidden className="size-3.5" />
+        {copied === 'yes' ? 'Copied' : 'Copy'}
+      </Button>
+      <span role="status" className="sr-only">
+        {copied === 'yes' ? 'Address copied' : copied === 'no' ? 'Could not copy the address' : ''}
+      </span>
+    </span>
+  )
+}
+
 /** A link to another addon's page: drawn only while that addon is active here (else there is nothing to open). */
 function InternalLink({ href, label }: { href: string; label: string }) {
   const { workspace } = useWorkspace()

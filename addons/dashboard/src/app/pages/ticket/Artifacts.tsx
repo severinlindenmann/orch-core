@@ -187,7 +187,8 @@ function HtmlViewer({ a, agentHtml }: { a: Artifact; agentHtml: boolean }) {
   )
 }
 
-function Viewer({ a, agentHtml }: { a: Artifact; agentHtml: boolean }) {
+/** The content of one artifact (also the Artifacts page's preview pane): same sandbox and agent-HTML rule everywhere. */
+export function Viewer({ a, agentHtml }: { a: Artifact; agentHtml: boolean }) {
   if (a.kind === 'screenshot')
     return (
       <div className="space-y-2">
@@ -359,6 +360,7 @@ export function ArtifactDrawer({
     <Sheet open={!!open} onOpenChange={(o) => !o && onClose()}>
       <SheetContent
         side="right"
+        data-artifact-drawer
         className="w-[640px] max-w-[92vw] gap-0 border-border bg-surface sm:max-w-[640px]"
         onCloseAutoFocus={(e) => {
           e.preventDefault()

@@ -69,7 +69,10 @@ export function selectContributions(addons: AddonPackage[], slot: AddonSlot, ctx
         continue
       }
       if (c.when && (getPath(ctx, c.when) ?? null) === null) continue
-      out.push({ ...base, node: resolveBindings(c.node, ctx), ...(c.when ? { guarded: true } : {}) })
+      // A bound value ($ref into state or the ticket) can be anything: the resolved node is budgeted again before
+      // anything (parseNode, rendering, stringify) walks it (round 2 #2). Only this contribution fails.
+      const node = resolveBindings(c.node, ctx)
+      out.push({ ...base, node: nodeBudgetProblem(node) === null ? node : OVER_BUDGET, ...(c.when ? { guarded: true } : {}) })
     }
   }
   return out

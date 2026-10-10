@@ -36,7 +36,8 @@ export function getPath(root: unknown, path: string): unknown {
 function interpolate(s: string, ctx: unknown): string {
   return s.replace(/\$\{([a-zA-Z0-9_.$]+)(?:\|([a-z]+))?\}/g, (_, path: string, fmt?: string) => {
     const v = getPath(ctx, path)
-    if (v === undefined || v === null) return ''
+    // Only a plain value is written into text: an object or array is never stringified (it could be arbitrarily deep).
+    if (v === undefined || v === null || typeof v === 'object' || typeof v === 'function') return ''
     return fmt && FORMATTERS[fmt] ? FORMATTERS[fmt](v) : String(v)
   })
 }
@@ -69,11 +70,12 @@ export const NODE_BUDGET = { depth: 64, nodes: 20_000, bytes: 2_000_000 } as con
  */
 export function nodeBudgetProblem(root: unknown): string | null {
   const stack: [unknown, number][] = [[root, 0]]
-  let nodes = 0
+  // Every value counted when it is queued, so the stack itself never holds more than the node budget.
+  let nodes = 1
   let bytes = 0
+  const tooMany = `more than ${NODE_BUDGET.nodes} nodes`
   while (stack.length) {
     const [v, depth] = stack.pop()!
-    if (++nodes > NODE_BUDGET.nodes) return `more than ${NODE_BUDGET.nodes} nodes`
     if (typeof v === 'string') {
       bytes += v.length
       if (bytes > NODE_BUDGET.bytes) return 'too large'
@@ -82,10 +84,16 @@ export function nodeBudgetProblem(root: unknown): string | null {
     if (v === null || typeof v !== 'object') continue
     if (depth >= NODE_BUDGET.depth) return `nested deeper than ${NODE_BUDGET.depth}`
     if (Array.isArray(v)) {
-      for (const x of v) stack.push([x, depth + 1])
+      // The length is known up front: refuse before queuing anything of an array that cannot fit.
+      if (nodes + v.length > NODE_BUDGET.nodes) return tooMany
+      nodes += v.length
+      for (let i = 0; i < v.length; i++) stack.push([v[i], depth + 1])
       continue
     }
-    for (const k of Object.keys(v)) {
+    // Own keys one at a time (no keys array for a huge object), counted before each is queued.
+    for (const k in v) {
+      if (!Object.hasOwn(v, k)) continue
+      if (++nodes > NODE_BUDGET.nodes) return tooMany
       bytes += k.length
       if (bytes > NODE_BUDGET.bytes) return 'too large'
       stack.push([(v as Record<string, unknown>)[k], depth + 1])

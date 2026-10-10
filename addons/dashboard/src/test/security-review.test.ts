@@ -240,3 +240,35 @@ describe('round 2 #5 the content-hash cache is bounded and cleared on reset', ()
     expect(contentHashSlots()).toBe(0)
   })
 })
+
+describe('round 2 #2 bound values are budgeted too, and the budget walk allocates nothing unbounded', () => {
+  const pkgRef = (name: string, node: unknown) => ({ name, title: name, version: '1.0.0', description: '', capabilities: [], first_party: false, package_sha256: '', update: null, contributions: [{ slot: 'ticket.panel', id: 'p', title: 'P', node }] }) as unknown as AddonPackage
+  const wsOf = (names: string[]) => ({ addons: Object.fromEntries(names.map((n) => [n, { enabled: true, status: 'active', installed: true, version: '1.0.0', package_sha256: '', capabilities: [], granted: { version: '1.0.0', package_sha256: '', capabilities: [] } }])) }) as unknown as Workspace
+  const select = (state: unknown, node: unknown) => {
+    const ctx = { workspace: wsOf(['evil', 'good']), ticket: { key: 'DEMO-0043' } as TicketDocument, addon: state as Record<string, unknown> }
+    return selectContributions([pkgRef('evil', node), pkgRef('good', { type: 'stat', label: 'ok', value: '${ticket.key}' })], 'ticket.panel', ctx)
+  }
+  it('a $ref to a 20,000-deep object fails only that contribution', () => {
+    let deep: unknown = { type: 'stat', label: 'x', value: 1 }
+    for (let i = 0; i < 20_000; i++) deep = { type: 'stack', children: [deep] }
+    const out = select({ tree: deep }, { type: 'stack', children: [{ $ref: 'addon.tree' }] })
+    expect(parseNode(out[0].node).ok).toBe(false)
+    expect(JSON.stringify(out[1].node)).toContain('DEMO-0043')
+  })
+  it('a $ref to a very wide value fails only that contribution', () => {
+    const wide = Array.from({ length: 300_000 }, (_, i) => ({ type: 'stat', label: String(i), value: i }))
+    const out = select({ rows: wide }, { type: 'stack', children: { $ref: 'addon.rows' } })
+    expect(parseNode(out[0].node).ok).toBe(false)
+    expect(out[1].node).toBeTruthy()
+  })
+  it('interpolating a deep value never stringifies it', () => {
+    let deep: unknown = []
+    for (let i = 0; i < 20_000; i++) deep = [deep]
+    expect(() => select({ deep }, { type: 'stat', label: '${addon.deep}', value: 1 })).not.toThrow()
+  })
+  it('the walk stops before queuing more children than the node budget', () => {
+    expect(nodeBudgetProblem(Array.from({ length: 50_000 }, () => 1))).toMatch(/nodes/)
+    const wideObject = Object.fromEntries(Array.from({ length: 50_000 }, (_, i) => [`k${i}`, i]))
+    expect(nodeBudgetProblem(wideObject)).toMatch(/nodes/)
+  })
+})

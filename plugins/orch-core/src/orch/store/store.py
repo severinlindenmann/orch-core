@@ -162,7 +162,7 @@ class Store:
         expected_genesis: str | None,
         host: HostSigner | None,
         host_state_dir: Path | None,
-        verifier: Verifier,
+        _verifier: Verifier,
         clock: Callable[[], float],
         workspace_name: str | None,
     ) -> None:
@@ -170,7 +170,7 @@ class Store:
         self.workspace_id = workspace_id
         self._expected_genesis = expected_genesis
         self._host = host
-        self._verifier = verifier
+        self._verifier = _verifier
         self._clock = clock
         self._name = workspace_name
         self.state_dir = root / ".state"
@@ -208,9 +208,9 @@ class Store:
         expected_genesis: str | None = None,
         host: HostSigner | None = None,
         host_state_dir: str | os.PathLike[str] | None = None,
-        verifier: Verifier | None = None,
         clock: Callable[[], float] = time.time,
         workspace_name: str | None = None,
+        _verifier: Verifier | None = None,
     ) -> Store:
         """Open (and, for a new directory, prepare) the workspace at ``path``.
 
@@ -228,7 +228,7 @@ class Store:
             expected_genesis=expected_genesis,
             host=host,
             host_state_dir=Path(host_state_dir) if host_state_dir is not None else None,
-            verifier=verifier or CryptoVerifier(),
+            _verifier=_verifier or CryptoVerifier(),
             clock=clock,
             workspace_name=workspace_name,
         )
@@ -254,6 +254,12 @@ class Store:
 
     def close(self) -> None:
         self._index.close()
+
+    def refresh(self) -> None:
+        """Take the lock and re-read the logs if another process appended since: what a long-lived caller does before
+        it decides anything from :attr:`state` (the CLI hooks do)."""
+        with self._locked():
+            pass
 
     # ------------------------------------------------------------------ small helpers
 
@@ -410,10 +416,11 @@ class Store:
         pdir = self.state_dir / "pending"
         if not pdir.is_dir():
             return
-        for d in sorted(pdir.iterdir()):
+        found = sorted(pdir.iterdir())
+        if not found:
+            return  # the common case costs one directory listing
+        for d in found:
             self._recover_one(d)
-        with contextlib.suppress(OSError):
-            pdir.rmdir()
         tdir = self.root / "tickets"
         for p in tdir.iterdir() if tdir.is_dir() else []:  # a ticket directory whose event never landed
             with contextlib.suppress(OSError):
@@ -427,7 +434,10 @@ class Store:
             log = m["log"]
             path = self._path_of(log)
             check_uid(m["id"])
-        except (OSError, ValueError, KeyError, StoreError, TypeError):
+            e = canon.parse_event_line(line)
+            if e.get("id") != m["id"] or e.get("seq") != m["seq"] or not isinstance(m["files"], list):
+                raise ValueError("the manifest does not describe its own event")
+        except (OSError, ValueError, KeyError, StoreError, TypeError, canon.HashError):
             shutil.rmtree(d, ignore_errors=True)  # the manifest is written last: the event was never appended
             return
         raw = read_or_none(path) or b""
@@ -799,7 +809,11 @@ class Store:
 
     def _merge_body(self, uid: str, e: dict[str, Any], delta: Mapping[str, str | None]) -> dict[str, str]:
         assert self._state is not None
-        cur = self.body_sections(uid) if read_or_none(safe_join(self.root, f"tickets/{check_uid(uid)}/body.md")) is not None else {}
+        cur = (
+            self.body_sections(uid)
+            if read_or_none(safe_join(self.root, f"tickets/{check_uid(uid)}/body.md")) is not None
+            else {}
+        )
         new = dict(cur)
         for sid, text in delta.items():
             if text is None:
@@ -949,7 +963,8 @@ class Store:
         typ = ev["type"]
         if typ == "workspace.created":
             self._genesis_event = ev
-            self._pin = new.workspace.genesis
+            self._pin = self._expected_genesis = new.workspace.genesis
+            self._load_all()  # replay from here on carries the pin (the State built so far has none)
             if self._external_pins and new.workspace.genesis:
                 self._pins.pin_genesis(new.workspace.genesis)
         if typ == "grant.issued":

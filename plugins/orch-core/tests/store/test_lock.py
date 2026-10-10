@@ -5,8 +5,8 @@ from __future__ import annotations
 import multiprocessing as mp
 
 from orch import canon
-from orch.model import replay
 from orch.identity import CryptoVerifier
+from orch.model import replay
 from tests.store import workers
 from tests.store.helpers import WS, Env
 

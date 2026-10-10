@@ -318,7 +318,10 @@ def test_file_records_two_writers_lose_no_update_and_corruption_fails_closed(cli
     r = cli("approve", "plan", "--json", env=SESSION_ENV, records=FileRecords(d))
     assert json.loads(r.out)["error"]["code"] == "internal" and (d / f"{SESSION}.json").read_text() == "{ torn"
     (d / f"{SESSION}.json").write_text("[1, 2]")
-    assert json.loads(cli("approve", "plan", "--json", env=SESSION_ENV, records=FileRecords(d)).out)["error"]["code"] == "internal"
+    assert (
+        json.loads(cli("approve", "plan", "--json", env=SESSION_ENV, records=FileRecords(d)).out)["error"]["code"]
+        == "internal"
+    )
 
 
 # ---- retry dedup

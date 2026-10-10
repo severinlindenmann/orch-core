@@ -87,7 +87,7 @@ def test_a_torn_line_is_cut_off_and_the_event_is_lost_not_the_log(ws):
     assert crash(env, uid, "torn_line") == 7
     raw = env.path(uid, "events.jsonl").read_bytes()
     assert not raw.endswith(b"\n")  # really torn
-    s = consistent(env, uid)
+    consistent(env, uid)
     assert env.path(uid, "events.jsonl").read_bytes().endswith(b"\n") and len(env.read_events(uid)) == 2
     env.log(uid, "fine")
 

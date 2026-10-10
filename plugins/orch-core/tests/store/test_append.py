@@ -122,7 +122,7 @@ def test_host_fields_are_stamped_by_the_store_only(env):
 
 
 def test_at_is_the_clock_and_bumps_only_when_the_merged_order_needs_it(env):
-    s = env.bootstrap()
+    env.bootstrap()
     a, b = sorted([env.new_ticket("a"), env.new_ticket("b")])
     base = env.clock[0]
     stamps = []

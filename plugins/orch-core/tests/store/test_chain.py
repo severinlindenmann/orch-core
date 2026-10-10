@@ -9,7 +9,7 @@ import pytest
 
 from orch import canon, crypto
 from orch.custody import FileBackend
-from orch.store import BackendSigner, Store, StoreError
+from orch.store import BackendSigner, StoreError
 from tests.store.helpers import WS, Env
 
 

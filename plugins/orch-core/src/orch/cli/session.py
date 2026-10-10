@@ -190,4 +190,3 @@ class FileRecords(MemoryRecords):
     def attempt(self, *a: Any, **k: Any) -> str:
         with self._flock:
             return super().attempt(*a, **k)
-

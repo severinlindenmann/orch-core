@@ -121,7 +121,7 @@ def admit(state: State, event: dict[str, Any], *, log: str) -> Ok | Refusal:
 
 
 def external_edit_voids(state: State, uid: str, sections: dict[str, Any]) -> list[str] | Refusal:
-    """The ``voided_gates`` an ``edit.external`` of ``uid`` with these ``sections`` would carry (§5.11 derived field), or
+    """The ``voided_gates`` an ``edit.external`` of ``uid`` with these ``sections`` would carry (§5.11), or
     the refusal (a bound section of a done or closed ticket, an unknown section). The store calls this to fill the
     event it appends; replay recomputes the same list and refuses a mismatch."""
     if uid not in state._core.tickets:

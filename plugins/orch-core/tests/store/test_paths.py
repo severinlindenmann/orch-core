@@ -11,7 +11,15 @@ from orch import canon
 from orch.store import StoreError
 from orch.store.paths import check_artifact, check_uid, safe_join, target_ok
 
-BAD_UIDS = ["../x", "/etc/passwd", "a\x00b", "01J9ZK4Q7M3R8T2V6X0B5N1C9D/..", "01j9zk4q7m3r8t2v6x0b5n1c9d", "", "workspace"]
+BAD_UIDS = [
+    "../x",
+    "/etc/passwd",
+    "a\x00b",
+    "01J9ZK4Q7M3R8T2V6X0B5N1C9D/..",
+    "01j9zk4q7m3r8t2v6x0b5n1c9d",
+    "",
+    "workspace",
+]
 BAD_NAMES = ["../x.png", "/abs.png", "a/b.png", "a\x00.png", ".hidden", "..", "x" * 129, "a\\b"]
 
 
@@ -123,7 +131,7 @@ def test_a_hostile_pending_manifest_cannot_write_outside_the_files_the_store_own
     line = canon.event_line({"hash_v": 1})
     for target in ("../../../victim.txt", str(victim), "tickets/../../victim.txt"):
         m = {"v": 1, "id": "01J9ZP0000000000000000EVIL", "log": uid, "seq": 9, "line": line.decode(),
-             "files": [{"to": target, "n": 0, "sha256": canon.artifact_digest(b"pwned")[7:]}], "body_copy": "../x"}  # fmt: skip
+             "files": [{"to": target, "n": 0, "sha256": "0" * 64}], "body_copy": "../x"}  # fmt: skip
         (pdir / "manifest.json").write_text(json.dumps(m))
         with open(env.path(uid, "events.jsonl"), "ab") as f:
             f.write(line)

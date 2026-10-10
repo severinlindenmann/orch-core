@@ -43,7 +43,7 @@ def target_ok(rel: object) -> str:
 
 
 def safe_join(root: Path, rel: str) -> Path:
-    """``root/rel`` with no symlinked directory on the way (the final component may be absent or a link) and no escape from ``root``."""
+    """``root/rel`` with no symlinked directory on the way (the last part may be absent or a link), no escape."""
     if "\x00" in rel or rel.startswith(("/", "\\")) or ".." in Path(rel).parts or "\\" in rel:
         raise StoreError("validation.path", f"{rel!r} escapes the workspace")
     cur = root

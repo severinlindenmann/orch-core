@@ -28,11 +28,13 @@ def records_for(store: Store) -> FileRecords:
 
 def hooks_for(store: Store) -> Hooks:
     def head_seq(op: Operation, args: dict[str, Any]) -> int | None:
+        store.refresh()
         ref = args.get("ref")
         uid = store.uid_of(ref) if isinstance(ref, str) else None
         return store.head_seq(uid) if uid else None
 
     def grant_valid(ctx: Context) -> None:
+        store.refresh()  # a grant revoked by another process counts now
         try:
             token = parse_grant(ctx.grant)
         except Refused:

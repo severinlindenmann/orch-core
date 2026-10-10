@@ -8,8 +8,8 @@ import shutil
 import pytest
 
 from orch import canon, crypto, schema
-from orch.store import Store, StoreError, checkpoints
-from tests.store.helpers import WS, Env
+from orch.store import StoreError, checkpoints
+from tests.store.helpers import WS
 
 
 def cp_files(env):
@@ -143,7 +143,7 @@ def test_a_checkpoint_for_another_genesis_is_refused_outright(env):
 
 
 def rollback(env, backup):
-    """Put the backed-up logs and projections back but keep ``.state`` (git ignores it; a force-push restores the rest)."""
+    """Put the backed-up logs and projections back, keep ``.state`` (git ignores it; a force-push restores the rest)."""
     for name in ("events", "tickets", "config.json", "keys.jsonl"):
         target = env.root / name
         shutil.rmtree(target) if target.is_dir() else target.unlink(missing_ok=True)
@@ -186,7 +186,9 @@ def test_restore_after_a_rollback_abandons_the_checkpoint_and_new_chain_continue
     assert again.diverged == {} and again.chain_errors() == []
     assert load(env, f"ticket-{uid}.json")["o"]["seq"] == 4
     gates = again.state.tickets[uid].gates
-    assert all(gates[g].gen >= 1 for g in ("requirements", "plan", "verify"))  # a restore raises every gate that applies
+    assert all(
+        gates[g].gen >= 1 for g in ("requirements", "plan", "verify")
+    )  # a restore raises every gate that applies
 
 
 def test_restore_of_a_forked_tail_uses_abandon_tail_and_keeps_the_cut_lines(env):
@@ -207,7 +209,10 @@ def test_restore_of_a_forked_tail_uses_abandon_tail_and_keeps_the_cut_lines(env)
     assert s.abandon_tail(uid, 2) == 1
     assert any((env.root / ".state" / "abandoned").glob(f"{uid}-3.jsonl"))
     facts = s.restore_facts(uid)
-    assert facts["from_seq"] == 2 and facts["abandoned"] == {"seq": 3, "head": load(env, f"ticket-{uid}.json")["o"]["head"]}
+    assert facts["from_seq"] == 2 and facts["abandoned"] == {
+        "seq": 3,
+        "head": load(env, f"ticket-{uid}.json")["o"]["head"],
+    }
     s.append(env.person_event(env.owner, uid, "restore", **facts, reason="fork"), log=uid)
     assert s.diverged == {}
     assert env.log(uid, "continues").event["seq"] == 4

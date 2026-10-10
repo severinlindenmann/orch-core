@@ -83,6 +83,7 @@ def person(ws, *argv, passphrase=PASSPHRASE, answer=None):
                 break
             shown += chunk
             if not confirmed and b"and Enter to continue to the passphrase; anything else stops: " in shown:
+                time.sleep(0.3)  # typed after the prompt is up: the prompt discards typeahead
                 os.write(tty, (answer or key_of(argv)).encode() + b"\n")  # read after the review, as a person does
                 confirmed = True
             if not typed and b"Passphrase: " in shown:
@@ -144,7 +145,7 @@ def test_agent_works_person_signs_ticket_done_and_the_log_replays_clean(ws, tmp_
         assert "type: gate.approved" in term and "auth: passphrase" in term
         assert (
             "=== orch: read before you sign ===" in term
-            and f"| --- section {'plan' if gate == 'plan' else 'requirements'} ---" in term
+            and f"--- section {'plan' if gate == 'plan' else 'requirements'} (" in term
         )
         assert term.index("read before you sign") < term.index("Passphrase: ")  # the review comes first
 
@@ -161,7 +162,7 @@ def test_agent_works_person_signs_ticket_done_and_the_log_replays_clean(ws, tmp_
     assert code == 0, (out, err, term)
     assert out.startswith(f"ok {key} verdict.given pass seq=")
     assert f"source_sha[1].sha: {head}" in term and "outcome: pass" in term
-    assert f"| source: local:proj refs/heads/feat/x {head}" in term and "| artifact: build.log" in term
+    assert f"source:\r\n| local:proj refs/heads/feat/x {head}" in term and "artifact:\r\n| build.log" in term
 
     # a wrong passphrase on the same terminal writes nothing
     before = len(ws.events("1"))

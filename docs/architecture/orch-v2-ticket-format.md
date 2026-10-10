@@ -1398,9 +1398,14 @@ operation).
   texts (each checked against its hash), acceptance criteria, tasks with their verify commands, links, the source list
   and the artifact names with digests, then the short gate hash (the first 12 hex digits, 48 bits, of the verified gate hash). `orch show`
   prints the same 12 digits per open gate (`plan:open#8163ab12cd34`), and `show --full` prints the ticket's log id, so a person can compare
-  what they read earlier with what they sign. Ticket text is data: every line is escaped and starts with `| `. The other
-  ticket operations show the key, the log id and the title or question. There is no pager: a long text scrolls. If the
-  content changes while the person reads or types, the append is refused as gate.stale. The decisive fields of the
+  what they read earlier with what they sign. Ticket text is data: every line is escaped and starts with `| `; orch's own headings and
+  labels are printed bare, so text cannot pass for one. The review opens with a summary line (lines per section, number
+  of criteria and tasks) and, for `verify`, lists the task receipts (task, commit, exit code); it says that addon fields
+  and packages, the policy and people lists and earlier approvals are bound by the gate hash but not shown. There is no
+  pager in P1: a long text scrolls, which is why the summary comes first and the confirmation comes after the content.
+  Input typed before the content appeared is discarded (`tcflush`) and confirms nothing. git runs in its own session
+  (no controlling terminal), so a repository's filter cannot reach the person's terminal. If the content changes while
+  the person reads or types, the append is refused as gate.stale. The decisive fields of the
   signing bytes follow in the passphrase prompt (D41).
 - **Artifact bytes (§5.7).** Before the review, the SHA-256 of every bound artifact file (`requirements`/`plan`: those
   named in the section refs; `verify`: the whole manifest) is recomputed; a missing, replaced or changed file is

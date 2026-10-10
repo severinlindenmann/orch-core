@@ -104,6 +104,9 @@ def review_prompt(text: str, expect: str) -> bool:
             raise NoPrompt("/dev/tty is not a terminal")
         prompt = f"Type {expect} and Enter to continue to the passphrase; anything else stops: "
         os.write(fd, ("\n=== orch: read before you sign ===\n" + text + prompt).encode())
+        import termios
+
+        termios.tcflush(fd, termios.TCIFLUSH)  # whatever was typed before the content appeared confirms nothing
         line = bytearray()
         try:
             while True:
@@ -273,34 +276,50 @@ class Human:
         g = view.gates[gate]
         inp = g.input or {}
         texts = self.store.body_sections(view.uid)
-        out = [*self.header(view)[:-1], f"gate: {gate} generation {g.gen}", ""]
+        out = [*self.header(view)[:-1], f"gate: {gate} generation {g.gen}"]
+        f = inp.get("fields") or {}
+        # orch's own words (headings, labels) are printed bare; only ticket text, which an agent wrote, gets "| ", so
+        # text cannot pass for a heading
         body: list[str] = []
+        counts: list[str] = []
         for sid, h in (inp.get("sections") or {}).items():
             text = texts.get(sid, "")
             if canon.section_hash(text) != h:
                 raise OrchError("gate.stale", f"section {sid} changed while the review was built", hint="orch show")
-            body += [f"--- section {sid} ---", *(text.split("\n") if text else ["(empty)"])]
-        f = inp.get("fields") or {}
+            lines = text.split("\n") if text else []
+            counts.append(f"{sid}: {len(lines)} lines")
+            body += [f"--- section {sid} ({len(lines)} lines) ---", *self._data(lines or ["(empty)"])]
         body.append(f"--- type {f.get('ticket_type')} size {f.get('size')} ---")
-        if gate in ("requirements", "plan", "verify", "code"):
-            for a in f.get("acceptance") or []:
-                body += [f"{a['id']}: " + a["text"].replace("\n", " / ")]
-        for t in inp.get("tasks") or []:
+        acceptance = f.get("acceptance") or []
+        for a in acceptance:
+            body += [f"{a['id']}:", *self._data(a["text"].split("\n"))]
+        tasks = inp.get("tasks") or []
+        for t in tasks:
             verify = (t.get("verify") or {}).get("cmd")
-            body.append(f"{t['id']}: {t['text']}".replace("\n", " / "))
-            body.append(
-                f"   verify: {verify if verify else '(none)'}   proves: {','.join(t.get('proves') or []) or '-'}"
-            )
+            body += [f"{t['id']}:", *self._data(t["text"].split("\n")), "   verify:", *self._data([verify or "(none)"])]
+            body.append(f"   proves: {','.join(t.get('proves') or []) or '-'}")
         if f.get("links") is not None:
-            body.append("links: " + canon.dumps(thaw(f["links"])).decode())
+            body += ["links:", *self._data([canon.dumps(thaw(f["links"])).decode()])]
         for e in inp.get("source_sha") or []:
-            body.append(f"source: {e['repo']} {e['ref']} {e['sha']}")
+            body += ["source:", *self._data([f"{e['repo']} {e['ref']} {e['sha']}"])]
         for name, a in (inp.get("artifacts") or {}).items():
-            body.append(f"artifact: {name} kind={a.get('kind')} {a['digest']}")
-        for line in body:
-            out += ["| " + canon.clean(x) for x in line.split("\n")]
+            body += ["artifact:", *self._data([f"{name} kind={a.get('kind')} {a['digest']}"])]
+        for tid, r in (inp.get("receipts") or {}).items():
+            body += [
+                f"receipt {tid}:",
+                *self._data([f"exit {r.get('exit')} at {r.get('commit')} repo {r.get('repo')}"]),
+            ]
+        summary = ", ".join([*counts, f"{len(acceptance)} criteria", f"{len(tasks)} tasks"])
+        out += [f"summary: {summary}", "", *body]
+        out += ["", "also bound by the gate hash, not shown here: addon fields and packages, the policy and people"]
+        out += ["lists, and the approvals of earlier gates (the passphrase prompt shows the policy hash)"]
         out += ["", f"gate hash {views.short_gate_hash(g.hash)} (orch show prints the same)", ""]
         return out
+
+    @staticmethod
+    def _data(lines: list[str]) -> list[str]:
+        """Ticket text, escaped, one ``| `` mark per line."""
+        return ["| " + canon.clean(x) for x in lines for x in x.split("\n")]
 
     def refuse_repeat(self, view: Any, gate: str) -> None:
         """A person counts once per gate generation (``generations.counting``): a second approval changes nothing."""

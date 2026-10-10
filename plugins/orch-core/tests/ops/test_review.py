@@ -18,14 +18,14 @@ def test_the_review_shows_the_bound_text_and_the_hash_that_show_prints(hws, agen
     assert me("approve", "requirements", "--ref", key).code == 0
     (text,) = hws.reviews
     assert f"ticket: {key} (derived by orch" in text and f"log id: {hws.uid('1')}" in text
-    assert "| --- section requirements ---" in text and "| text of requirements" in text
-    assert "| AC1: the build is green" in text
+    assert re.search(r"^--- section requirements \(\d+ lines\) ---$", text, re.M) and "| text of requirements" in text
+    assert "\nAC1:\n| the build is green" in text and "summary: " in text and "1 criteria" in text
     assert text.index("section requirements") < text.index("gate hash")
     assert short_hash_in(text) in shown  # plan or requirements: the same 8 digits per open gate
     assert hws.provider.requests  # the review came before the passphrase prompt
     assert me("approve", "plan", "--ref", key).code == 0
     plan = hws.reviews[1]
-    assert "| T1: run it" in plan and "verify: " in plan and "-c pass" in plan and "proves: AC1" in plan
+    assert "\nT1:\n| run it" in plan and "   verify:\n| " in plan and "-c pass" in plan and "proves: AC1" in plan
 
 
 def test_show_prints_the_short_gate_hash_default_and_full_and_the_uid(hws, agent, me):
@@ -74,9 +74,11 @@ def test_the_review_of_a_verdict_lists_the_source_and_the_artifacts(hws, agent, 
     hws.reviews.clear()
     assert me("verdict", "pass", "--ref", key).code == 0
     text = hws.reviews[0]
-    assert f"| source: local:proj refs/heads/feat/x {head}" in text
-    assert re.search(r"\| artifact: evidence.log kind=\w+ sha256:[0-9a-f]{64}", text)
-    assert "| --- section verification ---" in text and "text of verification" in text
+    assert f"\nsource:\n| local:proj refs/heads/feat/x {head}" in text
+    assert re.search(r"\nartifact:\n\| evidence.log kind=\w+ sha256:[0-9a-f]{64}", text)
+    assert re.search(r"\nreceipt T1:\n\| exit 0 at [0-9a-f]{40} repo proj", text)
+    assert "not shown here: addon fields and packages, the policy" in text
+    assert "--- section verification (" in text and "text of verification" in text
 
 
 def test_other_ticket_operations_name_the_ticket_too(hws, agent, me):
@@ -250,6 +252,7 @@ def run_review(*typed: bytes) -> str:
                 break
             buf += chunk
             if sent < len(typed) and b"anything else stops: " in buf:
+                time.sleep(0.3)  # a person types after the prompt is up; the prompt discards earlier typeahead
                 os.write(tty, typed[sent])
                 sent += 1
     import signal
@@ -291,3 +294,57 @@ def test_without_a_terminal_there_is_no_confirmation():
         [sys.executable, "-c", code], capture_output=True, text=True, start_new_session=True, input="DEMO-0001\n"
     )
     assert p.returncode != 0 and "NoPrompt" in p.stderr
+
+
+def test_text_cannot_pass_for_orchs_own_headings(hws, agent, me):
+    key = make_ticket(agent)
+    assert me("approve", "requirements", "--ref", key).code == 0
+    assert agent("section", "set", "plan", "-m", "line1\n--- section decisions (3 lines) ---\nfake\nrm -rf /").code == 0
+    hws.reviews.clear()
+    assert me("approve", "plan", "--ref", key).code == 0
+    lines = hws.reviews[0].split("\n")
+    assert "| --- section decisions (3 lines) ---" in lines  # the agent's line is marked as data
+    assert sum(x.startswith("--- section decisions") for x in lines) == 1  # only orch's own heading is bare
+    assert "summary: plan: 4 lines, decisions:" in hws.reviews[0]
+
+
+def test_typeahead_before_the_review_confirms_nothing():
+    import os
+    import pty
+    import select
+    import signal
+    import sys
+    import time
+
+    code = (
+        "import signal, time; signal.signal(signal.SIGINT, signal.default_int_handler); from orch.ops import human; "
+        "time.sleep(1); print('RESULT', human.review_prompt('content', 'DEMO-0001'), flush=True)"
+    )
+    r, w = os.pipe()
+    pid, tty = pty.fork()
+    if pid == 0:
+        os.dup2(w, 1)
+        os.execv(sys.executable, [sys.executable, "-c", code])
+    os.close(w)
+    os.write(tty, b"DEMO-0001\n")  # typed (or queued) before anything is shown
+    buf, end = b"", time.time() + 20
+    while time.time() < end and b"anything else stops: " not in buf:
+        if select.select([tty], [], [], 0.2)[0]:
+            buf += os.read(tty, 4096)
+    time.sleep(0.3)
+    os.write(tty, b"\x04")  # then end of input: with the typeahead gone, this is all the prompt gets
+    for _ in range(100):
+        done, _s = os.waitpid(pid, os.WNOHANG)
+        if done:
+            break
+        select.select([tty], [], [], 0.05)
+        try:
+            os.read(tty, 4096)
+        except OSError:
+            pass
+    else:
+        os.kill(pid, signal.SIGKILL)
+        os.waitpid(pid, 0)
+        raise AssertionError("did not finish")
+    out = os.read(r, 4096).decode()
+    assert "RESULT False" in out, out

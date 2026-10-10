@@ -119,3 +119,27 @@ def test_git_runs_with_an_allow_listed_environment(monkeypatch):
     monkeypatch.setenv("LC_ALL", "C")
     env = observe.git_env()
     assert set(env) <= {"PATH", "HOME", "LANG", "TMPDIR", "TERM", "LC_ALL"} and env["LC_ALL"] == "C"
+
+
+def test_git_runs_without_a_controlling_terminal(ws, tmp_path):
+    """A clean filter set in the repository runs inside ``git status``; it must not be able to open the person's tty."""
+    import sys
+    import time
+
+    from orch.store import observe
+
+    repo = ws.repo()
+    marker = tmp_path / "marker"
+    script = tmp_path / "filter.py"
+    script.write_text(
+        "import sys, os\n"
+        "try:\n    open('/dev/tty', 'w').close(); r = 'tty'\nexcept OSError:\n    r = 'no tty'\n"
+        f"open({str(marker)!r}, 'w').write(r)\nsys.stdout.write(sys.stdin.read())\n"
+    )
+    (repo / ".git" / "info").mkdir(exist_ok=True)
+    (repo / ".git" / "info" / "attributes").write_text("*.txt filter=probe\n")
+    ws.git("config", "filter.probe.clean", f"{sys.executable} {script}")
+    time.sleep(1.1)
+    (repo / "impl.txt").write_text("broken\n")  # same content, new mtime: git runs the filter to compare
+    observe.dirty(repo)
+    assert marker.read_text() == "no tty"

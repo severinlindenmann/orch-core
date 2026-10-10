@@ -374,20 +374,26 @@ def _check_ticket(obj: dict[str, Any]) -> None:
 _FENCE = re.compile(r"(`{3,}|~{3,})")
 
 
-def _forged_heading(text: str) -> int | None:
-    """Index of the first line that would start a section when body.md is parsed: ``## `` at column 0 outside a
-    code fence (F1 §4). A fence opens with three or more backticks or tildes at column 0 and closes with the same
-    character at least as long."""
+def _forged_heading(text: str) -> tuple[int, str] | None:
+    """The first problem that would corrupt body.md when the section is written: ``(line index, why)``.
+
+    F1 §4, exact fence rule: a line at column 0 with three or more backticks or tildes opens a fence; it is closed by
+    a line at column 0 of the same character, at least as long, with nothing after it but spaces (not tabs). A
+    ``## `` line outside a fence would start a section; text that ends with a fence still open would swallow the
+    next headings. Both are refused."""
     fence: str | None = None
-    for i, line in enumerate(text.split("\n")):
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
         m = _FENCE.match(line)
         if fence is None:
             if m:
                 fence = m.group(1)
             elif line.startswith("## "):
-                return i
-        elif m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence) and not line[m.end() :].strip():
+                return i, "would start a section (## outside a code fence)"
+        elif m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence) and not line[m.end() :].strip(" "):
             fence = None
+    if fence is not None:
+        return len(lines) - 1, "ends inside an open code fence"
     return None
 
 
@@ -398,11 +404,9 @@ def _check_body(obj: dict[str, Any]) -> None:
             raise SchemaError("body", _pointer(["sections", sid]), f"a {obj['type']} ticket has no section {sid!r}")
         if text.startswith("\n") or text.endswith("\n"):
             raise SchemaError("body", _pointer(["sections", sid]), "section text has leading or trailing LF")
-        line = _forged_heading(text)
-        if line is not None:
-            raise SchemaError(
-                "body", _pointer(["sections", sid]), f"line {line + 1} would start a section (## outside a code fence)"
-            )
+        problem = _forged_heading(text)
+        if problem is not None:
+            raise SchemaError("body", _pointer(["sections", sid]), f"line {problem[0] + 1} {problem[1]}")
 
 
 def _check_workspace(obj: dict[str, Any]) -> None:

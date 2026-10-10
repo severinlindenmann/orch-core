@@ -1887,29 +1887,32 @@ def test_repo_identity_non_canonical_forms_are_refused(identity):
         )
 
 
-def test_repo_identity_agrees_with_canon_on_the_shared_cases():
-    """canon's gate-hash input checks the same rule; the two may differ only where F1 is stricter than canon."""
-    from orch.canon import hashing
+def _schema_accepts_identity(ident):
+    src = [{"repo": ident, "ref": "refs/heads/main", "sha": "a" * 40}]
+    try:
+        V("event", mut(ex.EVENTS["gate.approved.code"], lambda e: e.update(source_sha=src)))
+    except SchemaError:
+        return False
+    return True
 
-    for ident in (
-        "https://github.com/acme/x",
-        "https://github.com:8443/a/b",
-        "https://GitHub.com/a/b",
-        "https://github.com:443/a/b",
-        "https://github.com/a/b/",
-    ):
-        src = [{"repo": ident, "ref": "refs/heads/main", "sha": "a" * 40}]
-        ours = True
+
+def test_repo_identity_agrees_with_canon_and_the_shared_vectors():
+    """canon's check_repo_identity and the schema implement the same F1 5.7 rule; the vectors are shared."""
+    import json
+    from pathlib import Path
+
+    from orch.canon import check_repo_identity
+
+    vec = json.loads((Path(__file__).resolve().parents[1] / "vectors" / "f1" / "repo_identity.json").read_text())
+    for ident in vec["ok"]:
+        assert check_repo_identity(ident) == ident and _schema_accepts_identity(ident), ident
+    for ident in vec["refused"]:
         try:
-            V("event", mut(ex.EVENTS["gate.approved.code"], lambda e, s=src: e.update(source_sha=s)))
-        except SchemaError:
-            ours = False
-        try:
-            hashing._repo_identity(ident)
-            theirs = True
+            check_repo_identity(ident)
+            canon_ok = True
         except ValueError:
-            theirs = False
-        assert ours == theirs, ident
+            canon_ok = False
+        assert not canon_ok and not _schema_accepts_identity(ident), ident
 
 
 def test_decisions_need_a_non_empty_source_list():
@@ -1997,6 +2000,23 @@ def test_body_sections_refuse_a_forged_heading(text):
 @pytest.mark.parametrize(
     "text",
     [
+        "```",
+        "```\n## x",
+        "a\n~~~",
+        "```\n```\t",  # a tab after the closing fence: still open
+        "```\n``` x",
+        "````\n```",  # the shorter fence does not close the longer one
+        "```\n~~~",  # another character does not close it
+        "```\n ```",  # not at column 0
+    ],
+)
+def test_body_sections_refuse_an_open_code_fence(text):
+    bad("body", {"type": "feature", "sections": {"plan": text}}, "/sections/plan", "open code fence")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
         "a\n```\n## inside a fence\n```\nb",
         "~~~md\n## inside\n~~~",
         "````\n```\n## still inside\n```\n````",
@@ -2005,7 +2025,8 @@ def test_body_sections_refuse_a_forged_heading(text):
         "##nospace",
         "### three hashes",
         "# one hash",
-        "```\n## fence never closed",
+        "```\n```   ",  # spaces after the closing fence are fine
+        "```py\ncode\n```",
     ],
 )
 def test_body_sections_allow_headings_inside_fences_and_non_headings(text):
@@ -2103,6 +2124,7 @@ def test_repeated_patterns_are_references_not_copies():
     assert any_id.endswith("|" + addon_alt + ")(?![\\s\\S])"), (any_id, addon_alt)
 
 
+@pytest.mark.slow
 def test_validation_speed_of_an_event_stays_cheap():
     """Measured about 0.26 ms per event on a laptop (is_valid fast path, envelope and definitions inlined);
     the bound is loose so a slow CI machine passes, but a return to $ref chains (about 1.5 ms) would not."""
@@ -2117,3 +2139,20 @@ def test_validation_speed_of_an_event_stays_cheap():
             V("event", e)
     per_event = (time.perf_counter() - t0) / (20 * len(events))
     assert per_event < 0.001, f"{per_event * 1000:.2f} ms per event"
+
+
+def test_event_schemas_repeat_the_envelope_of_event_json():
+    """The envelope is inlined into every event.<type> for speed; keep the copies equal to event.json."""
+    env = schema.load("event")
+    for t in schema.event_types():
+        s = schema.load("event." + t)
+        for k, v in env["properties"].items():
+            if k == "actor":
+                continue  # intentionally narrowed per type
+            if k == "type":
+                assert s["properties"][k] == {"const": t}, t
+            else:
+                assert s["properties"][k] == v, (t, k)
+        assert set(env["required"]) <= set(s["required"]), t
+        assert s["allOf"][: len(env["allOf"])] == env["allOf"], t
+        assert s["additionalProperties"] is False, t

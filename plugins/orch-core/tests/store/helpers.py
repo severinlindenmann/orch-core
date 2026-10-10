@@ -109,6 +109,37 @@ class Env:
             label="tests",
         )
 
+    def add_device(self, p: Person | None = None) -> tuple[str, bytes]:
+        """``device.added`` of a second device of ``p`` (signed by the first); returns (device ref, its dk_sig key)."""
+        p = p or self.owner
+        sig_key, kx_key = crypto.generate_private_key(), crypto.generate_private_key()
+        sig_pub = crypto.public_bytes(sig_key)
+        cert = certs.make_device_cert(
+            p.pk_pub,
+            p.pk_sign,
+            dk_sig_pub=sig_pub,
+            dk_kx_pub=crypto.public_bytes(kx_key),
+            label_sealed=b"second",
+            created_ms=T0 * 1000,
+            expires_ms=None,
+            scopes_max=["look", "decide", "operate", "type"],
+        )
+        ref = certs.device_ref(sig_pub)
+        assert self.store is not None
+        self.store.append(self.person_event(p, "workspace", "device.added", device=ref, cert=cert), log="workspace")
+        return ref, sig_pub
+
+    def revoke_device(self, ref: str, p: Person | None = None, reason: str = "compromised"):
+        p = p or self.owner
+        rev = certs.make_revocation(
+            p.pk_pub, p.pk_sign, device_id_hex=ref[2:], revoked_ms=(self.clock[0] + 1) * 1000, reason=reason
+        )
+        assert self.store is not None
+        return self.store.append(
+            self.person_event(p, "workspace", "device.revoked", device=ref, reason=reason, revocation=rev),
+            log="workspace",
+        )
+
     def bootstrap(self, **kw: Any) -> Store:
         """An open store with the genesis and one grant for the owner."""
         s = self.open(**kw)

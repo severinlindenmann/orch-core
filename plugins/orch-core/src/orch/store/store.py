@@ -1064,9 +1064,20 @@ class Store:
         assert self._state is not None
         if self._host is None:
             return out
-        out += self._heal_workspace()
+        bad = {c.log for c in self._state.chain_errors} | set(self._read_errors) | set(self._diverged)
+        if WORKSPACE in bad:
+            return out
+        try:
+            out += self._heal_workspace()
+        except StoreError as e:
+            self._report(e.code, e.detail, WORKSPACE)
         for uid in sorted(self._state.tickets):
-            out += self._heal_ticket(uid)
+            if uid in bad:
+                continue
+            try:
+                out += self._heal_ticket(uid)
+            except StoreError as e:  # one ticket that cannot be healed must not stop the others (or opening)
+                self._report(e.code, e.detail, uid)
         return out
 
     def _after_open_heal(self) -> None:

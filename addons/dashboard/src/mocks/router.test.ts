@@ -356,3 +356,13 @@ describe('stable ages and the attention count', () => {
     expect(store.viewer).toBe('p_sev')
   })
 })
+
+describe('grant default hours', () => {
+  it('is clamped to 1..12 whole hours', async () => {
+    const { grantDefaultHours } = await import('@/api/grants')
+    expect(grantDefaultHours({ grant_hours: 99 })).toBe(12)
+    expect(grantDefaultHours({ grant_hours: 0 })).toBe(1)
+    expect(grantDefaultHours({ grant_hours: Number.NaN })).toBe(8)
+    expect(grantDefaultHours({})).toBe(8)
+  })
+})

@@ -3,7 +3,7 @@ import { atLeast } from '@/api/permissions'
 import type { AddonDecision } from '@/api/types'
 import type { MockStore } from '../store'
 import type { Rng } from '../busy/rng'
-import { canSeeTicket, conflict, notFound, registerAddon, type AddonCtx } from './registry'
+import { canSeeTicket, conflict, notFound, registerAddon, withinCharterSize, type AddonCtx } from './registry'
 import { fmtDateTime, fmtWhen } from '@/lib/time'
 
 // factory (AI Factory, Phase 2 preview; v1 docs/factory.md): one factory epic, DEMO-0050 "Monthly billing v2".
@@ -24,7 +24,7 @@ import { fmtDateTime, fmtWhen } from '@/lib/time'
 const EPIC_TITLE = 'Monthly billing v2'
 const MAX_CHILDREN = 25
 const MAX_HOURS = 72
-const MAX_SIZE = 'm'
+const MAX_SIZE = 'm' as const
 const WATCH_STEPS = 10 // simulated steps per workspace per hour
 const STEP_MS = 20_000
 const MAX_PERMITS_SHOWN = 5
@@ -188,7 +188,10 @@ function simulateStep(store: MockStore, ws: string): boolean {
   if (!store.autoApprove(child.key, 'plan', { charter: 'factory', by: agent }).ok) return false
   // The charter approves everything, verdicts included (owner decision 2026-10-10): a child waiting in testing gets
   // its verdict through core, on its branch head. A code review stays human (core refuses it under a charter).
-  const waiting = childKeys(store, ws, epic).find((k) => store.ticket(k)?.status === 'testing' && !store.ticket(k)?.verdict)
+  const waiting = childKeys(store, ws, epic).find((k) => {
+    const t = store.ticket(k)
+    return t?.status === 'testing' && !t.verdict && withinCharterSize(t.size, MAX_SIZE)
+  })
   if (waiting) store.autoApprove(waiting, 'verify', { charter: 'factory', by: agent })
   state.used = (state.used as number) + 1
   state.simSteps = n + 1
@@ -382,7 +385,7 @@ registerAddon({
   // The charter signed when the epic started; in force while the factory runs (not paused, not stopped).
   charter(state, c) {
     const epic = state.epic as string | null
-    return epic ? { epic, signedBy: state.startedBy as string, active: modeOf(state, c.store.now()) === 'running' } : null
+    return epic ? { epic, signedBy: state.startedBy as string, active: modeOf(state, c.store.now()) === 'running', maxSize: MAX_SIZE } : null
   },
 
   decisions(state, _pkg, c): AddonDecision[] {

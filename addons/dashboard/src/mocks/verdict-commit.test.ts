@@ -208,3 +208,79 @@ describe('landing uses the signed commit', () => {
     expect(t.status).toBe('testing')
   })
 })
+
+describe('review fixes', () => {
+  const codeOn2 = (s: S, count = 2) =>
+    s.store.appendWs(s.ws, { type: 'gate.policy_set', gate: 'code', approvers: 'maintainer', count, not: 'assignees', applies: 'all' })
+
+  it('a code review with count 2 waits for the second reviewer, then the ticket is done', async () => {
+    const s = setup()
+    codeOn2(s)
+    await pass(s, KEY, head(s))
+    await s.api.postAction(KEY, { action: 'approve', gate: 'code', source_sha: head(s) })
+    expect(s.store.ticket(KEY)).toMatchObject({ status: 'testing', gates: { code: { state: 'pending' } } })
+    s.store.setViewer('p_mara')
+    await s.api.postAction(KEY, { action: 'approve', gate: 'code', source_sha: head(s) })
+    expect(s.store.ticket(KEY)).toMatchObject({ status: 'done', gates: { code: { state: 'approved' } } })
+  })
+
+  it('a push voids a partial code quorum: an approval on the old commit never counts with one on the new', async () => {
+    const s = setup()
+    codeOn2(s)
+    await pass(s)
+    await s.api.postAction(KEY, { action: 'approve', gate: 'code', source_sha: head(s) })
+    s.store.pushCommit(KEY)
+    expect(s.store.eventsOf(KEY).some((e) => e.type === 'gate.invalidated' && e.gate === 'code' && e.cause === 'new_commits')).toBe(true)
+    expect(s.store.ticket(KEY)!.gates.code.approvals).toHaveLength(0)
+  })
+
+  it('a push voids a partial verify quorum (count 2): only approvals of the head count', () => {
+    const s = setup()
+    s.store.appendWs(s.ws, { type: 'gate.policy_set', gate: 'verify', approvers: 'maintainer', count: 2 })
+    const old = head(s)
+    s.store.append(KEY, { type: 'gate.approved', actor: 'p_mara', gate: 'verify', source_sha: old })
+    expect(s.store.ticket(KEY)!.gates.verify.state).toBe('pending')
+    s.store.pushCommit(KEY)
+    expect(s.store.ticket(KEY)!.gates.verify.approvals).toHaveLength(0)
+    // Even without a void, an approval on an older commit is not counted toward the head.
+    s.store.append(KEY, { type: 'gate.approved', actor: 'p_sev', gate: 'verify', source_sha: old })
+    s.store.append(KEY, { type: 'gate.approved', actor: 'p_mara', gate: 'verify', source_sha: old })
+    expect(s.store.ticket(KEY)!.gates.verify.state).toBe('pending')
+  })
+
+  it('a re-pushed commit already on the branch does not double the diff', () => {
+    const s = setup()
+    const before = s.store.ticket(KEY)!.branch
+    s.store.append(KEY, { type: 'branch.pushed', actor: 'claude-code:s_x:p_sev', sha: before.head })
+    expect(s.store.ticket(KEY)!.branch).toMatchObject({ head: before.head, additions: before.additions, files: before.files })
+  })
+
+  it('request changes on verify is refused while a verdict stands', async () => {
+    const s = setup()
+    codeOn2(s, 1)
+    await pass(s)
+    await expect(s.api.postAction(KEY, { action: 'request_changes', gate: 'verify', text: 'x' })).rejects.toMatchObject({ status: 409, code: 'verdict.exists' })
+  })
+
+  it('a code review policy change re-reads tickets: on sends done-unlanded back to testing, off makes waiting ones done', async () => {
+    const s = setup()
+    await pass(s)
+    expect(s.store.ticket(KEY)!.status).toBe('done')
+    s.store.setViewer('p_sev')
+    await s.api.postSettings(s.ws, { op: 'gate.policy', gate: 'code', approvers: 'maintainer', count: 1, not: 'assignees', applies: 'all' })
+    expect(s.store.ticket(KEY)!.status).toBe('testing')
+    await s.api.postSettings(s.ws, { op: 'gate.policy', gate: 'code', approvers: 'maintainer', count: 1, not: 'assignees', applies: 'off' })
+    expect(s.store.ticket(KEY)!.status).toBe('done')
+  })
+})
+
+describe('the charter covers children up to its size only', () => {
+  it('refuses a verdict for a child above size m, and the demo skips it', () => {
+    const s = setup('p_sev', true)
+    const def = (s.store as unknown as { defs: Map<string, { size: string | null }> }).defs.get('DEMO-0053')!
+    def.size = 'l'
+    expect(s.store.autoApprove('DEMO-0053', 'verify', { charter: 'factory', by: 'claude-code:s_f101:p_sev' })).toMatchObject({ ok: false, status: 409, code: 'charter.out_of_scope' })
+    def.size = null
+    expect(s.store.autoApprove('DEMO-0053', 'verify', { charter: 'factory', by: 'claude-code:s_f101:p_sev' })).toMatchObject({ ok: false, code: 'charter.out_of_scope' })
+  })
+})

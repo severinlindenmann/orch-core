@@ -53,4 +53,17 @@ describe('ticket: the changes the verdict signs', () => {
     expect(await screen.findByTestId('gate-code', {}, T)).toHaveAccessibleName('Code review: Waiting for your review')
     expect(within(screen.getByTestId('ticket-header')).getByRole('button', { name: 'Approve code review' })).toBeInTheDocument()
   })
+
+  it('the verdict dialog signs the head it opened with: a push while it is open is refused as stale', async () => {
+    const { user } = renderApp('/ticket/DEMO-0041')
+    const header = await screen.findByTestId('ticket-header', {}, T)
+    await user.click(within(header).getByRole('button', { name: 'Give verdict' }))
+    const dialog = await screen.findByRole('dialog', {}, T)
+    await user.click(within(dialog).getByRole('radio', { name: /^Pass on c90e7a1/ }))
+    mockStore.pushCommit('DEMO-0041')
+    await waitFor(() => expect(within(dialog).getByRole('radio', { name: /^Pass on c90e7a1/ })).toBeInTheDocument(), T)
+    await user.click(within(dialog).getByRole('button', { name: 'Pass' }))
+    expect(await within(dialog).findByRole('alert', {}, T)).toHaveTextContent(/New commits since you opened the verdict: the branch head is [0-9a-f]{7}, not c90e7a1/)
+    expect(mockStore.ticket('DEMO-0041')!.verdict).toBeNull()
+  })
 })

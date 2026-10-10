@@ -9,7 +9,11 @@ export const GRANT_MAX_HOURS = 12
 export const DEFAULT_GRANT_HOURS = 8
 
 /** The workspace's default grant length (hours). */
-export const grantDefaultHours = (ws: Pick<Workspace, 'grant_hours'> | undefined): number => ws?.grant_hours ?? DEFAULT_GRANT_HOURS
+export const grantDefaultHours = (ws: Pick<Workspace, 'grant_hours'> | undefined): number => {
+  const h = ws?.grant_hours
+  // Clamped to a whole number of hours from 1 to the longest grant: a bad setting never widens a member's grant.
+  return typeof h === 'number' && Number.isFinite(h) ? Math.min(GRANT_MAX_HOURS, Math.max(1, Math.floor(h))) : DEFAULT_GRANT_HOURS
+}
 
 /**
  * What a person may sign for themselves (owner decision 2026-10-10, item 5). Owners and maintainers: all tickets in the

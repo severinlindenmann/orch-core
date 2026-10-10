@@ -28,7 +28,13 @@ export interface Charter {
   epic: string
   signedBy: string
   active: boolean
+  /** The largest child size the charter covers (xs < s < m < l < xl); larger or unsized children wait for a person. */
+  maxSize: 'xs' | 's' | 'm' | 'l' | 'xl'
 }
+
+const CHARTER_SIZES = ['xs', 's', 'm', 'l', 'xl']
+/** Is a child of `size` inside a charter's size limit? An unsized child is not. */
+export const withinCharterSize = (size: string | null, max: Charter['maxSize']): boolean => !!size && CHARTER_SIZES.includes(size) && CHARTER_SIZES.indexOf(size) <= CHARTER_SIZES.indexOf(max)
 
 /** An action's result, or a refusal the router turns into an HTTP error (status, code, sentence). */
 export type AddonActionFn = (ctx: AddonCtx) => AddonActionResult | StoreFailure

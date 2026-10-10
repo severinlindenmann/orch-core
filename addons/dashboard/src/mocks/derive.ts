@@ -101,7 +101,8 @@ export function deriveTicket(
 
   for (const e of events) {
     const c = commitOf(e)
-    if (c) commits.push(c)
+    // A commit already on the branch (a re-push of the same sha) adds nothing.
+    if (c && !commits.some((x) => x.sha === c.sha)) commits.push(c)
     switch (e.type) {
       case 'ticket.created':
         status = (e.status as Status) ?? 'backlog'
@@ -314,12 +315,14 @@ export function deriveTicket(
     const invalid = gateInvalid[g]
     const gated = gateContent(g, def, finalBody, artifacts, branch)
     const signed = approvals[approvals.length - 1]?.source_sha
+    // verify and code count only approvals of the branch head: one on an older commit never adds to the quorum.
+    const counted = g === 'verify' || g === 'code' ? approvals.filter((a) => a.source_sha === branch.head).length : approvals.length
     gates[g] = {
       state: changes
         ? 'changes_requested'
         : invalid
           ? 'invalidated'
-          : approvals.length >= policy.count || (approvals.length > 0 && approvals.length >= (gateNeeded[g] ?? Infinity))
+          : counted >= policy.count || (counted > 0 && counted >= (gateNeeded[g] ?? Infinity))
             ? 'approved'
             : 'pending',
       approvals,

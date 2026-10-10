@@ -143,6 +143,7 @@ function CodeReview({ workspace, canEdit, ask }: { workspace: Workspace; canEdit
         `Approvals needed: ${next.count}`,
         'Never an assignee of the ticket; never auto-approved, not even under a factory charter',
         'It signs the commit the verdict signed; landing needs it',
+        'Turning it on sends done tickets that have not landed back to testing for a review; turning it off makes tickets waiting for one done',
         'Approvals already given stay valid',
       ],
       req: { op: 'gate.policy', gate: 'code', approvers: next.approvers, count: next.count, not: 'assignees', applies: next.applies },

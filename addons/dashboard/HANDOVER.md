@@ -171,7 +171,8 @@ schedules `arm`, `disarm`, `run_now`, `open_run`, `finding`; drop `share`, `clai
 
 **Mock only (not part of the contract):** POST `/api/dev/reset {dataset?}`, GET `/api/dev/dataset`, POST
 `/api/dev/viewer`, POST `/api/dev/relay/:ws` (simulate a dropped link / a phone scanning), POST
-`/api/dev/tickets/:key/push` (the ticket's agent pushes a commit: the demo of "new commits after the verdict").
+`/api/dev/tickets/:key/push` (the ticket's agent pushes a commit, any time: it simulates an agent push; the Changes
+tab offers it while a verdict stands). **The real host must not have this route.**
 
 **Core rules the host must keep (owner decisions 10 Oct):**
 
@@ -179,16 +180,24 @@ schedules `arm`, `disarm`, `run_now`, `open_run`, `finding`; drop `share`, `clai
   section, artifacts and criteria. `verdict.given` and the verify `gate.approved` record `source_sha`.
 - **New commits void it.** When the ticket branch gets a commit other than the one a standing verify (or code)
   approval signed, core appends `gate.invalidated {gate, cause: 'new_commits', sha, reason: "New commits after the
-  verdict: <sha>"}` as host for each, and a done ticket goes back to testing (the landing-resolution path). The mock
-  sees commits as `task.done` receipts and `branch.pushed {sha, branch}` (agent); the host watches the branch.
+  verdict: <sha>"}` as host for each, and a done ticket goes back to testing (the landing-resolution path). Any
+  approval on another commit is voided, also a partial quorum, and only approvals of the current head count. The mock
+  sees commits as `task.done` receipts and `branch.pushed {sha, branch}` (agent); **the host takes the head from git
+  (content-addressed), never from a sha an agent reports.**
 - **Code review gate (`code`).** Off by default; on per workspace or per ticket type. When it applies, a pass
-  verdict keeps the ticket in testing until a person (policy approvers, never an assignee, never a charter) approves
-  exactly that commit; landing needs it on the commit the verdict signed. A landing resolution voids it with verify.
+  verdict keeps the ticket in testing until the policy's count of people (policy approvers, never an assignee, never a
+  charter) approve exactly that commit; landing needs it on the commit the verdict signed. A landing resolution voids
+  it with verify. A policy change re-reads tickets: on, done tickets that have not landed go back to testing; off,
+  tickets waiting for a review are done. Request changes on verify is refused while a verdict stands (409
+  `verdict.exists`).
+- **Member grants (`workable`).** The host must check the person's visibility and role on every claim and start
+  path (dashboard, CLI, addons), not only in the start dialog.
 - **Landing uses the signed commit.** The land worker's `source_sha` is the verify approval's `source_sha`; an entry
   whose approval no longer stands for that commit leaves the queue.
 - **Charter verdicts.** `autoApprove(key, 'verify', {charter, by})` (core, an agent under an active charter, a child
   of its epic, in testing): `verdict.given` and `gate.approved` with `via: 'factory_charter'`, `charter`,
-  `charter_signed_by`, `source_sha` and no presence. Never for `code` (403 `human_only`). Every surface says
+  `charter_signed_by`, `source_sha` and no presence. Never for `code` (403 `human_only`), and only for children
+  within the charter's size limit (`maxSize`; larger or unsized: 409 `charter.out_of_scope`). Every surface says
   "Verdict: via the factory charter — no person reviewed this".
 - **Schedules "Run now"** is member-level and unsigned in the mock (it only reads and reports). Before any run that
   starts an agent, the real host checks the addon's `spawn_agent` grant and the person's own active grant.

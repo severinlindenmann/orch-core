@@ -53,13 +53,14 @@ export function eventDetail(e: OrchEvent, v: Viewer): string {
     case 'question.answered':
       return `Answered ${s('question')}${e.option ? ` with "${s('option')}"` : ''}${e.text ? `: ${s('text')}` : ''}`
     case 'gate.approved':
-      return `Approved ${s('gate')}`
+      return e.via === 'factory_charter' ? `Approved ${s('gate')} via the factory charter — no person reviewed this` : `Approved ${s('gate')}${e.source_sha ? ` on ${s('source_sha')}` : ''}`
     case 'gate.changes_requested':
       return `Requested changes on ${s('gate')}${e.text ? `: ${s('text')}` : ''}`
     case 'gate.invalidated':
       return `${s('gate')} approval invalidated: ${s('reason')}`
     case 'verdict.given':
-      return `Verdict ${s('result')}${e.text ? `: ${s('text')}` : ''}`
+      if (e.via === 'factory_charter') return `Verdict ${s('result')} via the factory charter — no person reviewed this${e.source_sha ? ` (commit ${s('source_sha')})` : ''}`
+      return `Verdict ${s('result')}${e.source_sha ? ` on ${s('source_sha')}` : ''}${e.text ? `: ${s('text')}` : ''}`
     case 'handoff.written':
       return `Handoff: ${s('text')}`
     case 'section.edited':

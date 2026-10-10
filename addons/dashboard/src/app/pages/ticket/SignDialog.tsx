@@ -83,16 +83,22 @@ export function SignDialog({ ticket, action, onClose, onOpenEvidence, onOpenChan
   const cancel = useRef<HTMLButtonElement>(null)
   const firstRadio = useRef<HTMLInputElement>(null)
 
+  // The commit a verdict or code review signs is the head when the dialog opened: a push while it is open does not
+  // change what is shown, and the host refuses the stale sha (409).
+  const [openedHead, setOpenedHead] = useState(ticket.branch.head)
   useEffect(() => {
     setPhase('confirm')
     setText('')
     setResult(null)
     setError(null)
+    setOpenedHead(ticket.branch.head)
+    // Only when a new action opens: later refetches of the ticket must not move the signed commit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [action])
 
   if (!action) return null
   const d = describe(ticket, action)
-  const sections = action.kind === 'approve' || action.kind === 'request_changes' ? (d.gate ? signedSections(ticket, d.gate, personName) : null) : null
+  const sections = action.kind === 'approve' || action.kind === 'request_changes' ? (d.gate ? signedSections({ ...ticket, branch: { ...ticket.branch, head: openedHead } }, d.gate, personName) : null) : null
   const hasContent = !!sections && written(sections).length > 0
   const nothing = action.kind === 'approve' && !!sections && !hasContent
   const needsText = action.kind === 'request_changes' || (action.kind === 'verdict' && result === 'fail')
@@ -111,7 +117,8 @@ export function SignDialog({ ticket, action, onClose, onOpenEvidence, onOpenChan
   const blocked = busy || !!hint
 
   // The commit a verdict or code review signs: the branch head now, in full (owner decision 2026-10-10).
-  const head = ticket.branch.head
+  const head = openedHead
+  const shownBranch = { ...ticket.branch, head }
   const passLabel = `Pass on ${visible(head)} · ${diffstat(ticket.branch)}: the evidence is enough`
   const proven = ticket.acceptance_state.filter((a) => a.state === 'proven').length
   const receipts = ticket.tasks_state.filter((t) => t.receipt).length
@@ -216,7 +223,7 @@ export function SignDialog({ ticket, action, onClose, onOpenEvidence, onOpenChan
             </p>
             <section aria-label="Commit" className="rounded-md border border-border bg-bg px-3 py-2 text-[13px]">
               <h3 className="mb-0.5 text-[12px] font-medium text-text-muted">The verdict signs this commit</h3>
-              <p className="break-words font-mono text-[12px] text-text">{visible(commitCover(ticket.branch))}</p>
+              <p className="break-words font-mono text-[12px] text-text">{visible(commitCover(shownBranch))}</p>
               <p className="mt-1 text-[12px] text-text-muted">A new commit on the branch after the verdict voids it; the ticket goes back to testing.</p>
             </section>
             <fieldset className="grid gap-2" disabled={busy}>

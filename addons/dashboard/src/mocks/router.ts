@@ -112,7 +112,8 @@ function postAction(store: MockStore, ctx: RouteContext): TransportResponse {
         if (a.source_sha !== t.branch.head || a.source_sha !== t.verdict?.source_sha)
           return fail(409, 'gate.stale', `The branch moved: its head is ${t.branch.head}, not ${String(a.source_sha)}.`, 'Open the changes again and review the current commit.')
         const event = store.append(key, { type: 'gate.approved', gate: 'code', presence: 'touchid', source_sha: a.source_sha })
-        store.append(key, { type: 'status.changed', actor: 'host', to: 'done' })
+        // Done only once the policy's count is met (a count of 2 waits for the second reviewer).
+        if (!codeReviewWaits(store.ticket(key)!)) store.append(key, { type: 'status.changed', actor: 'host', to: 'done' })
         return finish(event)
       }
       const why = store.canApprove(t, a.gate, me)
@@ -126,6 +127,8 @@ function postAction(store: MockStore, ctx: RouteContext): TransportResponse {
       const why = store.canApprove(t, a.gate, me)
       if (why && !/already/.test(why)) return fail(403, 'gate.not_eligible', why)
       if (a.gate === 'code' && !codeReviewWaits(t)) return fail(409, 'gate.not_open', `${key} has no code review waiting.`)
+      // A verdict stands: changes on verify would leave it in place and the ticket stuck. A new commit or the code review voids it.
+      if (a.gate === 'verify' && t.verdict) return fail(409, 'verdict.exists', 'A verdict was already given.', 'A new commit voids it; with the code review on, ask for changes there.')
       const event = store.append(key, { type: 'gate.changes_requested', gate: a.gate, text: a.text.trim() })
       // Changes to the code void the verdict too: the next commit needs a new one.
       if (a.gate === 'code') store.append(key, { type: 'gate.invalidated', actor: 'host', gate: 'verify', reason: 'The code review asked for changes.', cause: 'code_review' })
@@ -337,6 +340,7 @@ function postSettings(store: MockStore, ctx: RouteContext): TransportResponse {
       const why = unmeetablePolicy(ws, { approvers: b.approvers, count: b.count })
       if (why) return fail(409, 'gate.unmeetable', why, 'Add people to that group first, or lower the count.')
       store.appendWs(wsId, { type: 'gate.policy_set', gate: b.gate, approvers: b.approvers, count: b.count, not: b.not ?? null, ...(b.gate === 'code' ? { applies: b.applies ?? ws.gates.code.applies ?? 'off' } : {}) })
+      if (b.gate === 'code') store.recheckCodeReview(wsId)
       return done()
     }
     case 'archive':

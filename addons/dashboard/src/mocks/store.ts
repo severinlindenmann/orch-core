@@ -35,6 +35,7 @@ import { getAddon, openDecisions } from './addons'
 import { isCoreNamespace } from './addons/registry'
 import { deriveTicket, describeEvent, fnvHex, parseActor } from './derive'
 import { commitOf, nextCommitSha } from './changes'
+import { withinCharterSize } from './addons/registry'
 import addonsFixture from './fixtures/addons.json'
 import catalogFixture from './fixtures/catalog.json'
 import demoFixture from './fixtures/demo.json'
@@ -493,13 +494,32 @@ export class MockStore {
     if (!t) return
     const reason = `New commits after the verdict: ${sha}`
     let voided = false
+    // Any approval on another commit, whatever the gate's state (a partial quorum too), and a verdict on another
+    // commit: none of them may count toward the new head.
     for (const gate of ['verify', 'code'] as const) {
       const g = t.gates[gate]
-      if (g.state !== 'approved' || !g.source_sha || g.source_sha === sha) continue
+      const stale = g.approvals.some((a) => a.source_sha !== sha) || (gate === 'verify' && !!t.verdict && t.verdict.source_sha !== sha)
+      if (!stale) continue
       this.append(key, { type: 'gate.invalidated', actor: 'host', gate, reason, cause: 'new_commits', sha })
       voided = true
     }
     if (voided && t.status === 'done') this.append(key, { type: 'status.changed', actor: 'host', to: 'testing' })
+  }
+
+  /**
+   * Core re-reads every ticket after the code review policy changed. Turned off (or the count met) for a ticket waiting
+   * in testing on a pass verdict: it is done. Turned on for a done ticket that has not landed and has no code review on
+   * its verdict's commit: it goes back to testing and waits for one. Landed tickets keep their history.
+   */
+  recheckCodeReview(wsId: string): void {
+    for (const [key, ws] of this.wsOfKey) {
+      if (ws !== wsId) continue
+      const t = this.ticket(key)
+      if (!t?.verdict || t.verdict.result !== 'pass' || t.gates.verify.state !== 'approved') continue
+      if (t.status === 'testing' && !codeReviewWaits(t)) this.append(key, { type: 'status.changed', actor: 'host', to: 'done', reason: 'code review policy' })
+      else if (t.status === 'done' && t.gates.code.required && t.gates.code.state !== 'approved' && !this.eventsOf(key).some((e) => e.type === 'land.attempt' && e.outcome === 'merged'))
+        this.append(key, { type: 'status.changed', actor: 'host', to: 'testing', reason: 'code review policy' })
+    }
   }
 
   /**
@@ -1159,6 +1179,8 @@ export class MockStore {
     const ch = mod?.charter && addonActive(w, opts.charter) ? mod.charter(this.addonState(w.id, opts.charter), { store: this, ws: w.id, viewer: actor.for }) : null
     if (!ch || !ch.active) return refuse(409, 'charter.inactive', 'No charter is in force for this epic (not started, paused or stopped).')
     if (t.parent !== ch.epic) return refuse(409, 'charter.out_of_scope', `${key} is not a child of ${ch.epic}.`)
+    // The charter covers children up to its size limit only; larger (or unsized) ones wait for a person.
+    if (!withinCharterSize(t.size, ch.maxSize)) return refuse(409, 'charter.out_of_scope', `${key} is ${t.size ? `size ${t.size}` : 'not sized'}; the charter covers children of size ${ch.maxSize} or smaller.`)
     if ((gate as string) === 'code') return refuse(403, 'human_only', 'A code review is always a person\'s: the charter never approves it.')
     if (gate === 'verify') {
       if (t.status !== 'testing') return refuse(409, 'transition.not_allowed', `${key} is ${t.status}, not testing.`)

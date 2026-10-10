@@ -35,3 +35,8 @@ jobs:
         env:
           # The 3.14 leg must have Unicode 16.0, so the canon comparison tests can never skip silently there.
           ORCH_REQUIRE_UNICODE16: ${{ matrix.python == '3.14' && '1' || '' }}
+      # the slow marker holds, among others, the check that all 52 operation declarations validate against the
+      # operation schema (startup does not validate)
+      - run: uv run pytest -q -m slow -n auto
+        env:
+          ORCH_REQUIRE_UNICODE16: ${{ matrix.python == '3.14' && '1' || '' }}

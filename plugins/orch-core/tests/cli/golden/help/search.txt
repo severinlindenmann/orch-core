@@ -1,0 +1,5 @@
+Search ticket titles and sections.
+usage: orch search QUERY [--limit N]
+  QUERY  what to look for
+  --limit N  at most this many [default 10]
+more: orch describe search

@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "code": "transition.refused",
+    "message": "the ticket status does not allow this",
+    "hint": "orch show --section current_state",
+    "fix": {
+      "argv": [
+        "orch",
+        "show"
+      ]
+    },
+    "retryable": false
+  }
+}

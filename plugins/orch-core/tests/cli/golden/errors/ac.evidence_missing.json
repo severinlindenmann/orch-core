@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "ac.evidence_missing",
+    "message": "acceptance criteria without evidence",
+    "hint": "orch artifact add FILE --ac AC1",
+    "fix": {
+      "argv": [
+        "orch",
+        "describe",
+        "artifact.add"
+      ]
+    },
+    "retryable": false
+  }
+}

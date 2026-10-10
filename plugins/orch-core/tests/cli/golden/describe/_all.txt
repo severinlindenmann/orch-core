@@ -1,0 +1,8 @@
+ok describe all
+Context: status, describe, help
+Read: show, list, search, next, inbox
+Lifecycle: new, claim, release, handoff, submit, ask, wait
+Edit: set, section set, ac add|edit, task list|next|add|start|done|skip|block|reopen, artifact add|replace|list, log, apply
+Human only: approve, request-changes, verdict, answer, close, reopen, grant, grant revoke, member add|remove|role
+Admin: init, doctor, check, instructions sync, import v1, addon list|grant|disable|purge
+next: orch describe CMD

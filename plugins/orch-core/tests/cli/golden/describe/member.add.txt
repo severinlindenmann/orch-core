@@ -1,0 +1,19 @@
+ok describe member.add
+Add a member with a role; their first device certificate comes with the invitation.
+usage: orch member add --name NAME [--role owner|maintainer|member|viewer] --pk KEY --cert PATH [--dry-run]
+who: human · emits: member.added
+pre: workspace_exists role_allows user_presence text_clean
+args:
+  --name NAME  display name (required)
+  --role ROLE  role (owner|maintainer|member|viewer) [default member]
+  --pk KEY  their public key, b64u (required)
+  --cert PATH  their device certificate: PATH or - for stdin (required)
+  --dry-run  say what would happen, append nothing
+errors:
+  human_only (exit 3): orch ask or orch wait | fix: orch describe ask
+  role.denied (exit 3): ask an owner or maintainer | fix: orch status
+  lock.busy (exit 4 retry): retry in a moment | fix: orch status
+  parse.json (exit 6): orch describe member.add
+  parse.text (exit 6): orch describe member.add
+  members.stale (exit 9 retry): retry; the person re-signs | fix: orch status
+out: ok member.added {person} {role} seq={seq} / next: {next}

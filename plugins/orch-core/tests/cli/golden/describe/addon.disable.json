@@ -1,0 +1,111 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "target": "addon.disable",
+    "name": "addon.disable",
+    "cli": "orch addon disable",
+    "summary": "Disable an addon; its data stays.",
+    "who": "human",
+    "usage": "orch addon disable NAME [--dry-run]",
+    "pre": [
+      "workspace_exists",
+      "addon_exists",
+      "role_allows",
+      "user_presence"
+    ],
+    "emits": [
+      "addon.disabled"
+    ],
+    "input": {
+      "type": "object",
+      "description": "Disable an addon; its data stays.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "addon name",
+          "x-metavar": "NAME"
+        }
+      },
+      "x-positional": [
+        "name"
+      ],
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "text": "ok addon.disabled {name} seq={seq}\nnext: {next}",
+      "json": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "errors": [
+      {
+        "code": "not_found",
+        "exit": 2,
+        "retryable": false,
+        "hint": "orch list",
+        "fix": [
+          "orch",
+          "list"
+        ]
+      },
+      {
+        "code": "human_only",
+        "exit": 3,
+        "retryable": false,
+        "hint": "orch ask or orch wait",
+        "fix": [
+          "orch",
+          "describe",
+          "ask"
+        ]
+      },
+      {
+        "code": "role.denied",
+        "exit": 3,
+        "retryable": false,
+        "hint": "ask an owner or maintainer",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
+        "code": "lock.busy",
+        "exit": 4,
+        "retryable": true,
+        "hint": "retry in a moment",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
+        "code": "members.stale",
+        "exit": 9,
+        "retryable": true,
+        "hint": "retry; the person re-signs",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      }
+    ]
+  },
+  "key": null,
+  "seq": 0,
+  "cursor": 0,
+  "hints": []
+}

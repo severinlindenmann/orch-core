@@ -1,0 +1,141 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "target": "artifact.replace",
+    "name": "artifact.replace",
+    "cli": "orch artifact replace",
+    "summary": "Replace a stored file; the name stays, the digest changes.",
+    "who": "agent",
+    "usage": "orch artifact replace NAME PATH [--ref REF] [--dry-run]",
+    "pre": [
+      "ticket_exists",
+      "ticket_open_for_work",
+      "grant_valid"
+    ],
+    "emits": [
+      "artifact.replaced"
+    ],
+    "input": {
+      "type": "object",
+      "description": "Replace a stored file; the name stays, the digest changes.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "artifact name",
+          "x-metavar": "NAME"
+        },
+        "path": {
+          "type": "string",
+          "description": "the new file",
+          "x-metavar": "PATH"
+        },
+        "ref": {
+          "type": "string",
+          "description": "ticket REF (flag); default: your claim",
+          "pattern": "^(?:(?:[A-Z][A-Z0-9]{0,15}-)?[0-9]+(?:/T[1-9][0-9]*)?|T[1-9][0-9]*)$",
+          "x-metavar": "REF"
+        }
+      },
+      "x-positional": [
+        "name",
+        "path"
+      ],
+      "required": [
+        "name",
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "text": "ok {key} artifact.replaced {name} seq={seq}\nnext: {next}",
+      "json": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "name",
+          "sha256",
+          "bytes"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "errors": [
+      {
+        "code": "ambiguous_ref",
+        "exit": 2,
+        "retryable": false,
+        "hint": "name the ticket REF, for example DEMO-0043",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
+        "code": "not_found",
+        "exit": 2,
+        "retryable": false,
+        "hint": "orch list",
+        "fix": [
+          "orch",
+          "list"
+        ]
+      },
+      {
+        "code": "grant.expired",
+        "exit": 3,
+        "retryable": false,
+        "hint": "ask the person for a new grant",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
+        "code": "grant.required",
+        "exit": 3,
+        "retryable": false,
+        "hint": "ask the person to run orch grant, then set ORCH_GRANT",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
+        "code": "transition.refused",
+        "exit": 3,
+        "retryable": false,
+        "hint": "orch show --section current_state",
+        "fix": [
+          "orch",
+          "show"
+        ]
+      },
+      {
+        "code": "lock.busy",
+        "exit": 4,
+        "retryable": true,
+        "hint": "retry in a moment",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      }
+    ]
+  },
+  "key": null,
+  "seq": 0,
+  "cursor": 0,
+  "hints": []
+}

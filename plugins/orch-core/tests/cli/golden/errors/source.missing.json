@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "code": "source.missing",
+    "message": "a source ref is missing",
+    "hint": "restore the branch, then retry",
+    "fix": {
+      "argv": [
+        "orch",
+        "status"
+      ]
+    },
+    "retryable": false
+  }
+}

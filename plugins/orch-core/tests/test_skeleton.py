@@ -46,9 +46,10 @@ def test_entry_point_version():
     assert (r.returncode, r.stdout.strip()) == (0, "orch v2 (in development)")
 
 
-def test_unimplemented_exits_2():
+def test_unimplemented_exits_1_with_the_error_envelope():
+    # C5: a declared operation without a handler yet is `not_implemented`, exit 1 (format doc 10.4: internal).
     r = subprocess.run([sys.executable, "-m", "orch", "list"], capture_output=True, text=True)
-    assert r.returncode == 2 and "not implemented" in r.stderr
+    assert r.returncode == 1 and r.stderr.startswith("err not_implemented list: not implemented yet")
 
 
 def test_shared_vectors_parse():

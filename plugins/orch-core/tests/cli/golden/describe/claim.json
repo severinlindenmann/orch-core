@@ -1,0 +1,137 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "target": "claim",
+    "name": "claim",
+    "cli": "orch claim",
+    "summary": "Claim a ticket, the next one, or take over another session's claim.",
+    "who": "agent",
+    "usage": "orch claim [REF] [--next] [--takeover] [--reason TEXT] [--dry-run]",
+    "pre": [
+      "ticket_exists",
+      "ticket_visible",
+      "ticket_open_for_work",
+      "claim_free_or_takeover",
+      "grant_valid"
+    ],
+    "emits": [
+      "claim.taken"
+    ],
+    "input": {
+      "type": "object",
+      "description": "Claim a ticket, the next one, or take over another session's claim.",
+      "properties": {
+        "ref": {
+          "type": "string",
+          "description": "ticket REF; default: the next ticket",
+          "pattern": "^(?:(?:[A-Z][A-Z0-9]{0,15}-)?[0-9]+(?:/T[1-9][0-9]*)?|T[1-9][0-9]*)$",
+          "x-metavar": "REF"
+        },
+        "next": {
+          "type": "boolean",
+          "description": "claim the next ticket"
+        },
+        "takeover": {
+          "type": "boolean",
+          "description": "take the claim from another session (needs --reason)"
+        },
+        "reason": {
+          "type": "string",
+          "description": "why you take over",
+          "x-metavar": "TEXT"
+        }
+      },
+      "x-positional": [
+        "ref"
+      ],
+      "required": [],
+      "additionalProperties": false
+    },
+    "output": {
+      "text": "ok {key} claim.taken {status} seq={seq}\nnext: {next}",
+      "json": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "takeover": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "errors": [
+      {
+        "code": "not_found",
+        "exit": 2,
+        "retryable": false,
+        "hint": "orch list",
+        "fix": [
+          "orch",
+          "list"
+        ]
+      },
+      {
+        "code": "grant.expired",
+        "exit": 3,
+        "retryable": false,
+        "hint": "ask the person for a new grant",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
+        "code": "grant.required",
+        "exit": 3,
+        "retryable": false,
+        "hint": "ask the person to run orch grant, then set ORCH_GRANT",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
+        "code": "transition.refused",
+        "exit": 3,
+        "retryable": false,
+        "hint": "orch show --section current_state",
+        "fix": [
+          "orch",
+          "show"
+        ]
+      },
+      {
+        "code": "claim.held",
+        "exit": 4,
+        "retryable": false,
+        "hint": "orch claim --takeover --reason TEXT, or pick another ticket",
+        "fix": [
+          "orch",
+          "describe",
+          "claim"
+        ]
+      },
+      {
+        "code": "lock.busy",
+        "exit": 4,
+        "retryable": true,
+        "hint": "retry in a moment",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      }
+    ]
+  },
+  "key": null,
+  "seq": 0,
+  "cursor": 0,
+  "hints": []
+}

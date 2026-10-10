@@ -1,0 +1,5 @@
+Import a v1 workspace: tickets, history as imported events, artifacts.
+usage: orch import v1 PATH [--dry-run]
+  PATH  the v1 workspace
+  --dry-run  say what would happen, append nothing
+more: orch describe import.v1

@@ -1,0 +1,64 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "target": "check",
+    "name": "check",
+    "cli": "orch check",
+    "summary": "Check that the ticket files match their events (for a commit hook).",
+    "who": "read",
+    "usage": "orch check",
+    "pre": [
+      "workspace_exists"
+    ],
+    "emits": [],
+    "input": {
+      "type": "object",
+      "description": "Check that the ticket files match their events (for a commit hook).",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "output": {
+      "text": "ok check {problems}\nnext: {next}",
+      "json": {
+        "type": "object",
+        "properties": {
+          "problems": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "where": {
+                  "type": "string"
+                },
+                "what": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "where",
+                "what"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "problems",
+          "findings"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "errors": []
+  },
+  "key": null,
+  "seq": 0,
+  "cursor": 0,
+  "hints": []
+}

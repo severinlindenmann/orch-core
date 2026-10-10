@@ -1,0 +1,21 @@
+ok describe task.add
+Add a task, optionally with a verify command and the criteria it proves.
+usage: orch task add TEXT [--verify CMD] [--proves AC1,AC2] [--assignee PERSON] [--ref REF] [--dry-run]
+who: agent · emits: ticket.updated
+pre: ticket_exists ticket_open_for_work acceptance_exists base_rev_tracked grant_valid text_clean
+args:
+  TEXT  the task
+  --verify CMD  verify command
+  --proves AC1,AC2  criteria it proves, comma separated
+  --assignee PERSON  person id
+  --ref REF  ticket REF (flag)
+  --dry-run  say what would happen, append nothing
+errors:
+  not_found (exit 2): orch list
+  grant.expired (exit 3): ask the person for a new grant | fix: orch status
+  grant.required (exit 3): ask the person to run orch grant, then set ORCH_GRANT | fix: orch status
+  transition.refused (exit 3): orch show --section current_state | fix: orch show
+  lock.busy (exit 4 retry): retry in a moment | fix: orch status
+  parse.text (exit 6): orch describe task.add
+  conflict.field (exit 8 retry): orch show, then redo the edit | fix: orch show
+out: ok {key} ticket.updated {task} seq={seq} / next: {next}

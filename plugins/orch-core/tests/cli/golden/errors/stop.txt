@@ -1,0 +1,1 @@
+err stop STOP: report to the user · retry:false · next: the same refusal came three times; do not retry · fix: orch status

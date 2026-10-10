@@ -1,0 +1,4 @@
+How to do one kind of work (a workflow), generated from the registry; no argument lists them.
+usage: orch help [WORKFLOW]
+  WORKFLOW  workflow name
+more: orch describe help

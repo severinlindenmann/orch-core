@@ -1,0 +1,19 @@
+ok describe claim
+Claim a ticket, the next one, or take over another session's claim.
+usage: orch claim [REF] [--next] [--takeover] [--reason TEXT] [--dry-run]
+who: agent · emits: claim.taken
+pre: ticket_exists ticket_visible ticket_open_for_work claim_free_or_takeover grant_valid
+args:
+  REF  ticket REF; default: the next ticket
+  --next  claim the next ticket
+  --takeover  take the claim from another session (needs --reason)
+  --reason TEXT  why you take over
+  --dry-run  say what would happen, append nothing
+errors:
+  not_found (exit 2): orch list
+  grant.expired (exit 3): ask the person for a new grant | fix: orch status
+  grant.required (exit 3): ask the person to run orch grant, then set ORCH_GRANT | fix: orch status
+  transition.refused (exit 3): orch show --section current_state | fix: orch show
+  claim.held (exit 4): orch claim --takeover --reason TEXT, or pick another ticket | fix: orch describe claim
+  lock.busy (exit 4 retry): retry in a moment | fix: orch status
+out: ok {key} claim.taken {status} seq={seq} / next: {next}

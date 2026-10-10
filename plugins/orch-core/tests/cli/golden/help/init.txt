@@ -1,0 +1,6 @@
+Create a workspace here: the genesis event, the workspace key and the instructions.
+usage: orch init --prefix PREFIX [--name NAME] [--dry-run]
+  --prefix PREFIX  ticket key prefix, for example DEMO (required)
+  --name NAME  your display name
+  --dry-run  say what would happen, append nothing
+more: orch describe init

@@ -1,0 +1,115 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "target": "show",
+    "name": "show",
+    "cli": "orch show",
+    "summary": "Read a ticket: the default view, some sections, everything, the log or a diff since an event.",
+    "who": "read",
+    "usage": "orch show [REF] [--section A,B] [--full] [--log] [--diff] [--since N]",
+    "pre": [
+      "ticket_exists",
+      "ticket_visible"
+    ],
+    "emits": [],
+    "input": {
+      "type": "object",
+      "description": "Read a ticket: the default view, some sections, everything, the log or a diff since an event.",
+      "properties": {
+        "ref": {
+          "type": "string",
+          "description": "ticket REF (DEMO-0043, 43); default: your claim",
+          "pattern": "^(?:(?:[A-Z][A-Z0-9]{0,15}-)?[0-9]+(?:/T[1-9][0-9]*)?|T[1-9][0-9]*)$",
+          "x-metavar": "REF"
+        },
+        "section": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "summary",
+              "context",
+              "requirements",
+              "out_of_scope",
+              "plan",
+              "decisions",
+              "verification",
+              "findings",
+              "current_state"
+            ]
+          },
+          "description": "only these sections, comma separated",
+          "x-metavar": "A,B",
+          "x-split": ","
+        },
+        "full": {
+          "type": "boolean",
+          "description": "every section"
+        },
+        "log": {
+          "type": "boolean",
+          "description": "the event log"
+        },
+        "diff": {
+          "type": "boolean",
+          "description": "what changed"
+        },
+        "since": {
+          "type": "integer",
+          "description": "events after this seq",
+          "minimum": 0,
+          "x-metavar": "N"
+        }
+      },
+      "x-positional": [
+        "ref"
+      ],
+      "required": [],
+      "additionalProperties": false
+    },
+    "output": {
+      "text": "ok {key} show {view} seq={seq}\nnext: {next}",
+      "json": {
+        "type": "object",
+        "properties": {
+          "view": {
+            "type": "string"
+          },
+          "ticket": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "view"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "errors": [
+      {
+        "code": "ambiguous_ref",
+        "exit": 2,
+        "retryable": false,
+        "hint": "name the ticket REF, for example DEMO-0043",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
+        "code": "not_found",
+        "exit": 2,
+        "retryable": false,
+        "hint": "orch list",
+        "fix": [
+          "orch",
+          "list"
+        ]
+      }
+    ]
+  },
+  "key": null,
+  "seq": 0,
+  "cursor": 0,
+  "hints": []
+}

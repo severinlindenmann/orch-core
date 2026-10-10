@@ -582,7 +582,8 @@ never count as evidence.
 
 **The source list (D58, D59).** One entry `{"repo": repo identity, "ref": "refs/heads/<branch>", "sha": git commit
 id}` per repo in `links.repos`, sorted by `repo`. Every repo a ticket names is code-bearing and must have a branch
-in `links.branches` before `submit`.
+in `links.branches` before `submit`. A ticket that links no repo has an empty source list, and its verify decisions
+carry `source_sha: []`; a ticket that links a repo must have a non-empty list.
 - **The current source list is the projection of the latest `branch.pushed` per repo name in `links.repos`.** The
   host appends `branch.pushed` whenever any of (`repo_id`, `ref`, `sha`) of a linked repo differs from that
   projection: the first observation (`before: null`), a new commit, a rebase, a force-push, a reset (also back to
@@ -614,9 +615,11 @@ in `links.branches` before `submit`.
 - it signed the current gate hash, the current `policy_hash`, the current `gate_gen` and (for `verify`, `code`) the
   current source list;
 - the gate is complete (§4; an empty section is the hash of `""`), also on replay;
-- when the policy is `independent`: the signer was not an assignee since the gated content last changed, had no
-  agent edit that content on their behalf, and, for `not: assignees`, was not the `for` person of any agent event
-  that touched a bound path of this gate in its current generation (§12 O4).
+- when the policy is `independent`: the signer is not a **worker** of the ticket (§12 O4). A worker is anyone who
+  was an assignee, held a claim, or was the `for` person of any agent event on the ticket (edits, `claim.taken`,
+  `task.*`, `artifact.*`, and the commits a `branch.pushed` records for that agent's session) since the ticket was
+  last reopened. The set only grows: a generation raise never clears it. The code gate always uses this rule
+  (D59).
 
 `independent` is off by default for `requirements`, `plan` and `verify`, so **a sole owner can approve the work of
 their own agents**: with it off, a person may verify work their own agent did, even under `not: assignees`
@@ -626,7 +629,8 @@ their own agents**: with it off, a person may verify work their own agent did, e
 `member.removed` or `role.changed` voids that person's approvals only on gates that haven't yet reached `count`.
 `people` lists are not changed by a removal: removed persons stay listed and become ineligible. A `device.revoked`
 with reason `compromised` voids the decisions that device signed on tickets that are not yet `done`; a `done` ticket
-it approved keeps its state and shows the flag "approved by a revoked device".
+it approved keeps its state and shows the flag "approved by a revoked device". It also ends every grant that device signed. `member.removed` ends every grant of the removed person and every
+device of that person in this workspace: a later `member.added` starts with new devices and grants only.
 
 A gate is approved when `count` distinct persons have counting approvals. A gate that doesn't apply to the ticket's
 type is not needed.
@@ -932,7 +936,7 @@ possible**. It loads nothing it doesn't need, its output is terse, and it is tol
 - A grant is always for the person who signs it. `scope: workable` covers the tickets that person may see and work
   on; the host checks it on every claim and write, not only when the grant is issued.
 - `verbs` is `"agent"` (every operation whose `who` is `agent` or `unattended`) or a list of operation names (a
-  narrower grant, for example for CI). A human-only operation is never in a grant.
+  narrower grant, for example for CI), matched exactly; no prefix or group matching. A human-only operation is never in a grant.
 - Length is whole hours; `expires_at` = `issued_at` + 3600 · `hours` seconds, all signed. Readers check this,
   `|at − issued_at| ≤ 300 s` and the role terms at the event's position. A `settings.changed` of `grant_hours` doesn't shorten
   existing grants.

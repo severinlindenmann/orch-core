@@ -1,0 +1,31 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "topic": "parallel",
+    "steps": [
+      {
+        "op": "task.next",
+        "call": "ORCH_SESSION=<yours>.<n> orch task next"
+      },
+      {
+        "op": "task.start",
+        "call": "orch task start T3"
+      },
+      {
+        "op": "task.done",
+        "call": "orch task done T3 --run"
+      },
+      {
+        "op": "log",
+        "call": "orch log 'note'"
+      }
+    ]
+  },
+  "key": null,
+  "seq": 0,
+  "cursor": 0,
+  "hints": [
+    "orch describe CMD"
+  ]
+}

@@ -1,0 +1,9 @@
+Add a task, optionally with a verify command and the criteria it proves.
+usage: orch task add TEXT [--verify CMD] [--proves AC1,AC2] [--assignee PERSON] [--ref REF] [--dry-run]
+  TEXT  the task
+  --verify CMD  verify command
+  --proves AC1,AC2  criteria it proves, comma separated
+  --assignee PERSON  person id
+  --ref REF  ticket REF (flag)
+  --dry-run  say what would happen, append nothing
+more: orch describe task.add

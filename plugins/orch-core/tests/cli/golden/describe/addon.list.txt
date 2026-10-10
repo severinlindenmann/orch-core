@@ -1,0 +1,7 @@
+ok describe addon.list
+List the installed addons and whether each is enabled.
+usage: orch addon list
+who: read · emits: -
+pre: workspace_exists
+errors:
+out: ok addon.list {count} / next: {next}

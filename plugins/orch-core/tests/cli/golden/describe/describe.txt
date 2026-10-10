@@ -1,0 +1,9 @@
+ok describe describe
+The full contract of one command (or the list of commands), generated from the registry.
+usage: orch describe [CMD...]
+who: read · emits: -
+args:
+  CMD  command, for example task done or task.done; leave out for the list
+errors:
+  not_found (exit 2): orch describe lists the commands | fix: orch describe
+out: ok describe {target} / next: {next}

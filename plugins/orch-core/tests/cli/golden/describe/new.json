@@ -1,0 +1,174 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "target": "new",
+    "name": "new",
+    "cli": "orch new",
+    "summary": "Create a ticket.",
+    "who": "agent",
+    "usage": "orch new TITLE [--type TYPE] [--priority low|medium|high|urgent] [--size SIZE] [--label A,B] [--parent KEY] [--message TEXT] [--file PATH] [--dry-run]",
+    "pre": [
+      "workspace_exists",
+      "grant_valid",
+      "text_clean"
+    ],
+    "emits": [
+      "ticket.created"
+    ],
+    "input": {
+      "type": "object",
+      "description": "Create a ticket.",
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "one line, at most 200 characters",
+          "maxLength": 200,
+          "x-metavar": "TITLE"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "feature",
+            "bug",
+            "chore",
+            "spike",
+            "epic"
+          ],
+          "description": "ticket type",
+          "default": "feature"
+        },
+        "priority": {
+          "type": "string",
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "urgent"
+          ],
+          "description": "priority"
+        },
+        "size": {
+          "type": "string",
+          "enum": [
+            "xs",
+            "s",
+            "m",
+            "l",
+            "xl"
+          ],
+          "description": "size"
+        },
+        "label": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,31}$"
+          },
+          "description": "labels, comma separated",
+          "x-metavar": "A,B",
+          "x-split": ","
+        },
+        "parent": {
+          "type": "string",
+          "description": "parent ticket key",
+          "x-metavar": "KEY"
+        },
+        "message": {
+          "type": "string",
+          "description": "free text",
+          "x-short": "m",
+          "x-metavar": "TEXT"
+        },
+        "file": {
+          "type": "string",
+          "description": "read the text from PATH, or - for stdin",
+          "x-metavar": "PATH"
+        }
+      },
+      "x-positional": [
+        "title"
+      ],
+      "required": [
+        "title"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "text": "ok {key} ticket.created {ticket_type} seq={seq}\nnext: {next}",
+      "json": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "ticket_type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "ticket_type"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "errors": [
+      {
+        "code": "not_found",
+        "exit": 2,
+        "retryable": false,
+        "hint": "the parent does not exist",
+        "fix": [
+          "orch",
+          "list"
+        ]
+      },
+      {
+        "code": "grant.expired",
+        "exit": 3,
+        "retryable": false,
+        "hint": "ask the person for a new grant",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
+        "code": "grant.required",
+        "exit": 3,
+        "retryable": false,
+        "hint": "ask the person to run orch grant, then set ORCH_GRANT",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
+        "code": "lock.busy",
+        "exit": 4,
+        "retryable": true,
+        "hint": "retry in a moment",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
+        "code": "parse.text",
+        "exit": 6,
+        "retryable": false,
+        "hint": "orch describe new",
+        "fix": [
+          "orch",
+          "describe",
+          "new"
+        ]
+      }
+    ]
+  },
+  "key": null,
+  "seq": 0,
+  "cursor": 0,
+  "hints": []
+}

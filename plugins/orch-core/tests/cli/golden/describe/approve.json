@@ -1,0 +1,152 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "target": "approve",
+    "name": "approve",
+    "cli": "orch approve",
+    "summary": "Approve a gate (requirements, plan or code) with your signature.",
+    "who": "human",
+    "usage": "orch approve requirements|plan|code [--ref REF] [--dry-run]",
+    "pre": [
+      "ticket_exists",
+      "gate_current",
+      "approver_eligible",
+      "user_presence"
+    ],
+    "emits": [
+      "gate.approved"
+    ],
+    "input": {
+      "type": "object",
+      "description": "Approve a gate (requirements, plan or code) with your signature.",
+      "properties": {
+        "gate": {
+          "type": "string",
+          "enum": [
+            "requirements",
+            "plan",
+            "code"
+          ],
+          "description": "gate",
+          "x-metavar": "GATE"
+        },
+        "ref": {
+          "type": "string",
+          "description": "ticket REF (flag)",
+          "pattern": "^(?:(?:[A-Z][A-Z0-9]{0,15}-)?[0-9]+(?:/T[1-9][0-9]*)?|T[1-9][0-9]*)$",
+          "x-metavar": "REF"
+        }
+      },
+      "x-positional": [
+        "gate"
+      ],
+      "required": [
+        "gate"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "text": "ok {key} gate.approved {gate} seq={seq}\nnext: {next}",
+      "json": {
+        "type": "object",
+        "properties": {
+          "gate": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "gate"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "errors": [
+      {
+        "code": "not_found",
+        "exit": 2,
+        "retryable": false,
+        "hint": "orch list",
+        "fix": [
+          "orch",
+          "list"
+        ]
+      },
+      {
+        "code": "human_only",
+        "exit": 3,
+        "retryable": false,
+        "hint": "orch ask or orch wait",
+        "fix": [
+          "orch",
+          "describe",
+          "ask"
+        ]
+      },
+      {
+        "code": "role.denied",
+        "exit": 3,
+        "retryable": false,
+        "hint": "ask an owner or maintainer",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
+        "code": "transition.refused",
+        "exit": 3,
+        "retryable": false,
+        "hint": "orch show --section current_state",
+        "fix": [
+          "orch",
+          "show"
+        ]
+      },
+      {
+        "code": "lock.busy",
+        "exit": 4,
+        "retryable": true,
+        "hint": "retry in a moment",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
+        "code": "gate.stale",
+        "exit": 5,
+        "retryable": false,
+        "hint": "orch show",
+        "fix": [
+          "orch",
+          "show"
+        ]
+      },
+      {
+        "code": "source.missing",
+        "exit": 5,
+        "retryable": false,
+        "hint": "restore the branch, then retry",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
+        "code": "members.stale",
+        "exit": 9,
+        "retryable": true,
+        "hint": "retry; the person re-signs",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      }
+    ]
+  },
+  "key": null,
+  "seq": 0,
+  "cursor": 0,
+  "hints": []
+}

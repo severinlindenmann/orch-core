@@ -1,0 +1,7 @@
+Request changes on a gate, with a reason.
+usage: orch request-changes requirements|plan|code --message TEXT [--ref REF] [--dry-run]
+  GATE  gate (requirements|plan|code)
+  -m, --message TEXT  free text (required)
+  --ref REF  ticket REF (flag)
+  --dry-run  say what would happen, append nothing
+more: orch describe request_changes

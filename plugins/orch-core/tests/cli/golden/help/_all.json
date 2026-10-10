@@ -1,0 +1,19 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "topic": "all",
+    "workflows": [
+      "work",
+      "ask",
+      "refine",
+      "parallel"
+    ]
+  },
+  "key": null,
+  "seq": 0,
+  "cursor": 0,
+  "hints": [
+    "orch help work"
+  ]
+}

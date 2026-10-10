@@ -31,4 +31,7 @@ class UnavailableBackend:
     def _no(self, *_a, **_k):
         raise BackendUnavailable(self._why)
 
-    create = public_key = sign = presence = exists = delete = _no
+    create = public_key = sign = exists = delete = _no
+
+    def presence(self) -> str:
+        return self.auth or "none"

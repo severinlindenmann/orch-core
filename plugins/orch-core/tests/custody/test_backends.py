@@ -66,7 +66,7 @@ def pass_backend(tmp_path, phrase=PHRASE, **kw):
         seen.append(req)
         return phrase
 
-    b = PassphraseBackend(tmp_path / "keys", passphrase_provider=provider, kdf=FAST, min_n=2**10, **kw)
+    b = PassphraseBackend(tmp_path / "keys", _passphrase_provider=provider, _kdf=FAST, _min_n=2**10, **kw)
     b.seen = seen  # type: ignore[attr-defined]
     return b
 
@@ -100,7 +100,7 @@ def test_key_file_is_0600_and_holds_no_plaintext_scalar(tmp_path):
         assert stat.S_IMODE(os.stat(path.parent).st_mode) == 0o700
     doc = json.loads(path.read_text())
     assert doc["kdf"]["name"] == "scrypt" and doc["kdf"]["n"] == 2**10
-    assert set(doc) == {"v", "key_id", "pub", "kdf", "nonce", "ct"}
+    assert set(doc) == {"v", "key_id", "role", "pub", "kdf", "nonce", "ct"}
 
 
 def test_import_secret_gives_that_key(tmp_path):
@@ -115,10 +115,10 @@ def test_import_secret_gives_that_key(tmp_path):
 def test_wrong_passphrase_is_refused_and_signs_nothing(tmp_path):
     b = pass_backend(tmp_path)
     b.create("dk")
-    bad = PassphraseBackend(tmp_path / "keys", passphrase_provider=lambda r: "not the phrase", kdf=FAST, min_n=2**10)
+    bad = PassphraseBackend(tmp_path / "keys", _passphrase_provider=lambda r: "not the phrase", _kdf=FAST, _min_n=2**10)
     with pytest.raises(WrongPassphrase):
         bad.sign("dk", person_payload(), action="a")
-    empty = PassphraseBackend(tmp_path / "keys", passphrase_provider=lambda r: "", kdf=FAST, min_n=2**10)
+    empty = PassphraseBackend(tmp_path / "keys", _passphrase_provider=lambda r: "", _kdf=FAST, _min_n=2**10)
     with pytest.raises(WrongPassphrase):
         empty.sign("dk", person_payload(), action="a")
 
@@ -184,7 +184,7 @@ def _no_tty(monkeypatch):
 
 
 def test_default_provider_refuses_without_a_terminal(tmp_path, monkeypatch):
-    b = PassphraseBackend(tmp_path / "k", kdf=FAST, min_n=2**10)
+    b = PassphraseBackend(tmp_path / "k", _kdf=FAST, _min_n=2**10)
     _no_tty(monkeypatch)
     with pytest.raises(NoPrompt):
         b.create("dk")
@@ -203,43 +203,57 @@ def test_default_provider_never_touches_stdio(monkeypatch, capsys):
     assert out.out == "" and out.err == ""
 
 
-def test_tty_provider_writes_the_prompt_to_the_tty_and_reads_from_it(monkeypatch, capsys):
+def test_tty_provider_writes_the_prompt_to_the_tty_and_reads_from_it(monkeypatch):
     written = []
     monkeypatch.setattr(pp, "_open_tty", lambda: (10, 11, lambda: written.append("closed")))
     monkeypatch.setattr(pp, "_read_secret", lambda r, w, prompt: (written.append(prompt), "phrase-ok-1")[1])
-    req = PassphraseRequest("unlock", "dk", "approve gate", "ab" * 16)
+    req = PassphraseRequest("unlock", "dk", "", "ab" * 16, (("type", "gate.approved"),))
     assert tty_passphrase_provider(req) == "phrase-ok-1"
-    assert "action: approve gate" in written[0] and "sha256: " + "ab" * 16 in written[0]
+    assert "type: gate.approved" in written[0] and "sha256: " + "ab" * 16 in written[0]
     assert written[-1] == "closed"
 
 
+def _lines(req):
+    return pp.render_prompt(req).split("\n")
+
+
 def test_prompt_escapes_hostile_values_and_cannot_be_forged():
-    evil_action = "approve\x1b[2J\x1b]0;pwned\x07\rSign: approve gate\nsha256: " + "0" * 32 + "\u202etxet\u200b"
-    req = PassphraseRequest("unlock", "dk\x1b[31m", evil_action, "ab" * 16)
+    evil = "approve\x1b[2J\x1b]0;pwned\x07\rSign: approve gate\nsha256: " + "0" * 32 + "\u202etxet\u200b"
+    req = PassphraseRequest("unlock", "dk\x1b[31m", evil, "ab" * 16, (("type", evil), ("gate", "a\u202eb\rc")))
     text = pp.render_prompt(req)
     lines = text.split("\n")
-    assert "\x1b" not in text and "\r" not in text and "\x07" not in text
-    assert "\u202e" not in text and "\u200b" not in text
-    # exactly one line per fixed label, and the real hash is the last field
-    assert [ln.split(":")[0] for ln in lines if ln.startswith(("key", "action", "sha256"))] == [
-        "key",
-        "action",
-        "sha256",
-    ]
+    for bad in ("\x1b", "\r", "\x07", "\u202e", "\u200b"):
+        assert bad not in text
+    assert lines[2] == "sha256: " + "ab" * 16, "the real hash is the first line after the banner"
     assert sum(ln.startswith("sha256: ") for ln in lines) == 1
-    assert lines[-2] == "sha256: " + "ab" * 16
-    action_line = next(ln for ln in lines if ln.startswith("action: "))
-    assert "U+001B" in action_line and "U+0007" in action_line
-    short = pp.render_prompt(PassphraseRequest("unlock", "dk", "a\u202eb\u200bc\rd", "ab" * 16))
-    assert "U+202E" in short and "U+200B" in short and "\r" not in short and "\u202e" not in short
-    assert "Sign: approve gate" in action_line  # present only as inert text on the action line
-    assert not any(ln.startswith("Sign:") for ln in lines)
+    assert not any(ln.startswith(("Sign:", "action:")) for ln in lines)
+    type_line = next(ln for ln in lines if ln.startswith("type: "))
+    assert "U+001B" in type_line and "U+0007" in type_line and "U+000D" in type_line and "U+000A" in type_line
+    gate_line = next(ln for ln in lines if ln.startswith("gate: "))
+    assert "U+202E" in gate_line and "U+000D" in gate_line
+    # every non-empty line is a banner or starts with a fixed label
+    allowed = ("===", "sha256:", "key:", "type:", "gate:", "note (caller text, not signed):")
+    assert all(ln.startswith(allowed) for ln in lines if ln)
+
+
+def test_a_value_cannot_open_a_fake_sha256_line():
+    req = PassphraseRequest("unlock", "dk", "x\rsha256: deadbeef", "ab" * 16, (("type", "y\nsha256: deadbeef"),))
+    lines = _lines(req)
+    assert [ln for ln in lines if ln.startswith("sha256:")] == ["sha256: " + "ab" * 16]
+    note = next(ln for ln in lines if ln.startswith("note"))
+    assert note.startswith('note (caller text, not signed): "') and "U+000D" in note
+
+
+def test_values_are_escaped_exactly_once():
+    esc = pp.render_prompt(PassphraseRequest("unlock", "dk", "a\x1bb", "ab" * 16, (("type", "a\x1bb"),)))
+    assert esc.count("\u27e8U+001B\u27e9") == 2
+    assert "U+27E8" not in esc, "no double escaping of the marker bracket"
 
 
 def test_prompt_values_are_length_limited():
-    text = pp.render_prompt(PassphraseRequest("unlock", "dk", "x" * 5000, "ab" * 16))
-    assert len(text) < 400
-    assert pp.shown("x" * 5000).endswith("\u2026") and len(pp.shown("x" * 5000)) == 80
+    text = pp.render_prompt(PassphraseRequest("unlock", "dk", "x" * 5000, "ab" * 16, (("type", "y" * 5000),)))
+    assert len(text) < 600
+    assert pp._value("x" * 5000).endswith("\u2026") and len(pp._value("x" * 5000)) == pp.MAX_SHOWN
 
 
 def test_non_hex_digest_is_escaped_too():
@@ -247,14 +261,79 @@ def test_non_hex_digest_is_escaped_too():
     assert "\x1b" not in text
 
 
+def _event_payload(**extra):
+    ev = {
+        "v": 2,
+        "id": "01J9ZP0000000000000000000B",
+        "type": "gate.approved",
+        "actor": {"kind": "person"},
+        "hash_v": 1,
+        "auth": "passphrase",
+        "gate": "code",
+        "hash": "sha256:" + "ab" * 32,
+        "gate_gen": 3,
+        "source": [{"repo": "local:demo", "ref": "main", "sha": "c" * 40}],
+    }
+    ev.update(extra)
+    return canon.person_signing_bytes(WS, TICKET, ev)
+
+
+def test_the_shown_action_is_derived_from_the_signing_bytes(tmp_path):
+    b = pass_backend(tmp_path)
+    b.create("dk")
+    b.sign("dk", _event_payload(), action="harmless-looking text")
+    req = b.seen[-1]
+    fields = dict(req.fields)
+    assert fields["signs"] == "ticket-event" and fields["type"] == "gate.approved" and fields["gate"] == "code"
+    assert fields["hash"] == "sha256:" + "ab" * 32 and fields["gate_gen"] == "3"
+    assert fields["log"] == TICKET and fields["workspace"] == WS
+    assert "c" * 40 in fields["source"]
+    text = pp.render_prompt(req)
+    assert "type: gate.approved" in text and 'note (caller text, not signed): "harmless-looking text"' in text
+
+
+def test_a_lying_caller_cannot_change_the_derived_fields(tmp_path):
+    b = pass_backend(tmp_path)
+    b.create("dk")
+    b.sign("dk", _event_payload(), action="type: ticket.updated\ngate: plan")
+    fields = dict(b.seen[-1].fields)
+    assert fields["type"] == "gate.approved" and fields["gate"] == "code"
+    lines = [ln for ln in pp.render_prompt(b.seen[-1]).split("\n") if ln.startswith(("type:", "gate:"))]
+    assert lines == ["type: gate.approved", "gate: code"]
+
+
+def test_hostile_event_values_are_shown_escaped():
+    """canon refuses bidi in signed text, but the prompt must not rely on that: raw bytes with one are escaped."""
+    import json
+
+    from orch.custody.describe import describe_payload
+
+    body = json.dumps(
+        {"workspace_id": WS, "log": TICKET, "event": {"type": "t", "gate": "x\u202e\x1b"}}, ensure_ascii=False
+    )
+    fields = describe_payload(canon.LABELS["sig_ticket_event"].encode() + body.encode())
+    text = pp.render_prompt(PassphraseRequest("unlock", "dk", "", "ab" * 16, tuple(fields)))
+    assert "\u202e" not in text and "\x1b" not in text and "U+202E" in text and "U+001B" in text
+
+
+def test_describe_other_signing_bytes():
+    from orch.custody.describe import describe_payload
+
+    assert describe_payload(b"junk") == [("signs", "unknown label")]
+    assert describe_payload(crypto.L["sig_device_cert"] + b"not json")[1] == ("payload", "not parseable")
+    cert = crypto.L["sig_revocation"] + canon.cj_checked(
+        {"kind": "revocation", "device_id": "ab" * 16, "reason": "lost"}
+    )
+    d = dict(describe_payload(cert))
+    assert d["signs"] == "revocation" and d["reason"] == "lost"
+
+
 def test_backend_passes_the_signing_hash_not_caller_text(tmp_path):
     b = pass_backend(tmp_path)
     b.create("dk")
     payload = person_payload()
     b.sign("dk", payload, action="approve\nsha256: 0000\x1b[2J")
-    req = b.seen[-1]
-    assert req.digest == crypto.sha256(payload).hex()[:32]
-    assert "\n" not in req.action and "\x1b" not in req.action
+    assert b.seen[-1].digest == crypto.sha256(payload).hex()[:32]
 
 
 def test_passphrase_key_refuses_host_labels_and_unlabelled_bytes(tmp_path):
@@ -296,7 +375,7 @@ def test_tampered_key_file_is_refused(tmp_path):
 def test_default_kdf_floor_applies_to_files(tmp_path):
     weak = pass_backend(tmp_path)  # n = 2^10 file
     weak.create("dk")
-    strict = PassphraseBackend(tmp_path / "keys", passphrase_provider=lambda r: PHRASE)
+    strict = PassphraseBackend(tmp_path / "keys", _passphrase_provider=lambda r: PHRASE)
     with pytest.raises(CustodyError, match="corrupt"):
         strict.sign("dk", person_payload(), action="a")
 
@@ -304,9 +383,9 @@ def test_default_kdf_floor_applies_to_files(tmp_path):
 def test_bad_kdf_parameters_are_refused_by_the_constructor(tmp_path):
     for p in (KdfParams(n=2**10 + 1), KdfParams(n=2**21), KdfParams(n=2**10, r=1), KdfParams(n=2**10, p=2)):
         with pytest.raises(CustodyError):
-            PassphraseBackend(tmp_path / "k", kdf=p, min_n=2**10)
+            PassphraseBackend(tmp_path / "k", _kdf=p, _min_n=2**10)
     with pytest.raises(CustodyError):
-        PassphraseBackend(tmp_path / "k", kdf=KdfParams(n=2**10))  # below the default floor
+        PassphraseBackend(tmp_path / "k", _kdf=KdfParams(n=2**10))  # below the default floor
 
 
 def test_default_parameters_are_scrypt_2_17():
@@ -407,7 +486,7 @@ def test_planned_backends_refuse_clearly(name, tmp_path):
 
 
 def test_registry(tmp_path):
-    assert isinstance(get_backend("passphrase", tmp_path / "p", kdf=FAST, min_n=2**10), PassphraseBackend)
+    assert isinstance(get_backend("passphrase", tmp_path / "p"), PassphraseBackend)
     assert isinstance(get_backend("file", tmp_path / "f"), FileBackend)
     with pytest.raises(CustodyError):
         get_backend("keychain", tmp_path)
@@ -415,8 +494,233 @@ def test_registry(tmp_path):
 
 def test_production_kdf_parameters_round_trip(tmp_path):
     """One real run at N = 2^17 (128 MiB): create, sign, and the file records the parameters."""
-    b = PassphraseBackend(tmp_path / "k", passphrase_provider=lambda r: PHRASE)
+    b = PassphraseBackend(tmp_path / "k", _passphrase_provider=lambda r: PHRASE)
     pub = b.create("dk")
     assert json.loads((tmp_path / "k" / "dk.key.json").read_text())["kdf"]["n"] == 2**17
     payload = person_payload()
     assert crypto.verify(pub, b.sign("dk", payload, action="a"), payload)
+
+
+# --- roles (security review item 9) -------------------------------------------------------------------------------------
+
+
+def _cert_payload():
+    return crypto.L["sig_device_cert"] + canon.cj_checked({"v": 2, "suite": 2, "kind": "device_cert"})
+
+
+def test_person_key_signs_only_person_key_labels_and_device_key_only_its_own(tmp_path):
+    b = pass_backend(tmp_path)
+    pk_pub = b.create("pk", role="person")
+    b.create("dk", role="device")
+    cert = _cert_payload()
+    assert crypto.verify(pk_pub, b.sign("pk", cert, action=""), cert)
+    with pytest.raises(CustodyError):
+        b.sign("pk", person_payload(), action="")  # PK never signs events
+    with pytest.raises(CustodyError):
+        b.sign("dk", cert, action="")  # dk_sig never signs certificates
+    for label in ("sig_enroll_request", "sig_drop_object", "sig_relay_auth", "sig_decision"):
+        b.sign("dk", crypto.L[label] + b"{}", action="")
+    for label in ("sig_sk_grant", "sig_card_wsk", "sig_revocation"):
+        with pytest.raises(CustodyError):
+            b.sign("dk", crypto.L[label] + b"{}", action="")
+
+
+def test_role_is_authenticated_in_the_key_file(tmp_path):
+    b = pass_backend(tmp_path)
+    b.create("dk", role="device")
+    path = tmp_path / "keys" / "dk.key.json"
+    doc = json.loads(path.read_text())
+    doc["role"] = "person"
+    path.write_text(json.dumps(doc))
+    os.chmod(path, 0o600)
+    with pytest.raises(WrongPassphrase):
+        b.sign("dk", _cert_payload(), action="")
+
+
+def test_unknown_and_workspace_roles_are_refused_by_the_passphrase_backend(tmp_path):
+    b = pass_backend(tmp_path)
+    for role in ("workspace", "root", ""):
+        with pytest.raises(CustodyError):
+            b.create("k", role=role)
+    with pytest.raises(CustodyError):
+        FileBackend(tmp_path / "f").create("k", role="device")
+
+
+# --- R1: atomic create ----------------------------------------------------------------------------------------------
+
+
+def test_concurrent_create_has_exactly_one_winner_whose_key_is_on_disk(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    for trial in range(30):
+        d = tmp_path / f"t{trial}"
+        n = 8
+        gate = Barrier(n)
+
+        def attempt(_):
+            f = FileBackend(d)
+            gate.wait()
+            try:
+                return f.create("k")
+            except KeyExists:
+                return None
+
+        with ThreadPoolExecutor(n) as ex:
+            results = list(ex.map(attempt, range(n)))
+        winners = [r for r in results if r is not None]
+        assert len(winners) == 1, f"trial {trial}: {len(winners)} creates succeeded"
+        assert FileBackend(d).public_key("k") == winners[0]
+        assert not [p for p in d.iterdir() if ".tmp" in p.name], "temporary files are cleaned up"
+
+
+def test_concurrent_create_across_processes(tmp_path):
+    import subprocess
+
+    code = (
+        "import sys, time\n"
+        "from orch.custody import FileBackend, KeyExists\n"
+        "d, go = sys.argv[1], float(sys.argv[2])\n"
+        "f = FileBackend(d)\n"
+        "time.sleep(max(0, go - time.time()))\n"
+        "try:\n"
+        "    print(f.create('k').hex())\n"
+        "except KeyExists:\n"
+        "    print('exists')\n"
+    )
+    import time
+
+    go = time.time() + 1.0
+    procs = [
+        subprocess.Popen([sys.executable, "-c", code, str(tmp_path / "p"), str(go)], stdout=subprocess.PIPE, text=True)
+        for _ in range(4)
+    ]
+    outs = [p.communicate()[0].strip() for p in procs]
+    winners = [o for o in outs if o not in ("exists", "")]
+    assert len(winners) == 1, outs
+    assert FileBackend(tmp_path / "p").public_key("k").hex() == winners[0]
+
+
+def test_create_never_replaces_an_existing_file(tmp_path):
+    f = FileBackend(tmp_path)
+    (tmp_path / "k.filekey.json").write_text("precious")
+    with pytest.raises(KeyExists):
+        f.create("k")
+    assert (tmp_path / "k.filekey.json").read_text() == "precious"
+
+
+def test_write_new_falls_back_to_exclusive_create_without_hard_links(tmp_path, monkeypatch):
+    from orch.custody import files
+
+    def no_link(*a, **k):
+        raise OSError("hard links unsupported")
+
+    monkeypatch.setattr(files.os, "link", no_link)
+    files.write_new(tmp_path / "a", b"x")
+    assert (tmp_path / "a").read_bytes() == b"x"
+    with pytest.raises(KeyExists):
+        files.write_new(tmp_path / "a", b"y")
+    assert (tmp_path / "a").read_bytes() == b"x"
+
+
+# --- R4: passphrase text ----------------------------------------------------------------------------------------------
+
+
+def test_nfc_and_nfd_passphrases_are_the_same_passphrase(tmp_path):
+    import unicodedata
+
+    nfc = "café au lait été"
+    nfd = unicodedata.normalize("NFD", nfc)
+    assert nfc != nfd
+    b = pass_backend(tmp_path, phrase=nfc)
+    b.create("dk")
+    other = PassphraseBackend(tmp_path / "keys", _passphrase_provider=lambda r: nfd, _kdf=FAST, _min_n=2**10)
+    payload = person_payload()
+    assert crypto.verify(b.public_key("dk"), other.sign("dk", payload, action=""), payload)
+
+
+def test_invalid_utf8_from_the_terminal_is_refused_not_replaced():
+    with pytest.raises(CustodyError, match="UTF-8"):
+        pp._decode(b"abc\xff\xfe")
+    assert pp._decode("héllo".encode()) == "héllo"
+
+
+def test_lone_surrogate_passphrase_is_refused(tmp_path):
+    b = pass_backend(tmp_path, phrase="abcdefgh\ud800")
+    with pytest.raises(CustodyError):
+        b.create("dk")
+    assert not b.exists("dk")
+
+
+def test_minimum_length_counts_normalised_characters(tmp_path):
+    import unicodedata
+
+    nfd7 = unicodedata.normalize("NFD", "é" * 7)  # 14 code points, 7 characters after NFC
+    b = pass_backend(tmp_path, phrase=nfd7)
+    with pytest.raises(CustodyError, match="at least"):
+        b.create("dk")
+
+
+# --- hardening seams, modes, presence -------------------------------------------------------------------------------------
+
+
+def test_no_public_path_lowers_the_floor_or_injects_a_provider():
+    import inspect
+
+    from orch import custody
+
+    assert list(inspect.signature(custody.get_backend).parameters) == ["name", "directory"]
+    for name in inspect.signature(PassphraseBackend).parameters:
+        if name != "directory":
+            assert name.startswith("_"), name
+    assert pp.MIN_N == 2**15
+
+
+def test_default_backend_applies_the_floor_to_files(tmp_path):
+    weak = pass_backend(tmp_path)
+    weak.create("dk")
+    from orch.custody import get_backend
+
+    strict = get_backend("passphrase", tmp_path / "keys")
+    with pytest.raises(CustodyError, match="corrupt"):
+        strict.public_key("dk")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX modes")
+def test_key_files_with_loose_mode_are_refused(tmp_path):
+    b = pass_backend(tmp_path)
+    b.create("dk")
+    f = FileBackend(tmp_path / "f")
+    f.create("w")
+    for backend, name, path in (
+        (b, "dk", tmp_path / "keys" / "dk.key.json"),
+        (f, "w", tmp_path / "f" / "w.filekey.json"),
+    ):
+        os.chmod(path, 0o644)
+        with pytest.raises(CustodyError, match="accessible by others"):
+            backend.public_key(name)
+        os.chmod(path, 0o600)
+        backend.public_key(name)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX owner check")
+def test_key_file_owned_by_another_user_is_refused(tmp_path, monkeypatch):
+    from orch.custody import files
+
+    b = pass_backend(tmp_path)
+    b.create("dk")
+    uid = os.getuid()
+    monkeypatch.setattr(files.os, "getuid", lambda: uid + 1)
+    with pytest.raises(CustodyError, match="another user"):
+        b.public_key("dk")
+
+
+def test_windows_fails_closed_for_human_signing(monkeypatch):
+    monkeypatch.setattr(pp.os, "name", "nt")
+    with pytest.raises(NoPrompt, match="Windows"):
+        tty_passphrase_provider(PassphraseRequest("unlock", "dk", "", "ab" * 16))
+
+
+def test_presence_is_auth_or_none(tmp_path):
+    for backend in (pass_backend(tmp_path), FileBackend(tmp_path / "f"), *(get_backend(n, tmp_path) for n in PLANNED)):
+        assert backend.presence() == (backend.auth or "none")

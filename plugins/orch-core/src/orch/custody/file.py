@@ -1,9 +1,9 @@
 """The ``file`` tier (D64; the VPS, no human signing): a P-256 key in a 0600 JSON file, signing without any factor.
 
 Because it signs without a human factor it is **flagged file-tier**: ``auth`` is ``None``, ``person_capable`` is
-``False`` and it refuses every person-tier label (person events, certificates, revocations, delegations, decisions)
-and any label it was not given (ticket-format §5.3, §12 O2). It exists for the workspace key and the host's own
-appends.
+``False``, it holds only the ``workspace`` role (WSK) and signs only :data:`HOST_LABELS`: never a person event, a
+certificate, a revocation or a delegation (ticket-format §5.3, §12 O2). It exists for the workspace key and the host's
+own appends.
 """
 
 from __future__ import annotations
@@ -34,8 +34,10 @@ class FileBackend:
         return files.key_path(self._dir, key_id, FILE_SUFFIX)
 
     def _load(self, key_id: str):
+        path = self._path(key_id)
+        files.check_private(path)
         try:
-            doc = json.loads(self._path(key_id).read_bytes())
+            doc = json.loads(path.read_bytes())
             if set(doc) != {"v", "key_id", "d"} or doc["v"] != 1 or doc["key_id"] != key_id:
                 raise ValueError("shape")
             return crypto.private_key_from_scalar(int.from_bytes(crypto.unb64u(doc["d"], 32), "big"))
@@ -44,8 +46,10 @@ class FileBackend:
         except (ValueError, KeyError, TypeError, crypto.CryptoError) as e:
             raise CustodyError(f"corrupt key file for {key_id!r}: {e}") from None
 
-    def create(self, key_id: str, *, secret: bytes | None = None) -> bytes:
+    def create(self, key_id: str, *, secret: bytes | None = None, role: str = "workspace") -> bytes:
         check_key_id(key_id)
+        if role != "workspace":
+            raise CustodyError("the file tier holds only the workspace role")
         if secret is None:
             key = crypto.generate_private_key()
         else:
@@ -67,7 +71,7 @@ class FileBackend:
         return crypto.sign(self._load(key_id), payload)
 
     def presence(self) -> str:
-        return "none"
+        return self.auth or "none"
 
     def exists(self, key_id: str) -> bool:
         return self._path(key_id).exists()

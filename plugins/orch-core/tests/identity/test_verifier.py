@@ -115,31 +115,31 @@ def test_verifier_is_stateless_and_immutable():
 def test_verify_embedded_genesis_uses_the_one_genesis_implementation():
     g = build_genesis()
     v = CryptoVerifier()
-    assert v.verify_embedded(g.event)
+    assert v.verify_embedded(g.event, pk_pub=None)
     assert v.verify_embedded(g.event, pk_pub=crypto.b64u(g.owner.pk_pub))
     assert not v.verify_embedded(g.event, pk_pub=crypto.b64u(Person().pk_pub)), "another person's key"
     ev = copy.deepcopy(g.event)
     ev["delegation"]["o"]["client_hosted"] = True
-    assert not v.verify_embedded(ev)
+    assert not v.verify_embedded(ev, pk_pub=None)
     ev = copy.deepcopy(g.event)
     ev["device_cert"] = Person().cert()
-    assert not v.verify_embedded(ev)
+    assert not v.verify_embedded(ev, pk_pub=None)
     ev = copy.deepcopy(g.event)
     ev["device_cert"] = g.owner.cert(scopes=("look",))
-    assert not v.verify_embedded(resign(g, ev)), "scopes are checked too (check_genesis)"
+    assert not v.verify_embedded(resign(g, ev), pk_pub=None), "scopes are checked too (check_genesis)"
 
 
 def test_verify_embedded_member_added_device_added_device_revoked():
     p, m = Person(), Person()
     v = CryptoVerifier()
     added = {"type": "member.added", "person": m.ref, "pk_pub": crypto.b64u(m.pk_pub), "device_cert": m.cert()}
-    assert v.verify_embedded(added) and v.verify_embedded(added, pk_pub=crypto.b64u(m.pk_pub))
+    assert v.verify_embedded(added, pk_pub=None) and v.verify_embedded(added, pk_pub=crypto.b64u(m.pk_pub))
     assert not v.verify_embedded(added, pk_pub=crypto.b64u(p.pk_pub))
-    assert not v.verify_embedded({**added, "device_cert": p.cert()})
+    assert not v.verify_embedded({**added, "device_cert": p.cert()}, pk_pub=None)
 
     dev = {"type": "device.added", "device": m.device, "cert": m.cert()}
     assert v.verify_embedded(dev, pk_pub=crypto.b64u(m.pk_pub))
-    assert not v.verify_embedded(dev), "device.added needs the person's key"
+    assert not v.verify_embedded(dev, pk_pub=None), "device.added needs the person's key"
     assert not v.verify_embedded(dev, pk_pub=crypto.b64u(p.pk_pub))
 
     did = crypto.device_id(m.sig_pub).hex()
@@ -147,7 +147,8 @@ def test_verify_embedded_member_added_device_added_device_revoked():
     rev = make_revocation(m.pk_pub, m.pk_sign, device_id_hex=did, revoked_ms=NOW, reason="lost")
     r_ev = {"type": "device.revoked", "device": "d_" + did, "reason": "lost", "revocation": rev}
     assert v.verify_embedded(r_ev, pk_pub=m.pk_pub, device_cert=cert_o)
-    assert not v.verify_embedded(r_ev, pk_pub=m.pk_pub), "the revoked device's certificate is required"
+    assert v.verify_embedded(r_ev, pk_pub=m.pk_pub), "without a certificate the model binds the device (C4)"
+    assert not v.verify_embedded(r_ev, pk_pub=None), "no person key: fail closed"
     assert not v.verify_embedded(r_ev, pk_pub=m.pk_pub, device_cert=p.cert()["o"]), "another person's device"
     assert not v.verify_embedded(r_ev, pk_pub=p.pk_pub, device_cert=cert_o)
     assert not v.verify_embedded({**r_ev, "reason": "retired"}, pk_pub=m.pk_pub, device_cert=cert_o)
@@ -167,7 +168,7 @@ def test_unknown_missing_or_malformed_types_are_false_and_never_raise():
         {"type": "device.revoked"},
         {"type": "device.added", "cert": 5},
     ):
-        assert v.verify_embedded(junk) is False
+        assert v.verify_embedded(junk, pk_pub=None) is False
     assert v.verify_embedded({"type": "device.added", "cert": 5}, pk_pub="nope") is False
 
 
@@ -181,7 +182,7 @@ def test_signatures_match_the_c4_interface():
     class Interface:
         def verify_person(self, event, context): ...
         def verify_host(self, event, *, log, wsk_pub): ...
-        def verify_embedded(self, event): ...
+        def verify_embedded(self, event, *, pk_pub): ...
 
     assert params(CryptoVerifier.verify_person) == params(Interface.verify_person)
     for name in ("verify_host", "verify_embedded"):
@@ -206,4 +207,4 @@ def test_satisfies_c4_protocol():
     assert v.verify_person(ev, context) is True
     g = build_genesis()
     assert v.verify_host(g.event, log="workspace", wsk_pub=None) is True
-    assert v.verify_embedded(g.event) is True
+    assert v.verify_embedded(g.event, pk_pub=None) is True

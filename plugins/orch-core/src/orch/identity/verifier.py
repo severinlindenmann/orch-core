@@ -5,7 +5,7 @@ The protocol it satisfies is C4's ``orch.model.verifier.Verifier`` (PR #347), as
     class Verifier(Protocol):
         def verify_person(self, event, context: SigContext) -> bool: ...
         def verify_host(self, event, *, log: str, wsk_pub: bytes | None) -> bool: ...
-        def verify_embedded(self, event) -> bool: ...
+        def verify_embedded(self, event, *, pk_pub) -> bool: ...
 
 ``SigContext`` has ``workspace_id``, ``log`` and ``cert`` (the signing device's certificate); this module reads only
 those attributes, so it imports nothing from ``model/`` at runtime. ``tests/identity/test_verifier.py`` compares the
@@ -31,8 +31,10 @@ Decisions:
 * ``verify_embedded`` is self-contained for ``workspace.created`` (the one genesis implementation,
   :func:`orch.identity.members.check_genesis`, in F1 §5.11 order, including both signatures) and ``member.added`` (the
   event carries ``pk_pub``). ``device.added`` and ``device.revoked`` need the person's key, and ``device.revoked`` also
-  the revoked device's certificate, which only the replayed state has: pass them as the keyword-only ``pk_pub`` and
-  ``device_cert``. Without them these types are ``False``.
+  the revoked device's certificate, which only the replayed state has: the model passes the key it vouches for as the
+  required keyword ``pk_pub`` (``None`` makes these types ``False``). ``device_cert`` is an optional extra: given, the
+  revocation is also bound to that device's certificate (:func:`members.check_device_revoked`); absent, the model must
+  compare the revocation's person with the device's person, as C4 does.
 """
 
 from __future__ import annotations
@@ -43,6 +45,7 @@ from typing import Any
 from orch import canon, crypto
 
 from . import members
+from .certs import check_revocation
 from .errors import Refused
 
 __all__ = ["CryptoVerifier"]
@@ -99,7 +102,7 @@ class CryptoVerifier:
         self,
         event: Mapping[str, Any],
         *,
-        pk_pub: bytes | str | None = None,
+        pk_pub: bytes | str | None,
         device_cert: Mapping[str, Any] | None = None,
     ) -> bool:
         try:
@@ -119,9 +122,12 @@ class CryptoVerifier:
             if etype == "device.added":
                 members.check_device_added(event, given)
             else:
-                if device_cert is None:
-                    return False
-                members.check_device_revoked(event, given, _cert_o(device_cert))
+                if device_cert is not None:
+                    members.check_device_revoked(event, given, _cert_o(device_cert))
+                else:  # C4 interface: the model binds the device to the person (its own person_id comparison)
+                    rev_o = check_revocation(event.get("revocation"), given)
+                    if event.get("device") != "d_" + rev_o["device_id"] or event.get("reason") != rev_o["reason"]:
+                        return False
             return True
         except (Refused, crypto.EncodingError, crypto.CryptoError, KeyError, TypeError, AttributeError):
             return False

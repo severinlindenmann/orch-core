@@ -140,10 +140,16 @@ def observe(store: Any, ref: str, problems: list[str] | None = None) -> list[dic
     for name in links["repos"]:  # git, with no lock held
         branch = links["branches"].get(name)
         path = repo_path(store.root, store.state.workspace.repos, name)
-        if not branch or path is None or not path.is_dir():
+        if not branch:
+            continue  # the ticket names no branch yet: submit says so itself
+        if path is None or not path.is_dir():
+            if problems is not None:
+                problems.append(f"{name}: no working copy in settings.repos; its code cannot be observed")
             continue
         ref_name = f"refs/heads/{branch}"
         if git(path, "rev-parse", "--verify", "-q", ref_name) is None:
+            if problems is not None:
+                problems.append(f"{name}: git does not know {ref_name}; its code cannot be observed")
             continue
         sha = git(path, "rev-parse", "--verify", "-q", f"{ref_name}^{{commit}}")
         if not sha or not _HEX.fullmatch(sha):
@@ -158,25 +164,17 @@ def observe(store: Any, ref: str, problems: list[str] | None = None) -> list[dic
         if cur is not None and cur["ref"] == ref_name and cur["sha"] == sha:
             continue
         before = {"repo_id": cur["repo"], "ref": cur["ref"], "sha": cur["sha"]} if cur else None
-        counting = {
-            g: {d.id for d in view.gates[g].decisions if d.counting} for g in ("verify", "code") if g in view.gates
-        }
         payload = {"repo_name": name, "repo_id": rid, "ref": ref_name, "sha": sha, "before": before}
         try:
-            out.append(store.host_append("branch.pushed", view.uid, payload))
-        except StoreError:  # the head moved since we looked (or the ticket no longer takes it): next time
+            out += store.host_append("branch.pushed", view.uid, payload)
+        except StoreError as e:  # the head moved since we looked (``source.not_new``) is normal: next time
+            if e.code != "source.not_new" and problems is not None:
+                problems.append(f"{name}: the observation was refused ({e.code})")
             continue
         view = store.ticket(ref) or view
-        for g, ids in counting.items():
-            voided = sorted(d.id for d in view.gates[g].decisions if not d.counting and d.id in ids)
-            if voided:
-                try:
-                    out.append(
-                        store.host_append(
-                            "gate.invalidated", view.uid, {"gate": g, "cause": "new_commits", "voided": voided}
-                        )
-                    )
-                except StoreError:
-                    pass
-        view = store.ticket(ref) or view
+    try:  # whatever the model voided without a record (an earlier crash, a changed section) is recorded now
+        out += store.flush_invalidations(ref)
+    except StoreError as e:
+        if problems is not None:
+            problems.append(f"a gate invalidation was refused ({e.code}); orch doctor can look at the log")
     return out

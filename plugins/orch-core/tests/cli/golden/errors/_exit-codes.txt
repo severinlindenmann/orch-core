@@ -32,6 +32,7 @@ lock.busy 4 retry:true
 invalid.input 5 retry:false
 ac.evidence_missing 5 retry:false
 verify.failed 5 retry:false
+observe.unavailable 5 retry:false
 gate.stale 5 retry:false
 source.missing 5 retry:false
 parse.json 6 retry:false

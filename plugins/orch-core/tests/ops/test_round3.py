@@ -140,3 +140,119 @@ def test_more_is_exact_or_says_how_far_it_looked(ws, cli, monkeypatch):
     monkeypatch.setattr(lst, "MORE_SCAN", 1)
     out = cli("list", "--limit", "1").out
     assert "1 or more not shown (" in out and "+1+" not in out and "+" + "2+" not in out
+
+
+def _submitted(ws, cli):
+    from tests.ops.test_ask_wait import OPEN
+
+    repo = ws.repo()
+    claimed(cli)
+    fill_and_approve(ws, cli)
+    cli("set", "1", LINKS)
+    cli("section", "set", "verification", "-m", "run it")
+    cli("task", "done", "T1", "--run")
+    ws.store.append(ws.person_event(ws.owner, "workspace", "policy.changed", gates={"verify": OPEN}), log="workspace")
+    assert cli("submit").code == 0
+    return repo, ws.uid("1")
+
+
+def test_a_crash_between_branch_pushed_and_the_invalidation_does_not_silence_later_ones(ws, cli, monkeypatch):
+    """The Opus R3-1 repro: ``voided`` comes from the state the model derived, so nothing lost earlier blocks it."""
+    from orch.store import Store
+    from tests.ops.test_ask_wait import verdict
+
+    repo, uid = _submitted(ws, cli)
+    ws.store = ws.other()
+    verdict(ws, uid, "pass")
+    wait_for(cli, "verdict", ref="1")
+    real = Store._flush
+    state = {"crash": True}
+
+    def flaky(self, u):
+        if state["crash"]:
+            state["crash"] = False
+            raise KeyboardInterrupt("crash after branch.pushed")
+        return real(self, u)
+
+    monkeypatch.setattr(Store, "_flush", flaky)
+    (repo / "impl.txt").write_text("one\n")
+    ws.git("commit", "-qam", "one")
+    try:
+        cli("show", "1")
+    except KeyboardInterrupt:
+        pass
+    monkeypatch.setattr(Store, "_flush", real)
+    cli("show", "1")  # every observe flushes what is owed: the lost record is written now
+    seen = [(e["type"], e.get("voided")) for e in ws.events("1") if e["type"] in ("branch.pushed", "gate.invalidated")]
+    assert [t for t, _ in seen][-2:] == ["branch.pushed", "gate.invalidated"] and len(seen[-1][1]) == 1
+    ws.store.close()
+    ws.store = ws.other()
+    verdict(ws, uid, "pass")  # a second round: a new verdict, a new commit
+    (repo / "impl.txt").write_text("two\n")
+    ws.git("commit", "-qam", "two")
+    cli("show", "1")
+    inv = [e for e in ws.events("1") if e["type"] == "gate.invalidated"]
+    assert len(inv) == 2 and inv[1]["gate"] == "verify" and len(inv[1]["voided"]) == 1
+    kinds = []
+    for _ in range(6):
+        r = cli.j("wait", "--ref", "1", "--timeout", "1")
+        if r.data["kind"] == "timeout":
+            break
+        kinds.append((r.data["kind"], r.data.get("outcome")))
+    assert kinds[-2:] == [("verdict", "pass"), ("invalidated", None)] or ("invalidated", None) in kinds
+
+
+def test_a_flush_repairs_an_invalidation_that_was_never_written(ws, cli, monkeypatch):
+    from orch.store import Store
+    from tests.ops.test_ask_wait import verdict
+
+    repo, uid = _submitted(ws, cli)
+    ws.store = ws.other()
+    verdict(ws, uid, "pass")
+    monkeypatch.setattr(Store, "_flush", lambda self, u: [])  # the invalidation is lost
+    (repo / "impl.txt").write_text("one\n")
+    ws.git("commit", "-qam", "one")
+    cli("show", "1")
+    assert "gate.invalidated" not in [e["type"] for e in ws.events("1")]
+    monkeypatch.undo()
+    s = ws.other()
+    try:
+        out = s.flush_invalidations("1")  # with no new commit at all
+        assert [e["type"] for e in out] == ["gate.invalidated"] and out[0]["cause"] == "new_commits"
+        assert s.flush_invalidations("1") == []  # nothing is owed twice
+    finally:
+        s.close()
+
+
+def test_a_refused_invalidation_is_reported_not_swallowed(ws, cli, monkeypatch):
+    from orch.store import Store, StoreError
+
+    repo, uid = _submitted(ws, cli)
+    (repo / "impl.txt").write_text("one\n")
+    ws.git("commit", "-qam", "one")
+
+    def refuse(self, u):
+        raise StoreError("gate.invalidated_mismatch", "voided should be something else")
+
+    monkeypatch.setattr(Store, "_flush", refuse)
+    r = cli("show", "1")
+    assert r.code == 0 and "a gate invalidation was refused (gate.invalidated_mismatch)" in r.out
+
+
+def test_a_linked_repo_that_cannot_be_observed_is_said_and_submit_refuses(ws, cli):
+    import shutil
+
+    repo, uid = _submitted(ws, cli)
+    cli("task", "reopen", "T1")
+    shutil.rmtree(repo)
+    r = cli("show", "1")
+    assert "observe: proj: no working copy in settings.repos; its code cannot be observed" in r.out
+    cli("task", "done", "T1")
+    n = len(ws.read_events(uid))
+    r = cli.j("submit", "1")
+    assert (r.code, r.err_code) == (5, "observe.unavailable") and "proj" in r.doc["error"]["message"]
+    assert len(ws.read_events(uid)) == n
+    ws2 = ws.repo("proj")  # a working copy again, but without the branch git knows nothing about
+    ws.git("branch", "-m", "other")
+    r = cli("show", "1")
+    assert "git does not know refs/heads/feat/x" in r.out and ws2.is_dir()

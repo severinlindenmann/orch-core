@@ -350,17 +350,40 @@ class Store:
         """Does this store hold the workspace key (it can append), or only read?"""
         return self._host is not None
 
-    def host_append(self, typ: str, ref: str, payload: Mapping[str, Any]) -> dict[str, Any]:
-        """Append a host event of the observation kind (``branch.pushed``, ``gate.invalidated``) to the ticket ``ref``:
-        the only host events the callers of :mod:`orch.store.observe` write. The rest the host writes by itself."""
-        if typ not in ("branch.pushed", "gate.invalidated"):
+    def host_append(self, typ: str, ref: str, payload: Mapping[str, Any]) -> list[dict[str, Any]]:
+        """Append the host's observation of a repository (``branch.pushed``) to the ticket ``ref`` and, **under the same
+        lock**, the ``gate.invalidated`` records it makes owed (see :meth:`flush_invalidations`). Returns the events."""
+        if typ != "branch.pushed":
             raise StoreError("validation.event", f"{typ} is not an event a caller appends in the host's name")
         with self._locked():
             uid = self._uid_of(ref)
             if uid is None:
                 raise StoreError("ticket.unknown", ref)
             self._ensure({uid})
-            return self._host_append(typ, uid, dict(payload))
+            out = [self._host_append(typ, uid, dict(payload))]
+            return out + self._flush(uid)
+
+    def flush_invalidations(self, ref: str) -> list[dict[str, Any]]:
+        """Append a host ``gate.invalidated`` for every gate that still has approvals the model voided without a record
+        (after a ``branch.pushed``, a crash between the two appends, a changed section...). ``voided`` is exactly what
+        the model derived (``pending_void``, read from the state after the last append), never a caller's guess."""
+        with self._locked():
+            uid = self._uid_of(ref)
+            if uid is None:
+                return []
+            self._ensure({uid})
+            return self._flush(uid)
+
+    def _flush(self, uid: str) -> list[dict[str, Any]]:
+        assert self._state is not None
+        out = []
+        for g in ("requirements", "plan", "verify", "code"):
+            t = self._state._core.tickets.get(uid)
+            ids = sorted(t.gates[g].pending_void) if t is not None else []
+            if ids:
+                cause = "new_commits" if g in ("verify", "code") else "content_changed"
+                out.append(self._host_append("gate.invalidated", uid, {"gate": g, "cause": cause, "voided": ids}))
+        return out
 
     def attempt_logged(self, ref: str, idem: str) -> bool:
         """Did an append with this idempotency key reach the log of ticket ``ref``? (The log confirms the record.)"""

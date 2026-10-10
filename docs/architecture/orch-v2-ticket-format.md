@@ -1319,6 +1319,9 @@ Where this chapter was silent, `orch.ops` does the following. Each is a rule the
   **frozen, versioned constant of the format** (`orch.model.emits.EMITS_V1`, digest pinned by a test; a test also checks
   that the live registry equals it): replay never reads the registry. A change of any operation's `emits` adds
   `EMITS_V2` and bumps `CURRENT`; logs written under version 1 keep replaying under `EMITS_V1`.
+  **Before any `EMITS_V2` exists** (a rule of §10.1 too): the table version a grant is judged by must be readable from the
+  log (a field on `grant.issued`, or the workspace format version at the time it was issued), never from the running
+  release; replay that picked `CURRENT` would change the meaning of old logs.
 - **Receipts.** A receipt means "this command exited 0 in the agent's environment, in this working copy, at this commit": it
   is **attested by the agent's environment**, not independent verification (the agent controls `PATH`, may pick among the
   linked repositories by its working directory, and a ticket with no linked repository gives `repo: null`, which counts as
@@ -1340,9 +1343,11 @@ Where this chapter was silent, `orch.ops` does the following. Each is a rule the
   the pending host `branch.pushed` (`before: null` on the first sighting) before `submit`, `show` and `wait` (and, in C7, a
   person's approval prompt). The repo identity is the `origin` remote as a canonical `https://` URL with credentials and
   `.git` stripped, else `local:<name>`; a remote is never stored, printed or put on a command line as it is. A ref that names no commit object is reported and
-  never signed. git is read without the workspace lock; only the append takes it (the model re-checks `before`). When a
-  `branch.pushed` voids `verify` or `code` approvals the host's `gate.invalidated` (`new_commits`) follows, so `wait` returns
-  `invalidated`. In P1 the source list is only as trustworthy as the working copy the agent can write. A read-only store
+  never signed. git is read without the workspace lock; only the append takes it (the model re-checks `before`). The `branch.pushed` and the
+  `gate.invalidated` records it owes are appended under one lock, and `voided` is what the model derived (`pending_void`, read
+  after the append); every observe also records any leftover `pending_void` (after a crash, a changed section), and a
+  refusal is reported. When a linked repo cannot be observed (no working copy, an unknown branch, a ref with no commit)
+  `show` says so and `submit` refuses with `observe.unavailable`. In P1 the source list is only as trustworthy as the working copy the agent can write. A read-only store
   observes nothing.
 - **`apply`** takes `{"ref": ..., "ops": [...]}` (the editing operations; `set` included), validated against each
   operation's own schema; keys the batch cannot honour (`run`, `artifact`, `ac` on `task.done`) are refused, never ignored.

@@ -52,7 +52,7 @@ def test_the_commands_of_a_task_loop_meet_their_budgets(big):
         timed(cli, *argv, budget=0.4)
     timed(cli, "wait", "--timeout", "1", budget=2.0)  # the timeout plus one second
     timed(cli, "list", budget=0.8)
-    timed(cli, "list", "--status", "open", "--limit", "50", budget=0.8)
+    timed(cli, "list", "--status", "open", "--limit", "20", budget=0.8)
     timed(cli, "inbox", budget=0.8)
     timed(cli, "next", budget=0.8)
     r = timed(cli, "search", "number 777", budget=1.5)

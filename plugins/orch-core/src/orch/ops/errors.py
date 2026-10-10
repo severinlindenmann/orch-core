@@ -255,6 +255,16 @@ _SPECS = [
         "task done --run: the exit code was not 0, nothing was appended.",
     ),
     _e(
+        "observe.unavailable",
+        5,
+        False,
+        "a linked repository cannot be observed",
+        "orch show names the repository; fix settings.repos or links.branches",
+        ["orch", "show"],
+        "A linked repo has no working copy, or git does not know its branch or the ref names no commit: submit would "
+        "judge code nobody looked at.",
+    ),
+    _e(
         "gate.stale",
         5,
         False,

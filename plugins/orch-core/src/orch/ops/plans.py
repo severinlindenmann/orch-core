@@ -71,6 +71,12 @@ def run(
     problems: list[str] = []
     if observe_repos:  # git is read before the lock is taken: only the append of what it found holds a writer up
         observe.observe(c.store, c.resolve(args.get(ref_key), live_only=live_only).uid, problems)
+        if problems and not ctx.dry_run:  # what is submitted must be what was looked at
+            raise OrchError(
+                "observe.unavailable",
+                "; ".join(problems)[:200],
+                hint="orch show shows what cannot be observed; fix settings.repos or links.branches",
+            )
     with c.locked():
         view = c.resolve(args.get(ref_key), live_only=live_only)
         if claim:

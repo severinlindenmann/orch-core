@@ -46,6 +46,7 @@ OP = operation(
     data=obj({"status": STR}),
     errors=(
         err("ac.evidence_missing"),
+        err("observe.unavailable"),
         err("claim.required"),
         err("transition.refused"),
         err("not_found"),

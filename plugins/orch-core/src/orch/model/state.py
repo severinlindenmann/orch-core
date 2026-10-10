@@ -90,8 +90,8 @@ def replay(
     ``ws_seq``, then ``at``, then ticket uid, then ``seq`` (an event with ``ws_seq = k`` follows workspace event
     ``k``). ``admit`` only accepts an append that sorts after every earlier append, so for any log the host wrote,
     this order is the append order. ``expected_workspace_id`` and ``expected_genesis`` are the store's pins (from
-    ``config.json`` and the host state dir); a genesis that does not match is refused before it is trusted. ``now`` is a timestamp string (the model reads no clock); it decides what is
-    live in the views. Events that fail authorization are absent for state and reported (``workspace.invalid``,
+    ``config.json`` and the host state dir); a genesis that does not match is refused before it is trusted.
+    ``now`` is a timestamp string (the model reads no clock); it decides what is live in the views. Events that fail authorization are absent for state and reported (``workspace.invalid``,
     the tickets' ``frozen``); a broken chain stops that log (``chain_errors``).
     """
     ctx = Ctx(verifier, expected_workspace_id, expected_genesis)

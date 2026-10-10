@@ -173,7 +173,8 @@ describe('factory full runs', () => {
   it('a run on hold: the calm notice above the tabs, on Today and in the shell; Stop from the shell cancels it', async () => {
     const { user } = renderApp('/addon/factory/factory', { viewer: 'p_sev', setup: holding })
     expect(await screen.findByText('Full run R-1 · Autumn tariff campaign: on hold before Deliver', { selector: 'strong' }, T)).toBeInTheDocument()
-    expect(await screen.findByText('Delivering in 28 min: Publish campaign to the newsletter list', {}, T)).toBeInTheDocument()
+    // The signed question is stable (no countdown, Codex integration review #1); the minutes left are core's own line.
+    expect(await screen.findByText(/^Delivery at .+: Publish campaign to the newsletter list$/, {}, T)).toBeInTheDocument()
     const banner = await screen.findByTestId('delivery-hold-banner', {}, T)
     expect(banner).toHaveTextContent(/^Delivering in 28 min · Publish campaign to the newsletter list · at \d\d:\d\d · AI Factory \(factory\)/)
     expect(banner.className).not.toMatch(/warning|danger|orange/)
@@ -190,7 +191,8 @@ describe('factory full runs', () => {
   it('Today lists the hold as a needs-you item with Stop delivery', async () => {
     renderApp('/', { viewer: 'p_sev', setup: holding })
     const card = await screen.findByTestId('card-addon:factory.hold:R-1', {}, T)
-    expect(card).toHaveTextContent(/Delivering in 28 min: Publish campaign to the newsletter list/)
+    expect(card).toHaveTextContent(/Delivery at .+: Publish campaign to the newsletter list/)
+    expect(card.querySelector('[data-hold-countdown]')).toHaveTextContent(/^Delivering in 28 min, at \d\d:\d\d$/)
   })
   it('Simulate: let the hold time pass (demo) delivers: "Delivered: <destination> at <time>"', async () => {
     const { user } = renderApp('/addon/factory/factory', { viewer: 'p_sev', setup: holding })

@@ -1231,7 +1231,9 @@ export class MockStore {
     // the option must be one of its options. The addon then only applies the answer; core records it (addon.decided).
     let decision: AddonDecision | undefined
     if (meta?.decision) {
-      if (!can(role, 'addon.decide')) return refuse(403, 'forbidden', 'Only owners and maintainers decide addon decisions.', 'Ask an owner or maintainer.')
+      // An eligibility-decided action (`deciders: 'eligible'`, e.g. a code review) takes core's gate eligibility instead
+      // of the role floor: members may answer it when eligible (the handler checks); viewers never.
+      if (!can(role, 'addon.decide') && !(meta.deciders === 'eligible' && can(role, 'ticket.act'))) return refuse(403, 'forbidden', 'Only owners and maintainers decide addon decisions.', 'Ask an owner or maintainer.')
       const open = openDecisions(addon, this.addonState(ws, name), pkg?.decisions ?? [], { store: this, ws, viewer: this.viewer })
       decision = open.find((d) => d.id === body.id && d.action === id && (!d.ticket || (this.wsOfKey.get(d.ticket) === ws && this.isVisible(d.ticket))))
       // An answer that carried terms names them; the decision may be gone because its terms changed (a new id).
@@ -1515,11 +1517,15 @@ export class MockStore {
   /** Open decisions of the addons that are active in `wsId`; none for a viewer. */
   addonDecisions(wsId: string): AddonDecision[] {
     const w = this.workspaces.find((x) => x.id === wsId)
-    if (!w || !this.canDecide(wsId)) return []
+    const role = this.roleIn(wsId, this.viewer)
+    if (!w || !can(role, 'ticket.act')) return []
+    const all = this.canDecide(wsId)
+    // A member sees only decisions whose action is eligibility-decided (`deciders: 'eligible'`); a viewer none.
+    const eligibleOnly = (a: AddonPackage, d: AddonDecision) => all || manifestFor(a, w.addons[a.name]?.version ?? a.version).actions?.[d.action]?.deciders === 'eligible'
     // A decision about a ticket is shown only to people who can see that ticket.
     return this.addons
       .filter((a) => addonActive(w, a.name))
-      .flatMap((a) => openDecisions(getAddon(a.name), this.addonState(wsId, a.name), a.decisions ?? [], { store: this, ws: wsId, viewer: this.viewer }))
+      .flatMap((a) => openDecisions(getAddon(a.name), this.addonState(wsId, a.name), a.decisions ?? [], { store: this, ws: wsId, viewer: this.viewer }).filter((d) => eligibleOnly(a, d)))
       .filter((d) => !d.ticket || (this.wsOfKey.get(d.ticket) === wsId && this.isVisible(d.ticket)))
   }
 

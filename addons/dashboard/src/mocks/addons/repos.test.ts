@@ -223,10 +223,15 @@ describe('Repos host: declaration validation', () => {
 
   it('declares an untracked folder only with its exact observed remote', async () => {
     const s = setup()
-    const args = { name: 'sandbox', path: 'sandbox', remote: s.state.observed[`${ROOT}/sandbox`].remote, target_folder: `${ROOT}/sandbox`, confirmed: true }
+    const observed = s.state.observed[`${ROOT}/sandbox`]
+    const args = { name: 'sandbox', path: 'sandbox', remote: observed.remote, default_branch: observed.branch, target_folder: `${ROOT}/sandbox`, confirmed: true }
     await expect(s.run('adopt', { ...args, remote: 'https://git.example.test/other.git' })).rejects.toMatchObject({ status: 409 })
+    // The branch that would be declared is signed too (Codex integration review #2): without it, or another one, refused.
+    const { default_branch: _b, ...noBranch } = args
+    await expect(s.run('adopt', noBranch)).rejects.toMatchObject({ status: 409, code: 'repos.changed' })
+    await expect(s.run('adopt', { ...args, default_branch: 'release' })).rejects.toMatchObject({ status: 409, code: 'repos.changed' })
     await s.run('adopt', args)
-    expect(s.declared().sandbox).toMatchObject({ path: 'sandbox', remote: args.remote })
+    expect(s.declared().sandbox).toMatchObject({ path: 'sandbox', remote: args.remote, default_branch: observed.branch })
   })
 })
 

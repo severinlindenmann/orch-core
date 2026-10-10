@@ -174,7 +174,15 @@ offered). A decision action the manifest marks
 `ticket`, `epic`, `scope` — else the host refuses the answer (409 `decision.terms_required`); such a decision is
 answered once (a second answer: 409 `decision.closed`, from core's `addon.decided` record), and the permit action
 runs the command from the matched decision's terms, never from live permit state (it refuses when the live permit no
-longer matches them). The
+longer matches them). A decision's signed text (title, question, detail, options, terms) must be stable while it is open: no countdowns
+(a factory hold says "Delivery at <time>: <destination>"; core draws the minutes left from `hold.until`, outside the
+digest). After any 409 on a decision answer, the client refetches the decisions, so the next choice snapshots the
+current one. A decision action marked `deciders: 'eligible'` (factory `code_review`, minRole member) is answered by
+whoever core's gate eligibility admits (`gateEligibility` under the code-gate policy: e.g. a member who is a reviewer
+under "the ticket's reviewers"), never a viewer, the requester or the author; the host skips the owners-and-maintainers
+floor for it, members get only such decisions from `addon-decisions`, and the handler checks eligibility again.
+Repos `adopt` signs the observed `default_branch` with the name, path, remote and folder and refuses any change (409
+`repos.changed`). The
 id still binds the decision; terms make what it binds legible. On an addon page, a decision node's primary option is
 disabled while a form on that page that names it (`guards: <decision id>`, with `cancel`) holds unsaved edits
 ("Unsaved changes to the terms: save or cancel them before you accept."); other options stay.

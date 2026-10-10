@@ -751,6 +751,12 @@ export interface ActionMeta {
    * each answer once (a second answer to the same decision is 409 decision.closed). Security review #3.
    */
   authorises?: boolean
+  /**
+   * 'eligible': who may answer is the decision's own eligibility rule (a factory code review: core's gate eligibility
+   * under the code-gate policy), not the owners-and-maintainers floor of addon decisions. Core still refuses viewers;
+   * the addon offers the decision only to eligible people and its handler checks eligibility again (core's rule).
+   */
+  deciders?: 'eligible'
 }
 
 export interface AddonUpdate {

@@ -574,12 +574,11 @@ export function runsView(c: Ctx, state: Record<string, unknown>, opts: { epic: s
 
 /** Core decisions for full runs: Stop delivery while a run holds, and code reviews that wait for a person. */
 export function holdDecisions(c: Ctx, state: Record<string, unknown>, epic: string | null): AddonDecision[] {
-  if (!atLeast(c.store.roleIn(c.ws, c.viewer), 'maintainer')) return []
   // Runs belong to the factory epic: a viewer who cannot see it gets no decision at all (nothing of the run).
   if (!epic || !canSeeTicket(c, epic)) return []
-  const now = c.store.now()
   const runs = runsOf(state)
-  const holds = runs
+  // Stop delivery: owners and maintainers. Code reviews: whoever core's gate eligibility admits (below).
+  const holds = !atLeast(c.store.roleIn(c.ws, c.viewer), 'maintainer') ? [] : runs
     .filter((r) => r.stage === 'holding')
     .map((r) => ({
       kind: 'decision' as const,
@@ -587,7 +586,9 @@ export function holdDecisions(c: Ctx, state: Record<string, unknown>, epic: stri
       addon: 'factory',
       ticket: epic,
       title: 'AI Factory full run: delivery on hold',
-      question: `Delivering in ${minutesLeft(r, now)} min: ${plain(r.deliverMeans!)}`,
+      // Stable signed text (the digest covers it): the destination and the deadline, never a countdown. Core draws the
+      // minutes left from `hold.until`, outside what is signed (Codex integration review #1).
+      question: `Delivery at ${fmtDateTime(r.holdUntil!)}: ${plain(r.deliverMeans!)}`,
       detail: `Full run ${r.id} "${plain(r.goal)}" reached Preview and goes out at ${fmtDateTime(r.holdUntil!)} unless you stop it. Stop cancels the delivery; the run stays at Preview.`,
       options: [{ key: 'stop', label: 'Stop delivery', primary: true }],
       terms: { run: r.id, deliver_means: r.deliverMeans!, hold_until: r.holdUntil! },

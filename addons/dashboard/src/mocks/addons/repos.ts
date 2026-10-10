@@ -279,7 +279,8 @@ function view(s: ReposState, c: Ctx) {
     issues.push({ id, title: `${base}: untracked git repo in the workspace folder` })
     details[id] = stack(
       kv({ 'Observed remote': s.observed[p].remote, Path: p, 'Current branch': s.observed[p].branch }),
-      ...(owner && REPO_NAME.test(base) ? [button('Declare untracked repo', 'adopt', { name: base, path: base, remote: s.observed[p].remote, target_folder: p })] : []),
+      // Every value that would be declared is a signed arg, the observed branch included (Codex integration review #2).
+      ...(owner && REPO_NAME.test(base) ? [button('Declare untracked repo', 'adopt', { name: base, path: base, remote: s.observed[p].remote, default_branch: s.observed[p].branch, target_folder: p })] : []),
     )
     return { id, repo: base, path: base, state: 'untracked' }
   })
@@ -456,6 +457,7 @@ registerAddon({
       const o = s.observed[full]
       if (!o?.git || !s.disk[full]?.git || s.disk[full].remote !== o.remote || c.body.target_folder !== full) return conflict('repos.changed', 'Check this folder again before declaring it.')
       if (c.body.remote !== o.remote) return conflict('repos.changed', 'The observed remote changed. Review it again.')
+      if (c.body.default_branch !== o.branch) return conflict('repos.changed', 'The observed branch changed. Review it again.')
       const d = validateNew(s, c, { name: c.body.name, path: c.body.path, remote: o.remote, default_branch: o.branch }, true)
       if ('ok' in d) return d
       return declare(s, c, d, 'Declared untracked')

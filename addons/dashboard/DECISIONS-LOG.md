@@ -1145,3 +1145,14 @@ The owner answered the eight open questions of REVIEW.md. Items 1, 2, 5 and 6 ch
   `openRepoShell` goes through the central `newShell` pty check, and the factory/repos tests read typed (quoted) values.
 - **Why:** Codex review 2026-10-10 #3; controller ruling after the factory rewrite merged.
 - **Revert:** revert the "#3 completed" commit (the merge stays).
+
+## Codex integration review of feat/dashboard-round3 (2026-10-11)
+
+- **Decision:** (1) the factory hold decision's signed question is stable ("Delivery at <time>: <destination>"); the
+  countdown is drawn from `hold.until` outside the digest (Today row, shell banner), so a Stop signed after the minute
+  ticks over still stops; a 409 on any decision answer refetches the decisions (no stale snapshot reused). (2) Repos
+  `adopt` signs and re-checks the observed `default_branch`. (3) factory code reviews use core's gate eligibility as
+  the only authority: manifest `code_review` is `minRole: member`, `deciders: 'eligible'`; core skips the
+  maintainer floor for such actions, offers members only those decisions, and still refuses viewers.
+- **Why:** Codex integration review (1 High, 2 Medium).
+- **Revert:** revert the integration-review commit.

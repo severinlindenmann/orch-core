@@ -1,6 +1,7 @@
 // Factory full runs (owner decision 2026-10-10 evening, D61 option): the request, the signed start, the steps with
 // their labels, the hold before Deliver, Stop during the hold and the delivery after it.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { decisionBody, decisionChanged } from '@/addon-ui/DecisionSignPrompt'
 import { offered } from '@/test/offered'
 import { describeEvent } from '@/mocks/derive'
 import { createMockStore } from '@/mocks/store'
@@ -96,6 +97,18 @@ describe('factory full run: steps, hold, Stop, delivery', () => {
     expect(JSON.stringify(s.view().runsNode)).toContain('Delivering in 30 min · Deploy to production')
     const d = s.store.addonDecisions(s.ws).find((x) => x.id === 'factory.hold:R-1')!
     expect(d).toMatchObject({ options: [{ key: 'stop', label: 'Stop delivery' }], terms: { run: 'R-1', deliver_means: 'Deploy to production', hold_until: r.holdUntil }, hold: { until: r.holdUntil, deliver_means: 'Deploy to production' } })
+  })
+  it('Stop signed a minute after the prompt opened still stops: the signed text has no countdown', () => {
+    const s = setup()
+    startDeliverRun(s)
+    toHold()
+    const opened = structuredClone(s.store.addonDecisions(s.ws).find((x) => x.id === 'factory.hold:R-1')!)
+    expect(opened.question).not.toMatch(/in \d+ min/)
+    vi.advanceTimersByTime(61_000) // the minute ticks over while the prompt is open
+    const live = s.store.addonDecisions(s.ws).find((x) => x.id === 'factory.hold:R-1')!
+    expect(decisionChanged(opened, live)).toBe(false)
+    expect(s.store.runAddon(s.ws, 'factory', 'hold', decisionBody(opened, 'stop'))).toMatchObject({ ok: true })
+    expect(s.runs()[0]).toMatchObject({ stage: 'stopped' })
   })
   it('Stop during the hold cancels: no delivery event, even after the window', () => {
     const s = setup()
@@ -280,6 +293,29 @@ describe('fix round 1: the code review gate stays human in a full run', () => {
     expect(s.runs()[0].stage).toBe('holding')
     expect(s.store.wsEventsOf(s.ws).filter((e) => e.type === 'addon.decided' && String(e.id).startsWith('factory.code:')).every((e) => e.presence === 'touchid' && (e.actor as { kind: string }).kind === 'person')).toBe(true)
     expect(JSON.stringify(s.view().runsNode)).toMatch(/code review \(commit [0-9a-f]{7}\) approved by Mara/)
+  })
+  it('a member who is a reviewer under the "ticket\'s reviewers" policy reviews (eligibility, not a role floor)', () => {
+    const s = setup()
+    s.store.appendWs(s.ws, { type: 'member.added', person: 'p_kim', name: 'Kim', role: 'member' })
+    s.store.appendWs(s.ws, { type: 'gate.policy_set', gate: 'code', approvers: 'reviewers', count: 1, not: 'assignees', applies: 'all' })
+    const epic = s.store.addonState(s.ws, 'factory').epic as string
+    const people = s.store.ticket(epic)!.people
+    s.store.append(epic, { type: 'people.set', owner: people.owner, assignees: people.assignees, reviewers: ['p_kim'], watchers: people.watchers ?? [] })
+    toReview(s)
+    // Kim (a member, the epic's reviewer) is offered the reviews and may sign them; Mara (maintainer, no reviewer) is not.
+    s.store.setViewer('p_mara')
+    expect(s.store.addonDecisions(s.ws).filter((d) => d.id.startsWith('factory.code:'))).toEqual([])
+    s.store.setViewer('p_kim')
+    expect(s.store.roleIn(s.ws, 'p_kim')).toBe('member')
+    const ds = s.store.addonDecisions(s.ws)
+    expect(ds.map((d) => d.id)).toEqual(['factory.code:R-1:1', 'factory.code:R-1:2', 'factory.code:R-1:3']) // reviews only: no hold, no permit
+    s.store.setViewer('p_sev')
+    for (const d of ds) expect(review(s, d.id, 'p_kim')).toMatchObject({ ok: true })
+    toHold()
+    expect(s.runs()[0].stage).toBe('holding')
+    // A viewer never decides, whatever the policy.
+    s.store.setViewer('p_tom')
+    expect(s.store.addonDecisions(s.ws)).toEqual([])
   })
   it('the policy decides: the approver group and the quorum of distinct people', () => {
     const s = setup()

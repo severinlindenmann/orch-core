@@ -21,7 +21,7 @@ import { toastApiError } from '@/app/toast'
 import { useWorkspace } from '@/app/workspace'
 import type { HumanAction } from '../ticket/shared'
 import { ago } from './shared'
-import { plural } from '@/lib/time'
+import { fmtClock, nowMs, plural } from '@/lib/time'
 
 export const NewItemContext = createContext(false)
 export const SigningContext = createContext(false)
@@ -309,6 +309,9 @@ export function useDecide(d: AddonDecision, onError?: (e: unknown) => void, onDo
       // A decision can move a ticket, an approval or the addon's own state; nothing else (not settings, relay, skills ...).
       await Promise.all(DECISION_KEYS.map((k) => qc.invalidateQueries({ queryKey: [k] })))
     } catch (e) {
+      // The decision moved on the host (closed, changed, stale digest): the cached one must not be signed again. Fetch
+      // the decisions anew, so the next choice snapshots the current one (Codex integration review #1).
+      if (e instanceof ApiError && e.status === 409) await Promise.all(['addon-decisions', 'today', 'addon-state'].map((k) => qc.invalidateQueries({ queryKey: [k] })))
       if (onError) onError(e)
       else toastApiError(e, 'That did not work.')
     } finally {
@@ -319,6 +322,15 @@ export function useDecide(d: AddonDecision, onError?: (e: unknown) => void, onDo
     <DecisionSignPrompt d={signing.d} option={signing.o} changed={decisionChanged(signing.d, d)} workspacePrefix={workspace?.prefix ?? ''} onClose={() => setSigning(null)} onSign={() => void sign(signing)} />
   )
   return { choose: (o: AddonDecision['options'][number]) => setSigning({ o, d }), busy: pending || !!signing, pending, prompt }
+}
+
+/** A hold's countdown: core's own line from `hold.until`, outside the signed text, so it ticks while a prompt is open. */
+function HoldCountdown({ until }: { until: string }) {
+  return (
+    <span data-hold-countdown className="block text-[12px] text-text-muted">
+      Delivering in {Math.max(0, Math.ceil((Date.parse(until) - nowMs()) / 60_000))} min, at {fmtClock(until)}
+    </span>
+  )
 }
 
 function DecisionBody({ d, readOnly, showQuestion = true, inlineErrors, onPending, blockedReason }: { d: AddonDecision; readOnly: boolean; showQuestion?: boolean; inlineErrors?: boolean; onPending?: (pending: boolean) => void; blockedReason?: string }) {
@@ -333,6 +345,8 @@ function DecisionBody({ d, readOnly, showQuestion = true, inlineErrors, onPendin
     <>
       {pending && showQuestion && <p role="status" className="text-xs text-text-muted">Signing…</p>}
       {showQuestion && <p className="text-[13px] leading-relaxed text-text">{d.question}</p>}
+      {/* A hold's countdown is core's, from `hold.until`: outside the signed text, so it can tick while a prompt is open. */}
+      {showQuestion && d.hold && <HoldCountdown until={d.hold.until} />}
       {d.detail && <p className="whitespace-pre-line text-[13px] leading-relaxed text-text-muted">{d.detail}</p>}
       {!readOnly && (
         <div className="flex flex-wrap items-center gap-2">
@@ -393,7 +407,12 @@ export function DecisionRow({
       addon={!inline}
       icon={inline ? undefined : <AddonBadge name={addonTitle ?? d.addon} className="size-3.5 text-[9px]" />}
       ask={d.question}
-      sub={d.ticket ? <TicketLine ticket={d.ticket} title={ticketTitle ?? d.title} /> : <span>{d.title}</span>}
+      sub={
+        <>
+          {d.ticket ? <TicketLine ticket={d.ticket} title={ticketTitle ?? d.title} /> : <span>{d.title}</span>}
+          {d.hold && <HoldCountdown until={d.hold.until} />}
+        </>
+      }
       expanded={inline || expanded}
       onToggle={readOnly || inline ? undefined : toggle}
       action={

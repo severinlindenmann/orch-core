@@ -418,12 +418,13 @@ registerAddon({
   },
 
   decisions(state, _pkg, c): AddonDecision[] {
-    // Answering a permit lets a command run: owners and maintainers only.
-    if (!atLeast(c.store.roleIn(c.ws, c.viewer), 'maintainer')) return []
     // The epic is named only to people who can see it (a child can be visible while its epic is not).
     const epic = epicOf(c, state)
     if (state.epic) settleRuns(c.store, state)
+    // Code reviews follow core's gate eligibility alone (any member the code-gate policy admits, never a viewer, the
+    // requester or the author); holds and permits let something run or stop: owners and maintainers only.
     const holds = state.epic ? holdDecisions(c, state, epic) : []
+    if (!atLeast(c.store.roleIn(c.ws, c.viewer), 'maintainer')) return holds
     return holds.concat(permitsOf(state)
       .filter((p) => p.state === 'open' && canSeeTicket(c, p.ticket))
       .map((p) => ({

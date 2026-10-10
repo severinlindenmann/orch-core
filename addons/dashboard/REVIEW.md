@@ -68,6 +68,7 @@ Read the evidence of a ticket in testing and send it back.
 
 - [ ] **Open a ticket in testing** — DEMO-0041 waits for a verdict. Page: `/ticket/DEMO-0041`.
 - [ ] **Read the evidence** — Acceptance & tasks (evidence per criterion), Artifacts (log, CSV, code, screenshot). Page: `/ticket/DEMO-0041`.
+- [ ] **Read the changes** — Changes: core's diff of the branch against develop. Give verdict says "Pass on <commit> · +A −D": the verdict signs that commit. Page: `/ticket/DEMO-0041`.
 - [ ] **Look at widgets** — DEMO-0046 shows charts, a flow and an image compare in its text. Page: `/ticket/DEMO-0046`.
 - [ ] **Fail the verdict with a reason** — Give verdict → Send back, write why. The ticket returns to In progress. Page: `/ticket/DEMO-0041`.
 
@@ -102,6 +103,7 @@ Severin runs the workspace: people, gates, addons, grants.
 - [ ] **Install quick tasks** — Addons → Browse addons → Quick tasks → Install → Grant and turn on (one signature). Page: `/settings/addons`.
 - [ ] **Update GitHub** — The update shows what changes; one signature grants the new version. Page: `/settings/addons`.
 - [ ] **Revoke an agent grant** — Agents → Grants → Revoke grant; the agent sessions on it stop. Page: `/agents`.
+- [ ] **A member grants themselves** — In CLI Tom is a member: Agents → Issue grant… covers the tickets he may work on, at most 8 h. Page: `/agents` as Tom in CLI.
 
 ### 7. Addons tour
 
@@ -213,6 +215,9 @@ The merge lane: approval, checks and merge bind to one candidate.
 
 - [ ] **Landing page** — Queues | Needs | History. Page: `/addon/land/landing`.
 - [ ] **A voided approval** — DEMO-0053: a conflict resolution voided the verify approval; back to review. Page: `/ticket/DEMO-0053`.
+- [ ] **New commits void the verdict** — DEMO-0042 → Changes → "Simulate: the agent pushes a commit". Core voids the verdict; the ticket is back in testing. Page: `/ticket/DEMO-0042`.
+- [ ] **The code review gate** — Gates → Code review: off by default; on for every ticket or by type. It follows the verdict on the same commit, never by an assignee. Page: `/settings/gates`.
+- [ ] **A charter verdict** — DEMO-0051: "Verdict: via the factory charter — no person reviewed this". The AI Factory's Children tab names each verdict (Busy day). Page: `/ticket/DEMO-0051`, Busy day.
 - [ ] **Resolve it yourself** — Today → From addons → "I will resolve it", then Mark resolved on the Landing page (Busy day). Page: `/`, Busy day.
 - [ ] **Board chips** — Landing state on cards (landing, checking, conflict); no extra column (Busy day). Page: `/board`, Busy day.
 
@@ -267,30 +272,31 @@ Known and left for later:
   "Updated elsewhere — Reload / Keep mine" design.
 - In a very narrow terminal the simulated Claude welcome box is cut with "…" (terminal content, allowed to clip).
 
-## Open questions for you
+## Decided (owner, 10 Oct 2026)
 
-Decisions the mockup made that need your yes or no. Each is cheap to change.
+The open questions of the first review, with the owner's answers. Each is applied in the mockup and logged in
+DECISIONS-LOG.md ("Owner decisions 2026-10-10").
 
-1. **Landing (D53): which approval binds to the code.** The mockup binds the **verify approval** (your verdict) to
-   the candidate SHA; "back to review" means the ticket goes from Done back to Testing and the verdict is cleared.
-   Keep this, or add a separate code-review gate?
-2. **Widgets beyond orch.widgets.v1.** The mockup accepts `ok` as another name for `pass` in `gates`, `note` for
-   `info` in `callout`, a multi-series form of `series` (shared x, up to 4 named series), and two proposed types,
-   `timeline` and `progress` (widgets.md says "progress is not a type"). Put them into v1, or drop them? The Python
-   renderer refuses all of them today.
-3. **Drop links without the app (D54).** Drop links open only in the orch app; the relay has no download page. Should
-   the static fallback page and apple-app-site-association cover `/d/` the way they cover `/pair`?
-4. **Connections.** Who may run checks and the doctor (here: members and up; viewers read only)? Who sees the secrets
-   file's path and unreferenced names (here: owners and maintainers)? Referenced env names are shown to every member
-   (they are not secret; values are). And in the demo, a check run from Today's re-login row is the only way a failing
-   CLI login comes back ok (a plain Run check keeps the failure); is that the flow you want?
-5. **Starting agents.** Members cannot issue grants, so a member without one cannot start an agent. Is that right,
-   or should members get their own grants?
-6. **AI Factory charter approvals.** The factory auto-approves its children's gates under the signed charter (v1
-   behaviour), shown as "via the factory charter". Keep, or make every factory approval a person's?
-7. **AI Factory "Watch live"** is an explicit button (an addon page cannot tell whether someone has it open). Fine?
-8. **Schedules "Run now"** is member-level and unsigned in this preview (it only reads and reports). A real host would
-   also check `spawn_agent` and the person's grant. Fine for now?
+1. **Landing (D53): the verdict signs the commit; an opt-in code review gate.** The verify gate's hash includes the
+   branch head (`source_sha`); the verdict dialog says "Pass on <commit> · +A −D" and its covers name the commit. Any
+   new commit after the verdict voids it (core: `gate.invalidated`, "New commits after the verdict: <sha>") and the
+   ticket goes back to Testing. The land worker uses the signed commit; a clean rebase keeps the approval, a conflict
+   voids it. Testing shows the diff (Changes tab) next to the evidence. The `code` gate is off by default; on per
+   workspace or per ticket type (Settings → Gates), it follows the verdict, signs the same commit, is never an
+   assignee's, and landing needs it.
+2. **Widgets.** `timeline`, `progress` and the multi-series `series` stay, marked "Proposed — not in orch.widgets.v1
+   yet"; the aliases `ok` and `note` are gone (one name per thing). Proposal for widgets.md:
+   `docs/widgets-v1-proposal.md`.
+3. **Relay/Drop: strict D54.** Drop is orch-only; no download page for outsiders. Revisit later.
+4. **Connections: as built.**
+5. **Agent grants: members may grant themselves** — their own signature, the tickets they may work on, at most the
+   workspace default (8 h); owners revoke any grant; viewers still cannot.
+6. **AI Factory charter approves everything, verdicts included** ("Verdict: via the factory charter — no person
+   reviewed this", on the ticket and the factory page). With the code review gate on for factory tickets, that review
+   stays a person's (Settings → Gates explains how).
+7. **AI Factory "Watch live": as built** (an explicit button).
+8. **Schedules "Run now": as built.** The real host checks `spawn_agent` and the person's grant before any run that
+   starts an agent (HANDOVER).
 
 Calls made for you (each logged in DECISIONS-LOG.md with how to revert):
 

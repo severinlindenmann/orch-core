@@ -97,7 +97,7 @@ describe('review tour', () => {
     expect(box).toBeChecked()
     expect(JSON.parse(localStorage.getItem(TICKS_KEY)!)).toEqual(['6.4'])
     expect(within(sheet).getByText(`1 of ${STEP_COUNT} checked`)).toBeInTheDocument()
-    expect(within(sheet).getByRole('button', { name: /^6\. Owner admin/ })).toHaveTextContent('1/6')
+    expect(within(sheet).getByRole('button', { name: /^6\. Owner admin/ })).toHaveTextContent('1/7')
     expect(screen.getByRole('button', { name: /^Review tour/, hidden: true })).toHaveTextContent(`1/${STEP_COUNT}`)
   })
 

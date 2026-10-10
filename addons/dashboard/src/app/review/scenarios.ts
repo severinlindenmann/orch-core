@@ -60,6 +60,7 @@ export const SCENARIOS: TourScenario[] = [
   S(3, 'Verdict', 'Read the evidence of a ticket in testing and send it back.', [
     { title: 'Open a ticket in testing', detail: 'DEMO-0041 waits for a verdict.', go: { path: '/ticket/DEMO-0041' } },
     { title: 'Read the evidence', detail: 'Acceptance & tasks (evidence per criterion), Artifacts (log, CSV, code, screenshot).', go: { path: '/ticket/DEMO-0041' } },
+    { title: 'Read the changes', detail: 'Changes: core\'s diff of the branch against develop. Give verdict says "Pass on <commit> · +A −D": the verdict signs that commit.', go: { path: '/ticket/DEMO-0041' } },
     { title: 'Look at widgets', detail: 'DEMO-0046 shows charts, a flow and an image compare in its text.', go: { path: '/ticket/DEMO-0046' } },
     { title: 'Fail the verdict with a reason', detail: 'Give verdict → Send back, write why. The ticket returns to In progress.', go: { path: '/ticket/DEMO-0041' } },
   ]),
@@ -85,6 +86,7 @@ export const SCENARIOS: TourScenario[] = [
     { title: 'Install quick tasks', detail: 'Addons → Browse addons → Quick tasks → Install → Grant and turn on (one signature).', go: { path: '/settings/addons' } },
     { title: 'Update GitHub', detail: 'The update shows what changes; one signature grants the new version.', go: { path: '/settings/addons' } },
     { title: 'Revoke an agent grant', detail: 'Agents → Grants → Revoke grant; the agent sessions on it stop.', go: { path: '/agents' } },
+    { title: 'A member grants themselves', detail: 'In CLI Tom is a member: Agents → Issue grant… covers the tickets he may work on, at most 8 h.', go: { path: '/agents', viewer: 'p_tom', workspace: 'CLI' } },
   ]),
   S(7, 'Addons tour', 'Every addon page, panel and Today card, each marked with the orange A.', [
     { title: 'Publish', detail: 'Start and stop an app (Undo), revoke a share, a show-once link (asks first, then "Copy this link now").', go: { path: '/addon/publish/shares' } },
@@ -166,6 +168,9 @@ export const SCENARIOS: TourScenario[] = [
   S(16, 'Landing (D53)', 'The merge lane: approval, checks and merge bind to one candidate.', [
     { title: 'Landing page', detail: 'Queues | Needs | History.', go: { path: '/addon/land/landing' } },
     { title: 'A voided approval', detail: 'DEMO-0053: a conflict resolution voided the verify approval; back to review.', go: { path: '/ticket/DEMO-0053' } },
+    { title: 'New commits void the verdict', detail: 'DEMO-0042 → Changes → "Simulate: the agent pushes a commit". Core voids the verdict; the ticket is back in testing.', go: { path: '/ticket/DEMO-0042' } },
+    { title: 'The code review gate', detail: 'Gates → Code review: off by default; on for every ticket or by type. It follows the verdict on the same commit, never by an assignee.', go: { path: '/settings/gates' } },
+    { title: 'A charter verdict', detail: 'DEMO-0051: "Verdict: via the factory charter — no person reviewed this". The AI Factory\'s Children tab names each verdict (Busy day).', go: { path: '/ticket/DEMO-0051', dataset: 'busy' } },
     { title: 'Resolve it yourself', detail: 'Today → From addons → "I will resolve it", then Mark resolved on the Landing page (Busy day).', go: { path: '/', dataset: 'busy' } },
     { title: 'Board chips', detail: 'Landing state on cards (landing, checking, conflict); no extra column (Busy day).', go: { path: '/board', dataset: 'busy' } },
   ]),

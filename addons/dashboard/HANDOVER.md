@@ -37,6 +37,11 @@ Drop, Artifacts, motion), wave 3b (D53 Landing, D55–D57 Skills, Connections an
 fits a 13" notebook with the right dock). Controller rulings that refine the table above (not reopening it): addon
 markers once per surface for dense items (board chips, table cells), addon install is one signed "Grant and turn on".
 
+**Owner decisions (10 Oct), all built** (REVIEW.md "Decided", DECISIONS-LOG "Owner decisions 2026-10-10"): the
+verdict signs the commit and new commits void it; an opt-in `code` review gate; widget aliases removed and the
+proposed types documented (`docs/widgets-v1-proposal.md`); members grant themselves agent grants; the factory charter
+gives verdicts; Drop stays orch-only (strict D54); Connections, Watch live and Schedules Run now as built.
+
 ## Source of the data model
 
 Read these on `origin/develop` (`git show origin/develop:docs/architecture/<file>`):
@@ -91,7 +96,7 @@ All workspace reads are members only (404 unknown workspace, 403 non-member); hi
 | GET `/api/workspaces/:ws/cursor` | `status` (it shows the cursor) |
 | GET `/api/workspaces/:ws/people` (owners) | `member` (list form) — proposal `member.list` with the directory |
 | POST `/api/workspaces/:ws/settings` `{op}`: `member.add`, `member.role`, `member.remove` | `member` (human only, signed; format events `member.added`, `role.changed`) |
-| same, `gate.policy` | no operation yet — proposal `policy.set` (format event `policy.changed`; signed) |
+| same, `gate.policy` | no operation yet — proposal `policy.set` (format event `policy.changed`; signed). Gate `code` (the opt-in code review) also takes `applies: 'off' \| 'all' \| [ticket types]` and always `not: 'assignees'` |
 | same, `rename` | no operation yet — proposal `workspace.rename` |
 | same, `archive` (always 409 `cli_only`) | no operation yet — proposal `workspace.archive` (CLI only) |
 
@@ -106,7 +111,8 @@ All workspace reads are members only (404 unknown workspace, 403 non-member); hi
 | GET `/api/tickets/:key` | `show --json` (the ticket document, §7) |
 | GET `/api/tickets/:key/events?since=` | `show --log --since N` |
 | POST `/api/tickets/:key/actions` `answer` | `answer` (human, signed) |
-| … `approve` / `request_changes` / `verdict` | `approve` / `request-changes` / `verdict` (human, signed) |
+| … `approve` / `request_changes` / `verdict` | `approve` / `request-changes` / `verdict` (human, signed). `verdict` carries `source_sha` (the branch head the person saw; 409 `verdict.stale` otherwise) and signs it; `approve {gate: 'code', source_sha}` is the code review (after a pass verdict, the same commit, never an assignee; 409 `gate.stale` / `gate.not_open`); request changes on `code` also voids the verdict |
+| GET `/api/tickets/:key/changes` | no operation yet — proposal `diff` (core's diff of the ticket branch against its base: files, +/−, unified lines; the ticket document carries `branch` with head, commits and diffstat) |
 | … `ask` | `ask` |
 | … `comment` | no operation yet — proposal `comment` (closest: `log`, which is the agent's) |
 | … `claim` / `release` | `claim` / `release` (agents only; the dashboard never offers them) |
@@ -122,7 +128,7 @@ All workspace reads are members only (404 unknown workspace, 403 non-member); hi
 | GET `/api/workspaces/:ws/agents`, `…/agents/activity` | no operation yet — proposal `session.list`, `session.refusals` |
 | GET `/api/workspaces/:ws/agents/launch?ticket&mode&harness&where` | no operation yet — proposal `session.preview` (core-computed facts for the start dialog) |
 | (start/stop run through the start-agent addon actions) | no operation yet — proposal `session.start` / `session.stop` (human; needs `spawn_agent`, a grant, a server-issued single-use confirmation) |
-| GET/POST `/api/workspaces/:ws/grants`, POST `…/grants/:id/revoke` | `grant` (human, signed; revoke stops its sessions) |
+| GET/POST `/api/workspaces/:ws/grants`, POST `…/grants/:id/revoke` | `grant` (human, signed; revoke stops its sessions). Terms by role (`grantTerms`): owners and maintainers scope `all`, 1–12 h; **members grant themselves** scope `workable` (the tickets they may work on), 1 h up to the workspace default (`grant_hours`, 8); viewers none (403). Wrong scope 403 `grant.scope`. Members revoke their own; owners revoke any |
 
 **Skills, connections, relay (D54–D57)**
 
@@ -164,7 +170,28 @@ schedules `arm`, `disarm`, `run_now`, `open_run`, `finding`; drop `share`, `clai
 `save_settings` (owner) on every addon with settings.
 
 **Mock only (not part of the contract):** POST `/api/dev/reset {dataset?}`, GET `/api/dev/dataset`, POST
-`/api/dev/viewer`, POST `/api/dev/relay/:ws` (simulate a dropped link / a phone scanning).
+`/api/dev/viewer`, POST `/api/dev/relay/:ws` (simulate a dropped link / a phone scanning), POST
+`/api/dev/tickets/:key/push` (the ticket's agent pushes a commit: the demo of "new commits after the verdict").
+
+**Core rules the host must keep (owner decisions 10 Oct):**
+
+- **The verdict signs the commit.** The verify gate hash covers the branch head (`source_sha`) with the verification
+  section, artifacts and criteria. `verdict.given` and the verify `gate.approved` record `source_sha`.
+- **New commits void it.** When the ticket branch gets a commit other than the one a standing verify (or code)
+  approval signed, core appends `gate.invalidated {gate, cause: 'new_commits', sha, reason: "New commits after the
+  verdict: <sha>"}` as host for each, and a done ticket goes back to testing (the landing-resolution path). The mock
+  sees commits as `task.done` receipts and `branch.pushed {sha, branch}` (agent); the host watches the branch.
+- **Code review gate (`code`).** Off by default; on per workspace or per ticket type. When it applies, a pass
+  verdict keeps the ticket in testing until a person (policy approvers, never an assignee, never a charter) approves
+  exactly that commit; landing needs it on the commit the verdict signed. A landing resolution voids it with verify.
+- **Landing uses the signed commit.** The land worker's `source_sha` is the verify approval's `source_sha`; an entry
+  whose approval no longer stands for that commit leaves the queue.
+- **Charter verdicts.** `autoApprove(key, 'verify', {charter, by})` (core, an agent under an active charter, a child
+  of its epic, in testing): `verdict.given` and `gate.approved` with `via: 'factory_charter'`, `charter`,
+  `charter_signed_by`, `source_sha` and no presence. Never for `code` (403 `human_only`). Every surface says
+  "Verdict: via the factory charter — no person reviewed this".
+- **Schedules "Run now"** is member-level and unsigned in the mock (it only reads and reports). Before any run that
+  starts an agent, the real host checks the addon's `spawn_agent` grant and the person's own active grant.
 
 ## Events the mock writes
 
@@ -179,7 +206,10 @@ undecided). Everything below that is not in that list is **provisional**.
 - Provisional, ticket: `ticket.created`, `people.set`, `labels.changed`, `section.edited`, `handoff.written`,
   `status.changed`, `claim.taken`, `claim.released`, `lease.taken`, `lease.released`, `task.run`, `task.blocked`,
   `task.skipped` (these two are derived by `derive.ts` but never written by the mock), `log.added`, `comment.added`, `question.asked`, `question.answered`, `gate.changes_requested`,
-  `gate.invalidated` (also core's landing void), `verdict.given`, `agent.refused`.
+  `gate.invalidated` (also core's landing void, and `cause: 'new_commits'` with `sha` for new commits after a verdict),
+  `verdict.given` (with `source_sha`; a charter verdict adds `via`, `charter`, `charter_signed_by`), `agent.refused`,
+  `branch.pushed` (an agent pushed `sha` to the ticket branch). `gate.approved` may name gate `code` (the code
+  review, with `source_sha`).
 - Provisional, workspace log: `ticket.discarded`, `workspace.renamed`, `member.removed`, `view.saved`,
   `view.deleted`, `grant.issued`, `grant.revoked`, `agent.started`, `agent.stopped`, `addon.installed`,
   `addon.enabled`, `addon.disabled`, `addon.updated`, `addon.uninstalled`, `addon.settings_saved`, `addon.decided`,
@@ -204,8 +234,9 @@ undecided). Everything below that is not in that list is **provisional**.
 - **D53 (landing).** The land addon binds approval, checks and merge to one candidate SHA; a clean rebase keeps the
   approval (re-checked), a conflict resolution voids it — through core (`store.landingResolved`: core checks the
   failed attempt and the resolution records and writes the reason), never by the addon. `main` is refused as a target
-  (D33, normalised names). Open question for the owner: the bound approval is the **verify** approval (the verdict).
-- **D54.** The relay is API only; its one allowed page is the static, script-free fallback for the pairing link (`/pair`). The dashboard draws no relay-hosted page; Drop links are app-only (open owner question: should that fallback also cover `/d/`?).
+  (D33, normalised names). Decided (10 Oct): the verdict signs the branch head (`source_sha`), the land worker uses
+  that commit, new commits void the verdict, and the opt-in `code` gate (when on) signs the same commit.
+- **D54.** The relay is API only; its one allowed page is the static, script-free fallback for the pairing link (`/pair`). The dashboard draws no relay-hosted page. Decided (10 Oct): strict D54 — Drop is orch-only, no outsider download page; revisit later.
 
 ## How to run, test and preview
 
@@ -260,7 +291,7 @@ http://127.0.0.1:5181/ (stable snapshot). To publish a new version:
 
 ## Next
 
-1. **Owner review** with [REVIEW.md](REVIEW.md) and the in-app Review tour; answer its open questions.
+1. **Owner review** with [REVIEW.md](REVIEW.md) and the in-app Review tour (the first round's questions are decided).
 2. **Next PR:** push `feat/dashboard-mockup` (`origin/develop` is already merged in), open a PR against `develop`,
    ping the orch v2 build session (orch-4e) when it is open. Merge only on green CI. The dashboard's vitest suite and
    `npm run layout:guard` run locally only (CI does not run them): run both before asking for the merge.

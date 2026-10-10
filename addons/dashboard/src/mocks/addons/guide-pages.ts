@@ -46,7 +46,7 @@ Mission Control shows the work of one workspace: its tickets, the agents working
 
 ## Roles
 
-Each person has one role per workspace. **Owner** and **maintainer** can approve and sign grants. **Member** can create tickets, comment and answer. **Viewer** can only read.
+Each person has one role per workspace. **Owner** and **maintainer** can approve and sign grants. **Member** can create tickets, comment, answer and sign a grant for their own agents. **Viewer** can only read.
 
 ## Search and commands
 
@@ -100,7 +100,7 @@ If the text of a gate changes after it was approved, the approval no longer matc
 
 ## Verdict
 
-At Verify the reviewer gives a verdict. A passed verdict is the only way a ticket reaches **Done**.
+At Verify the reviewer gives a verdict. The verdict signs the branch's head commit; a new commit after it voids it and the ticket goes back to Testing. A passed verdict is the only way a ticket reaches **Done**. Where the **code review** gate is on (Settings > Gates), a person also approves that same commit before it is done.
 `,
   },
   {
@@ -112,7 +112,7 @@ An **agent** is a program such as Claude Code or Codex that works on tickets. It
 
 ## Grants
 
-A grant says: this person's agents may work in this workspace until a given time. An owner or maintainer signs it with Touch ID. It runs out by itself. **Revoke** ends it at once, and every agent under it stops. The grant status is shown at the bottom of the sidebar.
+A grant says: this person's agents may work in this workspace until a given time. You sign it for yourself with Touch ID: owners and maintainers for all tickets (up to 12 hours), members for the tickets they may work on (up to the workspace default, 8 hours). Owners can revoke any grant. It runs out by itself. **Revoke** ends it at once, and every agent under it stops. The grant status is shown at the bottom of the sidebar.
 
 ## What an agent does
 

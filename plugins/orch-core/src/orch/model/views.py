@@ -31,6 +31,9 @@ class DecisionView:
     gen: int
     counting: bool
     voided: bool
+    hash: str
+    policy_hash: str
+    source_sha: tuple[Mapping[str, str], ...] | None
 
 
 @dataclass(frozen=True)
@@ -207,7 +210,21 @@ def _gate_view(ws: WsCore, t: TCore, g: str) -> GateView:
         gates.approved(ws, t, g),
         tuple(d.person for d in generations.counting(t, g)),
         tuple(policies.eligible_persons(ws, t, g)),
-        tuple(DecisionView(d.id, d.gate, d.kind, d.person, d.gen, d.id in count, d.voided) for d in gc.decisions),
+        tuple(
+            DecisionView(
+                d.id,
+                d.gate,
+                d.kind,
+                d.person,
+                d.gen,
+                d.id in count,
+                d.voided,
+                d.hash,
+                d.policy_hash,
+                freeze(d.source_sha) if d.source_sha is not None else None,
+            )
+            for d in gc.decisions
+        ),
         needs.gate_waiting(ws, t, g),
         tuple(sorted(gc.revoked_flag)),
     )

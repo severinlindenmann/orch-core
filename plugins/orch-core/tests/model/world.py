@@ -262,7 +262,9 @@ class World:
             tasks = [{"id": "T1", "text": "do it", "verify": {"cmd": "make test"}, "proves": ["AC1"]}]
             self.edit(uid, actor, {"ticket.tasks": tasks})
 
-    def decide(self, uid: str, who: str, gate: str, kind: str = "approve", text: str = "x", **over: Any):
+    def decide(
+        self, uid: str, who: str, gate: str, kind: str = "approve", text: str = "x", try_: bool = False, **over: Any
+    ):
         """A gate decision signed against the current gate hash, generation, policy hash and source list."""
         v = self.view(uid)
         g = v.gates[gate]
@@ -282,7 +284,7 @@ class World:
             typ = "gate.changes_requested"
             p.update(gate=gate, text=text)
         p.update(over)
-        return self.tev(uid, typ, who, **p)
+        return self.try_(uid, typ, who, **p) if try_ else self.tev(uid, typ, who, **p)
 
     def push(self, uid: str, sha: str = SHA1, repo: str = "dbt", repo_id: str = REPO, ref: str = "refs/heads/feat/x"):
         cur = None
@@ -305,7 +307,7 @@ class World:
         self.tev(uid, "claim.taken", a, **kw)
         return a
 
-    def to_testing(self, uid: str, name: str = "sev", repo: bool = False):
+    def to_testing(self, uid: str, name: str = "sev", repo: bool = True):
         """Ticket with approved requirements and plan, claimed, task done with evidence, submitted."""
         self.fill(uid)
         if repo:
@@ -325,9 +327,30 @@ class World:
         return a
 
 
+def pol(approvers=("owner",), count=1, not_=(), applies="all", independent=False):
+    """A policy in canonical form (sorted lists)."""
+    a = applies if isinstance(applies, str) else sorted(applies)
+    return {
+        "approvers": sorted(approvers),
+        "count": count,
+        "not": sorted(not_),
+        "applies": a,
+        "independent": independent,
+    }
+
+
 def _thaw(o: Any) -> Any:
     if hasattr(o, "items"):
         return {k: _thaw(v) for k, v in o.items()}
     if isinstance(o, tuple | list):
         return [_thaw(v) for v in o]
     return copy.copy(o)
+
+
+def refused(w: World, log: str, typ: str, actor, **payload):
+    """Append nothing; return the refusal code of ``admit`` (``None`` when the event would be admitted)."""
+    st = w.state()
+    from orch.model import admit
+
+    res = admit(st, w.build_unappended(log, typ, actor, **payload), log=log)
+    return getattr(res, "code", None)

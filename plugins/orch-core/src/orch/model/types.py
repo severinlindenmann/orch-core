@@ -232,6 +232,7 @@ class TCore:
     branch_heads: dict[str, dict[str, str]] = field(default_factory=dict)  # repo name -> {repo_id, ref, sha}
     handoff: str | None = None
     marks: set[str] = field(default_factory=set)  # gates the current event raises directly (generations.py)
+    content_marks: set[str] = field(default_factory=set)  # marks caused by a change of the gate's own bound paths
     touch: dict[str, set[str]] = field(default_factory=dict)  # gate -> `for` persons of this event's agent edits
     last_at: int = 0
 

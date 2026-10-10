@@ -177,8 +177,12 @@ def authorize_agent(core: Core, t: TCore | None, e: dict[str, Any]) -> Refusal |
         return Refusal(Code.GRANT_INVALID, "the grant's person is not a member who may run agents")
     if not verb_covers(e["type"], g.verbs):
         return Refusal(Code.GRANT_VERB, f"the grant does not cover {e['type']}")
-    if g.scope == "workable" and t is not None and not visibility.can_see(ws, t, a["for"]):
-        return Refusal(Code.GRANT_SCOPE, "a workable grant covers only tickets its person may see")
+    if g.scope == "all" and m.role == "member":
+        return Refusal(Code.GRANT_SCOPE, "a member's grant is `workable` only (D60), whatever it says")
+    # An agent's permissions are the intersection of its grant and its person: it never reaches a ticket that its
+    # `for` person can't see, whatever the grant scope (§9, §10.1 A3).
+    if t is not None and not visibility.can_see(ws, t, a["for"]):
+        return Refusal(Code.GRANT_SCOPE, "the agent's person may not see this ticket")
     return None
 
 

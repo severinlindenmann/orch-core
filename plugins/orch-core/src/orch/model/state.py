@@ -10,6 +10,7 @@ from typing import Any
 
 from .codes import OK, Ok, Refusal
 from .engine import Ctx, apply_event
+from . import visibility
 from .types import Core, ts
 from .verifier import Verifier
 from .views import TicketView, WorkspaceView, ticket_view, workspace_view
@@ -33,6 +34,13 @@ class State:
     now: int
     _core: Core = field(repr=False, compare=False)
     _ctx: Ctx = field(repr=False, compare=False)
+
+    def visible_to(self, person: str) -> Mapping[str, TicketView]:
+        """The tickets ``person`` may see (§9): what a reader, the CLI or the relay may show them."""
+        core = self._core
+        return MappingProxyType(
+            {u: t for u, t in self.tickets.items() if visibility.can_see(core.ws, core.tickets[u], person)}
+        )
 
     def by_key(self, key: str) -> TicketView:
         return next(t for t in self.tickets.values() if t.key == key)

@@ -272,3 +272,29 @@ describe('round 2 #2 bound values are budgeted too, and the budget walk allocate
     expect(nodeBudgetProblem(wideObject)).toMatch(/nodes/)
   })
 })
+
+describe('round 2 #4 attaching to a running shell and typing into it need the pty grant', () => {
+  const withShell = () => {
+    const { s, ws } = setup()
+    expect(s.runAddon(ws, 'terminals', 'new', {})?.ok).toBe(true)
+    const view = s.addonStateView(ws, 'terminals') as { sessions: { id: string; kind: string; owner: string; status: string; interactive: boolean }[] }
+    const mine = view.sessions.find((x) => x.kind === 'person' && x.owner === 'p_sev' && x.status === 'running')!
+    expect(mine.interactive).toBe(true)
+    const a = s.workspaces.find((w) => w.id === ws)!.addons.terminals
+    a.capabilities = a.capabilities.filter((c) => c !== 'pty')
+    a.granted = { ...a.granted!, capabilities: a.granted!.capabilities.filter((c) => c !== 'pty') }
+    return { s, ws, id: mine.id }
+  }
+  it('open on a running person shell is refused without pty', () => {
+    const { s, ws, id } = withShell()
+    expect(s.runAddon(ws, 'terminals', 'open', { session: id })).toMatchObject({ ok: false, status: 409, code: 'terminals.no_pty' })
+  })
+  it('without pty no session is interactive; transcripts stay readable', () => {
+    const { s, ws } = withShell()
+    const view = s.addonStateView(ws, 'terminals') as { sessions: { id: string; kind: string; interactive: boolean; transcript?: unknown }[] }
+    expect(view.sessions.length).toBeGreaterThan(0)
+    for (const x of view.sessions) expect(x.interactive, x.id).toBe(false)
+    const agent = view.sessions.find((x) => x.kind === 'agent')
+    if (agent) expect(s.runAddon(ws, 'terminals', 'open', { session: agent.id })?.ok).toBe(true)
+  })
+})

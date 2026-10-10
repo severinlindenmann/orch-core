@@ -149,6 +149,7 @@ registerAddon({
     const { viewer } = c
     const role = c.store.roleIn(c.ws, viewer)
     const mine = (s: Session) => s.kind === 'person' && s.owner === viewer
+    const pty = ptyGranted(c)
     const shown = sessionsOf(state).filter((s) => visibleTo(c, s))
     const sessions: TerminalSessionView[] = shown.map((s) => ({
       id: s.id,
@@ -159,7 +160,8 @@ registerAddon({
       ticket: s.ticket,
       status: s.status,
       // Typing needs a harness that takes input (an unsupported harness is a read-only transcript).
-      interactive: mine(s) && s.status === 'running' && !!role && atLeast(role, 'member') && !!findHarness(harnessOfSession(s))?.capabilities.interactive,
+      // Typing is a pty use: without the grant every session is a read-only transcript (round 2 #4).
+      interactive: pty && mine(s) && s.status === 'running' && !!role && atLeast(role, 'member') && !!findHarness(harnessOfSession(s))?.capabilities.interactive,
       ...withTranscript(s, shellCtx(c, s)),
       harness: harnessOfSession(s),
       purpose: s.kind === 'agent' ? (s.purpose ?? null) : null,
@@ -195,6 +197,9 @@ registerAddon({
       }
       const s = sessionsOf(state).find((x) => x.id === body.session && visibleTo(ctx, x))
       if (!s) return notFound('No such terminal session.')
+      // Attaching to a running shell of a person is a pty use (round 2 #4); a transcript (an agent's mirror, a stopped
+      // session) stays readable without it.
+      if (s.kind === 'person' && s.status === 'running' && !ptyGranted(ctx)) return noPty()
       navOf(state)[viewer] = { current: s.id }
       return { ok: true, message: `Opened ${sessionTitle(s)}.`, changed: true }
     },

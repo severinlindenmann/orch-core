@@ -2,10 +2,10 @@
 
 from typing import Any
 
-from orch.cli.render import fence
 from orch.ops._dsl import INT, REF, STR, arr, err, obj, operation
 from orch.ops.base import Context, Result
 from orch.ops.runtime import Call
+from orch.ops.views import fence
 
 
 def handle(ctx: Context, args: dict[str, Any]) -> Result:

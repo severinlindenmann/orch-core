@@ -3,12 +3,12 @@
 from collections.abc import Iterator
 from typing import Any
 
-from orch.cli.render import fence
 from orch.ops import views
 from orch.ops._dsl import INT, KEY, STR, I, S, arr, obj, operation
 from orch.ops.base import Context, Result
 from orch.ops.errors import OrchError
 from orch.ops.runtime import Call
+from orch.ops.views import fence
 from orch.store import StoreError
 
 

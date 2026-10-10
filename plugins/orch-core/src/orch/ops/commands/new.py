@@ -2,12 +2,11 @@
 
 from typing import Any
 
-from orch.canon.text import clean_line
 from orch.ops import views
 from orch.ops._dsl import FILE, LABEL_PATTERN, MSG, STR, E, L, S, err, obj, operation
 from orch.ops.base import Context, Result
 from orch.ops.errors import OrchError
-from orch.ops.runtime import Call, path_hash
+from orch.ops.runtime import Call, flat, path_hash
 from orch.schema import SECTIONS_BY_TYPE
 from orch.store.render import section_entry
 
@@ -29,7 +28,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         parent = c.store.normalise_ref(args["parent"])
         pv = c.store.ticket(parent)
         if pv is None or not c.sees(pv):
-            raise OrchError("not_found", f"no parent ticket {clean_line(args['parent'])[:40]}")
+            raise OrchError("not_found", f"no parent ticket {flat(args['parent'])[:40]}")
         sets["ticket.parent"] = pv.key
     text = c.read_text_source(args, ("message", "file"))
     summary = c.text(text, limit=65536, what="description").strip("\n") if text is not None else ""

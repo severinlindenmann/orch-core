@@ -6,13 +6,12 @@ from jsonschema import Draft202012Validator
 
 import orch.ops as ops
 from orch import canon
-from orch.canon.text import clean_line
 from orch.cli.store_errors import to_orch_error
 from orch.ops import plans, views
 from orch.ops._dsl import FILE, INT, STR, arr, err, obj, operation
 from orch.ops.base import Context, Result
 from orch.ops.errors import OrchError
-from orch.ops.runtime import Call
+from orch.ops.runtime import Call, flat
 from orch.store import StoreError
 
 MAX_ITEMS = 100
@@ -40,7 +39,7 @@ def _check(item: Any, i: int, table: dict[str, Any]) -> tuple[str, dict[str, Any
         raise OrchError("invalid.input", f'item {i}: an object with an "op"')
     name = item["op"]
     if name not in table:
-        raise OrchError("invalid.input", f"item {i}: {clean_line(name)[:40]!r} is not a batch operation")
+        raise OrchError("invalid.input", f"item {i}: {flat(name)[:40]!r} is not a batch operation")
     args = {k: v for k, v in item.items() if k != "op"}
     for banned in ("ref", "file"):
         if banned in args:

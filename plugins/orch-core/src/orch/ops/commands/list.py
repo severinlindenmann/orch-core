@@ -2,12 +2,11 @@
 
 from typing import Any
 
-from orch.canon.text import clean_line
-from orch.cli.render import fence
 from orch.ops import views
 from orch.ops._dsl import INT, KEY, STR, B, E, I, S, arr, obj, operation
 from orch.ops.base import Context, Result
-from orch.ops.runtime import Call
+from orch.ops.runtime import Call, flat
+from orch.ops.views import fence
 
 
 def handle(ctx: Context, args: dict[str, Any]) -> Result:
@@ -30,7 +29,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         rows.append(v)
     rows.sort(key=lambda v: views.key_number(v.key), reverse=True)
     rows = rows[: args.get("limit", 20)]
-    tickets = [{"key": v.key, "title": clean_line(v.title), "status": v.status} for v in rows]
+    tickets = [{"key": v.key, "title": flat(v.title), "status": v.status} for v in rows]
     body = "\n".join(f"{v.key} {v.status} {v.fields['priority']}: {views.short(v.title, 80)}" for v in rows)
     return Result(
         data={"count": len(rows), "tickets": tickets},

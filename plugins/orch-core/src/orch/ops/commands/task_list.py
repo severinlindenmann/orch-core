@@ -2,18 +2,17 @@
 
 from typing import Any
 
-from orch.canon.text import clean_line
 from orch.ops import views
 from orch.ops._dsl import INT, REF_PATTERN, STR, S, arr, err, obj, operation
 from orch.ops.base import Context, Result
-from orch.ops.runtime import Call
+from orch.ops.runtime import Call, flat
 
 
 def handle(ctx: Context, args: dict[str, Any]) -> Result:
     c = Call.of(ctx, "task.list")
     view = c.resolve(args.get("ref"))
     c.shown(view, fields=("tasks",))
-    tasks = [{"id": t.id, "text": clean_line(t.text), "state": t.state} for t in view.tasks]
+    tasks = [{"id": t.id, "text": flat(t.text), "state": t.state} for t in view.tasks]
     return c.result(
         view,
         {"count": len(tasks), "tasks": tasks},

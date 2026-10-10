@@ -2,11 +2,10 @@
 
 from typing import Any
 
-from orch.canon.text import clean_line
 from orch.ops import plans, views
 from orch.ops._dsl import REF_PATTERN, STR, S, arr, err, obj, operation
 from orch.ops.base import Context, Result
-from orch.ops.runtime import Call
+from orch.ops.runtime import Call, flat
 
 
 def handle(ctx: Context, args: dict[str, Any]) -> Result:
@@ -20,9 +19,9 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
             view, {"task": "none"}, hints=["orch submit" if done else "orch task add TEXT"], lines=["no task is open"]
         )
     verify = next((x["verify"] for x in view.fields["tasks"] if x["id"] == t.id), None)
-    data: dict[str, Any] = {"task": t.id, "text": clean_line(t.text), "proves": list(t.proves)}
+    data: dict[str, Any] = {"task": t.id, "text": flat(t.text), "proves": list(t.proves)}
     if verify:
-        data["verify"] = clean_line(verify["cmd"])
+        data["verify"] = flat(verify["cmd"])
     hint = (
         f"orch task done {t.id}" + (" --run" if verify else "") if t.state == "started" else f"orch task start {t.id}"
     )

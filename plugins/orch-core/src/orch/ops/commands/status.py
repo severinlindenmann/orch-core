@@ -2,11 +2,10 @@
 
 from typing import Any
 
-from orch.canon.text import clean_line
 from orch.ops import views
 from orch.ops._dsl import INT, KEY, STR, err, obj, operation
 from orch.ops.base import Context, Result
-from orch.ops.runtime import Call
+from orch.ops.runtime import Call, flat
 
 
 def handle(ctx: Context, args: dict[str, Any]) -> Result:
@@ -21,7 +20,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         m = ws.members.get(person)
         name = m.name if m else person
     mine = c.mine() if ctx.session else []
-    data: dict[str, Any] = {"person": clean_line(name), "cursor": 0}
+    data: dict[str, Any] = {"person": flat(name), "cursor": 0}
     if grant:
         data["grant"] = grant
     lines: list[str] = []

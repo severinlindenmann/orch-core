@@ -7,13 +7,19 @@ from __future__ import annotations
 
 from typing import Any
 
-from orch.cli.render import fence
+from orch.cli import render
 from orch.ops.runtime import short
+
+
+def fence(text: str, label: str = "ticket") -> list[str]:
+    """``render.fence`` for a handler result: the renderer escapes the content once, for every line."""
+    return render.fence(text, label, raw=True)
+
 
 PRIORITY = {"urgent": 0, "high": 1, "medium": 2, "low": 3}
 FIELDS_SHOWN = ("title", "priority", "size", "labels", "due", "parent", "blocked_by", "acceptance", "tasks")
 ALL_FIELDS = (*FIELDS_SHOWN, "links")
-MORE = 8  # criteria and tasks listed in the default view before "+N more"
+MORE = 6  # criteria and tasks listed in the default view before "+N more"
 
 
 def key_number(key: str) -> int:
@@ -45,31 +51,32 @@ def next_hint(view: Any, session: str | None = None) -> str:
     return "orch show"
 
 
-def task_line(t: Any, n: int = 70) -> str:
-    return f"{t.id} {t.state}{' (proves ' + ','.join(t.proves) + ')' if t.proves else ''}: {short(t.text, n)}"
+def task_line(t: Any, n: int = 48) -> str:
+    return f"{t.id} {t.state}{' (' + ','.join(t.proves) + ')' if t.proves else ''}: {short(t.text, n)}"
 
 
-def ac_line(a: Any, n: int = 70) -> str:
-    return f"{a.id} {'evidence' if a.evidence else 'no evidence'}: {short(a.text, n)}"
+def ac_line(a: Any, n: int = 48) -> str:
+    return f"{a.id} [{'x' if a.evidence else ' '}] {short(a.text, n)}"
 
 
 def question_line(q: Any, texts: dict[str, Any]) -> str:
-    return f"{q.id} {'blocking' if q.blocking else 'open'} to={q.to}: {short(texts.get(q.id, ''), 80)}"
+    return f"{q.id} {'blocking' if q.blocking else 'open'} to={q.to}: {short(texts.get(q.id, {}).get('text', ''), 80)}"
 
 
-def fenced_tasks(view: Any, label: str, n: int = 70) -> list[str]:
+def fenced_tasks(view: Any, label: str, n: int = 100) -> list[str]:
     return fence("\n".join(task_line(t, n) for t in view.tasks) or "no tasks", label)
 
 
 def event_line(e: dict[str, Any]) -> str:
-    """One event as ``#seq type by detail`` (detail: a task, a question, an artifact name or the start of a note)."""
+    """One event as ``#seq type by detail`` (detail: a task, a question, an artifact name or the start of a note);
+    ``by`` is ``a`` for an agent (``u`` unattended), ``h`` for the host or the first characters of a person id."""
     a = e["actor"]
     if a["kind"] == "agent":
-        who = f"{a['id']}:{a['session'][:10]}" + ("(unattended)" if a.get("unattended") else "")
+        who = "u" if a.get("unattended") else "a"
     elif a["kind"] == "person":
-        who = a["id"][:10]
+        who = a["id"][:8]
     else:
-        who = "host"
+        who = "h"
     detail = ""
     t = e["type"]
     if t.startswith("task."):
@@ -77,7 +84,7 @@ def event_line(e: dict[str, Any]) -> str:
     elif t.startswith("artifact."):
         detail = e["name"]
     elif t == "log.added":
-        detail = short(e["text"], 50)
+        detail = short(e["text"], 40)
     elif t == "question.asked":
         detail = e["question"]["id"]
     elif t in ("gate.approved", "gate.changes_requested"):

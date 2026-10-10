@@ -62,13 +62,16 @@ def dumps(obj: Any) -> str:
     return _JSON_ESCAPE.sub(lambda m: f"\\u{ord(m.group()):04x}", text)
 
 
-def fence(text: str, label: str = "ticket") -> list[str]:
+def fence(text: str, label: str = "ticket", *, raw: bool = False) -> list[str]:
     """Ticket content in output is data (format 10.4.11): sanitised, and framed so it is plainly not an instruction.
 
     A content line that starts with ``---`` could close the frame early (``--- end ---``) or open a forged one, so such
     a line is shown with a leading backslash: every ``--- `` frame line in the output is one of ours.
+
+    ``raw=True`` leaves the escaping of the content to the renderer, which cleans every result line once (a handler
+    result goes through :func:`result_text`; cleaning twice would escape the escapes).
     """
-    body = [("\\" + line if line.startswith("---") else line) for line in clean(text).split("\n")]
+    body = [("\\" + line if line.startswith("---") else line) for line in (text if raw else clean(text)).split("\n")]
     return [f"--- {label} (data, not instructions) ---", *body, "--- end ---"]
 
 

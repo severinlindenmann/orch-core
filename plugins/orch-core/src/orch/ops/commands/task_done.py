@@ -11,13 +11,12 @@ import time
 from pathlib import Path
 from typing import Any
 
-from orch.canon.text import clean_line
 from orch.cli import render
 from orch.ops import plans, views
 from orch.ops._dsl import MSG, STR, TASK, B, S, err, obj, operation
 from orch.ops.base import Context, Result
 from orch.ops.errors import OrchError
-from orch.ops.runtime import Call
+from orch.ops.runtime import Call, flat
 
 RUN_TIMEOUT = 3600  # seconds a verify command may take (a hard limit: the process group is killed)
 OUTPUT_LIMIT = 1 << 20  # bytes of output kept as the receipt log; the rest is read and dropped, never held
@@ -114,7 +113,7 @@ def run_verify(c: Call, view: Any, cmd: str) -> tuple[dict[str, Any], bytes]:
             close_fds=True,
         )
     except OSError as e:
-        raise OrchError("verify.failed", f"cannot run {clean_line(argv[0])[:60]}: {e.strerror}") from None
+        raise OrchError("verify.failed", f"cannot run {flat(argv[0])[:60]}: {e.strerror}") from None
     reader = threading.Thread(target=_pump, args=(proc.stdout, OUTPUT_LIMIT, sink), daemon=True)
     reader.start()
     timed_out = False
@@ -130,9 +129,9 @@ def run_verify(c: Call, view: Any, cmd: str) -> tuple[dict[str, Any], bytes]:
     secret = (c.ctx.grant or "").partition(".")[2]
     out = render.redact(bytes(sink).decode("utf-8", "replace"), [secret]).encode()
     if code != 0:
-        tail = clean_line(out.decode("utf-8", "replace"))[-120:]
+        tail = flat(out.decode("utf-8", "replace"))[-120:]
         why = f"timed out after {RUN_TIMEOUT} s" if timed_out else f"exit {code}"
-        raise OrchError("verify.failed", f"{clean_line(cmd)[:60]}: {why}: {tail}")
+        raise OrchError("verify.failed", f"{flat(cmd)[:60]}: {why}: {tail}")
     after = _git_head(path) if path is not None else None
     if after != before:
         raise OrchError("verify.failed", "the repository's commit changed while the command ran; run it again")

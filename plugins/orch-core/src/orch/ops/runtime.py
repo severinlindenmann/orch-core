@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import Any
 
 from orch import canon
-from orch.canon.text import TextError, clean_line, normalize_text
+from orch.canon.text import TextError, normalize_text
 from orch.ops.base import Context, Handler, Result
 from orch.ops.errors import GLOBAL_ERRORS, OrchError
 
@@ -504,7 +504,7 @@ class Call:
             raise OrchError("ambiguous_ref", f"name the ticket REF; your claims: {names}")
         view = self.store.ticket(part)
         if view is None or not self.sees(view):
-            raise OrchError("not_found", f"no ticket {clean_line(part)[:60]}")
+            raise OrchError("not_found", f"no ticket {flat(part)[:60]}")
         if need_claim:
             self.require_claim(view)
         return view
@@ -585,10 +585,10 @@ class Call:
             try:
                 fd = os.open(source, os.O_RDONLY | os.O_NONBLOCK)
             except OSError as e:
-                raise OrchError("invalid.input", f"cannot read {clean_line(source)[:80]}: {e.strerror}") from None
+                raise OrchError("invalid.input", f"cannot read {flat(source)[:80]}: {e.strerror}") from None
             if not stat.S_ISREG(os.fstat(fd).st_mode):
                 os.close(fd)
-                raise OrchError("invalid.input", f"{clean_line(source)[:80]} is not a regular file")
+                raise OrchError("invalid.input", f"{flat(source)[:80]} is not a regular file")
             with os.fdopen(fd, "rb") as f:
                 data = f.read(FILE_LIMIT + 1)
         if len(data) > FILE_LIMIT:
@@ -618,16 +618,16 @@ class Call:
         try:
             fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
         except OSError as e:
-            raise OrchError("invalid.input", f"cannot read {clean_line(path)[:80]}: {e.strerror}") from None
+            raise OrchError("invalid.input", f"cannot read {flat(path)[:80]}: {e.strerror}") from None
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode) or st.st_size > ARTIFACT_LIMIT:
             os.close(fd)
             why = "is not a regular file" if not stat.S_ISREG(st.st_mode) else f"is larger than {ARTIFACT_LIMIT} bytes"
-            raise OrchError("invalid.input", f"{clean_line(path)[:80]} {why}")
+            raise OrchError("invalid.input", f"{flat(path)[:80]} {why}")
         with os.fdopen(fd, "rb") as f:
             data = f.read(ARTIFACT_LIMIT + 1)
         if len(data) > ARTIFACT_LIMIT:
-            raise OrchError("invalid.input", f"{clean_line(path)[:80]} is larger than {ARTIFACT_LIMIT} bytes")
+            raise OrchError("invalid.input", f"{flat(path)[:80]} is larger than {ARTIFACT_LIMIT} bytes")
         self.check_secret(data)
         return data
 
@@ -707,7 +707,12 @@ def keyed(ctx: Context, args: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def flat(text: str) -> str:
+    """One line: whitespace collapsed. Escaping is the renderer's job, once."""
+    return " ".join(text.split())
+
+
 def short(text: str, n: int = 70) -> str:
-    """One line of ticket content, flattened and cut (the caller fences it)."""
-    one = clean_line(text)
+    """One line of ticket content, flattened and cut (the caller fences it; the renderer escapes it)."""
+    one = " ".join(text.split())
     return one if len(one) <= n else one[: n - 1] + "…"

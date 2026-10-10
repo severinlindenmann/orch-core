@@ -70,7 +70,7 @@ def test_task_states_follow_the_table(ws, cli):
         cli("task", "add", t)
     assert cli("task", "start", "T1").first == "ok DEMO-0001 task.started T1 seq=6"
     assert cli("task", "block", "T1", "--reason", "needs a key").code == 0
-    assert cli("task", "reopen", "T1").code == 5 or True
+    assert cli("task", "reopen", "T1").code == 0  # a blocked task is reopened
     assert cli.j("task", "start", "T9").err_code == "not_found"
     assert cli("task", "skip", "T2", "--reason", "not needed").code == 0
     r = cli.j("task", "start", "T2")  # skipped: only a reopen brings it back

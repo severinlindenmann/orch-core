@@ -16,11 +16,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from orch import canon
-from orch.cli.render import fence
 from orch.ops import views
 from orch.ops.base import Context, Result
 from orch.ops.errors import OrchError
 from orch.ops.runtime import Call, Projection, short
+from orch.ops.views import fence
 from orch.schema import SECTIONS_BY_TYPE
 from orch.store.render import section_entry, thaw
 

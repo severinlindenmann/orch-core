@@ -2,12 +2,12 @@
 
 from typing import Any
 
-from orch.cli.render import fence
 from orch.ops import views
 from orch.ops._dsl import REF, SECTIONS, STR, B, I, L, err, obj, operation
 from orch.ops.base import Context, Result
 from orch.ops.errors import OrchError
 from orch.ops.runtime import Call
+from orch.ops.views import fence
 from orch.schema import SECTIONS_BY_TYPE
 from orch.store.render import thaw
 
@@ -81,7 +81,7 @@ def _default(c: Call, view: Any, head: int) -> tuple[list[str], dict[str, Any]]:
     body = [f"title: {views.short(view.title, 100)}"]
     state = texts.get("current_state", "").strip()
     if state:
-        body.append("current_state: " + views.short(state.replace("\n", " / "), 400))
+        body.append("current_state: " + views.short(state.replace("\n", " / "), 240))
     qs = {q["id"]: q for q in _questions(view)}
     for q in views.open_questions(view):
         body.append(views.question_line(q, qs))
@@ -93,12 +93,9 @@ def _default(c: Call, view: Any, head: int) -> tuple[list[str], dict[str, Any]]:
     body += [views.task_line(t) for t in tasks]
     if len(view.tasks) > len(tasks):
         body.append(f"+{len(view.tasks) - len(tasks)} more tasks (orch task list)")
-    present = [s for s in SECTIONS_BY_TYPE[view.type] if texts.get(s)]
-    lines = [_header(c, view), *fence("\n".join(body), f"ticket {view.key}")]
-    if present:
-        lines.append("sections: " + ",".join(present) + " (orch show --section A,B)")
     if events:
-        lines += fence("\n".join(views.event_line(e) for e in events), "last events")
+        body += [views.event_line(e) for e in events]
+    lines = [_header(c, view), *fence("\n".join(body), f"ticket {view.key}")]
     c.shown(view, fields=views.FIELDS_SHOWN, sections=("current_state",), seq=head)
     return lines, _document(view, texts, events, ())
 

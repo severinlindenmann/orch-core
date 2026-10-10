@@ -2,12 +2,11 @@
 
 from typing import Any
 
-from orch.canon.text import clean_line
-from orch.cli.render import fence
 from orch.ops import views
 from orch.ops._dsl import INT, KEY, STR, arr, obj, operation
 from orch.ops.base import Context, Result
-from orch.ops.runtime import Call
+from orch.ops.runtime import Call, flat
+from orch.ops.views import fence
 
 PEER_LABEL = "from-peer"
 
@@ -22,7 +21,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         labels = v.fields["labels"]
         if PEER_LABEL in labels and c.sees(v) and v.status not in ("done", "closed"):
             sender = next((x[5:] for x in labels if x.startswith("peer.") and len(x) > 5), "unknown")
-            items.append({"key": v.key, "from": sender, "title": clean_line(v.title)})
+            items.append({"key": v.key, "from": sender, "title": flat(v.title)})
     lines = (
         fence(
             "\n".join(f"{i['key']} from={views.short(i['from'], 32)}: {views.short(i['title'], 80)}" for i in items),

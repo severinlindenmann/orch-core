@@ -2,12 +2,11 @@
 
 from typing import Any
 
-from orch.canon.text import clean_line
-from orch.cli.render import fence
 from orch.ops import views
 from orch.ops._dsl import STR, obj, operation
 from orch.ops.base import Context, Result
-from orch.ops.runtime import Call
+from orch.ops.runtime import Call, flat
+from orch.ops.views import fence
 
 
 def handle(ctx: Context, args: dict[str, Any]) -> Result:
@@ -16,7 +15,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     if view is None:
         return Result(data={"target": "none"}, hints=["orch new TITLE"], lines=["nothing is free to work on"])
     mine = view.claim is not None and view.claim.live and c.mine() == [view]
-    data = {"target": view.key, "title": clean_line(view.title)}
+    data = {"target": view.key, "title": flat(view.title)}
     return Result(
         data=data,
         key=view.key,

@@ -3,11 +3,11 @@
 import time
 from typing import Any
 
-from orch.cli.render import fence
 from orch.ops._dsl import REF_PATTERN, B, I, S, err, operation
 from orch.ops.base import Context, Result
 from orch.ops.errors import OrchError
 from orch.ops.runtime import Call
+from orch.ops.views import fence
 
 POLL = (0.1, 0.25, 0.5, 1.0)  # seconds between looks at the log, growing
 

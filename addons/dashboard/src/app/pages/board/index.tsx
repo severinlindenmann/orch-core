@@ -35,8 +35,9 @@ import { EpicLanes, statusOfDrop } from './EpicLanes'
 import { groupByEpic, hasEpics, laneOf, movedAt } from './grouping'
 import { ListView } from './ListView'
 import { TicketCard, TicketCardBody, type BoardPeople } from './TicketCard'
-import { Toolbar, type View } from './Toolbar'
-import { applyFilters, DONE_LIMIT, NO_FILTERS, STATUS_LABEL, useBoardDisplay, type BoardDisplay, type Filters } from './lib'
+import { Toolbar } from './Toolbar'
+import { useBoardUrlState } from './urlState'
+import { applyFilters, DONE_LIMIT, NO_FILTERS, STATUS_LABEL, useBoardDisplay, type BoardDisplay } from './lib'
 import { toastApiError } from '@/app/toast'
 import { LoadFailed } from '@/components/LoadFailed'
 
@@ -165,8 +166,7 @@ export function BoardPage() {
   const qc = useQueryClient()
   const { workspace } = useWorkspace()
   const wsId = workspace?.id
-  const [view, setView] = useState<View>('board')
-  const [filters, setFilters] = useState<Filters>(NO_FILTERS)
+  const { view, setView, filters, setFilters } = useBoardUrlState()
   const [dragging, setDragging] = useState<TicketSummary | null>(null)
   const role = useRole()
   const canMove = can(role, 'ticket.move')

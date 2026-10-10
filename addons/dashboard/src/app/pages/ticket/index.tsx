@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { Link, useRouter, useRouterState } from '@tanstack/react-router'
+import { Link, useNavigate, useRouter, useRouterState, useSearch } from '@tanstack/react-router'
 import { ChevronRight, Lock, TriangleAlert } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -103,8 +103,15 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
     queryFn: () => api.getTicket(ticketKey),
     retry: false,
   })
-  // A `#question-Q2` link (Today's Agents panel) opens the Questions tab on that question from the first paint.
-  const [tab, setTab] = useState<TabId>(() => (questionOf(hash) ? 'questions' : 'overview'))
+  // The tab is in the address (`?tab=history`, Overview when absent). A `#question-Q2` link (Today's Agents panel)
+  // opens the Questions tab on that question from the first paint.
+  const search = useSearch({ strict: false }) as { tab?: TabId }
+  const navigate = useNavigate()
+  const tab: TabId = search.tab ?? (questionOf(hash) ? 'questions' : 'overview')
+  const setTab = useCallback(
+    (next: TabId) => void navigate({ to: '/ticket/$key', params: { key: ticketKey }, search: next === 'overview' ? {} : { tab: next }, replace: true }),
+    [navigate, ticketKey],
+  )
   const [focus, setFocus] = useState<string | undefined>(() => questionOf(hash))
   const applied = useRef(`${ticketKey}#${hash}`)
   const [signing, setSigning] = useState<HumanAction | null>(null)
@@ -141,15 +148,13 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
     const now = `${ticketKey}#${hash}`
     if (applied.current === now) return
     applied.current = now
-    const question = questionOf(hash)
-    setTab(question ? 'questions' : 'overview')
-    setFocus(question)
+    setFocus(questionOf(hash))
   }, [ticketKey, hash])
 
   const jump = useCallback((j: Jump) => {
     setTab(j.tab)
     setFocus(j.id)
-  }, [])
+  }, [setTab])
 
   // Runs again once the ticket is on screen, so a cold deep link highlights its target too.
   const shown = !!q.data && viewer.ready && home.ready
@@ -186,7 +191,8 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
       {/* From 1280 px the rail is a 320 px column; below, it is the Panels sheet (it never drops under the content). */}
       <div className={wide ? 'grid min-w-0 grid-cols-[minmax(0,1fr)_320px] items-start gap-6' : 'min-w-0'}>
         <Tabs
-          value={tab}
+          // `?tab=changes` on a ticket without changes (yet): Overview.
+          value={tab === 'changes' && !HAS_CHANGES.has(ticket.status) ? 'overview' : tab}
           onValueChange={(v) => {
             setTab(v as TabId)
             setFocus(undefined)

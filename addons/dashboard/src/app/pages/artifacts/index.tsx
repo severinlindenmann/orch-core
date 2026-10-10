@@ -16,6 +16,7 @@ import { cn } from '@/lib/utils'
 import { useMediaQuery, WIDE_QUERY } from '../today/shared'
 import { ArtifactPane, ArtifactPreview, openMode } from './Preview'
 import { ArtifactGrid, ArtifactList, artifactKey } from './views'
+import { useArtifactsUrl, useShownArtifactInUrl } from './urlState'
 
 type View = 'list' | 'grid'
 const viewKey = (person: string) => `orch.artifacts.view.${person}`
@@ -62,6 +63,7 @@ export function ArtifactsPage() {
   const [qInput, setQInput] = useState('')
   const [page, setPage] = useState(1)
   const [view, setView] = useState<View | null>(null)
+  const url = useArtifactsUrl()
   const [open, setOpen] = useState<ArtifactItem | null>(null)
   // The list view's selected row: the pane (or an open drawer) shows it; j/k move it.
   const [selected, setSelected] = useState<ArtifactItem | null>(null)
@@ -71,9 +73,10 @@ export function ArtifactsPage() {
   const split = useMediaQuery(WIDE_QUERY) && pageWidth >= SPLIT_MIN_PAGE
 
   // The list/grid choice is remembered per person; nothing is read until the viewer is known.
+  // `?view=` in the address wins over the remembered choice.
   useEffect(() => {
-    if (person) setView(readView(person))
-  }, [person])
+    if (person) setView(url.view ?? readView(person))
+  }, [person, url.view])
   // A new workspace starts unfiltered.
   useEffect(() => {
     setFilters({})
@@ -111,6 +114,7 @@ export function ArtifactsPage() {
   const dirty = Object.values(filters).some((v) => v !== undefined) || qInput !== ''
   const chooseView = (v: View) => {
     setView(v)
+    url.setView(v)
     try {
       if (person) localStorage.setItem(viewKey(person), v)
     } catch {
@@ -124,6 +128,8 @@ export function ArtifactsPage() {
     // Beside the table the pane shows it; narrower (and in the grid) the drawer opens.
     if (!listed || !split) setOpen(a)
   }
+  // `?a=` names the shown artifact (the selected row, or the open drawer).
+  useShownArtifactInUrl(url, { items: view ? data?.items : undefined, shown: selected ?? open, show: (a) => { if (listed) setSelected(a); if (!listed || !split) setOpen(a) } })
   // Wider than SPLIT_MIN again: the pane takes over from an open drawer.
   useEffect(() => {
     if (split && listed) setOpen(null)

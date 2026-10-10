@@ -67,7 +67,8 @@ def _chain_check(core: Core, log: str, lc: LogCore, e: dict[str, Any], ctx: Ctx)
         return Refusal(Code.EVENT_UNKNOWN_TYPE, f"{e['type']} is not an event of the {kind} log")
     if e["seq"] != lc.seq + 1 or e["prev"] != lc.head:
         return Refusal(Code.CHAIN_BROKEN, "seq/prev do not continue the log")
-    genesis = e["type"] == "workspace.created" and not core.ws.created  # a second one is checked like any event
+    # a second one, or one that is not seq 1, is checked like any event (and never trusted with wsk_pub=None)
+    genesis = e["type"] == "workspace.created" and not core.ws.created and e["seq"] == 1
     if genesis:  # refuse a foreign genesis before it is trusted with wsk_pub=None
         if e.get("workspace_id") != ctx.expected_workspace_id:
             return Refusal(Code.TRUST_GENESIS_MISMATCH, "the genesis is for another workspace id")

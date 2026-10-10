@@ -588,3 +588,23 @@ def test_status_transitions_are_person_gated_and_workers_do_not_change_them(w):
     # being a worker (agent for tom) does not make tom a manager of someone else's ticket
     w.tev(other, "ticket.reopened", "sev")
     assert refused(w, other, "ticket.closed", "tom", resolution="other") == Code.ROLE_DENIED
+
+
+def test_a_genesis_must_be_seq_1_in_replay_and_in_admit():
+    """The trust root does not rely on the schema alone (store review): a workspace.created that is not seq 1 is never
+    trusted, even when an earlier (refused) event of the log leaves the workspace without a genesis."""
+    from orch import canon
+    from orch.model import WORKSPACE, admit, replay
+
+    w = World(validate=False).bootstrap()
+    genesis = w.ws[0]
+    junk = {**w.wev("settings.changed", "sev", set={"grant_hours": 4}), "seq": 1, "prev": None, "based_on": None}
+    late = {**genesis, "seq": 2, "id": "01J9ZK0000000000000000ZZZY", "prev": canon.event_head(junk)}
+    late["based_on"] = late["prev"]
+    s = replay([junk, late], {}, verifier=w.verifier, now=w.at(), expected_workspace_id=w.workspace_id)
+    assert not s.workspace.members and s.workspace.genesis is None
+    empty = replay([], {}, verifier=w.verifier, now=w.at(), expected_workspace_id=w.workspace_id)
+    first_try = {**genesis, "seq": 2, "prev": None}
+    assert admit(empty, first_try, log=WORKSPACE).code in (Code.CHAIN_BROKEN, Code.GENESIS_INVALID)
+    one = {**genesis, "seq": 1, "prev": None}
+    assert not hasattr(admit(empty, {k: v for k, v in one.items() if k != "host_sig"}, log=WORKSPACE), "code")

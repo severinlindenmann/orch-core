@@ -2,6 +2,8 @@ import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { can, roleOf } from '@/api/permissions'
 import { SettingsSkeleton } from '../skeletons'
+import { LoadFailed } from '@/components/LoadFailed'
+import { useLoadFailure } from '../../useLoadFailure'
 import { cn } from '@/lib/utils'
 import { useWorkspace } from '../../workspace'
 import { usePageHeader } from '../../shell/ShellUi'
@@ -27,6 +29,8 @@ export function SettingsPage({ tab, addon }: { tab?: string; addon?: string }) {
   const { workspace } = useWorkspace()
   const me = useQuery(queries.me())
 
+  const failure = useLoadFailure()
+  if (failure.failed) return <LoadFailed what="settings" onRetry={failure.retry} />
   if (!workspace || !me.data) {
     return <SettingsSkeleton inPage />
   }

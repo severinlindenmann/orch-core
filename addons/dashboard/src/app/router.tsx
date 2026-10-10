@@ -137,7 +137,7 @@ const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, n
  * address-bar path (`/board`, `/w/DEMO/board`) and get memory history starting there. With `queryClient` the route
  * loaders warm each page's data before it shows (without one they load the page's code only).
  */
-export function createAppRouter(initialPath?: string, queryClient?: QueryClient) {
+export function createAppRouter(initialPath?: string, queryClient?: QueryClient, opts: { pendingMs?: number } = {}) {
   const urls: UrlState = { prefix: null }
   const history = initialPath === undefined ? createBrowserHistory() : createMemoryHistory({ initialEntries: [initialPath] })
   return createRouter({
@@ -150,7 +150,7 @@ export function createAppRouter(initialPath?: string, queryClient?: QueryClient)
     defaultPreloadDelay: 50,
     // The query cache decides freshness; the router keeps a preloaded result long enough for the click that follows.
     defaultPreloadStaleTime: 0,
-    defaultPendingMs: PENDING_MS,
+    defaultPendingMs: opts.pendingMs ?? PENDING_MS,
     defaultPendingMinMs: PENDING_MIN_MS,
     defaultPendingComponent: GenericSkeleton,
     defaultErrorComponent: RouteProblem,

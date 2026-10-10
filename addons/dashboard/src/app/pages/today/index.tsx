@@ -3,7 +3,7 @@ import { useQueries, useQuery } from '@tanstack/react-query'
 import { ChevronDown, Eye } from 'lucide-react'
 import { can } from '@/api/permissions'
 import type { AddonDecision, NeedsYouItem, TicketDocument } from '@/api/types'
-import { useAddons } from '@/addon-ui'
+import { useAddons, useSlot } from '@/addon-ui'
 import { cn } from '@/lib/utils'
 import { useWorkspace } from '../../workspace'
 import { useRole } from '../../useRole'
@@ -11,6 +11,9 @@ import { useAttention, type Attention } from '../../attention'
 import { SEEN_PREFIX, useTodayGeneration } from '../../todayRestart'
 import { usePageHeader } from '../../shell/ShellUi'
 import { TodaySkeleton } from '../skeletons'
+import { LoadFailed } from '@/components/LoadFailed'
+import { LOADER_WAIT_MS } from '../../routeData'
+import { useLoadFailure, useWaitAtMost } from '../../useLoadFailure'
 import { SignDialog } from '../ticket/SignDialog'
 import type { HumanAction } from '../ticket/shared'
 import { QueueGroup } from './groups'
@@ -101,7 +104,13 @@ export function TodayPage() {
   const role = useRole()
   const readOnly = !can(role, 'ticket.act')
 
-  if (!today.data || !agentsQ.data || !me.data || !decisionsQ.data || !role || dataset.isPending || stale || !attention.ready) {
+  // The Glance is part of the first screen: Today waits for its addon states too (at most LOADER_WAIT_MS, then it
+  // shows with the Glance's own placeholders), so nothing appears beside the queue a moment later.
+  const glanceWaiting = useWaitAtMost(useSlot('today.card').some((c) => c.waiting?.status === 'pending'), LOADER_WAIT_MS)
+  const failure = useLoadFailure(today, agentsQ, decisionsQ)
+
+  if (failure.failed) return <LoadFailed what="Today" onRetry={failure.retry} />
+  if (!today.data || !agentsQ.data || !me.data || !decisionsQ.data || !role || dataset.isPending || stale || !attention.ready || glanceWaiting) {
     return <TodaySkeleton inPage />
   }
   // A new workspace or person starts a new queue (its own accepted order and open row).

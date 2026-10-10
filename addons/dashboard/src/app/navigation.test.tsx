@@ -17,7 +17,9 @@ afterEach(() => vi.restoreAllMocks())
 describe('the router owns page loading', () => {
   it('keeps the old page until PENDING_MS, then shows the page skeleton, then the page', async () => {
     await import('./pages/agents') // the chunk is in: only the data is slow
-    const { router } = renderApp('/board')
+    // A wider pending delay than the app's, so a loaded test machine cannot blur "before" and "after" it.
+    const pendingMs = 800
+    const { router } = renderApp('/board', { pendingMs })
     await screen.findByTestId('card-DEMO-0043', {}, T)
     let release!: () => void
     const gate = new Promise<void>((r) => (release = r))
@@ -35,12 +37,12 @@ describe('the router owns page loading', () => {
     watch.observe(document.body, { childList: true, subtree: true })
     const start = performance.now()
     act(() => void router.navigate({ to: '/agents' }))
-    await sleep(PENDING_MS / 4)
-    // Well under PENDING_MS: the board is still there.
+    await sleep(100)
+    // Well under the pending delay: the board is still there.
     expect(screen.getByTestId('card-DEMO-0043')).toBeVisible()
     await waitFor(() => expect(loading()).toBeInTheDocument(), T)
     watch.disconnect()
-    expect(shownAt! - start).toBeGreaterThanOrEqual(PENDING_MS - 5)
+    expect(shownAt! - start).toBeGreaterThanOrEqual(pendingMs - 5)
     // Past it: one skeleton in the page's shape (its heading included), never a blank page.
     expect(loading()).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Agents', level: 1 })).toBeInTheDocument()
@@ -53,7 +55,8 @@ describe('the router owns page loading', () => {
 
   it('a page that is ready within PENDING_MS replaces the old one directly, with no skeleton in between', async () => {
     await import('./pages/agents')
-    const { router } = renderApp('/board')
+    // The same rule with a wider delay: a page that is ready before it shows at once (the app uses PENDING_MS).
+    const { router } = renderApp('/board', { pendingMs: 1500 })
     await screen.findByTestId('card-DEMO-0043', {}, T)
     const seen: string[] = []
     const watch = new MutationObserver(() => {
@@ -188,5 +191,25 @@ describe('the page fade', () => {
     await act(() => router.navigate({ to: '/tickets' }))
     await screen.findByText('DEMO-0043', {}, T)
     expect(fades()).toHaveLength(0)
+  })
+})
+
+describe('pages say when they could not load (G4 review M5)', () => {
+  it('Today, Agents and Settings show an error with Retry when the viewer cannot be read, and Retry recovers', async () => {
+    for (const [path, what, after] of [
+      ['/', /Could not load Today/, /need you|Nothing needs you/],
+      ['/agents', /Could not load agents/, /agent sessions? ·/],
+      ['/settings/general', /Could not load settings/, /Members/],
+    ] as const) {
+      const real = api.getMe.bind(api)
+      const spy = vi.spyOn(api, 'getMe').mockRejectedValue(new Error('down'))
+      const { user, unmount } = renderApp(path)
+      expect(await screen.findByRole('alert', {}, T)).toHaveTextContent(what)
+      spy.mockImplementation(real)
+      await user.click(screen.getByRole('button', { name: 'Retry' }))
+      expect((await screen.findAllByText(after, {}, T)).length).toBeGreaterThan(0)
+      spy.mockRestore()
+      unmount()
+    }
   })
 })

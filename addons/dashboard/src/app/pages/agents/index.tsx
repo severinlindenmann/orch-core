@@ -5,6 +5,8 @@ import { can, canRevokeGrant, roleOf } from '@/api/permissions'
 import type { GrantInfo } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { AgentsSkeleton } from '../skeletons'
+import { LoadFailed } from '@/components/LoadFailed'
+import { useLoadFailure } from '../../useLoadFailure'
 import { useWorkspace } from '../../workspace'
 import { usePageHeader } from '../../shell/ShellUi'
 import { Section } from '../ticket/shared'
@@ -30,6 +32,8 @@ export function AgentsPage() {
   const [action, setAction] = useState<GrantAction | null>(null)
   const sign = useSignGrant(ws ?? '')
 
+  const failure = useLoadFailure(today, sessions, grants, activity)
+  if (failure.failed) return <LoadFailed what="agents" onRetry={failure.retry} />
   if (!ws || !me.data || !today.data || !sessions.data || !grants.data || !activity.data) {
     return <AgentsSkeleton inPage />
   }

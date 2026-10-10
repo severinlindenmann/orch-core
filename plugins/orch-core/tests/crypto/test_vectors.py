@@ -1,4 +1,15 @@
-"""Every suite-2 vector of ``vectors_v2.json`` that the crypto layer owns (protocol v2 §1, §3, §4, §5)."""
+"""Every suite-2 vector of ``vectors_v2.json`` that the crypto layer owns (protocol v2 §1, §3, §4, §5).
+
+Sections of ``suites.2`` consumed elsewhere: ``certs``, ``revocations`` and ``card`` (delegation cases) in
+``tests/identity/test_certs.py``; ``question_hash``, ``decisions``, ``webauthn`` and ``publish`` by canon/schema tests.
+
+Sections **deferred**, with the phase that owns them (nothing in C2 builds those objects; they need the relay,
+bridge or Drop code): ``card`` (card/sealed part, relay update rules), ``wk_grants`` and ``member_lists`` (relay
+member lists, P2/P3), ``cert_request``, ``enroll`` and ``bridge`` (pairing and bridge v2, P2/P3), ``revocation_op``
+(host revocation op, P2), ``push`` (P3), ``drop`` and ``ws_envelopes`` (Drop and ws-to-ws, P2+), ``relay_auth``
+(relay login, P3). ``test_deferred_sections_are_complete`` fails when the vector file gains a section nobody has
+listed, so a vector update cannot go unconsumed silently.
+"""
 
 from __future__ import annotations
 
@@ -150,3 +161,17 @@ def test_key_pair_round_trip_on_vector_keys():
     sig = crypto.sign(k, b"x")
     assert crypto.verify(pub("phone.sig"), sig, b"x")
     assert isinstance(k, ec.EllipticCurvePrivateKey)
+
+
+CONSUMED = {"keys", "ids", "sign", "hkdf", "salted_aead", "seal", "seal_open", "label_sealed", "certs", "revocations"}
+OTHER_TESTS = {"question_hash", "decisions", "webauthn", "publish"}
+DEFERRED = {
+    "card", "wk_grants", "member_lists", "cert_request", "enroll", "bridge", "revocation_op", "push", "drop",
+    "ws_envelopes", "relay_auth",
+}  # fmt: skip
+
+
+def test_deferred_sections_are_complete():
+    sections = set(S2) - {"suite", "name"}
+    assert sections == CONSUMED | OTHER_TESTS | DEFERRED, sections ^ (CONSUMED | OTHER_TESTS | DEFERRED)
+    assert not CONSUMED & DEFERRED

@@ -183,8 +183,8 @@ def _event_lines(body: Any) -> list[tuple[str, str]]:
     if extra:
         _refuse(f"{etype} carries fields the prompt does not show: {sorted(extra)[:3]}")
     actor = ev.get("actor")
-    if not isinstance(actor, dict) or actor.get("kind") != "person":
-        _refuse("not a person event")
+    if not isinstance(actor, dict) or set(actor) != {"kind", "id", "device"} or actor["kind"] != "person":
+        _refuse("actor must be exactly {kind: person, id, device}")
     out: list[tuple[str, str]] = [
         ("workspace", _scalar(body["workspace_id"])),
         ("log", _scalar(log)),
@@ -216,10 +216,14 @@ def describe_payload(payload: bytes) -> list[tuple[str, str]]:
     if label is None:
         _refuse("unknown signature label")
     key = names[label]
+    raw = payload[len(label) :]
     try:
-        body = canon.loads_strict(payload[len(label) :])
+        body = canon.loads_strict(raw)
+        canonical = canon.cj_checked(body) == raw
     except Exception:  # noqa: BLE001
         _refuse("signing bytes are not canonical JSON")
+    if not canonical:
+        _refuse("signing bytes are not the canonical form of what they say")
     out: list[tuple[str, str]] = [("signs", key.removeprefix("sig_").replace("_", "-"))]
     if key in ("sig_ticket_event", "sig_ws_event"):
         out += _event_lines(body)

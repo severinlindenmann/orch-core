@@ -78,6 +78,7 @@ MIN_PASSPHRASE_CHARS = 8
 MIN_N = 2**15
 MAX_N = 2**20
 MAX_SHOWN = 120
+MAX_NAME = 80
 ROLES = ("person", "device")
 
 
@@ -121,7 +122,9 @@ def _field_lines(name: object, value: object) -> list[str]:
     """One ``name: value`` line, or several ``name#k/n`` lines when the escaped value is longer than one line, so a
     long value is shown in full and never truncated (a hidden tail could carry the decisive part)."""
     text = canon.clean(value if isinstance(value, str) else repr(value)).replace("\n", "\u27e8U+000A\u27e9")
-    label = _value(name, 80)
+    label = canon.clean(name if isinstance(name, str) else repr(name)).replace("\n", "\u27e8U+000A\u27e9")
+    if len(label) > MAX_NAME:  # truncating would let two different keys look the same
+        raise CustodyError("refusing to prompt: a field name is too long to show in full")
     chunks = [text[i : i + MAX_SHOWN] for i in range(0, len(text), MAX_SHOWN)] or [""]
     if len(chunks) == 1:
         return [f"{label}: {chunks[0]}"]

@@ -4,7 +4,7 @@ The protocol it satisfies is C4's ``orch.model.verifier.Verifier`` (PR #347), as
 
     class Verifier(Protocol):
         def verify_person(self, event, context: SigContext) -> bool: ...
-        def verify_host(self, event, *, log: str, wsk_pub: bytes | None) -> bool: ...
+        def verify_host(self, event, *, log: str, wsk_pub: bytes | None, workspace_id: str) -> bool: ...
         def verify_embedded(self, event, *, pk_pub) -> bool: ...
 
 ``SigContext`` has ``workspace_id``, ``log`` and ``cert`` (the signing device's certificate); this module reads only
@@ -16,10 +16,9 @@ Decisions:
 * **Stateless and immutable.** No constructor state: the workspace key comes from the replayed genesis through
   ``wsk_pub`` (``None`` only for the genesis event itself, which carries its own, bound by the PK-signed
   delegation).
-* **``workspace_id``.** Ticket events do not carry the workspace id, but it is in the signed bytes (§5.5), so
-  ``verify_host`` takes it as an optional keyword (taken from the event when it has one, as workspace-log
-  events do; otherwise required; without it the event is ``False``). It is optional, so a call
-  that follows the C4 interface is accepted.
+* **``workspace_id``** is a required keyword of ``verify_host`` and is never read from the event (ticket events carry
+  none, and a forged event must not name its own); for the genesis (``wsk_pub=None``) the event's own
+  ``workspace_id`` must equal the passed one, else ``False``.
 * **Fail closed.** Every method returns ``bool`` and never raises; a malformed event, key or signature is ``False``.
   ``verify_embedded`` is ``True`` only for an event whose ``type`` is a known string that carries embedded objects and
   whose objects all verify. An event with a missing, non-string or unknown type is ``False``.
@@ -28,13 +27,14 @@ Decisions:
   that ``actor.device == "d_" + device_id(dk_sig_pub)``. ``context.cert``
   may be the signed object ``{"o", "sig"}`` or its ``o``. The certificate's own signature, scopes, expiry and
   revocation at the event's position are ``model/``'s.
-* ``verify_embedded`` is self-contained for ``workspace.created`` (the one genesis implementation,
-  :func:`orch.identity.members.check_genesis`, in F1 §5.11 order, including both signatures) and ``member.added`` (the
-  event carries ``pk_pub``). ``device.added`` and ``device.revoked`` need the person's key, and ``device.revoked`` also
-  the revoked device's certificate, which only the replayed state has: the model passes the key it vouches for as the
-  required keyword ``pk_pub`` (``None`` makes these types ``False``). ``device_cert`` is an optional extra: given, the
-  revocation is also bound to that device's certificate (:func:`members.check_device_revoked`); absent, the model must
-  compare the revocation's person with the device's person, as C4 does.
+* ``verify_embedded(event, *, pk_pub, device_cert=None)``:
+  * ``workspace.created``: the one genesis implementation (:func:`orch.identity.members.check_genesis`, F1 §5.11
+    order, both signatures); self-contained. ``member.added``: the event carries ``pk_pub``; self-contained.
+  * ``device.added``: needs ``pk_pub``, the person key the model vouches for (``None`` gives ``False``).
+  * ``device.revoked``: needs ``pk_pub`` **and** ``device_cert``, the revoked device's certificate from the replayed
+    state; the revocation is verified under ``pk_pub`` against that certificate (same person and device,
+    :func:`members.check_device_revoked`). ``device_cert=None`` gives ``False``.
+  * When ``pk_pub`` is given for a self-contained type it must equal the key in the event.
 """
 
 from __future__ import annotations
@@ -45,7 +45,6 @@ from typing import Any
 from orch import canon, crypto
 
 from . import members
-from .certs import check_revocation
 from .errors import Refused
 
 __all__ = ["CryptoVerifier"]
@@ -80,19 +79,18 @@ class CryptoVerifier:
         except (crypto.EncodingError, crypto.CryptoError, canon.HashError, KeyError, TypeError, AttributeError):
             return False
 
-    def verify_host(
-        self, event: Mapping[str, Any], *, log: str, wsk_pub: bytes | None, workspace_id: str | None = None
-    ) -> bool:
+    def verify_host(self, event: Mapping[str, Any], *, log: str, wsk_pub: bytes | None, workspace_id: str) -> bool:
         try:
+            if type(workspace_id) is not str:
+                return False
             if wsk_pub is None:
                 if event.get("type") != "workspace.created" or log != "workspace":
                     return False
+                if event.get("workspace_id") != workspace_id:  # the genesis must name the workspace we are replaying
+                    return False
                 wsk_pub = _key(event["wsk_pub"])
-                workspace_id = event["workspace_id"]  # the genesis names its own workspace
             else:
                 wsk_pub = _key(wsk_pub)
-                if workspace_id is None:
-                    workspace_id = event.get("workspace_id")  # only events that carry one (workspace log)
             sig = crypto.unb64u(event["host_sig"], crypto.SIG_LEN)
             return crypto.verify(wsk_pub, sig, canon.host_signing_bytes(workspace_id, log, event))
         except (crypto.EncodingError, crypto.CryptoError, canon.HashError, KeyError, TypeError, AttributeError):
@@ -122,12 +120,9 @@ class CryptoVerifier:
             if etype == "device.added":
                 members.check_device_added(event, given)
             else:
-                if device_cert is not None:
-                    members.check_device_revoked(event, given, _cert_o(device_cert))
-                else:  # C4 interface: the model binds the device to the person (its own person_id comparison)
-                    rev_o = check_revocation(event.get("revocation"), given)
-                    if event.get("device") != "d_" + rev_o["device_id"] or event.get("reason") != rev_o["reason"]:
-                        return False
+                if device_cert is None:
+                    return False
+                members.check_device_revoked(event, given, _cert_o(device_cert))
             return True
         except (Refused, crypto.EncodingError, crypto.CryptoError, KeyError, TypeError, AttributeError):
             return False

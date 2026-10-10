@@ -354,3 +354,46 @@ def test_backend_refuses_before_prompting_for_unhandled_types(tmp_path):
     assert not any(r.kind == "unlock" for r in b.seen)
     ok = payload("ticket.reopened", TICKET, {"text": "x"})
     assert crypto.verify(b.public_key("dk"), b.sign("dk", ok, action=""), ok)
+
+
+# --- canonical bytes, exact actor, field names (re-review P1, P2, names) -----------------------------------------------
+
+
+def test_non_canonical_signing_bytes_refuse():
+    good = payload("ticket.reopened", TICKET, {"text": "x"})
+    label = canon.LABELS["sig_ticket_event"].encode()
+    body = good[len(label) :]
+    obj = json.loads(body)
+    reordered = json.dumps(dict(reversed(list(obj.items()))), separators=(",", ":")).encode()
+    assert reordered != body  # key order differs from the sorted canonical form
+    for bad in (reordered, body.replace(b",", b", ", 1), b" " + body, body + b"\n", body.replace(b'"x"', b'"\\u0078"')):
+        with pytest.raises(CustodyError, match="canonical"):
+            describe_payload(label + bad)
+    describe_payload(good)
+
+
+def test_a_duplicate_key_in_the_bytes_refuses():
+    label = canon.LABELS["sig_ticket_event"].encode()
+    body = payload("ticket.reopened", TICKET, {"text": "x"})[len(label) :]
+    dup = body.replace(b'"text":"x"', b'"text":"x","text":"y"')
+    assert dup != body
+    with pytest.raises(CustodyError):
+        describe_payload(label + dup)
+
+
+def test_actor_must_be_exactly_kind_id_device():
+    log, fields = CASES["ticket.reopened"]
+    base = {"kind": "person", "id": PERSON, "device": DEVICE}
+    for bad in ({**base, "session": "s_x"}, {"kind": "person", "id": PERSON}, {"kind": "person", "device": DEVICE}, {}):
+        with pytest.raises(CustodyError, match="actor must be exactly"):
+            describe_payload(payload("ticket.reopened", log, fields, actor=bad))
+    describe_payload(payload("ticket.reopened", log, fields, actor=base))
+
+
+def test_long_field_names_refuse_instead_of_truncating():
+    repos = {"a" * 100 + "1": {"path": "/x"}, "a" * 100 + "2": {"path": "/y"}}
+    p = payload("settings.changed", "workspace", {"set": {"repos": repos}})
+    with pytest.raises(CustodyError, match="too long"):
+        rendered(p)
+    ok = payload("settings.changed", "workspace", {"set": {"repos": {"demo": {"path": "/x"}}}})
+    assert "set.repos.demo.path: /x" in rendered(ok)

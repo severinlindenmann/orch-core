@@ -309,17 +309,17 @@ def test_a_lying_caller_cannot_change_the_derived_fields(tmp_path):
     assert lines == ["type: gate.approved", "gate: code"]
 
 
-def test_hostile_event_values_are_shown_escaped():
-    """canon refuses bidi in signed text, but the prompt must not rely on that: raw bytes with one are escaped."""
-    from orch.custody.describe import describe_payload
-
-    ev = {"type": "ticket.reopened", "text": "x\u202e\x1b", "actor": {"kind": "person", "id": "p", "device": "d"}}
-    body = {"contract": 1, "suite": 2, "workspace_id": WS, "log": TICKET, "event": ev}
+def test_bidi_in_signing_bytes_refuses_to_prompt():
+    """Bytes that canon would never sign (a bidi control) are not canonical: refuse rather than show them."""
     import json
 
+    from orch.custody.describe import describe_payload
+
+    ev = {"type": "ticket.reopened", "text": "x\u202e", "actor": {"kind": "person", "id": "p", "device": "d"}}
+    body = {"contract": 1, "suite": 2, "workspace_id": WS, "log": TICKET, "event": ev}
     payload = canon.LABELS["sig_ticket_event"].encode() + json.dumps(body, ensure_ascii=False).encode()
-    text = pp.render_prompt(PassphraseRequest("unlock", "dk", "", "ab" * 16, tuple(describe_payload(payload))))
-    assert "\u202e" not in text and "\x1b" not in text and "U+202E" in text and "U+001B" in text
+    with pytest.raises(CustodyError, match="canonical"):
+        describe_payload(payload)
 
 
 def test_backend_passes_the_signing_hash_not_caller_text(tmp_path):

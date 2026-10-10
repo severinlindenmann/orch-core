@@ -30,7 +30,7 @@ import type {
   Workspace,
   WorkspaceEvent,
 } from '@/api/types'
-import { addonActive, ARG_KEY, manifestProblem, pendingUpdate, manifestFor, sameSet, sameTerms, viewerActions } from '@/api/addons'
+import { addonActive, ARG_KEY, decisionDigest, manifestProblem, pendingUpdate, manifestFor, sameSet, sameTerms, viewerActions } from '@/api/addons'
 import { getAddon, openDecisions } from './addons'
 import { isCoreNamespace } from './addons/registry'
 import { deriveTicket, describeEvent, fnvHex, parseActor } from './derive'
@@ -1173,13 +1173,19 @@ export class MockStore {
       if (body.confirmed !== true) return refuse(409, 'confirm.required', 'A decision is answered in orch\'s own signing prompt.', 'Answer it on Today, or press the option and sign in the dialog.')
       // The terms the person saw in core's prompt must be the terms now (core shows and signs them line by line).
       if (!sameTerms(body.terms, decision.terms)) return refuse(409, 'decision.closed', 'The terms of this decision changed since you opened it.', 'Reopen it and check the terms again.')
+      // The answer binds the whole decision core showed (security review #3): its ticket, and its digest (title,
+      // question, detail, options, terms) compared with the decision now. Core's prompt always sends the digest.
+      // TODO(host): require the digest once every decision producer is migrated (the factory rewrite); the mock
+      // still accepts a body without one so the existing addon tests run unchanged.
+      if (body.ticket !== undefined && body.ticket !== decision.ticket) return refuse(409, 'decision.closed', 'That decision is about another ticket.', 'Reopen it and check it again.')
+      if (body.digest !== undefined && body.digest !== decisionDigest(decision)) return refuse(409, 'decision.closed', 'This decision changed since you opened it.', 'Reopen it and check it again.')
     }
     const raw = action({ store: this, ws, viewer: this.viewer, ticket, body, state: this.addonState(ws, name), decision })
     // A refusal changes nothing others need to see: no record, no refresh for other clients, nothing saved.
     if (!raw.ok) return raw
     const res = this.checkedResult(ws, raw)
     // Core's own record of a decision (presence step done in core's prompt): who decided what, never the addon's words.
-    if (decision) this.appendWs(ws, { type: 'addon.decided', name, id: decision.id, option: String(body.option), ...(decision.ticket ? { ticket: decision.ticket } : {}), ...(decision.terms ? { terms: { ...decision.terms } } : {}), presence: 'touchid' })
+    if (decision) this.appendWs(ws, { type: 'addon.decided', name, id: decision.id, option: String(body.option), ...(decision.ticket ? { ticket: decision.ticket } : {}), ...(decision.terms ? { terms: { ...decision.terms } } : {}), digest: decisionDigest(decision), presence: 'touchid' })
     // Core's own record of a signed action (the addon cannot write or hide it): who signed which action with exactly the
     // body that was signed (every arg, uncut; only core's `confirmed` flag left out), whether or not the addon changed anything.
     if (meta?.confirm === 'sign') {

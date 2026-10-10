@@ -1,3 +1,4 @@
+import { decisionDigest } from '@/api/addons'
 import type { AddonDecision } from '@/api/types'
 import { SignPrompt } from '@/components/sign/SignPrompt'
 import { AddonBadge } from './AddonBadge'
@@ -40,6 +41,8 @@ export function DecisionSignPrompt({ d, option, workspacePrefix, onSign, onClose
         `In workspace ${workspacePrefix}`,
       ]}
       confirmLabel="Send answer"
+      // The digest of the decision as shown here: posted with the answer, compared by the host (security review #3).
+      hash={decisionDigest(d)}
       onClose={onClose}
       onSign={onSign}
     >
@@ -79,9 +82,11 @@ export const decisionToast = (title: string, addon: string, option: string, mess
   ...(message ? { description: `Addon says: ${message}` } : {}),
 })
 
-/** Has the live decision moved away from the one a prompt was opened on (addon, id, terms or options)? */
-export const decisionChanged = (opened: AddonDecision, live: AddonDecision | undefined) =>
-  !live || live.addon !== opened.addon || live.id !== opened.id || JSON.stringify(live.terms ?? null) !== JSON.stringify(opened.terms ?? null) || JSON.stringify(live.options) !== JSON.stringify(opened.options)
+/** Has the live decision moved away from the one a prompt was opened on (anything the prompt shows or posts: its digest)? */
+export const decisionChanged = (opened: AddonDecision, live: AddonDecision | undefined) => !live || decisionDigest(live) !== decisionDigest(opened)
 
-/** The body core posts for a decision after its prompt: the decision's own id, ticket and terms, the option key, `confirmed`. */
-export const decisionBody = (d: AddonDecision, option: string) => ({ id: d.id, option, ...(d.ticket ? { ticket: d.ticket } : {}), ...(d.terms ? { terms: { ...d.terms } } : {}), confirmed: true })
+/**
+ * The body core posts for a decision after its prompt: the decision's own id, ticket and terms, the option key, the
+ * digest of the decision as shown (the host refuses it when the decision changed since), `confirmed`.
+ */
+export const decisionBody = (d: AddonDecision, option: string) => ({ id: d.id, option, ...(d.ticket ? { ticket: d.ticket } : {}), ...(d.terms ? { terms: { ...d.terms } } : {}), digest: decisionDigest(d), confirmed: true })

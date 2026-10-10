@@ -153,7 +153,8 @@ const CASES: Case[] = [
     arg: 3,
     addon: ['Retry failed build', 'Ops notebook failed to build', 'Retry last good version'],
     skip: ['confirmed'],
-    shown: { id: (v) => `Decision ${v}`, option: (v) => `Answer: option ${v}`, ticket: (v) => `About ${v}` },
+    // The digest of the decision as shown (security review #3) sits in the prompt's Details.
+    shown: { id: (v) => `Decision ${v}`, option: (v) => `Answer: option ${v}`, ticket: (v) => `About ${v}`, digest: (v) => v },
   },
   {
     name: 'addon sign (confirm: sign)',
@@ -222,6 +223,7 @@ const CASES: Case[] = [
     shown: {
       id: (v) => (v.endsWith('.relay.recv-question+drop.send-handoff+question.90d') ? `Decision ${v}` : `unexpected id ${v}`),
       option: (v) => `Answer: option ${v}`,
+      digest: (v) => v,
       peer: typed('Peer (peer)'),
       comparison_code: typed('Comparison code (comparison_code)'),
       carrier: typed('Carrier (carrier)'),

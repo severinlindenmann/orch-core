@@ -59,6 +59,7 @@ import { startLive } from './busy/live'
 import { ConnectionsHost } from './connections'
 import { makeRng } from './busy/rng'
 import type { RelaySim } from './relay'
+import { MandatesPreviewHost } from './mandates-preview'
 
 /** The mock "now" when the page loads: matches the fixtures (grant until 18:00 the same day). */
 export const MOCK_EPOCH = '2026-10-09T11:30:00Z'
@@ -170,6 +171,12 @@ export class MockStore {
   readonly relaySim = new Map<string, RelaySim>()
   /** Skills, connections, checks and the secrets file (D55–D57). */
   readonly conn = new ConnectionsHost(this)
+  /** Mandates, PREVIEW ONLY (mocks/mandates-preview.ts): its own state, never in a workspace or ticket log. */
+  readonly mandatesPreview = new MandatesPreviewHost(this)
+  /** Whether this store keeps the demo in the browser (off in tests). */
+  get persisting(): boolean {
+    return this.persist
+  }
 
   /** Which demo dataset is loaded: today's seed, or the seed plus a generated busy day (src/mocks/busy). */
   dataset: Dataset = 'normal'
@@ -348,6 +355,7 @@ export class MockStore {
   reset(dataset: Dataset = this.dataset, keepViewer = false) {
     this.sim.stopAll()
     this.relaySim.clear()
+    this.mandatesPreview.reset()
     this.dataset = dataset
     this.seed()
     if (!keepViewer) this.viewer = meFixture.person

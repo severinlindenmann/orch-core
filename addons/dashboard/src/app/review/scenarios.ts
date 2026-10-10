@@ -186,6 +186,15 @@ export const SCENARIOS: TourScenario[] = [
     { title: 'Re-login from Today', detail: 'Connections group: copy the login hint, Run check again (Demo).', go: { path: '/' } },
     { title: 'Unblocked', detail: 'After Run check again for gcloud-billing, DEMO-0054 no longer says Blocked and Start agent works.', go: { path: '/ticket/DEMO-0054' } },
   ]),
+  S(19, 'Mandates (preview)', 'How the approved Step 1 pilot would look. A non-functional preview: nothing signs.', [
+    { title: 'Preflight', detail: 'Agents → Mandates: the four prerequisites are "not available in this build", so issuing is blocked.', go: { path: '/agents?tab=mandates' } },
+    { title: 'Issue a pilot mandate', detail: 'Show the pilot anyway (preview), then Issue a pilot mandate…: the fixed scope, the never list and the protected paths; "Sign mandate (preview — nothing is signed)".', go: { path: '/agents?tab=mandates' } },
+    { title: 'The banner', detail: 'One calm line on every page: Mandate md_3 · for Severin · epic DEMO-0050 · 9 decisions · until Tue. Details opens the tab; × hides it for this session.', go: { path: '/board' } },
+    { title: 'Decided for you', detail: 'Today, below the real queue: one folded row. Open it for up to 3 decisions (Looks right, Veto), the refused or skipped items and Show all; "Revoke mandate and void…" sits in its header.', go: { path: '/' } },
+    { title: 'Stop', detail: 'Stop in the banner (optionally also stop agents): "Stopping…", then "Stopped at #1842".', go: { path: '/agents?tab=mandates' } },
+    { title: 'Revoke and void', detail: 'Lists the 7 decisions it would void and the 2 on landed work it only lists for review.', go: { path: '/agents?tab=mandates' } },
+    { title: 'Off again', detail: 'Demo data → Preview: mandates (or Reset demo): Today and the shell look exactly as before.', go: { path: '/' } },
+  ]),
 ]
 
 export const STEP_COUNT = SCENARIOS.reduce((n, s) => n + s.steps.length, 0)

@@ -243,6 +243,20 @@ A ticket that needs a login that expired.
 - [ ] **Re-login from Today** — Connections group: copy the login hint, Run check again (Demo). Page: `/`.
 - [ ] **Unblocked** — After Run check again for gcloud-billing, DEMO-0054 no longer says Blocked and Start agent works. Page: `/ticket/DEMO-0054`.
 
+### 19. Mandates (preview)
+
+How the approved Step 1 pilot would look. A non-functional preview: nothing signs.
+
+- [ ] **Preflight** — Agents → Mandates: the four prerequisites are "not available in this build", so issuing is blocked. Page: `/agents?tab=mandates`.
+- [ ] **Issue a pilot mandate** — Show the pilot anyway (preview), then Issue a pilot mandate…: the fixed scope, the never list and the protected paths; "Sign mandate (preview — nothing is signed)". Page: `/agents?tab=mandates`.
+- [ ] **The banner** — One calm line on every page: Mandate md_3 · for Severin · epic DEMO-0050 · 9 decisions · until Tue. Details opens the tab; × hides it for this session. Page: `/board`.
+- [ ] **Decided for you** — Today, below the real queue: one folded row. Open it for up to 3 decisions (Looks right, Veto), the refused or skipped items and Show all; "Revoke mandate and void…" sits in its header. Page: `/`.
+- [ ] **Stop** — Stop in the banner (optionally also stop agents): "Stopping…", then "Stopped at #1842". Page: `/agents?tab=mandates`.
+- [ ] **Revoke and void** — Lists the 7 decisions it would void and the 2 on landed work it only lists for review. Page: `/agents?tab=mandates`.
+- [ ] **Off again** — Demo data → Preview: mandates (or Reset demo): Today and the shell look exactly as before. Page: `/`.
+
+Quickest way in: **Demo data → Preview: mandates** turns the preview on with mandate md_3 already in force (seeded as if it had run for three days). Off by default; Reset demo turns it off.
+
 ## What is simulated
 
 Nothing here talks to a real system. Each simulation says so where you meet it (a "Simulated" or "Demo" chip).
@@ -261,6 +275,7 @@ Nothing here talks to a real system. Each simulation says so where you meet it (
 | Dictation | Always simulated: the microphone is never used; Stop fills in a sample sentence. |
 | Time | The demo clock starts at Friday 9 Oct 2026, 11:30 UTC when the demo loads or resets, then runs in real time. "5 min ago" is measured against that clock, not your computer's date. |
 | Usage and costs | Generated numbers (last 7 days pinned to CHF 31.40). |
+| Mandates (preview) | A non-functional preview of a proposed feature (`docs/concept-mandates.md`, Step 1 pilot). Nothing is signed and no Touch ID runs; the preflight honestly reports that none of the four prerequisites exists in this build. The decision log is seeded; Stop's acknowledgement is a 1.5 s pause. Its state is kept apart from the demo's logs (browser key `orch.preview.mandates`). |
 
 ## Known polish items
 

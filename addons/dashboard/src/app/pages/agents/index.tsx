@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import { useNavigate, useSearch } from '@tanstack/react-router'
 import { useState } from 'react'
 import { activeGrantOf } from '@/api/grants'
 import { can, canRevokeGrant, roleOf } from '@/api/permissions'
@@ -17,6 +18,11 @@ import { Grants } from './Grants'
 import { SessionGroup, type SessionContext } from './Sessions'
 import { fmtClock, fmtDateTime } from '@/lib/time'
 import { queries } from '@/api/queries'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { validateAgentsSearch, type AgentsTab } from '../../search'
+import { Pill } from '../ticket/shared'
+import { useMandatesPreview } from '../../mandates/shared'
+import { MandatesTab } from './Mandates'
 
 export function AgentsPage() {
   usePageHeader('Agents')
@@ -31,11 +37,16 @@ export function AgentsPage() {
   const activity = useQuery({ ...queries.agentActivity(ws!), enabled: !!ws })
   const [action, setAction] = useState<GrantAction | null>(null)
   const sign = useSignGrant(ws ?? '')
+  // The tab is in the address (`?tab=mandates`; Sessions when absent). Mandates is a PREVIEW (concept-mandates.md).
+  const tab: AgentsTab = validateAgentsSearch(useSearch({ strict: false })).tab ?? 'sessions'
+  const navigate = useNavigate()
+  const setTab = (next: string) => void navigate({ to: '/agents', search: next === 'mandates' ? { tab: 'mandates' } : {}, replace: true })
+  const mandates = useMandatesPreview(ws)
 
   const failure = useLoadFailure(today, sessions, grants, activity)
   if (failure.failed) return <LoadFailed what="agents" onRetry={failure.retry} />
-  if (!ws || !me.data || !today.data || !sessions.data || !grants.data || !activity.data) {
-    return <AgentsSkeleton inPage />
+  if (!ws || !me.data || !today.data || !sessions.data || !grants.data || !activity.data || (tab === 'mandates' && mandates.isPending)) {
+    return <AgentsSkeleton inPage tab={tab} />
   }
 
   const now = today.data.now
@@ -61,22 +72,41 @@ export function AgentsPage() {
       <div className="flex items-center gap-3">
         <div className="flex-1">
           <h1 className="text-xl font-semibold tracking-tight">Agents</h1>
-          <p className="mt-1 text-[13px] text-text-muted">{summary}</p>
+          {/* The sessions summary and Issue grant belong to the Sessions tab (Mandates is a preview of its own). */}
+          {tab === 'sessions' && <p className="mt-1 text-[13px] text-text-muted">{summary}</p>}
         </div>
-        {canAct && <Button onClick={() => setAction({ kind: 'issue' })}>Issue grant…</Button>}
+        {canAct && tab === 'sessions' && <Button onClick={() => setAction({ kind: 'issue' })}>Issue grant…</Button>}
       </div>
 
-      <div className="space-y-3">
-        {waiting.length > 0 && <SessionGroup id="waiting-h" title="Waiting on you" list={waiting} ctx={ctx} />}
-        {group('waiting-others').length > 0 && <SessionGroup id="waiting-others-h" title="Waiting on others" list={group('waiting-others')} ctx={ctx} />}
-        {group('idle').length > 0 && <SessionGroup id="idle-h" title="Idle" list={group('idle')} ctx={ctx} />}
-        <SessionGroup id="working-h" title="Working" list={working} ctx={ctx} empty="No agent session is working." />
-        {stoppedList.length > 0 && <SessionGroup id="stopped-h" title="Stopped" list={stoppedList} ctx={ctx} defaultOpen={false} />}
-      </div>
-      <Section title="Grants" className="[&>div]:p-0">
-        <Grants grants={grants.data} now={now} name={name} canRevoke={canRevoke} onRevoke={(grant) => setAction({ kind: 'revoke', grant })} />
-      </Section>
-      <AgentActivity items={activity.data} sessions={sessions.data} />
+      <Tabs value={tab} onValueChange={setTab} className="gap-4">
+        <TabsList variant="line" className="h-9 w-full min-w-0 justify-start gap-1 overflow-x-auto overflow-y-hidden border-b border-border [&>*]:flex-none">
+          <TabsTrigger value="sessions">Sessions</TabsTrigger>
+          <TabsTrigger value="mandates">
+            Mandates <Pill className="h-4 px-1.5 text-[10px]">Preview</Pill>
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="sessions" className="space-y-5">
+          <div className="space-y-3">
+            {waiting.length > 0 && <SessionGroup id="waiting-h" title="Waiting on you" list={waiting} ctx={ctx} />}
+            {group('waiting-others').length > 0 && <SessionGroup id="waiting-others-h" title="Waiting on others" list={group('waiting-others')} ctx={ctx} />}
+            {group('idle').length > 0 && <SessionGroup id="idle-h" title="Idle" list={group('idle')} ctx={ctx} />}
+            <SessionGroup id="working-h" title="Working" list={working} ctx={ctx} empty="No agent session is working." />
+            {stoppedList.length > 0 && <SessionGroup id="stopped-h" title="Stopped" list={stoppedList} ctx={ctx} defaultOpen={false} />}
+          </div>
+          <Section title="Grants" className="[&>div]:p-0">
+            <Grants grants={grants.data} now={now} name={name} canRevoke={canRevoke} onRevoke={(grant) => setAction({ kind: 'revoke', grant })} />
+          </Section>
+          <AgentActivity items={activity.data} sessions={sessions.data} />
+        </TabsContent>
+        <TabsContent value="mandates">
+          {mandates.data ? (
+            <MandatesTab ws={ws} state={mandates.data} now={now} />
+          ) : (
+            // A host without the preview endpoint: say so, never "Agents could not load".
+            <p className="text-[13px] text-text-muted">The mandates preview is not available here.</p>
+          )}
+        </TabsContent>
+      </Tabs>
 
       <GrantDialog
         action={action}

@@ -878,3 +878,62 @@ The owner answered the eight open questions of REVIEW.md. Items 1, 2, 5 and 6 ch
   moment for a shell that fills in after paint); the hidden old page's queries keep polling while the next loads.
 - **Why:** review G4 (I1, I2, M1–M10) and review G3 re-review nits N1–N3; controller fix round 1.
 - **Revert:** revert the G4 fix-round commits.
+
+## Owner decision 2026-10-10 — Mandates preview screen (M1)
+
+- **Decision:** the owner approved Step 1 of the mandates concept (pilot) and asked to see how it would look. The
+  dashboard gets a clearly labelled, **non-functional preview** — not part of the contract, nothing signs:
+  (1) **Agents → Mandates** (`/agents?tab=mandates`; the Agents page gets tabs, Sessions is the default and is left
+  out of the address): the preflight (the four prerequisites of §Summary, each honestly "not available in this
+  build", so issuing is blocked; "Show the pilot anyway (preview)" only turns the preview on), "Issue a pilot mandate"
+  (core dialog: one orchestrator and one epic are the only inputs; decision kinds requirements / plan / verdict, size
+  ≤ m, 7 days, no renewal are shown, not editable; the never list in full; the protected paths; the confirm reads
+  "Sign mandate (preview — nothing is signed)"; values through `visible.tsx`), the mandate in force (limits as meters:
+  decisions, days left, children, rework cycles; the decision log in core words "Verdict: via mandate md_3, for
+  Severin — no person reviewed this (commit …)" + "checked by checker si_… (passed)"; refused / skipped items with
+  their reason; revisions; Stop with "Stopping…" → "Stopped at #1842" and "Also stop agents"; Revoke and void, a
+  destructive confirm listing the decisions it voids and the landed ones it only lists). (2) A **shell banner** under
+  the topbar while the preview mandate exists (not revoked): one calm, truncating line with Preview chip, Stop (owners),
+  Details and × (hidden for the browser session, per mandate and phase). (3) **Today: "Decided for you"** (owners):
+  the decisions since the last look with Looks right, Veto and Revoke and void (mandate-wide, the same dialog), then
+  the refused / skipped items as needs-you rows. (4) **Off by default**: Demo data → "Preview: mandates" turns it on
+  with md_3 seeded as if it had run three days (on DEMO-0050's children); Reset demo turns it off. Every surface
+  carries the Preview chip and "Preview of a proposed feature (concept: mandates, Step 1 pilot). Nothing here signs
+  anything."
+- **How it stays apart:** its own mock module (`src/mocks/mandates-preview.ts`, own browser key
+  `orch.preview.mandates`, never a workspace or ticket log event) and its own endpoint
+  (`GET|POST /api/workspaces/:ws/preview/mandates`, owners to change). No signing path changed; a test spies on every
+  signing / decision api method (postAction, runAddonAction, issueGrant, revokeGrant, grantSkillCredentials,
+  postAddonOp, postRelay, postSettings) through a full run and asserts none is called.
+- **Choices made here:** the digest stays while a stopped mandate exists (its decisions still deserve a look; it goes
+  on Revoke and void or when the preview is turned off); the refused items are not counted in the sidebar's
+  "needs you" number (the real attention count is untouched); request-changes (part of the concept's pilot, 3 cycles)
+  shows only as the rework-cycles limit, the dialog lists the three approval kinds the brief names.
+- **Why:** owner decision 10 Oct 2026 ("Approve step 1 (pilot)" + a mockup screen to see it), brief M1.
+- **Revert:** revert the M1 commits (delete `src/app/mandates/`, `src/app/pages/agents/Mandates.tsx`,
+  `src/api/mandatesPreview.ts`, `src/mocks/mandates-preview.ts`; the Agents tabs, the shell and Today go back).
+
+## M1 mandates preview: review fixes (round 1, controller rulings)
+
+- **Decision:** (I1) Today's "Decided for you" moves **below** the real needs-you queue, folded to one summary row
+  ("Decided for you · 5 since you last looked · 2 refused or skipped · Review"); open, it shows at most 3 decisions,
+  the refused or skipped items (core's reason in full) and "Show all (N more) on Agents → Mandates". (I4) One
+  "Revoke mandate and void…" in the digest header; rows keep Looks right and Veto (with the ticket and kind in their
+  accessible names). (I2) The Stop and Revoke covers and lists, the decision label (`DecisionLine`, built from parts),
+  the banner and the mandate view put values through `visible.tsx` (`Raw` / `plain`); tested with a bidi override in
+  the issuer's name. (I3) The owner's decision stands: **approvals and verdicts only**. The rework-cycles meter and
+  the "3 request-changes cycles" refusal are gone; the dialog and the mandate say "Request changes stay yours" (concept
+  §5 lists request-changes for the pilot; the owner's Step 1 approval and the brief name the three approval kinds).
+  (Choice 6) Today and its skeleton choose one or two columns by the **page** width (the shell's window-minus-dock,
+  `useTodayWide`, ≥ 1280), not the window: with the dock open Today is one column. The width is known on the first
+  render (DockArea's context), so the first paint already has the final layout. Minors: a Stop pending at a reload is
+  acknowledged on load (M3); the preview query does not retry and Agents → Mandates says "not available here" instead
+  of "Agents could not load" on a host without it (M1, partly); the "never signs" tests spy on every api method and
+  allow no write except the preview's (M2); the sessions summary and Issue grant show on the Sessions tab only, the
+  skeleton matches (M5); the issue dialog's duplicate "fixed" list is gone (M6); the preflight says "unblocked here
+  only to show the flow" once the preview is on (M7); the banner's button reads "Stop…" (M8); a meter at its limit is
+  muted with "limit reached" (M9).
+- **Not done:** M1's warm-up on every shell load stays (it is the mock's endpoint; the real host gets no preview).
+  M3's seeded times still follow the demo clock after a reload (the log is seeded relative to "now" when turned on).
+- **Why:** review M1, controller rulings for fix round 1.
+- **Revert:** revert the M1 fix-round commit.

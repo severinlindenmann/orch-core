@@ -64,6 +64,8 @@ function shellScoped(qc: QueryClient, ws: Workspace, pkgs: AddonPackage[]): Ensu
   return [
     qc.ensureQueryData(queries.grants(ws.id)),
     qc.ensureQueryData(queries.today(ws.id)),
+    // Mandates, PREVIEW ONLY: the shell banner reads it (off by default; read before the first paint so it never pops in).
+    qc.ensureQueryData(queries.mandatesPreview(ws.id)),
     ...slotStates(qc, ws, pkgs, 'nav'),
   ]
 }

@@ -17,6 +17,7 @@ import { useShortcuts } from './shortcuts'
 import { ShellToaster } from './ShellToaster'
 import { Sidebar } from './Sidebar'
 import { Topbar } from './Topbar'
+import { MandateBanner } from '../mandates/MandateBanner'
 
 /** Keyboard shortcuts from `shortcuts.ts`. */
 function Shortcuts() {
@@ -79,6 +80,8 @@ export function Shell() {
             <Sidebar />
             <div className="flex min-w-0 flex-1 flex-col">
               <Topbar />
+              {/* Mandates, PREVIEW ONLY: nothing renders unless the preview is on with a mandate in force. */}
+              <MandateBanner />
               <DockArea>
               <main ref={main} id="main" tabIndex={-1} className="min-h-0 flex-1 overflow-y-auto p-4 outline-none @[60rem]/page:p-6">
                 <ErrorBoundary resetKey={path} fallback={(retry) => (

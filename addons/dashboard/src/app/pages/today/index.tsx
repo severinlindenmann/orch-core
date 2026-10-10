@@ -22,8 +22,10 @@ import { acceptOrder, buildGroups, foldLabel, pruneOrder, reconcile, toEntries, 
 import { ReloginGroup } from './relogin'
 import { ApprovalRow, DecisionRow, FoldRow, NewItemContext, SigningContext, QuestionRow, VerdictRow } from './rows'
 import { AgentsBar, AgentsPanel, Glance, GLANCE_TILES, Recently } from './side'
-import { displayName, useMediaQuery, useSessionState, WIDE_QUERY, type Directory } from './shared'
+import { displayName, useSessionState, useTodayWide, type Directory } from './shared'
 import { queries } from '@/api/queries'
+import { DecidedForYou } from '../../mandates/DecidedForYou'
+import { useMandatesPreview } from '../../mandates/shared'
 
 function dateLine(now: string) {
   return new Date(now).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' })
@@ -114,9 +116,11 @@ export function TodayPage() {
   // The owner's connections are part of Today's first screen (attention.ready): a failure there says so too.
   const connectionsQ = useConnections(can(role, 'settings') ? ws : undefined)
   const failure = useLoadFailure(today, agentsQ, decisionsQ, connectionsQ)
+  // Mandates, PREVIEW ONLY: the digest is part of the first screen when the preview is on (warmed by the shell loader).
+  const mandatesQ = useMandatesPreview(ws, { poll: false })
 
   if (failure.failed) return <LoadFailed what="Today" onRetry={failure.retry} />
-  if (!today.data || !agentsQ.data || !me.data || !decisionsQ.data || !role || dataset.isPending || stale || !attention.ready || glanceWaiting) {
+  if (!today.data || !agentsQ.data || !me.data || !decisionsQ.data || !role || dataset.isPending || stale || !attention.ready || glanceWaiting || (mandatesQ.isPending && !!ws)) {
     return <TodaySkeleton inPage />
   }
   // A new workspace or person starts a new queue (its own accepted order and open row).
@@ -148,7 +152,8 @@ function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention, g
   const today = useQuery({ ...queries.today(ws!), enabled: !!ws })
   const agentsQ = useQuery({ ...queries.agents(ws!), enabled: !!ws })
   const addons = useAddons()
-  const wide = useMediaQuery(WIDE_QUERY)
+  // Two columns only when the page itself is wide (the window minus the dock), never because the window is.
+  const wide = useTodayWide()
   const now = today.data!.now
   const sessions = useMemo(() => agentsQ.data ?? [], [agentsQ.data])
   const dir: Directory = { workspace, agents: sessions }
@@ -342,6 +347,9 @@ function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention, g
           {waiting.count} more {waiting.count === 1 ? 'is' : 'are'} waiting {allOwners ? `for an owner (${whoWaits})` : `for ${whoWaits || 'other people'}`}.
         </p>
       )}
+
+      {/* Mandates, PREVIEW ONLY: below the real queue, folded to one row. */}
+      {!readOnly && ws && <DecidedForYou ws={ws} now={now} />}
     </section>
   )
 

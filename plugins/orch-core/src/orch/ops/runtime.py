@@ -187,7 +187,7 @@ def guarded(handler: Handler, name: str, declared: list[str]) -> Handler:
             raise to_orch_error(e, declared) from e
         except CustodyError as e:
             # the person's passphrase prompt: kept distinct, agents branch on them (D65)
-            if e.code in ("custody.no_prompt", "custody.wrong_passphrase") and e.code in declared:
+            if e.code in ("custody.no_prompt", "custody.no_key", "custody.wrong_passphrase") and e.code in declared:
                 raise OrchError(e.code, str(e)) from e
             raise OrchError("internal", f"the key custody: {e}") from e
 

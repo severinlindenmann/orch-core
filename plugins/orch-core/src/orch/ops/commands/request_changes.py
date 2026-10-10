@@ -13,7 +13,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     view = h.ticket(args.get("ref"))
     text = h.text(args, required=True, what="the reason")
     event = {"type": "gate.changes_requested", "gate": gate, **h.gate_basis(view, gate), "text": text}
-    done = h.run(event, view.uid, f"request changes on {gate} of {view.key}")
+    done = h.run(event, view.uid, f"request changes on {gate} of {view.key}", review=h.review(view, gate))
     return h.ticket_result(view, done, {"gate": gate}, f"orch show {view.key}")
 
 

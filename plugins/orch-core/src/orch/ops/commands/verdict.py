@@ -15,6 +15,9 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     # D58: git is read right before the prompt; the verdict binds the commits it finds, a dirty or unobservable
     # repository is refused, and git is read again after the passphrase (the append is refused if the code moved)
     view = h.observe(view)
+    if outcome == "pass":
+        h.refuse_repeat(view, "verify")
+    h.artifacts_ok(view, "verify")
     event: dict[str, Any] = {
         "type": "verdict.given",
         "outcome": outcome,
@@ -24,7 +27,11 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     if text is not None:
         event["text"] = text
     done = h.run(
-        event, view.uid, f"verdict {outcome} on {view.key}", before_append=h.recheck_source(view, event["source_sha"])
+        event,
+        view.uid,
+        f"verdict {outcome} on {view.key}",
+        precommit=h.recheck_source(view, event["source_sha"]),
+        review=h.review(view, "verify"),
     )
     return h.ticket_result(view, done, {"outcome": outcome}, f"orch show {view.key}")
 
@@ -53,6 +60,8 @@ OP = operation(
         err("parse.text"),
         err("not_found"),
         err("observe.unavailable"),
+        err("artifact.mismatch"),
+        err("gate.already_approved"),
     ),
     handler=handle,
 )

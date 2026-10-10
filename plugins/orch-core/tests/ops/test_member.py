@@ -39,6 +39,7 @@ def test_the_owner_adds_a_member_from_the_invitees_key_and_certificate(hws, me, 
         e["actor"]["id"] == hws.owner.ref and e["auth"] == "passphrase" and e["roster_v"] == 1
     )  # the member list as it was when it signed
     assert members(hws)[p.ref] == "maintainer"
+    assert f"their person id is {p.ref}" in r.out and "out of band" in r.out
 
 
 def test_the_certificate_can_come_on_stdin_and_a_second_add_is_refused(hws, me, tmp_path):

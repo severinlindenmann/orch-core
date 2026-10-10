@@ -45,7 +45,7 @@ def agent_bin(ws, grant, *argv, stdin=None):
     return p
 
 
-def person(ws, *argv, passphrase=PASSPHRASE):
+def person(ws, *argv, passphrase=PASSPHRASE, answer="y"):
     """Run ``orch`` as the person at a terminal. Returns ``(exit code, stdout, stderr, what the terminal showed)``."""
     env = {"PATH": "/usr/bin:/bin", "HOME": str(ws.tmp), "ORCH_STATE_DIR": str(ws.host_state), "TERM": "dumb"}
     out_r, out_w = os.pipe()
@@ -63,7 +63,8 @@ def person(ws, *argv, passphrase=PASSPHRASE):
     os.close(err_w)
     shown = b""
     typed = False
-    deadline = time.time() + 30
+    confirmed = False
+    deadline = time.time() + 60
     while time.time() < deadline:  # until the terminal closes (the command ended) or the time is up
         ready, _, _ = select.select([tty], [], [], 0.2)
         if ready:
@@ -74,6 +75,9 @@ def person(ws, *argv, passphrase=PASSPHRASE):
             if not chunk:
                 break
             shown += chunk
+            if answer is not None and not confirmed and b"[y/N] " in shown:
+                os.write(tty, answer.encode() + b"\n")  # read after the review, as a person does
+                confirmed = True
             if not typed and b"Passphrase: " in shown:
                 # a person types after the prompt is up and the terminal no longer echoes (the prompt flushes input
                 # when it switches echo off): wait for that, as a person's reaction time would
@@ -131,6 +135,11 @@ def test_agent_works_person_signs_ticket_done_and_the_log_replays_clean(ws, tmp_
         assert code == 0, (out, err, term)
         assert out.startswith(f"ok {key} gate.approved {gate} seq=") and f"gate: {gate}" in term
         assert "type: gate.approved" in term and "auth: passphrase" in term
+        assert (
+            "=== orch: read before you sign ===" in term
+            and f"| --- section {'plan' if gate == 'plan' else 'requirements'} ---" in term
+        )
+        assert term.index("read before you sign") < term.index("Passphrase: ")  # the review comes first
 
     agent("task", "start", "T1")
     assert "receipt=exit0/" in agent("task", "done", "T1", "--run", "-m", "green").stdout
@@ -145,6 +154,7 @@ def test_agent_works_person_signs_ticket_done_and_the_log_replays_clean(ws, tmp_
     assert code == 0, (out, err, term)
     assert out.startswith(f"ok {key} verdict.given pass seq=")
     assert f"source_sha[1].sha: {head}" in term and "outcome: pass" in term
+    assert f"| source: local:proj refs/heads/feat/x {head}" in term and "| artifact: build.log" in term
 
     # a wrong passphrase on the same terminal writes nothing
     before = len(ws.events("1"))

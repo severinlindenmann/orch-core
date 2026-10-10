@@ -24,7 +24,9 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         event["option"] = option
     if text is not None:
         event["text"] = text
-    done = h.run(event, view.uid, f"answer {qid} of {view.key}")
+    doc = next((x for x in view.fields["questions"] if x["id"] == qid), {})
+    shown = [f"question {qid}: {doc.get('text', '')}", *[f"option {o['key']}" for o in doc.get("options", [])]]
+    done = h.run(event, view.uid, f"answer {qid} of {view.key}", review=h.header(view, *shown))
     return h.ticket_result(view, done, {"question": qid}, f"orch show {view.key}")
 
 

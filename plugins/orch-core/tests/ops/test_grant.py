@@ -131,3 +131,16 @@ def test_a_secret_that_cannot_be_shown_is_said_and_the_grant_can_be_revoked(hws,
     gid = issued(hws)[-1]["grant"]
     assert r.code == 3 and r.err_code == "custody.no_prompt" and gid in r.doc["error"]["message"]
     assert me("grant", "revoke", gid).code == 0
+
+
+def test_dry_run_makes_no_grant_and_prints_no_id_or_hint(hws, me):
+    n = len(issued(hws))
+    r = me("grant", "--dry-run")
+    assert r.code == 0 and "gr_" not in r.out and "next:" not in r.out and "no grant was made" in r.out
+    d = me("grant", "--dry-run", "--json").doc
+    assert "grant" not in d["data"] and d["hints"] == [] and len(issued(hws)) == n and hws.shown_secrets == []
+
+
+def test_the_terminal_text_says_to_clear_the_scrollback(hws, me):
+    assert me("grant").code == 0
+    assert "scrollback" in hws.shown_secrets[0] and "scrollback" in me("grant").out

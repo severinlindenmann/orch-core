@@ -10,6 +10,7 @@ args:
 errors:
   ambiguous_ref (exit 2): name the ticket REF, for example DEMO-0043 | fix: orch status
   not_found (exit 2): orch list
+  custody.no_key (exit 3): orch init sets up your device key | fix: orch help
   custody.no_prompt (exit 3): run this command yourself, in your own terminal | fix: orch help
   custody.wrong_passphrase (exit 3): run the command again and type your passphrase | fix: orch help
   human_only (exit 3): orch ask or orch wait | fix: orch describe ask

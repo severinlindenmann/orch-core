@@ -54,6 +54,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         try:
             human.show_secret(  # looked up at call time: a test replaces it, nothing else does
                 f"\nORCH_GRANT={value}\n(shown once; orch keeps only its hash)\n"
+                "Clear your terminal scrollback when the harness has it: whatever can read this terminal can read it.\n"
             )
         except Exception as e:  # the grant exists but nobody can use it: say how to end it
             raise OrchError(
@@ -61,9 +62,11 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
                 f"{token.grant_id} was issued but its secret could not be shown ({e}); revoke it: orch grant revoke "
                 f"{token.grant_id}",
             ) from None
-        lines.append("the secret was shown on your terminal")
-    data = {"grant": token.grant_id, "until": event["expires_at"], "scope": event["scope"]}
-    return h.workspace_result(done, data, "set ORCH_GRANT=<the value shown> for the harness", lines)
+        lines.append("the secret was shown on your terminal; clear its scrollback when the harness has it")
+        data = {"grant": token.grant_id, "until": event["expires_at"], "scope": event["scope"]}
+        return h.workspace_result(done, data, "set ORCH_GRANT=<the value shown> for the harness", lines)
+    # a dry run made no grant: no id, no end time, no hint (the id above was never used)
+    return h.workspace_result(None, {"scope": event["scope"]}, None, ["no grant was made"])
 
 
 OP = operation(
@@ -79,8 +82,8 @@ OP = operation(
     },
     pre=("workspace_exists", "role_allows", "user_presence", "text_clean"),
     emits=("grant.issued",),
-    text="ok grant.issued {grant} until={until}\nnext: {next}",
-    data=obj({"grant": STR, "until": STR, "scope": STR}),
+    text="ok grant.issued[ {grant}][ until={until}]\nnext: {next}",
+    data=obj({"grant": STR, "until": STR, "scope": STR}, optional=("grant", "until")),
     errors=(err("role.denied"), err("parse.text")),
     handler=handle,
 )

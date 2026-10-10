@@ -14,7 +14,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     text = h.text(args, what="the reason")
     if text is not None:
         event["text"] = text
-    done = h.run(event, view.uid, f"reopen {view.key}")
+    done = h.run(event, view.uid, f"reopen {view.key}", review=h.header(view, "title: " + view.title))
     return h.ticket_result(view, done, {}, f"orch show {view.key}")
 
 

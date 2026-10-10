@@ -271,7 +271,7 @@ def main(
             grant=grant_env,
             # a call that carries an agent's grant is never a person's; whether there is a person at a terminal is
             # the custody prompt's business (/dev/tty, fail closed), not an environment variable's
-            human_presence=grant_env is None,
+            human_presence="ORCH_GRANT" not in env,  # an empty value counts as set
             dry_run=parsed.dry_run,
             now=now,
             env={k: v for k, v in env.items() if k != "ORCH_GRANT"},

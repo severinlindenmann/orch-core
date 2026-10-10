@@ -31,6 +31,7 @@ def build(tmp: Path, mp: pytest.MonkeyPatch) -> HumanWs:
     ws = HumanWs(tmp)
     ws.bootstrap()
     mp.setattr(human, "open_backend", ws.backend)
+    mp.setattr(human, "review_prompt", lambda text: True)
     agent, me = Cli(ws), Cli(ws, grant=False, session=None)
     first = make_ticket(agent, "Needs approval")  # DEMO-0001: filled, nothing approved yet
     assert agent("ask", "Which export is the source of truth?", "--options", "csv,api", "--rec", "csv").code == 0
@@ -117,6 +118,7 @@ def run(base: Path, name: str, as_json: bool, mp: pytest.MonkeyPatch) -> str:
         if who == "wrong":
             ws.provider.passphrase = "not the passphrase"
         mp.setattr(human, "open_backend", ws.backend)
+        mp.setattr(human, "review_prompt", lambda text: True)
         mp.setattr(human, "show_secret", lambda text: None)  # the secret goes to a terminal; a golden file is not one
         cli = Cli(ws) if who == "agent" else Cli(ws, grant=False, session=None)
         r = cli(*argv, *(["--json"] if as_json else []))

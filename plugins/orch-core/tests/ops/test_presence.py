@@ -160,7 +160,8 @@ def test_no_key_on_this_machine(hws, agent, me):
     key = make_ticket(agent)
     (hws.person_dir / "dk.key.json").unlink()
     r = me("approve", "requirements", "--ref", key, "--json")
-    assert r.code == 2 and r.err_code == "not_found" and hws.provider.requests == []
+    assert r.code == 3 and r.err_code == "custody.no_key" and hws.provider.requests == []
+    assert "orch init" in r.doc["error"]["hint"]
 
 
 def test_a_key_file_others_can_read_is_not_used(hws, agent, me):
@@ -227,5 +228,14 @@ def test_a_workspace_without_a_key_directory_is_not_created_by_looking(hws, agen
     import shutil
 
     shutil.rmtree(gone)
-    assert me("approve", "requirements", "--ref", key, "--json").err_code == "not_found"
+    assert me("approve", "requirements", "--ref", key, "--json").err_code == "custody.no_key"
     assert not gone.exists()  # opening a backend would have created it
+
+
+def test_an_empty_grant_variable_still_counts_as_a_grant(hws, agent):
+    key = make_ticket(agent)
+    from tests.ops.helpers import Cli
+
+    n = count(hws)
+    r = Cli(hws, grant=False)("approve", "requirements", "--ref", key, "--json", ORCH_GRANT="")
+    assert r.code == 3 and r.err_code == "human_only" and count(hws) == n and hws.provider.requests == []

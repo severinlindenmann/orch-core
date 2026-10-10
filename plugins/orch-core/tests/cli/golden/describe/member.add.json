@@ -76,6 +76,16 @@
     },
     "errors": [
       {
+        "code": "custody.no_key",
+        "exit": 3,
+        "retryable": false,
+        "hint": "orch init sets up your device key",
+        "fix": [
+          "orch",
+          "help"
+        ]
+      },
+      {
         "code": "custody.no_prompt",
         "exit": 3,
         "retryable": false,

@@ -10,6 +10,7 @@ args:
   --label TEXT  short label
   --dry-run  say what would happen, append nothing
 errors:
+  custody.no_key (exit 3): orch init sets up your device key | fix: orch help
   custody.no_prompt (exit 3): run this command yourself, in your own terminal | fix: orch help
   custody.wrong_passphrase (exit 3): run the command again and type your passphrase | fix: orch help
   human_only (exit 3): orch ask or orch wait | fix: orch describe ask
@@ -17,4 +18,4 @@ errors:
   lock.busy (exit 4 retry): retry in a moment | fix: orch status
   parse.text (exit 6): orch describe grant
   members.stale (exit 9 retry): retry; the person re-signs | fix: orch status
-out: ok grant.issued {grant} until={until} / next: {next}
+out: ok grant.issued[ {grant}][ until={until}] / next: {next}

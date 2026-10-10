@@ -30,13 +30,16 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from orch import canon
 from orch.custody import Backend, NoPrompt, get_backend
 from orch.identity import device_ref, new_ulid, sign_person_event
+from orch.ops import views
 from orch.ops.base import Context
 from orch.ops.errors import OrchError
 from orch.ops.runtime import Call, short
+from orch.store.render import thaw
 
-__all__ = ["KEY_ID", "Human", "iso", "keys_dir", "open_backend", "show_secret", "source_sha"]
+__all__ = ["KEY_ID", "Human", "iso", "keys_dir", "open_backend", "review_prompt", "show_secret", "source_sha"]
 
 KEY_ID = "dk"
 KEY_FILE = KEY_ID + ".key.json"
@@ -85,6 +88,31 @@ class _AcceptAll:
         return True
 
 
+def review_prompt(text: str) -> bool:
+    """Show ``text`` on the person's own terminal and ask whether to go on. ``/dev/tty`` only (like the passphrase), so
+    an agent holding stdin and stdout sees none of it and cannot answer; no terminal is :class:`NoPrompt`. Tests
+    replace this function."""
+    if os.name == "nt":  # pragma: no cover
+        raise NoPrompt("no terminal to show the review on")
+    try:
+        fd = os.open("/dev/tty", os.O_RDWR | os.O_NOCTTY)
+    except OSError:
+        raise NoPrompt("no controlling terminal to show the review on") from None
+    try:
+        if not os.isatty(fd):
+            raise NoPrompt("/dev/tty is not a terminal")
+        os.write(
+            fd,
+            ("\n=== orch: read before you sign ===\n" + text + "Continue and ask for your passphrase? [y/N] ").encode(),
+        )
+        line = bytearray()
+        while (c := os.read(fd, 1)) and c != b"\n":
+            line += c
+        return bytes(line).strip().lower() in (b"y", b"yes")
+    finally:
+        os.close(fd)
+
+
 def source_sha(view: Any) -> list[dict[str, str]]:
     """The ticket's current source list as the plain ``source_sha`` value of a decision (sorted by repo already)."""
     return [{"repo": e["repo"], "ref": e["ref"], "sha": e["sha"]} for e in view.source_list]
@@ -117,11 +145,7 @@ class Human:
             wid = self.workspace_id
             directory = keys_dir(self.call.ws.state_dir, wid)
             if not (directory / KEY_FILE).is_file():  # looked at first: opening the backend would create the directory
-                raise OrchError(
-                    "not_found",
-                    "this machine holds no device key of yours for this workspace",
-                    hint="the workspace owner adds you; orch init and keys set up a device",
-                )
+                raise OrchError("custody.no_key", "this machine holds no device key of yours for this workspace")
             self._backend = open_backend(directory)
         return self._backend
 
@@ -163,31 +187,122 @@ class Human:
             raise OrchError("invalid.input", f"the {gate} gate cannot be hashed right now (see orch show)")
         return {"gate_gen": g.gen, "hash": g.hash, "policy_hash": g.policy_hash}
 
+    def _tree_problems(self, view: Any, signed: list[dict[str, str]]) -> list[str]:
+        """Read-only: for each linked repository with a branch, is the working copy **on the bound branch, at the bound
+        commit, with nothing uncommitted**? The decision binds a commit; a person who ran or read the files must have
+        had exactly that commit in front of them (D58, security review R2). ``signed`` is the source list bound."""
+        from orch.store import observe
+
+        out: list[str] = []
+        links = view.fields["links"]
+        for name in links["repos"]:
+            branch = links["branches"].get(name)
+            if not branch:
+                continue
+            path = observe.repo_path(self.store.root, self.store.state.workspace.repos, name)
+            if path is None or not path.is_dir():
+                out.append(f"{name}: no working copy in settings.repos")
+                continue
+            ref = f"refs/heads/{branch}"
+            head = observe.head(path)
+            on = observe.git(path, "symbolic-ref", "-q", "HEAD")
+            entry = next((e for e in signed if e["repo"] == observe.repo_identity(path, name)), None)
+            if head is None or entry is None or entry["ref"] != ref or entry["sha"] != head:
+                out.append(f"{name}: {ref} is not recorded at the commit checked out; look again with orch show")
+            elif on != ref:
+                out.append(f"{name}: the working tree is on {on or 'a detached commit'}, the decision binds {ref}")
+            dirty = observe.dirty(path)
+            if dirty is None:
+                out.append(f"{name}: git cannot be asked about the working tree")
+            elif dirty:
+                out.append(f"{name}: the working tree has uncommitted changes; the decision binds a commit")
+        return out
+
     def observe(self, view: Any) -> Any:
-        """D58: read git now, append the ``branch.pushed`` the ticket is owed, and refuse (``observe.unavailable``) a
-        repository that cannot be observed or whose working tree has uncommitted changes: the decision binds a commit,
-        not the files a person is looking at. Returns the fresh view."""
+        """D58: read git now and append the ``branch.pushed`` the ticket is owed (never under ``--dry-run``, which
+        writes nothing), then refuse (``observe.unavailable``) unless each linked working copy is on the bound branch at
+        the bound commit and clean. Returns the fresh view."""
         from orch.store import observe
 
         problems: list[str] = []
-        observe.observe(self.store, view.uid, problems)
-        view = self.store.ticket(view.uid) or view
-        links = view.fields["links"]
-        for name in links["repos"]:
-            path = observe.repo_path(self.store.root, self.store.state.workspace.repos, name)
-            if links["branches"].get(name) and path is not None and path.is_dir():
-                dirty = observe.dirty(path)
-                if dirty is None:
-                    problems.append(f"{name}: git cannot be asked about the working tree")
-                elif dirty:
-                    problems.append(f"{name}: the working tree has uncommitted changes; the decision binds a commit")
+        if not self.ctx.dry_run:
+            observe.observe(self.store, view.uid, problems)
+            view = self.store.ticket(view.uid) or view
+        problems += self._tree_problems(view, source_sha(view))
         if problems:
             raise OrchError(
                 "observe.unavailable",
-                "; ".join(problems)[:200],
-                hint="commit or stash, or fix settings.repos or links.branches; orch show says what is seen",
+                "; ".join(dict.fromkeys(problems))[:200],
+                hint="check out the branch at its tip and commit or stash, or fix settings.repos or links.branches",
             )
         return view
+
+    # -- what the person reads before signing
+    def artifacts_ok(self, view: Any, gate: str) -> None:
+        """F1 5.7: recompute the SHA-256 of every bound artifact file; a mismatch is ``artifact.mismatch``."""
+        g = view.gates[gate].input or {}
+        for name, a in (g.get("artifacts") or {}).items():
+            p = self.store.root / "tickets" / view.uid / "artifacts" / name
+            try:
+                if p.is_symlink():
+                    raise OSError("symlink")
+                data = p.read_bytes()
+            except OSError:
+                raise OrchError("artifact.mismatch", f"{short(name, 60)}: the file cannot be read") from None
+            if canon.artifact_digest(data) != a["digest"]:
+                raise OrchError("artifact.mismatch", f"{short(name, 60)} differs from the digest in the log")
+
+    def header(self, view: Any, *more: str) -> list[str]:
+        """What the person reads before any ticket operation: which ticket (the key is derived by orch from the log id
+        that the signature names), then ``more`` (ticket text: escaped and marked)."""
+        out = [f"ticket: {view.key} (derived by orch from the log id below, not signed)", f"log id: {view.uid}"]
+        out += ["| " + canon.clean(x) for m in more for x in m.split("\n")]
+        return [*out, ""]
+
+    def review(self, view: Any, gate: str) -> list[str]:
+        """The gate's bound content, as the gate hash binds it (F1 5.7): the section texts (each checked against its
+        hash), acceptance criteria, tasks with their verify commands, links, the source list and the artifact digests;
+        then a short gate hash, the one ``orch show`` prints. Ticket text is data: every line is escaped and marked."""
+        g = view.gates[gate]
+        inp = g.input or {}
+        texts = self.store.body_sections(view.uid)
+        out = [*self.header(view)[:-1], f"gate: {gate} generation {g.gen}", ""]
+        body: list[str] = []
+        for sid, h in (inp.get("sections") or {}).items():
+            text = texts.get(sid, "")
+            if canon.section_hash(text) != h:
+                raise OrchError("gate.stale", f"section {sid} changed while the review was built", hint="orch show")
+            body += [f"--- section {sid} ---", *(text.split("\n") if text else ["(empty)"])]
+        f = inp.get("fields") or {}
+        body.append(f"--- type {f.get('ticket_type')} size {f.get('size')} ---")
+        if gate in ("requirements", "plan", "verify", "code"):
+            for a in f.get("acceptance") or []:
+                body += [f"{a['id']}: " + a["text"].replace("\n", " / ")]
+        for t in inp.get("tasks") or []:
+            verify = (t.get("verify") or {}).get("cmd")
+            body.append(f"{t['id']}: {t['text']}".replace("\n", " / "))
+            body.append(
+                f"   verify: {verify if verify else '(none)'}   proves: {','.join(t.get('proves') or []) or '-'}"
+            )
+        if f.get("links") is not None:
+            body.append("links: " + canon.dumps(thaw(f["links"])).decode())
+        for e in inp.get("source_sha") or []:
+            body.append(f"source: {e['repo']} {e['ref']} {e['sha']}")
+        for name, a in (inp.get("artifacts") or {}).items():
+            body.append(f"artifact: {name} kind={a.get('kind')} {a['digest']}")
+        for line in body:
+            out += ["| " + canon.clean(x) for x in line.split("\n")]
+        out += ["", f"gate hash {views.short_gate_hash(g.hash)} (orch show prints the same)", ""]
+        return out
+
+    def refuse_repeat(self, view: Any, gate: str) -> None:
+        """A person counts once per gate generation (``generations.counting``): a second approval changes nothing."""
+        g = view.gates[gate]
+        me = self.person
+        if any(
+            d.person == me and d.gen == g.gen and d.kind in ("approve", "pass") and not d.voided for d in g.decisions
+        ):
+            raise OrchError("gate.already_approved", f"you already approved {gate} of {view.key} at this generation")
 
     # -- checking, signing, appending
     def precheck(self, event: dict[str, Any], log: str) -> None:
@@ -222,17 +337,20 @@ class Human:
             **event,
         }
 
-    def sign_and_append(
-        self, event: dict[str, Any], log: str, action: str, *, before_append: Callable[[], None] | None = None
+    def _sign_and_append(
+        self,
+        event: dict[str, Any],
+        log: str,
+        action: str,
+        precommit: Callable[[], None] | None = None,
     ) -> Any:
         """Build the person event, ask for the passphrase (the prompt shows the decisive fields of the signing bytes),
-        sign, optionally run ``before_append`` (it may refuse: D58 reads git again), append."""
+        sign, append; ``precommit`` runs inside ``Store.append`` with the workspace lock held (D58: git is read again
+        there, so nothing can move between the check and the append)."""
         person, device = self.who()
         ev = self._envelope(event, log, person, device)
         ev["sig"] = sign_person_event(self.backend, KEY_ID, self.workspace_id, log, ev, action=action)
-        if before_append is not None:
-            before_append()
-        return self.store.append(ev, log=log)
+        return self.store.append(ev, log=log, precommit=precommit)
 
     def run(
         self,
@@ -240,21 +358,24 @@ class Human:
         log: str,
         action: str,
         *,
-        before_append: Callable[[], None] | None = None,
+        precommit: Callable[[], None] | None = None,
+        review: list[str] | None = None,
     ) -> Any:
-        """``precheck``, then (unless ``--dry-run``) ``sign_and_append``; ``None`` for a dry run."""
+        """``precheck``, then (unless ``--dry-run``) show ``review`` on the terminal and ask the person to confirm, sign
+        and append; ``None`` for a dry run."""
         self.precheck(event, log)
         if self.ctx.dry_run:
             return None
-        return self.sign_and_append(event, log, action, before_append=before_append)
+        if review is not None and not review_prompt("\n".join(review)):
+            raise OrchError("invalid.input", "not confirmed: nothing was signed")
+        return self._sign_and_append(event, log, action, precommit)
 
     def recheck_source(self, view: Any, signed: list[dict[str, str]]) -> Callable[[], None]:
-        """For ``before_append`` of a decision that binds the source list (D58, D59): read git again after the person
-        typed the passphrase, and refuse (``gate.stale``) if the commits are no longer the ones that were shown."""
+        """For ``precommit`` of a decision that binds the source list (D58, D59): inside the append, with the lock held,
+        read git again (read-only) and refuse (``gate.stale``) unless it is still the commits that were shown."""
 
         def check() -> None:
-            now = self.observe(view)
-            if source_sha(now) != signed:
+            if self._tree_problems(view, signed):
                 raise OrchError(
                     "gate.stale", "the code changed while you were deciding; look at it again", hint="orch show"
                 )
@@ -269,14 +390,16 @@ class Human:
         seq = done.event["seq"] if done is not None else self.store.head_seq(view.uid)
         return self.call.result(fresh, data, seq=seq, hints=[hint], lines=lines)
 
-    def workspace_result(self, done: Any, data: dict[str, Any], hint: str, lines: list[str] | None = None) -> Any:
+    def workspace_result(
+        self, done: Any, data: dict[str, Any], hint: str | None, lines: list[str] | None = None
+    ) -> Any:
         from orch.ops.base import Result
 
         out = list(lines or [])
         if self.ctx.dry_run:
             out.insert(0, "dry-run: nothing was written")
         seq = done.event["seq"] if done is not None else 0
-        return Result(data=data, key=None, seq=seq, hints=[hint], lines=out)
+        return Result(data=data, key=None, seq=seq, hints=[hint] if hint else [], lines=out)
 
     # -- text
     def text(self, args: dict[str, Any], *, required: bool = False, what: str = "message") -> str | None:

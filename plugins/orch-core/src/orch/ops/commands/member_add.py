@@ -33,7 +33,8 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         "device_cert": cert,
     }
     done = h.run(event, "workspace", f"add member {person} as {event['role']}")
-    return h.workspace_result(done, {"person": person, "role": event["role"]}, "orch member")
+    hint = f"check with {event['name']}, out of band, that their person id is {person}"
+    return h.workspace_result(done, {"person": person, "role": event["role"]}, hint)
 
 
 OP = operation(

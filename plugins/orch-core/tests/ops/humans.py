@@ -64,6 +64,9 @@ class HumanWs(Ws):
         super().__init__(tmp_path, live=live)
         self.provider = Provider()
         self.shown_secrets: list[str] = []
+        self.reviews: list[str] = []  # what the terminal showed before the passphrase prompt
+        self.confirm = True
+        self.on_review: Callable[[str], None] | None = None
         self.owner = BackedPerson(tmp_path / "keys-owner", self.provider)
         self.people = {"owner": self.owner}
         self.person_dir = self.host_state / "hosts" / WS / "person"
@@ -78,6 +81,12 @@ class HumanWs(Ws):
             self.person_event(self.owner, "workspace", "policy.changed", gates={"verify": policy}), log="workspace"
         )
         return s
+
+    def review_prompt(self, text: str) -> bool:
+        self.reviews.append(text)
+        if self.on_review is not None:
+            self.on_review(text)
+        return self.confirm
 
     def act_as(self, person: BackedPerson) -> None:
         """The key on 'this machine' is ``person``'s (the CLI reads one device key per workspace)."""
@@ -128,6 +137,7 @@ def _hws(tmp_path, monkeypatch, *, live):
     w.bootstrap()
     monkeypatch.setattr(human, "open_backend", w.backend)
     monkeypatch.setattr(human, "show_secret", w.shown_secrets.append)
+    monkeypatch.setattr(human, "review_prompt", w.review_prompt)
     w.provider.requests.clear()  # what the setup signed is not what the test is about
     w.provider.shown.clear()
     yield w

@@ -39,6 +39,17 @@ class Ws(Env):
             self.store.close()
             self.store = old
 
+    def sign(self, ref: str, typ: str, **payload: Any) -> Any:
+        """A person event (signed by the owner) appended to ticket ``ref`` through a store that knows it."""
+        old, self.store = self.store, self.other()
+        try:
+            uid = self.store.uid_of(ref)
+            self.store.ticket(uid)
+            return self.store.append(self.person_event(self.owner, uid, typ, **payload), log=uid)
+        finally:
+            self.store.close()
+            self.store = old
+
     def view(self, ref: str):
         """The ticket as a fresh process sees it (``Env.store`` does not rescan the directory for new tickets)."""
         s = self.other()

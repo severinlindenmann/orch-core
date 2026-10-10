@@ -55,7 +55,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     never wrote or read it). The timeout is the caller's, 540 s by default; it ends in ``timeout`` (exit 0) so the agent
     loops, or in ``wait.timeout`` (exit 7) with ``--strict-timeout``."""
     c = Call.of(ctx, "wait")
-    view = c.resolve(args.get("ref"))
+    view = c.resolve(args.get("ref"), live_only=False)  # a done ticket ended the claim, not the wait
     note = c.notes.get(view.uid)
     start = c.store.head_seq(view.uid)
     after = max(note["cursor"], note["since"] or 0) if (note["cursor"] or note["since"] is not None) else start

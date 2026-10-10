@@ -60,6 +60,16 @@
     },
     "errors": [
       {
+        "code": "ambiguous_ref",
+        "exit": 2,
+        "retryable": false,
+        "hint": "name the ticket REF, for example DEMO-0043",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
         "code": "not_found",
         "exit": 2,
         "retryable": false,

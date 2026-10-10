@@ -135,6 +135,9 @@ def operation(
     declared = list(errors)
     present = {e["code"] for e in declared}
     extra = list(_IMPLIED.get(who, ()))
+    props_ = props or {}
+    if ("ref" in props_ and "ref" not in required) or "task" in props_ or name == "apply":
+        extra.append("ambiguous_ref")  # REF left out means "my claim"; none or several is ambiguous
     if who != "read":
         extra.append("lock.busy")
     declared += [err(c) for c in extra if c not in present]

@@ -222,6 +222,7 @@ class Store:
         self._exists: set[str] = set()
         self._pending_revs: list[dict[str, Any]] = []
         self._ws_restore_at = ""
+        self._created_ok: dict[str, tuple[int, str]] = {}  # uid -> (inode, key) of a first line whose host_sig verified
         self._suspect = False  # duplicate or missing keys among the hints
         self._hint_mismatch = False  # a verified ticket whose key its hint did not say
 
@@ -808,10 +809,10 @@ class Store:
         """The next ticket key: one above the highest number in ``keys.jsonl`` or in any ``ticket.created`` (§2). Only
         called under the lock (``create_ticket``), after the directory scan."""
         assert self._state is not None
-        if self._unsure():
-            self._ensure(set(self._exists))  # the hints cannot be believed: the verified keys decide
+        # a key is taken if a verified creation, a loaded ticket, or (additively) a hint or keys.jsonl says so; a hint
+        # or a file can only make fewer keys free, never one more
         best = 0
-        for key in (*self._key_uid, *(t.key for t in self._state.tickets.values())):
+        for key in (*self._verified_keys(), *self._key_uid, *(t.key for t in self._state.tickets.values())):
             m = _KEY_NUM.fullmatch(key)
             best = max(best, int(m.group(1)) if m else 0)
         for line in (read_or_none(self.root / "keys.jsonl") or b"").splitlines():
@@ -819,6 +820,40 @@ class Store:
                 m = _KEY_NUM.fullmatch(loads(line)["key"])
                 best = max(best, int(m.group(1)) if m else 0)
         return f"{self._state.workspace.prefix}-{best + 1:04d}"
+
+    def _verified_keys(self) -> dict[str, str]:
+        """key -> uid for every ticket whose creation line (the first line of its log) is a well-formed
+        ``ticket.created`` with a valid ``host_sig``, checked here without replaying the ticket (about one signature
+        check per ticket, cached by inode). Key ownership is decided from this, never from a hint, ``keys.jsonl`` or the
+        index."""
+        wsk = self._wsk_pub()
+        out: dict[str, str] = {}
+        if wsk is None:
+            return out
+        for uid, h in self._hints.items():
+            hit = self._created_ok.get(uid)
+            if hit is None or hit[0] != h.ino:
+                hit = None
+                line = first_line(safe_join(self.root, f"tickets/{uid}/events.jsonl"))
+                try:
+                    e = canon.parse_event_line(line) if line else None
+                    if (
+                        e is not None
+                        and e.get("type") == "ticket.created"
+                        and e.get("seq") == 1
+                        and e.get("prev") is None
+                        and isinstance(e.get("key"), str)
+                        and self._verifier.verify_host(e, log=uid, wsk_pub=wsk, workspace_id=self.workspace_id)
+                    ):
+                        hit = (h.ino, e["key"])
+                except (canon.HashError, KeyError, TypeError):
+                    hit = None
+                if hit is None:
+                    self._created_ok.pop(uid, None)
+                    continue
+                self._created_ok[uid] = hit
+            out.setdefault(hit[1], uid)
+        return out
 
     def _unsure(self) -> bool:
         """Can the key hints (first lines of unverified logs) not be believed? Duplicates, missing keys, or a verified
@@ -1026,9 +1061,12 @@ class Store:
             e.get("type") == "ticket.created" and self._unsure()
         ):
             need |= self._exists
+        verified = self._verified_keys() if e.get("type") == "ticket.created" else {}
         for key in self._read_refs([e]) | ({e["key"]} if e.get("type") == "ticket.created" else set()):
             if isinstance(key, str) and key in self._key_uid:
                 need.add(self._key_uid[key])
+            if key in verified:
+                need.add(verified[key])  # the ticket whose verified creation holds the key: the model refuses a repeat
         self._ensure(need)
         self._enforce_revocations()
 

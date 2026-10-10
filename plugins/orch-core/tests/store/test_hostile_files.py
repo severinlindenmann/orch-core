@@ -161,3 +161,35 @@ def test_a_new_ticket_cannot_reuse_a_key_whose_hint_was_hidden(pair):
     s = env.open(load="lazy")
     r = s.create_ticket(actor=env.agent, ticket_type="chore", title="n", owner=env.owner.ref)
     assert r.event["key"] == "DEMO-0003"
+
+
+def test_a_forged_keys_jsonl_hint_or_index_cannot_free_a_taken_key(pair):
+    env, a, b = pair
+    s = env.open(load="all")
+    s.index.dump()
+    s.close()
+    # the index and keys.jsonl say nothing is taken; a's first line is unreadable to the hint reader (hidden key)
+    (env.root / "keys.jsonl").write_bytes(b"")
+    db = sqlite3.connect(env.root / ".state" / "index.sqlite")
+    db.execute("DELETE FROM tickets")
+    db.commit()
+    db.close()
+    s = env.open(load="lazy")
+    for h in s._hints.values():  # and the hints are wiped as well
+        h.key = None
+    s._key_uid = {}
+    r = s.create_ticket(actor=env.agent, ticket_type="chore", title="n", owner=env.owner.ref)
+    assert r.event["key"] == "DEMO-0003"  # the verified creations of a and b still own 1 and 2
+    with pytest.raises(StoreError) as e:  # and an explicit repeat of a taken key is refused by the model
+        s.append(
+            {
+                "type": "ticket.created",
+                "actor": env.agent,
+                "key": "DEMO-0001",
+                "ticket_type": "chore",
+                "title": "dup",
+                "owner": env.owner.ref,
+            },
+            log="01J9ZP0000000000000000DKK2",
+        )
+    assert e.value.code == "ticket.exists"

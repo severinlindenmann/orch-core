@@ -30,6 +30,8 @@ describe('one attention count', () => {
     const { user } = renderApp('/')
     const n = await headerCount()
     await user.click(await screen.findByRole('button', { name: 'Switch workspace' }))
-    await waitFor(() => expect(screen.getAllByLabelText(`${n} need you`).length).toBeGreaterThan(0))
+    // The row's name carries the count (the pill itself is aria-hidden).
+    await waitFor(() => expect(screen.getByRole('button', { name: /^DEMO · / })).toHaveAccessibleName(`DEMO · Acme energy data, ${n} need you`))
+    expect(screen.getByRole('button', { name: /^DEMO · / })).toHaveTextContent(String(n))
   })
 })

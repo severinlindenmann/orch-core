@@ -1,4 +1,4 @@
-import { useRef, useState, type KeyboardEvent } from 'react'
+import { useId, useRef, useState, type KeyboardEvent, type MutableRefObject } from 'react'
 import { Check, ChevronsUpDown } from 'lucide-react'
 import { roleOf } from '@/api/permissions'
 import type { Workspace } from '@/api/types'
@@ -17,20 +17,27 @@ const ariaKeys = (keys: string) => keys.replace('⌘', 'Meta+').replace('Ctrl+',
  * than nothing (the sidebar badge's number). The shortcut shows on hover or focus; the role and the relay are in the
  * tooltip (and in the workspace's settings).
  */
-function WorkspaceRow({ w, index, current, viewer, onPick }: { w: Workspace; index: number; current: boolean; viewer: string | undefined; onPick: () => void }) {
+function WorkspaceRow({ w, index, current, viewer, onPick, quietFocus }: { w: Workspace; index: number; current: boolean; viewer: string | undefined; onPick: () => void; quietFocus: MutableRefObject<boolean> }) {
   const needs = useAttention(w.id).needsYou.total
   const keys = SHORTCUTS.find((s) => s.id === `workspace.${index + 1}`)?.keys
   const relay = w.relay === 'on' ? 'Relay on (simulated)' : 'Relay not connected'
   return (
     <li>
-      <Tooltip>
+      {/* Hover waits a moment; the focus the popover puts on the current row when it opens shows no tooltip. */}
+      <Tooltip delayDuration={500}>
         <TooltipTrigger asChild>
           <button
             type="button"
             data-ws-row
             aria-current={current ? 'true' : undefined}
             onClick={onPick}
-            aria-label={`${w.prefix} · ${w.name}${needs > 0 ? `, ${needs} need you` : ''}${current ? ', current workspace' : ''}`}
+            onFocus={(e) => {
+              if (!quietFocus.current) return
+              quietFocus.current = false
+              e.preventDefault() // Radix opens a tooltip on focus unless the event is prevented
+            }}
+            // `aria-current` says which one is current; the label carries the name and the count once.
+            aria-label={`${w.prefix} · ${w.name}${needs > 0 ? `, ${needs} need you` : ''}`}
             aria-keyshortcuts={keys ? ariaKeys(keys) : undefined}
             className="group flex w-full min-w-0 items-center gap-2 rounded-md px-1.5 py-1.5 text-left text-[13px] outline-none hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:ring-2 focus-visible:ring-brand"
           >
@@ -42,11 +49,11 @@ function WorkspaceRow({ w, index, current, viewer, onPick }: { w: Workspace; ind
               </kbd>
             )}
             {needs > 0 && (
-              <span aria-label={`${needs} need you`} className="rounded-full bg-brand px-1.5 text-[11px] font-semibold text-on-brand">
+              <span aria-hidden className="rounded-full bg-brand px-1.5 text-[11px] font-semibold text-on-brand">
                 {needs}
               </span>
             )}
-            {current ? <Check role="img" className="size-3.5 shrink-0 text-text-muted" aria-label="Current workspace" /> : <span aria-hidden className="size-3.5 shrink-0" />}
+            {current ? <Check aria-hidden className="size-3.5 shrink-0 text-text-muted" /> : <span aria-hidden className="size-3.5 shrink-0" />}
           </button>
         </TooltipTrigger>
         <TooltipContent side="right">
@@ -73,6 +80,8 @@ export function WorkspaceSwitcher({ collapsed, viewer }: { collapsed: boolean; v
   const { workspace, workspaces, switchWorkspace } = useWorkspace()
   const [open, setOpen] = useState(false)
   const list = useRef<HTMLUListElement>(null)
+  const quietFocus = useRef(false)
+  const headingId = useId()
   const trigger = (
     <button
       type="button"
@@ -106,13 +115,14 @@ export function WorkspaceSwitcher({ collapsed, viewer }: { collapsed: boolean; v
         onOpenAutoFocus={(e) => {
           // Focus starts on the current workspace (not the first row), so Up/Down move from where you are.
           e.preventDefault()
+          quietFocus.current = true
           ;(list.current?.querySelector<HTMLButtonElement>('[aria-current="true"]') ?? list.current?.querySelector<HTMLButtonElement>('[data-ws-row]'))?.focus()
         }}
       >
-        <div id="ws-list-h" className="px-1.5 pb-1 text-[11px] uppercase tracking-wider text-text-faint">
+        <div id={headingId} className="px-1.5 pb-1 text-[11px] uppercase tracking-wider text-text-faint">
           Workspaces
         </div>
-        <ul ref={list} aria-labelledby="ws-list-h" onKeyDown={onListKey} className="space-y-0.5">
+        <ul ref={list} aria-labelledby={headingId} onKeyDown={onListKey} className="space-y-0.5">
           {workspaces.map((w, i) => (
             <WorkspaceRow
               key={w.id}
@@ -120,6 +130,7 @@ export function WorkspaceSwitcher({ collapsed, viewer }: { collapsed: boolean; v
               viewer={viewer}
               index={i}
               current={w.id === workspace?.id}
+              quietFocus={quietFocus}
               onPick={() => {
                 setOpen(false)
                 switchWorkspace(w.id)

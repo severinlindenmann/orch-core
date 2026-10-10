@@ -299,9 +299,12 @@ describe('app shell', () => {
       const rows = within(list).getAllByRole('listitem')
       expect(rows).toHaveLength(3)
       const demo = within(rows[0]).getByRole('button', { name: /^DEMO · Acme energy data/ })
-      expect(within(demo).getByRole('img', { name: 'Current workspace' })).toBeInTheDocument()
+      // "Current" is said once (aria-current), not again in the name or by the check.
+      expect(demo).toHaveAttribute('aria-current', 'true')
+      expect(within(list).getAllByRole('button').filter((b) => b.getAttribute('aria-current'))).toHaveLength(1)
+      expect(demo.getAttribute('aria-label')).not.toMatch(/current/i)
       // The count is the same "needs you" number as the sidebar badge, shown only when there is something.
-      await waitFor(() => expect(within(rows[0]).getByLabelText(/^\d+ need you$/)).toBeInTheDocument())
+      await waitFor(() => expect(demo).toHaveAccessibleName(/^DEMO · Acme energy data, \d+ need you$/))
       for (const r of rows) {
         expect(within(r).queryAllByRole('link')).toHaveLength(0) // no recent tickets
         expect(within(r).queryByText(/^(owner|maintainer|member|viewer)$/)).toBeNull() // the role is in the tooltip
@@ -317,11 +320,26 @@ describe('app shell', () => {
       const list = await screen.findByRole('list', { name: 'Workspaces' })
       const [demo, int] = within(list).getAllByRole('button')
       await waitFor(() => expect(demo).toHaveFocus())
-      expect(await screen.findByRole('tooltip')).toHaveTextContent(/Your role: owner.*Relay not connected/)
+      // Opening the switcher focuses the current row but shows no tooltip next to it.
+      await new Promise((r) => setTimeout(r, 700))
+      expect(screen.queryByRole('tooltip')).toBeNull()
+      await user.hover(int)
+      expect(await screen.findByRole('tooltip', {}, { timeout: 3000 })).toHaveTextContent(/Your role: owner.*Relay not connected/)
+      await user.unhover(int)
       await user.keyboard('{ArrowDown}')
       expect(int).toHaveFocus()
       await user.keyboard('{Enter}')
       await waitFor(() => expect(screen.getByRole('button', { name: 'Switch workspace' })).toHaveTextContent(/Internal/))
+    })
+
+    it('⌘1..n still switch with the switcher closed', async () => {
+      const { user } = renderApp('/')
+      await screen.findByRole('button', { name: 'Switch workspace' })
+      await user.keyboard('{Meta>}3{/Meta}')
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Switch workspace' })).toHaveTextContent(/Client VM/))
+      await user.keyboard('{Meta>}1{/Meta}')
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Switch workspace' })).toHaveTextContent(/Acme/))
+      expect(screen.queryByRole('list', { name: 'Workspaces' })).toBeNull()
     })
 
     it('keeps the board when switching (waits on the topbar title: Board has no h1)', async () => {

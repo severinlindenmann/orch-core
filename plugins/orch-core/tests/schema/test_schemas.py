@@ -1592,6 +1592,7 @@ DOC_NON_EVENTS = {
 def test_doc_event_names_in_text_have_schemas():
     """Every `x.y` with a reserved event prefix in the doc (outside the decisions log) is a schema or listed above."""
     text = cov.doc_before("## 13. Decisions log (F1)")  # the log tells history, with old names
+    text = text[: text.index("### 10.4a")] + text[text.index("### 10.5") :]  # the refusal-code table has error codes
     prefixes = "|".join(schema.load("common")["$defs"]["reservedPrefix"]["enum"])
     found = set(re.findall(r'"type":"([a-z.]+)"', text)) | set(re.findall(rf"`((?:{prefixes})\.[a-z_]+)`", text))
     known = {n[len("event.") :] for n in schema.names() if n.startswith("event.")}

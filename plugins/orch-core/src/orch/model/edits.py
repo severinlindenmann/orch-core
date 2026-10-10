@@ -17,7 +17,6 @@ from .codes import Code, Refusal
 from .gates import EMPTY
 from .types import Core, TCore, WsCore
 
-
 PROTECTED = frozenset({"ticket.schema", "ticket.uid", "ticket.key", "ticket.visibility", "ticket.questions"})  # §5.8
 
 

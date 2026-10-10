@@ -278,7 +278,7 @@ describe('fix round 1: single-use request ids', () => {
   it('a signed start cannot be replayed, not even after re-reviewing the same values', () => {
     const s = setup()
     s.run('prepare_run', { formData: DELIVER })
-    const first = { ...runArgs(draftOf(s)), confirmed: true }
+    const first: Record<string, unknown> = { ...runArgs(draftOf(s)), confirmed: true }
     expect(s.run('start_run', first)).toMatchObject({ ok: true })
     expect(s.run('start_run', first)).toMatchObject({ ok: false, status: 409, code: 'factory.request_used' })
     s.run('prepare_run', { formData: DELIVER })

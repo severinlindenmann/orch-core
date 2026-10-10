@@ -7,7 +7,7 @@ import './styles/tokens.css'
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { staleTime: 5_000, retry: false, refetchOnWindowFocus: false } } })
 const router = createAppRouter()
-// Dev only: the layout guard (scripts/layout-guard.mjs) moves between routes through this (memory history has no URLs).
+// Dev only: the layout guard (scripts/layout-guard.mjs) moves between routes through this without reloading.
 if (import.meta.env.DEV) Object.assign(window, { __orchRouter: router })
 
 createRoot(document.getElementById('root')!).render(

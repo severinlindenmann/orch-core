@@ -132,7 +132,7 @@ export function ShellUiProvider({ children }: { children: ReactNode }) {
   const [newTicketOpen, setNewTicketOpen] = useState(false)
   const newTicketOpener = useRef<HTMLElement | null>(null)
   const [origin, setOrigin] = useState<PageOrigin>(BOARD_ORIGIN)
-  const loc = useRouterState({ select: (s) => `${s.location.pathname}\n${s.location.href}` })
+  const loc = useRouterState({ select: (s) => `${s.location.pathname}\n${s.location.publicHref}` })
   useEffect(() => {
     const [pathname, href] = loc.split('\n')
     const next = originOf(pathname, href, header.title)

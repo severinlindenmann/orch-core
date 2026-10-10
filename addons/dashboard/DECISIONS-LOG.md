@@ -739,3 +739,55 @@ The owner answered the eight open questions of REVIEW.md. Items 1, 2, 5 and 6 ch
   - **Decision:** (I1) A fitted frame adds its own border (`offsetHeight - clientHeight`) to the reported content height, so the visible area equals the content and a viewport-sized document is a fixed point (before: always 2 px short, which drove the loop). `stepFit` stays as a backstop. (M2) Three changes of direction in a row (each within 500 ms) settle on the larger height for good. (M3) A shrink held as a possible loop is tried once after 500 ms without reports (`settleFit`): a document that settled in steps ends at its final height; a shrink that answers the probe confirms a loop and the frame stays at the larger height. (M4) A component test drives the frame's message path (source and shape filter, border, cap, loop). Switcher: "current" only as `aria-current`; the check and count are `aria-hidden` (the name carries the count); the tooltip waits 500 ms on hover and does not open for the focus the popover puts on the current row; the heading id comes from `useId`; a test checks ⌘1..n with the switcher closed.
   - **Why:** review G1 (1 Important, 7 Minor).
   - **Revert:** revert the review-fix commit.
+## Owner request 2026-10-10 — G2 permanent URLs
+
+- **Decision:** (1) **Browser history, real paths**, is the app's only mode (local dev, `npm run preview`, a real
+  host); memory history only where a test passes an initial path. This **supersedes** the G7 note "Deep link
+  `/ticket/X` lands on Today … memory history on purpose (sandboxed viewer)". Per the owner ("we care about the local
+  setup") there is no iframe/hash fallback for the claude.ai preview; Vite `base` is now `/` so a reload on a deep
+  path finds `/assets/`. (2) **Workspace in the address** for every workspace page: `/w/<PREFIX>/…`, done with a
+  router rewrite (`src/app/urls.ts`) so the route tree and the ~60 in-app links keep their short paths. **Today is
+  per workspace** (its queries are keyed by the workspace), so it is `/w/<PREFIX>`, and `/` goes there. **Settings
+  are per workspace** too (`/w/<PREFIX>/settings/<tab>`). Tickets stay `/ticket/<KEY>` (the key names the workspace;
+  a `/w/X/ticket/K` address drops the `/w/X`). On a `/w/…` address the address is the source of truth for the
+  workspace (Back/Forward and pasted links switch); a switch on a workspace page pushes the same page in the new
+  workspace (Back returns); elsewhere the remembered workspace applies. Old paths are replaced with the current
+  workspace's address. An unknown prefix shows "No workspace <PREFIX>" and keeps the address. (3) **View state in
+  search params**, validated per field with zod (invalid → default): ticket `tab`; board `view`, `mine`, `type`,
+  `label`, `person`, `epic`, `q`; tickets filters (already); artifacts `view` and `a` (the shown artifact as
+  `<ticket>.<sha256[:12]>`, no file name); the settings addon row is the existing `/settings/addon/<name>` path. Tab
+  and artifact changes replace the history entry; filter and view changes push (like the tickets list; the artifacts layout pushes since the review fixes); search text
+  replaces after 200 ms. Not in the URL: dialogs, signing prompts, the terminal dock, the demo dataset (Normal/Busy
+  day is mock data, not a place) and the review tour step. Addon page tabs (core's `tabs` node, e.g. Usage's
+  Overview / By model) are `?tab.<node id>=<tab id>` on addon pages (the remembered per-viewer tab still applies
+  when the address has none; on Today and tickets addon tabs stay local). Agents has no tabs, so no param. (4) **Copy link** on the ticket header, Settings, addon
+  pages and in ⌘K; it copies `origin + address` of the page as shown. (5) Links in the app follow the workspace: the
+  router caches built link addresses, so a workspace change gives the router a fresh rewrite (`setLinkWorkspace`),
+  which TanStack uses to drop that cache. The address replace that adds `/w/<PREFIX>` ignores navigation blockers
+  (same page, not a navigation).
+- **Why:** owner request 2026-10-10 16:52 ("copy paste a url and come back to the same page, ticket, settings etc."),
+  then "we don't care about the artifact on claude, we care about the local setup".
+- **Revert:** revert the G2 commits (router back to `createMemoryHistory({ initialEntries: ['/'] })`, `base: './'`,
+  drop `urls.ts`, `search.ts`, `copyLink.ts`, the URL hooks in board/artifacts and the ticket tab param).
+
+## G2 permanent URLs: review fixes
+
+- **Decision:** (1) **Redirects keep the address's workspace**: the router rewrite's input points the link workspace
+  at the prefix of each new incoming address (marking the cached link addresses stale), so a redirect built while
+  that address loads (`/w/INT/settings` → `/w/INT/settings/general`, `/w/INT/settings/addons/x` →
+  `/w/INT/settings/addon/x`, an unknown tab → General) stays in INT; `WorkspaceProvider` re-points links at the shown
+  workspace after every render (an unknown prefix). Repeated parses of the same address do not touch it. (2) **Copy
+  link copies the address bar exactly** (`router.history.location.href`), so on "No workspace NOPE" it copies the
+  NOPE address. (3) Prefixes match case-insensitively; the address is corrected to the real prefix. `/w` and `/w/`
+  are Today. (4) The artifacts layout (`view`) now pushes, like the board's view; the shown artifact replaces.
+  (5) An addon page tab follows the address (subscribed to the history); when the address has none, the shown tab is
+  put in (replace). (6) `setWorkspaceId` gains `url: 'replace'`; the Review tour uses it (no extra history entry).
+  (7) The default ticket breadcrumb (a ticket opened first) is the permanent `/w/<PREFIX>/board`. (8) A jump on a
+  ticket (to a question, to the evidence) keeps the `#question-…` hash; a tab click drops it. (9) While the workspaces
+  load, a `/w/<PREFIX>` address shows the page skeleton instead of the remembered workspace's page. (10) The hosted
+  preview is frozen at 98151971; the publish steps are marked obsolete.
+- **Not done:** invalid search params stay in the address until the page writes it (they never apply; dropping them
+  needs a replace on every route); `/nonsense` still becomes `/w/DEMO/nonsense` (the router's not-found page, as
+  before G2); ticket keys stay case-sensitive (predates G2).
+- **Why:** review G2 (2 Important, 11 Minor).
+- **Revert:** revert the review-fix commit.

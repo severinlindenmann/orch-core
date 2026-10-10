@@ -1,7 +1,7 @@
 import type { RJSFValidationError } from '@rjsf/utils'
 import { useQuery } from '@tanstack/react-query'
-import { Link, useBlocker } from '@tanstack/react-router'
-import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { Link, useBlocker, useRouter } from '@tanstack/react-router'
+import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { ArrowRight, ChevronRight, Copy, Ellipsis, ExternalLink, TriangleAlert } from 'lucide-react'
 import { addonActive } from '@/api/addons'
 import { api } from '@/api/client'
@@ -273,11 +273,48 @@ function TabsView({ node, depth }: { node: NodeOf<'tabs'>; depth: number }) {
   return <TabsBody key={key} storageKey={key} node={node} depth={depth} />
 }
 
+/**
+ * On an addon page the open tab is also in the address (`?tab.<node id>=<tab id>`), so a copied link opens it; an
+ * unknown tab id there falls back like any other. Elsewhere (Today, a ticket) only the remembered tab applies.
+ */
+const noSubscribe = () => () => {}
+
+function useTabInUrl(nodeId: string) {
+  const router = useRouter({ warn: false })
+  const param = `tab.${nodeId}`
+  // Subscribed to the address: it can change under a mounted node (a sidebar click on the same page, Back). Read from
+  // the history (not the router's state) so a node rendered without the app router still works.
+  const history = router?.history
+  const snap = useSyncExternalStore(history ? (cb) => history.subscribe(cb) : noSubscribe, () => {
+    if (!router || !history) return ''
+    const l = router.parseLocation(history.location)
+    const tab = (l.search as Record<string, unknown>)[param]
+    return `${l.pathname}\n${typeof tab === 'string' ? tab : ''}`
+  })
+  const [pathname, tab] = snap.split('\n')
+  const onPage = !!router && pathname.startsWith('/addon/')
+  const fromUrl = onPage && tab ? tab : null
+  const write = useCallback(
+    (id: string) => {
+      if (onPage) void router.navigate({ to: '.', search: (prev: Record<string, unknown>) => ({ ...prev, [param]: id }), replace: true } as never)
+    },
+    [onPage, router, param],
+  )
+  return [onPage, fromUrl, write] as const
+}
+
 function TabsBody({ storageKey, node, depth }: { storageKey: string; node: NodeOf<'tabs'>; depth: number }) {
-  const [chosen, setChosen] = useState<string | null>(() => readTab(storageKey))
-  const active = node.tabs.find((t) => t.id === chosen) ?? node.tabs[0]
+  const [onPage, urlTab, writeUrlTab] = useTabInUrl(node.id)
+  const [chosen, setChosen] = useState<string | null>(() => urlTab ?? readTab(storageKey))
+  // The address wins when it names a tab; otherwise the shown tab goes into it, so a copied link opens what is shown.
+  const shownId = urlTab ?? chosen
+  const active = node.tabs.find((t) => t.id === shownId) ?? node.tabs[0]
+  useEffect(() => {
+    if (onPage && urlTab === null && chosen !== null && node.tabs.some((t) => t.id === chosen)) writeUrlTab(chosen)
+  }, [onPage, urlTab, chosen, node.tabs, writeUrlTab])
   const pick = (id: string) => {
     setChosen(id)
+    writeUrlTab(id)
     try {
       localStorage.setItem(storageKey, id)
     } catch {

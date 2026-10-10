@@ -21,7 +21,7 @@ describe('Addon manager', () => {
     await waitFor(() => expect(within(screen.getByRole('row', { name: /Quick tasks/ })).getByText('Active')).toBeInTheDocument())
     expect(within(screen.getByRole('row', { name: /Quick tasks/ })).getByRole('switch', { name: 'Quick tasks enabled' })).toBeEnabled()
     await user.click(await screen.findByRole('button', { name: /More addons/ }))
-    await waitFor(() => expect(screen.getAllByRole('link', { name: /Quick tasks/ }).some((l) => l.getAttribute('href') === '/addon/quick/quick')).toBe(true)) // sidebar nav appeared
+    await waitFor(() => expect(screen.getAllByRole('link', { name: /Quick tasks/ }).some((l) => l.getAttribute('href') === '/w/DEMO/addon/quick/quick')).toBe(true)) // sidebar nav appeared
   })
   it('an update with a new capability shows the diff and is one signature (it stays on)', async () => {
     const { user } = renderApp('/settings/addons')

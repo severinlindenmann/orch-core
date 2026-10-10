@@ -81,7 +81,7 @@ describe('app shell', () => {
     await screen.findByRole('heading', { name: 'Today' })
     const nav = await screen.findByRole('navigation', { name: 'Main' })
     const more = await within(nav).findByRole('button', { name: /More addons \(\d+\)/ })
-    const links = within(nav).getAllByRole('link').filter((l) => l.getAttribute('href')?.startsWith('/addon/'))
+    const links = within(nav).getAllByRole('link').filter((l) => l.getAttribute('href')?.includes('/addon/'))
     expect(links.length).toBeLessThanOrEqual(6)
     // The resolved icon component draws a lucide-<name> class: two addons sharing one icon would share it.
     const icons = links.map((l) => [...(l.querySelector('svg')?.classList ?? [])].find((c) => /^lucide-/.test(c) && c !== 'lucide'))
@@ -95,7 +95,7 @@ describe('app shell', () => {
     const { user } = renderApp('/')
     await screen.findByRole('heading', { name: 'Today' })
     const nav = await screen.findByRole('navigation', { name: 'Main' })
-    const addonLinks = () => within(nav).getAllByRole('link').filter((l) => l.getAttribute('href')?.startsWith('/addon/'))
+    const addonLinks = () => within(nav).getAllByRole('link').filter((l) => l.getAttribute('href')?.includes('/addon/'))
     const more = await within(nav).findByRole('button', { name: /^More addons \(\d+\)$/ })
     const total = addonLinks().length + Number(/\((\d+)\)/.exec(more.getAttribute('aria-label')!)![1])
     expect(total).toBeGreaterThan(6)

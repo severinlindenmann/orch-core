@@ -4,7 +4,8 @@ import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
-  base: './',
+  // Absolute asset paths: the app owns real paths (/w/DEMO/settings/addon/x), so a reload there must still find /assets.
+  base: '/',
   plugins: [react(), tailwindcss()],
   resolve: { alias: { '@': path.resolve(import.meta.dirname, './src') } },
   build: {

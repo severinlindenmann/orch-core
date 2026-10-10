@@ -222,10 +222,11 @@ def test_signatures_match_the_c4_interface():
 
 
 def test_satisfies_c4_protocol():
-    """Runs once C4 (orch.model.verifier) is merged and carries the amended Protocol; skipped until then."""
+    """CryptoVerifier against the real ``orch.model.verifier.Verifier`` (C4)."""
     import inspect
 
-    mod = pytest.importorskip("orch.model.verifier")
+    from orch.model import verifier as mod
+
     for name in ("verify_person", "verify_host", "verify_embedded"):
         theirs = list(inspect.signature(getattr(mod.Verifier, name)).parameters)
         ours = list(inspect.signature(getattr(CryptoVerifier, name)).parameters)
@@ -237,4 +238,4 @@ def test_satisfies_c4_protocol():
     assert v.verify_person(ev, context) is True
     g = build_genesis()
     assert v.verify_host(g.event, log="workspace", wsk_pub=None, workspace_id=WS) is True
-    assert v.verify_embedded(g.event, pk_pub=None) is True
+    assert v.verify_embedded(g.event, pk_pub=g.event["owner"]["pk_pub"]) is True

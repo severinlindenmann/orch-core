@@ -582,7 +582,8 @@ never count as evidence.
 
 **The source list (D58, D59).** One entry `{"repo": repo identity, "ref": "refs/heads/<branch>", "sha": git commit
 id}` per repo in `links.repos`, sorted by `repo`. Every repo a ticket names is code-bearing and must have a branch
-in `links.branches` before `submit`.
+in `links.branches` before `submit`. A ticket that links no repo has an empty source list, and its verify decisions
+carry `source_sha: []`; a ticket that links a repo must have a non-empty list.
 - **The current source list is the projection of the latest `branch.pushed` per repo name in `links.repos`.** The
   host appends `branch.pushed` whenever any of (`repo_id`, `ref`, `sha`) of a linked repo differs from that
   projection: the first observation (`before: null`), a new commit, a rebase, a force-push, a reset (also back to
@@ -614,9 +615,11 @@ in `links.branches` before `submit`.
 - it signed the current gate hash, the current `policy_hash`, the current `gate_gen` and (for `verify`, `code`) the
   current source list;
 - the gate is complete (§4; an empty section is the hash of `""`), also on replay;
-- when the policy is `independent`: the signer was not an assignee since the gated content last changed, had no
-  agent edit that content on their behalf, and, for `not: assignees`, was not the `for` person of any agent event
-  that touched a bound path of this gate in its current generation (§12 O4).
+- when the policy is `independent`: the signer is not a **worker** of the ticket (§12 O4). A worker is anyone who
+  was an assignee, held a claim, or was the `for` person of any agent event on the ticket (edits, `claim.taken`,
+  `task.*`, `artifact.*`, and the commits a `branch.pushed` records for that agent's session) since the ticket was
+  last reopened. The set only grows: a generation raise never clears it. The code gate always uses this rule
+  (D59).
 
 `independent` is off by default for `requirements`, `plan` and `verify`, so **a sole owner can approve the work of
 their own agents**: with it off, a person may verify work their own agent did, even under `not: assignees`
@@ -626,7 +629,8 @@ their own agents**: with it off, a person may verify work their own agent did, e
 `member.removed` or `role.changed` voids that person's approvals only on gates that haven't yet reached `count`.
 `people` lists are not changed by a removal: removed persons stay listed and become ineligible. A `device.revoked`
 with reason `compromised` voids the decisions that device signed on tickets that are not yet `done`; a `done` ticket
-it approved keeps its state and shows the flag "approved by a revoked device".
+it approved keeps its state and shows the flag "approved by a revoked device". It also ends every grant that device signed. `member.removed` ends every grant of the removed person and every
+device of that person in this workspace: a later `member.added` starts with new devices and grants only.
 
 A gate is approved when `count` distinct persons have counting approvals. A gate that doesn't apply to the ticket's
 type is not needed.
@@ -932,7 +936,7 @@ possible**. It loads nothing it doesn't need, its output is terse, and it is tol
 - A grant is always for the person who signs it. `scope: workable` covers the tickets that person may see and work
   on; the host checks it on every claim and write, not only when the grant is issued.
 - `verbs` is `"agent"` (every operation whose `who` is `agent` or `unattended`) or a list of operation names (a
-  narrower grant, for example for CI). A human-only operation is never in a grant.
+  narrower grant, for example for CI), matched exactly; no prefix or group matching. A human-only operation is never in a grant.
 - Length is whole hours; `expires_at` = `issued_at` + 3600 · `hours` seconds, all signed. Readers check this,
   `|at − issued_at| ≤ 300 s` and the role terms at the event's position. A `settings.changed` of `grant_hours` doesn't shorten
   existing grants.
@@ -1031,6 +1035,92 @@ Combined calls for the common loops:
    `"duplicate":true`.
 10. Every write supports `--dry-run`. Free text comes from `-m` or `--file PATH|-`, and structured input is JSON only.
 11. Ticket content in output is data: it is fenced and sanitised, never instructions.
+
+### 10.4a Refusal codes of the model
+
+`orch.model` refuses an event (at append, or by reporting it as `auth.invalid_event` on replay) with exactly one of
+these codes; they are the stable `error.code` strings of §10.4 for these refusals. The store adds its own
+(`store.torn_write`, `trust.genesis_mismatch`, `chain.diverged`, `validation.*`).
+
+| Code | Raised when |
+|---|---|
+| `chain.broken` | §5.5 a line fails seq, prev, host_sig or the log is already broken; nothing after it counts |
+| `chain.diverged` | §5.10 a head differs from a checkpoint at the same seq (raised by the store, not the model) |
+| `chain.bad_ws_seq` | §5.5 `ws_seq` decreases, exceeds the workspace head, or an append would sort before an earlier one |
+| `event.bad_base` | §5.1 `based_on` is not the head of an earlier event of the log |
+| `event.duplicate_id` | §5.1 an event `id` repeats in the log |
+| `event.bad_actor` | §5.2 the actor kind may not append this type |
+| `event.unknown_type` | §5.4 a type not of this log (custom addon events are refused in P1) |
+| `auth.invalid_event` | §5.11 derived fields (`voided_gates`) differ from what replay computes; also the label of every refused event on replay |
+| `sig.invalid` | §5.3 a person signature is missing or does not verify under the device certificate |
+| `members.stale` | §5.4.2 `roster_v` is not the member-list version at the event's position |
+| `freeze.active` | §5.11 a person decision while an invalid event is unacknowledged |
+| `ack.unknown` | §5.11 `invalid.acknowledged` names no unacknowledged invalid event of this log (seq and head) |
+| `trust.genesis_mismatch` | §5.11 the genesis differs from the pinned one |
+| `genesis.invalid` | §5.11 the genesis fails its checks, a second genesis, or an event before it |
+| `role.denied` | §5.4.2 the signer's role (or ticket role) may not append this type |
+| `member.unknown` | §5.4.2 the person is not a member (or is not allowed as owner/addressee) |
+| `member.exists` | §5.4.2 `member.added` for a current member |
+| `members.last_owner` | §5.4.2 removing or demoting the last owner |
+| `device.unknown` | §5.3 the device is not a device of the signer, or does not exist |
+| `device.exists` | §5.3 the device id is already registered |
+| `device.invalid` | §5.3 the device was removed, revoked, or its certificate expired |
+| `device.scope` | §5.3 the certificate lacks `decide` (or `operate`), or has a `drop:` scope |
+| `device.cert` | §5.3 an embedded certificate or revocation is not signed by the person key, or is for another person |
+| `grant.invalid` | §10.1 the grant is unknown, expired, revoked, ended, another person's, or its person may not run agents |
+| `grant.scope` | §10.1 the grant's scope does not cover the ticket, or the person can't see it |
+| `grant.verb` | §10.1 the grant's verbs do not name this operation (exact match) |
+| `grant.terms` | §10.1 D60 role terms (scope, length) or the time fields are wrong |
+| `grant.exists` | §10.1 the grant id is taken |
+| `grant.unknown` | §10.1 `grant.revoked` names no grant |
+| `quota.unattended` | §5.2 the unattended quota is exceeded |
+| `unattended.denied` | §5.2 an unattended event outside what unattended agents may do |
+| `settings.invalid` | §5.4.2 two repos resolve to the same path |
+| `addon.unknown` | §5.4.2 the addon is not granted or not enabled |
+| `ticket.unknown` | §5.4.1 the ticket log has no `ticket.created` yet |
+| `ticket.exists` | §5.4.1 the ticket or its key already exists |
+| `ticket.frozen` | §5.7 bound edits, `artifact.*`, `task.*`, `claim.taken`, named-role `people.changed` on done or closed tickets |
+| `ticket.not_visible` | §9 the ticket is restricted and the signer is not on the list |
+| `ticket.bad_reference` | §5.8 a key, acceptance criterion, task or repo reference does not resolve at this position |
+| `status.transition` | §5.9 the event is not allowed from the ticket's status |
+| `submit.incomplete` | §4, §5.9 submit lacks approvals, evidence, a verification section or branches |
+| `people.invalid` | §5.4.1 `people.changed` for `owner` must add exactly one person |
+| `conflict.section` | §5.8 `base_rev` does not match the current section or value hash |
+| `path.protected` | §5.8 a protected path in `set` |
+| `body.unknown_section` | §4 a section the ticket type does not have |
+| `body.unknown_artifact` | §5.8 a reference to an artifact that is not in the file manifest |
+| `repo.unknown` | §3 `links.repos` names a repo missing from `settings.repos` |
+| `restore.bad_head` | §5.10 `restore` does not name the last event on disk |
+| `gate.stale` | §5.7 generation, gate hash, policy hash or source list is not current |
+| `gate.no_eligible` | §5.7 the effective policy leaves no approver token |
+| `gate.not_eligible` | §5.7 the signer may not decide this gate (token, `not`, independence) |
+| `gate.incomplete` | §4 the gate's sections, acceptance criteria or tasks are missing |
+| `gate.not_applicable` | §5.7 the gate does not apply to the ticket type |
+| `gate.status` | §5.9 decisions are not accepted in the ticket's status |
+| `gate.invalidated_mismatch` | §5.11 `voided` differs from the approvals the cause retired |
+| `policy.invalid` | §5.7 a code policy without `not: assignees` and `independent` |
+| `source.missing` | §5.7 a linked repo has no observed branch |
+| `source.unlinked` | §5.7 the repo is not in `links.repos` |
+| `source.not_new` | §5.7 `branch.pushed` repeats the projection, has a wrong `before`, or changes a ref on a done ticket |
+| `claim.not_live` | §5.2 no live claim of that session (or takeover of nothing) |
+| `claim.exists` | §5.4.1 the ticket is claimed and no takeover was given |
+| `claim.not_holder` | §5.4.1 an agent acts under another session's claim |
+| `task.unknown` | §5.4.1 the task id is not in `ticket.json` |
+| `task.leased` | §10.1 A4 another session holds the task lease |
+| `task.state` | §5.4.1 the task event is not allowed from the task's state |
+| `task.bad_receipt` | §5.4.1 receipt command differs from `verify.cmd`, or the exit is not 0 |
+| `artifact.exists` | §6 the artifact name is taken (use `artifact.replaced`) |
+| `artifact.unknown` | §6 no such artifact name |
+| `artifact.bad_replaces` | §6 `replaces` is not the current digest |
+| `artifact.kind` | §6 unknown core kind, or `feedback` from a non-person |
+| `question.unknown` | §5.4.1 no such question id |
+| `question.stale` | §5.4.1 the answer names an older question hash |
+| `question.answered` | §5.4.1 the first valid answer already won |
+| `question.bad_id` | §5.6 `qid` is not derived from the question id |
+| `question.bad_hash` | §5.6 the question hash is wrong |
+| `question.reask` | §5.2 an unattended session re-asks an existing id |
+| `answer.not_allowed` | §5.4.1 the signer is not the addressee, an owner or a maintainer |
+| `answer.bad_option` | §5.4.1 neither option nor text, or an option key that doesn't exist |
 
 ### 10.5 Example: a whole task loop, as the agent sees it
 

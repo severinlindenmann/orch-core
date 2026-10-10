@@ -234,8 +234,7 @@
         {
           "$ref": "https://schemas.orch.dev/v2/common#/$defs/sourceList"
         }
-      ],
-      "minItems": 1
+      ]
     },
     "text": {
       "$ref": "https://schemas.orch.dev/v2/common#/$defs/str"

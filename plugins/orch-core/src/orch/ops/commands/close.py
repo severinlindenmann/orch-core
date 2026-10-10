@@ -1,6 +1,31 @@
 """orch close: close a ticket"""
 
+from typing import Any
+
 from orch.ops._dsl import MSG, REF, STR, E, S, err, obj, operation
+from orch.ops.base import Context, Result
+from orch.ops.errors import OrchError
+from orch.ops.human import Human
+
+
+def handle(ctx: Context, args: dict[str, Any]) -> Result:
+    h = Human(ctx, "close")
+    view = h.ticket(args.get("ref"))
+    resolution = args.get("resolution", "other")
+    if args.get("duplicate_of") and resolution != "duplicate":
+        raise OrchError("invalid.input", "--duplicate-of goes with --resolution duplicate")
+    event: dict[str, Any] = {"type": "ticket.closed", "resolution": resolution}
+    if args.get("duplicate_of"):
+        dup = h.store.normalise_ref(args["duplicate_of"])
+        if h.store.ticket(dup) is None:  # loaded now: the model judges the reference against its place in the order
+            raise OrchError("not_found", f"no ticket {dup}")
+        event["duplicate_of"] = dup
+    text = h.text(args, what="the reason")
+    if text is not None:
+        event["text"] = text
+    done = h.run(event, view.uid, f"close {view.key} as {resolution}")
+    return h.ticket_result(view, done, {"resolution": resolution}, "orch list")
+
 
 OP = operation(
     "close",
@@ -19,4 +44,5 @@ OP = operation(
     text="ok {key} ticket.closed {resolution} seq={seq}\nnext: {next}",
     data=obj({"resolution": STR}),
     errors=(err("role.denied"), err("transition.refused"), err("parse.text"), err("not_found")),
+    handler=handle,
 )

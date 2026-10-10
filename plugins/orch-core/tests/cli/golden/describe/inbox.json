@@ -5,7 +5,7 @@
     "target": "inbox",
     "name": "inbox",
     "cli": "orch inbox",
-    "summary": "Tickets handed over from peer workspaces.",
+    "summary": "Tickets handed over from peer workspaces, and decisions on your tickets that wait has not handed over.",
     "who": "read",
     "usage": "orch inbox",
     "pre": [
@@ -14,7 +14,7 @@
     "emits": [],
     "input": {
       "type": "object",
-      "description": "Tickets handed over from peer workspaces.",
+      "description": "Tickets handed over from peer workspaces, and decisions on your tickets that wait has not handed over.",
       "properties": {},
       "required": [],
       "additionalProperties": false
@@ -50,11 +50,36 @@
               ],
               "additionalProperties": false
             }
+          },
+          "decisions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "$ref": "https://schemas.orch.dev/v2/common#/$defs/ticketKey"
+                },
+                "seq": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "decision": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "key",
+                "seq",
+                "decision"
+              ],
+              "additionalProperties": false
+            }
           }
         },
         "required": [
           "count",
-          "items"
+          "items",
+          "decisions"
         ],
         "additionalProperties": false
       }

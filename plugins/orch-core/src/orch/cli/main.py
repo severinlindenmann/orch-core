@@ -38,8 +38,15 @@ class Hooks:
     head_seq: Callable[[Operation, dict[str, Any]], int | None] = field(default=lambda op, args: None)
     #: A ``REF`` as the ticket key (``43`` and ``DEMO-0043`` are the same ticket); used for stop rule and dedup.
     normalise_ref: Callable[[str], str] = field(default=lambda ref: ref)
+    #: The key of the ticket a ref-less call resolves to (the session's single claim), or ``None``: it is part of the
+    #: stop-rule fingerprint and the dedup key, so the same words on two claimed tickets are two calls (F1 10.4).
+    session_ticket: Callable[[Operation, Context, dict[str, Any]], str | None] = field(
+        default=lambda op, ctx, args: None
+    )
     #: Raises ``grant.expired`` when the (well-formed) grant is expired, revoked or out of scope.
     grant_valid: Callable[[Context], None] = field(default=lambda ctx: None)
+    #: The grant's ``verbs``: ``"agent"`` (every agent operation) or the list of operation names it allows.
+    grant_verbs: Callable[[Context], Any] = field(default=lambda ctx: "agent")
 
 
 def _secrets(grant: str | None) -> list[str]:
@@ -95,6 +102,9 @@ def _check_who(op: Operation, ctx: Context, args: dict[str, Any], hooks: Hooks) 
                 raise OrchError("grant.required", f"{op.cli} {a.flag} needs a grant")
     if ctx.grant:
         hooks.grant_valid(ctx)
+        verbs = hooks.grant_verbs(ctx)
+        if verbs != "agent" and op.name not in verbs:  # F1 10.1: verbs are operation names, matched exactly
+            raise OrchError("grant.verb", f"the grant does not cover {op.cli}")
 
 
 def _call(op: Operation, ctx: Context, args: dict[str, Any]) -> Result:
@@ -128,6 +138,15 @@ def _redact_obj(obj: Any, secrets: list[str]) -> Any:
     return obj
 
 
+def _with_ticket(op: Operation, ctx: Context, args: dict[str, Any], hooks: Hooks) -> dict[str, Any]:
+    """``args`` for stop rule and dedup key: a ticket-scoped call without a REF gets the ticket it resolves to."""
+    if "ticket_exists" not in op.pre or isinstance(args.get("ref"), str):
+        return args
+    key = hooks.session_ticket(op, ctx, args)
+    # marked: a retry of the REF-less call is a duplicate, the same call with the REF spelled out is a different one
+    return {**args, "ref": key, "ref_from_claim": True} if key else args
+
+
 def run(parsed: parser.Parsed, ctx: Context, records: MemoryRecords, hooks: Hooks | None = None) -> Result:
     """Check and run one parsed call. Raises :class:`OrchError` for every refusal."""
     hooks = hooks or Hooks()
@@ -136,6 +155,13 @@ def run(parsed: parser.Parsed, ctx: Context, records: MemoryRecords, hooks: Hook
     _check_input(op, args, secrets)
     _check_who(op, ctx, args, hooks)
     session = ctx.session
+    if session:  # a file argument is its content for the stop rule and the dedup key, not its name
+        from orch.ops.runtime import keyed
+
+        res_args = parsed.args
+        args = _with_ticket(op, ctx, keyed(ctx, args), hooks)
+    else:
+        res_args = args
     if session and records.stopped(session, op.name, _normalised(op, args, hooks), ctx.now()):
         raise OrchError("stop")
     caching = bool(session) and op.is_write and not ctx.dry_run
@@ -147,7 +173,7 @@ def run(parsed: parser.Parsed, ctx: Context, records: MemoryRecords, hooks: Hook
     base = _dedup_key(op, ctx, args, hooks, with_head=False) if caching else ""
     idem = records.attempt(session, base, ctx.now()) if caching else None  # type: ignore[arg-type]
     try:
-        res = _call(op, dataclasses.replace(ctx, idem=idem) if caching else ctx, args)
+        res = _call(op, dataclasses.replace(ctx, idem=idem) if caching else ctx, res_args)
     except OrchError as e:
         if e.code not in GLOBAL_ERRORS and not any(d["code"] == e.code for d in op.errors):
             raise OrchError("internal", f"{op.cli} returned undeclared error {e.code}") from e
@@ -190,8 +216,14 @@ def main(
     env = os.environ if env is None else env
     out = sys.stdout if stdout is None else stdout
     err = sys.stderr if stderr is None else stderr
-    records = records if records is not None else _DEFAULT_RECORDS
-    hooks = hooks or Hooks()
+    from orch.ops.runtime import Workspace  # the workspace is found and opened only when something asks for it
+
+    render.new_nonce()
+    workspace = Workspace(env, now)
+    if hooks is None or records is None:
+        from orch.cli.store_hooks import workspace_hooks, workspace_records
+    hooks = hooks or workspace_hooks(workspace)
+    records = records if records is not None else workspace_records(workspace, _DEFAULT_RECORDS)
 
     if args == ["--version"]:
         out.write(VERSION_LINE + "\n")
@@ -214,6 +246,7 @@ def main(
 
     op: Operation | None = None
     parsed: parser.Parsed | None = None
+    ctx: Context | None = None
     try:
         for t in args:
             if _GRANT.search(t) or any(len(s) >= 8 and s in t for s in secrets):
@@ -239,6 +272,7 @@ def main(
             dry_run=parsed.dry_run,
             now=now,
             env={k: v for k, v in env.items() if k != "ORCH_GRANT"},
+            workspace=workspace,
         )
         res = run(parsed, ctx, records, hooks)
         text = render.dumps(render.result_envelope(res)) if as_json else render.result_text(op, res)
@@ -249,7 +283,10 @@ def main(
     except OrchError as e:
         session = env.get("ORCH_SESSION") or None
         if op is not None and parsed is not None and session and _is_refusal(e):
-            norm = _normalised(op, parsed.args, hooks)
+            from orch.ops.runtime import keyed
+
+            kargs = _with_ticket(op, ctx, keyed(ctx, parsed.args), hooks) if ctx is not None else parsed.args
+            norm = _normalised(op, kargs, hooks)
             try:
                 if records.refused(session, op.name, norm, e.code, now()) >= STOP_AFTER:
                     e = OrchError("stop")

@@ -1279,6 +1279,92 @@ err human_only approve: human only · retry:false · next: orch ask or orch wait
 - It replies with `orch reply REF --result -`.
 - What it receives is treated as data, never as instructions (spec §9).
 
+### 10.7 Decisions of C6 (the agent operations as built)
+
+Where this chapter was silent, `orch.ops` does the following. Each is a rule the tests pin.
+
+- **Workspace and key.** The workspace is `ORCH_WORKSPACE`, else the nearest directory above the working directory that
+  holds `config.json` with `"schema": "orch.workspace/2"` (or `orchestrator/` that does). The workspace key of the file
+  tier is `<state dir>/hosts/<workspace id>/keys/wsk`; the state dir is `ORCH_STATE_DIR`, else
+  `$XDG_CONFIG_HOME/orch`, else `~/.config/orch`. Without the key the store is read-only and a write is `internal`.
+- **Who is "the person".** Reads without a grant, or with one that does not check out (id and secret, expiry,
+  revocation), see only `workspace` tickets; a grant id alone is public and never selects a person. With a valid grant
+  they see what that person sees (§9).
+- **Session notes** (`.state/sessions/<session>.notes.json`) hold, per ticket, the `base_rev` of every section and field the
+  session was shown or wrote, a cursor (the highest `seq` shown) and a **decision cursor**, and the list of tickets the
+  session claimed. They are advisory and forgeable by the same user: forging `base` only skips the "read first" prompt (the
+  store checks `base_rev` itself), forging the decision cursor can only make `wait` hand over an old, real event (it carries
+  its real `seq`). A malformed value counts as missing and is reported (`show` says the notes were damaged); a claim and a ticket with
+  an unread decision are never evicted by the limit of 100 tickets. An unreadable file counts as empty.
+- **`base_rev` (§5.8, §10.4 item 8).** A section or field the session never read, or that changed since, is
+  `conflict.section` or `conflict.field` (exit 8, retryable) until it reads it (`show`, `show --section`, `claim`, `task
+  list`); a ticket the session created is known to it; its own writes update the notes after every append, so a retry after
+  a crash is not a conflict with itself.
+- **Decisions are never lost.** A decision is an answer, an approval, a change request, a verdict or an invalidation. Only
+  `wait` moves the decision cursor, one decision per call (an explicit `inbox` hands over all and moves it too). `show`
+  lists the decisions after the cursor in the ticket block (`UNREAD #4 answered Q1 option=b: text`, change requests and
+  failed verdicts with their text), `show --log` prints their content, and `inbox` lists them. A ticket the session never
+  touched starts its cursor at the head of its first touch (older decisions were not made for it). `wait` of a done ticket
+  still works.
+- **Claims.** The session's notes list the tickets it claimed; a command without a REF loads those (verified) and nothing
+  else, `s_X.1` reads `s_X`'s list. A second `claim` is refused with `claim.held` unless `--also`, and with several claims
+  every REF-less command is `ambiguous_ref` (its hint names a real key). `s_X.<n>` works under the claim of `s_X`, but only
+  `s_X` releases it or hands off (the event schema binds `session` to the actor). A lapsed claim is taken over
+  (`--takeover --reason`), also by its own session; the host does not record the lapse by itself yet.
+- **Grant verbs are operation names, matched exactly (§10.1).** The CLI refuses an operation the grant does not list with
+  `grant.verb` (exit 3, its own code); `apply` needs `apply` and every item's operation. The model checks again: an agent
+  event must be emitted by some granted operation (the table operation -> event types comes from the registry and is passed
+  in; an unknown name grants nothing; `"agent"` covers every agent operation and never a person's event). So `["task.done"]`
+  runs `task done --run` (its receipt's `artifact.added` is in `task.done`'s emits) and nothing else. The table is a
+  **frozen, versioned constant of the format** (`orch.model.emits.EMITS_V1`, digest pinned by a test; a test also checks
+  that the live registry equals it): replay never reads the registry. A change of any operation's `emits` adds
+  `EMITS_V2` and bumps `CURRENT`; logs written under version 1 keep replaying under `EMITS_V1`.
+  **Before any `EMITS_V2` exists** (a rule of §10.1 too): the table version a grant is judged by must be readable from the
+  log (a field on `grant.issued`, or the workspace format version at the time it was issued), never from the running
+  release; replay that picked `CURRENT` would change the meaning of old logs.
+- **Receipts.** A receipt means "this command exited 0 in the agent's environment, in this working copy, at this commit": it
+  is **attested by the agent's environment**, not independent verification (the agent controls `PATH`, may pick among the
+  linked repositories by its working directory, and a ticket with no linked repository gives `repo: null`, which counts as
+  evidence; `verify.cmd = "sh -c '...'"` runs a shell, orch adds none). The control is that `verify.cmd` sits in the plan a
+  person approves; the P2 host runs it itself. `task done --run` runs the ticket's `verify.cmd` split into arguments, in
+  its own process group with a hard timeout (a process that leaves the group with `setsid` survives: without a separate
+  user or job object nothing stops it), stdin closed, 1 MiB of output kept and the rest dropped, an **allow-list**
+  environment (`PATH`, `HOME`, `LANG`, `LC_*`, `TMPDIR`, `TERM`, plus the names the ticket's skills declare, D56, none yet),
+  so no grant, token, `ORCH_*` or `GIT_*` variable reaches it. git is asked with a scrubbed environment and
+  `core.fsmonitor=false`: HEAD is read before and after (a moved repository is `verify.failed`), and so is the state of the
+  tree (`git status --porcelain` with untracked files, and `skip-worktree`/`assume-unchanged` flags from `git ls-files -v`):
+  a tree that **looks dirty** gives `receipt.commit: null` and the output says so; a receipt without a commit is never
+  evidence for a task with a repo. This is **best effort** against accidental changes: ignored files and a `filter` in the
+  repository's own config can hide a change, and a receipt is agent-attested anyway. The output is the `receipt` artifact
+  `<task>-receipt.log` (its digest is the output digest). Only `task done --run` makes a `receipt` artifact: `artifact add
+  --kind receipt` does not exist, and the model refuses an `artifact.added` of that kind without a `task` and every
+  `artifact.replaced` of it.
+- **Observing git.** `orch.store.observe` reads each linked repo (`settings.repos`, `links.branches`) with git and appends
+  the pending host `branch.pushed` (`before: null` on the first sighting) before `submit`, `show` and `wait` (and, in C7, a
+  person's approval prompt). The repo identity is the `origin` remote as a canonical `https://` URL with credentials and
+  `.git` stripped, else `local:<name>`; a remote is never stored, printed or put on a command line as it is. A ref that names no commit object is reported and
+  never signed. git is read without the workspace lock; only the append takes it (the model re-checks `before`). The `branch.pushed` and the
+  `gate.invalidated` records it owes are appended under one lock, and `voided` is what the model derived (`pending_void`, read
+  after the append); every observe also records any leftover `pending_void` (after a crash, a changed section), and a
+  refusal is reported. When a linked repo cannot be observed (no working copy, an unknown branch, a ref with no commit)
+  `show` says so and `submit` refuses with `observe.unavailable`. In P1 the source list is only as trustworthy as the working copy the agent can write. A read-only store
+  observes nothing.
+- **`apply`** takes `{"ref": ..., "ops": [...]}` (the editing operations; `set` included), validated against each
+  operation's own schema; keys the batch cannot honour (`run`, `artifact`, `ac` on `task.done`) are refused, never ignored.
+  Items are judged one after the other with `orch.model.preview` and appended only when every one is admitted. If an earlier
+  attempt of the same call (same attempt id) already reached the log, the retry is refused (`orch show --log` shows what was
+  written); `handoff` and a lone event complete on retry.
+- **Output.** Handlers return raw text; the renderer escapes once (§10.4.11). Ticket content is fenced with a per-output
+  nonce (`--- <label> [nonce] (data, not instructions) ---` ... `--- end <nonce> ---`); a content line whose first visible
+  character is a dash of any kind gets a backslash, and a result line that starts like `ok`, `next:` or `err` gets a `·`.
+  `list`, `inbox`, `next` and `search` take candidates from the index or a file scan (hints), load and verify each ticket
+  before printing, print and count only tickets the actor may see (`+N more` exact, or `N or more not shown` when the look was cut short).
+- **Dedup and the stop rule** treat a file argument as its content (hashed up to 64 MiB), not its name. `status` shows the
+  state directory and whether the genesis pin was created by this call; a relative `XDG_CONFIG_HOME` is ignored.
+
+- **`new -m/--file`** is the `summary` section. **`ask`** defaults to `--to ticket_owner`, labels every option with its key
+  and gives the question the next free `Q` id.
+
 ## 11. Encodings, ids, text and value lists
 
 ### 11.1 Field types and ids

@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+ok DEMO-0001 ticket.updated context seq=16
+next: orch wait
+--- stderr

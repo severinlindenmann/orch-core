@@ -1,0 +1,19 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "person": "Owner",
+    "cursor": 15,
+    "grant": "gr_GRANT until 2026-09-21T22:13:20Z",
+    "claim": "DEMO-0001",
+    "new_events": 0,
+    "state_dir": "STATE"
+  },
+  "key": "DEMO-0001",
+  "seq": 0,
+  "cursor": 15,
+  "hints": [
+    "orch wait"
+  ]
+}
+# exit 0

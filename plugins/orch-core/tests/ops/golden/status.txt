@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+ok status Owner cursor=15 grant=gr_GRANT until 2026-09-21T22:13:20Z claim=DEMO-0001
+DEMO-0001 in_progress (your claim) · T2 next · 0 new events · waiting: Q1 blocking
+state dir STATE
+next: orch wait
+--- stderr

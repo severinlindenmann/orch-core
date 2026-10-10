@@ -35,6 +35,7 @@ class LogInfo:
     error_seq: int = 0
     seen_size: int = 0  # size of the file when it was opened for reading (a broken log has unread bytes past `offset`)
     ino: int | None = None  # inode of the file when it was read (the freshness check compares it, see Store._fresh)
+    seen_times: tuple[int, int] = (0, 0)  # (mtime_ns, ctime_ns) of the file when it was read: part of its signature
     starts: list[int] = field(default_factory=list)  # starts[i] is the byte offset of the line of seq i + 1
 
     @property
@@ -62,6 +63,7 @@ def read_new_lines(info: LogInfo, *, validate: bool = True) -> list[dict[str, An
     with os.fdopen(fd, "rb") as f:
         st = os.fstat(f.fileno())
         info.ino, info.seen_size = st.st_ino, st.st_size
+        info.seen_times = (st.st_mtime_ns, st.st_ctime_ns)
         f.seek(info.offset)
         while info.error is None:
             # one line at a time, never more than a line's limit: a file of any size cannot make us allocate more
@@ -100,15 +102,24 @@ def file_size(path: Path) -> int:
         return 0
 
 
-def stat_sig(path: Path) -> tuple[int, int] | None:
-    """``(size, inode)`` of a log, or None if it is missing; a symlink has its own signature (never a file's)."""
+def stat_sig(path: Path) -> tuple[int, int, int, int] | None:
+    """``(size, inode, mtime_ns, ctime_ns)`` of a log, or None if it is missing; a symlink has its own signature
+    (never a file's). The times make a log that was replaced by another file of the same size and inode number (or
+    edited in place without a size change) differ from the one that was verified."""
     try:
         st = os.lstat(path)
     except (FileNotFoundError, NotADirectoryError):
         return None
     if stat.S_ISLNK(st.st_mode):
-        return (-1, -1)
-    return (st.st_size, st.st_ino)
+        return (-1, -1, -1, -1)
+    return (st.st_size, st.st_ino, st.st_mtime_ns, st.st_ctime_ns)
+
+
+def info_sig(info: LogInfo | None) -> tuple[int, int, int, int] | None:
+    """The signature the store recorded when it read (or wrote) ``info``'s log, comparable with :func:`stat_sig`."""
+    if info is None or info.ino is None:
+        return None
+    return (info.seen_size, info.ino, *info.seen_times)
 
 
 def last_line(path: Path) -> bytes | None:

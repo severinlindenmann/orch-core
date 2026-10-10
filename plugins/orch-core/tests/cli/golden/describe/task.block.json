@@ -61,6 +61,16 @@
     },
     "errors": [
       {
+        "code": "ambiguous_ref",
+        "exit": 2,
+        "retryable": false,
+        "hint": "name the ticket REF, for example DEMO-0043",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
         "code": "not_found",
         "exit": 2,
         "retryable": false,
@@ -108,6 +118,17 @@
         "fix": [
           "orch",
           "claim"
+        ]
+      },
+      {
+        "code": "lease.held",
+        "exit": 4,
+        "retryable": false,
+        "hint": "pick another task: orch task next",
+        "fix": [
+          "orch",
+          "task",
+          "next"
         ]
       },
       {

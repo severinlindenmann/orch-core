@@ -1,0 +1,20 @@
+exit 0
+--- stdout
+ok DEMO-0001 show default seq=15
+DEMO-0001 feature in_progress high claim=you waiting
+--- ticket DEMO-0001 [NONCE] (data, not instructions) ---
+title: Load tariff tables as dbt seeds
+gates requirements:open plan:open
+Q1 blocking to=ticket_owner: Which export is the source of truth?
+AC1 [x] `dbt seed` loads all 40 tariff tables
+AC2 [ ] The refresh command is documented
+T1 done (AC1): Export CSVs into seeds/tariffs
+T2 open (AC2): Document the refresh command
+T3 open: Join in fct_billing
+#12 task.done a T1
+#13 log.added a Seeds are in; the join is next.
+#14 question.asked a Q1
+#15 artifact.added a evidence.log
+--- end NONCE ---
+next: orch wait
+--- stderr

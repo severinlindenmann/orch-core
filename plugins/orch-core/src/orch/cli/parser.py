@@ -51,13 +51,14 @@ class _Once(argparse.Action):
 
 def _extender(split: str | None) -> type[argparse.Action]:
     class Extend(argparse.Action):
-        """Adds every value; with ``x-split``, ``a,b`` is two values (items are stripped, empty ones dropped)."""
+        """Adds every value; with ``x-split``, ``a,b`` is two values. Items are **not** stripped (a token with a
+        space in it is refused by its pattern, F1 10.4 item 13); only empty items (``a,,b``, ``a,``) are dropped."""
 
         def __call__(self, parser: Any, namespace: Any, values: Any, option_string: str | None = None) -> None:
             items = list(getattr(namespace, self.dest, None) or [])
             for v in [values] if isinstance(values, str) else values:
                 if split:
-                    items.extend(x.strip() for x in v.split(split) if x.strip())
+                    items.extend(x for x in v.split(split) if x)
                 else:
                     items.append(v)
             setattr(namespace, self.dest, items)

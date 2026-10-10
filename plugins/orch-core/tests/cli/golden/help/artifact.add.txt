@@ -1,8 +1,8 @@
-Store a file; works without a grant (unattended, never evidence). --ac and --task need a grant.
+Store a file; works without a grant (unattended, never evidence). --ac and --task need a grant. A receipt is only made by task done --run.
 usage: orch artifact add PATH [--ref REF] [--kind KIND] [--name NAME] [--ac AC] [--task TASK] [--label TEXT] [--dry-run]
   PATH  file to store
   --ref REF  ticket REF (flag); default: your claim
-  --kind KIND  what it is (screenshot|log|report|link|dataset|build|diagram|receipt|other) [default other]
+  --kind KIND  what it is (screenshot|log|report|link|dataset|build|diagram|other) [default other]
   --name NAME  name in the ticket; default: the file name
   --ac AC  criterion it is evidence for (needs a grant)
   --task TASK  task it belongs to (needs a grant)

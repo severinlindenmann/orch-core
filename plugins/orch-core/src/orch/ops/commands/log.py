@@ -1,6 +1,15 @@
 """orch log: add a note to the ticket log"""
 
+from typing import Any
+
+from orch.ops import plans
 from orch.ops._dsl import FILE, MSG, REF_PATTERN, S, err, obj, operation
+from orch.ops.base import Context, Result
+
+
+def handle(ctx: Context, args: dict[str, Any]) -> Result:
+    return plans.run(ctx, "log", args, plans.log)
+
 
 OP = operation(
     "log",
@@ -20,4 +29,5 @@ OP = operation(
     text="ok {key} log.added seq={seq}\nnext: {next}",
     data=obj({}),
     errors=(err("quota.unattended"), err("parse.text"), err("not_found"), err("ambiguous_ref")),
+    handler=handle,
 )

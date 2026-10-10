@@ -5,7 +5,7 @@
     "target": "artifact.add",
     "name": "artifact.add",
     "cli": "orch artifact add",
-    "summary": "Store a file; works without a grant (unattended, never evidence). --ac and --task need a grant.",
+    "summary": "Store a file; works without a grant (unattended, never evidence). --ac and --task need a grant. A receipt is only made by task done --run.",
     "who": "unattended",
     "usage": "orch artifact add PATH [--ref REF] [--kind KIND] [--name NAME] [--ac AC] [--task TASK] [--label TEXT] [--dry-run]",
     "pre": [
@@ -21,7 +21,7 @@
     ],
     "input": {
       "type": "object",
-      "description": "Store a file; works without a grant (unattended, never evidence). --ac and --task need a grant.",
+      "description": "Store a file; works without a grant (unattended, never evidence). --ac and --task need a grant. A receipt is only made by task done --run.",
       "properties": {
         "path": {
           "type": "string",
@@ -44,7 +44,6 @@
             "dataset",
             "build",
             "diagram",
-            "receipt",
             "other"
           ],
           "description": "what it is",

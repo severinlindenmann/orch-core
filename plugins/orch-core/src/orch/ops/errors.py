@@ -136,6 +136,15 @@ _SPECS = [
         "The grant is past its end, was revoked, or does not cover this ticket or verb.",
     ),
     _e(
+        "grant.verb",
+        3,
+        False,
+        "the grant does not cover this operation",
+        "ask the person for a grant that lists this operation, or use another operation",
+        ["orch", "status"],
+        "A grant with a list of verbs names operations, matched exactly (F1 10.1); this operation is not in it.",
+    ),
+    _e(
         "role.denied",
         3,
         False,
@@ -246,6 +255,16 @@ _SPECS = [
         "task done --run: the exit code was not 0, nothing was appended.",
     ),
     _e(
+        "observe.unavailable",
+        5,
+        False,
+        "a linked repository cannot be observed",
+        "orch show names the repository; fix settings.repos or links.branches",
+        ["orch", "show"],
+        "A linked repo has no working copy, or git does not know its branch or the ref names no commit: submit would "
+        "judge code nobody looked at.",
+    ),
+    _e(
         "gate.stale",
         5,
         False,
@@ -349,6 +368,7 @@ GLOBAL_ERRORS = (
     "usage",
     "unknown_command",
     "grant.secret_in_args",
+    "grant.verb",
     "invalid.input",
     "internal",
     "not_implemented",

@@ -1,0 +1,41 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "count": 5,
+    "hits": [
+      {
+        "key": "DEMO-0001",
+        "where": "title",
+        "line": "Load tariff tables as dbt seeds"
+      },
+      {
+        "key": "DEMO-0001",
+        "where": "section summary",
+        "line": "Load the 40 tariff tables as seeds."
+      },
+      {
+        "key": "DEMO-0001",
+        "where": "section plan",
+        "line": "2. seed them"
+      },
+      {
+        "key": "DEMO-0001",
+        "where": "ac AC1",
+        "line": "`dbt seed` loads all 40 tariff tables"
+      },
+      {
+        "key": "DEMO-0001",
+        "where": "task T1",
+        "line": "Export CSVs into seeds/tariffs"
+      }
+    ]
+  },
+  "key": null,
+  "seq": 0,
+  "cursor": 0,
+  "hints": [
+    "orch show DEMO-0001"
+  ]
+}
+# exit 0

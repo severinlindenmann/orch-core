@@ -50,11 +50,21 @@ describe('visible / visibleValue: no two signed values look alike', () => {
     ['a️b', 'ab'], // variation selector
     ['é', 'é'], // precomposed vs combining accent
     ['Å', 'Å'], // A with ring vs ANGSTROM SIGN (a canonical singleton)
+    ['\uac00', '\u1100\u1161'], // 가 vs its decomposed jamo (letters, not marks; round 2 #3)
+    ['\uac00x', '\u1100\u1161x'],
+    ['\u00e9\uac00', 'e\u0301\u1100\u1161'],
     ['\\', '\\\\'],
     ['x\\', 'x\\\\'],
   ]
   it.each(PAIRS)('visible(%j) differs from visible(%j)', (a, b) => {
     expect(visible(a)).not.toBe(visible(b))
+  })
+  it('a string NFC would change is shown in ASCII only, so it cannot look like its normalized twin (round 2 #3)', () => {
+    expect(visible('\u1100\u1161')).toBe('\\u{1100}\\u{1161}')
+    expect(visible('e\u0301')).toBe('e\\u{301}')
+    expect(visible('\u212b')).toBe('\\u{212b}')
+    for (const s of ['\u1100\u1161x', 'Zu\u0308rich', '\u212b', 'e\u0301\uac00']) expect(visible(s), JSON.stringify(s)).toMatch(/^[\x20-\x7e]*$/)
+    expect(visible('\uac00')).toBe('\uac00') // already NFC: readable
   })
   it('a typed value tells strings from numbers and booleans', () => {
     expect(visibleValue('1')).not.toBe(visibleValue(1))

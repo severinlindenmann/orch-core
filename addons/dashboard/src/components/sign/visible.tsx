@@ -11,8 +11,6 @@
  */
 const HIDDEN = '\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}\\p{Default_Ignorable_Code_Point}\\p{Co}\\p{Cn}\\p{Cs}\\u2420'
 const OTHER_SPACE = '(?! )\\p{Zs}'
-/** For a string that is not in NFC: also every combining mark and every character NFC would change (é vs e + U+0301). */
-const MARK = /\p{M}/u
 const escape = (c: string) => `\\u{${c.codePointAt(0)!.toString(16)}}`
 const pattern = (extra: string) => new RegExp(`\\\\|[${HIDDEN}]|${OTHER_SPACE}${extra}`, 'gu')
 const STRICT = pattern('')
@@ -23,8 +21,9 @@ function encode(s: string, re: RegExp): string {
   const denormal = s !== s.normalize('NFC')
   const out = s.replace(re, (c) => (c === '\\' ? '\\\\' : c === '"' ? '\\"' : escape(c)))
   if (!denormal) return out
-  // Only for strings NFC would change: each such character and every mark is shown by its code point.
-  return [...out].map((c) => (MARK.test(c) || c.normalize('NFC') !== c ? escape(c) : c)).join('')
+  // A string NFC would change can look like a different one (é vs e + U+0301, 가 vs its two jamo): every code point
+  // beyond ASCII is then shown by number (round 2 #3). ASCII never changes under NFC, and escapes are ASCII.
+  return [...out].map((c) => (c.codePointAt(0)! > 0x7e ? escape(c) : c)).join('')
 }
 
 /** Shown for a space at the start or end, where it would be invisible. */

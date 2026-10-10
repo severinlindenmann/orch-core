@@ -342,7 +342,8 @@ agent; **D** an addon; **H** the host only. Types marked D58–D60 are new with 
 | `addon.purged` | P | `name` | Deletes the addon's data. |
 
 The **member-list version** (`list_seq`) is the number of `member.added`, `member.removed` and `role.changed`
-events in the workspace log so far. A signed event cites the version its signer saw.
+events in the workspace log so far. A signed event cites the version its signer saw. When a member is removed,
+their earlier signatures stay valid against the version they cite; their unused approvals stop counting.
 
 **Who may sign what** (on top of the actor column):
 

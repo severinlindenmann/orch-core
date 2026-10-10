@@ -1365,6 +1365,64 @@ Where this chapter was silent, `orch.ops` does the following. Each is a rule the
 - **`new -m/--file`** is the `summary` section. **`ask`** defaults to `--to ticket_owner`, labels every option with its key
   and gives the question the next free `Q` id.
 
+**Decisions of C7 (the human operations as built).** Where §5.3, §5.7, §10.1 and §10.3 were silent, `orch.ops.human` and the eleven human operations (`approve`,
+`request-changes`, `verdict`, `answer`, `close`, `reopen`, `grant`, `grant revoke`, `member add|remove|role`) do the
+following. Each is a rule the tests pin (`tests/ops/test_presence.py` and the test file of each operation).
+
+- **Presence.** A human operation is refused as `human_only` (exit 3) before its handler runs when `ORCH_GRANT` is set
+  (§10.3: "Agents get `human_only`"), and the handler refuses again if a grant ever reaches it. Every signature then asks
+  for the passphrase on `/dev/tty` through the passphrase backend (§5.3, D65): never stdin, stdout, stderr, an argument
+  or an environment variable, and no option skips or carries it. No controlling terminal is `custody.no_prompt`, a wrong
+  or empty passphrase is `custody.wrong_passphrase`; both are exit 3, not retryable, declared by every human operation
+  and kept distinct (D65: agents branch on them). Nothing is written in either case. A harness that shares the person's
+  terminal can still trigger the prompt; that limit is D65's. A person's operation is never deduplicated or answered from
+  the session records: every call is a fresh signature.
+- **Who signs.** The key is `<state dir>/hosts/<workspace id>/person/dk.key.json` (key id `dk`, passphrase backend,
+  role `device`), next to the workspace key. The person and the device are not named by the caller: the device id is
+  derived from the key file's public key and looked up in the replayed device roster, which says whose device it is. A key
+  the log does not know, a removed or revoked device and a person who is no longer a member sign nothing
+  (`role.denied`, before any prompt). A key file others can read is refused by the backend. P1 holds one device key per
+  workspace per machine; creating it is `orch init`/`keys` (C8), not C7.
+- **What is signed comes from the log.** `gate`, `gate_gen`, `hash`, `policy_hash`, `source_sha`, the question `hash`,
+  `roster_v` and `based_on` are read from the verified state (`orch.model` views and the store) at the moment of the
+  call; the operations have no option for any of them. The ticket is named with `--ref` (a person has no claim, so there
+  is no "my claim" default: `ambiguous_ref`); a ticket the signer may not see is `not_found` (§9).
+- **Judged before the prompt, the lock not held while typing.** The event is judged with `orch.model.preview` as
+  `Store.append` will judge it (all rules, the signature aside), so a refused event (`gate.stale`, `role.denied`,
+  `transition.refused`, `answer.not_allowed` ...) costs no passphrase. The workspace lock is not held while the person
+  types; `Store.append` then verifies the signature and judges again, so a change during the prompt is `gate.stale` or
+  `members.stale` and the person decides again.
+- **D58/D59 binding.** `verdict` and `approve code` read git (`orch.store.observe`, which appends any owed
+  `branch.pushed`) right before the prompt, bind the commits it finds as `source_sha`, and read git **again after the
+  passphrase**: a source list that moved meanwhile is `gate.stale`, nothing is appended. A linked repository that cannot
+  be observed is `observe.unavailable`, a missing ref `source.missing` (the model's rule, §5.7). **F1 was silent on a
+  working tree with uncommitted changes:** the decision binds a commit, not the files the person is looking at, so it is
+  refused as `observe.unavailable` (best effort, the check of §10.7 "Receipts"). A ticket that links no repository signs
+  `source_sha: []`.
+- **The prompt** is the passphrase backend's, built from the signing bytes (D41, `custody/describe.py`): the digest of
+  the bytes first, then workspace, log, type, `auth`, `roster_v`, actor, and every payload field (gate hash and
+  generation, policy hash, every repo, ref and sha of `source_sha`, the grant terms, the member and role ...); the
+  caller's note comes last, marked as not signed. It does not show the text of the gated sections: the person reads them
+  with `orch show` (the dashboard prompt of P2 shows them against the hash, §5.7).
+- **`grant`.** The 32-byte secret is drawn when the command runs, only its hash goes into the event, and
+  `ORCH_GRANT=...` is written to `/dev/tty` **after** the append and nowhere else: not stdout (a pipe, a log, an
+  agent's transcript), not stderr, not a file, not a record. If the terminal cannot show it the command fails with
+  `custody.no_prompt` and names the grant to revoke. Defaults: `--hours 8`, `--scope workable`, `--verbs agent`;
+  `issued_at` is the clock when the command starts (readers allow 300 s, §10.1). **`--verbs` is validated at issue:**
+  each name must be an operation an agent or an unattended agent may run (§10.1: a human-only operation is never in a
+  grant; the model would otherwise accept a name that grants nothing). The D60 role terms are the model's
+  (`grant.terms` is `invalid.input` with the reason in the message; a viewer is `role.denied` after the pre-check).
+- **`member add`** takes what the invitee made: `--pk` (their person key, base64url) and `--cert` (their first device
+  certificate, a path or `-`); the person id is derived from the key and the certificate is checked by the model
+  (`device.cert`). `member role` and `member remove` of the last owner are `invalid.input` carrying `members.last_owner`.
+  Maintainers add members and viewers, owners do everything else; a device whose certificate lacks `operate` cannot sign
+  member, role, grant or settings events (`device.scope`, §5.3).
+- **Texts.** `request-changes` and a `fail` verdict need `-m`; every text passes the §11.3 rules (`parse.text`) and the
+  grant-secret filter. `close --duplicate-of` loads and normalises the key (`not_found` if there is no such ticket).
+- **Not built here, because no operation is declared for it in §10.3:** `invalid acknowledge`, `restore`, ticket
+  `policy`/`people`/`visibility`, workspace `policy`/`settings`, `device` and `addon` events. Their person events exist
+  in §5.4; their operations arrive with the task that declares them.
+
 ## 11. Encodings, ids, text and value lists
 
 ### 11.1 Field types and ids

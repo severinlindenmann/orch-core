@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+ok role.changed p_PERSON maintainer seq=7
+next: orch member
+--- stderr

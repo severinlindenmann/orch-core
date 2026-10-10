@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+ok member.added p_PERSON viewer seq=7
+next: orch member
+--- stderr

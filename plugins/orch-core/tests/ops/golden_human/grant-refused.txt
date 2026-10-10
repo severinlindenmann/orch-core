@@ -1,0 +1,4 @@
+exit 5
+--- stdout
+--- stderr
+err invalid.input --verbs: approve is not an operation an agent may run · retry:false · next: orch describe grant

@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+ok grant.issued gr_GRANT until=2026-09-21T22:20:01Z
+the secret was shown on your terminal
+next: set ORCH_GRANT=<the value shown> for the harness
+--- stderr

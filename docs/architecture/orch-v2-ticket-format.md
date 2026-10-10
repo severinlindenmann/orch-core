@@ -172,7 +172,7 @@ A repo name in `links` matches `^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$`; a branch nam
 ## 4. `body.md`
 
 Prose only, with no frontmatter. A section starts with `## ` at column 0 outside a code fence, as in v1, including
-v1's guards against forged headings. **Code fence (exact):** a line starting at column 0 with three or more backticks or three or more tildes opens a fence; it is closed by a line at column 0 of the same character, at least as long, with nothing after it but spaces. Inside a fence, `## ` lines are text. A `## ` line at column 0 outside a fence that isn't a known section heading is refused.
+v1's guards against forged headings. **Code fence (exact):** a line starting at column 0 with three or more backticks or three or more tildes opens a fence; it is closed by a line at column 0 of the same character, at least as long, with nothing after it but spaces. Inside a fence, `## ` lines are text. A `## ` line at column 0 outside a fence that isn't a known section heading is refused. Section text that ends with a fence still open is refused.
 
 | Section (heading) | id | feature | bug | chore | spike | epic |
 |---|---|---|---|---|---|---|

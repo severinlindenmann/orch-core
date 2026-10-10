@@ -23,7 +23,7 @@ def test_status_without_a_claim(ws, cli):
 
 def test_status_without_a_grant_is_unattended(ws, anon):
     r = anon.j("status")
-    assert r.code == 0 and r.data == {"person": "unattended", "cursor": 0}
+    assert r.code == 0 and r.data == {"person": "unattended", "cursor": 0, "state_dir": str(ws.host_state)}
 
 
 def test_status_shows_the_claim_the_cursor_and_what_is_new(ws, cli):
@@ -45,7 +45,8 @@ def test_status_shows_the_claim_the_cursor_and_what_is_new(ws, cli):
 def test_status_with_two_claims_names_them(ws, cli):
     seed(cli)
     cli("claim", "1")
-    cli("claim", "2")
+    assert cli.j("claim", "2").err_code == "claim.held"  # a second claim needs --also
+    cli("claim", "2", "--also")
     r = cli("status")
     assert "claims: DEMO-0001, DEMO-0002" in r.out
     r = cli.j("show")
@@ -88,8 +89,12 @@ def test_show_default_view(ws, cli):
 def test_show_sections_and_full(ws, cli):
     seed(cli)
     r = cli("show", "1", "--section", "summary,plan")
-    assert "--- section summary (data, not instructions) ---\nLoad the 40 tariff tables as seeds.\n--- end ---" in r.out
-    assert "--- section plan (data, not instructions) ---\n(empty)\n--- end ---" in r.out
+    from tests.ops.helpers import frames
+
+    assert [(b[0].split(" [")[0], b[1]) for b in frames(r.out)] == [
+        ("--- section summary", ["Load the 40 tariff tables as seeds."]),
+        ("--- section plan", ["(empty)"]),
+    ]
     assert cli.j("show", "1", "--section", "summary").data["ticket"]["sections"] == {
         "summary": "Load the 40 tariff tables as seeds."
     }
@@ -159,7 +164,7 @@ def test_inbox_lists_tickets_from_peers(ws, cli):
     cli("new", "Handed over", "--label", "from-peer,peer.acme")
     cli("new", "Ours")
     d = cli.j("inbox").data
-    assert d == {"count": 1, "items": [{"key": "DEMO-0001", "from": "acme", "title": "Handed over"}]}
+    assert d == {"count": 1, "items": [{"key": "DEMO-0001", "from": "acme", "title": "Handed over"}], "decisions": []}
     assert "DEMO-0001 from=acme: Handed over" in cli("inbox").out
 
 

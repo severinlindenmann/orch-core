@@ -29,17 +29,22 @@ def _hits(v: Any, texts: dict[str, str], needle: str) -> Iterator[tuple[str, str
 
 def handle(ctx: Context, args: dict[str, Any]) -> Result:
     """Case-insensitive substring search over the titles, sections, criteria and tasks of the tickets the actor may
-    see, newest first; one hit per place."""
+    see, newest first; one hit per place. The files are scanned for candidates (bytes, no replay); only a candidate is
+    loaded and verified, and everything printed comes from the verified ticket."""
     c = Call.of(ctx, "search")
     needle = c.text(args["query"], one_line=True, what="query").lower()
     if not needle.strip():
         raise OrchError("invalid.input", "query is empty")
-    c.store.load_all()
+    cands = c.store.raw_matches(needle)
+    views_ = [v for u in cands if (v := c.store.ticket(u)) is not None and c.sees(v)]
+    views_.sort(key=lambda v: views.key_number(v.key), reverse=True)
     hits: list[dict[str, str]] = []
     limit = args.get("limit", 10)
-    for v in sorted(c.store.state.tickets.values(), key=lambda v: views.key_number(v.key), reverse=True):
-        if not c.sees(v) or len(hits) >= limit:
-            continue
+    left = 0
+    for i, v in enumerate(views_):
+        if len(hits) >= limit:
+            left = len(views_) - i
+            break
         try:
             texts = c.store.body_sections(v.uid)
         except StoreError:
@@ -49,10 +54,13 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
             if len(hits) >= limit:
                 break
     body = "\n".join(f"{h['key']} {h['where']}: {h['line']}" for h in hits)
+    lines = fence(body, "search hits") if hits else ["no hits"]
+    if left:
+        lines.append(f"+{left} more tickets match (orch search QUERY --limit N)")
     return Result(
         data={"count": len(hits), "hits": hits},
         hints=[f"orch show {hits[0]['key']}" if hits else "orch list"],
-        lines=fence(body, "search hits") if hits else ["no hits"],
+        lines=lines,
     )
 
 

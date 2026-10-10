@@ -78,7 +78,6 @@
       ],
       "current_state": "",
       "events": [
-        "#11 artifact.added a T1-receipt.log",
         "#12 task.done a T1",
         "#13 log.added a Seeds are in; the join is next.",
         "#14 question.asked a Q1",

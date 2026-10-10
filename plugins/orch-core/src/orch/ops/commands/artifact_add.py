@@ -14,7 +14,10 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
 OP = operation(
     "artifact.add",
     "Edit",
-    "Store a file; works without a grant (unattended, never evidence). --ac and --task need a grant.",
+    (
+        "Store a file; works without a grant (unattended, never evidence). --ac and --task need a grant. "
+        "A receipt is only made by task done --run."
+    ),
     who="unattended",
     props={
         "path": S("file to store", **{"x-metavar": "PATH"}),
@@ -28,7 +31,6 @@ OP = operation(
             "dataset",
             "build",
             "diagram",
-            "receipt",
             "other",
             default="other",
         ),

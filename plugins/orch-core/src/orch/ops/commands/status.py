@@ -46,6 +46,10 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         hints = ["orch show REF"]
     else:
         lines.append("no claim")
+    data["state_dir"] = str(c.ws.state_dir)
+    lines.append(f"state dir {c.ws.state_dir}" + (" (genesis pin created by this call)" if c.ws.pin_created else ""))
+    if c.ws.pin_created:
+        data["pin"] = "created"
     return Result(data=data, key=view.key if view else None, cursor=data["cursor"], hints=hints, lines=lines)
 
 
@@ -57,8 +61,8 @@ OP = operation(
     pre=("workspace_exists",),
     text="ok status {person} cursor={cursor}[ grant={grant}][ claim={claim}]\nnext: {next}",
     data=obj(
-        {"person": STR, "grant": STR, "claim": KEY, "cursor": INT, "new_events": INT},
-        optional=("grant", "claim", "new_events"),
+        {"person": STR, "grant": STR, "claim": KEY, "cursor": INT, "new_events": INT, "state_dir": STR, "pin": STR},
+        optional=("grant", "claim", "new_events", "pin"),
     ),
     errors=(err("not_found", "run orch init in a workspace", ["orch", "describe", "init"]),),
     handler=handle,

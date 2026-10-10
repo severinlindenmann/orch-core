@@ -26,6 +26,7 @@ __all__ = [
     "names",
     "register",
     "resolve",
+    "verb_events",
 ]
 
 _REGISTRY: dict[str, Operation] = {}
@@ -116,6 +117,12 @@ def resolve(words: list[str] | tuple[str, ...]) -> Operation | None:
         if op.words == target:
             return op
     return None
+
+
+def verb_events() -> dict[str, frozenset[str]]:
+    """Operation name -> the event types it emits: what a grant's ``verbs`` list allows (F1 10.1, exact names).
+    Passed to the model, which stays free of the registry. ``task.done`` includes ``artifact.added`` (its receipt)."""
+    return {op.name: frozenset(op.emits) for op in all()}
 
 
 def iter_groups() -> Iterator[tuple[str, list[Operation]]]:

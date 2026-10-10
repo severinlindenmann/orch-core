@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from tests.ops.helpers import OTHER, Cli
+from tests.ops.helpers import OTHER, Cli, wait_for
 
 OPEN = {"approvers": ["owner"], "count": 1, "not": [], "applies": "all", "independent": False}
 
@@ -183,7 +183,7 @@ def test_wait_a_fail_verdict_exits_3_with_its_text(ws, cli):
     uid = make_ready(ws, cli)
     ws.store = ws.other()
     verdict(ws, uid, "fail", text="the test is wrong")
-    r = cli.j("wait", "--timeout", "5")
+    r = wait_for(cli, "verdict")
     assert r.code == 3 and r.data["kind"] == "verdict" and r.data["outcome"] == "fail"
     assert r.data["text"] == "the test is wrong" and r.data["by"] == ws.owner.ref
     t = cli("wait", "--timeout", "1")  # text mode: the decision text is fenced
@@ -194,7 +194,7 @@ def test_wait_a_pass_verdict_exits_0_and_carries_no_text(ws, cli):
     uid = make_ready(ws, cli)
     ws.store = ws.other()
     verdict(ws, uid, "pass")
-    r = cli.j("wait", "--timeout", "5")
+    r = wait_for(cli, "verdict")
     assert r.code == 0 and r.data["outcome"] == "pass" and "text" not in r.data
 
 
@@ -234,12 +234,12 @@ def test_wait_approved_and_invalidated(ws, cli):
     assert voided
     s._host_append("gate.invalidated", uid, {"gate": "requirements", "cause": "content_changed", "voided": voided})
     s.close()
-    r = cli.j("wait", "--timeout", "5")
+    r = wait_for(cli, "invalidated")
     assert r.code == 3 and r.data["kind"] == "invalidated" and r.data["gate"] == "requirements"
     assert set(r.data) == {"kind", "key", "seq", "cursor", "next", "gate"}
     assert uid  # approved: a later approval is reported as such
     ws.human("approve", uid, "requirements")
-    r = cli.j("wait", "--timeout", "5")
+    r = wait_for(cli, "approved")
     assert r.code == 0 and r.data["kind"] == "approved" and r.data["gate"] == "requirements"
 
 

@@ -73,7 +73,7 @@ def state_dir(env: Mapping[str, str]) -> Path:
     """The host state directory (genesis pins, noted revocations, workspace keys)."""
     if env.get("ORCH_STATE_DIR"):
         return Path(env["ORCH_STATE_DIR"])
-    if env.get("XDG_CONFIG_HOME"):
+    if env.get("XDG_CONFIG_HOME", "").startswith("/"):  # the XDG spec: a relative path is invalid and ignored
         return Path(env["XDG_CONFIG_HOME"]) / "orch"
     return Path(env.get("HOME") or os.path.expanduser("~")) / ".config" / "orch"
 
@@ -123,6 +123,12 @@ class Workspace:
         self._root: Path | None = None
         self._looked = False
         self._store: Any = None
+        #: set by opening the store: was the genesis pin created by this call (trust on first use)?
+        self.pin_created = False
+
+    @property
+    def state_dir(self) -> Path:
+        return state_dir(self.env)
 
     @property
     def root(self) -> Path | None:
@@ -155,6 +161,7 @@ class Workspace:
             backend = FileBackend(keys)
             if backend.exists("wsk"):
                 host = BackendSigner(backend, "wsk")
+        self.pin_created = not (sd / "hosts" / wid / "genesis").exists()
         return Store.open(
             root,
             expected_workspace_id=wid,
@@ -189,46 +196,56 @@ def guarded(handler: Handler, name: str, declared: list[str]) -> Handler:
 
 
 class Notes:
-    """What a session was shown or wrote, per ticket: ``base`` (path -> hash), ``cursor`` and ``since``.
+    """What a session was shown or wrote, per ticket, and which tickets it claimed.
 
-    One ``<session>.notes.json`` under ``.state/sessions``, replaced atomically under the sessions lock. It is advisory:
-    an unreadable file counts as empty, which only makes the next edit ask the agent to read first (a conflict), never
-    lets a stale write through. At most 100 tickets are kept."""
+    ``base`` (path -> hash) is what ``base_rev`` is built from; ``cursor`` is the highest ``seq`` shown; ``decided``
+    is the decision cursor: **only** ``wait`` (and an explicit ``inbox``) advances it, so a decision the agent was not
+    handed stays undelivered, whatever else it read (``show`` lists undelivered decisions). ``claims`` lists the uids
+    the session claimed, so a command without a REF loads those and nothing else.
+
+    One ``<session>.notes.json`` under ``.state/sessions``, replaced atomically under the sessions lock. It is advisory
+    and forgeable by whoever owns the files (the same user): an unreadable file counts as empty, which only makes the
+    next edit ask the agent to read first, never lets a stale write through (the store checks ``base_rev`` itself). At
+    most 100 tickets and 20 claims are kept."""
 
     KEEP = 100
+    KEEP_CLAIMS = 20
 
     def __init__(self, directory: Path | None, session: str | None) -> None:
         self.directory = directory
         self.session = session
-        self._mem: dict[str, dict[str, Any]] = {}
+        self._mem: dict[str, Any] = {"tickets": {}, "claims": []}
 
     def _path(self) -> Path | None:
         if self.directory is None or not self.session:
             return None
         return self.directory / (re.sub(r"[^A-Za-z0-9_-]", "_", self.session)[:120] + ".notes.json")
 
-    def _load(self) -> dict[str, dict[str, Any]]:
+    def _load(self) -> dict[str, Any]:
         p = self._path()
         if p is None:
             return self._mem
         try:
             doc = json.loads(p.read_bytes())
-            tickets = doc["tickets"]
-            if isinstance(tickets, dict) and all(isinstance(v, dict) for v in tickets.values()):
-                return tickets
+            tickets, claims = doc["tickets"], doc.get("claims", [])
+            ok = isinstance(tickets, dict) and all(isinstance(v, dict) for v in tickets.values())
+            if ok and isinstance(claims, list) and all(isinstance(c, str) for c in claims):
+                return {"tickets": tickets, "claims": claims}
         except (OSError, ValueError, KeyError, TypeError, RecursionError):
             pass
-        return {}
+        return {"tickets": {}, "claims": []}
 
-    def _store(self, tickets: dict[str, dict[str, Any]]) -> None:
+    def _save(self, doc: dict[str, Any]) -> None:
         p = self._path()
         if p is None:
-            self._mem = tickets
+            self._mem = doc
             return
         from orch.store.fsio import write_atomic
 
-        newest = sorted(tickets, key=lambda u: tickets[u].get("at", 0), reverse=True)[: self.KEEP]
-        write_atomic(p, json.dumps({"tickets": {u: tickets[u] for u in newest}}).encode(), mode=0o600, durable=False)
+        t = doc["tickets"]
+        newest = sorted(t, key=lambda u: t[u].get("at", 0), reverse=True)[: self.KEEP]
+        out = {"tickets": {u: t[u] for u in newest}, "claims": doc["claims"][-self.KEEP_CLAIMS :]}
+        write_atomic(p, json.dumps(out).encode(), mode=0o600, durable=False)
 
     @contextlib.contextmanager
     def _locked(self) -> Iterator[None]:
@@ -243,8 +260,22 @@ class Notes:
 
     def get(self, uid: str) -> dict[str, Any]:
         with self._locked():
-            e = self._load().get(uid) or {}
-        return {"cursor": int(e.get("cursor", 0)), "since": e.get("since"), "base": dict(e.get("base", {}))}
+            e = self._load()["tickets"].get(uid)
+        if e is None:
+            return {"cursor": 0, "decided": None, "base": {}}
+        return {"cursor": int(e.get("cursor", 0)), "decided": e.get("decided"), "base": dict(e.get("base", {}))}
+
+    def claims(self) -> list[str]:
+        with self._locked():
+            return list(self._load()["claims"])
+
+    def add_claim(self, uid: str) -> None:
+        if not self.session:
+            return
+        with self._locked():
+            doc = self._load()
+            doc["claims"] = [c for c in doc["claims"] if c != uid] + [uid]
+            self._save(doc)
 
     def update(
         self,
@@ -253,21 +284,25 @@ class Notes:
         now: float,
         base: Mapping[str, str] | None = None,
         cursor: int | None = None,
-        since: int | None = None,
+        decided: int | None = None,
+        first_decided: int = 0,
     ) -> None:
+        """Merge into the entry of ``uid``. A new entry starts with ``decided = first_decided`` (the head when the
+        session first touched the ticket: older decisions were not made for it); ``decided`` only moves forward."""
         if not self.session:
             return
         with self._locked():
-            tickets = self._load()
-            e = tickets.setdefault(uid, {})
+            doc = self._load()
+            e = doc["tickets"].setdefault(uid, {"decided": first_decided})
+            e.setdefault("decided", first_decided)
             if base:
                 e.setdefault("base", {}).update(base)
             if cursor is not None:
                 e["cursor"] = max(int(e.get("cursor", 0)), cursor)
-            if since is not None:
-                e["since"] = since
+            if decided is not None:
+                e["decided"] = max(int(e["decided"]), decided)
             e["at"] = int(now)
-            self._store(tickets)
+            self._save(doc)
 
 
 def path_hash(view: Any, path: str) -> str:
@@ -302,6 +337,7 @@ class Projection:
         self._seq, self._prev = stamp["seq"] - 1, stamp["prev"]
         self._at, self._ws_seq = stamp["at"], stamp["ws_seq"]
         self._state = store.state
+        self._noted = call.notes.get(self.uid)["base"]  # read once for the whole plan
         self.planned: list[Planned] = []
         self._probes: list[dict[str, Any]] = []
         self.bases: dict[str, str] = {}
@@ -313,7 +349,7 @@ class Projection:
         the session never read it or it changed since."""
         if path in self.bases:
             return self.bases[path]
-        noted = self.call.notes.get(self.uid)["base"].get(path)
+        noted = self._noted.get(path)
         code = "conflict.section" if path.startswith("body.") else "conflict.field"
         what = path[5:] if path.startswith("body.") else path[len("ticket.") :]
         if noted is None:
@@ -386,8 +422,13 @@ class Projection:
         out = []
         for i, p in enumerate(self.planned):
             idem = f"{c.ctx.idem}:{i}" if c.ctx.idem else None
-            out.append(c.store.append(p.event, log=self.uid, body=p.body, artifacts=p.artifacts, idem=idem))
-        c.wrote(self.uid, self.first_seq - 1, out[-1].event["seq"], self.bases, c.store.state.tickets[self.uid])
+            done = c.store.append(p.event, log=self.uid, body=p.body, artifacts=p.artifacts, idem=idem)
+            out.append(done)
+            # the session's notes follow every append, so a retry after a crash between two of them knows what its own
+            # first events changed and is not a conflict with itself
+            view = done.state.tickets[self.uid]
+            bases = {path: path_hash(view, path) for path in p.event.get("base_rev", {})}
+            c.wrote(self.uid, done.event["seq"] - 1, done.event["seq"], bases)
         return out
 
 
@@ -477,20 +518,43 @@ class Call:
             return True
         return self.person is not None and self.person in view.visibility["restricted"]
 
+    def claimed_uids(self) -> list[str]:
+        """The uids this session (and the sessions it works under: ``s_X.1`` under ``s_X``) recorded as claimed."""
+        out: list[str] = []
+        session = self.ctx.session or ""
+        while session:
+            out += Notes(records_dir(self.ws.root) if self.ws.root else None, session).claims()
+            session = session.rpartition(".")[0]
+        return list(dict.fromkeys(out))
+
     def mine(self, *, live_only: bool = True) -> list[Any]:
-        """Tickets whose claim belongs to this session's family (``s_X`` and ``s_X.1`` share ``s_X``'s claim)."""
+        """Tickets whose claim belongs to this session's family (``s_X`` and ``s_X.1`` share ``s_X``'s claim): the
+        tickets in its notes, each loaded and verified (a stale entry drops out); no other ticket is read."""
         from orch.model.claims import in_family
 
         session = self.ctx.session
         if not session:
             return []
-        self.store.load_all()
         out = []
-        for v in self.store.state.tickets.values():
-            c = v.claim
+        for uid in self.claimed_uids():
+            v = self.store.ticket(uid)
+            c = v.claim if v is not None else None
             if c is not None and (c.live or not live_only) and in_family(session, c.session) and self.sees(v):
                 out.append(v)
         return sorted(out, key=lambda v: v.key)
+
+    @property
+    def verbs(self) -> Any:
+        """``"agent"`` or the operation names the (verified) grant lists."""
+        gid = self.grant_id
+        view = self.store.state.workspace.grants.get(gid) if gid and self.person else None
+        return "agent" if view is None else view.verbs
+
+    def check_verb(self, op_name: str) -> None:
+        """A grant with a list of verbs covers exactly the operations it names (F1 10.1)."""
+        v = self.verbs
+        if v != "agent" and op_name not in v:
+            raise OrchError("grant.verb", f"the grant does not cover {op_name}")
 
     def resolve(self, ref: str | None = None, *, live_only: bool = True, need_claim: bool = False) -> Any:
         """The ticket view for ``ref`` (``DEMO-0043``, ``43``, ``DEMO-0043/T3``) or, without one, the session's single
@@ -501,7 +565,11 @@ class Call:
             if len(mine) == 1:
                 return mine[0]
             names = ", ".join(v.key for v in mine) or "none"
-            raise OrchError("ambiguous_ref", f"name the ticket REF; your claims: {names}")
+            import orch.ops as ops
+
+            cli = ops.get(self.op).cli
+            hint = f"orch {cli} {mine[0].key}" if mine else "orch claim --next"
+            raise OrchError("ambiguous_ref", f"name the ticket REF; your claims: {names}", hint=hint)
         view = self.store.ticket(part)
         if view is None or not self.sees(view):
             raise OrchError("not_found", f"no ticket {flat(part)[:60]}")
@@ -532,13 +600,14 @@ class Call:
         base = {f"ticket.{f}": path_hash(view, f"ticket.{f}") for f in fields}
         base.update({f"body.{s}": path_hash(view, f"body.{s}") for s in sections})
         head = self.store.head_seq(view.uid) if seq is None else seq
-        self.notes.update(view.uid, now=self.now, base=base, cursor=head)
+        self.notes.update(view.uid, now=self.now, base=base, cursor=head, first_decided=head)
 
-    def wrote(self, uid: str, before: int, last: int, bases: Mapping[str, str], view: Any) -> None:
+    def wrote(self, uid: str, before: int, last: int, bases: Mapping[str, str]) -> None:
         """After an append of events ``before+1 .. last``: the written paths are known, the cursor moves over the
-        session's own events only when it had seen everything before them, and ``wait`` waits after ``last``."""
+        session's own events only when it had seen everything before them. The decision cursor starts at ``before`` for
+        a ticket the session had not touched (a decision after its first write is for it) and never moves here."""
         cur = self.notes.get(uid)["cursor"]
-        self.notes.update(uid, now=self.now, base=bases, cursor=last if cur >= before else None, since=last)
+        self.notes.update(uid, now=self.now, base=bases, cursor=last if cur >= before else None, first_decided=before)
 
     def cursor(self, uid: str) -> int:
         return self.notes.get(uid)["cursor"]
@@ -686,7 +755,11 @@ def input_digest(ctx: Context, source: str) -> str | None:
             os.close(fd)
             return None
         with os.fdopen(fd, "rb") as f:
+            total = 0
             while chunk := f.read(1 << 20):
+                total += len(chunk)
+                if total > ARTIFACT_LIMIT:  # the handler refuses it; the key does not read it all
+                    return None
                 h.update(chunk)
         return h.hexdigest()
     except (OSError, ValueError):

@@ -101,6 +101,10 @@ NORMAL = [
     (re.compile(r"gr_[0-7][0-9A-HJKMNP-TV-Z]{25}"), "gr_GRANT"),
     (re.compile(r"exit0/[0-9]+ms"), "exit0/Nms"),
     (re.compile(r'"ms":[0-9]+'), '"ms":N'),
+    (re.compile(r"\[[0-9a-f]{8}\]"), "[NONCE]"),
+    (re.compile(r"--- end [0-9a-f]{8} ---"), "--- end NONCE ---"),
+    (re.compile(r"state dir \S+"), "state dir STATE"),
+    (re.compile(r'"state_dir": "[^"]+"'), '"state_dir": "STATE"'),
     (re.compile(r"[0-7][0-9A-HJKMNP-TV-Z]{25}"), "ULID"),
 ]
 

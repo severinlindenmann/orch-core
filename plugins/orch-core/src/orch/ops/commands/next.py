@@ -14,14 +14,14 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     view = views.next_ticket(c)
     if view is None:
         return Result(data={"target": "none"}, hints=["orch new TITLE"], lines=["nothing is free to work on"])
-    mine = view.claim is not None and view.claim.live and c.mine() == [view]
+    mine = view.claim is not None and view.claim.live and view.uid in {v.uid for v in c.mine()}
     data = {"target": view.key, "title": flat(view.title)}
     return Result(
         data=data,
         key=view.key,
         seq=c.store.head_seq(view.uid),
         cursor=c.cursor(view.uid),
-        hints=[views.next_hint(view, ctx.session) if mine else f"orch claim {view.key}"],
+        hints=[f"orch show {view.key}" if mine else f"orch claim {view.key}"],
         lines=fence(
             f"{view.key} {view.status} {view.fields['priority']}: {views.short(view.title, 100)}", "next ticket"
         ),

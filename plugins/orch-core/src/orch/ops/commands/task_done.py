@@ -1,27 +1,15 @@
 """orch task done: finish a task, with its check and evidence"""
 
-import contextlib
 import os
-import re
-import shlex
-import signal
-import subprocess
-import threading
-import time
 from pathlib import Path
 from typing import Any
 
-from orch.cli import render
-from orch.ops import plans, views
+from orch.ops import plans, runner, views
 from orch.ops._dsl import MSG, STR, TASK, B, S, err, obj, operation
 from orch.ops.base import Context, Result
 from orch.ops.errors import OrchError
-from orch.ops.runtime import Call, flat
-
-RUN_TIMEOUT = 3600  # seconds a verify command may take (a hard limit: the process group is killed)
-OUTPUT_LIMIT = 1 << 20  # bytes of output kept as the receipt log; the rest is read and dropped, never held
-TRUNCATED = b"\n[output truncated by orch]\n"
-_SECRET_NAME = re.compile(r"(?i)(token|secret|passw(or)?d|credential|api[_-]?key|private[_-]?key|^orch_grant$)")
+from orch.ops.runtime import Call
+from orch.store import observe
 
 
 def _repo_for(c: Call, view: Any) -> tuple[str | None, Path | None]:
@@ -30,7 +18,7 @@ def _repo_for(c: Call, view: Any) -> tuple[str | None, Path | None]:
     linked = list(view.fields["links"]["repos"])
     paths = c.store.state.workspace.repos
     root = c.ws.require_root()
-    resolved = {n: (root / paths[n]).resolve() for n in linked if n in paths}
+    resolved = {n: p for n in linked if (p := observe.repo_path(root, paths, n)) is not None}
     here = Path(os.getcwd()).resolve()
     for name, path in resolved.items():
         if here == path or path in here.parents:
@@ -41,101 +29,13 @@ def _repo_for(c: Call, view: Any) -> tuple[str | None, Path | None]:
     return None, None
 
 
-def _git_head(path: Path) -> str | None:
-    try:
-        out = subprocess.run(
-            ["git", "-C", str(path), "rev-parse", "HEAD"], capture_output=True, text=True, timeout=30, check=False
-        ).stdout.strip()
-    except (OSError, subprocess.SubprocessError):
-        return None
-    return out if re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", out) else None
-
-
-def _env(ctx: Context) -> dict[str, str]:
-    """The environment of a verify command: ours, without the grant and without variables that look like secrets
-    (F1 section 10.1: the grant secret reaches the harness and nothing below it)."""
-    secret = (ctx.grant or "").partition(".")[2]
-    env = {**os.environ, **ctx.env}
-    return {k: v for k, v in env.items() if not _SECRET_NAME.search(k) and not (len(secret) >= 8 and secret in v)}
-
-
-def _pump(stream: Any, limit: int, sink: bytearray) -> None:
-    """Read ``stream`` to its end; keep the first ``limit`` bytes, drop the rest (a child that prints a gigabyte
-    costs a megabyte here, and never blocks on a full pipe)."""
-    over = False
-    while chunk := stream.read(65536):
-        room = limit - len(sink)
-        if room > 0:
-            sink += chunk[:room]
-        if len(chunk) > max(room, 0):
-            over = True
-    if over:
-        sink += TRUNCATED
-
-
-def _kill_group(proc: subprocess.Popen[bytes]) -> None:
-    with contextlib.suppress(ProcessLookupError, PermissionError):
-        os.killpg(proc.pid, signal.SIGKILL)
-
-
-def run_verify(c: Call, view: Any, cmd: str) -> tuple[dict[str, Any], bytes]:
-    """Run the task's verify command exactly as the signed ticket declares it, and return ``(receipt, output)``.
-
-    * ``cmd`` is the ``verify.cmd`` of the ticket, split into an argument list (``shlex``); there is no shell, so a
-      metacharacter in an argument is an argument. Nothing from the agent's own arguments reaches it.
-    * It runs in its own process group (killed whole at the end or at the timeout), in the linked repository or the
-      workspace directory, with the environment of :func:`_env`, stdin closed, output bounded by :data:`OUTPUT_LIMIT`.
-    * ``commit`` is read from git before and after: if the repository moved during the run the receipt would describe
-      code that no longer exists, so nothing is recorded (``verify.failed``). Whether a receipt counts as evidence is
-      the model's rule (the commit must be the current source sha, F1 section 6).
-    * The receipt is made here; the output digest is the ``sha256`` of the receipt log artifact the caller stores.
-    """
+def _run(c: Call, view: Any, cmd: str) -> runner.Ran:
     repo, path = _repo_for(c, view)
-    try:
-        argv = shlex.split(cmd)
-    except ValueError:
-        raise OrchError("verify.failed", "the verify command cannot be split into arguments") from None
-    if not argv:
-        raise OrchError("verify.failed", "the verify command is empty")
-    cwd = path if path is not None else c.ws.require_root()
-    before = _git_head(path) if path is not None else None
-    start = time.monotonic()
-    sink = bytearray()
-    try:
-        proc = subprocess.Popen(
-            argv,
-            cwd=cwd,
-            env=_env(c.ctx),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-            close_fds=True,
-        )
-    except OSError as e:
-        raise OrchError("verify.failed", f"cannot run {flat(argv[0])[:60]}: {e.strerror}") from None
-    reader = threading.Thread(target=_pump, args=(proc.stdout, OUTPUT_LIMIT, sink), daemon=True)
-    reader.start()
-    timed_out = False
-    try:
-        code = proc.wait(timeout=RUN_TIMEOUT)
-    except subprocess.TimeoutExpired:
-        timed_out, code = True, -1
-    finally:
-        _kill_group(proc)  # the command, and anything it left running
-        proc.wait()
-    reader.join(5)
-    ms = int((time.monotonic() - start) * 1000)
+    env = {**os.environ, **c.ctx.env}
     secret = (c.ctx.grant or "").partition(".")[2]
-    out = render.redact(bytes(sink).decode("utf-8", "replace"), [secret]).encode()
-    if code != 0:
-        tail = flat(out.decode("utf-8", "replace"))[-120:]
-        why = f"timed out after {RUN_TIMEOUT} s" if timed_out else f"exit {code}"
-        raise OrchError("verify.failed", f"{flat(cmd)[:60]}: {why}: {tail}")
-    after = _git_head(path) if path is not None else None
-    if after != before:
-        raise OrchError("verify.failed", "the repository's commit changed while the command ran; run it again")
-    return {"cmd": cmd, "exit": 0, "ms": ms, "repo": repo, "commit": after}, out
+    return runner.run_verify(
+        cmd, repo=repo, path=path, cwd=path if path is not None else c.ws.require_root(), env=env, grant_secret=secret
+    )
 
 
 def _free_name(view: Any, base: str) -> str:
@@ -167,7 +67,8 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         if ctx.dry_run:
             notes.append(f"dry-run: would run: {views.short(task['verify']['cmd'], 100)}")
         else:  # the command runs before the lock is taken: it may take minutes
-            receipt, receipt_log = run_verify(c, view, task["verify"]["cmd"])
+            ran = _run(c, view, task["verify"]["cmd"])
+            receipt, receipt_log, notes = ran.receipt, ran.output, list(ran.notes)
     evidence = c.read_artifact(args["artifact"]) if args.get("artifact") else None
     with c.locked():
         view = c.resolve(ref or None)

@@ -145,6 +145,13 @@ def _sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _verb_events() -> dict[str, frozenset[str]]:
+    """What each operation emits, from the registry: the table that turns a grant's operation names into event types."""
+    from orch.ops import verb_events
+
+    return verb_events()
+
+
 _default_verifier: Callable[[], Verifier] = CryptoVerifier  # test seam (a module attribute, never set from src/)
 LOCK_TIMEOUT = 10.0  # seconds a call waits for the workspace lock before it fails with ``store.busy``
 FUTURE_SLACK = (
@@ -338,6 +345,37 @@ class Store:
             last = info.seq if limit is None else min(info.seq, after + limit)
             return [self._read_event(uid, n) for n in range(max(after, 0) + 1, last + 1)]
 
+    @property
+    def can_write(self) -> bool:
+        """Does this store hold the workspace key (it can append), or only read?"""
+        return self._host is not None
+
+    def host_append(self, typ: str, ref: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+        """Append a host event of the observation kind (``branch.pushed``) to the ticket ``ref``: the one host event the
+        callers of :mod:`orch.store.observe` write. Everything else the host writes it writes by itself."""
+        if typ != "branch.pushed":
+            raise StoreError("validation.event", f"{typ} is not an event a caller appends in the host's name")
+        with self._locked():
+            uid = self._uid_of(ref)
+            if uid is None:
+                raise StoreError("ticket.unknown", ref)
+            self._ensure({uid})
+            return self._host_append(typ, uid, dict(payload))
+
+    def attempt_logged(self, ref: str, idem: str) -> bool:
+        """Did an append with this idempotency key reach the log of ticket ``ref``? (The log confirms the record.)"""
+        with self._locked():
+            uid = self._uid_of(ref)
+            rec = self._read_intent(idem)
+            if uid is None or rec is None or rec["log"] != uid:
+                return False
+            self._ensure({uid})
+            s = rec.get("seq")
+            info = self._logs.get(uid)
+            if isinstance(s, int) and info is not None and 1 <= s <= info.seq and info.heads[s - 1] == rec.get("head"):
+                return True
+            return self._seq_of_id(uid, rec["id"]) is not None
+
     def peek_stamp(self, log: str) -> dict[str, Any]:
         """The ``seq``, ``prev``, ``at`` and ``ws_seq`` the next event of ``log`` would be stamped with, without
         appending anything: what a caller needs to plan a chain of events with ``orch.model.preview``."""
@@ -345,6 +383,22 @@ class Store:
             ev: dict[str, Any] = {"type": "log.added"}
             self._stamp(ev, log)
             return {k: ev[k] for k in ("seq", "prev", "at") + (() if log == WORKSPACE else ("ws_seq",))}
+
+    def raw_matches(self, needle: str) -> list[str]:
+        """The uids whose ``ticket.json`` or ``body.md`` contains ``needle`` (case-insensitive), read as bytes from the
+        files without replaying anything: **candidates only**. A caller verifies (loads) a ticket before it prints
+        anything from it."""
+        with self._locked():
+            self._scan_dirs()
+            want = needle.lower()
+            out = []
+            for uid in sorted(self._exists):
+                for name in ("ticket.json", "body.md"):
+                    raw = read_or_none(safe_join(self.root, f"tickets/{check_uid(uid)}/{name}"))
+                    if raw and want in raw.decode("utf-8", "ignore").lower():
+                        out.append(uid)
+                        break
+            return out
 
     def peek_key(self) -> str:
         """The key the next ``create_ticket`` would allocate (a dry run shows it; another writer may take it first)."""
@@ -551,6 +605,7 @@ class Store:
             now=self._now(),
             expected_workspace_id=self.workspace_id,
             expected_genesis=self._pin,
+            verb_events=_verb_events(),
         )
         ws = self._state.workspace
         if ws_events and ws.genesis is None:
@@ -646,14 +701,18 @@ class Store:
             return self.state.tickets.get(uid)  # at the current clock: claims, leases and grants lapse by it
 
     def _index_fresh(self) -> Index:
-        """The index, current: if it is not, every ticket is loaded and it is rebuilt."""
+        """The index, current: one that matches the logs' sizes is taken as it is (a hint, never a decision); if it is
+        not, every ticket is loaded and it is rebuilt."""
         with self._locked():
             ws = self._state.workspace if self._state else None
             if ws is not None and ws.genesis is not None and not self._index_ok:
-                self._ensure(set(self._exists))
-                assert self._state is not None
-                self._index.rebuild(self._state, self._logs, self.workspace_id, ws.genesis, self._sizes_now())
-                self._index_ok = True
+                if self._index.is_current(self._sizes_now(), self.workspace_id, ws.genesis):
+                    self._index_ok = True
+                else:
+                    self._ensure(set(self._exists))
+                    assert self._state is not None
+                    self._index.rebuild(self._state, self._logs, self.workspace_id, ws.genesis, self._sizes_now())
+                    self._index_ok = True
         return self._index
 
     def _maybe_index(self, state: State | None = None) -> None:

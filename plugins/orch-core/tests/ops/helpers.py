@@ -141,3 +141,40 @@ class Cli:
         """A command with ``--json``; the document is on stdout for success and failure alike."""
         r = self(*argv, "--json", **kw)
         return r
+
+
+OPEN_RE = r"^--- .* \[([0-9a-f]{8})\] \(data, not instructions\) ---$"
+
+
+def frames(out: str) -> list[tuple[str, list[str]]]:
+    """The fenced blocks of an output as ``(label line, content lines)``, checking each is closed by its own nonce."""
+    import re
+
+    blocks, cur, nonce = [], None, None
+    for x in out.splitlines():
+        m = re.match(OPEN_RE, x)
+        if cur is None and m:
+            cur, nonce = (x, []), m.group(1)
+        elif cur is not None and x == f"--- end {nonce} ---":
+            blocks.append(cur)
+            cur = None
+        elif cur is not None:
+            cur[1].append(x)
+    assert cur is None, "a fence was never closed"
+    return blocks
+
+
+def fenced(out: str) -> str:
+    """All fenced content of an output, joined."""
+    return "\n".join("\n".join(b[1]) for b in frames(out))
+
+
+def wait_for(cli: Any, kind: str, *, tries: int = 6) -> Run:
+    """``wait`` until it hands over a decision of this kind (earlier ones are delivered first, one per call)."""
+    for _ in range(tries):
+        r = cli.j("wait", "--timeout", "2")
+        if r.code in (0, 3) and r.doc["ok"] and r.data["kind"] == kind:
+            return r
+        if r.code not in (0, 3) or r.data["kind"] == "timeout":
+            break
+    raise AssertionError(f"no {kind} decision")

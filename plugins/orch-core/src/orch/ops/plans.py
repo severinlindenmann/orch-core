@@ -266,7 +266,7 @@ def task_add(c: Call, p: Projection, args: dict[str, Any]) -> Out:
     known = {a["id"] for a in p.last_view.fields["acceptance"]}
     for ac in proves:
         if ac not in known:
-            raise OrchError("not_found", f"{p.view.key} has no criterion {ac}")
+            raise OrchError("not_found", f"{p.view.key} has no criterion {ac}", hint="orch ac add TEXT")
     tid = _next_id("T", [t["id"] for t in tasks])
     verify = {"cmd": c.text(args["verify"], one_line=True, what="verify command")} if args.get("verify") else None
     task: dict[str, Any] = {"id": tid, "text": text, "verify": verify, "proves": proves}
@@ -326,6 +326,8 @@ def artifact_event(c: Call, name: str, data: bytes, kind: str, **extra: Any) -> 
 
 
 def artifact_add(c: Call, p: Projection, args: dict[str, Any]) -> Out:
+    if args.get("kind") == "receipt":
+        raise OrchError("invalid.input", "a receipt is only made by task done --run")
     data = c.read_artifact(args["path"])
     name = args.get("name") or os.path.basename(args["path"])
     label = c.text(args["label"], one_line=True, what="label") if args.get("label") else None
@@ -341,6 +343,8 @@ def artifact_replace(c: Call, p: Projection, args: dict[str, Any]) -> Out:
     old = next((a for a in p.last_view.artifacts if a.name == name), None)
     if old is None or old.digest is None:
         raise OrchError("not_found", f"{p.view.key} has no file artifact {short(name, 40)}")
+    if old.kind == "receipt":
+        raise OrchError("invalid.input", f"{name} is a receipt: only task done --run makes one, nothing replaces it")
     data = c.read_artifact(args["path"])
     ev, files = artifact_event(c, name, data, old.kind, ac=old.ac, task=old.task)
     ev["type"] = "artifact.replaced"

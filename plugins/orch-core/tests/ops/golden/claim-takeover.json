@@ -1,15 +1,17 @@
 {
-  "v": "orch.cli/2.0",
-  "ok": true,
-  "data": {
-    "status": "in_progress",
-    "takeover": true
-  },
-  "key": "DEMO-0003",
-  "seq": 4,
-  "cursor": 4,
-  "hints": [
-    "orch show"
-  ]
+  "ok": false,
+  "error": {
+    "code": "claim.held",
+    "message": "you already hold DEMO-0001; with --also you hold several and every command then needs a REF",
+    "hint": "orch claim REF --also, or orch release first",
+    "fix": {
+      "argv": [
+        "orch",
+        "describe",
+        "claim"
+      ]
+    },
+    "retryable": false
+  }
 }
-# exit 0
+# exit 4

@@ -15,6 +15,8 @@ from orch.ops.runtime import Call, flat
 from orch.store import StoreError
 
 MAX_ITEMS = 100
+# keys a batch item may carry where the operation has more than the batch can do (--run, --artifact, --ac)
+ITEM_KEYS = {"task.done": {"task", "message"}}
 
 
 def _items(c: Call, args: dict[str, Any]) -> tuple[str | None, list[dict[str, Any]]]:
@@ -44,7 +46,12 @@ def _check(item: Any, i: int, table: dict[str, Any]) -> tuple[str, dict[str, Any
     for banned in ("ref", "file"):
         if banned in args:
             raise OrchError("invalid.input", f"item {i}: {banned} is not allowed in a batch item (ref is the batch's)")
-    props = ops.get(name).input
+    allowed = ITEM_KEYS.get(name)
+    if allowed is not None and set(args) - allowed:  # a key the batch cannot honour is refused, never ignored
+        extra = ", ".join(sorted(set(args) - allowed))
+        raise OrchError("invalid.input", f"item {i} ({name}): {extra} is not supported in a batch")
+    props = dict(ops.get(name).input)
+    props["required"] = [r for r in props.get("required", []) if r != "ref"]  # the batch names the ticket
     errors = sorted(Draft202012Validator(props).iter_errors(args), key=lambda e: list(map(str, e.path)))
     if errors:
         where = ".".join(str(p) for p in errors[0].absolute_path)
@@ -57,8 +64,19 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     ref, items = _items(c, args)
     table = plans.batch_ops()
     checked = [_check(item, i, table) for i, item in enumerate(items, 1)]
+    for name, _ in checked:
+        c.check_verb(name)  # a grant that lists operations must list every operation the batch runs
     with c.locked():
         view = c.resolve(ref)
+        if ctx.idem and not ctx.dry_run:
+            started = [i for i in range(len(checked) + 4) if c.store.attempt_logged(view.uid, f"{ctx.idem}:{i}")]
+            if started:
+                raise OrchError(
+                    "invalid.input",
+                    f"an earlier attempt of this batch was interrupted after {len(started)} event(s); "
+                    "orch show --log shows what was written: send only the rest",
+                    hint="orch show --log",
+                )
         if any(name.startswith("task.") for name, _ in checked):
             c.require_claim(view)
         p = c.projection(view)

@@ -1,4 +1,4 @@
 exit 5
 --- stdout
 --- stderr
-err ac.evidence_missing submit: requirements not approved; plan not approved; section verification is empty; AC2 has no evidence · retry:false · next: orch artifact add FILE --ac AC1 · fix: orch describe artifact.add
+err ac.evidence_missing submit: requirements not approved; plan not approved; section verification is empty; AC2 has no evidence · retry:false · next: orch ask "approve the requirements gate?" · fix: orch describe artifact.add

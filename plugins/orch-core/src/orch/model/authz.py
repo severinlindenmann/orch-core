@@ -9,6 +9,7 @@ Role rules that belong to one type live with that type's handler.
 
 from __future__ import annotations
 
+from collections.abc import Collection, Mapping
 from typing import Any
 
 from . import visibility
@@ -159,13 +160,21 @@ def authorize_person(core: Core, log: str, e: dict[str, Any], v: Verifier) -> Re
     return None
 
 
-def verb_covers(typ: str, verbs: Any) -> bool:
-    """``"agent"`` covers every agent operation; a list names operations and is matched exactly (§10.1 A3): the
-    event type is the operation name, with no prefix or group matching."""
-    return verbs == "agent" or typ in verbs
+def verb_covers(typ: str, verbs: Any, verb_events: Mapping[str, Collection[str]] | None = None) -> bool:
+    """``"agent"`` covers every agent operation. A list names **operations**, matched exactly (§10.1 A3, no prefix or
+    group matching); an event is covered when some granted operation emits its type (``verb_events``: operation name ->
+    the event types it emits, built from the registry and passed in, so the model stays pure). Without the table (a
+    model test) the names are read as event types."""
+    if verbs == "agent":
+        return True
+    if verb_events is None:
+        return typ in verbs
+    return any(typ in verb_events.get(v, ()) for v in verbs)
 
 
-def authorize_agent(core: Core, t: TCore | None, e: dict[str, Any]) -> Refusal | None:
+def authorize_agent(
+    core: Core, t: TCore | None, e: dict[str, Any], verb_events: Mapping[str, Collection[str]] | None = None
+) -> Refusal | None:
     ws, a, at = core.ws, e["actor"], ts(e["at"])
     g = ws.grants.get(a["grant"])
     if g is None:
@@ -177,7 +186,7 @@ def authorize_agent(core: Core, t: TCore | None, e: dict[str, Any]) -> Refusal |
     m = ws.members.get(a["for"])
     if m is None or m.role == "viewer":
         return Refusal(Code.GRANT_INVALID, "the grant's person is not a member who may run agents")
-    if not verb_covers(e["type"], g.verbs):
+    if not verb_covers(e["type"], g.verbs, verb_events):
         return Refusal(Code.GRANT_VERB, f"the grant does not cover {e['type']}")
     if g.scope == "all" and m.role == "member":
         return Refusal(Code.GRANT_SCOPE, "a member's grant is `workable` only (D60), whatever it says")

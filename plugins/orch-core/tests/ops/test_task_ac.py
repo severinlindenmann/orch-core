@@ -213,10 +213,12 @@ def test_task_done_prints_the_next_task_fenced(ws, cli):
     cli("task", "add", "first")
     cli("task", "add", "second thing")
     r = cli("task", "done", "T1")
-    assert "--- next task T2 (data, not instructions) ---" in r.out and "second thing" in r.out
+    from tests.ops.helpers import frames
+
+    assert [b[0].split(" [")[0] for b in frames(r.out)] == ["--- next task T2"] and "second thing" in r.out
     assert r.out.splitlines()[-1] == "next: orch task start T2"
     r = cli("task", "done", "T2")
-    assert r.out.splitlines()[-1] == "next: orch submit"
+    assert r.out.splitlines()[-1] == 'next: orch ask "approve the requirements gate?"'  # a gate is still open
 
 
 def test_a_dry_run_changes_nothing_and_does_not_run_the_command(ws, cli, tmp_path):
@@ -274,7 +276,7 @@ def test_submit_needs_the_claim_and_approvals(ws, cli):
 
 @pytest.fixture
 def td():
-    import orch.ops.commands.task_done as m
+    import orch.ops.runner as m
 
     return m
 

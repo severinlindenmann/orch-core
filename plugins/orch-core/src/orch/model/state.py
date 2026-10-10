@@ -84,6 +84,7 @@ def replay(
     now: str,
     expected_workspace_id: str,
     expected_genesis: str | None = None,
+    verb_events: Mapping[str, Iterable[str]] | None = None,
 ) -> State:
     """Derive the state from the parsed events of the workspace log and the ticket logs (schema-valid).
 
@@ -96,7 +97,7 @@ def replay(
     Events that fail authorization are absent for state and reported (``workspace.invalid``,
     the tickets' ``frozen``); a broken chain stops that log (``chain_errors``).
     """
-    ctx = Ctx(verifier, expected_workspace_id, expected_genesis)
+    ctx = Ctx(verifier, expected_workspace_id, expected_genesis, verb_events=verb_events)
     core = Core()
     merged: list[tuple[tuple[int, int, int, str, int], str, dict[str, Any]]] = [
         ((e["seq"], 0, 0, "", e["seq"]), WORKSPACE, e) for e in workspace_events
@@ -116,7 +117,7 @@ def admit(state: State, event: dict[str, Any], *, log: str) -> Ok | Refusal:
     shapes the views. It needs no ``host_sig`` yet. ``O(event)`` for a ticket event; a workspace event that changes
     every ticket (member, role, policy, addon, restore, compromised device) copies all tickets.
     """
-    ctx = Ctx(state._ctx.verifier, state._ctx.expected_workspace_id, state._ctx.expected_genesis, admit=True)
+    ctx = dataclasses.replace(state._ctx, admit=True)
     r = apply_event(copy.copy(state._core), log, event, ctx, commit=False)
     return OK if r is None else r
 

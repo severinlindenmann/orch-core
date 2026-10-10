@@ -22,7 +22,14 @@ def build(c: Call, p: Projection, args: dict[str, Any]) -> plans.Out:
             raise
         # the model lists everything that is missing; evidence is the case this operation names
         code = "ac.evidence_missing" if "no evidence" in e.detail else "transition.refused"
-        raise OrchError(code, f"submit: {flat(e.detail)[:180]}") from None
+        gate = next((g for g in ("requirements", "plan") if f"{g} not approved" in e.detail), None)
+        section = next((s for s in ("verification", "findings") if f"section {s} is empty" in e.detail), None)
+        hint = None
+        if gate:
+            hint = f'orch ask "approve the {gate} gate?"'
+        elif section:
+            hint = f"orch section set {section} -m TEXT"
+        raise OrchError(code, f"submit: {flat(e.detail)[:180]}", hint=hint) from None
     return plans.Out({"status": p.last_view.status}, ["orch wait"])
 
 

@@ -2,8 +2,8 @@
   "ok": false,
   "error": {
     "code": "claim.held",
-    "message": "DEMO-0003: held by another session; take it over with --takeover --reason",
-    "hint": "orch claim --takeover --reason TEXT, or pick another ticket",
+    "message": "you already hold DEMO-0001; with --also you hold several and every command then needs a REF",
+    "hint": "orch claim REF --also, or orch release first",
     "fix": {
       "argv": [
         "orch",

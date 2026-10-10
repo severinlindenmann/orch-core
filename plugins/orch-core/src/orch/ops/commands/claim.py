@@ -28,8 +28,17 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
 
         held = view.claim
         if held is not None and held.live and c.ctx.session and in_family(c.ctx.session, held.session):
+            c.notes.add_claim(view.uid)
             return c.result(
                 view, {"status": view.status}, hints=[views.next_hint(view, ctx.session)], lines=["already your claim"]
+            )
+        mine = [v for v in c.mine() if v.uid != view.uid]
+        if mine and not args.get("also"):
+            raise OrchError(
+                "claim.held",
+                f"you already hold {', '.join(v.key for v in mine)}; with --also you hold several and every command "
+                "then needs a REF",
+                hint="orch claim REF --also, or orch release first",
             )
         event: dict[str, Any] = {"type": "claim.taken"}
         if args.get("takeover"):
@@ -48,6 +57,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         p.add(event)
         done = p.commit()
         if done:
+            c.notes.add_claim(view.uid)
             c.shown(p.last_view, fields=views.ALL_FIELDS, sections=tuple(SECTIONS_BY_TYPE[view.type]))
         data: dict[str, Any] = {"status": p.last_view.status}
         if "takeover" in event:
@@ -65,6 +75,7 @@ OP = operation(
         "ref": REF("ticket REF; default: the next ticket"),
         "next": B("claim the next ticket"),
         "takeover": B("take the claim from another session (needs --reason)"),
+        "also": B("hold this claim besides the ones you already hold"),
         "reason": S("why you take over", **{"x-metavar": "TEXT"}),
     },
     positional=("ref",),

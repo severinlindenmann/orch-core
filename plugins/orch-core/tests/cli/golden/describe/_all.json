@@ -58,7 +58,7 @@
         "cli": "inbox",
         "group": "Read",
         "who": "read",
-        "summary": "Tickets handed over from peer workspaces."
+        "summary": "Tickets handed over from peer workspaces, and decisions on your tickets that wait has not handed over."
       },
       {
         "name": "new",
@@ -198,7 +198,7 @@
         "cli": "artifact add",
         "group": "Edit",
         "who": "unattended",
-        "summary": "Store a file; works without a grant (unattended, never evidence). --ac and --task need a grant."
+        "summary": "Store a file; works without a grant (unattended, never evidence). --ac and --task need a grant. A receipt is only made by task done --run."
       },
       {
         "name": "artifact.replace",

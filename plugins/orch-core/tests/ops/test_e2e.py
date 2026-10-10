@@ -84,6 +84,9 @@ def test_a_scripted_agent_session(ws, orch, tmp_path):
     r = orch("ask", "Anything else?", "--options", "no,yes", "--rec", "no")
     assert r.returncode == 0 and "question.asked Q1" in r.stdout
     t = time.monotonic()
+    for gate in ("requirements", "plan"):  # the two approvals came while the agent worked: wait hands them over
+        r = orch("wait", "--timeout", "1", "--json")
+        assert r.returncode == 0 and r.doc["data"]["kind"] == "approved" and r.doc["data"]["gate"] == gate
     r = orch("wait", "--timeout", "1", "--json")
     assert r.returncode == 0 and r.doc["data"]["kind"] == "timeout" and time.monotonic() - t < 15
     r = orch("wait", "--timeout", "1", "--strict-timeout", "--json")

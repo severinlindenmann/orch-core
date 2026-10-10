@@ -46,6 +46,7 @@ class Ctx:
     expected_workspace_id: str
     expected_genesis: str | None = None
     admit: bool = False  # pre-append: no host_sig yet, ws_seq must be the workspace head
+    verb_events: Any = None  # operation name -> event types it emits (grant verbs are operation names, F1 10.1)
 
 
 def _head(e: dict[str, Any]) -> str | None:
@@ -203,7 +204,7 @@ def _authorize(core: Core, log: str, t: TCore | None, e: dict[str, Any], ctx: Ct
         if a.get("unattended") is True:
             if (r := authz.authorize_unattended(ws, t, e)) is not None:
                 return r
-        elif (r := authz.authorize_agent(core, t, e)) is not None:
+        elif (r := authz.authorize_agent(core, t, e, ctx.verb_events)) is not None:
             return r
     if (r := authz.freeze_check(core, log, e)) is not None:
         return r

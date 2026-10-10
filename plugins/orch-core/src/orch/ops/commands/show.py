@@ -3,16 +3,18 @@
 import json
 from typing import Any
 
-from orch.ops import views
+from orch.model.claims import in_family
+from orch.ops import decisions, views
 from orch.ops._dsl import REF, SECTIONS, STR, B, I, L, err, obj, operation
 from orch.ops.base import Context, Result
 from orch.ops.errors import OrchError
 from orch.ops.runtime import Call
 from orch.ops.views import fence
 from orch.schema import SECTIONS_BY_TYPE
+from orch.store import observe
 from orch.store.render import HEADINGS, thaw
 
-LAST = 5  # events in the default view
+LAST = 4  # events in the default view
 LOG_DEFAULT = 20
 
 
@@ -65,7 +67,7 @@ def _header(c: Call, view: Any) -> str:
     if view.fields["size"]:
         bits.append(f"size={view.fields['size']}")
     if view.claim is not None:
-        mine = c.ctx.session and view.claim.session in (c.ctx.session, c.ctx.session.rpartition(".")[0])
+        mine = bool(c.ctx.session) and in_family(c.ctx.session, view.claim.session)
         bits.append("claim=you" if mine else "claim=other")
         if not view.claim.live:
             bits.append(f"lapsed={view.claim.lapsed}")
@@ -79,10 +81,22 @@ def _header(c: Call, view: Any) -> str:
 def _default(c: Call, view: Any, head: int) -> tuple[list[str], dict[str, Any]]:
     texts = c.store.body_sections(view.uid)
     events = c.store.events(view.key, after=max(0, head - LAST))
+    pending = decisions.undelivered(c, view)
     body = [f"title: {views.short(view.title, 100)}"]
+    if pending:  # an answer or a change request the agent was not handed yet: `orch wait` hands it over
+        body += [f"UNREAD {decisions.line(e)}" for e in pending[:5]]
+        if len(pending) > 5:
+            body.append(f"+{len(pending) - 5} more decisions (orch wait)")
+    applies = [
+        f"{g}:{'ok' if v.approved else 'open'}"
+        for g, v in view.gates.items()
+        if v.applies and g in ("requirements", "plan")
+    ]
+    if applies:
+        body.append("gates " + " ".join(applies))
     state = texts.get("current_state", "").strip()
     if state:
-        body.append("current_state: " + views.short(state.replace("\n", " / "), 240))
+        body.append("current_state: " + views.short(state.replace("\n", " / "), 200))
     qs = {q["id"]: q for q in _questions(view)}
     for q in views.open_questions(view):
         body.append(views.question_line(q, qs))
@@ -166,6 +180,8 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     if args.get("since") is not None and not (args.get("log") or args.get("diff")):
         raise OrchError("invalid.input", "--since goes with --log or --diff")
     view = c.resolve(args.get("ref"))
+    if observe.observe(c.store, view.key):  # a repository moved since the last look: show what is there now
+        view = c.resolve(args.get("ref"))
     head = c.store.head_seq(view.uid)
     name = modes[0] if modes else "default"
     if name == "section":
@@ -180,11 +196,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     else:
         lines, doc = _default(c, view, head)
         shown = "default"
-    data: dict[str, Any] = {"view": shown}
-    if shown in ("log", "diff"):
-        data["ticket"] = doc
-    else:
-        data["ticket"] = doc
+    data: dict[str, Any] = {"view": shown, "ticket": doc}
     return Result(
         data=data,
         key=view.key,

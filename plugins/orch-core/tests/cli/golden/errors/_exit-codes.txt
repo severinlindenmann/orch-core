@@ -19,6 +19,7 @@ grant.secret_in_args 2 retry:false
 human_only 3 retry:false
 grant.required 3 retry:false
 grant.expired 3 retry:false
+grant.verb 3 retry:false
 role.denied 3 retry:false
 transition.refused 3 retry:false
 stop 3 retry:false

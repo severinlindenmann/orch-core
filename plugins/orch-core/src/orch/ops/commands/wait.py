@@ -5,40 +5,13 @@ from typing import Any
 
 from orch.ops._dsl import REF_PATTERN, B, I, S, err, operation
 from orch.ops.base import Context, Result
+from orch.ops.decisions import decision
 from orch.ops.errors import OrchError
 from orch.ops.runtime import Call
 from orch.ops.views import fence
+from orch.store import observe
 
 POLL = (0.1, 0.25, 0.5, 1.0)  # seconds between looks at the log, growing
-
-
-def _by(e: dict[str, Any]) -> str:
-    return e["actor"]["id"]
-
-
-def decision(e: dict[str, Any], key: str) -> tuple[dict[str, Any], int] | None:
-    """What a ticket event means for a waiting agent (F1 10.4 item 7), as ``(fields, exit code)``; ``None`` when it
-    is not a decision. The fields are exactly the ones the item lists for the kind and nothing else."""
-    t = e["type"]
-    base = {"key": key, "seq": e["seq"]}
-    if t == "question.answered":
-        out = {"kind": "answered", **base, "question": e["question"], "by": _by(e)}
-        for k in ("option", "text"):
-            if e.get(k) is not None:
-                out[k] = e[k]
-        return out, 0
-    if t == "gate.approved":
-        return {"kind": "approved", **base, "gate": e["gate"], "by": _by(e)}, 0
-    if t == "gate.changes_requested":
-        return {"kind": "changes_requested", **base, "gate": e["gate"], "text": e["text"], "by": _by(e)}, 3
-    if t == "verdict.given":
-        out = {"kind": "verdict", **base, "outcome": e["outcome"], "by": _by(e)}
-        if e["outcome"] == "fail":
-            out["text"] = e["text"]
-        return out, 3 if e["outcome"] == "fail" else 0
-    if t == "gate.invalidated":
-        return {"kind": "invalidated", **base, "gate": e["gate"]}, 3
-    return None
 
 
 HINT = {
@@ -51,14 +24,18 @@ HINT = {
 
 
 def handle(ctx: Context, args: dict[str, Any]) -> Result:
-    """Wait for the first decision after the session's last write on the ticket (or after the head, when the session
-    never wrote or read it). The timeout is the caller's, 540 s by default; it ends in ``timeout`` (exit 0) so the agent
+    """Wait for the first decision after the session's decision cursor, which only ``wait`` (and ``inbox``) moves: a
+    decision ``show`` displayed is still handed over here. A session that never touched the ticket waits for what is
+    decided from now on. The timeout is the caller's, 540 s by default; it ends in ``timeout`` (exit 0) so the agent
     loops, or in ``wait.timeout`` (exit 7) with ``--strict-timeout``."""
     c = Call.of(ctx, "wait")
     view = c.resolve(args.get("ref"), live_only=False)  # a done ticket ended the claim, not the wait
+    observe.observe(c.store, view.key)
     note = c.notes.get(view.uid)
     start = c.store.head_seq(view.uid)
-    after = max(note["cursor"], note["since"] or 0) if (note["cursor"] or note["since"] is not None) else start
+    if note["decided"] is None:  # the session never touched this ticket: wait for what is decided from now on
+        c.notes.update(view.uid, now=c.now, first_decided=start)
+    after = start if note["decided"] is None else note["decided"]
     deadline = time.monotonic() + args.get("timeout", 540)
     pause = iter(POLL)
     wait = POLL[0]
@@ -68,7 +45,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
             if got is None:
                 continue
             fields, code = got
-            c.notes.update(view.uid, now=c.now, cursor=e["seq"])
+            c.notes.update(view.uid, now=c.now, cursor=e["seq"], decided=e["seq"])
             hints = [HINT.get(fields["kind"]) or ("orch show" if fields.get("outcome") == "pass" else "orch task next")]
             data = {**fields, "cursor": e["seq"], "next": hints[0]}
             lines = fence(fields["text"], "decision text") if fields.get("text") else []

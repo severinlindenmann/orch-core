@@ -69,7 +69,14 @@ def _hooks(get_store: Callable[[], Any | None]) -> Hooks:
         if store is not None:
             grant_person(store, ctx.grant)
 
-    return Hooks(head_seq=head_seq, normalise_ref=normalise, grant_valid=grant_valid)
+    def grant_verbs(ctx: Context) -> Any:
+        store = get_store()
+        if store is None or not ctx.grant:
+            return "agent"
+        view = store.state.workspace.grants.get(ctx.grant.partition(".")[0])
+        return "agent" if view is None else view.verbs
+
+    return Hooks(head_seq=head_seq, normalise_ref=normalise, grant_valid=grant_valid, grant_verbs=grant_verbs)
 
 
 def hooks_for(store: Any) -> Hooks:

@@ -40,6 +40,8 @@ class Hooks:
     normalise_ref: Callable[[str], str] = field(default=lambda ref: ref)
     #: Raises ``grant.expired`` when the (well-formed) grant is expired, revoked or out of scope.
     grant_valid: Callable[[Context], None] = field(default=lambda ctx: None)
+    #: The grant's ``verbs``: ``"agent"`` (every agent operation) or the list of operation names it allows.
+    grant_verbs: Callable[[Context], Any] = field(default=lambda ctx: "agent")
 
 
 def _secrets(grant: str | None) -> list[str]:
@@ -95,6 +97,9 @@ def _check_who(op: Operation, ctx: Context, args: dict[str, Any], hooks: Hooks) 
                 raise OrchError("grant.required", f"{op.cli} {a.flag} needs a grant")
     if ctx.grant:
         hooks.grant_valid(ctx)
+        verbs = hooks.grant_verbs(ctx)
+        if verbs != "agent" and op.name not in verbs:  # F1 10.1: verbs are operation names, matched exactly
+            raise OrchError("grant.verb", f"the grant does not cover {op.cli}")
 
 
 def _call(op: Operation, ctx: Context, args: dict[str, Any]) -> Result:
@@ -199,6 +204,7 @@ def main(
     err = sys.stderr if stderr is None else stderr
     from orch.ops.runtime import Workspace  # the workspace is found and opened only when something asks for it
 
+    render.new_nonce()
     workspace = Workspace(env, now)
     if hooks is None or records is None:
         from orch.cli.store_hooks import workspace_hooks, workspace_records

@@ -25,7 +25,10 @@ def test_claim_next_takes_the_best_free_ticket(ws, cli):
     make(cli, "urgent one", priority="urgent")
     make(cli, "medium one")
     assert cli("claim", "--next").first.startswith("ok DEMO-0002 claim.taken")
-    r = cli("claim")  # no REF: the next one again, but this session already holds DEMO-0002; it takes another
+    r = cli.j("claim")  # no REF: the next one, but this session already holds DEMO-0002
+    assert (r.code, r.err_code) == (4, "claim.held") and "--also" in r.doc["error"]["message"]
+    assert "orch claim REF --also" in r.doc["error"]["hint"]
+    r = cli("claim", "--also")
     assert r.first.startswith("ok DEMO-0003 claim.taken")
 
 

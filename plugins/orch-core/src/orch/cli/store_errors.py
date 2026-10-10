@@ -48,7 +48,7 @@ TABLE: dict[str, str] = {
     "gate.not_eligible": "role.denied",
     "grant.invalid": "grant.expired",
     "grant.scope": "grant.expired",
-    "grant.verb": "grant.expired",
+    "grant.verb": "grant.verb",
     "ticket.unknown": "not_found",
     "ticket.not_visible": "not_found",
     "ticket.frozen": "transition.refused",

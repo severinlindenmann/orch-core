@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Any
 
 from orch.cli import render
+from orch.ops import decisions
 from orch.ops.runtime import short
 
 
@@ -39,15 +40,28 @@ def next_task(view: Any, session: str | None = None) -> Any | None:
     return free[0] if free else None
 
 
+def open_gate(view: Any) -> str | None:
+    """The first of ``requirements`` and ``plan`` that applies to the ticket and is not approved, if any."""
+    for g in ("requirements", "plan"):
+        v = view.gates[g]
+        if v.applies and not v.approved:
+            return g
+    return None
+
+
 def next_hint(view: Any, session: str | None = None) -> str:
     """The ``next:`` line after a write: ids and commands only, never ticket text."""
     if any(q.blocking for q in open_questions(view)):
         return "orch wait"
     t = next_task(view, session)
     if t is not None:
+        if t.state == "started":
+            verify = next((x["verify"] for x in view.fields["tasks"] if x["id"] == t.id), None)
+            return f"orch task done {t.id}" + (" --run" if verify else "")
         return f"orch task start {t.id}"
     if view.tasks and all(x.state in ("done", "skipped") for x in view.tasks):
-        return "orch submit"
+        g = open_gate(view)
+        return f'orch ask "approve the {g} gate?"' if g else "orch submit"
     return "orch show"
 
 
@@ -87,10 +101,8 @@ def event_line(e: dict[str, Any]) -> str:
         detail = short(e["text"], 40)
     elif t == "question.asked":
         detail = e["question"]["id"]
-    elif t in ("gate.approved", "gate.changes_requested"):
-        detail = e["gate"]
-    elif t == "verdict.given":
-        detail = e["outcome"]
+    elif t in ("question.answered", "gate.approved", "gate.changes_requested", "verdict.given", "gate.invalidated"):
+        detail = decisions.line(e, 80).split(" ", 1)[1]
     return f"#{e['seq']} {t} {who}" + (f" {detail}" if detail else "")
 
 
@@ -98,21 +110,19 @@ def next_ticket(c: Any, *, mine_first: bool = True) -> Any | None:
     """The ticket to work on: the session's own claim (``mine_first``), else the best free one the actor may see.
 
     Free means ``open`` with no live claim and nothing it is blocked by still undone; the best is the highest
-    priority, then the lowest number."""
+    priority, then the lowest number. Candidates come from the index; the one returned (and every blocker looked at) is
+    loaded and verified."""
     if mine_first:
         mine = c.mine()
         if mine:
             return mine[0]
-    c.store.load_all()
-    tickets = c.store.state.tickets.values()
-    status = {v.key: v.status for v in tickets}
-    free = [
-        v
-        for v in tickets
-        if c.sees(v)
-        and v.status == "open"
-        and not (v.claim is not None and v.claim.live)
-        and all(status.get(k, "done") in ("done", "closed") for k in v.fields["blocked_by"])
-    ]
-    free.sort(key=lambda v: (PRIORITY.get(v.fields["priority"], 2), key_number(v.key)))
-    return free[0] if free else None
+    rows = c.store.index.query("SELECT uid, key, priority FROM tickets WHERE status = 'open'")
+    rows.sort(key=lambda r: (PRIORITY.get(r[2], 2), key_number(r[1])))
+    for uid, _key, _prio in rows:
+        v = c.store.ticket(uid)
+        if v is None or not c.sees(v) or v.status != "open" or (v.claim is not None and v.claim.live):
+            continue
+        blockers = [c.store.ticket(k) for k in v.fields["blocked_by"]]
+        if all(b is None or b.status in ("done", "closed") for b in blockers):
+            return v
+    return None

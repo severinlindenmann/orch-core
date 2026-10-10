@@ -77,10 +77,11 @@ def test_notes_survive_a_corrupt_file_by_asking_for_a_read(ws, cli):
     cli("section", "set", "plan", "-m", "v1")
     p = next((ws.root / ".state" / "sessions").glob(f"{SESSION}.notes.json"))
     p.write_text("{not json")
-    r = cli.j("section", "set", "plan", "-m", "v2")
+    assert cli.j("section", "set", "plan", "-m", "v2").err_code == "ambiguous_ref"  # the claims are unknown too
+    r = cli.j("section", "set", "plan", "-m", "v2", "--ref", "1")
     assert r.err_code == "conflict.section"  # unknown: read first, never a blind write
     cli("show", "1", "--section", "plan")
-    assert cli("section", "set", "plan", "-m", "v2").code == 0
+    assert cli("section", "set", "plan", "-m", "v2", "--ref", "1").code == 0
 
 
 # ---------------------------------------------------------------------------------------------- store and model

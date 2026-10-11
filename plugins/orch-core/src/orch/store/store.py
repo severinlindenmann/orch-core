@@ -1706,7 +1706,7 @@ class Store:
                 self._checkpoints.write_ticket(self._host.sign, uid, info.seq, info.head or "", self._now())
 
     def checkpoint(self) -> None:
-        """Write the workspace checkpoint now (and a ticket checkpoint for every log that has none yet)."""
+        """Write the workspace checkpoint and finish crash-repairable ticket checkpoints."""
         with self._locked():
             self._checkpoint_all()
 
@@ -1723,7 +1723,7 @@ class Store:
             if view is None or view.frozen:
                 continue
             cp = self._checkpoints.ticket(uid)
-            if cp is None or "o" not in cp or cp["o"]["seq"] != info.seq:
+            if (cp is None or "o" not in cp or cp["o"]["seq"] != info.seq) and self.repairable_checkpoint(uid):
                 self._checkpoints.write_ticket(self._host.sign, uid, info.seq, info.head or "", at_)
         self._write_workspace_checkpoint(at_, self._state)
 

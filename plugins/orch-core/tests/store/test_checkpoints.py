@@ -276,3 +276,26 @@ def test_missing_checkpoint_repair_requires_the_host_and_a_verified_log(env, hos
     store = env.open(host=env.signer if host else None)
     store.repair_checkpoints()
     assert not path.exists()
+
+
+@pytest.mark.parametrize("load", ["all", "lazy"])
+@pytest.mark.parametrize("rollback", [False, True])
+def test_checkpoint_only_finishes_the_recorded_append(env, load, rollback):
+    from orch.ops.health import _checkpoints
+
+    store = env.bootstrap()
+    uid = env.new_ticket()
+    env.log(uid, "last append")
+    store.close()
+    path = env.root / ".state" / "checkpoints" / f"ticket-{uid}.json"
+    path.unlink()
+    if rollback:
+        log = env.path(uid, "events.jsonl")
+        log.write_bytes(b"".join(log.read_bytes().splitlines(keepends=True)[:-1]))
+    store = env.open(load=load)
+    if load == "lazy":
+        store.ticket(uid)
+        store.checkpoint()
+    assert path.exists() is not rollback
+    findings = _checkpoints(store, host_here=True)
+    assert any(f.code == "checkpoint.missing" for f in findings) is rollback

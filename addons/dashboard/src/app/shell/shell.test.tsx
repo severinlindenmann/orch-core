@@ -380,7 +380,9 @@ describe('app shell', () => {
       await user.click(within(recent).getByRole('option', { name: /DEMO-0043/ }))
       await screen.findByRole('heading', { level: 1, name: /Load tariff tables/ })
       await waitFor(() => expect(screen.getByRole('button', { name: 'Switch workspace' })).toHaveTextContent(/Acme/))
-      expect(await screen.findByText('Switched to Acme energy data to open DEMO-0043')).toBeInTheDocument()
+      // Asserted on sonner's history, not the DOM: on a loaded runner the toast can time out between findByText and
+      // the assertion (CI flake on #387).
+      await waitFor(() => expect(toast.getHistory().map((t) => ('title' in t ? t.title : undefined))).toContain('Switched to Acme energy data to open DEMO-0043'))
       // DEMO's addons (Publish is not installed in INT) render in the rail.
       await waitFor(() => expect(screen.getByRole('complementary', { name: 'Ticket details' }).querySelector('[data-addon="publish"]')).not.toBeNull())
     })

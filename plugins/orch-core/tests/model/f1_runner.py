@@ -1,6 +1,6 @@
 """Runs an F1 scenario vector (``tests/vectors/f1/*.json`` ``scenarios``) through ``orch.model`` with the real
-``CryptoVerifier``: every step is offered to ``admit`` on the state of the accepted prefix, a refused event is also
-replayed as the next line of the log, and the optional ``after`` checks read the state after an accepted step."""
+``CryptoVerifier``: every step except ``replay_only`` is offered to ``admit`` on the accepted prefix. A refused event
+is also replayed as the next line of the log; optional ``after`` checks read the state after an accepted step."""
 
 from __future__ import annotations
 
@@ -108,6 +108,15 @@ def run_scenario(sc: dict[str, Any], *, validate: bool = True) -> tuple[list, di
             else:
                 schema.validate("event." + event["type"], event, log=kind)
         st = state_of(sc, ws, tl)
+        if step.get("replay_only"):
+            assert expect == "ok", where
+            (ws if log == WORKSPACE else tl.setdefault(log, [])).append(event)
+            now = state_of(sc, ws, tl)
+            assert not now.chain_errors, (where, now.chain_errors)
+            assert not now._core.logs[log].invalid, (where, now._core.logs[log].invalid)
+            if "after" in step:
+                check_after(now, step["after"])
+            continue
         genesis = event["type"] == "workspace.created"  # checks its own host_sig (§5.11 step 4): admitted signed
         r = admit(st, event if genesis else {k: v for k, v in event.items() if k != "host_sig"}, log=log)
         got = "ok" if not hasattr(r, "code") else r.code.value

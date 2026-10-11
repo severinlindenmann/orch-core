@@ -293,6 +293,21 @@ def tamper_vector() -> dict[str, Any]:
             [*ticket, resign_host(setp(repaired, **{field: value}), TICKET)],
             repaired["seq"],
         )
+    agent_event = w.ev(
+        TICKET,
+        "log.added",
+        {"kind": "agent", "id": "claude-code", "session": "field-set", "unattended": True},
+        {"text": "agent note"},
+        at=ow.stamp(w.clock),
+    )
+    ticket.pop()  # keep the shared base logs unchanged
+    add(
+        "agent_field_set_sig",
+        "5.2: sig appears on person events and on no others; agent event host_sig verifies",
+        TICKET,
+        [*ticket, resign_host(setp(agent_event, sig=e4["sig"]), TICKET)],
+        agent_event["seq"],
+    )
     return {
         "pins": "tampered chain lines (5.5 Reading): the stated mutation of a signed log and the one F1 outcome, the "
         "line position where a reader reports chain.broken (lines checked in file order, a bad host_sig or person sig "
@@ -853,6 +868,18 @@ def restore_scenarios() -> list[dict[str, Any]]:
         {"device": did("mara1"), "reason": "lost", "revocation": ow.make_revocation("mara", "mara1", "lost")},
         note="a much later host revocation must not extend the old restore window",
     )
+    w.ev(
+        TICKET,
+        "log.added",
+        w.actor("sev"),
+        {"text": "still outside the restore window after the late revocation"},
+        ws_seq=7,
+        expect="ok",
+        note="read after workspace seq 8, but names seq 7 in the gap after the closed restore window",
+    )
+    # §5.5: a reader can encounter an older ticket position after reading the workspace log; a live append
+    # would instead carry the current workspace seq. This step pins the reader's restore-window check.
+    w.steps[-1]["replay_only"] = True
     out.append(w.scenario(reappends=True))
     return out
 

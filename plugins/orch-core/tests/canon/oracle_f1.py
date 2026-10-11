@@ -599,6 +599,7 @@ def all_vectors() -> dict[str, dict[str, Any]]:
         "note": "files tagged [shared] are copied verbatim into orch-relay; the others are core-only. "
         "Step keys: replay_only accepts historical replay but admit refuses chain.bad_ws_seq; "
         "schema_refused means schema validation refuses before the model; "
+        "append_code pins the store append refusal (F1 §5.11 step 0), while expect keeps the model outcome; "
         "replay_expect pins a distinct replay outcome.",
     }
     return out

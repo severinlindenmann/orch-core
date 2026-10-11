@@ -198,6 +198,7 @@
      "log": "01J9ZK4Q7M3R8T2V6X0B5N1C9D"
     },
     {
+     "append_code": "validation.event",
      "event": {
       "actor": {
        "device": "d_7efc1ba896b95f9151978a1dad982e3a",
@@ -227,6 +228,7 @@
      "schema_refused": true
     },
     {
+     "append_code": "validation.event",
      "event": {
       "actor": {
        "device": "d_7efc1ba896b95f9151978a1dad982e3a",
@@ -253,6 +255,7 @@
      "schema_refused": true
     },
     {
+     "append_code": "validation.event",
      "event": {
       "actor": {
        "device": "d_7efc1ba896b95f9151978a1dad982e3a",
@@ -507,6 +510,7 @@
      "log": "01J9ZK4Q7M3R8T2V6X0B5N1C9D"
     },
     {
+     "append_code": "validation.event",
      "event": {
       "actor": {
        "device": "d_c65032f21d43401cc223b05723c1e5b4",
@@ -540,6 +544,7 @@
      "schema_refused": true
     },
     {
+     "append_code": "validation.event",
      "event": {
       "actor": {
        "device": "d_c65032f21d43401cc223b05723c1e5b4",
@@ -573,6 +578,7 @@
      "schema_refused": true
     },
     {
+     "append_code": "validation.event",
      "event": {
       "actor": {
        "device": "d_c65032f21d43401cc223b05723c1e5b4",
@@ -606,6 +612,7 @@
      "schema_refused": true
     },
     {
+     "append_code": "validation.event",
      "event": {
       "actor": {
        "device": "d_c65032f21d43401cc223b05723c1e5b4",
@@ -639,6 +646,7 @@
      "schema_refused": true
     },
     {
+     "append_code": "validation.event",
      "event": {
       "actor": {
        "device": "d_c65032f21d43401cc223b05723c1e5b4",
@@ -672,6 +680,7 @@
      "schema_refused": true
     },
     {
+     "append_code": "validation.event",
      "event": {
       "actor": {
        "device": "d_c65032f21d43401cc223b05723c1e5b4",
@@ -705,6 +714,7 @@
      "schema_refused": true
     },
     {
+     "append_code": "validation.event",
      "event": {
       "actor": {
        "device": "d_c65032f21d43401cc223b05723c1e5b4",
@@ -738,6 +748,7 @@
      "schema_refused": true
     },
     {
+     "append_code": "validation.event",
      "event": {
       "actor": {
        "device": "d_c65032f21d43401cc223b05723c1e5b4",
@@ -771,6 +782,7 @@
      "schema_refused": true
     },
     {
+     "append_code": "validation.event",
      "event": {
       "actor": {
        "device": "d_c65032f21d43401cc223b05723c1e5b4",
@@ -804,6 +816,7 @@
      "schema_refused": true
     },
     {
+     "append_code": "validation.event",
      "event": {
       "actor": {
        "device": "d_c65032f21d43401cc223b05723c1e5b4",

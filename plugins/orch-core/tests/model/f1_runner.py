@@ -1,22 +1,26 @@
 """Runs an F1 scenario vector (``tests/vectors/f1/*.json`` ``scenarios``) through ``orch.model`` with the real
 ``CryptoVerifier``: every step is offered to ``admit`` on the accepted prefix. ``replay_only`` steps must refuse
 append with ``chain.bad_ws_seq`` but replay successfully. Other refused events are also replayed as the next line
-of the log; optional ``after`` checks read the state after an accepted step."""
+of the log; optional ``after`` checks read the state after an accepted step. ``schema_refused`` steps also check
+``append_code`` at the store append validation boundary, independently of the model outcome in ``expect``."""
 
 from __future__ import annotations
 
 import copy
 import json
+from contextlib import closing
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 import pytest
 
-from orch import schema
+from orch import crypto, schema
 from orch.identity import CryptoVerifier
 from orch.model import WORKSPACE, admit, replay
 from orch.model.codes import Code
 from orch.model.engine import CHAIN_CODES
+from orch.store import Store, StoreError
 
 DIR = Path(__file__).parent.parent / "vectors" / "f1"
 
@@ -94,6 +98,37 @@ def _gens(st: Any, uid: str) -> list[int]:
     return [t.gates[g].gen for g in ("requirements", "plan", "verify", "code")] if t else [0, 0, 0, 0]
 
 
+class VectorSigner:
+    def __init__(self) -> None:
+        key = load("signatures.json")["keys"]["wsk"]["scalar_hex"]
+        self.key = crypto.private_key_from_scalar(int(key, 16))
+        self.public_key = crypto.public_bytes(self.key)
+
+    def sign(self, payload: bytes) -> bytes:
+        return crypto.sign(self.key, payload)
+
+
+def check_append_code(sc: dict[str, Any], st: Any, step: dict[str, Any], where: str) -> None:
+    # Exercise the store's append validation boundary with the vector's exact stamped envelope.
+    # Projection healing and wall-clock stamping are not part of these log-only scenarios.
+    event = copy.deepcopy(step["event"])
+    with TemporaryDirectory() as tmp, pytest.MonkeyPatch.context() as patch:
+        root = Path(tmp)
+        with closing(
+            Store.open(
+                root / "workspace",
+                expected_workspace_id=sc["workspace_id"],
+                host=VectorSigner(),
+                host_state_dir=root / "host",
+            )
+        ) as store:
+            store._state = st
+            patch.setattr(store, "_stamp", lambda *args, **kwargs: None)
+            with pytest.raises(StoreError) as exc:
+                store._commit(event, step["log"], None, {}, ())
+            assert exc.value.code == step["append_code"], where
+
+
 def run_scenario(sc: dict[str, Any], *, validate: bool = True) -> tuple[list, dict[str, list]]:
     prev = [0, 0, 0, 0]
     ws: list[dict[str, Any]] = []
@@ -109,6 +144,8 @@ def run_scenario(sc: dict[str, Any], *, validate: bool = True) -> tuple[list, di
             else:
                 schema.validate("event." + event["type"], event, log=kind)
         st = state_of(sc, ws, tl)
+        if step.get("schema_refused"):
+            check_append_code(sc, st, step, where)
         if step.get("replay_only"):
             assert expect == "ok", where
             unsigned = {k: v for k, v in event.items() if k != "host_sig"}

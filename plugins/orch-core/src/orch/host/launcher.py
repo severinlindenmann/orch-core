@@ -2,8 +2,13 @@
 
 ``spawn_gitread`` runs ``[sys.executable, "-I", "-m", "orch.gitread"]`` with a fixed argv, an empty environment,
 ``close_fds``, pipes on stdin and stdout only, and a new process group. The audit hook of
-:mod:`orch.host.audit` allows exactly this call. The ``setrlimit`` limits of section 0.11 and the reader itself are
-H3b1; until then the child fails to start ``orch.gitread`` and exits.
+:mod:`orch.host.audit` allows exactly this call.
+
+The section 0.11 limits (CPU 10 s, address space 512 MiB, 64 open files, a 30 s alarm, no core, no file writes, no
+new processes) are set by the child itself as its first action (:func:`orch.gitread.sandbox.apply_limits`), before it
+reads its request: the argv is fixed and the child is orch's own code, and ``preexec_fn`` is unsafe in the threaded
+host. The caller (:class:`orch.gitread.client.ReaderPool`) enforces the 30 s wall clock from outside as well and kills
+the child's process group.
 """
 
 from __future__ import annotations

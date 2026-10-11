@@ -925,11 +925,16 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
   T must commit to this restore: T's entry for the log, proven from `acc_from`, has `head(line)` at
   `from_seq + 1`. A proof that does not fold to T is incomplete; a proof that folds to T with another head at
   `from_seq + 1` is `chain.diverged`. A ticket restore needs `line.ws_seq ≤ T.o.workspace_log.seq`.
-  **Revoked signers at receivers** (format decision C3): a receiver refuses a restore signed by a device it knows to
-  be revoked as `compromised`, at any time: whatever the revocation's position, `revoked_ms` or `line.at`, since
-  positions and `line.at` are host-chosen and a log-free receiver cannot place them. A `lost` or `retired` revocation
-  it holds when it judges the transition refuses it too. A restore whose own `revocations` list revokes its signer
-  is refused for every reason, with or without local knowledge (only the host's replay can place it, below).
+  **Revoked signers at receivers** (format decision C3). "Earlier" and "later" are the receiver's own order, never
+  `line.at`, `revoked_ms` or a log position (all host-chosen or unverifiable for a log-free receiver). Any
+  revocation of the signer the receiver holds when it judges the transition refuses it, whatever the reason: one
+  learned before the sync, or from a lower-`n` bundle already judged in the same walk. In particular a
+  `compromised` signer is refused at any position. A revocation first learned after the transition was judged (from
+  a higher-`n` bundle of the same walk, or after the commit) never invalidates it: a `compromised` one raises an
+  alarm, a `lost` or `retired` one changes nothing. Liveness cost, accepted: a receiver that learned a `lost` or
+  `retired` revocation out of band before syncing past a genuine older transition by that device stays refused
+  until an owner pairs it again. A restore whose own `revocations` list revokes its signer is refused for every
+  reason, with or without local knowledge (only the host's replay can place it, below).
   For a device the receiver already knows to be revoked, a listed entry's person and `pk_pub` must be the known
   ones. Revocation completeness applies to workspace restores only; a ticket restore carries `[]`.
   `source` must equal `{n: C.o.n, hash: h_checkpoint(C.o)}` of a schema-valid, WSK-signed workspace checkpoint of the
@@ -2238,7 +2243,7 @@ A1–A20 (PR body), HO (dashboard handover, input only), D58–D60, the adversar
 | 144 | Section headings (C9) | ASCII, with a key (ASCII case folding, letters and digits only) that differs from every core heading and every other granted addon's (§8.1). | Look-alike headings must not make `body.md` ambiguous or misleading. |
 | 145 | Restore position time, C1 (orch-relay #41 review; format decision, to be challenged) | Receivers require `C.o.at ≤ line.at ≤ T.o.at`, equality accepted (§5.10). | The host stamps the restore at `max(clock, C.o.at, last at)` and T at the restore's `at`; checkpoints never go backwards. |
 | 146 | Receiver clock ceiling, C2 (orch-relay #41 review; format decision, to be challenged) | A receiver refuses a checkpoint or a restore's T whose `at` is more than 300 s after its clock (`checkpoint.future`); the host refuses a restore when `C.o.at` is more than 300 s after its clock (§5.10). | A WSK holder could otherwise freeze receivers with a far-future `at`: every later honest checkpoint (higher `n`, lower `at`) would be diverged. |
-| 147 | Revoked restore signers at receivers, C3 (orch-relay #42 review; format decision, to be challenged) | A receiver refuses a restore signed by a device it knows to be `compromised` at any time, whatever the revocation's position; a `lost`/`retired` revocation it holds when it judges also refuses; a bundle that revokes its own signer is refused for every reason; the host refuses a signer in its durable revocation evidence (§5.10). | Positions and `line.at` are host-chosen: with the WSK and a stolen device key an attacker can place a restore before the revocation. |
+| 147 | Revoked restore signers at receivers, C3 (orch-relay #42 review and §19.8; format decision, to be challenged) | In the receiver's own order: a revocation of the signer held when the transition is judged (from before the sync or a lower-`n` bundle of the walk) refuses it, any reason, so a `compromised` signer is refused at any position; one first learned later (a higher-`n` bundle, after commit) never invalidates it, `compromised` only raises an alarm. A bundle that revokes its own signer is refused for every reason. The host refuses a signer in its durable revocation evidence (§5.10). | Positions, `line.at` and `revoked_ms` are host-chosen or unverifiable: a WSK holder with a stolen device key can place a restore before the revocation. |
 | 148 | Receiver checks stated one by one (orch-relay #41/#42 reviews) | The pinned (card / genesis) delegation, each owner-device check, the signed `source`, T's head at `from_seq + 1`, `ws_seq ≤ T`, the strict checkpoint shape and workspace id, known-person binding of listed evidence (§5.10); pinned by signed vectors that each keep every other signature valid. | Shared vectors must fail a receiver that skips any one check. |
 Open after F1 (not settled here):
 

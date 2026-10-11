@@ -1289,6 +1289,37 @@ def transition_vectors() -> list[dict[str, Any]]:
         over={"revocations": [rev_entry("lena", "lena1", "lost")]},
         known_revocations=lena_lost,
     )
+    # C3 in the receiver's own order: what it holds when it judges refuses; what it learns later only alarms.
+    sev_compromised = [{"revocation": ow.make_revocation("sev", "sev1", "compromised")}]
+    ticket_variant(
+        "walk_compromised_learned_from_higher_n_bundle_alarm_only",
+        "ok",
+        learned_later_in_walk=sev_compromised,
+        note="learned_later_in_walk comes from a higher-n bundle judged after this one: it is not known_revocations "
+        "here; the receiver commits this transition and raises an alarm",
+    )
+    ticket_variant(
+        "walk_compromised_learned_from_lower_n_bundle_refuses",
+        "chain.diverged",
+        known_revocations=sev_compromised,
+        note="learned from a lower-n bundle of the same walk, so held when this one is judged",
+    )
+    ticket_variant(
+        "walk_retired_known_before_sync_stays_refused_until_repaired",
+        "chain.diverged",
+        known_revocations=[{"revocation": ow.make_revocation("sev", "sev1", "retired", revoked_ms=1_700_000_000_000)}],
+        note="liveness cost: a genuine older transition by a device the receiver already knows retired stays refused "
+        "until an owner pairs the receiver again",
+    )
+    ticket_variant(
+        "non_owner_revocation_held_ticket_restore_accepted",
+        "ok",
+        known_revocations=[
+            {"revocation": ow.make_revocation("lena", "lena1", "compromised"), "pk_pub": key("pk_lena").pub_b64u}
+        ],
+        note="a ticket restore carries [] and cannot deliver a revocation; a non-owner revocation the receiver holds "
+        "neither completes nor blocks it",
+    )
     for reason, revoked_ms in [
         ("compromised", 1_900_000_000_000),
         ("compromised", 1_700_000_000_000),

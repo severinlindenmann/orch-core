@@ -186,6 +186,20 @@ def test_source_and_accumulator_transitions(case):
         pinned_delegation=case["pinned_delegation"],
     )
     assert got == (case["expect"], case["recorded"])
+    if "learned_later_in_walk" in case:  # only the receiver's order separates this case from a refusal
+        again = cps.judge_offer(
+            case["held"]["o"],
+            case["offered"]["o"],
+            pinned_genesis=C["genesis"],
+            workspace_id=W,
+            now=case["now"],
+            wsk_pub=WSK,
+            restore=case["restore"],
+            proofs=case["proofs"],
+            known_revocations=case["learned_later_in_walk"],
+            pinned_delegation=case["pinned_delegation"],
+        )
+        assert again == ("chain.diverged", None)
 
 
 # Cases whose one defect is a signature; every other refusal must keep both event signatures valid, so that the

@@ -107,6 +107,10 @@ def judge_offer(
     for the delegation pinned for this workspace (``pinned_delegation``, the card's / genesis event's). Hosts
     additionally replay authorization; this log-free receiver uses the delegation-owner policy. A missing or
     non-folding proof returns ``sync.incomplete``.
+
+    ``known_revocations`` are the revocations the receiver holds when it judges this transition, in its own order:
+    learned before the sync or from lower-``n`` bundles already judged in the walk. Any of them for the signer
+    refuses (C3); one first learned from a higher-``n`` bundle must not be passed (a compromised one only alarms).
     """
     from orch.model.types import ts
 
@@ -226,7 +230,7 @@ def _judge_restore(
             rev = known["revocation"]["o"]
             got = carried.get(rev["device_id"])
             if rev["device_id"] == signer:
-                return diverged  # any reason, whenever it was issued (C3 for compromised)
+                return diverged  # held when judged: any reason, any host-chosen position (C3)
             if got is not None and (
                 got["revocation"]["o"]["person_id"] != rev["person_id"]
                 or ("pk_pub" in known and got["pk_pub"] != known["pk_pub"])

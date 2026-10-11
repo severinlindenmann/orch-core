@@ -1227,9 +1227,21 @@ class Store:
             self._enforce_revocations()
             if self._pending_revs:
                 raise StoreError("store.torn_write", "a restore's device.revoked re-appends are not all written yet")
+        if typ != "restore" and self._missing_checkpoint(log):
+            raise StoreError("checkpoint.missing", f"{log}: missing checkpoint is not explained by the last append")
         d = self._diverged.get(log) or (self._diverged.get(WORKSPACE) if log != WORKSPACE else None)
         if d is not None and not (typ == "restore" and d.log == log):
             raise StoreError("chain.diverged", f"{d.log}: {d.detail} (an owner-signed restore is needed)")
+
+    def _missing_checkpoint(self, log: str) -> bool:
+        info = self._logs.get(log)
+        return bool(
+            log != WORKSPACE
+            and info is not None
+            and info.seq
+            and self._checkpoints.ticket(log) is None
+            and not self.repairable_checkpoint(log)
+        )
 
     def _envelope(self, event: dict[str, Any], log: str) -> dict[str, Any]:
         bad = [k for k in _HOST_FIELDS if k in event]
@@ -1272,6 +1284,8 @@ class Store:
         host_event = isinstance(actor, dict) and actor.get("kind") == "host"
         if not self._healing:
             self._ensure_for(e, log)
+        if typ != "restore" and self._missing_checkpoint(log):
+            raise StoreError("checkpoint.missing", f"{log}: missing checkpoint is not explained by the last append")
         if idem is not None:
             dup = self._idem_hit(idem, log, e)
             if dup is not None:
@@ -1671,7 +1685,9 @@ class Store:
         assert self._host is not None
         if state.workspace.genesis is None or self._logs[WORKSPACE].seq == 0:
             return
-        if self._checkpoints.write_workspace(self._host.sign, state.workspace.genesis, at_, self._logs) == "diverged":
+        # Do not certify a rolled-back head just because its ticket checkpoint was deleted.
+        logs = {uid: info for uid, info in self._logs.items() if not self._missing_checkpoint(uid)}
+        if self._checkpoints.write_workspace(self._host.sign, state.workspace.genesis, at_, logs) == "diverged":
             self._diverged[WORKSPACE] = Divergence(
                 WORKSPACE, self._logs[WORKSPACE].seq, "a checkpoint at this height has another head"
             )

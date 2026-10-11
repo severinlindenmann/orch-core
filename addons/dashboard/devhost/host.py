@@ -10,9 +10,11 @@ from pathlib import Path
 
 from orch import ops
 from orch.ops import Context, Result
+from orch.ops.caps import Files
 from orch.ops.errors import OrchError
 from orch.ops.runtime import Call, Workspace
 from orch.ops.views import verified
+
 from orch_dashboard.errors import HostError, fail
 from orch_dashboard.hostlink import check_uid, encode, receive
 
@@ -31,13 +33,12 @@ class HostWorkspace(Workspace):
 
     def _open(self, root):
         from orch.custody import FileBackend
+        from orch.ops.runtime import _config, state_dir
         from orch.store import BackendSigner, Store
 
-        from orch.ops.runtime import _config, state_dir
-
-        cfg = _config(root) or {}
+        cfg = _config(root, self.files) or {}
         wid = cfg["workspace"]["id"]
-        sd = state_dir(self.env)
+        sd = state_dir(self.env, self.files)
         host = None
         keys = sd / "hosts" / wid / "keys"
         if keys.is_dir():
@@ -173,7 +174,8 @@ class StubHost:
 
     def call(self, op, args):
         with self.lock:
-            runtime = HostWorkspace(self.env)
+            # Direct-mode files (core #375): a same-user dev process. Files.host belongs to the real host.
+            runtime = HostWorkspace(self.env, files=Files.direct())
             try:
                 store = runtime.store
                 store.load_all()
@@ -304,8 +306,9 @@ class StubHost:
                         "sub_cursor": self.cursor,
                     }
                 elif op == "ticket.query":
-                    from orch_dashboard.app import TicketQuery
                     from pydantic import ValidationError
+
+                    from orch_dashboard.app import TicketQuery
 
                     try:
                         query = TicketQuery(**args)

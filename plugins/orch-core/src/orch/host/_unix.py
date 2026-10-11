@@ -10,9 +10,18 @@ import struct
 import sys
 from pathlib import Path
 
+_RESOURCE_ERRORS = {errno.EMFILE, errno.ENFILE, errno.ENOBUFS, errno.ENOMEM, errno.EINTR}
+
 
 class UnsafePath(ValueError):
     """A transport path cannot be trusted."""
+
+
+def _acl_failure(message: str, code: int | None = None) -> None:
+    code = ctypes.get_errno() if code is None else code
+    if code in _RESOURCE_ERRORS:
+        raise OSError(code, message)
+    raise UnsafePath(message)
 
 
 def _linux_acl(data: bytes, trusted: set[int], *, empty: bool) -> None:
@@ -44,6 +53,8 @@ def check_acl(fd: int, trusted: set[int], *, empty: bool = False) -> None:
             except OSError as exc:
                 if exc.errno in {errno.ENODATA, errno.ENOTSUP, errno.EOPNOTSUPP}:
                     continue
+                if exc.errno in _RESOURCE_ERRORS:
+                    raise
                 raise UnsafePath("Cannot inspect POSIX ACL") from exc
             _linux_acl(data, trusted, empty=empty)
         return
@@ -69,14 +80,15 @@ def check_acl(fd: int, trusted: set[int], *, empty: bool = False) -> None:
     trusted_uuids = set()
     for uid in trusted:
         uuid = ctypes.create_string_buffer(16)
-        if lib.mbr_uid_to_uuid(uid, uuid) != 0:
-            raise UnsafePath("Cannot resolve ACL principal")
+        status = lib.mbr_uid_to_uuid(uid, uuid)
+        if status != 0:
+            _acl_failure("Cannot resolve ACL principal", status)
         trusted_uuids.add(uuid.raw)
     acl = lib.acl_get_fd_np(fd, 0x100)  # ACL_TYPE_EXTENDED
     if not acl:
         if ctypes.get_errno() == errno.ENOENT:  # Darwin: inode has no extended ACL.
             return
-        raise UnsafePath("Cannot inspect Darwin ACL")
+        _acl_failure("Cannot inspect Darwin ACL")
     try:
         entry = pointer()
         which = 0  # ACL_FIRST_ENTRY; ACL_NEXT_ENTRY is -1 on Darwin.
@@ -86,13 +98,13 @@ def check_acl(fd: int, trusted: set[int], *, empty: bool = False) -> None:
                 # Darwin returns -1/EINVAL at the end (unlike POSIX's 0).
                 if status == -1 and ctypes.get_errno() == errno.EINVAL:
                     break
-                raise UnsafePath("Cannot enumerate Darwin ACL")
+                _acl_failure("Cannot enumerate Darwin ACL")
             which = -1
             if empty:
                 raise UnsafePath("Setup directory has an ACL")
             tag, mask = ctypes.c_int(), ctypes.c_uint64()
             if lib.acl_get_tag_type(entry, ctypes.byref(tag)) or lib.acl_get_permset_mask_np(entry, ctypes.byref(mask)):
-                raise UnsafePath("Cannot inspect Darwin ACL entry")
+                _acl_failure("Cannot inspect Darwin ACL entry")
             if tag.value == 2:  # ACL_EXTENDED_DENY
                 continue
             if tag.value != 1:
@@ -101,7 +113,7 @@ def check_acl(fd: int, trusted: set[int], *, empty: bool = False) -> None:
             if mask.value & sum(1 << bit for bit in (2, 4, 5, 6, 8, 10, 12, 13)):
                 qualifier = lib.acl_get_qualifier(entry)
                 if not qualifier:
-                    raise UnsafePath("Cannot inspect Darwin ACL principal")
+                    _acl_failure("Cannot inspect Darwin ACL principal")
                 try:
                     if ctypes.string_at(qualifier, 16) not in trusted_uuids:
                         raise UnsafePath("ACL grants write to another principal")

@@ -1407,3 +1407,39 @@ def test_write_deadline_has_overloaded_disposition(monkeypatch):
             )
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("code", [errno.EMFILE, errno.ENFILE, errno.ENOBUFS, errno.ENOMEM, errno.EINTR])
+def test_acl_resource_failure_is_retryable_by_monitor(monkeypatch, code):
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(transport, "RECHECK_SECONDS", 0.001)
+    calls = []
+
+    def exhausted(fd, name):
+        calls.append(name)
+        if len(calls) == 1:
+            raise OSError(code, "Resource exhausted")
+        raise OSError(errno.EACCES, "Actual inspection refusal")
+
+    monkeypatch.setattr(os, "getxattr", exhausted, raising=False)
+
+    async def scenario():
+        server = server_for(SimpleNamespace(recheck=lambda: check_acl(42, {UID})))
+        with pytest.raises(UnsafePath, match="Cannot inspect"):
+            await asyncio.wait_for(server._monitor(), 1)
+        assert len(calls) == 2
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("code", [errno.EMFILE, errno.ENOMEM, errno.EACCES])
+def test_native_acl_failure_preserves_resource_errno(code):
+    from orch.host._unix import _acl_failure
+
+    if code == errno.EACCES:
+        with pytest.raises(UnsafePath):
+            _acl_failure("ACL failed", code)
+    else:
+        with pytest.raises(OSError) as exc:
+            _acl_failure("ACL failed", code)
+        assert exc.value.errno == code

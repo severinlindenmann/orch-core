@@ -350,6 +350,16 @@ class Sim:
         self._fin(expect)
         return e
 
+    def move(
+        self, to: str, *, who: str | dict[str, Any] = "sev", from_: str | None = None, expect: str = "ok", **kw: Any
+    ) -> None:
+        """F1 5.4.1/5.9: a signed move parks work and ends an in_progress claim; refusals are specified by each case."""
+        actor = self.w.actor(who) if isinstance(who, str) else who
+        self._t("ticket.moved", actor, {"from": from_ or self.status, "to": to, "reason": "Reprioritise"}, expect, **kw)
+        if expect == "ok":
+            self.status = to
+        self._fin(expect)
+
     def claim(self, *, expect: str = "ok", note: str | None = None) -> dict[str, Any]:
         e = self._t("claim.taken", self.agent, {}, expect, note=note)
         if expect == "ok":
@@ -1061,6 +1071,67 @@ def status_scenarios() -> list[dict[str, Any]]:
     V = "verify"
     pins = "ticket-format 5.9 along one ticket: "
     out = []
+    s = _new(
+        "ticket_moved", pins + "H0: owner/maintainer person moves, exact from, permitted destinations and live claims"
+    )
+    s.move("backlog")
+    s.move("open", who="mara")
+    s.move("open", note="same-status move is allowed")
+    s.move("backlog", who=s.agent, expect="event.bad_actor", schema_refused=True)
+    s.move("backlog", who=s.w.HOST, expect="event.bad_actor", schema_refused=True)
+    s.people("owner", ["lena"])
+    s.move("backlog", who="lena", expect="role.denied", note="ticket ownership alone is insufficient")
+    s.move("backlog", from_="backlog", expect="status.transition")
+    for to in ("in_progress", "testing", "done", "closed"):
+        s.move(to, expect="status.transition", schema_refused=True)
+    s.claim()
+    s.move("open", expect="status.transition", note="the claim is live")
+    s.w.clock += 120 * 60 + 1
+    s.move("backlog", note="claim expired; liveness is evaluated at the event position")
+    s.claim()
+    s.w.ev("workspace", "grant.revoked", s.w.actor("sev"), {"grant": s.grant})
+    s.move("open", note="a revoked grant makes the claim no longer live")
+    s.move("open", who="mara")
+    s.close()
+    s.move("open", expect="status.transition", note="closed cannot be moved")
+    out.append(s.scenario())
+
+    s = _new("ticket_moved_ends_expired_claim", pins + "a move ends the claim; raising the TTL cannot revive it")
+    s.claim()
+    s.w.clock += 120 * 60 + 1
+    s.move("backlog")
+    s.w.ev("workspace", "settings.changed", s._sev(), {"set": {"claim_ttl_min": 1440}})
+    s._t("handoff.written", s.agent, {"text": "Old session"}, expect="claim.not_live")
+    out.append(s.scenario())
+
+    s = _new("ticket_moved_authorization", pins + "viewers, removed members and unattended agents cannot move work")
+    s.w.member("vic", "viewer")
+    s.move("backlog", who="vic", expect="role.denied")
+    s.member_removed("mara")
+    s.move("backlog", who="mara", expect="member.unknown")
+    s.move(
+        "backlog",
+        who={"kind": "agent", "id": "claude-code", "session": SESSION, "unattended": True},
+        expect="event.bad_actor",
+        schema_refused=True,
+    )
+    out.append(s.scenario())
+
+    s = _new(
+        "ticket_moved_restricted", pins + "workspace owners and maintainers manage tickets outside their visibility"
+    )
+    s._t("visibility.changed", s._sev(), {"visibility": {"restricted": [pid("lena")]}})
+    s.move("backlog", who="sev")
+    s.move("open", who="mara")
+    out.append(s.scenario())
+
+    s = _new("ticket_moved_settled", pins + "H0: neither testing nor done can be moved")
+    _to_done(s)
+    s.move("backlog", expect="status.transition")
+    s.pushed(SHA_B)
+    s.move("open", expect="status.transition")
+    out.append(s.scenario())
+
     s = _new("status_table", pins + "decisions in each state, verdicts and code decisions only in testing, a pass that does not complete the done "
              "rule leaves the status, done is sticky, close and reopen")  # fmt: skip
     _to_done(s)

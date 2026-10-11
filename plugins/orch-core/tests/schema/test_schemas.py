@@ -523,7 +523,7 @@ def test_custom_addon_events_and_reserved_prefixes_are_refused():
     bad("event", ex.ADDON_EVENT, "/type", "custom addon events are refused")
     for t in (
         "gate.bogus",
-        "ticket.moved",
+        "ticket.teleported",
         "invalid.thing",
         "device.lost",
         "grant.bogus",
@@ -1605,6 +1605,9 @@ def test_event_types_match_doc_tables():
 
 # Names in the doc that look like event types but are not: error codes, ticket.json paths, config paths.
 DOC_NON_EVENTS = {
+    "status.transition",
+    "artifact.search",
+    "ticket.discard",
     "device.cert",
     "device.exists",
     "artifact.mismatch", "claim.held", "claim.not_live", "device.unknown", "grant.verb",
@@ -2350,3 +2353,25 @@ def test_settings_validate_the_resulting_repos_once(monkeypatch):
 
 def test_heading_keys_fold_only_ascii():
     assert schema.heading_key("Stra\u00dfe") != schema.heading_key("STRASSE")
+
+
+@pytest.mark.parametrize("reason", ["", "x" * 501])
+def test_ticket_moved_reason_bounds(reason):
+    bad("event.ticket.moved", mut(ex.EVENTS["ticket.moved"], lambda e: e.update(reason=reason)), "/reason")
+
+
+def test_ticket_moved_reason_optional():
+    e = ex.fresh(ex.EVENTS["ticket.moved"])
+    e.pop("reason")
+    V("event.ticket.moved", e, log="ticket")
+
+
+@pytest.mark.parametrize("mark", ["\u0301", "\u0903", "\u20dd", "\U00010d69"])
+@pytest.mark.parametrize("prefix", ["", "feat/", "feat/part/"])
+def test_branch_components_cannot_start_with_marks(mark, prefix):
+    e = ex.fresh(ex.EVENTS["ticket.updated"])
+    e["set"] = {
+        "ticket.links": {"repos": ["proj"], "branches": {"proj": prefix + mark + "branch"}, "prs": [], "external": []}
+    }
+    with pytest.raises(SchemaError):
+        V("event.ticket.updated", e, log="ticket")

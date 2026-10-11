@@ -67,6 +67,46 @@ def test_a_new_commit_after_the_verdict_voids_it(hws, agent, me):
     assert v.status == "testing" and not v.gates["verify"].approved
 
 
+def test_a_new_commit_after_a_repo_case_change_reopens_a_done_ticket(hws, agent, me):
+    repo, key = repo_ticket(hws, agent, me)
+    hws.git("remote", "add", "origin", "https://host/Declared.git")
+    hws.store.append(
+        hws.person_event(hws.owner, "workspace", "policy.changed", gates={"code": CODE_POLICY}), log="workspace"
+    )
+    to_testing(agent, me, hws.tmp, key)
+    assert me("verdict", "pass", "--ref", key).code == 0
+    reviewer = hws.add_member("rita", "maintainer")
+    hws.act_as(reviewer)
+    assert me("approve", "code", "--ref", key).code == 0
+    v = hws.view("1")
+    assert v.status == "done" and all(v.gates[g].approved for g in ("verify", "code"))
+    old = dict(v.source_list[0])
+    assert old["repo"] == "https://host/Declared"
+    hws.store.append(
+        hws.person_event(
+            hws.owner,
+            "workspace",
+            "settings.changed",
+            set={"repos": {"proj": {"path": str(repo), "remote": "https://host/declared"}}},
+        ),
+        log="workspace",
+    )
+    (repo / "impl.txt").write_text("changed after the verdict\n")
+    hws.git("commit", "-qam", "late")
+    head = hws.git("rev-parse", "HEAD")
+    assert agent("show", key).code == 0
+    events = hws.events("1")
+    assert [e["type"] for e in events[-3:]] == ["branch.pushed", "gate.invalidated", "gate.invalidated"]
+    pushed = events[-3]
+    assert pushed["before"] == {"repo_id": old["repo"], "ref": old["ref"], "sha": old["sha"]}
+    assert pushed["repo_id"] == "https://host/declared" and pushed["sha"] == head
+    assert {e["gate"] for e in events[-2:]} == {"verify", "code"}
+    assert all(e["cause"] == "new_commits" for e in events[-2:])
+    v = hws.view("1")
+    assert dict(v.source_list[0]) == {"repo": "https://host/declared", "ref": old["ref"], "sha": head}
+    assert v.status == "testing" and all(not v.gates[g].approved for g in ("verify", "code"))
+
+
 def test_a_dirty_working_tree_is_refused_and_nothing_is_signed(hws, agent, me):
     repo, key = repo_ticket(hws, agent, me)
     to_testing(agent, me, hws.tmp, key)

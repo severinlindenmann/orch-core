@@ -335,16 +335,32 @@ blobs per device and epoch), `drop_spaces`, `revocations`.
 - **Pairing (D6):**
   1. The host shows a QR code with `orch://pair#v2.<ws>.<offer>.<secret>.<wsk_pin>` (the universal link `https://<relay>/pair#…` opens the app too), and the app scans it with the camera
      (10 minutes, single use).
-  2. The phone generates `DK` and sends a join request through the relay.
+  2. The phone generates `DK` and sends a join request through the relay. The request's meta carries `attempt`, a
+     32-character lower-case hex nonce the phone draws when it starts a pairing attempt (protocol v2 §8.3). A resend
+     of the same attempt keeps it; a new scan draws a new one. A phone without a certificate also draws **fresh
+     device keys** for every attempt, and stores the attempt's `device_id`, `dk_hash` and `attempt` before it
+     sends. The host answers a resend with `pending` only when keys and `attempt` both match, otherwise with
+     `pairing_closed`. A pair request without a valid `attempt` is `malformed`; the old shape is refused.
   3. Both screens show a 6-character fingerprint. The human confirms on the host.
   4. **First time only:** the host asks the owner's primary device to sign a device certificate. When the host *is*
      the primary device, it signs locally. The QR carries a pin of the owner's `PK`, which the phone uses to check
      the certificate.
+     - **The request names the attempt.** The host's `cert_request` carries `offer_id`, `attempt`, `device_id` and
+       `dk_hash` in the clear, and the same four values again inside the sealed part. The primary refuses
+       (`malformed`) unless the clear and sealed values are equal and `dk_hash` matches the keys in the sealed part.
+       `dk_hash = b64u(H("orch/v2/dk-hash|" || suite || lp16(dk_sig_pub) || lp16(dk_kx_pub)))` binds both keys of
+       the attempt. The relay sees only the clear values, which reveal no key.
      - **The primary chooses the randomness.** After it receives the phone's keys, the primary draws a fresh nonce
-       and returns it in a `cert_challenge` signed by `PK`. The phone verifies it with the `PK` pin from the QR and
-       checks that the keys in it are its own. Phone and primary then show a code derived from that signed
-       challenge, and the primary needs its own confirmation. A host can no longer grind a matching code
-       (protocol v2 §8.4).
+       and returns it in a `cert_challenge` signed by `PK`. The challenge carries `offer_id`, `attempt`,
+       `device_id`, `dk_sig_pub`, `dk_kx_pub`, `request_id` and the request's `expires_ms`. The phone verifies it
+       with the `PK` pin from the QR and checks that the keys, the attempt and the offer in it are its own. Phone
+       and primary then show a code derived from that signed challenge, and the primary needs its own
+       confirmation. A host can no longer grind a matching code (protocol v2 §8.4).
+     - **A rejection on the primary is signed too.** The primary signs a `cert_rejection` with `PK`
+       (`orch/v2/sig/cert-rejection|`) over `offer_id`, `attempt`, `device_id`, `dk_hash` and the request's
+       `expires_ms`, so a captured rejection cannot be replayed into a later attempt. The relay refuses a
+       challenge or rejection that does not match the stored request (403 `not_for_this_device`). The phone shows
+       "Denied by the owner" only after its device, attempt and offer checks pass.
      - The primary signs a certificate only for the keys in its own challenge, once, with at most one open
        request per workspace.
      - If the primary device is unreachable, pairing waits in `cert_pending` for up to 10 minutes, and both screens
@@ -354,6 +370,13 @@ blobs per device and epoch), `drop_spaces`, `revocations`.
        `cert.person_id == card.owner_person_id`, or that the person is in the signed member list (D39), and otherwise refuses with `other_person`.
   5. The host adds the phone to the member list and seals `WK_e` to it. Type and Factory actions need a fresh Face ID
      signature from the Secure Enclave key.
+     - **Answers to the phone.** `pair_status` answers `approved` with `epoch`, `list_seq`, `card_seq` and
+       `baseline` (the join anchor), and `rejected` in exactly two forms: the short `{state, wsk_pub}` and the long
+       `{state, wsk_pub, pk_pub, rejection}`. Any other shape is refused as `not_a_pairing_answer`.
+     - **The anchor comes from accepted objects.** `epoch`, `list_seq` and `card_seq` are those of the head list
+       and card the relay accepted, never of a publication it refused or that is still unconfirmed (protocol v2
+       §8.3, F7). The phone refuses any list or card below the anchor.
+     - A host pair answer needs a held generation; without one the relay answers 409 `fenced`, as intended.
 - **Starting work:** a "New ticket" action (a sealed request applied by the host), start/move through the Operate
   scope, and the AI Factory through the bridge (as merged in core R13).
 

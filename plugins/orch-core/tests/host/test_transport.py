@@ -1,0 +1,1045 @@
+"""H1b acceptance and transport integration; no dispatcher or registry storage."""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import errno
+import os
+import secrets
+import shutil
+import socket
+import stat
+import struct
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from orch.host import frames, transport
+from orch.host._unix import CheckedDirectory, UnsafePath, _linux_acl, check_acl, check_directory
+from orch.host.transport import (
+    Bucket,
+    ByteBudget,
+    Credentials,
+    HostLimits,
+    Listener,
+    Peer,
+    Pin,
+    Server,
+    Session,
+    check_socket_path,
+    connect_pinned,
+    handshake_pinned,
+    peer_credentials,
+)
+
+WS = "a" * 32
+HELLO = {"t": "hello", "proto": [1], "client": "test", "caps": []}
+UID, GID = os.getuid(), os.getgid()
+META = {
+    "host": "test",
+    "workspace": {"id": WS, "prefix": "TEST"},
+    "tier": "B",
+    "caps": [],
+    "ops": {},
+    "registry": "sha256:" + "0" * 64,
+    "limits": {"frame": frames.MAX_FRAME, "inflight": 8, "timeout_ms": 30_000, "blob_bytes": 0, "inline_bytes": 0},
+}
+
+
+class Registry:
+    def __init__(self, peers=None, worker_uid=None):
+        self.peers = {UID: Peer(UID, "agent")} if peers is None else peers
+        self.worker_uid = worker_uid
+        self.lookups = []
+
+    def lookup(self, uid, workspace_id):
+        self.lookups.append((uid, workspace_id))
+        return self.peers.get(uid)
+
+
+class Clock:
+    def __init__(self):
+        self.now = 0.0
+
+    def __call__(self):
+        return self.now
+
+
+def req(request_id="r"):
+    return {"t": "req", "id": request_id, "op": "status", "args": {}}
+
+
+def result(request_id="r"):
+    return {
+        "t": "res",
+        "id": request_id,
+        "ok": True,
+        "result": {
+            "data": {},
+            "key": None,
+            "seq": 0,
+            "cursor": 0,
+            "hints": [],
+            "lines": [],
+            "duplicate": False,
+            "exit": 0,
+            "head": None,
+        },
+    }
+
+
+def handler(session, frame, request):
+    if session.admit(request):
+
+        async def run():
+            if session.state.start(request, "read"):
+                session.respond(request, result(request.id))
+
+        return run()
+    return None
+
+
+@pytest.fixture
+def secure_tree():
+    # /tmp is sticky: §2 correctly forbids a user-owned direct child. Use a short
+    # directory under this checked-out repository, whose ancestors are trusted.
+    root = Path(__file__).resolve().parents[4]
+    while True:
+        path = root / (".h" + secrets.token_hex(2))
+        try:
+            path.mkdir(mode=0o700)
+            break
+        except FileExistsError:
+            continue
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path)
+
+
+@pytest.fixture
+def listener(secure_tree):
+    try:
+        value = Listener(secure_tree / "r", WS, host_uid=UID, gid=GID)
+    except OSError as exc:
+        if exc.errno == errno.EPERM:
+            pytest.skip("Sandbox forbids AF_UNIX bind (EPERM)")
+        raise
+    try:
+        yield value
+    finally:
+        value.close()
+
+
+def server_for(listener, **kwargs):
+    return Server(
+        listener,
+        kwargs.pop("registry", Registry()),
+        kwargs.pop("limits", HostLimits()),
+        kwargs.pop("handler", handler),
+        META,
+        **kwargs,
+    )
+
+
+async def read_frame(sock):
+    loop = asyncio.get_running_loop()
+    decoder = frames.Decoder()
+    while True:
+        data = await asyncio.wait_for(loop.sock_recv(sock, 1), 2)
+        if not data:
+            return None
+        items = decoder.feed(data)
+        if items:
+            assert not isinstance(items[0], frames.FrameError)
+            return items[0]
+
+
+async def send_frame(sock, frame):
+    await asyncio.get_running_loop().sock_sendall(sock, frames.encode(frame))
+
+
+@contextlib.asynccontextmanager
+async def running(server):
+    task = asyncio.create_task(server.serve())
+    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    client.setblocking(False)
+    try:
+        await asyncio.get_running_loop().sock_connect(client, str(server.listener.path))
+        yield client, task
+    finally:
+        client.close()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+def test_checked_directory_create_modes_and_recheck(secure_tree):
+    with contextlib.ExitStack() as stack:
+        directory = CheckedDirectory(secure_tree / "run", UID, mode=0o711)
+        stack.callback(directory.close)
+        assert stat.S_IMODE(os.fstat(directory.fd).st_mode) == 0o711
+        directory.recheck()
+        (secure_tree / "run").chmod(0o777)
+        with pytest.raises(UnsafePath):
+            directory.recheck()
+
+
+def test_symlink_and_writable_ancestor_refused(secure_tree):
+    (secure_tree / "actual").mkdir()
+    (secure_tree / "link").symlink_to(secure_tree / "actual", target_is_directory=True)
+    with pytest.raises(OSError):
+        CheckedDirectory(secure_tree / "link" / "run", UID, mode=0o711)
+    (secure_tree / "actual").chmod(0o777)
+    with pytest.raises(UnsafePath):
+        CheckedDirectory(secure_tree / "actual" / "run", UID, mode=0o711)
+
+
+def test_ancestor_replacement_even_with_correct_modes(secure_tree):
+    parent = secure_tree / "parent"
+    parent.mkdir(mode=0o700)
+    directory = CheckedDirectory(parent / "run", UID, mode=0o711)
+    try:
+        parent.rename(secure_tree / "old")
+        parent.mkdir(mode=0o700)
+        (parent / "run").mkdir(mode=0o711)
+        (parent / "run").chmod(0o711)
+        with pytest.raises(UnsafePath, match="replaced"):
+            directory.recheck()
+    finally:
+        directory.close()
+
+
+def test_foreign_helper_owner_names_owner(monkeypatch):
+    monkeypatch.setattr(os, "fstat", lambda fd: SimpleNamespace(st_uid=UID + 123, st_mode=stat.S_IFDIR | 0o755))
+    with pytest.raises(UnsafePath, match=str(UID + 123)):
+        check_directory(42, Path("/Users/Shared/orch"), UID)
+
+
+@pytest.mark.parametrize("mode", [0o700, 0o775, 0o1777])
+def test_helper_requires_root_0755(monkeypatch, mode):
+    monkeypatch.setattr(os, "fstat", lambda fd: SimpleNamespace(st_uid=0, st_mode=stat.S_IFDIR | mode))
+    with pytest.raises(UnsafePath):
+        check_directory(42, Path("/Users/Shared/orch"), UID)
+
+
+def test_sticky_parent_requires_root_helper(secure_tree, monkeypatch):
+    import orch.host._unix as unix
+
+    original = unix.check_directory
+
+    def checked(fd, path, host_uid, *, helper=False):
+        if path == secure_tree:
+            return True
+        return original(fd, path, host_uid, helper=helper)
+
+    monkeypatch.setattr(unix, "check_directory", checked)
+    if UID == 0:
+        pytest.skip("This assertion needs a non-root current UID")
+    with pytest.raises(UnsafePath, match="expected root 0755"):
+        CheckedDirectory(secure_tree / "run", UID, mode=0o711)
+
+
+def acl(*entries):
+    return struct.pack("<I", 2) + b"".join(struct.pack("<HHI", *entry) for entry in entries)
+
+
+@pytest.mark.parametrize("entry", [(2, 2, 99999), (4, 2, 0xFFFFFFFF), (8, 2, 99999), (32, 2, 0xFFFFFFFF)])
+def test_linux_acl_rejects_foreign_write(entry):
+    with pytest.raises(UnsafePath):
+        _linux_acl(acl(entry), {0, UID}, empty=False)
+
+
+def test_linux_acl_masks_and_read_only_entries():
+    _linux_acl(acl((2, 6, 99999), (16, 4, 0xFFFFFFFF)), {0, UID}, empty=False)
+    _linux_acl(acl((2, 7, UID)), {0, UID}, empty=False)
+    with pytest.raises(UnsafePath):
+        _linux_acl(acl((2, 4, UID)), {0, UID}, empty=True)
+    with pytest.raises(UnsafePath):
+        _linux_acl(b"bad", {UID}, empty=False)
+
+
+def test_acl_inspection_failure_closed(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "unsupported")
+    with pytest.raises(UnsafePath):
+        check_acl(42, {UID})
+
+
+def test_linux_default_acl_checked(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(
+        os, "getxattr", lambda fd, name: acl((2, 2, 99999)) if name.endswith("default") else acl(), raising=False
+    )
+    with pytest.raises(UnsafePath):
+        check_acl(42, {UID})
+
+
+def test_real_platform_acl(secure_tree):
+    fd = os.open(secure_tree, os.O_RDONLY)
+    try:
+        check_acl(fd, {0, UID})
+    finally:
+        os.close(fd)
+
+
+@pytest.mark.parametrize("path", [Path("/" + "a" * 100), Path("/" + "é" * 50), Path("relative"), Path("/a/../b")])
+def test_socket_path_limit(path):
+    with pytest.raises(UnsafePath):
+        check_socket_path(path)
+    check_socket_path(Path("/" + "a" * 99))
+
+
+def test_directory_and_socket_modes(listener):
+    assert stat.S_IMODE(listener.path.stat().st_mode) == 0o660
+    assert stat.S_IMODE(listener.path.parent.stat().st_mode) == 0o750
+    assert stat.S_IMODE(listener.path.parent.parent.stat().st_mode) == 0o711
+    assert listener.path.stat().st_gid == GID
+    listener.recheck()
+
+
+def test_bind_restores_cwd_and_umask(secure_tree, monkeypatch):
+    cwd = Path.cwd()
+    old = os.umask(0o027)
+    monkeypatch.setattr(socket.socket, "bind", lambda *args: (_ for _ in ()).throw(OSError(errno.EPERM, "test")))
+    try:
+        with pytest.raises(OSError):
+            Listener(secure_tree / "r", WS, host_uid=UID, gid=GID)
+        assert Path.cwd() == cwd
+        assert os.umask(0o027) == 0o027
+    finally:
+        os.umask(old)
+
+
+def test_bind_uses_checked_fd_despite_replacement(secure_tree, monkeypatch):
+    # Replace an ancestor between validation and bind. bind still operates in the
+    # original inode, and post-bind recheck refuses service and cleans only it.
+    original = Listener._bind
+    bound_at = []
+    original_bind = socket.socket.bind
+
+    def bind_socket(sock, address):
+        bound_at.append((address, Path.cwd()))
+        return original_bind(sock, address)
+
+    def replaced(self, gid):
+        self.path.parent.rename(self.path.parent.with_name("old"))
+        self.path.parent.mkdir(mode=0o750)
+        original(self, gid)
+
+    monkeypatch.setattr(Listener, "_bind", replaced)
+    monkeypatch.setattr(socket.socket, "bind", bind_socket)
+    try:
+        with pytest.raises(UnsafePath):
+            Listener(secure_tree / "r", WS, host_uid=UID, gid=GID)
+    except OSError as exc:
+        if exc.errno == errno.EPERM:
+            pytest.skip("Sandbox forbids AF_UNIX bind (EPERM)")
+        raise
+    assert bound_at == [("host.sock", secure_tree / "r" / "old")]
+    assert not (secure_tree / "r" / WS / "host.sock").exists()
+    assert not (secure_tree / "r" / "old" / "host.sock").exists()
+
+
+def test_live_lock_and_stale_socket(listener):
+    with pytest.raises(BlockingIOError):
+        Listener(listener.path.parent.parent, WS, host_uid=UID, gid=GID)
+    # Simulate a crash: close socket/lock/fds without unlinking the stale socket.
+    listener.sock.close()
+    listener.sock = None
+    listener.identity = None
+    path = listener.path
+    listener.close()
+    replacement = Listener(path.parent.parent, WS, host_uid=UID, gid=GID)
+    replacement.close()
+    assert not path.exists()
+
+
+def test_planted_file_and_symlink(secure_tree):
+    run = secure_tree / "r"
+    run.mkdir(mode=0o711)
+    run.chmod(0o711)
+    directory = run / WS
+    directory.mkdir(mode=0o750)
+    directory.chmod(0o750)
+    path = directory / "host.sock"
+    path.write_text("not a socket")
+    with pytest.raises(UnsafePath, match="Planted"):
+        Listener(run, WS, host_uid=UID, gid=GID)
+    assert path.read_text() == "not a socket"
+    path.unlink()
+    path.symlink_to(secure_tree / "elsewhere")
+    with pytest.raises(UnsafePath, match="Planted"):
+        Listener(run, WS, host_uid=UID, gid=GID)
+    assert path.is_symlink()
+
+
+def test_foreign_socket_owner_refused(listener, monkeypatch):
+    path = listener.path
+    listener.sock.close()
+    listener.sock = None
+    listener.identity = None
+    listener.close()
+    original = os.stat
+
+    def foreign(name, *args, **kwargs):
+        info = original(name, *args, **kwargs)
+        if str(name) == "host.sock":
+            return SimpleNamespace(st_mode=info.st_mode, st_uid=UID + 123)
+        return info
+
+    monkeypatch.setattr(os, "stat", foreign)
+    with pytest.raises(UnsafePath, match="Planted socket"):
+        Listener(path.parent.parent, WS, host_uid=UID, gid=GID)
+    assert path.exists()
+
+
+def test_binding_requires_single_main_thread(secure_tree, monkeypatch):
+    monkeypatch.setattr(transport.threading, "active_count", lambda: 2)
+    with pytest.raises(RuntimeError, match="threads"):
+        Listener(secure_tree / "r", WS, host_uid=UID, gid=GID)
+
+
+def test_native_peer_credentials():
+    a, b = socket.socketpair()
+    try:
+        credentials = peer_credentials(a)
+        assert (credentials.uid, credentials.gid, credentials.pid) == (UID, GID, os.getpid())
+    finally:
+        a.close()
+        b.close()
+
+
+@pytest.mark.parametrize("platform", ["linux", "darwin"])
+def test_peer_credential_structs(monkeypatch, platform):
+    monkeypatch.setattr(sys, "platform", platform)
+
+    class Sock:
+        def getsockopt(self, level, option, length):
+            if platform == "linux":
+                return struct.pack("3i", 321, 123, 456)
+            return struct.pack("i", 321) if option == 2 else struct.pack("@IIh2x16I", 0, 123, 1, 456, *([0] * 15))
+
+    # SO_PEERCRED is absent on macOS, but its Linux numeric value is stable.
+    monkeypatch.setattr(socket, "SO_PEERCRED", 17, raising=False)
+    assert peer_credentials(Sock()) == Credentials(123, 456, 321)
+
+
+def test_uid_checked_before_client_sends(listener, monkeypatch):
+    monkeypatch.setattr(transport, "peer_credentials", lambda sock: Credentials(UID + 1, GID, 1))
+    with pytest.raises(UnsafePath, match="UID"):
+        connect_pinned(Pin(UID, WS, listener.path))
+    accepted, _ = listener.sock.accept()
+    try:
+        accepted.settimeout(1)
+        assert accepted.recv(1) == b""
+    finally:
+        accepted.close()
+
+
+def test_pin_workspace_checked(listener):
+    server = server_for(listener)
+    welcome = server.welcome(Peer(UID, "agent"), 1)
+    Pin(UID, WS, listener.path).check_welcome(welcome)
+    with pytest.raises(UnsafePath):
+        Pin(UID, "b" * 32, listener.path).check_welcome(welcome)
+    with pytest.raises(UnsafePath):
+        Pin(UID + 1, WS, listener.path).check_welcome(welcome)
+
+
+@pytest.mark.parametrize(
+    "kind,uid,worker,allowed",
+    [
+        ("workspace", 123, None, "agent"),
+        ("workspace", 124, None, None),
+        ("control", UID, None, "control"),
+        ("control", UID + 123, None, None),
+        ("workspace", 123, 123, None),
+        ("control", UID, UID, None),
+        ("worker", 123, 123, "worker"),
+        ("worker", 124, 123, None),
+    ],
+)
+def test_listener_class_rules(kind, uid, worker, allowed):
+    listener = SimpleNamespace(kind=kind, host_uid=UID, workspace_id=WS)
+    server = server_for(
+        listener, registry=Registry({123: Peer(123, "agent")}, worker), worker_identity=lambda cred: True
+    )
+    if allowed:
+        assert server.classify(Credentials(uid, GID, 1)).kind == allowed
+    else:
+        with pytest.raises(frames.FrameError, match="not allowed"):
+            server.classify(Credentials(uid, GID, 1))
+
+
+def test_worker_requires_identity_hook_and_single_connection():
+    listener = SimpleNamespace(kind="worker", host_uid=UID, workspace_id=None)
+    server = server_for(listener, registry=Registry(worker_uid=123))
+    with pytest.raises(frames.FrameError):
+        server.classify(Credentials(123, 1, 42))
+    server.worker_identity = lambda cred: cred.pid == 42  # H10 also verifies start time.
+    assert server.classify(Credentials(123, 1, 42)).kind == "worker"
+    with pytest.raises(frames.FrameError):
+        server.classify(Credentials(123, 1, 43))
+    peer = Peer(123, "worker")
+    server.limits.acquire(peer)
+    with pytest.raises(frames.FrameError) as error:
+        server.limits.acquire(peer)
+    assert error.value.code == "peer.denied"
+    server.limits.release(peer)
+    server.limits.acquire(peer)
+
+
+def test_uid_limits_and_agent_bucket():
+    clock = Clock()
+    limits = HostLimits(clock=clock)
+    peer = Peer(123, "agent")
+    for _ in range(32):
+        limits.acquire(peer)
+    with pytest.raises(frames.FrameError) as error:
+        limits.acquire(peer)
+    assert error.value.response()["t"] == "fatal"
+    limits.release(peer)
+    limits.acquire(peer)
+    assert all(limits.request_allowed(peer) for _ in range(100))
+    assert not limits.request_allowed(peer)
+    assert limits.request_allowed(Peer(456, "agent"))
+    assert limits.request_allowed(Peer(123, "person"))
+    clock.now += 0.05
+    assert limits.request_allowed(peer)
+    attempts = HostLimits(clock=clock, connection_rate=(1, 1))
+    attempts.acquire(peer)
+    attempts.release(peer)
+    with pytest.raises(frames.FrameError):
+        attempts.acquire(peer)
+
+
+def test_byte_budget_and_bucket_are_bounded():
+    clock = Clock()
+    budget = ByteBudget(clock)
+    budget.add(transport.BYTES_PER_MINUTE)
+    with pytest.raises(frames.FrameError):
+        budget.add(1)
+    clock.now = 61
+    budget.add(1)
+    assert budget.total == 1
+    for _ in range(1000):
+        budget.add(1)
+    assert len(budget.samples) == 1
+    bucket = Bucket(20, 100, clock)
+    clock.now += 100
+    assert sum(bucket.take() for _ in range(101)) == 100
+
+
+def test_unauthorized_kernel_uid_denied_without_client_bytes(listener):
+    async def scenario():
+        registry = Registry({})
+        server = server_for(listener, registry=registry)
+        async with running(server) as (client, _):
+            fatal = await read_frame(client)
+            assert fatal["error"]["code"] == "peer.denied"
+            assert await read_frame(client) is None
+            assert registry.lookups == [(UID, WS)]
+
+    asyncio.run(scenario())
+
+
+def test_handshake_request_malformed_and_reuse(listener):
+    async def scenario():
+        async with running(server_for(listener)) as (client, _):
+            for byte in frames.encode(HELLO):
+                await asyncio.get_running_loop().sock_sendall(client, bytes([byte]))
+            assert (await read_frame(client))["t"] == "welcome"
+            await send_frame(client, req() | {"unknown": True})
+            assert (await read_frame(client))["error"]["code"] == "req.invalid"
+            await send_frame(client, req())
+            assert (await read_frame(client))["ok"]
+            await send_frame(client, req())
+            assert (await read_frame(client))["ok"]
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "first,code", [(req(), "handshake.invalid"), (HELLO | {"proto": [99]}, "host.version_mismatch")]
+)
+def test_handshake_failures(listener, first, code):
+    async def scenario():
+        async with running(server_for(listener)) as (client, _):
+            await send_frame(client, first)
+            assert (await read_frame(client))["error"]["code"] == code
+            assert await read_frame(client) is None
+
+    asyncio.run(scenario())
+
+
+def test_request_before_welcome_is_fatal(listener):
+    async def scenario():
+        async with running(server_for(listener)) as (client, _):
+            await asyncio.get_running_loop().sock_sendall(client, frames.encode(HELLO) + frames.encode(req()))
+            reply = await read_frame(client)
+            if reply["t"] == "welcome":
+                reply = await read_frame(client)
+            assert reply["error"]["code"] == "handshake.invalid"
+            assert await read_frame(client) is None
+
+    asyncio.run(scenario())
+
+
+def test_connection_quota_before_hello(listener):
+    async def scenario():
+        limits = HostLimits()
+        limits.connections[UID] = 32
+        async with running(server_for(listener, limits=limits)) as (client, _):
+            assert (await read_frame(client))["error"]["code"] == "quota.host"
+            assert limits.connections[UID] == 32
+
+    asyncio.run(scenario())
+
+
+def test_monitor_stops_serving_on_replaced_ancestor(listener, monkeypatch):
+    monkeypatch.setattr(transport, "RECHECK_SECONDS", 0.02)
+
+    async def scenario():
+        server = server_for(listener)
+        async with running(server) as (client, task):
+            await send_frame(client, HELLO)
+            assert (await read_frame(client))["t"] == "welcome"
+            run = listener.path.parent.parent
+            run.rename(run.with_name("old"))
+            run.mkdir(mode=0o711)
+            run.chmod(0o711)
+            with pytest.raises((UnsafePath, OSError)):
+                await asyncio.wait_for(task, 1)
+            assert await read_frame(client) is None
+            assert not server.sessions
+            assert not server.limits.connections
+
+    asyncio.run(scenario())
+
+
+@contextlib.asynccontextmanager
+async def pair_session(clock=None, callback=handler):
+    host, client = socket.socketpair()
+    host.setblocking(False)
+    client.setblocking(False)
+    clock = clock or Clock()
+    listener = SimpleNamespace(kind="workspace", host_uid=UID, workspace_id=WS)
+    server = server_for(listener, clock=clock, handler=callback)
+    session = Session(host, Peer(UID, "agent"), Credentials(UID, GID, os.getpid()), server)
+    task = asyncio.create_task(session.run())
+    try:
+        yield session, client, task, clock
+    finally:
+        client.close()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.parametrize("partial,code", [(False, "handshake.invalid"), (True, "frame.invalid")])
+def test_deadlines_without_further_bytes(partial, code):
+    async def scenario():
+        async with pair_session() as (session, client, _, clock):
+            if partial:
+                await send_frame(client, HELLO)
+                assert (await read_frame(client))["t"] == "welcome"
+                await asyncio.get_running_loop().sock_sendall(client, b"\x00")
+                while not session.decoder.pending:
+                    await asyncio.sleep(0.001)
+            clock.now = 11
+            fatal = await read_frame(client)
+            assert fatal["error"]["code"] == code
+            assert await read_frame(client) is None
+
+    asyncio.run(scenario())
+
+
+def test_idle_timeout_and_subscription_exemption():
+    async def scenario():
+        async with pair_session() as (session, client, task, clock):
+            await send_frame(client, HELLO)
+            await read_frame(client)
+            session.subscriptions = 1
+            clock.now = 601
+            await asyncio.sleep(0.15)
+            assert not task.done()
+            session.subscriptions = 0
+            assert await read_frame(client) is None
+
+    asyncio.run(scenario())
+
+
+def test_inflight_quota_cancel_and_idle_exemption():
+    async def scenario():
+        def parked(session, frame, request):
+            session.admit(request)
+
+            async def run():
+                session.state.start(request, "wait")
+                await asyncio.Event().wait()
+
+            return run()
+
+        async with pair_session(callback=parked) as (session, client, task, clock):
+            await send_frame(client, HELLO)
+            await read_frame(client)
+            for i in range(9):
+                await send_frame(client, req(str(i)))
+            assert (await read_frame(client))["error"]["code"] == "quota.host"
+            assert session.state.slots == 8
+            clock.now = 601
+            await asyncio.sleep(0.15)
+            assert not task.done()
+            await send_frame(client, {"t": "cancel", "id": "0"})
+            assert (await read_frame(client))["error"]["code"] == "cancelled"
+            await asyncio.sleep(0)
+            assert session.state.slots == 7
+
+    asyncio.run(scenario())
+
+
+def test_bounded_queue_and_fatal_disposition(monkeypatch):
+    monkeypatch.setattr(transport, "WRITE_QUEUE_FRAMES", 2)
+
+    async def scenario():
+        async with pair_session() as (_, client, _, _):
+            await send_frame(client, HELLO)
+            await read_frame(client)
+            # Coalesced malformed requests bypass admission but cannot grow an
+            # unbounded queue. No writer has begun a partial frame at overflow.
+            data = b"".join(frames.encode(req(str(i)) | {"bad": True}) for i in range(4))
+            await asyncio.get_running_loop().sock_sendall(client, data)
+            replies = []
+            while (reply := await read_frame(client)) is not None:
+                replies.append(reply)
+            assert replies[-1]["t"] == "fatal"
+            assert replies[-1]["error"]["code"] == "quota.host"
+            assert len(replies) <= 3
+
+    asyncio.run(scenario())
+
+
+def test_write_queue_byte_bound():
+    host, client = socket.socketpair()
+    try:
+        server = server_for(SimpleNamespace(kind="workspace", host_uid=UID, workspace_id=WS))
+        session = Session(host, Peer(UID, "agent"), Credentials(UID, GID, 1), server)
+        response = result()
+        response["result"]["data"] = "x" * (frames.MAX_FRAME - 1000)
+        session.send(response)
+        session.send(response)
+        with pytest.raises(frames.FrameError, match="Slow reader"):
+            session.send(response)
+        assert session.queued_bytes <= transport.WRITE_QUEUE_BYTES
+    finally:
+        host.close()
+        client.close()
+
+
+def test_slow_reader_write_timeout_closes_without_corrupt_fatal(monkeypatch):
+    monkeypatch.setattr(transport, "WRITE_TIMEOUT_SECONDS", 0.02)
+
+    async def scenario():
+        async with pair_session() as (session, client, task, _):
+            session.sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4096)
+            await send_frame(client, HELLO)
+            await read_frame(client)
+            response = result()
+            response["result"]["data"] = "x" * 1_000_000
+            session.send(response)
+            await asyncio.wait_for(task, 1)
+            assert session.closed
+            assert session.writing  # Partial body: appending fatal would corrupt it.
+
+    asyncio.run(scenario())
+
+
+# Actual second-user checks are opt-in even when pytest runs as root. A dedicated
+# container/dev-user fixture should set ORCH_TEST_OS_USERS=1 and execute as root.
+OS_USERS = pytest.mark.skipif(
+    os.environ.get("ORCH_TEST_OS_USERS") != "1" or os.geteuid() != 0,
+    reason="needs root and explicit ORCH_TEST_OS_USERS=1 for a second real UID",
+)
+
+
+@pytest.mark.needs_os_users
+@OS_USERS
+def test_second_os_uid_is_denied_before_sending_bytes():
+    base = Path(tempfile.mkdtemp(prefix="orch-users-", dir="/private/tmp" if sys.platform == "darwin" else "/tmp"))
+    base.chmod(0o755)  # Root-owned helper boundary under the sticky directory.
+    listener = Listener(base / "r", WS, host_uid=0, gid=0)
+    code = """
+import os, socket, sys
+os.setgroups([])
+os.setgid(0)  # Deliberately permit path access so kernel-UID admission is tested.
+os.setuid(65534)
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.connect(sys.argv[1])
+size = int.from_bytes(s.recv(4), 'big')
+data = b''
+while len(data) < size:
+    data += s.recv(size - len(data))
+assert b'peer.denied' in data
+assert s.recv(1) == b''
+"""
+
+    async def scenario():
+        server = server_for(listener, registry=Registry({}))
+        task = asyncio.create_task(server.serve())
+        try:
+            process = await asyncio.create_subprocess_exec(sys.executable, "-c", code, str(listener.path))
+            assert await asyncio.wait_for(process.wait(), 5) == 0
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        listener.close()
+        shutil.rmtree(base)
+
+
+@pytest.mark.needs_os_users
+@OS_USERS
+def test_actual_foreign_owned_planted_socket(secure_tree):
+    run = secure_tree / "r"
+    run.mkdir(mode=0o711)
+    run.chmod(0o711)
+    directory = run / WS
+    directory.mkdir(mode=0o750)
+    directory.chmod(0o750)
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as planted:
+        planted.bind(str(directory / "host.sock"))
+        os.chown(directory / "host.sock", 65534, -1)
+        with pytest.raises(UnsafePath, match="Planted"):
+            Listener(run, WS, host_uid=0, gid=0)
+
+
+def test_handshake_pinned_checks_workspace_before_returning(listener):
+    # Child process avoids both blocking the server loop and starting threads.
+    code = """
+import sys
+from pathlib import Path
+from orch.host.transport import Pin, handshake_pinned
+from orch.host._unix import UnsafePath
+hello = {'t':'hello', 'proto':[1], 'client':'test', 'caps':[]}
+try:
+    handshake_pinned(Pin(int(sys.argv[2]), 'b'*32, Path(sys.argv[1])), hello)
+except UnsafePath:
+    pass
+else:
+    raise AssertionError('Wrong workspace accepted')
+"""
+
+    async def scenario():
+        server = server_for(listener)
+        task = asyncio.create_task(server.serve())
+        try:
+            process = await asyncio.create_subprocess_exec(sys.executable, "-c", code, str(listener.path), str(UID))
+            assert await asyncio.wait_for(process.wait(), 5) == 0
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
+def test_handshake_helper_rejects_request_before_connect():
+    with pytest.raises(frames.FrameError):
+        handshake_pinned(Pin(UID, WS, Path("/nonexistent")), req())
+
+
+def test_native_acl_write_rejected(secure_tree):
+    if sys.platform != "darwin":
+        pytest.skip("Native Darwin ACL test; POSIX ACL decoding is covered separately")
+    path = secure_tree / "acl"
+    path.mkdir()
+    subprocess.run(["/bin/chmod", "+a", "everyone allow add_subdirectory,delete_child", str(path)], check=True)
+    try:
+        with pytest.raises(UnsafePath, match="ACL grants write"):
+            CheckedDirectory(path, UID, mode=0o700)
+    finally:
+        subprocess.run(["/bin/chmod", "-N", str(path)], check=True)
+
+
+@pytest.mark.parametrize("kind,mode", [("control", 0o700), ("worker", 0o750)])
+def test_separate_listeners_modes_and_welcome(secure_tree, kind, mode):
+    try:
+        listener = Listener(secure_tree / "r", kind, host_uid=UID, gid=GID, kind=kind)
+    except OSError as exc:
+        if exc.errno == errno.EPERM:
+            pytest.skip("Sandbox forbids AF_UNIX bind (EPERM)")
+        raise
+    server = server_for(
+        listener,
+        registry=Registry(worker_uid=UID if kind == "worker" else None),
+        worker_identity=lambda credentials: credentials.pid == os.getpid(),
+    )
+
+    async def scenario():
+        async with running(server) as (client, _):
+            assert stat.S_IMODE(listener.path.parent.stat().st_mode) == mode
+            await send_frame(client, HELLO)
+            welcome = await read_frame(client)
+            assert welcome["peer"]["class"] == kind
+            assert welcome["workspace"] is None
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        listener.close()
+
+
+def test_control_rejects_simulated_agent_uid_before_read(secure_tree, monkeypatch):
+    try:
+        listener = Listener(secure_tree / "r", "control", host_uid=UID, gid=GID, kind="control")
+    except OSError as exc:
+        if exc.errno == errno.EPERM:
+            pytest.skip("Sandbox forbids AF_UNIX bind (EPERM)")
+        raise
+    monkeypatch.setattr(transport, "peer_credentials", lambda sock: Credentials(UID + 123, GID, 1))
+    registry = Registry({UID + 123: Peer(UID + 123, "agent")})
+
+    async def scenario():
+        async with running(server_for(listener, registry=registry)) as (client, _):
+            assert (await read_frame(client))["error"]["code"] == "peer.denied"
+            assert await read_frame(client) is None
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        listener.close()
+
+
+def test_cancel_before_work_starts_releases_slot():
+    async def scenario():
+        started = []
+
+        def dispatch(session, frame, request):
+            session.admit(request)
+
+            async def run():
+                started.append(True)
+                await asyncio.Event().wait()
+
+            return run()
+
+        async with pair_session(callback=dispatch) as (session, client, _, _):
+            await send_frame(client, HELLO)
+            await read_frame(client)
+            data = frames.encode(req()) + frames.encode({"t": "cancel", "id": "r"})
+            await asyncio.get_running_loop().sock_sendall(client, data)
+            assert (await read_frame(client))["error"]["code"] == "cancelled"
+            await asyncio.sleep(0)
+            assert not started
+            assert session.state.slots == 0
+
+    asyncio.run(scenario())
+
+
+def test_dispatch_precedence_before_rate_limit():
+    async def scenario():
+        def denied(session, frame, request):
+            session.respond(
+                request,
+                {
+                    "t": "res",
+                    "id": request.id,
+                    "ok": False,
+                    "exit": 2,
+                    "error": {"code": "unknown_command", "message": "Unknown op", "retryable": False},
+                },
+            )
+
+        async with pair_session(callback=denied) as (session, client, _, _):
+            for _ in range(100):
+                session.server.limits.request_allowed(session.peer)
+            await send_frame(client, HELLO)
+            await read_frame(client)
+            await send_frame(client, req())
+            assert (await read_frame(client))["error"]["code"] == "unknown_command"
+            session.server.handler = handler
+            await send_frame(client, req())
+            assert (await read_frame(client))["error"]["code"] == "rate.limited"
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("asynchronous", [True, False])
+def test_handler_error_is_request_scoped(asynchronous):
+    def broken(session, frame, request):
+        if not asynchronous:
+            raise RuntimeError("private details")
+        session.admit(request)
+
+        async def run():
+            raise RuntimeError("private details")
+
+        return run()
+
+    async def scenario():
+        async with pair_session(callback=broken) as (session, client, _, _):
+            await send_frame(client, HELLO)
+            await read_frame(client)
+            await send_frame(client, req())
+            response = await read_frame(client)
+            assert response["error"]["code"] == "internal"
+            assert "private details" not in str(response)
+            session.server.handler = handler
+            await send_frame(client, req())
+            assert (await read_frame(client))["ok"]
+
+    asyncio.run(scenario())
+
+
+def test_default_run_paths(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "darwin")
+    assert transport.default_run_directory(501) == Path("/Users/Shared/orch/run/501")
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert transport.default_run_directory(1000) == Path("/run/orch/1000")
+
+
+def test_native_linux_default_acl(secure_tree):
+    if sys.platform != "linux":
+        pytest.skip("Native Linux POSIX ACL test")
+    path = secure_tree / "acl"
+    path.mkdir(mode=0o700)
+    data = acl((1, 7, 0xFFFFFFFF), (2, 2, UID + 123), (4, 0, 0xFFFFFFFF), (16, 2, 0xFFFFFFFF), (32, 0, 0xFFFFFFFF))
+    try:
+        os.setxattr(path, "system.posix_acl_default", data)
+    except OSError as exc:
+        if exc.errno in {errno.ENOTSUP, errno.EOPNOTSUPP}:
+            pytest.skip("Filesystem does not support POSIX ACLs")
+        raise
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        with pytest.raises(UnsafePath, match="ACL grants write"):
+            check_acl(fd, {0, UID})
+    finally:
+        os.close(fd)
+
+
+def test_acl_read_error_refuses_start(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "linux")
+
+    def unreadable(*args):
+        raise OSError(errno.EACCES, "ACL unavailable")
+
+    monkeypatch.setattr(os, "getxattr", unreadable, raising=False)
+    with pytest.raises(UnsafePath, match="Cannot inspect"):
+        check_acl(42, {UID})
+
+
+def test_hello_deadline_starts_at_accept_not_after_registry():
+    async def scenario():
+        async with pair_session() as (session, client, _, clock):
+            # Represent time spent resolving credentials/registry after accept.
+            session.accepted = -3
+            await send_frame(client, HELLO)
+            assert (await read_frame(client))["error"]["code"] == "handshake.invalid"
+
+    asyncio.run(scenario())

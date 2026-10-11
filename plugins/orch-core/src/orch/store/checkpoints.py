@@ -21,15 +21,25 @@ from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from orch import canon, crypto, schema
+from orch.model.types import ts
 
 from .fsio import loads, read_or_none, write_atomic
 from .logs import WORKSPACE, LogInfo
 from .paths import ULID, check_uid
 
-__all__ = ["Checkpoints", "Divergence", "find_divergence", "judge_offer", "verify_object"]
+__all__ = [
+    "Checkpoints",
+    "Divergence",
+    "ReceiverView",
+    "Restore",
+    "Verdict",
+    "find_divergence",
+    "judge_offer",
+    "verify_object",
+]
 
 LABEL = canon.LABELS["sig_checkpoint"].encode("ascii")
 WORKSPACE_EVERY = 50  # ticket appends between workspace checkpoints
@@ -85,125 +95,144 @@ def _offer_ok(offered: object) -> bool:
     return offered.get("kind") == "workspace_checkpoint"
 
 
+@dataclass(frozen=True)
+class ReceiverView:
+    """A receiver's trusted snapshot when it judges one offer (§5.10). Every field is required: ``{}`` and ``()`` say
+    explicitly that the receiver knows none. The caller supplies all of it from its own pinned state, never from the
+    offer or the relay; ``now`` is the receiver's one sampled clock and is trusted (a malformed value raises).
+
+    - ``known_devices``: every device id (hex, no ``d_``) the receiver knows, active or revoked, mapped to
+      ``{"person_id", "pk_pub"?}``; listed revocation evidence for such a device must be of that person and key.
+    - ``known_revocations``: the revocations it holds when it judges, in its own order (before the sync, or from
+      lower-``n`` bundles already judged in the walk). Any of them for the signer refuses (C3).
+    - ``learned_later``: revocations first learned after this judgment (a higher-``n`` bundle of the walk). They never
+      refuse; a ``compromised`` one of the signer of an accepted restore is reported in :attr:`Verdict.alarms`.
+    """
+
+    workspace_id: str
+    pinned_genesis: str
+    wsk_pub: bytes
+    pinned_delegation: Mapping[str, Any]
+    now: str
+    held: Mapping[str, Any] | None
+    known_devices: Mapping[str, Mapping[str, Any]]
+    known_revocations: Collection[Mapping[str, Any]]
+    learned_later: Collection[Mapping[str, Any]]
+
+
+@dataclass(frozen=True)
+class Restore:
+    """A restore transition bundle: the full transition (C, T, line, log, owner-device evidence, accumulator
+    material), the proof heads per log, and the restore ids this receiver already applied."""
+
+    transition: Mapping[str, Any]
+    proofs: Mapping[str, Any]
+    applied: Collection[str]
+
+
+class Verdict(NamedTuple):
+    code: str
+    restore_id: str | None = None
+    alarms: tuple[str, ...] = ()
+
+
 def judge_offer(
-    held: Mapping[str, Any] | None,
+    view: ReceiverView,
     offered: Mapping[str, Any],
     *,
-    pinned_genesis: str,
-    workspace_id: str,
-    now: str,
-    restore: Mapping[str, Any] | None = None,
-    applied: Collection[str] = (),
-    proofs: Mapping[str, list[str]] | None = None,
-    wsk_pub: bytes | None = None,
-    known_revocations: Collection[Mapping[str, Any]] = (),
-    pinned_delegation: Mapping[str, Any] | None = None,
-    known_devices: Mapping[str, Mapping[str, Any]] | None = None,
-    learned_later: Collection[Mapping[str, Any]] = (),
-    alarms: list[str] | None = None,
-) -> tuple[str, str | None]:
-    """Judge an authenticated workspace checkpoint ``o`` against the held one; ancestry is mandatory for growth (§5.10).
+    proofs: Mapping[str, Any] | None = None,
+    restore: Restore | None = None,
+) -> Verdict:
+    """Judge an authenticated workspace checkpoint ``o`` against ``view.held``; ancestry is mandatory for growth
+    (§5.10). ``proofs`` serve a plain offer; a restore carries its own in :class:`Restore`.
 
     The caller verifies the WSK signature of a plain offer; everything else is checked here: the shape (strict
     timestamps, ``n ≥ 1``, kind), the pinned genesis and ``workspace_id``, and the clock ceiling ``now + 300 s``
-    (``checkpoint.future``:
-    retryable, H unchanged; a local admission rule against one sampled clock, never evidence of divergence).
-    ``restore`` carries the full transition and owner-device evidence; it is accepted only
-    for the delegation pinned for this workspace (``pinned_delegation``, the card's / genesis event's). Hosts
-    additionally replay authorization; this log-free receiver uses the delegation-owner policy. A missing or
-    non-folding proof returns ``sync.incomplete``.
-
-    ``known_devices`` maps every device id the receiver knows (active or revoked) to ``{"person_id", "pk_pub"?}``:
-    listed revocation evidence for such a device must be of that person and key.
-    ``learned_later`` are revocations first learned after this judgment (a higher-``n`` bundle of the walk): they never
-    refuse; a ``compromised`` one of the signer of an accepted restore appends its device id to ``alarms``.
-    This function judges one transition against a caller-supplied snapshot; the walk, its serialization and the
-    persistence of judgments belong to the receiver runtime.
-    ``known_revocations`` are the revocations the receiver holds when it judges this transition, in its own order:
-    learned before the sync or from lower-``n`` bundles already judged in the walk. Any of them for the signer
-    refuses (C3); one first learned from a higher-``n`` bundle must not be passed (a compromised one only alarms).
+    (``checkpoint.future``: retryable, H unchanged; a local admission rule against one sampled clock, never evidence
+    of divergence). A restore is accepted only for the delegation pinned for this workspace (the card's / genesis
+    event's). Hosts additionally replay authorization; this log-free receiver uses the delegation-owner policy. A
+    missing or non-folding proof returns ``sync.incomplete``; a proof that binds another head is ``chain.diverged``.
+    This judges one transition against the caller's snapshot; the walk, its serialization and the persistence of
+    judgments belong to the receiver runtime.
     """
-    from orch.model.types import ts
-
+    held = view.held
     if not _offer_ok(offered):
-        return "chain.diverged", None
-    if offered["genesis"] != pinned_genesis:
-        return "trust.genesis_mismatch", None
-    if offered["workspace_id"] != workspace_id or (held and held["workspace_id"] != workspace_id):
-        return "chain.diverged", None
+        return Verdict("chain.diverged")
+    if offered["genesis"] != view.pinned_genesis:
+        return Verdict("trust.genesis_mismatch")
+    if offered["workspace_id"] != view.workspace_id or (held and held["workspace_id"] != view.workspace_id):
+        return Verdict("chain.diverged")
     h = _entries(held) if held else {}
     o = _entries(offered)
+    if restore is not None:
+        if proofs is not None:
+            raise TypeError("a restore carries its own proofs")
+        proofs = restore.proofs
     proofs = {} if proofs is None else proofs
     if held and offered["n"] == held["n"]:
-        return ("ok" if offered == held else "chain.diverged"), None
+        return Verdict("ok" if offered == held else "chain.diverged")
     if held and offered["n"] < held["n"]:
         bad = any(k not in h or v["seq"] > h[k]["seq"] or (v["seq"] == h[k]["seq"] and v != h[k]) for k, v in o.items())
-        return ("chain.diverged" if bad else "ignored"), None
-    if ts(offered["at"]) > ts(now) + SKEW_S:
-        return "checkpoint.future", None
+        return Verdict("chain.diverged" if bad else "ignored")
+    if ts(offered["at"]) > ts(view.now) + SKEW_S:
+        return Verdict("checkpoint.future")
     if held and (offered["at"] < held["at"] or h.keys() - o.keys()):
-        return "chain.diverged", None
+        return Verdict("chain.diverged")
     if not isinstance(proofs, Mapping):
-        return "sync.incomplete", None
+        return Verdict("sync.incomplete")
     restored = None
     if restore is not None:
-        verdict = _judge_restore(
-            held,
-            offered,
-            h,
-            o,
-            restore,
-            proofs,
-            pinned_genesis,
-            applied,
-            wsk_pub,
-            known_revocations,
-            pinned_delegation,
-            known_devices or {},
-        )
-        if verdict[0] != "ok":
-            return verdict
-        restored = verdict[1]
+        code, restored = _judge_restore(view=view, offered=offered, h=h, o=o, restore=restore, proofs=proofs)
+        if code != "ok":
+            return Verdict(code)
     if held is None and restore is None:
-        return "ok", None
+        return Verdict("ok")
     for log, entry in o.items():
         if restored and log == restored[0]:
             continue
         old = h.get(log, {"seq": 0, "head": None, "acc": _ZERO_ACC})
         if entry["seq"] < old["seq"] or (entry["seq"] == old["seq"] and entry != old):
-            return "chain.diverged", None
+            return Verdict("chain.diverged")
         if not _extension(old, entry, proofs.get(log, [])):
-            return "sync.incomplete", None
-    if restored and alarms is not None:
-        signer = restore["event"]["actor"]["device"][2:]  # type: ignore[index]
-        for later in learned_later:  # learned after the judgment: an alarm, never a refusal (C3)
-            rev = later["revocation"]["o"]
-            if rev["device_id"] == signer and rev["reason"] == "compromised":
-                alarms.append("d_" + signer)
-    return "ok", restored[1] if restored else None
+            return Verdict("sync.incomplete")
+    if not restored:
+        return Verdict("ok")
+    _, restore_id, signer = restored
+    alarms = tuple(
+        sorted(
+            {
+                "d_" + signer
+                for later in view.learned_later  # learned after the judgment: an alarm, never a refusal (C3)
+                if later["revocation"]["o"]["device_id"] == signer
+                and later["revocation"]["o"]["reason"] == "compromised"
+            }
+        )
+    )
+    return Verdict("ok", restore_id, alarms)
+
+
+def _same_evidence(entry: Mapping[str, Any], person_id: str, pk_pub: str | None) -> bool:
+    """A listed ``{revocation, device_cert, pk_pub}`` entry is of this person (and key, where known)."""
+    return entry["revocation"]["o"]["person_id"] == person_id and (pk_pub is None or entry["pk_pub"] == pk_pub)
 
 
 def _judge_restore(
-    held: Mapping[str, Any] | None,
+    *,
+    view: ReceiverView,
     offered: Mapping[str, Any],
     h: Mapping[str, Any],
     o: Mapping[str, Any],
-    restore: Mapping[str, Any],
+    restore: Restore,
     proofs: Mapping[str, Any],
-    pinned_genesis: str,
-    applied: Collection[str],
-    wsk_pub: bytes | None,
-    known_revocations: Collection[Mapping[str, Any]],
-    pinned_delegation: Mapping[str, Any] | None,
-    known_devices: Mapping[str, Mapping[str, Any]],
-) -> tuple[str, Any]:
-    """The restore half of :func:`judge_offer`: ``("ok", (log, id))`` or a refusal ``(code, None)``."""
+) -> tuple[str, tuple[str, str, str] | None]:
+    """The restore half of :func:`judge_offer`: ``("ok", (log, id, signer))`` or a refusal ``(code, None)``."""
     from orch.identity import CryptoVerifier
     from orch.identity.certs import check_cert, check_delegation, person_scope_ok
     from orch.identity.errors import Refused
-    from orch.model.types import ts
     from orch.model.verifier import SigContext
 
+    held, wsk_pub, applied, pinned_genesis = view.held, view.wsk_pub, restore.applied, view.pinned_genesis
+    pinned_delegation, restore = view.pinned_delegation, restore.transition  # type: ignore[assignment]
     diverged = "chain.diverged", None
     try:
         ev, log, c = restore["event"], restore["log"], restore["C"]
@@ -258,23 +287,21 @@ def _judge_restore(
         signer = ev["actor"]["device"][2:]
         if signer in carried:
             return diverged  # the bundle revokes its own signer: a log-free receiver cannot place the revocation
-        for device, got in carried.items():
-            mine = known_devices.get(device)
-            if mine is not None and (
-                got["revocation"]["o"]["person_id"] != mine["person_id"]
-                or ("pk_pub" in mine and got["pk_pub"] != mine["pk_pub"])
-            ):
-                return diverged  # evidence of another person or key for a device the receiver knows (active or revoked)
-        for known in known_revocations:
+        # Evidence for a device the receiver knows (active or revoked) must be of its known person and key.
+        knowledge = [(device, mine["person_id"], mine.get("pk_pub")) for device, mine in view.known_devices.items()]
+        knowledge += [
+            (k["revocation"]["o"]["device_id"], k["revocation"]["o"]["person_id"], k.get("pk_pub"))
+            for k in view.known_revocations
+        ]
+        for device, person_id, pk_pub in knowledge:
+            got = carried.get(device)
+            if got is not None and not _same_evidence(got, person_id, pk_pub):
+                return diverged
+        for known in view.known_revocations:
             rev = known["revocation"]["o"]
             got = carried.get(rev["device_id"])
             if rev["device_id"] == signer:
                 return diverged  # held when judged: any reason, any host-chosen position (C3)
-            if got is not None and (
-                got["revocation"]["o"]["person_id"] != rev["person_id"]
-                or ("pk_pub" in known and got["pk_pub"] != known["pk_pub"])
-            ):
-                return diverged  # evidence of another person or key for a device the receiver already knows
             if log == WORKSPACE and (
                 got is None or (rev["reason"] == "compromised" and got["revocation"]["o"]["reason"] != "compromised")
             ):
@@ -319,7 +346,7 @@ def _judge_restore(
             return "sync.incomplete", None
         if tail[0] != canon.event_head(ev):
             return diverged  # a WSK-signed T whose entry at from_seq + 1 is another event than this restore
-        return "ok", (log, ev["id"])
+        return "ok", (log, ev["id"], signer)
     except (KeyError, TypeError, ValueError, IndexError, Refused, schema.SchemaError, canon.HashError):
         return diverged
 

@@ -177,7 +177,7 @@
  ],
  "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
  "note": "TEST KEYS ONLY. Every private scalar below is derived from the key name as sha256('orch-f1-test-key|' + name) mod (n-1) + 1 and is published on purpose; the signatures are RFC 6979 (deterministic), so consumers verify the stored signature and never re-sign.",
- "pins": "protocol 2.4 checkpoint objects of F1 5.10: the exact shape of `o`, the signed bytes ('orch/v2/sig/checkpoint|' + cj(o)), real signatures; forged variants fail; a lower seq or n, or the same seq with another head, is refused (chain.diverged); a log that disagrees with a checkpoint is diverged; restore (see restore.json); receivers judge workspace checkpoints by n and seq (workspace_n_offers: ok, ignored, chain.diverged). Receiver inputs: the top-level workspace_id and genesis are the receiver's pins; every offer and transition case gives the receiver clock `now` (a WSK-signed `at` more than 300 s after it is checkpoint.future); a workspace_n_offers case with a `held` key (null: an uninitialized receiver) replaces workspace_n_held; every transition case gives `pinned_delegation`, the workspace's pinned (card / genesis) delegation whose `o` the carried, PK-verified one must equal; learned_later_in_walk lists revocations the receiver learns only from a higher-n bundle (never passed as known; `alarm: true` when it must raise the C3 alarm); `known_devices` maps device_id to the person_id and pk_pub the receiver knows for it (active or revoked); known_revocations entries may carry `pk_pub`. Every refusing transition keeps all signatures valid except the one a case names as its defect.",
+ "pins": "protocol 2.4 checkpoint objects of F1 5.10: the exact shape of `o`, the signed bytes ('orch/v2/sig/checkpoint|' + cj(o)), real signatures; forged variants fail; a lower seq or n, or the same seq with another head, is refused (chain.diverged); a log that disagrees with a checkpoint is diverged; restore (see restore.json); receivers judge workspace checkpoints by n and seq (workspace_n_offers: ok, ignored, chain.diverged). Receiver inputs (a receiver view; every field is given explicitly, {} or [] meaning none): the top-level workspace_id, genesis and wsk_pub are the receiver's pins; every offer and transition case gives the receiver clock `now` (one sampled, trusted clock; a WSK-signed `at` more than 300 s after it is the retryable checkpoint.future); a workspace_n_offers case with a `held` key (null: an uninitialized receiver) replaces workspace_n_held; every transition case gives `pinned_delegation` (the workspace's card / genesis delegation, whose `o` the carried, PK-verified one must equal), `known_devices` (device_id -> person_id and optional pk_pub the receiver knows for it, active or revoked), `known_revocations` (held when judging; entries may carry `pk_pub`) and `learned_later_in_walk` (learned only from a higher-n bundle; never refuses; `alarm: true` when it must raise the C3 alarm, otherwise no alarm). Every refusing transition keeps all signatures valid except the one a case names as its defect.",
  "ticket_checkpoint": {
   "signed": {
    "o": {
@@ -256,6 +256,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "restore_accumulator_fold",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -433,6 +436,7 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
    "known_revocations": [
     {
      "revocation": {
@@ -449,6 +453,7 @@
      }
     }
    ],
+   "learned_later_in_walk": [],
    "name": "relay_requires_every_held_revocation",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -626,6 +631,9 @@
     },
     "sig": "c6qQzTymIKWL1jANRlbWOpuAiwzvhttjgiUw-dhgzNlENSiE1KkRXnGmC7SoWqPhm-pqDodM9A14Q3pignKByQ"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "source_must_equal_held",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -803,6 +811,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "initialized_receiver_refuses_null_source",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -948,6 +959,9 @@
    "applied": [],
    "expect": "chain.diverged",
    "held": null,
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "uninitialized_receiver_refuses_nonnull_source",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -1125,6 +1139,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "malformed_retained_proof_is_incomplete",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -1302,6 +1319,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "malformed_tail_proof_is_incomplete",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -1479,6 +1499,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "transition_target_is_bound",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -1656,6 +1679,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "missing_abandoned_proof",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -1830,6 +1856,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "spliced_abandoned_prefix",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -2007,6 +2036,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "restore_not_in_target_proof",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -2186,6 +2218,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "restore_single_use",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -2363,6 +2398,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "full_restore_signature_required",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -2540,6 +2578,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "descriptor_is_insufficient",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -2610,6 +2651,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "source_signature_required",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -2787,6 +2831,9 @@
     },
     "sig": "R8qC8qThcPJJVpdYYpbY61mVfolRJId6rC4up2v6bFR1cDa95n-4uILVHLu3u8_2Kv7_FR3TE-hvrcjITcsahg"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "source_precedes_retained_prefix",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -2958,6 +3005,9 @@
     },
     "sig": "R8qC8qThcPJJVpdYYpbY61mVfolRJId6rC4up2v6bFR1cDa95n-4uILVHLu3u8_2Kv7_FR3TE-hvrcjITcsahg"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "forward_proof_cannot_replace_committed_prefix",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -3383,6 +3433,9 @@
     ],
     "workspace_id": "0123456789abcdef0123456789abcdef"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "demoted_delegation_owner_receiver_accepts_host_refuses",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -3551,6 +3604,7 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
    "known_revocations": [
     {
      "revocation": {
@@ -3567,6 +3621,7 @@
      }
     }
    ],
+   "learned_later_in_walk": [],
    "name": "receiver_retired_to_lost",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -3781,6 +3836,7 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
    "known_revocations": [
     {
      "revocation": {
@@ -3797,6 +3853,7 @@
      }
     }
    ],
+   "learned_later_in_walk": [],
    "name": "receiver_lost_to_retired",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -4011,6 +4068,7 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
    "known_revocations": [
     {
      "revocation": {
@@ -4027,6 +4085,7 @@
      }
     }
    ],
+   "learned_later_in_walk": [],
    "name": "receiver_compromised_to_lost",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -4241,6 +4300,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "rollback_accumulator_must_bind_retained_head",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -4400,6 +4462,9 @@
    "applied": [],
    "expect": "ok",
    "held": null,
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "null_source_with_pinned_genesis",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -4535,6 +4600,9 @@
    "applied": [],
    "expect": "sync.incomplete",
    "held": null,
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "null_source_cannot_substitute_genesis",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -4687,6 +4755,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "restore_delegation_of_another_person",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -4864,6 +4935,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "owner_policy_person_sig_by_another_device",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -5041,6 +5115,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "owner_policy_host_sig_by_another_key",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -5218,6 +5295,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "owner_policy_delegation_signed_by_another_key",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -5395,6 +5475,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "owner_policy_delegation_for_another_workspace",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -5572,6 +5655,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "owner_policy_delegation_for_another_wsk",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -5749,6 +5835,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "owner_policy_delegation_extra_field",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -5928,6 +6017,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "owner_policy_cert_not_signed_by_the_pk",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -6105,6 +6197,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "owner_policy_cert_without_operate",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -6280,6 +6375,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "owner_policy_cert_with_drop_scope",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -6454,6 +6552,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "owner_policy_cert_expired_at_line_at",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -6631,6 +6732,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "owner_policy_cert_created_after_line_at",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -6808,6 +6912,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "owner_policy_cert_valid_at_line_at",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -6985,6 +7092,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "owner_policy_actor_id_not_the_delegation_owner",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -7162,6 +7272,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "owner_policy_actor_device_not_the_cert",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -7339,6 +7452,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "signed_source_names_another_checkpoint",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -7516,6 +7632,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "signed_source_other_n_same_hash",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -7693,6 +7812,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "line_seq_not_from_seq_plus_one",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -7870,6 +7992,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "line_prev_not_the_retained_head",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -8047,6 +8172,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "abandoned_null_below_source_entry",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -8221,6 +8349,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "abandoned_below_source_entry",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -8398,6 +8529,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "abandoned_conflicting_head_at_source_height",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -8575,6 +8709,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "abandoned_above_source_entry",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -8752,6 +8889,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "target_over_another_head",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -8929,6 +9069,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "line_at_before_source_at",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -9106,6 +9249,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "line_at_equals_source_at",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -9283,6 +9429,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "line_at_after_target_at",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -9460,6 +9609,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "target_at_clock_ceiling",
    "now": "2026-10-10T10:55:00Z",
    "offered": {
@@ -9637,6 +9789,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "target_beyond_clock_ceiling",
    "now": "2026-10-10T10:54:59Z",
    "offered": {
@@ -9814,6 +9969,7 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
    "known_revocations": [
     {
      "pk_pub": "BAoPza8kl-gXxaP7-Qc17lCTIw6H7vxUpVcgi6ai9wZ3jDRClQu1bQ9VmPrAqbVtoqkhi3VMVyu7SwpHydtPWGA",
@@ -9831,6 +9987,7 @@
      }
     }
    ],
+   "learned_later_in_walk": [],
    "name": "foreign_evidence_for_a_known_revoked_device",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -10045,6 +10202,7 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
    "known_revocations": [
     {
      "revocation": {
@@ -10061,6 +10219,7 @@
      }
     }
    ],
+   "learned_later_in_walk": [],
    "name": "foreign_evidence_for_a_known_revoked_device_person_only",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -10281,6 +10440,8 @@
      "pk_pub": "BAoPza8kl-gXxaP7-Qc17lCTIw6H7vxUpVcgi6ai9wZ3jDRClQu1bQ9VmPrAqbVtoqkhi3VMVyu7SwpHydtPWGA"
     }
    },
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "foreign_evidence_for_a_known_active_device",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -10501,6 +10662,8 @@
      "pk_pub": "BAoPza8kl-gXxaP7-Qc17lCTIw6H7vxUpVcgi6ai9wZ3jDRClQu1bQ9VmPrAqbVtoqkhi3VMVyu7SwpHydtPWGA"
     }
    },
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "own_evidence_for_a_known_active_device",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -10715,6 +10878,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "bundle_revokes_its_own_signer_lost",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -10929,6 +11095,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "bundle_revokes_its_own_signer_retired",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -11143,6 +11312,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "bundle_revokes_its_own_signer_compromised",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -11357,6 +11529,7 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
    "known_revocations": [
     {
      "revocation": {
@@ -11373,6 +11546,7 @@
      }
     }
    ],
+   "learned_later_in_walk": [],
    "name": "signer_known_compromised_listed_issued_after_line_at",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -11587,6 +11761,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "restore_shape_envelope_version",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -11764,6 +11941,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "restore_shape_hash_version",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -11941,6 +12121,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "restore_shape_actor_extra_field",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -12119,6 +12302,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "restore_shape_timestamp_impossible_date",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -12296,6 +12482,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "restore_shape_counter_roster_v_negative",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -12473,6 +12662,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "restore_shape_custody_token_unknown",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -12650,6 +12842,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "restore_shape_abandoned_decision_not_an_id",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -12826,6 +13021,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "restore_shape_signature_encoding_malformed",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -13003,6 +13201,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "delegation_other_content_than_the_card",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -13180,6 +13381,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "owner_policy_bundle_pk_not_the_delegations",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -13357,6 +13561,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "signed_source_other_n_higher_same_hash",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -13534,6 +13741,7 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
    "known_revocations": [
     {
      "pk_pub": "BI14lIzDuy3ZvsMm9bkLZdzvYh9pT6NacDmef4dgenr0c78HIZjtcHf2lvbVlmMxv6lX0LXFgD8rCZLcoL_KJig",
@@ -13551,6 +13759,7 @@
      }
     }
    ],
+   "learned_later_in_walk": [],
    "name": "evidence_under_another_stored_key",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -13765,6 +13974,7 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
    "known_revocations": [
     {
      "revocation": {
@@ -13781,6 +13991,7 @@
      }
     }
    ],
+   "learned_later_in_walk": [],
    "name": "relay_refuses_a_known_revoked_owner_device",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -13995,6 +14206,9 @@
     },
     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "target_at_clock_ceiling_minus_one",
    "now": "2026-10-10T10:55:01Z",
    "offered": {
@@ -14178,6 +14392,7 @@
     },
     "sig": "u60_uMLlOySmN12uZZCRyEzy5d5GIag9JBz9KWkA42YGSWwGEpurFNvUwb6AHx_66QYivUqXIIchl5VC77wOXw"
    },
+   "known_devices": {},
    "known_revocations": [
     {
      "revocation": {
@@ -14194,6 +14409,7 @@
      }
     }
    ],
+   "learned_later_in_walk": [],
    "name": "ticket_restore_accepted_with_held_revocations",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -14397,6 +14613,9 @@
     },
     "sig": "u60_uMLlOySmN12uZZCRyEzy5d5GIag9JBz9KWkA42YGSWwGEpurFNvUwb6AHx_66QYivUqXIIchl5VC77wOXw"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "ticket_restore_ws_seq_above_target",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -14600,6 +14819,9 @@
     },
     "sig": "u60_uMLlOySmN12uZZCRyEzy5d5GIag9JBz9KWkA42YGSWwGEpurFNvUwb6AHx_66QYivUqXIIchl5VC77wOXw"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "ticket_restore_ws_seq_not_positive",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -14803,6 +15025,7 @@
     },
     "sig": "u60_uMLlOySmN12uZZCRyEzy5d5GIag9JBz9KWkA42YGSWwGEpurFNvUwb6AHx_66QYivUqXIIchl5VC77wOXw"
    },
+   "known_devices": {},
    "known_revocations": [
     {
      "revocation": {
@@ -14819,6 +15042,7 @@
      }
     }
    ],
+   "learned_later_in_walk": [],
    "name": "ticket_restore_with_revocations",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -15060,6 +15284,8 @@
     },
     "sig": "u60_uMLlOySmN12uZZCRyEzy5d5GIag9JBz9KWkA42YGSWwGEpurFNvUwb6AHx_66QYivUqXIIchl5VC77wOXw"
    },
+   "known_devices": {},
+   "known_revocations": [],
    "learned_later_in_walk": [
     {
      "revocation": {
@@ -15280,6 +15506,7 @@
     },
     "sig": "u60_uMLlOySmN12uZZCRyEzy5d5GIag9JBz9KWkA42YGSWwGEpurFNvUwb6AHx_66QYivUqXIIchl5VC77wOXw"
    },
+   "known_devices": {},
    "known_revocations": [
     {
      "revocation": {
@@ -15296,6 +15523,7 @@
      }
     }
    ],
+   "learned_later_in_walk": [],
    "name": "walk_compromised_learned_from_lower_n_bundle_refuses",
    "note": "learned from a lower-n bundle of the same walk, so held when this one is judged",
    "now": "2026-10-10T12:00:00Z",
@@ -15500,6 +15728,7 @@
     },
     "sig": "u60_uMLlOySmN12uZZCRyEzy5d5GIag9JBz9KWkA42YGSWwGEpurFNvUwb6AHx_66QYivUqXIIchl5VC77wOXw"
    },
+   "known_devices": {},
    "known_revocations": [
     {
      "revocation": {
@@ -15516,6 +15745,7 @@
      }
     }
    ],
+   "learned_later_in_walk": [],
    "name": "walk_retired_known_before_sync_stays_refused_until_repaired",
    "note": "liveness cost: a genuine older transition by a device the receiver already knows retired stays refused until an owner pairs the receiver again",
    "now": "2026-10-10T12:00:00Z",
@@ -15720,6 +15950,7 @@
     },
     "sig": "u60_uMLlOySmN12uZZCRyEzy5d5GIag9JBz9KWkA42YGSWwGEpurFNvUwb6AHx_66QYivUqXIIchl5VC77wOXw"
    },
+   "known_devices": {},
    "known_revocations": [
     {
      "pk_pub": "BAoPza8kl-gXxaP7-Qc17lCTIw6H7vxUpVcgi6ai9wZ3jDRClQu1bQ9VmPrAqbVtoqkhi3VMVyu7SwpHydtPWGA",
@@ -15737,6 +15968,7 @@
      }
     }
    ],
+   "learned_later_in_walk": [],
    "name": "non_owner_revocation_held_ticket_restore_accepted",
    "note": "a ticket restore carries [] and cannot deliver a revocation; a non-owner revocation the receiver holds neither completes nor blocks it",
    "now": "2026-10-10T12:00:00Z",
@@ -15941,6 +16173,7 @@
     },
     "sig": "u60_uMLlOySmN12uZZCRyEzy5d5GIag9JBz9KWkA42YGSWwGEpurFNvUwb6AHx_66QYivUqXIIchl5VC77wOXw"
    },
+   "known_devices": {},
    "known_revocations": [
     {
      "revocation": {
@@ -15957,6 +16190,7 @@
      }
     }
    ],
+   "learned_later_in_walk": [],
    "name": "ticket_restore_signer_known_compromised_after_line_at",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -16160,6 +16394,7 @@
     },
     "sig": "u60_uMLlOySmN12uZZCRyEzy5d5GIag9JBz9KWkA42YGSWwGEpurFNvUwb6AHx_66QYivUqXIIchl5VC77wOXw"
    },
+   "known_devices": {},
    "known_revocations": [
     {
      "revocation": {
@@ -16176,6 +16411,7 @@
      }
     }
    ],
+   "learned_later_in_walk": [],
    "name": "ticket_restore_signer_known_compromised_before_line_at",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -16379,6 +16615,7 @@
     },
     "sig": "u60_uMLlOySmN12uZZCRyEzy5d5GIag9JBz9KWkA42YGSWwGEpurFNvUwb6AHx_66QYivUqXIIchl5VC77wOXw"
    },
+   "known_devices": {},
    "known_revocations": [
     {
      "revocation": {
@@ -16395,6 +16632,7 @@
      }
     }
    ],
+   "learned_later_in_walk": [],
    "name": "ticket_restore_signer_known_retired_before_line_at",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -16592,6 +16830,9 @@
     },
     "sig": "R8qC8qThcPJJVpdYYpbY61mVfolRJId6rC4up2v6bFR1cDa95n-4uILVHLu3u8_2Kv7_FR3TE-hvrcjITcsahg"
    },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "forward_proof_acc_from_swapped",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
@@ -16746,6 +16987,9 @@
    "applied": [],
    "expect": "sync.incomplete",
    "held": null,
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
    "name": "null_source_acc_from_swapped",
    "now": "2026-10-10T12:00:00Z",
    "offered": {

@@ -3,6 +3,7 @@ bytes, forged variants, a lower seq (or n) and the same seq with another head re
 that disagrees with a checkpoint is diverged, and a workspace restore atomically embeds the PK-signed revocations."""
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,7 @@ W = C["workspace_id"]
 WSK = crypto.unb64u(C["wsk_pub"], crypto.PUB_LEN)
 UID = C["ticket_log"]["uid"]
 KEYS = json.loads((DIR / "signatures.json").read_text(encoding="utf-8"))["keys"]
+GENESIS_DELEGATION = C["transition_cases"][0]["pinned_delegation"]
 SIGNER = crypto.private_key_from_scalar(int(KEYS["wsk"]["scalar_hex"], 16))
 
 
@@ -54,6 +56,21 @@ def test_the_checkpoint_names_the_log_heads_and_the_genesis():
 @pytest.mark.parametrize("c", C["forged"], ids=lambda c: c["name"])
 def test_forged_checkpoints_do_not_verify(c):
     assert not cps.verify_object(WSK, c["checkpoint"])
+
+
+def view(held, now):
+    """A receiver view for plain offers: it knows no devices or revocations (explicitly)."""
+    return cps.ReceiverView(
+        workspace_id=W,
+        pinned_genesis=C["genesis"],
+        wsk_pub=WSK,
+        pinned_delegation=GENESIS_DELEGATION,
+        now=now,
+        held=held["o"] if held else None,
+        known_devices={},
+        known_revocations=(),
+        learned_later=(),
+    )
 
 
 def _store(tmp_path, ticket=True, workspace=True):
@@ -106,32 +123,25 @@ def test_n_offers_are_signed_and_judged_by_a_receiver(o):
     assert crypto.verify(WSK, crypto.unb64u(cp["sig"], crypto.SIG_LEN), cps.LABEL + canon.cj_checked(cp["o"]))
     assert cps.verify_object(WSK, C["workspace_n_held"])
     held = o["held"] if "held" in o else C["workspace_n_held"]
-    got = cps.judge_offer(
-        held["o"] if held else None,
-        o["checkpoint"]["o"],
-        pinned_genesis=C["genesis"],
-        workspace_id=W,
-        now=o["now"],
-        restore=o.get("restore"),
-        applied=o.get("applied", []),
-        proofs=o.get("proofs"),
-        wsk_pub=WSK,
-    )
-    assert got == (o["expect"], o.get("recorded"))
+    got = cps.judge_offer(view(held, o["now"]), o["checkpoint"]["o"], proofs=o.get("proofs"))
+    assert got == cps.Verdict(o["expect"])
 
 
 def test_a_receiver_accepts_the_first_checkpoint_only_under_the_pinned_genesis():
     o = C["workspace_n_held"]["o"]
-    now = "2026-10-10T12:00:00Z"
-    assert cps.judge_offer(None, o, pinned_genesis=C["genesis"], workspace_id=W, now=now) == ("ok", None)
-    assert cps.judge_offer(None, o, pinned_genesis="sha256:" + "00" * 32, workspace_id=W, now=now) == (
-        "trust.genesis_mismatch",
-        None,
-    )
-    assert cps.judge_offer(None, o, pinned_genesis=C["genesis"], workspace_id="f" * 32, now=now) == (
-        "chain.diverged",
-        None,
-    )
+    v = view(None, "2026-10-10T12:00:00Z")
+    assert cps.judge_offer(v, o) == cps.Verdict("ok")
+    assert cps.judge_offer(replace(v, pinned_genesis="sha256:" + "00" * 32), o).code == "trust.genesis_mismatch"
+    assert cps.judge_offer(replace(v, workspace_id="f" * 32), o).code == "chain.diverged"
+
+
+def test_the_receiver_view_has_no_defaults():
+    """Every view field is required (Opus #377 B1): forgetting known_devices must fail loudly, not open."""
+    with pytest.raises(TypeError):
+        cps.ReceiverView(  # type: ignore[call-arg]
+            workspace_id=W, pinned_genesis=C["genesis"], wsk_pub=WSK, pinned_delegation={}, now="2026-10-10T12:00:00Z",
+            held=None, known_revocations=(), learned_later=(),
+        )  # fmt: skip
 
 
 def test_the_p1_host_never_writes_a_lower_n(tmp_path):
@@ -172,39 +182,30 @@ def test_source_and_accumulator_transitions(case):
     if "host_scenario" in case:
         run_scenario(case["host_scenario"])
     assert cps.verify_object(WSK, case["offered"])
-    alarms: list[str] = []
-    got = cps.judge_offer(
-        case["held"]["o"] if case["held"] else None,
-        case["offered"]["o"],
-        pinned_genesis=C["genesis"],
+    got = cps.judge_offer(case_view(case), case["offered"]["o"], restore=bundle(case))
+    expected_alarms = (case["restore"]["event"]["actor"]["device"],) if case.get("alarm") else ()
+    assert got == cps.Verdict(case["expect"], case["recorded"], expected_alarms)
+    if case["learned_later_in_walk"]:  # only the receiver's order separates this case from a refusal
+        earlier = replace(case_view(case), known_revocations=case["learned_later_in_walk"], learned_later=())
+        assert cps.judge_offer(earlier, case["offered"]["o"], restore=bundle(case)) == cps.Verdict("chain.diverged")
+
+
+def case_view(case):
+    return cps.ReceiverView(
         workspace_id=W,
-        now=case["now"],
+        pinned_genesis=C["genesis"],
         wsk_pub=WSK,
-        restore=case["restore"],
-        proofs=case["proofs"],
-        applied=case["applied"],
-        known_revocations=case.get("known_revocations", []),
         pinned_delegation=case["pinned_delegation"],
-        known_devices=case.get("known_devices"),
-        learned_later=case.get("learned_later_in_walk", []),
-        alarms=alarms,
+        now=case["now"],
+        held=case["held"]["o"] if case["held"] else None,
+        known_devices=case["known_devices"],
+        known_revocations=case["known_revocations"],
+        learned_later=case["learned_later_in_walk"],
     )
-    assert got == (case["expect"], case["recorded"])
-    assert bool(alarms) == case.get("alarm", False)
-    if "learned_later_in_walk" in case:  # only the receiver's order separates this case from a refusal
-        again = cps.judge_offer(
-            case["held"]["o"],
-            case["offered"]["o"],
-            pinned_genesis=C["genesis"],
-            workspace_id=W,
-            now=case["now"],
-            wsk_pub=WSK,
-            restore=case["restore"],
-            proofs=case["proofs"],
-            known_revocations=case["learned_later_in_walk"],
-            pinned_delegation=case["pinned_delegation"],
-        )
-        assert again == ("chain.diverged", None)
+
+
+def bundle(case):
+    return cps.Restore(transition=case["restore"], proofs=case["proofs"], applied=case["applied"])
 
 
 # Cases whose one defect is a signature; every other refusal must keep both event signatures valid, so that the

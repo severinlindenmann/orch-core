@@ -9,45 +9,60 @@ from orch import canon, schema
 from orch.identity import CryptoVerifier, certs
 from orch.model import admit, replay
 from orch.store import Store, StoreError
+from orch.store.store import _epoch
 from tests.model.f1_runner import load
 
 V = load("restore.json")
 C = load("checkpoint.json")
 
 
+CALLER_FIELDS = ("reason", "note", "revocations", "abandoned_decisions")
+
+
+def _genesis_scenario():
+    sc = V["scenarios"][0]
+    return sc, sc["steps"][0]["event"]
+
+
 @pytest.mark.parametrize("case", V["schema_cases"], ids=lambda c: c["name"])
-def test_restore_structure_precedes_signature_and_is_atomic(case, env):
+def test_restore_structure_is_refused_before_authorization(case):
+    """Step 0 at the schema and at admit, before any signature or authorization check."""
     event = case["event"]
     kind = "workspace" if case["log"] == "workspace" else "ticket"
     with pytest.raises(schema.SchemaError):
         schema.validate("event", event, log=kind)
-    sc = V["scenarios"][0]
-    genesis = sc["steps"][0]["event"]
+    sc, genesis = _genesis_scenario()
     state = replay([genesis], {}, verifier=CryptoVerifier(), now=sc["now"], expected_workspace_id=sc["workspace_id"])
     unsigned = {k: v for k, v in event.items() if k != "host_sig"}
     assert admit(state, unsigned, log=case["log"]).code.value == case["expect"]
-    logs = {} if kind == "workspace" else {case["log"]: [event]}
+
+
+@pytest.mark.parametrize("case", V["schema_cases"], ids=lambda c: c["name"])
+def test_restore_structure_breaks_the_chain_on_replay(case):
+    event = case["event"]
+    kind = "workspace" if case["log"] == "workspace" else "ticket"
     if kind == "ticket" and "ws_seq" not in event:
-        return  # replay takes schema-valid lines (its merge key needs ws_seq); the store's read refuses this one
+        pytest.skip("replay takes schema-valid lines (its merge key needs ws_seq); the store's read refuses this one")
+    sc, genesis = _genesis_scenario()
     result = replay(
         [genesis, event] if kind == "workspace" else [genesis],
-        logs,
+        {} if kind == "workspace" else {case["log"]: [event]},
         verifier=CryptoVerifier(),
         now=sc["now"],
         expected_workspace_id=sc["workspace_id"],
     )
     assert result.chain_errors[0].code == case["replay"]
 
-    caller_fields = ("reason", "note", "revocations", "abandoned_decisions")
-    if not set(case["mutated"]) <= set(caller_fields) or case["name"].startswith("signature_"):
-        return  # host-stamped or signer-made fields: the model and replay checks above are the boundary
+
+@pytest.mark.parametrize("case", V["schema_cases"], ids=lambda c: c["name"])
+def test_restore_structure_is_refused_atomically_by_the_store(case, env):
+    if not set(case["mutated"]) <= set(CALLER_FIELDS) or case["name"].startswith("signature_"):
+        pytest.skip("host-stamped or signer-made fields: a caller cannot set them; schema, admit and replay cover it")
+    event = case["event"]
     store = env.bootstrap()
     before = env.read_events("workspace")
-    fields = {k: copy.deepcopy(event[k]) for k in caller_fields if k in event}
-    if kind == "ticket":
-        uid = env.new_ticket()
-    else:
-        uid = "workspace"
+    fields = {k: copy.deepcopy(event[k]) for k in CALLER_FIELDS if k in event}
+    uid = "workspace" if case["log"] == "workspace" else env.new_ticket()
     fields = {**store.restore_facts(uid), **fields}
     candidate = env.person_event(env.owner, uid, "restore", **fields)
     held = store._pins.held()
@@ -246,20 +261,13 @@ def test_restore_refuses_a_computed_at_more_than_300_seconds_ahead(env):
     env.log(uid)
     env.clock[0] -= 400
     held = store._pins.held()
-    assert _epoch_of(held["o"]["at"]) <= env.clock[0] + 300
+    assert _epoch(held["o"]["at"]) <= env.clock[0] + 300
     before = env.read_events("workspace")
     candidate = env.person_event(env.owner, "workspace", "restore", **store.restore_facts("workspace"), reason="other")
     with pytest.raises(StoreError, match="computed at") as exc:
         store.append(candidate, log="workspace")
     assert exc.value.code == "validation.restore"
     assert env.read_events("workspace") == before and store._pins.held() == held
-
-
-def _epoch_of(stamp):
-    import calendar
-    import time
-
-    return calendar.timegm(time.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ"))
 
 
 @pytest.mark.parametrize("reason", ["lost", "retired", "compromised"])
@@ -342,22 +350,21 @@ def test_transition_keeps_only_the_abandoned_suffix(env):
     assert transition["acc_from"] == acc_from
     assert transition["abandoned_heads"] == expected
     assert transition["forward_heads"] == []
-    from orch.store.checkpoints import judge_offer
+    from orch.store.checkpoints import ReceiverView, Restore, judge_offer
 
-    assert (
-        judge_offer(
-            transition["C"]["o"],
-            transition["T"]["o"],
-            proofs=transition["proofs"],
-            restore=transition,
-            wsk_pub=env.wsk_pub,
-            pinned_genesis=store.state.workspace.genesis,
-            workspace_id=store.workspace_id,
-            now=transition["T"]["o"]["at"],  # the test clock stamped T
-            pinned_delegation=store._genesis_event["delegation"],  # the pin, never the bundle's own delegation
-        )[0]
-        == "ok"
+    receiver = ReceiverView(
+        workspace_id=store.workspace_id,
+        pinned_genesis=store.state.workspace.genesis,
+        wsk_pub=env.wsk_pub,
+        pinned_delegation=store._genesis_event["delegation"],  # the pin, never the bundle's own delegation
+        now=transition["T"]["o"]["at"],  # the test clock stamped T
+        held=transition["C"]["o"],
+        known_devices={},
+        known_revocations=(),
+        learned_later=(),
     )
+    bundle = Restore(transition=transition, proofs=transition["proofs"], applied=())
+    assert judge_offer(receiver, transition["T"]["o"], restore=bundle).code == "ok"
 
 
 @pytest.mark.parametrize("evidence", ["ticket", "transition", "workspace_log"])
@@ -381,7 +388,7 @@ def test_null_source_refused_when_workspace_checkpoint_files_are_lost(env, evide
     before = env.read_events("workspace")
     with pytest.raises(StoreError) as exc:
         store.append(candidate, log="workspace")
-    assert exc.value.code in ("chain.diverged", "checkpoint.missing") and env.read_events("workspace") == before
+    assert exc.value.code == "checkpoint.missing" and env.read_events("workspace") == before
 
 
 def test_an_ordinary_append_does_not_rebaseline_after_lost_checkpoints(env):
@@ -399,6 +406,43 @@ def test_an_ordinary_append_does_not_rebaseline_after_lost_checkpoints(env):
     with pytest.raises(StoreError):
         store.restore_facts("workspace")
     assert store._pins.high_n() == high
+
+
+def test_a_host_without_checkpoint_evidence_starts_a_baseline(env, tmp_path):
+    """A fresh clone or a lost host state dir: no checkpoint evidence, so the next append starts a baseline (F1 "What
+    P1 can't detect"), and checkpoint() works."""
+    import shutil
+
+    store = env.bootstrap()
+    store.close()
+    shutil.rmtree(env.root / ".state" / "checkpoints")
+    env.host_state = tmp_path / "new-host-state"  # the host's state dir is gone
+    store = env.open()
+    store.append(env.grant_event(), log="workspace")
+    cp = store._checkpoints.workspace()
+    assert cp == store._pins.held() and cp["o"]["workspace_log"]["seq"] == store._logs["workspace"].seq
+    assert cp["o"]["n"] <= 2  # a new baseline: n restarts on a host that never had one (opening wrote n=1)
+    store.checkpoint()
+
+
+@pytest.mark.parametrize("evidence", ["high_water", "ancestry_only"])
+def test_a_host_with_checkpoint_evidence_refuses_without_a_checkpoint(env, evidence):
+    store = env.bootstrap()
+    store.close()
+    pins = env.host_state / "hosts" / store.workspace_id
+    (pins / "checkpoint.json").unlink()
+    if evidence == "ancestry_only":
+        (pins / "checkpoint-n").unlink()  # heads.sqlite rows from the earlier run remain
+    (env.root / ".state" / "checkpoints" / "workspace.json").unlink()
+    store = env.open()
+    before = env.read_events("workspace")
+    with pytest.raises(StoreError) as exc:
+        store.append(env.grant_event(), log="workspace")
+    assert exc.value.code == "checkpoint.missing" and env.read_events("workspace") == before
+    with pytest.raises(StoreError) as exc:
+        store.checkpoint()
+    assert exc.value.code == "checkpoint.missing"
+    assert store._checkpoints.workspace() is None
 
 
 def test_checkpoint_n_never_restarts_below_the_durable_high_water(env):

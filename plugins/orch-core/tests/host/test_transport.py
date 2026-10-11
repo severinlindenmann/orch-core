@@ -107,15 +107,29 @@ def handler(session, frame, request):
     return None
 
 
+# listener.py refuses a socket path over 100 UTF-8 bytes; the tree below the base adds "/.hXXXX/r/<32 hex>/host.sock".
+SOCKET_PATH_LIMIT = 100
+TREE_SUFFIX = len("/.h0000/r/" + "0" * 32 + "/host.sock")
+
+
+def _trusted_base() -> Path:
+    """The checkout root when the socket path fits under it, else the home directory: common on dev laptops, where
+    worktrees live under long paths such as ~/orch-dev/.worktrees/<name>. Not /tmp: a user-owned child of the sticky
+    /tmp is refused by §2 (``expected root 0755``), and mkdtemp creates exactly that."""
+    root = Path(__file__).resolve().parents[4]
+    if len(str(root).encode()) + TREE_SUFFIX <= SOCKET_PATH_LIMIT:
+        return root
+    home = Path.home().resolve()
+    if len(str(home).encode()) + TREE_SUFFIX > SOCKET_PATH_LIMIT or not os.access(home, os.W_OK):
+        pytest.skip(f"no trusted base short enough for a {SOCKET_PATH_LIMIT}-byte socket path")
+    return home
+
+
 @pytest.fixture
 def secure_tree():
-    # /tmp is sticky: §2 correctly forbids a user-owned direct child. Use a short directory under a trusted
-    # ancestor: the checkout root when the socket path fits (100 bytes), else the home directory.
-    root = Path(__file__).resolve().parents[4]
-    if len(str(root).encode()) > 40:
-        root = Path.home().resolve()
+    base = _trusted_base()
     while True:
-        path = root / (".h" + secrets.token_hex(2))
+        path = base / (".h" + secrets.token_hex(2))
         try:
             path.mkdir(mode=0o700)
             break

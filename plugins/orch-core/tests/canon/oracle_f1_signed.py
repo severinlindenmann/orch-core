@@ -753,14 +753,15 @@ def checkpoint_vector() -> dict[str, Any]:
         "('orch/v2/sig/checkpoint|' + cj(o)), real signatures; forged variants fail; a lower seq or n, or the same "
         "seq with another head, is refused (chain.diverged); a log that disagrees with a checkpoint is diverged; "
         "restore (see restore.json); receivers judge workspace checkpoints by n and seq (workspace_n_offers: ok, ignored, "
-        "chain.diverged). Receiver inputs: the top-level workspace_id and genesis are the receiver's pins; every offer "
-        "and transition case gives the receiver clock `now` (a WSK-signed `at` more than 300 s after it is "
-        "checkpoint.future); a workspace_n_offers case with a `held` key (null: an uninitialized receiver) replaces "
-        "workspace_n_held; every transition case gives `pinned_delegation`, the workspace's pinned (card / genesis) "
-        "delegation whose `o` the carried, PK-verified one must equal; learned_later_in_walk lists revocations the "
-        "receiver learns only from a higher-n bundle (never passed as known; `alarm: true` when it must raise the C3 "
-        "alarm); `known_devices` maps device_id to the person_id and pk_pub the receiver knows for it (active or "
-        "revoked); known_revocations entries may carry `pk_pub`. "
+        "chain.diverged). Receiver inputs (a receiver view; every field is given explicitly, {} or [] meaning none): "
+        "the top-level workspace_id, genesis and wsk_pub are the receiver's pins; every offer and transition case gives "
+        "the receiver clock `now` (one sampled, trusted clock; a WSK-signed `at` more than 300 s after it is the "
+        "retryable checkpoint.future); a workspace_n_offers case with a `held` key (null: an uninitialized receiver) "
+        "replaces workspace_n_held; every transition case gives `pinned_delegation` (the workspace's card / genesis "
+        "delegation, whose `o` the carried, PK-verified one must equal), `known_devices` (device_id -> person_id and "
+        "optional pk_pub the receiver knows for it, active or revoked), `known_revocations` (held when judging; entries "
+        "may carry `pk_pub`) and `learned_later_in_walk` (learned only from a higher-n bundle; never refuses; "
+        "`alarm: true` when it must raise the C3 alarm, otherwise no alarm). "
         "Every refusing transition keeps all signatures valid except the one a case names as its defect.",
         "note": KEY_NOTE,
         "workspace_id": W,
@@ -1410,6 +1411,10 @@ def transition_vectors() -> list[dict[str, Any]]:
     for case_ in cases:
         case_.setdefault("pinned_delegation", genesis["delegation"])
         case_.setdefault("now", RECEIVER_NOW)
+        for field in ("known_devices",):
+            case_.setdefault(field, {})
+        for field in ("known_revocations", "learned_later_in_walk"):
+            case_.setdefault(field, [])
         tr = case_["restore"]
         if "retained_heads" not in tr:
             continue

@@ -370,3 +370,12 @@ D58, D59, D60 confirmed. Two changes, both shown in the mockup and logged in DEC
   and roles, devices, relay pairing, secrets and connections and protected paths; up to 30 days, renewable with one
   new signature; it may start full runs that Deliver; it never issues another mandate. Concept:
   `docs/concept-mandates.md` (open points in §6).
+
+## P2 M0 server review (2026-10-11)
+
+Use [server/README.md](server/README.md) to start a dev-marked P1 stub and the local launcher.
+Check the dark read-only workspace switcher, Today, Tickets and Identity; unavailable host
+features must disappear, and no mock/demo controls or signing UI should appear. Confirm that
+launch strips the URL fragment, a second tab joins, logout clears both, and a restart requires
+another launch. Run the existing layout guard on the default Vite mock app. Real-browser
+origin enforcement and S1/S2 need the dev-kit/real host; stub tests are not issue acceptance.

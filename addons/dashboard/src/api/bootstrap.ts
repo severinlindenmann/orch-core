@@ -1,0 +1,65 @@
+const STORAGE = 'orch-session'
+let currentToken: string | null = null
+let channel: BroadcastChannel | null = null
+const listeners = new Set<() => void>()
+export const getToken = () => currentToken
+export function onSessionChange(listener: () => void) {
+  listeners.add(listener)
+  return () => { listeners.delete(listener) }
+}
+function remember(token: string | null) {
+  currentToken = token
+  if (token) sessionStorage.setItem(STORAGE, token)
+  else sessionStorage.removeItem(STORAGE)
+  listeners.forEach((fn) => fn())
+}
+export function clearSession(broadcast = true) {
+  remember(null)
+  if (broadcast) channel?.postMessage({ type: 'logout' })
+}
+export function safeDestination(value: string | null) {
+  if (!value || !value.startsWith('/') || value.startsWith('//') || value.includes('\\') || /[\x00-\x1f]/.test(value)) return '/'
+  const url = new URL(value, location.origin)
+  return url.origin === location.origin ? url.pathname + url.search : '/'
+}
+
+/** Runs before React imports or any data requests. Fragment removed even on failure. */
+export async function bootstrap(fetcher: typeof fetch = fetch): Promise<string | null> {
+  const fragment = new URLSearchParams(location.hash.slice(1))
+  const code = fragment.get('launch')
+  const destination = safeDestination(fragment.get('to'))
+  history.replaceState(null, '', code ? destination : location.pathname + location.search)
+  currentToken = sessionStorage.getItem(STORAGE)
+  if (typeof BroadcastChannel !== 'undefined') {
+    channel?.close()
+    channel = new BroadcastChannel('orch-session')
+    channel.onmessage = ({ data }) => {
+      if (data?.type === 'request' && currentToken) channel?.postMessage({ type: 'token', token: currentToken })
+      if (data?.type === 'logout') clearSession(false)
+    }
+  }
+  if (code) {
+    clearSession(false)
+    const response = await fetcher('/auth/session', {
+      method: 'POST', credentials: 'omit', redirect: 'error', cache: 'no-store',
+      headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code }),
+    })
+    if (!response.ok) return null
+    const body = await response.json() as { token: string }
+    remember(body.token)
+  } else if (!currentToken && channel) {
+    await new Promise<void>((resolve) => {
+      const handler = (event: MessageEvent) => {
+        if (event.data?.type === 'token' && typeof event.data.token === 'string') {
+          remember(event.data.token)
+          finish()
+        }
+      }
+      const finish = () => { clearTimeout(timer); channel?.removeEventListener('message', handler); resolve() }
+      const timer = setTimeout(finish, 400)
+      channel!.addEventListener('message', handler)
+      channel!.postMessage({ type: 'request' })
+    })
+  }
+  return currentToken
+}

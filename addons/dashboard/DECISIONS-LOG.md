@@ -1173,3 +1173,22 @@ The owner answered the eight open questions of REVIEW.md. Items 1, 2, 5 and 6 ch
 - **Decision:** The mock no longer writes or seeds `agent.refused` ticket events (fixtures, the busy generator, derive/describe, the Activity addon's groups). A refusal is a CLI error envelope (code + hint, format section 10 / core section 3 `errors`) returned to the agent. The product value stays: each agent session row carries a `refusals` list (`at`, `ticket`, `code`, `message`, `hint`, `retryable`, `op`), read by the Agents page ("Recent refusals", the stop rule on the third same code) and by Ticket History through `GET /api/tickets/:key/refusals`. History draws them in a separate dashed block labelled "From the agent session — not part of the signed log", never in the event list, its counts or the Raw tab. The `agent` prefix is no longer a core event prefix; an addon actor can never make an event look core (test: an `agent.*` type with an addon actor renders as addon).
 - **Why:** The format doc (F1 gap table) says a refusal is not a log entry: the log is signed history of what happened to the ticket, and a refused request changed nothing.
 - **Revert:** Restore the `agent.refused` events in `fixtures/demo.json` and `busy/agents.ts`, the `agent.refused` cases in `derive.ts`, `History.tsx` and `addons/activity.ts`, `'agent'` in `CORE_PREFIXES`, and read refusals in `store.agentActivity` from events again; drop `SessionRefusal`, `ticketRefusals`, the `/refusals` route and the `SessionRefusals` block.
+
+## 2026-10-11 P2 M0: private local server and read-only shell
+
+- **Decision:** Add `server/` with pinned FastAPI/uvicorn, strict Host/Origin/body checks,
+  fragment launch exchange, memory-only bearer sessions, UID-checked private IPC and HMAC
+  port ownership. Use v1 frames with trusted registry pins and fixed typed HTTP routes.
+  Build a production-only read shell, with feature-gated navigation and nullable projections
+  of existing UI types; keep the complete mock app as the Vite/test/layout default. Package
+  frontend assets in the wheel; core and the dev-only P1 stub never ship in it. Place pyproject
+  and uv.lock under server per the M0 brief (the design tree sketched them one directory up).
+- **Why:** M0 must exercise real host-shaped reads without shipping simulated state or opening
+  signing paths. The existing mock types contain data v1 does not provide; filling those gaps
+  with mock conventions would make the read shell misleading. P1's model remains authoritative
+  in the dev-marked stub. Isolate provisional host.list/control/registry shapes until stream A
+  confirms them. Polling stub invalidation is conservative; durable replay is real-host work.
+- **Revert:** Revert the M0 server/production-entry commits and dashboard CI workflow. The
+  mock app remains reachable throughout; restore its former client/transport singleton wiring
+  and Vite production entry if removing the package. No core migration or persisted session
+  data needs reversing.

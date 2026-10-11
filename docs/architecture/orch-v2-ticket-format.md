@@ -1064,7 +1064,9 @@ matches `set_by` at the event's position: an agent needs `agent` and a grant, an
 as `actor.id` (an addon actor is refused in P1), a person needs to hold one of the tokens on that ticket (§5.9; the
 tokens `agent` and `addon` are never held by a person), and the host writes no addon field. An addon section is
 refused unless the grant declares it for the ticket's type, and an addon artifact unless its `kind` is in
-`artifact_kinds`. The codes are in §10.4a. The host calls the same function before it appends. The gate hash binds
+`artifact_kinds`. Addon sections have no `set_by`: whoever may write the core sections of a ticket may write an
+addon section the grant declares for its type, as with core sections. The codes are in §10.4a. The host calls the
+same function before it appends. The gate hash binds
 only the declarations that have a `gate` (§5.7).
 
 **Disable, purge, re-grant.** `orch addon disable` and `orch addon purge` name an addon that was granted, and

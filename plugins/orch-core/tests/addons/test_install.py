@@ -192,7 +192,7 @@ def test_the_owner_reads_what_runs_before_the_passphrase(hws, me):
         agents_md="Estimates are hints only.",
         needs=[{"id": "big", "when": ["gt", ["field", "points"], 3], "who": ["owner"], "text": "large"}],
     )
-    man["entry"] = {"cmd": ["python3", "{pkg}/addon.py", "--flag"]}
+    man["entry"] = {"cmd": ["python3", "{pkg}/addon.py", "--flag", "a b"]}
     make_package(hws.root, man=man)
     assert me("addon", "grant", "echo").code == 0
     text = hws.reviews[-1]
@@ -201,7 +201,7 @@ def test_the_owner_reads_what_runs_before_the_passphrase(hws, me):
     for needle in (
         "addon echo 1.0.0",
         pkg_digest,
-        "command python3 {pkg}/addon.py --flag",
+        "command python3 '{pkg}/addon.py' --flag 'a b'",  # shlex-quoted: a space inside an argument shows
         "capabilities serve_http",
         "agents see: - addon echo (hint, grants nothing): Estimates are hints only.",
         "needs rule big for owner: large",
@@ -311,3 +311,26 @@ def test_list_says_the_state_and_what_to_do_about_a_changed_package(hws, me):
     assert "changed since the grant: orch addon grant echo" in me("addon", "list").out
     me("addon", "purge", "echo")
     assert me("addon", "list", "--json").doc["data"]["addons"][0]["state"] == "purged"
+
+
+def test_the_typed_word_of_a_workspace_event_is_the_name_it_signs(monkeypatch):
+    """A2: the caller cannot choose the word; a workspace event without a name is refused before any prompt."""
+    import types
+
+    import pytest
+
+    from orch.ops import human as human_mod
+    from orch.ops.errors import OrchError
+    from orch.ops.human import Human
+
+    asked = []
+    monkeypatch.setattr(human_mod, "review_prompt", lambda text, word: asked.append(word) or True)
+    h = Human.__new__(Human)
+    h.ctx = types.SimpleNamespace(dry_run=False)
+    h.precheck = lambda event, log: None
+    h._sign_and_append = lambda *a: "done"
+    assert h.run({"type": "addon.granted", "name": "echo"}, "workspace", "x", review=["r"]) == "done"
+    assert asked == ["echo"]
+    with pytest.raises(OrchError) as e:
+        h.run({"type": "member.removed", "person": "p_x"}, "workspace", "x", review=["r"])
+    assert e.value.code == "invalid.input" and asked == ["echo"]

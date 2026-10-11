@@ -10,6 +10,7 @@ import pytest
 
 from orch.custody import KdfParams, NoPrompt, PassphraseBackend, PassphraseRequest
 from orch.ops import workspace_init as wi
+from orch.ops.caps import Files
 
 OWN = "Zq7!mPx2-vL9#rTb4w"  # a passphrase of the person's own that passes the strength check
 
@@ -126,5 +127,5 @@ def init_ctx(where: dict[str, Path], *, grant: str | None = None, human: bool = 
         grant=grant,
         human_presence=human,
         now=time.time,
-        workspace=Workspace(env, time.time, cwd=str(where["root"])),
+        workspace=Workspace(env, time.time, cwd=str(where["root"]), files=Files.direct()),
     )

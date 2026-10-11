@@ -205,6 +205,7 @@ class ControlOps:
     # -- host.register
     def _inspect(self, root: str) -> tuple[str, str, Any]:
         """Check a root for registration; returns (workspace id, prefix, workspace view)."""
+        from orch.ops.caps import Files
         from orch.ops.runtime import _config
         from orch.store import Store, StoreError
         from orch.store.pins import HostPins
@@ -213,7 +214,7 @@ class ControlOps:
         info = os.stat(root)
         if not stat.S_ISDIR(info.st_mode):
             raise unsafe(f"{root}: not a directory")
-        cfg = _config(Path(root))
+        cfg = _config(Path(root), Files.direct())  # the host's own read of a root it is asked to adopt
         if cfg is None:
             raise HostError("invalid.input", f"{root} is not an orch workspace")
         workspace_id = cfg["workspace"]["id"]

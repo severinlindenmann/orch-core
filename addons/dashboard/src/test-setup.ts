@@ -35,3 +35,14 @@ window.scrollTo = (() => {}) as typeof window.scrollTo
 import { afterEach } from 'vitest'
 import { forgetFits } from '@/addon-ui/FrameNode'
 afterEach(() => forgetFits())
+
+// sonner removes a dismissed toast after a 200 ms timer that unmount does not clear; if it fires after the test
+// environment is torn down it throws "window is not defined". Files that showed a toast dismiss everything and let
+// those timers run before teardown (files without toasts pay nothing).
+import { afterAll } from 'vitest'
+import { toast } from 'sonner'
+afterAll(async () => {
+  if (toast.getHistory().length === 0) return
+  toast.dismiss()
+  await new Promise((resolve) => setTimeout(resolve, 300))
+})

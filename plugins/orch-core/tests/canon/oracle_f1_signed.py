@@ -621,9 +621,10 @@ def checkpoint_vector() -> dict[str, Any]:
          "checkpoint": _checkpoint(wcp(3, len(wl) - 1, heads_w[-2], {TICKET: {"seq": len(tl) - 1, "head": heads_t[-2]}})),
          "restore": {"log": "workspace", "from_seq": len(wl) - 2, "abandoned": {"seq": len(wl), "head": heads_w[-1]}},
          "expect": "chain.diverged"},
-        {"name": "an_old_restore_that_does_not_match_the_held_checkpoint",
+        {"name": "a_reused_restore_id", "applied": ["01J9ZK5RESTORE000000000009"],
          "checkpoint": _checkpoint(wcp(3, len(wl) - 1, heads_w[-2], {TICKET: {"seq": len(tl), "head": heads_t[-1]}})),
-         "restore": {"log": "workspace", "from_seq": len(wl) - 2, "abandoned": {"seq": len(wl) + 40, "head": "sha256:" + "99" * 32}},
+         "restore": {"id": "01J9ZK5RESTORE000000000009", "log": "workspace", "from_seq": len(wl) - 2,
+                     "abandoned": {"seq": len(wl) + 40, "head": "sha256:" + "99" * 32}},
          "expect": "chain.diverged"},
         {"name": "ticket_restore_regrown_to_the_held_seq",
          "checkpoint": _checkpoint(wcp(3, len(wl) + 1, "sha256:" + "aa" * 32, {TICKET: {"seq": len(tl), "head": "sha256:" + "bb" * 32}})),
@@ -632,10 +633,29 @@ def checkpoint_vector() -> dict[str, Any]:
          "checkpoint": _checkpoint(wcp(3, len(wl) - 1, heads_w[-2], {TICKET: {"seq": len(tl), "head": "sha256:" + "bb" * 32}})),
          "restore": {"log": TICKET, "from_seq": 2, "abandoned": {"seq": len(tl), "head": heads_t[-1]}},
          "expect": "chain.diverged"},
+        {"name": "ticket_restore_below_a_lagging_entry",
+         "checkpoint": _checkpoint(wcp(3, len(wl), heads_w[-1], {TICKET: {"seq": len(tl) - 1, "head": "sha256:" + "ee" * 32}})),
+         "restore": {"log": TICKET, "from_seq": 1, "abandoned": {"seq": len(tl) + 2, "head": "sha256:" + "ff" * 32}},
+         "expect": "ok", "note": "H's ticket entry (seq 4) lags the ticket checkpoint the restore gives up (seq 6)"},
+        {"name": "workspace_restore_of_a_receiver_that_missed_checkpoints",
+         "checkpoint": _checkpoint(wcp(4, len(wl), "sha256:" + "ab" * 32, {TICKET: {"seq": len(tl), "head": heads_t[-1]}})),
+         "restore": {"log": "workspace", "from_seq": len(wl) - 1, "abandoned": {"seq": len(wl) + 2, "head": "sha256:" + "ac" * 32}},
+         "expect": "ok", "note": "the restore gives up a checkpoint above H (n 3 was never seen)"},
+        {"name": "a_restore_attached_to_an_offer_that_does_not_need_it", "unneeded": True,
+         "checkpoint": _checkpoint(wcp(3, len(wl) + 1, "sha256:" + "ad" * 32, {TICKET: {"seq": len(tl) + 2, "head": "sha256:" + "ae" * 32}})),
+         "restore": {"log": TICKET, "from_seq": len(tl) + 1, "abandoned": {"seq": len(tl) + 2, "head": "sha256:" + "af" * 32}},
+         "expect": "ok", "note": "no log drops below H: the restore is ignored and the normal rules decide"},
         {"name": "a_fork_grown_past_the_held_height_is_accepted_without_the_logs",
          "checkpoint": _checkpoint(wcp(3, len(wl) + 2, "sha256:" + "cc" * 32, {TICKET: {"seq": len(tl) + 1, "head": "sha256:" + "dd" * 32}})),
          "expect": "ok", "limit": "height-only comparison: a receiver holding only checkpoints cannot see the fork"},
     ]  # fmt: skip
+    for i, offer in enumerate(n_offers):
+        if "restore" in offer:
+            offer["restore"].setdefault("id", f"01J9ZK5RESTORE{i:012d}")
+            offer.setdefault("applied", [])
+            offer["recorded"] = (
+                offer["restore"]["id"] if offer["expect"] == "ok" and not offer.pop("unneeded", False) else None
+            )
     # logs as they are on disk when a checkpoint is checked (heads by seq, 0-based list)
     divergences = [
         {"name": "log_agrees", "ticket_heads": heads_t, "expect": []},

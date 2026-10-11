@@ -556,6 +556,7 @@
    "name": "higher_n_same_seq_other_head"
   },
   {
+   "applied": [],
    "checkpoint": {
     "o": {
      "at": "2026-10-10T10:03:30Z",
@@ -580,16 +581,19 @@
    },
    "expect": "ok",
    "name": "higher_n_lower_height_with_a_restore",
+   "recorded": "01J9ZK5RESTORE000000000011",
    "restore": {
     "abandoned": {
      "head": "sha256:c5bff55dc4158717ece7433499b52f79b344c00af79a071210a79625d94dbf2f",
      "seq": 4
     },
     "from_seq": 2,
+    "id": "01J9ZK5RESTORE000000000011",
     "log": "workspace"
    }
   },
   {
+   "applied": [],
    "checkpoint": {
     "o": {
      "at": "2026-10-10T10:03:30Z",
@@ -614,16 +618,19 @@
    },
    "expect": "chain.diverged",
    "name": "higher_n_lower_height_with_a_restore_that_abandons_less",
+   "recorded": null,
    "restore": {
     "abandoned": {
      "head": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
      "seq": 3
     },
     "from_seq": 1,
+    "id": "01J9ZK5RESTORE000000000012",
     "log": "workspace"
    }
   },
   {
+   "applied": [],
    "checkpoint": {
     "o": {
      "at": "2026-10-10T10:03:30Z",
@@ -648,16 +655,19 @@
    },
    "expect": "ok",
    "name": "workspace_restore_regrown_to_the_held_seq",
+   "recorded": "01J9ZK5RESTORE000000000013",
    "restore": {
     "abandoned": {
      "head": "sha256:c5bff55dc4158717ece7433499b52f79b344c00af79a071210a79625d94dbf2f",
      "seq": 4
     },
     "from_seq": 2,
+    "id": "01J9ZK5RESTORE000000000013",
     "log": "workspace"
    }
   },
   {
+   "applied": [],
    "checkpoint": {
     "o": {
      "at": "2026-10-10T10:03:30Z",
@@ -682,16 +692,21 @@
    },
    "expect": "chain.diverged",
    "name": "workspace_restore_that_also_lowers_a_ticket",
+   "recorded": null,
    "restore": {
     "abandoned": {
      "head": "sha256:c5bff55dc4158717ece7433499b52f79b344c00af79a071210a79625d94dbf2f",
      "seq": 4
     },
     "from_seq": 2,
+    "id": "01J9ZK5RESTORE000000000014",
     "log": "workspace"
    }
   },
   {
+   "applied": [
+    "01J9ZK5RESTORE000000000009"
+   ],
    "checkpoint": {
     "o": {
      "at": "2026-10-10T10:03:30Z",
@@ -715,17 +730,20 @@
     "sig": "IP719k79F_d_t06t-8LuAK8dJyWDH8VTNJ36MlawlOUh3Uvu-CqxTMXth-gdAbRDp4SpAyYpoEib0TKFnwgfvg"
    },
    "expect": "chain.diverged",
-   "name": "an_old_restore_that_does_not_match_the_held_checkpoint",
+   "name": "a_reused_restore_id",
+   "recorded": null,
    "restore": {
     "abandoned": {
      "head": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
      "seq": 44
     },
     "from_seq": 2,
+    "id": "01J9ZK5RESTORE000000000009",
     "log": "workspace"
    }
   },
   {
+   "applied": [],
    "checkpoint": {
     "o": {
      "at": "2026-10-10T10:03:30Z",
@@ -750,16 +768,19 @@
    },
    "expect": "ok",
    "name": "ticket_restore_regrown_to_the_held_seq",
+   "recorded": "01J9ZK5RESTORE000000000016",
    "restore": {
     "abandoned": {
      "head": "sha256:08d494b703090846a430d99f8753f7e56621c0341517a5aeab9ad21deacc2e42",
      "seq": 4
     },
     "from_seq": 2,
+    "id": "01J9ZK5RESTORE000000000016",
     "log": "01J9ZK4Q7M3R8T2V6X0B5N1C9D"
    }
   },
   {
+   "applied": [],
    "checkpoint": {
     "o": {
      "at": "2026-10-10T10:03:30Z",
@@ -784,12 +805,128 @@
    },
    "expect": "chain.diverged",
    "name": "ticket_restore_that_lowers_the_workspace_log",
+   "recorded": null,
    "restore": {
     "abandoned": {
      "head": "sha256:08d494b703090846a430d99f8753f7e56621c0341517a5aeab9ad21deacc2e42",
      "seq": 4
     },
     "from_seq": 2,
+    "id": "01J9ZK5RESTORE000000000017",
+    "log": "01J9ZK4Q7M3R8T2V6X0B5N1C9D"
+   }
+  },
+  {
+   "applied": [],
+   "checkpoint": {
+    "o": {
+     "at": "2026-10-10T10:03:30Z",
+     "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+     "kind": "workspace_checkpoint",
+     "n": 3,
+     "suite": 2,
+     "tickets": {
+      "01J9ZK4Q7M3R8T2V6X0B5N1C9D": {
+       "head": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+       "seq": 3
+      }
+     },
+     "v": 2,
+     "workspace_id": "0123456789abcdef0123456789abcdef",
+     "workspace_log": {
+      "head": "sha256:c5bff55dc4158717ece7433499b52f79b344c00af79a071210a79625d94dbf2f",
+      "seq": 4
+     }
+    },
+    "sig": "j3DTCxxBO5GsR4x6enIru135TwfKC1TnlclpF4BXoRonq0y2GNxG7_UJ1TKVSueOdSOWU5_mvlT-yvlbetMHYg"
+   },
+   "expect": "ok",
+   "name": "ticket_restore_below_a_lagging_entry",
+   "note": "H's ticket entry (seq 4) lags the ticket checkpoint the restore gives up (seq 6)",
+   "recorded": "01J9ZK5RESTORE000000000018",
+   "restore": {
+    "abandoned": {
+     "head": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+     "seq": 6
+    },
+    "from_seq": 1,
+    "id": "01J9ZK5RESTORE000000000018",
+    "log": "01J9ZK4Q7M3R8T2V6X0B5N1C9D"
+   }
+  },
+  {
+   "applied": [],
+   "checkpoint": {
+    "o": {
+     "at": "2026-10-10T10:03:30Z",
+     "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+     "kind": "workspace_checkpoint",
+     "n": 4,
+     "suite": 2,
+     "tickets": {
+      "01J9ZK4Q7M3R8T2V6X0B5N1C9D": {
+       "head": "sha256:08d494b703090846a430d99f8753f7e56621c0341517a5aeab9ad21deacc2e42",
+       "seq": 4
+      }
+     },
+     "v": 2,
+     "workspace_id": "0123456789abcdef0123456789abcdef",
+     "workspace_log": {
+      "head": "sha256:abababababababababababababababababababababababababababababababab",
+      "seq": 4
+     }
+    },
+    "sig": "UL302pACJDKjGfx8m31CpTdh6jrTYGwCXKY-DvJleX_1JBKK3R8e94t-aKwI1x5H3wGhIB2nDKHk2zFEi7kW7w"
+   },
+   "expect": "ok",
+   "name": "workspace_restore_of_a_receiver_that_missed_checkpoints",
+   "note": "the restore gives up a checkpoint above H (n 3 was never seen)",
+   "recorded": "01J9ZK5RESTORE000000000019",
+   "restore": {
+    "abandoned": {
+     "head": "sha256:acacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacac",
+     "seq": 6
+    },
+    "from_seq": 3,
+    "id": "01J9ZK5RESTORE000000000019",
+    "log": "workspace"
+   }
+  },
+  {
+   "applied": [],
+   "checkpoint": {
+    "o": {
+     "at": "2026-10-10T10:03:30Z",
+     "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+     "kind": "workspace_checkpoint",
+     "n": 3,
+     "suite": 2,
+     "tickets": {
+      "01J9ZK4Q7M3R8T2V6X0B5N1C9D": {
+       "head": "sha256:aeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeaeae",
+       "seq": 6
+      }
+     },
+     "v": 2,
+     "workspace_id": "0123456789abcdef0123456789abcdef",
+     "workspace_log": {
+      "head": "sha256:adadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadad",
+      "seq": 5
+     }
+    },
+    "sig": "Gfz9znk6t125R6skiJiIgbbwiU5RKqO6t4mOzALlYZ4XhgvNvgNcoK6WQw0HNdhM8tkY3cQqpmCYJMumDHtcsQ"
+   },
+   "expect": "ok",
+   "name": "a_restore_attached_to_an_offer_that_does_not_need_it",
+   "note": "no log drops below H: the restore is ignored and the normal rules decide",
+   "recorded": null,
+   "restore": {
+    "abandoned": {
+     "head": "sha256:afafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafaf",
+     "seq": 6
+    },
+    "from_seq": 5,
+    "id": "01J9ZK5RESTORE000000000020",
     "log": "01J9ZK4Q7M3R8T2V6X0B5N1C9D"
    }
   },

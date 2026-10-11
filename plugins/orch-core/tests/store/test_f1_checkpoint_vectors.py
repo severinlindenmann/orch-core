@@ -100,15 +100,19 @@ def test_n_offers_are_signed_and_judged_by_a_receiver(o):
     a higher n without a lower seq is accepted, a lower n without a higher seq is ignored, the rest is diverged."""
     assert cps.verify_object(WSK, o["checkpoint"]) and cps.verify_object(WSK, C["workspace_n_held"])
     got = cps.judge_offer(
-        C["workspace_n_held"]["o"], o["checkpoint"]["o"], pinned_genesis=C["genesis"], restore=o.get("restore")
+        C["workspace_n_held"]["o"],
+        o["checkpoint"]["o"],
+        pinned_genesis=C["genesis"],
+        restore=o.get("restore"),
+        applied=o.get("applied", []),
     )
-    assert got == o["expect"]
+    assert got == (o["expect"], o.get("recorded"))
 
 
 def test_a_receiver_accepts_the_first_checkpoint_only_under_the_pinned_genesis():
     o = C["workspace_n_held"]["o"]
-    assert cps.judge_offer(None, o, pinned_genesis=C["genesis"]) == "ok"
-    assert cps.judge_offer(None, o, pinned_genesis="sha256:" + "00" * 32) == "trust.genesis_mismatch"
+    assert cps.judge_offer(None, o, pinned_genesis=C["genesis"]) == ("ok", None)
+    assert cps.judge_offer(None, o, pinned_genesis="sha256:" + "00" * 32) == ("trust.genesis_mismatch", None)
 
 
 def test_the_p1_host_never_writes_a_lower_n(tmp_path):

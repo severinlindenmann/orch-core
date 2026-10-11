@@ -1155,6 +1155,7 @@ class Store:
             raise StoreError("chain.broken", f"{log}: {self._read_errors[log]}")
         if WORKSPACE in self._read_errors:
             raise StoreError("chain.broken", f"workspace: {self._read_errors[WORKSPACE]}")
+        # NOTE: despite the name this also *writes*: it finishes a restore's pending device.revoked re-appends first
         if log != WORKSPACE and self._pending_revs:  # §5.10: no ticket event may name the restore's window
             self._enforce_revocations()
             if self._pending_revs:

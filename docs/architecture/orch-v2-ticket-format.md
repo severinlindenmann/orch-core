@@ -861,11 +861,14 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
   - **After a restore:** a checkpoint with lower `seq`s is accepted only if it comes with the owner-signed `restore`
     event, verified under the owner's device, whose `abandoned` is at least H's workspace-log `seq`. H is then replaced.
 
-  A restore comes with a checkpoint as `{log, from_seq, abandoned}`: it is judged first, for a higher `n` only, and
-  only if it is about the log whose `seq` drops (the workspace log or one ticket log), gives up exactly the
-  checkpoint H holds for that log (`from_seq < H.seq == abandoned.seq`, same `head`), the offered `seq` of that log
-  is at least `from_seq + 1`, and no other log drops or changes a head at a shared `seq`. A restore that does not
-  match H is `chain.diverged` (a receiver that missed checkpoints between H and the restore must be re-synced).
+  A restore comes with a checkpoint as `{id, log, from_seq, abandoned}`. It is looked at only for a higher `n`, and
+  only when its log (the workspace log or one ticket log) really drops below H or reaches H's `seq` again with
+  another `head`; otherwise it is ignored and the rules above decide. When it applies: its `id` is not among the
+  restore ids this receiver has already applied (receivers record the id when they accept the offer, so an old restore
+  can't be used again), `from_seq < H.seq <= abandoned.seq` (H's entry may lag the checkpoint the restore gives up,
+  and the receiver may have missed checkpoints; with the same `head` when the seqs are equal), the offered `seq` of
+  that log is at least `from_seq + 1`, and no other log drops or changes a head at a shared `seq`. Otherwise
+  `chain.diverged`.
   **Limits:** a receiver holding only checkpoints compares heights, so it accepts a fork that has grown past H and a
   forged H whose `n` and `seq` are both inflated (every honest checkpoint is then ignored); a receiver that holds the
   logs checks H's heads against them.

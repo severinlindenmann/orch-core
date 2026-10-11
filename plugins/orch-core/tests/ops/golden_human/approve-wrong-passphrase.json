@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "custody.wrong_passphrase",
+    "message": "wrong passphrase",
+    "hint": "run the command again and type your passphrase",
+    "fix": {
+      "argv": [
+        "orch",
+        "help"
+      ]
+    },
+    "retryable": false
+  }
+}
+# exit 3

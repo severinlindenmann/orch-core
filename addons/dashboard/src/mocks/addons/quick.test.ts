@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { offered } from '@/test/offered'
 import { createApi } from '@/api/client'
 import { createMockTransport } from '@/api/transport'
 import { createMockStore } from '@/mocks/store'
@@ -31,7 +32,8 @@ interface Item {
 }
 type State = { items: Q[]; list: Item[]; settings: { agents_add: boolean; max_commits: number; max_files: number } }
 const state = async (s: S) => (await s.api.getAddonState(s.ws, 'quick')) as unknown as State
-const run = (s: S, id: string, body: Record<string, unknown> = {}) => s.api.runAddonAction(s.ws, 'quick', id, body)
+// A decision answer carries the digest of the decision as offered (security review #3), as core's prompt posts it.
+const run = (s: S, id: string, body: Record<string, unknown> = {}) => s.api.runAddonAction(s.ws, 'quick', id, offered(s.store, s.ws, 'quick', id, body))
 const decisions = async (s: S) => (await s.api.getAddonDecisions(s.ws)).filter((d) => d.addon === 'quick')
 
 describe('quick tasks seed', () => {
@@ -169,10 +171,10 @@ describe('quick tasks outgrew decision', () => {
     items.find((q) => q.id === 'Q-004')!.status = 'outgrew'
     store.setViewer('p_tom')
     const api = createApi(createMockTransport(store, { latency: false }))
-    await expect(api.runAddonAction(cli, 'quick', 'decide', { id: 'dec_quick_Q-004', confirmed: true, option: 'more' })).rejects.toMatchObject({ status: 403 })
+    await expect(api.runAddonAction(cli, 'quick', 'decide', offered(store, cli, 'quick', 'decide', { id: 'dec_quick_Q-004', confirmed: true, option: 'more' }))).rejects.toMatchObject({ status: 403 })
     expect(items.find((q) => q.id === 'Q-004')!.status).toBe('outgrew')
     store.setViewer('p_sev') // an owner is above maintainer
-    expect((await api.runAddonAction(cli, 'quick', 'decide', { id: 'dec_quick_Q-004', confirmed: true, option: 'more' })).changed).toBe(true)
+    expect((await api.runAddonAction(cli, 'quick', 'decide', offered(store, cli, 'quick', 'decide', { id: 'dec_quick_Q-004', confirmed: true, option: 'more' }))).changed).toBe(true)
   })
 })
 

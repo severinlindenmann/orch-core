@@ -12,6 +12,12 @@ from orch.ops import decisions
 from orch.ops.runtime import short
 
 
+def short_gate_hash(h: str | None) -> str:
+    """The first 12 hex digits (48 bits) of the verified gate hash: what ``orch show`` prints per open gate and
+    what the signing review prints last, so a person can compare the two (F1 5.7)."""
+    return (h or "").removeprefix("sha256:")[:12] or "-"
+
+
 def fence(text: str, label: str = "ticket") -> list[str]:
     """``render.fence`` for a handler result: the renderer escapes the content once, for every line."""
     return render.fence(text, label, raw=True)

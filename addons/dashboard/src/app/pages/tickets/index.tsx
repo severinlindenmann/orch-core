@@ -129,7 +129,7 @@ export function TicketsPage() {
   const serverParams = useMemo(
     () => ticketsServerParams(search),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [search.q, search.type, search.priority, search.person, search.needs, search.label, search.sort],
+    [search.repo, search.q, search.type, search.priority, search.person, search.needs, search.label, search.sort],
   )
   const { data: all, isPending } = useQuery({
     ...queries.tickets(wsId!, serverParams),

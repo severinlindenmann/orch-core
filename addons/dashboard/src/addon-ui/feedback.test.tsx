@@ -92,7 +92,7 @@ describe('destructive confirm', () => {
     expect(region).toHaveTextContent('Revoke link')
     // The arg it sends is core's line, outside the addon's region.
     const arg = dialog.querySelector('[data-arg-key="id"]')!
-    expect(arg).toHaveTextContent('Id (id): x')
+    expect(arg).toHaveTextContent('Id (id): "x"')
     expect(region).not.toContainElement(arg as HTMLElement)
     expect(within(dialog).getByRole('button', { name: 'Confirm: Revoke (revoke)' })).toBeInTheDocument()
     expect(within(dialog).queryByRole('button', { name: 'Revoke link' })).toBeNull()

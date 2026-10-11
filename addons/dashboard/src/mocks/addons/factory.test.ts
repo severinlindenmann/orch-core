@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { offered } from '@/test/offered'
 import { createApi } from '@/api/client'
 import { createMockTransport } from '@/api/transport'
 import { createMockStore } from '@/mocks/store'
@@ -42,7 +43,8 @@ interface State {
   [k: string]: unknown
 }
 const state = async (s: S) => (await s.api.getAddonState(s.ws, 'factory')) as unknown as State
-const run = (s: S, id: string, body: Record<string, unknown> = {}) => s.api.runAddonAction(s.ws, 'factory', id, body)
+// A decision answer carries the digest of the decision as offered (security review #3), as core's prompt posts it.
+const run = (s: S, id: string, body: Record<string, unknown> = {}) => s.api.runAddonAction(s.ws, 'factory', id, offered(s.store, s.ws, 'factory', id, body))
 const permitsOf = async (s: S) => (await s.api.getAddonDecisions(s.ws)).filter((d) => d.addon === 'factory')
 const fail = (p: Promise<unknown>) => p.then(() => 'ok', (e: { status: number; code: string }) => `${e.status} ${e.code}`)
 const labels = async (s: S) => ((await state(s)).controls.children ?? []).map((c) => c.label)
@@ -104,7 +106,7 @@ describe('permits are core decisions', () => {
     const s = setup()
     const [d] = await permitsOf(s)
     const before = (await permitsOf(s)).length
-    await run(s, 'permit', { id: d.id, confirmed: true, option: 'once', ticket: d.ticket })
+    await run(s, 'permit', { id: d.id, confirmed: true, option: 'once', ticket: d.ticket, terms: d.terms })
     expect((await permitsOf(s)).length).toBe(before - 1)
     const ev = s.store.eventsOf(EPIC).filter((e) => e.type === 'factory.permit_granted')
     expect(ev).toHaveLength(1)
@@ -117,7 +119,7 @@ describe('permits are core decisions', () => {
   it('refuse logs factory.permit_refused on the epic', async () => {
     const s = setup()
     const [d] = await permitsOf(s)
-    await run(s, 'permit', { id: d.id, confirmed: true, option: 'refuse', ticket: d.ticket })
+    await run(s, 'permit', { id: d.id, confirmed: true, option: 'refuse', ticket: d.ticket, terms: d.terms })
     expect(s.store.eventsOf(EPIC).filter((e) => e.type === 'factory.permit_refused')).toHaveLength(1)
     expect(describeEvent(s.store.eventsOf(EPIC).at(-1)!)).toMatch(/refused P-\d+/)
   })
@@ -125,7 +127,7 @@ describe('permits are core decisions', () => {
     const s = setup()
     const [d] = await permitsOf(s)
     const command = (await state(s)).permits.find((p) => d.id.endsWith(p.id))!.command
-    await run(s, 'permit', { id: d.id, confirmed: true, option: 'epic', ticket: d.ticket })
+    await run(s, 'permit', { id: d.id, confirmed: true, option: 'epic', ticket: d.ticket, terms: d.terms })
     expect(s.store.eventsOf(EPIC).find((e) => e.type === 'factory.permit_granted')).toMatchObject({ scope: 'epic' })
     await run(s, 'watch')
     vi.advanceTimersByTime(20_000 * 10)
@@ -137,13 +139,13 @@ describe('permits are core decisions', () => {
   it('a closed decision does nothing, and a viewer cannot decide', async () => {
     const s = setup()
     const [d] = await permitsOf(s)
-    await run(s, 'permit', { id: d.id, confirmed: true, option: 'once', ticket: d.ticket })
-    const again = await refused(run(s, 'permit', { id: d.id, confirmed: true, option: 'refuse', ticket: d.ticket }))
-    expect(again).toMatchObject({ status: 409, code: 'decision.closed', message: 'That decision is closed.' })
+    await run(s, 'permit', { id: d.id, confirmed: true, option: 'once', ticket: d.ticket, terms: d.terms })
+    const again = await refused(run(s, 'permit', { id: d.id, confirmed: true, option: 'refuse', ticket: d.ticket, terms: d.terms }))
+    expect(again).toMatchObject({ status: 409, code: 'decision.closed', message: expect.stringMatching(/^That decision is closed/) })
     expect(s.store.eventsOf(EPIC).filter((e) => e.type === 'factory.permit_refused')).toHaveLength(0)
     const v = setup('p_tom')
     const [vd] = [{ id: 'factory.permit:P-1', ticket: 'DEMO-0052' }]
-    expect(await fail(v.api.runAddonAction(v.ws, 'factory', 'permit', { id: vd.id, confirmed: true, option: 'once' }))).toBe('403 forbidden')
+    expect(await fail(v.api.runAddonAction(v.ws, 'factory', 'permit', offered(v.store, v.ws, 'factory', 'permit', { id: vd.id, confirmed: true, option: 'once' })))).toBe('403 forbidden')
   })
 })
 
@@ -317,14 +319,14 @@ describe('minors', () => {
   it('an unknown permit option is a 400 and changes nothing', async () => {
     const s = setup()
     const [d] = await permitsOf(s)
-    expect(await fail(run(s, 'permit', { id: d.id, confirmed: true, option: 'whatever', ticket: d.ticket }))).toBe('400 validation.option')
+    expect(await fail(run(s, 'permit', { id: d.id, confirmed: true, option: 'whatever', ticket: d.ticket, terms: d.terms }))).toBe('400 validation.option')
     expect((await permitsOf(s)).length).toBeGreaterThan(0)
     expect(s.store.eventsOf(EPIC).some((e) => e.type === 'factory.permit_granted')).toBe(false)
   })
   it('a standing grant answering a later request is logged on the epic as standing', async () => {
     const s = setup()
     const [d] = await permitsOf(s)
-    await run(s, 'permit', { id: d.id, confirmed: true, option: 'epic', ticket: d.ticket })
+    await run(s, 'permit', { id: d.id, confirmed: true, option: 'epic', ticket: d.ticket, terms: d.terms })
     await run(s, 'watch')
     vi.advanceTimersByTime(20_000 * 10)
     const standing = s.store.eventsOf(EPIC).filter((e) => e.type === 'factory.permit_granted' && e.standing === true)

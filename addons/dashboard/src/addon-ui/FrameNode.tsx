@@ -1,20 +1,54 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { NodeOf } from './nodes'
+import { inertDocument } from './frameSanitize'
 
-// Prepended to every addon document. It blocks fetches, subresources and nested frames (inline script/style and
-// data: images only). It does NOT govern navigation: the document can still navigate its own frame to a remote
-// URL, which is why SandboxFrame drops the frame after its first load.
+// Prepended to core's own template documents (the only frames that run scripts). It blocks fetches, subresources and
+// nested frames (inline script/style and data: images only). The template code is core's, pinned by digest; agent
+// data reaches it as inert JSON only (widgetTemplates.frameDocument).
 const CSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:"
 
 /**
- * Sandboxed iframe for addon-supplied HTML. `sandbox="allow-scripts"` only: never allow-same-origin (the
- * document gets an opaque origin and cannot reach core's DOM, storage or cookies), nor top-navigation,
- * popups or forms. `fallback` replaces the frame if it navigates away from the document core gave it.
+ * A sandboxed iframe for HTML. Never allow-same-origin (an opaque origin cannot reach core's DOM, storage or cookies),
+ * nor top-navigation, popups or forms.
+ * - Default (addon frame nodes, agent HTML artifacts, one-off widget pages): INERT (security review #1). `sandbox=""`
+ *   (no scripts), core's sanitizer first (frameSanitize.ts: nothing that navigates or loads), core's no-script CSP. Its
+ *   height is the node's, fixed, scrolling inside; the person can drag it taller. No script inside the frame is needed
+ *   for anything.
+ * - `coreTemplate`: core's own pinned widget template document (widgetTemplates.ts), the only document allowed to run
+ *   scripts (`sandbox="allow-scripts"`), and the only one that may fit its height (`fitContent`, from its size reporter).
+ * `fallback` replaces the frame if it ever loads a second document (defence in depth; not the boundary).
  */
-export function FrameNode({ node, fallback, fitContent = false }: { node: NodeOf<'frame'>; fallback: ReactNode; fitContent?: boolean }) {
+export function FrameNode({ node, fallback, fitContent = false, coreTemplate = false }: { node: NodeOf<'frame'>; fallback: ReactNode; fitContent?: boolean; coreTemplate?: boolean }) {
+  if (!coreTemplate) {
+    const doc = inertDocument(node.html)
+    return <InertFrame key={doc} node={node} srcDoc={doc} fallback={fallback} />
+  }
   const srcDoc = `<meta http-equiv="Content-Security-Policy" content="${CSP}">${node.html}`
   // A new document is a new frame: its load count starts again.
   return <SandboxFrame key={srcDoc} node={node} srcDoc={srcDoc} fallback={fallback} fitContent={fitContent} />
+}
+
+/** An inert frame: no scripts, fixed height (the node's) with its own scrolling, resizable by the person. */
+function InertFrame({ node, srcDoc, fallback }: { node: NodeOf<'frame'>; srcDoc: string; fallback: ReactNode }) {
+  const loads = useRef(0)
+  const [navigated, setNavigated] = useState(false)
+  if (navigated) return <>{fallback}</>
+  return (
+    <div data-frame-resize className="min-h-12 resize-y overflow-hidden rounded-md border border-border" style={{ height: node.height }}>
+      <iframe
+        title={node.title}
+        sandbox=""
+        srcDoc={srcDoc}
+        referrerPolicy="no-referrer"
+        loading="lazy"
+        className="block h-full w-full bg-bg"
+        onLoad={() => {
+          loads.current += 1
+          if (loads.current > 1) setNavigated(true)
+        }}
+      />
+    </div>
+  )
 }
 
 /** The smallest height a fitted frame takes, whatever it reports. */

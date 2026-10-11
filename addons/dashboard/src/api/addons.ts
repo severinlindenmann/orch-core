@@ -1,5 +1,6 @@
 // Pure addon-state rules shared by the mock and the UI (part of the API contract).
-import type { ActionMeta, AddonGrant, AddonPackage, AddonStatus, AddonUpdate, InstalledAddon, Workspace, WorkspaceAddon } from './types'
+import { sha256Hex } from './sha256'
+import type { ActionMeta, AddonDecision, AddonGrant, AddonPackage, AddonStatus, AddonUpdate, InstalledAddon, Workspace, WorkspaceAddon } from './types'
 
 /** Does this grant cover exactly the installed package: same version and hash, and every installed capability? */
 export function grantCovers(a: Pick<WorkspaceAddon, 'version' | 'package_sha256' | 'capabilities'>, g: AddonGrant | null): g is AddonGrant {
@@ -46,7 +47,8 @@ export function manifestFor(pkg: Pick<AddonPackage, 'actions' | 'update'>, insta
 export const PACKAGE_NAME = /^[a-z][a-z0-9-]{0,39}$/
 /** An arg key an addon may send with an action (node args, signed args). */
 export const ARG_KEY = /^[A-Za-z][A-Za-z0-9_]{0,31}$/
-const HIDDEN_CHAR = new RegExp('[\\p{Cc}\\p{Cf}\\u2028\\u2029]', 'u')
+// The same characters core's visible-string helpers escape (components/sign/visible.tsx): never in a title.
+const HIDDEN_CHAR = new RegExp('[\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}\\p{Default_Ignorable_Code_Point}\\p{Co}\\p{Cn}\\p{Cs}\\u2420]|(?! )\\p{Zs}', 'u')
 
 /** At most this many terms on one decision (as for signed args). */
 export const MAX_DECISION_TERMS = 12
@@ -79,4 +81,16 @@ export function manifestProblem(pkg: { name: string; title: string }): string | 
   if (/[():·]/.test(pkg.title)) return 'Its title must not contain parentheses, a colon or a middle dot.'
   if (HIDDEN_CHAR.test(pkg.title)) return 'Its title contains invisible or control characters.'
   return null
+}
+
+/**
+ * The digest of a decision exactly as core shows it in its signing prompt (security review #3): the addon, id, action,
+ * ticket, title, question, detail, options and terms. Core posts it with the answer; the host compares it with the
+ * decision's digest now, in the same step that applies the answer, and refuses a mismatch (409 decision.closed). So a
+ * decision whose text (a permit's command in its question), ticket or options changed after the prompt opened is never
+ * answered with the old signature.
+ */
+export function decisionDigest(d: Pick<AddonDecision, 'addon' | 'id' | 'action' | 'ticket' | 'title' | 'question' | 'detail' | 'options' | 'terms'>): string {
+  const terms = d.terms ? Object.keys(d.terms).sort().map((k) => [k, d.terms![k]]) : null
+  return 'sha256:' + sha256Hex(JSON.stringify([d.addon, d.id, d.action, d.ticket ?? null, d.title, d.question, d.detail ?? null, d.options.map((o) => [o.key, o.label, !!o.primary]), terms]))
 }

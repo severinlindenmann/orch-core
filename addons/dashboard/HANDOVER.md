@@ -76,7 +76,7 @@ Paths are under `src/`.
 | Addons (18) | `mocks/addons/*`, `mocks/fixtures/addons.json`, `catalog.json` | Installed in DEMO: guide, start-agent, widgets, estimate, publish, github, usage, terminals, wiki, land. Catalog: worktrees, quick, records, activity, models, factory, schedules, drop (the Busy day installs all but drop in DEMO). |
 | Ticket page density (R4) | `app/pages/ticket/` (`Overview.tsx`, `Rail.tsx`, `widgets/`) | Current state shows 2 widgets, then "N more widgets"; question prototypes point to Questions → Answer; the rail holds addon panels under one "Addons · N" heading and one Terminal panel; the breadcrumb leads back to where the ticket was opened. Points (Estimate on) or Size, never both. |
 | Widgets, Usage, Busy day (R4) | `api/widgetCatalog.ts`, `api/widgetTemplates*.ts`, `mocks/addons/usage.ts`, `mocks/busy/` | Widgets gallery ("Where it's allowed" once per section); Usage tiles with one measure and one period each, scaled on the Busy day; Apps & shares vs Drop say what each is for; Busy day widgets on 20 tickets covering every core widget type and two templates, every artifact kind. |
-| Signing surface | `addon-ui/SignConfirm.tsx`, `DecisionSignPrompt.tsx`, `DestructiveConfirm.tsx`, `OptionsConfirm.tsx`, `app/pages/settings/addons/GrantDialog.tsx`, `test/signing-surface.test.tsx` | Signing and confirm dialogs: core's words in the title, covers and confirm button (an addon named "Title (package id)"); every arg that is sent is a core line "Words (key): value" (in the covers, or a "Sends" list above the addon region), never inside the addon's region; the addon's own text (label, sentence, row name, decision question) only in a labelled dashed "From the addon" region, always in full (wrapped, scrolling, never cut). Every addon-controlled or signed string goes through `components/sign/visible.tsx` (`Raw`/`visible`/`plain`: bidi-isolated, control/format characters as `\u{…}`, edge spaces as ␠, empty as `""`). Non-plain values (objects, NaN, Infinity), keys outside `^[A-Za-z][A-Za-z0-9_]{0,31}$` and more than 12 args fail closed. The confirm buttons of the destructive and options dialogs are core's ("Confirm: …", "Continue: …"); option field and choice labels sit in a labelled addon region. Package names must match `^[a-z][a-z0-9-]{0,39}$` and titles must be 1–40 characters without `( ) · :` or invisible characters (`manifestProblem` in `api/addons.ts`; the host refuses the install with 409 `addon.invalid_manifest`, the grant dialog will not sign). The table test covers 19 paths: gate approve, answer, verdict, addon decision, addon sign, options, destructive, start agent, agent grant issue and revoke, skill credential grant, addon install and update, relay connect, pair.confirm and device.remove, member role, gate policy, agent grant length. Not in the table (same SignPrompt pattern, own tests): relay stop, member add/remove. **Explicitly unsigned exception:** terminals `login_shell` (Today's "Log in in the terminal"): owner-only and needs the pty grant, but no signature and no confirm, because it runs nothing: it opens a shell as the connection's `run_as` with the login command typed, and the person presses Enter. The host still appends a `terminal.shell_opened` event (owner as actor). |
+| Signing surface | `addon-ui/SignConfirm.tsx`, `DecisionSignPrompt.tsx`, `DestructiveConfirm.tsx`, `OptionsConfirm.tsx`, `app/pages/settings/addons/GrantDialog.tsx`, `test/signing-surface.test.tsx` | Signing and confirm dialogs: core's words in the title, covers and confirm button (an addon named "Title (package id)"); every arg that is sent is a core line "Words (key): value" (in the covers, or a "Sends" list above the addon region), never inside the addon's region; the addon's own text (label, sentence, row name, decision question) only in a labelled dashed "From the addon" region, always in full (wrapped, scrolling, never cut). Every addon-controlled or signed string goes through `components/sign/visible.tsx` (`Raw`/`visible`/`plain`/`Inline`/`Prose`/`RawValue`): bidi-isolated; control, format, every default-ignorable (U+034F, U+3164, variation selectors …), private-use, unassigned and non-ASCII space characters as `\u{…}`; a backslash as `\\`; edge spaces as ␠ (a literal ␠ escaped); empty as `""`; every non-ASCII code point of a string NFC would change (decomposed Hangul, é as e + U+0301, the Ångström sign). The encoding is injective (collision tests in `visible.test.tsx`). Typed signed values (args, decision terms) use `RawValue`: strings quoted with `\"` escaped, numbers and booleans bare. Ticket signing (`SignDialog`) shows each signed section and field on its own (task text, assignee, verify command, proves; question, option, answer text), with a provenance caption. Non-plain values (objects, NaN, Infinity), keys outside `^[A-Za-z][A-Za-z0-9_]{0,31}$` and more than 12 args fail closed. The confirm buttons of the destructive and options dialogs are core's ("Confirm: …", "Continue: …"); option field and choice labels sit in a labelled addon region. Package names must match `^[a-z][a-z0-9-]{0,39}$` and titles must be 1–40 characters without `( ) · :` or invisible characters (`manifestProblem` in `api/addons.ts`; the host refuses the install with 409 `addon.invalid_manifest`, the grant dialog will not sign). The table test covers 19 paths: gate approve, answer, verdict, addon decision, addon sign, options, destructive, start agent, agent grant issue and revoke, skill credential grant, addon install and update, relay connect, pair.confirm and device.remove, member role, gate policy, agent grant length. Not in the table (same SignPrompt pattern, own tests): relay stop, member add/remove. **Explicitly unsigned exception:** terminals `login_shell` (Today's "Log in in the terminal"): owner-only and needs the pty grant, but no signature and no confirm, because it runs nothing: it opens a shell as the connection's `run_as` with the login command typed, and the person presses Enter. The host still appends a `terminal.shell_opened` event (owner as actor). |
 | Tests | `**/*.test.ts(x)`, `test/` | About 1,790 vitest tests (jsdom): contract, visibility sweep, orange guard, a11y smoke, signing surface, per page and per addon. `scripts/layout-guard.mjs` for real layout (below). Local only: CI does not run the dashboard suite or the layout guard. |
 
 ## Backend contract (for the host)
@@ -111,8 +111,8 @@ All workspace reads are members only (404 unknown workspace, 403 non-member); hi
 | POST `/api/workspaces/:ws/tickets/:key/undo-create` | no operation yet — proposal `ticket.discard` (creator, nothing happened yet; key never reused) |
 | GET `/api/tickets/:key` | `show --json` (the ticket document, §7) |
 | GET `/api/tickets/:key/events?since=` | `show --log --since N` |
-| POST `/api/tickets/:key/actions` `answer` | `answer` (human, signed) |
-| … `approve` / `request_changes` / `verdict` | `approve` / `request-changes` / `verdict` (human, signed). `verdict` carries `source_sha` (the branch head the person saw; 409 `verdict.stale` otherwise) and signs it; `approve {gate: 'code', source_sha}` is the code review (after a pass verdict, the same commit, never an assignee; 409 `gate.stale` / `gate.not_open`); request changes on `code` also voids the verdict |
+| POST `/api/tickets/:key/actions` `answer` | `answer` (human, signed). Carries `hash`, the question's hash the dialog showed (and the exact option and trimmed text it showed); 409 `question.stale` unless it is the question's hash now, compared in the step that records the answer; `question.answered` records it |
+| … `approve` / `request_changes` / `verdict` | `approve` / `request-changes` / `verdict` (human, signed). `verdict` carries `source_sha` (the branch head the person saw; 409 `verdict.stale` otherwise) and signs it; `approve {gate: 'requirements' | 'plan', hash}` binds the content the person reviewed: `hash` is the gate's content hash (full sha256 of the material `gateSignedContent` covers) when the dialog opened, required, 409 `gate.stale` unless equal to the hash now (compared atomically with appending `gate.approved`, which records it); `approve {gate: 'code', source_sha}` is the code review (after a pass verdict, the same commit, never an assignee; 409 `gate.stale` / `gate.not_open`); request changes on `code` also voids the verdict |
 | GET `/api/tickets/:key/changes` | no operation yet — proposal `diff` (core's diff of the ticket branch against its base: files, +/−, unified lines; the ticket document carries `branch` with head, commits and diffstat) |
 | … `ask` | `ask` |
 | … `comment` | no operation yet — proposal `comment` (closest: `log`, which is the agent's) |
@@ -129,7 +129,7 @@ All workspace reads are members only (404 unknown workspace, 403 non-member); hi
 | GET `/api/workspaces/:ws/agents`, `…/agents/activity` | no operation yet — proposal `session.list`, `session.refusals` |
 | GET `/api/workspaces/:ws/agents/launch?ticket&mode&harness&where` | no operation yet — proposal `session.preview` (core-computed facts for the start dialog) |
 | (start/stop run through the start-agent addon actions) | no operation yet — proposal `session.start` / `session.stop` (human; needs `spawn_agent`, a grant, a server-issued single-use confirmation) |
-| GET/POST `/api/workspaces/:ws/preview/mandates` | **PREVIEW ONLY — not part of the contract.** Served by the mock for the non-functional mandates preview (M1, `docs/concept-mandates.md` Step 1); nothing is signed. A host implements nothing here until core specifies mandates (D62 draft, PR #340); the shape will change. |
+| GET/POST `/api/workspaces/:ws/preview/mandates` | **PREVIEW ONLY — not part of the contract.** Served by the mock for the non-functional mandates preview (M1, updated in U2 to the wide mandate, `docs/concept-mandates.md`; ops `enable`, `disable`, `issue {orchestrator, days ≤ 30}`, `renew {days ≤ 30}`, `stop`, `review`, `revoke`); nothing is signed. A host implements nothing here until core specifies mandates (D62 draft, PR #340); the shape will change. |
 | GET/POST `/api/workspaces/:ws/grants`, POST `…/grants/:id/revoke` | `grant` (human, signed; revoke stops its sessions). Terms by role (`grantTerms`): owners and maintainers scope `all`, 1–24 h; **members grant themselves** scope `workable` (the tickets they may work on), 1 h up to the workspace default (`grant_hours`, 8); viewers none (403). Wrong scope 403 `grant.scope`. Members revoke their own; owners revoke any |
 
 **Skills, connections, relay (D54–D57)**
@@ -146,13 +146,13 @@ All workspace reads are members only (404 unknown workspace, 403 non-member); hi
 
 | Endpoint | Operation |
 |---|---|
-| GET `/api/addons`, `/api/workspaces/:ws/addons`, `…/addon-catalog` | `addon …` (list) |
+| GET `/api/addons`, `/api/workspaces/:ws/addons`, `…/addon-catalog` | `addon …` (list). Every package response (also the addon-operation answer) is the **public package**: no `decisions` or other runtime/ticket-bound state; decisions reach a client only through the filtered `addon-decisions` (security review #5) |
 | POST `/api/workspaces/:ws/addons/:name` `{op}`: `install`, `grant`, `update`, `enable`, `disable`, `uninstall` | `addon …` (grant/update/install-with-grant are signed: format `addon.granted`) |
 | GET `/api/workspaces/:ws/addon-decisions` | no operation yet — proposal: part of `inbox` (addon decisions core renders) |
 | GET `/api/workspaces/:ws/addons/:name/state[?ticket=KEY]` | no operation yet — proposal `addon.state` (the addon's view for this person; per-ticket for panels) |
 | POST `/api/workspaces/:ws/addons/:name/actions/:id` | the addon's own command group (format §8 `cli`), run by the host; `confirm: 'sign'` and `decision: true` actions are signed by core (events `addon.action_signed`, `addon.decided`) |
 
-The host requires core's `confirmed: true` on `confirm: 'sign'`, `'destructive'`, `'options'`, `'spawn_agent'` and decision
+The host runs only an action the **installed, granted manifest declares** (`actions[id]`, an own entry; 403 `addon.undeclared_action` otherwise, also for an implementation an update dropped from the manifest; security review #10). It requires core's `confirmed: true` on `confirm: 'sign'`, `'destructive'`, `'options'`, `'spawn_agent'` and decision
 actions (409 `confirm.required`); a signed action carries at most 12 plain values (400 `validation`), and
 `addon.action_signed` records exactly the signed args (uncut, without `confirmed`).
 
@@ -163,7 +163,26 @@ anything else fails closed (core does not offer the decision; `validTerms` in `a
 `openDecisions`). Core shows each term in the decision's signing covers as its own line "Words (key): value" (core
 humanises the key; the value through `visible.tsx` `Raw`, in full), posts them with the answer (`decisionBody`), and the
 host refuses the answer with 409 `decision.closed` ("…or its terms changed", hint "Reopen it and check the terms again")
-unless they equal the decision's terms now (`sameTerms`: same keys, values and types). `addon.decided` records them. The
+unless they equal the decision's terms now (`sameTerms`: same keys, values and types). `addon.decided` records them.
+Every decision answer also carries `digest` (`decisionDigest` in `api/addons.ts`: sha256 over addon, id, action, ticket,
+title, question, detail, options and terms, exactly as core's prompt showed them, also in its Details); the host refuses
+it with 409 `decision.closed` unless it equals the digest of the decision now, and refuses a body whose `ticket` is not
+the decision's (security review #3). The digest is **required** on every decision answer (409
+`decision.digest_required` without one; tests post through `test/offered.ts`, which computes it from the decision as
+offered). A decision action the manifest marks
+`authorises: true` (the factory `permit`) must carry what it authorises as typed `terms` — a permit's are `command`,
+`ticket`, `epic`, `scope` — else the host refuses the answer (409 `decision.terms_required`); such a decision is
+answered once (a second answer: 409 `decision.closed`, from core's `addon.decided` record), and the permit action
+runs the command from the matched decision's terms, never from live permit state (it refuses when the live permit no
+longer matches them). A decision's signed text (title, question, detail, options, terms) must be stable while it is open: no countdowns
+(a factory hold says "Delivery at <time>: <destination>"; core draws the minutes left from `hold.until`, outside the
+digest). After any 409 on a decision answer, the client refetches the decisions, so the next choice snapshots the
+current one. A decision action marked `deciders: 'eligible'` (factory `code_review`, minRole member) is answered by
+whoever core's gate eligibility admits (`gateEligibility` under the code-gate policy: e.g. a member who is a reviewer
+under "the ticket's reviewers"), never a viewer, the requester or the author; the host skips the owners-and-maintainers
+floor for it, members get only such decisions from `addon-decisions`, and the handler checks eligibility again.
+Repos `adopt` signs the observed `default_branch` with the name, path, remote and folder and refuses any change (409
+`repos.changed`). The
 id still binds the decision; terms make what it binds legible. On an addon page, a decision node's primary option is
 disabled while a form on that page that names it (`guards: <decision id>`, with `cancel`) holds unsaved edits
 ("Unsaved changes to the terms: save or cancel them before you accept."); other options stay.
@@ -175,7 +194,7 @@ accepts only `<name>.<verb>` records from an addon.
 Addon action ids the mock implements (manifest `actions` sets roles; default member): publish `share`, `share_once`,
 `copy_link`, `extend`, `revoke`, `start`, `stop`, `logs`, `redeploy`, `decide`; github `import`, `refresh`,
 `approve`, `open`; estimate `set`; wiki `open`, `search`, `clear_search`, `close`, `edit`, `done`, `create`, `save`,
-`link`; terminals `open`, `new`, `close`, `open_ticket`, `start`, `resume`, `login_shell` (owner only plus the pty grant, else 403 / 409 `terminals.no_pty`; body is only `{connection}`, never a command: the host takes the command from that connection's `login_hint` (404 unknown connection, 400 no login); the shell runs as the connection's `run_as`; the hint is written to the pty once on first attach with control characters and newlines stripped and no trailing CR, so nothing runs until the person presses Enter; the session view carries `prefill` and `run_as`; appends `terminal.shell_opened {connection, run_as, session}` by the owner; unsigned by design, see the signing surface row); start-agent `configure`, `start`, `stop`;
+`link`; terminals `open`, `new`, `close`, `open_ticket`, `start`, `resume`, `login_shell` (owner only plus the pty grant, else 403 / 409 `terminals.no_pty`; every path that creates or attaches a person's shell — `new`, `open_ticket`, `start`, `resume`, `login_shell` — checks the pty grant in one place, `newShell`, security review #11; `open` on a running person shell needs it too, and without it no session is `interactive` (a transcript stays readable); body is only `{connection}`, never a command: the host takes the command from that connection's `login_hint` (404 unknown connection, 400 no login); the shell runs as the connection's `run_as`; the hint is written to the pty once on first attach with control characters and newlines stripped and no trailing CR, so nothing runs until the person presses Enter; the session view carries `prefill` and `run_as`; appends `terminal.shell_opened {connection, run_as, session}` by the owner; unsigned by design, see the signing surface row); start-agent `configure`, `start`, `stop`;
 guide `open`; worktrees `filter`, `add`, `remove`, `open_terminal`; quick `add`, `claim`, `close`, `make_ticket`,
 `decide`; records `commit`, `push`, `pull`; activity `apply`, `view_timeline`, `view_ticket`, `show_new`,
 `clear_filters`, `show_older`; models `escalate`; factory `permit`, `pause`, `resume`, `watch`, `stop_watching`;
@@ -247,8 +266,68 @@ undecided). Everything below that is not in that list is **provisional**.
   `publish.decided`, `github.imported`, `github.pr_linked`, `estimate.set`, `usage.recorded`, `wiki.linked`,
   `quick.made_ticket`, `records.committed`, `records.pushed`, `records.pulled`, `drop.shared`, `drop.claimed`,
   `drop.revoked`, `drop.removed`, `drop.extended`, `factory.paused`, `factory.resumed`, `factory.permit_granted`,
-  `factory.permit_refused`, `land.queued`, `land.attempt`, `land.dequeued`, `land.resolved`.
+  `factory.permit_refused`, `factory.run_requested`, `factory.run_step`, `factory.deliver_held`,
+  `factory.deliver_stopped`, `factory.delivered` (full runs, below), `land.queued`, `land.attempt`, `land.dequeued`, `land.resolved`.
 - Not written by the mock: `artifact.replaced`, `edit.external`, `projection.repaired`, `restore`.
+
+## Factory full runs: request fields, events, the hold/Stop contract (provisional)
+
+Owner decision 10 Oct 2026 evening (D61 option); proposal `docs/factory-full-run-proposal.md`. In the mock it is the
+factory addon's (`src/mocks/addons/factory-runs.ts`); the hold is meant to be **host-enforced**.
+
+- **Request** (signed, `start_run`, `confirm: 'sign'`, maintainer+; a Deliver target owner-only in the mock): the
+  signed args are exactly `request` (a single-use id the host issued at review: `rq-<PREFIX>-<nonce>-<n>`, the nonce new for every seeding of the state, so a reset never reissues an id), `goal` (≤ 200 chars), `goes_up_to` (`Preview` | `Deliver`), and for Deliver
+  `deliver_means` (the concrete destination, ≤ 160 chars, required) and `hold_minutes` (15 | 30 | 60 | 240, default
+  30), plus `largest_child: 'm'`. Core records them in `addon.action_signed {args}`. The form (`prepare_run`) stores a
+  per-viewer draft; the host refuses a signature whose values differ from the reviewed draft (409 `factory.stale`),
+  a Deliver without a destination (400 `validation`), a run while the factory is paused or stopped (409
+  `factory.not_running`), a reused request id (409 `factory.request_used`; the id is consumed with the run's creation in
+  one step) and a run whose children do not fit the charter's child budget (409 `factory.budget`; admission reserves
+  them, `used += 3`).
+- **Charter:** one check at admission, every step and settlement: paused holds everything, the hold clock too; a
+  charter stopped by time (or an over-committed budget) stops progress and ends a hold `factory.deliver_cancelled
+  {run, reason: 'charter_stopped'}` ("Not delivered: the charter stopped"). Nothing is delivered after it stops.
+- **Code review (D61 "never the code gate"):** when the workspace code review policy applies, each child waits at a
+  Code review step for people: core decision `factory.code:<run>:<n>` (option `approve`, terms `{run, child,
+  child_title, commit}`, signed in core's prompt; `addon.decided` with presence) → `factory.code_reviewed {run, child,
+  commit, approvals, needed}`. Eligibility is core's D59 rule (`store.gateEligibility`, the same as a ticket's code
+  gate): the policy's approver group, the run's requester and the child's author count as its assignees (never
+  reviewers), one approval per person, and the policy's `count` of distinct people. The decision is offered only to
+  people who are eligible. Each approval signs the child's commit; a new commit (`factory.child_pushed {run, child,
+  commit}`) voids the approvals and sends the child back to wait before Validate (D58/D59). Validate and Preview wait
+  for every review; neither the factory nor a mandate satisfies it.
+- **Events** on the factory epic, by the addon: `factory.run_requested {run, request, goal, goes_up_to, children,
+  deliver_means?, hold_minutes?}`, `factory.code_reviewed {run, child}`, `factory.deliver_cancelled {run, reason}`, `factory.run_step {run, step: 'Plan' | 'Preview'}`, `factory.deliver_held {run, deliver_means,
+  until}`, `factory.deliver_stopped {run}`, `factory.delivered {run, deliver_means}`. Children's steps
+  (Requirements, Build and test, Validate, Evidence) are in the addon state in the mock; a real host writes them on
+  child tickets with `via: 'factory_full_run'`. Every decided step is labelled "via the factory full run <you|name>
+  signed on <date> — no person reviewed this step".
+- **Hold/Stop contract.** At Deliver the host opens a core decision `factory.hold:<run>` with **one option, `stop`**,
+  `terms {run, deliver_means, hold_until}` and `hold {until, deliver_means}` (new optional `AddonDecision.hold`).
+  Core shows it on Today, in place on the page (`decision` node) and as a calm shell line (`DeliveryHoldBanner`:
+  "Delivering in 28 min · <deliver_means> · at 14:32 · AI Factory (factory) · Stop…"). Stop is signed in core's
+  decision prompt (`addon.decided`, presence Touch ID) and cancels: no `factory.delivered`, the run stays at
+  Preview. When `until` passes with no Stop the host delivers to exactly `deliver_means` (it refuses any other
+  destination, `factory.deliver_mismatch`) and writes `factory.delivered`. While the factory is paused nothing is
+  delivered: Pause keeps what is left of the hold (`holdRemainingMs`, from the wall clock), and Resume rebuilds both
+  deadlines from it, so a reload while paused never ends or shortens the hold. Agents never hold the delivery credential: the host delivers.
+- **The factory stays on during a hold.** Disable, update and uninstall are refused (409 `addon.delivery_on_hold`,
+  core's sentence names the run) while a delivery holds (mock: `MockAddon.offBlocked`). The real host keeps Stop
+  available independently of the addon's activation (Stop is a core decision on a core-held deadline), so even an
+  addon that crashed or was removed cannot take the Stop away.
+- **Reloads:** the hold's deadline is held on the host's real clock. The mock keeps a wall-clock deadline next to the
+  mock one (`holdWallUntil`) and re-derives the mock deadline from it when the mock clock restarts on a reload, so a
+  reload never extends a hold. Seeded factory state is saved as soon as it is seeded (`MockAddon.saveOnSeed`), so the
+  busy day's hold is not seeded again on a reload. Factory state version 4; versions 2 and 3 are migrated
+  (`MockAddon.migrate`): runs, holds and counters kept; a hold saved without a wall deadline gets its full window again
+  from the reload (conservative: never shorter than what was left).
+- Disable / update / uninstall initialise and settle the factory state before the hold check, so a seeded hold nobody
+  looked at still blocks them.
+- **No operation shortens a Deliver hold.** During the hold the only human act is a signed Stop; there is no
+  "deliver now". The mock's "Simulate: let the hold time pass (demo)" is a simulator control of the demo data (owner
+  only, refused outside the demo datasets), not a host operation: a host implements nothing for it.
+- **Demo only:** "Fill in a demo request" (`demo_run`, prefills the form; still signed); the busy day seeds run R-1 on
+  hold (28 min left); its 3 children are reserved in the budget (23 of 25 used), a valid charter state.
 
 ## Sign dialogs and landing against D41 / D49 / D53
 
@@ -264,6 +343,23 @@ undecided). Everything below that is not in that list is **provisional**.
   failed attempt and the resolution records and writes the reason), never by the addon. `main` is refused as a target
   (D33, normalised names). Decided (10 Oct): the verdict signs the branch head (`source_sha`), the land worker uses
   that commit, new commits void the verdict, and the opt-in `code` gate (when on) signs the same commit.
+- **Third-party HTML (security review #1).** Addon frame nodes, agent HTML artifacts and one-off widget pages are
+  drawn **inert**: core's sanitizer (`addon-ui/frameSanitize.ts`) first removes everything that could navigate the
+  frame or load something (script, meta refresh, base, link, iframe/object/embed, forms (unwrapped), SVG animation,
+  every `href` except `#anchors`, every `src` except data: images, `target`, `ping`, `formaction`, `srcset`, event
+  handlers, style `url()`/`@import`), then the frame gets `sandbox=""` (no scripts) and a no-script CSP. Its height is
+  fixed (the node's), the content scrolls inside, the person can drag it taller. Only core's own pinned widget
+  templates (`api/widgetTemplates.ts`, data as inert JSON) run scripts (`sandbox="allow-scripts"`) and fit their
+  height. Removing a frame after a second load is no longer relied on. Agent HTML that relies on scripts (script
+  elements, event handlers, `javascript:` URLs: `usesScripts`) is not drawn as an empty frame: core shows "This preview
+  used scripts, which orch no longer runs for agent HTML — showing the source." with the source (`ScriptedPreview`;
+  the artifact viewer offers the static preview from there). **A real host that wants to show active
+  third-party HTML (scripts) must render it in an environment that blocks every outbound request and navigation
+  before dispatch** (not in the dashboard's page).
+- **Addon contributions are bounded before core walks them (security review #9):** at most 64 levels, 20,000 values
+  and 2 MB of strings (`nodeBudgetProblem`, iterative, counting every value before it is queued); the node is checked
+  again after binding resolution (a `$ref` can bind any state), and interpolation never stringifies an object; over
+  budget, only that contribution shows "could not be shown".
 - **D54.** The relay is API only; its one allowed page is the static, script-free fallback for the pairing link (`/pair`). The dashboard draws no relay-hosted page. Decided (10 Oct): strict D54 — Drop is orch-only, no outsider download page; revisit later.
 
 ## Routes (permanent URLs)
@@ -279,7 +375,7 @@ the same view after a reload or pasted into a new tab. **The host serves `index.
 | `/w/<PREFIX>/board?view=list&mine=true&type=…&label=…&person=…&epic=…&q=…` | Board, its view and filters |
 | `/w/<PREFIX>/tickets?q=…&status=…&type=…&priority=…&person=…&needs=…&label=…&sort=…` | Tickets list and filters (saved views are these params) |
 | `/w/<PREFIX>/tickets/new` | New ticket page |
-| `/ticket/<KEY>?tab=acceptance\|changes\|questions\|artifacts\|history\|raw` | A ticket and its tab (Overview without `tab`); `#question-<id>` opens that question. The key names the workspace. |
+| `/w/<PREFIX>/ticket/<KEY>?tab=acceptance\|changes\|questions\|artifacts\|history\|raw` | A ticket and its tab (Overview without `tab`); `#question-<id>` opens that question. The key names the workspace: `/ticket/<KEY>` and `/w/<OTHER>/ticket/<KEY>` redirect (replace) here. |
 | `/w/<PREFIX>/artifacts?view=list\|grid&a=<KEY>.<sha256[:12]>` | Artifacts, layout and the shown artifact |
 | `/w/<PREFIX>/agents?tab=mandates` | Agents (Sessions without `tab`); `mandates` is the **preview** tab (not part of the contract) |
 | `/w/<PREFIX>/settings/<tab>` | Settings tab (general, members, gates, relay, addons, skills, connections) |
@@ -289,11 +385,11 @@ the same view after a reload or pasted into a new tab. **The host serves `index.
 - **Mechanics.** The route tree keeps short in-app paths (`/board`, `/settings/$tab`); a router rewrite
   (`src/app/urls.ts`) strips `/w/<PREFIX>` on the way in and adds the current workspace on the way out, so every
   `<Link>` gets the workspace without naming it. On a `/w/…` address the address decides the workspace
-  (`WorkspaceProvider`); on a ticket the ticket's home workspace becomes current. The last workspace is remembered
+  (`WorkspaceProvider`); on a ticket the ticket's home workspace (its key's prefix, never the remembered one) becomes current and is in the address. The last workspace is remembered
   (localStorage) for addresses without one.
 - **Old addresses keep working:** `/`, `/board`, `/settings/…` etc. are replaced by the current workspace's address;
-  `/settings` → `/settings/general`; `/settings/addons/<name>` → `/settings/addon/<name>`; `/w/<PREFIX>/ticket/<KEY>`
-  → `/ticket/<KEY>`.
+  `/settings` → `/settings/general`; `/settings/addons/<name>` → `/settings/addon/<name>`; `/ticket/<KEY>` →
+  `/w/<KEY's PREFIX>/ticket/<KEY>` (keeping `?tab=` and `#question-…`); `/w/<OTHER>/ticket/<KEY>` → the key's own workspace.
 - **Not found:** an unknown `/w/<PREFIX>` shows "No workspace <PREFIX>" (the address stays); an unknown ticket,
   a restricted one, an addon that is off or a missing addon page show their existing states. An unknown settings tab
   still goes to General (in the address's workspace: the router's redirects keep `/w/<PREFIX>`). Prefixes match
@@ -368,8 +464,9 @@ for G2+ builds. `build-preview.py` still runs, but its output does not load; it 
 - Addon settings drawer: a save by someone else while you edit resets your edits (needs an "Updated elsewhere" design).
 - The simulated Claude welcome box clips in a very narrow terminal (allowed: terminal content).
 - **Mandates are a preview only (M1), not part of the contract.** Agents → Mandates, the shell's mandate banner,
-  Today's "Decided for you" and Demo data → "Preview: mandates" show how the owner-approved Step 1 pilot
-  (`docs/concept-mandates.md`) would look. Nothing signs; the preview endpoint, its types (`src/api/mandatesPreview.ts`)
+  Today's "Decided for you" and Demo data → "Preview: mandates" show how the wide mandate (owner decision 10 Oct
+  evening, `docs/concept-mandates.md`: whole workspace minus the always-human areas and protected paths, up to 30 days,
+  renewable, never another mandate, may start full runs that Deliver) would look. Nothing signs; the preview endpoint, its types (`src/api/mandatesPreview.ts`)
   and words are provisional. Off by default; a host ships none of it until core specifies mandates. The real build
   needs the four prerequisites (P2 custody, isolated execution, host-minted identities and checker, typed effects with
   durable counters and a time guard) before any of it can be enabled.
@@ -387,3 +484,35 @@ for G2+ builds. `build-preview.py` still runs, but its output does not load; it 
    - settle event names with issue #338 and rename the provisional ones in the mock and `describeEvent`;
    - move the rules the mock enforces (permissions, visibility, gate policy, addon roles, refusal codes) into the
      host; the UI keeps them only as convenience.
+
+## Repos addon preview (U3)
+
+The declared repo list is the workspace's `settings.repos` (`Workspace.repos`, folded from `settings.changed`
+`set.repos`, ticket format §2/§5.4.2); the addon keeps only observations, jobs, its log, settings and a draft.
+`remote`/`default_branch` per entry are a proposed format amendment. Seeds: `fixtures/workspaces.json` (`repos`,
+`root_folder`); Busy day adds `busy/repos.ts` (every generated `links.repos` name is declared). Proposal:
+[repos-addon-proposal.md](docs/repos-addon-proposal.md).
+
+| Endpoint / action | Minimum role | Behavior |
+|---|---|---|
+| `POST /api/workspaces/:ws/settings` `{op: 'repos', set}` | owner (person) | Core's `settings.changed`; bad name/path/remote 400; same path 409 `settings.repos_same_path`; `store.changeRepos` is the one writer. |
+| `GET …/addons/repos/state` | viewer | Structure, Checks, Activity, Glance, settings, ticket panel. `moving: true` while a clone runs: core's shared query re-reads every 1 s. Buttons only for the roles that may use them. |
+| `POST …/repos/actions/prepare_add`, `add`, `adopt` | **owner** | Host-validated (`src/api/repos.ts`, shared with the UI); add/adopt signed; write `settings.changed` through `changeRepos`. |
+| `POST …/repos/actions/remove`, `remove_anyway` | **owner** | Destructive / options confirm; 409 `repos.linked` with the count of open tickets the owner can see; `settings.changed` with `null`; the disk is untouched. |
+| `POST …/repos/actions/clone`, `clone_all`, `clone_attention` | maintainer | Signed remote, target folder and `clone_as` (the git-login connection); stale plan or identity 409 `repos.changed`; no remote 409 `repos.no_remote`; no login 409 `repos.no_login`. |
+| `POST …/repos/actions/check`, `fetch`, `fetch_all` | member | Re-read / refresh tracking; never pull or discard changes. |
+| `POST …/repos/actions/open_terminal` | member | Repos and Terminals pty grants; dock shell with `cd -- '<path>'` typed, not run. |
+| `POST …/repos/actions/save_settings` | maintainer | Interval, fetch-on-check, git-login connection (gh/glab/git CLI logins only). |
+| `GET /api/workspaces/:ws/tickets?repo=:name` | viewer | Exact `links.repos` filter; visibility enforced. |
+
+Round 2: `settings.changed` is refused by `store.appendWs` unless an owner person signs it, and not folded otherwise
+(replay); `settings`, `branch`, `invalid`, `terminal`, `visibility` are reserved addon names. A queued clone runs only
+its signed spec; a later declaration change cancels it. The shared addon-state query also honours a state's
+`nextRefreshMs` (bounded 30 s – 1 h; `addonRefresh` in queries.ts), which Repos sets for its scheduled check.
+
+Host contract (real host): clone runs `git clone -- <remote> <path>` (with `--`), never through a shell, as the
+connection's own CLI login (D56 A); orch stores no git credentials. Remotes are refused with any userinfo, query,
+fragment, non-ASCII character or a part starting with `-`.
+
+Links: a repo row is `/w/DEMO/addon/repos/repos?tab.repos=structure&row=web-portal` (core opens the row whose key is
+`row`, on any addon page); the ticket list by repo is `/w/DEMO/tickets?repo=web-portal`.

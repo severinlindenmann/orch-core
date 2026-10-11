@@ -70,7 +70,7 @@ describe('Workspace links page (Preview)', () => {
     vi.spyOn(mod, 'decisions').mockImplementation((st, pkg, c) => original(st, pkg, c).map((d) => (d.terms ? { ...d, terms: { ...d.terms, expires_after: '365 days' } } : d)))
     await client.invalidateQueries({ queryKey: ['addon-decisions'] })
     expect(await within(dialog).findByText(/This decision changed after you opened this prompt/, {}, T)).toBeInTheDocument()
-    expect(within(dialog).getByText('90 days')).toBeInTheDocument()
+    expect(within(dialog).getByText('"90 days"')).toBeInTheDocument() // a typed string value, quoted (security review #8)
     const post = vi.spyOn(api, 'runAddonAction')
     await user.click(within(dialog).getByRole('button', { name: 'Send answer' }))
     await waitFor(() => expect(post).toHaveBeenCalled(), T)

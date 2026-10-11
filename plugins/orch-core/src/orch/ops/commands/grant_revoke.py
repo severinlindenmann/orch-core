@@ -1,6 +1,25 @@
 """orch grant revoke: revoke a grant"""
 
+from typing import Any
+
 from orch.ops._dsl import STR, S, err, obj, operation
+from orch.ops.base import Context, Result
+from orch.ops.errors import OrchError
+from orch.ops.human import Human
+
+
+def handle(ctx: Context, args: dict[str, Any]) -> Result:
+    h = Human(ctx, "grant.revoke")
+    gid = args["grant"]
+    h.who()
+    if gid not in h.store.state.workspace.grants:
+        raise OrchError("not_found", f"no grant {gid}")
+    event: dict[str, Any] = {"type": "grant.revoked", "grant": gid}
+    if args.get("reason"):
+        event["reason"] = h.call.text(args["reason"], one_line=True, what="reason")
+    done = h.run(event, "workspace", f"revoke grant {gid}")
+    return h.workspace_result(done, {"grant": gid}, "orch grant")
+
 
 OP = operation(
     "grant.revoke",
@@ -18,4 +37,5 @@ OP = operation(
     text="ok grant.revoked {grant} seq={seq}\nnext: {next}",
     data=obj({"grant": STR}),
     errors=(err("role.denied"), err("parse.text"), err("not_found")),
+    handler=handle,
 )

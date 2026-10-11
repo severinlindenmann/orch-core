@@ -4,8 +4,9 @@ import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { addonActive } from '@/api/addons'
 import { workspaceOfTicket } from '@/api/workspaces'
-import { frameDocument } from '@/api/widgetTemplates'
 import { FrameNode } from '@/addon-ui/FrameNode'
+import { usesScripts } from '@/addon-ui/frameSanitize'
+import { ScriptedPreview } from '@/addon-ui/ScriptedPreview'
 import { frameNode } from '@/addon-ui/nodes'
 import { Button, buttonVariants } from '@/components/ui/button'
 import type { Artifact } from '@/api/types'
@@ -172,8 +173,11 @@ const isHtmlDocument = (a: Artifact) => DOCUMENT_KINDS.includes(a.kind) && /\.ht
  * "View source" shows the bytes instead, and then reads "Show preview".
  */
 function HtmlViewer({ a, agentHtml }: { a: Artifact; agentHtml: boolean }) {
-  const [source, setSource] = useState(false)
-  const node = frameNode.safeParse({ type: 'frame', title: `Sandboxed preview of ${a.name}`, html: frameDocument(a.preview!, {}, 520), height: 520 })
+  // A page that relied on scripts opens on its source with core's notice (round 2 #6); its static preview stays one click away.
+  const scripted = usesScripts(a.preview!)
+  const [source, setSource] = useState(scripted)
+  // Agent HTML is drawn inert (no scripts, sanitized: security review #1), at a fixed height the person can drag.
+  const node = frameNode.safeParse({ type: 'frame', title: `Sandboxed preview of ${a.name}`, html: a.preview!, height: 520 })
   const framed = agentHtml && !source && node.success
   return (
     <div className={cn('space-y-2', agentHtml && 'rounded-lg border p-2', agentHtml && addonHairline)} data-addon={agentHtml ? 'widgets' : undefined}>
@@ -187,7 +191,13 @@ function HtmlViewer({ a, agentHtml }: { a: Artifact; agentHtml: boolean }) {
         )}
         {!agentHtml && <span className="text-[12px] text-text-muted">Agent HTML is off in this workspace, so only the source is shown.</span>}
       </div>
-      {framed ? <FrameNode node={node.data} fallback={<p className="text-[13px] text-text-muted">The preview left its sandbox and was removed.</p>} /> : <CodeBlock language="html" text={a.preview!} />}
+      {framed ? (
+        <FrameNode node={node.data} fallback={<p className="text-[13px] text-text-muted">The preview left its sandbox and was removed.</p>} />
+      ) : agentHtml && scripted && node.success ? (
+        <ScriptedPreview html={a.preview!} onPreview={() => setSource(false)} />
+      ) : (
+        <CodeBlock language="html" text={a.preview!} />
+      )}
     </div>
   )
 }

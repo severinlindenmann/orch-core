@@ -1,3 +1,4 @@
+import { Inline } from '@/components/sign/visible'
 import { useQuery } from '@tanstack/react-query'
 import { Bot, TriangleAlert } from 'lucide-react'
 import type { ReactNode } from 'react'
@@ -174,7 +175,10 @@ export function SpawnConfirm({ addon, ticketKey, onStart, onClose }: { addon: st
         {facts.map(([k, v]) => (
           <div key={k} className="contents">
             <dt className="text-text-muted">{k}</dt>
-            <dd className="text-text">{v}</dd>
+            {/* Core's facts; the ticket title in them is the ticket's words, so every fact goes through the visible-string helper. */}
+            <dd className="text-text">
+              <Inline>{v}</Inline>
+            </dd>
           </div>
         ))}
       </dl>

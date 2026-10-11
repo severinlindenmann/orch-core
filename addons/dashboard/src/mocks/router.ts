@@ -1,6 +1,6 @@
 // Tiny in-process router for the mock API: (method, path pattern) -> handler(store, ctx).
 import type { HttpMethod, TransportResponse } from '@/api/transport'
-import type { CodeReviewApplies, ActionRequest, AddonOpRequest, GateName, Role, SettingsRequest, WorkspaceIdentity, NewTicketRequest, ApiErrorBody, BodySections, OrchEvent, Priority, SavedView, Status, ViewParams, TicketDocument, TicketSummary } from '@/api/types'
+import type { AddonPackage, CodeReviewApplies, ActionRequest, AddonOpRequest, GateName, Role, SettingsRequest, WorkspaceIdentity, NewTicketRequest, ApiErrorBody, BodySections, OrchEvent, Priority, SavedView, Status, ViewParams, TicketDocument, TicketSummary } from '@/api/types'
 import { STATUSES } from '@/api/types'
 import type { MockStore } from './store'
 import { atLeast, can } from '@/api/permissions'
@@ -69,6 +69,12 @@ export class MockRouter {
 
 // ------------------------------------------------------------------ routes
 
+/** A package as a client may see it: everything but its decisions (served filtered by addon-decisions only). */
+function publicPackage<P extends AddonPackage>(p: P): Omit<P, 'decisions'> {
+  const { decisions: _decisions, ...pub } = p
+  return pub
+}
+
 function visibleTicket(store: MockStore, key: string): TicketDocument | TransportResponse {
   if (!store.hasTicket(key)) return fail(404, 'not_found', `No ticket ${key}`)
   if (!store.isVisible(key)) return fail(404, 'not_visible', `No ticket ${key}`, 'The ticket is restricted to other people.')
@@ -100,7 +106,9 @@ function postAction(store: MockStore, ctx: RouteContext): TransportResponse {
       if (q.to !== me && !can(role, 'question.answer.any')) return fail(403, 'question.not_addressee', `${q.id} is addressed to ${q.to}.`)
       if (a.option && !q.options?.some((o) => o.key === a.option)) return fail(400, 'validation', `Unknown option ${a.option}`)
       if (!a.option && !a.text?.trim()) return fail(400, 'validation', 'Pick an option or write an answer.')
-      const event = store.append(key, { type: 'question.answered', question: q.id, option: a.option, text: a.text?.trim() || undefined })
+      // The answer binds the question the person read (security review #7): its hash then must be its hash now.
+      if (typeof a.hash !== 'string' || a.hash !== q.hash) return fail(409, 'question.stale', `${q.id} changed since you opened it.`, 'Open the question again and answer the current one.')
+      const event = store.append(key, { type: 'question.answered', question: q.id, option: a.option, text: a.text?.trim() || undefined, hash: q.hash })
       const stillBlocked = store.ticket(key)!.questions_state.some((x) => x.state === 'open' && x.blocking)
       if (!stillBlocked && t.status === 'waiting') store.append(key, { type: 'status.changed', actor: 'host', to: 'open' })
       return finish(event)
@@ -121,7 +129,11 @@ function postAction(store: MockStore, ctx: RouteContext): TransportResponse {
       }
       const why = store.canApprove(t, a.gate, me)
       if (why) return fail(403, 'gate.not_eligible', why, 'See the gate policy in the workspace settings.')
-      const event = store.append(key, { type: 'gate.approved', gate: a.gate, presence: 'touchid' })
+      // The approval binds the content the person reviewed (security review #2): the hash the dialog showed must be the
+      // gate's content hash now, compared in the same step that appends the approval.
+      if (typeof a.hash !== 'string' || a.hash !== t.gates[a.gate].hash)
+        return fail(409, 'gate.stale', `The ${a.gate} changed since you opened it.`, 'Open it again and review the current text.')
+      const event = store.append(key, { type: 'gate.approved', gate: a.gate, presence: 'touchid', hash: a.hash })
       if (a.gate === 'plan' && t.status === 'backlog') store.append(key, { type: 'status.changed', actor: 'host', to: 'open' })
       return finish(event)
     }
@@ -233,6 +245,7 @@ function searchTickets(s: MockStore, ws: string, query: URLSearchParams): Ticket
   const type = query.get('type')
   const parent = query.get('parent')
   const label = query.get('label')
+  const repo = query.get('repo')
   const person = query.get('person')
   const needs = query.get('needs')
   const restricted = query.get('restricted')
@@ -244,6 +257,7 @@ function searchTickets(s: MockStore, ws: string, query: URLSearchParams): Ticket
     .filter((t) => !type || t.type === type)
     .filter((t) => !parent || t.parent === parent)
     .filter((t) => !label || t.labels.includes(label))
+    .filter((t) => !repo || t.links.repos.includes(repo))
     .filter((t) => !person || t.people.owner === person || t.people.assignees.includes(person) || t.claim?.for === person)
     .filter((t) => !needs || (needs === 'me' ? t.turn.who === s.viewer : needs === 'agent' ? t.turn.who.startsWith('agent:') : t.turn.who === 'nobody'))
     .filter((t) => restricted === null || t.restricted === (restricted === 'true'))
@@ -307,6 +321,10 @@ function postSettings(store: MockStore, ctx: RouteContext): TransportResponse {
       if (!Number.isInteger(b.hours) || b.hours < 1 || b.hours > GRANT_MAX_HOURS) return fail(400, 'validation.hours', `The agent grant length is 1 to ${GRANT_MAX_HOURS} hours.`)
       store.appendWs(wsId, { type: 'workspace.grant_hours_set', hours: b.hours })
       return done()
+    }
+    case 'repos': {
+      const r = store.changeRepos(wsId, b.set, { kind: 'person', id: store.viewer })
+      return r.ok ? done() : fail(r.status, r.code, r.message, r.hint)
     }
     case 'member.add': {
       const person = String(b.person ?? '').trim()
@@ -536,19 +554,21 @@ export function buildRouter(): MockRouter {
     const res = s.pushCommit(t.key)
     return res.ok ? ok({ ok: true, sha: res.sha, ticket: s.servedTicket(t.key) }) : fail(res.status, res.code, res.message, res.hint)
   })
-  r.add('GET', '/api/addons', (s) => ok(s.addons))
+  // Every package response is the public package (security review #5): decisions are runtime, ticket-bound state and
+  // reach a client only through the viewer- and workspace-filtered addon-decisions endpoint below.
+  r.add('GET', '/api/addons', (s) => ok(s.addons.map(publicPackage)))
   readOf('/api/workspaces/:ws/addons', (s, c) =>
-    ok(s.workspaceAddons(c.params.ws)),
+    ok(s.workspaceAddons(c.params.ws).map(publicPackage)),
   )
   // Decisions and the catalog sit outside /addons/:name, so no addon name can collide with them.
   readOf('/api/workspaces/:ws/addon-catalog', (s, c) =>
-    ok(s.workspaceCatalog(c.params.ws)),
+    ok(s.workspaceCatalog(c.params.ws).map(publicPackage)),
   )
   r.add('POST', '/api/workspaces/:ws/addons/:name', (s, c) => {
     const b = c.body as AddonOpRequest | null
     if (!b || typeof b !== 'object' || !('op' in b)) return fail(400, 'validation', 'Body must be {op, ...}')
     const res = s.addonOp(c.params.ws, c.params.name, b, person(s))
-    return res.ok ? ok(res.addon) : fail(res.status, res.code, res.message, res.hint)
+    return res.ok ? ok(publicPackage(res.addon)) : fail(res.status, res.code, res.message, res.hint)
   })
   readOf('/api/workspaces/:ws/addon-decisions', (s, c) =>
     ok(s.addonDecisions(c.params.ws)),

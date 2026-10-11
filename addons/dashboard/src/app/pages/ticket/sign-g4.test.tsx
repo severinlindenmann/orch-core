@@ -131,7 +131,7 @@ describe('G4 empty approvals and content', () => {
     await user.click(await screen.findByRole('button', { name: 'Preview reconciliation-demo.html' }, T))
     const sheet = await screen.findByRole('dialog', {}, T)
     await waitFor(() => expect(sheet.querySelector('iframe')).toBeTruthy(), T)
-    expect(sheet.querySelector('iframe')).toHaveAttribute('sandbox', 'allow-scripts')
+    expect(sheet.querySelector('iframe')).toHaveAttribute('sandbox', '') // agent HTML is inert (security review #1)
     expect(sheet).toHaveTextContent('Sandboxed preview')
     await user.click(within(sheet).getByRole('button', { name: 'View source' }))
     expect(sheet.querySelector('iframe')).toBeNull()
@@ -186,7 +186,7 @@ describe('G4 the dialog shows everything the gate hash covers', () => {
     const dialog = await renderDialog((t) => t, { kind: 'approve', gate: 'plan' })
     await waitFor(() => expect(dialog).toHaveTextContent('Assignee: Severin'), T)
     expect(dialog).toHaveTextContent('Assignee: Mara')
-    expect(dialog).toHaveTextContent('Verify: gh workflow run nightly')
+    expect(dialog).toHaveTextContent('Verify command: gh workflow run nightly')
     expect(dialog).toHaveTextContent('Proves: AC1')
   })
   it('requirements: out of scope, acceptance criteria, type and size appear', async () => {

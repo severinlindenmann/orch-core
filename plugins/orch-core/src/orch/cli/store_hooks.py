@@ -60,6 +60,16 @@ def _hooks(get_store: Callable[[], Any | None]) -> Hooks:
         n = store.head_seq(ref)  # takes the lock and checks the ticket (not a hint)
         return n or None
 
+    def session_ticket(op: Operation, ctx: Context, args: dict[str, Any]) -> str | None:
+        from orch.ops.runtime import Call
+
+        if get_store() is None:
+            return None
+        try:
+            return str(Call.of(ctx, op.name).resolve(None).key)  # the session's single claim, as the handler sees it
+        except OrchError:
+            return None  # none or several claims: the handler refuses (or the REF is named)
+
     def normalise(ref: str) -> str:
         store = get_store()
         return store.normalise_ref(ref) if store is not None else ref
@@ -76,7 +86,13 @@ def _hooks(get_store: Callable[[], Any | None]) -> Hooks:
         view = store.state.workspace.grants.get(ctx.grant.partition(".")[0])
         return "agent" if view is None else view.verbs
 
-    return Hooks(head_seq=head_seq, normalise_ref=normalise, grant_valid=grant_valid, grant_verbs=grant_verbs)
+    return Hooks(
+        head_seq=head_seq,
+        normalise_ref=normalise,
+        session_ticket=session_ticket,
+        grant_valid=grant_valid,
+        grant_verbs=grant_verbs,
+    )
 
 
 def hooks_for(store: Any) -> Hooks:

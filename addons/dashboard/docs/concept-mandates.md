@@ -1,35 +1,65 @@
 # Concept: Mandates (delegated signing and an autonomous workspace)
 
-Status: **owner approved Step 1 only (the pilot), 10 Oct 2026** — recorded as D62 in the draft spec PR #340. Steps 2–3 are future owner decisions. Revision 2, after an adversarial review by Codex (its findings are cited below as Critical/High/Medium #n).
-No code changes in core yet. Origin: owner feedback item J (10 Oct 2026).
+Status: **owner decision 10 Oct 2026 (evening): the wide mandate** — it replaces the earlier "Step 1 only (the
+pilot)" approval of the same morning (D62 in the draft spec PR #340). Revision 3. Revision 2 followed an adversarial
+review by Codex (its findings are cited below as Critical/High/Medium #n). No code changes in core yet. Origin: owner
+feedback item J (10 Oct 2026).
 
 > "an option that allows me to give an agent user rights … temporary / permanent rights to sign in my name … an
 > orchestrator agent that runs the whole workspace and decides and signs for me when I want to change the workspace to
 > be completely autonomous"
 
+> **Owner decision, 10 Oct evening (supersedes the Step-1-only scope).**
+> "I want this agent to be able to command and steer the full workspace in my name (except settings like addons,
+> user management etc.): if an agent is waiting for approval it can sign in my name and approve, check blocked tickets
+> and approve them, enable factories etc."
+>
+> - **What a mandate may do:** steer the whole workspace in your name. Approve agents that wait for an approval and
+>   every gate (requirements, plan, verdict, and the code review gate: you did not keep it human), answer agents'
+>   questions, unblock tickets, answer addon decisions and factory permits, enable factories and start factory runs
+>   **including full runs that end in Deliver** (D61; the hold window with Stop is the only human checkpoint there),
+>   and issue grants that start agents.
+> - **What stays human, always, whatever the mandate says:** settings, addons (install, update, capabilities),
+>   members and roles, devices, relay pairing, secrets and connections, and any change to **protected paths** (CI,
+>   build and test tooling, deploy config, dependency manifests, orch config, skills and hooks, security code). A
+>   person's "no" stays in place until a person lifts it.
+> - **No chains:** a mandate may issue grants (start agents), but **never another mandate**. The host refuses
+>   mandate → mandate (`mandate.chain_refused`). Owner decision, §2.15.
+> - **Duration:** time-boxed and renewable. You pick the length, up to 30 days. Renewing is one new signature on the
+>   Mac (a new revision, §2.11).
+> - **Unchanged:** the four prerequisites (P2 custody first) are mandatory; the host refuses every mandate until they
+>   pass (§2.12). The execution boundary (§2.2) and protected paths now carry far more weight, because far more is
+>   delegated.
+>
+> The earlier Step 1 / 2 / 3 rollout is kept in §5 as history.
+
 ---
 
 ## Summary (one page)
 
-**What you get.** You can sign a **mandate**: a scoped, time-limited delegation from you to one orchestrator.
-While it is in force, the **host** signs certain decisions for you (approvals, verdicts, some answers) when that
-orchestrator asks, if every rule below holds. The agent never holds a key. Every such decision reads "via mandate
-md_3, for Severin — no person reviewed this" and can never pass for your own signature. Today's factory charter is
-the first, smallest mandate. Over three steps this grows into an autonomous workspace that runs for a week without
-you and asks you only where you asked to be asked.
+**What you get.** You can sign a **mandate**: a time-boxed delegation from you to one orchestrator. While it is in
+force, the **host** signs for you when that orchestrator asks, if every rule below holds: approvals and verdicts on
+any ticket, answers, unblocking, addon decisions, enabling factories and starting factory runs (full runs to Deliver
+included), and grants that start agents. The agent never holds a key. Every such decision reads "via mandate md_3,
+for Severin — no person reviewed this" and can never pass for your own signature. Today's factory charter is the
+first, smallest mandate.
 
-**What it can never do.** It cannot issue grants or mandates. It cannot change members, roles, devices or relay
-pairing. It cannot touch secrets, credentials or connections, install or upgrade addons or their capabilities, or
-change policies or settings. It cannot `restore`, purge, make a first send to a peer, publish publicly, or land on
-`main`. It never signs the code review gate. It cannot approve a change to **protected paths**: CI, build and test
-tooling, deploy config, dependency manifests, orch config, skills, hooks, and code classed as security. A person
-approves those, always. It cannot override a person's "no", and that "no" stays in place until a person lifts it.
+**What it can never do.** It cannot touch settings or policies, addons (install, update, grant capabilities),
+members or roles, devices, relay pairing, or secrets, credentials and connections. It cannot approve a change to
+**protected paths**: CI, build and test tooling, deploy config, dependency manifests, orch config, skills, hooks,
+and code classed as security. A person approves those, always. It cannot issue another mandate (§2.15). It cannot
+override a person's "no", and that "no" stays in place until a person lifts it.
 
 **The honest risk.** A model that can cause a signature can be talked into causing one. Within its limits, an injected
-orchestrator *will* approve what it is told to. The damage is not limited to "bad code on `develop`". Code the
-mandate approves runs in tests, agent sessions, CI and any deploy that follows `develop`, with whatever credentials
-and network those places have. **That execution boundary is the real blast radius**, so this concept limits it
-directly (§2.2) rather than trusting the model.
+orchestrator *will* approve what it is told to, and with the wide scope those limits are the whole workspace except
+the list above. The damage is not limited to "bad code on `develop`". Code the mandate approves runs in tests, agent
+sessions, CI and any deploy that follows, with whatever credentials and network those places have. And because a
+mandate may start a factory full run with a Deliver target, **a mandate can cause a production deploy, a publish or
+a send with no person signing anything**: the only safeguard there is the hold notice with Stop (default 30 min), and
+the host refuses a Deliver to anything but the destination fixed in the signed request. It may also sign the code
+review gate. **That execution boundary is the real blast radius**, so this concept limits it directly (§2.2) rather
+than trusting the model; with the wide scope, §2.2 and the protected paths are what still stands between an injected
+orchestrator and the things you said stay yours.
 
 **What must exist first** (the host checks these at startup and refuses mandates otherwise, §2.12):
 1. P2 custody: the host process holds every signing key, agents run under their own OS user, addons are isolated
@@ -40,10 +70,9 @@ directly (§2.2) rather than trusting the model.
 4. Typed, core-validated effects for every delegable action (§2.4), durable counters, and a time and rollback guard
    (§2.10).
 
-**The decision I'm asking for.** Approve **Step 1 only: a Factory-sized pilot**. It covers one epic you admit, its
-children up to size m, requirements, plan and verdict approvals only, a 7-day maximum, and no renewal. It reuses the
-charter you already accepted, rebuilt on the mandate machinery. Workspace-wide Autonomous (Step 3) is decided later,
-only once the listed controls have run in the pilot (§5).
+**The decision (made, 10 Oct evening).** The wide mandate above, time-boxed up to 30 days and renewable with one new
+signature, with the always-human list, no mandate → mandate chains, and full runs to Deliver allowed. It reuses the
+charter you already accepted, rebuilt on the mandate machinery. It ships only once the four prerequisites pass.
 
 ---
 
@@ -74,15 +103,15 @@ mandate {
   effects:      { "gate.approve:requirements": {...}, "gate.approve:plan": {...}, "verdict.pass": {...} },
   addon_pins:   { factory: "sha256:…" },        // package + manifest + effect schema hashes (§2.4)
   limits:       { see §2.8 },
-  not_before, expires, max_until,              // max_until immutable across revisions
+  not_before, expires, max_until?,             // max_until: OPTIONAL, pending the owner (§6 point 3); fixed once set
   policy_hash, people_hash, list_seq, checkpoint,
   delegation_pub
 }
 ```
 
 You sign it on the Mac with Touch ID (D41), under context `orch/v2/mandate|<workspace_id>`. The Touch ID prompt names
-the effects, the admitted tickets and `max_until`. **Issuer:** owners only, for themselves. **Issue, extend or widen:**
-Mac only. Under D49 the phone signs whenever it is unlocked, so it may only **acknowledge, suspend, stop and veto**,
+the effects, the scope and `expires`, and `max_until` only when one is set (optional, pending §6 point 3). **Issuer:**
+owners only, for themselves. **Issue, renew or widen:** Mac only. Under D49 the phone signs whenever it is unlocked, so it may only **acknowledge, suspend, stop and veto**,
 and none of these widen anything.
 
 ### 2.2 Execution boundary (Critical #1)
@@ -100,12 +129,22 @@ Approved code runs before any human sees it. The design therefore bounds where i
   `AGENTS*.md`, skills, hooks, orch config, and paths classed `security`. A diff that touches any of them makes the
   verdict and landing **human-only** (`mandate.protected_path`), whatever the mandate says. The workspace sets the
   list, and you can extend it but not shrink it below the core default.
-- **Stated boundary:** with these controls, an injected mandate can at most put wrong application code on
-  `develop` inside the allowed paths, and run it in a sandbox without secrets. You still merge to `main` (D33).
+- **Stated boundary (pilot scope):** with these controls, an injected mandate could at most put wrong application
+  code on `develop` inside the allowed paths, and run it in a sandbox without secrets.
+- **Wide mandate (10 Oct evening):** that statement no longer holds on its own. The mandate may now sign the code
+  review gate, approve landings and start factory full runs that Deliver (deploy, publish, send) after the hold
+  window. What still holds: mandated sessions never hold production or deploy credentials themselves (a Deliver is
+  executed by the host, to the exact destination in the signed request, §2.16), protected paths stay human-only, and
+  settings, addons, people, devices, relay and secrets are out of reach. Because so much more is delegated, **this
+  section and the protected-path list are the controls that matter most**; they must be enforced by the host, never
+  by the orchestrator's good behaviour.
 
 ### 2.3 Scope you admitted, not scope the agent describes (High #2, #12)
 
-- **Admission is a human act.** A mandate covers only tickets you admitted (signed `mandate.admitted`), or children
+- **Wide mandate:** the scope is the whole workspace minus the always-human list, so per-ticket admission is no
+  longer required. Everything else in this section still applies: frozen classification, provenance, cumulative
+  limits, and peer or external content out of scope until a person clears it.
+- **Admission is a human act (pilot scope).** A mandate covers only tickets you admitted (signed `mandate.admitted`), or children
   of an admitted epic created within that epic's budget. Labels, type and size are **frozen at admission or creation**
   and recorded in the mandate's view. A later edit does not widen scope. Size already works this way for the charter
   (HANDOVER "Charter size").
@@ -124,17 +163,20 @@ Approved code runs before any human sees it. The design therefore bounds where i
 A mandate lists **effects**, not loose "classes". Each effect is defined in core with a schema, exact resource bounds
 and what it can change. Core validates every request against it. Anything not listed is denied.
 
-| Effect | Pilot (Step 1) | Later | Never |
-|---|---|---|---|
-| `gate.approve` requirements / plan | yes | yes | |
-| `verdict.pass` on `source_sha` | yes (≤ m, no protected paths) | yes, with checker | |
-| `gate.request_changes` | yes, at most 3 cycles per ticket | yes | |
-| `question.answer` | no | only questions addressed to you and typed `choice`, with options fixed by the asker. Never free text that grants a permit, credential or D55 approval. | |
-| `addon.decide` | no | only effects an addon declares in its **pinned** manifest as core effect types (e.g. `permit.once {command_hash}`), with a bounded resource. An addon update unpins it, and the mandate stops covering it until you re-sign. | `permit.epic`/standing permits, anything that maps to a "never" effect |
-| `land.enqueue` | no | yes, to listed targets, with checker | `main` |
-| `ticket.close` / `reopen` / `ticket.create` | no | create only under an admitted epic within budget. Close only for tickets the mandate itself delivered. | dismissing findings, questions or vetoes that are open, or tickets classed `security` |
-| `gate.approve:code` | | | always human |
-| grants, mandates, members/roles/devices, relay, secrets/connections/skill credentials, addon install/grant/update, policies/settings, `restore`, purge, first peer send, public publish | | | **never**, by any path, including addon effects and answers |
+| Effect | Wide mandate (10 Oct evening) | Always human |
+|---|---|---|
+| `gate.approve` requirements / plan, `verdict.pass` on `source_sha` | yes (with checker on verdicts) | when the diff touches protected paths |
+| `gate.approve:code` (code review gate) | yes: the owner did not keep it human (open point 1) | when the diff touches protected paths; inside a factory run (D61) |
+| `gate.request_changes` | yes, at most 3 cycles per ticket | |
+| `question.answer` | yes, typed `choice` with options fixed by the asker; never free text that grants a permit, credential or D55 approval | |
+| unblock a ticket (approve what blocks it) | yes | a block on secrets/connections (D55) |
+| `addon.decide` (incl. factory permits) | only effects an addon declares in its **pinned** manifest as core effect types; an addon update unpins it until you re-sign | anything that maps to an always-human effect |
+| enable a factory, start a factory run (Preview or Deliver, D61) | yes; a Deliver still waits out the hold window with Stop (§2.16) | |
+| `land.enqueue` | yes, with checker, to `develop` and listed targets | `main`: refused until the owner decides (§6 point 2) |
+| `ticket.create` / `close` / `reopen` | yes | dismissing open findings, questions or vetoes |
+| `grant.issue` (start agents) | yes, within the mandate's own limits | |
+| `mandate.issue` / `extend` | **no** (§2.15) | always |
+| settings and policies, addons (install, grant, update), members/roles, devices, relay pairing, secrets/connections/skill credentials | **no**, by any path, including addon effects and answers | always |
 
 ### 2.5 Identities (High #4)
 
@@ -195,17 +237,17 @@ decision ids are durable and covered by the WSK checkpoint. If the host detects 
 Part B), a restored state, or a checkpoint lower than the relay's, it **suspends** every mandate until you re-acknowledge
 it on the Mac.
 
-### 2.11 Duration: acknowledging and extending are different acts (High #8)
+### 2.11 Duration: time-boxed and renewable (High #8; owner decision 10 Oct evening)
 
-- `expires` is the current end, and `max_until` is a hard ceiling fixed at the first issuance. Neither the phone nor
-  an acknowledgement can move it.
-- **Weekly acknowledgement** (phone allowed) only confirms that you have seen the digest. Without it, the mandate is
-  suspended. An acknowledgement never extends `expires`.
-- **Extension** is a new `revision` of the same `root_id`, signed on the Mac. It is bound to the original, keeps the
-  lifetime counters, and pins the current policy and addon semantics. If anything widens, the Touch ID prompt shows
-  the difference.
-- "Permanent" therefore means a chain of extensions you sign, each at most 30 days, under a `max_until` of at most
-  180 days. Step 1 has no extensions at all.
+- You pick the length when you sign, **up to 30 days**. `expires` is the end.
+- **Renewing** is one new signature on the Mac: a new `revision` of the same `root_id`, bound to the original. It
+  keeps the lifetime counters and pins the current policy and addon semantics. If anything widens, the Touch ID prompt
+  shows the difference. The phone cannot renew (D49: it acknowledges, stops and vetoes only).
+- Each renewal again runs the preflight (§2.12); a failed check means the mandate ends at `expires`.
+- **`max_until` is optional and pending** (§6 point 3). When the owner keeps a ceiling, it is set at issuance, shown
+  in every issue and renew prompt, never moved by a renewal (a renewal past it is refused), and covered by the
+  signature. Without one, each renewal is bounded only by its own 30 days. Revision 2 had a 180-day ceiling and a
+  weekly acknowledgement; the owner's decision does not include them, so both are open points, not rules.
 
 ### 2.12 Custody prerequisites, enforced (High #5)
 
@@ -237,17 +279,41 @@ click past.
 ### 2.14 Conflicts and code review / D53 / D41 / D49
 
 - A person's decision always wins, and their "no" persists (§2.7). In a race, the safer decision stands.
-- **Code review gate:** never delegable. If you turn it on for chosen types, it marks where you want to look.
+- **Code review gate:** revision 2 kept it never delegable. Under the wide mandate the owner did not keep it human, so
+  a mandate may sign it (open point 1 in §6 recommends keeping it human). The factory never signs it (D61).
 - **D53:** unchanged. The verdict signs `source_sha`, new commits void it, and the land worker uses the signed
-  commit and re-checks the mandate right before merging (§2.13). `main` is never a target.
+  commit and re-checks the mandate right before merging (§2.13). `main` is never a target until the owner decides (§6 point 2): the host refuses it (D33), mandate or not.
 - **D41:** every *human* signature still needs Touch ID. A mandate signature is a third kind (`presence: "none"`,
   `via: "mandate"`). Its human moments, issuance and extension, use Touch ID. **D49:** the phone acknowledges, stops
   and vetoes. Phone batch taps (a second key for later steps) show the **exact effect and the immutable item digest**
   per item and sign that digest, not a summary.
 
+### 2.15 No mandate → mandate chains (owner decision)
+
+A mandate may issue **grants** (they start agents, which then work under the same mandate and its limits), but it can
+**never issue, extend or renew a mandate**. The host refuses that request (`mandate.chain_refused`) whatever path it
+comes by (an op, an addon effect, an answer). Why: a mandate that can mint another mandate could outlive its own
+expiry, its Stop and its revocation by handing its power to a fresh one. Grants are allowed because a grant's agents
+stay inside the issuing mandate: its expiry, Stop, limits and revocation end them too.
+
+### 2.16 Mandates and factory full runs (owner decision)
+
+A mandate may start a factory full run (D61, `docs/factory-full-run-proposal.md`) whose target is **Deliver**. Then
+a production deploy, a publish or a send can happen with no person signing anything. The safeguards are:
+- the request names the exact Deliver destination; the request signature (here the mandate's) covers it, and the host
+  refuses a Deliver to anything else;
+- the **hold window** (default 30 min, set in the request): a calm "Delivering in 28 min · Stop" notice on Today, on the
+  factory page and in the shell; you can Stop it until the window ends;
+- the run is labelled "via mandate md_3, for Severin — no person reviewed this", step by step;
+- protected paths and the code-gate rules of the factory still apply: in a full run, when the code review policy
+  applies, each child waits at a Code review step for a **person** (D61 "never the code gate"); a mandate does not
+  satisfy that step, even though it may sign the code gate elsewhere (§2.4, open point 1);
+- a stopped charter (time or budget) stops the run and ends a hold "not delivered".
+Said plainly: the hold notice is the only human checkpoint, and it only helps if someone looks.
+
 ## 3. How it shows in the dashboard
 
-- **Shell banner** (calm, not orange): "Mandate md_3 · for Severin · epic DEMO-0050 · 9 decisions · until Fri ·
+- **Shell banner** (calm, not orange): "Mandate md_3 · for Severin · whole workspace · 12 decisions · until Fri ·
   **Stop**". After Stop: "Stopping… / Stopped at #1842".
 - **Today:** a "Decided for you" digest with "Looks right", "Veto", and "Revoke and void". Below it, everything the
   mandate refused or skipped (protected path, provenance, veto, limit) as normal "needs you" items.
@@ -266,39 +332,49 @@ click past.
 | C. Deterministic auto-approve rules on owner-admitted, low-impact paths | **Adopted as a component.** Effects carry deterministic preconditions (checks green, paths allowed, size). Not enough on its own, because it cannot judge requirements. |
 | D. Phone batch approvals | Kept as an override and second key, signing exact digests. Not autonomy. |
 | E. Autonomous preparation + human release | **The fallback** if Step 3 is never approved. Agents do everything up to the verdict, and you release batches. |
-| F. Single-epic capability (Codex) | **Adopted as Step 1.** |
+| F. Single-epic capability (Codex) | Adopted as Step 1 in revision 2; superseded by the wide mandate (10 Oct evening). |
 | G. Hand the agent your real signature | Rejected. Breaks D41 and core §4. |
 
 ## 5. Rollout
 
-1. **Step 1, Factory pilot (P2):** one admitted epic, children ≤ m, effects requirements, plan, verdict and
-   request-changes (3 cycles). No answers, addon decisions, close/reopen, landing or extension. 7 days maximum. Built
-   with full controls: preflight, execution boundary, protected paths, host-minted identities, canonical payload,
-   reservation, vetoes, Stop with acknowledgement, time guard. The charter becomes this mandate, and old records keep
-   `via: "factory_charter"`.
-2. **Step 2, Assist:** several admitted epics, typed `question.answer` (choice only), `addon.decide` for pinned
-   typed effects, checker on verdicts, weekly acknowledgement, extensions up to 30 days.
-3. **Step 3, Autonomous (workspace-wide):** decided separately, and only after Steps 1–2 have run with no gap in these
-   gating controls: the relay lease, execution-time recheck in the land worker, aggregate limits enforced through
-   execution grants, provenance carried across derived tickets, enforced sandbox and credential checks for every
-   covered repo, and `land.enqueue` with the checker. Admission becomes "admit by rule" (types and paths you sign),
-   still frozen at admission.
+**Now (owner decision 10 Oct evening):** one stage, the wide mandate (§Summary, §2.4). Build order, not permission
+steps: (1) the four prerequisites (P2 custody, isolated execution, host-minted identities and checker, typed effects
+with durable counters and the time guard); (2) protected paths and the always-human list enforced in core; (3) the
+execution boundary (§2.2) and host-executed Deliver with the hold window (§2.16); (4) issuance, renewal, Stop with
+acknowledgement, Revoke and void, vetoes, the chain refusal (§2.15). The mandate ships when all four are in place;
+nothing is switched on earlier with weaker controls. The charter becomes a mandate, and old records keep
+`via: "factory_charter"`.
+
+**History (superseded):** revision 2 proposed three steps. Step 1, a factory pilot: one admitted epic, children ≤ m,
+requirements, plan and verdict, 7 days, no renewal (approved the morning of 10 Oct). Step 2, Assist: several epics,
+typed answers, pinned addon decisions, checker, weekly acknowledgement, 30-day extensions. Step 3, Autonomous,
+workspace-wide, only after Steps 1–2 ran without a gap in the relay lease, execution-time recheck, aggregate limits,
+provenance, sandbox checks and checked landing. The owner chose to go straight to a wide scope; the gating controls
+of old Step 3 are now part of the build order above.
 
 ## 6. Open questions for the owner
 
-1. Approve Step 1 as scoped above?
-2. Owners only as issuers (recommended), or maintainers too, for Step 1 only?
-3. Is the default protected-path list right (CI, build/test, deploy, manifests and lockfiles, orch config, skills,
+Decided on 10 Oct evening: the wide scope, the always-human list, up to 30 days and renewable, full runs to Deliver
+allowed, no mandate → mandate chains. Still open:
+
+1. **Code review gate:** you did not keep it human, so a mandate may sign it. Recommended: keep it human (it marks
+   exactly where you said you want to look). Your call.
+2. **Old "never" items you did not name either way:** `restore`, purge, a first send to a peer, public publish, landing
+   on `main`. This revision treats restore and purge as settings (always human), a first send to a peer and public
+   publish as delegable, and keeps **landing on `main` refused** (D33) until you decide. Confirm, or say otherwise?
+3. A ceiling across renewals (`max_until`, optional in the schema until you decide; revision 2 had 180 days) and a
+   weekly acknowledgement: keep either?
+4. Owners only as issuers (recommended), or maintainers too?
+5. Is the default protected-path list right (CI, build/test, deploy, manifests and lockfiles, orch config, skills,
    hooks, security-classed code)?
-4. CI/deploy from `develop` while a mandate is in force: pause it (recommended), or require a per-run release?
-5. Checker: must it be a different model from the orchestrator?
-6. Ceiling for "permanent": 180-day `max_until` with 30-day extensions and a weekly acknowledgement?
-7. Who may suspend your mandate: any member with Operate scope (recommended), or only you?
-8. Multi-person workspaces (D39): should a mandate seat ever count where other people are listed approvers?
+6. CI/deploy from `develop` while a mandate is in force: pause it (recommended), or require a per-run release?
+7. Checker: must it be a different model from the orchestrator?
+8. Who may suspend your mandate: any member with Operate scope (recommended), or only you?
+9. Multi-person workspaces (D39): should a mandate seat ever count where other people are listed approvers?
 
 ## 7. Format and core changes (all provisional; event types are unsettled, PR #336 / #338)
 
-- **Workspace events:** `mandate.issued`, `mandate.extended` (revision), `mandate.acknowledged`, `mandate.admitted`,
+- **Workspace events:** `mandate.issued`, `mandate.renewed` (revision; was `mandate.extended`), `mandate.acknowledged`, `mandate.admitted`,
   `mandate.suspended {reason}`, `mandate.resumed`, `mandate.stop_requested`, `mandate.stopped {boundary_seq}`,
   `mandate.revoked {void_unlanded, stop_agents}`, `mandate.tripped`, `mandate.preflight`.
 - **Ticket events:** existing decision events gain `via: "mandate"`, `decision_id`, `mandate_id`,
@@ -314,10 +390,12 @@ click past.
   (human); `mandate.preflight`, `mandate.check`, `mandate.list` (read). Core keeps a new **effect registry** (schemas,
   bounds, the "never" set) alongside the operation registry. New errors include `mandate.custody_unsupported`,
   `mandate.protected_path`, `mandate.not_admitted`, `mandate.provenance`, `mandate.veto`, `mandate.replay`,
-  `mandate.limit`, `mandate.stopped`, `mandate.time_uncertain` and `mandate.effect_unknown`.
-- **Core §4:** a new row, "A mandated agent is prompt-injected → it can decide only typed effects on admitted work,
-  outside protected paths, within aggregate limits, and the result runs only in a sandbox without secrets. It is
-  labelled, vetoable, stoppable with acknowledgement, and voidable before landing. Nothing reaches `main`."
+  `mandate.limit`, `mandate.stopped`, `mandate.time_uncertain`, `mandate.effect_unknown`, `mandate.always_human`
+  (an excluded area) and `mandate.chain_refused` (a mandate asked to issue a mandate).
+- **Core §4:** a new row, "A mandated agent is prompt-injected → it can decide typed effects anywhere in the
+  workspace except the always-human areas and protected paths, within aggregate limits; its sessions run in a sandbox
+  without secrets; a Deliver it starts waits out a hold window with Stop and goes only to the signed destination. It
+  is labelled, vetoable, stoppable with acknowledgement, and voidable before landing. It cannot mint another mandate."
 
 ## 8. Changes after Codex review
 
@@ -332,7 +410,7 @@ All 15 findings were adopted. Where an adoption is only partial, the row says wh
 | 5 | Custody prerequisites | `mandate.preflight` refuses issuance on unsupported configs (§2.12). |
 | 6 | Replay / cross-log | Canonical payload, one digest for all signatures, durable decision ids, atomic reservation (§2.6). |
 | 7 | Stop leaves work running | Acknowledged boundary, queued effects cancelled, execution-time recheck, relay lease (§2.13). |
-| 8 | Renewal extends authority | Acknowledgement separate from extension, revisions bound to the root, immutable `max_until`, lifetime counters (§2.11). |
+| 8 | Renewal extends authority | Revisions bound to the root, lifetime counters, a renewal is a new Mac signature; `max_until` (immutable when set) and the weekly acknowledgement are now optional, pending the owner (§2.11, §6 point 3). |
 | 9 | Veto persistence | Persistent `veto` flag, cleared only by a person, rechecked at execution (§2.7). |
 | 10 | Budgets bound signatures | Aggregate limits, reservation, retries and descendants counted, caps through execution grants. Money is not shown until enforced (§2.8). |
 | 11 | Rates are detection | Stated as detection only, with rolling aggregates, provenance-aware freshness and rework caps (§2.9). |

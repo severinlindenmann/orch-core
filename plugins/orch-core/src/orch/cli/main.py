@@ -38,6 +38,11 @@ class Hooks:
     head_seq: Callable[[Operation, dict[str, Any]], int | None] = field(default=lambda op, args: None)
     #: A ``REF`` as the ticket key (``43`` and ``DEMO-0043`` are the same ticket); used for stop rule and dedup.
     normalise_ref: Callable[[str], str] = field(default=lambda ref: ref)
+    #: The key of the ticket a ref-less call resolves to (the session's single claim), or ``None``: it is part of the
+    #: stop-rule fingerprint and the dedup key, so the same words on two claimed tickets are two calls (F1 10.4).
+    session_ticket: Callable[[Operation, Context, dict[str, Any]], str | None] = field(
+        default=lambda op, ctx, args: None
+    )
     #: Raises ``grant.expired`` when the (well-formed) grant is expired, revoked or out of scope.
     grant_valid: Callable[[Context], None] = field(default=lambda ctx: None)
     #: The grant's ``verbs``: ``"agent"`` (every agent operation) or the list of operation names it allows.
@@ -133,6 +138,15 @@ def _redact_obj(obj: Any, secrets: list[str]) -> Any:
     return obj
 
 
+def _with_ticket(op: Operation, ctx: Context, args: dict[str, Any], hooks: Hooks) -> dict[str, Any]:
+    """``args`` for stop rule and dedup key: a ticket-scoped call without a REF gets the ticket it resolves to."""
+    if "ticket_exists" not in op.pre or isinstance(args.get("ref"), str):
+        return args
+    key = hooks.session_ticket(op, ctx, args)
+    # marked: a retry of the REF-less call is a duplicate, the same call with the REF spelled out is a different one
+    return {**args, "ref": key, "ref_from_claim": True} if key else args
+
+
 def run(parsed: parser.Parsed, ctx: Context, records: MemoryRecords, hooks: Hooks | None = None) -> Result:
     """Check and run one parsed call. Raises :class:`OrchError` for every refusal."""
     hooks = hooks or Hooks()
@@ -144,13 +158,14 @@ def run(parsed: parser.Parsed, ctx: Context, records: MemoryRecords, hooks: Hook
     if session:  # a file argument is its content for the stop rule and the dedup key, not its name
         from orch.ops.runtime import keyed
 
-        args = keyed(ctx, args)
         res_args = parsed.args
+        args = _with_ticket(op, ctx, keyed(ctx, args), hooks)
     else:
         res_args = args
     if session and records.stopped(session, op.name, _normalised(op, args, hooks), ctx.now()):
         raise OrchError("stop")
-    caching = bool(session) and op.is_write and not ctx.dry_run
+    # a person's operation is never replayed from a record: each one is a fresh signature, never a cached result
+    caching = bool(session) and op.is_write and op.who != "human" and not ctx.dry_run
     key = _dedup_key(op, ctx, args, hooks) if caching else ""
     if caching:
         hit = records.recall(session, key, ctx.now())  # type: ignore[arg-type]
@@ -254,7 +269,9 @@ def main(
         ctx = Context(
             session=session,
             grant=grant_env,
-            human_presence=False,
+            # a call that carries an agent's grant is never a person's; whether there is a person at a terminal is
+            # the custody prompt's business (/dev/tty, fail closed), not an environment variable's
+            human_presence="ORCH_GRANT" not in env,  # an empty value counts as set
             dry_run=parsed.dry_run,
             now=now,
             env={k: v for k, v in env.items() if k != "ORCH_GRANT"},
@@ -271,7 +288,8 @@ def main(
         if op is not None and parsed is not None and session and _is_refusal(e):
             from orch.ops.runtime import keyed
 
-            norm = _normalised(op, keyed(ctx, parsed.args) if ctx is not None else parsed.args, hooks)
+            kargs = _with_ticket(op, ctx, keyed(ctx, parsed.args), hooks) if ctx is not None else parsed.args
+            norm = _normalised(op, kargs, hooks)
             try:
                 if records.refused(session, op.name, norm, e.code, now()) >= STOP_AFTER:
                     e = OrchError("stop")

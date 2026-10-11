@@ -575,7 +575,7 @@
     "body": {
       "summary": "Automate the monthly reconciliation of billed kWh against the finance total.",
       "requirements": "- A generic dbt test with a configurable tolerance (default 0.1 %).\n- Output names the biggest deltas.",
-      "verification": "Test passes on September data, fails on a seeded 1 % deviation (see screenshot).\n\n```orch\n{\"html\":\"artifact:reconciliation-demo.html\",\"sha256\":\"377811c248ac770376acec6c8a6531d563db83f1965e13ce74f32222afbdfcaf\",\"id\":\"proto\",\"title\":\"Failure output prototype\",\"source\":\"reconciliation-demo.html\",\"caption\":\"Click a row for the meter detail.\",\"height\":230}\n```\n\n```orch\n{\"html\":\"artifacts/DEMO-0041/tolerance-demo.html\",\"sha256\":\"30478746d794d29a99a122f3f7d89545319fb6e6b6c165af18fa4a4fa7e04091\",\"id\":\"proto-old\",\"title\":\"Tolerance setting prototype\",\"source\":\"tolerance-demo.html, first draft\",\"height\":160}\n```",
+      "verification": "Test passes on September data, fails on a seeded 1 % deviation (see screenshot).\n\n```orch\n{\"html\":\"artifact:reconciliation-demo.html\",\"sha256\":\"8b1ad37e620c84a4c40544620ce38c4e2b2aa2b2e52595a8879bc0a63feb5f8b\",\"id\":\"proto\",\"title\":\"Failure output prototype\",\"source\":\"reconciliation-demo.html\",\"caption\":\"Open a row for the meter detail.\",\"height\":230}\n```\n\n```orch\n{\"html\":\"artifacts/DEMO-0041/tolerance-demo.html\",\"sha256\":\"30478746d794d29a99a122f3f7d89545319fb6e6b6c165af18fa4a4fa7e04091\",\"id\":\"proto-old\",\"title\":\"Tolerance setting prototype\",\"source\":\"tolerance-demo.html, first draft\",\"height\":160}\n```",
       "current_state": "Both tasks done, evidence attached, PR is green. Waiting for the reviewer verdict."
     },
     "events": [
@@ -675,11 +675,11 @@
         "actor": "claude-code:s_5d10:p_sev",
         "name": "reconciliation-demo.html",
         "kind": "other",
-        "bytes": 1218,
-        "sha256": "377811c248ac770376acec6c8a6531d563db83f1965e13ce74f32222afbdfcaf",
+        "bytes": 1291,
+        "sha256": "8b1ad37e620c84a4c40544620ce38c4e2b2aa2b2e52595a8879bc0a63feb5f8b",
         "ac": "AC2",
         "label": "Clickable prototype of the failure output",
-        "preview": "<style>body{font:12px/1.5 ui-sans-serif,system-ui,sans-serif}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid GrayText;padding:4px 8px;text-align:left}tr.row{cursor:pointer}tr.row:hover{background:Highlight;color:HighlightText}.d{display:none;color:GrayText}.d.on{display:table-row}</style>\n<h4 style=\"margin:0 0 6px\">Failure output when the tolerance is exceeded (1 %)</h4>\n<table id=\"t\"><tr><th>Customer</th><th>Billed kWh</th><th>Finance kWh</th><th>Delta</th></tr></table>\n<p id=\"hint\" style=\"color:GrayText\">Click a row for the meter detail.</p>\n<script>\nvar rows=[[\"C-10492\",18420,17102,\"+1318\"],[\"C-20871\",9210,8433,\"+777\"],[\"C-30115\",7788,7203,\"+585\"]];\nvar t=document.getElementById(\"t\");\nrows.forEach(function(r){var tr=document.createElement(\"tr\");tr.className=\"row\";r.forEach(function(v){var td=document.createElement(\"td\");td.textContent=v;tr.appendChild(td)});\nvar dt=document.createElement(\"tr\");dt.className=\"d\";var c=document.createElement(\"td\");c.colSpan=4;c.textContent=\"3 meters, 2 replaced in September; billed twice for the overlap day.\";dt.appendChild(c);\ntr.addEventListener(\"click\",function(){dt.classList.toggle(\"on\")});t.appendChild(tr);t.appendChild(dt)});\n</script>\n"
+        "preview": "<style>body{font:12px/1.5 ui-sans-serif,system-ui,sans-serif}.r{display:grid;grid-template-columns:2fr 2fr 2fr 1fr;gap:8px;padding:4px 8px;border-bottom:1px solid GrayText}.h{font-weight:600}details summary{list-style:none;cursor:pointer}details summary::-webkit-details-marker{display:none}details summary:hover{background:Highlight;color:HighlightText}details p{margin:0;padding:4px 8px;color:GrayText;border-bottom:1px solid GrayText}</style>\n<h4 style=\"margin:0 0 6px\">Failure output when the tolerance is exceeded (1 %)</h4>\n<div class=\"r h\"><span>Customer</span><span>Billed kWh</span><span>Finance kWh</span><span>Delta</span></div>\n<details><summary class=\"r\"><span>C-10492</span><span>18420</span><span>17102</span><span>+1318</span></summary><p>3 meters, 2 replaced in September; billed twice for the overlap day.</p></details>\n<details><summary class=\"r\"><span>C-20871</span><span>9210</span><span>8433</span><span>+777</span></summary><p>3 meters, 2 replaced in September; billed twice for the overlap day.</p></details>\n<details><summary class=\"r\"><span>C-30115</span><span>7788</span><span>7203</span><span>+585</span></summary><p>3 meters, 2 replaced in September; billed twice for the overlap day.</p></details>\n<p style=\"color:GrayText\">Open a row for the meter detail.</p>\n"
       },
       {
         "at": "2026-10-06T11:34:00Z",
@@ -687,11 +687,11 @@
         "actor": "claude-code:s_5d10:p_sev",
         "name": "tolerance-demo.html",
         "kind": "other",
-        "bytes": 558,
-        "sha256": "5481e1fa445d8c4b7be9449657c669eda5232e362d7b5298ad6f1759ca7fb737",
+        "bytes": 530,
+        "sha256": "4ab529e2277ea3db4676c67b106f2837a89f6c25261b8779d8c58c5357aa803e",
         "ac": "AC2",
         "label": "Tolerance setting prototype (current version)",
-        "preview": "<style>body{font:12px ui-sans-serif,system-ui,sans-serif}</style><h4 style=\"margin:0 0 6px\">Tolerance setting</h4>\n<label>Tolerance <input id=\"r\" type=\"range\" min=\"1\" max=\"20\" value=\"1\"> <output id=\"o\">0.1 %</output></label>\n<p id=\"p\" style=\"color:GrayText\">Fails above 0.1 % of the finance total.</p>\n<script>\nvar r=document.getElementById(\"r\");r.addEventListener(\"input\",function(){var v=(r.value/10).toFixed(1)+\" %\";document.getElementById(\"o\").textContent=v;document.getElementById(\"p\").textContent=\"Fails above \"+v+\" of the finance total.\"});\n</script>\n"
+        "preview": "<style>body{font:12px ui-sans-serif,system-ui,sans-serif}table{border-collapse:collapse}td,th{padding:2px 8px;text-align:left;border-bottom:1px solid GrayText}</style><h4 style=\"margin:0 0 6px\">Tolerance setting</h4>\n<p style=\"color:GrayText\">The test fails above the tolerance, as a share of the finance total (default 0.1 %).</p>\n<table><tr><th>Tolerance</th><th>Seeded 1 % deviation</th></tr><tr><td>0.1 %</td><td>fails</td></tr><tr><td>1.0 %</td><td>passes at the limit</td></tr><tr><td>2.0 %</td><td>passes</td></tr></table>\n"
       },
       {
         "at": "2026-10-06T11:40:00Z",
@@ -1133,10 +1133,12 @@
       ],
       "links": {
         "repos": [
-          "acme-energy-dbt"
+          "acme-energy-dbt",
+          "web-portal"
         ],
         "branches": {
-          "acme-energy-dbt": "fix/DEMO-0046-dim-meter-dupes"
+          "acme-energy-dbt": "fix/DEMO-0046-dim-meter-dupes",
+          "web-portal": "fix/meter-display"
         }
       },
       "acceptance": [

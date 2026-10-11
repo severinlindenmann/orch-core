@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { offered } from '@/test/offered'
 import { createApi } from '@/api/client'
 import { createMockTransport } from '@/api/transport'
 import { createMockStore } from '@/mocks/store'
@@ -36,7 +37,8 @@ interface State {
   armedCount: number
 }
 const state = async (s: S) => (await s.api.getAddonState(s.ws, 'schedules')) as unknown as State
-const run = (s: S, id: string, body: Record<string, unknown> = {}) => s.api.runAddonAction(s.ws, 'schedules', id, body)
+// A decision answer carries the digest of the decision as offered (security review #3), as core's prompt posts it.
+const run = (s: S, id: string, body: Record<string, unknown> = {}) => s.api.runAddonAction(s.ws, 'schedules', id, offered(s.store, s.ws, 'schedules', id, body))
 const decisions = async (s: S) => (await s.api.getAddonDecisions(s.ws)).filter((d) => d.addon === 'schedules')
 const fail = (p: Promise<unknown>) => p.then(() => 'ok', (e: { status: number; code: string; message: string }) => `${e.status} ${e.code}`)
 const row = async (s: S, id: string) => (await state(s)).rows.find((r) => r.id === id)!

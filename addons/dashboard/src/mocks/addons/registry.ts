@@ -83,6 +83,15 @@ export interface MockAddon {
    * force now (started, not paused or stopped). Core's `store.autoApprove` reads it; nothing else may auto-approve.
    */
   charter?(state: Record<string, unknown>, ctx: Omit<AddonCtx, 'body' | 'state'>): Charter | null
+  /**
+   * Why core must refuse to disable, update or uninstall this addon now (a sentence in core's words), or null. The
+   * factory uses it while a delivery is on hold: turning the addon off would take the Stop away while the clock runs.
+   */
+  offBlocked?(state: Record<string, unknown>, ctx: Omit<AddonCtx, 'body' | 'state'>): string | null
+  /** Save the state as soon as it is seeded (it holds a deadline a reload must not restart). */
+  saveOnSeed?: boolean
+  /** State saved under an older `stateVersion`: the migrated state, or null to drop it and seed again. */
+  migrate?(state: Record<string, unknown>, fromVersion: number): Record<string, unknown> | null
   launch?(state: Record<string, unknown>, req: LaunchRequest, ctx: Omit<AddonCtx, 'body' | 'state'> & { commit: boolean; lastTier?: string }): LaunchPlan
   actions: Record<string, AddonAction>
 }
@@ -135,6 +144,8 @@ export const CORE_EVENT_NAMESPACES: readonly string[] = [
   'addon', 'agent', 'artifact', 'claim', 'comment', 'connection', 'decision', 'device', 'edit', 'epoch', 'gate', 'grant',
   'handoff', 'host', 'labels', 'lease', 'log', 'member', 'pair', 'people', 'policy', 'projection', 'question', 'relay',
   'restore', 'role', 'section', 'skill', 'status', 'task', 'ticket', 'verdict', 'verify', 'view', 'workspace',
+  // Also reserved by the ticket format (§5.4.2 "Unknown types"), or written by core in this mock (terminal.shell_opened).
+  'branch', 'invalid', 'settings', 'terminal', 'visibility',
 ]
 
 /** A package name the host refuses (install and registration alike): one of core's own event namespaces. */

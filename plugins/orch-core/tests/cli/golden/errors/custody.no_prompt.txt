@@ -1,0 +1,1 @@
+err custody.no_prompt no terminal to ask for your passphrase on · retry:false · next: run this command yourself, in your own terminal · fix: orch help

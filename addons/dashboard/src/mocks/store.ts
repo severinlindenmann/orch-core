@@ -29,11 +29,13 @@ import type {
   GrantInfo,
   Workspace,
   WorkspaceEvent,
+  WorkspaceRepo,
 } from '@/api/types'
-import { addonActive, ARG_KEY, manifestProblem, pendingUpdate, manifestFor, sameSet, sameTerms, viewerActions } from '@/api/addons'
+import { REPO_NAME, remoteProblem, resolveRepoPath } from '@/api/repos'
+import { addonActive, ARG_KEY, decisionDigest, manifestProblem, pendingUpdate, manifestFor, sameSet, sameTerms, viewerActions } from '@/api/addons'
 import { getAddon, openDecisions } from './addons'
 import { isCoreNamespace } from './addons/registry'
-import { deriveTicket, describeEvent, fnvHex, parseActor } from './derive'
+import { clearContentHashes, deriveTicket, describeEvent, fnvHex, parseActor } from './derive'
 import { commitOf, nextCommitSha } from './changes'
 import { withinCharterSize } from './addons/registry'
 import addonsFixture from './fixtures/addons.json'
@@ -55,6 +57,7 @@ import { HARNESSES, HARNESS_LABEL, MODES, MODE_LABEL, WHERES, WHERE_LABEL, launc
 import { clearPersisted, loadPersisted, savePersisted, type PersistedV2 } from './persist'
 import { foldGrants, foldViews, foldWorkspace } from './workspace-log'
 import { BUSY_SEED, generateBusy, type BusyData } from './busy/generate'
+import { busyRepos } from './busy/repos'
 import { startLive } from './busy/live'
 import { ConnectionsHost } from './connections'
 import { makeRng } from './busy/rng'
@@ -98,7 +101,14 @@ function currentAddonStates(p: PersistedV2): PersistedV2['addonState'] {
   const out: PersistedV2['addonState'] = {}
   for (const [key, state] of Object.entries(p.addonState)) {
     const name = key.slice(key.indexOf('/') + 1)
-    if ((getAddon(name)?.stateVersion ?? 1) === (p.addonVersions?.[name] ?? 1)) out[key] = state
+    const mod = getAddon(name)
+    const want = mod?.stateVersion ?? 1
+    const had = p.addonVersions?.[name] ?? 1
+    if (want === had) out[key] = state
+    else if (mod?.migrate) {
+      const m = mod.migrate(state, had)
+      if (m) out[key] = m
+    }
   }
   return out
 }
@@ -216,6 +226,7 @@ export class MockStore {
     this.wsEvents.clear()
     for (const w of this.seedWorkspaces) this.wsEvents.set(w.id, [])
     if (this.busy) this.installBusyAddons()
+    if (this.busy) for (const w of this.seedWorkspaces) w.repos = { ...busyRepos(w.prefix), ...w.repos }
     this.created = {}
     this.addonStates = {}
     this.refoldWorkspaces()
@@ -356,6 +367,7 @@ export class MockStore {
     this.sim.stopAll()
     this.relaySim.clear()
     this.mandatesPreview.reset()
+    clearContentHashes() // the content-hash cache holds ticket texts: nothing of the old dataset survives a reset
     this.dataset = dataset
     this.seed()
     if (!keepViewer) this.viewer = meFixture.person
@@ -726,6 +738,11 @@ export class MockStore {
     if (!list) throw new Error(`unknown workspace ${wsId}`)
     const seq = (list[list.length - 1]?.seq ?? 0) + 1
     const { actor, ...rest } = input
+    // Core's boundary for settings.changed (format §5.4.2 "who may sign"): owners, people only. Whatever calls this.
+    if (input.type === 'settings.changed') {
+      const a = typeof actor === 'string' ? parseActor(actor) : actor
+      if (a?.kind !== 'person' || this.roleIn(wsId, a.id) !== 'owner') throw new Error('settings.changed is signed by an owner (a person) only')
+    }
     const event = {
       v: 2,
       id: wsId.slice(0, 8) + String(seq).padStart(8, '0'),
@@ -745,6 +762,48 @@ export class MockStore {
   grants(wsId: string): GrantInfo[] {
     const seed = ((grantsFixture as unknown as Record<string, GrantInfo[]>)[wsId] ?? []).map((g) => ({ ...g, sessions: [...g.sessions, ...(this.busy?.grantSessions[g.id] ?? [])] }))
     return foldGrants(seed, this.wsEvents.get(wsId) ?? [])
+  }
+
+  /**
+   * Format §5.4.2 `settings.changed` with `set.repos`: the owner's signed change of the declared repos (`settings.repos`).
+   * Owners only, people only (never an agent or an addon on its own). `null` removes a name. Refused: a bad name, a path
+   * that is not a plain string, a remote with credentials, a name that is not there to remove, and two repos that
+   * resolve to the same path (case-insensitive: the host's file system may be). The addon's own refusals (linked
+   * tickets, duplicate remotes) come before this; this is the rule every writer meets.
+   */
+  changeRepos(wsId: string, set: Record<string, WorkspaceRepo | null>, actor: Actor): { ok: true } | StoreFailure {
+    const ws = this.workspaces.find((w) => w.id === wsId)
+    if (!ws) return refuse(404, 'not_found', 'No such workspace')
+    if (actor.kind !== 'person') return refuse(403, 'human_only', 'Only a person changes the workspace settings.')
+    if (!can(this.roleIn(wsId, actor.id), 'settings')) return refuse(403, 'forbidden', 'Only owners change the declared repos.', 'Ask an owner.')
+    const entries = Object.entries(set ?? {})
+    if (!entries.length || entries.length > 50) return refuse(400, 'validation', 'Name 1 to 50 repos to change.')
+    const next: Record<string, WorkspaceRepo> = { ...(ws.repos ?? {}) }
+    for (const [name, entry] of entries) {
+      if (!REPO_NAME.test(name)) return refuse(400, 'validation.repo_name', `"${name.slice(0, 100)}" is not a repo name.`, 'Letters, digits, dots, underscores and dashes, starting with a letter or digit (at most 100).')
+      if (entry === null) {
+        if (!next[name]) return refuse(404, 'not_found', `No declared repo ${name}.`)
+        delete next[name]
+        continue
+      }
+      const { path, remote, default_branch } = (entry ?? {}) as Partial<WorkspaceRepo>
+      if (typeof path !== 'string' || !path.length || path.length > 400 || !/^[\x21-\x7e]+$/.test(path)) return refuse(400, 'validation.repo_path', 'A repo path is 1 to 400 plain characters.')
+      const problem = remote === undefined ? null : remoteProblem(remote)
+      if (problem) return refuse(400, 'validation.remote', problem)
+      if (default_branch !== undefined && (typeof default_branch !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/.test(default_branch) || default_branch.includes('..') || default_branch.endsWith('/')))
+        return refuse(400, 'validation.branch', 'Write a valid default branch name.')
+      next[name] = { path, ...(remote !== undefined ? { remote } : {}), ...(default_branch !== undefined ? { default_branch } : {}) }
+    }
+    const root = ws.root_folder ?? '.'
+    const seen = new Map<string, string>()
+    for (const [name, e] of Object.entries(next)) {
+      const at = resolveRepoPath(root, e.path).toLowerCase()
+      const other = seen.get(at)
+      if (other) return refuse(409, 'settings.repos_same_path', `${other} and ${name} would use the same folder.`)
+      seen.set(at, name)
+    }
+    this.appendWs(wsId, { type: 'settings.changed', actor, set: { repos: structuredClone(set) }, presence: 'touchid' })
+    return { ok: true }
   }
 
   /**
@@ -1002,7 +1061,10 @@ export class MockStore {
     const mod = getAddon(name)
     // The busy dataset seeds an addon with its own, bigger state when the module has one.
     const seeded = this.dataset === 'busy' && mod?.seedBusy ? mod.seedBusy(ws, this, makeRng(BUSY_SEED).fork(key)) : (mod?.seed(ws, this) ?? {})
-    return (this.addonStates[key] = seeded)
+    this.addonStates[key] = seeded
+    // Seeded state that holds a deadline (a factory hold) is saved at once, so a reload never seeds it again.
+    if (mod?.saveOnSeed && this.persist) queueMicrotask(() => this.save())
+    return seeded
   }
 
   /**
@@ -1063,6 +1125,13 @@ export class MockStore {
     if (!st || !pkg) return refuse(404, 'not_found', `${name} is not installed in this workspace.`)
     const v: InstalledAddon = { ...pkg, ws: st }
     const update = pendingUpdate(v)
+    // A delivery on hold keeps its addon on: turning it off or changing it would take the Stop away mid-hold.
+    if (req.op === 'disable' || req.op === 'update' || req.op === 'uninstall') {
+      const mod = getAddon(name)
+      // The state is initialised (seeded) and settled first: a hold seeded but never looked at still counts.
+      const why = mod?.offBlocked ? mod.offBlocked(this.addonState(wsId, name), { store: this, ws: wsId, viewer: actor.id }) : null
+      if (why) return refuse(409, 'addon.delivery_on_hold', why, 'Stop the delivery first (or wait for the hold to end).')
+    }
     switch (req.op) {
       case 'grant':
         if (req.op !== 'grant') break
@@ -1133,9 +1202,13 @@ export class MockStore {
     const role = this.roleIn(ws, this.viewer)
     const pkg = this.addons.find((a) => a.name === name)
     const installed = w.addons[name]
-    const meta = (pkg && installed ? manifestFor(pkg, installed.version).actions : pkg?.actions)?.[id]
-    const min = meta?.minRole ?? 'member'
+    const declared = pkg && installed ? manifestFor(pkg, installed.version).actions : undefined
+    const meta = declared && Object.hasOwn(declared, id) ? declared[id] : undefined
     if (!role) return refuse(403, 'forbidden', 'You are not a member of this workspace.', 'Ask an owner.')
+    // Only an action the installed, granted manifest declares runs (security review #10): an implementation the
+    // manifest leaves out (removed in an update, never declared) fails closed instead of running as a default member action.
+    if (!meta) return refuse(403, 'addon.undeclared_action', `${name} does not declare the action "${id}" in its installed version.`, 'Update or reinstall the addon; nothing was run.')
+    const min = meta.minRole ?? 'member'
     if (!atLeast(role, min)) {
       if (min === 'member') return refuse(403, 'forbidden', 'Viewers cannot do this.', 'Ask an owner or maintainer.')
       return refuse(403, 'forbidden', `Only ${min === 'owner' ? 'owners' : 'owners and maintainers'} can do this.`, min === 'owner' ? 'Ask an owner.' : 'Ask an owner or maintainer.')
@@ -1158,7 +1231,9 @@ export class MockStore {
     // the option must be one of its options. The addon then only applies the answer; core records it (addon.decided).
     let decision: AddonDecision | undefined
     if (meta?.decision) {
-      if (!can(role, 'addon.decide')) return refuse(403, 'forbidden', 'Only owners and maintainers decide addon decisions.', 'Ask an owner or maintainer.')
+      // An eligibility-decided action (`deciders: 'eligible'`, e.g. a code review) takes core's gate eligibility instead
+      // of the role floor: members may answer it when eligible (the handler checks); viewers never.
+      if (!can(role, 'addon.decide') && !(meta.deciders === 'eligible' && can(role, 'ticket.act'))) return refuse(403, 'forbidden', 'Only owners and maintainers decide addon decisions.', 'Ask an owner or maintainer.')
       const open = openDecisions(addon, this.addonState(ws, name), pkg?.decisions ?? [], { store: this, ws, viewer: this.viewer })
       decision = open.find((d) => d.id === body.id && d.action === id && (!d.ticket || (this.wsOfKey.get(d.ticket) === ws && this.isVisible(d.ticket))))
       // An answer that carried terms names them; the decision may be gone because its terms changed (a new id).
@@ -1169,13 +1244,22 @@ export class MockStore {
       if (body.confirmed !== true) return refuse(409, 'confirm.required', 'A decision is answered in orch\'s own signing prompt.', 'Answer it on Today, or press the option and sign in the dialog.')
       // The terms the person saw in core's prompt must be the terms now (core shows and signs them line by line).
       if (!sameTerms(body.terms, decision.terms)) return refuse(409, 'decision.closed', 'The terms of this decision changed since you opened it.', 'Reopen it and check the terms again.')
+      // The answer binds the whole decision core showed (security review #3): its ticket, and its digest (title,
+      // question, detail, options, terms) compared with the decision now. Required on every answer: core's prompt
+      // always sends it (decisionBody), so an answer without one was not shown by core and is refused.
+      if (body.ticket !== undefined && body.ticket !== decision.ticket) return refuse(409, 'decision.closed', 'That decision is about another ticket.', 'Reopen it and check it again.')
+      // A privilege-bearing decision binds what it authorises as typed terms, and is answered once (security review #3).
+      if (meta.authorises && (!decision.terms || !Object.keys(decision.terms).length)) return refuse(409, 'decision.terms_required', 'This decision would authorise something without naming it, so orch will not sign it.', 'The addon must name what it authorises in the decision\'s terms.')
+      if (meta.authorises && this.wsEventsOf(ws).some((e) => e.type === 'addon.decided' && e.name === name && e.id === decision!.id)) return refuse(409, 'decision.closed', 'That decision was already answered.')
+      if (typeof body.digest !== 'string') return refuse(409, 'decision.digest_required', 'A decision is answered with the digest of what core showed.', 'Answer it in orch\'s own signing prompt.')
+      if (body.digest !== decisionDigest(decision)) return refuse(409, 'decision.closed', 'This decision changed since you opened it.', 'Reopen it and check it again.')
     }
     const raw = action({ store: this, ws, viewer: this.viewer, ticket, body, state: this.addonState(ws, name), decision })
     // A refusal changes nothing others need to see: no record, no refresh for other clients, nothing saved.
     if (!raw.ok) return raw
     const res = this.checkedResult(ws, raw)
     // Core's own record of a decision (presence step done in core's prompt): who decided what, never the addon's words.
-    if (decision) this.appendWs(ws, { type: 'addon.decided', name, id: decision.id, option: String(body.option), ...(decision.ticket ? { ticket: decision.ticket } : {}), ...(decision.terms ? { terms: { ...decision.terms } } : {}), presence: 'touchid' })
+    if (decision) this.appendWs(ws, { type: 'addon.decided', name, id: decision.id, option: String(body.option), ...(decision.ticket ? { ticket: decision.ticket } : {}), ...(decision.terms ? { terms: { ...decision.terms } } : {}), digest: decisionDigest(decision), presence: 'touchid' })
     // Core's own record of a signed action (the addon cannot write or hide it): who signed which action with exactly the
     // body that was signed (every arg, uncut; only core's `confirmed` flag left out), whether or not the addon changed anything.
     if (meta?.confirm === 'sign') {
@@ -1293,17 +1377,27 @@ export class MockStore {
   /** Gate policy: why `person` may not approve `gate` on `t` (null when eligible). */
   canApprove(t: TicketDocument, gate: GateName, person: string): string | null {
     const ws = this.workspaceOf(t.key)!
+    return this.gateEligibility(ws.id, gate, person, { assignees: t.people.assignees, reviewers: t.people.reviewers }, t.gates[gate].approvals.map((a) => a.by))
+  }
+
+  /**
+   * Core's one eligibility rule for a gate under the workspace policy (D59): role, the approver group, assignees (always
+   * excluded on the code gate) and one approval per person. Used for tickets and for work that is not a ticket yet
+   * (a factory full run's child: its requester and author count as assignees).
+   */
+  gateEligibility(wsId: string, gate: GateName, person: string, people: { assignees: string[]; reviewers: string[] }, approvedBy: string[]): string | null {
+    const ws = this.workspaces.find((w) => w.id === wsId)!
     const policy = ws.gates[gate]
     const role = this.roleIn(ws.id, person)
     if (!can(role, 'ticket.act')) return 'Viewers cannot approve.'
-    if (policy.approvers === 'reviewers' ? !t.people.reviewers.includes(person) : !roleMeets(role, policy.approvers))
+    if (policy.approvers === 'reviewers' ? !people.reviewers.includes(person) : !roleMeets(role, policy.approvers))
       return policy.approvers === 'reviewers'
         ? 'Only a reviewer of this ticket can approve this gate.'
         : policy.approvers === 'maintainer'
           ? 'Only an owner or a maintainer can approve this gate.'
           : `Only the ${policy.approvers} can approve this gate.`
-    if ((policy.not === 'assignees' || gate === 'code') && t.people.assignees.includes(person)) return 'Assignees cannot approve their own work.'
-    if (t.gates[gate].approvals.some((a) => a.by === person)) return 'You already approved this gate.'
+    if ((policy.not === 'assignees' || gate === 'code') && people.assignees.includes(person)) return 'Assignees cannot approve their own work.'
+    if (approvedBy.includes(person)) return 'You already approved this gate.'
     return null
   }
 
@@ -1355,10 +1449,9 @@ export class MockStore {
   }
 
   /** Open questions, pending gates and verdicts on the workspace's tickets; `eligible` filters to what that person can act on. */
-  private openItems(workspaceId: string, eligible?: string): NeedsYouItem[] {
+  private openItems(workspaceId: string, eligible?: string, tickets = this.listTickets(workspaceId), blocks = this.blockingCheck(workspaceId)): NeedsYouItem[] {
     const items: NeedsYouItem[] = []
-    const blocks = this.blockingCheck(workspaceId)
-    for (const t of this.listTickets(workspaceId)) {
+    for (const t of tickets) {
       if (t.status === 'done') continue
       const can = (gate: GateName) => !eligible || !this.canApprove(t, gate, eligible)
       for (const q of t.questions_state) {
@@ -1391,12 +1484,21 @@ export class MockStore {
 
   /** Open items the viewer cannot act on, and the people who can (ids). */
   waitingOnOthers(workspaceId: string, person = this.viewer): NonNullable<TodayDocument['waiting_on_others']> {
-    const mine = new Set(this.needsYou(workspaceId, person).map(itemKey))
+    const tickets = this.listTickets(workspaceId)
+    const blocks = this.blockingCheck(workspaceId)
+    const mine = can(this.roleIn(workspaceId, person), 'ticket.act') ? this.openItems(workspaceId, person, tickets, blocks) : []
+    return this.waitingOnOthersFrom(workspaceId, person, mine, this.openItems(workspaceId, undefined, tickets, blocks), tickets)
+  }
+
+  /** Reuse one request's visible ticket snapshot and open items; no cache survives a request or viewer change. */
+  private waitingOnOthersFrom(workspaceId: string, person: string, mineItems: NeedsYouItem[], open: NeedsYouItem[], tickets: TicketDocument[]): NonNullable<TodayDocument['waiting_on_others']> {
+    const mine = new Set(mineItems.map(itemKey))
+    const byKey = new Map(tickets.map(t => [t.key, t]))
     const w = this.workspaces.find((x) => x.id === workspaceId)
-    const others = this.openItems(workspaceId).filter((i) => !mine.has(itemKey(i)))
+    const others = open.filter((i) => !mine.has(itemKey(i)))
     const people = new Set<string>()
     for (const i of others) {
-      const t = this.ticket(i.ticket)
+      const t = byKey.get(i.ticket)
       if (!t || !w) continue
       for (const m of w.members) {
         if (m.person === person || !can(this.roleIn(workspaceId, m.person), 'ticket.act')) continue
@@ -1415,11 +1517,15 @@ export class MockStore {
   /** Open decisions of the addons that are active in `wsId`; none for a viewer. */
   addonDecisions(wsId: string): AddonDecision[] {
     const w = this.workspaces.find((x) => x.id === wsId)
-    if (!w || !this.canDecide(wsId)) return []
+    const role = this.roleIn(wsId, this.viewer)
+    if (!w || !can(role, 'ticket.act')) return []
+    const all = this.canDecide(wsId)
+    // A member sees only decisions whose action is eligibility-decided (`deciders: 'eligible'`); a viewer none.
+    const eligibleOnly = (a: AddonPackage, d: AddonDecision) => all || manifestFor(a, w.addons[a.name]?.version ?? a.version).actions?.[d.action]?.deciders === 'eligible'
     // A decision about a ticket is shown only to people who can see that ticket.
     return this.addons
       .filter((a) => addonActive(w, a.name))
-      .flatMap((a) => openDecisions(getAddon(a.name), this.addonState(wsId, a.name), a.decisions ?? [], { store: this, ws: wsId, viewer: this.viewer }))
+      .flatMap((a) => openDecisions(getAddon(a.name), this.addonState(wsId, a.name), a.decisions ?? [], { store: this, ws: wsId, viewer: this.viewer }).filter((d) => eligibleOnly(a, d)))
       .filter((d) => !d.ticket || (this.wsOfKey.get(d.ticket) === wsId && this.isVisible(d.ticket)))
   }
 
@@ -1436,12 +1542,17 @@ export class MockStore {
       }
     }
     recent.sort((a, b) => b.at.localeCompare(a.at))
+    // Today formerly folded every ticket again for each attention section, and derived agent blockers repeatedly.
+    // All sections describe this same synchronous request: share its visible documents and lazy blocker lookup.
+    const mayAct = can(this.roleIn(workspaceId, this.viewer), 'ticket.act')
+    const mine = mayAct ? this.openItems(workspaceId, this.viewer, tickets, blocks) : []
+    const open = this.openItems(workspaceId, undefined, tickets, blocks)
     return {
       now: this.now(),
       workspace: workspaceId,
-      needs_you: this.needsYou(workspaceId),
-      read_only_open: this.readOnlyOpen(workspaceId),
-      waiting_on_others: this.waitingOnOthers(workspaceId),
+      needs_you: mine,
+      read_only_open: mayAct ? [] : open,
+      waiting_on_others: this.waitingOnOthersFrom(workspaceId, this.viewer, mine, open, tickets),
       working: tickets.filter((t) => t.claim).map((t) => this.summary(t, blocks)),
       recent: recent.slice(0, 15),
       counts,

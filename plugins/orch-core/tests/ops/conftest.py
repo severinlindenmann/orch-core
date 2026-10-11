@@ -1,6 +1,7 @@
 import pytest
 
 from tests.ops.helpers import Cli, Ws
+from tests.ops.humans import agent, hws, live_agent, live_hws, me  # noqa: F401  (fixtures of the human-operation tests)
 
 
 @pytest.fixture

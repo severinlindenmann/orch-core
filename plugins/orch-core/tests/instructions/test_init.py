@@ -517,13 +517,11 @@ def test_sync_refuses_to_write_through_a_symlink(where, term, passphrases, tmp_p
 
 def test_init_through_main_with_the_cli_deciding_presence(where, term, passphrases, monkeypatch):
     """``main(["init", ...])`` end to end: the CLI, not the test, decides whether a person is present. That needs the
-    human operations of C7 (#354); until they are merged the CLI never grants presence and this test is skipped."""
+    human presence of C7 (#354)."""
     monkeypatch.chdir(where["root"])
     out, err = io.StringIO(), io.StringIO()
     env = {"ORCH_STATE_DIR": str(where["state"]), "HOME": str(where["home"]), "USER": "severin", "PATH": "/usr/bin"}
     code = main(["init", "--prefix", "DEMO", "--name", "Severin"], env=env, stdout=out, stderr=err)
-    if code != 0 and "human_only" in err.getvalue() and not term.shown:
-        pytest.skip("the CLI grants no human presence before C7 (#354) is merged")
     assert code == 0 and out.getvalue().startswith("ok init DEMO seq=1"), out.getvalue() + err.getvalue()
     assert term.code not in out.getvalue() + err.getvalue()
     assert (where["root"] / "config.json").is_file()

@@ -1,0 +1,17 @@
+{
+  "ok": false,
+  "error": {
+    "code": "invalid.input",
+    "message": "members.last_owner: the last owner can't be removed",
+    "hint": "orch describe member.remove",
+    "fix": {
+      "argv": [
+        "orch",
+        "describe",
+        "member.remove"
+      ]
+    },
+    "retryable": false
+  }
+}
+# exit 5

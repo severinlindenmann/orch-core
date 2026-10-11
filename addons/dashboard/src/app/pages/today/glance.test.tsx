@@ -11,7 +11,7 @@ describe('Today: Glance', () => {
     const glance = await screen.findByRole('region', { name: 'Glance' }, T)
     const items = await within(glance).findAllByRole('listitem', {}, T)
     const headed = items.filter((li) => li.querySelector(':scope > div > h3'))
-    expect(headed.map((li) => li.querySelector('h3')!.textContent)).toEqual(['Apps & shares', 'PRs needing review · 3', 'Agent spend'])
+    expect(headed.map((li) => li.querySelector('h3')!.textContent)).toEqual(['Apps & shares', 'PRs needing review · 3', 'Agent spend', 'Repos'])
     for (const li of headed) expect(within(li).getAllByRole('img', { name: /^From the .* addon$/ })).toHaveLength(1)
     // No orange frame and no boxed stat inside the list.
     expect(glance.querySelector('.border-addon-border')).toBeNull()

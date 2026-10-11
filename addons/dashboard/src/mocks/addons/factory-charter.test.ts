@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { offered } from '@/test/offered'
 import { createApi } from '@/api/client'
 import { createMockTransport } from '@/api/transport'
 import type { NewTicketRequest } from '@/api/types'
@@ -77,7 +78,7 @@ describe('the factory writes its own events as itself', () => {
   it('answering a permit logs factory.permit_granted / factory.permit_refused by the addon; no permit.* or host-acted addon event', async () => {
     const { store, ws, api } = setup()
     const [d] = (await api.getAddonDecisions(ws)).filter((x) => x.addon === 'factory')
-    await api.runAddonAction(ws, 'factory', 'permit', { id: d.id, confirmed: true, option: 'epic', ticket: d.ticket })
+    await api.runAddonAction(ws, 'factory', 'permit', offered(store, ws, 'factory', 'permit', { id: d.id, confirmed: true, option: 'epic', ticket: d.ticket, terms: d.terms }))
     const ev = store.eventsOf(EPIC).filter((e) => e.type.startsWith('factory.permit_'))
     expect(ev).toEqual([expect.objectContaining({ type: 'factory.permit_granted', scope: 'epic', actor: { kind: 'addon', id: 'factory' } })])
     expect(store.eventsOf(EPIC).some((e) => e.type.startsWith('permit.'))).toBe(false)

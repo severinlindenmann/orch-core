@@ -29,9 +29,12 @@ from typing import Any
 from .custody import ensure_private_dir, read_json, write_private
 from .errors import HostError
 
-__all__ = ["EXPIRE_SECONDS", "KEEP_SECONDS", "MAX_PENDING", "RequestStore", "new_request_id"]
+__all__ = ["EXPIRE_SECONDS", "GRANT_EXPIRE_SECONDS", "KEEP_SECONDS", "MAX_PENDING", "RequestStore", "new_request_id"]
 
 EXPIRE_SECONDS = 600
+#: a grant request expires sooner: F1 refuses a grant.issued whose issued_at (the prepare time) is more than 300 s
+#: away from its append
+GRANT_EXPIRE_SECONDS = 240
 KEEP_SECONDS = 24 * 3600
 MAX_PENDING = 20
 REQUEST_ID = re.compile(r"hr_[0-7][0-9A-HJKMNP-TV-Z]{25}")
@@ -86,8 +89,9 @@ class RequestStore:
         return self.expire(record)
 
     def expire(self, record: dict[str, Any]) -> dict[str, Any]:
-        """A pending request older than 10 minutes becomes ``expired`` (written)."""
-        if record["state"] in PENDING and self.clock() >= record["expires"]:
+        """A pending request older than 10 minutes (a grant: 4) becomes ``expired`` (written). A request whose signed
+        events are being appended (``submit`` set) never expires: it is rolled forward."""
+        if record["state"] in PENDING and not record.get("submit") and self.clock() >= record["expires"]:
             record = {**record, "state": "expired", "done_at": self.clock()}
             self.write(record)
         return record

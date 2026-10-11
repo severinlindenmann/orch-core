@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import copy
 import re
+import unicodedata
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -28,6 +29,21 @@ from . import review
 __all__ = ["Signed", "SignerRefused", "check", "check_reviews", "confirm_word", "header", "render", "run", "sign"]
 
 _ULID = re.compile(r"[0-7][0-9A-HJKMNP-TV-Z]{25}")
+_HEX32 = re.compile(r"[0-9a-f]{32}")
+_KEY = re.compile(r"[A-Z][A-Z0-9]{0,15}-(?:(?!0000)[0-9]{4}|[1-9][0-9]{4,})")
+_PERSON = re.compile(r"p_[0-9a-f]{32}")
+_DEVICE = re.compile(r"d_[0-9a-f]{32}")
+_ADDON = re.compile(r"[a-z][a-z0-9-]{0,39}")
+_TOKEN = re.compile(r"[a-z][a-z0-9_]*")
+_QUESTION = re.compile(r"Q[1-9][0-9]*")
+_TIME = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
+_CORE_SECTIONS = "summary|context|requirements|out_of_scope|plan|decisions|verification|findings|current_state"
+_SECTION = re.compile(rf"(?:{_CORE_SECTIONS}|[a-z][a-z0-9-]{{0,39}}\.[a-z][a-z0-9_]*)")
+_EDIT_PATH = re.compile(
+    r"ticket\.(?:title|type|priority|size|labels|parent|blocked_by|due|links|acceptance|tasks)"
+    r"|ticket\.addons\.[a-z][a-z0-9-]{0,39}\.[a-z][a-z0-9_]*"
+    rf"|body\.{_SECTION.pattern}"
+)
 _ENVELOPE_OK = frozenset({"v", "id", "type", "actor", "auth", "hash_v", "roster_v", "based_on"})
 _FORBIDDEN = frozenset({"seq", "at", "prev", "ws_seq", "host_sig", "sig"})
 _GATE_TYPES = {"gate.approved": None, "gate.changes_requested": None, "verdict.given": "verify"}
@@ -64,15 +80,104 @@ def check(
     """Refuse (:class:`SignerRefused`) anything the signer cannot vouch for, **before any prompt**. ``device`` and
     ``auth``, when given, must be what the events carry (a bound request)."""
     _shape(prepared, workspace_id=workspace_id, person=person, device=device, auth=auth)
+    _formats(prepared)
     _hashes(prepared, workspace_id)
+    _touches(prepared)
     material = prepared["material"]
     events = prepared["events"]
     check_reviews(material, events)
+    for block in material["review"]:  # derived values are rendered too: they must have their formats
+        d = block["derived"]
+        if ("cert_device" in d and not _DEVICE.fullmatch(str(d["cert_device"]))) or (
+            "cert_person" in d and not _PERSON.fullmatch(str(d["cert_person"]))
+        ):
+            _refuse("a certificate names a malformed device or person")
     digest = review.review_digest(material)
     if prepared.get("review_digest") != digest:
         _refuse("review_digest does not match the material")
-    if prepared.get("fingerprint") != review.fingerprint(digest, events):
+    if prepared.get("fingerprint") != review.fingerprint(digest, events, prepared["op"]):
         _refuse("the fingerprint does not match")
+
+
+def _formats(prepared: Mapping[str, Any]) -> None:
+    """Every identifier the review shows or the person types is checked against its F1 format before anything is
+    rendered: a host string can never carry a terminal control sequence into the header or the confirmation word."""
+    if not isinstance(prepared.get("workspace_id"), str) or not _HEX32.fullmatch(prepared["workspace_id"]):
+        _refuse("workspace_id is malformed")
+    log = prepared["log"]
+    if log != "workspace" and not _ULID.fullmatch(log):
+        _refuse("log is not a ticket uid")
+    material = prepared["material"]
+    ticket = material.get("ticket")
+    if ticket is not None and (
+        not isinstance(ticket.get("key"), str)
+        or not _KEY.fullmatch(ticket["key"])
+        or not isinstance(ticket.get("uid"), str)
+        or not _ULID.fullmatch(ticket["uid"])
+    ):
+        _refuse("material.ticket has a malformed key or uid")
+    op = prepared["op"]
+    for e in prepared["events"]:
+        if e["actor"]["device"] is not None and not _DEVICE.fullmatch(str(e["actor"]["device"])):
+            _refuse("actor.device is malformed")
+        if not _PERSON.fullmatch(str(e["actor"]["id"])):
+            _refuse("actor.id is malformed")
+        if op in _MEMBER_OPS and not _PERSON.fullmatch(str(e.get("person"))):
+            _refuse("the member is not a person id")
+        if op in _ADDON_OPS and not _ADDON.fullmatch(str(e.get("name"))):
+            _refuse("the addon name is malformed")
+        if e["type"] in _GATE_TYPES and not isinstance(e.get("gate_gen"), int):
+            _refuse("gate_gen is not a number")
+    for sid in material.get("texts") or {}:
+        if not isinstance(sid, str) or not _SECTION.fullmatch(sid):
+            _refuse("a section id is malformed")
+    for path in material.get("before") or {}:
+        if not isinstance(path, str) or not (_EDIT_PATH.fullmatch(path) or _TOKEN.fullmatch(path)):
+            _refuse("a before key is malformed")
+    q = material.get("question")
+    if q is not None and (not isinstance(q, dict) or not _QUESTION.fullmatch(str(q.get("id")))):
+        _refuse("the question id is malformed")
+    o = prepared.get("origin")
+    if (
+        not isinstance(o, dict)
+        or type(o.get("uid")) is not int
+        or type(o.get("pid")) is not int
+        or not isinstance(o.get("client"), str)
+        or not _TIME.fullmatch(str(o.get("created_at")))
+    ):
+        _refuse("origin is malformed")
+
+
+#: what a person version of an agent op may touch with its ticket.updated (§0.8): the paths of ``set`` and the
+#: sections; ``None`` for no restriction beyond the schema
+_SET_FIELDS = frozenset(
+    f"ticket.{k}" for k in ("title", "priority", "size", "labels", "due", "links", "parent", "blocked_by")
+)
+
+
+def _touches(prepared: Mapping[str, Any]) -> None:
+    """The op is bound: what each op's ``ticket.updated`` may change, so ``ac.add`` cannot carry a title change."""
+    op = prepared["op"]
+    for e in prepared["events"]:
+        if e["type"] != "ticket.updated":
+            continue
+        sets = e.get("set") or {}
+        sections = e.get("sections") or {}
+        if not isinstance(sets, dict) or not isinstance(sections, dict):
+            _refuse("ticket.updated is malformed")
+        touched = set(sets) | {"body." + sid for sid in sections}
+        if set(e.get("base_rev") or {}) != touched:
+            _refuse("base_rev does not name exactly the paths the edit touches")
+        if op in ("ac.add", "ac.edit"):
+            ok = set(sets) == {"ticket.acceptance"} and not sections
+        elif op == "section.set":
+            ok = not sets and len(sections) == 1
+        elif op == "set":
+            ok = bool(sets) and set(sets) <= _SET_FIELDS and not sections
+        else:
+            ok = False
+        if not ok:
+            _refuse(f"{op} does not change {sorted(touched)}")
 
 
 def check_reviews(material: Mapping[str, Any], events: list[Mapping[str, Any]]) -> None:
@@ -178,10 +283,24 @@ def _gate(material: Mapping[str, Any], ev: Mapping[str, Any], workspace_id: str,
         _refuse("gate_input is for another workspace, ticket or gate")
     if ev.get("hash") != bound:
         _refuse("the gate hash of the event is not the hash of the gate input shown")
-    if ev.get("policy_hash") != inp.get("policy_hash"):
-        _refuse("the policy hash of the event is not the one in the gate input")
+    policy = material.get("policy")
+    try:
+        bound_policy = canon.policy_hash(gate, policy) if isinstance(policy, dict) else None
+    except Exception:  # noqa: BLE001
+        bound_policy = None
+    if bound_policy is None:
+        _refuse("the material carries no policy the signer can hash")
+    if bound_policy != inp.get("policy_hash") or bound_policy != ev.get("policy_hash"):
+        _refuse("the policy hash differs from the policy shown (in the gate input or the event)")
     if "source_sha" in ev and not _same(ev["source_sha"], inp.get("source_sha")):
         _refuse("the source list of the event is not the one in the gate input")
+    texts = material.get("texts")
+    sections = inp.get("sections") or {}
+    if not isinstance(texts, dict) or set(texts) != set(sections):
+        _refuse("the material does not carry the text of every section the gate binds")
+    for sid, want in sections.items():
+        if not isinstance(texts[sid], str) or canon.section_hash(texts[sid]) != want:
+            _refuse(f"section {sid}: the text does not hash to the gate input's section hash")
 
 
 def _question(material: Mapping[str, Any], ev: Mapping[str, Any], workspace_id: str, log: str) -> None:
@@ -232,7 +351,7 @@ _PLAIN = {
     "approve": "approve the {gate} gate of {ticket}",
     "request_changes": "request changes on the {gate} gate of {ticket}",
     "verdict": "give the verdict {outcome} on {ticket}",
-    "answer": "answer {question} on {ticket}",
+    "answer": "answer {question} on {ticket} with option {option}",
     "close": "close {ticket} as {resolution}",
     "reopen": "reopen {ticket}",
     "grant": "issue a grant {grant}: scope {scope}, verbs {verbs}, {hours} h",
@@ -258,12 +377,23 @@ def confirm_word(prepared: Mapping[str, Any]) -> str:
     if op == "grant":
         return "GRANT"
     if op in _MEMBER_OPS:
-        return str(ev.get("person"))
+        return _clean(ev.get("person"))
     if op in _ADDON_OPS:
-        return str(ev.get("name"))
+        return _clean(ev.get("name"))
     if ticket is not None:
-        return str(ticket["key"])
+        return ticket_word(prepared)
     return op.upper()
+
+
+def uid_fragment(log: str) -> str:
+    """The last four characters of the signed log's uid: what the person types next to the (host-attested) key."""
+    return log[-4:]
+
+
+def ticket_word(prepared: Mapping[str, Any]) -> str:
+    """``KEY/FRAG``: the key is the host's word for the ticket (not proven in H5a), the fragment comes from the uid
+    of the log the signature names, so the typed word always names the ticket that is signed."""
+    return f"{_clean(prepared['material']['ticket']['key'])}/{uid_fragment(prepared['log'])}"
 
 
 def header(prepared: Mapping[str, Any], workspace: Callable[[str], tuple[str, str] | None]) -> list[str]:
@@ -276,15 +406,24 @@ def header(prepared: Mapping[str, Any], workspace: Callable[[str], tuple[str, st
     ev, ticket = prepared["events"][0], prepared["material"].get("ticket")
     fields = {k: _clean(v) for k, v in review.payload(ev).items()}
     fields.setdefault("gate", "verify")
-    fields["ticket"] = ticket["key"] if ticket else "the workspace"
+    fields.setdefault("option", "none (text only)")
+    fields["ticket"] = ticket_word(prepared) if ticket else "the workspace"
     try:
-        plain = _PLAIN.get(prepared["op"], prepared["op"] + " on {ticket}").format_map(_Default(fields))
+        plain = _PLAIN.get(prepared["op"], "{op} on {ticket}").format_map(_Default({**fields, "op": prepared["op"]}))
     except (KeyError, ValueError):
         plain = prepared["op"]
     o = prepared["origin"]
-    return [
+    lines = [
         f"workspace: {_clean(name)} ({_clean(prefix)}) {prepared['workspace_id']}",
-        f"op: {_clean(plain)}",
+        f"op: {_clean(prepared['op'])}: {_clean(plain)}",
+    ]
+    if ticket is not None:
+        lines.append(
+            f"ticket: {_clean(ticket['key'])} (ticket key per host, not proven) uid {prepared['log']} "
+            f"(signed; you type its last four: {uid_fragment(prepared['log'])})"
+        )
+    return [
+        *lines,
         f"requested by uid {int(o['uid'])} pid {int(o['pid'])} at {_clean(o['created_at'])}; "
         f"client {_clean(o['client'])} (self-declared, unverified)",
         f"fingerprint: {prepared['fingerprint']}",
@@ -297,14 +436,14 @@ class _Default(dict):
 
 
 def _summary(block: Mapping[str, Any]) -> str:
-    derived = block["derived"]
+    derived, typ = block["derived"], _clean(block["type"])
     if "ticket_key" in derived:
-        return f"{block['type']} on {derived['ticket_key']}"
+        return f"{typ} on {_clean(derived['ticket_key'])} (ticket key per host)"
     if "cert_device" in derived:
-        return f"{block['type']}: device {derived['cert_device']} of {derived['cert_person']}"
+        return f"{typ}: device {_clean(derived['cert_device'])} of {_clean(derived['cert_person'])}"
     if derived.get("sections"):
-        return f"{block['type']}: sections {', '.join(sorted(derived['sections']))}"
-    return str(block["type"])
+        return f"{typ}: sections {', '.join(_clean(k) for k in sorted(derived['sections']))}"
+    return typ
 
 
 def render(prepared: Mapping[str, Any], workspace: Callable[[str], tuple[str, str] | None]) -> str:
@@ -313,6 +452,7 @@ def render(prepared: Mapping[str, Any], workspace: Callable[[str], tuple[str, st
     ``before`` values are data, one ``| `` mark per line."""
     out = [*header(prepared, workspace), ""]
     material = prepared["material"]
+    events = prepared["events"]
     for i, block in enumerate(material["review"], 1):
         out.append(f"--- event {i} of {len(material['review'])}: {_summary(block)} ---")
         payload = block["payload"]
@@ -320,26 +460,66 @@ def render(prepared: Mapping[str, Any], workspace: Callable[[str], tuple[str, st
             if block["type"] == "grant.issued" and key == "secret_hash":
                 out.append("secret_hash: drawn by this signer after you confirm")
                 continue
-            out.append(f"{_clean(key)}: {_clean(payload[key])}")
+            label = " (consistency check against the gate input; host attestation)" if key == "source_sha" else ""
+            out.append(f"{_clean(key)}: {_clean(payload[key])}{label}")
+        if block["type"] in review.GATE_TYPES:
+            out.append(f"gate_gen: {int(events[i - 1]['gate_gen'])} (host attestation, checked by the host at submit)")
         for sid, sec in sorted((block["derived"].get("sections") or {}).items()):
-            out.append(f"section {_clean(sid)} ({sec['hash']}):")
+            out.append(f"section {_clean(sid)} ({_clean(sec['hash'])}):")
             out += ["| " + _clean(line) for line in sec["text"].split("\n")]
         for key, value in sorted(block["derived"].items()):
-            if key != "sections":
-                out.append(f"{key}: {_clean(value)}")
+            if key == "ticket_key":
+                out.append(f"ticket_key: {_clean(value)} (ticket key per host)")
+            elif key != "sections":
+                out.append(f"{_clean(key)}: {_clean(value)}")
     if material.get("kind") == "gate":
-        out.append(f"gate input of {material['gate']}: {_clean(material['input'])}")
+        out += _gate_content(material)
     if material.get("kind") == "question":
-        out.append(f"question: {_clean(material['question'])}")
+        q = material["question"]
+        out.append(f"question {_clean(q['id'])}:")
+        out += ["| " + _clean(line) for line in str(q.get("text", "")).split("\n")]
+        out += [f"option {_clean(o.get('key'))}: {_clean(o.get('label'))}" for o in q.get("options") or []]
     for path, value in sorted((material.get("before") or {}).items()):
         label = "current value according to the host, not signed" if not path.startswith(("ticket.", "body.")) else ""
         out.append(f"before {_clean(path)}{' (' + label + ')' if label else ''}:")
-        out += ["| " + _clean(line) for line in (value if isinstance(value, str) else _clean(value)).split("\n")]
+        text = value if isinstance(value, str) else canon.dumps(value).decode("utf-8")
+        out += ["| " + _clean(line) for line in text.split("\n")]
     for c in prepared.get("checks") or []:
         out.append(
             f"check: {_clean(c.get('repo'))} clean at {_clean(c.get('at'))} (attested by the worker, best effort)"
         )
-    return "\n".join(out) + "\n"
+    text = "\n".join(out) + "\n"
+    if any(unicodedata.category(c) in ("Cc", "Cf") and c != "\n" for c in text):  # every value went through _clean
+        _refuse("the review would carry a control character")
+    return text
+
+
+def _gate_content(material: Mapping[str, Any]) -> list[str]:
+    """What the gate hash binds, as P1's review shows it: every section text (checked against the gate input), the
+    acceptance criteria, the tasks with their verify commands, the links, the policy (its hash recomputed)."""
+    inp = material["input"]
+    out = [f"=== the {_clean(material['gate'])} gate binds ==="]
+    for sid in sorted(material["texts"]):
+        text = material["texts"][sid]
+        lines = text.split("\n") if text else []
+        out.append(f"--- section {_clean(sid)} ({len(lines)} lines) ---")
+        out += ["| " + _clean(line) for line in lines or ["(empty)"]]
+    fields = inp.get("fields") or {}
+    out.append(f"type {_clean(fields.get('ticket_type'))} size {_clean(fields.get('size'))}")
+    for a in fields.get("acceptance") or []:
+        out.append(f"{_clean(a.get('id'))}:")
+        out += ["| " + _clean(line) for line in str(a.get("text", "")).split("\n")]
+    for t in inp.get("tasks") or []:
+        out.append(f"{_clean(t.get('id'))}:")
+        out += ["| " + _clean(line) for line in str(t.get("text", "")).split("\n")]
+        out.append(f"   verify: {_clean((t.get('verify') or {}).get('cmd') or '(none)')}")
+    if fields.get("links") is not None:
+        out.append(f"links: {_clean(fields['links'])}")
+    for name, a in sorted((inp.get("artifacts") or {}).items()):
+        out.append(f"artifact {_clean(name)}: {_clean(a)}")
+    out.append(f"policy: {_clean(material['policy'])} (hash recomputed)")
+    out.append(f"gate input: {_clean(inp)}")
+    return out
 
 
 # --- signing -----------------------------------------------------------------------------------------------------
@@ -380,6 +560,24 @@ def sign(prepared: Mapping[str, Any], *, backend: Any, key_id: str, workspace_id
     return Signed(out, secret)
 
 
+def check_uploads(prepared: Mapping[str, Any], files: Mapping[str, Any] | None) -> None:
+    """Every artifact event must name bytes this client uploaded itself (``files``): its ``sha256`` and ``bytes`` are
+    recomputed here, so a host cannot swap the file and the event together."""
+    import base64
+    import binascii
+
+    uploaded = []
+    for spec in (files or {}).values():
+        try:
+            uploaded.append(base64.b64decode(spec["b64"], validate=True))
+        except (KeyError, TypeError, binascii.Error, ValueError):
+            _refuse("an uploaded file is not inline base64")
+    sums = {(canon.artifact_digest(b), len(b)) for b in uploaded}
+    for e in prepared["events"]:
+        if e["type"] in ("artifact.added", "artifact.replaced") and (e.get("sha256"), e.get("bytes")) not in sums:
+            _refuse(f"{_clean(e.get('name'))}: the artifact is not the file you sent")
+
+
 def run(
     call: Callable[..., Any],
     op: str,
@@ -406,6 +604,7 @@ def run(
     request_id = prepared["request"]["id"]
     try:
         check(prepared, workspace_id=workspace_id, person=person, device=device, auth=backend.auth)
+        check_uploads(prepared, files)
         if not confirm(render(prepared, workspace), confirm_word(prepared)):
             _refuse("not confirmed")
         signed = sign(prepared, backend=backend, key_id=key_id, workspace_id=workspace_id)

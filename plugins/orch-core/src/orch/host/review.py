@@ -10,7 +10,7 @@ the rule itself on what it received, never trusting a value the host computed.
 * :func:`derived` holds the values the signer computes itself, per event type (the frozen table of §0.8.1). It raises
   :class:`ReviewError` when the material does not back the event (a section text whose ``section_hash`` differs).
 * :func:`review_digest` is ``sha256(cj(material))``; :func:`fingerprint` the first 12 hex digits of
-  ``sha256(cj({review_digest, events}))``, each event without ``sig``, ``actor.device``, ``auth`` and, for
+  ``sha256(cj({op, review_digest, events}))``, each event without ``sig``, ``actor.device``, ``auth`` and, for
   ``grant.issued``, ``secret_hash`` (N2).
 """
 
@@ -25,6 +25,7 @@ from orch import canon
 
 __all__ = [
     "ENVELOPE",
+    "GATE_TYPES",
     "PERSON_AGENT_OPS",
     "events_fit",
     "person_op_types",
@@ -39,7 +40,10 @@ __all__ = [
 ]
 
 #: the envelope keys a review payload leaves out (§0.8.1)
-ENVELOPE = frozenset({"v", "id", "type", "actor", "auth", "hash_v", "roster_v", "based_on", "gate_gen", "sig"})
+ENVELOPE = frozenset({"v", "id", "type", "actor", "auth", "hash_v", "roster_v", "based_on", "sig"})
+#: the decision types whose ``gate_gen`` is an envelope key of the review: shown on its own line, labelled a host
+#: attestation (v1.5 "Bound hashes"); on any other type an unexpected ``gate_gen`` stays in the payload, so it is shown
+GATE_TYPES = frozenset({"gate.approved", "gate.changes_requested", "verdict.given"})
 _DECISIONS = frozenset({"gate.approved", "gate.changes_requested", "verdict.given", "question.answered"})
 _CERTS = {"member.added": "device_cert", "workspace.created": "device_cert", "device.added": "cert"}
 _SECTIONS = frozenset({"ticket.updated", "ticket.created", "question.asked"})
@@ -94,7 +98,8 @@ def sha256_cj(value: Any) -> str:
 
 def payload(event: Mapping[str, Any]) -> dict[str, Any]:
     """The event without the envelope keys: every other key, verbatim."""
-    return {k: copy.deepcopy(v) for k, v in event.items() if k not in ENVELOPE}
+    gate = event.get("type") in GATE_TYPES
+    return {k: copy.deepcopy(v) for k, v in event.items() if k not in ENVELOPE and not (gate and k == "gate_gen")}
 
 
 def _cert(event: Mapping[str, Any], field: str) -> dict[str, Any]:
@@ -170,6 +175,8 @@ def fingerprint_view(event: Mapping[str, Any]) -> dict[str, Any]:
     return out
 
 
-def fingerprint(digest: str, events: list[Mapping[str, Any]]) -> str:
-    body = {"review_digest": digest, "events": [fingerprint_view(e) for e in events]}
+def fingerprint(digest: str, events: list[Mapping[str, Any]], op: str) -> str:
+    """The first 12 hex digits of ``sha256(cj({op, review_digest, events}))``: the op is bound too (two ops emitting
+    the same ``ticket.updated`` have different fingerprints)."""
+    body = {"op": op, "review_digest": digest, "events": [fingerprint_view(e) for e in events]}
     return hashlib.sha256(canon.dumps(body)).hexdigest()[:12]

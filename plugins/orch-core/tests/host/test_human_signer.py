@@ -235,7 +235,7 @@ def test_an_unknown_payload_key_is_shown_in_the_review_text(human, served):
     p["events"][0]["future_field"] = "must be shown"
     p["material"]["review"] = [review.of(p["events"][0], p["material"])]
     p["review_digest"] = review.review_digest(p["material"])
-    p["fingerprint"] = review.fingerprint(p["review_digest"], p["events"])
+    p["fingerprint"] = review.fingerprint(p["review_digest"], p["events"], p["op"])
     human.check(p)  # consistent, so the signer shows it...
     text = signer.render(p, lambda w: ("Acme", "DEMO"))
     assert "future_field: must be shown" in text  # ...and every payload key is in the review
@@ -264,9 +264,9 @@ def test_verdict_pass_and_verdict_fail_on_one_gate_have_different_fingerprints()
         ev = {**base, "outcome": outcome}
         material = {"kind": "gate", "gate": "verify", "input": {}, "ticket": {"key": "DEMO-0001", "uid": UID}}
         material["review"] = [review.of(ev, material)]
-        prints.append(review.fingerprint(review.review_digest(material), [ev]))
+        prints.append(review.fingerprint(review.review_digest(material), [ev], "verdict"))
         # the events alone already differ: the fingerprint covers every payload field, not only the digest
-        prints.append(review.fingerprint(H1, [ev]))
+        prints.append(review.fingerprint(H1, [ev], "verdict"))
     assert prints[0] != prints[2] and prints[1] != prints[3]
 
 
@@ -283,10 +283,10 @@ def test_the_fingerprint_sets_aside_only_device_auth_sig_and_a_grants_secret_has
     assert view == {"type": "log.added", "actor": {"kind": "person", "id": alice.ref}, "text": "t", "secret_hash": H1}
     grant = {**ev, "type": "grant.issued"}
     assert "secret_hash" not in review.fingerprint_view(grant)
-    assert review.fingerprint(H1, [ev]) != review.fingerprint(H1, [{**ev, "secret_hash": H2}])
-    assert review.fingerprint(H1, [grant]) == review.fingerprint(H1, [{**grant, "secret_hash": None}])
+    assert review.fingerprint(H1, [ev], "log") != review.fingerprint(H1, [{**ev, "secret_hash": H2}], "log")
+    assert review.fingerprint(H1, [grant], "log") == review.fingerprint(H1, [{**grant, "secret_hash": None}], "log")
     bound = {**ev, "actor": {**ev["actor"], "device": None}, "auth": None}
-    assert review.fingerprint(H1, [ev]) == review.fingerprint(H1, [bound])  # binding keeps the fingerprint
+    assert review.fingerprint(H1, [ev], "log") == review.fingerprint(H1, [bound], "log")  # binding keeps the fingerprint
 
 
 def test_a_tampered_digest_or_fingerprint_is_refused(human, served):
@@ -310,8 +310,10 @@ def test_the_header_comes_from_the_signers_own_registry_and_the_word_from_the_op
         signer.render(p, lambda w: None)
     head = signer.header(p, lambda w: ("Acme", "DEMO"))
     assert head[0].startswith("workspace: Acme (DEMO) " + served.wid)
-    assert head[-1] == f"fingerprint: {p['fingerprint']}" and "unverified" in head[2]
-    assert signer.confirm_word(p) == key
+    assert head[-1] == f"fingerprint: {p['fingerprint']}" and any("unverified" in line for line in head)
+    assert head[1] == f"op: log: log on {key}/{p['log'][-4:]}"
+    assert head[2].startswith(f"ticket: {key} (ticket key per host, not proven) uid {p['log']}")
+    assert signer.confirm_word(p) == f"{key}/{p['log'][-4:]}"
     g = human.prepare("grant", {"hours": 1})
     assert signer.confirm_word(g) == "GRANT"
     assert "secret_hash: drawn by this signer" in signer.render(g, lambda w: ("Acme", "DEMO"))

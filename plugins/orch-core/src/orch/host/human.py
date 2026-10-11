@@ -35,7 +35,7 @@ from orch import canon
 from . import review
 from .errors import HostError
 from .outcomes import Planned, request_idem
-from .requests import EXPIRE_SECONDS, PENDING, RequestStore, new_request_id
+from .requests import EXPIRE_SECONDS, GRANT_EXPIRE_SECONDS, PENDING, RequestStore, new_request_id
 from .workspace import ok_result
 
 if TYPE_CHECKING:
@@ -224,10 +224,10 @@ class HumanOps:
             check_device(store, person, signer["device"], now, operate=_operate(sorted(types)))
         operation = ops.get(name)
         inner = dict(args["args"])
-        from orch.cli.main import _check_input
+        from orch.ops.inputs import check_input
 
         try:
-            _check_input(operation, inner, [])
+            check_input(operation, inner)
         except OrchError as e:
             raise host_error(e, operation) from None
         specs = self.backend._file_specs(operation, call.frame, inner)
@@ -275,7 +275,7 @@ class HumanOps:
             "state": "bound" if signer is not None else "prepared",
             "signer": signer,
             "created": now,
-            "expires": now + EXPIRE_SECONDS,
+            "expires": now + (GRANT_EXPIRE_SECONDS if name == "grant" else EXPIRE_SECONDS),
             "prepared": prepared,
             "extras": extras,
             "result": template,
@@ -311,7 +311,6 @@ class HumanOps:
                 {
                     "body": dict(c.body) if c.body else None,
                     "artifacts": {n: base64.b64encode(b).decode() for n, b in (c.artifacts or {}).items()} or None,
-                    "source_check": c.source_check,
                 }
             )
         material = self._material(store, log, events, capture, extras)
@@ -327,7 +326,7 @@ class HumanOps:
             "events": events,
             "material": material,
             "review_digest": digest,
-            "fingerprint": review.fingerprint(digest, events),
+            "fingerprint": review.fingerprint(digest, events, name),
             "origin": {
                 "uid": call.peer.uid,
                 "pid": int(call.session.credentials.pid),
@@ -347,8 +346,20 @@ class HumanOps:
             ticket = {"key": events[0]["key"], "uid": log}
         types = [e["type"] for e in events]
         if len(events) == 1 and types[0] in _GATE_TYPES:
+            from orch import canon as _canon
+
             gate = events[0].get("gate", "verify")
-            return {"kind": "gate", "gate": gate, "input": thaw(view.gates[gate].input), "ticket": ticket}
+            g = view.gates[gate]
+            inp = thaw(g.input)
+            texts = store.body_sections(view.uid)  # every section the gate binds, as the signer must show it (P1)
+            return {
+                "kind": "gate",
+                "gate": gate,
+                "input": inp,
+                "policy": _canon.canonical_policy(thaw(g.policy)),
+                "texts": {sid: texts.get(sid, "") for sid in sorted(inp.get("sections") or {})},
+                "ticket": ticket,
+            }
         if len(events) == 1 and types[0] == "question.answered":
             qid = events[0]["question"]
             question = next((thaw(q) for q in view.fields["questions"] if q["id"] == qid), None)
@@ -417,6 +428,8 @@ class HumanOps:
 
     def cancel(self, call: Call, requests: RequestStore, args: dict[str, Any]) -> dict[str, Any]:
         record = requests.load(args["request_id"], call.principal)
+        if record.get("submit"):  # its signed events are being appended: it ends submitted, never cancelled
+            return {"state": "submitted"}
         if record["state"] in PENDING:
             record = {**record, "state": "cancelled", "done_at": call.service.clock()}
             requests.write(record)
@@ -442,7 +455,10 @@ class HumanOps:
             raise
         try:
             result = redactor.obj(self._submit(call, args, begun))
-        except _Stored as stored:  # the request's stored failure: the same outcome state under this idem
+        except _Stored as stored:
+            # the request's stored failure (or a roll-forward that failed after an event landed): stored as failed
+            # under this idem whatever its retryability, so a retry replays it; a plain HostError below is a refusal
+            # before anything landed, which refuse() stores only when it is not retryable
             outcomes.fail(begun, stored.error)
             raise stored.error from None
         except HostError as exc:  # a refusal before any append
@@ -459,7 +475,15 @@ class HumanOps:
         record = requests.load(args["request_id"], call.principal)
         events = args["events"]
         sub = record.get("submit")
-        if record["state"] == "submitted" and sub and canon.dumps(sub["events"]) == canon.dumps(events):
+        same = bool(sub) and canon.dumps(sub["events"]) == canon.dumps(events)
+        if sub and record.get("outcome") is None:
+            # a submission interrupted between two appends (not a crash: the host kept serving). The signatures exist,
+            # so it is rolled forward exactly as at start, never judged again; other events get request_state
+            if not same:
+                raise HostError("human.request_state", "the request is being submitted with other events")
+            result = roll_forward(service, requests, record)
+            return {**result, "duplicate": True}
+        if record["state"] == "submitted" and same:
             outcome = record["outcome"]
             if outcome["state"] == "committed":
                 return {**outcome["result"], "duplicate": True}
@@ -483,7 +507,8 @@ class HumanOps:
             record = requests.expire(record)  # expiry is checked again at append, under the lock
             if record["state"] == "expired":
                 raise HostError("human.request_expired", "the request expired before it was appended")
-            self._judge(store, record, events)
+            git = service.capabilities().with_principal(call.principal).git
+            self._judge(store, record, events, git)
             log = record["prepared"]["log"]
             view = store.ticket(log) if log != "workspace" else None
             key = view.key if view is not None else None
@@ -491,7 +516,7 @@ class HumanOps:
             outcomes.plan(intent, [Planned(log, e["id"], e["type"], e["actor"]) for e in events], key)
             record = {**record, "submit": {"events": events, "outcome_key": intent.key}}
             requests.write(record)  # fsync before the first append: a crash after it is rolled forward at start
-            return self._append(service, requests, record)
+            return finish(service, requests, record)
 
     @staticmethod
     def _fresh_secret_hash(store: Any, value: Any) -> bool:
@@ -502,8 +527,9 @@ class HumanOps:
         return all(store.grant_secret_hash(g) != value for g in store.state.workspace.grants)
 
     @staticmethod
-    def _judge(store: Any, record: dict[str, Any], events: list[dict[str, Any]]) -> None:
-        """All events together with ``model.preview`` (signatures verified), plus the D58 source check."""
+    def _judge(store: Any, record: dict[str, Any], events: list[dict[str, Any]], git: Any) -> None:
+        """All events together with ``model.preview`` (signatures verified; the prepare-time judging in
+        :func:`orch.ops.prepare.judge` set signatures aside), plus the D58 recheck of every signed source list."""
         from orch.model import Refusal, preview
         from orch.store import StoreError
 
@@ -511,22 +537,42 @@ class HumanOps:
         state = store.state
         stamp = store.peek_stamp(log)
         seq, prev, at = stamp["seq"], stamp["prev"], stamp["at"]
-        for ev, extra in zip(events, record["extras"], strict=True):
+        for ev in events:
             probe = {**ev, "seq": seq, "prev": prev, "at": at}
             if "ws_seq" in stamp:
                 probe["ws_seq"] = stamp["ws_seq"]
             r = preview(state, probe, log=log)
             if isinstance(r, Refusal):
                 raise _store_error(StoreError.from_refusal(r))
-            if extra.get("source_check") and log != "workspace":
-                view = store.ticket(log)
-                now = [{"repo": e["repo"], "ref": e["ref"], "sha": e["sha"]} for e in view.source_list]
-                if now != ev.get("source_sha"):
-                    raise HostError("gate.stale", "the code changed since the request was prepared")
+            if "source_sha" in ev and log != "workspace":
+                recheck_sources(git, store, store.ticket(log), ev["source_sha"])
             state, seq, prev = r, seq + 1, canon.event_head(probe)
 
-    def _append(self, service: WorkspaceService, requests: RequestStore, record: dict[str, Any]) -> dict[str, Any]:
-        return finish(service, requests, record)
+
+def recheck_sources(git: Any, store: Any, view: Any, signed: list[dict[str, Any]]) -> None:
+    """D58 at submit, under the store lock: each linked repo's head, read again through the host's git reader (under
+    the caller's principal), must be the commit the decision signs, on the bound branch: ``gate.stale`` otherwise. A
+    reader that cannot answer fails closed (``observe.unavailable``). The working tree's cleanliness is the worker's
+    ``tree.check`` (H10), not checked here."""
+    from orch.ops.caps import CapabilityDenied
+
+    links = view.fields["links"]
+    repos = store.state.workspace.repos
+    for name in links["repos"]:
+        branch = links["branches"].get(name)
+        if not branch:
+            continue
+        try:
+            path = git.repo_path(store.root, repos, name)
+            head = git.head(path) if path is not None else None
+            identity = git.identity(path, name) if head is not None else None
+        except (CapabilityDenied, OSError) as exc:
+            raise HostError("observe.unavailable", f"{name}: git cannot be read now ({exc})") from None
+        if head is None or identity is None:
+            raise HostError("observe.unavailable", f"{name}: git cannot be read now")
+        entry = next((e for e in signed if e.get("repo") == identity), None)
+        if entry is None or entry.get("ref") != f"refs/heads/{branch}" or entry.get("sha") != head:
+            raise HostError("gate.stale", f"{name}: the code moved since the request was prepared; look again")
 
 
 class _Stored(Exception):
@@ -588,6 +634,50 @@ def finish(service: WorkspaceService, requests: RequestStore, record: dict[str, 
     return result
 
 
+def roll_forward(service: WorkspaceService, requests: RequestStore, record: dict[str, Any]) -> dict[str, Any]:
+    """Finish an interrupted submission (:func:`finish`) and give the outcome record of the ``human.submit`` that
+    started it the same terminal state. Returns the result or raises the stored error."""
+    try:
+        return finish(service, requests, record)
+    finally:
+        done = requests.read(record["id"]) or record
+        key = (done.get("submit") or {}).get("outcome_key")
+        if key and done.get("outcome"):
+            service.outcomes.settle(key, done["outcome"])
+
+
+def outcome_fields(service: WorkspaceService, record: dict[str, Any]) -> dict[str, Any] | str:
+    """The reconciler hook of the outcome store for a ``pending`` ``human.submit`` record some of whose events landed:
+    the request is rolled forward and its outcome becomes the record's terminal state (``keep`` if it cannot be)."""
+    requests = service.requests
+    rid = (record.get("args_normalised") or {}).get("request_id")
+    try:
+        req = requests.read(rid) if requests is not None and isinstance(rid, str) else None
+    except HostError:
+        req = None
+    if req is None or not req.get("submit"):
+        return "keep"
+    if req.get("outcome") is None:
+        try:
+            finish(service, requests, req)
+        except (_Stored, HostError):
+            pass
+        req = requests.read(rid) or req
+    outcome = req.get("outcome")
+    if not outcome:
+        return "keep"
+    return {
+        k: v
+        for k, v in (
+            ("step", outcome["state"]),
+            ("result", outcome.get("result")),
+            ("error", outcome.get("error")),
+            ("exit", outcome["exit"]),
+        )
+        if v is not None
+    }
+
+
 def recover(service: WorkspaceService) -> list[tuple[str, str]]:
     """At start, before anything is served: every request whose signed events were being appended is rolled forward
     (§0.8.1), and the outcome record of its ``human.submit`` gets the same terminal state. Returns
@@ -596,13 +686,9 @@ def recover(service: WorkspaceService) -> list[tuple[str, str]]:
     out = []
     for record in requests.unfinished():
         try:
-            finish(service, requests, record)
+            roll_forward(service, requests, record)
             state = "committed"
         except (_Stored, HostError):
             state = "failed"
-        record = requests.read(record["id"]) or record
-        key = (record.get("submit") or {}).get("outcome_key")
-        if key and record.get("outcome"):
-            service.outcomes.settle(key, record["outcome"])
         out.append((record["id"], state))
     return out

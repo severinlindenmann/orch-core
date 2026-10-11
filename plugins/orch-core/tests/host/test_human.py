@@ -511,7 +511,7 @@ def test_the_composite_prompt_fields_equal_describe_payload_of_the_signed_bytes(
         )
         assert res["key"] == key
         ((text, word),) = shown
-        assert word == key and "workspace: Acme (DEMO)" in text and "self-declared, unverified" in text
+        assert word == f"{key}/{s.lab.ws.uid(key)[-4:]}" and "workspace: Acme (DEMO)" in text and "self-declared, unverified" in text
         event = s.lab.ws.events(key)[-1]
         assert event["text"] == "via the composite"
         signing = canon.person_signing_bytes(s.wid, s.lab.ws.uid(key), event)

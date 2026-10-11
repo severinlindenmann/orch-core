@@ -19,19 +19,19 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-__all__ = ["Capture", "Captured", "judge"]
+__all__ = ["Capture", "Captured", "accepting", "judge"]
 
 
 @dataclass
 class Captured:
     """One event a handler would have signed or appended: its log, its payload (``type`` and the payload keys, without
-    envelope), the section texts and artifact bytes that go with it, and whether a D58 source check guards it."""
+    envelope), and the section texts and artifact bytes that go with it. A decision's D58 source check is not carried:
+    ``human.submit`` re-reads git itself for every signed ``source_sha`` (:func:`orch.host.human.recheck_sources`)."""
 
     log: str
     event: dict[str, Any]
     body: dict[str, str | None] | None = None
     artifacts: dict[str, bytes] | None = None
-    source_check: bool = False
 
 
 @dataclass
@@ -64,20 +64,26 @@ class Capture:
         self.events.append(captured)
 
 
+def accepting(state: Any) -> Any:
+    """``state`` judging every signature as valid: the unsigned events of a prepare (the signatures do not exist yet;
+    ``Store.append`` and ``human.submit`` verify them for real)."""
+    import dataclasses
+
+    from orch.ops.human import _AcceptAll
+
+    return dataclasses.replace(state, _ctx=dataclasses.replace(state._ctx, verifier=_AcceptAll(), admit=True))
+
+
 def judge(store: Any, log: str, payload: dict[str, Any], capture: Capture) -> None:
     """Judge one unsigned person event (``payload``: its type and payload keys) as ``Store.append`` will, signature
     aside; raises the store's refusal."""
-    import dataclasses
-
     from orch.identity import new_ulid
     from orch.model import Refusal, preview
-    from orch.ops.human import _AcceptAll
     from orch.store import StoreError
 
     store.refresh()
     stamp = store.peek_stamp(log)
-    state = store.state
-    state = dataclasses.replace(state, _ctx=dataclasses.replace(state._ctx, verifier=_AcceptAll(), admit=True))
+    state = accepting(store.state)
     probe = {
         "v": 2,
         "id": new_ulid(),

@@ -272,6 +272,8 @@ class OutcomeStore(IntentStore):
         self.reconciler = reconciler
         self.max_records = max_records
         self.wait_seconds = wait_seconds
+        #: ``fn(record) -> fields | "keep"`` for a pending ``human.submit`` record some of whose events landed (H5a)
+        self.roll_forward: Callable[[dict[str, Any]], dict[str, Any] | str] | None = None
         #: key -> (principal, step, done_at); every mutation holds ``_lock``
         self._idx: dict[str, _Entry] = {}
         self._counts: dict[str, int] = {}
@@ -621,8 +623,8 @@ class OutcomeStore(IntentStore):
                 error = HostError("internal", f"{record['op']} landed but its result could not be rebuilt")
                 return {"step": "failed", "error": error.error(), "exit": error.exit}
             return {"step": "committed", "result": result, "exit": 0}
-        if landed and record["op"] in NO_PARTIAL:
-            return "keep"  # human.submit: H5a rolls it forward
+        if landed and record["op"] in NO_PARTIAL:  # human.submit: rolled forward (H5a), never partial
+            return self.roll_forward(record) if self.roll_forward is not None else "keep"
         if landed:
             error = HostError(
                 "invalid.input", f"an earlier attempt of this call was interrupted after {len(landed)} event(s)"

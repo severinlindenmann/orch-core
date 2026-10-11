@@ -377,12 +377,14 @@ class RegistryBackend:
 
     def _step8(self, call: Call, operation: Operation, redactor: Redactor) -> tuple[dict[str, Any], Any, dict]:
         """Step 8: the args against the schema, the host's own refusals, the session label, the ``files``."""
-        from orch.cli.main import _SESSION, _check_input
+        from orch.cli.main import _SESSION
+        from orch.cli.render import redact
         from orch.ops.errors import OrchError
+        from orch.ops.inputs import check_input
 
         args = dict(call.frame["args"])
         try:
-            _check_input(operation, args, redactor.secrets)
+            check_input(operation, args, lambda text: redact(text, redactor.secrets)[:200])
         except OrchError as e:
             raise host_error(e, operation) from None
         for arg, why in HOST_REFUSED_ARGS.get(operation.name, {}).items():

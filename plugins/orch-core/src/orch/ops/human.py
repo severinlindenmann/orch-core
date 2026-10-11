@@ -24,7 +24,6 @@ here lets a call skip the prompt.
 
 from __future__ import annotations
 
-import dataclasses
 import os
 from collections.abc import Callable
 from pathlib import Path
@@ -136,9 +135,9 @@ class Human:
     """One human operation: the person, the backend, the checks, the signature, the append."""
 
     def __init__(self, ctx: Context, op: str) -> None:
-        if ctx.grant is not None or (not ctx.human_presence and getattr(ctx, "prepare", None) is None):
+        if ctx.grant is not None or (not ctx.human_presence and ctx.prepare is None):
             raise OrchError("human_only", "a person's own terminal is needed; an agent never gets this")
-        if getattr(ctx, "prepare", None) is None:  # human.prepare (H5a) signs nothing here: the signing client does
+        if ctx.prepare is None:  # human.prepare (H5a) signs nothing here: the signing client does
             ctx.caps.signer.require()
         self.ctx = ctx
         self.call = Call.of(ctx, op)
@@ -168,13 +167,13 @@ class Human:
     @property
     def auth(self) -> str:
         """The ``auth`` of the events: the backend's, or (``human.prepare``) the bound signer's."""
-        capture = getattr(self.ctx, "prepare", None)
+        capture = self.ctx.prepare
         return capture.probe_auth if capture is not None else self.backend.auth  # type: ignore[return-value]
 
     def who(self) -> tuple[str, str]:
         """``(person, device)`` of the key on this machine, from the replayed device roster. Under ``human.prepare``
         the person the host mapped, judged under one of their valid devices (:class:`orch.ops.prepare.Capture`)."""
-        capture = getattr(self.ctx, "prepare", None)
+        capture = self.ctx.prepare
         if capture is not None:
             return capture.person, capture.probe_device
         if self._who is None:
@@ -248,9 +247,7 @@ class Human:
         writes nothing), then refuse (``observe.unavailable``) unless each linked working copy is on the bound branch at
         the bound commit and clean. Returns the fresh view."""
         problems: list[str] = []
-        if (
-            not self.ctx.dry_run and getattr(self.ctx, "prepare", None) is None
-        ):  # prepare appends nothing (the host's branch.pushed too)
+        if not self.ctx.dry_run and self.ctx.prepare is None:  # prepare appends nothing (the host's branch.pushed too)
             self.ctx.caps.git.observe(self.store, view.uid, problems)
             view = self.store.ticket(view.uid) or view
         problems += self._tree_problems(view, source_sha(view))
@@ -355,8 +352,9 @@ class Human:
         person, device = self.who()
         self.store.refresh()
         stamp = self.store.peek_stamp(log)
-        state = self.store.state
-        state = dataclasses.replace(state, _ctx=dataclasses.replace(state._ctx, verifier=_AcceptAll(), admit=True))
+        from orch.ops.prepare import accepting
+
+        state = accepting(self.store.state)
         probe = self._envelope(event, log, person, device)
         probe.update(sig="x", seq=stamp["seq"], prev=stamp["prev"], at=stamp["at"])
         if "ws_seq" in stamp:
@@ -405,7 +403,7 @@ class Human:
         """``precheck``, then (unless ``--dry-run``) show ``review`` on the terminal and ask the person to confirm, sign
         and append; ``None`` for a dry run. The word the person types comes from what is signed: the verified key of
         the ticket log, or the ``name`` of a workspace event (``addon.granted``); no such word is a refusal."""
-        capture = getattr(self.ctx, "prepare", None)
+        capture = self.ctx.prepare
         grant_probe = capture is not None and event.get("type") == "grant.issued" and event.get("secret_hash") is None
         # a prepared grant has no secret_hash (the signer draws the secret, F1): the model judges it with a placeholder
         self.precheck({**event, "secret_hash": "sha256:" + "0" * 64} if grant_probe else event, log)
@@ -414,7 +412,7 @@ class Human:
         if capture is not None:
             from orch.ops.prepare import Captured
 
-            capture.add(Captured(log, dict(event), source_check=precommit is not None))
+            capture.add(Captured(log, dict(event)))  # submit re-reads git itself (D58)
             return None
         if review is not None:
             if log == "workspace":  # no ticket key: the name the event itself carries, never a word the caller picks

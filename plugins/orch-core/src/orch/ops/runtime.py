@@ -431,13 +431,10 @@ class Projection:
         self._at, self._ws_seq = stamp["at"], stamp["ws_seq"]
         self._state = store.state
         self.capture = call.ctx.prepare  # human.prepare (H5a): judged as the person, recorded, never appended
-        if self.capture is not None:
-            import dataclasses
+        if self.capture is not None:  # the signature does not exist yet: everything else is judged as the store will
+            from orch.ops.prepare import accepting
 
-            from orch.ops.human import _AcceptAll
-
-            st = self._state  # the signature does not exist yet: everything else is judged as the store will
-            self._state = dataclasses.replace(st, _ctx=dataclasses.replace(st._ctx, verifier=_AcceptAll(), admit=True))
+            self._state = accepting(self._state)
         self._noted = call.notes.get(self.uid)["base"]  # read once for the whole plan
         self.planned: list[Planned] = []
         self._probes: list[dict[str, Any]] = []
@@ -515,11 +512,9 @@ class Projection:
 
         state = self.call.store.state
         if self.capture is not None:
-            import dataclasses
+            from orch.ops.prepare import accepting
 
-            from orch.ops.human import _AcceptAll
-
-            state = dataclasses.replace(state, _ctx=dataclasses.replace(state._ctx, verifier=_AcceptAll(), admit=True))
+            state = accepting(state)
         for probe in self._probes:
             r = preview(state, probe, log=self.uid)
             if isinstance(r, Refusal):

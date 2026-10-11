@@ -18,6 +18,7 @@ EVENT_ACTORS: dict[str, frozenset[str]] = {
         "ticket.submitted": "A",
         "ticket.closed": "P",
         "ticket.reopened": "P",
+        "ticket.moved": "P",
         "visibility.changed": "P",
         "people.changed": "P",
         "policy.changed": "P",

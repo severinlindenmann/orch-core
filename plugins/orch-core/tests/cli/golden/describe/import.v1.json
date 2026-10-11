@@ -89,6 +89,16 @@
         ]
       },
       {
+        "code": "custody.no_batch",
+        "exit": 3,
+        "retryable": false,
+        "hint": "use a passphrase device key (orch init sets one up)",
+        "fix": [
+          "orch",
+          "help"
+        ]
+      },
+      {
         "code": "custody.no_key",
         "exit": 3,
         "retryable": false,

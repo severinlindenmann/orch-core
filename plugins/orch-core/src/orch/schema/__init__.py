@@ -595,6 +595,7 @@ def _ev_policy(obj: dict[str, Any], actor: dict[str, Any]) -> None:
 
 def _ev_addon_granted(obj: dict[str, Any], actor: dict[str, Any]) -> None:
     seen: set[str] = set()
+    headings = set(CORE_HEADING_KEYS)
     for i, sec in enumerate(obj["sections"]):
         if sec["id"].split(".", 1)[0] != obj["name"]:
             raise SchemaError(
@@ -603,6 +604,9 @@ def _ev_addon_granted(obj: dict[str, Any], actor: dict[str, Any]) -> None:
         if sec["id"] in seen:
             raise SchemaError("event", _pointer(["sections", i, "id"]), f"duplicate section {sec['id']!r}")
         seen.add(sec["id"])
+        if sec["heading_key"] in headings:
+            raise SchemaError("event", _pointer(["sections", i, "heading_key"]), "heading key is taken")
+        headings.add(sec["heading_key"])
     for fname, f in obj["fields"].items():
         if f["type"] == "integer" and "min" in f and "max" in f and f["min"] > f["max"]:
             raise SchemaError("event", _pointer(["fields", fname, "min"]), "min is greater than max")

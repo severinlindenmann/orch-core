@@ -389,16 +389,17 @@ class Human:
         *,
         precommit: Callable[[], None] | None = None,
         review: list[str] | None = None,
-        expect: str | None = None,
     ) -> Any:
         """``precheck``, then (unless ``--dry-run``) show ``review`` on the terminal and ask the person to confirm, sign
-        and append; ``None`` for a dry run."""
+        and append; ``None`` for a dry run. The word the person types comes from what is signed: the verified key of
+        the ticket log, or the ``name`` of a workspace event (``addon.granted``); no such word is a refusal."""
         self.precheck(event, log)
         if self.ctx.dry_run:
             return None
         if review is not None:
-            if log == "workspace":  # a workspace event has no ticket key: the caller names what the person types
-                word = expect
+            if log == "workspace":  # no ticket key: the name the event itself carries, never a word the caller picks
+                name = event.get("name")
+                word = name if isinstance(name, str) and name else None
             else:
                 view = self.store.ticket(log)  # the key the person types is the verified key of the log being signed
                 word = view.key if view is not None else None

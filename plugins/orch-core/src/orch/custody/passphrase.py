@@ -444,51 +444,53 @@ class PassphraseBackend:
         the ``digest`` of what the batch will sign and ``fields`` describing it; hold the unlocked key in this process
         for the ``with`` block only; yield ``sign(payload)``, which refuses every payload ``sign`` would refuse. The
         scalar is zeroised when the block ends, however it ends. ``labels`` limits what the key signs to those domain
-        labels (``orch import v1`` passes the ticket-event label only), on top of the role's own. For the length of
-        the block core dumps are off and a debugger cannot attach (:func:`_harden`). Per-signature prompts (D65) stay
-        the rule everywhere else: only a caller that shows the person the whole batch first may use this (a test
-        checks that only ``ops/import_run.py`` calls it)."""
+        labels (``orch import v1`` passes the ticket-event label only), on top of the role's own. From before the
+        passphrase prompt to the end of the block, core dumps are off and a debugger cannot attach (:func:`_harden`).
+        Per-signature prompts (D65) stay the rule everywhere else: only a caller that shows the person the whole
+        batch first may use this (a test checks that only ``ops/import_run.py`` calls it)."""
         if not labels or not all(label_allowed(lb, ROLE_LABELS["device"]) for lb in labels):
             raise CustodyError("an unlocked batch names the device labels it may sign")
         check_key_id(key_id)
         doc, header, params, salt, nonce, ct = self._read(key_id)
         request = PassphraseRequest("batch", key_id, action if isinstance(action, str) else "", digest, fields)
-        pw = _passphrase_bytes(self._provider(request))
-        if not pw:
-            raise WrongPassphrase("empty passphrase")
-        derived = bytearray(_derive(pw, salt, params))
-        scalar = bytearray()
-        key = None
+        restore = _harden()  # before the prompt: the passphrase, the derived key and the scalar are all covered
         try:
+            pw = _passphrase_bytes(self._provider(request))
+            if not pw:
+                raise WrongPassphrase("empty passphrase")
+            derived = bytearray(_derive(pw, salt, params))
+            scalar = bytearray()
+            key = None
             try:
-                scalar = bytearray(crypto.aes_gcm_open(bytes(derived), nonce, ct, self._aad(header)))
-            except InvalidTag:
-                raise WrongPassphrase("wrong passphrase") from None
-            key = crypto.private_key_from_scalar(int.from_bytes(scalar, "big"))
-            if crypto.public_bytes(key) != crypto.unb64u(doc["pub"], crypto.PUB_LEN):
-                raise CustodyError("key file does not match its public key")
-            allowed = labels
-            live = [key]
+                try:
+                    scalar = bytearray(crypto.aes_gcm_open(bytes(derived), nonce, ct, self._aad(header)))
+                except InvalidTag:
+                    raise WrongPassphrase("wrong passphrase") from None
+                key = crypto.private_key_from_scalar(int.from_bytes(scalar, "big"))
+                if crypto.public_bytes(key) != crypto.unb64u(doc["pub"], crypto.PUB_LEN):
+                    raise CustodyError("key file does not match its public key")
+                allowed = labels
+                live = [key]
 
-            def sign(payload: bytes) -> bytes:
-                if not live:
-                    raise CustodyError("the key is locked again")
-                if not label_allowed(payload, allowed):
-                    raise CustodyError(
-                        f"a {doc['role']} key does not sign this payload (unknown label or another role's label)"
-                    )
-                return crypto.sign(live[0], payload)
+                def sign(payload: bytes) -> bytes:
+                    if not live:
+                        raise CustodyError("the key is locked again")
+                    if not label_allowed(payload, allowed):
+                        raise CustodyError(
+                            f"a {doc['role']} key does not sign this payload (unknown label or another role's label)"
+                        )
+                    return crypto.sign(live[0], payload)
 
-            restore = _harden()
-            try:
-                yield sign
+                try:
+                    yield sign
+                finally:
+                    live.clear()
             finally:
-                live.clear()
-                restore()
+                _zeroise(derived)
+                _zeroise(scalar)
+                key = None  # noqa: F841
         finally:
-            _zeroise(derived)
-            _zeroise(scalar)
-            key = None  # noqa: F841
+            restore()
 
     def presence(self) -> str:
         return self.auth or "none"

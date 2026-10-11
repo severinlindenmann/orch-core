@@ -188,3 +188,52 @@ def test_the_scripted_session_notes_hold_claims_and_decisions(ws, cli, n):
     claimed(cli)
     doc = json.loads(next((ws.root / ".state" / "sessions").glob("*.notes.json")).read_text())
     assert doc["claims"] == [ws.uid("1")] and "decided" in next(iter(doc["tickets"].values()))
+
+
+def test_the_claim_hint_looks_at_a_capped_number_of_tickets(ws, cli, monkeypatch):
+    """#359 review: a claimless status must stay cheap however many open tickets are blocked."""
+    from orch.ops import views
+
+    for t in ("A", "B", "C", "D"):
+        cli("new", t)
+    for ref in ("2", "3"):  # the best two open candidates wait for DEMO-0001, which another session works on
+        r = cli("set", ref, "blocked_by=DEMO-0001")
+        assert r.code == 0, r.err
+    assert Cli(ws, session=OTHER)("claim", "1").code == 0
+    monkeypatch.setattr(views, "CLAIM_HINT_SCAN", 2)
+    seen = []
+    real = views.verified
+
+    def counting(c, uids, chunk=40):
+        uids = list(uids)
+        seen.append(len(uids))
+        return real(c, uids, chunk)
+
+    monkeypatch.setattr(views, "verified", counting)
+    assert last(cli("status")) == "next: orch next"  # the free DEMO-0004 is beyond the cap: the command that looks
+    assert seen == [2]
+    assert last(cli("next")) == "next: orch claim DEMO-0004"
+    monkeypatch.setattr(views, "CLAIM_HINT_SCAN", 3)
+    assert last(cli("status")) == "next: orch claim --next"
+
+
+def test_claim_hint_stops_dependency_loading_at_its_budget(ws, cli, monkeypatch):
+    from orch.ops import views
+    from orch.store import Store
+
+    for i in range(8):
+        cli("new", f"T{i}")
+    for i in range(1, 8):
+        assert cli("set", str(i), f"blocked_by=DEMO-{i + 1:04d}").code == 0
+    monkeypatch.setattr(views, "CLAIM_HINT_SCAN", 1)
+    monkeypatch.setattr(views, "CLAIM_HINT_WORK", 3)
+    reads = []
+    real = Store._spend_load
+
+    def spend(store):
+        real(store)
+        reads.append(1)
+
+    monkeypatch.setattr(Store, "_spend_load", spend)
+    assert last(cli("status")) == "next: orch next"
+    assert len(reads) <= 3

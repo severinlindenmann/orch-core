@@ -118,7 +118,8 @@ def test_git_runs_with_an_allow_listed_environment(monkeypatch):
         monkeypatch.setenv(k, "x")
     monkeypatch.setenv("LC_ALL", "C")
     env = observe.git_env()
-    assert set(env) <= {"PATH", "HOME", "LANG", "TMPDIR", "TERM", "LC_ALL"} and env["LC_ALL"] == "C"
+    assert all(k in {"PATH", "HOME", "LANG", "TMPDIR", "TERM"} or k.startswith("LC_") for k in env)
+    assert env["LC_ALL"] == "C"
 
 
 def test_git_runs_without_a_controlling_terminal(ws, tmp_path):

@@ -9,7 +9,7 @@ from __future__ import annotations
 import copy
 import dataclasses
 import heapq
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any
@@ -86,6 +86,7 @@ def replay(
     expected_workspace_id: str,
     expected_genesis: str | None = None,
     verb_events: Mapping[str, Iterable[str]] | None = None,
+    invalidations: tuple[str, Callable[[str, str], None]] | None = None,
 ) -> State:
     """Derive the state from the parsed events of the workspace log and the ticket logs (schema-valid).
 
@@ -95,6 +96,7 @@ def replay(
     this order is the append order. ``expected_workspace_id`` and ``expected_genesis`` are the store's pins (from
     ``config.json`` and the host state dir); a genesis that does not match is refused before it is trusted.
     ``now`` is a timestamp string (the model reads no clock); it decides what is live in the views.
+    ``invalidations`` optionally observes only new pending voids for one ticket as ``(gate, event type)``.
     Events that fail authorization are absent for state and reported (``workspace.invalid``,
     the tickets' ``frozen``); a broken chain stops that log (``chain_errors``).
     """
@@ -114,8 +116,17 @@ def replay(
             for uid, events in ticket_logs.items()
         ),
     ]
+    pending: dict[str, set[str]] = {}
     for _, log, e in heapq.merge(*streams, key=lambda x: x[0]):
         apply_event(core, log, e, ctx, commit=True)
+        if invalidations is not None:
+            uid, note = invalidations
+            ticket = core.tickets.get(uid)
+            if ticket is not None:
+                for gate, value in ticket.gates.items():
+                    if value.pending_void - pending.get(gate, set()):
+                        note(gate, e["type"])
+                    pending[gate] = set(value.pending_void)
     return _build(core, ctx, now)
 
 

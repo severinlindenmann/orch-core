@@ -457,7 +457,7 @@ agent; **D** an addon; **H** the host only. Types marked D58–D60 are new with 
 | `gate.approved` | P | `gate`: `requirements`, `plan` or `code`; `gate_gen`: int; `hash`: gate hash; `policy_hash`; `source_sha?`: source list | `source_sha` only and always on `code` (D59). |
 | `gate.changes_requested` | P | `gate`: `requirements`, `plan` or `code`; `gate_gen`; `hash`; `policy_hash`; `text`: str | |
 | `verdict.given` | P | `outcome`: `pass` or `fail`; `gate_gen`; `hash`: verify gate hash; `policy_hash`; `source_sha`: source list; `text?`: str | The verify gate's decision. `text` is required on `fail`. `source_sha` is D58. |
-| `gate.invalidated` | H | `gate`: gate; `cause`: `new_commits`, `content_changed`, `policy_changed`, `member_changed`, `device_compromised` or `conflict_resolved`; `voided`: [event id] | **D58.** A record only: it raises no generation and changes no status. `voided` is derived (§5.11). `conflict_resolved` is D53 (P2). |
+| `gate.invalidated` | H | `gate`: gate; `cause`: `new_commits`, `content_changed`, `policy_changed`, `member_changed`, `device_compromised`, `restored` or `conflict_resolved`; `voided`: [event id] | **D58.** A record only: it raises no generation and changes no status. `voided` is derived (§5.11). `restored` records approvals voided by a ticket or workspace `restore`. `conflict_resolved` is D53 (P2). |
 | `branch.pushed` | H | `repo_name`: repo name; `repo_id`: repo identity; `ref`: str; `sha`: git commit id; `before`: {`repo_id`, `ref`, `sha`} or null | **D58.** Appended whenever any of (`repo_id`, `ref`, `sha`) of a linked repo differs from the source-list projection, including the first observation (`before: null`). Never taken from an agent. |
 | `artifact.added` | A, U | file: `name`, `kind`, `sha256`: hash, `bytes`: int; or addon: `name`, `kind`, `addon`, `ref`: str; both: `task?`, `ac?`, `label?`: str | `kind` `feedback` only from a person. Unattended: no `ac`, `task`. Refused on `done`/`closed`. |
 | `artifact.replaced` | A | as `artifact.added`, plus `replaces`: hash | Same `name`; `replaces` is the old digest. |
@@ -857,7 +857,9 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
   - accepted if its `n` is higher and no `seq` is lower than in H (gaps in `n` are normal);
   - ignored, without an alarm, if its `n` is lower and no `seq` is higher than in H (a stale delivery);
   - `chain.diverged` in every other case: the same `n` with a different `o`; a log whose `seq` equals H's but whose
-    `head` differs; a higher `n` with a lower `seq`; a lower `n` with a higher `seq`; or a uid of H that is missing.
+    `head` differs; a higher `n` with a lower `seq`; a lower `n` with a higher `seq`; or a higher `n` that lacks a uid of H.
+    A lower `n` that lacks a uid of H is a stale delivery and is ignored, provided no `seq` is higher.
+    A lower `n` that names a uid H lacks has a higher `seq` for it (H's counts as 0), so it is `chain.diverged`.
   - **After a restore:** a checkpoint with lower `seq`s is accepted only with the owner-signed `restore` event,
     verified under the owner's device, under the rule below. H is then replaced.
 
@@ -1126,16 +1128,19 @@ executable, so `entry.cmd[0]` is a program found on `PATH` or an absolute path, 
 **Grant.** `orch addon grant NAME` (a person, owner only, user presence) builds the `addon.granted` event from the
 package bytes it read. `version` and `capabilities` are the manifest's (the owner grants exactly what the manifest
 declares, sorted, never a subset). `fields` are the manifest's fields without `show` and `filter` (type, limits,
-`set_by`, `gate`), `sections` are all its sections named `<name>.<id>` with their `types` (and `gate` when it has
-one), `artifact_kinds` its kinds, all sorted. `package_sha256` is the digest above. Replay uses only the event, never
-a manifest. A new version, a changed byte or a changed capability is a new grant.
+`set_by`, `gate`), `sections` are all its sections named `<name>.<id>` with their `types`, `heading_key` (the
+heading casefolded, letters and digits only), and `gate` when it has one; `artifact_kinds` its kinds, all sorted.
+`package_sha256` is the digest above. Replay uses only the event, never a manifest. A new version, a changed byte
+or a changed capability is a new grant.
 
 Before the passphrase the owner reads, on the terminal, and types the addon's name to go on: the version, the full
 package digest, `entry.cmd`, the capabilities, the `agents_md` line as an agent would see it, the `needs` rules'
 `for` and `text`, every field with its type, `set_by` and bindings, the sections and kinds, and on a re-grant the
 previous version and digest and what changed in capabilities, fields, sections and kinds (a new digest with nothing
 else changed is said to be the package bytes only). Text from the package is shown as escaped printable ASCII.
-`orch addon grant` refuses a section heading whose key (below) equals the key of a heading of another granted addon.
+The host and replay refuse a section heading whose key equals one of another granted, unpurged addon, including
+a disabled addon. A re-grant replaces its own heading keys. Replay checks the signed `heading_key` declarations
+without reading packages; a collision is refused as an invalid addon value (§10.4a).
 
 **Replay checks every addon write against the grant.** An event that sets `ticket.addons.<a>.<f>` is refused unless
 `a` is granted, enabled and not purged (an unknown addon), `f` is declared in the grant's `fields` (an unknown field),
@@ -1144,7 +1149,9 @@ matches `set_by` at the event's position: an agent needs `agent` and a grant, an
 as `actor.id` (an addon actor is refused in P1), a person needs to hold one of the tokens on that ticket (§5.9; the
 tokens `agent` and `addon` are never held by a person), and the host writes no addon field. An addon section is
 refused unless the grant declares it for the ticket's type, and an addon artifact unless its `kind` is in
-`artifact_kinds`. The codes are in §10.4a. The host calls the same function before it appends. The gate hash binds
+`artifact_kinds`. Addon sections have no `set_by`: whoever may write the core sections of a ticket may write an
+addon section the grant declares for its type, as with core sections. The codes are in §10.4a. The host calls the
+same function before it appends. The gate hash binds
 only the declarations that have a `gate` (§5.7).
 
 **Disable, purge, re-grant.** `orch addon disable` and `orch addon purge` name an addon that was granted, and
@@ -1499,6 +1506,11 @@ these codes; they are the stable `error.code` strings of §10.4 for these refusa
 | `question.reask` | §5.2 an unattended session re-asks an existing id |
 | `answer.not_allowed` | §5.4.1 the signer is not the addressee, an owner or a maintainer |
 | `answer.bad_option` | §5.4.1 neither option nor text, or an option key that doesn't exist |
+
+Next to these, the key custody has its own refusals (exit 3, not retryable, not model codes): `custody.no_prompt`,
+`custody.no_key` and `custody.wrong_passphrase` (§10.8), and `custody.no_batch`: `orch import v1` signs its reviewed
+batch under one unlock (§14.2), and a key backend that can only ask per signature cannot do that, so the import is
+refused before anything is signed (declared by `import.v1`).
 
 ### 10.5 Example: a whole task loop, as the agent sees it
 
@@ -1858,7 +1870,7 @@ Every string in `ticket.json`, `body.md` and events:
 | verdict outcome | `pass`, `fail` |
 | close resolution | `wont_do`, `duplicate`, `obsolete`, `other` |
 | claim release reason | `released`, `handoff`, `expired`, `grant_ended`, `member_removed`, `ticket_done`, `ticket_closed` |
-| `gate.invalidated` cause | `new_commits` (D58), `content_changed`, `policy_changed`, `member_changed`, `device_compromised`, `conflict_resolved` (D53, P2) |
+| `gate.invalidated` cause | `new_commits` (D58), `content_changed`, `policy_changed`, `member_changed`, `device_compromised`, `restored`, `conflict_resolved` (D53, P2) |
 | `device.revoked` reason | `compromised`, `lost`, `retired` |
 | device scope levels needed | `decide` for every person event; also `operate` for member, policy, settings, grant, addon and `restore` events; `drop:` certificates never |
 | `projection.repaired` cause | `external_edit`, `projection_mismatch`, `keys_mismatch` |
@@ -2188,7 +2200,7 @@ replay gives:
 | a line that is not the canonical bytes, a bad `prev`, `seq`, `ws_seq`, `host_sig`, or a person signature | `chain.broken` (log, `seq`, cause) |
 | a log shorter than, or with another head than, a signed checkpoint | `chain.diverged` |
 | a checkpoint that is unreadable or not signed by the host key | `checkpoint.bad` |
-| a missing workspace or ticket checkpoint: an **error** where this machine holds the workspace key (it writes one after every append, so someone deleted it), a warning on a clone | `checkpoint.missing` |
+| a missing workspace or ticket checkpoint: an **error** where this machine holds the workspace key (it writes one after every append; deletion or a crash can leave one missing), a warning on a clone | `checkpoint.missing`; `doctor --repair` can write a missing ticket checkpoint where the host holds the key and the log verifies |
 | a ticket folder with no event log; a file in `artifacts/` the log does not name | `ticket.nolog`, `artifact.unlisted` (warning) |
 | the genesis pin missing (warning), or different | `pin.missing`, `trust.genesis_mismatch` |
 | a device revocation the host noted that the log does not hold | `revocation.missing` |
@@ -2207,6 +2219,8 @@ chain, a signature or a checkpoint: an owner-signed `restore` is the only repair
 
 `orch check` is the fast subset (chain, projections, checkpoints missing where the host key is, store reports, instructions) and exits 5 on any finding, with the first line `check: N problems`; it does not heal.
 `orch check --staged` is the commit check for a git pre-commit hook (`orch check --staged || exit 1`): it also refuses
-staged files under `.state/`, key files, files holding a grant secret, a symlink or submodule where the workspace keeps a file, a deleted log or projection, a staged `ticket.json`, `body.md`, artifact,
-`config.json` or `keys.jsonl` that is not what the log says, and a staged log that is not a prefix of the verified one
-(`commit.state`, `commit.secret`, `commit.edited`, `commit.forged`, `commit.link`, `commit.deleted`). The hook installer stays with C28 (P2).
+staged files under `.state/`, key files, files holding a grant secret, a symlink or submodule where the workspace keeps a file, a deleted log, projection or artifact, a staged `ticket.json`, `body.md`, artifact,
+`config.json` or `keys.jsonl` that is not what the log says, a staged log that is not a prefix of the verified one,
+and any other file under `tickets/` or `events/` (for example `events/other.jsonl`, or a file in a ticket folder that
+is not `ticket.json`, `body.md`, `events.jsonl` or under `artifacts/`)
+(`commit.state`, `commit.secret`, `commit.edited`, `commit.forged`, `commit.link`, `commit.deleted`, `commit.unknown`). The hook installer stays with C28 (P2).

@@ -9,7 +9,8 @@ edits), the signed checkpoints and the host's pins with the logs.
 ``check`` is the fast subset for a hook or CI (chain, projections, instructions). ``doctor`` is all of it, and with
 ``--repair`` does the documented safe repairs *through the store*: it answers external edits with the host events
 format section 5.8 names, rebuilds the derived index, and removes the key folders of an init that died. It never repairs
-a chain, a signature or a checkpoint: only an owner-signed ``restore`` can.
+a chain, a signature or a divergent checkpoint: only an owner-signed ``restore`` can.
+A missing ticket checkpoint can be written only for the last recorded append, after replay verifies.
 """
 
 from __future__ import annotations
@@ -236,13 +237,12 @@ def _has_host_key(state_dir: Path, wid: str) -> bool:
 
     try:
         return key_path(state_dir / "hosts" / wid / "keys", "wsk", FILE_SUFFIX).is_file()
-    except Exception:  # noqa: BLE001
-        return False
+    except Exception:  # noqa: BLE001 - when it cannot be told, judge at the strict level (a missing checkpoint is an error)
+        return True
 
 
 def _checkpoints(s: InspectStore, host_here: bool) -> list[Finding]:
-    """Where this machine holds the workspace key it writes a checkpoint after every append, so a missing one means
-    somebody deleted it (that hides a rollback): an error. Without the key (a clone) it is only a warning."""
+    """A missing checkpoint can hide a rollback or follow a crash: an error on the host, a warning on clones."""
     out: list[Finding] = []
     cps = s._checkpoints
     if s._wsk_pub() is None:
@@ -254,11 +254,23 @@ def _checkpoints(s: InspectStore, host_here: bool) -> list[Finding]:
         )
     have = set(cps.ticket_uids())
     missing = sorted(u for u in s.state.tickets if u not in have)
-    if missing:
-        keys = ", ".join(s.state.tickets[u].key for u in missing[:5])
+    for repairable in (False, True):
+        group = [u for u in missing if (host_here and s.repairable_checkpoint(u)) == repairable]
+        if not group:
+            continue
+        keys = ", ".join(s.state.tickets[u].key for u in group[:5])
         out.append(
             Finding(
-                "warn", "checkpoints", "checkpoint.missing", f"{len(missing)} tickets have no checkpoint ({keys}...)"
+                lvl,
+                "checkpoints",
+                "checkpoint.missing",
+                f"{len(group)} tickets have no checkpoint ({keys}...)"
+                + (
+                    "; doctor --repair can finish the last recorded append"
+                    if repairable
+                    else "; a rollback is possible; use orch restore"
+                ),
+                "checkpoint" if repairable else None,
             )
         )
     wsk = s._wsk_pub()
@@ -366,6 +378,11 @@ def repair(root: Path, wid: str, env: Mapping[str, str], findings: list[Finding]
         store = ws.store
         events = store.scan()
         did.append(f"answered external edits with {len(events)} host events")
+    if "checkpoint" in wanted:
+        store = ws.store
+        store.load_all()
+        store.repair_checkpoints()
+        did.append("wrote missing ticket checkpoints for verified logs")
     if "index" in wanted:
         ws.store.rebuild_index()
         did.append("rebuilt the index")
@@ -390,6 +407,9 @@ def _git(root: Path, *args: str) -> bytes | None:
     return done.stdout if done.returncode == 0 else None
 
 
+_TICKET_FILE = re.compile(r"tickets/([0-7][0-9A-HJKMNP-TV-Z]{25})/(ticket\.json|body\.md|events\.jsonl|artifacts/.+)")
+
+
 def check_staged(s: InspectStore, root: Path) -> list[Finding]:
     """What a pre-commit hook refuses: staged files that are not what the log says, a staged log that is not a prefix
     of the verified one, deleted logs, links, anything of ``.state``, key material and grant secrets."""
@@ -406,11 +426,27 @@ def check_staged(s: InspectStore, root: Path) -> list[Finding]:
             entries.append((meta[4], meta[1], fields[i + 1]))
     guarded = re.compile(r"(?:tickets/|events/|\.state(?:/|$))|(?:config|keys)\.jsonl?$")
     for status, mode, rel in sorted(entries, key=lambda e: e[2]):
+        folded = rel.casefold()
+        if folded == ".state" or folded.startswith(".state/"):
+            out.append(Finding("error", rel, "commit.state", ".state is local: never commit it"))
+            continue
+        protected = folded.startswith(("tickets/", "events/")) or folded in (
+            "tickets",
+            "events",
+            "config.json",
+            "keys.jsonl",
+        )
+        known = rel in ("events/workspace.jsonl", "config.json", "keys.jsonl") or _TICKET_FILE.fullmatch(rel)
+        if protected and (not rel.isascii() or not known):
+            out.append(Finding("error", rel, "commit.unknown", "a file the workspace does not keep there"))
+            continue
         if status == "D":
             if rel.endswith(("events.jsonl", "workspace.jsonl", "ticket.json", "body.md", "config.json", "keys.jsonl")):
                 out.append(
                     Finding("error", rel, "commit.deleted", "a log or a projection may not be deleted from history")
                 )
+            elif _TICKET_FILE.fullmatch(rel):
+                out.append(Finding("error", rel, "commit.deleted", "an artifact may not be deleted from history"))
             continue
         if mode in ("120000", "160000") and guarded.search(rel):
             out.append(Finding("error", rel, "commit.link", "a symlink or submodule where the workspace keeps a file"))
@@ -430,9 +466,7 @@ def check_staged(s: InspectStore, root: Path) -> list[Finding]:
         if _GRANT.search(blob.decode("utf-8", "replace")) or b"ORCH_GRANT=" in blob:
             out.append(Finding("error", rel, "commit.secret", "the file holds a grant secret"))
             continue
-        m = re.fullmatch(
-            r"tickets/([0-7][0-9A-HJKMNP-TV-Z]{25})/(ticket\.json|body\.md|events\.jsonl|artifacts/.+)", rel
-        )
+        m = _TICKET_FILE.fullmatch(rel)
         if rel == "config.json":
             if blob != s._config_bytes(st):
                 out.append(Finding("error", rel, "commit.edited", "config.json is not what the log says (hand edit)"))
@@ -441,6 +475,8 @@ def check_staged(s: InspectStore, root: Path) -> list[Finding]:
                 out.append(Finding("error", rel, "commit.edited", "keys.jsonl is not what the log says (hand edit)"))
         elif rel == "events/workspace.jsonl":
             out += _prefix(rel, blob, root / rel, "workspace")
+        elif rel.startswith(("tickets/", "events/")) and not m:
+            out.append(Finding("error", rel, "commit.unknown", "a file the workspace does not keep there"))
         elif m:
             uid, what = m.groups()
             view = st.tickets.get(uid)

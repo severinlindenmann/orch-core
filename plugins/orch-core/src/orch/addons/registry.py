@@ -76,6 +76,9 @@ def state_of(addon: Any, loaded: tuple[Manifest, str] | None) -> str:
     manifest, digest = loaded
     if digest != addon.package_sha256 or manifest.version != addon.version or manifest.name != addon.name:
         return "changed"
+    headings = {f"{manifest.name}.{s['id']}": heading_key(s["heading"]) for s in manifest.sections}
+    if any(headings.get(s["id"]) != s["heading_key"] for s in addon.sections):
+        return "changed"
     return ACTIVE
 
 
@@ -94,6 +97,7 @@ class Registry:
     def __init__(self, addons: Mapping[str, Addon], manifests: Mapping[str, tuple[Manifest, str]]) -> None:
         """``addons``: name -> replayed ``Addon``. ``manifests``: name -> ``(manifest, digest of the package it was
         read from)``."""
+        self._headings = {n: {s["heading_key"] for s in a.sections} for n, a in addons.items() if not a.purged}
         self._grants: dict[str, Addon] = {}
         self._manifests: dict[str, Manifest] = {}
         self._state: dict[str, str] = {}
@@ -141,11 +145,9 @@ class Registry:
         return out
 
     def heading_conflicts(self, manifest: Manifest) -> list[str]:
-        """Headings of ``manifest`` whose key (:func:`orch.schema.heading_key`) equals one of another active addon's
+        """Headings of ``manifest`` whose key (:func:`orch.schema.heading_key`) equals one of another granted addon's
         (``orch addon grant`` refuses a collision, §8.1). Core headings are checked by the manifest schema."""
-        taken = {
-            heading_key(s["heading"]) for n, m in self._manifests.items() if n != manifest.name for s in m.sections
-        }
+        taken = {key for name, keys in self._headings.items() if name != manifest.name for key in keys}
         return [s["heading"] for s in manifest.sections if heading_key(s["heading"]) in taken]
 
     def needs_rules(self) -> list[tuple[str, dict[str, Any]]]:

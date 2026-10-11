@@ -269,6 +269,30 @@ def tamper_vector() -> dict[str, Any]:
         "person signature no longer verifies, so the chain breaks at 3 and every ticket event with ws_seq >= 3 stops",
         "workspace", [wsl[0], wsl[1], resign_host(setp(wsl[2], role="maintainer"), "workspace"), wsl[3]], 3)  # fmt: skip
     add("workspace_event_deleted", "workspace seq 2 removed", "workspace", [wsl[0], wsl[2], wsl[3]], 2)
+    # §5.2's field set is independent of the signature: sign each malformed host event correctly.
+    repaired = w.ev(
+        TICKET,
+        "projection.repaired",
+        w.HOST,
+        {"path": "ticket.json", "cause": "projection_mismatch"},
+        at=ow.stamp(w.clock),
+    )
+    ticket.pop()  # keep the shared base logs (also used by checkpoint.json) unchanged
+    add(
+        "host_field_set_valid",
+        "a host projection.repaired without person-only fields",
+        TICKET,
+        [*ticket, repaired],
+        None,
+    )
+    for field, value in (("sig", e4["sig"]), ("auth", "passphrase"), ("roster_v", w.roster_v)):
+        add(
+            f"host_field_set_{field}",
+            f"5.2: {field} appears on person events and on no others; host_sig verifies",
+            TICKET,
+            [*ticket, resign_host(setp(repaired, **{field: value}), TICKET)],
+            repaired["seq"],
+        )
     return {
         "pins": "tampered chain lines (5.5 Reading): the stated mutation of a signed log and the one F1 outcome, the "
         "line position where a reader reports chain.broken (lines checked in file order, a bad host_sig or person sig "
@@ -648,6 +672,10 @@ def checkpoint_vector() -> dict[str, Any]:
         {"name": "a_fork_grown_past_the_held_height_is_accepted_without_the_logs",
          "checkpoint": _checkpoint(wcp(3, len(wl) + 2, "sha256:" + "cc" * 32, {TICKET: {"seq": len(tl) + 1, "head": "sha256:" + "dd" * 32}})),
          "expect": "ok", "limit": "height-only comparison: a receiver holding only checkpoints cannot see the fork"},
+        {"name": "lower_n_extra_uid",
+         "checkpoint": _checkpoint(wcp(1, len(wl), heads_w[-1], {
+             **held["tickets"], TICKET2: {"seq": 1, "head": heads_t[0]}})),
+         "expect": "chain.diverged", "note": "5.10: H has no entry for this uid, so its seq counts as 0"},
     ]  # fmt: skip
     for i, offer in enumerate(n_offers):
         if "restore" in offer:
@@ -775,6 +803,56 @@ def restore_scenarios() -> list[dict[str, Any]]:
     w.ev(TICKET, "log.added", w.actor("mara"), {"text": "x"}, ws_seq=restored["seq"], expect="chain.bad_ws_seq",
          note="the ticket event names the restore (seq 5), which is not the last event of the window")  # fmt: skip
     w.ev(TICKET, "log.added", w.actor("mara"), {"text": "x"}, note="naming the last event (seq 6) is fine")
+    out.append(w.scenario(reappends=True))
+    w = World(
+        "restore_window_ends_before_a_later_host_revocation",
+        "5.10: only the contiguous host device.revoked re-appends belong to the restore window; "
+        "the first other workspace event closes it",
+    )
+    prefix(w)
+    w.ticket()
+    w.ev(
+        "workspace",
+        "restore",
+        w.actor("sev"),
+        {
+            "from_seq": 4,
+            "head": head(w.logs["workspace"][-1]),
+            "abandoned": {"seq": 5, "head": head(old_revoked)},
+            "abandoned_decisions": [],
+            "reason": "restored a backup",
+        },
+    )
+    w.ev("workspace", "device.revoked", w.HOST, {"device": did("lena1"), "reason": "lost", "revocation": rev})
+    w.ev(
+        TICKET,
+        "log.added",
+        w.actor("sev"),
+        {"text": "at the last re-append"},
+        note="the last re-append's ws_seq stays valid even after a later host revocation",
+    )
+    w.ev(
+        "workspace",
+        "settings.changed",
+        w.actor("sev"),
+        {"set": {"grant_hours": 5}},
+        note="the first workspace event that is not a re-append closes the window",
+    )
+    w.ev(
+        TICKET,
+        "log.added",
+        w.actor("sev"),
+        {"text": "after the window closes"},
+        note="this ws_seq remains accepted when the full workspace log is replayed",
+    )
+    w.tick(3600)
+    w.ev(
+        "workspace",
+        "device.revoked",
+        w.HOST,
+        {"device": did("mara1"), "reason": "lost", "revocation": ow.make_revocation("mara", "mara1", "lost")},
+        note="a much later host revocation must not extend the old restore window",
+    )
     out.append(w.scenario(reappends=True))
     return out
 

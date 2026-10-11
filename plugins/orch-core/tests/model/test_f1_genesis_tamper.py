@@ -89,6 +89,10 @@ CHECK_CHAIN_STOPS_AT = {
     "member_role_raised_not_resigned": 4,
     "member_role_raised_host_resigned": 4,
     "workspace_event_deleted": 2,
+    "host_field_set_valid": None,
+    "host_field_set_sig": None,
+    "host_field_set_auth": None,
+    "host_field_set_roster_v": None,
 }
 
 

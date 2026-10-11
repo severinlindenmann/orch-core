@@ -4,7 +4,50 @@ from __future__ import annotations
 
 import math
 
+import pytest
+
 from tests.ops.helpers import OTHER, Cli
+
+
+@pytest.mark.parametrize("mode", [[], ["--log"], ["--diff"]])
+@pytest.mark.parametrize("change,detail", [("add", "AC2 added"), ("edit", "AC1 edited"), ("remove", "AC1 removed")])
+def test_show_reads_the_event_tail_once(ws, cli, monkeypatch, mode, change, detail):
+    from orch.ops.commands import show
+    from orch.store import Store
+
+    cli("new", "Tail")
+    cli("claim", "1")
+    cli("ac", "add", "first")
+    after = ws.events("1")[-1]["seq"]
+    values = [] if change == "remove" else [{"id": "AC1", "text": "edited" if change == "edit" else "first"}]
+    if change == "add":
+        values.append({"id": "AC2", "text": "second"})
+    ws.store = ws.other()
+    ws.update(ws.uid("1"), {"ticket.acceptance": values})
+    ws.store.close()
+    reads = []
+    real = Store.events
+
+    def events(self, ref, *, after=0, limit=None):
+        reads.append((after, limit))
+        return real(self, ref, after=after, limit=limit)
+
+    monkeypatch.setattr(Store, "events", events)
+    if mode:
+        result = cli("show", "1", *mode, "--since", str(after))
+        assert result.code == 0, result.err
+        out = result.out
+    else:
+        from types import SimpleNamespace
+
+        store = ws.other()
+        try:
+            out = "\n".join(show._recent(SimpleNamespace(store=store), store.ticket("1"), after))
+        finally:
+            store.close()
+    assert reads == [(after, None)]
+    assert detail in out
+    assert "acceptance set" not in out
 
 
 def seed(cli):
@@ -284,3 +327,28 @@ def test_list_prints_and_counts_only_what_the_actor_can_see(ws, cli, anon):
     d = anon.j("list", "--limit", "1")
     assert [t["key"] for t in d.data["tickets"]] == ["DEMO-0006"] and "Ticket 0" not in d.out
     assert "+4 more" in cli("list", "--limit", "2").out  # the owner's agent sees all six
+
+
+def test_claim_hint_does_not_count_hidden_tickets(ws, cli, anon):
+    restricted(ws, cli)
+    ws.sign("2", "visibility.changed", visibility={"restricted": [ws.owner.ref]})
+    hint = anon("status").out.splitlines()[-1]
+    assert hint == 'next: orch new "TITLE"'
+    cli("new", "another secret")
+    ws.sign("3", "visibility.changed", visibility={"restricted": [ws.owner.ref]})
+    assert anon("status").out.splitlines()[-1] == hint
+
+
+@pytest.mark.parametrize("cap", [2, 40])
+def test_hidden_tickets_do_not_cross_the_claim_hint_scan_cap(ws, cli, anon, monkeypatch, cap):
+    from orch.ops import views
+
+    monkeypatch.setattr(views, "CLAIM_HINT_SCAN", cap)
+    monkeypatch.setattr(views, "CLAIM_HINT_WORK", 3)
+    hint = anon("status").out.splitlines()[-1]
+    for i in range(1, cap + 3):
+        assert cli("new", f"hidden {i}").code == 0
+        ws.sign(str(i), "visibility.changed", visibility={"restricted": [ws.owner.ref]})
+        assert anon("status").out.splitlines()[-1] == hint
+    assert cli("new", "visible").code == 0
+    assert anon("status").out.splitlines()[-1] == "next: orch claim --next"

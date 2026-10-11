@@ -9,7 +9,7 @@ import resource
 import pytest
 
 from orch.custody import PassphraseBackend, PassphraseRequest, render_prompt
-from orch.custody.base import CustodyError
+from orch.custody.base import CustodyError, WrongPassphrase
 from orch.importer import find_v1, read_v1, source_id, uid_for
 from orch.ops import import_run
 from orch.ops.errors import OrchError
@@ -223,6 +223,19 @@ def test_the_batch_signer_signs_only_planned_person_events():
     assert len(raw.signed) == 1
 
 
+def test_each_planned_step_is_signed_once():
+    ev = {"type": "log.added", "text": "same"}
+    U = "01J9ZK4Q7M3R8T2V6X0B5N1C9D"
+    plan = {U: [dict(ev), dict(ev)]}  # two equal steps: each may be signed once, so twice in all
+    full = {**ev, "actor": {"kind": "person", "id": "p_a", "device": "d_a"}, "id": "X", "v": 2, "hash_v": 1}
+    raw = Raw()
+    signer = import_run.BoundSigner(raw, "a" * 32, "p_a", "d_a", plan)
+    assert signer(U, full) and signer(U, {**full, "id": "Y"})
+    with pytest.raises(OrchError):
+        signer(U, {**full, "id": "Z"})
+    assert len(raw.signed) == 2 and len(plan[U]) == 2  # the caller's plan is not changed
+
+
 def make_backend(tmp_path, provider):
     b = PassphraseBackend(tmp_path / "k", _passphrase_provider=provider, _kdf=KDF)
     b.create("dk", role="device")
@@ -264,6 +277,30 @@ def test_core_dumps_are_off_while_the_key_is_unlocked(tmp_path):
     assert resource.getrlimit(resource.RLIMIT_CORE) == before
 
 
+def test_the_process_is_hardened_before_the_passphrase_prompt(tmp_path):
+    from orch import canon
+
+    seen = []
+
+    def provider(r):
+        if r.kind == "batch":
+            seen.append(resource.getrlimit(resource.RLIMIT_CORE)[0])
+        return PASSPHRASE
+
+    b = make_backend(tmp_path, provider)
+    before = resource.getrlimit(resource.RLIMIT_CORE)
+    with b.unlocked("dk", action="t", digest="ab" * 16, labels=(canon.LABELS["sig_ticket_event"].encode(),)):
+        pass
+    assert seen == [0] and resource.getrlimit(resource.RLIMIT_CORE) == before
+    bad = make_backend(tmp_path / "x", lambda r: PASSPHRASE if r.kind != "batch" else "wrong passphrase here")
+    with (
+        pytest.raises(WrongPassphrase),
+        bad.unlocked("dk", action="t", digest="ab" * 16, labels=(canon.LABELS["sig_ticket_event"].encode(),)),
+    ):
+        pass
+    assert resource.getrlimit(resource.RLIMIT_CORE) == before  # put back when the unlock fails too
+
+
 def test_only_the_importer_unlocks_a_batch():
     from pathlib import Path
 
@@ -274,3 +311,28 @@ def test_only_the_importer_unlocks_a_batch():
         if ".unlocked(" in p.read_text() or 'getattr(backend, "unlocked"' in p.read_text()
     )
     assert users == ["ops/import_run.py"]
+
+
+def test_a_backend_that_cannot_sign_a_batch_has_its_own_code(hws, me, v1, monkeypatch):  # noqa: F811
+    with_repo(hws)
+    monkeypatch.delattr(PassphraseBackend, "unlocked")
+
+    def no_review(*args):
+        pytest.fail("a backend without batch signing must refuse before review")
+
+    monkeypatch.setattr(import_run.human, "review_prompt", no_review)
+    before = snapshot(hws.root)
+    r = me.j("import", "v1", str(v1))
+    assert r.code == 3 and r.err_code == "custody.no_batch" and "reviewed batch" in r.doc["error"]["message"]
+    assert snapshot(hws.root) == before
+
+
+def test_signing_shows_progress_on_stderr(hws, me, v1, monkeypatch):  # noqa: F811
+    with_repo(hws)
+    monkeypatch.setattr(import_run, "PROGRESS_EVERY", 1)
+    r = me("import", "v1", str(v1))
+    assert r.code == 0
+    lines = [ln for ln in r.err.splitlines() if ln.startswith("import.v1: ")]
+    n = r.out.split()[2]  # ok import.v1 <count> tickets
+    assert lines and lines[0].startswith(f"import.v1: 1/{n} tickets, ") and len(lines) == int(n) - 1
+    assert "import.v1:" not in r.out  # stdout carries only the result

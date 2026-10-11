@@ -38,6 +38,9 @@ class Context:
     workspace: Any = field(default=None, repr=False)
     #: Standard input read once (``--file -``), so the dedup key and the handler see the same bytes.
     files: dict[str, bytes] = field(default_factory=dict, repr=False)
+    #: One line of progress for a long-running operation (``import v1`` while it signs), written to stderr by the CLI;
+    #: never part of the result. ``None``: no progress is shown.
+    progress: Callable[[str], None] | None = field(default=None, repr=False)
 
 
 @dataclass

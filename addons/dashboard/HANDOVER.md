@@ -344,8 +344,8 @@ factory addon's (`src/mocks/addons/factory-runs.ts`); the hold is meant to be **
   iPhone with its scopes, and the Today re-login row marks phone prompts "P4 · Preview". Nothing contradicts D49.
 - **D53 (landing).** The land addon binds approval, checks and merge to one candidate SHA; a clean rebase keeps the
   approval (re-checked), a conflict resolution voids it — through core (`store.landingResolved`: core checks the
-  failed attempt and the resolution records and writes the reason), never by the addon. `main` is refused as a target
-  (D33, normalised names) for everyone, including mandates, until the owner lifts D33. A mandate can never do
+  failed attempt and the resolution records and writes the reason), never by the addon. `main` is allowed for owners (D33, owner decision 11 Oct), with aliases normalised.
+  Core signs `enqueue_main` covering ticket, target `main` and commit; other roles receive 403. A mandate can never do
   more than its owner. Decided (10 Oct): the verdict signs the branch head (`source_sha`), the land worker uses
   that commit, new commits void the verdict, and the opt-in `code` gate (when on) signs the same commit.
 - **Third-party HTML (security review #1).** Addon frame nodes, agent HTML artifacts and one-off widget pages are
@@ -464,8 +464,9 @@ for G2+ builds. `build-preview.py` still runs, but its output does not load; it 
 - `confirmed` (core's confirm flag on spawn/sign/decision actions) is a plain boolean in the mock. A real host needs
   a server-issued, single-use confirmation bound to the person, the action and the arguments.
 - The start dialog's facts come from core's `agents/launch` preview; a real host renders them from its own resolver.
-- The land worker's real push is a fast-forward with a lease on the target SHA, and `main` must be refused at push
-  time too (see DECISIONS-LOG "N9 review fixes").
+- The land worker's real push is a fast-forward with a lease on the target SHA, and at push
+  time the real worker must verify the core signature binds the ticket, target `main` and commit,
+  and that its signer was an owner and still has owner authority (D33, 11 Oct; supersedes N9 refusal).
 - Addon settings drawer: a save by someone else while you edit resets your edits (needs an "Updated elsewhere" design).
 - The simulated Claude welcome box clips in a very narrow terminal (allowed: terminal content).
 - **Mandates are a preview only (M1), not part of the contract.** Agents → Mandates, the shell's mandate banner,
@@ -526,7 +527,7 @@ Links: a repo row is `/w/DEMO/addon/repos/repos?tab.repos=structure&row=web-port
 
 These decisions supersede earlier open questions and defaults in this handover.
 Mandates remain non-signing preview only: code-review approval, first linked-workspace send,
-public publish and restore/purge are allowed. Landing on main is refused for everyone by D33 until the owner lifts it;
+public publish and restore/purge are allowed. Landing on main is allowed for owners and their mandates (D33, 11 Oct);
 a mandate can never do more than its owner. Another mandate, protected paths, settings, addons, members/roles,
 devices, relay pairing and secrets/connections stay human. No total renewal ceiling. “Weekly check-in due <day>”
 and “Still OK” preview confirmation; after 3 unconfirmed days the mandate pauses, not revokes.
@@ -555,3 +556,16 @@ No primary flag. `remote` + `default_branch`: **proposed for the format amendmen
 Last gate: **Verify** (core-owned; the ticket body section remains Verification). Addon log tabs: **Activity**;
 ticket History stays History. Ellipsis marks a dialog asking for input, never a plain confirmation or signing prompt.
 Factory permits sit in a reserved folded “n permits waiting · Review” row; Today retains the needs-you decisions.
+
+### D33 follow-up — owner landing on main (11 Oct)
+
+Owners can add `main` to Allowed targets. `refs/heads/main`, `origin/main`, remote refs and case variants
+resolve to `main`. The first allowed target remains the enqueue target. `enqueue_main` is an owner-only
+core `confirm: 'sign'` action; Covers show the ticket, target and approved commit. The ordinary `enqueue`
+refuses main without that signed path. Stale target/commit confirmation returns 409 `land.changed`.
+The simulated worker reads core's `addon.action_signed` record and rechecks owner authority at merge
+time; missing signature or lost authority fails the attempt without advancing the target head.
+For a red-check retry on main, take it off the queue and sign a new landing; the ordinary rerun decision
+cannot bypass signing. The real worker must enforce the same signature and owner checks at push time.
+Mandates remain a non-functional preview: an owner's mandate may land on main but can never exceed
+its owner, and protected paths still need a person.

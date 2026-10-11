@@ -56,7 +56,7 @@ export const MAY: string[] = [
   'Approve agents that wait for an approval: requirements, plan, verdicts and the code review gate.',
   'Answer agents\u2019 questions (typed choices only).',
   'Unblock tickets.',
-  'Land on main — only if you allow it for owners (D33 refuses it today).',
+  'Land on main — owners may since 11 Oct; never more than its owner.',
   'Make a first send to a linked workspace, publish publicly, restore and purge.',
   'Answer addon decisions and factory permits.',
   'Enable factories and start factory runs, including Deliver (after the hold window).',
@@ -228,12 +228,13 @@ export class MandatesPreviewHost {
     const now = Date.parse(this.store.now())
     const issued = now - 3 * DAY
     const kid = (i: number) => kids[i % kids.length]
-    // Nine decisions in the order they happened: gate approvals, a verdict on work that landed, a code review, an
+    // Ten decisions in the order they happened: gate approvals, a verdict on work that landed, a code review and main landing, an
     // unblocked ticket, a factory permit, a factory enabled, a full run started and a grant that started an agent.
     const plan: { k?: number; kind: MandateDecisionKind; landed?: boolean; target?: string }[] = [
       { k: 0, kind: 'requirements' }, { k: 0, kind: 'plan' }, { k: 0, kind: 'verdict', landed: true },
       { k: 4, kind: 'unblock' },
       { k: 2, kind: 'code_review' },
+      { k: 2, kind: 'land_main', target: 'main', landed: true },
       { kind: 'factory_enabled', target: `AI Factory in ${prefix}` },
       { k: 1, kind: 'permit', target: 'uv run pytest tests/billing -q' },
       { kind: 'factory_run', target: 'full run R-3 “Tariff page copy”, up to Preview' },
@@ -246,12 +247,12 @@ export class MandatesPreviewHost {
     const decisions: MandateDecision[] = plan.map((p, i) => {
       const t = p.k === undefined ? undefined : kid(p.k)
       return {
-        seq: FIRST_SEQ + i + (i >= 4 ? 1 : 0), // leave the refused main landing out of the decision log
+        seq: FIRST_SEQ + i,
         id: `${md}.d${i + 1}`,
         ...(t ? { ticket: t.key, title: t.title } : {}),
         ...(p.target ? { target: p.target } : {}),
         kind: p.kind,
-        ...(p.kind === 'verdict' || p.kind === 'code_review' ? { commit: commits[c++ % commits.length] } : {}),
+        ...(p.kind === 'verdict' || p.kind === 'code_review' || p.kind === 'land_main' ? { commit: p.kind === 'land_main' ? commits[(c - 1) % commits.length] : commits[c++ % commits.length] } : {}),
         at: iso(issued + (i + 1) * 6 * 3_600_000),
         checker: { identity: checker, result: 'passed' as const },
         landed: !!p.landed,
@@ -279,10 +280,6 @@ export class MandatesPreviewHost {
         id: `${md}.r4`, asked: 'Issue a mandate to a second orchestrator', reason: 'chain',
         detail: 'Refused (mandate.chain_refused): a mandate never issues another mandate. Grants that start agents are allowed.',
         at: iso(now - 2 * 3_600_000),
-      },
-      {
-        id: `${md}.r5`, ticket: kid(2).key, title: kid(2).title, kind: 'land_main', reason: 'd33',
-        detail: 'D33: main is closed', at: iso(now - 3_600_000),
       },
     ]
     return {

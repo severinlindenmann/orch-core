@@ -17,7 +17,7 @@ describe('Landing page', () => {
     expect(screen.getByText(/Worker: checking DEMO-0052 \(attempt #14\)/)).toBeInTheDocument()
     expect(screen.getByText(/Attempt #14 · DEMO-0052/)).toBeInTheDocument()
     expect(await screen.findByText('T2 integration checks', {}, T)).toBeInTheDocument()
-    expect(screen.getByText(/main \(D33: people merge to main by hand\)/)).toBeInTheDocument()
+    expect(screen.getByText('Owner signature required (D33, 11 Oct)')).toBeInTheDocument()
     expect(screen.getByText('1 from another workspace on this machine')).toBeInTheDocument()
   })
 

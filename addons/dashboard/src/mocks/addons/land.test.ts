@@ -10,7 +10,7 @@ import { availableActions } from '@/app/pages/ticket/actions'
 import { asLand, attemptOf, recordMerge, step, type LandState } from './land-worker'
 
 // Landing (D53): one serial worker over queues per (remote, target); approval binds to the candidate; any resolution
-// voids the approval through core; stacked parents first; crash-resume never merges twice; main is never a target.
+// voids the approval through core; stacked parents first; crash-resume never merges twice; main requires an owner signature.
 const setup = (viewer = 'p_sev', dataset: 'normal' | 'busy' = 'normal') => {
   const store = createMockStore({ persist: false, dataset })
   const ws = store.workspaces.find((w) => w.prefix === 'DEMO')!.id
@@ -352,12 +352,12 @@ describe('queue actions and settings', () => {
     expect(landEvents(s, 'DEMO-0041', 'land.dequeued')[0].actor).toMatchObject({ kind: 'addon', id: 'land' })
   })
 
-  it('main is never an allowed target (D33); owners only; names checked; a busy target is kept', async () => {
+  it('owners can allow main (D33); aliases normalised; names checked; a busy target is kept', async () => {
     const s = setup()
-    const r = await refused(run(s, 'save_settings', { targets: 'develop, main', timeout_minutes: 30 }))
-    expect(r).toMatchObject({ status: 409, code: 'land.target_refused' })
-    expect(r.message).toMatch(/D33/)
-    for (const t of ['refs/heads/main', 'origin/main', 'Main', 'refs/remotes/origin/MAIN']) expect((await refused(run(s, 'save_settings', { targets: `develop, ${t}` }))).code, t).toBe('land.target_refused')
+    for (const t of ['main', 'refs/heads/main', 'origin/main', 'Main', 'refs/remotes/origin/MAIN']) {
+      expect(await run(s, 'save_settings', { targets: `develop, ${t}` })).toMatchObject({ ok: true })
+      expect(land(s).settings.targets).toEqual(['develop', 'main'])
+    }
     expect(await run(s, 'save_settings', { targets: 'refs/heads/develop' })).toMatchObject({ ok: true })
     expect(land(s).settings.targets).toEqual(['develop'])
     expect((await refused(run(s, 'save_settings', { targets: 'dev elop' }))).code).toBe('validation')
@@ -368,6 +368,52 @@ describe('queue actions and settings', () => {
     expect(((await view(s)).settings as { targets: string }).targets).toBe('develop, release/2026.10')
     s.store.setViewer('p_mara')
     expect((await refused(run(s, 'save_settings', { targets: 'develop' }))).status).toBe(403)
+  })
+
+  const mainReady = async () => {
+    const s = setup()
+    drain(s)
+    await verdict(s, 'DEMO-0041', 'p_sev')
+    await run(s, 'save_settings', { targets: 'origin/MAIN, develop' })
+    return s
+  }
+  const signedMain = (s: S) => ({ ticket: 'DEMO-0041', target: 'main', commit: s.store.ticket('DEMO-0041')!.branch.head, confirmed: true })
+
+  it('an owner lands on main only with a core signature covering ticket, target and commit', async () => {
+    const s = await mainReady()
+    expect((await refused(run(s, 'enqueue', signedMain(s)))).code).toBe('confirm.required')
+    expect((await refused(run(s, 'enqueue_main', { ...signedMain(s), confirmed: false }))).code).toBe('confirm.required')
+    for (const args of [{ commit: 'stale' }, { target: 'develop' }])
+      expect((await refused(run(s, 'enqueue_main', { ...signedMain(s), ...args }))).code).toBe('land.changed')
+    expect(await run(s, 'enqueue_main', signedMain(s))).toMatchObject({ ok: true, changed: true })
+    expect(s.store.wsEventsOf(s.ws).at(-1)).toMatchObject({ type: 'addon.action_signed', action: 'enqueue_main', actor: { kind: 'person', id: 'p_sev' }, args: { ticket: 'DEMO-0041', target: 'main', commit: signedMain(s).commit } })
+    expect(drain(s).at(-1)).toContain('merged')
+    expect(land(s).attempts.at(-1)).toMatchObject({ target: 'main', outcome: 'merged' })
+  })
+
+  it.each(['maintainer', 'member', 'agent'] as const)('%s cannot enqueue or confirm main', async (role) => {
+    const s = await mainReady()
+    if (role === 'agent') s.store.setViewer('claude-code:s_demo:p_sev')
+    else s.store.workspaces.find((w) => w.id === s.ws)!.members.find((m) => m.person === 'p_sev')!.role = role
+    for (const action of ['enqueue', 'enqueue_main'])
+      expect((await refused(run(s, action, signedMain(s)))).status).toBe(403)
+    expect(land(s).queues.flatMap((q) => q.entries)).toHaveLength(0)
+  })
+
+  it.each(['demoted', 'unsigned', 'changed commit'] as const)('worker refuses main at merge time: %s', async (change) => {
+    const s = await mainReady()
+    await run(s, 'enqueue_main', signedMain(s))
+    const q = land(s).queues.find((q) => q.target === 'main')!
+    const head = q.head
+    if (change === 'demoted') s.store.workspaces.find((w) => w.id === s.ws)!.members.find((m) => m.person === 'p_sev')!.role = 'maintainer'
+    if (change === 'unsigned') s.store.wsEventsOf(s.ws).pop()
+    if (change === 'changed commit') {
+      step(s.store, land(s))
+      land(s).attempts.at(-1)!.source_sha = 'unsigned'
+    }
+    drain(s)
+    expect(land(s).attempts.at(-1)).toMatchObject({ outcome: 'failed', reason: 'owner_required' })
+    expect(q.head).toBe(head)
   })
 
   it('viewers read the tabs but cannot queue; open_checks hands out the CI link', async () => {

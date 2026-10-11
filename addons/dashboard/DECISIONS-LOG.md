@@ -1198,3 +1198,16 @@ The owner answered the eight open questions of REVIEW.md. Items 1, 2, 5 and 6 ch
 - **Why:** U8 review's eight Minor findings and three Nits, with the controller's explicit rulings. A mandate cannot
   exceed its owner's authority, addon node limits must hold at any permit count, and core owns signing prose.
 - **Revert:** Revert this fix-round commit; doing so restores the reviewed inconsistencies and permit overflow.
+
+## Owner decision 2026-10-11 — owners may land on main (D33)
+
+**Decision:** Owners may allow and land on `main`, with a core signature covering ticket, canonical target
+and commit. Maintainers, members and agents cannot enqueue or confirm main landings. The worker rechecks
+the owner's signed authorization at merge time; the real worker must do so at push time. Mandates may
+land on main within their owner's authority (still preview only). This supersedes earlier D33 refusal
+entries, including N9's universal main refusal and the seeded mandate refusal. Other targets retain their roles.
+
+**Why:** The owner clarified “the owner merges develop → main”: main is an owner boundary, not a universal ban.
+
+**Revert:** Restore the normalised main refusal in settings, enqueue and worker, remove the main signing
+action, and restore the refused mandate example and corresponding documentation/tests.

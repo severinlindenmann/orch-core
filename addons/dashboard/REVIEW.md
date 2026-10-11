@@ -248,7 +248,7 @@ A ticket that needs a login that expired.
 How the wide mandate (owner decision 10 Oct evening) would look. A non-functional preview: nothing signs.
 
 - [ ] **Preflight** — Agents → Mandates: the four prerequisites are "not available in this build", so issuing is blocked. Page: `/agents?tab=mandates`.
-- [ ] **Issue a mandate** — Show the mandate anyway (preview), then Issue a mandate…: "Steers the whole workspace in your name", what it may do (approve waiting agents and gates including code review, land on main only if allowed for owners (D33 refuses it today), first send to a linked workspace, publish publicly, restore/purge, unblock tickets, enable factories and start their runs including Deliver, issue grants), what stays yours (settings, addons, members and roles, devices, relay pairing, secrets and connections, protected paths, another mandate), a length up to 30 days; "Sign mandate (preview — nothing is signed)". Page: `/agents?tab=mandates`.
+- [ ] **Issue a mandate** — Show the mandate anyway (preview), then Issue a mandate…: "Steers the whole workspace in your name", what it may do (approve waiting agents and gates including code review, land on main (owners may since 11 Oct; never more than its owner), first send to a linked workspace, publish publicly, restore/purge, unblock tickets, enable factories and start their runs including Deliver, issue grants), what stays yours (settings, addons, members and roles, devices, relay pairing, secrets and connections, protected paths, another mandate), a length up to 30 days; "Sign mandate (preview — nothing is signed)". Page: `/agents?tab=mandates`.
 - [ ] **Renew** — Renew… in the mandate: pick a new length (up to 30 days) from now; revision 2, same scope, no total renewal ceiling. Weekly check-in due on the named day; Still OK is preview-only. After 3 unconfirmed days it pauses, not revokes. Page: `/agents?tab=mandates`.
 - [ ] **The banner** — One calm line on every page: Mandate md_3 · for Severin · whole workspace · 9 decisions · until Tue. Details opens the tab; × hides it for this session. Page: `/board`.
 - [ ] **Decided for you** — Today, below the real queue: one folded row. Open it for up to 3 decisions (a grant, a factory run, a permit … with Looks right, Veto), the refused items (protected path, your veto, an addon install and a second mandate, both refused) and Show all; "Revoke mandate and void" sits in its header. Page: `/`.
@@ -373,7 +373,7 @@ D58, D59, D60 confirmed. Two changes, both shown in the mockup and logged in DEC
 
 ## Owner answers, 11 Oct morning (U8)
 
-- Mandates preview: issue, inspect code-review approval and the refused land-on-main item, then “Still OK” beside the weekly due day.
+- Mandates preview: issue, inspect code-review approval and the allowed land-on-main decision, then “Still OK” beside the weekly due day.
   Nothing signs. Renewals have no total ceiling; 3 unconfirmed days pauses instead of revoking.
 - Factory Full runs: hold choices 0 (no hold), 15 min (default), 30 min, 1 h, 4 h, 24 h. Inspect the zero-hold signing
   cover, then stop a positive hold and try Deliver now… / Deliver with a new hold…; sign the new delivery without
@@ -383,3 +383,8 @@ D58, D59, D60 confirmed. Two changes, both shown in the mockup and logged in DEC
   remote/default_branch remain proposed for the format amendment (owner agreed 11 Oct).
 - Verify names the last gate; addon log tabs say Activity; the ticket tab still says History. Confirmation-only
   buttons have no ellipsis; input dialogs retain it.
+
+D33 follow-up: as Severin, set Landing → Allowed targets to `main, develop`, open an approved unlanded
+ticket and Add to the landing queue. Check Covers shows ticket, target `main`, and approved commit,
+then Sign and run; run the demo worker. As Mara or a member main enqueue is refused. For red checks
+on main, take it off the queue and sign again. Other targets keep their existing roles.

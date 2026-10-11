@@ -18,7 +18,7 @@ feedback item J (10 Oct 2026).
 >   every gate (requirements, plan, verdict, and the code review gate: explicitly allowed on 11 Oct), answer agents'
 >   questions, unblock tickets, answer addon decisions and factory permits, enable factories and start factory runs
 >   **including full runs that end in Deliver** (D61; a positive hold gives a Stop checkpoint, zero does not),
->   and issue grants that start agents, land on main only if allowed for owners (D33 refuses it today), make a first send to a linked workspace, publish publicly, restore and purge.
+>   and issue grants that start agents, land on main (owners may since 11 Oct; never more than its owner), make a first send to a linked workspace, publish publicly, restore and purge.
 > - **What stays human, always, whatever the mandate says:** settings, addons (install, update, capabilities),
 >   members and roles, devices, relay pairing, secrets and connections, and any change to **protected paths** (CI,
 >   build and test tooling, deploy config, dependency manifests, orch config, skills and hooks, security code). A
@@ -173,7 +173,7 @@ and what it can change. Core validates every request against it. Anything not li
 | unblock a ticket (approve what blocks it) | yes | a block on secrets/connections (D55) |
 | `addon.decide` (incl. factory permits) | only effects an addon declares in its **pinned** manifest as core effect types; an addon update unpins it until you re-sign | anything that maps to an always-human effect |
 | enable a factory, start a factory run (Preview or Deliver, D61) | yes; a Deliver still waits out the hold window with Stop (§2.16) | |
-| `land.enqueue` | yes, with checker; `main` only if allowed for owners (D33 refuses it today) | protected paths |
+| `land.enqueue` | yes, with checker; `main` allowed for owners since 11 Oct; never more than its owner | protected paths |
 | restore / purge, first send to a linked workspace, public publish | yes (owner agreed 11 Oct), typed and pinned effects | protected paths and always-human effects |
 | `ticket.create` / `close` / `reopen` | yes | dismissing open findings, questions or vetoes |
 | `grant.issue` (start agents) | yes, within the mandate's own limits | |
@@ -285,7 +285,7 @@ click past.
 - **Code review gate:** revision 2 kept it never delegable. Under the wide mandate the owner did not keep it human, so
   a mandate may sign it. The factory never signs it (D61).
 - **D53:** unchanged. The verdict signs `source_sha`, new commits void it, and the land worker uses the signed
-  commit and re-checks the mandate right before merging (§2.13). D33 refuses `main` for everyone, including mandates, until the owner lifts it. A mandate can never do more than its owner; protected paths still require a person.
+  commit and re-checks the mandate right before merging (§2.13). D33 allows owners to land on `main` (owner decision 11 Oct); a mandate may too within its owner’s authority. A mandate can never do more than its owner; protected paths still require a person.
 - **D41:** every *human* signature still needs Touch ID. A mandate signature is a third kind (`presence: "none"`,
   `via: "mandate"`). Its human moments, issuance and extension, use Touch ID. **D49:** the phone acknowledges, stops
   and vetoes. Phone batch taps (a second key for later steps) show the **exact effect and the immutable item digest**
@@ -360,7 +360,7 @@ Decided on 10 Oct evening: the wide scope, the always-human list, up to 30 days 
 allowed, no mandate → mandate chains.
 
 Decided 11 Oct: code review, restore/purge, first linked-workspace send and public publish are allowed.
-Landing on main remains refused by D33 for everyone until the owner lifts it. There is no total renewal ceiling;
+Landing on main is allowed for owners and their mandates (D33, owner decision 11 Oct); a mandate never exceeds its owner’s authority. There is no total renewal ceiling;
 the weekly check-in pauses after 3 unconfirmed days.
 
 Still open:

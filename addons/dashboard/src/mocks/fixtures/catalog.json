@@ -1100,7 +1100,7 @@
           "children": [
             {
               "type": "markdown",
-              "text": "Tickets land only on these branches. `main` is never a landing target (D33): people merge to main by hand."
+              "text": "Tickets land only on these branches. `main` requires an owner signature covering the ticket, target and commit (D33, 11 Oct)."
             },
             {
               "type": "form",
@@ -1141,6 +1141,11 @@
     "actions": {
       "save_settings": {
         "minRole": "owner"
+      },
+      "enqueue_main": {
+        "minRole": "owner",
+        "confirm": "sign",
+        "label": "Land on main"
       },
       "enqueue": {
         "minRole": "member",

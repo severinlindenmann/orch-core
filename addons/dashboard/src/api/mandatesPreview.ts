@@ -68,7 +68,7 @@ export const REFUSAL_LABEL: Record<MandateRefusalReason, string> = {
   limit: 'Limit reached',
   always_human: 'Always yours',
   chain: 'No mandate chains',
-  d33: 'D33: main is closed',
+  d33: 'Main landing refused (earlier D33 policy)',
 }
 
 /** Something the mandate refused or skipped: it goes to a person, as a normal "needs you" item. */

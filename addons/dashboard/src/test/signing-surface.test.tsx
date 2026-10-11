@@ -81,6 +81,24 @@ const addonOpShown = (name: string): Record<string, Shown> => ({
 const LINE = 'Routing picked this model for you, LINE-MARK'
 
 const CASES: Case[] = [
+  {
+    name: 'owner landing on main', path: '/ticket/DEMO-0052', wide: true,
+    setup: (s) => {
+      const state = s.addonState(wsOf(s), 'land') as unknown as { settings: { targets: string[] }; queues: { entries: unknown[] }[]; attempts: unknown[]; worker: { current: number | null } }
+      state.settings.targets = ['main', 'develop']
+      state.queues.forEach((q) => { q.entries = [] })
+      state.attempts = []
+      state.worker.current = null
+    },
+    open: async (user) => {
+      const panel = await openTicketPanel(user, 'Landing')
+      await user.click(await within(panel).findByRole('button', { name: 'Add to the landing queue' }, T))
+      return screen.findByRole('dialog', {}, T)
+    },
+    confirm: press('Sign and run'), method: 'runAddonAction', arg: 3,
+    skip: ['confirmed'], args: true, expectArgs: ['ticket', 'target', 'commit'],
+  },
+
   ...([0, 60] as const).map((hold): Case => ({
     name: `factory re-delivery with hold ${hold}`, path: '/addon/factory/factory',
     setup: s => {

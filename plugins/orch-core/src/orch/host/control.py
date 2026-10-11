@@ -459,20 +459,30 @@ class ControlOps:
             return False
 
     @staticmethod
-    def _foreign_config(root: str, workspace_id: str) -> bool:
-        """Is there a ``config.json`` in ``root`` that does not name ``workspace_id``? A direct ``orch init`` may have
-        run in the root after the host died: its files are not ours to delete. (An unreadable one counts as foreign.)"""
+    def _foreign_root(root: str, workspace_id: str, planned_id: str) -> bool:
+        """Did another workspace take over ``root`` after the host died? A direct ``orch init`` may have: a
+        ``config.json`` that does not name ``workspace_id`` (unreadable counts), or an ``events/workspace.jsonl``
+        whose first line is a genesis other than the planned one (``config.json`` is installed only after that line).
+        Its files are not ours to delete."""
         path = Path(root) / "config.json"
         try:
             raw = path.read_bytes()
         except FileNotFoundError:
-            return False
+            pass
         except OSError:
             return True
+        else:
+            try:
+                if json.loads(raw)["workspace"]["id"] != workspace_id:
+                    return True
+            except (ValueError, KeyError, TypeError):
+                return True
         try:
-            return json.loads(raw)["workspace"]["id"] != workspace_id
-        except (ValueError, KeyError, TypeError):
-            return True
+            with open(Path(root) / "events" / "workspace.jsonl", "rb") as handle:
+                first = json.loads(handle.readline(1 << 20))
+        except (OSError, ValueError):
+            return False  # no first line, or a torn one: nothing a direct init finished
+        return isinstance(first, dict) and first.get("id") != planned_id
 
     @staticmethod
     def _clean_root(root: str, *, remove_root: bool = False) -> None:
@@ -557,7 +567,7 @@ class ControlOps:
         # Validated but not landed: undo only what this bootstrap created, and never a registered workspace.
         registered = self.host.registry.get(workspace_id) is not None or self.host.registry.by_root(root) is not None
         if not registered:
-            if not self._foreign_config(root, workspace_id):
+            if not self._foreign_root(root, workspace_id, event["id"]):
                 self._clean_root(root, remove_root=True)
             pins = HostPins(self.state_dir, workspace_id)
             try:

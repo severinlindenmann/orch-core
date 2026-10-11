@@ -24,6 +24,7 @@ import contextlib
 import fcntl
 import grp
 import hashlib
+import logging
 import os
 import secrets
 import threading
@@ -47,6 +48,10 @@ from .registry import Entry, Registry, host_dir
 from .transport import WRITE_TIMEOUT_SECONDS, HostLimits, Server
 from .workspace import OpBackend, StatusBackend, WorkspaceGate, WorkspaceService
 
+LOG = logging.getLogger(__name__)
+#: how often retention runs in a host that stays up (§0.7)
+SWEEP_SECONDS = 3600.0
+
 __all__ = ["RETRY_AFTER_MS", "Host"]
 
 RETRY_AFTER_MS = 1000
@@ -69,6 +74,7 @@ class Host:
         clock: Callable[[], float] = time.time,
         lock_wait: float = LOCK_WAIT_SECONDS,
         limits: HostLimits | None = None,
+        sweep_interval: float = SWEEP_SECONDS,
     ) -> None:
         self.state_dir = Path(state_dir)
         self.host_uid = os.getuid() if host_uid is None else host_uid
@@ -77,6 +83,8 @@ class Host:
         self.pins = pins or AgentPins()
         self.clock = clock
         self.lock_wait = lock_wait
+        self.sweep_interval = sweep_interval
+        self._sweeper: asyncio.Task[None] | None = None
         self.limits = limits or HostLimits()
         self.registry = Registry(self.state_dir, self.host_uid, person_check=self._person_check, pins=self.pins)
         self.intents = IntentStore(self.state_dir, self.host_uid, clock=clock)
@@ -199,6 +207,7 @@ class Host:
         self.servers["control"] = (server, asyncio.create_task(server.serve()))
         for entry in self.registry.entries():
             await self.serve(entry)
+        self._sweeper = asyncio.create_task(self._sweep_loop())
 
     def _gid(self, entry: Entry) -> int:
         try:
@@ -303,6 +312,26 @@ class Host:
         assert self._stopped is not None
         self._stopped.set()
 
+    async def sweep_once(self) -> None:
+        """Retention (§0.7): records past 24 h become tombstones, old tombstones and job records go. Every file
+        operation runs off the event loop (the workspace worker thread, or a helper thread)."""
+        for fn in (self.intents.sweep, self.jobs.sweep):
+            try:
+                await asyncio.to_thread(fn)
+            except Exception:  # noqa: BLE001 - retention must never stop the host
+                LOG.exception("retention sweep failed")
+        for service in list(self.services.values()):
+            if service.state != "unavailable":
+                try:
+                    await service.call(service.outcomes.sweep)
+                except Exception:  # noqa: BLE001
+                    LOG.exception("outcome sweep failed")
+
+    async def _sweep_loop(self) -> None:
+        while True:
+            await asyncio.sleep(self.sweep_interval)
+            await self.sweep_once()
+
     async def _flush(self) -> None:
         """Wait until every queued answer has been written, bounded by the transport's write deadline."""
         deadline = time.monotonic() + WRITE_TIMEOUT_SECONDS
@@ -313,6 +342,10 @@ class Host:
             await asyncio.sleep(0.01)
 
     async def close(self) -> None:
+        if self._sweeper is not None:
+            self._sweeper.cancel()
+            await asyncio.gather(self._sweeper, return_exceptions=True)
+            self._sweeper = None
         for name in list(self.servers):
             pair = self.servers.pop(name)
             pair[1].cancel()

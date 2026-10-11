@@ -39,7 +39,7 @@ def outcome_files(lab, wid):
     return [json.loads((directory / name).read_text()) for name in sorted(os.listdir(directory))]
 
 
-def crash_write(lab, monkeypatch, point):
+def crash_write(lab, monkeypatch, point, op="new"):
     """A host process armed at ``point``: register the workspace, send one write, see the process die by SIGKILL."""
     monkeypatch.setenv("T_ACTOR", json.dumps(lab.ws.agent))
     monkeypatch.setenv("T_OWNER", lab.owner)
@@ -51,7 +51,7 @@ def crash_write(lab, monkeypatch, point):
         with ControlClient(control) as c:
             wid = ok(lab.register(c))["data"]["workspace_id"]
         ws = WsClient(lab.run / wid / "host.sock", wid, UID)
-        ws.send("w1", "new", {"title": "crash"}, opts={"idem": IDEM})
+        ws.send("w1", op, {"title": "crash"}, opts={"idem": IDEM})
         try:
             res = ws.read(20)
         except (ConnectionError, OSError, AssertionError):
@@ -124,6 +124,36 @@ def test_a_second_crash_after_reconciliation_changes_nothing(lab, monkeypatch):
         assert h.host.services[wid].outcomes.reconcile_all() == []
 
 
+def test_kill_between_two_appends_leaves_a_partial_record_after_restart(lab, monkeypatch):
+    wid = crash_write(lab, monkeypatch, "outcome-after-first-append", op="apply")
+    assert len(tickets(lab)) == 1  # event 1 of 2 landed
+    (record,) = outcome_files(lab, wid)
+    assert record["step"] == "pending" and len(record["planned"]) == 2
+    with restarted(lab):
+        (after,) = outcome_files(lab, wid)
+        assert after["step"] == "partial" and after["seqs"] == [1]
+        ws = WsClient(lab.run / wid / "host.sock", wid, UID)
+        got = ok(ws.call("outcome.get", {"idem": IDEM}))["data"]
+        assert got["state"] == "partial" and "interrupted after 1 event" in got["error"]["message"]
+        retry = ws.call("apply", {"title": "crash"}, request_id="again", opts={"idem": IDEM})
+        assert err(retry) == "invalid.input" and "interrupted after 1 event" in retry["error"]["message"]
+        assert len(tickets(lab)) == 1  # the retry did not append the rest, or the first again
+        ws.close()
+
+
+def test_kill_between_two_appends_of_a_human_submit_stays_pending_for_the_roll_forward(lab, monkeypatch):
+    wid = crash_write(lab, monkeypatch, "outcome-after-first-append", op="human.submit")
+    with restarted(lab):
+        (after,) = outcome_files(lab, wid)
+        assert after["step"] == "pending"  # never partial: H5a rolls it forward
+        ws = WsClient(lab.run / wid / "host.sock", wid, UID)
+        assert ok(ws.call("outcome.get", {"idem": IDEM}))["data"] == {"state": "pending"}
+        retry = ws.call("human.submit", {"title": "crash"}, opts={"idem": IDEM})
+        assert err(retry) == "outcome.unknown" and retry["error"]["retryable"] is True
+        assert len(tickets(lab)) == 1
+        ws.close()
+
+
 # --- H2a follow-up (a): _registered is exact ------------------------------------------------------------------------
 
 
@@ -159,7 +189,7 @@ def test_a_started_register_intent_with_its_own_recorded_id_is_still_finished(la
         assert ok(c.call("host.outcome", {"idem": idem}))["data"]["result"]["data"] == {"workspace_id": wid}
 
 
-# --- H2a follow-up (b): a root a direct init took over is not cleaned -------------------------------------------------
+# --- H2a follow-up (b): a root a direct init took over is not cleaned -----------------------------------------------
 
 
 def killed_bootstrap(lab, tmp_path):
@@ -193,3 +223,16 @@ def test_recovery_still_cleans_a_root_whose_config_names_this_workspace(lab, tmp
     with lab.host():
         pass
     assert not root.exists()
+
+
+def test_recovery_leaves_a_root_whose_workspace_log_starts_with_another_genesis(lab, tmp_path):
+    root, created, idem = killed_bootstrap(lab, tmp_path)
+    # a direct `orch init` that landed its genesis line but not yet its config.json
+    for name in ("config.json",):
+        (root / name).unlink(missing_ok=True)
+    (root / "events").mkdir(exist_ok=True)
+    line = json.dumps({"id": "01J9ZP0000000000000000DIRC", "type": "workspace.created", "seq": 1}) + "\n"
+    (root / "events" / "workspace.jsonl").write_text(line)
+    with lab.host() as h:
+        assert h.host.recovered == [("host.bootstrap", "failed")]
+    assert (root / "events" / "workspace.jsonl").read_text() == line  # not ours: left alone

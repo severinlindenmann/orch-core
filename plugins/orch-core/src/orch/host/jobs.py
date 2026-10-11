@@ -8,6 +8,7 @@ host restart; there is no ``opts.idem`` and no outcome record.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import os
 import re
@@ -48,8 +49,13 @@ class CompletionStore:
         self._bound: dict[str, object] = {}
 
     def open(self) -> None:
+        """At host start every ``leased`` record becomes ``void``: no connection survives a restart."""
         ensure_private_dir(self.dir.parent, self.host_uid)
         ensure_private_dir(self.dir, self.host_uid)
+        for name in os.listdir(self.dir):
+            record = read_json(self.dir / name, self.host_uid) if _ULID.fullmatch(name) else None
+            if record is not None and record.get("state") == "leased":
+                write_private(self.dir / name, {**record, "state": "void", "void_at": int(self.clock())})
 
     def _path(self, job: str) -> Path:
         if not _ULID.fullmatch(job):
@@ -61,7 +67,14 @@ class CompletionStore:
         with self._lock:
             write_private(
                 self._path(job),
-                {"id": job, "workspace_id": workspace_id, "kind": kind, "lease": lease, "state": "leased"},
+                {
+                    "id": job,
+                    "workspace_id": workspace_id,
+                    "kind": kind,
+                    "lease": lease,
+                    "state": "leased",
+                    "at": int(self.clock()),
+                },
             )
             self._bound[job] = connection
 
@@ -74,7 +87,7 @@ class CompletionStore:
                     del self._bound[job]
                     record = read_json(self._path(job), self.host_uid)
                     if record is not None and record["state"] == "leased":
-                        write_private(self._path(job), {**record, "state": "void"})
+                        write_private(self._path(job), {**record, "state": "void", "void_at": int(self.clock())})
                         out.append(job)
         return out
 
@@ -104,9 +117,19 @@ class CompletionStore:
             raise HostError("worker.lease", "the lease is not valid")
 
     def sweep(self) -> None:
-        """Completion records are kept 24 h after completion."""
+        """Records are kept 24 h after completion; ``leased`` and ``void`` ones 24 h after they were handed out or
+        voided. Blocking file work: the host calls it off the event loop (``Host.sweep_once``)."""
         now = self.clock()
         for name in os.listdir(self.dir):
             record = read_json(self.dir / name, self.host_uid) if _ULID.fullmatch(name) else None
-            if record and record.get("state") == "done" and now - record.get("done_at", now) > KEEP_SECONDS:
-                os.unlink(self.dir / name)
+            if record is None:
+                continue
+            since = record.get("done_at") or record.get("void_at") or record.get("at")
+            if (
+                since is not None
+                and now - since > KEEP_SECONDS
+                and name not in self._bound
+                and record.get("state") in {"done", "void", "leased"}
+            ):
+                with contextlib.suppress(FileNotFoundError):  # another host's sweep or a manual cleanup won
+                    os.unlink(self.dir / name)

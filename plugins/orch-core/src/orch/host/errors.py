@@ -24,6 +24,7 @@ HOST_CODES: dict[str, tuple[int, bool]] = {
     "idem.required": (5, False),
     "idem.conflict": (5, False),
     "idem.expired": (2, False),
+    "store.busy": (9, True),  # the store lock is held: a retry can succeed (the CLI maps it to retry.later)
     "blob.invalid": (5, False),
     "worker.lease": (3, False),
     "custody.unsafe_mode": (3, False),

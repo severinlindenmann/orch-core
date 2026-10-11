@@ -25,8 +25,14 @@ store lock: all landed gives ``committed`` (the result is rebuilt from the log w
 none removes the record so the retry runs again (a retry that names a file by ``{digest}`` then answers
 ``blob.invalid``: the client uploads again).
 
+**A refusal after an append.** :meth:`OutcomeStore.execute` does not believe the exception ``apply`` raises: it asks the
+log first (the same check as reconciliation), so a retryable error after an append never deletes the record (the retry
+would append again) and a refusal after event 1 of N is ``partial``, not ``failed``.
+
 **Retention.** Records live 24 h, then become tombstones for 7 days (``idem.expired``). At most 100 000 records per
-principal: past that the oldest completed ones become tombstones early.
+principal: past that the oldest completed ones become tombstones early. The store keeps an in-memory index of every
+record (built in one pass at :meth:`OutcomeStore.open`), so the limit check and :meth:`OutcomeStore.sweep` read only the
+records they change. The host calls ``sweep`` periodically, off the event loop.
 """
 
 from __future__ import annotations
@@ -35,17 +41,18 @@ import base64
 import binascii
 import contextlib
 import hashlib
+import logging
 import os
 import re
 import threading
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractContextManager
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, NamedTuple, Protocol
 
 from .custody import ensure_private_dir
 from .errors import HostError
-from .intents import Intent, IntentStore, binding_of
+from .intents import KEEP_SECONDS, TOMBSTONE_SECONDS, Intent, IntentStore, binding_of
 
 __all__ = [
     "BUILDERS",
@@ -54,6 +61,7 @@ __all__ = [
     "NO_PARTIAL",
     "Category",
     "OutcomeStore",
+    "Planned",
     "Reconciler",
     "StoreReconciler",
     "classify",
@@ -67,6 +75,10 @@ __all__ = [
 Category = Literal["log", "control", "job", "create", "read"]
 
 MAX_RECORDS = 100_000
+#: how long a duplicate waits for the running call with its key before it answers ``outcome.unknown`` (retryable). The
+#: workspace has one worker thread, so a wait that long was never going to be woken by that thread anyway.
+WAIT_SECONDS = 5.0
+LOG = logging.getLogger(__name__)
 CONTROL_WRITES = frozenset({"host.register", "host.unregister", "host.bootstrap"})
 #: ops that are log writes though no registry operation carries them
 _HUMAN_WRITES = frozenset({"human.submit"})
@@ -156,6 +168,18 @@ Builder = Callable[[dict[str, Any], list[dict[str, Any]]], dict[str, Any]]
 BUILDERS: dict[str, Builder] = {}
 
 
+class Planned(NamedTuple):
+    """An event a write will append, planned before the append: the log, the event id and what the event must be.
+
+    ``type`` (and ``actor``, for an event nobody signs) are checked against the logged event, as the store's own retry
+    check does: an event that merely carries the planned id is not trusted."""
+
+    log: str
+    id: str
+    type: str
+    actor: dict[str, Any] | None = None
+
+
 def result_builder(op: str) -> Callable[[Builder], Builder]:
     """Register ``fn(record, events) -> result`` as the builder of ``op``'s result for reconciliation."""
 
@@ -203,14 +227,22 @@ class StoreReconciler:
         return BUILDERS.get(record["op"], _default_builder)(record, events)
 
 
+def _matches(planned: dict[str, Any], event: dict[str, Any]) -> bool:
+    return event.get("type") == planned.get("type") and (
+        planned.get("actor") is None or event.get("actor") == planned["actor"]
+    )
+
+
 # --- the store --------------------------------------------------------------------------------------------------
+
+_Entry = tuple[str, str, float]  # principal, step, done_at (or created at)
 
 
 class OutcomeStore(IntentStore):
     """``<state>/hosts/<ws>/outcomes/<key>`` (0600), keyed by ``(workspace id, principal, idem)``.
 
-    The methods block (locks, fsync, the store lock) and belong on the workspace worker thread. A call that is running
-    holds its key in memory; a duplicate of it waits and then gets its result.
+    The methods block (locks, fsync, the store lock) and belong on the workspace worker thread, never on the event
+    loop. A call that is running holds its key in memory; a duplicate of it waits (bounded) and then gets its result.
     """
 
     START = "pending"
@@ -225,6 +257,7 @@ class OutcomeStore(IntentStore):
         clock: Callable[[], float] | None = None,
         reconciler: Reconciler | None = None,
         max_records: int = MAX_RECORDS,
+        wait_seconds: float = WAIT_SECONDS,
     ) -> None:
         import time
 
@@ -238,55 +271,79 @@ class OutcomeStore(IntentStore):
         self.namespace = workspace_id
         self.reconciler = reconciler
         self.max_records = max_records
+        self.wait_seconds = wait_seconds
+        #: key -> (principal, step, done_at); every mutation holds ``_lock``
+        self._idx: dict[str, _Entry] = {}
         self._counts: dict[str, int] = {}
-        self._count_lock = threading.Lock()
+
+    # -- the index (one pass at open; kept current by every write)
+    @staticmethod
+    def _entry(record: dict[str, Any]) -> _Entry:
+        return (
+            str(record.get("principal", "")),
+            str(record.get("step")),
+            float(record.get("done_at", record.get("at", 0))),
+        )
+
+    def _write(self, key: str, record: dict[str, Any]) -> None:
+        super()._write(key, record)
+        self._set(key, self._entry(record))
+
+    def _set(self, key: str, entry: _Entry) -> None:
+        self._drop(key)
+        self._idx[key] = entry
+        if entry[1] != "tombstone":
+            self._counts[entry[0]] = self._counts.get(entry[0], 0) + 1
+
+    def _drop(self, key: str) -> None:
+        old = self._idx.pop(key, None)
+        if old is not None and old[1] != "tombstone":
+            self._counts[old[0]] = max(0, self._counts.get(old[0], 0) - 1)
 
     def open(self) -> None:
+        """Create the directories and read every record once: the index, the counts and the ``pending`` records that
+        :meth:`reconcile_all` and :meth:`sweep` then work from."""
         ensure_private_dir(self.dir.parent.parent, self.host_uid)
         ensure_private_dir(self.dir.parent, self.host_uid)
         ensure_private_dir(self.dir, self.host_uid)
-        counts: dict[str, int] = {}
+        entries: dict[str, _Entry] = {}
         for name in os.listdir(self.dir):
             record = self.read(name) if len(name) == 64 else None
-            if record is not None and record.get("step") != "tombstone":
-                principal = record.get("principal", "")
-                counts[principal] = counts.get(principal, 0) + 1
-        with self._count_lock:
-            self._counts = counts
-
-    # -- counting (quota)
-    def _bump(self, principal: str, by: int) -> None:
-        with self._count_lock:
-            self._counts[principal] = max(0, self._counts.get(principal, 0) + by)
+            if record is not None:
+                entries[name] = self._entry(record)
+        with self._lock:
+            self._idx, self._counts = {}, {}
+            for name, entry in entries.items():
+                self._set(name, entry)
 
     def count(self, principal: str) -> int:
-        with self._count_lock:
-            return self._counts.get(principal, 0)
-
-    def _tombstone(self, name: str, record: dict[str, Any], now: float) -> None:
-        super()._tombstone(name, record, now)
-        self._bump(record["principal"], -1)
+        return self._counts.get(principal, 0)
 
     def abandon(self, intent: Intent) -> None:
-        super().abandon(intent)
-        self._bump(intent.record["principal"], -1)
+        with self._lock:
+            try:
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(self._path(intent.key))
+                self._drop(intent.key)
+            finally:
+                self._release(intent.key)
 
     def _admit(self, principal: str) -> None:
         """Called with the lock held, before a record is created: at the limit the oldest completed records become
-        tombstones early (about 1 % at a time), and with none to spare the write is ``quota.host``."""
+        tombstones early (about 1 % at a time, chosen from the index), and with none to spare the write is
+        ``quota.host``."""
         if self.count(principal) < self.max_records:
             return
-        done = []
-        for name in os.listdir(self.dir):
-            if len(name) != 64 or name in self._running:
-                continue
-            record = self.read(name)
-            if record and record.get("principal") == principal and record.get("step") in self.TERMINAL:
-                done.append((record.get("done_at", 0), name, record))
-        done.sort(key=lambda item: item[:2])
+        done = sorted(
+            (entry[2], name)
+            for name, entry in self._idx.items()
+            if entry[0] == principal and entry[1] in self.TERMINAL and name not in self._running
+        )
         want = self.count(principal) - self.max_records + max(1, self.max_records // 100)
-        for _, name, record in done[: max(want, 1)]:
-            self._tombstone(name, record, self.clock())
+        for _, name in done[: max(want, 1)]:
+            record = self.read(name)
+            if record is not None:
+                self._tombstone(name, record, self.clock())
         if self.count(principal) >= self.max_records:
             raise HostError("quota.host", "too many outcome records for this principal")
 
@@ -340,19 +397,22 @@ class OutcomeStore(IntentStore):
         op: str,
         args: dict[str, Any],
         *,
+        planned: Sequence[Planned],
         files: Mapping[str, str] | None = None,
         session: str | None = None,
-        planned: Sequence[tuple[str, str]] = (),
         digest_args: frozenset[str] = frozenset(),
     ) -> Intent | dict[str, Any]:
         """A new ``pending`` record (fsynced before the caller appends), or the stored answer of a duplicate.
 
-        ``args`` are the normalised args, ``planned`` the ``(log, event id)`` of every event the call will append, in
-        order. A duplicate of a running call waits for it. Raises ``idem.conflict`` (another binding),
-        ``idem.expired`` (a tombstone), the stored error of a ``failed`` or ``partial`` record, ``blob.invalid`` (a
-        ``{digest}`` file where the op would have to run again), ``outcome.unknown`` (an earlier attempt that cannot
-        be reconciled yet) and ``quota.host``.
+        ``args`` are the normalised args, ``planned`` every event the call will append, in order (never empty: a
+        crash after an append with nothing planned could not be told from one before it, and the retry would append
+        again). A duplicate of a running call waits for it, at most ``wait_seconds``. Raises ``idem.conflict``
+        (another binding), ``idem.expired`` (a tombstone), the stored error of a ``failed`` or ``partial`` record,
+        ``blob.invalid`` (a ``{digest}`` file where the op would have to run again), ``outcome.unknown`` (an earlier
+        attempt that cannot be reconciled yet, or a running one that did not finish in time) and ``quota.host``.
         """
+        if not planned:
+            raise ValueError("a write plans at least one event")
         key = self.key(self.namespace, principal, idem)
         binding = binding_of(op, args, session, files)
         while True:
@@ -374,14 +434,15 @@ class OutcomeStore(IntentStore):
                             "args_normalised": args,
                             "files": dict(files or {}),
                             "session": session,
-                            "planned": [{"log": log, "id": event_id} for log, event_id in planned],
+                            "planned": [{k: v for k, v in p._asdict().items() if v is not None} for p in planned],
                             "step": self.START,
                             "at": int(self.clock()),
                         }
                         self._write(key, record)
-                        self._bump(principal, 1)
                         self._running[key] = threading.Event()
                         return Intent(key, record)
+                    if record.get("principal") != principal or record.get("namespace") != self.namespace:
+                        raise HostError("internal", "an outcome record does not belong to its key")
                     if record.get("binding") != binding:
                         raise HostError("idem.conflict", "this idem was used for another request")
                     if record["step"] == "tombstone":
@@ -391,7 +452,8 @@ class OutcomeStore(IntentStore):
                     self._running[key] = threading.Event()  # a stale pending record: this call reconciles it
                     stale = record
             if stale is None:
-                running.wait()
+                if not running.wait(self.wait_seconds):
+                    raise HostError("outcome.unknown", f"{op} with this idem is still running; retry or outcome.get")
                 continue
             settled = self._settle(key, stale)
             if settled is not None and settled["step"] == self.START:
@@ -408,8 +470,8 @@ class OutcomeStore(IntentStore):
         return self._finish(intent, {"step": "committed", "result": result, "exit": 0})
 
     def refuse(self, intent: Intent, error: HostError) -> dict[str, Any] | None:
-        """A refusal of the op. A non-retryable one is stored (``failed``); a retryable one stores nothing, so the
-        retry runs again (``store.busy``, ``timeout`` before any append)."""
+        """A refusal of the op **before any planned event landed** (:meth:`execute` checks). A non-retryable one is
+        stored (``failed``); a retryable one stores nothing, so the retry runs again."""
         if error.retryable:
             self.abandon(intent)
             return None
@@ -436,39 +498,96 @@ class OutcomeStore(IntentStore):
         args: dict[str, Any],
         apply: Callable[[Intent], dict[str, Any]],
         *,
+        planned: Sequence[Planned],
         files: Mapping[str, str] | None = None,
         session: str | None = None,
-        planned: Sequence[tuple[str, str]] = (),
         digest_args: frozenset[str] = frozenset(),
     ) -> dict[str, Any]:
         """``begin``, ``apply`` (which appends the planned events and returns the result) and the end of the record.
 
-        A :class:`HostError` (or the store's refusal, as one) from ``apply`` is stored or, if retryable,
-        forgotten. Any other failure leaves the record ``pending``: the log says what landed.
-        Returns the result (a duplicate's has ``duplicate: true``).
+        A refusal from ``apply`` (:class:`HostError`, or the store's, as one) is not believed until the log has been
+        asked: nothing landed, the refusal is stored (``failed``) or, if retryable, forgotten; some landed,
+        the record is ``partial`` (``human.submit``: stays ``pending``); all landed, it is ``committed`` and the rebuilt
+        result is returned. Any other failure leaves the record ``pending``: the log says what landed. Returns the
+        result (a duplicate's has ``duplicate: true``).
         """
+        from orch.store import StoreError
+
         begun = self.begin(
             principal, idem, op, args, files=files, session=session, planned=planned, digest_args=digest_args
         )
         if isinstance(begun, dict):
             return begun
-        from orch.store import StoreError
-
         try:
             result = apply(begun)
         except HostError as exc:
-            self.refuse(begun, exc)
-            raise
-        except StoreError as exc:  # the model's refusal (or store.busy): stored, or forgotten if retryable
-            error = HostError(exc.code, exc.detail or exc.code)
-            self.refuse(begun, error)
-            raise error from None
+            return self._refused(begun, exc)
+        except StoreError as exc:  # the model's refusal (or store.busy): its disposition comes from the host table
+            return self._refused(begun, HostError(exc.code, exc.detail or exc.code))
         except BaseException:
             self.release(begun)
             raise
         return self.commit(begun, result)["result"]
 
+    def _refused(self, intent: Intent, error: HostError) -> dict[str, Any]:
+        """``apply`` raised ``error``: ask the log what landed, then end the record accordingly (raise or return)."""
+        try:
+            with self.reconciler.locked() if self.reconciler is not None else contextlib.nullcontext():
+                found = self._find(intent.record)
+                fields = self._fields(intent.record, found) if found is not None else "keep"
+        except BaseException:
+            self.release(intent)  # the log cannot say: keep the record, the next call reconciles it
+            raise error from None
+        if fields == "none":
+            self.refuse(intent, error)
+            raise error
+        if fields == "keep":
+            self.release(intent)
+            raise error
+        assert isinstance(fields, dict)
+        record = self._finish(intent, fields)
+        if record["step"] == "committed":
+            return record["result"]
+        raise HostError.stored(record["error"])
+
     # -- reconciliation
+    def _find(self, record: dict[str, Any]) -> list[dict[str, Any] | None] | None:
+        """For each planned event the matching logged event or ``None``; ``None`` when there is no reconciler. Call
+        inside ``reconciler.locked()``. Store errors propagate (the log cannot be read)."""
+        reconciler = self.reconciler
+        if reconciler is None:
+            return None
+        found = []
+        for planned in record.get("planned") or []:
+            event = reconciler.find(planned["log"], planned["id"])
+            found.append(event if event is not None and _matches(planned, event) else None)
+        return found
+
+    def _fields(self, record: dict[str, Any], found: list[dict[str, Any] | None]) -> dict[str, Any] | str:
+        """The terminal fields the log's answer gives, ``"none"`` (nothing landed) or ``"keep"`` (stay pending)."""
+        landed = [e for e in found if e is not None]
+        if found and len(landed) == len(found):
+            try:
+                result = self.reconciler.rebuild(record, landed)  # type: ignore[union-attr]
+            except Exception:  # noqa: BLE001 - a builder bug: the write landed, so it must not run again
+                LOG.exception("cannot rebuild the result of %s from the log", record["op"])
+                error = HostError("internal", f"{record['op']} landed but its result could not be rebuilt")
+                return {"step": "failed", "error": error.error(), "exit": error.exit}
+            return {"step": "committed", "result": result, "exit": 0}
+        if landed and record["op"] in NO_PARTIAL:
+            return "keep"  # human.submit: H5a rolls it forward
+        if landed:
+            error = HostError(
+                "invalid.input", f"an earlier attempt of this call was interrupted after {len(landed)} event(s)"
+            )
+            return {
+                "step": "partial",
+                "error": error.error(),
+                "exit": error.exit,
+                "seqs": [int(e["seq"]) for e in landed],
+            }
+        return "none"
+
     def _settle(self, key: str, record: dict[str, Any]) -> dict[str, Any] | None:
         """Reconcile a stale ``pending`` record whose key this call holds, then give the key back. Returns the record
         as it is now (``pending`` if the log could not say), ``None`` if it was removed."""
@@ -479,48 +598,33 @@ class OutcomeStore(IntentStore):
                 self._release(key)
 
     def _reconcile(self, key: str, record: dict[str, Any]) -> dict[str, Any] | None:
-        reconciler = self.reconciler
-        planned = record.get("planned") or []
-        if reconciler is None:
-            return record
+        from orch.store import StoreError
+
         try:
-            with reconciler.locked():
-                events = [reconciler.find(p["log"], p["id"]) for p in planned]
-                landed = [e for e in events if e is not None]
-                fields: dict[str, Any] | None = None
-                if planned and len(landed) == len(planned):
-                    fields = {"step": "committed", "result": reconciler.rebuild(record, landed), "exit": 0}
-                elif landed and record["op"] not in NO_PARTIAL:
-                    error = HostError(
-                        "invalid.input", f"an earlier attempt of this call was interrupted after {len(landed)} event(s)"
-                    )
-                    fields = {
-                        "step": "partial",
-                        "error": error.error(),
-                        "exit": error.exit,
-                        "seqs": [int(e["seq"]) for e in landed],
-                    }
-                elif landed:
-                    return record  # human.submit: H5a rolls it forward
-                if fields is None:
-                    with self._lock:
+            with self.reconciler.locked() if self.reconciler is not None else contextlib.nullcontext():
+                found = self._find(record)
+                fields = self._fields(record, found) if found is not None else "keep"
+                if fields == "keep":
+                    return record
+                with self._lock:
+                    if fields == "none":
                         with contextlib.suppress(FileNotFoundError):
                             os.unlink(self._path(key))
-                    self._bump(record["principal"], -1)
-                    return None
-                settled = {**record, **fields, "done_at": int(self.clock())}
-                with self._lock:
+                        self._drop(key)
+                        return None
+                    settled = {**record, **fields, "done_at": int(self.clock())}
                     self._write(key, settled)
-                return settled
-        except HostError:
+                    return settled
+        except (HostError, StoreError, OSError):
             return record  # the log cannot be read now (unavailable store...): still pending
-        except Exception:  # noqa: BLE001 - a store that cannot answer leaves the record for the next try
-            return record
 
-    def _stale(self) -> Iterator[tuple[str, dict[str, Any]]]:
-        for name in sorted(os.listdir(self.dir)):
-            if len(name) != 64:
-                continue
+    def reconcile_all(self) -> list[tuple[str, str]]:
+        """At start: reconcile every ``pending`` record no call is running (from the index: only those records are
+        read). Returns (op, outcome) for each, where outcome is the new step or ``removed``."""
+        with self._lock:
+            names = [n for n, e in self._idx.items() if e[1] == self.START and n not in self._running]
+        out = []
+        for name in sorted(names):
             with self._lock:
                 if name in self._running:
                     continue
@@ -528,16 +632,39 @@ class OutcomeStore(IntentStore):
                 if record is None or record.get("step") != self.START:
                     continue
                 self._running[name] = threading.Event()
-            yield name, record
-
-    def reconcile_all(self) -> list[tuple[str, str]]:
-        """At start: reconcile every ``pending`` record no call is running. Returns (op, outcome) for each, where
-        outcome is the new step or ``removed``."""
-        out = []
-        for name, record in self._stale():
             settled = self._settle(name, record)
             out.append((record["op"], "removed" if settled is None else settled["step"]))
         return out
+
+    # -- retention
+    def sweep(self) -> None:
+        """Terminal records older than 24 h become tombstones, tombstones older than 7 days go. Works from the index
+        and reads only the records it changes, a batch at a time (the lock is not held across batches). The host
+        calls this periodically, off the event loop."""
+        now = self.clock()
+        with self._lock:
+            due = [
+                (name, entry[1] == "tombstone")
+                for name, entry in self._idx.items()
+                if name not in self._running
+                and (
+                    (entry[1] == "tombstone" and now - entry[2] > TOMBSTONE_SECONDS)
+                    or (entry[1] in self.TERMINAL and now - entry[2] > KEEP_SECONDS)
+                )
+            ]
+        for start in range(0, len(due), 200):
+            with self._lock:
+                for name, is_tombstone in due[start : start + 200]:
+                    if name in self._running or name not in self._idx:
+                        continue
+                    if is_tombstone:
+                        with contextlib.suppress(FileNotFoundError):
+                            os.unlink(self._path(name))
+                        self._drop(name)
+                    else:
+                        record = self.read(name)
+                        if record is not None and record.get("step") in self.TERMINAL:
+                            self._tombstone(name, record, now)
 
     # -- outcome.get
     def lookup(self, principal: str, idem: str) -> dict[str, Any]:
@@ -548,11 +675,11 @@ class OutcomeStore(IntentStore):
         with self._lock:
             running = key in self._running
             record = self.read(key)
-            if record is not None and record.get("step") == self.START and not running:
-                self._running[key] = threading.Event()
+            if record is None or record.get("principal") != principal or record.get("namespace") != self.namespace:
+                raise HostError("outcome.unknown_idem", "no outcome for this idem")
+            if record.get("step") == self.START and not running:
+                self._running[key] = threading.Event()  # claimed only after the checks above
                 stale = record
-        if record is None or record.get("principal") != principal or record.get("namespace") != self.namespace:
-            raise HostError("outcome.unknown_idem", "no outcome for this idem")
         if stale is not None:
             record = self._settle(key, stale)
             if record is None:

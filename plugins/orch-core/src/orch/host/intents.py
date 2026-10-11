@@ -164,16 +164,20 @@ class IntentStore:
     def abandon(self, intent: Intent) -> None:
         """A retryable failure (``lock.busy``) stores nothing: the retry runs again."""
         with self._lock:
-            with contextlib.suppress(FileNotFoundError):
-                os.unlink(self._path(intent.key))
-            self._release(intent.key)
+            try:
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(self._path(intent.key))
+            finally:
+                self._release(intent.key)  # never leave the key marked running: a retry would wait for it forever
 
     def _finish(self, intent: Intent, fields: dict[str, Any]) -> dict[str, Any]:
         record = {**intent.record, **fields, "done_at": int(self.clock())}
         with self._lock:
-            self._write(intent.key, record)
-            intent.record = record
-            self._release(intent.key)
+            try:
+                self._write(intent.key, record)
+                intent.record = record
+            finally:
+                self._release(intent.key)  # also when the write fails (disk full): a retry must not wait forever
         return record
 
     def _release(self, key: str) -> None:

@@ -15,6 +15,7 @@ from orch.host.intents import KEEP_SECONDS, TOMBSTONE_SECONDS
 from orch.host.jobs import CompletionStore, completion_digest
 from orch.host.outcomes import (
     OutcomeStore,
+    Planned,
     classify,
     dry_run_supported,
     principal_of,
@@ -43,8 +44,8 @@ class FakeLog:
     def locked(self):
         yield
 
-    def land(self, log, event_id, seq=1):
-        self.events[(log, event_id)] = {"id": event_id, "seq": seq, "type": "x"}
+    def land(self, log, event_id, seq=1, etype="x"):
+        self.events[(log, event_id)] = {"id": event_id, "seq": seq, "type": etype}
 
     def find(self, log, event_id):
         if self.broken:
@@ -65,7 +66,12 @@ def env(tmp_path):
     return store, log, now
 
 
+def pl(log, event_id):
+    return Planned(log, event_id, "x")
+
+
 def begin(store, idem=IDEM, op="new", args=None, **kw):
+    kw.setdefault("planned", [pl("L", "default")])
     return store.begin(P, idem, op, args if args is not None else {"title": "x"}, **kw)
 
 
@@ -149,15 +155,17 @@ def test_principal_is_the_verified_grant_or_the_uid():
 
 def test_begin_commit_and_replay_with_duplicate_true(env):
     store, log, now = env
-    intent = begin(store, planned=[("L", "e1")])
+    intent = begin(store, planned=[pl("L", "e1")])
     path = store.dir / intent.key
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     record = json.loads(path.read_text())
-    assert record["step"] == "pending" and record["planned"] == [{"log": "L", "id": "e1"}]  # before any append
+    assert record["step"] == "pending" and record["planned"] == [
+        {"log": "L", "id": "e1", "type": "x"}
+    ]  # before any append
     assert store.lookup(P, IDEM) == {"state": "pending"}
     done = store.commit(intent, ok_result({"n": 1}, seq=4))
     assert done["step"] == "committed"
-    again = begin(store, planned=[("L", "e2")])
+    again = begin(store, planned=[pl("L", "e2")])
     assert again["duplicate"] is True and again["data"] == {"n": 1} and again["seq"] == 4
     assert store.lookup(P, IDEM) == {"state": "committed", "result": ok_result({"n": 1}, seq=4), "exit": 0}
 
@@ -217,7 +225,7 @@ def test_concurrent_duplicates_wait_for_the_first_call_and_get_one_result(env):
             release.wait(10)
             return ok_result({"n": len(applied)})
 
-        out.append(store.execute(P, IDEM, "new", {"title": "x"}, apply, planned=[("L", "e")]))
+        out.append(store.execute(P, IDEM, "new", {"title": "x"}, apply, planned=[pl("L", "e")]))
 
     first = threading.Thread(target=call)
     first.start()
@@ -241,8 +249,8 @@ def test_a_failed_waiter_target_lets_the_next_duplicate_run(env):
         raise HostError("lock.busy", "busy")  # retryable: stored nothing
 
     with pytest.raises(HostError):
-        store.execute(P, IDEM, "new", {"title": "x"}, boom, planned=[("L", "e")])
-    assert store.execute(P, IDEM, "new", {"title": "x"}, lambda p: ok_result({"ok": 1}), planned=[("L", "e2")])[
+        store.execute(P, IDEM, "new", {"title": "x"}, boom, planned=[pl("L", "e")])
+    assert store.execute(P, IDEM, "new", {"title": "x"}, lambda p: ok_result({"ok": 1}), planned=[pl("L", "e2")])[
         "data"
     ] == {"ok": 1}
 
@@ -260,7 +268,7 @@ def test_lookup_is_scoped_to_the_principal(env):
         store.lookup(P, IDEM2)
     assert exc.value.code == "outcome.unknown_idem"
     # the same idem under another principal is its own record, not a conflict
-    other = store.begin("uid:2", IDEM, "new", {"title": "other"})
+    other = store.begin("uid:2", IDEM, "new", {"title": "other"}, planned=[pl("L", "o")])
     assert not isinstance(other, dict)
 
 
@@ -275,7 +283,7 @@ def crash_after_pending(store, **kw):
 
 def test_reconcile_all_landed_rebuilds_the_result_from_the_log(env):
     store, log, _ = env
-    crash_after_pending(store, planned=[("L", "e1")])
+    crash_after_pending(store, planned=[pl("L", "e1")])
     log.land("L", "e1", seq=7)
     assert store.reconcile_all() == [("new", "committed")]
     assert store.lookup(P, IDEM)["result"]["data"] == {"rebuilt": ["e1"]}
@@ -285,7 +293,7 @@ def test_reconcile_all_landed_rebuilds_the_result_from_the_log(env):
 
 def test_a_duplicate_reconciles_a_stale_pending_record_at_its_next_lookup(env):
     store, log, _ = env
-    crash_after_pending(store, planned=[("L", "e1")])
+    crash_after_pending(store, planned=[pl("L", "e1")])
     log.land("L", "e1", seq=3)
     replay = begin(store)  # no reconcile_all ran: the retry itself reconciles
     assert replay["duplicate"] is True and replay["data"] == {"rebuilt": ["e1"]}
@@ -293,14 +301,14 @@ def test_a_duplicate_reconciles_a_stale_pending_record_at_its_next_lookup(env):
 
 def test_lookup_reconciles_a_stale_pending_record(env):
     store, log, _ = env
-    crash_after_pending(store, planned=[("L", "e1")])
+    crash_after_pending(store, planned=[pl("L", "e1")])
     log.land("L", "e1")
     assert store.lookup(P, IDEM)["state"] == "committed"
 
 
 def test_some_landed_is_partial_and_a_retry_gets_the_interrupted_error(env):
     store, log, _ = env
-    crash_after_pending(store, op="apply", planned=[("L", "e1"), ("L", "e2")])
+    crash_after_pending(store, op="apply", planned=[pl("L", "e1"), pl("L", "e2")])
     log.land("L", "e1", seq=5)
     assert store.reconcile_all() == [("apply", "partial")]
     out = store.lookup(P, IDEM)
@@ -313,7 +321,7 @@ def test_some_landed_is_partial_and_a_retry_gets_the_interrupted_error(env):
 
 def test_human_submit_is_never_partial_it_stays_pending_for_the_roll_forward(env):
     store, log, _ = env
-    crash_after_pending(store, op="human.submit", planned=[("L", "e1"), ("L", "e2")])
+    crash_after_pending(store, op="human.submit", planned=[pl("L", "e1"), pl("L", "e2")])
     log.land("L", "e1")
     assert store.reconcile_all() == [("human.submit", "pending")]
     assert store.lookup(P, IDEM) == {"state": "pending"}
@@ -324,18 +332,18 @@ def test_human_submit_is_never_partial_it_stays_pending_for_the_roll_forward(env
 
 def test_none_landed_removes_the_record_and_the_retry_runs_again(env):
     store, _, _ = env
-    intent = crash_after_pending(store, planned=[("L", "e1")])
+    intent = crash_after_pending(store, planned=[pl("L", "e1")])
     assert store.reconcile_all() == [("new", "removed")]
     assert not (store.dir / intent.key).exists()
     with pytest.raises(HostError, match="outcome.unknown_idem"):
         store.lookup(P, IDEM)
-    again = begin(store, planned=[("L", "e9")])
+    again = begin(store, planned=[pl("L", "e9")])
     assert not isinstance(again, dict)  # it runs again, with fresh planned ids
 
 
 def test_an_unreadable_log_leaves_the_record_pending(env):
     store, log, _ = env
-    crash_after_pending(store, planned=[("L", "e1")])
+    crash_after_pending(store, planned=[pl("L", "e1")])
     log.broken = True
     assert store.reconcile_all() == [("new", "pending")]
     with pytest.raises(HostError) as exc:
@@ -347,7 +355,7 @@ def test_an_unreadable_log_leaves_the_record_pending(env):
 
 def test_a_running_call_is_not_reconciled_away(env):
     store, log, _ = env
-    intent = begin(store, planned=[("L", "e1")])  # running in this process
+    intent = begin(store, planned=[pl("L", "e1")])  # running in this process
     assert store.reconcile_all() == []
     assert store.lookup(P, IDEM) == {"state": "pending"}
     store.commit(intent, ok_result({}))
@@ -383,7 +391,7 @@ def test_records_become_tombstones_after_24h_then_go_after_7_days(env):
 
 def test_a_pending_record_is_never_swept(env):
     store, _, now = env
-    crash_after_pending(store, planned=[("L", "e1")])
+    crash_after_pending(store, planned=[pl("L", "e1")])
     now[0] += 10 * KEEP_SECONDS
     store.sweep()
     assert json.loads((store.dir / store.key(WS, P, IDEM)).read_text())["step"] == "pending"
@@ -404,7 +412,7 @@ def test_the_record_limit_tombstones_the_oldest_completed_records_early(tmp_path
         store.lookup(P, idems[0])
     assert store.lookup(P, idems[5])["state"] == "committed"
     assert store.count(P) <= 5
-    other = store.begin("uid:9", idems[0], "new", {"title": "x"})  # the limit is per principal
+    other = store.begin("uid:9", idems[0], "new", {"title": "x"}, planned=[pl("L", "o")])  # the limit is per principal
     assert not isinstance(other, dict)
 
 
@@ -485,7 +493,7 @@ def test_a_digest_retry_that_has_to_run_again_is_blob_invalid_even_if_a_blob_has
         return known.get(blob)
 
     files, _ = store.bind_files(P, IDEM, {"f": {"blob": "b_Y"}}, blob_digest=blob_digest)
-    crash_after_pending(store, files=files, planned=[("L", "e1")])  # died before the append
+    crash_after_pending(store, files=files, planned=[pl("L", "e1")])  # died before the append
     digests, by_digest = store.bind_files(P, IDEM, {"f": {"digest": SHA_A}}, blob_digest=blob_digest)
     with pytest.raises(HostError) as exc:
         begin(store, files=digests, digest_args=by_digest)  # reconciliation removes the record: it must run again
@@ -496,7 +504,7 @@ def test_a_digest_retry_that_has_to_run_again_is_blob_invalid_even_if_a_blob_has
     assert exc.value.code == "blob.invalid"
     # uploading again (a blob spec) runs it
     again, _ = store.bind_files(P, IDEM, {"f": {"blob": "b_Y"}}, blob_digest=blob_digest)
-    assert not isinstance(begin(store, files=again, planned=[("L", "e2")]), dict)
+    assert not isinstance(begin(store, files=again, planned=[pl("L", "e2")]), dict)
 
 
 def test_a_malformed_digest_is_blob_invalid(env):
@@ -562,3 +570,264 @@ def test_job_done_precedence_unknown_leased_void(jobs):
         store.done(JOB, "L" * 26, "error", digest, conn)  # 4. void
     # the message is part of the digest
     assert digest != completion_digest("error", error={"code": "cancelled", "message": "other"})
+
+
+# --- fix round: a refusal after an append, store codes, leaked keys, the index, reconciliation chec -----------------
+
+
+def landing(log, *ids, then=None, etype="x"):
+    """An ``apply`` that appends these events (they appear in the fake log) and then raises ``then``."""
+
+    def apply(pending):
+        for i, event_id in enumerate(ids, 1):
+            log.land("L", event_id, seq=i, etype=etype)
+        if then is not None:
+            raise then
+        return ok_result({"done": True})
+
+    return apply
+
+
+def run(store, apply, *ids, op="new", idem=IDEM):
+    return store.execute(P, idem, op, {"title": "x"}, apply, planned=[pl("L", i) for i in ids])
+
+
+def test_a_retryable_error_after_the_append_does_not_delete_the_record_and_never_appends_twice(env):
+    store, log, _ = env
+    applied = []
+
+    def apply(pending):
+        applied.append(1)
+        return landing(log, "e1", then=HostError("lock.busy", "busy"))(pending)
+
+    result = store.execute(P, IDEM, "new", {"title": "x"}, apply, planned=[pl("L", "e1")])
+    assert result["data"] == {"rebuilt": ["e1"]}  # the log says it landed: committed, the rebuilt result
+    assert store.lookup(P, IDEM)["state"] == "committed"
+    again = store.execute(P, IDEM, "new", {"title": "x"}, apply, planned=[pl("L", "e2")])
+    assert again["duplicate"] is True and applied == [1]  # the retry did not append again
+
+
+def test_a_nonretryable_error_after_the_first_of_two_events_is_partial_not_failed(env):
+    store, log, _ = env
+    with pytest.raises(HostError, match="interrupted after 1 event"):
+        run(store, landing(log, "e1", then=HostError("invalid.input", "no")), "e1", "e2", op="apply")
+    out = store.lookup(P, IDEM)
+    assert out["state"] == "partial" and json.loads((store.dir / store.key(WS, P, IDEM)).read_text())["seqs"] == [1]
+    with pytest.raises(HostError, match="interrupted after 1 event"):
+        run(store, landing(log), "e3", "e4", op="apply")
+
+
+def test_a_refusal_after_the_first_event_of_a_human_submit_stays_pending(env):
+    store, log, _ = env
+    with pytest.raises(HostError, match="invalid.input"):
+        run(store, landing(log, "e1", then=HostError("invalid.input", "no")), "e1", "e2", op="human.submit")
+    assert store.lookup(P, IDEM) == {"state": "pending"}
+
+
+def test_a_refusal_with_nothing_landed_is_stored_or_forgotten_as_before(env):
+    store, log, _ = env
+    with pytest.raises(HostError):
+        run(store, landing(log, then=HostError("invalid.input", "no")), "e1")
+    assert store.lookup(P, IDEM)["state"] == "failed"
+    with pytest.raises(HostError):
+        run(store, landing(log, then=HostError("lock.busy", "busy")), "e2", idem=IDEM2)
+    with pytest.raises(HostError, match="outcome.unknown_idem"):
+        store.lookup(P, IDEM2)
+
+
+def test_an_unreadable_log_after_a_refusal_keeps_the_record_pending(env):
+    store, log, _ = env
+
+    def apply(pending):
+        log.land("L", "e1")
+        log.broken = True
+        raise HostError("lock.busy", "busy")
+
+    with pytest.raises(HostError, match="lock.busy"):
+        run(store, apply, "e1")
+    log.broken = False
+    assert store.lookup(P, IDEM)["state"] == "committed"  # the next lookup reconciles it
+
+
+def test_store_busy_is_retryable_and_every_store_code_keeps_its_cli_disposition(env):
+    from orch.cli.store_errors import TABLE
+    from orch.host.errors import disposition
+    from orch.ops.errors import ERRORS
+    from orch.store import StoreError
+
+    assert disposition("store.busy") == (9, True)
+    for code, mapped in TABLE.items():
+        spec = ERRORS.get(mapped)
+        if spec is not None:
+            assert disposition(code)[1] == spec.retryable, code
+    store, log, _ = env
+
+    def apply(pending):
+        raise StoreError("store.busy", "adopting")
+
+    with pytest.raises(HostError) as exc:
+        run(store, apply, "e1")
+    assert exc.value.code == "store.busy" and exc.value.retryable
+    with pytest.raises(HostError, match="outcome.unknown_idem"):
+        store.lookup(P, IDEM)  # not stored as a permanent failure
+
+
+def test_a_failed_record_write_does_not_leak_the_running_key(env, monkeypatch):
+    store, log, _ = env
+    intent = begin(store, planned=[pl("L", "e1")])
+    real = store._write
+
+    def broken(key, record):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(store, "_write", broken)
+    with pytest.raises(OSError):
+        store.commit(intent, ok_result({}))
+    monkeypatch.setattr(store, "_write", real)
+    log.land("L", "e1")
+    assert begin(store, planned=[pl("L", "e9")])["duplicate"] is True  # reconciled from the log, no hang
+    intent2 = begin(store, IDEM2, planned=[pl("L", "f1")])
+    monkeypatch.setattr(store.__class__, "_path", lambda self, key: (_ for _ in ()).throw(PermissionError("x")))
+    with pytest.raises(PermissionError):
+        store.abandon(intent2)
+    monkeypatch.undo()
+    assert not store._running  # released although the unlink failed
+    with pytest.raises(HostError, match="outcome.unknown_idem"):
+        store.lookup(P, IDEM2)  # nothing landed: reconciliation removes the stale record
+
+
+def test_a_duplicate_of_a_call_that_never_finishes_waits_a_bounded_time(tmp_path):
+    (tmp_path / "state").mkdir(mode=0o700)
+    store = OutcomeStore(tmp_path / "state", WS, UID, wait_seconds=0.2)
+    store.open()
+    begin(store)  # running, and nobody will ever finish it
+    with pytest.raises(HostError) as exc:
+        begin(store)
+    assert exc.value.code == "outcome.unknown" and exc.value.retryable
+
+
+def test_lookup_of_a_foreign_record_leaks_no_running_key(env):
+    store, log, _ = env
+    key = store.key(WS, P, IDEM)
+    foreign = {"idem": IDEM, "namespace": WS, "principal": "uid:2", "binding": "b", "op": "new", "step": "pending"}
+    (store.dir / key).write_text(json.dumps(foreign))
+    os.chmod(store.dir / key, 0o600)
+    with pytest.raises(HostError, match="outcome.unknown_idem"):
+        store.lookup(P, IDEM)
+    assert not store._running
+    with pytest.raises(HostError, match="internal"):
+        begin(store)
+    assert not store._running
+
+
+def test_reconciliation_requires_the_planned_type_and_actor(env):
+    store, log, _ = env
+    crash_after_pending(store, planned=[Planned("L", "e1", "ticket.created", {"kind": "agent", "id": "a"})])
+    log.land("L", "e1", etype="note.added")  # another event that carries the planned id
+    assert store.reconcile_all() == [("new", "removed")]
+    crash_after_pending(store, planned=[Planned("L", "e2", "x", {"kind": "agent", "id": "a"})])
+    log.events[("L", "e2")] = {"id": "e2", "seq": 1, "type": "x", "actor": {"kind": "agent", "id": "other"}}
+    assert store.reconcile_all() == [("new", "removed")]
+    crash_after_pending(store, planned=[Planned("L", "e3", "x", {"kind": "agent", "id": "a"})])
+    log.events[("L", "e3")] = {"id": "e3", "seq": 1, "type": "x", "actor": {"kind": "agent", "id": "a"}}
+    assert store.reconcile_all() == [("new", "committed")]
+
+
+def test_a_result_builder_bug_marks_the_record_failed_instead_of_leaving_it_pending(env, caplog):
+    store, log, _ = env
+    crash_after_pending(store, planned=[pl("L", "e1")])
+    log.land("L", "e1")
+
+    def boom(record, events):
+        raise KeyError("key")
+
+    log.rebuild = boom
+    assert store.reconcile_all() == [("new", "failed")]
+    out = store.lookup(P, IDEM)
+    assert out["state"] == "failed" and out["error"]["code"] == "internal" and "rebuilt" in out["error"]["message"]
+    assert "cannot rebuild" in caplog.text
+    with pytest.raises(HostError, match="internal"):
+        begin(store)  # the write landed: a retry must not run it again
+
+
+def test_a_write_plans_at_least_one_event(env):
+    store, _, _ = env
+    with pytest.raises(ValueError):
+        store.begin(P, IDEM, "new", {}, planned=[])
+    with pytest.raises(ValueError):
+        store.execute(P, IDEM, "new", {}, lambda p: ok_result({}), planned=[])
+
+
+def test_open_reads_every_record_once_and_the_limit_check_reads_only_what_it_changes(tmp_path, monkeypatch):
+    now = [1_800_000_000.0]
+    (tmp_path / "state").mkdir(mode=0o700)
+    store = OutcomeStore(tmp_path / "state", WS, UID, clock=lambda: now[0], max_records=20, reconciler=FakeLog())
+    store.open()
+    idems = [f"a_01J9ZP00000000000000000{i:02d}" for i in range(20)]
+    for idem in idems:
+        now[0] += 1
+        store.commit(begin(store, idem), ok_result({}))
+    reads = []
+    real = type(store).read
+
+    def counting(self, key):
+        reads.append(key)
+        return real(self, key)
+
+    monkeypatch.setattr(type(store), "read", counting)
+    fresh = OutcomeStore(tmp_path / "state", WS, UID, clock=lambda: now[0], max_records=20, reconciler=FakeLog())
+    fresh.open()
+    fresh.reconcile_all()
+    fresh.sweep()
+    assert len(reads) == 20  # one pass: not three
+    reads.clear()
+    begin(fresh, "a_01J9ZP0000000000000000000Z")  # at the limit: the oldest one becomes a tombstone
+    assert len(reads) <= 2
+    assert fresh.count(P) == 20
+
+
+def test_the_index_follows_every_write(env):
+    store, log, now = env
+    a = begin(store, IDEM)
+    assert store.count(P) == 1
+    store.abandon(a)
+    assert store.count(P) == 0 and not store._idx
+    store.commit(begin(store, IDEM), ok_result({}))
+    now[0] += KEEP_SECONDS + 1
+    store.sweep()
+    assert store.count(P) == 0 and [e[1] for e in store._idx.values()] == ["tombstone"]
+    now[0] += TOMBSTONE_SECONDS + 1
+    store.sweep()
+    assert not store._idx and os.listdir(store.dir) == []
+
+
+# --- jobs -----------------------------------------------------------------------------------------------------------
+
+
+def test_job_records_leased_at_start_become_void_and_stale_ones_are_swept(jobs, tmp_path):
+    store, now = jobs
+    conn = object()
+    store.lease(JOB, WS, "tree.check", "L" * 26, conn)
+    other = "01J9ZP0000000000000000000K"
+    store.lease(other, WS, "tree.check", "M" * 26, conn)
+    fresh = CompletionStore(tmp_path / "state", UID, clock=lambda: now[0])
+    fresh.open()  # a restart: no connection survives
+    assert json.loads((fresh.dir / JOB).read_text())["state"] == "void"
+    with pytest.raises(HostError, match="worker.lease"):
+        fresh.done(JOB, "L" * 26, "ok", completion_digest("ok", {}), conn)
+    now[0] += KEEP_SECONDS + 1
+    fresh.sweep()
+    assert os.listdir(fresh.dir) == []
+
+
+def test_job_sweep_survives_a_concurrent_removal(jobs, monkeypatch):
+    store, now = jobs
+    store.lease(JOB, WS, "tree.check", "L" * 26, object())
+    store._bound.clear()
+    now[0] += KEEP_SECONDS + 1
+
+    def gone(path):
+        raise FileNotFoundError(path)
+
+    monkeypatch.setattr("orch.host.jobs.os.unlink", gone)
+    store.sweep()  # no exception

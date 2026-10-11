@@ -51,6 +51,18 @@ def patch(point: str) -> None:
         store.Store.append = after(store.Store.append)
     elif point == "outcome-before-append":
         store.Store.create_ticket = die
+    elif point == "outcome-after-first-append":
+        original = store.Store.create_ticket
+        calls = []
+
+        def create_ticket(self, *args, **kwargs):
+            result = original(self, *args, **kwargs)
+            calls.append(1)
+            if len(calls) == 1:
+                die()  # event 1 of 2 is in the log, event 2 is not
+            return result
+
+        store.Store.create_ticket = create_ticket
     elif point == "outcome-before-commit":
         from orch.host import outcomes
 

@@ -40,10 +40,10 @@ def err(res):
 
 
 class Served:
-    def __init__(self, lab, backend=None):
+    def __init__(self, lab, backend=None, **kw):
         self.lab = lab
         self.backend = backend or OutcomeBackend(lab.ws.agent, lab.owner)
-        self.h = lab.host(backend=lambda: self.backend, clock=lambda: lab.ws.clock[0])
+        self.h = lab.host(backend=lambda: self.backend, clock=lambda: lab.ws.clock[0], **kw)
         self.h.__enter__()
         self.control = self.h.client()
         self.wid = ok(lab.register(self.control))["data"]["workspace_id"]
@@ -321,7 +321,7 @@ def test_files_binding_through_blob_then_digest_and_digest_without_a_record(serv
     )
 
 
-# --- the stored record is private and host-owned --------------------------------------------------
+# --- the stored record is private and host-owned --------------------------------------------------------------------
 
 
 def test_outcome_records_are_private_files_of_the_host(served):
@@ -334,3 +334,35 @@ def test_outcome_records_are_private_files_of_the_host(served):
     assert oct((directory / name).stat().st_mode & 0o777) == "0o600"
     record = json.loads((directory / name).read_text())
     assert record["planned"][0]["log"] == record["result"]["data"]["uid"]
+
+
+# --- retention in a host that stays up ------------------------------------------------------------------------------
+
+
+def test_a_running_host_sweeps_by_itself_without_a_reopen(lab):
+    import time
+
+    s = Served(lab, sweep_interval=0.2)
+    try:
+        ws = s.client()
+        new(ws)
+        assert ok(ws.call("outcome.get", {"idem": IDEM}))["data"]["state"] == "committed"
+        lab.ws.clock[0] += 24 * 3600 + 1  # a day passes; nothing reopens the workspace
+        deadline = time.monotonic() + 15
+        code = None
+        while time.monotonic() < deadline:
+            res = ws.call("outcome.get", {"idem": IDEM})
+            code = None if res["ok"] else res["error"]["code"]
+            if code == "idem.expired":
+                break
+            time.sleep(0.1)
+        assert code == "idem.expired"
+        lab.ws.clock[0] += 7 * 24 * 3600 + 1  # and the tombstone goes after its 7 days
+        for _ in range(150):
+            if not os.listdir(s.service.outcomes.dir):
+                break
+            time.sleep(0.1)
+        assert os.listdir(s.service.outcomes.dir) == []
+        assert err(ws.call("outcome.get", {"idem": IDEM})) == "outcome.unknown_idem"
+    finally:
+        s.close()

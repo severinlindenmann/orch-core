@@ -43,7 +43,7 @@ def test_label_literals():
     assert canon.LABELS["sig_host_event"] == "orch/v2/sig/host-event|"
 
 
-# --- canonical json -------------------------------------------------------------------------------------------
+# --- canonical json -----------------------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("v", load("canon.json")["depth"], ids=lambda v: v["name"])
@@ -55,7 +55,7 @@ def test_canon_depth_vectors(v):
             jcs.loads_strict(v["text"])
 
 
-# --- text -----------------------------------------------------------------------------------------------------
+# --- text ---------------------------------------------------------------------------------------------------
 
 
 T = load("text.json")
@@ -93,7 +93,7 @@ def test_invisible_characters_are_kept(v):
     assert canon.normalize_text(v["input"]) == v["input"]
 
 
-# --- hashes ---------------------------------------------------------------------------------------------------
+# --- hashes -------------------------------------------------------------------------------------------------
 
 H = load("hashes.json")
 
@@ -162,7 +162,7 @@ def test_grant_secret_hash(v):
     assert canon.grant_secret_hash(bytes.fromhex(v["secret_hex"])) == v["hash"]
 
 
-# --- gate hash ------------------------------------------------------------------------------------------------
+# --- gate hash ----------------------------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("v", load("gate_hash.json")["gate_hash"], ids=lambda v: v["name"])
@@ -172,7 +172,7 @@ def test_gate_hash_vectors(v):
     assert len(v["G"]) == 15
 
 
-# --- chain and signed bytes -----------------------------------------------------------------------------------
+# --- chain and signed bytes ---------------------------------------------------------------------------------
 
 C = load("chain.json")
 
@@ -238,7 +238,7 @@ def test_signing_bytes_do_not_replay():
         assert canon.person_signing_bytes(C["workspace_id"], C["log"], {**e, k: v}) != a
 
 
-# --- repo identity --------------------------------------------------------------------------------------------
+# --- repo identity ------------------------------------------------------------------------------------------
 
 R = load("repo_identity.json")
 

@@ -537,7 +537,17 @@ def artifact_refs_vectors() -> dict[str, Any]:
 
 
 def all_vectors() -> dict[str, dict[str, Any]]:
+    from . import oracle_f1_signed as sg
+
     return {
+        "signatures.json": sg.signatures_vector(),
+        "replay.json": sg.replay_scenario(),
+        "tamper.json": sg.tamper_vector(),
+        "genesis.json": sg.genesis_vector(),
+        "devices.json": {"pins": "device.added and device roster rules", "scenarios": sg.devices_scenarios()},
+        "revocation.json": {"pins": "device.revoked and recovery", "scenarios": sg.revocation_scenarios()},
+        "checkpoint.json": sg.checkpoint_vector(),
+        "restore.json": {"pins": "workspace restore and revocations", "scenarios": sg.restore_scenarios()},
         "labels.json": {"labels": LABELS},
         "section_text.json": section_text_vectors(),
         "artifact_refs.json": artifact_refs_vectors(),

@@ -81,6 +81,7 @@ CHECK_CHAIN_STOPS_AT = {
     "event_deleted": 2,
     "events_swapped": 3,
     "at_goes_back_host_resigned": None,  # check_chain sees links only, not `at`
+    "ws_seq_goes_back_host_resigned": None,  # valid links; replay must check per-log workspace positions
     "prev_rewritten": 3,
     "seq_rewritten": 3,
     "host_sig_swapped": 3,
@@ -114,6 +115,14 @@ def test_a_tampered_line_breaks_the_chain_where_the_vector_says(c):
     st = _replay_with(c)
     broken = [x.seq for x in st.chain_errors if x.log == c["log"]]
     assert broken == ([c["chain_broken_at"]] if c["chain_broken_at"] else []), c["mutation"]
+    if "replay_expect" in c:
+        assert [x.code for x in st.chain_errors if x.log == c["log"]] == [c["replay_expect"]], c["mutation"]
+    if c.get("replay_only"):
+        prefix = {**c, "events": c["events"][: c["chain_broken_at"] - 1]}
+        before = _replay_with(prefix)
+        assert not before.chain_errors
+        event = c["events"][c["chain_broken_at"] - 1]
+        assert admit(before, event, log=c["log"]).code == "chain.bad_ws_seq"
     stopped = c.get("ticket_events_stopped_from", {})
     for uid in T["ticket_events"]:
         got = [x.seq for x in st.chain_errors if x.log == uid]

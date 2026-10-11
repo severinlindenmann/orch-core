@@ -258,6 +258,12 @@ def tamper_vector() -> dict[str, Any]:
     add("at_goes_back_host_resigned", "seq 4: `at` set before seq 3's and host_sig re-made (an attacker holding the "
         "workspace key; `at` is not signed by the person): (ws_seq, at) never goes back along a log, so the line "
         "breaks the chain", TICKET, [e1, e2, e3, resign_host(setp(e4, at=e1["at"]), TICKET)], 4)  # fmt: skip
+    add("ws_seq_goes_back_host_resigned", "seq 4: ws_seq lowered from 3 to 2, at unchanged, host_sig re-made; "
+        "seq/prev and person signature remain valid. Replay keeps this single ticket log in file order: "
+        "the workspace head is 3 when this line is read, so only the per-log ws_seq decrease fails. "
+        "The cross-ticket merged-order guard is append-only; this history is append-unreachable", TICKET,
+        [e1, e2, e3, resign_host(setp(e4, ws_seq=e3["ws_seq"] - 1), TICKET)], 4)  # fmt: skip
+    cases[-1].update(replay_only=True, replay_expect="chain.bad_ws_seq")
     add(
         "tail_truncated", "seq 4 removed: the chain is intact, only a checkpoint can see it", TICKET, [e1, e2, e3], None
     )
@@ -314,6 +320,8 @@ def tamper_vector() -> dict[str, Any]:
         "line position where a reader reports chain.broken (lines checked in file order, a bad host_sig or person sig "
         "breaks the chain at that line); for a workspace-log break at seq n, the first seq of each ticket log whose "
         "events stop counting (ws_seq >= n); full lines of both logs with real signatures",
+        "note": "Case keys: replay_only marks an append-unreachable tampered log, checked directly on replay; "
+        "replay_expect pins its refusal code in addition to chain_broken_at.",
         "workspace_id": W,
         "genesis": w.genesis,
         "now": ow.stamp(w.clock + 60),

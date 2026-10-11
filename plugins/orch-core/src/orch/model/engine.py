@@ -337,6 +337,7 @@ def apply_event(
     if (r := _chain_check(core, log, lc, e, ctx)) is not None:
         if commit and lc.broken is None:
             lc.broken = r.detail
+            lc.broken_code = r.code.value
             core.logs[log] = lc
         return r
     r = _envelope_check(lc, e)

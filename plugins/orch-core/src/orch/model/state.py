@@ -15,7 +15,7 @@ from types import MappingProxyType
 from typing import Any
 
 from . import engine, visibility
-from .codes import OK, Code, Ok, Refusal
+from .codes import OK, Ok, Refusal
 from .engine import Ctx, apply_event
 from .types import WORKSPACE, Core, ts
 from .verifier import Verifier
@@ -65,9 +65,7 @@ class State:
 
 def _errors(core: Core) -> tuple[ChainError, ...]:
     return tuple(
-        ChainError(log, lc.seq + 1, Code.CHAIN_BROKEN.value, lc.broken)
-        for log, lc in sorted(core.logs.items())
-        if lc.broken
+        ChainError(log, lc.seq + 1, lc.broken_code, lc.broken) for log, lc in sorted(core.logs.items()) if lc.broken
     )
 
 

@@ -1,299 +1,749 @@
-# orch v2 P2: the host process (#325, #271, #287), v1
+# orch v2 P2: the host process (#325, #271, #287)
 
-Status: Decided 11 Oct 2026 (draft by orch-52, Codex challenge, Opus tie-break on two points). The socket API contract §0 is v1 (provisional): changes go through the coordination log.
+Status: Decided 11 Oct 2026 (draft by orch-52, Codex challenge, Opus tie-break on two points), revised the same day
+after the Opus security review (F1–F15), the Codex clarity review (14 points) and the dashboard stream's requests
+(R1–R11). The socket API contract §0 is **v1.1 (provisional)**: changes go through the coordination log.
 
-Built on `origin/develop` 908f2511. Decisions are numbered **D-P2-n**, each with a one-line reason. Numbers that
-existed in v0 keep their meaning where the decision survived.
+Built on `origin/develop` 908f2511. Decisions are numbered **D-P2-n**, each with a one-line reason.
 
 ---
 
-## 0. Socket API contract v1 (provisional)
+## 0. Socket API contract v1.1 (provisional)
 
-This section is complete on its own: streams B (dashboard), C (mobile, from P3) and D (relay bridge) can build on it
-without reading the rest. Changes go through the cross-stream log.
+§0 is complete on its own. Streams B (dashboard), C (mobile, from P3) and D (relay bridge) build on it without reading
+the rest. Everything in §0 is normative: a host or client that differs from it is wrong.
 
-### 0.1 Transport and framing
+### 0.1 Notation
 
-- **Sockets.** One per workspace, `<run>/<workspace_id>/host.sock`, for every workspace op. One control socket,
-  `<run>/control/host.sock` (directory 0700, host UID only), for `host.*` admin and bootstrap.
-- **Frame.** A 4-byte unsigned big-endian length `n`, then `n` bytes, with `1 ≤ n ≤ 2 097 152`. A reader must handle
-  partial and coalesced reads.
-- **Payload.** The payload is strict UTF-8 JSON, one object per frame. Any of the following is `frame.invalid`:
-  - invalid UTF-8;
-  - duplicate keys;
-  - `NaN` or `±Infinity`;
-  - an integer outside ±2^53;
-  - nesting deeper than 32;
+The schemas below use a compact notation:
+
+| Notation | Meaning |
+|---|---|
+| `k: T` | required key |
+| `k?: T` | optional key: it may be absent and is never `null` |
+| `T \| null` | the key is present and may be `null` |
+| `int a..b` | an integer from `a` to `b`, both inclusive |
+| `str{a..b}` | a string of `a` to `b` Unicode scalar values |
+| `str/re/` | a string matching the regular expression `re` in full |
+| `[T]{a..b}` | an array of `a` to `b` items |
+| `{K: T}{a..b}` | a map with `a` to `b` keys |
+| `= v` | the default when the key is absent |
+
+- Every object is **closed**. A key not listed is an error when a client sends it (§0.3), and clients ignore unknown
+  keys the host sends (§0.4).
+- **Common types:**
+  - `ULID` = `str/[0-7][0-9A-HJKMNP-TV-Z]{25}/`
+  - `Hash` = `str/sha256:[0-9a-f]{64}/`
+  - `Key` = `str/[A-Z][A-Z0-9]{1,9}-[0-9]{4,}/` (a ticket key)
+  - `Ref` = the F1 §10.3 REF forms
+  - `Uid` = the ticket uid (`ULID`)
+  - `Person` = the F1 person id
+  - `Device` = the F1 device id
+  - `Time` = an RFC 3339 UTC string with `Z`
+  - `Cursor` = `str{1..256}`, opaque
+  - `B64` = standard base64 (RFC 4648 §4) with padding and no whitespace
+- **Error codes** are listed per op. Every op may also return the codes of §0.6 marked "any op".
+
+### 0.2 Transport and framing
+
+- **Sockets.**
+  - One socket per workspace, `<run>/<workspace_id>/host.sock`, for every workspace op.
+  - One control socket, `<run>/control/host.sock` (directory 0700, host UID only), for the `host.*` admin and
+    bootstrap ops.
+- **Frame.** A 4-byte unsigned big-endian length `n`, then `n` bytes, with `1 ≤ n ≤ 2 097 152`. Readers handle partial
+  and coalesced reads. The body must arrive within 10 s of its length prefix.
+- **Payload.** Exactly one JSON object, strict UTF-8. Each of the following is `frame.invalid`:
+  - invalid UTF-8, or an escaped lone surrogate (`\ud800` without its pair);
+  - a duplicate key at any level;
+  - a number with a fraction or an exponent (no op uses floats), `NaN`, `Infinity`, or an integer outside
+    −(2^53−1)..2^53−1;
+  - nesting deeper than 32 (the top-level object is depth 1, and each nested object or array adds 1);
   - a top-level value that is not an object;
   - `n = 0`.
-- **Fatal errors.** A framing error, or any error that belongs to no request, gets one
-  `{"t":"fatal","error":{…}}` frame. Then the side that detected it closes the connection.
-- **Frame types:**
-  - `hello`, `welcome`: the handshake. `hello` must arrive within 2 s.
-  - `req`, `res`: a request and its response.
-  - `cancel`: cancels a request.
-  - `evt`: a pushed subscription item.
-  - `fatal`: see above.
-- **Request ids.** A string matching `^[A-Za-z0-9_-]{1,32}$`, unique among the connection's open requests. Reusing an
-  open id is fatal.
+- **Frame types.**
+  - Client to host: `hello`, `req`, `cancel`.
+  - Host to client: `welcome`, `res`, `evt`, `fatal`.
+- **Fatal errors.** A framing error, a handshake error, or an error that belongs to no request gets one `fatal` frame.
+  The host then closes the connection. A client that detects a framing error from the host just closes.
+- **Handshake.** The first client frame must be `hello`, within 2 s of `accept`. The host answers with `welcome` or
+  `fatal`. A second `hello`, or a `req` or `cancel` before `welcome`, is `fatal` `handshake.invalid`.
+- **Request ids.** `str/[A-Za-z0-9_-]{1,32}/`, unique among the connection's open requests (sent and not yet
+  answered). Reusing an open id is `fatal` `frame.invalid`. An id may be reused once its `res` has been sent.
 - **Order.**
-  - Responses may arrive in any order.
-  - Writes from one connection run in the order they were received.
-  - All writes to a workspace go through one worker queue.
+  - The host answers every `req` with exactly one `res`. Responses may arrive in any order.
+  - Writes (§0.7) from one connection run in the order they were received.
+  - The workspace worker serves principals round-robin, taking one request from each principal's per-connection FIFO
+    in turn. So fairness never reorders one connection's writes.
   - A read may overtake a queued write.
-- **Cancellation.** `{"t":"cancel","id":"r7"}`.
-  - A queued request, a read or a `wait` stops with `cancelled` (exit 9, retryable).
-  - A write that has started to commit is never undone. Its response is the real result, or `outcome.unknown`
-    (exit 9). The client recovers the result with `outcome.get` (§0.5).
-  - A timeout behaves the same way: it never implies a rollback.
+- **Timeouts.**
+  - The timer starts when the host has read the complete `req` frame.
+  - `opts.timeout_ms` is 1000..600 000, `= 30 000`.
+  - `wait` ignores `opts.timeout_ms`; its `timeout` argument governs (F1 §10.4 item 7).
+  - A timed-out read or `wait` answers `timeout`. A timed-out write answers its real result if it committed meanwhile,
+    otherwise `outcome.unknown` (§0.7). A timeout never implies a rollback.
+- **Cancellation.** `cancel = {t:"cancel", id: str}`.
+  - A request still in the queue answers `cancelled`.
+  - A running read or a parked `wait` answers `cancelled`.
+  - A running write answers its real result or `outcome.unknown`; it is never undone.
+  - A `cancel` for an unknown or already answered id is ignored without a response.
 
-### 0.2 Handshake, versioning and capabilities
-
-```
-→ {"t":"hello","proto":[1],"client":"orch-cli/2.0.0","caps":["ops/1","human/1","sub/1","blob/1","outcome/1"],
-   "ops":{"status":1,"show":1,"task.done":2}}
-← {"t":"welcome","proto":1,"host":"orch-host/2.0.0","host_uid":501,
-   "workspace":{"id":"6f1c0d2e8b4a4e1f9c3d2a7b5e9f0c11","prefix":"DEMO"},
-   "peer":{"uid":502,"class":"agent","person":null},
-   "caps":["ops/1","human/1","sub/1","blob/1","outcome/1","query/1","diff/1"],
-   "ops":{"status":1,"show":1,"task.done":2,"ticket.query":1,"…":1},
-   "registry":"sha256:9f2c…e1",
-   "limits":{"frame":2097152,"inflight":8,"timeout_ms":30000,"blob_bytes":67108864}}
-```
-
-- **`proto`** is the major version of framing and envelopes. If no major is shared, the host answers
-  `host.version_mismatch` and closes.
-- **`caps`** are named features with a version. **`ops`** maps each op to its contract version. A contract version is
-  bumped only when the op's input, output or errors change incompatibly.
-- **Unsupported ops.** If the client calls an op the host lacks, or one whose contract version differs from the
-  client's, the request gets `op.unsupported` (exit 1). Other ops keep working.
-- **`registry`** is a diagnostic digest only. Nothing is refused because of it.
-- **Unknown keys.** Clients ignore keys they do not know in results and in `evt` frames. The host refuses unknown keys
-  in `args`: op schemas are `additionalProperties:false`, because inputs are security-relevant.
-
-### 0.3 Requests, results and errors
+### 0.3 Envelopes (normative)
 
 ```
-req     {"t":"req","id":"r1","op":"<name>","args":{…},
-         "auth":{"grant":"gr_…","session":"s_…"},                 // both optional
-         "opts":{"dry_run":false,"idem":"a_<ULID>","timeout_ms":30000},
-         "files":{"<arg>":{"b64":"…"} | {"blob":"b_…"}}}          // file contents; never paths
-res ok  {"t":"res","id":"r1","ok":true,"result":{"data":…,"key":…,"seq":…,"cursor":…,"hints":[…],"lines":[…],
-         "duplicate":false,"exit":0,"head":null}}
-res err {"t":"res","id":"r1","ok":false,"exit":3,
-         "error":{"code":"human_only","message":"approve: human only","hint":"orch ask or orch wait","retryable":false}}
+Hello   = {t:"hello", proto:[int 1..65535]{1..8}, client:str{1..64},
+           caps:[str/[a-z][a-z0-9_]{0,23}\/[0-9]{1,4}/]{0..64},
+           ops?:{OpName: int 1..1000}{0..256}}
+Welcome = {t:"welcome", proto:int, host:str{1..64}, host_uid:int 0..4294967295,
+           workspace:{id:str/[0-9a-f]{32}/, prefix:str{1..10}} | null,     // null on the control socket
+           peer:{uid:int, class:"person"|"agent"|"worker"|"control", person:Person | null},
+           tier:"A"|"B", caps:[str]{0..64}, ops:{OpName:int}, registry:Hash,
+           limits:{frame:int, inflight:int, timeout_ms:int, blob_bytes:int, inline_bytes:int}}
+Req     = {t:"req", id:ReqId, op:OpName, args:object,
+           auth?:{grant?:str{1..128}, session?:str{1..64}},
+           opts?:{dry_run?:bool = false, idem?:str/a_[0-7][0-9A-HJKMNP-TV-Z]{25}/, timeout_ms?:int 1000..600000},
+           files?:{ArgName: {b64:B64} | {blob:BlobId}}{0..16}}
+Res     = {t:"res", id:ReqId, ok:true, result:Result}
+        | {t:"res", id:ReqId, ok:false, exit:int 1..9, error:Error}
+Result  = {data:any, key:Key | null, seq:int 0.., cursor:int 0.., hints:[str]{0..8}, lines:[str]{0..10000},
+           duplicate:bool, exit:int 0..9, head:str | null}
+Error   = {code:str/[a-z_]+(\.[a-z_]+)*/, message:str{1..400}, hint?:str{1..400},
+           fix?:{argv:[str]{1..32}}, retryable:bool, retry_after_ms?:int 1..3600000}
+Evt     = {t:"evt", sub:SubId, cursor:Cursor, items:[Item]{0..64}, end?:EndReason}
+Fatal   = {t:"fatal", error:Error}
+OpName  = str/[a-z][a-z_]*(\.[a-z_]+)*/      ReqId = str/[A-Za-z0-9_-]{1,32}/
 ```
 
-- **`result`** is `orch.ops.Result` in full. The CLI renders text from it with its own templates, so P1's golden output
-  is unchanged.
-- **`error`** is exactly the error body of F1 §10.4 item 4. Codes come from `orch.ops.errors` and §10.4a. Each op's
-  `errors` list declares which codes it can return (core §3).
-- **`retry_after_ms`** is a member of `error` when the code is `rate.limited` or `host.restarting`.
-- **`opts.idem` is required on every write.** The client makes one id per logical call and reuses it on retry.
-- **`opts.timeout_ms`** defaults to 30 000 and may go up to 600 000. `wait` is exempt from the default: its own
-  `timeout` argument applies (default 540 s, at most 3600 s).
+- **`Result`** is `orch.ops.Result` in full. The CLI renders text from it with its own templates, so P1's golden
+  output is unchanged.
+- **`Error`** is the F1 §10.4 item 4 body plus the optional `retry_after_ms`. The `exit` member of an error `Res` is
+  the CLI exit code (§0.6).
+- **Malformed requests.** A `req` with an unknown key, a missing required key or a wrong type answers `req.invalid`
+  when its `id` is readable, and is `fatal` `frame.invalid` otherwise. `args` that fail the op's schema answer
+  `invalid.input`, as in P1.
+- **`files`.** Every argument the registry marks `x-file: true` (for example `artifact add PATH`, `--file`) must come
+  through `files`. Such an argument in `args` carries only its logical name (the artifact name, or `-` for stdin), and
+  an `x-file` argument without its `files` entry answers `blob.invalid`. The host never treats a client string as a
+  path (§0.10).
 
-### 0.4 Peer classes and identity
+### 0.4 Capabilities and versioning
 
-The host reads the peer's UID from the kernel. It never takes a UID from a message.
+- **`proto`.** The host picks the highest major version it shares with `hello.proto`. If none is shared:
+  `fatal` `host.version_mismatch`.
+- **`caps`.** Named features with a version. The host lists what it serves. A client must not call an op whose cap it
+  did not see. In v1.1 the caps are `ops/1`, `human/2`, `sub/2`, `blob/2`, `outcome/2`, `query/1`, `diff/1`, `job/1`
+  and `control/1`.
+- **`ops`.** The host's `welcome.ops` lists every op it serves with its contract version. A client lists the ops it
+  will call; an op it omits is assumed to be at version 1.
+  - A call to an op the host does not list answers `unknown_command`.
+  - A call to an op listed at a different version than the client's answers `op.unsupported`. Other ops keep working.
+  - A version is bumped only when the op's input, output or errors change incompatibly.
+- **`registry`** is a diagnostic digest. Nothing is refused because of it.
+- **Forward compatibility.**
+  - Clients ignore unknown keys in `welcome`, `res`, `result.data`, `evt` and its items, and an unknown `EndReason`
+    counts as `closed`.
+  - The host refuses unknown keys everywhere it reads, because inputs are security-relevant.
 
-| Class | Who | May call |
+### 0.5 Principals, classes, permissions and visibility (authoritative)
+
+**Principal (F4).** Derived once per request from the kernel UID and the grant, never from an id alone.
+
+| Request | Principal |
+|---|---|
+| `auth.grant` present and its secret verified (id, constant-time secret match, not expired or revoked, person a member who may run agents) | `g:<grant id>@<uid>` |
+| anything else (no grant; a malformed, unknown, expired or wrong-secret grant) | `uid:<n>` |
+
+- `auth.session` is a label, not authentication.
+- Session notes, dedup records and the stop rule are keyed by `(principal, session)`. Outcome records (§0.7),
+  subscriptions (§0.9), blobs (§0.10) and human requests (§0.8) are keyed by principal.
+
+**Classes.** The kernel UID decides the class. The host's registry (§1, D-P2-5) maps each UID.
+
+| Class | UIDs | Notes |
 |---|---|---|
-| `person` | UIDs mapped to a person in the host's registry (on a Mac: the human's own UID, i.e. the human's CLI and the dashboard addon) | reads; `human.*`; `sub.*`; `blob.*`; `outcome.get`; `whoami`; `host.status`; agent ops only with `auth.grant` (they then run as that agent) |
-| `agent` | the workspace's agent UIDs (#287) | reads except `doctor` and `instructions.sync`; `agent` and `unattended` ops under the grant rules; `sub.*`; `blob.*`; `outcome.get`; `whoami` |
-| `worker` (H10) | the worker UID | `job.next`, `job.done`, `whoami` |
-| `bridge` (P3, reserved) | the relay bridge client | defined in P3. It has no person mapping, and every remote person request carries that person's own signature. |
-| anything else | | one `fatal` `peer.denied`, then the host closes the connection |
+| `person` | UIDs mapped to a person (on a Mac: the human's own UID, i.e. the CLI and the dashboard) | The mapping is checked again **on every request** (F8): the person must be a member with a valid device that has `decide`. Otherwise the caller reads as `no-person` and cannot call `human.*`. |
+| `agent` | the workspace's agent UIDs (#287) | acts for its grant's person |
+| `worker` | the worker UID | **one** worker connection per worker UID (F3). The first worker-class connection after host start holds the role until it closes; any further worker-class connection is `fatal` `peer.denied`. |
+| `control` | the host UID, on the control socket only | |
+| `bridge` | reserved for P3 | |
+| any other UID | — | `fatal` `peer.denied` before any byte is read |
 
-- **Who a call acts for:**
-  - an agent is the person who issued its grant;
-  - a person-class reader is the person mapped to its UID (`peers.<uid>.person` in the registry; never derived from a
-    key file);
-  - a person *event* names its device in `human.prepare`, and the host checks that this device belongs to the mapped
-    person (§0.6).
-- **Sessions.** `auth.session` is a label, not authentication. Session notes, dedup records and the stop rule are
-  keyed by `(principal, session)`. The principal is the grant id, or `uid:<n>` when there is no grant.
-- **Invalid grants on reads.** A read with no grant, or with one that does not check out, runs as "no grant" and sees
-  only `workspace` tickets (F1 §10.7). A write is refused with `grant.required` / `grant.expired`. A malformed grant
-  is refused on writes and ignored on reads (§10.4 item 12).
-- **Secrets.** The grant secret goes in `auth.grant` only. If a grant-shaped string appears anywhere in `args`, the
-  request is refused with `grant.secret_in_args`.
+**Tier A** (no agent UIDs configured, D-P2-5): every workspace connection is person class. A request with a verified
+grant runs in **agent mode** (the "agent, grant" column below). Any request with `auth.grant` present cannot call
+`human.*` (`human_only`).
 
-### 0.5 Idempotency and outcomes
+**Permission matrix.** Columns:
 
-- **Namespace.** Outcome records are keyed by `(workspace, principal, idem)`.
-- **Binding.** A record is bound to `sha256(cj({op, args_normalised, file_digests}))`. The same `idem` with a different
-  binding is `idem.conflict` (exit 5).
-- **States.** A record is `pending`, `committed` (it stores the response, redacted), `failed` (it stores the error) or
-  `partial` (an `apply` or a composite whose first events landed: it lists their `seq`s, and a retry is refused as in
-  P1).
-- **Retention.** Records live in host-owned `<state>/hosts/<ws>/outcomes/`, survive restarts and are kept for 24 h.
-  When a completed record expires, a tombstone (key, binding, state) stays for 7 days. A late retry then gets
-  `idem.expired`, never a second append.
-- **Recovery.** `outcome.get {idem}` returns the stored `res`, `{"state":"pending"}`, or `outcome.unknown_idem`. The
-  F1 §10.4 item 9 session dedup (15 minutes, `duplicate:true`) stays on top as the CLI-level behaviour.
+- **P** = person class, no grant;
+- **G** = a verified grant (agent class, or person class in agent mode);
+- **N** = agent class without a verified grant (unattended);
+- **W** = worker;
+- **C** = control.
 
-### 0.6 Operations
+| Ops | P | G | N | W | C |
+|---|---|---|---|---|---|
+| registry `read` ops except `doctor`, `instructions.sync`, `instructions.hook` | ✓ | ✓ | ✓ | — | — |
+| `doctor`, `instructions.sync`, `instructions.hook` | ✓ | — | — | — | — |
+| registry `agent` ops | — | ✓ (grant verbs) | — | — | — |
+| registry `unattended` ops (`ask`, `log`, `artifact.add`) | — | ✓ | ✓ (quotas) | — | — |
+| registry `human` ops as a plain `req` | `human_only` | `human_only` | `human_only` | — | — |
+| `human.prepare`, `human.get`, `human.submit`, `human.pending`, `human.cancel` | ✓ | — | — | — | — |
+| `whoami`, `host.status`, `outcome.get`, `blob.put`, `blob.drop` | ✓ | ✓ | ✓ | `whoami` only | — |
+| `sub.open`, `sub.close`, `ticket.query`, `ticket.get`, `needs`, `diff`, `artifact.get`, `workspace.show`, `member.list` | ✓ | ✓ | ✓ | — | — |
+| `session.list`, `grant.list` | ✓ | ✓ (own person's only) | — | — | — |
+| `job.next`, `job.heartbeat`, `job.done` | — | — | — | ✓ | — |
+| `host.list`, `host.register`, `host.unregister`, `host.wsk_create`, `host.bootstrap`, `host.restart` | — | — | — | — | ✓ |
 
-**Registry ops.** All 54 registry operations of `orch.ops` are served, with the same names, `input` schemas, handlers
-and `Result`. That covers `status`, `show`, `list`, `search`, `next`, `inbox`, `wait`, `task.*`, `artifact.*`, `new`,
-`claim`, `release`, `handoff`, `submit`, `set`, `section.set`, `ac.*`, `log`, `ask`, `apply`, `check`, `doctor`,
-`instructions.*` and `addon.list`.
+A call outside the matrix answers `op.not_allowed`. The one exception is human registry ops called as a plain `req`,
+which answer `human_only`. `host.status` gives class N only `version` and `tier`.
 
-- `who: human` ops are **not** callable as a plain `req`: they give `human_only` and go through `human.*`.
-- `init` and `import.v1` are client composites (§3, D-P2-9). `help` and `describe` are answered by the client and
-  also served.
+**Viewer.** Every read is filtered for one viewer:
 
-**New ops in v1:**
+- P: the mapped person;
+- G: the grant's person;
+- N, or P with an unmapped or invalid person: `no-person`, which sees `visibility: workspace` tickets only
+  (F1 §10.7).
 
-| Op | Args → `data` | Class |
+**Visibility for every read (F6).**
+
+- Every row, count, page token, `needs` item, session claim, grant, diff, artifact and subscription item is filtered
+  for the viewer **before** it is counted or returned.
+- `total` and `next_page` count visible rows only, and `q` matches visible content only.
+- A ref the viewer may not see gives the same `not_found` as a ref that does not exist, in `show`, `ticket.get`,
+  `diff`, `artifact.get` and `sub.open {ticket:<ref>}`.
+- `needs {person}` naming another person is allowed only for a person-class owner. For G it is always the grant's
+  person; for N, `workspace` items only.
+- `diff {repo}` accepts only a repo named in the ticket's `links.repos`.
+- `artifact.get {name}` resolves `name` (F1 §6 name rule) through the ticket's replayed manifest and reads by digest.
+  It never joins a client string to a path.
+- `session.list` and `grant.list`: a person-class owner sees every entry. Any other P sees their own. G sees its own
+  person's. Claims on tickets the viewer cannot see are left out.
+
+**Secrets.** The grant secret goes in `auth.grant` only. If a grant-shaped string appears anywhere in `args`,
+`files` or `opts`, the request answers `grant.secret_in_args`.
+
+### 0.6 Errors and their disposition (authoritative)
+
+Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryability. The host adds the codes below.
+
+**Connection fate:**
+
+- **stays**: the connection remains usable;
+- **close**: sent as `fatal`, then the connection is closed;
+- **drain**: the connection stays only until the drain ends.
+
+| Code | Exit | Retryable | Fate | When | `retry_after_ms` |
+|---|---|---|---|---|---|
+| `frame.invalid` | 6 | no | close | §0.2 framing rules; an unreadable `req` id; reuse of an open id | — |
+| `frame.too_large` | 6 | no | close | `n` > 2 MiB | — |
+| `handshake.invalid` | 6 | no | close | missing, late or second `hello` | — |
+| `peer.denied` | 3 | no | close | unmapped UID; second worker connection | — |
+| `host.version_mismatch` | 1 | no | close | no shared `proto` | — |
+| `req.invalid` | 6 | no | stays | malformed `req` envelope with a readable id | — |
+| `unknown_command` | 2 | no | stays | op not served (any op) | — |
+| `op.unsupported` | 1 | no | stays | op contract version differs | — |
+| `op.not_allowed` | 3 | no | stays | outside the §0.5 matrix | — |
+| `timeout` | 9 | yes | stays | read or `wait` past its timeout | — |
+| `cancelled` | 9 | yes | stays | §0.2 cancellation | — |
+| `outcome.unknown` | 9 | yes | stays | a write's fate cannot be reported now; recover with `outcome.get` | — |
+| `rate.limited` | 9 | yes | stays | token bucket empty | yes |
+| `quota.host` | 9 | yes | stays (close at connect for the connection limit) | connections, subscriptions, pending human requests, blobs, outcome records, git reader children over their limit (§0.11) | when a slot frees in time |
+| `result.too_large` | 1 | no | stays | the result would exceed the frame; the hint names the paging argument | — |
+| `host.restarting` | 9 | yes | drain | the host is draining (D-P2-4) | yes |
+| `workspace.unavailable` | 1 | no | stays | the workspace cannot be served; the message names the cause | — |
+| `workspace.degraded` | 3 | no | stays | a write while the workspace is degraded (reads work) | — |
+| `idem.required` | 5 | no | stays | a write without `opts.idem` | — |
+| `idem.conflict` | 5 | no | stays | the same `idem` with a different binding (§0.7) | — |
+| `idem.expired` | 2 | no | stays | the `idem` is only a tombstone (§0.7) | — |
+| `outcome.unknown_idem` | 2 | no | stays | `outcome.get` for no record of this principal | — |
+| `blob.invalid` | 5 | no | stays | §0.10 rules; an unknown or foreign blob | — |
+| `page.expired` | 9 | yes | stays | page token older than 10 min, or from another snapshot epoch; restart from the first page | — |
+| `sub.reset` | 9 | yes | stays | cursor too old, of another scope or epoch, or a journal rebuild (§0.9) | — |
+| `human.request_expired` | 3 | no | stays | request older than 10 min | — |
+| `human.request_mismatch` | 5 | no | stays | the submitted events differ from the prepared ones (§0.8) | — |
+| `human.request_state` | 3 | no | stays | the request is cancelled, already bound to another device, or already submitted by another call | — |
+| `host.required` | 3 | no | stays | a direct-mode CLI on a registered workspace (D-P2-18) | — |
+| `lock.busy` | 9 | yes | stays | register waited 60 s for the ownership lock (existing code) | yes |
+| `worker.lease` | 3 | no | stays | `job.*` with a lease that is unknown, expired or of another connection | — |
+| `repo.remote_mismatch` | 3 | no | stays | the observed identity differs from the declared `remote` (H0) | — |
+
+`host.unavailable` (exit 9, retryable) is raised **only by the client**, when it cannot connect or the connection
+drops. The host never sends it.
+
+### 0.7 Idempotency and outcomes
+
+**Which requests count as writes.**
+
+- **Writes** need `opts.idem`:
+  - registry ops whose `who` is not `read`, called with `dry_run:false`;
+  - `human.submit`;
+  - `host.register`, `host.unregister`, `host.bootstrap`;
+  - `job.done`.
+- **Not writes:**
+  - reads;
+  - every op called with `dry_run:true`;
+  - `human.prepare`, `human.get`, `human.cancel`, `human.pending`;
+  - `blob.put` (idempotent by offset, §0.10), `blob.drop`;
+  - `sub.*`, `outcome.get`, `job.next`, `job.heartbeat`, `host.list`, `host.status`, `host.restart`.
+
+  `host.wsk_create` is not idempotent: a retry creates a new key, and an unused key is deleted after 1 h.
+
+**Binding.** A record is keyed by `(workspace, principal, idem)` and bound to:
+
+```
+sha256(cj({op, args_normalised, files:{arg: sha256}, session, dry_run:false}))
+```
+
+- `args_normalised` is `args` with REFs resolved to the ticket uid, and defaults filled in from the schema.
+- The same key with another binding answers `idem.conflict`.
+
+**States.**
+
+| State | Meaning | A retry with the same key |
 |---|---|---|
-| `whoami` | `{}` → `{peer:{uid,class}, person, grant:{id,until,verbs,scope}\|null, session, tier:"A"\|"B"}` | all |
-| `ticket.query` | `{status?:[…], type?:[…], label?:[…], assignee?, owner?, parent?, epic?, q?, updated_since?, needs_me?:bool, sort?:"updated"\|"priority"\|"key", limit?:1–200 (50), page?}` → `{rows:[{key,uid,title,type,status,priority,size,labels,assignees,owner,parent,epic,claim:{session,agent}\|null,gates:{<gate>:"open"\|"approved"\|"n/a"},needs:[kind],updated_at,head_seq}], next_page:string\|null, total:int, sub_cursor}` | person, agent |
-| `needs` | `{person?:<self only, or any for owners>}` → `{items:[{kind:"question"\|"approve"\|"no_eligible"\|"acknowledge"\|"addon", key, uid, ref, detail, who:[person]}], sub_cursor}` | person, agent |
-| `diff` | `{ref, repo?, context?:0–10 (3), max_bytes?:≤1 MiB (256 KiB)}` → `{sources:[{repo,branch,base_sha,head_sha}], files:[{repo,path,status,add,del,binary}], unified:string, truncated:bool}` | person, agent |
-| `artifact.get` | `{ref, name, offset, length?:≤786432}` → `{b64, size, digest, last}` | person, agent |
-| `workspace.show` | `{}` → `{id, prefix, name, genesis, epoch, wsk_fingerprint, members_v}` | person, agent |
-| `member.list` | `{}` → `{members:[{person,name,role,devices:[{id,label?,auth}]}]}` | person, agent |
-| `session.list` | `{active?:bool}` → `{sessions:[{session,agent,person,grant_id,claims,leases,last_at}]}` | person; agent: its own person's only |
-| `human.prepare` | `{op, args, signer:{device, auth}, handoff?:bool, dry_run?:bool}` → `{request:{id, code\|null, expires_at}, workspace_id, log, event, material, review_digest}` | person |
-| `human.submit` | `{request_id, event}` → the op's Result | person |
-| `human.pending` | `{code?}` → `{requests:[{id, code, op, key, created_at, expires_at}]}` (own person only) | person |
-| `human.cancel` | `{request_id}` → `{}` | person |
-| `blob.put` | `{blob?, offset, b64, last, sha256}` → `{blob, size}` | all |
-| `blob.drop` | `{blob}` → `{}` | all |
-| `sub.open` | `{topics:["workspace"\|"tickets"\|"needs"\|"ticket:<ref>"], after?:cursor}` → `{sub, cursor}` | person, agent |
-| `sub.close` | `{sub}` → `{}` | person, agent |
-| `outcome.get` | `{idem}` → stored `res` \| `{state:"pending"}` | all |
-| `host.status` | `{}` → `{version, uptime_s, workspace, state:"ok"\|"degraded"\|"unavailable", tier}` (agents: `version` and `tier`) | all |
-| control socket: `host.list`, `host.register`, `host.unregister`, `host.wsk_create`, `host.restart` | see §1 | host UID |
+| `pending` | written (fsync) before `Store.append`. It holds the planned event ids. | waits for the first call to finish, then gets the same response |
+| `committed` | holds the full `Res`, redacted | gets it, with `duplicate:true` |
+| `failed` | a non-retryable refusal; holds the `Res` | gets it |
+| `partial` | a multi-event call whose first events landed; lists their `seq`s | refused as in P1 (F1 §10.7 `apply`), and the stored `Res` says what landed |
+
+A retryable failure (`store.busy`, `timeout` before any append) stores nothing, and the retry runs again.
+
+**Reconciliation.** A crash can leave the append in the log while the record still says `pending`. The host
+reconciles every `pending` record at start and at its next lookup, under the store lock:
+
+- all planned event ids are in the verified log: the record becomes `committed`, and the result is rebuilt from the log
+  through the op's result builder;
+- some are: `partial`;
+- none are (with no lock holder left): the record is removed, and the retry runs again.
+
+The planned event ids are the store's idempotency ids (F1 §2.1), so this check is exact.
+
+**Retention.** Records live in host-owned `<state>/hosts/<ws>/outcomes/`. Each is kept 24 h, then becomes a tombstone
+`{key, binding, state}` for 7 days. A tombstone answers `idem.expired`, never a second append. At most 100 000 records
+per principal; past that, the oldest completed records become tombstones early.
+
+**`outcome.get`** (§0.8) returns the record. The F1 §10.4 item 9 session dedup (15 minutes, `duplicate:true`) stays on
+top as the CLI-level behaviour.
+
+### 0.8 Operations
+
+**Registry ops.** Every registry op of `orch.ops` is served under its name, with its `input` schema as `args` (the
+parsed CLI arguments), its handler and its `Result`. The changes from P1:
+
+- `who: human` ops answer `human_only` as a plain `req`. They run through `human.*`.
+- `task.done` is at **contract 2** (H3b2). `run:true` is refused by the host. The client runs `verify.cmd` itself and
+  sends:
+
+  ```
+  receipt?:{cmd:str{1..4096}, exit:int −255..255, duration_ms:int 0..86400000, commit:str/[0-9a-f]{40,64}/ | null,
+            repo:str{1..200} | null, output:"-"}
+  ```
+
+  `output` comes through `files`, at most 1 MiB. The host stores the receipt with `attested_by: "agent"` (D-P2-19).
+- `import.v1` and `init` are not served (D-P2-9). `import.v1` runs in direct mode before registration. `init` is the
+  `host.wsk_create` + `host.bootstrap` composite.
+- `help` and `describe` are answered by the client from its own registry. The host serves them too.
+- The `show` data is unchanged, so the goldens stay byte-identical. UIs use `ticket.get` (R1).
+
+**New ops.**
+
+`whoami {}` →
+
+```
+{peer:{uid:int, class:str}, person:Person | null, tier:"A"|"B",
+ grant:{id:str, until:Time, verbs:"agent" | [OpName], scope:"all"|"workable"} | null, session:str | null}
+```
+
+Errors: none beyond any op.
+
+`ticket.query` (read) args:
+
+```
+{status?:[Status]{1..8}, type?:[str]{1..16}, label?:[str]{1..16}, assignee?:Person, owner?:Person,
+ parent?:Ref, epic?:Ref, q?:str{1..200}, updated_since?:Time, needs_me?:bool,
+ sort?:"updated"|"priority"|"key" = "updated", order?:"asc"|"desc" = "desc", limit?:int 1..200 = 50, page?:str{1..512}}
+```
+
+→
+
+```
+{rows:[Row]{0..200}, next_page:str | null, total:int, sub_cursor:Cursor, as_of:Time}
+Row = {key:Key, uid:Uid, title:str, type:str, status:Status, priority:str | null, size:str | null, labels:[str],
+       assignees:[Person], owner:Person | null, parent:Key | null, epic:Key | null,
+       claim:{session:str, agent:str} | null, gates:{Gate: "open"|"approved"|"n/a"}, needs:[NeedKind],
+       updated_at:Time, head_seq:int}
+```
+
+- Filters combine with AND. The values inside one filter combine with OR.
+- `q` is a case-insensitive substring match (NFC, casefold) over the key, the title and the section texts.
+- The sort is stable. Ties break by key ascending.
+- `needs_me` keeps the rows with a need whose `who` contains the viewer.
+- The first page fixes a **snapshot**: its `sub_cursor` and `as_of`. Later pages carry the snapshot and the last row's
+  sort key and uid, and they read the state **at that snapshot's journal position**. Only the paging position changes,
+  so a row neither repeats nor goes missing across pages.
+- Page tokens expire after 10 min (`page.expired`).
+- `total` counts visible matching rows in the snapshot.
+
+Errors: `invalid.input`, `page.expired`, `not_found` (`parent` or `epic`).
+
+`ticket.get {ref:Ref, log_since?:int 0.. = 0, log_limit?:int 1..500 = 100}` (read, R1) →
+
+```
+{doc:TicketDoc, log:[{seq:int, type:str, at:Time, actor:{kind:str, id:str | null}, summary:str{0..200}}],
+ log_more:bool, questions:[{id:str, state:"open"|"answered"|"stale", to:[Person], blocking:bool,
+                            answered_by:Person | null, answered_seq:int | null}],
+ criteria:[{id:str, text:str, evidence:[{artifact:str, digest:Hash, kind:str, attested_by:"agent"|"person"|"unattended"}]}],
+ gates:{Gate:{state:"open"|"approved"|"n/a", gen:int, hash12:str/[0-9a-f]{12}/ | null}},
+ sub_cursor:Cursor}
+```
+
+- `TicketDoc` is the F1 §7 ticket document.
+- `summary` is host text, escaped as in F1 §10.4 item 11. The content itself is fetched with `show --log`.
+
+Errors: `not_found`, `ambiguous_ref`.
+
+`needs {person?:Person}` (read) →
+
+```
+{items:[{kind:"question"|"approve"|"no_eligible"|"acknowledge"|"addon", key:Key | null, uid:Uid | null,
+         ref:str | null, detail:str, who:[Person]}], sub_cursor:Cursor}
+```
+
+- **Core owns the computation:** `orch.model.needs` over the verified state. Addons only *declare* rules (C9
+  `needs_rules`), which core evaluates over addon fields. No addon code runs.
+- Addon runtime decisions come with H10 jobs and are out of `needs` in v1.1.
+
+Errors: `op.not_allowed` (another person's needs, §0.5).
+
+`diff {ref:Ref, repo?:str, context?:int 0..10 = 3, max_bytes?:int 1024..1048576 = 262144}` (read) →
+
+```
+{sources:[{repo:str, branch:str, base_sha:str, head_sha:str}],
+ files:[{repo:str, path:str, old_path:str | null, status:"A"|"M"|"D"|"R"|"T", add:int, del:int, binary:bool}],
+ unified:str, truncated:bool}
+```
+
+- **head** is the branch head the host reader observes, which is the `source_sha` a verdict would sign (D58).
+- **base** is the merge base of head and the repo's `default_branch` (`settings.repos`; if none, `main`, then
+  `master`). If no merge base exists, base is the head's first parent. With no parent: `observe.unavailable`.
+- Renames are detected at 50 % similarity.
+- `unified` is cut at `max_bytes` on a line boundary, and `truncated` says so.
+
+Errors: `not_found`, `observe.unavailable`, `repo.remote_mismatch`, `quota.host`.
+
+`artifact.get {ref:Ref, name:str{1..200}, offset:int 0.., length?:int 1..786432 = 786432}` (read) →
+
+```
+{b64:B64, size:int, digest:Hash, offset:int, last:bool}
+```
+
+`offset` = `size` returns an empty `b64` with `last:true`. `offset` > `size` is `invalid.input`.
+
+Errors: `not_found`, `invalid.input`.
+
+`workspace.show {}` (read) →
+
+```
+{id:str, prefix:str, name:str, genesis:Hash, epoch:int, wsk_fingerprint:str, members_v:int, state:"ok"|"degraded"}
+```
+
+`member.list {}` (read) →
+
+```
+{members:[{person:Person, name:str, role:"owner"|"maintainer"|"member"|"viewer",
+           devices:[{id:Device, auth:str | null, scopes:[str], valid:bool}]}]}
+```
+
+`session.list {active?:bool = true}` (read) →
+
+```
+{sessions:[{session:str, agent:str, person:Person, grant_id:str | null, claims:[Key], leases:[str], last_at:Time}]}
+```
+
+`grant.list {active?:bool = true}` (read, R2) →
+
+```
+{grants:[{id:str, person:Person, scope:"all"|"workable", verbs:"agent" | [OpName], issued_at:Time, expires_at:Time,
+          revoked_at:Time | null, sessions:int}]}
+```
+
+The grant id is public (F1 §10.7). `secret_hash` is never returned.
+
+`blob.put`, `blob.drop`: §0.10. `sub.open`, `sub.close`: §0.9.
+
+`outcome.get {idem:str}` →
+
+```
+{state:"pending"} | {state:"committed"|"failed"|"partial", res:Res}
+```
+
+Errors: `outcome.unknown_idem` (also for another principal's record, F4).
+
+`host.status {}` →
+
+```
+{version:str, tier:"A"|"B", uptime_s?:int, state?:"ok"|"degraded"|"unavailable", worker?:bool}
+```
+
+Class N gets only `version` and `tier`.
+
+**Human ops** (`human.*`, §0.8.1), **job ops** (§0.8.2), **control ops** (§0.8.3): below.
 
 **Person versions of agent ops (signed).** `new`, `set`, `section.set`, `ac.add`, `ac.edit`, `log`, `ask`,
-`artifact.add` and `artifact.replace` can be called by a person through `human.prepare {op:"new", args:{…}}`. This is
-allowed exactly when every event type the op emits allows actor P or A (`orch.ops.actors.allows("human", t)`). F1
-already allows it: an A type may be appended by a signed person. Other ops get `op.not_allowed`.
+`artifact.add` and `artifact.replace` run as a person through `human.prepare {op, args}`. The rule is exact: allowed
+when every event type the op emits passes `orch.ops.actors.allows("human", t)` (F1: an A type may be appended by a
+signed person). Other agent ops answer `op.not_allowed`.
 
-**`move` (provisional; needs the F1 amendment H0).** A person op, owner or maintainer, through `human.prepare`:
-`{ref, to:"backlog"|"open", reason?}`. It emits a new person event `ticket.moved {from, to, reason?}`.
+**`move` (provisional until H0 lands `ticket.moved`).**
 
-- Allowed from `backlog`, `open`, and from `in_progress` with no live claim.
-- Never into `in_progress`, `testing`, `done` or `closed`: those statuses come from `claim`, `submit`, verdicts and
-  `close`/`reopen`.
-- The dashboard's other moves map to those ops.
+- A person op, owner or maintainer, through `human.prepare`: `{ref:Ref, to:"backlog"|"open", reason?:str{1..500}}`.
+- It emits `ticket.moved {from, to, reason?}`.
+- Allowed from `backlog`, `open`, and from `in_progress` with no live claim. Never into `in_progress`, `testing`,
+  `done` or `closed`.
 
-**Reserved, not served until F1 defines their events:** `policy.set`, `settings.set`, `comment`, `ticket.discard`,
-`artifact.search`, `view.save`, `view.delete`. Dashboard-only data such as saved views belongs in the dashboard addon's
-own storage, not in core.
+**`policy.set` and `settings.set` (provisional until H0).** Person ops through `human.prepare` that emit the existing
+`policy.changed` and `settings.changed` events. Their argument schemas are fixed in H0.
 
-**`human.*` in detail (D-P2-15, D-P2-21, D-P2-22).** The host never prompts and holds no device key. Every person event
-is prepared by the host, signed by a client, and submitted.
+**Reserved, not served:** `comment`, `ticket.discard`, `artifact.search`, `view.save`, `view.delete`. Saved views are
+the dashboard addon's own data.
 
-- **`human.prepare` result:**
-  - `event`: the unsigned canonical envelope, with `id`, `actor:{kind:"person",id,device}`, `auth`, `hash_v`,
-    `roster_v`, `based_on`, `gate_gen`, `type` and payload;
-  - `material`: the structured input from which the signer recomputes every bound hash:
-    - for gates, `orch.model.gates.gate_input`: section texts, criteria, tasks, links, `source_sha`, artifacts with
-      their digests, policy and people;
-    - for answers, the question;
-    - for other ops, the event payload itself;
-  - `review_digest`: `sha256(cj(material))`.
-- **What the signer must do:**
-  1. recompute the gate or question hash from `material` and compare it with the hash in `event`;
-  2. render its own review from `material`, never from host text;
-  3. get the person's confirmation;
-  4. build the signing bytes itself (`identity.sign_person_event`) and show the prompt fields from those bytes;
-  5. sign, and keep `material` frozen from confirmation to signature.
-- **Binding.** A request is bound to `(workspace, mapped person, signer.device, op, review_digest)` and is valid for
-  10 minutes. Expiry is checked again at append, under the lock.
+#### 0.8.1 Human ops (D-P2-15, D-P2-21, D-P2-22)
+
+The host never prompts and holds no device key. Every person event is prepared by the host, signed by a signing client
+(the CLI, `orch sign`, or the H9 helper), and submitted.
+
+```
+human.prepare  {op:OpName, args:object, signer?:Signer, handoff?:bool = false}   + req.files for the inner op (R9)
+  → {request:{id:str/hr_[0-7][0-9A-HJKMNP-TV-Z]{25}/, code:str/[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}/ | null,
+              expires_at:Time, bound:bool} | null,
+     workspace_id:str, log:Uid | "workspace", events:[Event]{1..16}, material:Material,
+     review_digest:Hash, fingerprint:str/[0-9a-f]{12}/}
+human.get      {request_id:str, signer?:Signer}
+  → same shape as human.prepare's result, plus origin:{uid:int, pid:int, client:str, created_at:Time}
+human.submit   {request_id:str, events:[Event]{1..16}}                           (a write: opts.idem required)
+  → the inner op's Result
+human.pending  {code?:str, request_id?:str}                                      (at most one of the two)
+  → {requests:[{id:str, code:str | null, op:OpName, key:Key | null, created_at:Time, expires_at:Time,
+                state:"prepared"|"submitted"|"cancelled"|"expired",
+                event_id:ULID | null, seq:int | null}]}                          (R6)
+human.cancel   {request_id:str} → {state:"cancelled"|"submitted"}
+Signer   = {device:Device, auth:"passphrase"|"secure-enclave"}
+Event    = the F1 §5.1 envelope without seq, at, prev, ws_seq and host_sig; sig present only in human.submit
+Material = {kind:"gate", gate:Gate, input:<orch.model.gates.gate_input>}
+         | {kind:"question", question:<the question object>, ticket:{key:Key, uid:Uid}}
+         | {kind:"payload", ticket:{key:Key, uid:Uid} | null, op:OpName}
+```
+
+**Rules.**
+
+- **Event ids are host-prepared** (H0 amends F1 §5.1). A signer never changes any field except `sig`, the device and
+  auth binding below, and the grant `secret_hash`.
+- **Multi-event ops** (for example a person's `artifact.add` with evidence) prepare all their events in one request.
+  They share one `based_on` (the log head at prepare; F1 allows any earlier head). They are signed one by one and
+  appended all-or-nothing, like `Projection` (F1 §10.7).
+- **`dry_run`.** `opts.dry_run:true` judges the events, creates no request, and returns `request:null` with the
+  events and material. `--dry-run` on a human CLI command uses it.
+- **Device binding (R7).**
+  - Without `handoff`, `signer` is required and the events carry `actor.device` and `auth`.
+  - With `handoff:true`, `signer` is absent, and the events carry `actor.device: null` and `auth: null`.
+  - `human.get {request_id, signer}` binds the device **once**: the host checks that the device belongs to the mapped
+    person and has a valid certificate with `decide` (and `operate` where needed), fills in `device` and `auth`,
+    freezes the events and sets `bound:true`. A second binding to another device answers `human.request_state`.
+- **The grant secret (F1).** The secret is drawn by the process that signs, never by the one that prepares.
+  - `human.prepare {op:"grant"}` takes no `secret_hash`. The prepared event carries `"secret_hash": null`, and
+    `material` says so.
+  - The signer draws the 32-byte secret, puts its hash into the event, and builds the signing bytes from that event.
+  - `human.submit` compares `cj(event without sig)` with the prepared event with `secret_hash` set aside. It then
+    requires `secret_hash` to be a well-formed hash that is new in the workspace.
+  - Every signer refuses a prepared grant event whose `secret_hash` is not `null`.
+  - The signer shows `ORCH_GRANT=…` on its own terminal or window only after `human.submit` confirms the commit.
+  - The preparer (the dashboard, a hand-off creator) never learns the secret.
+- **What the signer does** (D-P2-21):
+  1. Recompute every bound hash from `material`: the gate hash from `gate_input`, the question hash, and the payload
+     equality for `payload` material. Compare each with the events.
+  2. Check `review_digest = sha256(cj(material))`.
+  3. Render its own review from `material`, never from host text, opening with the header below.
+  4. Get the op-specific confirmation word: the ticket key for decisions, `GRANT` for grants, the person id for member
+     ops.
+  5. Build the signing bytes itself (`identity.sign_person_event`), show the prompt fields from those bytes, sign, and
+     keep `material` frozen from confirmation to signature.
+- **The header** is built by the signer before any ticket content:
+  - the workspace name and prefix from the signer's **own** registry for `workspace_id` (never host text);
+  - the op in plain words with its decisive fields: for `grant`, verbs, scope and hours; for `member.*`, the person id
+    and role; for decisions, the ticket key, gate and outcome;
+  - the `origin` (kernel UID and PID recorded by the host, and the self-declared `client`, labelled unverified);
+  - the **fingerprint**: the first 12 hex digits of `review_digest`.
+
+  The dashboard, `orch sign` and H9 all show the same fingerprint, so the person can match the screens (R8).
+- **Binding and expiry.** A request is bound to `(workspace, mapped person, device once bound, op, review_digest)` and
+  lives 10 minutes. Expiry is checked again at append, under the lock.
 - **`human.submit`.**
-  - It compares `cj(event without sig)` with the prepared event. A difference is `human.request_mismatch`.
-  - The host verifies the signature, runs the prepared `precommit` (git refs re-read under the lock, D58), and
+  - Compares `cj(event without sig)` with each prepared, bound event, with only `secret_hash` set aside for grants.
+    A difference is `human.request_mismatch`.
+  - Verifies every signature, runs the prepared `precommit` (the D58 branch check under the lock, D-P2-19), and
     re-judges with the model. Anything stale gets `gate.stale`, `members.stale` or `question.stale`.
   - Submit and cancel are serialized per request.
-  - A completed request leaves a tombstone holding its result. A repeated submit gets that result with
-    `duplicate:true`, never "expired".
-  - Blobs the request refers to are kept with the request.
-- **Hand-off.** `handoff:true` returns an 8-character code (40 bits). `human.pending {code}` finds only the same
-  person's requests, and a person may make at most 5 failed lookups per minute.
-- **No separate `expect` argument is needed.** The signed event carries the gate hash, `gate_gen`, `source_sha` and the
-  question hash, and the signer recomputes each from the material it displays. The signature therefore binds exactly
-  what the person saw. **The dashboard renders its review from `material`, never from its cached ticket view.**
-- **`grant`.** The client draws the secret and passes `secret_hash` in `args`. The signer checks that the event's
-  `secret_hash` equals the hash of its own secret, and shows `ORCH_GRANT=…` only after the `human.submit` result
-  confirms the commit.
+  - A completed request keeps a tombstone with its result for 24 h. A repeated submit gets that result with
+    `duplicate:true`.
+  - Blobs used by the inner op are held with the request.
+- **No separate `expect` argument is needed.** The events carry the gate hash, `gate_gen`, `source_sha` and the
+  question hash, each recomputed by the signer from the material it displays. The signature binds what the person
+  saw. **The dashboard renders its preview from `material` and `fingerprint`, never from its cached ticket view.**
+- **Hand-off (F5).**
+  - `handoff:true` returns an 8-character code (40 bits) that **names** the request. It is not a secret and
+    authorises nothing.
+  - `human.pending {code}` finds only the same person's requests. Failed lookups are limited to 5 per minute **per
+    connection**, so no same-UID process can lock out `orch sign`.
+  - `orch sign CODE` resolves the code with `human.pending`, then fetches and binds with `human.get`. It never calls
+    `human.prepare` a second time.
+  - **In tier A any process of the person's UID can create a request**, so `orch sign` says "only sign a code you
+    created yourself" every time it runs.
+- **Persistence.** Prepared requests live in `<state>/hosts/<ws>/requests/` and survive a host restart. At most 20 are
+  pending per person.
 
-### 0.7 Subscriptions
+Errors per op:
 
-- **Principal.** `sub.open` keeps the caller's principal: UID class, mapped person, grant id.
-- **Revalidation before every delivery** (queued items too):
-  - the grant must still be active (not expired or revoked), and the person still a member;
+| Op | Errors |
+|---|---|
+| prepare | `human_only`, `op.not_allowed`, the inner op's refusals, `device.unknown`/`device.invalid`/`device.scope`, `quota.host` |
+| get | `not_found`, `human.request_expired`, `human.request_state` |
+| submit | `not_found`, `human.request_expired`, `human.request_state`, `human.request_mismatch`, `sig.invalid`, the model codes |
+| pending | `invalid.input`, `rate.limited` |
+| cancel | `not_found` |
+
+#### 0.8.2 Job ops (worker class, H10)
+
+```
+job.next      {wait_ms?:int 0..30000 = 0}
+  → {job:{id:ULID, lease:str/[A-Z2-7]{26}/, kind:"addon.call"|"tree.check", workspace_id:str,
+          principal:str, deadline_at:Time, input:object} | null}
+job.heartbeat {id:ULID, lease:str} → {deadline_at:Time, cancel:bool}
+job.done      {id:ULID, lease:str, outcome:"ok"|"error", result?:object, error?:{code:str, message:str{1..400}}} → {}
+```
+
+- A lease (128 bits) is bound to the worker connection and lasts 60 s, renewed by `job.heartbeat`.
+- `cancel:true` asks the worker to stop the job and answer `job.done {outcome:"error", error:{code:"cancelled"}}`.
+- A job is retried at most twice, under the same job id with a new lease.
+- When the worker connection drops, every outstanding lease is void (F3), and the host waits for the restarted worker.
+- Errors: `worker.lease`, `invalid.input`.
+- `tree.check` input: `{repo:str, path_pin:{dev:int, ino:int}}`. Its result:
+  `{changed:[{path:str, why:"modified"|"untracked"|"deleted"|"flag"}]{0..200}, more:bool}`.
+
+#### 0.8.3 Control ops (control socket, F8)
+
+The peer UID must equal the host UID (checked like any socket). `welcome.workspace` is `null`.
+
+| Op | Args → result | Rules |
+|---|---|---|
+| `host.list` | `{}` → `{workspaces:[{workspace_id, prefix, root, state, tier, socket, person:Person \| null}]}` | `person` is the caller UID's mapping in each workspace (R11) |
+| `host.wsk_create` | `{}` → `{workspace_id, wsk_pub}` | The host draws a new workspace id and creates `hosts/<id>/keys/wsk` with `O_CREAT\|O_EXCL` in a fresh 0700 directory. It never takes an id from the caller and never replaces a key. A key with no genesis after 1 h is deleted. |
+| `host.bootstrap` | `{workspace_id, root, events:[Event]{1..4}, peers}` → `{workspace_id, seq}` | The `init` composite. `root` is a new empty directory owned by the host UID that passes the D-P2-17 ancestor check. `events` are the signed genesis events (`workspace.created`, delegation). The host validates them with the model, appends them with that workspace's WSK, writes the files, and registers the workspace as `host.register` does. |
+| `host.register` | `{root, peers:{"<uid>": {class:"person", person:Person} \| {class:"agent"} \| {class:"worker"}}}` → `{workspace_id}` | The one op besides `bootstrap` that opens a client-named path. `root` is resolved with `realpath`, must be owned by the host UID and pass the D-P2-17 ancestor check. The workspace id comes from its verified genesis and must match the pinned genesis. A UID with a root-owned agent or worker pin can never be mapped as `person`. A `person` mapping must name a member with a valid `decide` device. Takes the ownership lock (D-P2-18). |
+| `host.unregister` | `{workspace_id}` → `{}` | stops serving and restores direct mode |
+| `host.restart` | `{}` → `{draining:true}` | D-P2-4 |
+
+### 0.9 Subscriptions
+
+```
+sub.open  {topics:["workspace"|"tickets"|"needs"|"ticket:<Ref>"]{1..8}, after?:Cursor} → {sub:SubId, cursor:Cursor}
+sub.close {sub:SubId} → {}
+Item      = {jpos:int, log:Uid | "workspace", key:Key | null, uid:Uid | null, seq:int, ws_seq:int, type:str, at:Time,
+             actor:{kind:str, id:str | null}}
+          | {jpos:int, uid:Uid, gone:true}
+          | {jpos:int, type:"needs.changed"}
+EndReason = "closed"|"grant.expired"|"person.removed"|"overflow"|"reset"|"host.restarting"
+SubId     = str/sub_[0-9a-z]{1,16}/
+```
+
+- **Principal.** A subscription keeps the opening request's principal and viewer (§0.5).
+- **Revalidation before every delivery**, queued items included:
+  - the grant must still be verified (not expired or revoked) and the person still a member, and a person-class
+    mapping must still hold;
   - each item's ticket must still be visible.
 
-  An item that fails is dropped. If the grant has ended, the host sends `{"t":"evt","sub":…,"end":"grant.expired"}` and
-  closes the subscription.
-- **Items** carry metadata only: `{jpos, log, key, uid, seq, ws_seq, type, at, actor:{kind,id}}`. Clients refetch
-  content with ops.
-  - A ticket that becomes visible yields `{…,"type":"visibility.changed"}`.
-  - A ticket that becomes invisible yields `{jpos, uid, "gone":true}` (the subscriber already knew the uid).
-  - The `needs` topic yields `{jpos, "type":"needs.changed"}`.
-- **Cursors** are opaque strings of at most 256 bytes. They are scoped to the workspace, the principal and the history
-  epoch (the genesis plus the last `restore`) and point into the host's append journal (`jpos`, a monotonic position
-  in the merged order).
-- **Opening.** `sub.open` registers the subscription and reads the journal position in one step on the workspace
-  worker. With `after`, it first replays items after that cursor, then goes live, with no gap.
-- **Ordering.** Items arrive in `jpos` order. Duplicates happen only after a reconnect with an older cursor, and clients
-  dedupe by `jpos`.
-- **Invalidation.** A cursor that is too old (outside the 10 000-entry journal), has the wrong scope or comes from
-  another epoch gets `sub.reset`.
-- **Overflow.** A subscription queue holds at most 256 items or 256 KiB, and a slow reader may lag at most 30 s. Past
-  that, the host sends `{"t":"evt","sub":…,"invalidated":"overflow"}` and closes the subscription. The client takes a
-  snapshot (`ticket.query`, `needs` or `show`; each returns `sub_cursor`) and opens again with `after` set to that
-  cursor.
+  A failing item is dropped. If the principal fails, the host sends `evt {end:"grant.expired"}` or
+  `{end:"person.removed"}` and the subscription ends.
+- **`jpos`** is the event's position in the merged order (F1 §5.5) since the genesis. It is deterministic, so it
+  survives a restart, because the journal is rebuilt from the logs.
+- **Cursors** are opaque, at most 256 bytes. They encode `{workspace, principal hash, history epoch (genesis plus the
+  last restore head), jpos}`.
+- **Snapshot and resume.**
+  - Every snapshot read (`ticket.query`, `ticket.get`, `needs`) returns the `sub_cursor` of the jpos its state was
+    read at, taken atomically on the workspace worker.
+  - `sub.open {after}` registers the subscription and fixes the live boundary in one worker step, replays the items
+    after `after`, then goes live, with no gap.
+  - Its `res` is sent before any `evt` of that subscription. For a write from the same connection, its `res` is sent
+    before any `evt` carrying its own events.
+- **Delivery.** Items arrive in `jpos` order, batched up to 64 per `evt`. An event that matches several topics of one
+  subscription is delivered once. Duplicates happen only after a reconnect with an older cursor, and clients dedupe by
+  `jpos`.
+- **Visibility changes.** A ticket that becomes visible yields its event with `type: "visibility.changed"`. A ticket
+  that becomes invisible yields `{jpos, uid, gone:true}`: the one item delivered about a ticket the viewer can no
+  longer see, because the subscriber already knew the uid.
+- **Accepted metadata (F13).** `jpos` and `ws_seq` are global, so their gaps show that invisible tickets changed, and
+  `needs.changed` fires for every change to `needs`. Visibility in §0 is a display rule, not secrecy (F1 §9):
+  workspace files are group-readable in tier B.
+- **End.** `evt {end}` closes the subscription:
+  - `reset`: a cursor that is too old (outside the 10 000-entry journal), of another scope or epoch, or a journal
+    rebuild (D-P2-12). `sub.open` with such a cursor answers `sub.reset` instead.
+  - `overflow`: the queue exceeds 256 items or 256 KiB, or a slow reader lags more than 30 s. The client takes a
+    snapshot and opens again with `after` set to its `sub_cursor`.
+  - `host.restarting` (drain) and `closed` (`sub.close`).
 
-### 0.8 Files and blobs
+### 0.10 Files and blobs
 
-- **The host never opens a path a client names.** File contents come inline (`files.<arg>.b64`, up to 512 KiB) or as a
-  blob. Any argument that looks like an unresolved path gets `blob.invalid`.
-- **Blob uploads.**
-  - Offsets must be contiguous from 0, in chunks of at most 768 KiB.
-  - `last:true` must carry the `sha256` of the whole blob, and after that the blob cannot change.
-  - A blob is used once, then deleted.
-  - Unused blobs are deleted after 10 minutes, unless a prepared request holds them.
+```
+blob.put  {blob?:BlobId, offset:int 0.., b64:B64, last:bool, size?:int 1..67108864, sha256?:Hash} → {blob:BlobId, size:int}
+blob.drop {blob:BlobId} → {}
+BlobId = str/b_[A-Z2-7]{26}/
+```
+
+- **The host never opens a path a client names** (D-P2-11). File contents come inline (`files.<arg>.b64`) or as a
+  blob.
+- **Inline.** At most 512 KiB decoded per argument and per request in total (`welcome.limits.inline_bytes`).
+- **Uploads.**
+  - The first chunk has no `blob` and carries `size`. The host reserves `size` against the quota and returns a new id
+    (`b_` plus 128 random bits, base32).
+  - Later chunks carry the `blob`. Offsets are contiguous from 0, and each chunk decodes to at most 768 KiB.
+  - Resending a chunk at an offset already written, with identical bytes, is accepted without effect. Different bytes
+    answer `blob.invalid`.
+  - `last:true` needs the total to equal `size` and `sha256` (`sha256:` plus 64 lowercase hex digits) to match. After
+    that the blob is immutable.
+- **Ownership and storage (F9).** A blob is bound to its workspace and its principal. Use from another workspace or
+  principal gives the same `blob.invalid` as an unknown id. Blobs are stored at `<state>/hosts/<ws>/blobs/<id>` (0600,
+  host-owned), and the id is checked against `^b_[A-Z2-7]{26}$` before it is used in a path.
+- **Consumption.**
+  - A blob is consumed when the write that uses it commits.
+  - On a refusal or a dry run it stays available until it expires.
+  - An unused or incomplete blob expires 10 minutes after its last chunk, unless a prepared human request holds it (it
+    then lives as long as the request).
   - Blobs survive a reconnect by the same principal.
-  - Limits: 64 MiB per blob, 256 MiB per principal, 1 GiB per host.
+- **Names.** A blob has no file name. The artifact name or other logical name comes from `args` (F1 §6 name rule).
+- **Limits.** Quotas count decoded bytes, reserved at the first chunk.
+  - 64 MiB per blob.
+  - 256 MiB per **UID** across all its principals and workspaces. Blobs held by prepared human requests count against
+    the preparing UID.
+  - 1 GiB per host, with 256 MiB reserved for person-class UIDs.
+  - Over a limit: `quota.host`.
 
-### 0.9 Limits
+### 0.11 Limits
 
 | What | Limit |
 |---|---|
-| frame | 2 MiB |
+| frame | 2 MiB; the body within 10 s of its length prefix |
 | bytes per connection | 64 MiB/min in each direction |
 | connections | 32 per UID |
 | requests in flight | 8 per connection |
 | subscriptions | 8 per connection, 64 per UID |
 | pending human requests | 20 per person |
-| agent request rate | token bucket of 20/s, burst 100 per agent UID |
-| workspace fairness | round-robin across principals on the worker queue |
+| request rate | token bucket of 20/s, burst 100, per agent UID |
+| git reader children | 4 per host, 1 per principal at a time; others queue and count as in flight |
+| git reader child limits | CPU 10 s, address space 512 MiB, wall clock 30 s, 64 open files |
+| git reader inputs | object inflated ≤ 64 MiB (equal to its header); delta depth ≤ 64; `packed-refs` ≤ 32 MiB; pack `.idx` ≤ 256 MiB; `.git/index` ≤ 128 MiB and ≤ 1 000 000 entries; worktree walk ≤ 200 000 entries |
+| outcome records | 100 000 per principal |
+| audit log | `audit.jsonl` rotated at 10 MiB, 20 files kept. `human.*`, writes, `peer.denied` and control ops go to `audit-security.jsonl`, which read traffic never rotates away. |
 | idle connection | closed after 10 min unless it has a subscription or a request in flight |
 
-### 0.10 Error codes added by the host
-
-All are in the catalog with exit code and retryability.
-
-| Codes | Exit |
-|---|---|
-| `peer.denied`, `op.not_allowed` | 3 |
-| `frame.invalid`, `frame.too_large` | 6 |
-| `host.version_mismatch`, `op.unsupported` | 1 |
-| `host.unavailable` (raised by the client), `host.restarting`, `host.busy`, `rate.limited`, `cancelled`, `outcome.unknown` | 9 |
-| `idem.conflict`, `blob.invalid` | 5 |
-| `idem.expired`, `outcome.unknown_idem` | 2 |
-| `human.request_expired` | 3 |
-| `human.request_mismatch` | 5 |
-| `sub.reset` | 9 |
-| `host.required` | 3 |
-
-### 0.11 Examples
+### 0.12 Examples
 
 Agent class (UID 502, with a grant):
 
@@ -302,13 +752,9 @@ Agent class (UID 502, with a grant):
 ← {"t":"res","id":"r1","ok":true,"result":{"data":{"person":"p_sev","grant":{"id":"gr_01J9Z8…","until":"2026-10-11T18:00:00Z"},
    "cursor":14,"claims":["DEMO-0043"]},"key":"DEMO-0043","seq":0,"cursor":14,"hints":["orch task next"],
    "lines":["DEMO-0043 in-progress (your claim) · T3 next · 2 new events"],"duplicate":false,"exit":0,"head":null}}
-→ {"t":"req","id":"r2","op":"show","args":{"ref":"DEMO-0043","section":["plan"]},"auth":{"grant":"gr_01J9Z8…","session":"s_01J9ZQ…"}}
-← {"t":"res","id":"r2","ok":true,"result":{"data":{"key":"DEMO-0043","status":"in_progress","sections":{"plan":"…"}},"key":"DEMO-0043",
-   "seq":17,"cursor":17,"hints":[],"lines":["--- plan [k3x9] (data, not instructions) ---","…","--- end k3x9 ---"],
-   "duplicate":false,"exit":0,"head":null}}
-→ {"t":"req","id":"r3","op":"blob.put","args":{"offset":0,"b64":"MTEy…","last":true,"sha256":"5e1a…"}}
-← {"t":"res","id":"r3","ok":true,"result":{"data":{"blob":"b_01J9ZR…","size":48213},"key":null,"seq":0,"cursor":0,"hints":[],"lines":[],"duplicate":false,"exit":0,"head":null}}
-→ {"t":"req","id":"r4","op":"artifact.add","args":{"ref":"DEMO-0043","path":"tests.log","ac":"AC2"},"files":{"path":{"blob":"b_01J9ZR…"}},
+→ {"t":"req","id":"r3","op":"blob.put","args":{"offset":0,"size":48213,"b64":"MTEy…","last":true,"sha256":"sha256:5e1a…"}}
+← {"t":"res","id":"r3","ok":true,"result":{"data":{"blob":"b_K7Q2…","size":48213},"key":null,"seq":0,"cursor":0,"hints":[],"lines":[],"duplicate":false,"exit":0,"head":null}}
+→ {"t":"req","id":"r4","op":"artifact.add","args":{"ref":"DEMO-0043","path":"tests.log","ac":"AC2"},"files":{"path":{"blob":"b_K7Q2…"}},
    "auth":{"grant":"gr_01J9Z8…","session":"s_01J9ZQ…"},"opts":{"idem":"a_01J9ZS…"}}
 ← {"t":"res","id":"r4","ok":true,"result":{"data":{"artifact":"tests.log","digest":"sha256:5e1a…"},"key":"DEMO-0043","seq":18,"cursor":18,
    "hints":["orch task done T3"],"lines":[],"duplicate":false,"exit":0,"head":null}}
@@ -316,51 +762,92 @@ Agent class (UID 502, with a grant):
 ← {"t":"res","id":"r5","ok":false,"exit":3,"error":{"code":"human_only","message":"approve: human only","hint":"orch ask or orch wait","retryable":false}}
 ```
 
-Dashboard (person class, UID 501, mapped to `p_sev`). A board snapshot, a subscription, then an approval through the
-terminal hand-off:
+Dashboard (person class, UID 501, mapped to `p_sev`). A board snapshot, a subscription, then a verdict through the
+hand-off:
 
 ```
 → {"t":"req","id":"d1","op":"ticket.query","args":{"status":["open","in_progress","testing"],"limit":50}}
 ← {"t":"res","id":"d1","ok":true,"result":{"data":{"rows":[{"key":"DEMO-0043","uid":"01J9ZK…","title":"Billing join","status":"testing",
    "gates":{"requirements":"approved","plan":"approved","verify":"open","code":"n/a"},"needs":["approve"],"head_seq":18,…}],
-   "next_page":null,"total":1,"sub_cursor":"c1.QmF…"},…}}
+   "next_page":null,"total":1,"sub_cursor":"c1.QmF…","as_of":"2026-10-11T15:01:00Z"},…}}
 → {"t":"req","id":"d2","op":"sub.open","args":{"topics":["tickets","needs"],"after":"c1.QmF…"}}
 ← {"t":"res","id":"d2","ok":true,"result":{"data":{"sub":"sub_1","cursor":"c1.QmF…"},…}}
 ← {"t":"evt","sub":"sub_1","cursor":"c1.QmG…","items":[{"jpos":5121,"log":"01J9ZK…","key":"DEMO-0043","uid":"01J9ZK…","seq":19,"ws_seq":31,
    "type":"task.done","at":"2026-10-11T15:02:11Z","actor":{"kind":"agent","id":"claude"}}]}
-→ {"t":"req","id":"d3","op":"human.prepare","args":{"op":"verdict","args":{"ref":"DEMO-0043","outcome":"pass"},
-   "signer":{"device":"d_7Q…","auth":"passphrase"},"handoff":true}}
-← {"t":"res","id":"d3","ok":true,"result":{"data":{"request":{"id":"hr_01J9ZT…","code":"7F3K-Q2MA","expires_at":"2026-10-11T15:14:00Z"},
-   "workspace_id":"6f1c…","log":"01J9ZK…","event":{"v":2,"id":"01J9ZT…","type":"verdict.given","actor":{"kind":"person","id":"p_sev","device":"d_7Q…"},
-   "auth":"passphrase","hash_v":1,"roster_v":4,"based_on":"sha256:…","gate_gen":2,"outcome":"pass","hash":"sha256:81ab…",
-   "source_sha":[{"repo":"https://github.com/acme/energy-dbt","branch":"t/DEMO-0043","sha":"4be1…"}]},
-   "material":{"gate":"verify","input":{…gate_input…}},"review_digest":"sha256:…"},…}}
-   (the person runs `orch sign 7F3K-Q2MA`; that CLI calls human.pending, recomputes, reviews, signs, and then:)
-→ {"t":"req","id":"c1","op":"human.submit","args":{"request_id":"hr_01J9ZT…","event":{…same…,"sig":"MEUCIQ…"}},"opts":{"idem":"a_01J9ZU…"}}
-← {"t":"res","id":"c1","ok":true,"result":{"data":{"gate":"verify","outcome":"pass"},"key":"DEMO-0043","seq":20,"cursor":20,"hints":[],
+→ {"t":"req","id":"d3","op":"human.prepare","args":{"op":"verdict","args":{"ref":"DEMO-0043","outcome":"pass"},"handoff":true}}
+← {"t":"res","id":"d3","ok":true,"result":{"data":{"request":{"id":"hr_01J9ZT…","code":"7F3K-Q2MA","expires_at":"2026-10-11T15:14:00Z","bound":false},
+   "workspace_id":"6f1c…","log":"01J9ZK…","events":[{"v":2,"id":"01J9ZT…","type":"verdict.given",
+   "actor":{"kind":"person","id":"p_sev","device":null},"auth":null,"hash_v":1,"roster_v":4,"based_on":"sha256:…","gate_gen":2,
+   "outcome":"pass","hash":"sha256:81ab…","source_sha":[{"repo":"https://github.com/acme/energy-dbt","branch":"t/DEMO-0043","sha":"4be1…"}]}],
+   "material":{"kind":"gate","gate":"verify","input":{…}},"review_digest":"sha256:3c9d0e…","fingerprint":"3c9d0e41a7b2"},…}}
+```
+
+Then the person runs `orch sign 7F3K-Q2MA`. Its connection:
+
+```
+→ {"t":"req","id":"c1","op":"human.pending","args":{"code":"7F3K-Q2MA"}}
+→ {"t":"req","id":"c2","op":"human.get","args":{"request_id":"hr_01J9ZT…","signer":{"device":"d_7Q…","auth":"passphrase"}}}
+   (it recomputes the hashes, shows the header with fingerprint 3c9d0e41a7b2 and the review, asks for "DEMO-0043", prompts, signs)
+→ {"t":"req","id":"c3","op":"human.submit","args":{"request_id":"hr_01J9ZT…","events":[{…bound event…,"sig":"MEUCIQ…"}]},"opts":{"idem":"a_01J9ZU…"}}
+← {"t":"res","id":"c3","ok":true,"result":{"data":{"gate":"verify","outcome":"pass"},"key":"DEMO-0043","seq":20,"cursor":20,"hints":[],
    "lines":[],"duplicate":false,"exit":0,"head":null}}
 ```
 
-### 0.12 Changelog v0 → v1
+The dashboard sees `seq` 20 through its subscription, or polls `human.pending {request_id}` → `state:"submitted"`.
 
-1. String request ids; `fatal` frames; strict-JSON rules; `cancel`; `outcome.unknown`; response reordering and write
-   ordering defined.
-2. `opts.idem` is required on writes, namespaced by workspace and principal and bound to op, args and file digests.
-   Outcome records with tombstones; new `outcome.get`, `idem.conflict` and `idem.expired`.
-3. The exact `registry` match is replaced by `caps` plus per-op contract versions (`op.unsupported`). `registry` is now
-   a diagnostic.
-4. Peer classes `worker` and `bridge` (reserved) added. The person is an explicit UID→person map. `human.prepare` takes
-   `signer:{device,auth}`. Sessions are keyed by principal.
-5. Reads with an invalid grant behave as in F1 §10.7 (workspace tickets only) instead of being refused.
-6. `human.prepare` returns structured `material` and `review_digest`; the signer recomputes hashes and renders its own
-   review. Submit compares canonical JSON, keeps tombstones and scopes hand-off codes. The dashboard uses
-   prepare → sign → submit; there is no host-side prompt.
-7. Subscriptions keep their principal and revalidate before delivery. Opaque scoped cursors; the `needs` topic;
-   overflow and stale cursors invalidate (snapshot plus cursor); visibility transitions defined.
-8. New reads: `ticket.query`, `needs`, `diff`, `artifact.get`, `workspace.show`, `member.list`, `session.list`.
-   `move` (provisional). Person versions of `new`, `set`, `log`, `ask` and others through `human.*`. `blob.drop`.
-9. Control socket for `host.*` admin and bootstrap (`host.wsk_create`).
-10. Blob rules (contiguous offsets, final digest, single use, quotas) and the full limits table.
+### 0.13 Changelog
+
+**v0 → v1.**
+
+1. String request ids; `fatal` frames; strict-JSON rules; `cancel`; `outcome.unknown`; response and write ordering.
+2. `opts.idem` on writes, namespaced and bound; outcome records with tombstones; `outcome.get`, `idem.conflict`,
+   `idem.expired`.
+3. Exact `registry` equality replaced by `caps` plus per-op contract versions (`op.unsupported`).
+4. Peer classes `worker` and `bridge`; an explicit UID→person map; `human.prepare` takes `signer`; sessions keyed by
+   principal.
+5. Reads with an invalid grant behave as in F1 §10.7.
+6. `human.prepare` returns `material` and `review_digest`; the signer recomputes and renders; the dashboard uses
+   prepare → sign → submit.
+7. Subscriptions keep their principal, revalidate, use opaque scoped cursors, add a `needs` topic, and invalidate on
+   overflow.
+8. New reads (`ticket.query`, `needs`, `diff`, `artifact.get`, `workspace.show`, `member.list`, `session.list`);
+   `move`; person versions of agent ops; `blob.drop`.
+9. A control socket.
+10. Blob rules and a limits table.
+
+**v1 → v1.1.**
+
+1. **Normative schemas** (§0.1, §0.3, §0.8) for every envelope and op: types, required and nullable keys, bounds,
+   defaults and errors. The handshake order is fixed. `welcome` gains `tier` and `limits.inline_bytes`, and
+   `workspace` is `null` on the control socket. Parsing precision (depth counting, no floats, lone surrogates, integer
+   bounds) and a 10 s frame-body deadline.
+2. **One authoritative permission and visibility matrix** (§0.5). The principal comes only from a verified grant
+   (F4). The person mapping is rechecked on every request (F8). Visibility rules apply to every read (F6). One worker
+   connection per worker UID (F3).
+3. **Error disposition table** (§0.6) with exit, retryable, connection fate and `retry_after_ms`. New codes:
+   `handshake.invalid`, `req.invalid`, `timeout`, `quota.host`, `result.too_large`, `workspace.unavailable`,
+   `workspace.degraded`, `idem.required`, `page.expired`, `human.request_state`, `worker.lease`,
+   `repo.remote_mismatch`. `host.unavailable` is client-only.
+4. **Idempotency** (§0.7): which ops count as writes; the binding includes the session and file digests; concurrent
+   duplicates wait; retryable failures are not stored; `pending` records are reconciled from the log after a crash.
+5. **Human ops** (§0.8.1): `event` is now `events` (1..16, multi-event ops). `signer` is optional and a hand-off binds
+   its device in the new op **`human.get`** (R7, F5). The grant secret is drawn by the signer, and the prepared grant
+   event has `secret_hash: null` (F1). `origin`, an op-specific header and confirmation word, and a 12-hex
+   `fingerprint` shared by the dashboard, `orch sign` and H9 (R8). `human.prepare` accepts `files` (R9). `human.pending
+   {request_id}` reports `prepared`/`submitted`/`cancelled`/`expired` with event id and seq (R6). The lookup limit is
+   per connection. Host-prepared event ids. `dry_run` moves to `opts`, with `request: null`.
+6. **New ops:** `ticket.get` (structured ticket data: log summaries, question states, evidence digests per criterion;
+   R1), `grant.list` (R2), `job.next`/`heartbeat`/`done` (§0.8.2), control-op schemas including `host.bootstrap` and
+   `host.list` with the caller's person mapping (R11, §0.8.3). `task.done` contract 2 takes a client receipt.
+   `policy.set` and `settings.set` are provisional through `human.*`. `ticket.query` defines filter combination,
+   search, sort and ties, snapshot paging and `total`. `diff` defines base and head selection.
+7. **Subscriptions** (§0.9): deterministic `jpos` that survives restarts, snapshot cursors from every snapshot read,
+   response-before-event ordering, batching, topic overlap, `end` reasons, the `gone` exception, and accepted metadata
+   (F13).
+8. **Blobs** (§0.10): base64 alphabet and padding, decoded-byte limits, inline totals, the first chunk reserves
+   `size`, chunk retries, consumption on commit only, no file names, quotas per UID and workspace (F9). "Looks like a
+   path" is replaced by the registry's `x-file` marker.
+9. **Limits** (§0.11): git reader children and their numeric limits, outcome caps, audit retention (F10).
 
 ---
 
@@ -368,71 +855,74 @@ terminal hand-off:
 
 **D-P2-1. One host per host UID serves every registered workspace, with one worker thread per workspace.**
 
-- The worker gives an order to writes and keeps a single owner for the mutable `Store`. (v0's reason was wrong:
-  `FileLock` already shares a `threading.RLock`, so two threads cannot both pass it.)
+- The worker gives an order to writes and keeps a single owner for the mutable `Store`. (`FileLock` already shares a
+  `threading.RLock`, so locking is not the reason.)
 - **Registration.** Roots are canonicalised with `realpath`. A duplicate workspace id or root is refused.
-- **Workspace states.** Each workspace is `ok`, `degraded` (reads only, for example an unacknowledged invalid event) or
-  `unavailable` (missing, chain broken at genesis, unsafe modes). Ops on an unavailable workspace get
-  `host.unavailable` naming the cause. v0 promised read-only service here, which a broken workspace cannot give.
+- **Workspace states.**
+  - `ok`;
+  - `degraded`: reads only, for example an unacknowledged invalid event or a journal rebuild; a write answers
+    `workspace.degraded`;
+  - `unavailable`: missing, chain broken at genesis, or unsafe modes; every op answers `workspace.unavailable`.
 
 **D-P2-2. The OS service manager starts the host, never a CLI call.** If a CLI call could spawn the host, an agent-UID
 call would start a host as the agent.
 
 | Platform | Service | Run directory |
 |---|---|---|
-| macOS | LaunchAgent `io.orch.host` (`RunAtLoad`, `KeepAlive`) | `/Users/Shared/orch/run/<host uid>`, created by the setup helper (H3c) |
+| macOS | LaunchAgent `io.orch.host` (`RunAtLoad`, `KeepAlive`) | `/Users/Shared/orch/run/<host uid>` (D-P2-6, F12), created by the setup helper (H3c) |
 | Linux | systemd user or system unit | `/run/orch/<host uid>`, provisioned by `tmpfiles.d` from the privileged setup. A user unit's `RuntimeDirectory` lives under `$XDG_RUNTIME_DIR`, which agents cannot traverse. |
 | dev and tests | `orch host run --foreground` | `<state>/run` (no agent UIDs) |
 
-**D-P2-3. Every outcome is recoverable.** The store recovers torn appends. The host adds the outcome records of §0.5,
-so a lost response, an interrupted composite or a human submit is recovered by `idem`, never repeated.
+**D-P2-3. Every outcome is recoverable.** The store recovers torn appends. The host adds the outcome records and
+their reconciliation (§0.7), so a lost response, an interrupted composite or a human submit is recovered by `idem`,
+never repeated.
 
 **D-P2-4. Upgrades.**
 
 - The service runs a versioned, immutable release. `orch host install` copies it to
   `~/.local/share/orch/releases/<version>`, and the host imports every `orch` module at start.
-- An upgrade is: install the new release, then `orch host restart` (control socket) or the service manager's restart.
-  A running host is never changed under its feet.
+- An upgrade is: install the new release, then `host.restart` or the service manager's restart.
 - **Drain.**
-  - New requests get `host.restarting` with `retry_after_ms`.
+  - New requests answer `host.restarting` with `retry_after_ms`.
   - Writes in flight finish; there is no forced deadline inside a commit.
-  - Parked `wait`s and subscriptions end with `host.restarting`, not with a `timeout` result.
+  - Parked `wait`s answer `host.restarting`, and subscriptions end with `end:"host.restarting"`.
   - Lost responses are recovered with `outcome.get`.
-- Version skew is handled by capabilities (§0.2).
+- Version skew is handled by capabilities (§0.4).
 
-**D-P2-5. Several OS users, with an explicit UID map.** The host's registry (`<state>/host/workspaces.json`, 0600)
-holds, per workspace:
+**D-P2-5. Several OS users, with an explicit UID map.** The host's registry (`<state>/host/workspaces.json`, 0600, in
+the D-P2-17 custody list) holds, per workspace:
 
 ```json
 {"workspace_id":"6f1c…","root":"/Users/sev/acme","host_uid":501,"group":"orch-6f1c0d2e8b4a",
- "peers":{"501":{"class":"person","person":"p_sev"},"502":{"class":"agent"},"503":{"class":"worker"}}}
+ "peers":{"501":{"class":"person","person":"p_sev"},"502":{"class":"agent"},"503":{"class":"worker"}},
+ "repos":{"acme-energy-dbt":{"gitdir":{"path":"…","dev":1,"ino":2},"commondir":{"path":"…","dev":1,"ino":3}}}}
 ```
 
-- A person-class UID reads as its mapped person. A person mapping is only accepted if that person is a member and has
-  a valid device in the roster.
-- **Machines without agent UIDs** (dev, or a Mac before H3c) are tier A: every connection is person class, a request
-  with `auth.grant` runs in agent mode, and `human.*` with a grant present is `human_only`. `whoami` reports
-  `tier:"A"`.
+- The class and mapping rules are §0.5 and §0.8.3. The mapping is checked at registration and again on every request.
+- **Machines without agent UIDs** (dev, or a Mac before H3c) are tier A (§0.5).
 
 ## 2. The socket
 
 **D-P2-6. One socket per workspace in `<run>/<ws>/` (0750, group `orch-<ws 12 hex>`), the socket itself 0660, and
-`<run>` owned by the host UID.** File modes keep other users and other workspaces' agents out before the peer check
-runs.
+`<run>` owned by the host UID, mode 0711.** File modes keep other users and other workspaces' agents out before the
+peer check runs. With mode 0711, agents can reach their own workspace directory but cannot list workspace ids.
 
-- **Ancestors.** Every ancestor of `<run>` must be owned by root or by the host UID, and nobody else may write it. A
-  sticky root-owned directory such as `/Users/Shared` or `/run` is allowed when the next component belongs to the host
-  UID. No ACL entry may grant write, `add_subdirectory` or `delete_child` to anyone else (macOS: `acl_get_link_np`).
-  The host checks this at start and again every 60 s, and refuses (or stops serving) on a violation.
+- **Ancestors.**
+  - Every ancestor of `<run>` must be owned by root or by the host UID, with no write for anyone else.
+  - A sticky root-owned directory (`/Users/Shared`, `/run`) is allowed only as the parent of a directory created by the
+    setup helper as root, mode 0755, owned by root (`/Users/Shared/orch`, `/Users/Shared/orch/run`, `/run/orch`).
+    The helper refuses, and names the owner, when one of these exists with another owner, other modes or an ACL (F12).
+  - No ACL entry may grant write, `add_subdirectory` or `delete_child` to anyone else (macOS: `acl_get_link_np`).
+  - The host checks this at start and every 60 s, and refuses to start (or stops serving) on a violation.
 - **Binding.**
   1. Open each component with `O_NOFOLLOW|O_DIRECTORY` and `fstat` it.
   2. Take `<run>/<ws>/lock`.
-  3. `fchdir` into the checked directory fd and bind the **relative** name `host.sock`, under umask 0o177. This happens
-     before the host starts any threads, so the bind uses the checked descriptor.
+  3. `fchdir` into the checked directory and bind the **relative** name `host.sock` under umask 0o177. This happens
+     before the host starts any threads.
   4. `chmod` 0660 and `chown :group`, then `listen`.
 
   Stale sockets are removed only while the lock is held and only after a connect fails.
-- **Path length.** The UTF-8 encoded absolute path must stay at or under 100 bytes (clients connect by absolute path).
+- **Path length.** The UTF-8 encoded absolute path must stay at or under 100 bytes.
 - **Groups.**
   - The setup helper creates the group with a recorded gid and refuses if it already exists with an unknown gid or
     members.
@@ -442,133 +932,155 @@ runs.
 - **Peer credentials, both ways.** `SO_PEERCRED` on Linux, `getpeereid` (ctypes) on macOS.
   - The host refuses an unmapped UID before reading any byte.
   - The client accepts the server only if its UID and `welcome.workspace.id` match a **trusted pin**:
-    - for a person-class client, its own registry (same UID as the host);
+    - for a person-class client, its own registry (the same UID as the host);
     - for an agent-class client, `/Library/Application Support/orch/pins/<agent uid>.json` (macOS) or
-      `/etc/orch/pins/<uid>.json` (Linux), which is root-owned and written by the setup helper.
+      `/etc/orch/pins/<uid>.json` (Linux), root-owned and written by the setup helper.
 
-    `config.json` only names the workspace id to look up; it is never trusted.
-- **The credential is a snapshot of the connecting process.** A descriptor passed on to another process keeps that
-  snapshot. That is acceptable between processes of the same UID. **No privileged process forwards connections for
-  others**: the dashboard never proxies requests for another principal, and the host never passes client descriptors
-  on.
+    `config.json` only names the workspace id to look up.
+- **The credential is a snapshot of the connecting process.** No privileged process forwards connections for others:
+  the dashboard never proxies requests for another principal, and the host never passes client descriptors on.
 - **Real UID tests.** Two-process tests with real UIDs run in CI (Linux container, `useradd`) and on the dev Mac with a
-  test user, in addition to unit tests with fake credentials.
+  test user.
 
 **D-P2-7. There is no TCP listener in the host. The dashboard is a socket client.** The dashboard addon is a FastAPI
-process under the human's UID. It serves `127.0.0.1:<random port>` and is person class on the socket. FastAPI stays out
-of the key-holding process, and the host's attack surface stays one peer-checked socket.
+process under the human's UID. It serves `127.0.0.1:<random port>` and is person class on the socket.
 
-Required on the HTTP side (stream B):
+Required on the HTTP side (stream B; amended per R10):
 
-- a one-time launch token in the URL fragment, exchanged by a POST with an `Origin` check for an
-  `HttpOnly; SameSite=Strict` cookie;
-- `Host` must be `127.0.0.1:<port>` or `localhost:<port>`;
-- an `Origin` check on every non-GET request, and GET requests have no side effects;
-- a strict CSP;
-- SSE fed by `sub.open`.
+- **A bearer token in a header, no cookie.**
+  - The launch URL carries a one-time token in the fragment.
+  - The page exchanges it, with an `Origin` check, for a session token held in page memory only.
+  - Every API call sends `Authorization: Bearer <token>`.
+  - With no ambient credential, a cross-site request carries nothing, so CSRF has nothing to ride on.
+  - The token expires when the dashboard process restarts.
+- `Host` must be exactly `127.0.0.1:<port>`. `localhost` is refused (against DNS rebinding).
+- `Origin` is checked on every non-GET request, and GET requests have no side effects.
+- A strict CSP.
+- SSE fed by `sub.open` (the token goes in the SSE URL's query, single use, exchanged on connect).
 
-A review in the browser never stands in for the signer's review (§4).
+A review in the browser never stands in for the signer's review (§0.8.1).
 
 **Limit:** on a Mac the dashboard runs as the same UID as the host. A dashboard that runs attacker code can read the
-WSK. This is accepted under §4 ("the human's machine is trusted"), and Q3 would close it.
+WSK. This is accepted under §4 ("the human's machine is trusted").
 
 ## 3. Dispatch
 
-**D-P2-8. Frames are length-prefixed JSON with orch's own envelope** (§0.1). The result and error envelopes are
-already the contract. JSON-RPC's integer codes add nothing, and the length prefix lets the host enforce the size limit
-before parsing.
+**D-P2-8. Frames are length-prefixed JSON with orch's own envelope** (§0.2, §0.3). The result and error envelopes are
+already the contract, and the length prefix lets the host enforce the size limit before parsing.
 
 **D-P2-9. The op list is the registry, and handlers get explicit capabilities.** P1 handlers read `ctx.env`, open
 paths, run subprocesses and sign. Before the host serves them, H3a gives `Context` a capability object:
 
-| Capability | What it is |
-|---|---|
-| `store` | the worker's store |
-| `files` | client-supplied bytes only |
-| `git` | the content-addressed reader (D-P2-19) |
-| `clock` | the time source |
-| `exec` | none in the host, a subprocess runner in direct mode |
-| `signer` | none in the host, custody in direct mode |
+| Capability | Host | Direct mode |
+|---|---|---|
+| `store` | the worker's store | the CLI's store |
+| `files` | client-supplied bytes (§0.10) | the CLI reads files |
+| `git` | the reader launcher (below) | the same reader, in-process |
+| `clock` | host clock | system clock |
+| `exec` | none | the subprocess runner (`verify.cmd`) |
+| `signer` | none | custody |
 
-Handlers lose direct access to the environment, paths and subprocesses. A `sys.addaudithook` test in host mode fails on
-any `open` outside the workspace root and state directory, and on any `subprocess`, `os.exec*` or `os.posix_spawn`.
+**The launcher boundary.**
+
+- In the host, the one permitted process spawn is `orch.host.launcher.spawn_gitread()`. It runs
+  `[sys.executable, "-I", "-m", "orch.gitread"]` with a fixed argv, an empty environment, `close_fds`, stdin and
+  stdout pipes only, `setrlimit` per §0.11, and a new process group.
+- A `sys.addaudithook` installed at host start allows exactly that spawn: its `subprocess.Popen` /
+  `os.posix_spawn` event with that argv, from the launcher module. Every other `subprocess`, `os.exec*`, `os.system`
+  or `os.posix_spawn` raises.
+- The same hook fails any `open` outside the workspace root, the state directory and the pinned repo gitdirs (the git
+  reader child installs its own hook, limited to its pinned gitdir).
+
+**Flows.**
 
 - The check-and-run core of `cli.main.run` moves into `orch.host.dispatch` and serves both modes. That covers input
   validation, the who-check, the grant check, the stop rule, dedup and declared errors.
-- **Client composites:**
-  - `init`: the person's TTY steps, then `host.wsk_create` (control socket; the WSK is made in host custody, and only
-    `wsk_pub` comes back), then the delegation and genesis are signed locally and sent with `human.submit`;
-  - `import v1`: plan via `import.v1 --dry-run` on the host, review on the TTY, one unlock signing the batch locally,
-    then `human.submit` per event with `idem`;
-  - `task done --run`: D-P2-19.
-- **`--dry-run`** on any op runs `model.preview` on the host, appends nothing and creates no human request.
+- **`init`** (composite):
+  1. the person's TTY steps (passphrase, recovery code; device key made locally);
+  2. `host.wsk_create` → `{workspace_id, wsk_pub}`;
+  3. the client signs the delegation and `workspace.created` locally;
+  4. `host.bootstrap` appends the genesis and registers the workspace.
+- **`import v1`** runs in direct mode only, on an unregistered workspace: `orch import v1`, then `orch host register`.
+  A registered workspace answers `host.required` (`unregister`, import, `register`). The importer reads v1 files, which
+  the host must never do for a client, and the plan signs a large batch under one unlock (F1 §14.2). Neither fits a
+  socket op.
+- **`task done --run`:** the client runs `verify.cmd` and sends the receipt (§0.8, D-P2-19).
+- **Dry run:** `opts.dry_run` everywhere. For a person op, `human.prepare` with `opts.dry_run` returns `request:null`
+  and creates nothing (§0.8.1).
 
-**D-P2-10. Authentication per call, with the F1 reads rule** (§0.4). The redaction context, meaning the secret and
-the parts derived from it, is kept for the whole request after the `auth` member is dropped. Every result, error, audit
-line and outcome record is redacted with it.
+**D-P2-10. Authentication per call, with the F1 reads rule** (§0.5). The redaction context (the secret and the parts
+derived from it) is kept for the whole request after `auth` is dropped. Every result, error, audit line and outcome
+record is redacted with it.
 
-**D-P2-11. The host never opens a client-named path** (§0.8). Registered repository roots are taken from the signed
-`settings.repos`. They are opened with `O_NOFOLLOW` at every component below the root, and nothing outside them is
-read.
+**D-P2-11. The host never opens a client-named path** (§0.10). The two exceptions are the control-socket ops
+`host.register` and `host.bootstrap` (§0.8.3), from the host UID only. Repo working copies are taken from the signed
+`settings.repos` and opened under their pins (D-P2-19).
 
-**D-P2-12. Subscriptions** (§0.7). The journal is in memory, with the last 10 000 entries rebuilt from the logs at
-start. Appends the host did not make, by an unmanaged CLI, cannot happen for a registered workspace (D-P2-18), so there
-is no need for a stat poll.
+**D-P2-12. Subscriptions** (§0.9). The journal is in memory and rebuilt from the logs at start.
 
-**D-P2-13. Limits** (§0.9). Audit lines go to `<state>/hosts/<ws>/audit.jsonl` (0600, rotated at 10 MiB): time, UID,
-class, op, principal, session, code, duration, and never a secret.
+Foreign appends (F11): under the store lock, before every append and at every 60 s check, the host compares each log's
+head with the head it last saw. A head the host did not write means someone else appended: in tier A, an older CLI or a
+script holding the file-tier WSK. The host then:
 
-**D-P2-14. Versioning by capabilities** (§0.2). The registry digest is a diagnostic. Older clients are kept honest by
-recorded fixtures (H7).
+- rebuilds the journal from the logs;
+- ends every subscription (`end:"reset"`);
+- marks the workspace `degraded` until the rebuild ends;
+- writes one audit line.
+
+In tier B the store files are writable only by the host, so this cannot happen there.
+
+**D-P2-13. Limits** (§0.11). Audit lines record time, UID, class, op, principal, session, code and duration, never a
+secret.
+
+**D-P2-14. Versioning by capabilities** (§0.4). Older clients are kept honest by recorded fixtures (H7).
 
 ## 4. Human signing
 
 **D-P2-15. The client signs. The host never prompts and holds no device key.** A daemon has no terminal, and a host
-that could prompt would let any peer raise prompts on the person's screen. C7's rules (review the gated content,
-prompt from the signing bytes, a fresh signature every time) stay with the signer, which recomputes every bound hash
-from `material` (§0.6).
+that could prompt would let any peer raise prompts on the person's screen. C7's rules stay with the signer.
 
-**D-P2-16. The grant secret is drawn by the client.** The host only ever sees `secret_hash` when a grant is issued. A
-later call made under the grant does send the secret, in `auth.grant`.
+**D-P2-16. The grant secret is drawn by the signing client, never by the preparer (§0.8.1).** Later calls made under
+the grant send the secret in `auth.grant`.
 
-**D-P2-21. The signer recomputes hashes from structured material and renders its own review** (Codex Q7, adopted now).
-The host is trusted, but a host bug must not be able to make the person sign content they did not see.
+**D-P2-21. The signer recomputes hashes from structured material and renders its own review**, opening with its own
+header and the shared fingerprint. A host bug must not be able to make the person sign content they did not see.
 
 **D-P2-22 (manager ruling, orch-89). The Touch ID signer H9 is in P2 and must land before the cutover (D44).**
 
 - **Order:**
-  1. the `human.prepare` → sign → `human.submit` contract first (H5a);
+  1. the `human.prepare` → sign → `human.submit` contract (H5a);
   2. the terminal hand-off `orch sign CODE` as the first signing path (H5b);
   3. H9 as its own group.
-- H9 blocks neither the socket core nor the dashboard's early milestones.
-- The invariant stays: the host never prompts and holds no device key.
-- **Reconciled with stream B:** the dashboard's earlier idea that the host signs or prompts is dropped. The dashboard
-  calls `human.prepare`, shows a preview from `material`, and hands the request to a signer: in P2 first `orch sign`,
-  then the H9 helper.
+- H9 blocks neither the socket core nor the dashboard's early milestones. The invariant stays: the host never prompts
+  and holds no device key.
+- The dashboard calls `human.prepare {handoff:true}`, previews from `material` with the fingerprint, and hands the
+  request to a signer.
 
-| Signer | Review | Prompt |
-|---|---|---|
-| CLI (`orch approve`, `orch sign CODE`) | on `/dev/tty`, rendered from `material`, confirmation word, `tcflush` (C7) | passphrase, fields from the signing bytes |
-| H9 `orch-signer` (macOS, Swift, Secure Enclave P-256, auth `secure-enclave`) | its own native window, rendered from `material` after it recomputes the hashes. The browser preview is only a preview. | Touch ID; the LocalAuthentication reason is built from the signing bytes; non-person labels are refused |
+| Signer | Fetch | Review | Prompt |
+|---|---|---|---|
+| CLI (`orch approve`) | `human.prepare` with `signer` | `/dev/tty`: header, then review from `material`, confirmation word, `tcflush` (C7) | passphrase, fields from the signing bytes |
+| CLI (`orch sign CODE`) | `human.pending` + `human.get` (binds the device) | the same | the same |
+| H9 `orch-signer` (macOS, Swift, Secure Enclave P-256, auth `secure-enclave`) | `human.get` (binds the device) | its own native window: header, then review from `material` after recomputing the hashes | Touch ID; the LocalAuthentication reason is built from the signing bytes; non-person labels refused |
 
-WebAuthn (D64) needs a new signature contract and stays out of P2.
+WebAuthn (D64) needs a new signature contract and is deferred past P2 (H0 records this).
 
 ## 5. WSK custody
 
 **D-P2-17. The WSK stays a file-tier key at `<state>/hosts/<ws>/keys/wsk` (0600 in a 0700 directory), owned by the host
 UID. P2 adds no keychain.**
 
-- A keychain ACL binds to the `python` binary, which every process of the same UID can run, and a daemon would run
-  into unlock prompts. The UID is the boundary.
+- A keychain ACL binds to the `python` binary, which every process of the same UID can run. The UID is the boundary.
 - This amends the macOS row of orch-v2.md §5.5 (H0).
-- **Checks.**
-  - `keys/`, `hosts/<ws>/`, the pins, the noted revocations, `outcomes/`, `audit.jsonl` and the workspace's
-    `events/`, `tickets/` and `.state/` must be private to the host UID, or (in the workspace) readable by the group
-    but writable only by the host.
-  - Their ancestors must not be replaceable by anyone else: owned by root or the host UID, no write for group or other
-    unless sticky, and no ACL or link tricks.
-  - Ordinary readable ancestors such as `/` and `/Users` are fine. Processes of the same UID stay trusted.
-- **For the CLI:** in host mode it opens neither the WSK nor the store. It keeps only the person's device key, for
+- **The custody list.** These must be private to the host UID, or (in the workspace) group-readable and writable only
+  by the host:
+  - `keys/`, `hosts/<ws>/`, the registry `<state>/host/` and `workspaces.json` (F8);
+  - the genesis pins, the noted revocations, `outcomes/`, `requests/`, `blobs/`;
+  - `audit*.jsonl`;
+  - the workspace's `events/`, `tickets/` and `.state/`.
+- **Their ancestors** must not be replaceable by anyone else: owned by root or the host UID, no write for group or
+  other unless sticky (D-P2-6 rules), and no ACL or link tricks. Ordinary readable ancestors such as `/` and `/Users`
+  are fine. Processes of the same UID stay trusted.
+- **For the CLI:** in host mode it opens neither the WSK nor the store, and keeps only the person's device key for
   signing. With agent UIDs (tier B), the P1 limits N4, N14 and O7 close, and session notes can no longer be forged.
 
 ## 6. Migration and compatibility
@@ -577,117 +1089,214 @@ UID. P2 adds no keychain.**
 
 | Workspace | CLI behaviour |
 |---|---|
-| registered with a host (in the person's registry, or in a pin for an agent UID) | must use the host. Host down, timeout or version error: `host.unavailable`, `host.version_mismatch` or `op.unsupported`, never direct mode. |
-| unmanaged (no registration, no pin) | direct mode exactly as P1 (CI, tests, the owner's C11 workspace, Windows) |
+| registered (in the person's registry, or in a pin for an agent UID) | must use the host. Host down, timeout or version error: `host.unavailable`, `host.version_mismatch` or `op.unsupported`, never direct mode. |
+| unmanaged | direct mode exactly as P1 (CI, tests, the owner's C11 workspace, Windows, `import v1`) |
 
-- **Adoption** (`orch host register <path>`, control socket):
-  1. take the exclusive ownership lock `<state>/hosts/<ws>/owner.lock`. Every direct-mode CLI holds it shared for its
-     whole command, so this waits for running commands to finish;
-  2. write the registration, start serving, then release the lock.
-
-  A direct-mode CLI checks the registration again under its shared lock and refuses with `host.required`.
-- **`orch host unregister`** stops serving, removes the registration and so restores direct mode explicitly.
-- On a VPS, registering also moves `hosts/<ws>/` and `.state/` to `orch-host-<ws>` and sets the modes.
-- `ORCH_HOST` is gone: the registration decides, so neither an agent nor an `.envrc` can choose the mode.
-- The format and the logs do not change.
+- **Adoption** (`host.register`):
+  1. take the exclusive ownership lock `<state>/hosts/<ws>/owner.lock`;
+  2. write the registration and start serving;
+  3. release the lock.
+- **A direct-mode CLI** holds the lock shared **per store transaction**, not across a parked `wait`, and checks the
+  registration again after every wake. If the workspace has been registered, it answers `host.required`.
+- `host.register` waits at most 60 s for the lock, then answers `lock.busy` naming the holders' PIDs (F14).
+- `host.unregister` stops serving, removes the registration and so restores direct mode explicitly.
+- On a VPS, registering moves `hosts/<ws>/` and `.state/` to `orch-host-<ws>`. The lock and registration marker stay
+  at the old path as a root-owned stub that says `host.required`.
+- `ORCH_HOST` is gone. The format and the logs do not change.
 
 ## 7. Security model and threats
 
 | Threat | Answer |
 |---|---|
-| Another local user | Directory and socket modes, peer map checked before any byte is read, private key directories. |
-| An agent under its own UID | Agent class: closed op list, no `human.*`, no admin. Reads follow its grant's person. It cannot read keys or host state. Tier B: the store files can be written only by the host. |
-| Workspace code run by the host | Never (D-P2-19, D-P2-20). An audit-hook test enforces it. |
-| Client-named paths, env, cwd | Never used (D-P2-10, D-P2-11). |
-| Malicious addon | Runs in the worker under the worker UID and returns proposals only. The dashboard is person class: it can read and create requests, but it cannot sign, because the signer recomputes and reviews. |
-| Socket hijack or planted socket | Host-owned `<run>`, ancestor checks, bind through a checked fd, trusted pins for the server UID and workspace. |
-| Path replacement | Ancestor policy (D-P2-6, D-P2-17), rechecked every 60 s; a two-process replacement test. |
-| Replay | Local socket only. `idem` binding plus tombstones; human requests are single use and bound; unique event ids; `gate_gen` and `based_on`. A grant secret is a bearer token (N4, accepted); it never appears in args or logs. |
-| Revoked caller keeps watching | Subscriptions revalidate before every delivery (§0.7). |
-| Denial of service | §0.9 limits, unattended quotas, round-robin fairness. |
+| Another local user | Directory and socket modes; peer map checked before any byte is read; private key directories. |
+| An agent under its own UID | Agent class: the §0.5 matrix, no `human.*`, no admin. It cannot read keys or host state. Tier B: the store files can be written only by the host. Reads over the socket follow its grant's person; the workspace files stay group-readable (F1 §9: restricted is not secret). |
+| Workspace code run by the host | Never. The only spawn is the launcher (D-P2-9), enforced by the audit hook. |
+| Client-named paths, env, cwd | Never used, except the two control ops from the host UID (D-P2-11). |
+| A grant secret leaked to the preparer | The secret is drawn by the signer; the prepared event has `secret_hash: null` (F1). |
+| A forged hand-off (tier A) | The signer's own header: workspace from its registry, op and decisive fields, origin, fingerprint, an op-specific confirmation word, and the "only sign a code you created" notice (F5). |
+| Grant id reuse | The principal comes only from a verified grant (F4). |
+| Malicious addon or escalation into the worker | Runs under the worker UID. The worker role is one connection per UID, with leases bound to that connection (F3). The clean-tree check runs no git process (F2). Proposals are rechecked. |
+| Socket hijack, planted socket, path replacement | Host-owned `<run>` under helper-created root directories (F12), ancestor checks every 60 s, bind through a checked fd, trusted pins. |
+| An agent steering D58 | Declared `remote` enforced, gitdir and `commondir` pins, ref resolution as git does it, a closed set of extensions (F7). |
+| Replay | Local socket only; `idem` binding with tombstones and reconciliation; human requests single use and bound; unique event ids; `gate_gen`, `based_on`. A grant secret is a bearer token (N4, accepted). |
+| Revoked caller or removed person keeps watching | Subscriptions revalidate before every delivery (§0.9). |
+| Denial of service | §0.11 limits, unattended quotas, round-robin fairness, git reader child caps, a security audit log that read traffic cannot rotate away (F10). |
 | Version skew or downgrade | Capabilities; the client refuses a missing `proto` or op contract. |
 
 **D-P2-19. Workspace-controlled code never runs as the host UID.**
 
-- **git: no git process in the host.** A content-addressed reader in orch's own Python reads `HEAD`, loose and packed refs, and objects (loose; pack v2 with idx v2, ofs and ref deltas; SHA-1 and SHA-256). It runs in a short-lived child (`python -I -m orch.gitread`, orch code only) with CPU, memory and wall-clock limits.
-  - **Config is data, never behaviour.** A strict parser reads only `core.repositoryformatversion`, `extensions.*` and `remote.origin.url`. It ignores `include`/`includeIf`. An unknown extension or `refStorage=reftable` makes the repo observe.unavailable. Attributes, hooks, filters and textconv are never read.
-  - **Pinned gitdir.** At registration the resolved gitdir (it follows a `.git` file and `commondir` once) is recorded in the host registry by realpath, device and inode. A later mismatch is observe.unavailable. Every open stays under the pinned gitdir, with `O_NOFOLLOW` and a regular-file check. `objects/info/alternates`, `info/grafts`, `shallow` and `refs/replace/` are ignored. A missing object is observe.unavailable and is never fetched.
-  - **Bounds.** Inflated size must equal the object header and stay at or under the §0.9 blob limit. Delta depth is at most 64. Packed-refs and pack index sizes are capped.
-  - Every object is checked against its id, so the `diff` op is computed from exactly the commits in `source_sha`. Gitlinks show as commit ids, and LFS files as their pointers, which are what the commit holds.
-- **The D58 branch check** (HEAD is the symbolic ref `refs/heads/<branch>` at the bound sha) is done by the host reader before the prompt and again in `precommit`.
-- **The D58 uncommitted-changes check** reads the index and the worktree. It runs as a worker job under the worker UID before the prompt. The prompt shows it as **attested by the worker, best effort** (F1 §10.7 already admits that ignored files and filters hide changes). `precommit` does not run it again. No worker means observe.unavailable for `verdict` and `approve code`.
-- **`task done --run`:** the agent's client runs `verify.cmd` and uploads `{cmd, exit, commit, repo, output blob}`.
-  The host checks that `cmd` equals the approved `verify.cmd` and records the receipt with
-  `attested_by: "agent"`.
-  - This proves that an authenticated agent **claimed** this result. It does not prove the command ran, its exit code,
-    its output or its commit.
-  - **The F1 §10.7 amendment (H0)** replaces "the P2 host runs it itself" with this statement. Independent
-    verification needs a separate trusted executor and is not in P2.
+- **git: no git process in the host.**
+  - A content-addressed reader in orch's own Python reads `HEAD`, loose and packed refs, and objects (loose; pack v2
+    with idx v2, ofs and ref deltas; SHA-1 and SHA-256).
+  - It runs in a short-lived child (`python -I -m orch.gitread`, started only by the launcher) within the §0.11
+    limits.
+  - **Config is data, never behaviour.** A strict parser reads only `core.repositoryformatversion`, `extensions.*` and
+    `remote.origin.url`, and ignores `include`/`includeIf`. Attributes, hooks, filters and textconv are never read.
+  - **Extensions (F7).** The allowed set is closed: `objectFormat` (`sha1`, `sha256`) and `noop`. Any other extension
+    (`worktreeConfig`, `refStorage`, `partialClone`, …) makes the repo observe.unavailable.
+  - **Identity (F7).**
+    - Where `settings.repos.<r>.remote` is declared, the observed identity must equal it (ASCII case ignored), else
+      `repo.remote_mismatch` and observe.unavailable (H0 makes the reserved F1 rule live).
+    - Where no `remote` is declared, the prompt labels the identity "from the working copy (agent-writable)", and
+      `orch doctor` recommends declaring it.
+  - **Pins (F7).**
+    - The host pins the gitdir **and** the `commondir` (realpath, device, inode) when a repo first appears: at
+      registration, or when a `settings.changed` that adds or moves it is appended.
+    - Both must lie under that repo's declared `path`, or the pin must belong to another repo declared in
+      `settings.repos` (a linked worktree). Anything else is observe.unavailable.
+    - Only `settings.changed` re-pins. A later mismatch is observe.unavailable.
+    - Every open stays under the pins, with `O_NOFOLLOW` and a regular-file check.
+    - `objects/info/alternates`, `info/grafts`, `shallow` and `refs/replace/` are ignored. A missing object is
+      observe.unavailable and is never fetched.
+  - **Refs (F7).**
+    - A loose ref wins over `packed-refs`. `HEAD` must be exactly `ref: refs/heads/<branch>\n`.
+    - A loose ref that is itself a symref, a ref name differing only in case from another ref in either store, or an
+      unparsable `packed-refs` line makes the repo observe.unavailable.
+  - **Bounds:** §0.11. Every object is checked against its id, so `diff` is computed from exactly the commits in
+    `source_sha`. Gitlinks show as commit ids, and LFS files as their pointers.
+- **The D58 branch check** (HEAD is the symbolic ref `refs/heads/<branch>` at the bound sha) is done by the host
+  reader before the prompt and again in `precommit`.
+- **The D58 uncommitted-changes check (F2)** reads the index and the worktree **with orch's own reader, never a git
+  process**. It runs as a `tree.check` job, in a `python -I -m orch.gitread` child under the worker UID, with the same
+  limits.
+  - It parses `.git/index` (v2 to v4).
+  - It compares each tracked file's `lstat` with the index entry and, where the stat differs, compares the raw-bytes
+    blob id.
+  - It lists untracked files by walking the tree minus `.gitignore` and `info/exclude` patterns.
+  - It reports the `skip-worktree` and `assume-unchanged` flags as changes.
+  - No config, attributes, filter, fsmonitor or hook is read.
+  - A file whose raw bytes differ from the index blob counts as changed, even where a git filter would hide the
+    difference (conservative).
+
+  The prompt shows the result as **attested by the worker, best effort**. It runs **before the prompt only**:
+  `precommit` does not run it again (H0 amends F1 §10.8). No worker means observe.unavailable for `verdict` and
+  `approve code`.
+- **`task done --run`:** the client runs `verify.cmd` and sends the receipt (§0.8). The host checks that `cmd` equals
+  the approved `verify.cmd` and records `attested_by: "agent"`.
+  - This proves an authenticated agent **claimed** this result. It does not prove the command ran, its exit code, its
+    output or its commit.
+  - H0 amends F1 §10.7 ("the P2 host runs it itself") to say this. Independent verification needs a separate trusted
+    executor and is not in P2.
 
 **D-P2-20. Addons and jobs run under a worker UID, never the host UID, with no development exception.**
 
 - `orch worker` runs as a dedicated worker user, separate from the agent users. It is started by a **LaunchDaemon**
   with `UserName` (system context, installed by the setup helper) or by a systemd system unit with `User=`.
-- **Jobs** (`job.next` / `job.done`) carry a lease (60 s, renewed by heartbeat), the principal that caused the job, and
-  a cancellation. Retries are explicit, at most twice, keyed by job id. Results are checked by
-  `Registry.check_proposal` before the host signs anything.
+- **Jobs** (§0.8.2).
+  - A lease lasts 60 s, renewed by heartbeat, and is bound to the one worker connection (F3).
+  - Each job carries the principal that caused it, and a cancellation.
+  - Retries are explicit, at most twice, keyed by job id.
+  - Addon results are checked by `Registry.check_proposal` before the host signs anything.
+  - A job's child processes get no copy of the worker connection or of lease tokens: the descriptor is `O_CLOEXEC`,
+    the job reads its input from a pipe and writes its proposal to a pipe.
+  - When the worker connection drops, every outstanding lease is void, and the host waits for the restarted worker. It
+    never hands leased jobs to a new worker-class connection while the old one is live.
 - **Containment.**
-  - **Linux:** the worker's system unit has `Delegate=yes`. Each job runs in its own child cgroup and is killed as a whole (`cgroup.kill`).
-  - **macOS:** each job runs in its own process group, killed at its deadline. An **orphan sweep** runs after every job ends, every 30 s and at worker start. It lists worker-UID processes (`sysctl KERN_PROC_UID`) and SIGKILLs every one that does not descend from the running worker: anything that escaped its group has been reparented to launchd. Before each kill it checks UID, parent and start time again, and it repeats until no orphans are left. `RLIMIT_NPROC` on the worker UID bounds fork races. Sibling jobs are never killed. A job that daemonizes is killed, which is intended.
-  - **Accepted:** jobs under the worker UID can signal each other. Nothing they return is trusted without `check_proposal` (and the D53 re-check for landing). Per-job users and launchd coalitions are P3 questions.
+  - **Linux:** the worker's system unit has `Delegate=yes`. Each job runs in its own child cgroup and is killed as a
+    whole (`cgroup.kill`).
+  - **macOS:** each job runs in its own process group, killed at its deadline. An **orphan sweep** runs after every
+    job ends, every 30 s and at worker start.
+    - It lists worker-UID processes (`sysctl KERN_PROC_UID`) and kills every one that does not descend from the
+      running worker: anything that escaped its group has been reparented to launchd.
+    - The sweep runs as the worker UID, never as root. It stops a candidate (`SIGSTOP`), checks UID, start time and
+      process group again while the candidate is stopped, then sends `SIGKILL`; if the check fails it sends `SIGCONT`.
+    - A reparented process whose process group or session is that of a live job is not an orphan: it dies with its
+      job at the deadline (F14).
+    - `RLIMIT_NPROC` on the worker UID bounds fork races. Sibling jobs are never killed.
+  - **Accepted:** jobs under the worker UID can signal each other. Nothing they return is trusted without
+    `check_proposal` (and the D53 re-check for landing).
 - Without a worker, addons do not run (`addon.runner_unavailable`).
 
 ## 8. Implementation groups
 
-Smaller groups than v0. Execution isolation comes before host dispatch is turned on. Every group adds real
-two-process tests where it touches the socket.
+Each group is one PR with real two-process tests where it touches the socket. Execution isolation comes before host
+dispatch is turned on.
 
 | Group | Content | Acceptance | Review |
 |---|---|---|---|
-| **H0 F1 amendment** | receipts as agent attestation; `ticket.moved`; the macOS custody row; the reserved ops marked; outcome and idempotency notes | text plus vectors for `ticket.moved` | Codex, Opus |
-| **H1a Frame codec** | pure codec and limits, `fatal`, cancel state machine. T0 `tests/host/test_frames.py` | partial and coalesced reads, `n=0`, bad UTF-8, duplicate keys, NaN, depth, id reuse | Codex |
-| **H1b Unix transport** | bind through a checked fd, ancestor and ACL checks, both-way peer credentials, pins, control socket | real UID refused before any byte; planted socket; ancestor replaced mid-run; path longer than 100 bytes | Opus |
-| **H2a Lifecycle** | registry, states, ownership lock, register/unregister, units, release install, drain | second host gets `host.busy`; direct CLI refused after adoption; drain finishes a write in flight | Codex |
-| **H2b Outcomes** | idempotency store, tombstones, `outcome.get`, cancel after commit | two-process kill -9 mid-append, then the retry is a duplicate; `idem.conflict`; `idem.expired` | Opus |
-| **H3a Handler capabilities** | `Context` capabilities; handlers lose env, path and exec access; direct mode unchanged | goldens unchanged; audit-hook test (no open outside roots, no exec) | Codex |
-| **H3b No exec in the host** | content-addressed git reader, `diff`, client receipts, `host.wsk_create` and `init`, `import v1` composite | a malicious `.git/config` runs nothing; receipt labelled; a `.git` file or symlinked `objects/` pointing at another repo is refused; a 1 GB zlib bomb is refused within the limits; a reftable repo is unavailable; diff equals `git diff --no-ext-diff --no-textconv` on fixtures | Opus |
-| **H3c Agent and worker users (#287)** | macOS and Linux setup helper: users outside `staff`, groups, `<run>`, pins, workspace modes, LaunchDaemon for the worker | e2e `keys-isolation`, `mac-agent-uid`: the agent cannot read `wsk` or `dk` but can call `status` | Opus |
-| **H4a Dispatcher** | policy table, auth and the reads rule, principals, files and blobs, `artifact.get`, `whoami`, error catalog | closed list (registry × class); no key material in any response (property test); grant in args refused; invalid grant on a read gives workspace tickets | Opus |
+| **H0 F1 amendment** | see the list below | text, plus vectors for `ticket.moved`, `policy.set` and `settings.set` | Codex, Opus |
+| **H1a Frame codec** | pure codec, §0.2 rules, envelope schemas (§0.3), `fatal`, the cancel state machine. T0 `tests/host/test_frames.py` | partial and coalesced reads; `n=0`; bad UTF-8; lone surrogate; duplicate keys; float; depth 33; id reuse; body deadline; unknown envelope key → `req.invalid` | Codex |
+| **H1b Unix transport** | bind through a checked fd, ancestor and ACL checks, both-way peer credentials, pins, control socket | a real UID refused before any byte; the control socket refuses an agent UID; planted socket; ancestor replaced mid-run; path longer than 100 bytes; `/Users/Shared/orch` owned by another user refused by the helper and the host (F12) | Opus |
+| **H2a Lifecycle** | registry, states, ownership lock, control ops (`list`, `register`, `unregister`, `wsk_create`, `restart`), units, release install, drain | second host gets `host.busy`; direct CLI gets `host.required` after adoption; `register` gives up after 60 s with `lock.busy`; `unregister` restores direct mode; `degraded` refuses writes, `unavailable` refuses all; drain finishes a write in flight and ends `wait` with `host.restarting`; `wsk_create` never replaces a key; `register` refuses a pinned agent UID as person; a removed member's UID reads as no-person (F8); `host.list` shows the caller's mapping (R11) | Codex, Opus (control ops) |
+| **H2b Outcomes** | idempotency store, classification, reconciliation, tombstones, `outcome.get`, cancel after commit | two-process kill -9 between append and record, then the retry is a duplicate rebuilt from the log; concurrent duplicates get one append; `idem.conflict`; `idem.expired`; a retryable failure is re-run; `outcome.get` with another person's grant id and a wrong secret gives `outcome.unknown_idem` (F4) | Opus |
+| **H3a Handler capabilities** | `Context` capabilities; handlers lose env, path and exec access; direct mode unchanged | goldens unchanged; with the audit hook in host mode, no open outside the roots and no spawn except the launcher | Codex |
+| **H3b1 git reader and `diff`** | `orch.gitread`, the launcher, pins, refs, extensions, identity, `diff` | a malicious `.git/config` runs nothing; a `.git` file or symlinked `objects/` pointing elsewhere is refused; a 1 GB zlib bomb is refused within the limits; reftable is unavailable; diff equals `git diff --no-ext-diff --no-textconv` on fixtures; the F7 cases (changed `origin` against a declared `remote`, a `.git` file planted before the repo is added, a swapped `commondir`, loose/packed disagreement, case-colliding refs, `worktreeConfig`); at most 4 children under a burst of 100 `diff` calls (F10) | Opus |
+| **H3b2 Client receipts** | `task.done` contract 2, client-side `verify.cmd`, `attested_by` | `run:true` refused by the host; a receipt with a `cmd` other than `verify.cmd` refused; the output file goes through `files`; the receipt is labelled | Codex |
+| **H3b3 Bootstrap** | `host.bootstrap`, the `init` composite | `init` through the host yields the same genesis bytes as direct mode; `bootstrap` refuses a non-empty root, a foreign owner, or an id not from `wsk_create` | Opus |
+| **H3c Agent and worker users (#287)** | the macOS and Linux setup helper: users outside `staff`, groups, root-owned `orch` directories, `<run>`, pins, workspace modes, the worker LaunchDaemon | e2e `keys-isolation` and `mac-agent-uid`: the agent cannot read `wsk` or `dk` but can call `status`; the helper refuses a pre-existing foreign `/Users/Shared/orch` | Opus |
+| **H4a1 Dispatcher** | policy matrix, principals, auth and the reads rule, `whoami`, `host.status`, error catalog and disposition | closed list (registry × column of §0.5); no key material in any response (property test); grant in args refused; invalid grant on a read gives workspace tickets; another person's grant id with a wrong secret cannot reach outcomes, blobs or notes (F4); the F6 visibility cases (`total`, `next_page`, `needs {person}` from an agent, `session.list` claims, `diff` on an unlinked repo, `artifact.get` with `../x`, `sub.open ticket:<restricted>` gives `not_found`) | Opus |
+| **H4a2 Files and blobs** | `files`, `blob.*`, `artifact.get`, quotas | chunk retry with the same bytes accepted, with different bytes refused; a wrong final digest refused; use across principals and workspaces gives `blob.invalid`; the per-UID quota and the person reserve (F9); consumed on commit, kept after a refusal or dry run, expired after 10 min; `x-file` without `files` refused | Opus |
 | **H4b Thin CLI** | `orch.hostclient`, mode by registration, rendering from `result` | goldens byte-identical in both modes for all non-human ops except `wait` | Codex |
-| **H5a Human contract** | `human.prepare`/`submit`/`cancel`, material, signer recomputation, CLI composites, person versions of `new`/`set`/… | mismatch, expiry, single use, tombstone; stale between prepare and submit; prompt fields equal `describe_payload`; grant secret not on the socket at issue | Opus |
-| **H5b Hand-off** | codes, `human.pending`, `orch sign CODE`, lookup limits | guessing is rate-limited; another person's code is not found | Opus |
-| **H6a Live updates** | journal, `sub.*`, revalidation, cursors, overflow, `wait` on the bus | a revoked grant stops delivery, queued items included; resume with no gap; overflow then snapshot then cursor | Opus |
-| **H6b Dashboard reads** | `ticket.query`, `needs`, `workspace.show`, `member.list`, `session.list`, `move` | paging is stable under appends; restricted rows hidden; `needs` equals `model.needs` | Codex |
-| **H7 Turn host mode on** | the default for registered workspaces; parity including human ops and `wait`; cross-version fixtures (an older client against a newer host) | full golden parity; T2 in both modes | Opus |
-| **H9 Touch ID signer** (D-P2-22) | Swift helper, `secure-enclave` backend, native review, dashboard path | recomputes hashes; refuses non-person labels; F1 vector interop | Opus |
-| **H10 Worker and jobs** | `orch worker`, leases, containment, addon runner, clean-tree check | the addon cannot read the WSK; a double-forked escapee dies within 30 s while a concurrent sibling job completes | Opus |
+| **H5a Human contract** | `human.prepare`/`get`/`submit`/`cancel`, multi-event requests, material, signer recomputation and header, CLI composites, person versions of agent ops, `opts.dry_run` | mismatch, expiry, single use, tombstone; stale between prepare and submit; prompt fields equal `describe_payload`; a grant prepared with a non-null `secret_hash` is refused, and the preparer cannot obtain the secret (F1); `human.get` returns events and material byte-identical to `human.prepare`'s (F5); submit from another workspace's socket gives `not_found`; a multi-event request is all or nothing | Opus |
+| **H5b Hand-off** | codes, `human.pending` (by code and by request id), device binding in `human.get`, `orch sign CODE` | a successful hand-off sign end to end; `orch sign` shows the workspace from its own registry, the op header and the fingerprint before content; binding to a second device is refused; failed lookups on one connection do not lock out another (F5); the `pending` states `prepared`, `submitted`, `cancelled` and `expired` (R6) | Opus |
+| **H6a Live updates** | journal, `jpos`, `sub.*`, revalidation, cursors, end reasons, `wait` on the bus, foreign-append rebuild | a revoked grant and a removed person stop delivery, queued items included; resume with no gap after a host restart; overflow, then snapshot, then cursor; a write's `res` before its `evt`; the journal is rebuilt after a foreign append (F11) | Opus |
+| **H6b Dashboard reads** | `ticket.query`, `ticket.get`, `needs`, `workspace.show`, `member.list`, `session.list`, `grant.list`, `move`, `policy.set`, `settings.set` (after H0) | paging stays consistent under appends (no repeat, no gap); restricted rows hidden; `needs` equals `model.needs`; `ticket.get` evidence digests match the manifest; `grant.list` hides `secret_hash`; `move` allowed and refused per its rules | Codex |
+| **H7 Turn host mode on** | the default for registered workspaces; full parity; cross-version fixtures (an older client against a newer host) | full golden parity including human ops and `wait`; T2 in both modes. Needs H10 for `verdict` and `approve code` parity (clean-tree check). | Opus |
+| **H9 Touch ID signer** (D-P2-22) | Swift helper, `secure-enclave` backend, native header and review, dashboard integration | recomputes hashes; refuses non-person labels; F1 vector interop; cancellation (window closed or Touch ID refused) submits nothing and leaves the request `prepared`; same fingerprint as the dashboard | Opus |
+| **H10 Worker and jobs** | `orch worker`, `job.*`, leases, containment, addon runner, `tree.check` | the addon cannot read the WSK; a double-forked escapee dies within 30 s while a sibling job completes; a reparented child in a live job's group survives the sweep (F14); a repo with `filter.*.clean`, `core.fsmonitor` or `core.hooksPath` spawns no process in `tree.check` (F2); a second process under the worker UID is refused while the worker is connected, and a `job.done` with another connection's lease is refused (F3); lease expiry and retry at most twice; cancellation through heartbeat | Opus |
 
-- **Order:** H0, H1a → H1b → H2a → H2b → H3a → H3b → H3c → H4a → H4b → H5a → H5b ∥ H6a → H6b → H7 → H9, with H10
-  in parallel from H4a on.
-- **Cutover gate (D44):** H7, H9 and H10 (landing and addons are daily work).
-- **Stream B** uses a stub of §0 now and the real host from H4a, with `orch host run --foreground` on a demo workspace.
+- **Order:** H0, then H1a → H1b → H2a → H2b → H3a → H3b1 → H3b2 → H3b3 → H3c → H4a1 → H4a2 → H4b → H5a → H5b ∥
+  H6a → H6b → H7. H9 follows H5b. H10 runs in parallel from H4a1.
+- **Cutover gate (D44):** H7, H9 and H10.
+- **Stream B** uses a stub of §0 now and the real host from H4a1, with `orch host run --foreground` on a demo
+  workspace.
+
+**H0: the F1 and spec amendments.**
+
+1. **§10.7 receipts:** client-run, recorded `attested_by: "agent"`, proving a claim, not execution. Replaces "the P2
+   host runs it itself".
+2. **§10.8 clean-tree check:** run once, before the prompt, by the worker's reader, and shown as best effort.
+   `precommit` re-checks only the branch.
+3. **§5.1 event ids:** host-prepared in P2; the signer never chooses or changes them.
+4. **`ticket.moved`:** a person event (owner, maintainer) with `{from, to, reason?}` and the `move` rules (§0.8).
+5. **`policy.set` and `settings.set`:** ops and argument schemas for the existing `policy.changed` and
+   `settings.changed` events.
+6. **`repo.remote_mismatch`:** live where `settings.repos.<r>.remote` is declared (F7).
+7. **§8.1 `serve_http`:** a launcher policy switch. An addon whose granted manifest has it may be started as a
+   long-running local HTTP service under the person's UID (the dashboard). It is not a runner capability.
+8. **orch-v2-portable-custody.md §3:** the dashboard's session is a bearer token in a header, not an HttpOnly cookie
+   (R10).
+9. **D64:** WebAuthn deferred past P2. It needs a new signature contract.
+10. **orch-v2.md §5.5:** the macOS custody row becomes a 0600 file owned by the host UID (D-P2-17).
+11. **Reserved ops** (`comment`, `ticket.discard`, `artifact.search`, `view.*`) marked as not served.
 
 ## 9. Open questions
 
 1. **Windows (D63).** The proposal is to defer the named-pipe `HostTransport`; Windows stays in unmanaged direct mode
    (tier A).
-2. **A dedicated host user on macOS.** The proposal is not in P2; the peer map already supports it.
-3. **Own reader. dulwich is rejected (it honours grafts, alternates and shallow; it adds a dependency).**
-4. **Issuer-chosen UID restriction on grants** (Codex Q6). Leave it out of P2; it could come later as an optional
-   `grant.issued` field.
-5. **`move` semantics and the reserved ops** need F1 text (H0) before they are served.
-6. **To confirm during H3b/H10:** that macOS has no subreaper and reparents to launchd, and how reftable shows up in config.
+2. **A dedicated host user on macOS.** Not in P2; the peer map already supports it.
+3. **Own reader; dulwich is rejected** (it honours grafts, alternates and shallow, and adds a dependency).
+4. **An issuer-chosen UID restriction on grants.** Not in P2; it could come later as an optional `grant.issued` field.
+5. **To confirm during H3b1/H10:** that macOS has no subreaper and reparents to launchd, and how reftable shows up in
+   config.
 
 ## 10. Decisions record
 
 **1. How the host reads git (D-P2-19).**
 
 - **Codex:** Observe the repository in an isolated, unprivileged helper over controlled snapshots.
-- **Draft:** Use an in-process Python reader that ignores config; move the best-effort clean-tree check to the worker UID.
-- **Tie-break:** Accepted orch's own reader in a bounded child, with config read as data, a pinned gitdir and object limits; the host checks the branch before the prompt and in `precommit`, and the worker checks uncommitted changes before the prompt only.
+- **Draft:** Use an in-process Python reader that ignores config; move the best-effort clean-tree check to the worker
+  UID.
+- **Tie-break:** Accepted orch's own reader in a bounded child, with config read as data, a pinned gitdir and object
+  limits. The host checks the branch before the prompt and in `precommit`, and the worker checks uncommitted changes
+  before the prompt only.
+- **Security review (F2, F7):** the worker's check uses orch's own index and worktree reader, never git. Identity,
+  pins, refs and extensions are tightened.
 
 **2. Containing jobs on macOS (D-P2-20).**
 
 - **Codex:** Give each job its own containment so killing one cannot kill unrelated jobs.
-- **Draft:** Use per-job cgroups on Linux; on macOS use process groups and a whole-worker-UID sweep at restart and every 10 minutes, accepting that siblings may die.
-- **Tie-break:** Accepted delegated per-job cgroups on Linux; on macOS use process groups and an orphan-only sweep after jobs end, every 30 s and at worker start, preserving siblings; per-job users and launchd coalitions remain P3 questions.
+- **Draft:** Per-job cgroups on Linux; on macOS process groups and a whole-worker-UID sweep, accepting that siblings
+  may die.
+- **Tie-break:** Accepted delegated per-job cgroups on Linux. On macOS, process groups and an orphan-only sweep that
+  preserves siblings.
+- **Security review (F3, F14):** one worker connection with leases bound to it; a stop-check-kill sweep that never
+  runs as root.
+
+**3. Review round of 11 Oct (security review F1–F15, Codex clarity review 1–14, dashboard R1–R11).** Every point was
+adopted, and none is disputed. Two needs were met in a different shape than asked:
+
+- **R1 (structured ticket data)** is the new read `ticket.get`, not a change to `show`, so the `show` goldens stay
+  byte-identical.
+- **Codex 9 (import flow)** is answered by keeping `import v1` in direct mode before registration, because it reads v1
+  files and signs a batch, neither of which fits a socket op.

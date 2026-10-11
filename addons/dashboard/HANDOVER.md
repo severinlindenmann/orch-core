@@ -658,3 +658,56 @@ Vitest cover lifecycle, reconnect, resync, visibility, gone, revocation and boun
 S3/S4, the real-browser layout guard and cross-browser network behavior remain acceptance
 work. Full ticket views/hand-off are later milestones; their future consumers must use
 UUID-keyed ticket factories and the live hook's close-view callback.
+
+## P2 server (M2 reads)
+
+Implemented 2026-10-11 on contract v1.3.1, on top of M1. #305 reads only: nothing signs or mutates,
+and every control that would is not drawn (`/api/session` lists no `actions` feature until M3).
+
+**One app.** The production build now draws the mockup's own shell and pages (`src/production/Shell.tsx`
+mounts `createAppRouter`), not the M0 mini shell. `vite build` aliases `@/api/client` to
+`api/client.prod.ts`, so every page's `api` is `api/prodApi.ts` (the same object, behind the fetch
+transport); the module-graph check still fails the build if a mock module enters. The mock entry, tests
+and the layout guard keep the in-process mock (`api/features.ts` lists everything for them).
+`hasFeature(name, ws)` gates navigation, routes (`serves(...)` in `router.tsx`) and a few panels;
+`can(role, perm)` is also false for every role without the `actions` feature, so each action that was
+already behind a permission disappears. Today still lists what needs you (rows say "Answer in your
+terminal"); a viewer role still gets the read-only layout.
+
+**Routes** (closed list in `server/README.md`): `/today`, `/tickets`, `/board`, `/tickets/<key>`,
+`.../events`, `.../changes`, `.../artifacts/<name>`, each with a pydantic input model that forbids extras,
+one fixed host op behind it (`needs`+`ticket.query`, `ticket.query`, `ticket.get`, `ticket.get`, `diff`,
+`artifact.get`) and an adapter in `server/src/orch_dashboard/adapters/`. Queries are keyed by workspace
+UUID: `['ticket', ws, key]`, `['ticket-events', ws, key, seq]`, `['changes', ws, key, head]`;
+`queries.ticket(ws, key)` replaced `queries.ticket(key)`, and `api.getTicket/getEvents/getChanges` take
+the workspace as a last argument (the mock ignores it).
+
+**Adapters** unwrap `result.data`, spell `in_progress` as `in-progress`, and leave empty what the host does
+not serve; `TicketDocument.unavailable` names those fields and `OrchEvent.summary` carries the host's
+one-line event text (History shows it instead of guessing from payload fields). Golden JSON of the real
+adapters is written by pytest (`UPDATE_GOLDEN=1`) into `src/test/fixtures/server-m2/`, and the browser
+tests render the same files.
+
+**Not served by v1.3.1 (requests for stream A, collected here):**
+
+| Gap | Effect in the UI today |
+|---|---|
+| `ticket.query` rows have no task/criteria counts, `restricted`, or blocking-question count | Cards show no progress; no lock icon; "blocking" marker only on Today |
+| `needs` has no question text, no `since` | Today fills the question text from the ticket; rows show no age |
+| `ticket.get`: option labels (only keys), question `asked_at`/`asked_by`/answer text, task receipts and leases, the gate approvals and policy, the verdict (result, `source_sha`), the artifact manifest (name, bytes, time, who), claim agent/`for`/expiry, section history, branch commits | Empty or "not available"; evidence is listed only for artifacts attached to a criterion |
+| Row `claim.agent`, `turn` (whose turn it is) | The server derives the turn from `needs` for the viewer; other people's turns read "nobody" |
+| Closed tickets | The UI has no closed state: lists exclude them and a direct link answers 409 `ticket.closed` |
+| `diff` | One head/base per repo; the UI shows the first and lists the others; commits are not served |
+| Workspace-wide recent activity | Today's "Recently" is empty |
+| `needs` kinds `no_eligible`, `acknowledge`, `addon` | Sent to the browser (kinds `no_eligible`, `acknowledge`, `addon`) but Today, like the mockup, has no row for them and does not count them; an owner is not told yet that a gate has no eligible approver or that a log holds an invalid event |
+
+**Stub boundaries (dev only):** `ticket.query` snapshots live in memory (32, 10 minutes); the sort of
+`priority` puts `urgent` first for `desc`; `epic` is the parent when the parent is an epic; `diff` runs the
+scrubbed git helpers of core against the workspace's `settings.repos` and refuses unless the branch head
+equals the head the host observed. Nothing here is a real-host guarantee.
+
+Live updates: unchanged from M1, now mounted in the app shell. `ready` refetches the workspace's queries
+(this replaces gating the first fetch on `ready`: the refetch starts after the subscription, so no change
+falls in between). A `gone` ticket closes its open page (toast, back to the board) and removes the cached
+document, log and diff. Same-prefix workspaces are not told apart by the address yet (the M0 mini shell's
+`?ws=` suffix is gone with it); that belongs to the switcher milestone.

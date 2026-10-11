@@ -456,3 +456,21 @@ real-host acceptance, run S3/S4 with a second member, hide a ticket from that me
 view is open, restart the host during a stream, and verify no queued ticket metadata leaks.
 Run browser layout/cross-origin tests in Chromium, Firefox and WebKit with real listeners.
 These live-port acceptance steps were not run in the implementation sandbox.
+
+## Try P2 M2 reads (dev stub, own terminal)
+
+Read-only: Today, Board, Tickets, a ticket page (Overview, Acceptance, Changes, Questions, Artifacts, History,
+Raw) and live updates, from a disposable P1 workspace through the dev stub. Follow the M1 section above for the
+environment and the stub, but give the workspace a ticket with a branch (the Changes tab needs a linked repo whose
+branch the host observed) and open the dashboard on `/w/DEMO` after `npm run build`. Nothing signs: no Review,
+Answer, Give verdict, New ticket, Settings, Artifacts or Agents appears; typing `/w/DEMO/settings/general`
+leads to the board.
+
+Look for: Today rows with "Answer in your terminal" and the question text read from the ticket; the board in
+its five columns (no Waiting column content: waiting is derived); filters on the Tickets list (status, label,
+type, search); the ticket page's log as events with the host's one-line text and "checked by the host"; the
+Changes tab per file, and a refusal sentence when the branch moved after the host observed it (commit on the
+branch in the dev repo: the diff is refused until the host observes the new head); fields the host does not
+serve are named in Raw. Append a log note in a terminal (`orch log ... --ref DEMO-0001`): the open ticket page
+updates within a second. Hide a ticket from this person (visibility change) while its page is open: the page
+closes with a toast and the board no longer lists it.

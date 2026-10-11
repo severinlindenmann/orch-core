@@ -20,7 +20,14 @@ export default defineConfig(({ command }) => ({
       }
     },
   }],
-  resolve: { alias: { '@': path.resolve(import.meta.dirname, './src') } },
+  resolve: {
+    alias: [
+      // The production build swaps the api module (and so every page's `api`) for the real one; dev, tests and the
+      // layout guard keep the in-process mock. The module-graph check above fails the build if a mock slips in.
+      ...(command === 'build' ? [{ find: /^@\/api\/client$/, replacement: path.resolve(import.meta.dirname, './src/api/client.prod.ts') }] : []),
+      { find: '@', replacement: path.resolve(import.meta.dirname, './src') },
+    ],
+  },
   build: {
     rolldownOptions: {
       output: {

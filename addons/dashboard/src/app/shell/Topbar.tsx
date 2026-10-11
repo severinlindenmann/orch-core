@@ -5,6 +5,7 @@ import { Plus, RotateCcw, Search } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/api/client'
 import { can } from '@/api/permissions'
+import { canAct, isRealHost } from '@/api/features'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -77,6 +78,7 @@ export function Topbar() {
         </span>
       </div>
       <div className="flex-1" />
+ {!isRealHost() && (
       <div className="flex items-center gap-1">
         <Badge variant="outline" className="gap-1 border-border pr-1 font-normal text-text-muted">
           <span data-testid="demo-mode">{mode === 'busy' ? 'Demo data · Busy day' : 'Demo data'}</span>
@@ -106,6 +108,7 @@ export function Topbar() {
           <ReviewTour />
         </Badge>
       </div>
+      )}
       {pending && (
         <Dialog open onOpenChange={(o) => !o && setPending(null)}>
           <DialogContent role="alertdialog" className="max-w-sm gap-4 border-border bg-surface">
@@ -131,7 +134,7 @@ export function Topbar() {
         <span className="flex-1 text-left">Search or run a command</span>
         <kbd className="rounded border border-border bg-surface-2 px-1.5 font-mono text-[10px] text-text-muted">{isMac ? '⌘K' : 'Ctrl K'}</kbd>
       </button>
-      {role && can(role, 'ticket.create') && (
+      {role && canAct() && can(role, 'ticket.create') && (
         <Button size="sm" onClick={openNewTicket}>
           <Plus />
           New ticket

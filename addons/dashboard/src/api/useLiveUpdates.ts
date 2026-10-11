@@ -4,7 +4,8 @@ import { clearSession, getToken } from './bootstrap'
 import { readSSE } from './sse'
 
 export type LiveItem = { id: string; uid?: string; key?: string | null; type?: string; gone?: boolean }
-type CloseView = (uid?: string) => void
+/** Closes the views of a ticket that went away (`uid`, with every key its cached queries knew), or of the workspace. */
+type CloseView = (uid?: string, keys?: string[]) => void
 
 export function invalidateLive(client: QueryClient, ws: string, event: string, items: LiveItem[], close: CloseView = () => {}) {
   const scoped = { predicate: (q: { queryKey: readonly unknown[] }) => q.queryKey[1] === ws }
@@ -26,12 +27,12 @@ export function invalidateLive(client: QueryClient, ws: string, event: string, i
         for (const row of value?.rows ?? []) if (row.uid === item.uid) keys.add(row.key)
       }
       const ticket = { predicate: (q: { queryKey: readonly unknown[]; state: { data: unknown } }) =>
-        q.queryKey[1] === ws && (q.queryKey[0] === 'ticket' && keys.has(String(q.queryKey[2])) ||
+        q.queryKey[1] === ws && (['ticket', 'ticket-events', 'changes'].includes(String(q.queryKey[0])) && keys.has(String(q.queryKey[2])) ||
           (q.state.data as { uid?: string } | undefined)?.uid === item.uid) }
-      void client.cancelQueries(ticket); client.removeQueries(ticket); close(item.uid)
+      void client.cancelQueries(ticket); client.removeQueries(ticket); close(item.uid, [...keys])
       // Remove stale restricted rows immediately, before a refetch can finish.
       client.setQueriesData(scoped, (value: unknown) => {
-        if (!value || typeof value !== 'object') return value
+        if (!value || typeof value !== 'object' || Array.isArray(value)) return value
         const data = value as Record<string, unknown>
         const next = { ...data }
         for (const field of ['rows', 'needs_you']) if (Array.isArray(data[field]))

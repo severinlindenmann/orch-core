@@ -3,6 +3,7 @@ import { diffWords } from 'diff'
 import { ShieldCheck } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { api } from '@/api/client'
+import { useWorkspace } from '@/app/workspace'
 import type { BodySections, OrchEvent, TicketDocument, TicketRefusal } from '@/api/types'
 import { AddonBadge } from '@/addon-ui'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -56,6 +57,8 @@ function whoOf(e: OrchEvent): Who {
 }
 
 export function eventDetail(e: OrchEvent, v: Viewer): string {
+  // A real host serves each event with its one-line text and no payload fields: show that, never a guess from fields.
+  if (typeof e.summary === 'string') return e.summary ? `${e.type}: ${e.summary}` : e.type
   const s = (k: string) => String(e[k] ?? '')
   switch (e.type) {
     case 'ticket.created':
@@ -117,6 +120,8 @@ export function eventDetail(e: OrchEvent, v: Viewer): string {
 }
 
 function SigStatus({ e }: { e: OrchEvent }) {
+  // The host replays and verifies every log it serves; it does not send a signature to check again here.
+  if (typeof e.summary === 'string') return <span className="text-[11px] text-text-faint">checked by the host</span>
   if (e.actor.kind === 'person' && SIGNED_TYPES.has(e.type)) {
     const ok = e.sig_ok !== false
     return (
@@ -294,7 +299,8 @@ function Changes({ ticket }: { ticket: TicketDocument }) {
 
 export function History({ ticket, viewer }: TabProps) {
   const [view, setView] = useState<'timeline' | 'changes'>('timeline')
-  const { data, isLoading, error } = useQuery({ queryKey: ['ticket-events', ticket.key, ticket.head.seq], queryFn: () => api.getEvents(ticket.key) })
+  const ws = useWorkspace().workspace?.id
+  const { data, isLoading, error } = useQuery({ queryKey: ['ticket-events', ws, ticket.key, ticket.head.seq], queryFn: () => api.getEvents(ticket.key, 0, ws), enabled: !!ws })
   const refusals = useQuery({ queryKey: ['ticket-refusals', ticket.key, ticket.head.seq], queryFn: () => api.getTicketRefusals(ticket.key) })
   return (
     <div className="space-y-4">

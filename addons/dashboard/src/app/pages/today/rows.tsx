@@ -126,11 +126,16 @@ interface CoreRowProps {
   askedBy?: string
   /** Set for people who only read: the row has no buttons and names who decides. */
   decider?: string
+  /** The host serves no signing yet (read-only dashboard): the row says what is asked, with no button. */
+  locked?: boolean
 }
+
+/** The inline action of a row on a read-only dashboard: where to act instead. */
+const Locked = () => <span className="text-xs text-text-muted">Answer in your terminal</span>
 
 // ------------------------------------------------------------------ question
 
-export function QuestionRow({ item, ticket, now, expanded, onToggle, sign, askedBy, decider }: CoreRowProps) {
+export function QuestionRow({ item, ticket, now, expanded, onToggle, sign, askedBy, decider, locked }: CoreRowProps) {
   const q = ticket?.questions_state.find((x) => x.id === item.ref)
   const [choice, setChoice] = useState<string | null>(null)
   const id = `question:${item.ticket}:${item.ref}`
@@ -153,6 +158,8 @@ export function QuestionRow({ item, ticket, now, expanded, onToggle, sign, asked
       action={
         readOnly ? (
           <Decides who={decider} />
+        ) : locked ? (
+          <Locked />
         ) : expanded ? null : (
           <Button size="sm" variant="outline" aria-expanded={expanded} onClick={onToggle}>
             Answer
@@ -161,7 +168,17 @@ export function QuestionRow({ item, ticket, now, expanded, onToggle, sign, asked
       }
     >
       {q?.why && <p className="text-[13px] leading-relaxed text-text-muted">{q.why}</p>}
-      {q?.options?.length ? (
+      {locked ? (
+        <ul aria-label={`Options for ${item.ref}`} className="space-y-1 text-[13px] text-text">
+          {q?.options?.map((o) => (
+            <li key={o.key}>
+              {o.label}
+              {o.cost && <span className="text-xs text-text-muted"> · {o.cost}</span>}
+              {q.recommended === o.key && <RecommendedTag />}
+            </li>
+          ))}
+        </ul>
+      ) : q?.options?.length ? (
         <div className="flex flex-wrap items-end gap-2">
           <div role="radiogroup" aria-label={`Answer to ${item.ref}`} className="flex flex-wrap gap-2">
             {q.options.map((o) => (
@@ -193,7 +210,7 @@ export function QuestionRow({ item, ticket, now, expanded, onToggle, sign, asked
 
 // ------------------------------------------------------------------ approval (requirements / plan)
 
-export function ApprovalRow({ item, ticket, now, expanded, onToggle, sign, decider }: CoreRowProps) {
+export function ApprovalRow({ item, ticket, now, expanded, onToggle, sign, decider, locked }: CoreRowProps) {
   const gate = item.ref as Exclude<GateName, 'verify'>
   const readOnly = decider !== undefined
   const covers =
@@ -215,6 +232,8 @@ export function ApprovalRow({ item, ticket, now, expanded, onToggle, sign, decid
       action={
         readOnly ? (
           <Decides who={decider} />
+        ) : locked ? (
+          <Locked />
         ) : (
           <Button size="sm" variant="outline" disabled={!ticket} onClick={() => sign(item.ticket, { kind: 'approve', gate })}>
             Review
@@ -223,16 +242,18 @@ export function ApprovalRow({ item, ticket, now, expanded, onToggle, sign, decid
       }
     >
       <p className="text-[13px] text-text-muted">{covers}</p>
-      <Button size="sm" variant="ghost" disabled={!ticket} onClick={() => sign(item.ticket, { kind: 'request_changes', gate })}>
-        Request changes…
-      </Button>
+      {!locked && (
+        <Button size="sm" variant="ghost" disabled={!ticket} onClick={() => sign(item.ticket, { kind: 'request_changes', gate })}>
+          Request changes…
+        </Button>
+      )}
     </RowShell>
   )
 }
 
 // ------------------------------------------------------------------ verdict
 
-export function VerdictRow({ item, ticket, now, expanded, onToggle, sign, decider }: CoreRowProps) {
+export function VerdictRow({ item, ticket, now, expanded, onToggle, sign, decider, locked }: CoreRowProps) {
   const readOnly = decider !== undefined
   const ac = ticket?.acceptance_state ?? []
   const proven = ac.filter((a) => a.state === 'proven').length
@@ -257,9 +278,13 @@ export function VerdictRow({ item, ticket, now, expanded, onToggle, sign, decide
                 Evidence
               </Link>
             </Button>
-            <Button size="sm" variant="outline" disabled={!ticket} onClick={() => sign(item.ticket, { kind: 'verdict' })}>
-              Give verdict
-            </Button>
+            {locked ? (
+              <Locked />
+            ) : (
+              <Button size="sm" variant="outline" disabled={!ticket} onClick={() => sign(item.ticket, { kind: 'verdict' })}>
+                Give verdict
+              </Button>
+            )}
           </>
         )
       }

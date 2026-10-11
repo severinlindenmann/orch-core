@@ -190,6 +190,8 @@ export interface OrchEvent {
   at: string
   type: string
   actor: Actor
+  /** Real host only: the host's one-line text for this event (no payload fields are served with the log). */
+  summary?: string
   /** Event-specific payload, flattened as in the spec (task, gate, name, kind, ...). */
   [field: string]: unknown
 }
@@ -306,7 +308,10 @@ export interface TicketChanges {
   head: string
   additions: number
   deletions: number
-  files: { path: string; additions: number; deletions: number; lines: string }[]
+  files: { path: string; additions: number; deletions: number; lines: string; repo?: string | null; status?: string; binary?: boolean }[]
+  /** Real host only: one entry per linked repo (the fields above describe the first), and whether the diff was cut. */
+  sources?: { repo: string; branch: string; base: string; head: string }[]
+  truncated?: boolean
 }
 
 export interface SectionRevision {
@@ -350,8 +355,15 @@ export interface TicketDocument extends TicketDefinition {
   section_history?: Partial<Record<keyof BodySections, SectionRevision[]>>
   /** Skills, connections and env this ticket needs, with the connections' last check (core-computed; D55–D57). */
   needs?: TicketNeeds
-  /** The ticket's branch: head commit, commits and diffstat against its base (core-computed). */
+  /**
+   * The ticket's branch: head commit, commits and diffstat against its base (core-computed). A real host does not serve
+   * these with the ticket: `head` is then '' (see `unavailable`), and the Changes tab's diff (`TicketChanges`) has them.
+   */
   branch: TicketBranch
+  /** Real host only: what this document could not fill (the page says "not available", never a made-up value). */
+  unavailable?: string[]
+  /** Real host only: the log window of the document is incomplete (older or newer events exist). */
+  log_more?: boolean
   /**
    * Where the ticket is in landing (D53), read by core from the landing records in its own log (`land.*` events by the
    * landing addon), only while that addon is active. A done ticket that is queued, being checked or failed to land is
@@ -381,6 +393,7 @@ export interface TicketSummary {
   parent: string | null
   owner: string | null
   assignees: string[]
+  /** On a real host `agent` and `for` are '' when the host does not say. */
   claim: Pick<Claim, 'agent' | 'for' | 'session'> | null
   turn: Turn
   progress: { tasks_done: number; tasks_total: number; ac_proven: number; ac_total: number }
@@ -502,7 +515,7 @@ export interface CoreLaunch {
 
 // ---------------------------------------------------------------- today
 
-export type NeedsYouKind = 'question' | 'verdict' | 'approval' | 'handoff' | 'expiring'
+export type NeedsYouKind = 'question' | 'verdict' | 'approval' | 'handoff' | 'expiring' | 'no_eligible' | 'acknowledge' | 'addon'
 
 export interface NeedsYouItem {
   kind: NeedsYouKind
@@ -513,6 +526,8 @@ export interface NeedsYouItem {
   ref?: string // Q2, gate name, ...
   /** Gate hash an approval item covers (approval items only). */
   hash?: string
+  /** Real host only. */
+  uid?: string | null
   blocking?: boolean
 }
 

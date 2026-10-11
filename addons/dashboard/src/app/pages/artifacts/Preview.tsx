@@ -22,8 +22,9 @@ type State = 'loading' | 'ready' | 'missing' | 'failed' | 'denied'
  * Fails closed: an error never shows cached content, and a ticket the viewer may no longer see shows nothing about it.
  */
 function useArtifactContent(item: ArtifactItem | null) {
-  const ticket = useQuery({ ...queries.ticket(item?.ticket as string), enabled: !!item })
   const workspaces = useQuery(queries.workspaces())
+  const home = workspaceOfTicket(item?.ticket ?? '', workspaces.data ?? [])
+  const ticket = useQuery({ ...queries.ticket(home?.id as string, item?.ticket as string), enabled: !!item && !!home })
   const agentHtml = !!item && addonActive(workspaceOfTicket(item.ticket, workspaces.data ?? []), 'widgets')
   const err = ticket.error
   const state: State = err

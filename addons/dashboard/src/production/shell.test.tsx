@@ -1,49 +1,131 @@
-import { render, screen, waitFor } from '@testing-library/react'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { QueryClientProvider } from '@tanstack/react-query'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, expect, it, vi } from 'vitest'
-import { Shell } from './Shell'
-import { realApi } from '../api/realApi'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { setFeatures } from '@/api/features'
+import { invalidateLive, useLiveUpdates } from '@/api/useLiveUpdates'
+import board from '@/test/fixtures/server-m2/board-page.json'
+import changes from '@/test/fixtures/server-m2/changes.json'
+import events from '@/test/fixtures/server-m2/events.json'
+import ticket from '@/test/fixtures/server-m2/ticket.json'
+import today from '@/test/fixtures/server-m2/today.json'
+import { queryClient, Shell } from './Shell'
 
-vi.mock('../api/bootstrap', () => ({ getToken: () => 'demo-not-a-real-token', onSessionChange: () => () => {} }))
-vi.mock('../api/realApi', () => ({ realApi: { workspaces: vi.fn(), session: vi.fn(), identity: vi.fn(), today: vi.fn(), tickets: vi.fn(), logout: vi.fn() } }))
-vi.mock('../api/useLiveUpdates', () => ({ useLiveUpdates: () => ({ ready: true, revoked: false }) }))
+// Every page of the app reads through the production api, as the build wires it (vite.config.ts alias).
+vi.mock('@/api/client', async () => await import('@/api/client.prod'))
+vi.mock('@/api/bootstrap', () => ({ getToken: () => 'demo-not-a-real-token', clearSession: vi.fn(), onSessionChange: () => () => {} }))
+vi.mock('@/api/useLiveUpdates', async (original) => ({ ...(await original<typeof import('@/api/useLiveUpdates')>()), useLiveUpdates: vi.fn(() => ({ ready: true, revoked: false })) }))
+
 const ws = 'a'.repeat(32)
+const person = 'p_user1'
+const FEATURES = ['identity', 'today', 'tickets', 'board', 'ticket', 'changes', 'evidence']
+const workspaces = [{ id: ws, prefix: 'DEMO', name: 'Dev workspace', members: [{ person, name: 'Severin', role: 'owner', devices: 1 }], needs_you: 2, host_state: 'ok', features: FEATURES }]
+const me = [{ person, name: 'Severin', role: 'owner', tier: 'A', workspace: ws }]
+const empty = { rows: [], next_page: null, total: 0, sub_cursor: 'c', as_of: '2026-10-11T09:00:00Z' }
+let ticketDoc: unknown
+
+function route(url: string): unknown {
+  const [path] = url.split('?')
+  if (path === '/api/session') return { features: FEATURES, workspaces: { [ws]: FEATURES } }
+  if (path === '/api/workspaces') return workspaces
+  if (path === '/api/me') return me
+  if (path === `/api/w/${ws}/today`) return today
+  if (path === `/api/w/${ws}/board` || path === `/api/w/${ws}/tickets`) return url.includes('page=') ? { ...empty, rows: [] } : { ...board, next_page: null }
+  if (path === `/api/w/${ws}/tickets/DEMO-0001`) return ticketDoc
+  if (path === `/api/w/${ws}/tickets/DEMO-0001/events`) return events
+  if (path === `/api/w/${ws}/tickets/DEMO-0001/changes`) return changes
+  return undefined
+}
+
 beforeEach(() => {
-  vi.clearAllMocks()
-  history.replaceState(null, '', '/')
-  vi.mocked(realApi.workspaces).mockResolvedValue([{ id: ws, prefix: 'DEMO', name: 'Dev workspace', members: [], needs_you: 0, features: ['tickets'], host_state: 'ok' }])
-  vi.mocked(realApi.session).mockResolvedValue({ features: ['tickets'], workspaces: { [ws]: ['tickets'] } })
-  vi.mocked(realApi.tickets).mockResolvedValue({ rows: [], total: 0, next_page: null })
+  ticketDoc = ticket
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    const body = route(url)
+    return body === undefined ? Response.json({ ok: false, error: { code: 'not_found', message: 'No such route in the test', retryable: false } }, { status: 404 }) : Response.json(body)
+  }))
+  localStorage.clear()
 })
-function show() { render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><Shell /></QueryClientProvider>) }
-it('only renders advertised navigation; calls reads by UUID', async () => {
-  show()
-  await userEvent.click(await screen.findByRole('button', { name: 'Tickets' }))
-  expect(await screen.findByText('0 tickets')).toBeInTheDocument()
-  expect(realApi.tickets).toHaveBeenCalledWith(ws, undefined)
-  expect(realApi.identity).not.toHaveBeenCalled()
-  for (const name of ['Today', 'Identity', 'Agents', 'Settings', 'New ticket', 'Demo data', 'Terminals']) expect(screen.queryByRole('button', { name })).not.toBeInTheDocument()
-})
-it('asks for a workspace when readable prefixes collide', async () => {
-  const other = 'b'.repeat(32)
-  const rows = [ws, other].map((id) => ({ id, prefix: 'DEMO', name: id === ws ? 'First' : 'Second', members: [], needs_you: 0, features: ['tickets'], host_state: 'ok' }))
-  vi.mocked(realApi.workspaces).mockResolvedValue(rows)
-  vi.mocked(realApi.session).mockResolvedValue({ features: ['tickets'], workspaces: { [ws]: ['tickets'], [other]: ['tickets'] } })
-  history.replaceState(null, '', '/w/DEMO/tickets')
-  show()
-  expect(await screen.findByText('Choose a workspace: this prefix is shared.')).toBeInTheDocument()
-  expect(realApi.tickets).not.toHaveBeenCalled()
-  await userEvent.selectOptions(screen.getByLabelText('Workspace'), other)
-  expect(location.search).toBe('?ws=bbbbbbbb')
-  await userEvent.click(await screen.findByRole('button', { name: 'Tickets' }))
-  await waitFor(() => expect(realApi.tickets).toHaveBeenCalledWith(other, undefined))
+afterEach(() => {
+  setFeatures(null)
+  queryClient.clear()
+  vi.unstubAllGlobals()
 })
 
-it('shows a skeleton until session capabilities arrive', async () => {
-  vi.mocked(realApi.session).mockReturnValue(new Promise(() => {}))
-  show()
-  await screen.findByRole('option', { name: 'Dev workspace · DEMO' })
-  expect(screen.queryByText(/Host too old/)).not.toBeInTheDocument()
-  expect(screen.getByLabelText('Loading session')).toBeInTheDocument()
+function show(path: string) {
+  history.replaceState(null, '', path)
+  return render(<QueryClientProvider client={queryClient}><Shell /></QueryClientProvider>)
+}
+const methods = () => vi.mocked(fetch).mock.calls.map((c) => (c[1] as RequestInit | undefined)?.method)
+const nav = () => within(screen.getByRole('navigation', { name: 'Main' }))
+
+it('Today lists what needs the viewer from the host, without any button that signs', async () => {
+  show('/w/DEMO')
+  expect(await screen.findByText('Approve the requirements')).toBeInTheDocument()
+  expect(screen.getAllByText('Real P1 ticket').length).toBeGreaterThan(0)
+  expect(screen.getAllByText('Answer in your terminal').length).toBe(2)
+  for (const name of ['Review', 'Answer', 'Give verdict', 'Send answer', 'New ticket']) expect(screen.queryByRole('button', { name })).not.toBeInTheDocument()
+  // The mockup's own demo and viewer controls do not exist in production.
+  expect(screen.queryByTestId('demo-mode')).not.toBeInTheDocument()
+  expect(screen.queryByText(/viewing as/i)).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Log out' })).toBeInTheDocument()
+  expect(new Set(methods())).toEqual(new Set(['GET']))
+})
+
+it('only the advertised pages are in the navigation', async () => {
+  show('/w/DEMO')
+  await screen.findByText('Approve the requirements')
+  expect(nav().getAllByRole('link').map((a) => a.textContent)).toEqual(expect.arrayContaining(['Today', 'Board', 'Tickets']))
+  for (const name of ['Artifacts', 'Agents']) expect(nav().queryByRole('link', { name })).not.toBeInTheDocument()
+  expect(screen.queryByRole('link', { name: 'Settings' })).not.toBeInTheDocument()
+})
+
+it('an address of a page the host does not serve leads to the board', async () => {
+  show('/w/DEMO/settings/general')
+  expect(await screen.findByRole('heading', { name: /board/i }).catch(() => null) ?? await screen.findByText('Real P1 ticket')).toBeInTheDocument()
+  await waitFor(() => expect(location.pathname).toBe('/w/DEMO/board'))
+})
+
+it('the board draws the host\'s tickets and cannot move them', async () => {
+  show('/w/DEMO/board')
+  expect(await screen.findByText('Real P1 ticket')).toBeInTheDocument()
+  expect(screen.getByText('Second')).toBeInTheDocument()
+  expect(new Set(methods())).toEqual(new Set(['GET']))
+  expect(vi.mocked(fetch).mock.calls.some((c) => String(c[0]).includes(`/api/w/${ws}/board`))).toBe(true)
+})
+
+it('the ticket page shows sections, tasks, questions and the log from the host', async () => {
+  const user = userEvent.setup()
+  ticketDoc = { ...ticket, status: 'in-progress' }
+  show('/w/DEMO/ticket/DEMO-0001')
+  expect(await screen.findByText('Real P1 ticket')).toBeInTheDocument()
+  expect(screen.getAllByText('req').length).toBeGreaterThan(0)
+  await user.click(screen.getByRole('tab', { name: /Acceptance/ }))
+  expect(await screen.findByText('Write the export')).toBeInTheDocument()
+  await user.click(screen.getByRole('tab', { name: /Questions/ }))
+  expect(await screen.findByText('Any naming rule?')).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: /send answer|answer/i })).not.toBeInTheDocument()
+  await user.click(screen.getByRole('tab', { name: 'History' }))
+  expect(await screen.findByText(/AC1 added/)).toBeInTheDocument()
+  expect(screen.getAllByText('checked by the host').length).toBeGreaterThan(0)
+  await user.click(screen.getByRole('tab', { name: /Changes/ }))
+  expect(await screen.findByLabelText('Diff')).toBeInTheDocument()
+  expect(screen.getAllByText('a.txt').length).toBeGreaterThan(0)
+  expect(screen.getByText('+two')).toBeInTheDocument()
+  await user.click(screen.getByRole('tab', { name: 'Raw' }))
+  for (const name of [/approve/i, /request changes/i, /verdict/i]) expect(screen.queryByRole('button', { name })).not.toBeInTheDocument()
+  expect(new Set(methods())).toEqual(new Set(['GET']))
+})
+
+it('a ticket that is no longer visible closes the open ticket view and drops its cache', async () => {
+  show('/w/DEMO/ticket/DEMO-0001')
+  expect(await screen.findByText('Real P1 ticket')).toBeInTheDocument()
+  await waitFor(() => expect(vi.mocked(useLiveUpdates).mock.calls.at(-1)?.[0]).toBe(ws))
+  const close = vi.mocked(useLiveUpdates).mock.calls.at(-1)![1]!
+  const uid = (ticket as { uid: string }).uid
+  expect(queryClient.getQueryData(['ticket', ws, 'DEMO-0001'])).toBeTruthy()
+  ticketDoc = undefined // the host now answers not_found, as it does for a ticket the person may not see
+  act(() => invalidateLive(queryClient, ws, 'items', [{ id: '9.g', uid, gone: true }], close))
+  await waitFor(() => expect(location.pathname).toBe('/w/DEMO/board'))
+  expect(queryClient.getQueryData(['ticket', ws, 'DEMO-0001'])).toBeUndefined()
+  expect(screen.getByText('DEMO-0001 is no longer visible to you')).toBeInTheDocument()
 })

@@ -1278,3 +1278,25 @@ fallback makes launches usable when browser confinement prevents reading the sta
 HTTP polling. Remove `live.py` and stub subscription support together; keep strict framing and
 control discovery aligned with the host. Remove `--print-url` and XDG selection independently
 if launcher behavior is rolled back. No core file or signing boundary changes are required.
+
+## 2026-10-11 — P2 M2 reads: the mockup's app is the production app, behind a read-only api
+
+**Decision:** The production build draws the mockup's shell and pages (router, Today, Board, Tickets, the ticket
+page) on a real `api` object chosen at build time (alias of `@/api/client`), instead of growing the M0 mini shell.
+Features from `/api/session` hide whole pages and routes; `can()` is false without an `actions` feature, so every
+action already behind a permission is gone, and Today's rows say where to act. What a v1.3.1 host does not serve
+is left empty and named in `unavailable`; closed tickets are refused (the UI has no closed state). Ticket queries
+are keyed by workspace UUID. The ticket document comes from `ticket.get` alone (its F1 section 7 document carries
+the ticket.json fields); the list route also asks `needs` to say whose turn a ticket is. `ready` refetches the
+workspace's queries instead of gating the first read.
+
+**Why:** The brief asks for the existing pages on the fetch transport; a second UI would drift from the one the
+owner reviewed. One alias keeps the mock entry, tests and layout guard untouched. A permission-based hide reuses
+every existing viewer rule and its tests, and hiding a button is only a courtesy: the server has no write route.
+Honest empties beat invented progress, approvals or commits. The refetch on `ready` closes the same gap as
+subscribe-before-snapshot without a global read gate that could hang a non-current workspace.
+
+**Revert:** Delete `api/prodApi.ts`, `api/client.prod.ts`, `api/features.ts` and the alias in `vite.config.ts`;
+restore `src/production/Shell.tsx`, `shell.css`, `shell.test.tsx` and `api/realApi.ts` from the M1 commit; revert
+`queries.ticket(ws, key)` to `queries.ticket(key)`. The server routes and adapters can stay (the M0 routes they
+replaced are `GET /api/w/<uuid>/today` and `/tickets`, whose shapes changed to the UI types).

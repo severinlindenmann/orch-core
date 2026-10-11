@@ -3,6 +3,9 @@ import { GitCommitHorizontal } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/api/client'
 import { diffstat } from '@/api/gates'
+import { isRealHost } from '@/api/features'
+import { ApiError } from '@/api/types'
+import { useWorkspace } from '@/app/workspace'
 import { can } from '@/api/permissions'
 import { toastApiError } from '@/app/toast'
 import { Button } from '@/components/ui/button'
@@ -20,7 +23,10 @@ export const HAS_CHANGES = new Set(['in-progress', 'waiting', 'testing', 'done']
  */
 export function Changes({ ticket, viewer, jump }: TabProps) {
   const qc = useQueryClient()
-  const changes = useQuery({ queryKey: ['changes', ticket.key, ticket.branch.head], queryFn: () => api.getChanges(ticket.key) })
+  const ws = useWorkspace().workspace?.id
+  // The key carries the workspace and (mock) the branch head: a new commit reads the diff again. A real host's diff
+  // names its own head commits, shown below, and a log item of the ticket invalidates it with the ticket.
+  const changes = useQuery({ queryKey: ['changes', ws, ticket.key, ticket.branch.head], queryFn: () => api.getChanges(ticket.key, ws), enabled: !!ws })
   const push = useMutation({
     mutationFn: () => api.simulatePush(ticket.key),
     onSuccess: async (r) => {
@@ -29,10 +35,12 @@ export function Changes({ ticket, viewer, jump }: TabProps) {
     },
     onError: (e) => toastApiError(e, 'Could not push'),
   })
-  const b = ticket.branch
+  // The ticket's own branch facts (mock); a real host serves them with the diff instead.
+  const diff = changes.data
+  const b = ticket.branch.head ? ticket.branch : diff && { ...ticket.branch, name: diff.branch, base: diff.base, head: diff.head, files: diff.files.length, additions: diff.additions, deletions: diff.deletions }
   const signed = ticket.verdict?.source_sha
   // Demo control: only where a verdict stands, so a push has something to void.
-  const canDemo = can(viewer.role, 'ticket.act') && ticket.gates.verify.state === 'approved'
+  const canDemo = !isRealHost() && can(viewer.role, 'ticket.act') && ticket.gates.verify.state === 'approved'
 
   return (
     <div className="space-y-4">
@@ -40,9 +48,11 @@ export function Changes({ ticket, viewer, jump }: TabProps) {
         title={
           <span className="flex flex-wrap items-baseline gap-x-2">
             <span>Changes</span>
-            <Mono className="text-text-muted">
-              {b.name} against {b.base}
-            </Mono>
+            {b && (
+              <Mono className="text-text-muted">
+                {b.name} against {b.base}
+              </Mono>
+            )}
           </span>
         }
         aside={
@@ -51,17 +61,31 @@ export function Changes({ ticket, viewer, jump }: TabProps) {
           </Button>
         }
       >
-        <p className="text-[13px] text-text">
-          Head <Mono>{b.head}</Mono> · {diffstat(b)} in {b.files} file{b.files === 1 ? '' : 's'}
-          {signed && (
-            <span className={signed === b.head ? 'text-success' : 'text-warning'}>
-              {' · '}
-              {signed === b.head ? 'the verdict signed this commit' : `the verdict signed ${signed}, not the head`}
-            </span>
-          )}
-        </p>
+        {b ? (
+          <p className="text-[13px] text-text">
+            Head <Mono>{b.head}</Mono> · {diffstat(b)} in {b.files} file{b.files === 1 ? '' : 's'}
+            {signed && (
+              <span className={signed === b.head ? 'text-success' : 'text-warning'}>
+                {' · '}
+                {signed === b.head ? 'the verdict signed this commit' : `the verdict signed ${signed}, not the head`}
+              </span>
+            )}
+          </p>
+        ) : (
+          <p className="text-[13px] text-text-muted">The branch is read from the host when the tab opens.</p>
+        )}
+        {diff?.sources && diff.sources.length > 1 && (
+          <ul aria-label="Repositories" className="mt-1 space-y-0.5 text-[12px] text-text-muted">
+            {diff.sources.map((x) => (
+              <li key={x.repo}>
+                <Mono className="text-text">{x.repo}</Mono> · {x.branch} · head <Mono>{x.head}</Mono> against <Mono>{x.base}</Mono>
+              </li>
+            ))}
+          </ul>
+        )}
+        {diff?.truncated && <p className="mt-1 text-[12px] text-warning">The diff was cut at the host&apos;s size limit; the files below may be incomplete.</p>}
         <ol aria-label="Commits" className="mt-2 space-y-1">
-          {b.commits.map((c) => (
+          {ticket.branch.commits.map((c) => (
             <li key={c.sha} className="flex items-center gap-2 text-[12px] text-text-muted">
               <GitCommitHorizontal className="size-3.5 shrink-0" aria-hidden />
               <Mono className="text-text">{c.sha}</Mono>
@@ -79,13 +103,13 @@ export function Changes({ ticket, viewer, jump }: TabProps) {
         )}
       </Section>
       {changes.isLoading && <Skeleton className="h-40" />}
-      {changes.error && <p role="alert" className="text-[13px] text-danger">Could not load the diff.</p>}
+      {changes.error && <p role="alert" className="text-[13px] text-danger">{changes.error instanceof ApiError && changes.error.code === 'observe.unavailable' ? 'The host cannot show this branch right now: it moved since the host last looked, or has no observed head yet.' : 'Could not load the diff.'}</p>}
       {changes.data && (
         <div aria-label="Diff" className="space-y-3">
           {changes.data.files.map((f) => (
-            <section key={f.path} aria-label={f.path}>
+            <section key={`${f.repo ?? ''}:${f.path}`} aria-label={f.path}>
               <p className="mb-1 text-[12px] text-text-muted">
-                <Mono className="text-text">{f.path}</Mono> · {diffstat(f)}
+                <Mono className="text-text">{f.path}</Mono> · {diffstat(f)}{f.status && f.status !== 'M' ? ` · ${f.status === 'A' ? 'added' : f.status === 'D' ? 'deleted' : f.status === 'R' ? 'renamed' : 'changed'}` : ''}
               </p>
               <Diff f={{ file: f.path, lines: f.lines }} />
             </section>

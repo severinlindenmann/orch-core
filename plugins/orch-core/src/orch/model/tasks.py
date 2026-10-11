@@ -10,7 +10,7 @@ from typing import Any
 
 from orch.canon import ARTIFACT_KINDS
 
-from . import claims, gates, generations, source
+from . import addon_rules, claims, gates, generations, source
 from .codes import Code, Refusal
 from .types import ArtifactCore, Lease, TaskCore, TCore, WsCore, ts
 
@@ -131,6 +131,8 @@ def artifact_event(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
         ad = ws.addons.get(e.get("addon", ""))
         if ad is None or not ad.enabled or ad.purged:
             return Refusal(Code.ADDON_UNKNOWN, str(e.get("addon")))
+        if (r := addon_rules.check_artifact_kind(ad, e["kind"])) is not None:
+            return r
     if "ac" in e and e["ac"] not in {x["id"] for x in t.fields["acceptance"]}:
         return Refusal(Code.TICKET_BAD_REFERENCE, f"unknown acceptance criterion {e['ac']}")
     if "task" in e and e["task"] not in task_ids(t):

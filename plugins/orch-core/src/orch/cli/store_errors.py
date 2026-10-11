@@ -25,7 +25,8 @@ _INTERNAL = (
 _REFUSED = (  # an event the model refused: the request is what is wrong
     "sig.invalid freeze.active member.unknown member.exists members.last_owner device.unknown device.exists "
     "device.invalid device.scope device.cert grant.terms grant.exists grant.unknown unattended.denied "
-    "settings.invalid addon.unknown ticket.exists ticket.bad_reference submit.incomplete people.invalid "
+    "settings.invalid addon.unknown addon.field_unknown addon.value_invalid "
+    "ticket.exists ticket.bad_reference submit.incomplete people.invalid "
     "path.protected body.unknown_section body.unknown_artifact repo.unknown gate.no_eligible gate.incomplete "
     "gate.not_applicable gate.invalidated_mismatch policy.invalid source.unlinked source.not_new task.unknown "
     "task.bad_receipt artifact.exists artifact.unknown artifact.bad_replaces artifact.kind question.unknown "

@@ -13,9 +13,10 @@ from orch.ops.human import Human
 
 
 def handle(ctx: Context, args: dict[str, Any]) -> Result:
-    """The grant is built from the package bytes read once (ticket-format 8.1): exactly the manifest's capabilities,
-    ``binds`` derived from its fields and sections. The owner's signature then covers the digest, the capabilities and
-    the binds, which is all replay ever uses."""
+    """The grant is built from the package bytes read once (ticket-format 8.1): exactly the manifest's capabilities and
+    its declared fields, sections and artifact kinds. The owner reads a summary on the terminal and types the addon's
+    name; the signature then covers the digest, the capabilities and the declarations, which is all replay ever
+    uses."""
     h = Human(ctx, "addon.grant")
     h.who()
     name = args["name"]
@@ -31,13 +32,23 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     except (PackageError, ManifestError) as e:
         raise OrchError("invalid.input", f"addons/{name}: {e}") from None
     event = install.grant_event(manifest, package)
+    view = h.store.state.workspace.addons
+    registry = install.load_registry(root, view)
+    clash = registry.heading_conflicts(manifest)
+    if clash:
+        raise OrchError("invalid.input", f"section heading {clash[0]!r} is already used by another granted addon")
+    previous = install.as_addons(view).get(name)
     caps = ",".join(event["capabilities"]) or "none"
-    done = h.run(event, "workspace", f"grant addon {name} {manifest.version} capabilities {caps}")
+    review = install.review_lines(manifest, package, event, previous)
+    done = h.run(
+        event, "workspace", f"grant addon {name} {manifest.version} capabilities {caps}", review=review, expect=name
+    )
     lines = [
         f"version {manifest.version}",
         f"package {package.digest}",
         f"capabilities {caps}",
-        f"binds {len(event['binds']['fields'])} fields, {len(event['binds']['sections'])} sections",
+        f"declares {len(event['fields'])} fields, {len(event['sections'])} sections, "
+        f"{len(event['artifact_kinds'])} artifact kinds",
     ]
     return h.workspace_result(done, {"name": name}, "orch addon list", lines)
 

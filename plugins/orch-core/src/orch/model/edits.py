@@ -12,19 +12,27 @@ from typing import Any
 from orch.canon import value_hash
 from orch.schema import SECTIONS_BY_TYPE
 
-from . import generations, lifecycle
+from . import addon_rules, generations, lifecycle, policies
 from .codes import Code, Refusal
 from .gates import EMPTY
-from .types import Core, TCore, WsCore
+from .types import Addon, Core, TCore, WsCore
 
 PROTECTED = frozenset({"ticket.schema", "ticket.uid", "ticket.key", "ticket.visibility", "ticket.questions"})  # §5.8
 
 
-def _valid_section(ws: WsCore, ticket_type: str, sid: str) -> bool:
+def _active(ws: WsCore, name: str) -> Addon | None:
+    """The addon if it is granted, enabled and not purged (§8.1); only then does it have live fields and sections."""
+    a = ws.addons.get(name)
+    return a if a is not None and a.enabled and not a.purged else None
+
+
+def _section_refusal(ws: WsCore, ticket_type: str, sid: str) -> Refusal | None:
     if "." in sid:
-        a = ws.addons.get(sid.split(".", 1)[0])
-        return a is not None and a.enabled and not a.purged
-    return sid in SECTIONS_BY_TYPE[ticket_type]
+        a = _active(ws, sid.split(".", 1)[0])
+        if a is None:
+            return Refusal(Code.ADDON_UNKNOWN, sid)
+        return addon_rules.check_section(a, sid, ticket_type)
+    return None if sid in SECTIONS_BY_TYPE[ticket_type] else Refusal(Code.BODY_UNKNOWN_SECTION, sid)
 
 
 def _current_value(t: TCore, key: str) -> Any:
@@ -73,16 +81,21 @@ def updated(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
     if t.status in ("done", "closed") and paths & generations.bound_any(ws, t.ticket_type):
         return Refusal(Code.TICKET_FROZEN, f"bound paths are refused on {t.status} tickets")
     for sid in secs:
-        if not _valid_section(ws, new_type, sid):
-            return Refusal(Code.BODY_UNKNOWN_SECTION, sid)
+        if (r := _section_refusal(ws, new_type, sid)) is not None:
+            return r
     for path in sets:
         if path in PROTECTED:
             return Refusal(Code.PATH_PROTECTED, path)
         key = path[len("ticket.") :]
-        if key.startswith("addons."):  # §8.1: only a granted, enabled, not purged addon has live fields
-            a = ws.addons.get(key.split(".")[1])
-            if a is None or not a.enabled or a.purged:
+        if key.startswith("addons."):  # §8.1: replay checks the write against the grant, never a manifest
+            _, aname, fname = key.split(".", 2)
+            a = _active(ws, aname)
+            if a is None:
                 return Refusal(Code.ADDON_UNKNOWN, path)
+            actor = e["actor"]
+            tokens = policies.person_tokens(ws, t, actor["id"]) if actor["kind"] == "person" else ()
+            if (r := addon_rules.check_field_write(a, fname, sets[path], actor, tokens)) is not None:
+                return r
     if (r := _check_refs(t, secs)) is not None:
         return r
     for path, h in e["base_rev"].items():
@@ -118,8 +131,8 @@ def external(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
     if t.status in ("done", "closed") and paths & generations.bound_any(ws, t.ticket_type):
         return Refusal(Code.TICKET_FROZEN, "a bound section of a done or closed ticket is reverted, not installed")
     for sid in secs:
-        if not _valid_section(ws, t.ticket_type, sid):
-            return Refusal(Code.BODY_UNKNOWN_SECTION, sid)
+        if (r := _section_refusal(ws, t.ticket_type, sid)) is not None:
+            return r
     for sid, v in secs.items():
         if v is None:
             t.sections.pop(sid, None)

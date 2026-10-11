@@ -14,7 +14,7 @@ from typing import Any
 
 from orch.canon import HashError, event_head
 
-from . import authz, generations, policies
+from . import addon_rules, authz, generations, policies
 from .codes import Code, Refusal
 from .types import GATES, WORKSPACE, Addon, Core, Device, Grant, LogCore, Member, TCore, WsCore, ts
 from .verifier import SigContext, Verifier
@@ -268,13 +268,21 @@ def addon_event(core: Core, e: dict[str, Any]) -> Refusal | None:
     old = ws.addons.get(name)
     if typ != "addon.granted" and old is None:
         return Refusal(Code.ADDON_UNKNOWN, name)
-    named = generations.addon_binds_gates(old.binds if old else None)
+    named = generations.addon_binds_gates(old.binds if old else None)  # the gates it named before
     if typ == "addon.granted":
-        binds = copy.deepcopy(e["binds"])
-        named |= generations.addon_binds_gates(binds)
+        new = Addon(
+            name,
+            e["version"],
+            e["package_sha256"],
+            list(e["capabilities"]),
+            copy.deepcopy(e["fields"]),
+            copy.deepcopy(e["sections"]),
+            list(e["artifact_kinds"]),
+        )
+        named |= generations.addon_binds_gates(new.binds)
 
         def change() -> None:
-            ws.addons[name] = Addon(name, e["version"], e["package_sha256"], list(e["capabilities"]), binds)
+            ws.addons[name] = new
     else:
 
         def change() -> None:
@@ -288,6 +296,18 @@ def addon_event(core: Core, e: dict[str, Any]) -> Refusal | None:
             t.fields["addons"].pop(name, None)
             for sid in [s for s in t.sections if s.startswith(name + ".")]:
                 del t.sections[sid]
+            for aname in [n for n, a in t.artifacts.items() if a.addon == name]:
+                del t.artifacts[aname]
+        elif typ == "addon.granted":  # §8.1: stored values the new grant does not allow are dropped (events stay)
+            data = t.fields["addons"].get(name, {})
+            for fname in [f for f, v in data.items() if not addon_rules.holds_value(new.fields.get(f), v)]:
+                del data[fname]
+            if not data:
+                t.fields["addons"].pop(name, None)
+            allowed = {s["id"]: set(s["types"]) for s in new.sections}
+            for sid in [s for s in t.sections if s.startswith(name + ".")]:
+                if t.ticket_type not in allowed.get(sid, ()):
+                    del t.sections[sid]
         generations.mark(t, *named)
 
     cross(core, change, per_ticket)

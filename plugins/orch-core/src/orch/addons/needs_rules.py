@@ -55,9 +55,32 @@ def _is_int(x: Any) -> bool:
     return type(x) is int
 
 
-def validate_expr(expr: Any, fields: frozenset[str] | set[str] | None = None) -> None:
-    """Raise :class:`NeedsRuleError` unless ``expr`` is an expression of the language. ``fields`` are the field names of
-    the manifest (``None`` skips that one check, for a caller that has no manifest)."""
+_BOOL_OPS = frozenset({"and", "or", "not", "eq", "ne", "lt", "le", "gt", "ge", "in", "has", "is_null", "gate"})
+
+
+def _boolish(e: Any, fields: Mapping[str, str] | set[str] | frozenset[str] | None) -> bool:
+    """Can ``e`` be true or false? (An ``and``/``or``/``not`` operand that cannot is a mistake, refused at load.)"""
+    if type(e) is bool:
+        return True
+    if type(e) is not list or not e:
+        return False
+    if e[0] in _BOOL_OPS:
+        return True
+    if e[0] == "var":
+        return len(e) == 2 and e[1] == "blocked"
+    if e[0] == "field":
+        return not isinstance(fields, Mapping) or fields.get(e[1] if len(e) == 2 else None) == "boolean"
+    return False
+
+
+def validate_expr(expr: Any, fields: Mapping[str, str] | set[str] | frozenset[str] | None = None) -> None:
+    """Raise :class:`NeedsRuleError` unless ``expr`` is an expression of the language. ``fields`` are the fields of
+    the manifest, a set of names or a mapping name -> type (``None`` skips the field checks, for a caller without a
+    manifest).
+
+    Counting, in one place (the evaluator applies the same): the top expression is level 1 and an operand is one level
+    below its operator; a list at level :data:`MAX_DEPTH` is refused; every literal, a ``var``/``gate``/``field``
+    name included, is a node; more than :data:`MAX_NODES` nodes are refused."""
     count = 0
 
     def walk(e: Any, depth: int, where: str) -> None:
@@ -100,6 +123,8 @@ def validate_expr(expr: Any, fields: frozenset[str] | set[str] | None = None) ->
                 f"{where}: {op!r} takes {lo}{'' if hi == lo else '+' if hi is None else f'-{hi}'} operands"
             )
         for i, a in enumerate(args):
+            if op in ("and", "or", "not") and not _boolish(a, fields):
+                raise NeedsRuleError(f"{where}/{i + 1}: an operand of {op!r} must be able to be true or false")
             walk(a, depth + 1, f"{where}/{i + 1}")
 
     walk(expr, 1, "when")
@@ -122,16 +147,19 @@ def evaluate(expr: Any, env: Mapping[str, Any], fields: Mapping[str, Any] | None
 
 def _eval(e: Any, env: Mapping[str, Any], fields: Mapping[str, Any], n: list[int], depth: int) -> Any:
     n[0] += 1
-    if n[0] > MAX_NODES or depth > MAX_DEPTH + 1:
+    if n[0] > MAX_NODES or depth > MAX_DEPTH:
         raise _Stop
     if e is None or type(e) in (bool, int, str):
         return e
     if type(e) is not list or not e or type(e[0]) is not str:
         raise _Stop
+    if depth >= MAX_DEPTH:  # a list at level MAX_DEPTH is refused by validate_expr; here it does not fire
+        raise _Stop
     op, args = e[0], e[1:]
     if op in _REFS:
         if len(args) != 1 or type(args[0]) is not str:
             raise _Stop
+        n[0] += 1  # the name is a node
         return _lookup(op, args[0], env, fields)
     arity = _ARITY.get(op)
     if arity is None or len(args) < arity[0] or (arity[1] is not None and len(args) > arity[1]):

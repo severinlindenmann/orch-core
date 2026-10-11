@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from orch.addons.manifest import load_manifest
+from orch.addons.manifest import declarations, load_manifest
 from orch.addons.registry import ACTIVE, ProposalError, Registry, WriteRefused, state_of, validate_value
 from orch.model.types import Addon
 from tests.addons.helpers import MANIFEST, manifest
@@ -21,10 +21,11 @@ def load(**over):
 
 def registry(m=None, **flags):
     m = m or load()
-    a = Addon(m.name, m.version, DIGEST, m.capabilities, {"fields": {}, "sections": []})
+    a = Addon(m.name, m.version, DIGEST, m.capabilities, **declarations(m))
+    digest = flags.pop("digest", DIGEST)
     for k, v in flags.items():
         setattr(a, k, v)
-    return Registry({m.name: a}, {m.name: (m, flags.pop("digest", DIGEST))})
+    return Registry({m.name: a}, {m.name: (m, digest)})
 
 
 def refusal(reg, *a, **kw):
@@ -99,9 +100,9 @@ def test_values_are_checked_against_the_field_type(field, good, bad):
             validate_value(spec, v)
 
 
-def test_check_write_refuses_a_bad_value_with_invalid_input():
+def test_check_write_refuses_a_bad_value():
     r = registry()
-    assert refusal(r, "echo", "points", 1000, {"kind": "addon", "id": "echo"}) == "invalid.input"
+    assert refusal(r, "echo", "points", 1000, {"kind": "addon", "id": "echo"}) == "addon.value_invalid"
 
 
 def test_section_writes_need_the_section_to_exist_for_the_ticket_type():
@@ -187,7 +188,7 @@ def test_the_proposal_never_carries_more_than_its_addon():
 
 def test_state_of_covers_every_case():
     m = load()
-    a = Addon("echo", "1.0.0", DIGEST, [], {"fields": {}, "sections": []})
+    a = Addon("echo", "1.0.0", DIGEST, [], {}, [], [])
     assert state_of(None, None) == "unknown"
     assert state_of(a, (m, DIGEST)) == "active"
     assert state_of(a, None) == "missing"
@@ -197,3 +198,20 @@ def test_state_of_covers_every_case():
     assert state_of(a, (m, DIGEST)) == "disabled"
     a.purged = True
     assert state_of(a, (m, DIGEST)) == "purged"
+
+
+def test_headings_taken_by_another_active_addon_are_reported():
+    echo = load()
+    other = load(
+        name="other", title="Other", sections=[{"id": "n", "heading": "Other notes", "after": "plan", "types": ["bug"]}]
+    )
+    reg = Registry(
+        {"echo": Addon("echo", "1.0.0", DIGEST, [], **declarations(echo))},
+        {"echo": (echo, DIGEST)},
+    )
+    assert reg.heading_conflicts(other) == []
+    clash = json.loads(json.dumps(manifest(name="other", title="Other")))
+    clash["sections"] = [{"id": "n", "heading": "ECHO-notes", "after": "plan", "types": ["bug"]}]
+    assert reg.heading_conflicts(load_manifest(json.dumps(clash).encode())) == ["ECHO-notes"]
+    mine = load()
+    assert reg.heading_conflicts(mine) == []  # an addon does not collide with itself (a re-grant)

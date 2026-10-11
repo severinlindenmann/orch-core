@@ -2,7 +2,10 @@
 
 The adapter between the replayed views (``WorkspaceView``, ``TicketView``) and the pure language of
 :mod:`orch.addons.needs_rules`. An entry changes nothing: no gate, no status, no event. A rule of an inactive addon is
-never evaluated and never reads inactive data.
+never evaluated and never reads inactive data. ``tokens`` and ``_can_see`` mirror ``model.policies.person_tokens``
+and ``model.visibility.can_see`` on views (``tests/addons/test_inactive_data.py`` compares them).
+
+P1: tested, not yet called. P2 merges ``needs_of_ticket`` into ``orch inbox`` and ``orch show``.
 """
 
 from __future__ import annotations

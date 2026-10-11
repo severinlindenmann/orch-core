@@ -5,30 +5,56 @@ from __future__ import annotations
 import os
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from orch.addons.manifest import load_package_manifest
+from orch.addons.manifest import declarations, load_package_manifest
 from orch.addons.package import read_package
 from orch.addons.runner import Limits, RunnerError, call, child_env
+from orch.model.types import Addon
 from tests.addons.helpers import make_package
 
-TICKET = {"key": "DEMO-0001", "type": "feature", "status": "open", "fields": {}}
+
+def ticket(**over):
+    """A stand-in for a ``TicketView``: more than the runner may send, to show what it leaves out."""
+    t = SimpleNamespace(
+        key="DEMO-0001",
+        type="feature",
+        status="open",
+        visibility="workspace",
+        title="secret title",
+        people={"assignees": ("p_x",)},
+        fields={"title": "secret title", "addons": {"echo": {"points": 3}, "other": {"x": 1}}},
+    )
+    for k, v in over.items():
+        setattr(t, k, v)
+    return t
+
+
+TICKET = ticket()
+
+
+def granted_for(package, **over):
+    m = load_package_manifest(package, "echo")
+    a = Addon("echo", m.version, package.digest, m.capabilities, **declarations(m))
+    for k, v in over.items():
+        setattr(a, k, v)
+    return a
 
 
 @pytest.fixture
 def pkg(tmp_path):
     d = make_package(tmp_path)
     package = read_package(d)
-    return d, package, load_package_manifest(package, "echo")
+    return d, package, granted_for(package)
 
 
 def run(pkg, trigger, **limits):
-    _, package, manifest = pkg
+    _, package, granted = pkg
     return call(
         package,
-        manifest,
-        granted_digest=package.digest,
+        granted,
         trigger=trigger,
         ticket=TICKET,
         limits=Limits(**limits) if limits else None,
@@ -178,10 +204,60 @@ def test_a_json_rpc_error_is_an_error_and_never_echoes_the_message(pkg):
 
 
 def test_a_changed_package_never_starts(pkg):
-    d, package, manifest = pkg
+    d, package, granted = pkg
+    granted.package_sha256 = "sha256:" + "0" * 64
     with pytest.raises(RunnerError) as e:
-        call(package, manifest, granted_digest="sha256:" + "0" * 64, trigger="ok", ticket=TICKET)
+        call(package, granted, trigger="ok", ticket=TICKET)
     assert e.value.code == "addon.digest_mismatch"
+
+
+def test_the_command_capabilities_and_identity_come_from_the_granted_package_never_from_elsewhere(pkg, tmp_path):
+    """The manifest is parsed from the package bytes whose digest was granted; the grant's name, version and
+    capabilities must equal it. There is no way to pass a different manifest."""
+    import inspect
+
+    assert "manifest" not in inspect.signature(call).parameters
+    _, package, _ = pkg
+    for over in ({"capabilities": ["network"]}, {"capabilities": []}, {"version": "9.9.9"}, {"name": "other"}):
+        with pytest.raises(RunnerError) as e:
+            call(package, granted_for(package, **over), trigger="ok", ticket=TICKET)
+        assert e.value.code == "addon.digest_mismatch", over
+    # a package whose manifest names another command has another digest: it is not the granted one
+    evil = make_package(
+        tmp_path / "evil",
+        man={
+            **__import__("tests.addons.helpers", fromlist=["x"]).MANIFEST,
+            "entry": {"cmd": ["/bin/sh", "-c", "echo hi"]},
+        },
+    )
+    other = read_package(evil)
+    with pytest.raises(RunnerError) as e:
+        call(other, granted_for(package), trigger="ok", ticket=TICKET)
+    assert e.value.code == "addon.digest_mismatch"
+
+
+def test_only_key_type_status_and_the_addons_own_fields_are_sent(pkg):
+    params = run(pkg, "params")["params"]
+    assert params["ticket"] == {"key": "DEMO-0001", "type": "feature", "status": "open", "fields": {"points": 3}}
+    assert set(params) == {"addon", "version", "capabilities", "trigger", "ticket"}
+    assert params["capabilities"] == ["serve_http"]
+    assert "secret" not in str(params) and "p_x" not in str(params) and "other" not in str(params["ticket"])
+
+
+def test_a_ticket_that_is_not_visible_to_everyone_is_never_run(pkg):
+    _, package, granted = pkg
+    for vis in ({"restricted": ["p_x"]}, "restricted", None):
+        with pytest.raises(RunnerError) as e:
+            call(package, granted, trigger="ok", ticket=ticket(visibility=vis))
+        assert e.value.code == "addon.not_visible"
+
+
+def test_a_disabled_or_purged_addon_is_never_run(pkg):
+    _, package, _ = pkg
+    for over in ({"enabled": False}, {"purged": True}):
+        with pytest.raises(RunnerError) as e:
+            call(package, granted_for(package, **over), trigger="ok", ticket=TICKET)
+        assert e.value.code == "addon.inactive"
 
 
 def test_a_missing_command_is_a_start_failure(tmp_path):
@@ -191,17 +267,16 @@ def test_a_missing_command_is_a_start_failure(tmp_path):
     d = make_package(tmp_path, man=m)
     package = read_package(d)
     with pytest.raises(RunnerError) as e:
-        call(
-            package, load_package_manifest(package, "echo"), granted_digest=package.digest, trigger="ok", ticket=TICKET
-        )
+        call(package, granted_for(package), trigger="ok", ticket=TICKET)
     assert e.value.code == "addon.start_failed"
 
 
 def test_a_request_that_is_not_strict_json_or_too_big_is_refused_before_starting(pkg):
-    _, package, manifest = pkg
-    for ticket in ({"x": 1.5}, {"x": "y" * (70 << 10)}, {"x": object()}):
+    _, package, granted = pkg
+    for own in ({"x": 1.5}, {"x": "y" * (70 << 10)}, {"x": object()}):
+        t = ticket(fields={"addons": {"echo": own}})
         with pytest.raises(RunnerError) as e:
-            call(package, manifest, granted_digest=package.digest, trigger="ok", ticket=ticket)
+            call(package, granted, trigger="ok", ticket=t)
         assert e.value.code == "addon.bad_request"
 
 
@@ -212,15 +287,16 @@ def test_limits_are_validated():
 
 
 @pytest.mark.slow
-def test_no_temporary_directory_is_left_behind(pkg):
+def test_no_temporary_directory_is_left_behind(pkg, tmp_path, monkeypatch):
     import tempfile
 
-    before = {p for p in os.listdir(tempfile.gettempdir()) if p.startswith("orch-addon-")}
+    scratch = tmp_path / "scratch"  # a private temp dir: nothing else can add to it while this runs
+    scratch.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(scratch))
     run(pkg, "ok")
     refused(pkg, "crash", "addon.crashed")
     refused(pkg, "hang", "addon.timeout", timeout=0.5)
-    after = {p for p in os.listdir(tempfile.gettempdir()) if p.startswith("orch-addon-")}
-    assert after <= before
+    assert os.listdir(scratch) == []
 
 
 def test_a_hand_built_package_with_a_path_escape_is_refused_before_anything_is_written(tmp_path):
@@ -228,11 +304,11 @@ def test_a_hand_built_package_with_a_path_escape_is_refused_before_anything_is_w
 
     d = make_package(tmp_path)
     real = read_package(d)
-    for evil in ("../escape.py", "/abs.py", "a/../../b", ".hidden", "a//b"):
+    for evil in ("../escape.py", "/abs.py", "a/../../b", ".hidden", "a//b", "x.so"):
         files = {**real.files, evil: b"x"}
         forged = Package(files, package_digest(files))
         with pytest.raises(RunnerError) as e:
-            call(forged, load_package_manifest(real, "echo"), granted_digest=forged.digest, trigger="ok", ticket=TICKET)
+            call(forged, granted_for(forged), trigger="ok", ticket=TICKET)
         assert e.value.code == "addon.digest_mismatch"
     assert not (tmp_path / "escape.py").exists()
 
@@ -240,8 +316,30 @@ def test_a_hand_built_package_with_a_path_escape_is_refused_before_anything_is_w
 def test_the_digest_field_of_a_package_is_not_trusted(pkg):
     from orch.addons.package import Package
 
-    _, package, manifest = pkg
+    _, package, granted = pkg
     lying = Package({**package.files, "addon.py": b"print('evil')"}, package.digest)  # old digest, new bytes
     with pytest.raises(RunnerError) as e:
-        call(lying, manifest, granted_digest=package.digest, trigger="ok", ticket=TICKET)
+        call(lying, granted, trigger="ok", ticket=TICKET)
     assert e.value.code == "addon.digest_mismatch"
+
+
+def test_the_resource_limits_are_in_force_in_the_child(pkg):
+    out = run(pkg, "limits")
+    assert out["core"] == 0 and out["fsize"] == 1 << 20
+    assert out["cpu"] <= int(Limits().timeout) + 2
+
+
+def test_a_process_that_leaves_its_group_is_not_tracked(pkg):
+    """The documented P1 limit (§8.1): setsid escapes the group kill. Killing every process of the addon needs its own
+    UID or a cgroup (P2); this test pins that the limit is real so nobody claims otherwise."""
+    pid = run(pkg, "escape")["pid"]
+    try:
+        time.sleep(0.2)
+        os.kill(pid, 0)  # still alive: the group kill did not reach it
+    except ProcessLookupError:
+        pytest.skip("the escaped process was reaped quickly on this system")
+    finally:
+        try:
+            os.kill(pid, 9)
+        except ProcessLookupError:
+            pass

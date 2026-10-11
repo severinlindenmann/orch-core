@@ -57,8 +57,8 @@ def test_wrong_types_make_an_operator_false_not_an_error():
     assert not fires(["gt", ["field", "mood"], 1])
     assert not fires(["has", ["var", "status"], "t"])
     assert not fires(["eq", True, 1]) and not fires(["eq", 1, True])  # True is not 1
-    assert fires(["not", 5])  # a non-boolean operand is false
-    assert not fires(["and", 1, True]) and not fires(["or", "x", 0])
+    # a non-boolean operand is false (such a rule is refused at load, but evaluation stays total)
+    assert evaluate(["not", 5], ENV) and not evaluate(["and", 1, True], ENV) and not evaluate(["or", "x", 0], ENV)
     assert not fires(["lt", True, 2])  # booleans are not integers
 
 

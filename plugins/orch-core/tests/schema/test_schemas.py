@@ -1172,17 +1172,40 @@ def test_addon_events():
     bad("event", ev(A, package_sha256="ab" * 32), "/package_sha256")
     bad("event", ev(A, capabilities=["root"]), "/capabilities/0")
     bad("event", ev(A, capabilities=["pty", "pty"]), "/capabilities")
-    bad("event", mut(ex.EVENTS[A], lambda e: e["binds"].pop("fields")), "/binds", "fields")
-    bad("event", mut(ex.EVENTS[A], lambda e: e["binds"]["fields"].update(points=[])), "/binds/fields/points")
-    bad("event", mut(ex.EVENTS[A], lambda e: e["binds"]["fields"].update(points=["deploy"])), "/binds/fields/points/0")
+    bad("event", mut(ex.EVENTS[A], lambda e: e.pop("fields")), "", "fields")
+    bad("event", mut(ex.EVENTS[A], lambda e: e.pop("sections")), "", "sections")
+    bad("event", mut(ex.EVENTS[A], lambda e: e.pop("artifact_kinds")), "", "artifact_kinds")
+    bad("event", mut(ex.EVENTS[A], lambda e: e.update(binds={})), "", "binds")  # the old shape is gone
+    bad("event", mut(ex.EVENTS[A], lambda e: e["fields"]["points"].update(gate=[])), "/fields/points")
+    bad("event", mut(ex.EVENTS[A], lambda e: e["fields"]["points"].update(gate=["deploy"])), "/fields/points")
+    bad("event", mut(ex.EVENTS[A], lambda e: e["fields"]["points"].update(set_by=["root"])), "/fields/points")
+    bad("event", mut(ex.EVENTS[A], lambda e: e["fields"]["points"].pop("set_by")), "/fields/points")
+    bad("event", mut(ex.EVENTS[A], lambda e: e["fields"]["points"].update(show=True)), "/fields/points")
     bad(
         "event",
-        mut(ex.EVENTS[A], lambda e: e["binds"]["sections"][0].update(types=["story"])),
-        "/binds/sections/0/types/0",
+        mut(ex.EVENTS[A], lambda e: e["fields"]["points"].update(min=9, max=1)),
+        "/fields/points/min",
+        "greater",
     )
-    bad("event", mut(ex.EVENTS[A], lambda e: e["binds"]["sections"][0].pop("gate")), "/binds/sections/0", "gate")
-    bad("event", mut(ex.EVENTS[A], lambda e: e["binds"].update(extra=1)), "/binds", "extra")
-    V("event", mut(ex.EVENTS[A], lambda e: e["binds"].update(fields={}, sections=[])), log="workspace")
+    bad(
+        "event",
+        mut(ex.EVENTS[A], lambda e: e["fields"].update({"Bad": {"type": "boolean", "set_by": ["agent"]}})),
+        "/fields",
+    )
+    bad("event", mut(ex.EVENTS[A], lambda e: e["sections"][0].update(types=["story"])), "/sections/0/types/0")
+    bad("event", mut(ex.EVENTS[A], lambda e: e["sections"][0].pop("types")), "/sections/0", "types")
+    bad(
+        "event",
+        mut(ex.EVENTS[A], lambda e: e["sections"].append(dict(e["sections"][0]))),
+        "/sections/1/id",
+        "duplicate",
+    )
+    bad("event", mut(ex.EVENTS[A], lambda e: e["artifact_kinds"].append("screenshot")), "/artifact_kinds/1")
+    bad("event", mut(ex.EVENTS[A], lambda e: e["artifact_kinds"].append("chart")), "/artifact_kinds")
+    V("event", mut(ex.EVENTS[A], lambda e: e.update(fields={}, sections=[], artifact_kinds=[])), log="workspace")
+    V(
+        "event", mut(ex.EVENTS[A], lambda e: e["sections"][0].pop("gate")), log="workspace"
+    )  # a section need not be gated
     bad("event", ev("addon.disabled", name="x" * 41), "/name")
     bad("event", ev("addon.purged", name="log"), "/name")
 
@@ -1788,21 +1811,21 @@ def test_invalid_acknowledged_field_names_are_f1s():
     bad("event", mut(e, lambda o: o.update(seq_=1, head=ex.H)), "", "")
 
 
-def test_binds_sections_are_named_in_full_with_the_addons_prefix():
+def test_addon_sections_are_named_in_full_with_the_addons_prefix():
     A = ex.EVENTS["addon.granted"]
     for bad_id in ("notes", "requirements", "Estimate.notes", "estimate.", ".notes", "estimate.Notes"):
-        bad("event", mut(A, lambda e, i=bad_id: e["binds"]["sections"][0].update(id=i)), "/binds/sections/0/id")
+        bad("event", mut(A, lambda e, i=bad_id: e["sections"][0].update(id=i)), "/sections/0/id")
     bad(
         "event",
-        mut(A, lambda e: e["binds"]["sections"][0].update(id="other.notes")),
-        "/binds/sections/0/id",
+        mut(A, lambda e: e["sections"][0].update(id="other.notes")),
+        "/sections/0/id",
         "this addon",
     )
-    V("event", mut(A, lambda e: e["binds"]["sections"][0].update(id="estimate.more_notes")))
+    V("event", mut(A, lambda e: e["sections"][0].update(id="estimate.more_notes")))
     bad(
         "event",
-        mut(A, lambda e: e["binds"]["sections"].append({"id": "x.y", "gate": ["plan"], "types": ["bug"]})),
-        "/binds/sections/1/id",
+        mut(A, lambda e: e["sections"].append({"id": "x.y", "types": ["bug"]})),
+        "/sections/1/id",
     )
 
 

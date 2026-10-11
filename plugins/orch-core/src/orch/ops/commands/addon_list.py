@@ -12,7 +12,8 @@ from orch.ops.runtime import Call
 
 def handle(ctx: Context, args: dict[str, Any]) -> Result:
     """Granted addons (with their state: active, disabled, purged, changed since the grant, missing) and packages that
-    are installed but not granted. ``enabled`` is true only for an active addon."""
+    are installed but not granted (``not_granted``). ``enabled`` is true only for an active addon. P1: this is the one
+    place that loads the registry; P2 loads it for every call that runs or writes an addon."""
     c = Call.of(ctx, "addon.list")
     root = c.ws.require_root()
     view = c.store.state.workspace.addons
@@ -22,8 +23,9 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     lines: list[str] = []
     for name in sorted(granted):
         state = registry.state(name)
-        rows.append({"name": name, "version": granted[name].version, "enabled": state == "active"})
-        lines.append(f"{name} {granted[name].version} {state}")
+        rows.append({"name": name, "version": granted[name].version, "enabled": state == "active", "state": state})
+        note = " since the grant: orch addon grant " + name if state == "changed" else ""
+        lines.append(f"{name} {granted[name].version} {state}{note}")
     for name in install.installed_names(root):
         if name in granted:
             continue
@@ -33,7 +35,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
             version, note = "?", "not granted, package invalid"
         else:
             note = "not granted"
-        rows.append({"name": name, "version": version, "enabled": False})
+        rows.append({"name": name, "version": version, "enabled": False, "state": "not_granted"})
         lines.append(f"{name} {version} {note}")
     hint = "orch addon grant NAME" if any(not r["enabled"] for r in rows) else "orch status"
     return Result(data={"count": len(rows), "addons": rows}, lines=lines, hints=[hint])
@@ -46,6 +48,6 @@ OP = operation(
     who="read",
     pre=("workspace_exists",),
     text="ok addon.list {count}\nnext: {next}",
-    data=obj({"count": INT, "addons": arr(obj({"name": STR, "version": STR, "enabled": BOOL}))}),
+    data=obj({"count": INT, "addons": arr(obj({"name": STR, "version": STR, "enabled": BOOL, "state": STR}))}),
     handler=handle,
 )

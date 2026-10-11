@@ -31,10 +31,11 @@ __all__ = [
 
 MANIFEST_FILE = "orch-addon.json"
 MAX_DEPTH = 6
-MAX_FILES = 256
+MAX_FILES = 256  # files and directories together
 MAX_FILE_BYTES = 4 << 20
 MAX_TOTAL_BYTES = 16 << 20
 MAX_MANIFEST_BYTES = 64 << 10
+REFUSED_SUFFIXES = (".pyc", ".pyo", ".so", ".dylib", ".dll", ".pyd")  # opaque to a reviewing owner (§8.1)
 _SEGMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}(?![\s\S])")
 
 
@@ -70,12 +71,19 @@ def _check_segment(name: str, shown: str) -> None:
 
 
 def check_path(rel: str) -> None:
-    """Raise :class:`PackageError` unless ``rel`` is a relative POSIX path of valid segments within the depth limit."""
+    """Raise :class:`PackageError` unless ``rel`` is a relative POSIX path of valid segments within the depth limit,
+    and a file name that is not a compiled object."""
     parts = rel.split("/")
     if len(parts) > MAX_DEPTH:
         raise PackageError(f"{ascii(rel)}: more than {MAX_DEPTH} levels")
     for part in parts:
         _check_segment(part, rel)
+    _check_file_name(parts[-1], rel)
+
+
+def _check_file_name(name: str, shown: str) -> None:
+    if name.lower().endswith(REFUSED_SUFFIXES):
+        raise PackageError(f"{ascii(shown)}: compiled files ({', '.join(REFUSED_SUFFIXES)}) are not allowed")
 
 
 def _open_dir(path: str, dir_fd: int | None) -> int:
@@ -83,38 +91,43 @@ def _open_dir(path: str, dir_fd: int | None) -> int:
     return os.open(path, flags, dir_fd=dir_fd)
 
 
-def read_package(directory: str | os.PathLike[str]) -> Package:
-    """Read the package in ``directory`` under the rules of §8.1 or raise :class:`PackageError`."""
+def read_package(directory: str | os.PathLike[str], *, dir_fd: int | None = None) -> Package:
+    """Read the package in ``directory`` (a name relative to ``dir_fd`` when that is given) under the rules of §8.1 or
+    raise :class:`PackageError`."""
     root = os.fspath(directory)
     try:
-        if stat.S_ISLNK(os.lstat(root).st_mode):
+        if stat.S_ISLNK(os.lstat(root, dir_fd=dir_fd).st_mode):
             raise PackageError("the package directory is a symbolic link")
-        fd = _open_dir(root, None)
+        fd = _open_dir(root, dir_fd)
     except OSError as e:
         raise PackageError(f"cannot open the package directory ({e.strerror or 'error'})") from None
     files: dict[str, bytes] = {}
-    total = 0
+    total = entries = 0
     try:
         stack = [(fd, "", 1)]
         while stack:
             dfd, prefix, depth = stack.pop()
             try:
                 names = sorted(os.listdir(dfd))
+                if len({n.casefold() for n in names}) != len(names):
+                    raise PackageError(f"{prefix or './'}: two names equal when case is ignored")
                 for name in names:
                     shown = prefix + name
                     _check_segment(name, shown)
                     st = os.stat(name, dir_fd=dfd, follow_symlinks=False)
+                    entries += 1
+                    if entries > MAX_FILES:
+                        raise PackageError(f"more than {MAX_FILES} files and directories")
                     if stat.S_ISDIR(st.st_mode):
                         if depth >= MAX_DEPTH:
                             raise PackageError(f"{shown}: more than {MAX_DEPTH} levels")
                         stack.append((_open_dir(name, dfd), shown + "/", depth + 1))
                     elif stat.S_ISREG(st.st_mode):
+                        _check_file_name(name, shown)
                         if st.st_nlink > 1:
                             raise PackageError(f"{shown}: a hard link")
                         if st.st_size > MAX_FILE_BYTES:
                             raise PackageError(f"{shown}: larger than {MAX_FILE_BYTES} bytes")
-                        if len(files) >= MAX_FILES:
-                            raise PackageError(f"more than {MAX_FILES} files")
                         data = _read_file(name, dfd, shown)
                         total += len(data)
                         if total > MAX_TOTAL_BYTES:

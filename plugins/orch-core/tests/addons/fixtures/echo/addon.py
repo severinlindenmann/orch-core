@@ -22,6 +22,23 @@ def reply(result=None, **extra):
 
 if mode == "ok":
     reply({"set": {"points": 5}, "sections": {"notes": "looked at " + req["params"]["ticket"]["key"]}, "artifacts": []})
+elif mode == "params":
+    reply({"params": req["params"]})
+elif mode == "limits":
+    import resource
+
+    reply(
+        {
+            "core": resource.getrlimit(resource.RLIMIT_CORE)[0],
+            "fsize": resource.getrlimit(resource.RLIMIT_FSIZE)[0],
+            "cpu": resource.getrlimit(resource.RLIMIT_CPU)[0],
+        }
+    )
+elif mode == "escape":
+    import subprocess
+
+    p = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(5)"], start_new_session=True)
+    reply({"pid": p.pid})
 elif mode == "env":
     reply({"env": dict(os.environ), "cwd": os.getcwd(), "pkg": os.path.dirname(os.path.abspath(__file__))})
 elif mode == "hang":

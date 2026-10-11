@@ -10,7 +10,7 @@ import subprocess
 import pytest
 
 from orch import schema
-from orch.addons.manifest import ManifestError, derive_binds, load_manifest, load_package_manifest
+from orch.addons.manifest import ManifestError, declarations, load_manifest, load_package_manifest
 from orch.addons.package import MAX_FILE_BYTES, PackageError, package_digest, read_package
 from orch.store.render import HEADINGS
 from tests.addons.helpers import MANIFEST, make_package, manifest
@@ -20,16 +20,33 @@ def raw(m):
     return json.dumps(m).encode()
 
 
-def test_a_valid_manifest_loads_and_binds_are_derived():
+def test_a_valid_manifest_loads_and_the_declarations_are_derived():
     m = load_manifest(raw(MANIFEST))
     assert (m.name, m.version, m.capabilities) == ("echo", "1.0.0", ["serve_http"])
-    assert derive_binds(m) == {
+    d = declarations(m)
+    assert set(d) == {"fields", "sections", "artifact_kinds"}
+    assert d["artifact_kinds"] == ["chart"]
+    # a field keeps type, limits, set_by (sorted) and gate; show and filter are display hints and are dropped
+    assert d["fields"]["points"] == {
+        "type": "integer",
+        "min": 0,
+        "max": 100,
+        "set_by": ["addon", "agent", "maintainer", "owner"],
+        "gate": ["plan"],
+    }
+    assert d["fields"]["mood"]["gate"] == ["plan", "verify"] and "gate" not in d["fields"]["note"]
+    # every section is declared, qualified, with its types; only gated ones carry a gate
+    assert d["sections"] == [
+        {"id": "echo.extra", "types": ["feature"]},
+        {"id": "echo.notes", "types": ["bug", "feature"], "gate": ["plan"]},
+    ]
+    from orch.model.types import Addon
+
+    a = Addon("echo", "1.0.0", "sha256:" + "0" * 64, [], **d)
+    assert a.binds == {
         "fields": {"mood": ["plan", "verify"], "points": ["plan"]},
         "sections": [{"id": "echo.notes", "gate": ["plan"], "types": ["bug", "feature"]}],
     }
-    # the derived binds are what the event schema accepts
-    ev = {"name": "echo", "binds": derive_binds(m)}
-    assert all(s["id"].startswith("echo.") for s in ev["binds"]["sections"])
 
 
 @pytest.mark.parametrize(
@@ -45,8 +62,17 @@ def test_a_valid_manifest_loads_and_binds_are_derived():
         lambda m: m["sections"][0].update(heading="plan"),
         lambda m: m["sections"][1].update(heading="Echo notes"),  # a second section with the same heading
         lambda m: m["sections"][0].update(heading="A # B"),
-        lambda m: m["sections"][0].update(heading="a​b"),  # zero-width space
+        lambda m: m["sections"][0].update(heading="a\u200bb"),  # zero-width space
         lambda m: m["sections"][0].update(heading=" Echo "),
+        lambda m: m["sections"][0].update(heading="Pl\u0430n"),  # Cyrillic a: not ASCII
+        lambda m: m["sections"][0].update(heading="Plan:"),
+        lambda m: m["sections"][0].update(heading="Plan."),
+        lambda m: m["sections"][0].update(heading="P-lan"),  # the key drops punctuation: it is "plan"
+        lambda m: m["sections"][0].update(heading="Out  of scope"),  # two spaces
+        lambda m: m["sections"][0].update(heading="Outof scope"),  # the key of "Out of scope"
+        lambda m: m["sections"][0].update(heading="CURRENT STATE"),
+        lambda m: m["sections"][0].update(heading="x" * 41),
+        lambda m: m["sections"][1].update(heading="echo-notes"),  # same key as "Echo notes"
     ],
 )
 def test_invalid_manifests_are_refused(mutate):
@@ -66,13 +92,35 @@ def test_not_json_and_hostile_json_are_refused_without_echo():
 
 
 def test_core_headings_in_the_schema_equal_the_store_headings():
-    assert schema._CORE_HEADINGS == {h.casefold() for h in HEADINGS.values()}
+    assert list(schema._CORE_HEADINGS) == list(HEADINGS.values())
 
 
 def test_agents_md_is_one_plain_line():
-    load_manifest(raw(manifest(agents_md="Run `orch addon list` to see what is granted.")))
+    load_manifest(raw(manifest(agents_md="Run orch addon list to see what is granted. 3 words ok, 2024.")))
     load_manifest(raw(manifest(agents_md="")))
-    for bad in ("two\nlines", "# heading", "```", "- item", "> quote", "| row", " lead", "x" * 201, "a\x00b", "a​b"):
+    for bad in (
+        "two\nlines",
+        "# heading",
+        "```",
+        "- item",
+        "> quote",
+        "| row",
+        " lead",
+        "x" * 201,
+        "a\x00b",
+        "a\u200bb",
+        "<!-- hidden -->",
+        "* bullet",
+        "+ plus",
+        "1. numbered",
+        "12) numbered",
+        "[link](http://x)",
+        "see `code`",
+        "a | b",
+        "caf\u00e9",
+        "x\x1b[31m",
+        "\tTabbed",
+    ):
         with pytest.raises(ManifestError):
             load_manifest(raw(manifest(agents_md=bad)))
 
@@ -90,6 +138,8 @@ def test_needs_rules_are_validated_when_the_manifest_loads():
         {**good, "when": ["field", "missing"]},  # not a field of this addon
         {**good, "who": []},
         {**good, "who": ["root"]},
+        {**good, "when": ["not", ["var", "status"]]},  # an operand that can never be true or false
+        {**good, "when": ["and", ["field", "points"], True]},  # points is an integer
         {**good, "text": "x" * 121},
         {**good, "text": "a​b"},
         {**good, "id": "Bad Id"},
@@ -258,3 +308,35 @@ def test_a_symlinked_addons_directory_is_refused(tmp_path):
     os.symlink(real / "addons", ws / "addons")
     with pytest.raises(PackageError, match="symbolic link"):
         read_installed(ws, "echo")
+
+
+def test_a_boolean_field_may_be_a_boolean_operand():
+    m = manifest(needs=[{"id": "r", "when": ["not", ["field", "done"]], "who": ["owner"], "text": "x"}])
+    load_manifest(raw(m))
+
+
+def test_names_equal_when_case_is_ignored_are_refused(tmp_path):
+    d = make_package(tmp_path, files={"A.txt": b"1"})
+    try:
+        (d / "a.txt").write_bytes(b"2")
+    except OSError:
+        pytest.skip("case-insensitive file system")
+    if len(os.listdir(d)) < 4:
+        pytest.skip("case-insensitive file system")
+    with pytest.raises(PackageError, match="case"):
+        read_package(d)
+
+
+@pytest.mark.parametrize("name", ["x.so", "x.pyc", "lib.dylib", "X.SO", "a.dll", "m.pyd", "m.pyo"])
+def test_compiled_files_are_refused(tmp_path, name):
+    d = make_package(tmp_path, files={name: b"\x7fELF"})
+    with pytest.raises(PackageError, match="compiled"):
+        read_package(d)
+
+
+def test_directories_count_toward_the_entry_cap(tmp_path):
+    d = make_package(tmp_path)
+    for i in range(260):
+        (d / f"d{i}").mkdir()
+    with pytest.raises(PackageError, match="files and directories"):
+        read_package(d)

@@ -14,8 +14,28 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     name = args["name"]
     if name not in h.store.state.workspace.addons:
         raise OrchError("not_found", "no such addon was granted", hint="orch addon list")
+    if h.store.state.workspace.addons[name]["purged"]:  # nothing left to remove: nothing to sign
+        return Result(
+            data={"name": name},
+            seq=h.store.head_seq("workspace"),
+            lines=["already purged: nothing signed"],
+            hints=["orch addon list"],
+        )
+    h.store.load_all()  # the count below must see every ticket, not the ones loaded so far
+    tickets = fields = sections = artifacts = 0
+    for t in h.store.state.tickets.values():  # what the purge will remove from the derived state (events stay)
+        data = t.fields["addons"].get(name)
+        mine = [s for s in t.sections if s.startswith(name + ".")]
+        arts = [x for x in t.artifacts if x.addon == name]
+        if data or mine or arts:
+            tickets += 1
+        fields += len(data or {})
+        sections += len(mine)
+        artifacts += len(arts)
     done = h.run({"type": "addon.purged", "name": name}, "workspace", "purge addon " + name)
-    return h.workspace_result(done, {"name": name}, "orch addon list")
+    verb = "removes" if h.ctx.dry_run else "removed"
+    lines = [f"{verb} {fields} fields, {sections} sections, {artifacts} artifacts of {tickets} tickets (events stay)"]
+    return h.workspace_result(done, {"name": name}, "orch addon list", lines)
 
 
 OP = operation(

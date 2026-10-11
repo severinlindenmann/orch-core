@@ -166,3 +166,27 @@ def test_a_rule_reaches_the_persons_who_hold_its_tokens_and_can_see_the_ticket(h
     state = refresh(hws)
     (need,) = needs_of_ticket(reg, state.workspace, state.ticket(uid))
     assert need.who == (hws.owner.ref,)  # the others cannot see the ticket, so they are not told about it
+
+
+def test_the_needs_adapter_agrees_with_the_models_own_tokens_and_visibility(hws, me):
+    from orch.addons import needs as adapter
+    from orch.addons.needs_rules import GATES
+    from orch.model import types, visibility
+    from orch.model.policies import person_tokens
+
+    assert GATES == types.GATES  # one list of gates
+    hws.add_member("maria", "maintainer")
+    hws.add_member("vera", "viewer")
+    uid = hws.new_ticket("t")
+    hws.store.append(
+        hws.person_event(hws.owner, uid, "people.changed", role="watchers", add=[hws.people["maria"].ref], remove=[]),
+        log=uid,
+    )
+    hws.store.append(
+        hws.person_event(hws.owner, uid, "visibility.changed", visibility={"restricted": [hws.owner.ref]}), log=uid
+    )
+    hws.store.refresh()
+    core, view, wsv = hws.store.state._core, hws.store.ticket(uid), hws.store.state.workspace
+    for person in (*wsv.members, "p_" + "0" * 32):
+        assert adapter.tokens(wsv, view, person) == person_tokens(core.ws, core.tickets[uid], person), person
+        assert adapter._can_see(wsv, view, person) == visibility.can_see(core.ws, core.tickets[uid], person), person

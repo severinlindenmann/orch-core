@@ -1,6 +1,8 @@
 """The out-of-process addon runner: JSON-RPC 2.0 over stdio, one process per call (ticket-format §8.1).
 
 Nothing in P1 calls this (A5: addons run from P2), but the boundary is built and tested now so that P2 only wires it.
+P2 wires it as: ``call`` for a workspace-visible ticket, then ``Registry.check_proposal`` on the result, then the host
+builds, validates (``Registry.check_write``) and signs the events itself.
 
 What the host guarantees, each point pinned by ``tests/addons/test_runner.py``:
 
@@ -14,11 +16,19 @@ What the host guarantees, each point pinned by ``tests/addons/test_runner.py``:
   stderr is capped and never interpreted. A crash, a timeout, too much output, a second line, malformed or extra
   keys, a wrong id: an error of the call, nothing applied.
 * **A deadline.** The whole call, including startup, is bounded; the process group is killed at the end of every call.
+  A process that leaves its group (``setsid``, a double fork) is **not** tracked and outlives the call; killing every
+  process of the addon needs its own UID or a cgroup, which is a P2 requirement (ticket-format §8.1).
+* **Bound to the grant.** The command, the capabilities and the manifest come from the package bytes that match the
+  signed ``addon.granted`` (digest, name, version, capabilities), never from a separately passed manifest. The
+  request carries only the ticket's key, type, status and this addon's own fields, and only for a ticket whose
+  visibility is ``workspace``.
 * **Proposals only.** The result is checked by :meth:`orch.addons.registry.Registry.check_proposal`; the addon holds
   no key and appends nothing.
 
 Process limits (CPU time, file size, no core files) are defence in depth, **not a sandbox**: until the P2 host runs
-addons under their own UID, an addon is trusted to the degree the owner trusts its package (ticket-format §8.1).
+addons under their own UID, an addon is trusted to the degree the owner trusts its package. In particular "no addon
+holds a key" (core §4) is true only once the addon's UID cannot read the host's key store; in the same UID it is not
+(ticket-format §8.1).
 """
 
 from __future__ import annotations
@@ -29,6 +39,7 @@ import selectors
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 from collections.abc import Mapping, Sequence
@@ -36,8 +47,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from orch import canon
-from orch.addons.manifest import Manifest
-from orch.addons.package import Package, PackageError, check_path, package_digest, read_package
+from orch.addons.manifest import ManifestError, load_manifest
+from orch.addons.package import MANIFEST_FILE, Package, PackageError, check_path, package_digest, read_package
+from orch.model.types import Addon
 
 __all__ = ["Limits", "RunnerError", "call", "child_env"]
 
@@ -107,19 +119,16 @@ def _stage(package: Package, root: str) -> str:
     return pkg
 
 
-def _limits_hook(cpu: int):  # type: ignore[no-untyped-def]
-    def hook() -> None:  # runs in the child between fork and exec
-        import resource
-
-        for which, value in (
-            (resource.RLIMIT_CORE, 0),
-            (resource.RLIMIT_FSIZE, 1 << 20),
-            (resource.RLIMIT_CPU, cpu),
-        ):
-            with contextlib.suppress(ValueError, OSError):
-                resource.setrlimit(which, (value, value))
-
-    return hook
+_TRAMPOLINE = """
+import os, resource, sys
+cpu, exe = int(sys.argv[1]), sys.argv[2]
+for which, value in ((resource.RLIMIT_CORE, 0), (resource.RLIMIT_FSIZE, 1 << 20), (resource.RLIMIT_CPU, cpu)):
+    try:
+        resource.setrlimit(which, (value, value))
+    except (ValueError, OSError):
+        pass
+os.execv(exe, sys.argv[2:])
+"""
 
 
 def _kill(proc: subprocess.Popen[bytes]) -> None:
@@ -143,23 +152,51 @@ def _rmtree(path: str) -> None:
     shutil.rmtree(path, onerror=fix)
 
 
+def _own_fields(ticket: Any, name: str) -> dict[str, Any]:
+    f = ticket.fields.get("addons", {}).get(name, {}) if hasattr(ticket, "fields") else {}
+
+    def plain(v: Any) -> Any:
+        if isinstance(v, Mapping):
+            return {k: plain(x) for k, x in v.items()}
+        if isinstance(v, tuple | list):
+            return [plain(x) for x in v]
+        return v
+
+    return plain(f)
+
+
 def call(
     package: Package,
-    manifest: Manifest,
+    granted: Addon,
     *,
-    granted_digest: str,
     trigger: str,
-    ticket: Mapping[str, Any],
+    ticket: Any,
     limits: Limits | None = None,
 ) -> Any:
     """Run the addon once with method ``propose`` and return the ``result`` of its response (validate it with
-    ``Registry.check_proposal``). Raises :class:`RunnerError`."""
+    ``Registry.check_proposal``). ``granted`` is the replayed grant; ``ticket`` is a ``TicketView``, of which only the
+    key, type, status and this addon's own fields are sent. Raises :class:`RunnerError`."""
+    if not granted.enabled or granted.purged:
+        raise RunnerError("addon.inactive", "the addon is disabled or purged")
+    if ticket.visibility != "workspace":
+        raise RunnerError("addon.not_visible", "an addon is run only for a ticket every member can see")
     try:
         digest = package_digest(package.files)  # recomputed: the digest field of a Package is never trusted
     except PackageError:
         raise RunnerError("addon.digest_mismatch", "the package is empty") from None
-    if digest != granted_digest:
+    if digest != granted.package_sha256 or MANIFEST_FILE not in package.files:
         raise RunnerError("addon.digest_mismatch", "the package is not the one that was granted")
+    try:
+        manifest = load_manifest(package.files[MANIFEST_FILE])
+    except ManifestError:
+        raise RunnerError("addon.digest_mismatch", "the granted package has no valid manifest") from None
+    if (manifest.name, manifest.version, manifest.capabilities) != (
+        granted.name,
+        granted.version,
+        sorted(granted.capabilities),
+    ):
+        raise RunnerError("addon.digest_mismatch", "the manifest is not the one that was granted")
+    granted_digest = granted.package_sha256
     try:
         request = canon.dumps(
             {
@@ -167,11 +204,16 @@ def call(
                 "id": 1,
                 "method": "propose",
                 "params": {
-                    "addon": manifest.name,
-                    "version": manifest.version,
-                    "capabilities": manifest.capabilities,
+                    "addon": granted.name,
+                    "version": granted.version,
+                    "capabilities": sorted(granted.capabilities),
                     "trigger": trigger,
-                    "ticket": dict(ticket),
+                    "ticket": {
+                        "key": ticket.key,
+                        "type": ticket.type,
+                        "status": ticket.status,
+                        "fields": _own_fields(ticket, granted.name),
+                    },
                 },
             }
         )
@@ -189,8 +231,8 @@ def call(
         os.chmod(root, 0o700)
         try:
             pkg = _stage(package, root)
-        except PackageError as e:
-            raise RunnerError("addon.digest_mismatch", f"the package is not stageable: {e}") from None
+        except (PackageError, OSError) as e:
+            raise RunnerError("addon.digest_mismatch", f"the package is not stageable: {type(e).__name__}") from None
         work = os.path.join(root, "work")
         os.mkdir(work, 0o700)
         try:
@@ -198,15 +240,16 @@ def call(
                 raise RunnerError("addon.digest_mismatch", "the staged copy differs from the granted package")
         except PackageError:
             raise RunnerError("addon.digest_mismatch", "the staged copy is not a valid package") from None
-        env = child_env(manifest.name, manifest.capabilities, work, pkg)
+        env = child_env(granted.name, sorted(granted.capabilities), work, pkg)
         argv = [a.replace("{pkg}", pkg) for a in manifest.entry_cmd]
         exe = argv[0] if os.sep in argv[0] else shutil.which(argv[0], path=PATH)
         if exe is None:
             raise RunnerError("addon.start_failed", "the command is not found")
         argv[0] = exe
         try:
+            # a trampoline sets the resource limits and execs the command: no ``preexec_fn`` (unsafe in a threaded host)
             proc = subprocess.Popen(  # noqa: S603  (argv comes from the granted manifest, no shell)
-                argv,
+                [sys.executable, "-I", "-S", "-c", _TRAMPOLINE, str(int(limits.timeout) + 2), *argv],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -214,12 +257,11 @@ def call(
                 env=env,
                 close_fds=True,
                 start_new_session=True,
-                preexec_fn=_limits_hook(int(limits.timeout) + 2),  # noqa: PLW1509
             )
         except (OSError, ValueError):
             raise RunnerError("addon.start_failed", "the process did not start") from None
         out, err, overflow = _converse(proc, request, deadline, limits)
-        _kill(proc)  # stragglers of the group never outlive the call
+        _kill(proc)  # the group is killed; a process that left it (setsid) is not tracked in P1
         if overflow == "timeout":
             raise RunnerError("addon.timeout", f"no complete answer within {limits.timeout:g} s", _text(err))
         if overflow == "output":

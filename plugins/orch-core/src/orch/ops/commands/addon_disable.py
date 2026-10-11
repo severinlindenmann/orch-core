@@ -14,6 +14,15 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     name = args["name"]
     if name not in h.store.state.workspace.addons:
         raise OrchError("not_found", "no such addon was granted", hint="orch addon list")
+    a = h.store.state.workspace.addons[name]
+    if not a["enabled"]:  # already disabled or purged: nothing to sign
+        state = "purged" if a["purged"] else "disabled"
+        return Result(
+            data={"name": name},
+            seq=h.store.head_seq("workspace"),
+            lines=[f"already {state}: nothing signed"],
+            hints=["orch addon list"],
+        )
     done = h.run({"type": "addon.disabled", "name": name}, "workspace", "disable addon " + name)
     return h.workspace_result(done, {"name": name}, "orch addon list")
 

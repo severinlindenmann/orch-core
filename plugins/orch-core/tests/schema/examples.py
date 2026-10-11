@@ -459,10 +459,12 @@ _SPEC = {
             "version": "1.2.0",
             "package_sha256": digest("pkg"),
             "capabilities": ["serve_http"],
-            "binds": {
-                "fields": {"points": ["plan"]},
-                "sections": [{"id": "estimate.notes", "gate": ["plan"], "types": ["feature", "bug"]}],
+            "fields": {
+                "points": {"type": "integer", "min": 0, "max": 100, "set_by": ["owner", "agent"], "gate": ["plan"]},
+                "note": {"type": "string", "set_by": ["addon"]},
             },
+            "sections": [{"id": "estimate.notes", "types": ["feature", "bug"], "gate": ["plan"]}],
+            "artifact_kinds": ["chart"],
         },
         5,
     ),

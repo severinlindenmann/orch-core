@@ -481,7 +481,7 @@ agent; **D** an addon; **H** the host only. Types marked D58–D60 are new with 
 | `settings.changed` | P | `set`: {`grant_hours?`: int 1–24, `claim_ttl_min?`: int 15–1440, `lease_ttl_min?`: int 5–1440, `repos?`: {repo name: {`path`: str} or null}} | **D60** (`grant_hours`). Existing grants keep their end time. `null` removes a repo. Refused when two repos resolve to the same path. |
 | `grant.issued` | P | `grant`: grant id; `scope`: `all` or `workable`; `verbs`: `"agent"` or [operation name]; `issued_at`: timestamp; `hours`: int; `expires_at`: timestamp; `secret_hash`: hash; `label?`: str | **D60** terms in §10.1 A3. Always for the signer. Readers check `\|at − issued_at\| ≤ 300 s`, `expires_at == issued_at + 3600·hours` (seconds, no leap seconds) and the role terms at the event's position. |
 | `grant.revoked` | P | `grant`; `reason?`: str | **D60.** |
-| `addon.granted` | P | `name`: addon name; `version`: str; `package_sha256`: hash; `capabilities`: [token]; `binds`: {`fields`: {field: [gate]}, `sections`: [{`id`, `gate`: [gate], `types`: [ticket type]}]} | Owner only. Also enables the addon. The host checks `binds` against the package's manifest; replay uses only `binds`. |
+| `addon.granted` | P | `name`: addon name; `version`: str; `package_sha256`: hash; `capabilities`: [token]; `fields`: {field: {`type`, its limits, `set_by`, `gate`?}}; `sections`: [{`id`, `types`, `gate`?}]; `artifact_kinds`: [kind] | Owner only. Also enables the addon. The host derives `fields`, `sections` and `artifact_kinds` from the package's manifest (§8.1); replay never reads the manifest and checks every later addon write against these three (§8.1). The bindings of §5.7 are the entries that have `gate`. |
 | `addon.disabled` | P | `name` | Data stays untouched. A new `addon.granted` enables it again. |
 | `addon.purged` | P | `name` | Deletes the addon's data. |
 
@@ -575,7 +575,7 @@ the field it belongs to; no code looks a hash up by value alone.
 ### 5.7 Gates
 
 **Gates.** The core has four, in this order: `requirements`, `plan`, `verify`, `code`. Addons can't add gates;
-their fields and sections join one of these (`binds`). In `binds`, a section is always named in full as `<addon>.<token>`.
+their fields and sections join one of these (the `gate` of a field or section in `addon.granted`, called its binding below). A section is always named in full as `<addon>.<token>`.
 
 **Policy** (workspace default and ticket override). Every policy object, workspace or override, has all five keys:
 
@@ -604,13 +604,13 @@ their fields and sections join one of these (`binds`). In `binds`, a section is 
 
 | Gate | `bound(g)` |
 |---|---|
-| `requirements` | `ticket.type`, `ticket.size`, `ticket.acceptance`, `body.summary`, `body.context`, `body.requirements`, `body.out_of_scope`, addon paths per `binds` |
-| `plan` | all of `requirements` plus `ticket.tasks`, `body.plan`, `body.decisions`, addon paths per `binds` |
-| `verify` | `ticket.type`, `ticket.size`, `ticket.acceptance`, `ticket.links`, `body.verification`, `body.findings`, addon paths per `binds` |
+| `requirements` | `ticket.type`, `ticket.size`, `ticket.acceptance`, `body.summary`, `body.context`, `body.requirements`, `body.out_of_scope`, addon paths per binding |
+| `plan` | all of `requirements` plus `ticket.tasks`, `body.plan`, `body.decisions`, addon paths per binding |
+| `verify` | `ticket.type`, `ticket.size`, `ticket.acceptance`, `ticket.links`, `body.verification`, `body.findings`, addon paths per binding |
 | `code` | `ticket.type`, `ticket.size`, `ticket.acceptance`, `ticket.links` |
 
 Not bound by any gate, so never presented as approved: `title`, `priority`, `labels`, `parent`, `blocked_by`, `due`,
-`visibility`, questions (also `why` and `recommended`), Current state, and addon fields no `binds` names.
+`visibility`, questions (also `why` and `recommended`), Current state, and addon fields without a binding.
 
 **Generations.** Each gate `g` of a ticket has a generation, starting at 0. The events in this table raise it **in
 every status**. **An event raises a gate by at most 1, however many rows match** (when `g` applies):
@@ -624,7 +624,7 @@ every status**. **An event raises a gate by at most 1, however many rows match**
 | `branch.pushed` | `verify`, `code` |
 | `people.changed` for a role named in `g`'s effective policy (or `assignees` when `independent`) | `g` |
 | `policy.changed` (ticket or workspace) whose `gates` names `g` | `g` |
-| `addon.granted`, `addon.disabled`, `addon.purged` whose old or new `binds` names `g` | `g` |
+| `addon.granted`, `addon.disabled`, `addon.purged` with an old or new binding to `g` | `g` |
 | `member.removed`, `role.changed`, `device.revoked` (`compromised`) that voids a counting decision of `g` | `g` |
 | `gate.changes_requested` on `g` or an earlier gate; `verdict.given` `fail` | `g` and every later gate |
 | `ticket.reopened`, `restore` | every gate |
@@ -650,8 +650,8 @@ one). Every value comes from the logs, so any reader can rebuild `G`:
 | `schema` | `"orch.ticket/2"` |
 | `hash_v` | `1` |
 | `sections` | {section id: section hash} for each section of the gate (table below) that this ticket's type has; the hash of `""` when it is missing. The prompt shows the text and checks it against the hash. |
-| `fields` | `{"ticket_type", "size", "acceptance": [{id, text}], "links", "addons": {addon: {field: value}}}`; `links` is `ticket.links` for `verify` and `code`, `null` otherwise; `addons` holds the fields whose `binds` names this gate, a missing value as `null`; `{}` when none |
-| `addon_packages` | {addon: `package_sha256`} for every addon that is granted, not disabled and not purged, and whose `binds` names this gate for a field, or for a section of this ticket's type; `{}` when none |
+| `fields` | `{"ticket_type", "size", "acceptance": [{id, text}], "links", "addons": {addon: {field: value}}}`; `links` is `ticket.links` for `verify` and `code`, `null` otherwise; `addons` holds the fields bound to this gate, a missing value as `null`; `{}` when none |
+| `addon_packages` | {addon: `package_sha256`} for every addon that is granted, not disabled and not purged, and that has a field bound to this gate, or a section of this ticket's type bound to it; `{}` when none |
 | `tasks` | plan gate: `[{id, text, verify, proves}]` in `ticket.json` order; every other gate: `[]` |
 | `artifacts` | {name: {`kind`, `digest`, `ac`, `task`}} (`ac`, `task` `null` when absent): for `requirements` and `plan` the file artifacts named in the `refs` of the gate's sections; for `verify` every file artifact in the manifest; for `code` `{}` |
 | `receipts` | `verify`: {task id: {`event`, `repo`, `commit`, `exit`}} from the latest `task.done` of each task that is currently done and has a receipt; every other gate: `{}` |
@@ -869,7 +869,8 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
 - **Rules replay also checks** (C4, #347):
   - The last owner can't be removed or demoted (`members.last_owner`).
   - A viewer can't write, except answers addressed to them and device events.
-  - `binds.fields` keys belong to the addon named in the same event.
+  - The `fields`, `sections` and `artifact_kinds` of `addon.granted` belong to the addon named in the same event (sections are `<name>.<token>`).
+  - An addon write is checked against the grant (§8.1); the refusal codes are in §10.4a.
   - `links.repos` must be in `settings.repos`. A stale repo (one no longer in `settings.repos`) blocks only edits that
     touch links.
   - The initial workspace policies are the §2 config defaults.
@@ -1001,8 +1002,8 @@ Rules:
 | `artifact_kinds[]` | `{kind: token, label: str}`; a core kind name is refused |
 | `capabilities` | tokens from a closed list: `serve_http`, `spawn_agent`, `pty`, `network`, `git_push` |
 
-The host derives `addon.granted` `binds` (§5.4.2) from `fields.*.gate` and `sections[].gate`/`types`; replay uses
-only `binds`, never the manifest.
+The host derives `addon.granted` (§5.4.2) from the manifest's `fields` (without `show` and `filter`), `sections` and
+`artifact_kinds`; replay uses only that event, never the manifest.
 
 C9 settles the `needs` language, the package digest and the runner (§8.1). `cli` and `skills` stay out of P1: a
 manifest that has them is accepted only with the keys empty, and their shapes come with addon execution in P2.
@@ -1017,49 +1018,83 @@ trusted from the package.
 `name` in the manifest equals the directory name. The host reads the package once into memory and derives everything
 from those bytes. Rules (a violation refuses the whole package):
 - only regular files and directories: a symbolic link, a hard link (link count above 1), a device, a socket or a
-  pipe is refused, and so is a package directory that is itself a symbolic link;
+  pipe is refused, and so is a package directory that is itself a symbolic link, or `addons/` being one (both are
+  opened without following a link, and the package is read relative to the `addons/` descriptor);
 - every path segment matches `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$` and is not `__pycache__` (so no hidden file, no
-  `..`, no absolute path, no non-ASCII name); at most 6 levels, 256 files, 4 MiB per file, 16 MiB in all, and
+  `..`, no absolute path, no non-ASCII name, and no LF, space or backslash), and two names of one directory are not
+  equal when case is ignored (they would collide on some file systems);
+- at most 6 levels, 256 entries (files and directories together), 4 MiB per file, 16 MiB in all, and
   `orch-addon.json` at most 64 KiB;
+- no compiled files: names ending in `.pyc`, `.pyo`, `.so`, `.dylib`, `.dll` or `.pyd` are refused, so that what the
+  owner is asked to approve can be read;
 - the manifest is strict JSON (§11.3) and valid against `orch.addon/2`.
 
 **Package digest.** `package_sha256` is `sha256:` plus the SHA-256 of the UTF-8 text made of one line per file, in
 byte order of the path: the file's SHA-256 in 64 lower-case hex, two spaces, the path with `/` separators, LF. (It
 is what `find . -type f | sed 's|^\./||' | LC_ALL=C sort | xargs sha256sum | sha256sum` prints for a package that
-follows the rules.) It binds every byte of the package, the manifest included. An empty package is refused.
+follows the rules.) It binds every byte of the package, the manifest included. An empty package is refused. The
+listing is unambiguous only because names can't contain LF, space or backslash; empty directories and modes are not
+part of it. Any relaxation of the name rules changes the digest definition. Staged files are read-only and not
+executable, so `entry.cmd[0]` is a program found on `PATH` or an absolute path, never a file of the package.
 
-**Grant.** `orch addon grant NAME` (a person, owner only, user presence) builds the `addon.granted` event from the package
-bytes it read: `version` and `capabilities` are the manifest's (the owner grants exactly what the manifest declares,
-sorted, never a subset, and the signing prompt shows them), `package_sha256` is the digest above and `binds` is
-derived from the manifest (`fields.*.gate`; `sections[].gate` with `types`, each section named `<name>.<id>`).
-Replay uses only the event. A new version, a changed byte or a changed capability is a new grant. `orch addon disable` and
-`orch addon purge` name an addon that was granted. **Purge** removes the addon's data from the derived state of every
-ticket (`ticket.addons.<name>` and the sections `<name>.*`); the events stay, as they always do. A later
-`addon.granted` of the same name starts empty. A write to a field or section of a disabled or purged addon is
-refused as an unknown addon (§10.4a).
+**Grant.** `orch addon grant NAME` (a person, owner only, user presence) builds the `addon.granted` event from the
+package bytes it read. `version` and `capabilities` are the manifest's (the owner grants exactly what the manifest
+declares, sorted, never a subset). `fields` are the manifest's fields without `show` and `filter` (type, limits,
+`set_by`, `gate`), `sections` are all its sections named `<name>.<id>` with their `types` (and `gate` when it has
+one), `artifact_kinds` its kinds, all sorted. `package_sha256` is the digest above. Replay uses only the event, never
+a manifest. A new version, a changed byte or a changed capability is a new grant.
 
-**Inactive data.** The data of a disabled addon stays as written and is shown as inactive, never as live: it is not
-bound by a gate (§5.7), is not an input of any `needs` rule, and is never counted (no total, filter or "waiting").
-Data of an addon that was never granted is shown as `unknown`.
+Before the passphrase the owner reads, on the terminal, and types the addon's name to go on: the version, the full
+package digest, `entry.cmd`, the capabilities, the `agents_md` line as an agent would see it, the `needs` rules'
+`for` and `text`, every field with its type, `set_by` and bindings, the sections and kinds, and on a re-grant the
+previous version and digest and what changed in capabilities, fields, sections and kinds (a new digest with nothing
+else changed is said to be the package bytes only). Text from the package is shown as escaped printable ASCII.
+`orch addon grant` refuses a section heading whose key (below) equals the key of a heading of another granted addon.
 
-**Registration.** From a granted, enabled manifest whose package digest still equals the granted one: the fields
-(`ticket.addons.<name>.<field>`), the sections (`<name>.<id>`, with the manifest's heading and place) and the
-artifact kinds (an addon artifact always carries its `addon`, so kinds never collide). A package whose digest differs
-from the grant registers nothing (the host says "changed since granted"). A write to a field is checked per actor
-against `set_by` (§5.2): `agent` an agent with a grant, `addon` that addon only, a human token a signed person event
-of a person who holds that token; and against the field's type and limits (§8 table). Only leaf paths exist (the
-schema allows nothing else), and ids are prefixed by the addon name, so two addons never share a field or section.
+**Replay checks every addon write against the grant.** An event that sets `ticket.addons.<a>.<f>` is refused unless
+`a` is granted, enabled and not purged (an unknown addon), `f` is declared in the grant's `fields` (an unknown field),
+the value is valid for its declared type and limits (§8 table; `null` clears) (an invalid value), and the actor
+matches `set_by` at the event's position: an agent needs `agent` and a grant, an addon needs `addon` and its own name
+as `actor.id` (an addon actor is refused in P1), a person needs to hold one of the tokens on that ticket (§5.9; the
+tokens `agent` and `addon` are never held by a person), and the host writes no addon field. An addon section is
+refused unless the grant declares it for the ticket's type, and an addon artifact unless its `kind` is in
+`artifact_kinds`. The codes are in §10.4a. The host calls the same function before it appends. The gate hash binds
+only the declarations that have a `gate` (§5.7).
 
-**`agents_md`.** `""` or one line of 1 to 200 characters that passes the text rules (§11.3), has no invisible
-character and does not start with `#`, a backtick, `-`, `>` or `|`. It is a hint for agents, to be shown after the
-core lines of `AGENTS.orch.md` (one line per addon, addons by name, within the 25-line limit). It is part of the
-package, so only a grant makes it effective. P1 validates the key; `instructions sync` adds the lines when addons run
-(P2).
+**Disable, purge, re-grant.** `orch addon disable` and `orch addon purge` name an addon that was granted, and
+sign nothing when it is already in that state (`already disabled`, `already purged`). A disabled addon's data stays
+as written and is shown as inactive. **Purge** removes the addon's data from the derived state of every ticket: its
+fields, its sections and its artifacts (events stay, as they always do), and says how many. A **re-grant** (also after
+a disable) drops, from the derived state, every stored value that the new grant does not declare or that is not valid
+under it (type, limits, a section no longer declared for the ticket's type), so a changed type never revives as a live
+value; values that still fit stay. Addon artifacts of a disabled addon stay and are shown as inactive. A package whose
+digest is not the granted one is `changed`: it registers nothing and is never run (`orch addon list` says so and names
+the re-grant).
+
+**Inactive data.** The data of a disabled addon is not bound by a gate (§5.7), is not an input of any `needs` rule,
+and is never counted (no total, filter or "waiting"). Data of an addon that was never granted is shown as `unknown`.
+
+**Registration.** From a granted, enabled addon whose package digest still equals the granted one: the fields, sections
+and artifact kinds come from the **grant**; the section headings and places, the `needs` rules and `agents_md` come
+from the manifest (checked against the digest). A section heading is ASCII, at most 40 characters, `^[A-Za-z0-9](?:[A-Za-z0-9,&/'-]| (?! ))*$`.
+Its key, the heading casefolded with every character other than a letter or digit removed, must differ from the key of
+every core heading and of every other heading of the manifest, and `orch addon grant` refuses a key equal to one of
+another granted addon (the body parser needs headings that differ). An addon artifact always carries its `addon`, so
+kinds never collide. A write is checked as above; ids are prefixed by the addon name, so two addons never share a
+field or section.
+
+**`agents_md`.** `""` or one line of 1 to 200 printable ASCII characters (U+0020 to U+007E), starting with a letter or
+digit, not starting with digits followed by `.` or `)` and a space, and with none of `<`, `>`, `[`, `]`, `` ` ``, `*`
+or `|`. The host never writes it verbatim: it renders it as `- addon <name> (hint, grants nothing): <line>`, after the
+core lines of `AGENTS.orch.md` (one line per addon, addons by name, within the 25-line limit), and `orch addon grant`
+shows it as it will read. It is part of the package, so only a grant makes it effective, and it grants nothing: an
+agent keeps the capabilities its own grant has. P1 validates the key; `instructions sync` adds the lines when addons
+run (P2).
 
 **`needs`.** A list of at most 16 rules `{"id": token, "when": EXPR, "who": [approver token, …], "text": line ≤ 120}`
 with unique `id`. A rule fires for a ticket when `EXPR` evaluates to `true`: it makes one "needs you" entry with ref
-`<name>.<id>` for each person who holds one of the `who` tokens on that ticket (§5.9), and has no effect on any core
-state, gate or status. Rules of an inactive addon are not evaluated.
+`<name>.<id>` for each person who holds one of the `who` tokens on that ticket (§5.9) and can see it (§9), and has no
+effect on any core state, gate or status. Rules of an inactive addon are not evaluated.
 
 `EXPR` is JSON, never text, so there is nothing to parse and no code to run:
 - literals: a string, an integer, `true`, `false`, `null`;
@@ -1069,13 +1104,16 @@ state, gate or status. Rules of an inactive addon are not evaluated.
 - `["gate", G]`, `G` a core gate: whether its current hash has been approved (bool);
 - `["field", NAME]`: the value of this addon's own field `NAME`, `null` when unset (an addon cannot read another
   addon's fields);
-- `["and", E, …]`, `["or", E, …]` (one or more operands), `["not", E]`;
+- `["and", E, …]`, `["or", E, …]` (one or more operands), `["not", E]`; an operand must be able to be true or false
+  (a boolean literal, a comparison, `gate`, `blocked`, or a boolean field), which is checked when the manifest loads;
 - `["eq", A, B]`, `["ne", A, B]` (same type and value; lists element by element);
 - `["lt", A, B]`, `["le", A, B]`, `["gt", A, B]`, `["ge", A, B]` (both integers, else `false`);
 - `["in", A, B, …]` (A equals one of the following operands); `["has", L, V]` (L is a list that contains V, else
   `false`); `["is_null", E]`.
 
-Checked when the manifest is loaded: depth at most 6 and at most 40 nodes, every operator and variable known, arity
+Limits, counted one way by the validator and the evaluator: the top expression is level 1 and an operand is one level
+below its operator; a list at level 6 is refused. Every literal, a `var`, `gate` or `field` name included, is a node,
+and more than 40 nodes are refused. Also checked when the manifest loads: every operator and variable known, arity
 right, `var`, `gate` and `field` names literal, `field` names a field of this manifest, strings at most 200
 characters, integers within ±(2^53−1). Evaluated: the evaluator is total and deterministic. It never raises and never
 loops (it re-checks depth and node count itself and gives `false` beyond them); a value of the wrong type makes the
@@ -1084,28 +1122,44 @@ operator `false`; `and`, `or` and `not` treat a non-boolean operand as `false`; 
 
 **Runner (from P2; the code exists in P1 and is tested, nothing calls it).** One process per call, JSON-RPC 2.0, one
 line each way on stdin and stdout, UTF-8 JSON in the strict subset (§11.3). The host:
-- stages a **private copy** of the package (read-only), checks the digest of the copy against the granted
-  `package_sha256` (a mismatch refuses to start), and starts `entry.cmd` (`{pkg}` in an argument is replaced by the
-  staged path) in a new process group, from an empty working directory of its own that is deleted afterwards;
+- takes the grant (`addon.granted` as replayed) and the package, recomputes the package digest from the bytes and
+  requires it to equal the granted one, parses the manifest **from those bytes**, and requires its name, version and
+  capabilities to equal the grant's; the command, the capabilities and `ORCH_ADDON_CAPABILITIES` come from nothing
+  else. A disabled, purged or changed addon is never run;
+- runs it only for a ticket whose visibility is `workspace` (like unattended events, §5.2): an owner is not
+  necessarily on a restricted ticket's list;
+- stages a **private copy** of the package (read-only), checks the digest of the copy against the grant, and starts
+  `entry.cmd` (`{pkg}` in an argument is replaced by the staged path) in a new session and process group, from an
+  empty working directory of its own that is deleted afterwards. The staged copy is owned by the host and is
+  readable, not writable, by the addon's UID;
 - gives it an environment of only `PATH`, `LANG`, `HOME` and `TMPDIR` (the working directory),
   `PYTHONDONTWRITEBYTECODE`, `PYTHONPATH` (the staged package), `ORCH_ADDON` (its name) and
   `ORCH_ADDON_CAPABILITIES`; never `ORCH_GRANT`, never a key, a token or any other variable of the host; every other
   file descriptor is closed;
 - sends one request `{"jsonrpc":"2.0","id":1,"method":"propose","params":{"addon","version","capabilities","trigger","ticket"}}`
-  (`ticket`: `key`, `type`, `status` and this addon's own fields only) and reads one response line of at most
-  256 KiB (stderr at most 16 KiB, kept for the log, never shown as instructions); the whole call has a deadline
-  (default 10 s, at most 60 s) after which the process group is killed. A crash, a non-zero exit, a second line,
-  output beyond the cap, malformed or extra-keyed JSON, a wrong `id`, or both or neither of `result` and `error` is
-  an error of the call and nothing is applied;
+  where `ticket` is built by the runner from the ticket view: `key`, `type`, `status` and `fields`, which is this
+  addon's own fields only, nothing else. It reads one response line of at most 256 KiB (stderr at most 16 KiB, kept
+  for the log, never shown as instructions); the whole call has a deadline (default 10 s, at most 60 s) after which
+  the process group is killed. A crash, a non-zero exit, a second line, output beyond the cap, malformed or
+  extra-keyed JSON, a wrong `id`, or both or neither of `result` and `error` is an error of the call and nothing is
+  applied;
 - accepts `result` only as `{"set": {FIELD: value}, "sections": {ID: text}, "artifacts": [{"kind","name","ref"}]}`:
-  `FIELD` names a manifest field whose `set_by` has `addon` and whose value is valid for its type; `ID` a manifest
-  section whose `types` has the ticket's type; `kind` a manifest artifact kind. The result is a **proposal**: the
-  host validates it and builds and signs the events itself (actor `addon`, `ticket.updated` of leaf paths; P2); the
-  addon never sees a key, never appends, and cannot name a core event type, a core path or another addon's path.
+  `FIELD` names a field of the grant whose `set_by` has `addon` and whose value is valid for it; `ID` a section of the
+  grant for the ticket's type; `kind` a kind of the grant. The result is a **proposal**: the host validates it and
+  builds and signs the events itself (actor `addon`, `ticket.updated` of leaf paths; P2); the addon never appends,
+  and cannot name a core event type, a core path or another addon's path.
+
+What the runner does not do, and what P2 must have before it calls the runner:
+- **Process tracking.** A process that leaves its group (`setsid`, a double fork) is not tracked in P1 and outlives
+  the call. Killing every process of the addon (its own UID, a cgroup or a job object) is a P2 requirement; no P2
+  code calls the runner before it exists.
+- **No key in reach.** "No addon holds a key" (core §4) holds only once addons run under a UID that cannot read the
+  host's key store. In the same UID as the host it is false, whatever the environment says.
 - Capabilities are recorded and shown in P1; `serve_http`, `network`, `pty`, `spawn_agent` and `git_push` are
   enforced by the P2 host (agent UID and sandbox, §4). The runner's process limits (CPU time, file size, no core
-  files, a closed environment) are defence in depth and not a sandbox: until P2 an addon is trusted to the degree the
-  owner trusts its package. `pty` is never granted to agents.
+  files, set by a small exec trampoline before the command starts) and its closed environment are defence in depth
+  and not a sandbox: until P2 an addon is trusted to the degree the owner trusts its package. `pty` is never granted
+  to agents.
 
 The first-party addons (dashboard, terminals, worktrees, quick tasks, widgets, records, activity, start agent,
 publish, github, estimate, usage, wiki) live in the orch-core repo under `addons/` and use the same API as every
@@ -1313,6 +1367,8 @@ these codes; they are the stable `error.code` strings of §10.4 for these refusa
 | `unattended.denied` | §5.2 an unattended event outside what unattended agents may do |
 | `settings.invalid` | §5.4.2 two repos resolve to the same path |
 | `addon.unknown` | §5.4.2 the addon is not granted or not enabled |
+| `addon.field_unknown` | §8.1 the field is not declared in the addon's grant |
+| `addon.value_invalid` | §8.1 the value is not valid for the declared field type and limits |
 | `ticket.unknown` | §5.4.1 the ticket log has no `ticket.created` yet |
 | `ticket.exists` | §5.4.1 the ticket or its key already exists |
 | `ticket.frozen` | §5.7 bound edits, `artifact.*`, `task.*`, `claim.taken`, named-role `people.changed` on done or closed tickets |
@@ -1928,15 +1984,16 @@ A1–A20 (PR body), HO (dashboard handover, input only), D58–D60, the adversar
 | 132 | Echoed text and `fix.argv` (#346) | Echoed agent text escaped (`⟨U+…⟩`, C0/C1/ESC); JSON escapes C1, bidi and line separators; `fix.argv` starts with `orch` with clean elements, else `internal` (§10.4 item 11). | Terminal escape and bidi tricks in error output. |
 | 133 | Argument parsing rules (#346) | `--json`, `--help`, `-h` only before `--` and never as an option value; a scalar flag twice is a usage error; `ask --options` splits on commas with token-pattern options; `set` keys are title, priority, size, labels, due, links, parent, blocked_by (§10.3, §10.4 item 13). | Free text with commas or flag-like values must not change the command. |
 | 134 | Last owner, viewers, duplicate approvals (#347) | The last owner can't be removed or demoted (`members.last_owner`); a viewer writes only answers addressed to them and device events; a duplicate approval by one person counts once (§5.9, §5.11). | A workspace keeps an owner; counts are by person. |
-| 135 | Addon binds and repo links (#347) | `binds.fields` keys belong to the addon in the same event; `links.repos` must be in `settings.repos`, and a stale repo blocks only edits touching links (§5.11). | One addon can't bind another's fields; an old repo doesn't freeze unrelated edits. |
+| 135 | Addon grant contents and repo links (#347) | the grant's field, section and kind names belong to the addon in the same event; `links.repos` must be in `settings.repos`, and a stale repo blocks only edits touching links (§5.11). | One addon can't bind another's fields; an old repo doesn't freeze unrelated edits. |
 | 136 | Initial policies and merged order (#347) | Initial workspace policies are the §2 config defaults; merged order `(ws_seq, at, uid, seq)`; an append sorting before the last is refused (`chain.bad_ws_seq`) (§5.11). | A total order every reader computes the same way. |
 | 137 | Cross-ticket references (#347) | `parent`, `blocked_by`, `duplicate_of` must point to a ticket created earlier in merged order (§5.11). | No forward or dangling references on replay. |
 | 138 | Replay pin and Verifier interface (#347) | `replay` requires the expected workspace id and refuses a genesis that differs from the pin (`trust.genesis_mismatch`); `verify_person(event, context)`, `verify_host(event, *, log, wsk_pub, workspace_id)` (never from the event), `verify_embedded(event, *, pk_pub, device_cert=None)` (cert required for `device.revoked`) (§5.11). | The caller supplies the trust anchors; the event can't. |
 | 139 | Addon package and digest (C9) | A directory, strict file rules, `package_sha256` is the digest of a sorted `sha256sum`-style listing (§8.1, §5.6); the host reads the package once. | The digest must bind every byte, and a path trick or symlink must not read a file outside the package. |
-| 140 | Addon grant, purge, inactive data (C9) | The grant is exactly the manifest's capabilities; purge removes derived data; disabled data is inactive and never counted; a changed package registers nothing (§8.1). | The owner approves what runs; nothing live comes from an unapproved byte. |
+| 140 | Addon grant, purge, inactive data (C9) | The grant is exactly the manifest's capabilities and carries the declared fields (type, limits, `set_by`, `gate`), sections and artifact kinds; replay checks every addon write against it; purge removes derived fields, sections and artifacts; a re-grant drops values the new grant does not allow; disabled data is inactive and never counted; a changed package registers nothing and is never run (§8.1). | Replay, not only the host, must enforce who may write what (Opus R1); the owner approves what runs and what it may write. |
 | 141 | `needs` language (C9) | JSON expressions, closed variable list, total and deterministic, no effect on core state (§8.1). | No code execution and no parser; waiting lists never change a gate. |
-| 142 | `cli`, `skills` and `agents_md` (C9) | `cli` and `skills` stay empty-only until P2; `agents_md` is one validated line (§8.1). | Nothing is invented for features that do not run in P1. |
-| 143 | Runner (C9) | One process per call, JSON-RPC over stdio, private package copy, clean environment, caps and deadline, proposals only (§8.1). | An addon can propose values and nothing else. |
+| 142 | `cli`, `skills` and `agents_md` (C9) | `cli` and `skills` stay empty-only until P2; `agents_md` is one line of printable ASCII, rendered by the host with the addon's name, shown at grant (§8.1). | Nothing is invented for features that do not run in P1; an addon must not give hidden or structured instructions to agents that hold capabilities it lacks. |
+| 143 | Runner (C9) | One process per call, JSON-RPC over stdio, bound to the grant (manifest from the granted bytes), private package copy, clean environment, caps and deadline, workspace-visible tickets only, proposals only; process tracking and a separate UID are P2 requirements (§8.1). | An addon can propose values and nothing else, and the wording does not promise more than the code. |
+| 144 | Section headings (C9) | ASCII, with a key (casefold, letters and digits only) that differs from every core heading and every other granted addon's (§8.1). | Look-alike headings must not make `body.md` ambiguous or misleading. |
 Open after F1 (not settled here):
 
 - The P3 envelope for phone decisions (`evidence`); the `qid` mapping itself is settled (§5.6).

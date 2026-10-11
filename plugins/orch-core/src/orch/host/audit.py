@@ -121,6 +121,8 @@ def _import_tree(name: str) -> None:
     except ImportError:
         return
     for info in pkgutil.walk_packages(getattr(pkg, "__path__", []), name + "."):
+        if info.name.endswith(".__main__"):  # a script: importing it would run it (jsonschema's parses sys.argv)
+            continue
         try:
             importlib.import_module(info.name)
         except Exception:  # an optional backend that is not installed: nothing to preload

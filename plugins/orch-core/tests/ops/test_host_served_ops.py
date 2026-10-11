@@ -55,7 +55,7 @@ def test_served_ops_run_under_host_caps_and_the_hook(ws, cli, tmp_path):
         timeout=300,
         check=False,
     )
-    assert done.returncode == 0, done.stderr[-2000:]
+    assert done.returncode == 0, (done.stderr[-1500:], done.stdout[-500:])
     results = json.loads(done.stdout.split("RESULT", 1)[1])
     for argv, (_code, out, err) in results.items():
         assert "host audit" not in out + err, (argv, out, err)

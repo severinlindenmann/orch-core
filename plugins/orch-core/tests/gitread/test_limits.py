@@ -8,7 +8,7 @@ import zlib
 
 import pytest
 
-from orch.gitread import limits, local, objects, patch
+from orch.gitread import limits, local, objects, patchtext
 from orch.gitread.errors import Unavailable
 from orch.gitread.pinning import pin_repo
 from orch.gitread.repo import Repo
@@ -166,13 +166,13 @@ def test_changed_files_are_capped_while_walking(repo, monkeypatch):
     repo.commit()
     monkeypatch.setattr(limits, "DIFF_FILES_MAX", 5)
     rendered = []
-    real = patch._one
+    real = patchtext._one
 
     def spy(*a, **k):
         rendered.append(a[1])
         return real(*a, **k)
 
-    monkeypatch.setattr(patch, "_one", spy)
+    monkeypatch.setattr(patchtext, "_one", spy)
     got = local.diff(repo.path, branch="feat", default_branch=None)
     assert got["truncated"] is True and len(got["files"]) == 5 and len(rendered) == 5
 
@@ -183,7 +183,7 @@ def test_patch_text_is_not_kept_past_max_bytes(repo, monkeypatch):
         repo.write(f"n{i:02d}", "".join(f"{j}\n" for j in range(100)))
     repo.commit()
     kept = []
-    real = patch.render
+    real = patchtext.render
 
     def spy(*a, **k):
         text, files, cut = real(*a, **k)

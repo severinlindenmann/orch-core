@@ -18,7 +18,7 @@ from typing import Any
 from . import limits
 from .errors import Unavailable
 from .fs import RepoPins
-from .patch import diff_trees, render
+from .patchtext import diff_trees, render
 from .pinning import pin_repo
 from .repo import Repo
 

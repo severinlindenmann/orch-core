@@ -13,7 +13,7 @@ Modules (kept import-light: the child loads only what it needs):
 * :mod:`~orch.gitread.objects`: loose objects, pack v2 with idx v2, ofs and ref deltas, SHA-1 and SHA-256.
 * :mod:`~orch.gitread.refs`: ``HEAD``, loose and packed refs as git resolves them, the F7 refusals.
 * :mod:`~orch.gitread.repo`: one opened repository; commits, trees, merge base.
-* :mod:`~orch.gitread.xdiff`, :mod:`~orch.gitread.patch`: git's diff algorithm and its patch text.
+* :mod:`~orch.gitread.myers`, :mod:`~orch.gitread.patchtext`: a clean-room line diff and git-style patch text.
 * :mod:`~orch.gitread.pinning`: what a repo's gitdir and ``commondir`` are, once, at registration.
 * :mod:`~orch.gitread.ops`: the requests the child answers (``pin``, ``observe``, ``diff``).
 * :mod:`~orch.gitread.sandbox`: the child's limits and audit hook (profiles ``gitdir``, ``worktree``, ``pin``).

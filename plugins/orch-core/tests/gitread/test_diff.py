@@ -1,4 +1,6 @@
-"""``diff`` equals ``git diff --no-ext-diff --no-textconv --no-renames`` on fixtures (H3b1), and base/head follow
+"""``diff`` is a valid unified diff that ``git apply`` accepts and that reproduces the head exactly; on the simple
+fixtures it equals ``git diff --no-ext-diff --no-textconv --no-renames`` byte for byte (hunk placement may differ
+where git uses its own heuristics) (H3b1). Base/head follow
 section 0.8: head is the branch tip, base the merge base with the default branch (``main``, then ``master``), else
 the head's first parent, else ``observe.unavailable``."""
 
@@ -6,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import os
+import subprocess
 
 import pytest
 
@@ -15,6 +18,15 @@ from orch.gitread.errors import Unavailable
 from .conftest import Repo
 
 GIT_DIFF = ("diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--no-color")
+
+
+def _names(block: bytes, path: str) -> bool:
+    """The block is for ``path`` or for something under it (a pathspec names a directory too)."""
+    from orch.gitread.patchtext import quote_path
+
+    head = block.split(b"\n", 1)[0]
+    exact = b"diff --git " + quote_path(b"a/" + path.encode()) + b" "
+    return head.startswith(exact) or head.startswith(b"diff --git a/" + path.encode() + b"/")
 
 
 def patch_of(result: dict) -> bytes:
@@ -80,20 +92,67 @@ def build_fixture(r: Repo) -> tuple[str, str]:
     return base, head
 
 
+SIMPLE = [
+    "bin.dat", "bin_gone.dat", "new_bin.png", "mode.sh", "mode_and_text.sh", "deleted.txt", "new_empty.txt",
+    "empty_deleted.txt", "becomes_empty.txt", "from_empty.txt", "noeol.txt", "with space.txt", "café.txt",
+    'q"uote.txt', "dir/sub/b.txt", "dir/new/c.txt", "to_link", "link", "vendor/sub", "moved_from.txt",
+    "moved_to.txt", "file_to_dir",
+]  # fmt: skip
+
+
+def split_patch(patch: bytes) -> list[bytes]:
+    """The ``diff --git`` blocks (a content line always starts with a space, ``+``, ``-`` or a backslash)."""
+    blocks: list[bytes] = []
+    for line in patch.splitlines(keepends=True):
+        if line.startswith(b"diff --git "):
+            blocks.append(b"")
+        blocks[-1] += line
+    return blocks
+
+
+def apply_and_compare(r: Repo, patch: bytes, base: str, head: str, tmp_path) -> None:
+    """``git apply --check`` accepts the patch on the base tree, and applying it gives exactly the head tree. A
+    binary file only says ``differ`` (no data to apply), so the patch is applied without those blocks and the
+    expectation is the head tree with the binary paths left as they were in the base."""
+    binary = [b for b in split_patch(patch) if b"\nBinary files " in b]
+    text = b"".join(b for b in split_patch(patch) if b not in binary)
+    assert len(binary) == 3
+
+    def run(idx: str, *args: str, **kw) -> subprocess.CompletedProcess:
+        env = {**r.env, "GIT_INDEX_FILE": str(tmp_path / idx)}
+        return subprocess.run(["git", "-C", str(r.path), *args], env=env, capture_output=True, check=True, **kw)
+
+    run("idx", "read-tree", base)
+    run("idx", "apply", "--cached", "--unidiff-zero", "--check", "-", input=text)
+    run("idx", "apply", "--cached", "--unidiff-zero", "-", input=text)
+    run("want", "read-tree", head)
+    for path in ("bin.dat", "bin_gone.dat", "new_bin.png"):
+        in_base = run("want", "ls-tree", base, path).stdout.split()
+        if in_base:
+            run("want", "update-index", "--add", "--cacheinfo", f"{in_base[0].decode()},{in_base[2].decode()},{path}")
+        else:
+            run("want", "update-index", "--force-remove", path)
+    assert run("idx", "write-tree").stdout == run("want", "write-tree").stdout
+
+
 @pytest.mark.parametrize("fmt", ["sha1", "sha256"])
 @pytest.mark.parametrize("packed", [False, True])
-def test_diff_equals_git_on_the_fixture(make_repo, fmt, packed):
+def test_diff_is_a_valid_patch_and_equals_git_on_simple_files(make_repo, tmp_path, fmt, packed):
     r = make_repo(object_format=fmt)
     base, head = build_fixture(r)
     if packed:
         r.git("repack", "-adf", "-q", "--depth=10", "--window=50")
         r.git("pack-refs", "--all")
     for ctx in (3, 0, 1, 10):
-        want = r.git(*GIT_DIFF, f"-U{ctx}", base, head, raw=True)
         got = local.diff(r.path, branch="feat", default_branch=None, context=ctx, max_bytes=1048576)
         assert (got["base_sha"], got["head_sha"]) == (base, head)
-        assert patch_of(got) == want, ctx
         assert got["truncated"] is False
+        apply_and_compare(r, patch_of(got), base, head, tmp_path)
+        blocks = split_patch(patch_of(got))
+        for path in SIMPLE:
+            want = r.git(*GIT_DIFF, f"-U{ctx}", base, head, "--", f":(literal){path}", raw=True)
+            mine = b"".join(b for b in blocks if b.startswith(b"diff --git ") and _names(b, path))
+            assert mine == want, (ctx, path)
     statuses = {f["path"]: f["status"] for f in got["files"]}
     assert statuses["to_link"] == "T" and statuses["link"] == "M" and statuses["deleted.txt"] == "D"
     assert statuses["new_bin.png"] == "A" and statuses["moved_to.txt"] == "A" and statuses["moved_from.txt"] == "D"
@@ -123,7 +182,7 @@ def test_base_is_the_merge_base_with_main_not_its_tip(make_repo):
     r.commit()
     got = local.diff(r.path, branch="feat", default_branch=None)
     assert got["base_sha"] == r.sha("main~1") and got["head_sha"] == head
-    assert patch_of(got) == r.git(*GIT_DIFF, "main...feat", raw=True)
+    assert patch_of(got) == r.git(*GIT_DIFF, "main...feat", raw=True)  # one hunk: identical to git
 
 
 def test_master_is_the_fallback_and_a_declared_default_wins(make_repo):

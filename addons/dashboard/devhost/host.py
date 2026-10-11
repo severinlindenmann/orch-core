@@ -22,6 +22,40 @@ from .reserved import OPS
 READS = ("addon.list", "list")
 
 
+class HostWorkspace(Workspace):
+    """The stub plays the host, so it opens the store without the direct-mode guard (D-P2-18).
+
+    Core's `Workspace` guards every store with `DirectGuard`, which answers `host.required` once the workspace is in
+    `<state>/host/workspaces.json`. The dev registry pin lives in that same file, so the stub must be the host here.
+    """
+
+    def _open(self, root):
+        from orch.custody import FileBackend
+        from orch.store import BackendSigner, Store
+
+        from orch.ops.runtime import _config, state_dir
+
+        cfg = _config(root) or {}
+        wid = cfg["workspace"]["id"]
+        sd = state_dir(self.env)
+        host = None
+        keys = sd / "hosts" / wid / "keys"
+        if keys.is_dir():
+            backend = FileBackend(keys)
+            if backend.exists("wsk"):
+                host = BackendSigner(backend, "wsk")
+        self.pin_created = not (sd / "hosts" / wid / "genesis").exists()
+        return Store.open(
+            root,
+            expected_workspace_id=wid,
+            host=host,
+            host_state_dir=sd,
+            clock=self.now,
+            workspace_name=cfg["workspace"].get("name"),
+            load="lazy",
+        )
+
+
 class StubHost:
     def __init__(self, root: Path, state: Path, person: str):
         if os.environ.get("ORCH_DEV") != "1" or not (root / ".orch-dev").is_file():
@@ -139,7 +173,7 @@ class StubHost:
 
     def call(self, op, args):
         with self.lock:
-            runtime = Workspace(self.env)
+            runtime = HostWorkspace(self.env)
             try:
                 store = runtime.store
                 store.load_all()

@@ -5,6 +5,7 @@ import threading
 import time
 from collections import deque
 from datetime import UTC, datetime
+from pathlib import Path
 
 
 class Auth:
@@ -14,6 +15,8 @@ class Auth:
         self.instance = secrets.token_hex(16)
         self.probe_key = secrets.token_hex(32)
         self.codes: dict[str, float] = {}
+        # The exact file handed out per code, so later directory resolution can never change what is deleted.
+        self.files: dict[str, Path] = {}
         self.sessions: dict[str, tuple[float, float]] = {}
         self.attempts = deque()
         self.lock = threading.Lock()
@@ -27,11 +30,14 @@ class Auth:
             self.codes = {c: until for c, until in self.codes.items() if until > now}
             code = secrets.token_urlsafe(32)
             self.codes[code] = now + 30
+            payload = {"instance": self.instance, "port": port, "probe_key": self.probe_key, "code": code}
             if self.directory is not None:
+                self.files[code] = Path(self.redirect_path(code))
+                payload["redirect_file"] = str(self.files[code])
                 timer = threading.Timer(60, lambda: self.remove_redirect(code))
                 timer.daemon = True
                 timer.start()
-            return {"instance": self.instance, "port": port, "probe_key": self.probe_key, "code": code}
+            return payload
 
     def _attempt(self, now):
         while self.attempts and self.attempts[0] <= now - 60:
@@ -45,8 +51,11 @@ class Auth:
         return self.directory / ("launch-" + hashlib.sha256(code.encode()).hexdigest() + ".html")
 
     def remove_redirect(self, code):
-        if self.directory is not None:
-            self.redirect_path(code).unlink(missing_ok=True)
+        path = self.files.pop(code, None)
+        if path is None and self.directory is not None:
+            path = self.redirect_path(code)
+        if path is not None:
+            path.unlink(missing_ok=True)
 
     def exchange(self, code):
         with self.lock:

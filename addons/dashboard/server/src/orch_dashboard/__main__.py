@@ -253,9 +253,13 @@ def open_dashboard(path="/", print_url=False):
         print("Single-use dashboard link; expires in 30 s.")
         print(url)
         return
-    # Use the directory the server chose, so its exchange and timer remove the same file.
-    directory = Path(launch["redirect"]) if launch.get("redirect") else redirect_directory(directory)
-    redirect = Auth(directory=directory).redirect_path(launch["code"])
+    # Write exactly the file the server recorded for this code, so its exchange and timer delete that same path.
+    if launch.get("redirect_file"):
+        redirect = Path(launch["redirect_file"])
+        directory = redirect.parent
+    else:
+        directory = Path(launch["redirect"]) if launch.get("redirect") else redirect_directory(directory)
+        redirect = Auth(directory=directory).redirect_path(launch["code"])
     with private_directory(directory, parents=False) as directory_fd:
         fd = os.open(redirect.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory_fd)
         try:

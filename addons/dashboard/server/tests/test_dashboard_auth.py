@@ -299,3 +299,56 @@ def test_print_url_terminal_only(tmp_path, monkeypatch, capsys):
     launcher.open_dashboard(print_url=True)
     printed = capsys.readouterr().out
     assert "Single-use" in printed and "30 s" in printed and "#launch=" in printed
+
+
+@pytest.mark.parametrize("xdg", ["valid", "unset", "invalid"])
+def test_exchange_and_timer_delete_the_exact_handed_out_file(tmp_path, monkeypatch, xdg):
+    """The server deletes the file it recorded for the code, whatever directory the launcher's env would resolve to."""
+    from orch_dashboard import __main__ as launcher
+
+    runtime = tmp_path / "runtime"
+    runtime.mkdir(mode=0o700)
+    fallback = tmp_path / "state" / "dashboard"
+    fallback.mkdir(parents=True, mode=0o700)
+    if xdg == "valid":
+        monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime))
+    elif xdg == "invalid":
+        runtime.chmod(0o755)
+        monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime))
+    else:
+        monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    server_dir = launcher.redirect_directory(fallback)
+    assert (server_dir == runtime / "orch-dashboard") == (xdg == "valid")
+    timers = []
+
+    class Timer:
+        def __init__(self, delay, fn):
+            self.fn = fn
+            timers.append(self)
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr("orch_dashboard.auth.threading.Timer", Timer)
+    auth = Auth(directory=server_dir)
+    monkeypatch.setattr(launcher, "state_dir", lambda: tmp_path / "state")
+    monkeypatch.setattr(launcher, "verify_probe", lambda _: None)
+    monkeypatch.setattr(launcher.webbrowser, "open", lambda url: True)
+    created = []
+    for mode in ("exchange", "timer"):
+        issued = auth.launch(PORT)
+        # The launcher's own environment resolves to a different directory than the server's (and the server's
+        # "redirect" hint is absent): only the recorded file path may decide.
+        monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "launcher-sees-something-else"))
+        monkeypatch.setattr(launcher, "control", lambda *_, issued=issued: {k: v for k, v in issued.items()})
+        launcher.open_dashboard()
+        redirect = auth.files[issued["code"]]
+        assert redirect.parent == server_dir and redirect.is_file()
+        created.append(redirect)
+        if mode == "exchange":
+            assert auth.exchange(issued["code"])[1] == 200
+        else:
+            timers[-1].fn()
+        assert not redirect.exists()
+    assert not auth.files
+    assert not list(server_dir.glob("launch-*.html"))

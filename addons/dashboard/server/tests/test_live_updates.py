@@ -50,6 +50,10 @@ def test_snapshot_reset_and_reopen():
             "sub.open",
         ]
         assert calls[2][1]["after"] == "snapshot"
+        for _ in range(100):  # the resync frame is queued by the worker thread, slightly after the second sub.open
+            if tab.queue.qsize() >= 2:
+                break
+            await asyncio.sleep(0.01)
         assert [tab.queue.get_nowait()[0] for _ in range(tab.queue.qsize())] == ["ready", "resync"]
         await live.close()
 

@@ -83,8 +83,8 @@ def _applies_union(a: Any, b: Any) -> Any:
 
 
 def effective_policy(ws: dict[str, Any], override: dict[str, Any] | None) -> dict[str, Any]:
-    """§5.7: approvers = workspace intersect override, count = the larger, not = the union, independent = either, applies =
-    the union (``all`` if either is, ``off`` only if both are, else the sorted de-duplicated list)."""
+    """§5.7: approvers = workspace intersect override, count = the larger, not = the union, independent = either,
+    applies = the union (``all`` if either is, ``off`` only if both are, else the sorted de-duplicated list)."""
     if override is None:
         return canonical_policy(ws)
     return {

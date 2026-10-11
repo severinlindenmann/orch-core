@@ -9,6 +9,7 @@ from orch import canon
 from orch.canon import jcs
 
 from . import oracle_f1 as oracle
+from . import oracle_f1_gate as oracle_gate
 
 DIR = Path(__file__).parent.parent / "vectors" / "f1"
 PROTOCOL_LABELS = json.loads((DIR.parent / "vectors_v2.json").read_text(encoding="utf-8"))["labels"]
@@ -42,7 +43,7 @@ def test_label_literals():
     assert canon.LABELS["sig_host_event"] == "orch/v2/sig/host-event|"
 
 
-# --- canonical json -------------------------------------------------------------------------------------------
+# --- canonical json -----------------------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("v", load("canon.json")["depth"], ids=lambda v: v["name"])
@@ -54,7 +55,7 @@ def test_canon_depth_vectors(v):
             jcs.loads_strict(v["text"])
 
 
-# --- text -----------------------------------------------------------------------------------------------------
+# --- text ---------------------------------------------------------------------------------------------------
 
 
 T = load("text.json")
@@ -92,7 +93,7 @@ def test_invisible_characters_are_kept(v):
     assert canon.normalize_text(v["input"]) == v["input"]
 
 
-# --- hashes ---------------------------------------------------------------------------------------------------
+# --- hashes -------------------------------------------------------------------------------------------------
 
 H = load("hashes.json")
 
@@ -141,6 +142,12 @@ def test_policy_hash(v):
     assert canon.policy_hash(v["gate"], v["policy"]) == v["hash"]
 
 
+@pytest.mark.parametrize("v", H["policy_hash_refused"], ids=lambda v: v["why"])
+def test_policy_hash_refuses_a_policy_without_canonical_form(v):
+    with pytest.raises(canon.HashError):
+        canon.policy_hash(v["gate"], v["policy"])
+
+
 @pytest.mark.parametrize("v", H["people_hash"], ids=range(len(H["people_hash"])))
 def test_people_hash(v):
     assert canon.people_hash(v["people"]) == v["hash"]
@@ -161,7 +168,7 @@ def test_grant_secret_hash(v):
     assert canon.grant_secret_hash(bytes.fromhex(v["secret_hex"])) == v["hash"]
 
 
-# --- gate hash ------------------------------------------------------------------------------------------------
+# --- gate hash ----------------------------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("v", load("gate_hash.json")["gate_hash"], ids=lambda v: v["name"])
@@ -171,7 +178,7 @@ def test_gate_hash_vectors(v):
     assert len(v["G"]) == 15
 
 
-# --- chain and signed bytes -----------------------------------------------------------------------------------
+# --- chain and signed bytes ---------------------------------------------------------------------------------
 
 C = load("chain.json")
 
@@ -237,7 +244,7 @@ def test_signing_bytes_do_not_replay():
         assert canon.person_signing_bytes(C["workspace_id"], C["log"], {**e, k: v}) != a
 
 
-# --- repo identity --------------------------------------------------------------------------------------------
+# --- repo identity ------------------------------------------------------------------------------------------
 
 R = load("repo_identity.json")
 
@@ -258,7 +265,8 @@ def test_same_repo_identity_ignores_ascii_case_only():
         assert canon.same_repo_identity(a, b)
     assert not canon.same_repo_identity("https://github.com/a/x", "https://github.com/a/y")
     # the hashed value keeps the raw form: two case variants hash differently and the source list refuses both
-    g = oracle.gate_inputs()["verify"]
+    t = oracle_gate.sample_ticket()
+    g = oracle_gate.derive_G(t, "verify")
     g["source_sha"] = [dict(g["source_sha"][0], repo=a) for a in R["same"][0]]
     with pytest.raises(canon.HashError):
         canon.gate_hash(g)

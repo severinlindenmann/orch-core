@@ -20,7 +20,7 @@ ABC = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
 GOOD = "sha256:" + "ab" * 32
 
 
-# --- forms and literal known answers ---------------------------------------------------------------------------
+# --- forms and literal known answers ------------------------------------------------------------------------
 
 
 def test_literal_known_answers():
@@ -34,9 +34,9 @@ def test_literal_known_answers():
     assert canon.question_id(oracle.W, oracle.UID, "Q1") == "d60478ec5ff8f6ff213cded9c0f8f243"
     g = {x["name"]: x for x in oracle.gate_vectors()["gate_hash"]}
     assert canon.gate_hash(g["requirements"]["G"]) == (
-        "sha256:b642e8d470eb195a0b0f7661488e6d8c7c1488dbdf0c77e82eec8d005be4d803"
+        "sha256:f9edf87ff4a72af07aafb01ae69179cbf2a57f0490749d639a9981ec0cae21c5"
     )
-    assert canon.gate_hash(g["code"]["G"]) == "sha256:645e604157b6aa7750281df879e1014d1b0a01909133bd730e8812ad4ea69246"
+    assert canon.gate_hash(g["code"]["G"]) == "sha256:16be57bdbf53706b3d3a0b274274a5b66b0362588de645afb749c07fc7e4bcf4"
 
 
 def test_section_text_with_json_sensitive_characters_hashes_raw_utf8():
@@ -139,7 +139,7 @@ def test_cj_errors_are_hash_errors():
         canon.value_hash(a)
 
 
-# --- policy, people, question ---------------------------------------------------------------------------------
+# --- policy, people, question -------------------------------------------------------------------------------
 
 POLICY = {"approvers": ["owner", "maintainer"], "count": 1, "not": [], "applies": "all", "independent": False}
 
@@ -224,7 +224,7 @@ def test_question_forms():
         canon.question_hash("abc", oracle.UID, "t", [])
 
 
-# --- gate hash validation --------------------------------------------------------------------------------------
+# --- gate hash validation -----------------------------------------------------------------------------------
 
 
 def _g(gate="requirements"):
@@ -410,7 +410,7 @@ def test_gate_hash_text_is_exact_or_refused(t):
             canon.gate_hash(g)
 
 
-# --- events: chain, line form, signing contexts ----------------------------------------------------------------
+# --- events: chain, line form, signing contexts -------------------------------------------------------------
 
 
 def test_chain_rules():
@@ -510,7 +510,7 @@ def test_host_signing_bytes_needs_the_full_event():
         canon.host_signing_bytes(oracle.W, oracle.UID, e)
 
 
-# --- section key sets (ticket-format §4/§5.7) ------------------------------------------------------------------
+# --- section key sets (ticket-format §4/§5.7) ---------------------------------------------------------------
 
 _EXPECTED_SECTIONS = {
     ("requirements", "feature"): {"summary", "context", "requirements", "out_of_scope"},

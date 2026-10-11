@@ -531,7 +531,13 @@ Workspace views, agent starts, relay links, epochs and terminal events are defin
   and `host_sig`, then `sig` against the device certificate, then replay authorization (§5.11). A line that fails
   these checks breaks the chain: every read and `orch doctor` report `chain.broken` with its `seq`, and nothing
   after it counts until an owner-signed `restore`. An event that passes them but fails authorization is handled as
-  §5.11 says.
+  §5.11 says. `sig` is checked under `dk_sig_pub` of the certificate for `actor.device` (if there is none, or the
+  signature doesn't verify, the line breaks the chain). A `device.added` whose `actor.device` is the device it adds
+  is checked under the `cert` inside the event; whether that self-signature is allowed is authorization (§5.3, for
+  example `device.unknown`). Whether that certificate is valid at this point (expired, removed, revoked, missing a
+  scope) is authorization (§5.11). A break at workspace `seq` n also stops every ticket
+  event with `ws_seq ≥ n`. Each log's lines are checked in file order before merging; a reader never sorts a log's
+  lines. `chain.broken` names the line's position, which is the `seq` it should carry.
 - **Writing** is atomic per event, under the store lock: (1) write the new `ticket.json`/`body.md` to
   `.state/pending/<event id>/`; (2) append the event line and fsync; (3) rename the pending files into place, fsync
   the directory, keep a copy of the installed `body.md` in `.state/body/<uid>.md`, and record the event id in
@@ -595,7 +601,7 @@ their fields and sections join one of these (`binds`). In `binds`, a section is 
   even when it names every type). An override can never end up looser, even after a later workspace change.
   "No eligible approver" is judged on tokens, not persons: an override that leaves no token is refused; if a later
   workspace change empties the set, the gate is blocked (`gate.no_eligible`) until someone fixes the policy.
-- **Canonical form** for hashing: all five keys, `approvers` and `not` sorted and de-duplicated, `applies` a non-empty list. Policies and people lists are stored in events and files **in this canonical form** (people lists sorted and de-duplicated too); a non-canonical one is refused at append. Hashing applies the canonical form as well, as a safeguard; every other list this document calls "sorted" (for example `source_sha`, `prior.approvals`) must already be sorted and is refused otherwise. "Sorted" always means by Unicode code point (equal to UTF-8 byte order).
+- **Canonical form** for hashing: all five keys, `approvers` and `not` sorted and de-duplicated, `applies` `"all"`, `"off"` or a non-empty sorted list. Policies and people lists are stored in events and files **in this canonical form** (people lists sorted and de-duplicated too); a non-canonical one is refused at append. Hashing applies the canonical form as well, as a safeguard; every other list this document calls "sorted" (for example `source_sha`, `prior.approvals`) must already be sorted and is refused otherwise. "Sorted" always means by Unicode code point (equal to UTF-8 byte order).
 - For `code`, `not` always includes `assignees` and `independent` is `true`; the host refuses a policy without them
   (D59).
 
@@ -1179,7 +1185,7 @@ these codes; they are the stable `error.code` strings of §10.4 for these refusa
 
 | Code | Raised when |
 |---|---|
-| `chain.broken` | §5.5 a line fails seq, prev, host_sig or the log is already broken; nothing after it counts |
+| `chain.broken` | §5.5 a line fails seq, prev, host_sig or the person sig, or the log is already broken; nothing after it counts |
 | `chain.diverged` | §5.10 a head differs from a checkpoint at the same seq (raised by the store, not the model) |
 | `chain.bad_ws_seq` | §5.5 `ws_seq` decreases, exceeds the workspace head, or an append would sort before an earlier one |
 | `event.bad_base` | §5.1 `based_on` is not the head of an earlier event of the log |

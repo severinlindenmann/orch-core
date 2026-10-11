@@ -284,3 +284,15 @@ def test_a_host_key_that_cannot_be_looked_up_is_judged_strictly(two, monkeypatch
 
     monkeypatch.setattr(files, "key_path", boom)
     assert health._has_host_key(two.host_state, "x") is True
+
+
+def test_doctor_repairs_a_missing_ticket_checkpoint_after_append(two):
+    ws = two
+    uid = ws.uid("1")
+    path = ws.root / ".state" / "checkpoints" / f"ticket-{uid}.json"
+    path.unlink()
+    r = doctor(ws)
+    assert "checkpoint.missing" in codes(r)
+    r = doctor(ws, "--repair")
+    assert r.code == 0, r.out
+    assert path.exists() and "checkpoint.missing" not in codes(doctor(ws))

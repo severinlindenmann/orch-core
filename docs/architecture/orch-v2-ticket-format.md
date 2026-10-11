@@ -2200,7 +2200,7 @@ replay gives:
 | a line that is not the canonical bytes, a bad `prev`, `seq`, `ws_seq`, `host_sig`, or a person signature | `chain.broken` (log, `seq`, cause) |
 | a log shorter than, or with another head than, a signed checkpoint | `chain.diverged` |
 | a checkpoint that is unreadable or not signed by the host key | `checkpoint.bad` |
-| a missing workspace or ticket checkpoint: an **error** where this machine holds the workspace key (it writes one after every append, so someone deleted it), a warning on a clone | `checkpoint.missing` |
+| a missing workspace or ticket checkpoint: an **error** where this machine holds the workspace key (it writes one after every append; deletion or a crash can leave one missing), a warning on a clone | `checkpoint.missing`; `doctor --repair` can write a missing ticket checkpoint where the host holds the key and the log verifies |
 | a ticket folder with no event log; a file in `artifacts/` the log does not name | `ticket.nolog`, `artifact.unlisted` (warning) |
 | the genesis pin missing (warning), or different | `pin.missing`, `trust.genesis_mismatch` |
 | a device revocation the host noted that the log does not hold | `revocation.missing` |

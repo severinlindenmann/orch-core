@@ -9,7 +9,8 @@ edits), the signed checkpoints and the host's pins with the logs.
 ``check`` is the fast subset for a hook or CI (chain, projections, instructions). ``doctor`` is all of it, and with
 ``--repair`` does the documented safe repairs *through the store*: it answers external edits with the host events
 format section 5.8 names, rebuilds the derived index, and removes the key folders of an init that died. It never repairs
-a chain, a signature or a checkpoint: only an owner-signed ``restore`` can.
+a chain, a signature or a divergent checkpoint: only an owner-signed ``restore`` can.
+A missing ticket checkpoint can be written when this host holds the key and the log verifies.
 """
 
 from __future__ import annotations
@@ -241,8 +242,7 @@ def _has_host_key(state_dir: Path, wid: str) -> bool:
 
 
 def _checkpoints(s: InspectStore, host_here: bool) -> list[Finding]:
-    """Where this machine holds the workspace key it writes a checkpoint after every append, so a missing one means
-    somebody deleted it (that hides a rollback): an error. Without the key (a clone) it is only a warning."""
+    """A missing checkpoint can hide a rollback or follow a crash: an error on the host, a warning on clones."""
     out: list[Finding] = []
     cps = s._checkpoints
     if s._wsk_pub() is None:
@@ -257,7 +257,14 @@ def _checkpoints(s: InspectStore, host_here: bool) -> list[Finding]:
     if missing:
         keys = ", ".join(s.state.tickets[u].key for u in missing[:5])
         out.append(
-            Finding(lvl, "checkpoints", "checkpoint.missing", f"{len(missing)} tickets have no checkpoint ({keys}...)")
+            Finding(
+                lvl,
+                "checkpoints",
+                "checkpoint.missing",
+                f"{len(missing)} tickets have no checkpoint ({keys}...)"
+                + ("; doctor --repair writes missing checkpoints for verified logs" if host_here else ""),
+                "checkpoint" if host_here else None,
+            )
         )
     wsk = s._wsk_pub()
     cdir = s.state_dir / "checkpoints"
@@ -364,6 +371,11 @@ def repair(root: Path, wid: str, env: Mapping[str, str], findings: list[Finding]
         store = ws.store
         events = store.scan()
         did.append(f"answered external edits with {len(events)} host events")
+    if "checkpoint" in wanted:
+        store = ws.store
+        store.load_all()
+        store.repair_checkpoints()
+        did.append("wrote missing ticket checkpoints for verified logs")
     if "index" in wanted:
         ws.store.rebuild_index()
         did.append("rebuilt the index")

@@ -1677,6 +1677,19 @@ class Store:
             )
         self._ticket_appends_since_cp = 0
 
+    def repair_checkpoints(self) -> None:
+        """Fill missing ticket checkpoints only when the host holds the key and replay verifies."""
+        with self._locked():
+            if self._host is None or self._state is None or self._diverged or self.chain_errors():
+                return
+            if self._state.workspace.invalid:
+                return
+            for uid, view in self._state.tickets.items():
+                if view.frozen or self._checkpoints.ticket(uid) is not None:
+                    continue
+                info = self._logs[uid]
+                self._checkpoints.write_ticket(self._host.sign, uid, info.seq, info.head or "", self._now())
+
     def checkpoint(self) -> None:
         """Write the workspace checkpoint now (and a ticket checkpoint for every log that has none yet)."""
         with self._locked():
@@ -1685,9 +1698,14 @@ class Store:
     def _checkpoint_all(self) -> None:
         if self._host is None or self._state is None or self._state.workspace.genesis is None or self._diverged:
             return
+        if self.chain_errors() or self._state.workspace.invalid:
+            return
         at_ = self._now()
         for uid, info in self._logs.items():
             if uid == WORKSPACE or not info.seq or info.error:
+                continue
+            view = self._state.tickets.get(uid)
+            if view is None or view.frozen:
                 continue
             cp = self._checkpoints.ticket(uid)
             if cp is None or "o" not in cp or cp["o"]["seq"] != info.seq:

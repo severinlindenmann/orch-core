@@ -260,3 +260,19 @@ def test_a_revocation_for_a_device_the_restored_chain_never_had_is_skipped(env, 
     facts = s.restore_facts("workspace")
     s.append(env.person_event(env.owner, "workspace", "restore", **facts, reason="x"), log="workspace")
     assert env.read_events("workspace")[-1]["type"] == "restore"  # nothing to revoke: the device was never added
+
+
+@pytest.mark.parametrize("host", [True, False])
+def test_missing_checkpoint_repair_requires_the_host_and_a_verified_log(env, host):
+    store = env.bootstrap()
+    uid = env.new_ticket()
+    env.log(uid, "original")
+    store.close()
+    path = env.root / ".state" / "checkpoints" / f"ticket-{uid}.json"
+    path.unlink()
+    if host:
+        log = env.path(uid, "events.jsonl")
+        log.write_bytes(log.read_bytes().replace(b"original", b"tampered"))
+    store = env.open(host=env.signer if host else None)
+    store.repair_checkpoints()
+    assert not path.exists()

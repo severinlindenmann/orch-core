@@ -1578,8 +1578,9 @@ def restore_scenarios() -> list[dict[str, Any]]:
     restore(w, [evidence("sev", "sev1")])
     w.ev(TICKET, "log.added", w.actor("sev"), {"text": "after self revocation"}, expect="device.invalid")
     out.append(w.scenario())
-    # Host replay authorizes against the pre-event state, so a fresh self-revocation is valid for every reason; the
-    # log-free receivers refuse the same bundle (checkpoint.json bundle_revokes_its_own_signer_*).
+    # Replay of an existing line authorizes against the pre-event state, so a self-revocation stays valid on replay for
+    # every reason; the host refuses it before the append (host_cases self_revocation_refused_before_append) and
+    # receivers refuse the bundle (checkpoint.json bundle_revokes_its_own_signer_*).
     for reason in ("retired", "compromised"):
         w = setup("owner_authorized_before_self_revocation_" + reason)
         restore(w, [evidence("sev", "sev1", reason)])
@@ -1862,5 +1863,12 @@ def restore_contract_vectors() -> dict[str, Any]:
             {"name": "crash_before_restore_commit", "fault": "before_commit", "expect": "no_accepted_restore"},
             {"name": "exact_restore_retry", "expect": "prior_result"},
             {"name": "stale_source", "expect": "chain.diverged"},
+            {
+                "name": "self_revocation_refused_before_append",
+                "self_revocation": True,
+                "expect": "validation.restore",
+                "note": "the host refuses a restore listing its own signer before the append; replay of an existing "
+                "such line keeps pre-event authorization (scenarios owner_authorized_before_self_revocation*)",
+            },
         ],
     }

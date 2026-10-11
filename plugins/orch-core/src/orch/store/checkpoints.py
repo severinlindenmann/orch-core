@@ -103,7 +103,9 @@ def judge_offer(
 
     The caller verifies the WSK signature of a plain offer; everything else is checked here: the shape (strict
     timestamps, ``n ≥ 1``, kind), the pinned genesis and ``workspace_id``, and the clock ceiling ``now + 300 s``
-    (``checkpoint.future``). ``restore`` carries the full transition and owner-device evidence; it is accepted only
+    (``checkpoint.future``:
+    retryable, H unchanged; a local admission rule against one sampled clock, never evidence of divergence).
+    ``restore`` carries the full transition and owner-device evidence; it is accepted only
     for the delegation pinned for this workspace (``pinned_delegation``, the card's / genesis event's). Hosts
     additionally replay authorization; this log-free receiver uses the delegation-owner policy. A missing or
     non-folding proof returns ``sync.incomplete``.

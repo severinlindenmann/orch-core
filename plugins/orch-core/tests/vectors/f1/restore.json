@@ -33,6 +33,12 @@
   {
    "expect": "chain.diverged",
    "name": "stale_source"
+  },
+  {
+   "expect": "validation.restore",
+   "name": "self_revocation_refused_before_append",
+   "note": "the host refuses a restore listing its own signer before the append; replay of an existing such line keeps pre-event authorization (scenarios owner_authorized_before_self_revocation*)",
+   "self_revocation": true
   }
  ],
  "pins": "workspace restore and revocations; replay_only steps replay successfully but admit refuses chain.bad_ws_seq; schema_refused marks steps refused by schema validation before the model",

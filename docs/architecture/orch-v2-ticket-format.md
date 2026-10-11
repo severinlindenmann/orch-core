@@ -896,9 +896,11 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
 - **Receivers** keep the last accepted workspace checkpoint H, verifying schema, WSK signature, workspace and pinned
   genesis. The schema check is strict: kind `workspace_checkpoint`, `n ≥ 1`, and every `at` a real calendar time
   (§11.1), not only the pattern. The workspace id must be the receiver's pinned one, for the first checkpoint too.
-  **Clock ceiling** (format decision C2): a receiver refuses a checkpoint whose `at` is more than 300 s after its own
-  clock, a restore's T included (`checkpoint.future`; nothing is stored, and the same object may be offered again
-  later). A stale lower `n` and an identical equal `n` are judged as below, without the ceiling. Equal `n` requires the identical object; a higher `n` and a lower `at` is refused (`chain.diverged`). A stale
+  **Clock ceiling** (format decision C2): for an advancing offer (a restore's T included), compare against one
+  sampled receiver clock. If `at > now + 300 s`, return retryable `checkpoint.future` without changing H. This is a
+  local admission rule, not evidence of divergence. Its protection assumes a sufficiently accurate clock; surface
+  clock correction as recovery, and never obtain time from the offered checkpoint or relay. Only a stale lower `n`
+  and an identical equal `n` are exempt; a conflicting offer still gets its ordinary checks below. Equal `n` requires the identical object; a higher `n` and a lower `at` is refused (`chain.diverged`). A stale
   lower `n` is ignored only if it has no higher entries or conflicting entries at equal heights. Every existing entry
   is kept. Equal `seq` requires identical `head` and `acc`; growth from s to t requires exactly t−s heads, the last
   matching the offered head, folding from the held accumulator to the offered accumulator. Proof pages are bound to
@@ -932,10 +934,21 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
   learned before the sync, or from a lower-`n` bundle already judged in the same walk. In particular a
   `compromised` signer is refused at any position. A revocation first learned after the transition was judged (from
   a higher-`n` bundle of the same walk, or after the commit) never invalidates it: a `compromised` one raises an
-  alarm, a `lost` or `retired` one changes nothing. Liveness cost, accepted: a receiver that learned a `lost` or
-  `retired` revocation out of band before syncing past a genuine older transition by that device stays refused
-  until an owner pairs it again. A restore whose own `revocations` list revokes its signer is refused for every
-  reason, with or without local knowledge (only the host's replay can place it, below).
+  alarm, a `lost` or `retired` one changes nothing. Judgment is a serialized receiver operation using a defined
+  revocation snapshot. Persist the judgment and its position in the walk atomically with transition state; recovery
+  preserves that order. (A malicious relay can still make two receivers decide differently by the order it delivers
+  evidence in: this is local knowledge, not global agreement.) A restore whose own `revocations` list revokes its
+  signer is refused for every reason, with or without local knowledge.
+  **Recovery from a refused transition.** Refusal preserves H and revocation evidence. Recovery requires an
+  explicit owner-authenticated pairing/baseline procedure, including a documented person-key recovery path when no
+  usable device remains. Recovery never removes revocation tombstones. Requirements (procedure: P3): the receiver
+  adopts a new baseline only from an owner-authenticated statement naming an exact checkpoint `{n, hash}` (the P3
+  pairing `approved` baseline, or an owner-signed baseline pin made by an unrevoked owner device or a device the
+  person key newly certifies); it verifies that checkpoint (WSK signature, pinned workspace and genesis, `n` above
+  H's) and, from H, accumulator proofs that every log of H is kept or abandoned only by restores the owner signed;
+  the blocked transition is skipped only because the owner-authenticated baseline lies past it, never because a
+  relay reports no transition, an empty log or a missing checkpoint; every revocation and tombstone the receiver
+  holds carries over and still refuses later transitions by those devices.
   For a device the receiver already knows to be revoked, a listed entry's person and `pk_pub` must be the known
   ones. Revocation completeness applies to workspace restores only; a ticket restore carries `[]`.
   `source` must equal `{n: C.o.n, hash: h_checkpoint(C.o)}` of a schema-valid, WSK-signed workspace checkpoint of the
@@ -992,14 +1005,16 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
   restore's workspace seq: revoked devices and compromised grants are already refused there; eligible actors count.
   No restore-specific `device.revoked` re-appends, pending plan, `store.torn_write` guard or ws_seq window exists.
 - `reason` is closed: `rollback`, `diverged`, `broken`, `other`. Optional `note` is one line, at most 280 UTF-8 bytes,
-  displayed only as quoted owner text, never acted on. Restore append sets `at = max(clock, C.o.at, last at)`, and the
-  host refuses the append (`validation.restore`) when `C.o.at` is more than 300 s after its clock: the restore would
-  otherwise carry a time every receiver refuses (C2). Under the append lock the host also refuses a restore signed by
+  displayed only as quoted owner text, never acted on. Restore append sets `at = max(clock, C.o.at, last at)` from
+  one sampled host clock, and the host applies the analogous C2 check to that computed restore timestamp before
+  append: `at > clock + 300 s` is refused (`validation.restore`). Host acceptance does not guarantee receiver
+  acceptance (receivers sample their own clocks). Under the append lock the host also refuses a restore signed by
   a device whose revocation it holds as durable evidence, whatever the reason (`device.invalid`; the receiver rule
-  C3, which replay of the kept chain alone cannot apply when the revocation sits in the given-up part). A restore that
-  lists a fresh revocation of its own signer, one the host does not hold yet, is valid on the host and on replay
-  (authorization uses the pre-event state), but receivers refuse it, so its transition cannot be published: an owner
-  should sign such a restore from another device.
+  C3, which replay of the kept chain alone cannot apply when the revocation sits in the given-up part).
+  **Self-revocation:** before append, refuse a restore whose revocations include its signer (`validation.restore`).
+  Replay retains pre-event authorization semantics for an existing such line. Explain recovery before requesting a
+  signature: provision an eligible replacement while the current device remains usable, or use the documented
+  person-key recovery procedure (§5.3 recovery: the person key certifies a new device).
   A restore is an event line capped at 524,288 bytes (`schema.MAX_EVENT_LINE_BYTES`, LF included). Measure the full
   signed line before append; oversize is refused atomically, never truncated or split.
 - **What P1 can't detect:** if both the history and the local checkpoints in `.state/` are replaced, the rollback
@@ -2243,8 +2258,8 @@ A1–A20 (PR body), HO (dashboard handover, input only), D58–D60, the adversar
 | 143 | Runner (C9) | One process per call, JSON-RPC over stdio, bound to the grant (manifest from the granted bytes), private package copy, clean environment, caps and deadline, workspace-visible tickets only, proposals only; process tracking and a separate UID are P2 requirements (§8.1). | An addon can propose values and nothing else, and the wording does not promise more than the code. |
 | 144 | Section headings (C9) | ASCII, with a key (ASCII case folding, letters and digits only) that differs from every core heading and every other granted addon's (§8.1). | Look-alike headings must not make `body.md` ambiguous or misleading. |
 | 145 | Restore position time, C1 (orch-relay #41 review; format decision, to be challenged) | Receivers require `C.o.at ≤ line.at ≤ T.o.at`, equality accepted (§5.10). | The host stamps the restore at `max(clock, C.o.at, last at)` and T at the restore's `at`; checkpoints never go backwards. |
-| 146 | Receiver clock ceiling, C2 (orch-relay #41 review; format decision, to be challenged) | A receiver refuses a checkpoint or a restore's T whose `at` is more than 300 s after its clock (`checkpoint.future`); the host refuses a restore when `C.o.at` is more than 300 s after its clock (§5.10). | A WSK holder could otherwise freeze receivers with a far-future `at`: every later honest checkpoint (higher `n`, lower `at`) would be diverged. |
-| 147 | Revoked restore signers at receivers, C3 (orch-relay #42 review and §19.8; format decision, to be challenged) | In the receiver's own order: a revocation of the signer held when the transition is judged (from before the sync or a lower-`n` bundle of the walk) refuses it, any reason, so a `compromised` signer is refused at any position; one first learned later (a higher-`n` bundle, after commit) never invalidates it, `compromised` only raises an alarm. A bundle that revokes its own signer is refused for every reason. The host refuses a signer in its durable revocation evidence (§5.10). | Positions, `line.at` and `revoked_ms` are host-chosen or unverifiable: a WSK holder with a stolen device key can place a restore before the revocation. |
+| 146 | Receiver clock ceiling, C2 (orch-relay #41 review; Codex challenge) | For an advancing offer, one sampled receiver clock: `at > now + 300 s` is retryable `checkpoint.future`, H unchanged; a local admission rule, not divergence, assuming an accurate clock (correction is recovery; time never from the offer or relay). The host checks the computed restore `at` before append; host acceptance does not guarantee receiver acceptance (§5.10). | A WSK holder could otherwise freeze receivers with a far-future `at`: every later honest checkpoint (higher `n`, lower `at`) would be diverged. |
+| 147 | Revoked restore signers at receivers, C3 (orch-relay #42 review and §19.8; format decision, to be challenged) | In the receiver's own order: a revocation of the signer held when the transition is judged (from before the sync or a lower-`n` bundle of the walk) refuses it, any reason, so a `compromised` signer is refused at any position; one first learned later (a higher-`n` bundle, after commit) never invalidates it, `compromised` only raises an alarm. A bundle that revokes its own signer is refused for every reason, and the host refuses it before append. Judgment is serialized over a defined revocation snapshot and persisted with its walk position. Recovery: an owner-authenticated pairing/baseline (P3), never relay emptiness; tombstones stay. The host refuses a signer in its durable revocation evidence (§5.10, Codex challenge). | Positions, `line.at` and `revoked_ms` are host-chosen or unverifiable: a WSK holder with a stolen device key can place a restore before the revocation. |
 | 148 | Receiver checks stated one by one (orch-relay #41/#42 reviews) | The pinned (card / genesis) delegation, each owner-device check, the signed `source`, T's head at `from_seq + 1`, `ws_seq ≤ T`, the strict checkpoint shape and workspace id, known-person binding of listed evidence (§5.10); pinned by signed vectors that each keep every other signature valid. | Shared vectors must fail a receiver that skips any one check. |
 Open after F1 (not settled here):
 

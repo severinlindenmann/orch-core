@@ -78,8 +78,25 @@ def test_durable_restore_contract(case, env, monkeypatch):
         facts["revocations"] = [{"revocation": revocation, **store.state.device_evidence(device)}]
     if "missing" in case:
         facts["revocations"] = []
+    if case.get("self_revocation"):
+        rev = certs.make_revocation(
+            env.owner.pk_pub,
+            env.owner.pk_sign,
+            device_id_hex=env.owner.device[2:],
+            revoked_ms=env.clock[0] * 1000,
+            reason="retired",
+        )
+        own = {"revocation": rev, **store.state.device_evidence(env.owner.device)}
+        facts["revocations"] = sorted([*facts["revocations"], own], key=lambda r: r["revocation"]["o"]["device_id"])
     candidate = env.person_event(env.owner, "workspace", "restore", **facts, reason="rollback")
     held = store._pins.held()
+    if case.get("self_revocation"):
+        before = env.read_events("workspace")
+        with pytest.raises(StoreError) as exc:
+            store.append(candidate, log="workspace")
+        assert exc.value.code == case["expect"]
+        assert env.read_events("workspace") == before and store._pins.held() == held
+        return
     if case["name"] == "stale_source":
         store.checkpoint()
         with pytest.raises(StoreError) as exc:
@@ -214,10 +231,58 @@ def test_restore_refuses_checkpoint_more_than_300_seconds_ahead(env):
     before = env.read_events("workspace")
     held = store._pins.held()
     candidate = env.person_event(env.owner, "workspace", "restore", **store.restore_facts("workspace"), reason="other")
-    with pytest.raises(StoreError, match="300 seconds ahead") as exc:
+    with pytest.raises(StoreError, match="300 seconds ahead of the clock") as exc:
         store.append(candidate, log="workspace")
     assert exc.value.code == "validation.restore"
     assert env.read_events("workspace") == before and store._pins.held() == held
+
+
+def test_restore_refuses_a_computed_at_more_than_300_seconds_ahead(env):
+    """C2 at the host: the stamped restore `at` is max(clock, C.o.at, last at); a ticket event ahead of the clock moves
+    it past the ceiling although C itself is within it."""
+    store = env.bootstrap()
+    uid = env.new_ticket()
+    env.clock[0] += 400
+    env.log(uid)
+    env.clock[0] -= 400
+    held = store._pins.held()
+    assert _epoch_of(held["o"]["at"]) <= env.clock[0] + 300
+    before = env.read_events("workspace")
+    candidate = env.person_event(env.owner, "workspace", "restore", **store.restore_facts("workspace"), reason="other")
+    with pytest.raises(StoreError, match="computed at") as exc:
+        store.append(candidate, log="workspace")
+    assert exc.value.code == "validation.restore"
+    assert env.read_events("workspace") == before and store._pins.held() == held
+
+
+def _epoch_of(stamp):
+    import calendar
+    import time
+
+    return calendar.timegm(time.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ"))
+
+
+@pytest.mark.parametrize("reason", ["lost", "retired", "compromised"])
+def test_host_refuses_a_restore_that_revokes_its_own_signer(env, reason):
+    """Receivers refuse such a bundle, so the host refuses it before the append instead of committing an
+    unpublishable restore (§5.10); replay of an existing line keeps pre-event authorization (restore.json)."""
+    store = env.bootstrap()
+    facts = store.restore_facts("workspace")
+    rev = certs.make_revocation(
+        env.owner.pk_pub,
+        env.owner.pk_sign,
+        device_id_hex=env.owner.device[2:],
+        revoked_ms=env.clock[0] * 1000,
+        reason=reason,
+    )
+    facts["revocations"] = [{"revocation": rev, **store.state.device_evidence(env.owner.device)}]
+    candidate = env.person_event(env.owner, "workspace", "restore", **facts, reason="other")
+    before, held = env.read_events("workspace"), store._pins.held()
+    with pytest.raises(StoreError, match="revokes its own signer") as exc:
+        store.append(candidate, log="workspace")
+    assert exc.value.code == "validation.restore"
+    assert env.read_events("workspace") == before and store._pins.held() == held
+    assert not list((store._pins.dir / "transitions").glob("*.json"))
 
 
 def test_completed_restores_do_not_add_work_to_append(env, monkeypatch):

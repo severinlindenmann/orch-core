@@ -1384,6 +1384,10 @@ class Store:
             # Replay authorizes against the kept chain, which lacks a revocation from the given-up part; the host's
             # durable evidence still has it, and every receiver refuses a revoked signer (§5.10, C3).
             raise StoreError("device.invalid", f"{signer} is revoked in the host's durable revocation evidence")
+        if any("d_" + r["revocation"]["o"]["device_id"] == signer for r in e.get("revocations", [])):
+            # §5.10: receivers refuse a bundle that revokes its own signer, so the host never appends one (replay
+            # keeps pre-event authorization). Sign from an eligible replacement device, or recover by person key.
+            raise StoreError("validation.restore", f"the restore revokes its own signer {signer}")
         if log == WORKSPACE:
             supplied = {"d_" + r["revocation"]["o"]["device_id"]: r for r in e.get("revocations", [])}
             for entry in facts["revocations"]:
@@ -1486,16 +1490,12 @@ class Store:
         if floor is not None:
             last_pos = floor if last_pos is None or floor > last_pos else last_pos
             last_at = max(last_at, floor[1])
-        t = max(int(self._clock()), last_at)
+        now = int(self._clock())  # one sampled clock for the stamp and the ceiling
+        t = max(now, last_at)
         if ev["type"] == "restore":
             cp = self._held_checkpoint()
             if cp:
-                checkpoint_at = _epoch(cp["o"]["at"])
-                if checkpoint_at > int(self._clock()) + 300:
-                    raise StoreError(
-                        "validation.restore", "held checkpoint is more than 300 seconds ahead of the clock"
-                    )
-                t = max(t, checkpoint_at)
+                t = max(t, _epoch(cp["o"]["at"]))
         if log != WORKSPACE:
             wsh = self._logs[WORKSPACE].seq if WORKSPACE in self._logs else 0
             ev["ws_seq"] = wsh
@@ -1504,6 +1504,12 @@ class Store:
                     t = last_pos[1]
                 if t == last_pos[1] and (log, seq) <= (last_pos[2], last_pos[3]):
                     t += 1
+        if ev["type"] == "restore" and t > now + 300:
+            # §5.10 C2: the computed restore `at` (source, last merged-order at) is checked, not only C's. Host
+            # acceptance does not guarantee receiver acceptance: receivers sample their own clocks.
+            raise StoreError(
+                "validation.restore", "the restore's computed at is more than 300 seconds ahead of the clock"
+            )
         ev["at"] = _fmt(t)
 
     # -- text, artifacts

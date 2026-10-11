@@ -168,4 +168,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for how to run the checks locally. Report
 
 ## License
 
-Apache License 2.0. See [LICENSE](LICENSE).
+Licensed under the PolyForm Noncommercial License 1.0.0. Commercial use requires a separate license from the author. See [LICENSE](LICENSE).

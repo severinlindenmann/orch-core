@@ -62,7 +62,7 @@ it('gone cancels and purges details and rows, closes views; revoked purges works
   expect(client.getQueryData(['ticket', 'ws', 'DEMO-0001'])).toBeUndefined()
   expect(client.getQueryData(['ticket', 'ws', 'DEMO-0001', 'log'])).toBeUndefined()
   expect(client.getQueryData(['tickets', 'ws'])).toEqual({ rows: [] })
-  expect(cancel).toHaveBeenCalled(); expect(close).toHaveBeenCalledWith('u', ['u'])
+  expect(cancel).toHaveBeenCalled(); expect(close).toHaveBeenCalledWith('u', expect.arrayContaining(['u', 'DEMO-0001']))
   invalidateLive(client, 'ws', 'revoked', [], close)
   expect(client.getQueryData(['tickets', 'ws'])).toBeUndefined()
   expect(client.getQueryData(['ticket', 'other', 'DEMO-0001'])).toEqual({ uid: 'other-u' })

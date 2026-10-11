@@ -1309,7 +1309,7 @@ board column: the 409 `ticket.closed` is removed, the ticket page shows a Closed
 text, never a link), the Tickets list gets a Closed filter that reads `status:["closed"]`, and Today flags needs on
 closed tickets. (3) `no_eligible`, `acknowledge` and `addon` needs get their own notice row (they were drawn as
 verdict rows). (4) Today's "Recently" comes from `activity.list` with `scope:"tickets"`; the server strips `jpos`,
-`ws_seq`, `log` and `uid`, follows `next_page` over short pages and dedupes by `id`. (5) A verdict keeps
+`ws_seq`, `log` and `uid` as fields (`jpos` can still appear inside opaque ids and cursors), follows `next_page` over short pages and dedupes by `id`. (5) A verdict keeps
 `outcome` and a list of sources; artifact digests lose their `sha256:` prefix; task "doing" is `leased_by`; gate
 `auth` maps to the presence labels. (6) Snips are shown with a "shortened" flag, never with a "…" added and never
 with a "more" button (no op returns the full text). (7) Gone and visibility changes purge Today's feed and the closed

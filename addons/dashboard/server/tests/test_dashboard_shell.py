@@ -155,3 +155,14 @@ def test_malformed_workspace_welcome_is_one_error_row(client, token, stub, gatew
     assert reply.status_code == 200
     assert len(reply.json()) == 1
     assert reply.json()[0]["host_state"] == "frame.invalid"
+
+
+def test_artifact_get_needs_the_diff_capability(gateway, stub):
+    from orch_dashboard.errors import HostError
+
+    link = gateway.link(stub.ws)
+    link.welcome["caps"].remove("diff/1")  # query/1 stays: artifact.get belongs to diff/1 (contract 0.4)
+    assert "evidence" not in gateway.features(stub.ws) and "ticket" in gateway.features(stub.ws)
+    with pytest.raises(HostError) as err:
+        link.call("artifact.get", {"ref": "DEMO-0001", "name": "x", "offset": 0})
+    assert err.value.error["code"] == "op.unsupported"

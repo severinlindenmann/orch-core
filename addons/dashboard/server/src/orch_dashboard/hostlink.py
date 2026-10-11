@@ -46,7 +46,7 @@ OPS = {
     )
 }
 
-QUERY_OPS = {"ticket.query", "ticket.get", "artifact.get", "grant.list", "needs", "workspace.show", "member.list"}
+QUERY_OPS = {"ticket.query", "ticket.get", "grant.list", "needs", "workspace.show", "member.list"}
 
 
 def peer_uid(sock: socket.socket) -> int:
@@ -230,7 +230,7 @@ class HostLink:
             else "outcome/1"
             if op == "outcome.get"
             else "diff/1"
-            if op == "diff"
+            if op in {"diff", "artifact.get"}
             else "activity/1"
             if op == "activity.list"
             else "query/1"

@@ -95,7 +95,7 @@ class Gateway:
             "board": [("ticket.query", "query/1"), ("needs", "query/1")],
             "ticket": [("ticket.get", "query/1"), ("needs", "query/1")],
             "changes": [("ticket.get", "query/1"), ("diff", "diff/1")],
-            "evidence": [("ticket.get", "query/1"), ("artifact.get", "query/1")],
+            "evidence": [("ticket.get", "query/1"), ("artifact.get", "diff/1")],
             "activity": [("activity.list", "activity/1")],
         }
         for feature, ops in requirements.items():

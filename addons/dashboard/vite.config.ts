@@ -3,6 +3,8 @@ import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vitest/config'
 
+let sonnerPatched = 0
+
 export default defineConfig(({ command }) => ({
   // Absolute asset paths: the app owns real paths (/w/DEMO/settings/addon/x), so a reload there must still find /assets.
   base: '/',
@@ -14,7 +16,15 @@ export default defineConfig(({ command }) => ({
       if (!/node_modules\/sonner\/dist\/index\.mjs$/.test(id)) return null
       const out = code.replace(/^__insertCSS\(/m, 'void (')
       if (out === code) throw new Error('sonner no longer calls __insertCSS at its top level: update vite.config.ts')
+      sonnerPatched += 1
       return { code: out, map: null }
+    },
+    // A build that bundles sonner must have patched exactly one module: a renamed entry file would otherwise pass silently
+    // and the CSP would block sonner's injected <style> at runtime.
+    buildEnd() {
+      if (command !== 'build') return
+      const inGraph = [...this.getModuleIds()].some((id) => /node_modules\/sonner\//.test(id))
+      if (inGraph && sonnerPatched !== 1) throw new Error(`sonner is bundled but ${sonnerPatched} modules were patched (expected 1): its entry path changed, update vite.config.ts`)
     },
   }, {
     name: 'production-entry',

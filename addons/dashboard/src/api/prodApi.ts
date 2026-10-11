@@ -96,7 +96,7 @@ function ticketQuery(p: ListTicketsParams, page?: string): string {
 /** What the host cannot filter or sort: the rest of the mock's list parameters, applied to the rows read. */
 function narrow(rows: TicketSummary[], p: ListTicketsParams): TicketSummary[] {
   let out = rows
-  if (p.priority?.length) out = out.filter((t) => p.priority!.includes(t.priority))
+  if (p.priority?.length) out = out.filter((t) => t.priority !== null && p.priority!.includes(t.priority))
   if (p.person) out = out.filter((t) => t.owner === p.person || t.assignees.includes(p.person!) || t.claim?.for === p.person)
   if (p.needs === 'agent') out = out.filter((t) => t.turn.who.startsWith('agent:'))
   if (p.needs === 'nobody') out = out.filter((t) => t.turn.who === 'nobody')

@@ -36,7 +36,7 @@ export function ListView({ tickets, people, onOpen }: { tickets: TicketSummary[]
         case 'status':
           return STATUSES.indexOf(t.status)
         case 'priority':
-          return PRIORITY_RANK[t.priority]
+          return t.priority ? PRIORITY_RANK[t.priority] : -1
         case 'size':
           return t.size ? SIZES.indexOf(t.size) : -1
         case 'owner':
@@ -95,7 +95,7 @@ export function ListView({ tickets, people, onOpen }: { tickets: TicketSummary[]
               <TableCell className="py-1.5">
                 <span className="inline-flex items-center gap-1 text-[12px] text-text-muted">
                   <PriorityMarker priority={t.priority} />
-                  {t.priority}
+                  {t.priority ?? '–'}
                 </span>
               </TableCell>
               {showSize && <TableCell className={cn('py-1.5 font-mono text-[11px] uppercase text-text-muted')}>{t.size ?? '–'}</TableCell>}

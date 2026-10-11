@@ -706,7 +706,7 @@ names what it lacks in `unavailable`. What v1.4 now provides, and how the UI use
 | Claim agent/`for` | `ClaimFull` (`live`, `lapsed`) | Turn "claim has lapsed" when `live` is false; expiry still unknown |
 | Closed tickets | §0.8.4: plain read, `closed{…}`, `status:["closed"]` | The 409 `ticket.closed` is gone; the page draws a Closed notice (`duplicate_of` as plain text); Tickets has a Closed filter; Today flags needs of closed tickets |
 | `needs` kinds `no_eligible`, `acknowledge`, `addon` | `payload.cause` (`no_token` or `no_visible_person`), rule text | New notice row on Today (it used to be drawn as a verdict row) |
-| Workspace-wide recent activity | `activity.list` (`scope:"tickets"`), snapshot paging | Today's "Recently"; follows `next_page` across short pages, dedupes by `id`; `jpos`, `ws_seq`, `log` and `uid` never reach the browser |
+| Workspace-wide recent activity | `activity.list` (`scope:"tickets"`), snapshot paging | Today's "Recently"; follows `next_page` across short pages, dedupes by `id`; `jpos`, `ws_seq`, `log` and `uid` are never a field in what the browser gets (`jpos` can still appear inside opaque ids and cursors, e.g. `<jpos>.e`) |
 | Event payloads | `LogItem.data` (nested, closed per type) | Flattened beside the core keys; `<field>_cut` becomes `truncated`, shown as "(shortened by the host)" |
 | Section history | `sections` (hashes only) | History › Changes lists who, when and the hash; no diff, ever |
 
@@ -732,3 +732,14 @@ Live updates: unchanged from M1, now mounted in the app shell. `ready` refetches
 falls in between). A `gone` ticket closes its open page (toast, back to the board) and removes the cached
 document, log and diff. Same-prefix workspaces are not told apart by the address yet (the M0 mini shell's
 `?ws=` suffix is gone with it); that belongs to the switcher milestone.
+
+**M2 fix round (review-M2).** The epic children and refusals queries are keyed by workspace
+(`['ticket-children', ws, key]`, `['ticket-refusals', ws, key, seq]`), so `gone`, `revoked` and `ready` reach them.
+`gone` closes only the open ticket page whose key was collected for that uid (`close(uid, keys)`). `parent` and
+`blocked_by` are plain text unless the key is a visible row in the cached tickets list or board (contract 0.5), and
+nothing preloads them. After a `revoked` the shell shows a persistent "Workspace access is no longer available."
+toast (the caches are purged as before). `artifact.get` is gated on `diff/1`, an empty non-final chunk is an error
+(bounded loop), and a null `priority` stays null (no marker, "-" in the rail). The build fails when sonner is bundled
+but its transform did not match exactly once. **Known, harmless:** Radix's scroll lock (`react-style-singleton`) and
+xterm's DOM renderer still create `<style>` elements; the CSP (`style-src 'self'`) blocks them, the console logs the
+violation, Radix dialogs do not lock body scroll and the terminal keeps its own styling. The CSP is not loosened.

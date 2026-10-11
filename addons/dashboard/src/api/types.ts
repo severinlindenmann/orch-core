@@ -151,7 +151,7 @@ export interface TicketDefinition {
   key: string
   title: string
   type: TicketType
-  priority: Priority
+  priority: Priority | null
   size: Size | null
   labels: string[]
   parent: string | null
@@ -178,7 +178,7 @@ export type BodySections = Partial<
 export interface NewTicketRequest {
   type: TicketType
   title: string
-  priority: Priority
+  priority: Priority | null
   size: Size | null
   labels: string[]
   parent: string | null
@@ -434,7 +434,7 @@ export interface TicketSummary {
   uid: string
   title: string
   type: TicketType
-  priority: Priority
+  priority: Priority | null
   size: Size | null
   status: Status
   labels: string[]

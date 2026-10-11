@@ -151,7 +151,8 @@ const PRIORITY_TONE: Record<Priority, string> = {
   urgent: 'text-danger',
 }
 
-export function PriorityLabel({ priority }: { priority: Priority }) {
+export function PriorityLabel({ priority }: { priority: Priority | null }) {
+  if (!priority) return <span className="text-[13px] text-text-faint" title="No priority set">–</span>
   return <span className={cn('text-[13px] font-medium capitalize', PRIORITY_TONE[priority])}>{priority}</span>
 }
 

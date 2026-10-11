@@ -82,6 +82,20 @@ def test_page_tokens_are_bound_and_expire(rich, stub):
         rows(stub, limit=1, sort="key", page=first["next_page"])
 
 
+def test_altered_page_tokens_are_page_expired(rich, stub):
+    first = rows(stub, limit=1, sort="key")
+    sid, offset, mac = first["next_page"].split(".")
+    for bad in (
+        f"{sid}.{int(offset) + 1}.{mac}",
+        f"{sid}.{offset}",
+        f"{sid}.{offset}.{'0' * len(mac)}",
+        f"{sid}.0.{mac}",
+    ):
+        with pytest.raises(HostError, match="page.expired"):
+            rows(stub, limit=1, sort="key", page=bad)
+    assert rows(stub, limit=1, sort="key", page=first["next_page"])["rows"]
+
+
 def test_ticket_get_is_structured(rich, stub):
     got = stub.call("ticket.get", {"ref": "DEMO-0001"})["data"]
     assert got["doc"]["key"] == "DEMO-0001" and got["doc"]["acceptance"][0]["id"] == "AC1"

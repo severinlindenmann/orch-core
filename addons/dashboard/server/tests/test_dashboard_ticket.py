@@ -156,3 +156,34 @@ def test_without_read_ext_the_page_says_unknown(client, token, stub, rich):
     assert all(r[k] is None for r in board["rows"] for k in unknown)
     check("ticket-v13", doc)
     check("board-page-v13", board)
+
+
+def test_artifact_empty_chunk_without_last_is_an_error(client, token, stub, gateway, monkeypatch):
+    calls = []
+
+    def call(ws, op, args=None):
+        calls.append(op)
+        return {"b64": "", "last": False, "size": 10, "digest": "sha256:" + "0" * 64}
+
+    monkeypatch.setattr(gateway, "call", call)
+    res = client.get(url(stub, "DEMO-0001/artifacts/out.log"), headers=headers(token))
+    assert res.status_code >= 500 and res.json()["error"]["code"] == "internal"
+    assert len(calls) == 1  # no second read of a host that makes no progress
+
+
+def test_null_priority_stays_null(client, token, stub, gateway, rich, monkeypatch):
+    real = gateway.call
+
+    def call(ws, op, args=None):
+        data = real(ws, op, args)
+        for row in data.get("rows", []):
+            row["priority"] = None
+        if op == "ticket.get":
+            data["doc"]["priority"] = None
+        return data
+
+    monkeypatch.setattr(gateway, "call", call)
+    doc = client.get(url(stub, "DEMO-0001"), headers=headers(token)).json()
+    assert doc["priority"] is None
+    rows = client.get(f"/api/w/{stub.ws}/tickets", headers=headers(token)).json()["rows"]
+    assert rows and all(r["priority"] is None for r in rows)

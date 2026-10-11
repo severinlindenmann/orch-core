@@ -165,13 +165,17 @@ def register(app: FastAPI, gateway: Gateway):
     def artifact(key: Key, name: ArtifactName, query: Annotated[ContentQuery, Query()], ws: str = Depends(workspace)):
         """An evidence file, read in chunks up to a cap, its digest checked against the one the ticket names."""
         chunks, offset = [], 0
-        while True:
+        for _ in range(MAX_ARTIFACT // CHUNK + 1):
             part = gateway.call(ws, "artifact.get", {"ref": key, "name": name, "offset": offset, "length": CHUNK})
             raw = base64.b64decode(part["b64"], validate=True)
+            if not raw and not part["last"]:
+                raise fail("internal")  # a host that makes no progress must not pin a worker thread
             chunks.append(raw)
             offset += len(raw)
             if part["last"] or offset >= MAX_ARTIFACT:
                 break
+        else:
+            raise fail("internal")
         data = b"".join(chunks)
         complete = bool(part["last"])
         digest = part["digest"]

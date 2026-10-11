@@ -7,6 +7,7 @@ these ops.
 
 import base64
 import hashlib
+import hmac
 import re
 import secrets
 import time
@@ -356,6 +357,11 @@ class Pages:
 
     def __init__(self):
         self.snapshots = {}
+        self._key = secrets.token_bytes(32)  # per process: an offset in a token is authenticated, not taken on trust
+
+    def token(self, sid, offset):
+        mac = hmac.new(self._key, f"{sid}.{offset}".encode(), "sha256").hexdigest()[:24]
+        return f"{sid}.{offset}.{mac}"
 
     def open(self, rows, as_of, sub_cursor, args_key, person, then):
         now = time.monotonic()
@@ -375,9 +381,16 @@ class Pages:
         return sid
 
     def read(self, token, args_key, person):
-        sid, _, offset = token.partition(".")
+        sid, _, rest = token.partition(".")
+        offset, _, mac = rest.partition(".")
         snap = self.snapshots.get(sid)
-        if snap is None or snap["expires"] <= time.monotonic() or not offset.isdecimal() or snap["person"] != person:
+        if (
+            snap is None
+            or snap["expires"] <= time.monotonic()
+            or not offset.isdecimal()
+            or not hmac.compare_digest(self.token(sid, offset), f"{sid}.{offset}.{mac}")
+            or snap["person"] != person
+        ):
             raise fail("page.expired", exit=9)
         if snap["key"] != args_key:
             raise bad("page")
@@ -434,7 +447,7 @@ def query(host, store, views, args, person):
     page, nxt = _page(host, snap, start, limit, now, lambda r: r["uid"])
     return {
         "rows": page,
-        "next_page": f"{sid}.{nxt}" if nxt is not None else None,
+        "next_page": host.pages.token(sid, nxt) if nxt is not None else None,
         "total": len(snap["rows"]),
         "sub_cursor": snap["cursor"],
         "as_of": snap["as_of"],
@@ -1038,7 +1051,7 @@ def activity(host, store, views, ws, person, args):
     page, nxt = _page(host, snap, start, limit, now, lambda r: r["uid"])
     return {
         "items": page,
-        "next_page": f"{sid}.{nxt}" if nxt is not None else None,
+        "next_page": host.pages.token(sid, nxt) if nxt is not None else None,
         "sub_cursor": snap["cursor"],
         "as_of": snap["as_of"],
     }

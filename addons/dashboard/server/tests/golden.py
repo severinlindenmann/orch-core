@@ -29,7 +29,7 @@ def normalize(value, seen=None):
             elif k in ("sub_cursor", "cursor") and isinstance(v, str):
                 out[k] = "CURSOR"
             elif k == "next_page" and isinstance(v, str):
-                out[k] = "PAGE." + v.rpartition(".")[2]
+                out[k] = "PAGE." + v.split(".")[1]
             else:
                 out[k] = normalize(v, seen)
         return out

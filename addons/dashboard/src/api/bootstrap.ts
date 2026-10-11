@@ -13,9 +13,9 @@ function remember(token: string | null) {
   else sessionStorage.removeItem(STORAGE)
   listeners.forEach((fn) => fn())
 }
-export function clearSession(broadcast = true) {
-  remember(null)
-  if (broadcast) channel?.postMessage({ type: 'logout' })
+export function clearSession(broadcast = true, token = currentToken) {
+  if (currentToken === token) remember(null)
+  if (broadcast && token) channel?.postMessage({ type: 'logout', token })
 }
 export function safeDestination(value: string | null) {
   if (!value || !value.startsWith('/') || value.startsWith('//') || value.includes('\\') || /[\x00-\x1f]/.test(value)) return '/'
@@ -35,7 +35,7 @@ export async function bootstrap(fetcher: typeof fetch = fetch): Promise<string |
     channel = new BroadcastChannel('orch-session')
     channel.onmessage = ({ data }) => {
       if (data?.type === 'request' && currentToken) channel?.postMessage({ type: 'token', token: currentToken })
-      if (data?.type === 'logout') clearSession(false)
+      if (data?.type === 'logout' && typeof data.token === 'string') clearSession(false, data.token)
     }
   }
   if (code) {
@@ -56,7 +56,10 @@ export async function bootstrap(fetcher: typeof fetch = fetch): Promise<string |
         }
       }
       const finish = () => { clearTimeout(timer); channel?.removeEventListener('message', handler); resolve() }
-      const timer = setTimeout(finish, 400)
+      let timer = setTimeout(() => {
+        timer = setTimeout(finish, 2000)
+        channel?.postMessage({ type: 'request' })
+      }, 2000)
       channel!.addEventListener('message', handler)
       channel!.postMessage({ type: 'request' })
     })

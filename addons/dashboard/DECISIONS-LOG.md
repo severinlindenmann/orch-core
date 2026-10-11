@@ -1192,3 +1192,18 @@ The owner answered the eight open questions of REVIEW.md. Items 1, 2, 5 and 6 ch
   mock app remains reachable throughout; restore its former client/transport singleton wiring
   and Vite production entry if removing the package. No core migration or persisted session
   data needs reversing.
+
+## 2026-10-11 P2 M0 fix round 1
+
+- **Decision:** Open a private redirect file instead of a credential-bearing browser argument;
+  expire launch codes after 30 seconds and delete redirects on exchange or after 60 seconds.
+  Throttle failed exchanges only. Require explicitly marked, isolated dev state and contain
+  sockets there; clean them on SIGTERM/SIGINT. Scope cross-tab logout to the failed token,
+  retry tab discovery once after two seconds, and wait for session capabilities before
+  rendering availability. Use a root favicon, pinned CI actions without persisted credentials,
+  bounded CI jobs, validated welcome shapes, and retrying layout startup with Chrome cleanup.
+- **Why:** Apply all eleven review findings without changing core or starting port listeners.
+  Valid launches must survive bogus attempts; stale tabs must not clear newer sessions;
+  malformed workspace hosts must fail as one row rather than the whole list.
+- **Revert:** Revert this fix-round commit. That restores the reviewed M0 behavior and its
+  known security and reliability defects; no data migration is involved.

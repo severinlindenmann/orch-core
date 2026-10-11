@@ -107,3 +107,20 @@ def test_registry_pin_permissions(tmp_path):
     with pytest.raises(OSError):
         read_pins(path)
     assert os.getuid() >= 0
+
+
+@pytest.mark.parametrize("change", [{"workspace": "x"}, {"peer": []}, {"ops": []}, {"caps": {}}])
+def test_malformed_workspace_welcome_is_one_error_row(client, token, stub, gateway, monkeypatch, change):
+    original = stub.welcome
+
+    def malformed():
+        return {**original(), **change}
+
+    # Establish a healthy control link first; only this workspace's welcome is malformed.
+    assert client.get("/api/workspaces", headers={"Authorization": f"Bearer {token}"}).status_code == 200
+    gateway.links[stub.ws].close()
+    monkeypatch.setattr(stub, "welcome", malformed)
+    reply = client.get("/api/workspaces", headers={"Authorization": f"Bearer {token}"})
+    assert reply.status_code == 200
+    assert len(reply.json()) == 1
+    assert reply.json()[0]["host_state"] == "frame.invalid"

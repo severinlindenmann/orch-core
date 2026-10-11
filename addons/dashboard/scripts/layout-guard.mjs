@@ -18,10 +18,11 @@
 // --chrome <path> (or CHROME_PATH). Needs the dev build: it moves between routes through `window.__orchRouter` (main.tsx). jsdom cannot lay out, so this runs against the real dev server.
 
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
+import { waitForTarget, waitForDevTools } from './layout-startup.mjs'
 
 const argv = process.argv.slice(2)
 const opt = (name, fallback) => {
@@ -81,46 +82,60 @@ function findChrome() {
 }
 
 async function launch() {
+  const chrome = findChrome()
   const profile = mkdtempSync(join(tmpdir(), 'layout-guard-'))
-  const proc = spawn(findChrome(), [
+  const proc = spawn(chrome, [
     '--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check',
     '--hide-scrollbars=false', '--force-device-scale-factor=1', 'about:blank',
   ], { stdio: 'ignore' })
-  const portFile = join(profile, 'DevToolsActivePort')
-  for (let i = 0; i < 100 && !existsSync(portFile); i++) await sleep(100)
-  const [port] = readFileSync(portFile, 'utf8').split('\n')
-  const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()
-  const page = targets.find((t) => t.type === 'page')
-  const ws = new WebSocket(page.webSocketDebuggerUrl)
-  await new Promise((ok, fail) => {
-    ws.onopen = ok
-    ws.onerror = fail
-  })
-  let id = 0
-  const waiting = new Map()
-  ws.onmessage = (m) => {
-    const msg = JSON.parse(m.data)
-    if (msg.id && waiting.has(msg.id)) {
-      const { ok, fail } = waiting.get(msg.id)
-      waiting.delete(msg.id)
-      msg.error ? fail(new Error(msg.error.message)) : ok(msg.result)
-    }
-  }
-  const send = (method, params = {}) =>
-    new Promise((ok, fail) => {
-      waiting.set(++id, { ok, fail })
-      ws.send(JSON.stringify({ id, method, params }))
-    })
+  let ws
+  let closed = false
+  let spawnError
+  proc.on('error', (error) => { spawnError = error })
+  const onExit = () => close()
+  const onInt = () => { close(); process.exit(130) }
+  const onTerm = () => { close(); process.exit(143) }
   const close = () => {
-    ws.close()
-    proc.kill()
-    try {
-      rmSync(profile, { recursive: true, force: true })
-    } catch {
-      /* a locked profile is left for the OS to clean */
-    }
+    if (closed) return
+    closed = true
+    try { ws?.close() } catch { /* cleanup must still terminate Chrome */ }
+    proc.kill('SIGKILL')
+    process.removeListener('exit', onExit)
+    process.removeListener('SIGINT', onInt)
+    process.removeListener('SIGTERM', onTerm)
+    try { rmSync(profile, { recursive: true, force: true }) } catch { /* OS may hold the profile */ }
   }
-  return { send, close }
+  process.once('exit', onExit)
+  process.once('SIGINT', onInt)
+  process.once('SIGTERM', onTerm)
+  try {
+    const page = await waitForDevTools(join(profile, 'DevToolsActivePort'), { alive: () => !spawnError && proc.exitCode === null && proc.signalCode === null })
+    ws = new WebSocket(page.webSocketDebuggerUrl)
+    await new Promise((ok, fail) => {
+      const timeout = setTimeout(() => fail(new Error('Chrome DevTools WebSocket did not become ready')), 10000)
+      ws.onopen = () => { clearTimeout(timeout); ok() }
+      ws.onerror = (error) => { clearTimeout(timeout); fail(error) }
+    })
+    let id = 0
+    const waiting = new Map()
+    ws.onmessage = (m) => {
+      const msg = JSON.parse(m.data)
+      if (msg.id && waiting.has(msg.id)) {
+        const { ok, fail } = waiting.get(msg.id)
+        waiting.delete(msg.id)
+        msg.error ? fail(new Error(msg.error.message)) : ok(msg.result)
+      }
+    }
+    const send = (method, params = {}) =>
+      new Promise((ok, fail) => {
+        waiting.set(++id, { ok, fail })
+        ws.send(JSON.stringify({ id, method, params }))
+      })
+    return { send, close }
+  } catch (error) {
+    close()
+    throw error
+  }
 }
 
 // ------------------------------------------------------------------ page helpers
@@ -213,22 +228,17 @@ function findOverflow(allowed) {
 
 // ------------------------------------------------------------------ the run
 
-/** The dev server must answer first (it may still be starting). */
-async function waitForServer() {
-  for (let i = 0; i < 60; i++) {
-    try {
-      if ((await fetch(BASE)).ok) return
-    } catch {
-      /* not up yet */
-    }
-    await sleep(500)
+async function main() {
+  await waitForTarget(BASE)
+  const { send, close } = await launch()
+  try {
+    await run(send, close)
+  } finally {
+    close()
   }
-  throw new Error(`No dev server at ${BASE}: start it with \`npx vite --port 5201 --strictPort --host 127.0.0.1\` or pass --url`)
 }
 
-async function main() {
-  await waitForServer()
-  const { send, close } = await launch()
+async function run(send, close) {
   const { evaluate, settle } = makePage(send)
   await send('Page.enable')
   await send('Runtime.enable')
@@ -315,7 +325,8 @@ async function main() {
       ok &&= pass
       console.log(`selftest --break ${what}: exit ${code}, ${says.test(out) ? 'reason reported' : 'reason missing'} → ${pass ? 'ok' : 'FAIL'}`)
     }
-    process.exit(ok ? 0 : 1)
+    process.exitCode = ok ? 0 : 1
+    return
   }
 
   for (const dataset of DATASETS) {
@@ -477,7 +488,7 @@ async function main() {
   }
   close()
   console.log(`\n${checked} pages checked, ${failures.length} failing (overflow, cut-off controls or a step that did not open), ${warned} clipping warnings.`)
-  if (failures.length) process.exit(1)
+  if (failures.length) process.exitCode = 1
 }
 
 main().catch((e) => {

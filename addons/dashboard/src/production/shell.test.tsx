@@ -38,3 +38,11 @@ it('asks for a workspace when readable prefixes collide', async () => {
   await userEvent.click(await screen.findByRole('button', { name: 'Tickets' }))
   await waitFor(() => expect(realApi.tickets).toHaveBeenCalledWith(other, undefined))
 })
+
+it('shows a skeleton until session capabilities arrive', async () => {
+  vi.mocked(realApi.session).mockReturnValue(new Promise(() => {}))
+  show()
+  await screen.findByRole('option', { name: 'Dev workspace · DEMO' })
+  expect(screen.queryByText(/Host too old/)).not.toBeInTheDocument()
+  expect(screen.getByLabelText('Loading session')).toBeInTheDocument()
+})

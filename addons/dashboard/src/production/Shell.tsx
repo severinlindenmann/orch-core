@@ -68,7 +68,8 @@ function WorkspaceShell() {
     {list.isPending && <p role="status">Loading workspaces…</p>}
     {list.data && !ws && <p>{matches.length > 1 ? 'Choose a workspace: this prefix is shared.' : 'Choose an available workspace.'}</p>}
     {ws && ws.host_state !== 'ok' && <p role="alert">{ws.host_state === 'addon.disabled' ? 'Dashboard addon is disabled.' : 'Host not running.'}</p>}
-    {ws && ws.host_state === 'ok' && (features.includes(page) ? <Content key={`${ws.id}:${page}`} ws={ws} page={page} /> : <p>Host too old for this feature, or feature not available.</p>)}
+    {ws && ws.host_state === 'ok' && session.isPending && <div aria-label="Loading session" role="status" className="prod-skeleton" />}
+    {ws && ws.host_state === 'ok' && session.data && (features.includes(page) ? <Content key={`${ws.id}:${page}`} ws={ws} page={page} /> : <p>Host too old for this feature, or feature not available.</p>)}
   </main></div>
 }
 

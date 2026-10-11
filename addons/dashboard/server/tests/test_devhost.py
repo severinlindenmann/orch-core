@@ -83,3 +83,108 @@ def test_restricted_ticket_does_not_leak(stub, p1):
     stranger = StubHost(p1.root, p1.host_state, other.ref)
     assert stranger.call("ticket.query", {})["data"]["rows"] == []
     assert stranger.call("needs", {})["data"]["items"] == []
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "unset",
+        "default",
+        "nested_default",
+        "unmarked",
+        "run_override",
+        "socket_override",
+        "alias",
+        "xdg_default",
+        "registry_alias",
+    ],
+)
+def test_isolated_state_required(tmp_path, monkeypatch, case):
+    from pathlib import Path
+
+    from devhost.__main__ import dev_directories
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / ".orch-dev").touch()
+    monkeypatch.setenv("ORCH_STATE_DIR", str(state))
+    monkeypatch.delenv("ORCH_RUN_DIR", raising=False)
+    monkeypatch.delenv("ORCH_HOST_SOCKET", raising=False)
+    default = Path.home() / ".config/orch"
+    if case == "unset":
+        monkeypatch.delenv("ORCH_STATE_DIR")
+    elif case in ("default", "nested_default", "alias"):
+        default.mkdir(parents=True)
+        (default / ".orch-dev").touch()
+        target = default
+        if case == "nested_default":
+            target = default / "child"
+            target.mkdir()
+            (target / ".orch-dev").touch()
+        if case == "alias":
+            target = tmp_path / "alias"
+            target.symlink_to(default)
+        monkeypatch.setenv("ORCH_STATE_DIR", str(target))
+    elif case == "unmarked":
+        (state / ".orch-dev").unlink()
+    elif case == "run_override":
+        monkeypatch.setenv("ORCH_RUN_DIR", str(default / "run"))
+    elif case == "xdg_default":
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        state.rename(tmp_path / "orch")
+        monkeypatch.setenv("ORCH_STATE_DIR", str(tmp_path / "orch"))
+    elif case == "registry_alias":
+        (state / "host").symlink_to(default)
+    else:
+        monkeypatch.setenv("ORCH_HOST_SOCKET", str(default / "run/control/host.sock"))
+    with pytest.raises(RuntimeError):
+        dev_directories()
+    assert not (default / "host/workspaces.json").exists()
+
+
+def test_isolated_state_accepted(tmp_path, monkeypatch):
+    from devhost.__main__ import dev_directories
+
+    (tmp_path / ".orch-dev").touch()
+    monkeypatch.setenv("ORCH_STATE_DIR", str(tmp_path))
+    monkeypatch.delenv("ORCH_RUN_DIR", raising=False)
+    monkeypatch.delenv("ORCH_HOST_SOCKET", raising=False)
+    assert dev_directories() == (tmp_path.resolve(), tmp_path.resolve() / "run")
+
+
+@pytest.mark.parametrize("sig_name", ["SIGTERM", "SIGINT"])
+def test_signal_cleanup_without_binding(p1, monkeypatch, sig_name):
+    import signal
+    import sys
+    from unittest.mock import Mock
+
+    from devhost import __main__ as dev
+
+    state = p1.host_state
+    state.mkdir(parents=True, exist_ok=True)
+    (state / ".orch-dev").touch()
+    monkeypatch.setenv("ORCH_STATE_DIR", str(state))
+    monkeypatch.delenv("ORCH_RUN_DIR", raising=False)
+    monkeypatch.delenv("ORCH_HOST_SOCKET", raising=False)
+    monkeypatch.setattr(sys, "argv", ["devhost", str(p1.root), "--person", p1.owner.ref])
+    sockets = []
+    previous = signal.getsignal(getattr(signal, sig_name))
+
+    def serve(host, run, opened, stopped):
+        for name in ("control", host.ws):
+            path = run / name / "host.sock"
+            path.parent.mkdir(parents=True)
+            path.touch()
+            sock = Mock()
+            opened.append((sock, path))
+            sockets.append((sock, path))
+        signal.getsignal(getattr(signal, sig_name))(getattr(signal, sig_name), None)
+        assert stopped.is_set()
+
+    monkeypatch.setattr(dev, "run_stub", serve)
+    dev.main()
+    for sock, path in sockets:
+        sock.close.assert_called_once()
+        assert not path.exists()
+    assert signal.getsignal(getattr(signal, sig_name)) == previous

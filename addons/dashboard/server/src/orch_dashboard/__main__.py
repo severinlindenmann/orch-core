@@ -5,6 +5,8 @@ import errno
 import fcntl
 import hashlib
 import hmac
+import html
+import json
 import os
 import secrets
 import socket
@@ -94,7 +96,7 @@ def _serve(directory, lock_fd=None):
     # For a child, its launcher holds the startup lock until ctl.sock answers.
     ctl_path = directory / "ctl.sock"
     stale_socket(ctl_path)
-    auth = Auth()
+    auth = Auth(directory=directory)
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.bind(("127.0.0.1", 0))
     listener.listen(128)
@@ -212,7 +214,22 @@ def open_dashboard(path="/"):
                 raise
             time.sleep(0.05)
     fragment = urllib.parse.urlencode({"launch": launch["code"], "to": path})
-    webbrowser.open(f"http://127.0.0.1:{launch['port']}/#{fragment}")
+    url = f"http://127.0.0.1:{launch['port']}/#{fragment}"
+    redirect = Auth(directory=directory).redirect_path(launch["code"])
+    with private_directory(directory) as directory_fd:
+        fd = os.open(redirect.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory_fd)
+        try:
+            os.fchmod(fd, 0o600)
+            with os.fdopen(fd, "w") as file:
+                file.write(
+                    '<!doctype html><meta name="referrer" content="no-referrer">'
+                    f'<meta http-equiv="refresh" content="0;url={html.escape(url, quote=True)}">'
+                    f'<script>location.replace({json.dumps(url)});</script>'
+                )
+            webbrowser.open(redirect.resolve().as_uri())
+        except BaseException:
+            redirect.unlink(missing_ok=True)
+            raise
 
 
 def main():

@@ -128,6 +128,15 @@ class HostLink:
                 raise HostError(w["error"])
             if w.get("t") != "welcome" or w.get("proto") != 1:
                 raise fail("host.version_mismatch", exit=1)
+            if (
+                not isinstance(w.get("workspace"), dict)
+                or not isinstance(w.get("peer"), dict)
+                or not isinstance(w.get("caps"), list)
+                or not all(isinstance(cap, str) for cap in w["caps"])
+                or not isinstance(w.get("ops"), dict)
+                or not all(type(version) is int for version in w["ops"].values())
+            ):
+                raise fail("frame.invalid", exit=6)
             if w.get("host_uid") != host_uid or (workspace_id and w.get("workspace", {}).get("id") != workspace_id):
                 raise fail("peer.denied", exit=3)
             peer = w.get("peer", {})
@@ -146,7 +155,10 @@ class HostLink:
         try:
             sock.connect(str(path))
             return cls(sock, host_uid, workspace_id)
-        except (OSError, EOFError):
+        except HostError:
+            sock.close()
+            raise
+        except Exception:
             sock.close()
             raise fail("host.unavailable") from None
 

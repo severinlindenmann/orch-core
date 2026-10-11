@@ -23,3 +23,5 @@
 .prod-main dt { color: var(--text-muted); margin-top: 20px; font-size: 12px; }
 .prod-main dd { overflow-wrap: anywhere; }
 .prod-login { max-width: 560px; margin: 15vh auto; padding: 32px; display: grid; gap: 16px; }
+
+.prod-skeleton { height: 8rem; background: var(--surface-2); border-radius: 6px; }

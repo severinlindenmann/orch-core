@@ -26,7 +26,7 @@ def test_expiry_and_idle():
     now = [100.0]
     auth = Auth(lambda: now[0])
     code = auth.launch(PORT)["code"]
-    now[0] += 60
+    now[0] += 30
     assert auth.exchange(code)[1] == 401
     token = auth.exchange(auth.launch(PORT)["code"])[0]["token"]
     now[0] += 43200
@@ -94,9 +94,11 @@ def test_body_bound_and_no_echo(client, auth):
         ).status_code
         == 413
     )
-    for _ in range(6):
-        assert client.post("/auth/session", json={"code": "x" * 43}, headers={"Origin": ORIGIN}).status_code == 401
-    assert client.post("/auth/session", json={"code": code}, headers={"Origin": ORIGIN}).status_code == 429
+    for i in range(20):
+        assert client.post("/auth/session", json={"code": "x" * 43}, headers={"Origin": ORIGIN}).status_code == (
+            401 if i < 10 else 429
+        )
+    assert client.post("/auth/session", json={"code": code}, headers={"Origin": ORIGIN}).status_code == 200
 
 
 def test_all_api_routes_require_token_and_unknown_routes(tmp_path):
@@ -163,17 +165,61 @@ def test_reopen_path():
 def test_launcher_opens_only_after_probe(tmp_path, monkeypatch, capsys):
     import orch_dashboard.__main__ as launcher
 
-    auth = Auth()
+    auth = Auth(directory=tmp_path / "dashboard")
+    timers = []
+    monkeypatch.setattr("orch_dashboard.auth.threading.Timer", lambda delay, fn: Timer(delay, fn))
+
+    class Timer:
+        def __init__(self, delay, fn):
+            assert delay == 60
+            self.fn = fn
+            timers.append(self)
+
+        def start(self):
+            pass
+
     issued = auth.launch(PORT)
     opened = []
     monkeypatch.setattr(launcher, "state_dir", lambda: tmp_path)
     monkeypatch.setattr(launcher, "control", lambda *_: issued)
     monkeypatch.setattr(launcher, "verify_probe", lambda _: opened.append("probe"))
-    monkeypatch.setattr(launcher.webbrowser, "open", lambda url: opened.append(url))
+    browser_args = []
+
+    class BrowserProcess:
+        def poll(self):
+            return None
+
+    def browser_process(args, **kwargs):
+        browser_args.append(args)
+        return BrowserProcess()
+
+    def open_browser(url):
+        opened.append(url)
+        return launcher.webbrowser.BackgroundBrowser("demo-not-a-real-browser").open(url)
+
+    monkeypatch.setattr(launcher.subprocess, "Popen", browser_process)
+    monkeypatch.setattr(launcher.webbrowser, "open", open_browser)
     launcher.open_dashboard("/w/DEMO/tickets")
     assert opened[0] == "probe"
-    assert opened[1].startswith(ORIGIN + "/#launch=")
-    assert issued["code"] in opened[1]
+    assert opened[1].startswith("file://")
+    assert "launch=" not in opened[1] and issued["code"] not in opened[1]
+    assert browser_args == [["demo-not-a-real-browser", opened[1]]]
+    assert all("launch=" not in arg and issued["code"] not in arg for arg in browser_args[0])
+    from pathlib import Path
+    from urllib.parse import unquote, urlsplit
+
+    redirect = Path(unquote(urlsplit(opened[1]).path))
+    assert redirect.stat().st_mode & 0o777 == 0o600
+    assert redirect.parent.stat().st_mode & 0o777 == 0o700
+    html = redirect.read_text()
+    assert issued["code"] in html and "location.replace" in html and 'http-equiv="refresh"' in html
+    assert auth.exchange(issued["code"])[1] == 200
+    assert not redirect.exists()
+    issued = auth.launch(PORT)
+    launcher.open_dashboard()
+    redirect = Path(unquote(urlsplit(opened[-1]).path))
+    timers[-1].fn()
+    assert not redirect.exists()
     assert not capsys.readouterr().out
     opened.clear()
 

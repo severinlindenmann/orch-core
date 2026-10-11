@@ -60,7 +60,7 @@ def create_app(port: int, gateway=None, auth=None, static=None):
 
     @app.post("/auth/session")
     def session(body: LaunchCode):
-        value, status = auth.exchange(body.code, count_attempt=False)
+        value, status = auth.exchange(body.code)
         return (
             JSONResponse(value) if value else response("rate.limited" if status == 429 else "session.required", status)
         )

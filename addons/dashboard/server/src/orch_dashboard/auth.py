@@ -8,7 +8,8 @@ from datetime import UTC, datetime
 
 
 class Auth:
-    def __init__(self, clock=time.time):
+    def __init__(self, clock=time.time, directory=None):
+        self.directory = directory
         self.clock = clock
         self.instance = secrets.token_hex(16)
         self.probe_key = secrets.token_hex(32)
@@ -25,7 +26,11 @@ class Auth:
             now = self.clock()
             self.codes = {c: until for c, until in self.codes.items() if until > now}
             code = secrets.token_urlsafe(32)
-            self.codes[code] = now + 60
+            self.codes[code] = now + 30
+            if self.directory is not None:
+                timer = threading.Timer(60, lambda: self.remove_redirect(code))
+                timer.daemon = True
+                timer.start()
             return {"instance": self.instance, "port": port, "probe_key": self.probe_key, "code": code}
 
     def _attempt(self, now):
@@ -36,18 +41,20 @@ class Auth:
         self.attempts.append(now)
         return True
 
-    def allow_attempt(self):
-        with self.lock:
-            return self._attempt(self.clock())
+    def redirect_path(self, code):
+        return self.directory / ("launch-" + hashlib.sha256(code.encode()).hexdigest() + ".html")
 
-    def exchange(self, code, *, count_attempt=True):
+    def remove_redirect(self, code):
+        if self.directory is not None:
+            self.redirect_path(code).unlink(missing_ok=True)
+
+    def exchange(self, code):
         with self.lock:
             now = self.clock()
-            if count_attempt and not self._attempt(now):
-                return None, 429
             until = self.codes.pop(code, 0)
             if now >= until:
-                return None, 401
+                return None, 401 if self._attempt(now) else 429
+            self.remove_redirect(code)
             token = secrets.token_urlsafe(32)
             self.sessions[token] = now, now
             return {"token": token, "expires_at": datetime.fromtimestamp(now + 86400, UTC).isoformat()}, 200

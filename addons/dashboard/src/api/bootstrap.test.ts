@@ -7,7 +7,7 @@ beforeEach(() => {
   vi.stubGlobal('BroadcastChannel', undefined)
   clearSession(false)
 })
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers() })
 
 describe('production bootstrap', () => {
   it('scrubs the fragment before any request, exchanges once and stores in this tab', async () => {
@@ -56,8 +56,70 @@ describe('production bootstrap', () => {
     }
     vi.stubGlobal('BroadcastChannel', Channel)
     expect(await bootstrap(vi.fn())).toBe('demo-not-a-real-shared-token')
-    Channel.current.onmessage!(new MessageEvent('message', { data: { type: 'logout' } }))
+    Channel.current.onmessage!(new MessageEvent('message', { data: { type: 'logout', token: 'demo-not-a-real-shared-token' } }))
     expect(getToken()).toBeNull()
     expect(sessionStorage.getItem('orch-session')).toBeNull()
   })
+})
+
+it('ignores logout for an older token and broadcasts the failed token', async () => {
+  const postMessage = vi.fn()
+  let receive: (event: MessageEvent) => void = () => {}
+  vi.stubGlobal('BroadcastChannel', class {
+    set onmessage(fn: (event: MessageEvent) => void) { receive = fn }
+    postMessage = postMessage
+    close() {}
+  })
+  sessionStorage.setItem('orch-session', 'demo-not-a-real-new')
+  await bootstrap()
+  receive(new MessageEvent('message', { data: { type: 'logout', token: 'demo-not-a-real-old' } }))
+  expect(getToken()).toBe('demo-not-a-real-new')
+  clearSession(true, 'demo-not-a-real-old')
+  expect(getToken()).toBe('demo-not-a-real-new')
+  expect(postMessage).toHaveBeenLastCalledWith({ type: 'logout', token: 'demo-not-a-real-old' })
+  receive(new MessageEvent('message', { data: { type: 'logout', token: 'demo-not-a-real-new' } }))
+  expect(getToken()).toBeNull()
+})
+
+it('waits two seconds, retries once, and accepts a delayed tab reply', async () => {
+  vi.useFakeTimers()
+  const handlers = new Set<(event: MessageEvent) => void>()
+  const postMessage = vi.fn()
+  vi.stubGlobal('BroadcastChannel', class {
+    postMessage = postMessage
+    close() {}
+    addEventListener(_name: string, fn: (event: MessageEvent) => void) { handlers.add(fn) }
+    removeEventListener(_name: string, fn: (event: MessageEvent) => void) { handlers.delete(fn) }
+  })
+  const joined = bootstrap()
+  await vi.advanceTimersByTimeAsync(1999)
+  expect(postMessage).toHaveBeenCalledTimes(1)
+  await vi.advanceTimersByTimeAsync(1)
+  expect(postMessage).toHaveBeenCalledTimes(2)
+  await vi.advanceTimersByTimeAsync(1500)
+  handlers.forEach((fn) => fn(new MessageEvent('message', { data: { type: 'token', token: 'demo-not-a-real-delayed' } })))
+  expect(await joined).toBe('demo-not-a-real-delayed')
+  expect(handlers.size).toBe(0)
+  expect(vi.getTimerCount()).toBe(0)
+})
+
+it('a late API 401 broadcasts its request token and preserves a newer session', async () => {
+  const { realApi } = await import('./realApi')
+  const postMessage = vi.fn()
+  vi.stubGlobal('BroadcastChannel', class { postMessage = postMessage; close() {} })
+  sessionStorage.setItem('orch-session', 'demo-not-a-real-old')
+  await bootstrap()
+  let respond!: (value: Response) => void
+  vi.stubGlobal('fetch', vi.fn((_path, init) => {
+    expect(init.headers.Authorization).toBe('Bearer demo-not-a-real-old')
+    return new Promise<Response>((resolve) => { respond = resolve })
+  }))
+  const request = realApi.workspaces()
+  const rejected = expect(request).rejects.toThrow('Run orch dashboard')
+  sessionStorage.setItem('orch-session', 'demo-not-a-real-new')
+  await bootstrap()
+  respond(new Response('', { status: 401 }))
+  await rejected
+  expect(getToken()).toBe('demo-not-a-real-new')
+  expect(postMessage).toHaveBeenLastCalledWith({ type: 'logout', token: 'demo-not-a-real-old' })
 })

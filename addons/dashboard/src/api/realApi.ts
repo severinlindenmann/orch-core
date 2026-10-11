@@ -21,8 +21,9 @@ export type ShellNeed = Pick<NeedsYouItem, 'text'> & {
 }
 const transport = createFetchTransport('', getToken)
 async function call<T>(path: string): Promise<T> {
-  const result = await transport.request('GET', path)
-  if (result.status === 401) { clearSession(); throw new Error('Run orch dashboard in your terminal') }
+  const token = getToken()
+  const result = await createFetchTransport('', () => token).request('GET', path)
+  if (result.status === 401) { clearSession(true, token); throw new Error('Run orch dashboard in your terminal') }
   if (result.status >= 400) {
     const body = result.json as ApiErrorBody
     throw new ApiError(result.status, body.error ?? { code: 'host.unavailable', message: 'Host not available', retryable: true }, body.exit)

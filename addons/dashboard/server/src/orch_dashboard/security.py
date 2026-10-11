@@ -61,8 +61,6 @@ class Security:
             sites = values(b"sec-fetch-site")
             if sites and sites != ["same-origin"]:
                 return await reject("origin.bad", 403)
-        if path == "/auth/session" and method == "POST" and not self.auth.allow_attempt():
-            return await reject("rate.limited", 429)
         if path == "/auth/session" and values(b"content-type") != ["application/json"]:
             return await reject("invalid.input", 400)
         limit = 1024 if path == "/auth/session" else 1_048_576

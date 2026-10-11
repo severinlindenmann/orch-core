@@ -30,7 +30,9 @@ The stub uses the P1 signed store and registry; it does not seed mock tickets. I
 disposable workspace through P1's `orch init --prefix DEMO` in your own terminal (or use a
 workspace prepared by the dev-kit). The terminal handles its signing factors.
 
-1. Explicitly mark that workspace with an empty `.orch-dev` file at its root. Export
+1. Explicitly mark that workspace and its separate dev state directory with an empty
+   `.orch-dev` file in each. The stub refuses the default host state directory and socket
+   overrides outside the marked state. Export
    `ORCH_DEV=1`, `ORCH_STATE_DIR` pointing to its host state, and `ORCH_WORKSPACE` pointing to
    the workspace. All terminals below must use the same state directory.
 2. Install this addon's `orch-addon.json` at `$ORCH_WORKSPACE/addons/dashboard/orch-addon.json`.
@@ -44,6 +46,8 @@ workspace prepared by the dev-kit). The terminal handles its signing factors.
    # Set these to your disposable workspace and its host state:
    export ORCH_WORKSPACE=/absolute/path/to/dev-workspace
    export ORCH_STATE_DIR=/absolute/path/to/dev-state
+   mkdir -p "$ORCH_STATE_DIR"
+   touch "$ORCH_STATE_DIR/.orch-dev"
    server/.venv/bin/python -m devhost "$ORCH_WORKSPACE" --person p_YOUR_PERSON_ID
    ```
 
@@ -98,11 +102,11 @@ The private 0600 control socket is inside an owned 0700 directory opened with `O
 startup is flock-serialized and both IPC peers check UID. A stale socket is unlinked only
 under that lock after a refused connection, with type and owner checked.
 
-Launch codes and bearer tokens each have 256 bits of entropy. Codes last 60 seconds and are
+Launch codes and bearer tokens each have 256 bits of entropy. Codes last 30 seconds and are
 atomically single-use; tokens live in memory (12-hour idle, 24-hour absolute lifetime). The
 browser strips the fragment before fetching, keeps the token in memory/sessionStorage, and
 uses `Authorization`. Same-origin tabs can share a token with BroadcastChannel; logout
-revokes it and clears other tabs. Restart ends every session. Browser extensions/crash
+revokes it and clears other tabs holding that same token. Restart ends every session. Browser extensions/crash
 restore may see a launch fragment before scrub or restore sessionStorage; expired/revoked
 credentials are useless. Same-UID processes are outside this browser threat model.
 
@@ -112,7 +116,7 @@ Closed M0 route surface:
 | --- | --- |
 | `GET /`, `/w/<prefix>/{today,tickets,identity}`, `/assets/*`, `/favicon.svg` | Public static shell; index no-store, hashed assets immutable |
 | `GET /auth/probe?n=…` | Public HMAC only |
-| `POST /auth/session` | Code exchange; exact Origin/JSON, 1 KiB, 10 exchanges/minute |
+| `POST /auth/session` | Code exchange; exact Origin/JSON, 1 KiB, 10 failed exchanges/minute |
 | `POST /auth/logout` | Bearer and exact Origin |
 | `GET /api/session` | Features per workspace and union |
 | `GET /api/workspaces` | UUIDs, names, members, needs counts, availability |
@@ -126,6 +130,11 @@ return 404 (unsupported methods 405). Unsafe requests require exact Origin; `Sec
 when present must say same-origin. Foreign/null Origin is refused on reads too. Responses
 carry strict CSP, nosniff and no-referrer; API/auth are no-store. Validation errors never
 reflect submitted bodies. The launcher disables access logs. No request body exceeds 1 MiB.
+
+The launcher opens a private 0600 HTML redirect file inside the 0700 dashboard state
+folder. Browser process arguments contain only its file URL, never the launch code.
+The server deletes the redirect after a successful exchange or after 60 seconds.
+Failed exchanges share a per-minute budget; a valid code always bypasses that budget.
 
 ## Contract v1 seams and M0 limits
 
@@ -157,6 +166,7 @@ reflect submitted bodies. The launcher disables access logs. No request body exc
 ```sh
 # addons/dashboard
 npx vitest run --maxWorkers=3
+node --test scripts/layout-startup.check.mjs
 npm run typecheck
 npm run build
 # addons/dashboard/server

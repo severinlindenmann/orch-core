@@ -1605,6 +1605,8 @@ def test_event_types_match_doc_tables():
 
 # Names in the doc that look like event types but are not: error codes, ticket.json paths, config paths.
 DOC_NON_EVENTS = {
+    "device.cert",
+    "device.exists",
     "artifact.mismatch", "claim.held", "claim.not_live", "device.unknown", "grant.verb",
     "gate.already_approved", "gate.incomplete", "gate.no_eligible", "gate.stale", "gate.suspicious_text",
     "settings.repos", "ticket.acceptance", "ticket.addons", "ticket.json", "ticket.key", "ticket.links",
@@ -1752,7 +1754,7 @@ ONE_LINE_PAYLOADS = [  # (event key, path to a one-line string field) for every 
     ("task.reopened", ("reason",)),
     ("status.changed", ("reason",)),
     ("claim.taken", ("takeover", "reason")),
-    ("restore", ("reason",)),
+    ("restore", ("note",)),
     ("invalid.acknowledged", ("reason",)),
     ("device.removed", ("reason",)),
     ("grant.revoked", ("reason",)),

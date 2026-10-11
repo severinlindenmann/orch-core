@@ -85,6 +85,8 @@ SUITE = 2  # deployment suite (§5.3, D46)
 PREFIX = "sha256:"
 
 LABELS: dict[str, str] = {
+    "h_checkpoint": "orch/v2/checkpoint-hash|",
+    "h_log_acc": "orch/v2/log-acc|",
     "gate": "orch/v2/gate|",
     "section": "orch/v2/section|",
     "value": "orch/v2/value|",
@@ -809,3 +811,11 @@ def host_signing_bytes(workspace_id: str, log: str, event: Mapping[str, Any]) ->
         if k not in e:
             raise HashError(f"event has no {k!r}: the host signs the full event")
     return signed_context("sig_host_event", workspace_id, log, e)
+
+
+def checkpoint_hash(o: Mapping[str, Any]) -> str:
+    return format_hash(hashlib.sha256(LABELS["h_checkpoint"].encode() + cj_checked(o)).hexdigest())
+
+
+def log_acc(acc: str, head: str) -> str:
+    return format_hash(hashlib.sha256(LABELS["h_log_acc"].encode() + parse_hash(acc) + parse_hash(head)).hexdigest())

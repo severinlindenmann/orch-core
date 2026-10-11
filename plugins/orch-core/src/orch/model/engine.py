@@ -16,8 +16,8 @@ import copy
 from dataclasses import dataclass
 from typing import Any
 
-from orch.canon import HashError, event_head
-from orch.schema import LOG_TYPES, SchemaError, validate_settings
+from orch.canon import HashError, event_head, log_acc
+from orch.schema import LOG_TYPES, SchemaError, validate, validate_settings
 
 from . import authz, claims, edits, gates, generations, lifecycle, questions, source, tasks, visibility, workspace
 from .codes import Code, Refusal
@@ -58,21 +58,6 @@ def _head(e: dict[str, Any]) -> str | None:
 
 def _log_of(core: Core, log: str) -> LogCore:
     return core.logs.get(log) or LogCore()
-
-
-def note_restore_window(core: Core, e: dict[str, Any]) -> None:
-    """Track §5.10's restore window along the workspace log: a ``restore`` followed at once by the host's
-    ``device.revoked`` re-appends. Every seq of the window except its last is one that no ticket event may name."""
-    last = core.rwin_last
-    if e["type"] == "restore":
-        core.rwin_last = e["seq"]
-    elif (
-        last is not None and e["type"] == "device.revoked" and e["actor"].get("kind") == "host" and e["seq"] == last + 1
-    ):
-        core.rwin_forbidden.add(last)
-        core.rwin_last = e["seq"]
-    else:
-        core.rwin_last = None
 
 
 def _person_sig_check(core: Core, log: str, e: dict[str, Any], ctx: Ctx, genesis: bool) -> Refusal | None:
@@ -133,8 +118,6 @@ def _chain_check(core: Core, log: str, lc: LogCore, e: dict[str, Any], ctx: Ctx)
             return Refusal(Code.CHAIN_BAD_WS_SEQ, f"ws_seq {e['ws_seq']} (workspace head {wsh})")
         if e["ws_seq"] == lc.last_ws_seq and ts(e["at"]) < lc.last_at:
             return Refusal(Code.CHAIN_BAD_WS_SEQ, "`at` goes back within the same ws_seq")
-        if e["ws_seq"] in core.rwin_forbidden:
-            return Refusal(Code.CHAIN_BAD_WS_SEQ, f"ws_seq {e['ws_seq']} names the restore or one of its re-appends")
         if ctx.admit and core.last_pos is not None and position(e, log) <= core.last_pos:
             # replay walks events by (ws_seq, at, uid, seq); appending out of that order would make replay see
             # cross-ticket state in another order than admit did, so the host must pick a later `at`
@@ -229,7 +212,7 @@ def _workspace_handler(core: Core, lc: LogCore, e: dict[str, Any], ctx: Ctx) -> 
         "addon.granted": lambda: workspace.addon_event(core, e),
         "addon.disabled": lambda: workspace.addon_event(core, e),
         "addon.purged": lambda: workspace.addon_event(core, e),
-        "restore": lambda: workspace.restore(core, lc, e),
+        "restore": lambda: workspace.restore(core, lc, e, v),
         "invalid.acknowledged": lambda: _ack(ws, lc, e),
         "projection.repaired": lambda: None,
     }
@@ -312,6 +295,7 @@ def _place(lc: LogCore, e: dict[str, Any]) -> None:
     lc.head = head
     if head is not None:
         lc.heads[head] = e["seq"]
+        lc.acc = log_acc(lc.acc, head)
     lc.ids.add(e["id"])
     lc.last_ws_seq = e.get("ws_seq", lc.last_ws_seq)
     if "ws_seq" in e:
@@ -326,9 +310,12 @@ def apply_event(
     lc = _log_of(core, log)
     if cow:  # the caller shares logs with an earlier State: never mutate those
         lc = copy.deepcopy(lc)
-    if e["type"] == "settings.changed":
+    if e["type"] in ("settings.changed", "restore"):
         try:
-            validate_settings(e["set"], repos=core.ws.repos)
+            if e["type"] == "restore":
+                validate("event", {"host_sig": "AA" * 43, **e}, log="workspace" if log == WORKSPACE else "ticket")
+            else:
+                validate_settings(e["set"], repos=core.ws.repos)
         except SchemaError as exc:
             if commit and not ctx.admit and lc.broken is None:
                 lc.broken = str(exc)
@@ -354,8 +341,6 @@ def apply_event(
         assert sc is not None
         core.ws, core.tickets, core.keys, core.created_at = sc.ws, sc.tickets, sc.keys, sc.created_at
         _place(lc, e)
-        if log == WORKSPACE:
-            note_restore_window(core, e)
         if e["type"] == "invalid.acknowledged":
             lc.acked.add(e["invalid_seq"])
         elif e["type"] == "restore":

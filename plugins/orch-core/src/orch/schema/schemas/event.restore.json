@@ -254,7 +254,61 @@
       "uniqueItems": true
     },
     "reason": {
+      "enum": [
+        "rollback",
+        "diverged",
+        "broken",
+        "other"
+      ]
+    },
+    "note": {
       "$ref": "https://schemas.orch.dev/v2/common#/$defs/line"
+    },
+    "source": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "n": {
+              "$ref": "https://schemas.orch.dev/v2/common#/$defs/posInt"
+            },
+            "hash": {
+              "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+            }
+          },
+          "required": [
+            "n",
+            "hash"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "revocations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "revocation": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/revocation"
+          },
+          "device_cert": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/deviceCert"
+          },
+          "pk_pub": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/pubkey"
+          }
+        },
+        "required": [
+          "revocation",
+          "device_cert",
+          "pk_pub"
+        ],
+        "additionalProperties": false
+      }
     }
   },
   "required": [
@@ -272,7 +326,9 @@
     "head",
     "abandoned",
     "abandoned_decisions",
-    "reason"
+    "reason",
+    "source",
+    "revocations"
   ],
   "additionalProperties": false,
   "allOf": [

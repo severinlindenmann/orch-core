@@ -285,6 +285,8 @@ class World:
         if person:
             e["auth"] = "passphrase"
             e["roster_v"] = (0 if typ == "workspace.created" else self.roster_v) if roster_v is None else roster_v
+        if typ == "restore":
+            e.update({"source": None, "revocations": []})
         e.update(copy.deepcopy(payload or {}))
         if person:
             who = signer or "dk_" + _dev_name(actor["device"])

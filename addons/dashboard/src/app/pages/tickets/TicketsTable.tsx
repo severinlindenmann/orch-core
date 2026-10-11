@@ -161,7 +161,7 @@ export function TicketsTable({
               {folded.has('people') && <People ticket={t} people={people} />}
               {folded.has('turn') && (
                 <span className={cn('truncate', turn === 'you' && 'font-medium text-brand')} title={t.turn.why}>
-                  <span className="text-text-faint">Turn </span>
+                  <span className="text-text-faint">Turn: </span>
                   {turn}
                 </span>
               )}

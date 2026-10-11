@@ -94,7 +94,7 @@ export function Filters({
   const priority = (
     <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Priority">
       {PRIORITIES.map((p: Priority) => (
-        <button key={p} type="button" aria-pressed={!!search.priority?.includes(p)} onClick={() => onSearch({ priority: toggle(search.priority, p) })} className={chip(!!search.priority?.includes(p))}>
+        <button key={p} type="button" aria-pressed={!!search.priority?.includes(p)} onClick={() => onSearch({ priority: toggle(search.priority, p) })} className={cn(chip(!!search.priority?.includes(p)), 'capitalize')}>
           <PriorityMarker priority={p} />
           {p}
         </button>

@@ -33,7 +33,7 @@ describe('Today: a calm, grouped queue', () => {
     expect(n).toBe(mockStore.needsYou(ws).length + mockStore.addonDecisions(ws).length + relogin)
   })
 
-  it('opens the first blocking question; picking an option posts nothing, "Send answer…" opens core\'s dialog', async () => {
+  it('opens the first blocking question; picking an option posts nothing, "Send answer" opens core\'s dialog', async () => {
     const post = vi.spyOn(api, 'postAction')
     const { user } = renderApp('/', { viewer: 'p_sev' })
     const row = await screen.findByTestId('card-question:DEMO-0043:Q2', {}, T)
@@ -41,7 +41,7 @@ describe('Today: a calm, grouped queue', () => {
     expect(within(row).getByText(/Asked by /)).toBeInTheDocument()
     const radios = await within(row).findAllByRole('radio', {}, T)
     expect(within(row).getByText('Recommended')).toBeInTheDocument()
-    const send = within(row).getByRole('button', { name: 'Send answer…' })
+    const send = within(row).getByRole('button', { name: 'Send answer' })
     expect(send).toBeDisabled()
     await user.click(radios[1])
     expect(post).not.toHaveBeenCalled()
@@ -77,7 +77,7 @@ describe('Today: a calm, grouped queue', () => {
     const { user } = renderApp('/', { viewer: 'p_sev' })
     const row = await screen.findByTestId('card-question:DEMO-0043:Q2', {}, T)
     await user.click((await within(row).findAllByRole('radio', {}, T))[0])
-    await user.click(within(row).getByRole('button', { name: 'Send answer…' }))
+    await user.click(within(row).getByRole('button', { name: 'Send answer' }))
     await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Send answer' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('Not yours to answer')
     spy.mockRestore()
@@ -98,7 +98,7 @@ describe('Today: a calm, grouped queue', () => {
       def: { id: 'Q9', to: 'p_sev', text: 'Keep the old role for a week?', options: [{ key: 'a', label: 'Yes' }, { key: 'b', label: 'No' }], recommended: 'a', blocking: true },
     })
     await user.click((await within(row).findAllByRole('radio', {}, T))[0])
-    await user.click(within(row).getByRole('button', { name: 'Send answer…' }))
+    await user.click(within(row).getByRole('button', { name: 'Send answer' }))
     await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Send answer' }))
     const pill = await screen.findByRole('button', { name: /^1 new · Show$/ }, T)
     expect(within(slot).getByRole('button', { name: /^1 new · Show$/ })).toBe(pill)
@@ -134,8 +134,10 @@ describe('Today: addon decisions are core rows, signed in core', () => {
   it('an option opens core\'s prompt; signing posts with the workspace id and core records addon.decided', async () => {
     const spy = vi.spyOn(api, 'runAddonAction')
     const success = vi.spyOn(toast, 'success')
-    const { user } = renderApp('/', { viewer: 'p_sev' })
+    const { user, client } = renderApp('/', { viewer: 'p_sev' })
     const row = await openDecision(user, 'dec_publish_failed_build')
+    client.setQueryData(['today', 'unrelated-workspace'], { untouched: true })
+    client.setQueryData(['addon-state', 'unrelated-workspace', 'publish'], { untouched: true })
     const option = within(row).getByRole('button', { name: 'Retry last good version' })
     await user.click(option)
     const prompt = await screen.findByRole('dialog', { name: /^Decide for / })
@@ -148,6 +150,8 @@ describe('Today: addon decisions are core rows, signed in core', () => {
     expect(spy.mock.calls[0][0]).toBe(ws)
     await waitFor(() => expect(mockStore.wsEventsOf(ws).some((e) => e.type === 'addon.decided' && e.id === 'dec_publish_failed_build' && e.presence === 'touchid')).toBe(true))
     await waitFor(() => expect(screen.queryByTestId('card-addon:dec_publish_failed_build')).toBeNull(), T)
+    expect(client.getQueryState(['today', 'unrelated-workspace'])?.isInvalidated).toBe(false)
+    expect(client.getQueryState(['addon-state', 'unrelated-workspace', 'publish'])?.isInvalidated).toBe(false)
     // The confirmation: core's sentence as the title, the addon's own message below it, labelled.
     expect(success).toHaveBeenCalledWith('Signed: answer retry · Publish (publish)', { description: expect.stringMatching(/^Addon says: /) })
     spy.mockRestore()

@@ -153,7 +153,7 @@ export function AcceptanceTasks({ ticket, viewer, jump }: TabProps) {
           </button>
         </p>
       )}
-      <Section title={`Acceptance criteria (${ticket.acceptance_state.filter((a) => a.state === 'proven').length}/${ticket.acceptance_state.length} evidenced)`}>
+      <Section title={<>Acceptance criteria <span className="font-normal text-text-muted">· {ticket.acceptance_state.filter((a) => a.state === 'proven').length}/{ticket.acceptance_state.length} evidenced</span></>}>
         {ticket.acceptance_state.length === 0 ? (
           <p className="text-[13px] text-text-faint">No acceptance criteria yet.</p>
         ) : (
@@ -167,7 +167,7 @@ export function AcceptanceTasks({ ticket, viewer, jump }: TabProps) {
         )}
       </Section>
 
-      <Section title={`Tasks (${ticket.tasks_state.filter((t) => t.state === 'done').length}/${ticket.tasks_state.length} done)`}>
+      <Section title={<>Tasks <span className="font-normal text-text-muted">· {ticket.tasks_state.filter((t) => t.state === 'done').length}/{ticket.tasks_state.length} done</span></>}>
         {ticket.tasks_state.length === 0 ? (
           <p className="text-[13px] text-text-faint">{ticket.type === 'epic' ? 'Epics have no tasks; work happens in the children.' : 'No tasks yet. The plan is not broken down.'}</p>
         ) : (

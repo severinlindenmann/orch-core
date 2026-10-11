@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { usePageWidth } from '../../pageWidth'
+import { useContext, useEffect, useState } from 'react'
+import { CollapsedDockWidthContext, usePageWidth } from '../../pageWidth'
 import type { AgentInfo, Workspace } from '@/api/types'
 
 /** How long an item has waited ("14 min", "2 h", "3 days"): the one formatter, src/lib/time.ts. */
@@ -27,7 +27,7 @@ export const TODAY_WIDE_MIN = 1280
 
 /** Today (and its skeleton) lay out in two columns only when the page is wide: with the dock open, one column. */
 export function useTodayWide(): boolean {
-  return usePageWidth() >= TODAY_WIDE_MIN
+  return usePageWidth() + useContext(CollapsedDockWidthContext) >= TODAY_WIDE_MIN
 }
 
 export function useMediaQuery(query: string): boolean {

@@ -253,6 +253,15 @@ describe('mock tickets search', () => {
       expect(refusals.filter((r) => r.refusal!.stop)).toHaveLength(1)
       expect(refusals.find((r) => r.refusal!.stop)!.refusal!.code).toBe('lease.held')
     })
+    it('refusals come from the agent sessions, never the ticket log (format F1)', async () => {
+      const { api, store } = setup()
+      const refusals = await api.getTicketRefusals('DEMO-0043')
+      expect(refusals.map((r) => r.code)).toEqual(['claim.held', 'human_only', 'lease.held', 'lease.held', 'lease.held'])
+      expect(refusals[1]).toMatchObject({ session: 's_77c2', agent: 'claude-code', for: 'p_sev', hint: expect.any(String) })
+      expect((await api.getEvents('DEMO-0043')).some((e) => e.type.startsWith('agent.'))).toBe(false)
+      expect(store.eventsOf('DEMO-0043').some((e) => e.type === 'agent.refused')).toBe(false)
+      expect((await api.getAgents(store.workspaces[0].id)).some((a) => 'refusals' in a)).toBe(false)
+    })
   })
 })
 

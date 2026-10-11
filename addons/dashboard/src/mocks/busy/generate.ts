@@ -74,10 +74,7 @@ export function buildWorkspace(cfg: WsCfg, seed: number): Built[] {
   const st = newBuildState(rng, cfg)
   const tickets = planFor(cfg, rng).map((p) => buildTicket(st, p))
   addArtifacts(rng.fork('artifacts'), tickets, { max: cfg.prefix === 'DEMO' ? 40 : cfg.prefix === 'INT' ? 8 : 4 })
-  if (cfg.agents) {
-    addRefusals(rng.fork('refusals'), tickets)
-    addWidgets(rng.fork('widgets'), tickets)
-  }
+  if (cfg.agents) addWidgets(rng.fork('widgets'), tickets)
   return tickets
 }
 
@@ -96,7 +93,7 @@ export function generateBusy(seed: number = BUSY_SEED): BusyData {
   const built = Object.fromEntries(WORKSPACES.map((cfg) => [cfg.prefix, buildWorkspace(cfg, seed)])) as Record<WsCfg['prefix'], Built[]>
   return {
     tickets: { DEMO: built.DEMO.map(strip), INT: built.INT.map(strip), CLI: built.CLI.map(strip) },
-    agents: agentRows(makeRng(seed).fork('agents'), built.DEMO),
+    agents: agentRows(makeRng(seed).fork('agents'), built.DEMO, addRefusals(makeRng(seed).fork('DEMO').fork('refusals'), built.DEMO)),
     grantSessions: grantSessions(),
   }
 }

@@ -22,8 +22,8 @@ describe('github code reviews page', () => {
     expect(within(row).getByText('acme-energy/energy-dbt')).toBeInTheDocument()
     expect(within(row).getByText('#29')).toBeInTheDocument()
     expect(within(row).getByRole('link', { name: 'DEMO-0041' })).toHaveAttribute('href', '/w/DEMO/ticket/DEMO-0041')
-    expect(within(row).getByText('pass').className).toMatch(/rounded-full/)
-    expect(within(row).getByText('requested').className).toMatch(/rounded-full/)
+    expect(within(row).getByText('pass').parentElement!.className).toMatch(/rounded-full/)
+    expect(within(row).getByText('requested').parentElement!.className).toMatch(/rounded-full/)
     expect(screen.queryByText('Normalize meter reading timestamps to UTC')).not.toBeInTheDocument() // merged: in the fold
   })
   it('Recently merged is a closed fold with the merged pull requests', async () => {

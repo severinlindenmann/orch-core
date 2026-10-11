@@ -46,7 +46,7 @@ describe('Agents page', () => {
   it('revokes a grant after signing, and its sessions stop', async () => {
     const { user } = renderApp('/agents')
     const row = await screen.findByRole('row', { name: /gr_01J9Z8/ })
-    const stopped = () => Number(/Stopped \((\d+)\)/.exec(screen.queryByRole('button', { name: /Stopped/ })?.textContent ?? '(0)')?.[1] ?? 0)
+    const stopped = () => Number(/Stopped\s*·\s*(\d+)/.exec(screen.queryByRole('button', { name: /Stopped/ })?.textContent ?? '')?.[1] ?? 0)
     const before = stopped()
     // Grants are named by person, scope and end; the id is only the fine print.
     expect(within(row).getByText("Severin's grant (all tickets · until 18:00)")).toBeInTheDocument()

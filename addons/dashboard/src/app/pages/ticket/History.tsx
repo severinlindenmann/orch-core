@@ -3,7 +3,7 @@ import { diffWords } from 'diff'
 import { ShieldCheck } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { api } from '@/api/client'
-import type { BodySections, OrchEvent, TicketDocument } from '@/api/types'
+import type { BodySections, OrchEvent, TicketDocument, TicketRefusal } from '@/api/types'
 import { AddonBadge } from '@/addon-ui'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
@@ -12,6 +12,34 @@ import { sectionTitle } from './Overview'
 import { ActorIcon, agentName, ago, fmtExact, fmtTime, Mono, Pill, type TabProps, type Viewer } from './shared'
 
 const CORE_PREFIXES = new Set(['ticket', 'status', 'people', 'claim', 'lease', 'task', 'artifact', 'question', 'gate', 'verdict', 'handoff', 'log', 'section', 'edit', 'projection', 'restore'])
+/** Why core refused an agent, in plain words (the code stays beside it for tools). */
+const REFUSAL_WORDS: Record<string, string> = {
+  human_only: 'only people approve',
+  'claim.held': 'another session holds the ticket',
+  'lease.held': 'another session holds that task',
+  'gate.not_approved': 'the plan is not approved yet',
+  'verify.failed': "the task's check failed",
+  'grant.scope': 'its grant does not cover that',
+  'grant.expired': 'its grant has ended',
+  'grant.revoked': 'its grant was revoked',
+}
+
+/** A handoff's embedded widget blocks (```orch … ```) read as their title here; the ticket shows the widget itself. */
+function handoffText(text: string): string {
+  return text.replace(/```orch\s*\n([\s\S]*?)```/g, (_, body: string) => {
+    let title = ''
+    try {
+      const t = (JSON.parse(body) as { title?: unknown }).title
+      if (typeof t === 'string') title = t
+    } catch {
+      /* not a widget block: a plain mention */
+    }
+    return title ? `[widget: ${title}]` : '[widget]'
+  }).trim()
+}
+
+export const refusalWords = (r: Pick<TicketRefusal, 'code' | 'message'>): string => REFUSAL_WORDS[r.code] ?? (r.message || 'not allowed')
+
 const SIGNED_TYPES = new Set(['gate.approved', 'gate.changes_requested', 'verdict.given', 'question.answered', 'people.set'])
 
 type Who = 'person' | 'agent' | 'host' | 'addon'
@@ -62,7 +90,7 @@ export function eventDetail(e: OrchEvent, v: Viewer): string {
       if (e.via === 'factory_charter') return `Verdict ${s('result')} via the factory charter — no person reviewed this${e.source_sha ? ` (commit ${s('source_sha')})` : ''}`
       return `Verdict ${s('result')}${e.source_sha ? ` on ${s('source_sha')}` : ''}${e.text ? `: ${s('text')}` : ''}`
     case 'handoff.written':
-      return `Handoff: ${s('text')}`
+      return `Handoff: ${handoffText(s('text'))}`
     case 'section.edited':
       return `Edited section ${s('section').replace('_', ' ')}`
     case 'log.added':
@@ -147,6 +175,38 @@ function Timeline({ events, viewer }: { events: OrchEvent[]; viewer: Viewer }) {
         </ol>
       )}
     </div>
+  )
+}
+
+/**
+ * Refusals core returned to agents (CLI error envelopes: a code and a hint), from the agent session. They are not ticket
+ * events: not signed, not in the event list, its counts or Raw. Drawn apart so they never read as log entries.
+ */
+export function SessionRefusals({ items, viewer }: { items: TicketRefusal[]; viewer: Viewer }) {
+  if (items.length === 0) return null
+  return (
+    <section aria-labelledby="session-refusals-h" data-testid="session-refusals" className="space-y-2 rounded-md border border-dashed border-border bg-surface-2/40 p-3">
+      <header>
+        <h3 id="session-refusals-h" className="text-[12px] font-semibold text-text">
+          Refused agents · {items.length}
+        </h3>
+        <p className="text-[12px] text-text-faint">From the agent session — not part of the signed log</p>
+      </header>
+      <ul className="space-y-2" aria-label="Refusals from the agent session, newest first">
+        {items.slice().reverse().map((r, i) => (
+          <li key={`${r.session}-${r.at}-${i}`} className="text-[12px]">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+              <span className="text-[13px] font-medium text-text">{`${agentName(r.agent)} for ${viewer.name(r.for)}`}</span>
+              <Mono className="text-[11px] text-text-faint">{r.session}</Mono>
+              <span className="text-text-faint" title={fmtExact(r.at)}>{ago(r.at)}</span>
+              <Pill>{r.code}</Pill>
+            </div>
+            <p className="mt-0.5 text-[13px] text-text-muted">{`Refused: ${refusalWords(r)}`}</p>
+            {r.hint ? <p className="text-[12px] text-text-faint">Hint: {r.hint}</p> : null}
+          </li>
+        ))}
+      </ul>
+    </section>
   )
 }
 
@@ -235,6 +295,7 @@ function Changes({ ticket }: { ticket: TicketDocument }) {
 export function History({ ticket, viewer }: TabProps) {
   const [view, setView] = useState<'timeline' | 'changes'>('timeline')
   const { data, isLoading, error } = useQuery({ queryKey: ['ticket-events', ticket.key, ticket.head.seq], queryFn: () => api.getEvents(ticket.key) })
+  const refusals = useQuery({ queryKey: ['ticket-refusals', ticket.key, ticket.head.seq], queryFn: () => api.getTicketRefusals(ticket.key) })
   return (
     <div className="space-y-4">
       <ToggleGroup type="single" value={view} onValueChange={(v) => v && setView(v as typeof view)} variant="outline" size="sm" aria-label="History view">
@@ -258,7 +319,10 @@ export function History({ ticket, viewer }: TabProps) {
           Could not load the history.
         </p>
       ) : (
-        <Timeline events={data} viewer={viewer} />
+        <>
+          <Timeline events={data} viewer={viewer} />
+          <SessionRefusals items={refusals.data ?? []} viewer={viewer} />
+        </>
       )}
     </div>
   )

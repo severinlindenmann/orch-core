@@ -743,3 +743,27 @@ toast (the caches are purged as before). `artifact.get` is gated on `diff/1`, an
 but its transform did not match exactly once. **Known, harmless:** Radix's scroll lock (`react-style-singleton`) and
 xterm's DOM renderer still create `<style>` elements; the CSP (`style-src 'self'`) blocks them, the console logs the
 violation, Radix dialogs do not lock body scroll and the terminal keeps its own styling. The CSP is not loosened.
+
+## P2 server (M3 actions)
+
+Signed actions through the terminal hand-off (#305). **The dashboard never signs, holds no factor and never calls
+`human.submit`.** The person signs with `orch sign CODE` (H5b); the dashboard prepares, shows, follows and cancels.
+
+| Route | Host op | Notes |
+| --- | --- | --- |
+| `POST /api/w/<uuid>/handoff` | `human.prepare {op, args, handoff:true}` | body: `idem` (`a_` + 26 Crockford chars, client-made, one per click) and a typed action (`approve`, `request_changes`, `verdict`, `answer`, `comment` -> `log`, `label` -> `set labels=`, `close`, `reopen`, `new`). `extra=forbid`. `move`, `ask`, settings: 400. Same idem = the recorded answer; same action while open = the open request is reused; 8 open requests per session (`quota.host`) |
+| `GET /api/w/<uuid>/handoff/<request_id>[?full=1]` | `human.pending {request_id}` (+ `human.get` with `full` while open) | `{state, event_ids, seq}` |
+| `DELETE /api/w/<uuid>/handoff/<request_id>` | `human.cancel` | idempotent; logout cancels the session's open requests |
+
+The answer is a `HandoffRequest {id, code, expires_at, state, op, key, fingerprint, review_digest, gate_hash, material, events}`.
+The server recomputes `review_digest` and the fingerprint (`sha256(cj({review_digest, events without sig, actor.device,
+auth}))[:12]`, host contract 0.8.1) and refuses (`internal`) an answer that disagrees; the browser recomputes both again
+and shows nothing otherwise. The preview is only `material`. Feature `actions` is listed when the host serves
+`human.prepare/get/pending/cancel`; `move` is never listed (H6b), so `can(role, 'ticket.move')` is off on a real host.
+Gate `material.policy` and section `texts` are rendered when present (v1.5, optional).
+
+Dev stub: `devhost/humanops.py` (v1.4 `human.*` on the P1 store), `devhost/sign.py` (`python -m devhost sign CODE`).
+Both are dev only, never shipped, and excluded from the wheel (tested). Stub limits: `new` carries title and type only
+(P1 `ticket.created` has no other fields), no `observe` of git for code gates, requests are in memory.
+Known gaps: the fingerprint will also cover the op once H5a lands (the client check then needs that formula); the uid
+fragment is the last 8 characters of the log id in both the panel and the stub signer (confirm with stream A).

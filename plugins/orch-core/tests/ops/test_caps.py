@@ -1,0 +1,188 @@
+"""The capability object (D-P2-9): direct mode keeps today's powers, host mode is restricted, and the host file
+capability has exactly one reading of a path, which is also the open."""
+
+import os
+import sys
+
+import pytest
+
+from orch.ops.base import Context
+from orch.ops.caps import Capabilities, CapabilityDenied, Files, NotARegularFile
+
+
+@pytest.fixture
+def tree(tmp_path):
+    base = tmp_path.resolve()
+    root, outside = base / "root", base / "outside"
+    (root / "a").mkdir(parents=True)
+    outside.mkdir()
+    (root / "a" / "f.txt").write_text("inside")
+    (outside / "secret.txt").write_text("outside")
+    return root, outside
+
+
+# ------------------------------------------------------------------------------------------------------ direct mode
+
+
+def test_context_builds_direct_caps_from_env_and_clock():
+    ctx = Context(env={"A": "b"}, now=lambda: 7.0)
+    assert ctx.caps.env == {"A": "b"} and ctx.env == {"A": "b"}
+    assert ctx.caps.clock() == 7.0
+    assert ctx.caps.exec.enabled and ctx.caps.git.enabled and ctx.caps.signer.enabled
+    ctx.caps.signer.require()
+
+
+def test_direct_files_reach_any_path(tree):
+    root, outside = tree
+    f = Capabilities.direct({}).files
+    assert f.read_text(outside / "secret.txt") == "outside"
+    assert f.getcwd() == os.getcwd()
+    data, size = f.read_regular(str(outside / "secret.txt"), 100)
+    assert (data, size) == (b"outside", 7)
+    with pytest.raises(NotARegularFile):
+        f.read_regular(str(outside), 10)
+    f.write_text(outside / "w.txt", "x")
+    assert f.lexists(outside / "w.txt")
+    f.unlink(outside / "w.txt")
+    assert not f.lexists(outside / "w.txt")
+
+
+def test_direct_exec_runs_and_child_env_merges():
+    c = Capabilities.direct({})
+    done = c.exec.run([sys.executable, "-c", "print(1)"], capture_output=True)
+    assert done.stdout.strip() == b"1"
+    assert c.exec.child_env({"X": "1"})["X"] == "1"
+    assert "PATH" in c.exec.child_env({}) or "PATH" not in os.environ
+
+
+# --------------------------------------------------------------------------------------------------------- host mode
+
+
+def host(tree):
+    root, _ = tree
+    return Capabilities.host((root,), clock=lambda: 3.0)
+
+
+def test_host_caps_deny_everything_but_rooted_files(tree):
+    c = host(tree)
+    assert c.env == {} and c.clock() == 3.0
+    with pytest.raises(CapabilityDenied):
+        c.exec.run(["true"])
+    with pytest.raises(CapabilityDenied):
+        c.exec.popen(["true"])
+    with pytest.raises(CapabilityDenied):
+        c.exec.child_env({})
+    with pytest.raises(CapabilityDenied):
+        c.git.head(tree[0])
+    with pytest.raises(CapabilityDenied):
+        c.signer.require()
+    with pytest.raises(CapabilityDenied):
+        c.files.getcwd()
+    with pytest.raises(CapabilityDenied):
+        c.files.read_stdin(10)
+    assert isinstance(CapabilityDenied("x"), OSError)
+
+
+def test_host_files_work_inside_the_roots(tree):
+    root, _ = tree
+    f = host(tree).files
+    assert f.read_text(root / "a" / "f.txt") == "inside"
+    f.write_text(root / "a" / "g.txt", "new")
+    assert f.read_bytes(root / "a" / "g.txt") == b"new"
+    f.mkdir(root / "x" / "y", parents=True)
+    assert (root / "x" / "y").is_dir()
+    assert f.lexists(root / "a" / "g.txt") and not f.lexists(root / "a" / "nope")
+    f.unlink(root / "a" / "g.txt")
+    f.rmtree(root / "x")
+    assert not (root / "x").exists()
+    assert f.read_regular(str(root / "a" / "f.txt"), 3) == (b"ins", 6)
+
+
+def test_host_files_refuse_outside_the_roots(tree):
+    root, outside = tree
+    f = host(tree).files
+    for bad in (outside / "secret.txt", "/etc/passwd", "relative.txt", str(root) + "x/a"):
+        with pytest.raises(CapabilityDenied):
+            f.read_bytes(bad)
+
+
+def test_traversal_with_dotdot_is_refused(tree):
+    root, outside = tree
+    f = host(tree).files
+    for bad in (f"{root}/a/../../outside/secret.txt", f"{root}/a/../../etc", f"{root}/./a/f.txt", f"{root}//a/f.txt"):
+        with pytest.raises(CapabilityDenied):
+            f.read_bytes(bad)
+
+
+def test_nul_byte_is_refused(tree):
+    root, _ = tree
+    with pytest.raises(CapabilityDenied):
+        host(tree).files.read_bytes(f"{root}/a/f.txt\0/../../x")
+
+
+def test_symlinked_directory_component_is_refused(tree):
+    root, outside = tree
+    (root / "link").symlink_to(outside)
+    f = host(tree).files
+    with pytest.raises(OSError):
+        f.read_bytes(root / "link" / "secret.txt")
+    with pytest.raises(OSError):
+        f.write_text(root / "link" / "new.txt", "x")
+    assert not (outside / "new.txt").exists()
+    with pytest.raises(OSError):
+        f.mkdir(root / "link" / "d", parents=True)
+
+
+def test_symlinked_final_component_is_refused(tree):
+    root, outside = tree
+    (root / "a" / "l.txt").symlink_to(outside / "secret.txt")
+    with pytest.raises(OSError):
+        host(tree).files.read_bytes(root / "a" / "l.txt")
+    with pytest.raises(OSError):
+        host(tree).files.read_regular(str(root / "a" / "l.txt"), 10)
+
+
+def test_symlink_swapped_after_validation_cannot_escape(tree):
+    """The check is the open: a swap between the string split and the walk is refused by the kernel (``O_NOFOLLOW``)."""
+    root, outside = tree
+
+    class Racy(Files):
+        def _split(self, path):
+            got = super()._split(path)  # validated ...
+            (root / "a" / "f.txt").unlink()
+            os.rename(root / "a", root / "a.moved")
+            (root / "a").symlink_to(outside)  # ... then swapped
+            (outside / "f.txt").write_text("outside")
+            return got
+
+    f = Racy((root,))
+    with pytest.raises(OSError):
+        f.read_bytes(root / "a" / "f.txt")
+
+
+def test_normpath_and_raw_open_cannot_differ(tree):
+    """``link/../x`` is ``root/x`` to ``normpath`` but ``outside/../x`` to the kernel: there is one reading, and it
+    refuses the form."""
+    root, outside = tree
+    (root / "link").symlink_to(outside)
+    (root / "x.txt").write_text("root-x")
+    (outside.parent / "x.txt").write_text("parent-x")
+    p = f"{root}/link/../x.txt"
+    assert os.path.normpath(p) == str(root / "x.txt")
+    with pytest.raises(CapabilityDenied):
+        host(tree).files.read_bytes(p)
+
+
+def test_root_spelling_is_exact(tree, tmp_path):
+    root, _ = tree
+    link = tmp_path / "rootlink"
+    link.symlink_to(root)
+    with pytest.raises(CapabilityDenied):
+        host(tree).files.read_bytes(link / "a" / "f.txt")
+    with pytest.raises(CapabilityDenied):
+        host(tree).files.read_bytes(str(root).upper() + "/a/f.txt")
+
+
+def test_roots_must_be_absolute_and_free_of_nul():
+    with pytest.raises(ValueError):
+        Files(("rel",))

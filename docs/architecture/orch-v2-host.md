@@ -2163,21 +2163,35 @@ orch-relay's `docs/p3-relay-design.md` §9 defines what the host owes the relay 
   when the pairing ends. A baseline is never downgraded. The host keeps the checkpoints that baselines name.
 - **Membership publication (P3-D7, Q10).** It runs **outside the checkpoint outbox** and never waits behind it. A
   content-refused rotation must not block checkpoints, and a `chain.diverged` checkpoint must not block a security
-  rotation. The list carries `wk_commit`, `wk_commit = b64u(H("orch/v2/wk-commit|" || workspace_id || u32(epoch) || WK_E))`. Rules:
-  - **One WK per epoch, ever.** The host never creates a second key for an epoch number. Epochs may skip, never fall.
+  rotation. The signed list carries the required field
+  `wk_commit = b64u(H("orch/v2/wk-commit|" || workspace_id || u32(epoch) || WK_E))` (32 bytes, canonical b64u). A list
+  without it, or with an ill-formed one, is refused `malformed`. Every list at one epoch carries the same `wk_commit`,
+  and the host never signs a different one for an epoch. Rules:
+  - **One WK per epoch, ever.** The host never creates a second key for an epoch number. Epochs may skip, never fall. Epochs are u32 (1..2^32-1). The
+    relay accepts a later list only with `prev <= epoch <= prev + 2^16`. The host alarms, and clamps: it never allocates
+    an epoch above `committed + 2^16`, whether through repeated burns or H7 jumps. A list that removes a member has a
+    higher epoch than the previous list. A list at the same epoch carries the same `wk_commit`, else the relay answers
+    409 `wk_commit_changed`.
+  - **First list.** The first publication for a workspace may use any epoch `1..2^16` and any `list_seq >= 1`. A refused
+    first publication burns its epoch and `list_seq` like any other, and the retry uses (2,2) or higher.
   - **Allocation.** The host allocates `list_seq` and epoch from durable high-water marks (`LHW`, `EHW`). It never
     derives `list_seq` from `roster_v` or from the log. `roster_v` can repeat after a log `restore`. `list_seq` never
-    falls or repeats.
+    falls or repeats. Gaps are legal: after a burn the next list uses `LHW + 1`. `LHW` is the highest `list_seq` ever
+    signed, not the committed one.
   - **H1/H2, persistence before the first send.** The host writes the allocation, the signed list, the grants, the
     holder set and `WK_E` in one atomic write under `<state>/hosts/<ws>/membership/`, with keys under `keys/`, both in
     the D-P2-17 custody list. At most one body is exposed at a time. Exactly one writer: the fenced holder.
-  - **H3, transient outcomes** (lost response, connection error, timeout, 429, 5xx) resend the exact bytes. After a `fenced` and an explicit
-    re-hold, or a re-login, first `GET members`. If the verified list is above `LHW` or `EHW`, or is not a body the host
+  - **H3, transient outcomes** (lost response, connection error, timeout, 429, 5xx, 401/`expired` then re-login,
+    `fenced` then explicit re-hold) resend the exact bytes. A 429 does not burn the body. After a `fenced` and an
+    explicit re-hold, or a re-login, first `GET members`. If the verified list is above `LHW` or `EHW`, or is not a body the host
     exposed, apply H7. Otherwise resend the exact bytes.
   - **H3, container-only refusals** (`stale_card`, `wrap_conflict`). The exposed record keeps the signed list and
     grants immutable and the card-key wraps replaceable. The exact-bytes rule applies to the signed parts. The host
     resends the same signed list with new wraps.
-  - **H4, burning.** Any other refusal, or a list change while a body is out, supersedes the body: its `list_seq` and
+  - **H4, burning.** Any other refusal, or a list change while a body is out, supersedes the body.
+    Content refusals: `revoked`, `cert_expired`, `cert_invalid`, `other_person`, `scope_exceeded`, `malformed`,
+    `bad_signature`, `other_workspace`, `missing_grant`, `not_for_this_device`. Divergence refusals: `stale_list`,
+    `bad_epoch`, `rotation_required`, `grant_conflict`, `wk_commit_changed`. A superseded body: its `list_seq` and
     any new epoch are burned. Stop sending the old body before persisting the burn. Persist the burn and the new
     allocation in one atomic write. Never resend a burned body. Do not adopt a burned body that the relay later shows as
     committed: its burn may have been caused by excluding a holder.
@@ -2186,25 +2200,27 @@ orch-relay's `docs/p3-relay-design.md` §9 defines what the host owes the relay 
     after a body at `E` might have committed.
   - **Burned-WK custody.** A burned `WK_E` is stored under `keys/` like an old epoch key, is never active, and under it
     the host opens requests only to answer the §8.5 `stale_epoch`. It never seals a data response, a `drop_rewrap`
-    output or any other content under it.
+    output or any other content under it. It is deleted under the same retention as old epoch keys. For §8.5 it
+    counts as a held key.
   - **H5, holder rule.** A list at epoch `E` includes every device that was sent `WK_E` in any exposed body.
     Otherwise the next list uses a new epoch. The rotation gate (no new sealing under `E`) goes up as soon as the host
     decides to drop such a device. This covers supersession and F1 log restores. A restore reaches the publisher as a list change. If it abandons a `member.added`
     whose device got a grant, the rotation is correct.
   - **H6.** The host never signs two different `cj(o)` under one `list_seq`. It never re-signs: it resends persisted
     bytes.
-  - Revocations learned from the relay raise the rotation gate at once, durably.
+  - **Rotation gate.** Revocations learned from the relay raise the rotation gate at once, durably.
   - **H7, host-state loss.** The host first does `GET members` and verifies it with the WSK, then sets `LHW := max(local, relay list_seq) + 1024`
-    and `EHW := max(local, relay epoch) + 1024`, and rotates at once to `EHW + 1`. This is not the F1 `restore` event, which
+    and `EHW := max(local, relay epoch) + 1024`, and rotates at once to `EHW + 1`. A takeover by an instance without the latest membership store is host-state loss too. This is not the F1 `restore` event, which
     does not touch `hosts/<ws>/`. It is the same pattern as the checkpoint `n` high-water mark, with a margin. Treat as
     host-state loss: the membership store missing, unreadable or torn while the WSK exists; the relay's verified list
     above `LHW`/`EHW`, or at a `list_seq` with content the host never exposed; no local `WK` for the relay's committed
     epoch; or the relay's held checkpoint `n` above the durable checkpoint `n` high-water mark (#377; the startup comparison above). Stated limit: a
     self-consistent restore of all of `hosts/<ws>/` whose state still matches the relay goes undetected. The holder
     sets of bodies exposed after the backup are then lost.
-  - **H8, alarms.** Count content and divergence refusals only. The count resets on a 2xx, and the alarm fires after 3.
+  - **H8, alarms.** Count the content and divergence refusals named under H4 only. Transient outcomes neither count nor back
+    off. The count resets on a 2xx, and the alarm fires after 3 consecutive such refusals.
     Also alarm when a rotation stays uncommitted for 10 minutes for any reason, including transient errors. A hostile
-    relay can 5xx forever. The alarm shows in `host.status`. The host backs off exponentially, up to 5 min. Backoff never lowers the rotation gate.
+    relay can 5xx forever. The alarm shows in `host.status`. The host backs off exponentially, up to 5 min, and each attempt burns at most one epoch. Backoff never lowers the rotation gate.
   - **Host vectors** (there is no P3 row in §8). The nine from the relay's Q10 design:
     - `request_under_burned_epoch_key_gets_signed_stale_epoch`
     - `refused_rotation_burns_epoch_and_list_seq`

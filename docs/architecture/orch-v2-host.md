@@ -1344,10 +1344,10 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
    person, device, section, addon, question id, `before` path, origin) is checked against its F1 format before
    rendering, every other host string is escaped (control and bidi characters become visible markers), and a review
    that would still carry a control character is refused.
-8. Hand-off codes and `orch sign CODE` are H5b; a hand-off request has `code: null` until then, and `human.get` with
-   `signer` binds it (device checks included). `human.pending` is served: without arguments it lists the caller's
-   requests (any state, within retention); `{request_id}` gives that one (or an empty list); `{code}` gives an empty
-   list until H5b issues codes. A failed submit shows `error:{code}` (the catalog code only).
+8. Hand-off codes and `orch sign CODE` are H5b (see "As built in H5b" below); `human.get` with `signer` binds a
+   hand-off request (device checks included). `human.pending` is served: without arguments it lists the caller's
+   requests (any state, within retention); `{request_id}` gives that one (or an empty list); `{code}` the pending
+   request the code names (H5b). A failed submit shows `error:{code}` (the catalog code only).
 8a. **`human.prepare` ignores `opts.idem`** (§0.7: it is in the "reads and side-effect-free ops" row): every call creates
    a new request, even with the same idem. A client that lost a prepare's answer finds its open requests with
    `human.pending` (no arguments) and cancels the ones it will not use (`human.cancel`); unused requests expire after
@@ -1371,6 +1371,33 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
     interrupted idem the same terminal state; other events answer `human.request_state`.
 14. The CLI composite is the library function `orch.host.signer.run`; routing `orch approve` and the other person
     commands to it is H4b's host-mode CLI.
+
+**As built in H5b** (hand-off; no wire schema changes):
+
+1. **Codes.** A request prepared with `handoff:true` gets a code at prepare: 8 characters of Crockford base32
+   (`0-9A-HJKMNP-TV-Z`, 40 bits) from a CSPRNG, shown `XXXX-XXXX`. A code is never issued twice while a request carrying
+   it is stored in the workspace (24 h after it ends). A request prepared with `signer`, and a `dry_run`, has `code: null`.
+2. **`human.pending {code}`** returns the request only to the same principal and the same mapped person, only in the
+   workspace whose socket is asked (each workspace has its own request directory), and only while the request is
+   `prepared` or `bound`: the code expires with the request and no longer resolves once it is submitted, cancelled or
+   expired (`{request_id}` still reports those states, R6). A lookup that finds nothing is a failed lookup.
+3. **The lookup limit.** After 5 failed code lookups within 60 s on one connection, every code lookup on that
+   connection answers `rate.limited` (retryable, `retry_after_ms` until the oldest failure leaves the window), the right
+   code included. The count belongs to the connection: another connection of the same person is not affected, and
+   `{request_id}` lookups are not counted (an id carries 80 random bits).
+4. **`orch sign CODE [--workspace ID|PREFIX]`** (`orch.host.handoff`): prints the notice "only sign a code you created
+   yourself" on every run (stderr, and first in the review on `/dev/tty`); refuses when `ORCH_GRANT` is set
+   (`human_only`); asks `human.pending {code}` on the socket of each workspace of the person's own registry
+   (`<state>/host/workspaces.json`, the entries mapping the caller's UID to a person), or only the one named; takes the
+   one match (none: `not_found`; several: `invalid.input`, use `--workspace`); then `human.get` with the device of the
+   key in `<state>/hosts/<ws>/person/`, the signer's `check`, the review (notice, header, content), the confirmation
+   word, the passphrase, `human.submit`. A refusal or a declined review cancels the request, so the preparer sees
+   `cancelled`. The header's workspace name is the last path component of the registry entry's `root`, its prefix the
+   entry's `prefix`. It talks to the workspace socket with the minimal client `orch.host.client.Connection` (pinned
+   handshake, one request at a time), not with H4b's host-mode CLI.
+5. A hand-off request's artifact events (a person's `artifact.add`) carry digests of bytes the signer did not upload:
+   `orch sign` shows them as signed commitments and cannot compare them with a local file (the composite's
+   `check_uploads` applies only to requests it prepared itself).
 
 #### 0.8.2 Job ops (worker socket, H10)
 

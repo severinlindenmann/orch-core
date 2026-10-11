@@ -4,13 +4,13 @@ Status: Decided 11 Oct 2026 (draft by orch-52, Codex challenge, Opus tie-break o
 after the Opus security review (F1–F15), the Codex clarity review (14 points) and the dashboard stream's requests
 (R1–R11), and again after the security re-review (N1–N5), the Codex clarity re-review (12 points) and orch-relay's P3
 host interface (§11), and finally after the Opus diff check (M1, L1–L3) and the Codex re-check (8 points). The socket
-API contract §0 is **v1.3 (provisional)**: changes go through the coordination log.
+API contract §0 is **v1.3.1 (provisional)**: changes go through the coordination log.
 
 Built on `origin/develop` 908f2511. Decisions are numbered **D-P2-n**, each with a one-line reason.
 
 ---
 
-## 0. Socket API contract v1.3 (provisional)
+## 0. Socket API contract v1.3.1 (provisional)
 
 §0 is complete on its own. Streams B (dashboard), C (mobile, from P3) and D (relay bridge) build on it without reading
 the rest. Everything in §0 is normative: a host or client that differs from it is wrong.
@@ -67,13 +67,15 @@ The schemas below use a compact notation:
     worker-UID connection to a workspace or control socket is `fatal` `peer.denied`, and so is any other UID on the
     worker socket.
 - **Frame.** A 4-byte unsigned big-endian length `n`, then `n` bytes, with `1 ≤ n ≤ 2 097 152`. Readers handle partial
-  and coalesced reads. The body must arrive within 10 s of its length prefix.
+  and coalesced reads. The body must arrive within 10 s of the first byte of its length prefix.
 - **Payload.** Exactly one JSON object, strict UTF-8. Each of the following is `frame.invalid`:
   - invalid UTF-8, or an escaped lone surrogate (`\ud800` without its pair);
   - a duplicate key at any level;
   - a number with a fraction or an exponent (no op uses floats), `NaN`, `Infinity`, or an integer outside
     −(2^53−1)..2^53−1;
   - nesting deeper than 32 (the top-level object is depth 1, and each nested object or array adds 1);
+  - more than 65,536 JSON values in one frame (count every object, array, string, number, boolean and null,
+    including the top-level object; object member names are not values);
   - a top-level value that is not an object;
   - `n = 0`.
 - **Frame types.**
@@ -177,8 +179,8 @@ OpName  = str/[a-z][a-z_]*(\.[a-z_]+)*/      ReqId = str/[A-Za-z0-9_-]{1,32}/
   - A version is bumped only when the op's input, output or errors change incompatibly.
 - **`registry`** is a diagnostic digest. Nothing is refused because of it.
 - **Forward compatibility.**
-  - Clients ignore unknown keys in `welcome`, `res`, `result.data`, `evt` and its items, and an unknown `EndReason`
-    counts as `closed`.
+  - Clients ignore unknown keys in `welcome`, `res`, `result.data`, `evt` and its items, `fatal`, and `Error`; an unknown
+    `EndReason` counts as `closed`.
   - The host refuses unknown keys everywhere it reads, because inputs are security-relevant.
 
 ### 0.5 Principals, classes, permissions and visibility (authoritative)
@@ -305,7 +307,7 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 | `cancelled` | 9 | yes | stays | §0.2 cancellation | — |
 | `outcome.unknown` | 9 | yes | stays | a write's fate cannot be reported now; recover with `outcome.get` | — |
 | `rate.limited` | 9 | yes | stays | token bucket empty | yes |
-| `quota.host` | 9 | yes | stays (close at connect for the connection limit) | connections, subscriptions, pending human requests, blobs, outcome records, git reader children over their limit (§0.11) | when a slot frees in time |
+| `quota.host` | 9 | yes | stays (close at connect for the connection limit) | connections, requests in flight, subscriptions, pending human requests, blobs, outcome records, git reader children over their limit (§0.11) | when a slot frees in time |
 | `result.too_large` | 1 | no | stays | the result would exceed the frame; the hint names the paging argument | — |
 | `host.restarting` | 9 | yes | drain | the host is draining (D-P2-4) | yes |
 | `workspace.unavailable` | 1 | no | stays | the workspace cannot be served; the message names the cause | — |
@@ -1203,6 +1205,8 @@ The dashboard sees `seq` 20 through its subscription, or polls `human.pending {r
 6. **Dry runs ignore `opts.idem`:** never required, never looked up, never replayed.
 7. **`idem.expired`** is in the `outcome.get` and `host.outcome` error lists.
 8. New code `control.rolled_back`.
+
+**v1.3 → v1.3.1.** Frames contain at most 65,536 JSON values; exceeding the cap is fatal `frame.invalid` (§0.2).
 
 
 ---

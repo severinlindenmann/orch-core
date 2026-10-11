@@ -573,3 +573,42 @@ def test_the_expiry_error_names_the_requests_lifetime(human, served):
         res = human.submit_res(prepared["request"]["id"], human.sign(prepared).events)
         assert err(res) == "human.request_expired"
         assert f"it lives {minutes} minutes" in res["error"]["message"]
+
+
+def test_recheck_sources_runs_under_the_store_lock(human, served, monkeypatch):
+    import contextlib
+
+    _, key = human.ticket()
+    ready(human, key)
+    p = human.prepare("approve", {"ref": key, "gate": "requirements"})
+    requests = served.service.requests
+    rec = requests.read(p["request"]["id"])
+    rec["prepared"]["events"][0]["source_sha"] = []  # as a code approval or a verdict would sign it
+    requests.write(rec)
+    store = served.service.store
+    depth = [0]
+    real_locked = store.locked
+
+    @contextlib.contextmanager
+    def counted():
+        with real_locked():
+            depth[0] += 1
+            try:
+                yield
+            finally:
+                depth[0] -= 1
+
+    seen = []
+
+    def recheck(git, st, view, signed):
+        seen.append((depth[0], st is store, git.principal, signed))
+        raise HostError("gate.stale", "moved")
+
+    monkeypatch.setattr(store, "locked", counted)
+    monkeypatch.setattr(host_human, "recheck_sources", recheck)
+    events = [dict(rec["prepared"]["events"][0])]
+    from orch.identity import sign_person_event
+
+    events[0]["sig"] = sign_person_event(human.backend, "dk", served.wid, p["log"], events[0], action="t")
+    assert err(human.submit_res(p["request"]["id"], events)) == "gate.stale"
+    assert seen == [(1, True, f"uid:{os.getuid()}", [])]  # inside store.locked(), as the caller

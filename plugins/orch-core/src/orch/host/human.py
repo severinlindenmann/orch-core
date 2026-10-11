@@ -17,8 +17,11 @@ The host never prompts and holds no device key (D-P2-15). A person op is prepare
   forward at start (:func:`recover`), so a human submission is never ``partial``.
 * **cancel** ends a pending request.
 
-Hand-off codes, ``human.pending`` and ``orch sign CODE`` are H5b: a request prepared with ``handoff:true`` has
-``code: null`` here and can be bound by ``human.get`` with ``signer``.
+* **pending** lists the caller's requests (or the one named by ``request_id``), each with ``error: {code}`` after a
+  refused submit (the catalog code only).
+
+Hand-off codes and ``orch sign CODE`` are H5b: a request prepared with ``handoff:true`` has ``code: null`` here (so
+``human.pending {code}`` answers an empty list) and can be bound by ``human.get`` with ``signer``.
 """
 
 from __future__ import annotations
@@ -465,6 +468,8 @@ class HumanOps:
             except HostError:
                 records = []  # an unknown request gives an empty list, like an unknown code
         else:
+            # one file read per request in this workspace's directory: bounded by the 20-pending quota per person
+            # plus the terminal requests kept 24 h; an index can replace it if H5b's hand-offs make lists long
             records = []
             for rid in requests.ids():
                 try:
@@ -619,14 +624,14 @@ class HumanOps:
         stamp = store.peek_stamp(log)
         seq, prev, at = stamp["seq"], stamp["prev"], stamp["at"]
         for ev in events:
+            if "source_sha" in ev and log != "workspace":  # D58 first: git is read under the same lock
+                recheck_sources(git, store, store.ticket(log), ev["source_sha"])
             probe = {**ev, "seq": seq, "prev": prev, "at": at}
             if "ws_seq" in stamp:
                 probe["ws_seq"] = stamp["ws_seq"]
             r = preview(state, probe, log=log)
             if isinstance(r, Refusal):
                 raise _store_error(StoreError.from_refusal(r))
-            if "source_sha" in ev and log != "workspace":
-                recheck_sources(git, store, store.ticket(log), ev["source_sha"])
             state, seq, prev = r, seq + 1, canon.event_head(probe)
 
 

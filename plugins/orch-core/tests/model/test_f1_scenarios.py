@@ -10,6 +10,7 @@ FILES = {
     "devices.json": lambda d: d["scenarios"],
     "revocation.json": lambda d: d["scenarios"],
     "restore.json": lambda d: d["scenarios"],
+    "refusal_order.json": lambda d: d["scenarios"],
     "generation.json": lambda d: d["scenarios"],
     "status.json": lambda d: d["scenarios"],
     "effective_policy.json": lambda d: d["scenarios"],

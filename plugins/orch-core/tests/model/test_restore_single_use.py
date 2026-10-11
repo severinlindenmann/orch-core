@@ -30,3 +30,15 @@ def test_an_abandoned_decision_id_is_refused_whatever_it_is_based_on(after_resto
     e.pop("host_sig", None)
     r = admit(st, e, log=uid)
     assert getattr(r, "code", None) == Code.EVENT_DUPLICATE_ID
+
+
+def test_the_identical_signed_event_is_refused_when_appended_again(after_restore):
+    """Only the host's fields change (seq, prev, ws_seq, at, host_sig); every signed field, ``based_on`` included,
+    is the abandoned event's own, so this is the replay the restore exists to stop."""
+    sc, ws, uid, log, gone = after_restore
+    st = state_of(sc, ws, {uid: log})
+    e = copy.deepcopy(gone)
+    e.update(seq=log[-1]["seq"] + 1, prev=event_head(log[-1]), ws_seq=ws[-1]["seq"], at="2099-01-01T00:00:00Z")
+    e.pop("host_sig", None)
+    assert any(h == e["based_on"] for h in map(event_head, log))  # still names an earlier event of the new chain
+    assert getattr(admit(st, e, log=uid), "code", None) == Code.EVENT_DUPLICATE_ID

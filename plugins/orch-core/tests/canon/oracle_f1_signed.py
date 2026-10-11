@@ -379,18 +379,39 @@ def genesis_vector() -> dict[str, Any]:
             signer="dk_mara1",
         ),
         _genesis_case(
-            "delegation_check_before_host_sig",
-            3,
-            "checks 3 and 4 both fail: 3 is reported",
+            "certificate_with_decide_only",
+            5,
+            "scopes_max ['look', 'decide']: the genesis installs members, policies and settings, which need `operate`",
+            device_cert=ow.make_cert("sev", "sev1", ["look", "decide"]),
+        ),
+        _genesis_case(
+            "host_sig_check_before_delegation_check",
+            4,
+            "checks 3 and 4 both fail: host_sig is a line check (refusal order step 1), so chain.broken wins",
             delegation=ow.make_delegation("sev", workspace_id=OTHER_W),
             host_key="wsk_other",
         ),
         _genesis_case("roster_v_is_not_zero", None, "the genesis has roster_v 0", shape="genesis.shape", roster_v=1),
     ]
+    # (append, replay): checks 1, 2, 3 and 5 are genesis.invalid, check 4 is chain.broken, check 6 is sig.invalid at append
+    # and chain.broken on replay; on replay a failing host_sig or person sig breaks the chain before any other check
+    codes = {
+        "host_sig_by_another_key": ("chain.broken", "chain.broken"),
+        "host_sig_covers_the_event": ("chain.broken", "chain.broken"),
+        "host_sig_check_before_delegation_check": ("chain.broken", "chain.broken"),
+        "signature_by_another_device": ("sig.invalid", "chain.broken"),
+        "signature_over_another_workspace": ("sig.invalid", "chain.broken"),
+        "owner_check_before_signature_check": ("genesis.invalid", "chain.broken"),
+        "actor_device_is_not_the_certificates": ("genesis.invalid", "chain.broken"),
+    }
+    for c in refused:
+        c["append"], c["replay"] = codes.get(c["name"], ("genesis.invalid", "genesis.invalid"))
     return {
         "pins": "the genesis checks of F1 5.11 in their stated order (1 owner ids, 2 delegation signature and field "
-        "set, 3 delegation binds workspace and wsk, 4 host_sig under wsk_pub, 5 device_cert and actor.device, 6 sig "
-        "under the certificate's key); genesis = the head of workspace.created",
+        "set, 3 delegation binds workspace and wsk, 4 host_sig under wsk_pub, 5 device_cert (valid at `at`, with operate) "
+        "and actor.device, 6 sig under the certificate's key); genesis = the head of workspace.created. Each refused "
+        "case carries `append` (the code at append: checks 1, 2, 3, 5 genesis.invalid, check 4 chain.broken, check 6 "
+        "sig.invalid) and `replay` (chain.broken where a line check fails first, else genesis.invalid)",
         "note": KEY_NOTE,
         "workspace_id": W,
         "valid": good,
@@ -560,12 +581,32 @@ def checkpoint_vector() -> dict[str, Any]:
     # signed workspace checkpoints offered to a reader that already holds n = 2 (relay, devices from P3; the P1 host
     # only writes its own and computes n itself): a lower n is refused even when everything else is the same
     held = wcp(2, len(wl), heads_w[-1], {TICKET: {"seq": len(tl), "head": heads_t[-1]}})
+    t2 = {"seq": len(tl) + 1, "head": "sha256:" + "66" * 32}
     n_offers = [
-        {"name": "lower_n_same_heads", "checkpoint": _checkpoint({**held, "n": 1}), "expect": "chain.diverged"},
+        {"name": "lower_n_same_heads", "checkpoint": _checkpoint({**held, "n": 1}), "expect": "ignored"},
         {"name": "same_n_same_content", "checkpoint": _checkpoint(held), "expect": "ok"},
-        {"name": "higher_n_same_heads", "checkpoint": _checkpoint({**held, "n": 3}), "expect": "ok"},
-        {"name": "lower_n_lower_height", "checkpoint": _checkpoint(wcp(1, len(wl) - 1, heads_w[-2], {})),
+        {"name": "same_n_other_content", "checkpoint": _checkpoint({**held, "at": "2026-10-10T10:09:00Z"}),
          "expect": "chain.diverged"},
+        {"name": "higher_n_same_heads", "checkpoint": _checkpoint({**held, "n": 3}), "expect": "ok"},
+        {"name": "higher_n_gap_in_n", "checkpoint": _checkpoint({**held, "n": 9}), "expect": "ok"},
+        {"name": "higher_n_higher_heights",
+         "checkpoint": _checkpoint(wcp(3, len(wl), heads_w[-1], {TICKET: t2})), "expect": "ok"},
+        {"name": "lower_n_lower_height", "checkpoint": _checkpoint(wcp(1, len(wl) - 1, heads_w[-2], {})),
+         "expect": "ignored"},
+        {"name": "lower_n_higher_height", "checkpoint": _checkpoint(wcp(1, len(wl), heads_w[-1], {TICKET: t2})),
+         "expect": "chain.diverged"},
+        {"name": "higher_n_lower_height", "checkpoint": _checkpoint(wcp(3, len(wl) - 1, heads_w[-2], {TICKET: {
+            "seq": len(tl), "head": heads_t[-1]}})), "expect": "chain.diverged"},
+        {"name": "higher_n_missing_ticket", "checkpoint": _checkpoint(wcp(3, len(wl), heads_w[-1], {})),
+         "expect": "chain.diverged"},
+        {"name": "higher_n_same_seq_other_head", "checkpoint": _checkpoint(wcp(3, len(wl), "sha256:" + "77" * 32, {
+            TICKET: {"seq": len(tl), "head": heads_t[-1]}})), "expect": "chain.diverged"},
+        {"name": "higher_n_lower_height_with_a_restore",
+         "checkpoint": _checkpoint(wcp(3, len(wl) - 1, heads_w[-2], {TICKET: {"seq": len(tl), "head": heads_t[-1]}})),
+         "restore": {"abandoned": {"seq": len(wl), "head": heads_w[-1]}}, "expect": "ok"},
+        {"name": "higher_n_lower_height_with_a_restore_that_abandons_less",
+         "checkpoint": _checkpoint(wcp(3, len(wl) - 1, heads_w[-2], {TICKET: {"seq": len(tl), "head": heads_t[-1]}})),
+         "restore": {"abandoned": {"seq": len(wl) - 1, "head": heads_w[-2]}}, "expect": "chain.diverged"},
     ]  # fmt: skip
     # logs as they are on disk when a checkpoint is checked (heads by seq, 0-based list)
     divergences = [
@@ -582,7 +623,8 @@ def checkpoint_vector() -> dict[str, Any]:
         "pins": "protocol 2.4 checkpoint objects of F1 5.10: the exact shape of `o`, the signed bytes "
         "('orch/v2/sig/checkpoint|' + cj(o)), real signatures; forged variants fail; a lower seq or n, or the same "
         "seq with another head, is refused (chain.diverged); a log that disagrees with a checkpoint is diverged; "
-        "restore (see restore.json)",
+        "restore (see restore.json); receivers judge workspace checkpoints by n and seq (workspace_n_offers: ok, ignored, "
+        "chain.diverged)",
         "note": KEY_NOTE,
         "workspace_id": W,
         "wsk_pub": key("wsk").pub_b64u,
@@ -654,4 +696,36 @@ def restore_scenarios() -> list[dict[str, Any]]:
             extra["host_expect"] = "refused"
             extra["host_knows_revocations"] = [rev]
         out.append(w.scenario(**extra))
+    # a ticket event stamped with the host's ws_seq while the restore was being written: it may not name the restore
+    # or a re-append except the last one (5.10); a log-only reader finds that out on replay
+    name = "ticket_event_may_not_name_the_restore_window"
+    w = World(name, "5.10: a ticket event's ws_seq may name the last event of the restore window (the restore, "
+              "then the host's device.revoked re-appends) but not the restore or an earlier re-append")  # fmt: skip
+    prefix(w)
+    w.ticket()
+    h4 = head(w.logs["workspace"][-1])
+    payload = {"from_seq": 4, "head": h4, "abandoned": {"seq": 5, "head": head(old_revoked)},
+               "abandoned_decisions": [], "reason": "restored a backup"}  # fmt: skip
+    restored = w.ev("workspace", "restore", w.actor("sev"), payload, note="the owner's restore, seq 5")
+    w.ev("workspace", "device.revoked", w.HOST, {"device": did("lena1"), "reason": "lost", "revocation": rev},
+         note="the host's re-append, seq 6: the last event of the window")  # fmt: skip
+    w.ev(TICKET, "log.added", w.actor("mara"), {"text": "x"}, ws_seq=restored["seq"], expect="chain.bad_ws_seq",
+         note="the ticket event names the restore (seq 5), which is not the last event of the window")  # fmt: skip
+    w.ev(TICKET, "log.added", w.actor("mara"), {"text": "x"}, note="naming the last event (seq 6) is fine")
+    out.append(w.scenario(reappends=True))
     return out
+
+
+def refusal_order_scenarios() -> list[dict[str, Any]]:
+    """§5.11 "Refusal order": events that break two rules at once get the code of the earlier step."""
+    w = base_world("refusal_order_type_step", "an event of the other log's type is refused at the type step, after the envelope and the log "
+                   "(on replay a bad signature breaks the chain first, so no vector mixes the two)")  # fmt: skip
+    mara = w.actor("mara")
+    w.ev(TICKET, "settings.changed", mara, {"set": {"grant_hours": 4}}, expect="event.unknown_type",
+         note="a workspace event in a ticket log; the signature is fine", schema_refused=True)  # fmt: skip
+    w.ev("workspace", "log.added", mara, {"text": "x"}, expect="event.unknown_type",
+         note="a ticket event in the workspace log", schema_refused=True)  # fmt: skip
+    w.ev("01J9ZK4QXXXXXXXXXXXXXXXXXX", "settings.changed", mara, {"set": {"grant_hours": 4}}, expect="ticket.unknown",
+         note="the log step (ticket.unknown) comes before the type step", schema_refused=True)  # fmt: skip
+    w.ev(TICKET, "log.added", mara, {"text": "ok"}, note="an honest event is accepted")
+    return [w.scenario()]

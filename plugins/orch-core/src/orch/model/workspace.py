@@ -61,9 +61,17 @@ def genesis(core: Core, e: dict[str, Any], v: Verifier, expected: str | None) ->
     if expected is not None and head is not None and head != expected:
         return Refusal(Code.TRUST_GENESIS_MISMATCH, "the genesis differs from the pinned one")
     cert = e["device_cert"]
-    if (r := authz.device_valid(None, cert, ts(e["at"]), False)) is not None:
-        return r
+    # check 5 (§5.11): the certificate is valid at this `at` with `operate` (the genesis installs members, policies and
+    # settings), whatever device_valid says about it; every failure of checks 1, 2, 3 and 5 is genesis.invalid
+    if authz.device_valid(None, cert, ts(e["at"]), True) is not None or a["device"] != "d_" + cert["o"]["device_id"]:
+        return Refusal(
+            Code.GENESIS_INVALID, "the genesis device certificate is expired, lacks `operate` or has a drop: scope"
+        )
     if not v.verify_embedded(e, pk_pub=e["owner"]["pk_pub"]):
+        # the verifier reports the first failing check: checks 1, 2, 3 and 5 are genesis.invalid, check 6 sig.invalid
+        why = getattr(v, "genesis_failure", lambda _e: None)(e)
+        if why == "genesis.bad_sig":
+            return Refusal(Code.SIG_INVALID, "genesis signature does not verify")
         return Refusal(Code.GENESIS_INVALID, "delegation or device certificate does not verify")
     if "sig" not in e or not v.verify_person(e, SigContext(e["workspace_id"], WORKSPACE, cert)):
         return Refusal(Code.SIG_INVALID, "genesis signature does not verify")

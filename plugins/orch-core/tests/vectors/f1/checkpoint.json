@@ -170,7 +170,7 @@
  ],
  "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
  "note": "TEST KEYS ONLY. Every private scalar below is derived from the key name as sha256('orch-f1-test-key|' + name) mod (n-1) + 1 and is published on purpose; the signatures are RFC 6979 (deterministic), so consumers verify the stored signature and never re-sign.",
- "pins": "protocol 2.4 checkpoint objects of F1 5.10: the exact shape of `o`, the signed bytes ('orch/v2/sig/checkpoint|' + cj(o)), real signatures; forged variants fail; a lower seq or n, or the same seq with another head, is refused (chain.diverged); a log that disagrees with a checkpoint is diverged; restore (see restore.json)",
+ "pins": "protocol 2.4 checkpoint objects of F1 5.10: the exact shape of `o`, the signed bytes ('orch/v2/sig/checkpoint|' + cj(o)), real signatures; forged variants fail; a lower seq or n, or the same seq with another head, is refused (chain.diverged); a log that disagrees with a checkpoint is diverged; restore (see restore.json); receivers judge workspace checkpoints by n and seq (workspace_n_offers: ok, ignored, chain.diverged)",
  "ticket_checkpoint": {
   "signed": {
    "o": {
@@ -302,7 +302,7 @@
     },
     "sig": "RaUXeXYspnacJOmO3rkxNy2BPWHzkeXFC5cEFjqskV8ULEtzu1e5FtQRzj1MGDsi7Uh2u2LzMcSDidIbUCVNnQ"
    },
-   "expect": "chain.diverged",
+   "expect": "ignored",
    "name": "lower_n_same_heads"
   },
   {
@@ -330,6 +330,32 @@
    },
    "expect": "ok",
    "name": "same_n_same_content"
+  },
+  {
+   "checkpoint": {
+    "o": {
+     "at": "2026-10-10T10:09:00Z",
+     "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+     "kind": "workspace_checkpoint",
+     "n": 2,
+     "suite": 2,
+     "tickets": {
+      "01J9ZK4Q7M3R8T2V6X0B5N1C9D": {
+       "head": "sha256:08d494b703090846a430d99f8753f7e56621c0341517a5aeab9ad21deacc2e42",
+       "seq": 4
+      }
+     },
+     "v": 2,
+     "workspace_id": "0123456789abcdef0123456789abcdef",
+     "workspace_log": {
+      "head": "sha256:c5bff55dc4158717ece7433499b52f79b344c00af79a071210a79625d94dbf2f",
+      "seq": 4
+     }
+    },
+    "sig": "pTXrfIZ623nah2d2-xJ0KQ15dnx-JTAO04vOu2ZSjtWuMpYyKcoFJUt4PopCt63Xt0fCy785hYbawtacT5Sw3g"
+   },
+   "expect": "chain.diverged",
+   "name": "same_n_other_content"
   },
   {
    "checkpoint": {
@@ -363,6 +389,58 @@
      "at": "2026-10-10T10:03:30Z",
      "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
      "kind": "workspace_checkpoint",
+     "n": 9,
+     "suite": 2,
+     "tickets": {
+      "01J9ZK4Q7M3R8T2V6X0B5N1C9D": {
+       "head": "sha256:08d494b703090846a430d99f8753f7e56621c0341517a5aeab9ad21deacc2e42",
+       "seq": 4
+      }
+     },
+     "v": 2,
+     "workspace_id": "0123456789abcdef0123456789abcdef",
+     "workspace_log": {
+      "head": "sha256:c5bff55dc4158717ece7433499b52f79b344c00af79a071210a79625d94dbf2f",
+      "seq": 4
+     }
+    },
+    "sig": "WfUowBmJ6KZBbGFcSWIcouUQNaGetTB_DCikr83S7aS8MIEZv24bjrP_x6zYkbmJPk2fkKPNhrykRg_6P3fTag"
+   },
+   "expect": "ok",
+   "name": "higher_n_gap_in_n"
+  },
+  {
+   "checkpoint": {
+    "o": {
+     "at": "2026-10-10T10:03:30Z",
+     "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+     "kind": "workspace_checkpoint",
+     "n": 3,
+     "suite": 2,
+     "tickets": {
+      "01J9ZK4Q7M3R8T2V6X0B5N1C9D": {
+       "head": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+       "seq": 5
+      }
+     },
+     "v": 2,
+     "workspace_id": "0123456789abcdef0123456789abcdef",
+     "workspace_log": {
+      "head": "sha256:c5bff55dc4158717ece7433499b52f79b344c00af79a071210a79625d94dbf2f",
+      "seq": 4
+     }
+    },
+    "sig": "qXeuhoG_tHe2FC9FD_5UGcXdMGbzm26CI66UuyIUhREvrdXp-ZgpQtkisKmofYgBvRJrCfAAkdTxjOCm3cxPVg"
+   },
+   "expect": "ok",
+   "name": "higher_n_higher_heights"
+  },
+  {
+   "checkpoint": {
+    "o": {
+     "at": "2026-10-10T10:03:30Z",
+     "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+     "kind": "workspace_checkpoint",
      "n": 1,
      "suite": 2,
      "tickets": {},
@@ -375,8 +453,171 @@
     },
     "sig": "E4vrbgRk4_9vf-GIItLiYFgCu31OnimAyfGQYEYLSuLVs99nnE93djv5HiTwPp5c2WaW81DYc4xcy4UDBuEF2A"
    },
-   "expect": "chain.diverged",
+   "expect": "ignored",
    "name": "lower_n_lower_height"
+  },
+  {
+   "checkpoint": {
+    "o": {
+     "at": "2026-10-10T10:03:30Z",
+     "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+     "kind": "workspace_checkpoint",
+     "n": 1,
+     "suite": 2,
+     "tickets": {
+      "01J9ZK4Q7M3R8T2V6X0B5N1C9D": {
+       "head": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+       "seq": 5
+      }
+     },
+     "v": 2,
+     "workspace_id": "0123456789abcdef0123456789abcdef",
+     "workspace_log": {
+      "head": "sha256:c5bff55dc4158717ece7433499b52f79b344c00af79a071210a79625d94dbf2f",
+      "seq": 4
+     }
+    },
+    "sig": "p28mWn4gwT4cVsM0RAK1rs5mXc959eRahqt2Y2bQMc8q2teOhRQKSPGNmtGiEd8cWe0AD0F-j5RFJnscQgBTeA"
+   },
+   "expect": "chain.diverged",
+   "name": "lower_n_higher_height"
+  },
+  {
+   "checkpoint": {
+    "o": {
+     "at": "2026-10-10T10:03:30Z",
+     "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+     "kind": "workspace_checkpoint",
+     "n": 3,
+     "suite": 2,
+     "tickets": {
+      "01J9ZK4Q7M3R8T2V6X0B5N1C9D": {
+       "head": "sha256:08d494b703090846a430d99f8753f7e56621c0341517a5aeab9ad21deacc2e42",
+       "seq": 4
+      }
+     },
+     "v": 2,
+     "workspace_id": "0123456789abcdef0123456789abcdef",
+     "workspace_log": {
+      "head": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
+      "seq": 3
+     }
+    },
+    "sig": "IP719k79F_d_t06t-8LuAK8dJyWDH8VTNJ36MlawlOUh3Uvu-CqxTMXth-gdAbRDp4SpAyYpoEib0TKFnwgfvg"
+   },
+   "expect": "chain.diverged",
+   "name": "higher_n_lower_height"
+  },
+  {
+   "checkpoint": {
+    "o": {
+     "at": "2026-10-10T10:03:30Z",
+     "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+     "kind": "workspace_checkpoint",
+     "n": 3,
+     "suite": 2,
+     "tickets": {},
+     "v": 2,
+     "workspace_id": "0123456789abcdef0123456789abcdef",
+     "workspace_log": {
+      "head": "sha256:c5bff55dc4158717ece7433499b52f79b344c00af79a071210a79625d94dbf2f",
+      "seq": 4
+     }
+    },
+    "sig": "fGJE6ugrrSudm8P0-QrkydBvAjP6oM21xZFa14qv-gLMOADWUKJR_foYQEP-ehtEzW1o6NsBvfSDChnyTxYr3A"
+   },
+   "expect": "chain.diverged",
+   "name": "higher_n_missing_ticket"
+  },
+  {
+   "checkpoint": {
+    "o": {
+     "at": "2026-10-10T10:03:30Z",
+     "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+     "kind": "workspace_checkpoint",
+     "n": 3,
+     "suite": 2,
+     "tickets": {
+      "01J9ZK4Q7M3R8T2V6X0B5N1C9D": {
+       "head": "sha256:08d494b703090846a430d99f8753f7e56621c0341517a5aeab9ad21deacc2e42",
+       "seq": 4
+      }
+     },
+     "v": 2,
+     "workspace_id": "0123456789abcdef0123456789abcdef",
+     "workspace_log": {
+      "head": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+      "seq": 4
+     }
+    },
+    "sig": "TzX2MtsItgTIKkM7wy3HlZzpDh1Tgp6Yf87lSpVaQzc-653wxEDM3zObjaK5g-tqzBlgGzmpmpcMV4f2SQ7OIA"
+   },
+   "expect": "chain.diverged",
+   "name": "higher_n_same_seq_other_head"
+  },
+  {
+   "checkpoint": {
+    "o": {
+     "at": "2026-10-10T10:03:30Z",
+     "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+     "kind": "workspace_checkpoint",
+     "n": 3,
+     "suite": 2,
+     "tickets": {
+      "01J9ZK4Q7M3R8T2V6X0B5N1C9D": {
+       "head": "sha256:08d494b703090846a430d99f8753f7e56621c0341517a5aeab9ad21deacc2e42",
+       "seq": 4
+      }
+     },
+     "v": 2,
+     "workspace_id": "0123456789abcdef0123456789abcdef",
+     "workspace_log": {
+      "head": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
+      "seq": 3
+     }
+    },
+    "sig": "IP719k79F_d_t06t-8LuAK8dJyWDH8VTNJ36MlawlOUh3Uvu-CqxTMXth-gdAbRDp4SpAyYpoEib0TKFnwgfvg"
+   },
+   "expect": "ok",
+   "name": "higher_n_lower_height_with_a_restore",
+   "restore": {
+    "abandoned": {
+     "head": "sha256:c5bff55dc4158717ece7433499b52f79b344c00af79a071210a79625d94dbf2f",
+     "seq": 4
+    }
+   }
+  },
+  {
+   "checkpoint": {
+    "o": {
+     "at": "2026-10-10T10:03:30Z",
+     "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+     "kind": "workspace_checkpoint",
+     "n": 3,
+     "suite": 2,
+     "tickets": {
+      "01J9ZK4Q7M3R8T2V6X0B5N1C9D": {
+       "head": "sha256:08d494b703090846a430d99f8753f7e56621c0341517a5aeab9ad21deacc2e42",
+       "seq": 4
+      }
+     },
+     "v": 2,
+     "workspace_id": "0123456789abcdef0123456789abcdef",
+     "workspace_log": {
+      "head": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
+      "seq": 3
+     }
+    },
+    "sig": "IP719k79F_d_t06t-8LuAK8dJyWDH8VTNJ36MlawlOUh3Uvu-CqxTMXth-gdAbRDp4SpAyYpoEib0TKFnwgfvg"
+   },
+   "expect": "chain.diverged",
+   "name": "higher_n_lower_height_with_a_restore_that_abandons_less",
+   "restore": {
+    "abandoned": {
+     "head": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
+     "seq": 3
+    }
+   }
   }
  ],
  "workspace_offers": [

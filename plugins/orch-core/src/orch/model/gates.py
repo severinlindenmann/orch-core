@@ -173,6 +173,9 @@ def decision(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
         return Refusal(Code.GATE_STATUS, "wrong status")
     if not policies.eligible(pol, policies.person_tokens(ws, t, person)):
         return Refusal(Code.GATE_NOT_ELIGIBLE, f"{person} may not decide {gate}")
+    if kind in ("approve", "pass") and (pol["independent"] or gate == "code") and person in t.workers:
+        # §5.11 refusal order, step 7: independence sits beside the token check, before anything stale or incomplete
+        return Refusal(Code.GATE_NOT_ELIGIBLE, "independent: the signer is a worker of this ticket (§5.7)")
     gc = t.gates[gate]
     if e["gate_gen"] != gc.gen:
         return Refusal(Code.GATE_STALE, f"gate_gen {e['gate_gen']} is not current ({gc.gen})")
@@ -191,8 +194,6 @@ def decision(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
     if kind in ("approve", "pass"):
         if lack := missing_for_gate(ws, t, gate):
             return Refusal(Code.GATE_INCOMPLETE, f"missing: {', '.join(lack)}")
-        if (pol["independent"] or gate == "code") and person in t.workers:
-            return Refusal(Code.GATE_NOT_ELIGIBLE, "independent: the signer is a worker of this ticket (§5.7)")
     t.gates[gate].decisions.append(
         Decision(
             e["id"],

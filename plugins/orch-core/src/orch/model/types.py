@@ -157,7 +157,7 @@ class GateCore:
     gen: int = 0
     decisions: list[Decision] = field(default_factory=list)
     pending_void: set[str] = field(default_factory=set)
-    revoked_flag: set[str] = field(default_factory=set)  # decision ids of a done ticket signed by a revoked device
+    revoked_flag: set[str] = field(default_factory=set)  # counting decision ids of a revoked device on a settled ticket
 
 
 @dataclass
@@ -233,6 +233,9 @@ class TCore:
     handoff: str | None = None
     marks: set[str] = field(default_factory=set)  # gates the current event raises directly (generations.py)
     workers: set[str] = field(default_factory=set)  # §5.7 "workers": assignees, claim holders, agents' `for` persons
+    # voids a settled (done or closed) ticket was exempt from, applied when it becomes unsettled other than by a reopen
+    exempt_persons: set[str] = field(default_factory=set)  # removed or role-changed while settled
+    exempt_devices: set[str] = field(default_factory=set)  # revoked ``compromised`` while settled
     last_at: int = 0
 
     @property
@@ -250,6 +253,10 @@ class Core:
     logs: dict[str, LogCore] = field(
         default_factory=dict
     )  # "workspace" and every ticket uid: chain place, invalid events
+    # workspace seqs a ticket event's ``ws_seq`` may not name (§5.10): a ``restore`` and the host's ``device.revoked``
+    # re-appends right after it, except the last of them; ``rwin_last`` is the last of the window being read
+    rwin_forbidden: set[int] = field(default_factory=set)
+    rwin_last: int | None = None
 
 
 def position(e: dict[str, Any], log: str) -> tuple[int, int, str, int]:

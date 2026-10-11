@@ -96,6 +96,17 @@ class CryptoVerifier:
         except (crypto.EncodingError, crypto.CryptoError, canon.HashError, KeyError, TypeError, AttributeError):
             return False
 
+    def genesis_failure(self, event: Mapping[str, Any]) -> str | None:
+        """The code of the first failing check of §5.11 for a ``workspace.created`` (``genesis.owner_mismatch``, ...,
+        ``genesis.bad_sig``), or ``None`` when all hold. Lets the model give check 6 its own refusal code."""
+        try:
+            members.check_genesis(event)
+        except Refused as e:
+            return e.code
+        except (crypto.EncodingError, crypto.CryptoError, KeyError, TypeError, AttributeError):
+            return "genesis.shape"
+        return None
+
     def verify_embedded(
         self,
         event: Mapping[str, Any],

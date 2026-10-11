@@ -36,8 +36,9 @@ def git_env(base: Mapping[str, str] | None = None) -> dict[str, str]:
     }
 
 
-def git(path: Path, *args: str) -> str | None:
-    """``git -C path ...`` on a scrubbed environment; stdout stripped, ``None`` if git fails or is missing."""
+def git(path: Path, *args: str, strip: bool = True) -> str | None:
+    """``git -C path ...`` on a scrubbed environment; stdout stripped (unless ``strip`` is off), ``None`` if git fails or
+    is missing."""
     try:
         done = subprocess.run(
             [
@@ -61,7 +62,9 @@ def git(path: Path, *args: str) -> str | None:
         )
     except (OSError, subprocess.SubprocessError):
         return None
-    return done.stdout.strip() if done.returncode == 0 else None
+    if done.returncode != 0:
+        return None
+    return done.stdout.strip() if strip else done.stdout
 
 
 def head(path: Path) -> str | None:
@@ -98,11 +101,14 @@ def repo_path(root: Path, repos: Mapping[str, str], name: str) -> Path | None:
 
 
 def repo_identity(path: Path, name: str) -> str:
-    """The canonical identity of the repository (F1 5.7): its ``origin`` remote as an ``https://`` URL when that is
-    canonical, else ``local:<name>``. Credentials in the remote (``https://user:token@host/...``) are stripped before
-    the URL is looked at and never stored, printed or put on a command line; a remote that is not canonical after
-    that is ``local:<name>``, never the raw URL."""
-    return canon.canonical_repo_identity(git(path, "config", "--get", "remote.origin.url") or "", name)
+    """The canonical identity of the repository (F1 5.7), from the raw ``remote.origin.url`` (no ``insteadOf``
+    rewriting, and not stripped: a value with a leading or trailing space is not canonical): the ``https://`` URL it
+    maps to when that is canonical, else ``local:<name>``. More than one configured value is ``local:<name>``: git
+    fetches from the first and pushes to all, so no single identity names the repo. Credentials in the remote
+    (``https://user:token@host/...``) are dropped by the mapping and never stored, printed or put on a command line."""
+    out = git(path, "config", "--null", "--get-all", "remote.origin.url", strip=False)
+    values = [v for v in (out or "").split("\0") if v]
+    return canon.canonical_repo_identity(values[0] if len(values) == 1 else "", name)
 
 
 def observe(store: Any, ref: str, problems: list[str] | None = None) -> list[dict[str, Any]]:

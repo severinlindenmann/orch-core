@@ -534,7 +534,7 @@ def test_events_without_signatures_are_refused_not_skipped():
     nosig = {k: v for k, v in e.items() if k != "sig"}
     w.tl[uid][-1] = nosig
     s = w.state()
-    assert [i.code for i in s._core.logs[uid].invalid] == ["sig.invalid"]
+    assert [(c.log, c.code) for c in s.chain_errors] == [(uid, "chain.broken")]  # §5.5: breaks the chain on replay
     w2 = World(validate=False).bootstrap()
     nohost = {k: v for k, v in w2.ws[0].items() if k != "host_sig"}
     w2.ws[0] = nohost
@@ -571,7 +571,7 @@ def test_replay_and_admit_verify_the_same_person_signature(w):
     assert admit(w.state(), e, log=uid).code == Code.SIG_INVALID
     e["host_sig"] = "x"
     w.tl[uid].append(e)
-    assert [i.code for i in w.state()._core.logs[uid].invalid] == ["sig.invalid"]
+    assert [(c.log, c.code) for c in w.state().chain_errors] == [(uid, "chain.broken")]  # §5.5: not an authz failure
 
 
 def test_status_transitions_are_person_gated_and_workers_do_not_change_them(w):

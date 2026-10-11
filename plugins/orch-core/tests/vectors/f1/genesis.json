@@ -1,9 +1,10 @@
 {
  "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
  "note": "TEST KEYS ONLY. Every private scalar below is derived from the key name as sha256('orch-f1-test-key|' + name) mod (n-1) + 1 and is published on purpose; the signatures are RFC 6979 (deterministic), so consumers verify the stored signature and never re-sign.",
- "pins": "the genesis checks of F1 5.11 in their stated order (1 owner ids, 2 delegation signature and field set, 3 delegation binds workspace and wsk, 4 host_sig under wsk_pub, 5 device_cert and actor.device, 6 sig under the certificate's key); genesis = the head of workspace.created",
+ "pins": "the genesis checks of F1 5.11 in their stated order (1 owner ids, 2 delegation signature and field set, 3 delegation binds workspace and wsk, 4 host_sig under wsk_pub, 5 device_cert (valid at `at`, with operate) and actor.device, 6 sig under the certificate's key); genesis = the head of workspace.created. Each refused case carries `append` (the code at append: checks 1, 2, 3, 5 genesis.invalid, check 4 chain.broken, check 6 sig.invalid) and `replay` (chain.broken where a line check fails first, else genesis.invalid)",
  "refused": [
   {
+   "append": "genesis.invalid",
    "check": 1,
    "desc": "owner.pk_pub is mara's key; person id, delegation and certificate are sev's",
    "event": {
@@ -70,9 +71,11 @@
    },
    "head": "sha256:139be313a8d08b831b262fa8fe68fa5775edcff5b3147939df8d89a8b99cc8c9",
    "name": "owner_pk_is_another_key",
+   "replay": "genesis.invalid",
    "shape": null
   },
   {
+   "append": "genesis.invalid",
    "check": 1,
    "desc": "owner.person names mara",
    "event": {
@@ -139,9 +142,11 @@
    },
    "head": "sha256:6575f250915238b6823e500e6f7a43a52834cf4a925b9e3a518983b844e4944b",
    "name": "owner_person_is_another",
+   "replay": "genesis.invalid",
    "shape": null
   },
   {
+   "append": "genesis.invalid",
    "check": 1,
    "desc": "device_cert names mara's person id",
    "event": {
@@ -208,9 +213,11 @@
    },
    "head": "sha256:3762ece482d1e1108b0bba3840023694eb1867632b056fff5fd07d44f82d87e0",
    "name": "certificate_of_another_person",
+   "replay": "genesis.invalid",
    "shape": null
   },
   {
+   "append": "genesis.invalid",
    "check": 2,
    "desc": "delegation signature is mara's",
    "event": {
@@ -277,9 +284,11 @@
    },
    "head": "sha256:9556528cfae1a1bbae46c820e618047c0c8c45e189ce575e36d2aec51464a385",
    "name": "delegation_signed_by_another_key",
+   "replay": "genesis.invalid",
    "shape": null
   },
   {
+   "append": "genesis.invalid",
    "check": 2,
    "desc": "exact field set",
    "event": {
@@ -347,9 +356,11 @@
    },
    "head": "sha256:193182a52c2b9c37c76a74314b7d09f36c8c1a220fd2b18652998072401fd432",
    "name": "delegation_with_an_extra_field",
+   "replay": "genesis.invalid",
    "shape": null
   },
   {
+   "append": "genesis.invalid",
    "check": 3,
    "desc": "delegation.o.workspace_id differs",
    "event": {
@@ -416,9 +427,11 @@
    },
    "head": "sha256:28b72ec5e9cadb7ce3d7107b8e0aea2921fdd12e839b78671acde87d48caeaf3",
    "name": "delegation_for_another_workspace",
+   "replay": "genesis.invalid",
    "shape": null
   },
   {
+   "append": "genesis.invalid",
    "check": 3,
    "desc": "delegation.o.wsk_pub differs",
    "event": {
@@ -485,9 +498,11 @@
    },
    "head": "sha256:443e6432c951ebc0675ae6e164fcc141918ef7d0ad8561959082bcbc190a6a42",
    "name": "delegation_for_another_wsk",
+   "replay": "genesis.invalid",
    "shape": null
   },
   {
+   "append": "chain.broken",
    "check": 4,
    "desc": "host_sig under wsk_other",
    "event": {
@@ -554,9 +569,11 @@
    },
    "head": "sha256:40c4f8ad95663454448f6822bbb9e011cfacb46c5661e729c71a29b436f24d79",
    "name": "host_sig_by_another_key",
+   "replay": "chain.broken",
    "shape": null
   },
   {
+   "append": "chain.broken",
    "check": 4,
    "desc": "host_id changed after host_sig; the person signature also fails, but check 4 comes first",
    "event": {
@@ -623,9 +640,11 @@
    },
    "head": "sha256:cba9b97b8b75689a9a14f5120aa513f469f7ac3f63ab893ba626f9205d94eeeb",
    "name": "host_sig_covers_the_event",
+   "replay": "chain.broken",
    "shape": null
   },
   {
+   "append": "genesis.invalid",
    "check": 5,
    "desc": "device_cert signature is mara's",
    "event": {
@@ -692,9 +711,11 @@
    },
    "head": "sha256:b25c6370756ce8af136cefa5e1cb8ba653d56185a8751270fe5b033e08c2f6a4",
    "name": "certificate_signed_by_another_key",
+   "replay": "genesis.invalid",
    "shape": null
   },
   {
+   "append": "genesis.invalid",
    "check": 5,
    "desc": "actor.device is sev2, the certificate is sev1's",
    "event": {
@@ -761,9 +782,11 @@
    },
    "head": "sha256:5f342c7f00d940cb0a011f92e419f637ee5348fe1b31155500b098b70d13b7bd",
    "name": "actor_device_is_not_the_certificates",
+   "replay": "chain.broken",
    "shape": null
   },
   {
+   "append": "genesis.invalid",
    "check": 5,
    "desc": "scopes_max ['look']",
    "event": {
@@ -827,9 +850,11 @@
    },
    "head": "sha256:e8384dc97c90b913234a8d8a8ba83c41c869a068246eef5c2750bd8827a7f5ad",
    "name": "certificate_without_decide",
+   "replay": "genesis.invalid",
    "shape": null
   },
   {
+   "append": "sig.invalid",
    "check": 6,
    "desc": "sig made by dk_mara1",
    "event": {
@@ -896,9 +921,11 @@
    },
    "head": "sha256:fd8ff0bcea5c81a6eebec06bfbd11b606f21cb8cab5dcf3786baf3b17ac5f925",
    "name": "signature_by_another_device",
+   "replay": "chain.broken",
    "shape": null
   },
   {
+   "append": "sig.invalid",
    "check": 6,
    "desc": "sig covers another workspace id",
    "event": {
@@ -965,9 +992,11 @@
    },
    "head": "sha256:fbd2c2872d93f51860e3f40eb219602abaa414b9ed161800104b97cc35466a4b",
    "name": "signature_over_another_workspace",
+   "replay": "chain.broken",
    "shape": null
   },
   {
+   "append": "genesis.invalid",
    "check": 1,
    "desc": "checks 1 and 6 both fail: 1 is reported",
    "event": {
@@ -1034,11 +1063,82 @@
    },
    "head": "sha256:a12877018dd8998c4d40f1c0f83c2643804dc69c3541f5cd619f136abfe634a4",
    "name": "owner_check_before_signature_check",
+   "replay": "chain.broken",
    "shape": null
   },
   {
-   "check": 3,
-   "desc": "checks 3 and 4 both fail: 3 is reported",
+   "append": "genesis.invalid",
+   "check": 5,
+   "desc": "scopes_max ['look', 'decide']: the genesis installs members, policies and settings, which need `operate`",
+   "event": {
+    "actor": {
+     "device": "d_c65032f21d43401cc223b05723c1e5b4",
+     "id": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
+     "kind": "person"
+    },
+    "at": "2026-10-10T10:00:10Z",
+    "auth": "passphrase",
+    "based_on": null,
+    "delegation": {
+     "o": {
+      "client_hosted": false,
+      "issued_ms": 1790000000000,
+      "kind": "ws_delegation",
+      "owner_person_id": "75bf75a3bb50b0c4ac02f8a757b90e23",
+      "suite": 2,
+      "v": 2,
+      "workspace_id": "0123456789abcdef0123456789abcdef",
+      "wsk_pub": "BJy4pP7CRCCFIbgVcqF07OgGwnzyG5Mu6nAPOvYZl72rKNxeRWcBwNDpRGc1LBIdbPY6ZrGFuKL1INLjmAeu_Ro"
+     },
+     "sig": "NwRve78-SgAnF30XOlRhDEb9KlCWIYBu5xXmOkGOE6vn70YeyeOXOcF6liH50gz6SfJNWTgZ2wi_KZc-DWXxMA"
+    },
+    "device_cert": {
+     "o": {
+      "created_ms": 1790000000000,
+      "device_id": "c65032f21d43401cc223b05723c1e5b4",
+      "dk_kx_pub": "BFeVKX_gphRxHCfh2Uw6UQVtj12_1v9LteaSfrwG6oH3QG8yDkYojB0rOpi7i-NDHC0PY47WHle_uYaQHjI534c",
+      "dk_sig_pub": "BEtUkscP1t-MK_B-LkrM8KwbVTJ2kwZBYo-4vnk4QSaltalieRixn4XJf8Z2jR5y10cpdvNZ1i-70-cvOz5Wlwo",
+      "expires_ms": null,
+      "kind": "device_cert",
+      "label_sealed": "bGFiZWwgc2V2MQ",
+      "person_id": "75bf75a3bb50b0c4ac02f8a757b90e23",
+      "scopes_max": [
+       "look",
+       "decide"
+      ],
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "35LGJw6_FKOs_NxyEMNCKztKGpNsegsnLSQk7pICDz5ATCQsLnVbpOP2sHjimQduVYoSfuUxVGCKUgs1pPa_Ww"
+    },
+    "hash_v": 1,
+    "host_id": "h_01J9ZK00000000000000000H01",
+    "host_sig": "nQZY4MVghl_ALFkPGyXu-bLrtUesRH5P4g51BecztzOA1bxEmwvOEJ2zyR14tXAfFnqxQueS6YvO8otgjOilAA",
+    "id": "01J9ZK00000000000000000001",
+    "owner": {
+     "name": "Sev",
+     "person": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
+     "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94"
+    },
+    "prefix": "DEMO",
+    "prev": null,
+    "roster_v": 0,
+    "seq": 1,
+    "sig": "qtULjlmcjtL3dwWrVAy8dut6TOxxFgD68Wwei2caGxzfVrB5yFApaKcv1Bg7dSL57Rw_dlnxROibiIb-L_GAlg",
+    "type": "workspace.created",
+    "v": 2,
+    "workspace_id": "0123456789abcdef0123456789abcdef",
+    "wsk_pub": "BJy4pP7CRCCFIbgVcqF07OgGwnzyG5Mu6nAPOvYZl72rKNxeRWcBwNDpRGc1LBIdbPY6ZrGFuKL1INLjmAeu_Ro"
+   },
+   "head": "sha256:7536a137b1ba1c3e67b644d8fb154c9c8ceb899ba1b1e3338c987000628a0ea3",
+   "name": "certificate_with_decide_only",
+   "replay": "genesis.invalid",
+   "shape": null
+  },
+  {
+   "append": "chain.broken",
+   "check": 4,
+   "desc": "checks 3 and 4 both fail: host_sig is a line check (refusal order step 1), so chain.broken wins",
    "event": {
     "actor": {
      "device": "d_c65032f21d43401cc223b05723c1e5b4",
@@ -1102,10 +1202,12 @@
     "wsk_pub": "BJy4pP7CRCCFIbgVcqF07OgGwnzyG5Mu6nAPOvYZl72rKNxeRWcBwNDpRGc1LBIdbPY6ZrGFuKL1INLjmAeu_Ro"
    },
    "head": "sha256:229c910933919cd76e4879c92671a413a6ebbebaf8081d22f984fc094ec307fd",
-   "name": "delegation_check_before_host_sig",
+   "name": "host_sig_check_before_delegation_check",
+   "replay": "chain.broken",
    "shape": null
   },
   {
+   "append": "genesis.invalid",
    "check": null,
    "desc": "the genesis has roster_v 0",
    "event": {
@@ -1172,6 +1274,7 @@
    },
    "head": "sha256:2475ae7480735be2686cb3802c18c5fb141e489776e166001203673a5e63427b",
    "name": "roster_v_is_not_zero",
+   "replay": "genesis.invalid",
    "shape": "genesis.shape"
   }
  ],

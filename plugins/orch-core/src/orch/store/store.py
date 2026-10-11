@@ -1971,8 +1971,8 @@ class Store:
 
     def restore_facts(self, log: str) -> dict[str, Any]:
         """What an owner needs to sign ``restore`` for ``log``: the last event on disk (``from_seq``, ``head``), the
-        highest checkpoint above it (``abandoned``, or None) and the signed decisions the host still knows of in the
-        part it archived with :meth:`abandon_tail` (``abandoned_decisions``)."""
+        highest checkpoint above it (``abandoned``, or None) and the ids of every person-signed event (actor P) the host
+        still knows of in the part it archived with :meth:`abandon_tail` (``abandoned_decisions``)."""
         info = self._logs.get(log)
         if info is None:
             raise StoreError("validation.log", f"unknown log {log}")
@@ -1995,7 +1995,7 @@ class Store:
             for line in p.read_bytes().splitlines():
                 with contextlib.suppress(canon.HashError, KeyError):
                     e = canon.parse_event_line(line + b"\n")
-                    if e["type"] in ("gate.approved", "gate.changes_requested", "verdict.given", "question.answered"):
+                    if e["actor"]["kind"] == "person":  # §5.10: every person-signed event of the given-up part
                         decisions.append(e["id"])
         return {
             "from_seq": info.seq,

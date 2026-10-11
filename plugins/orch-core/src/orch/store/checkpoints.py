@@ -27,7 +27,7 @@ from .fsio import loads, read_or_none, write_atomic
 from .logs import WORKSPACE, LogInfo
 from .paths import ULID, check_uid
 
-__all__ = ["Checkpoints", "Divergence", "find_divergence", "verify_object"]
+__all__ = ["Checkpoints", "Divergence", "find_divergence", "judge_offer", "verify_object"]
 
 LABEL = canon.LABELS["sig_checkpoint"].encode("ascii")
 WORKSPACE_EVERY = 50  # ticket appends between workspace checkpoints
@@ -39,6 +39,49 @@ class Divergence:
     seq: int
     detail: str
     code: str = "chain.diverged"
+
+
+def _heights(o: Mapping[str, Any]) -> dict[str, tuple[int, str]]:
+    out = {WORKSPACE: (o["workspace_log"]["seq"], o["workspace_log"]["head"])}
+    out.update({uid: (t["seq"], t["head"]) for uid, t in o["tickets"].items()})
+    return out
+
+
+def judge_offer(
+    held: Mapping[str, Any] | None,
+    offered: Mapping[str, Any],
+    *,
+    pinned_genesis: str,
+    restore: Mapping[str, Any] | None = None,
+) -> str:
+    """How a receiver (the host, the relay, a device) treats a workspace checkpoint ``offered`` to it when it already
+    holds ``held`` (§5.10 "Receivers"; both are the ``o`` objects, signatures already verified). ``"ok"`` (accept and
+    replace the held one), ``"ignored"`` (a stale delivery, no alarm), ``"chain.diverged"`` (stop) or
+    ``"trust.genesis_mismatch"``. ``restore`` is the owner-signed ``restore`` event (verified by the caller) that comes
+    with a checkpoint whose seqs are lower than the held one's.
+
+    The first checkpoint is accepted when its genesis is the pin. After that: a higher ``n`` with no lower ``seq`` is
+    accepted (gaps in ``n`` are normal); a lower ``n`` with no higher ``seq`` is ignored; anything else (the same ``n``
+    with another ``o``, a shared ``seq`` with another ``head``, a higher ``n`` with a lower ``seq`` or a missing
+    ticket, a lower ``n`` with a higher ``seq``) is ``chain.diverged``. Lower seqs are accepted only with a
+    ``restore`` whose ``abandoned`` reaches the held checkpoint's workspace-log ``seq``."""
+    if offered["genesis"] != pinned_genesis:
+        return "trust.genesis_mismatch"
+    if held is None:
+        return "ok"
+    if offered["n"] == held["n"]:
+        return "ok" if offered == held else "chain.diverged"
+    h, o = _heights(held), _heights(offered)
+    if any(o[k][0] == h[k][0] and o[k][1] != h[k][1] for k in h.keys() & o.keys()):
+        return "chain.diverged"
+    lower = any(k not in o or o[k][0] < h[k][0] for k in h)
+    higher = any(k not in h or o[k][0] > h[k][0] for k in o)
+    if offered["n"] > held["n"]:
+        if not lower:
+            return "ok"
+        ab = restore.get("abandoned") if restore else None
+        return "ok" if ab and ab["seq"] >= held["workspace_log"]["seq"] else "chain.diverged"
+    return "chain.diverged" if higher else "ignored"
 
 
 def sign_object(sign: Callable[[bytes], bytes], o: dict[str, Any]) -> dict[str, Any]:

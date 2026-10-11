@@ -418,6 +418,23 @@ def _check_workspace(obj: dict[str, Any]) -> None:
             raise SchemaError("workspace", _pointer(["members", i, "person"]), f"duplicate member {p!r}")
 
 
+# the headings of the core sections (store.render.HEADINGS; tests/addons/test_manifest.py keeps the two equal)
+_CORE_HEADINGS = frozenset(
+    x.casefold()
+    for x in (
+        "Summary",
+        "Context",
+        "Requirements",
+        "Out of scope",
+        "Plan",
+        "Decisions",
+        "Verification",
+        "Findings",
+        "Current state",
+    )
+)
+
+
 def _check_manifest(obj: dict[str, Any]) -> None:
     flagged = suspicious(obj["title"])  # bidi, every Cf and F1's named look-alikes (5.7, 8)
     if flagged:
@@ -433,6 +450,44 @@ def _check_manifest(obj: dict[str, Any]) -> None:
             if s[label] in seen:
                 raise SchemaError("addon-manifest", _pointer([key, i, label]), f"duplicate {label} {s[label]!r}")
             seen.add(s[label])
+    seen_headings: set[str] = set(_CORE_HEADINGS)
+    for i, sec in enumerate(obj.get("sections", [])):
+        h = sec["heading"]
+        where = _pointer(["sections", i, "heading"])
+        if h != h.strip() or suspicious(h) or "#" in h or "`" in h:
+            raise SchemaError(
+                "addon-manifest", where, "a heading has no edge spaces, # or backtick, or invisible character"
+            )
+        if h.casefold() in seen_headings:
+            raise SchemaError("addon-manifest", where, f"heading {h!r} is taken (a core section or another section)")
+        seen_headings.add(h.casefold())
+    _check_manifest_needs(obj)
+    line = obj.get("agents_md", "")
+    if line and (
+        line != line.strip()
+        or line[0] in "#`->|"
+        or suspicious(line)
+        or any(ord(c) < 0x20 or ord(c) == 0x7F for c in line)
+    ):
+        raise SchemaError("addon-manifest", "/agents_md", "one plain line that does not start with # ` - > or |")
+
+
+def _check_manifest_needs(obj: dict[str, Any]) -> None:
+    from orch.addons.needs_rules import NeedsRuleError, validate_expr
+
+    seen: set[str] = set()
+    fields = frozenset(obj.get("fields", {}))
+    for i, rule in enumerate(obj.get("needs", [])):
+        if rule["id"] in seen:
+            raise SchemaError("addon-manifest", _pointer(["needs", i, "id"]), f"duplicate id {rule['id']!r}")
+        seen.add(rule["id"])
+        try:
+            validate_expr(rule["when"], fields)
+        except NeedsRuleError as e:
+            raise SchemaError("addon-manifest", _pointer(["needs", i, "when"]), str(e)) from None
+        flagged = suspicious(rule["text"])
+        if flagged:
+            raise SchemaError("addon-manifest", _pointer(["needs", i, "text"]), "invisible character in text")
 
 
 def _check_gate_input(obj: dict[str, Any]) -> None:

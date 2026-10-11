@@ -1404,12 +1404,11 @@ def test_manifest_invalid():
     bad("addon-manifest", mut(M, lambda m: m.update(capabilities=["pty", "pty"])), "/capabilities")
     for c in ("serve_http", "spawn_agent", "pty", "network", "git_push"):
         V("addon-manifest", mut(M, lambda m, c=c: m.update(capabilities=[c])))
-    # deferred to C9: accepted only empty
+    # cli and skills are reserved for P2 and accepted only empty (needs and agents_md: tests/addons/test_manifest.py)
     for k, empty, full in (
-        ("needs", [], [{"id": "x"}]),
         ("cli", {}, {"group": "e", "ops": []}),
         ("skills", [], ["a.md"]),
-        ("agents_md", "", "x"),
+        ("agents_md", "", 7),
     ):
         V("addon-manifest", mut(M, lambda m, k=k, e=empty: m.update({k: e})))
         bad("addon-manifest", mut(M, lambda m, k=k, f=full: m.update({k: f})), "/" + k)

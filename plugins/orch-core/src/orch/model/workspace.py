@@ -283,7 +283,14 @@ def addon_event(core: Core, e: dict[str, Any]) -> Refusal | None:
             else:
                 old.purged = True
 
-    cross(core, change, lambda t: generations.mark(t, *named))
+    def per_ticket(t: TCore) -> None:
+        if typ == "addon.purged":  # §8.1: purge removes the addon's data from the derived state of every ticket
+            t.fields["addons"].pop(name, None)
+            for sid in [s for s in t.sections if s.startswith(name + ".")]:
+                del t.sections[sid]
+        generations.mark(t, *named)
+
+    cross(core, change, per_ticket)
     return None
 
 

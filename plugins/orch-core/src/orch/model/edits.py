@@ -79,8 +79,10 @@ def updated(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
         if path in PROTECTED:
             return Refusal(Code.PATH_PROTECTED, path)
         key = path[len("ticket.") :]
-        if key.startswith("addons.") and ws.addons.get(key.split(".")[1]) is None:
-            return Refusal(Code.ADDON_UNKNOWN, path)
+        if key.startswith("addons."):  # §8.1: only a granted, enabled, not purged addon has live fields
+            a = ws.addons.get(key.split(".")[1])
+            if a is None or not a.enabled or a.purged:
+                return Refusal(Code.ADDON_UNKNOWN, path)
     if (r := _check_refs(t, secs)) is not None:
         return r
     for path, h in e["base_rev"].items():

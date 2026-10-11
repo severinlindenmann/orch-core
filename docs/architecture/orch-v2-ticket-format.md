@@ -124,7 +124,9 @@ installed event, a record), `pending/<event id>/` (files and `manifest.json`), `
 only when its section hashes match the log), `checkpoints/` (§5.10), `intents/` (idempotency), `sessions/` (CLI records),
 `abandoned/` (cut log tails, never overwritten), `rejected/` (a `body.md` that was not a body, kept before it is reverted),
 `index.sqlite`. A symlink in place of `.state` or any of its fixed directories, or of `events` or `tickets`, is refused.
-The host state directory (pin, noted revocations) is mandatory for a store that can write.
+The host state directory (pin, noted revocations) is mandatory for a store that can write. It also retains the last
+accepted signed workspace checkpoint, restore transitions and durable head ancestry for publication (§5.10). A pending
+transition advances the checkpoint only after its full restore is verified in the committed log, including on a lazy open.
 
 **Write order and recovery** (§5.5, as built). Under the lock: stamp, validate, admit, sign, write the pending files, then the
 manifest (last), append the event line and flush it (the commit), rename the files into place, copy the body, write
@@ -160,7 +162,7 @@ second; loading and verifying everything takes seconds.
 
 **Checkpoints.** A ticket checkpoint after every append to that log; a workspace checkpoint after every workspace append,
 after every 50 ticket appends and when the store is opened with everything loaded; entries of tickets that are not loaded
-carry over from the previous one. Verification: signature, genesis, and the log head at the checkpointed height; a ticket
+carry over from the previous one. Verification: signature, genesis, and the log head and accumulator at the checkpointed height; a ticket
 is compared when it is loaded, a missing log at once.
 
 **Genesis pin and keys.** The genesis must be `seq` 1 (checked by the model, not only by the schema). `expected_genesis`
@@ -173,10 +175,10 @@ actor, payload; for a signed event its own id and base). A record that names any
 never reached the log gives its event id to the retry for an event nobody signs; a signed event keeps its signed id. The CLI
 pins an attempt id per call across a crash (`Context.idem`).
 
-**Revocations.** The host notes every person-key-signed device revocation it appends (with its time) in the host state
-directory. On every load: a noted revocation the log lacks, that a later workspace `restore` post-dates, is re-appended
-(host actor), which also finishes a re-append a crash interrupted; any other is a rolled-back revocation and the workspace
-log is marked diverged until an owner `restore`. A `restore` is stamped no earlier than the revocations it must re-append.
+**Revocations.** The host durably retains each accepted PK-signed revocation with its device certificate and
+person public key, including evidence learned from restores and evidence for devices or persons absent from the
+retained chain. Crash recovery preserves this evidence. On load, any recorded effective revocation absent from
+accepted history marks divergence, regardless of restore timestamps. There is no re-append plan or ticket window.
 
 **Lock.** One exclusive lock file per workspace, re-entrant within a process, `flock` (Windows: `msvcrt`); a call waits at
 most ten seconds, then `store.busy` (retryable).
@@ -337,7 +339,7 @@ treated like a line with a bad `host_sig` (§5.5).
 | Field | Type | Rule |
 |---|---|---|
 | `v` | int | the envelope version, always `2` |
-| `id` | ULID | chosen by whoever builds the event (the signer for person events). A repeated `id` in the same log is refused. |
+| `id` | ULID | chosen by whoever builds the event. For a person event, the signer makes it when signing, so its ULID time is the signer's clock then. It is covered by `sig` but never checked against `at` or any clock, and no rule orders, accepts or refuses events by it. A repeated `id` in the same log is refused. |
 | `seq` | int | `1` for the first event of a log, then +1, no gaps |
 | `at` | timestamp | the host's clock when it appends |
 | `type` | string | a type from §5.4; from P2 also `<addon>.<verb>` |
@@ -413,8 +415,9 @@ field is refused. Payload fields never reuse an envelope name.
   is signed by the person key and has `decide`, so the person key still vouches for it.
 - **Revoking a device.** The authority of `device.revoked` is the embedded revocation (protocol §6.2), verified
   under the person's `pk_pub` for a device certificate of that person, not the sender. Any member's device may
-  append it (actor P), and so may the host (actor H), for example after a `restore` or when a person has no device
-  left.
+  append it (actor P), and so may the host (actor H), when a freshly received revocation arrives or a person has no device left. A plain revocation of an already
+  revoked device accepts only a lost/retired → compromised upgrade; same or weaker reasons give `device.exists`.
+  Permanent revocation tombstones are checked by every device introduction, including recovery and member addition.
 - **Signed bytes (signed-event contract 1):** `"orch/v2/sig/ticket-event|" || cj({"contract": 1, "suite": 2,
   "workspace_id": W, "log": <uid>, "event": E})` for the ticket log, and `"orch/v2/sig/ws-event|" ||
   cj({"contract": 1, "suite": 2, "workspace_id": W, "log": "workspace", "event": E})` for the workspace log.
@@ -480,7 +483,7 @@ agent; **D** an addon; **H** the host only. Types marked D58–D60 are new with 
 | `artifact.replaced` | A | as `artifact.added`, plus `replaces`: hash | Same `name`; `replaces` is the old digest. |
 | `edit.external` | H | `sections`: sections; `voided_gates`: [gate]; `normalised`: bool | A `body.md` change the host didn't write (§5.8). `voided_gates` and `normalised` are derived. Not followed by `gate.invalidated`. |
 | `projection.repaired` | H | `path`: str; `cause`: `external_edit`, `projection_mismatch` or `keys_mismatch`; `fields?`: [path] | Both logs. |
-| `restore` | P | `from_seq`: int; `head`: hash; `abandoned`: {`seq`: int, `head`: hash} or null; `abandoned_decisions`: [event id]; `reason`: str | Both logs. Owner only (§5.10). |
+| `restore` | P | `from_seq`: int; `head`: hash; `abandoned`: {`seq`: int, `head`: hash} or null; `abandoned_decisions`: [event id]; `revocations`: [{revocation, device_cert, pk_pub}]; `source`: {n, hash} or null; `reason`: rollback, diverged, broken or other; `note?`: one-line str, ≤ 280 UTF-8 bytes | Both logs. Owner only (§5.10). |
 | `invalid.acknowledged` | P | `invalid_seq`: int; `invalid_head`: hash; `reason?`: str | Both logs. Owner only. Names an event that failed authorization (§5.11); lifts the decision freeze, keeps the event absent. |
 
 #### 5.4.2 Workspace log
@@ -493,7 +496,7 @@ agent; **D** an addon; **H** the host only. Types marked D58–D60 are new with 
 | `role.changed` | P | `person`; `role`: member role | |
 | `device.added` | P | `device`: device id; `cert`: signed object | Protocol §6.1 certificate, verbatim. Signed by an existing device of the same person, or by the new device when none is left (§5.3). |
 | `device.removed` | P | `device`; `reason?`: str | Removes the device from **this** workspace only (protocol §6.3). By the device's person or an owner. |
-| `device.revoked` | P, H | `device`; `reason`: `compromised`, `lost` or `retired`; `revocation`: signed object | The global revocation (protocol §6.2), signed by the person key, verbatim; its authority (§5.3). `reason` must equal `revocation.o.reason`, otherwise refused. Every workspace refuses the device from then on. `compromised` has the effects in §5.7. |
+| `device.revoked` | P, H | `device`; `reason`: `compromised`, `lost` or `retired`; `revocation`: signed object | The global revocation (protocol §6.2), signed by the person key, verbatim; its authority (§5.3). `reason` must equal `revocation.o.reason`, otherwise refused. Every workspace refuses the device from then on. For an already revoked device, only lost/retired → compromised is accepted; same or weaker reasons give `device.exists`. `compromised` has the effects in §5.7. H may append a freshly received revocation independently of any restore. |
 | `policy.changed` | P | `gates`: {gate: policy} | The workspace defaults. |
 | `settings.changed` | P | `set`: {`grant_hours?`: int 1–24, `claim_ttl_min?`: int 15–1440, `lease_ttl_min?`: int 5–1440, `repos?`: {repo name: {`path`: str, `remote?`: canonical repo identity, `default_branch?`: branch name} or null}} | **D60** (`grant_hours`). Existing grants keep their end time. `null` removes a repo. Refused when two repos resolve to the same path or declare the same identity (ignoring ASCII case), or a `local:` remote names another repo. |
 | `grant.issued` | P | `grant`: grant id; `scope`: `all` or `workable`; `verbs`: `"agent"` or [operation name]; `issued_at`: timestamp; `hours`: int; `expires_at`: timestamp; `secret_hash`: hash; `label?`: str | **D60** terms in §10.1 A3. Always for the signer. Readers check `\|at − issued_at\| ≤ 300 s`, `expires_at == issued_at + 3600·hours` (seconds, no leap seconds) and the role terms at the event's position. |
@@ -585,6 +588,8 @@ the field it belongs to; no code looks a hash up by value alone.
 | question id (`qid`) | the first 16 bytes, in 32 hex, of `H("orch/v2/question-id\|" \|\| cj({"workspace_id": W, "ticket": uid, "question": "Q1"}))` | `question.asked`; the protocol §13 `question_id` |
 | question hash | `H("orch/v2/question\|" \|\| cj({"question_id": qid, "ticket": uid, "text", "options"}))` (protocol §13's shape; `options` `[]` when none) | `question.*` |
 | event head | `H("orch/v2/event\|" \|\| cj(event))` | `prev`, `based_on`, checkpoints |
+| checkpoint hash (`h_checkpoint`) | `H("orch/v2/checkpoint-hash\|" \|\| cj(C.o))` | restore source |
+| log accumulator (`h_log_acc`) | `acc_0 = 32 zero bytes`; `acc_k = H("orch/v2/log-acc\|" \|\| acc_{k-1} \|\| raw32(head_k))`, both inputs exactly 32 decoded bytes, no seq | checkpoint entries |
 | genesis | the event head of `workspace.created` | the trust root (§5.11) |
 | grant secret hash | `H("orch/v2/grant-secret\|" \|\| secret bytes)` | `grant.issued` |
 
@@ -593,7 +598,7 @@ the field it belongs to; no code looks a hash up by value alone.
 - **Refuse, don't normalise.** Every hash function refuses an input string that breaks the text rules (§11.3)
   instead of normalising it. Normalising happens once, when text enters the store.
 - New labels (`orch/v2/gate|`, `section|`, `value|`, `policy|`, `people|`, `question-id|`, `event|`,
-  `grant-secret|`, `sig/ticket-event|`, `sig/ws-event|`, `sig/host-event|`, `sig/checkpoint|`) go into the
+  `grant-secret|`, `checkpoint-hash|`, `log-acc|`, `sig/ticket-event|`, `sig/ws-event|`, `sig/host-event|`, `sig/checkpoint|`) go into the
   orch-relay `vectors_v2.json` label list; the table stays prefix-free.
 
 ### 5.7 Gates
@@ -658,7 +663,9 @@ every status**. **An event raises a gate by at most 1, however many rows match.*
 
 `gate.invalidated` raises nothing. Edits of bound content are refused on `done` and `closed` tickets, so there the
 only raises are people and policy changes, `ticket.reopened`, `restore` and `branch.pushed`. "Done is sticky" is a
-separate status rule (below): it decides when a ticket leaves `done`, not whether a generation goes up. After a
+separate status rule (below): it decides when a ticket leaves `done`, not whether a generation goes up.
+A restore settles its own raises before applying its embedded revocations in list order; those revocations see the
+post-raise state and cannot raise a gate a second time (§5.10). After a
 reopen, the old verdict and code approvals therefore no longer count. The generation is derived by replaying both logs in the merged order, so it
 needs only events. A decision (`gate.approved`, `gate.changes_requested`, `verdict.given`) carries the `gate_gen`
 its signer saw, inside the signed bytes. **A decision whose `gate_gen` is not current is refused at append and never
@@ -865,41 +872,40 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
 
 | Kind | `o` |
 |---|---|
-| `ticket_checkpoint` | `{"v": 2, "suite": 2, "kind": "ticket_checkpoint", "workspace_id", "uid", "seq", "head", "at"}` |
-| `workspace_checkpoint` | `{"v": 2, "suite": 2, "kind": "workspace_checkpoint", "workspace_id", "genesis", "n", "at", "workspace_log": {"seq", "head"}, "tickets": {uid: {"seq", "head"}}}` |
+| `ticket_checkpoint` | `{"v": 2, "suite": 2, "kind": "ticket_checkpoint", "workspace_id", "uid", "seq", "head", "acc", "at"}` |
+| `workspace_checkpoint` | `{"v": 2, "suite": 2, "kind": "workspace_checkpoint", "workspace_id", "genesis", "n", "at", "workspace_log": {"seq", "head", "acc"}, "tickets": {uid: {"seq", "head", "acc"}}}` |
 
 - `sig = Sign(WSK, "orch/v2/sig/checkpoint|" || cj(o))`. `n` counts the workspace checkpoints from 1.
-- Refused: a checkpoint with a lower `seq` (or `n`) than one already seen, and **one with the same `seq` but a
-  different `head`** (`chain.diverged`). A log whose head at a checkpointed `seq` differs from the checkpoint is
-  diverged too: reads report it and no new events are appended until a `restore`.
-- **Receivers** (the host, the relay, devices) keep, per workspace, the highest workspace checkpoint they have
-  accepted. The first one is accepted when its signature verifies and its `genesis` equals the pin. A new checkpoint
-  is compared with the held one, H:
-  - accepted if its `n` is higher and no `seq` is lower than in H (gaps in `n` are normal);
-  - ignored, without an alarm, if its `n` is lower and no `seq` is higher than in H (a stale delivery);
-  - `chain.diverged` in every other case: the same `n` with a different `o`; a log whose `seq` equals H's but whose
-    `head` differs; a higher `n` with a lower `seq`; a lower `n` with a higher `seq`; or a higher `n` that lacks a uid of H.
-    A lower `n` that lacks a uid of H is a stale delivery and is ignored, provided no `seq` is higher.
-    A lower `n` that names a uid H lacks has a higher `seq` for it (H's counts as 0), so it is `chain.diverged`.
-  - **After a restore:** a checkpoint with lower `seq`s is accepted only with the owner-signed `restore` event,
-    verified under the owner's device, under the rule below. H is then replaced.
-
-  A restore comes with a checkpoint as `{id, log, from_seq, abandoned}`. It is looked at only for a higher `n`, and
-  only when its log (the workspace log or one ticket log) really drops below H or reaches H's `seq` again with
-  another `head`; otherwise it is ignored and the rules above decide. When it applies: its `id` is not among the
-  restore ids this receiver has already applied (receivers record the id when they accept the offer, so an old restore
-  can't be used again), `from_seq < H.seq <= abandoned.seq` (H's entry may lag the checkpoint the restore gives up,
-  and the receiver may have missed checkpoints; with the same `head` when the seqs are equal), the offered `seq` of
-  that log is at least `from_seq + 1`, and no other log drops or changes a head at a shared `seq`. Otherwise
-  `chain.diverged`.
-  **Limits:** a receiver holding only checkpoints compares heights, so it accepts a fork that has grown past H and a
-  forged H whose `n` and `seq` are both inflated (every honest checkpoint is then ignored); a receiver that holds the
-  logs checks H's heads against them.
-
-  Only `chain.diverged` stops the receiver. In P1 the host only writes its own checkpoints and never lowers `n`;
-  the relay and orch-mobile implement the rest from P3.
+- The host writer sets `at = max(clock, last checkpoint at)`. Accumulators are hash strings (§5.6),
+  maintained incrementally on append and replay; unloaded entries are copied forward unchanged and validated on load.
+- **Receivers** keep the last accepted workspace checkpoint H, verifying schema, WSK signature, workspace and pinned
+  genesis. Equal `n` requires the identical object; a higher `n` and a lower `at` is refused (`chain.diverged`). A stale
+  lower `n` is ignored only if it has no higher entries or conflicting entries at equal heights. Every existing entry
+  is kept. Equal `seq` requires identical `head` and `acc`; growth from s to t requires exactly t−s heads, the last
+  matching the offered head, folding from the held accumulator to the offered accumulator. Proof pages are bound to
+  an immutable checkpoint identity; H advances only after complete verification. Missing or malformed proof means
+  sync is incomplete, not proof of equivocation. This cannot conceal abandonment of the receiver's committed prefix
+  (honest host, withholding relay); it does not prove event validity, latestness, or disclosure of every restore.
+- **Restore transitions** carry C, T, the full signed restore line, its log, signer certificate and delegation evidence,
+  plus branch/proof material. A four-field descriptor is insufficient. Verify the full person and host signatures,
+  `line.seq = from_seq + 1`, `line.prev = head`, §5.5 order and §5.11 authorization against the pre-event state.
+  Hosts verify owner membership, role, device, scopes and revocation at `from_seq` by F1 replay. Relays and devices
+  may apply the narrower owner-device policy (P3-D24). A member list need not be persisted as transition evidence.
+  `source` must equal `{n: C.o.n, hash: h_checkpoint(C.o)}` of a schema-valid, WSK-signed workspace checkpoint of the
+  pinned workspace/genesis, and must equal the receiver's held H atomically. Null is allowed only without H.
+  Both log kinds bind the same workspace checkpoint. `abandoned` names the highest known checkpoint entry above
+  `from_seq`, including C's entry; equal-height conflicting heads are refused. Source is the transition baseline,
+  not necessarily the highest per-log entry. A ticket restore keeps all existing ticket entries present.
+  Derive `acc_from` from the verified retained prefix. C's abandoned suffix must come from durable branch history or
+  authenticated retrieval verified against C; when `from_seq ≥ C.seq`, require a forward proof from C to `from_seq`.
+  Fold the restore head and subsequent heads from `acc_from` to T. Unaffected entries follow ordinary growth rules.
+  Missing evidence leaves publication incomplete. Applied restore ids are single-use; an exact retry returns the
+  prior result. Compare, validate, persist the transition and advance H atomically; crash recovery keeps pending
+  transitions. P1/P2 use the last locally accepted workspace checkpoint as source, null only before any exists.
+  Pairing `approved` carries that exact held reference, retained and retrievable, never downgraded; relay-reported
+  emptiness cannot override it. P3 publishes these locally persisted transitions.
 - **Restore** (§12 O5). After a rollback (a restored backup, a git force-push of the workspace repo) an owner signs
-  `restore {from_seq, head, abandoned, abandoned_decisions, reason}`: `from_seq` and `head` name the last event on
+  `restore {from_seq, head, abandoned, abandoned_decisions, revocations, source, reason, note?}`: `from_seq` and `head` name the last event on
   disk that stays valid; `abandoned` gives up every checkpoint above `from_seq` and names the highest (`null` if
   none); `abandoned_decisions` lists the `id` of every person-signed event (actor P) in the given-up part that the
   host still knows of. A later event in the same log with one of these ids is an authorization failure (§5.11,
@@ -910,14 +916,30 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
   the kept chain, `roster_v` fits again) and generations don't cover membership. The host appends the restore as `from_seq + 1`
   with `prev = head` and accepts checkpoints of the new chain from then on. It raises every gate's generation, so no
   decision from the abandoned part counts again; a workspace-log `restore` does so on every ticket.
-- **Restore never drops revocations.** The host keeps every PK-signed revocation it has seen in host state. The host
-  appends a workspace `restore` and, under the same lock and before any other append, one `device.revoked` (actor H,
-  a new `id`, the revocation verbatim, allowed by §5.3) for each PK-signed revocation in host state that the new chain
-  lacks; each is its own atomic append, so for a moment the files show the restore without them. Crash recovery
-  finishes them first, and while any is missing the host refuses ticket appends. A ticket event's `ws_seq` may not name the restore or any of these
-  re-appends except the last (`chain.bad_ws_seq`). A log-only reader can't check that the set is complete.
-  `reader_cannot_see_a_dropped_revocation` pins only that such a reader accepts the restore, and that the host
-  refuses it.
+- **Restore never drops revocations.** A workspace restore carries one `{revocation, device_cert, pk_pub}` per
+  device for every revocation the host holds for any device ever seen in the workspace, including abandoned-only
+  devices and persons. Carry the strongest reason (`compromised > lost = retired`), sorted by
+  `revocation.o.device_id`, unique per device, all evidence verbatim. A ticket restore requires `[]`.
+  Structure, sorting, uniqueness and ticket emptiness are checked at step 0. At step 7 verify every PK signature,
+  certificate signature and binding: PK derives person_id; certificate key derives device_id. Failures give
+  `device.cert`; earlier §5.11 failures win. Expiry, removal or missing scope never blocks recording revocation.
+  Evidence proves revocation only, never membership or authority. Validate every entry before any effects.
+  The effective revocation is the earliest accepted one with the highest reason. An entry already in the retained
+  chain with the same reason must be byte-identical under canonical JSON and has no effect (no void or extra raise).
+  Compromised over lost/retired is an upgrade. Weaker entries, equal-strength different reasons, or same-reason
+  entries with different bytes give `device.exists` at step 7.
+  Authorize the restore against pre-event state, apply and settle its gate raises first, then apply revocations in
+  list order against the post-raise state (grant termination and §5.7 compromised effects). Each gate rises at most
+  once per restore. Unknown devices get permanent device-ID tombstones, checked by every introduction path.
+  Under the append lock the host checks completeness against its durable evidence, including already present
+  revocations; log-only readers validate the list but cannot check completeness. A relay checks every revocation
+  it holds for a device seen in the workspace is listed with the same or stronger reason. A ticket may name the
+  restore's workspace seq: revoked devices and compromised grants are already refused there; eligible actors count.
+  No restore-specific `device.revoked` re-appends, pending plan, `store.torn_write` guard or ws_seq window exists.
+- `reason` is closed: `rollback`, `diverged`, `broken`, `other`. Optional `note` is one line, at most 280 UTF-8 bytes,
+  displayed only as quoted owner text, never acted on. Restore append sets `at = max(clock, C.o.at, last at)`.
+  A restore is an event line capped at 524,288 bytes (`schema.MAX_EVENT_LINE_BYTES`, LF included). Measure the full
+  signed line before append; oversize is refused atomically, never truncated or split.
 - **What P1 can't detect:** if both the history and the local checkpoints in `.state/` are replaced, the rollback
   is invisible. From P3, checkpoints on the relay and on member devices catch it.
 
@@ -990,7 +1012,8 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
      hash; `source_sha` present on a change request or a non-verify gate, or missing on a verdict or code approval),
      `source.missing`, `gate.stale` (source list, gate hash), `gate.incomplete`. For addon writes: `addon.field_unknown`,
      `addon.value_invalid` and the other §8.1 codes. For other types the order is not pinned, and a vector must not
-     break two step-7 rules at once.
+     break two step-7 rules at once. For restores, verify the revocation evidence (`device.cert`) and the B1
+     effective-revocation rule (`device.exists`) before applying any effects (§5.10).
   8. Derived fields: `auth.invalid_event`, `gate.invalidated_mismatch`.
 
   On replay, an `actor.device` with no certificate, or a person `sig` that doesn't verify, breaks the chain (§5.5),
@@ -1023,7 +1046,7 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
 | Host event | Exact effect |
 |---|---|
 | `branch.pushed` | sets the source-list entry of one repo; raises `verify` and `code` (also on a `done` ticket, which goes to `testing`; there only for a new `sha` on an existing ref) |
-| `device.revoked` | appends a revocation that a person key signed (after a `restore`, or for a person with no device left); never one the host made up |
+| `device.revoked` | appends a revocation that a person key signed (fresh delivery, including for a person with no device left); never one the host made up |
 | `gate.invalidated` | records approvals that its cause already voided; raises nothing, changes no status |
 | `edit.external` | **installs** the new `body.md` prose as the current text and records its section hashes and references; raises generations per §5.7 (on `done`/`closed`, bound sections are reverted instead) |
 | `projection.repaired` | rewrites a projection (`config.json`, `ticket.json`, `keys.jsonl`, a bound section of a `done` ticket) back to what the events say; changes no state |
@@ -1899,6 +1922,7 @@ Every string in `ticket.json`, `body.md` and events:
 | close resolution | `wont_do`, `duplicate`, `obsolete`, `other` |
 | claim release reason | `released`, `handoff`, `expired`, `grant_ended`, `member_removed`, `ticket_done`, `ticket_closed` |
 | `gate.invalidated` cause | `new_commits` (D58), `content_changed`, `policy_changed`, `member_changed`, `device_compromised`, `restored`, `conflict_resolved` (D53, P2) |
+| `restore` reason | `rollback`, `diverged`, `broken`, `other`; optional `note` is one line, ≤ 280 UTF-8 bytes, display only |
 | `device.revoked` reason | `compromised`, `lost`, `retired` |
 | device scope levels needed | `decide` for every person event; also `operate` for member, policy, settings, grant, addon and `restore` events; `drop:` certificates never |
 | `projection.repaired` cause | `external_edit`, `projection_mismatch`, `keys_mismatch` |
@@ -1934,7 +1958,7 @@ Vectors to add to orch-relay `vectors_v2.json` and to the core tests, before C1 
 | `artifact_refs` | the reference regex, including inside code fences; an unknown reference refused; signer `refs` that differ from the regex refused |
 | `source_list` | projection from `branch.pushed`, first observation, ref and identity changes |
 | `question_id` | `qid` derivation and the question hash with it |
-| `checkpoint` | the §2.4 shape; lower `seq` refused, equal `seq` with another head refused, a restore that re-appends revocations |
+| `checkpoint` | the §2.4 shape; lower `seq` refused, equal `seq` with another head refused, source-bound restores carrying revocations, accumulator ancestry and atomic oversize refusal |
 | `repo_identity` | https, ssh with and without a port, scp-like forms mapped to one canonical URL; an https URL with `user:token@` loses it; `file://` → `local:` |
 
 ## 12. Needs owner
@@ -1963,7 +1987,7 @@ owner's confirmation.
 | O2 | Custody of `dk_sig` in P1 | `dk_sig` is held by the backend named in `auth`; in P1 it is passphrase-encrypted like the person key, decrypted for one signature on a TTY, never cached; a key that signs without its factor is `file`-tier and never signs person events (§5.3). | agreed with Opus reviewer |
 | O3 | Done is sticky; compromised devices | A `done` ticket leaves `done` only by `ticket.reopened`, `branch.pushed` of a source ref (D58) or the D59 code-gate rule; bound edits are refused from every actor. A `device.revoked` with `compromised` voids that device's decisions on unsettled tickets; settled (`done` or `closed`) tickets list them (`revoked_decisions`) with no state change until the ticket becomes unsettled (§5.7). A void raises the gate for everyone: a `role.changed` is a cheap way for an owner to reset a gate, which is accepted because owners can already edit bound content. | agreed with Opus reviewer |
 | O4 | Self-approval | With `independent` on, `not: assignees` also excludes the `for` person of agent events that touched a bound path in the gate's current generation. With it off (the single-owner default), a person may approve their own agent's work, and the doc says so (§5.7). | agreed with Opus reviewer |
-| O5 | `restore` power | Owner only; never drops revocations (the host re-appends every PK-signed revocation it has seen); records the abandoned signed decisions in `abandoned_decisions` (§5.10). | agreed with Opus reviewer |
+| O5 | `restore` power | Owner only; never drops revocations (the signed restore carries every effective PK-signed revocation the host holds for a device ever seen); records the abandoned signed decisions in `abandoned_decisions` (§5.10). | agreed with Opus reviewer |
 | O6 | Unattended evidence | Unattended artifacts carry no `ac`/`task` and are never evidence (§6). | agreed with Opus reviewer |
 | O7 | P1 trust root | The genesis pin is in the host state dir (P1; the person's custody key file gets it at pairing), owned by the same OS user as the agents in P1, so an agent can replace them together; stated plainly next to N14. | agreed with Opus reviewer |
 | R3 | Device recovery and who appends revocations | `device.revoked` may be appended by any member's device or by the host; its authority is the embedded PK-signed revocation (protocol §6.2). A device vouched for by the person key (with `decide`) may add itself when its person has no valid device left (the D50 recovery path); otherwise losing the owner's only device would leave the workspace without owner signatures. | agreed with Opus reviewer |
@@ -2071,7 +2095,7 @@ A1–A20 (PR body), HO (dashboard handover, input only), D58–D60, the adversar
 | 93 | Effective policy canonical form (Opus S8) | Every policy has all five keys; `applies` union rules; tokens, not persons, for "no eligible approver". | A partial override can't switch `code` on by accident. |
 | 94 | Repo identity incomplete (Opus S9) | Raw `remote.origin.url`, port rules, scp-like forms, `local:` otherwise; duplicate names ignoring ASCII case and paths after POSIX lexical normalisation and ASCII-only case folding refused at step 0 (including unchanged repos); duplicate identities refused; a declared `local:` remote must be exactly `local:<own repo name>`, and declared remote identities must be unique ignoring ASCII case across the resulting settings (including unchanged repos); P1 limit stated. | One canonical identity across runtimes. |
 | 95 | Receipts (Opus S10) | `receipt.cmd` = `verify.cmd`; latest `task.done` of a done task; evidence only at the current source `sha`; prompt rechecks file digests. | Stale or substituted evidence doesn't count. |
-| 96 | Restore drops revocations (Opus S11) | Revocations re-appended at once; `abandoned` gives up every checkpoint above `from_seq`; workspace restore raises every ticket's gates. | A rollback can't resurrect a revoked device. |
+| 96 | Restore drops revocations (Opus S11) | Superseded by B1: revocations carried atomically in the restore; `abandoned` gives up every checkpoint above `from_seq`; workspace restore raises every ticket's gates. | A rollback can't resurrect a revoked device. |
 | 97 | Question id frozen wrongly; `evidence` half-defined (Opus S12) | Derived `qid` (32 hex, `orch/v2/question-id\|`) used in the question hash; `evidence` refused in P1, defined in P3 with a new contract. | Protocol §13 needs hex ids; no person event without `sig`. |
 | 98 | `based_on` unchecked (Opus S13) | Must name an earlier event of the same log (`event.bad_base`); staleness via `gate_gen`, `hash`, `base_rev`. | A meaningless `based_on` can't be signed. |
 | 99 | Genesis pin agent-writable (Opus S14) | Pinned in the host state dir (the custody key file only from pairing, P1 deviation in §10.7); human-only verbs refuse a different genesis; P1 limit in O7. | The human signer checks the root, not only the host. |

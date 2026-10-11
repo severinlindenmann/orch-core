@@ -284,6 +284,11 @@ def suspicious(text: str) -> list[Suspect]:
 _LANGLE = "\u27e8"
 
 
+def has_control_or_format(text: str) -> bool:
+    """Whether text contains Unicode 16.0 Cc or Cf (the shared F1 branch-name restriction)."""
+    return any(ord(c) < 0x20 or 0x7F <= ord(c) <= 0x9F or _in_ranges(_CF_STARTS, _CF, ord(c)) for c in text)
+
+
 def show_invisible(text: str) -> str:
     """``text`` with every :func:`suspicious` character replaced by a visible ``\u27e8U+XXXX\u27e9`` marker.
 

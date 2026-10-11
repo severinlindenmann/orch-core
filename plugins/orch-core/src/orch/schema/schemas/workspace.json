@@ -99,6 +99,12 @@
             "properties": {
               "path": {
                 "$ref": "https://schemas.orch.dev/v2/common#/$defs/line"
+              },
+              "remote": {
+                "$ref": "https://schemas.orch.dev/v2/common#/$defs/repoIdentity"
+              },
+              "default_branch": {
+                "$ref": "https://schemas.orch.dev/v2/common#/$defs/branchName"
               }
             },
             "additionalProperties": false,

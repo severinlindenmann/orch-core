@@ -46,8 +46,9 @@ from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT202012
 
 from orch.canon import TextError, canonical_policy, check_text, dumps, loads_strict, suspicious
+from orch.canon.text import has_control_or_format
 
-__all__ = ["LOG_TYPES", "SchemaError", "event_types", "load", "names", "parse_json", "validate"]
+__all__ = ["LOG_TYPES", "SchemaError", "event_types", "load", "names", "parse_json", "validate", "validate_settings"]
 
 BASE = "https://schemas.orch.dev/v2/"
 MAX_STR_BYTES = 4096
@@ -269,7 +270,13 @@ def _valid_ref(ref: str) -> bool:
 
 
 def _check_ref(name: str, path: tuple[Any, ...], ref: str) -> None:
-    if not _valid_ref(ref):
+    branch = ref.removeprefix("refs/heads/")
+    if (
+        not _valid_ref(ref)
+        or branch.startswith(("-", "refs/"))
+        or branch in ("HEAD", "@")
+        or has_control_or_format(branch)
+    ):
         raise SchemaError(name, _pointer(path), f"{ref!r} is not a valid git ref name")
 
 
@@ -410,7 +417,18 @@ def _check_body(obj: dict[str, Any]) -> None:
             raise SchemaError("body", _pointer(["sections", sid]), f"line {problem[0] + 1} {problem[1]}")
 
 
+def _check_repos(name: str, path: tuple[Any, ...], repos: dict[str, Any]) -> None:
+    for repo, entry in repos.items():
+        if entry is None:
+            continue
+        if "remote" in entry:
+            _check_identity(name, (*path, repo, "remote"), entry["remote"])
+        if "default_branch" in entry:
+            _check_ref(name, (*path, repo, "default_branch"), "refs/heads/" + entry["default_branch"])
+
+
 def _check_workspace(obj: dict[str, Any]) -> None:
+    _check_repos("workspace", ("settings", "repos"), obj["settings"]["repos"])
     for g, p in obj["gates"].items():
         _check_policy("workspace", ("gates", g), p)
     persons = [m["person"] for m in obj["members"]]
@@ -712,7 +730,22 @@ def _ev_grant_issued(obj: dict[str, Any], actor: dict[str, Any]) -> None:
         raise SchemaError("event", "/issued_at", "issued_at is more than 300 s away from at")
 
 
+def validate_settings(value: Any) -> None:
+    """Validate a settings.changed payload, including repo fields, before model authorization (F1 step 0)."""
+    name = "event.settings.changed"
+    _walk(name, value, ("set",))
+    error = next(_validator(name + "#/properties/set").iter_errors(value), None)
+    if error is not None:
+        raise SchemaError(name, _pointer(("set", *error.absolute_path)), error.message)
+    _check_repos(name, ("set", "repos"), value.get("repos", {}))
+
+
+def _ev_settings_changed(obj: dict[str, Any], actor: dict[str, Any]) -> None:
+    _check_repos("event", ("set", "repos"), obj["set"].get("repos", {}))
+
+
 _EVENT_CHECKS = {
+    "settings.changed": _ev_settings_changed,
     "ticket.created": _ev_ticket_created,
     "ticket.updated": _ev_ticket_updated,
     "edit.external": _ev_edit_external,

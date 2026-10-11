@@ -147,7 +147,7 @@ class WsCore:
     grants: dict[str, Grant] = field(default_factory=dict)
     policies: dict[str, dict[str, Any]] = field(default_factory=default_policies)
     settings: dict[str, Any] = field(default_factory=lambda: dict(DEFAULT_SETTINGS))
-    repos: dict[str, str] = field(default_factory=dict)
+    repos: dict[str, dict[str, str]] = field(default_factory=dict)
     addons: dict[str, Addon] = field(default_factory=dict)
     unattended: list[tuple[int, str, int]] = field(default_factory=list)  # (at seconds, session, artifact bytes)
 

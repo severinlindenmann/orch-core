@@ -93,6 +93,8 @@ CHECK_CHAIN_STOPS_AT = {
     "host_field_set_sig": None,
     "host_field_set_auth": None,
     "host_field_set_roster_v": None,
+    "agent_field_set_valid": None,
+    "agent_field_set_sig": None,
 }
 
 

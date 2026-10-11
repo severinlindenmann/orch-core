@@ -238,15 +238,18 @@ def refs_of(text: str) -> list[str]:
 
 
 def _map_remote(raw: str, name: str) -> str:
-    """From the raw ``remote.origin.url``: https and ssh/scp-like forms become ``https://host[:port]/path`` (userinfo
-    removed, host lower-case, port kept except 443 for https and 22 for ssh, one trailing ``/`` removed first, then
-    one ``.git``); anything else is ``local:<name>``."""
-    m = re.fullmatch(r"(https|ssh)://(?:[^/@]*@)?([^/:@]+)(?::([0-9]+))?/(.+)", raw)
+    """From the raw ``remote.origin.url``: https and ssh/scp-like forms become ``https://host[:port]/path`` (only
+    literal git userinfo allowed for ssh and removed, host lower-case, port kept except 443 for https and 22 for ssh,
+    one trailing ``/`` removed first, then one ``.git``); anything else is ``local:<name>``."""
+    # F1: reject non-ASCII before case folding; https never carries userinfo.
+    if not raw.isascii() or (raw.startswith("https://") and "@" in raw):
+        return f"local:{name}"
+    m = re.fullmatch(r"(https|ssh)://(?:git@)?([^/:@]+)(?::([0-9]+))?/(.+)", raw)
     if m:
         scheme, host, port, path = m.groups()
         keep = port is not None and port != ("443" if scheme == "https" else "22")
     else:
-        s = re.fullmatch(r"(?:[^/@:]+@)?([^/:@]+):([^/].*)", raw)  # scp-like: [user@]host:path, no slash before ':'
+        s = re.fullmatch(r"(?:git@)?([^/:@]+):([^/].*)", raw)  # scp-like: [user@]host:path, no slash before ':'
         if not s or "://" in raw:
             return f"local:{name}"
         host, path = s.groups()

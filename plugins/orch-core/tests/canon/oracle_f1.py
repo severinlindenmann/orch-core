@@ -427,6 +427,8 @@ def repo_identity_vectors() -> dict[str, Any]:
         "local:", "local:a b", "local:a/b", "",
     ]  # fmt: skip
     raw = [  # (name, raw remote.origin.url, repo name): the canonical identity is derived by 5.7, independently
+        ("unicode_kelvin_host", "ssh://git@\u212aost/a", "x"),
+        ("https_git_user", "https://git@host/a/b", "x"),
         ("https_plain", "https://github.com/acme/x", "x"),
         ("https_dot_git", "https://github.com/acme/x.git", "x"),
         ("https_trailing_slash", "https://github.com/acme/x/", "x"),
@@ -437,6 +439,10 @@ def repo_identity_vectors() -> dict[str, Any]:
         ("https_default_port_dropped", "https://github.com:443/acme/x", "x"),
         ("https_other_port_kept", "https://git.example.com:8443/a/b", "x"),
         ("https_port_22_kept", "https://git.example.com:22/a/b", "x"),
+        ("ssh_git", "ssh://git@host/a/b", "x"),
+        ("ssh_alice", "ssh://alice@host/a/b", "x"),
+        ("ssh_git_password", "ssh://git:pw@host/a/b", "x"),
+        ("scp_alice", "alice@host:a/b", "x"),
         ("ssh_url", "ssh://git@github.com/acme/x.git", "x"),
         ("ssh_url_no_user", "ssh://github.com/acme/x", "x"),
         ("ssh_url_password", "ssh://git:pw@github.com/acme/x", "x"),
@@ -489,7 +495,8 @@ def repo_identity_vectors() -> dict[str, Any]:
         "refused": refused,
         "same": [["https://github.com/Acme/X", "https://github.com/acme/x"]],
         "mapping": mapping,
-        "mapping_note": "userinfo (user:token@) is removed before anything else and never appears in a result; one "
+        "mapping_note": "only absent userinfo or literal git is allowed; other users and passwords "
+        "map to local:<repo name>; one "
         "trailing / and then one trailing (lower-case) .git are removed from the end of the path; the https default "
         "port 443 and the ssh default port 22 are dropped, every other port is kept (so ssh on 443 keeps it); anything "
         "that is not https, ssh or scp-like is local:<repo name>. A mapped result that is not in the canonical form "
@@ -589,7 +596,10 @@ def all_vectors() -> dict[str, dict[str, Any]]:
             out[name] = {"pins": INDEX[name], **v}
     out["index.json"] = {
         "files": {k: INDEX[k] for k in sorted(INDEX)},
-        "note": "files tagged [shared] are copied verbatim into orch-relay; the others are core-only",
+        "note": "files tagged [shared] are copied verbatim into orch-relay; the others are core-only. "
+        "Step keys: replay_only accepts historical replay but admit refuses chain.bad_ws_seq; "
+        "schema_refused means schema validation refuses before the model; "
+        "replay_expect pins a distinct replay outcome.",
     }
     return out
 
@@ -606,7 +616,11 @@ def _vectors() -> dict[str, dict[str, Any]]:
         "devices.json": {"pins": "device.added and device roster rules", "scenarios": sg.devices_scenarios()},
         "revocation.json": {"pins": "device.revoked and recovery", "scenarios": sg.revocation_scenarios()},
         "checkpoint.json": sg.checkpoint_vector(),
-        "restore.json": {"pins": "workspace restore and revocations", "scenarios": sg.restore_scenarios()},
+        "restore.json": {
+            "pins": "workspace restore and revocations; replay_only steps replay successfully but admit refuses "
+            "chain.bad_ws_seq; schema_refused marks steps refused by schema validation before the model",
+            "scenarios": sg.restore_scenarios(),
+        },
         "refusal_order.json": {"pins": "5.11 refusal order", "scenarios": sg.refusal_order_scenarios()},
         "generation.json": {"pins": "the 5.7 raise table", "scenarios": fl.generation_scenarios()},
         "status.json": {"pins": "the 5.9 status table", "scenarios": fl.status_scenarios()},

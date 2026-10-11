@@ -2205,6 +2205,43 @@ def test_event_schemas_repeat_the_envelope_of_event_json():
         assert s["additionalProperties"] is False, t
 
 
+@pytest.mark.parametrize("remote", ["https://host/a/b", "https://host:8443/Acme/X", "local:repo"])
+def test_repo_settings_optional_fields(remote):
+    entry = {"path": "../repo", "remote": remote, "default_branch": "release/next"}
+    V("event", ev("settings.changed", set={"repos": {"repo": entry}}), log="workspace")
+    V("workspace", mut(ex.WORKSPACE, lambda o: o["settings"].update(repos={"repo": entry})))
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("remote", "https://HOST/a/b"),
+        ("remote", "https://host/a/b.git"),
+        ("remote", "https://host:443/a/b"),
+        ("remote", "https://host/a/../b"),
+        ("remote", "ssh://git@host/a/b"),
+        ("remote", "ssh://alice@host/a/b"),
+        ("remote", "ssh://git:pw@host/a/b"),
+        ("remote", "alice@host:a/b"),
+        ("remote", "https://git@host/a/b"),
+        ("remote", "https://alice@host/a/b"),
+        ("remote", "https://git:pw@host/a/b"),
+        ("default_branch", "bad..branch"),
+        ("default_branch", "branch.lock"),
+        ("default_branch", "has space"),
+        ("default_branch", ""),
+    ],
+)
+def test_repo_settings_refuse_invalid_fields(field, value):
+    entry = {"path": "../repo", field: value}
+    bad("event", ev("settings.changed", set={"repos": {"repo": entry}}), f"/set/repos/repo/{field}")
+    bad(
+        "workspace",
+        mut(ex.WORKSPACE, lambda o: o["settings"].update(repos={"repo": entry})),
+        f"/settings/repos/repo/{field}",
+    )
+
+
 @pytest.mark.parametrize("key", ["", "EchoNotes", "echo-notes", "echo notes", "plan", "x" * 41])
 def test_addon_heading_keys_are_canonical_and_not_core(key):
     bad(
@@ -2223,3 +2260,15 @@ def test_addon_heading_keys_are_required_and_unique():
         "/sections/1/heading_key",
         "taken",
     )
+
+
+@pytest.mark.parametrize(
+    "branch", ["-x", "HEAD", "@", "refs/heads/main", "a\u202eb", "a\u0085b", "a\u200db", "a\U00013439b"]
+)
+def test_shared_branch_rule(branch):
+    bad(
+        "event",
+        ev("settings.changed", set={"repos": {"repo": {"path": "../repo", "default_branch": branch}}}),
+        "/set/repos/repo/default_branch",
+    )
+    bad("ticket", mut(ex.TICKET, lambda o: o["links"]["branches"].update(repo=branch)), "/links/branches/repo")

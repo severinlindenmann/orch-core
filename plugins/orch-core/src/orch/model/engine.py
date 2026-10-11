@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from orch.canon import HashError, event_head
-from orch.schema import LOG_TYPES
+from orch.schema import LOG_TYPES, SchemaError, validate_settings
 
 from . import authz, claims, edits, gates, generations, lifecycle, questions, source, tasks, visibility, workspace
 from .codes import Code, Refusal
@@ -326,6 +326,14 @@ def apply_event(
     lc = _log_of(core, log)
     if cow:  # the caller shares logs with an earlier State: never mutate those
         lc = copy.deepcopy(lc)
+    if e["type"] == "settings.changed":
+        try:
+            validate_settings(e["set"])
+        except SchemaError as exc:
+            if commit and not ctx.admit and lc.broken is None:
+                lc.broken = str(exc)
+                core.logs[log] = lc
+            return Refusal(Code.VALIDATION_EVENT if ctx.admit else Code.CHAIN_BROKEN, str(exc))
     if (r := _chain_check(core, log, lc, e, ctx)) is not None:
         if commit and lc.broken is None:
             lc.broken = r.detail

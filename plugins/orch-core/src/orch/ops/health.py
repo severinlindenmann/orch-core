@@ -31,6 +31,7 @@ from orch.store.checkpoints import verify_object
 from orch.store.fsio import read_or_none
 from orch.store.paths import ULID
 from orch.store.pins import HostPins
+from orch.store.store import MISSING_CHECKPOINT_RECOVERY
 
 __all__ = ["Finding", "InspectStore", "check_staged", "inspect", "repair"]
 
@@ -129,7 +130,7 @@ def inspect(
                         Finding("error", f"{_label(s, log)}#{i.seq}", "auth.invalid_event", f"{i.type}: {i.code}")
                     )
         out += _projections(s, caps.files)
-        out += _checkpoints(s, _has_host_key(state_dir, wid), caps.files)
+        out += _checkpoints(s, _has_host_key(state_dir, wid), caps.files, HostPins(state_dir, wid))
         if not fast:
             out += _pins(s, state_dir, wid)
             out += _index(s)
@@ -225,17 +226,26 @@ def _has_host_key(state_dir: Path, wid: str) -> bool:
         return True
 
 
-def _checkpoints(s: InspectStore, host_here: bool, files: Files) -> list[Finding]:
+def _checkpoints(s: InspectStore, host_here: bool, files: Files, pins: HostPins | None = None) -> list[Finding]:
     """A missing checkpoint can hide a rollback or follow a crash: an error on the host, a warning on clones."""
     out: list[Finding] = []
     cps = s._checkpoints
     if s._wsk_pub() is None:
         return out
     lvl = "error" if host_here else "warn"
-    if cps.workspace() is None:
-        out.append(
-            Finding(lvl, "checkpoints", "checkpoint.missing", "no workspace checkpoint: a rollback would not show")
-        )
+    workspace_missing = cps.workspace() is None  # a restore needs that source: point to its finding instead
+    if workspace_missing:
+        if host_here and pins is not None and pins.held() is None and pins.checkpoint_evidence():
+            msg = (
+                "no workspace checkpoint, but this host's state shows checkpoints existed: appends are refused. "
+                + MISSING_CHECKPOINT_RECOVERY
+            )
+        else:
+            msg = (
+                "no workspace checkpoint: a rollback would not show; on a host without checkpoint evidence the next "
+                "append starts a new baseline automatically"
+            )
+        out.append(Finding(lvl, "checkpoints", "checkpoint.missing", msg))
     have = set(cps.ticket_uids())
     missing = sorted(u for u in s.state.tickets if u not in have)
     for repairable in (False, True):
@@ -252,7 +262,8 @@ def _checkpoints(s: InspectStore, host_here: bool, files: Files) -> list[Finding
                 + (
                     "; doctor --repair can finish the last recorded append"
                     if repairable
-                    else "; a rollback is possible; use orch restore"
+                    else "; a rollback is possible; "
+                    + ("see the workspace checkpoint finding" if workspace_missing else "use orch restore")
                 ),
                 "checkpoint" if repairable else None,
             )

@@ -1,3 +1,4 @@
+import asyncio
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -12,6 +13,7 @@ from . import adapters
 from .auth import Auth
 from .errors import HostError, fail, host_response, response
 from .gateway import WORKSPACE_ID, Gateway
+from .live import Live, SessionStream
 from .security import Security
 
 
@@ -37,13 +39,17 @@ def create_app(port: int, gateway=None, auth=None, static=None):
     gateway, auth = gateway or Gateway(), auth or Auth()
     static = Path(static) if static else Path(__file__).parent / "static"
 
+    live = Live(gateway, auth)
+
     @asynccontextmanager
     async def lifespan(app):
         yield
+        await live.close()
         gateway.close()
 
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.state.auth = auth
+    app.state.live = live
     app.add_middleware(Security, port=port, auth=auth)
 
     @app.exception_handler(HostError)
@@ -69,6 +75,19 @@ def create_app(port: int, gateway=None, auth=None, static=None):
     def logout(request: Request):
         auth.logout(request.state.token)
         return {"ok": True}
+
+    @app.get("/api/events")
+    async def events(request: Request, ws: str = Depends(workspace)):
+        await asyncio.to_thread(gateway.enabled, ws)
+        last = request.headers.get("last-event-id")
+        if last and len(last) > 256:
+            raise fail("invalid.input", exit=5)
+        w, tab = live.attach(ws, request.state.token, last)
+        return SessionStream(live.stream(w, tab), auth, request.state.token)
+
+    @app.get("/api/w/{ws}/head")
+    def head(ws: str = Depends(workspace)):
+        return {"sub_cursor": gateway.call(ws, "ticket.query", {"limit": 1})["sub_cursor"]}
 
     @app.get("/api/session")
     def session_info():

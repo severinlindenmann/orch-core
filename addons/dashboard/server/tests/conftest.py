@@ -70,7 +70,7 @@ def gateway(stub, p1, monkeypatch):
 
     def connect(path, uid, ws):
         client, host = socket.socketpair()
-        thread = threading.Thread(target=stub.serve_connection, args=(host,), daemon=True)
+        thread = threading.Thread(target=stub.serve_connection, args=(host, ws is None), daemon=True)
         thread.start()
         threads.append(thread)
         return HostLink(client, uid, ws)

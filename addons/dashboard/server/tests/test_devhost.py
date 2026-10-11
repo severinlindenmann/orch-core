@@ -22,7 +22,7 @@ def test_p1_registry_reads_no_writes(stub):
     assert stub.call("list", {})["data"]["tickets"][0]["title"] == "Real P1 ticket"
     assert stub.call("addon.list", {})["data"]["addons"][0]["enabled"]
     for op in ["human.prepare", "human.submit", "new", "set", "doctor"]:
-        with pytest.raises(HostError, match="op.unsupported"):
+        with pytest.raises(HostError, match="unknown_command"):
             stub.call(op, {})
 
 
@@ -41,7 +41,12 @@ def test_socket_reads_and_poll_invalidations(stub, p1):
         sub = link.call("sub.open", {"topics": ["tickets"], "after": before})
         p1.new_ticket("Added after snapshot")
         event = receive(a)
-        assert event == {"t": "evt", "sub": sub["sub"], "invalidated": "overflow"}
+        assert event["t"] == "evt" and event["sub"] == sub["sub"]
+        assert any(i.get("type") == "ticket.created" for i in event["items"])
+        assert all("title" not in i for i in event["items"])
+        reopened = link.call("sub.open", {"topics": ["tickets"], "after": before})
+        assert reopened["sub"].startswith("sub_")
+        stub.cursors.pop(before, None)
         with pytest.raises(HostError, match="sub.reset"):
             link.call("sub.open", {"topics": ["tickets"], "after": before})
     finally:
@@ -188,3 +193,43 @@ def test_signal_cleanup_without_binding(p1, monkeypatch, sig_name):
         sock.close.assert_called_once()
         assert not path.exists()
     assert signal.getsignal(getattr(signal, sig_name)) == previous
+
+
+def test_poll_gone_and_overflow(stub, p1):
+    from orch import crypto
+
+    from tests.store.helpers import Person
+
+    other = Person()
+    p1.store.append(
+        p1.person_event(
+            p1.owner,
+            "workspace",
+            "member.added",
+            person=other.ref,
+            name="Other",
+            role="member",
+            pk_pub=crypto.b64u(other.pk_pub),
+            device_cert=other.cert(created=1_790_000_000_000),
+        ),
+        log="workspace",
+    )
+    viewer = StubHost(p1.root, p1.host_state, other.ref)
+    cursor = viewer.call("ticket.query", {})["data"]["sub_cursor"]
+    uid = next(iter(p1.store.state.tickets))
+    p1.store.append(
+        p1.person_event(p1.owner, uid, "visibility.changed", visibility={"restricted": [p1.owner.ref]}), log=uid
+    )
+    items, end = viewer.pending(cursor, ["tickets", "needs"])
+    assert end is None
+    assert any(i.get("gone") and i["uid"] == uid for i in items)
+    assert not any(i.get("key") for i in items)
+    # Bound the dev journal delivery even when many log writes happen between polls.
+    before = viewer.cursor
+    pos = len(viewer.history)
+    viewer.journal.extend(
+        (pos + n, [{"id": f"{pos + n}.n", "jpos": pos + n, "type": "needs.changed"}]) for n in range(1, 258)
+    )
+    assert viewer.pending(before, ["needs"]) == ([], "overflow")
+    viewer.cursors.clear()
+    assert viewer.pending(before, ["needs"]) == ([], "reset")

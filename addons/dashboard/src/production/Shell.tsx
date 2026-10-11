@@ -5,16 +5,17 @@ import { OrbitMark } from '../brand/OrbitMark'
 import { getToken, onSessionChange } from '../api/bootstrap'
 import { realApi, type ShellWorkspace } from '../api/realApi'
 import './shell.css'
+import { useLiveUpdates } from '../api/useLiveUpdates'
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 5000 } } })
 type Page = 'today' | 'tickets' | 'identity'
 const labels: Record<Page, string> = { today: 'Today', tickets: 'Tickets', identity: 'Identity' }
 
-function Content({ ws, page }: { ws: ShellWorkspace; page: Page }) {
+function Content({ ws, page, liveReady }: { ws: ShellWorkspace; page: Page; liveReady: boolean }) {
   const [cursor, setCursor] = useState<string | undefined>()
-  const identity = useQuery({ queryKey: ['identity', ws.id], queryFn: () => realApi.identity(ws.id), enabled: ws.features.includes('identity') })
-  const today = useQuery({ queryKey: ['today', ws.id], queryFn: () => realApi.today(ws.id), enabled: page === 'today' })
-  const tickets = useQuery({ queryKey: ['tickets', ws.id, cursor], queryFn: () => realApi.tickets(ws.id, cursor), enabled: page === 'tickets' })
+  const identity = useQuery({ queryKey: ['identity', ws.id], queryFn: () => realApi.identity(ws.id), enabled: liveReady && ws.features.includes('identity') })
+  const today = useQuery({ queryKey: ['today', ws.id], queryFn: () => realApi.today(ws.id), enabled: liveReady && page === 'today' })
+  const tickets = useQuery({ queryKey: ['tickets', ws.id, cursor], queryFn: () => realApi.tickets(ws.id, cursor), enabled: liveReady && page === 'tickets' })
   const active = page === 'today' ? today : page === 'tickets' ? tickets : identity
   if (active.error) return <p role="alert">{active.error.message}</p>
   if (active.isPending) return <p role="status">Loading…</p>
@@ -51,6 +52,7 @@ function WorkspaceShell() {
   const matches = list.data?.filter((w) => (w.prefix === prefix || w.id === prefix)) ?? []
   const suffix = url.searchParams.get('ws')
   const ws = prefix ? matches.find((w) => suffix ? w.id.replaceAll('-', '').startsWith(suffix) : matches.length === 1) : list.data?.[0]
+  const live = useLiveUpdates(ws?.host_state === 'ok' ? ws.id : undefined)
   const features = ws ? session.data?.workspaces[ws.id] ?? [] : []
   const page: Page = requested === 'tickets' || requested === 'identity' ? requested : 'today'
   function go(workspace: ShellWorkspace, target: Page) {
@@ -69,7 +71,8 @@ function WorkspaceShell() {
     {list.data && !ws && <p>{matches.length > 1 ? 'Choose a workspace: this prefix is shared.' : 'Choose an available workspace.'}</p>}
     {ws && ws.host_state !== 'ok' && <p role="alert">{ws.host_state === 'addon.disabled' ? 'Dashboard addon is disabled.' : 'Host not running.'}</p>}
     {ws && ws.host_state === 'ok' && session.isPending && <div aria-label="Loading session" role="status" className="prod-skeleton" />}
-    {ws && ws.host_state === 'ok' && session.data && (features.includes(page) ? <Content key={`${ws.id}:${page}`} ws={ws} page={page} /> : <p>Host too old for this feature, or feature not available.</p>)}
+    {live.revoked && <p role="alert">Workspace access is no longer available.</p>}
+    {ws && !live.revoked && ws.host_state === 'ok' && session.data && (features.includes(page) ? <Content key={`${ws.id}:${page}`} ws={ws} page={page} liveReady={live.ready} /> : <p>Host too old for this feature, or feature not available.</p>)}
   </main></div>
 }
 

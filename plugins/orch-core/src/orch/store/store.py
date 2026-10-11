@@ -1677,15 +1677,30 @@ class Store:
             )
         self._ticket_appends_since_cp = 0
 
+    def repairable_checkpoint(self, uid: str) -> bool:
+        """Only the last recorded append can have crashed before its checkpoint write."""
+        info = self._logs.get(uid)
+        applied = self._read_applied()
+        cp = self._checkpoints.workspace()
+        if info is None or not info.seq or cp is None:
+            return False
+        floor = cp.get("o", {}).get("tickets", {}).get(uid, {}).get("seq", 0)
+        return (
+            applied.get("log") == uid
+            and applied.get("seq") == info.seq
+            and info.seq >= floor
+            and applied.get("id") == self._read_event(uid, info.seq)["id"]
+        )
+
     def repair_checkpoints(self) -> None:
-        """Fill missing ticket checkpoints only when the host holds the key and replay verifies."""
+        """Fill only a missing checkpoint explained by the last recorded append."""
         with self._locked():
             if self._host is None or self._state is None or self._diverged or self.chain_errors():
                 return
             if self._state.workspace.invalid:
                 return
             for uid, view in self._state.tickets.items():
-                if view.frozen or self._checkpoints.ticket(uid) is not None:
+                if view.frozen or self._checkpoints.ticket(uid) is not None or not self.repairable_checkpoint(uid):
                     continue
                 info = self._logs[uid]
                 self._checkpoints.write_ticket(self._host.sign, uid, info.seq, info.head or "", self._now())

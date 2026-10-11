@@ -10,7 +10,7 @@ edits), the signed checkpoints and the host's pins with the logs.
 ``--repair`` does the documented safe repairs *through the store*: it answers external edits with the host events
 format section 5.8 names, rebuilds the derived index, and removes the key folders of an init that died. It never repairs
 a chain, a signature or a divergent checkpoint: only an owner-signed ``restore`` can.
-A missing ticket checkpoint can be written when this host holds the key and the log verifies.
+A missing ticket checkpoint can be written only for the last recorded append, after replay verifies.
 """
 
 from __future__ import annotations
@@ -254,16 +254,23 @@ def _checkpoints(s: InspectStore, host_here: bool) -> list[Finding]:
         )
     have = set(cps.ticket_uids())
     missing = sorted(u for u in s.state.tickets if u not in have)
-    if missing:
-        keys = ", ".join(s.state.tickets[u].key for u in missing[:5])
+    for repairable in (False, True):
+        group = [u for u in missing if (host_here and s.repairable_checkpoint(u)) == repairable]
+        if not group:
+            continue
+        keys = ", ".join(s.state.tickets[u].key for u in group[:5])
         out.append(
             Finding(
                 lvl,
                 "checkpoints",
                 "checkpoint.missing",
-                f"{len(missing)} tickets have no checkpoint ({keys}...)"
-                + ("; doctor --repair writes missing checkpoints for verified logs" if host_here else ""),
-                "checkpoint" if host_here else None,
+                f"{len(group)} tickets have no checkpoint ({keys}...)"
+                + (
+                    "; doctor --repair can finish the last recorded append"
+                    if repairable
+                    else "; a rollback is possible; use orch restore"
+                ),
+                "checkpoint" if repairable else None,
             )
         )
     wsk = s._wsk_pub()

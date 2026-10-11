@@ -296,3 +296,55 @@ def test_doctor_repairs_a_missing_ticket_checkpoint_after_append(two):
     r = doctor(ws, "--repair")
     assert r.code == 0, r.out
     assert path.exists() and "checkpoint.missing" not in codes(doctor(ws))
+
+
+@pytest.mark.parametrize("rollback", [False, True])
+def test_missing_checkpoint_only_repairs_the_recorded_head(ws, cli, rollback):
+    assert cli("new", "one").code == 0
+    assert cli("claim", "1").code == 0
+    assert cli("log", "-m", "third event").code == 0
+    uid = next((ws.root / "tickets").iterdir()).name
+    path = ws.root / ".state" / "checkpoints" / f"ticket-{uid}.json"
+    log = ws.root / "tickets" / uid / "events.jsonl"
+    lines = log.read_bytes().splitlines(keepends=True)
+    assert len(lines) == 3
+    if rollback:
+        log.write_bytes(b"".join(lines[:-2]))
+    path.unlink()
+    before = doctor(ws)
+    assert "checkpoint.missing" in codes(before)
+    assert not any(code.startswith("chain.") for code in codes(before))
+    r = doctor(ws, "--repair")
+    if rollback:
+        assert r.code == 5 and not path.exists()
+        findings = [f for f in r.data["findings"] if f["what"].startswith("checkpoint.missing")]
+        assert findings and "rollback" in str(findings) and "orch restore" in str(findings)
+        assert "--repair" not in str(findings)
+        assert "checkpoint.missing" in codes(doctor(ws))
+    else:
+        assert r.code == 0, r.out
+        assert path.exists() and "checkpoint.missing" not in codes(doctor(ws))
+
+
+def test_doctor_finishes_checkpoint_write_interrupted_after_append(ws, cli, monkeypatch):
+    from orch.store import Store
+
+    with monkeypatch.context() as m:
+        m.setattr(Store, "_write_checkpoints", lambda *args: None)
+        assert cli("new", "interrupted checkpoint").code == 0
+    uid = next((ws.root / "tickets").iterdir()).name
+    path = ws.root / ".state" / "checkpoints" / f"ticket-{uid}.json"
+    assert not path.exists()
+    r = doctor(ws, "--repair")
+    assert r.code == 0, r.out
+    assert path.exists() and "checkpoint.missing" not in codes(doctor(ws))
+
+
+def test_doctor_leaves_missing_checkpoint_of_an_earlier_append(ws, cli):
+    assert cli("new", "earlier").code == 0
+    assert cli("new", "last").code == 0
+    path = ws.root / ".state" / "checkpoints" / f"ticket-{ws.uid('1')}.json"
+    path.unlink()
+    r = doctor(ws, "--repair")
+    assert r.code == 5 and not path.exists()
+    assert "checkpoint.missing" in codes(r)

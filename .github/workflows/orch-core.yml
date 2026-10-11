@@ -37,6 +37,8 @@ jobs:
           ORCH_REQUIRE_UNICODE16: ${{ matrix.python == '3.14' && '1' || '' }}
       # the slow marker holds, among others, the check that all 52 operation declarations validate against the
       # operation schema (startup does not validate)
-      - run: uv run pytest -q -m slow -n auto
+      - run: uv run pytest -q -m slow -n auto --deselect tests/ops/test_perf.py --deselect tests/store/test_perf.py
         env:
           ORCH_REQUIRE_UNICODE16: ${{ matrix.python == '3.14' && '1' || '' }}
+      # the latency budgets run alone: nothing else on the machine while they measure
+      - run: uv run pytest -q -m slow -p no:xdist tests/ops/test_perf.py tests/store/test_perf.py

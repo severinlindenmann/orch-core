@@ -394,6 +394,7 @@ def create_workspace(ctx: Context, args: dict[str, Any]) -> Result:
     finally:
         with contextlib.suppress(OSError):
             os.unlink(root / LOCK_DIR)
+        with contextlib.suppress(OSError):  # a failed unlink must not leave the descriptor open
             os.close(lock)
     return _finish(root, sd, wid, host_dir, prefix, owner_name, person, appended)
 

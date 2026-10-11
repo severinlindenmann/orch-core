@@ -29,12 +29,20 @@ def big(tmp_path_factory):
     return w
 
 
-def timed(cli, *argv, budget):
-    t = time.perf_counter()
-    r = cli(*argv)
-    dt = time.perf_counter() - t
-    assert r.code == 0, (argv, r.err)
-    assert dt < budget * SLACK, f"{' '.join(argv)} took {dt:.2f} s (budget {budget} s)"
+RUNS = 5
+
+
+def timed(cli, *argv, budget, cpu=True):
+    """Best of RUNS: a real regression moves the minimum, load noise does not. The commands run in this process,
+    so CPU time (``process_time``) is what is measured; ``cpu=False`` measures wall time (for a command that waits)."""
+    clock = time.process_time if cpu else time.perf_counter
+    best, r = float("inf"), None
+    for _ in range(RUNS if cpu else 1):
+        t = clock()
+        r = cli(*argv)
+        best = min(best, clock() - t)
+        assert r.code == 0, (argv, r.err)
+    assert best < budget * SLACK, f"{' '.join(argv)} took {best:.2f} s best of {RUNS} (budget {budget} s)"
     return r
 
 
@@ -50,9 +58,9 @@ def test_the_commands_of_a_task_loop_meet_their_budgets(big):
         ["task", "next"],
     ):
         timed(cli, *argv, budget=0.4)
-    timed(cli, "wait", "--timeout", "1", budget=2.0)  # the timeout plus one second
+    timed(cli, "wait", "--timeout", "1", budget=2.0, cpu=False)  # the timeout plus one second
     timed(cli, "list", budget=0.8)
-    timed(cli, "list", "--status", "open", "--limit", "20", budget=0.8)
+    timed(cli, "list", "--status", "open", "--limit", "50", budget=0.8)
     timed(cli, "inbox", budget=0.8)
     timed(cli, "next", budget=0.8)
     r = timed(cli, "search", "number 777", budget=1.5)

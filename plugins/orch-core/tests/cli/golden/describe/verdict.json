@@ -7,7 +7,7 @@
     "cli": "orch verdict",
     "summary": "Give the verify verdict: pass, or fail with a reason.",
     "who": "human",
-    "usage": "orch verdict pass|fail [--message TEXT] [--ref REF] [--dry-run]",
+    "usage": "orch verdict [REF] pass|fail [--message TEXT] [--dry-run]",
     "pre": [
       "ticket_exists",
       "ticket_in_testing",
@@ -40,12 +40,13 @@
         },
         "ref": {
           "type": "string",
-          "description": "ticket REF (flag)",
+          "description": "ticket REF (DEMO-0043, 43); default: your claim",
           "pattern": "^(?:(?:[A-Z][A-Z0-9]{0,15}-)?[0-9]+(?:/T[1-9][0-9]*)?|T[1-9][0-9]*)$",
           "x-metavar": "REF"
         }
       },
       "x-positional": [
+        "ref",
         "outcome"
       ],
       "required": [

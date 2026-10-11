@@ -124,3 +124,28 @@ def test_every_registered_operation_builds_a_parser():
     for op in ops.all():
         parser.build_parser(op)
         assert usage(op).startswith("orch " + op.cli)
+
+
+@pytest.mark.parametrize("cmd,word", [("approve", "plan"), ("request-changes", "plan"), ("verdict", "pass")])
+def test_the_human_commands_take_an_optional_ref_first_and_still_the_flag(cmd, word):
+    base = [cmd, word] if cmd != "request-changes" else [cmd, word, "-m", "why"]
+    key = "gate" if word == "plan" else "outcome"
+    for argv, ref in (
+        (base, None),
+        ([cmd, "DEMO-0003", *base[1:]], "DEMO-0003"),
+        ([*base, "--ref", "7"], "7"),
+        ([cmd, "7", *base[1:], "--ref", "7"], "7"),
+    ):
+        got = parser.parse(argv)
+        assert got.args.get("ref") == ref and got.args[key] == word, argv
+    with pytest.raises(UsageError, match="REF given twice"):
+        parser.parse([cmd, "3", *base[1:], "--ref", "4"])
+
+
+def test_a_usage_error_shows_the_correct_form_inline():
+    with pytest.raises(UsageError) as e:
+        parser.parse(["approve", "nonsense"])
+    assert "usage: orch approve [REF] requirements|plan|code [--dry-run]" in str(e.value)
+    with pytest.raises(UsageError) as e:
+        parser.parse(["task", "done"])
+    assert "usage: orch task done TASK [--run]" in str(e.value)

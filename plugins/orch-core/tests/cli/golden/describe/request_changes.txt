@@ -1,12 +1,12 @@
 ok describe request_changes
 Request changes on a gate, with a reason.
-usage: orch request-changes requirements|plan|code --message TEXT [--ref REF] [--dry-run]
+usage: orch request-changes [REF] requirements|plan|code --message TEXT [--dry-run]
 who: human · emits: gate.changes_requested
 pre: ticket_exists gate_current approver_eligible user_presence text_clean
 args:
+  REF  ticket REF (DEMO-0043, 43); default: your claim
   GATE  gate (requirements|plan|code)
   -m, --message TEXT  free text (required)
-  --ref REF  ticket REF (flag)
   --dry-run  say what would happen, append nothing
 errors:
   ambiguous_ref (exit 2): name the ticket REF, for example DEMO-0043 | fix: orch status

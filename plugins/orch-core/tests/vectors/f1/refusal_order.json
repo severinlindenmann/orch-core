@@ -316,7 +316,7 @@
   {
    "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
    "name": "settings_repo_refusals",
-   "now": "2026-10-10T10:04:00Z",
+   "now": "2026-10-10T10:05:20Z",
    "pins": "F1 step 0: malformed repo fields refuse append and break replay at the line; decision 94 aliases refuse settings",
    "steps": [
     {
@@ -973,6 +973,287 @@
      },
      "expect": "ok",
      "log": "workspace"
+    },
+    {
+     "append_code": "validation.event",
+     "event": {
+      "actor": {
+       "device": "d_c65032f21d43401cc223b05723c1e5b4",
+       "id": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
+       "kind": "person"
+      },
+      "at": "2026-10-10T10:03:10Z",
+      "auth": "passphrase",
+      "based_on": "sha256:38c7600269965c5644b218b1480ec3b288cfe5fc14f21f809b37ad20a330cae7",
+      "hash_v": 1,
+      "host_sig": "maNPMOIx1OXN75MViRMcWrcbadc_rgz96whoOyE-DF_DV_1qKnXOovGpf0cOIHxtrsRsvk0UuNro7qEb9XGfjA",
+      "id": "01J9ZK0000000000000000000K",
+      "prev": "sha256:38c7600269965c5644b218b1480ec3b288cfe5fc14f21f809b37ad20a330cae7",
+      "roster_v": 3,
+      "seq": 6,
+      "set": {
+       "repos": {
+        "c": {
+         "path": "../same"
+        },
+        "d": {
+         "path": "../same"
+        }
+       }
+      },
+      "sig": "0izHgnxFIH9Dqt8g0vubuodzaXvhrl_JNQqBsdTdibcCXoOKe80ED8lDSxX2RUTvkKtYymHUAqMvaxEXDXvzyw",
+      "type": "settings.changed",
+      "v": 2
+     },
+     "expect": "validation.event",
+     "log": "workspace",
+     "note": "decision 94: duplicate normalized paths or case-insensitive names, including unchanged repos",
+     "replay_expect": "chain.broken",
+     "schema_refused": true
+    },
+    {
+     "append_code": "validation.event",
+     "event": {
+      "actor": {
+       "device": "d_c65032f21d43401cc223b05723c1e5b4",
+       "id": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
+       "kind": "person"
+      },
+      "at": "2026-10-10T10:03:20Z",
+      "auth": "passphrase",
+      "based_on": "sha256:38c7600269965c5644b218b1480ec3b288cfe5fc14f21f809b37ad20a330cae7",
+      "hash_v": 1,
+      "host_sig": "C0lFQx4CmJV1PEV4moVCUimWd6uV852yjNIT_Lib-DpUx2yQXdwRtp-MWS78tQ0gvt5h8GbcSQuWyaHjYkVP1Q",
+      "id": "01J9ZK0000000000000000000M",
+      "prev": "sha256:38c7600269965c5644b218b1480ec3b288cfe5fc14f21f809b37ad20a330cae7",
+      "roster_v": 3,
+      "seq": 6,
+      "set": {
+       "repos": {
+        "c": {
+         "path": "../same"
+        },
+        "d": {
+         "path": "../other/../same/./"
+        }
+       }
+      },
+      "sig": "U2Lzi21VBypLHdAFsYIQihp8LOzdsV3Jand4C9nnlTIddGk9f5ERsPs4laPhAPiED26W9R-VrIzZWTRMqkL2-Q",
+      "type": "settings.changed",
+      "v": 2
+     },
+     "expect": "validation.event",
+     "log": "workspace",
+     "note": "decision 94: duplicate normalized paths or case-insensitive names, including unchanged repos",
+     "replay_expect": "chain.broken",
+     "schema_refused": true
+    },
+    {
+     "append_code": "validation.event",
+     "event": {
+      "actor": {
+       "device": "d_c65032f21d43401cc223b05723c1e5b4",
+       "id": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
+       "kind": "person"
+      },
+      "at": "2026-10-10T10:03:30Z",
+      "auth": "passphrase",
+      "based_on": "sha256:38c7600269965c5644b218b1480ec3b288cfe5fc14f21f809b37ad20a330cae7",
+      "hash_v": 1,
+      "host_sig": "pbWnPFgt5wyzM8p4-RvaJNm7RimQWPyuUCvWlErXeic2E8T-qURRm53_nM__1lhjTWXHOAXFts-Pe-CxaWkTPA",
+      "id": "01J9ZK0000000000000000000N",
+      "prev": "sha256:38c7600269965c5644b218b1480ec3b288cfe5fc14f21f809b37ad20a330cae7",
+      "roster_v": 3,
+      "seq": 6,
+      "set": {
+       "repos": {
+        "c": {
+         "path": "../Same"
+        },
+        "d": {
+         "path": "../same"
+        }
+       }
+      },
+      "sig": "WZGgFv70YUZmuJwkB62kq2RaN8rsIAoeZmyshwbmMTO3e2m5vIUv-mzqSyZLdQyn-HG5S-JKGu2AOWYwzsGXwA",
+      "type": "settings.changed",
+      "v": 2
+     },
+     "expect": "validation.event",
+     "log": "workspace",
+     "note": "decision 94: duplicate normalized paths or case-insensitive names, including unchanged repos",
+     "replay_expect": "chain.broken",
+     "schema_refused": true
+    },
+    {
+     "append_code": "validation.event",
+     "event": {
+      "actor": {
+       "device": "d_c65032f21d43401cc223b05723c1e5b4",
+       "id": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
+       "kind": "person"
+      },
+      "at": "2026-10-10T10:03:40Z",
+      "auth": "passphrase",
+      "based_on": "sha256:38c7600269965c5644b218b1480ec3b288cfe5fc14f21f809b37ad20a330cae7",
+      "hash_v": 1,
+      "host_sig": "e-Cl5b58iWT7zMkLrdfhG4o12M1tUgDAX4P6eBuwrQHfPxHmEC1F2KnDSrgHiDDzQAI6i6_HSOjv2ywLqDuPvQ",
+      "id": "01J9ZK0000000000000000000P",
+      "prev": "sha256:38c7600269965c5644b218b1480ec3b288cfe5fc14f21f809b37ad20a330cae7",
+      "roster_v": 3,
+      "seq": 6,
+      "set": {
+       "repos": {
+        "c": {
+         "path": "../Stra\u00dfe"
+        },
+        "d": {
+         "path": "../STRASSE"
+        }
+       }
+      },
+      "sig": "rIZ9d14OFtIOnCWUS90FMG5hJXY5qMiDYb-gFmzmoBbDDhFNgIDa0BDDxWAzhB3Sc5LrPRCA74KStMvggVUVRQ",
+      "type": "settings.changed",
+      "v": 2
+     },
+     "expect": "validation.event",
+     "log": "workspace",
+     "note": "decision 94: duplicate normalized paths or case-insensitive names, including unchanged repos",
+     "replay_expect": "chain.broken",
+     "schema_refused": true
+    },
+    {
+     "append_code": "validation.event",
+     "event": {
+      "actor": {
+       "device": "d_c65032f21d43401cc223b05723c1e5b4",
+       "id": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
+       "kind": "person"
+      },
+      "at": "2026-10-10T10:03:50Z",
+      "auth": "passphrase",
+      "based_on": "sha256:38c7600269965c5644b218b1480ec3b288cfe5fc14f21f809b37ad20a330cae7",
+      "hash_v": 1,
+      "host_sig": "AGIpkNN-IuVKN1z-eQh2PfeqM0tSkS2vSXZ_Gz2M0j_XFB0ePl42iajpflXJ57vI1DcxoEdJO7KsfEJzM5ei-A",
+      "id": "01J9ZK0000000000000000000Q",
+      "prev": "sha256:38c7600269965c5644b218b1480ec3b288cfe5fc14f21f809b37ad20a330cae7",
+      "roster_v": 3,
+      "seq": 6,
+      "set": {
+       "repos": {
+        "C": {
+         "path": "../d"
+        },
+        "c": {
+         "path": "../c"
+        }
+       }
+      },
+      "sig": "8EXMkUpGzhJOAMh_yvSu9D575SgMq4-84VdeutAa4asEDOkbPU0Ae5_tb0Cw1L-In9GzwPAb-3q2YShefNf5Zw",
+      "type": "settings.changed",
+      "v": 2
+     },
+     "expect": "validation.event",
+     "log": "workspace",
+     "note": "decision 94: duplicate normalized paths or case-insensitive names, including unchanged repos",
+     "replay_expect": "chain.broken",
+     "schema_refused": true
+    },
+    {
+     "event": {
+      "actor": {
+       "device": "d_c65032f21d43401cc223b05723c1e5b4",
+       "id": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
+       "kind": "person"
+      },
+      "at": "2026-10-10T10:04:00Z",
+      "auth": "passphrase",
+      "based_on": "sha256:38c7600269965c5644b218b1480ec3b288cfe5fc14f21f809b37ad20a330cae7",
+      "hash_v": 1,
+      "host_sig": "jAsp-6vdhdo35Xf_d6H_o_kc6vcdw1ml6gMGJWrcpzSTrYvUMfIpYFLn9c8-2WrNd4oDC7oG7Dp_-Xzi-7aAIg",
+      "id": "01J9ZK0000000000000000000R",
+      "prev": "sha256:38c7600269965c5644b218b1480ec3b288cfe5fc14f21f809b37ad20a330cae7",
+      "roster_v": 3,
+      "seq": 6,
+      "set": {
+       "repos": {
+        "c": {
+         "path": "../B/./"
+        }
+       }
+      },
+      "sig": "hkNf1U9s7L4m2t909ghjvgiFpmH2aRqMJwwYDoBsqC6EGHjP8YvGa512NZ_gya8Dodd-UyeKes_GLobLHuGiuQ",
+      "type": "settings.changed",
+      "v": 2
+     },
+     "expect": "validation.event",
+     "log": "workspace",
+     "note": "decision 94: duplicate normalized paths or case-insensitive names, including unchanged repos",
+     "replay_expect": "chain.broken"
+    },
+    {
+     "event": {
+      "actor": {
+       "device": "d_c65032f21d43401cc223b05723c1e5b4",
+       "id": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
+       "kind": "person"
+      },
+      "at": "2026-10-10T10:04:10Z",
+      "auth": "passphrase",
+      "based_on": "sha256:38c7600269965c5644b218b1480ec3b288cfe5fc14f21f809b37ad20a330cae7",
+      "hash_v": 1,
+      "host_sig": "ll7AmbNcN43sHmD2fIMmpG0VcPg2xfh69s389BByYStppknhfTPIDnN5pzvE0mniXbpZjo2Em0952aXe-7VQ2w",
+      "id": "01J9ZK0000000000000000000S",
+      "prev": "sha256:38c7600269965c5644b218b1480ec3b288cfe5fc14f21f809b37ad20a330cae7",
+      "roster_v": 3,
+      "seq": 6,
+      "set": {
+       "repos": {
+        "B": {
+         "path": "../other"
+        }
+       }
+      },
+      "sig": "xWDIFID8tlCx_owFz4F7E0ghvwcDpsrDLDB-reOh0vZZXEukCVhteShGyg5iF1IMXli5VHXO36axv6u6HEprPw",
+      "type": "settings.changed",
+      "v": 2
+     },
+     "expect": "validation.event",
+     "log": "workspace",
+     "note": "decision 94: duplicate normalized paths or case-insensitive names, including unchanged repos",
+     "replay_expect": "chain.broken"
+    },
+    {
+     "event": {
+      "actor": {
+       "device": "d_c65032f21d43401cc223b05723c1e5b4",
+       "id": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
+       "kind": "person"
+      },
+      "at": "2026-10-10T10:04:20Z",
+      "auth": "passphrase",
+      "based_on": "sha256:38c7600269965c5644b218b1480ec3b288cfe5fc14f21f809b37ad20a330cae7",
+      "hash_v": 1,
+      "host_sig": "D_h1JbvSPle0TZWHBJXnNP2JR59oSMkl3hDIKa0_WhA3Le9tqOFEh0QC3zNQZRDa47yvtztnJFu7C6SpXxVW8g",
+      "id": "01J9ZK0000000000000000000T",
+      "prev": "sha256:38c7600269965c5644b218b1480ec3b288cfe5fc14f21f809b37ad20a330cae7",
+      "roster_v": 3,
+      "seq": 6,
+      "set": {
+       "repos": {
+        "B": {
+         "path": "../b"
+        },
+        "b": null
+       }
+      },
+      "sig": "uF6nu6X1m3pxRCs6Ua7tIWgdx5MF4ZVngikz9t3Amy96HZb-aoG9LDuMJFS91EhRu2nF-b8u0tcHPdtqxqdFzw",
+      "type": "settings.changed",
+      "v": 2
+     },
+     "expect": "ok",
+     "log": "workspace",
+     "note": "removing the old entry allows its name and path to be reused"
     }
    ],
    "workspace_id": "0123456789abcdef0123456789abcdef"

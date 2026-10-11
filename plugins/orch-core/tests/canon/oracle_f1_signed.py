@@ -945,5 +945,31 @@ def refusal_order_scenarios() -> list[dict[str, Any]]:
         w.actor("sev"),
         {"set": {"repos": {"a": None, "b": {"path": "../b", "remote": "https://h/X"}}}},
     )
+    for repos in (
+        {"c": {"path": "../same"}, "d": {"path": "../same"}},
+        {"c": {"path": "../same"}, "d": {"path": "../other/../same/./"}},
+        {"c": {"path": "../Same"}, "d": {"path": "../same"}},
+        {"c": {"path": "../Stra\u00dfe"}, "d": {"path": "../STRASSE"}},
+        {"c": {"path": "../c"}, "C": {"path": "../d"}},
+        {"c": {"path": "../B/./"}},
+        {"B": {"path": "../other"}},
+    ):
+        w.ev(
+            "workspace",
+            "settings.changed",
+            w.actor("sev"),
+            {"set": {"repos": repos}},
+            expect="validation.event",
+            schema_refused=len(repos) == 2,
+            note="decision 94: duplicate normalized paths or case-insensitive names, including unchanged repos",
+        )
+        w.steps[-1]["replay_expect"] = "chain.broken"
+    w.ev(
+        "workspace",
+        "settings.changed",
+        w.actor("sev"),
+        {"set": {"repos": {"b": None, "B": {"path": "../b"}}}},
+        note="removing the old entry allows its name and path to be reused",
+    )
     out.append(w.scenario())
     return out

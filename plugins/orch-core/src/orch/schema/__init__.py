@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import copy
 import json
+import posixpath
 import re
 from datetime import UTC, datetime
 from functools import cache
@@ -418,9 +419,18 @@ def _check_body(obj: dict[str, Any]) -> None:
 
 
 def _check_repos(name: str, path: tuple[Any, ...], repos: dict[str, Any]) -> None:
+    names: set[str] = set()
+    paths: set[str] = set()
     for repo, entry in repos.items():
         if entry is None:
             continue
+        if repo.lower() in names:
+            raise SchemaError(name, _pointer(path), "two repo names differ only in case")
+        names.add(repo.lower())
+        normalized = posixpath.normpath(entry["path"]).casefold()
+        if normalized in paths:
+            raise SchemaError(name, _pointer(path), "two repos resolve to the same path")
+        paths.add(normalized)
         if "remote" in entry:
             _check_identity(name, (*path, repo, "remote"), entry["remote"])
         if "default_branch" in entry:
@@ -730,7 +740,7 @@ def _ev_grant_issued(obj: dict[str, Any], actor: dict[str, Any]) -> None:
         raise SchemaError("event", "/issued_at", "issued_at is more than 300 s away from at")
 
 
-def validate_settings(value: Any) -> None:
+def validate_settings(value: Any, *, repos: dict[str, Any] | None = None) -> None:
     """Validate a settings.changed payload, including repo fields, before model authorization (F1 step 0)."""
     name = "event.settings.changed"
     _walk(name, value, ("set",))
@@ -738,6 +748,9 @@ def validate_settings(value: Any) -> None:
     if error is not None:
         raise SchemaError(name, _pointer(("set", *error.absolute_path)), error.message)
     _check_repos(name, ("set", "repos"), value.get("repos", {}))
+    if repos is not None:
+        resulting = {**repos, **value.get("repos", {})}
+        _check_repos(name, ("set", "repos"), resulting)
 
 
 def _ev_settings_changed(obj: dict[str, Any], actor: dict[str, Any]) -> None:

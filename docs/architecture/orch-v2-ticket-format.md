@@ -80,6 +80,9 @@ orchestrator/
 - `config.json` mirrors what the signed events in `events/workspace.jsonl` say (§5.4.2).
 - `settings.repos` maps the repo names used in `links` to a working copy (absolute, or relative to the workspace
   directory), with a required `path` and optional `remote` and `default_branch` fields; there is no primary flag.
+  Repo names must be unique ignoring ASCII case. Paths must be unique after POSIX lexical normalisation
+  (`.` and `..` components and redundant slashes), then Unicode case folding. Check the resulting settings,
+  including unchanged repos; collisions give `validation.*` at append and `chain.broken` on replay (step 0).
   All fields are owner-signed in the same `settings.changed` event. `remote` must already be a canonical repo
   identity (§5.7): refuse a non-canonical value, never convert it. Under §5.11 step 0, malformed
   repo fields give `validation.*` at append and `chain.broken` at that line on replay, stopping the log.
@@ -2053,7 +2056,7 @@ A1–A20 (PR body), HO (dashboard handover, input only), D58–D60, the adversar
 | 91 | Status from-states (Opus S6) | A from→to table for every event (§5.9). | Replay can check transitions. |
 | 92 | Torn writes vs external edits (Opus S7) | `.state/applied`; recovery only when the last event isn't applied; a torn write ends in `edit.external`. | An ordinary external edit isn't misreported, and `base_rev` keeps working. |
 | 93 | Effective policy canonical form (Opus S8) | Every policy has all five keys; `applies` union rules; tokens, not persons, for "no eligible approver". | A partial override can't switch `code` on by accident. |
-| 94 | Repo identity incomplete (Opus S9) | Raw `remote.origin.url`, port rules, scp-like forms, `local:` otherwise; duplicate paths and identities refused; a declared `local:` remote must be exactly `local:<own repo name>`, and declared remote identities must be unique ignoring ASCII case across the resulting settings (including unchanged repos); P1 limit stated. | One canonical identity across runtimes. |
+| 94 | Repo identity incomplete (Opus S9) | Raw `remote.origin.url`, port rules, scp-like forms, `local:` otherwise; duplicate names ignoring ASCII case and paths after POSIX lexical normalisation and Unicode case folding refused at step 0 (including unchanged repos); duplicate identities refused; a declared `local:` remote must be exactly `local:<own repo name>`, and declared remote identities must be unique ignoring ASCII case across the resulting settings (including unchanged repos); P1 limit stated. | One canonical identity across runtimes. |
 | 95 | Receipts (Opus S10) | `receipt.cmd` = `verify.cmd`; latest `task.done` of a done task; evidence only at the current source `sha`; prompt rechecks file digests. | Stale or substituted evidence doesn't count. |
 | 96 | Restore drops revocations (Opus S11) | Revocations re-appended at once; `abandoned` gives up every checkpoint above `from_seq`; workspace restore raises every ticket's gates. | A rollback can't resurrect a revoked device. |
 | 97 | Question id frozen wrongly; `evidence` half-defined (Opus S12) | Derived `qid` (32 hex, `orch/v2/question-id\|`) used in the question hash; `evidence` refused in P1, defined in P3 with a new contract. | Protocol §13 needs hex ids; no person event without `sig`. |

@@ -2075,7 +2075,7 @@ A1–A20 (PR body), HO (dashboard handover, input only), D58–D60, the adversar
 | 113 | Host can't re-append revocations; lockout after losing every device (re-review R3) | `device.revoked` P or H, authorised by the embedded revocation; recovery `device.added` by a PK-vouched new device when none is left. | Protocol §6.2: the PK signature is the authority; D50 recovery. |
 | 114 | Several matching raise rows (re-review S-a) | An event raises a gate by at most 1. | +1 vs +2 would split `gate_gen`. |
 | 115 | Branch deletion after landing (re-review S-b) | A missing ref is not a change; on `done` only a new `sha` on an existing ref counts; pending `branch.pushed` appended before a prompt. | Landed tickets don't bounce. |
-| 116 | Credentials in the repo identity (re-review S-c) | Userinfo always removed. | No secrets in hashed, signed data. |
+| 116 | Credentials in the repo identity (re-review S-c) | Only ssh/scp `git@` userinfo is allowed and removed; any other userinfo, including all https userinfo, maps to `local:<name>` (§5.7). | No secrets in hashed, signed data. |
 | 117 | Revocation reason mismatch (re-review S-d) | Payload `reason` must equal `revocation.o.reason`. | The compromised effects can't be dodged. |
 | 118 | `.state/body` copy agent-writable (re-review S-e) | Used only when its section hashes match the log; otherwise `store.torn_write`. | A tampered copy can't become the reverted text. |
 | 119 | Signer-computed `refs` (re-review S-f) | Refused when they differ from the regex (`body.bad_refs`). | Bindings come from the text, not the signer's claim. |

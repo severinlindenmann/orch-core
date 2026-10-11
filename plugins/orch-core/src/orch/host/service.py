@@ -12,7 +12,7 @@ finish (no deadline inside a commit); parked ``wait``s answer ``host.restarting`
 ``end: "host.restarting"`` (**seam, H6a**: :attr:`Host.subscriptions_end`); then the listeners close and
 :meth:`Host.run` returns, so the service manager starts the new release.
 
-**Seams.** The workspace ops come from ``backend`` (H4a1, default :class:`~orch.host.workspace.StatusBackend`);
+**Seams.** The workspace ops come from ``backend`` (default :class:`~orch.host.dispatch.RegistryBackend`, H4a1);
 the worker socket and its PID check are H10; OS users, groups and the root-owned run directory are H3c (in dev and
 tier A the host's primary group stands in for the missing ``orch-<ws>`` group).
 """
@@ -37,7 +37,7 @@ from orch import canon
 
 from . import frames
 from .control import CONTROL_OPS, ControlGate, ControlOps
-from .custody import check_tree, ensure_private_dir
+from .custody import check_tree, ensure_private_dir, root_key
 from .errors import HostError
 from .intents import IntentStore
 from .jobs import CompletionStore
@@ -46,7 +46,7 @@ from .ownership import LOCK_WAIT_SECONDS
 from .pins import AgentPins
 from .registry import Entry, Registry, host_dir
 from .transport import WRITE_TIMEOUT_SECONDS, HostLimits, Server
-from .workspace import OpBackend, StatusBackend, WorkspaceGate, WorkspaceService
+from .workspace import OpBackend, WorkspaceGate, WorkspaceService
 
 LOG = logging.getLogger(__name__)
 #: how often retention runs in a host that stays up (§0.7)
@@ -79,7 +79,7 @@ class Host:
         self.state_dir = Path(state_dir)
         self.host_uid = os.getuid() if host_uid is None else host_uid
         self.run_dir = Path(run_dir) if run_dir is not None else default_run_directory(self.host_uid)
-        self.backend_factory = backend or (lambda: StatusBackend(lambda: self.started_at))
+        self.backend_factory = backend or self._registry_backend
         self.pins = pins or AgentPins()
         self.clock = clock
         self.lock_wait = lock_wait
@@ -100,6 +100,7 @@ class Host:
         self._stopped: asyncio.Event | None = None
         self._drain: asyncio.Task[None] | None = None
         self._bootstrapping: set[str] = set()
+        self._bootstrapping_roots: set[tuple[int, int] | str] = set()
         self._guard = threading.Lock()
         self.recovered: list[tuple[str, str]] = []
 
@@ -129,17 +130,32 @@ class Host:
     def _tier(self) -> str:
         return "B" if any(e.tier == "B" for e in self.registry.entries()) else "A"
 
-    # -- the person mapping check (F8), on the workspace's worker thread
+    def _registry_backend(self) -> OpBackend:
+        from .dispatch import RegistryBackend
+
+        return RegistryBackend(lambda: self.started_at)
+
+    # -- the person mapping check (F8)
     def _person_check(self, workspace_id: str, person: str) -> bool:
-        # TODO(H4a1): this blocks the event loop (up to 10 s) when the transport classifies a connection; move
-        # the per-connection check to an executor or a cache refreshed by the workspace worker.
+        """Non-blocking: the workspace's authentication snapshot, rebuilt by its worker thread after every refresh.
+        The transport calls this on the event loop when it classifies a connection (``welcome.peer.person``); every
+        request then rechecks the mapping on the worker thread against the refreshed store (F8)."""
         service = self.services.get(workspace_id)
-        if service is None or service.store is None:
+        if service is None:
             return False
+        auth = service.auth
+        if auth is not None and auth.fresh(service.entry.root):
+            return auth.person_ok(person, self.clock())
         try:
-            return bool(service.submit(service.person_valid, person).result(timeout=10))
-        except Exception:  # noqa: BLE001 - an unanswerable check fails closed (no-person)
-            return False
+            asyncio.get_running_loop()
+        except RuntimeError:  # a control thread (host.list): ask the worker thread, against the refreshed store
+            try:
+                return bool(service.submit(service.person_valid, person).result(timeout=10))
+            except Exception:  # noqa: BLE001 - an unanswerable check fails closed (no-person)
+                return False
+        # On the event loop with a stale snapshot: never block. The answer only fills welcome.peer.person; every
+        # request rechecks the mapping on the worker thread.
+        return auth is not None and auth.person_ok(person, self.clock())
 
     # -- start and stop
     def _take_host_lock(self) -> None:
@@ -247,6 +263,17 @@ class Host:
         self.servers[entry.workspace_id] = (server, asyncio.create_task(server.serve()))
 
     async def unserve(self, workspace_id: str) -> None:
+        """Stop serving one workspace (``unregister``). Its socket first drains like ``host.restart``: new requests
+        answer ``workspace.unavailable``, parked waits end, requests in flight (a write on the worker thread above all)
+        finish and their answers are written; only then are the connections closed."""
+        service = self.services.get(workspace_id)
+        if service is not None:
+            service.closing = True
+        pair = self.servers.get(workspace_id)
+        if pair is not None:
+            gone = HostError("workspace.unavailable", "the workspace was unregistered")
+            await self._settle([pair[0]], lambda: gone)
+            await self._flush([pair[0]])
         pair = self.servers.pop(workspace_id, None)
         if pair is not None:
             pair[1].cancel()
@@ -267,20 +294,35 @@ class Host:
         self._on_loop(self.unserve(workspace_id))
 
     @contextlib.contextmanager
-    def bootstrap_guard(self, workspace_id: str) -> Iterator[None]:
+    def bootstrap_guard(self, workspace_id: str, root: str | None = None) -> Iterator[None]:
+        """One bootstrap per workspace id **and** per root at a time (N5): two bootstraps of one empty root under two
+        ids would otherwise both pass the emptiness check, and the loser's clean-up could remove the winner's files.
+        The root is keyed by its identity (:func:`~orch.host.custody.root_key`), never by its spelling."""
+        root = None if root is None else root_key(root)  # type: ignore[assignment]
         with self._guard:
             if workspace_id in self._bootstrapping:
                 raise HostError("host.busy", f"workspace {workspace_id} is being bootstrapped")
+            if root is not None and root in self._bootstrapping_roots:
+                raise HostError("host.busy", f"{root} is being bootstrapped")
             self._bootstrapping.add(workspace_id)
+            if root is not None:
+                self._bootstrapping_roots.add(root)
         try:
             yield
         finally:
             with self._guard:
                 self._bootstrapping.discard(workspace_id)
+                if root is not None:
+                    self._bootstrapping_roots.discard(root)
 
     def bootstrapping(self, workspace_id: str) -> bool:
         with self._guard:
             return workspace_id in self._bootstrapping
+
+    def bootstrapping_root(self, root: str) -> bool:
+        key = root_key(root)
+        with self._guard:
+            return key in self._bootstrapping_roots
 
     # -- drain
     def begin_drain(self) -> None:
@@ -292,22 +334,7 @@ class Host:
         """Answer parked waits with ``host.restarting``, let every other request in flight finish, then stop."""
         self.draining = True
         self.subscriptions_end("host.restarting")
-        current = asyncio.current_task()
-        while True:
-            pending = []
-            for server, _ in list(self.servers.values()):
-                for session in list(server.sessions):
-                    for request, task in list(session.tasks.items()):
-                        if task is current or task.done():
-                            continue
-                        if request.phase == "wait":
-                            session.respond(request, self.restarting().response(request.id))
-                            task.cancel()
-                        else:
-                            pending.append(task)
-            if not pending:
-                break
-            await asyncio.wait(pending)
+        await self._settle(None, self.restarting)
         await self._flush()
         assert self._stopped is not None
         self._stopped.set()
@@ -332,11 +359,32 @@ class Host:
             await asyncio.sleep(self.sweep_interval)
             await self.sweep_once()
 
-    async def _flush(self) -> None:
+    async def _settle(self, servers: list[Server] | None, wait_error: Callable[[], HostError]) -> None:
+        """Answer parked waits with ``wait_error()`` and let every other request in flight finish (``servers``:
+        those listeners, ``None``: all)."""
+        current = asyncio.current_task()
+        while True:
+            pending = []
+            for server in servers if servers is not None else [pair[0] for pair in list(self.servers.values())]:
+                for session in list(server.sessions):
+                    for request, task in list(session.tasks.items()):
+                        if task is current or task.done():
+                            continue
+                        if request.phase == "wait":
+                            session.respond(request, wait_error().response(request.id))
+                            task.cancel()
+                        else:
+                            pending.append(task)
+            if not pending:
+                return
+            await asyncio.wait(pending)
+
+    async def _flush(self, servers: list[Server] | None = None) -> None:
         """Wait until every queued answer has been written, bounded by the transport's write deadline."""
         deadline = time.monotonic() + WRITE_TIMEOUT_SECONDS
         while time.monotonic() < deadline:
-            sessions = [s for server, _ in self.servers.values() for s in server.sessions if not s.closed]
+            chosen = servers if servers is not None else [pair[0] for pair in self.servers.values()]
+            sessions = [s for server in chosen for s in server.sessions if not s.closed]
             if all(not s.answering and s.queue.empty() and not s.writing for s in sessions):
                 return
             await asyncio.sleep(0.01)

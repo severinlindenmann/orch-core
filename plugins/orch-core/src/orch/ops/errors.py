@@ -272,6 +272,33 @@ _SPECS = [
         ["orch", "host", "list"],
         "A direct-mode call on a workspace the host has adopted (D-P2-18): there is no silent fallback.",
     ),
+    _e(
+        "host.busy",
+        4,
+        False,
+        "the host is already creating or serving this workspace",
+        "orch host list",
+        ["orch", "host", "list"],
+        "init --host: the root or the workspace id is already registered, has a genesis or is being bootstrapped (N5).",
+    ),
+    _e(
+        "custody.unsafe_mode",
+        3,
+        False,
+        "the directory or one of its parents is not safe for the host",
+        "use a directory owned by you whose parents only you or root can change",
+        ["orch", "describe", "{cmd}"],
+        "init --host: the root or an ancestor fails the host's ownership and mode checks (D-P2-17).",
+    ),
+    _e(
+        "host.unavailable",
+        9,
+        True,
+        "the orch host cannot be reached",
+        "start the host service, then retry",
+        ["orch", "host", "list"],
+        "init --host: no host answers on the control socket, or the connection dropped (§0.6, raised by the client).",
+    ),
     # 5 validation
     _e(
         "invalid.input",

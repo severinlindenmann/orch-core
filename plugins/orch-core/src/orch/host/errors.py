@@ -41,6 +41,22 @@ HOST_CODES: dict[str, tuple[int, bool]] = {
     "grant.expired": (3, False),
     "rate.limited": (9, True),
     "quota.host": (9, True),
+    # the rest of the §0.6 table, so every code the host sends has the table's exit and retryability
+    "frame.invalid": (6, False),
+    "frame.too_large": (6, False),
+    "conn.overloaded": (9, True),
+    "handshake.invalid": (6, False),
+    "peer.denied": (3, False),
+    "host.version_mismatch": (1, False),
+    "timeout": (9, True),
+    "cancelled": (9, True),
+    "result.too_large": (1, False),
+    "page.expired": (9, True),
+    "sub.reset": (9, True),
+    "human.request_expired": (3, False),
+    "human.request_mismatch": (5, False),
+    "human.request_state": (3, False),
+    "repo.remote_mismatch": (3, False),
 }
 
 
@@ -57,15 +73,29 @@ def disposition(code: str) -> tuple[int, bool]:
 class HostError(Exception):
     """One request's refusal: ``response(request_id)`` is its ``res`` frame, ``error()`` its stored ``Error``."""
 
-    def __init__(self, code: str, message: str | None = None, *, retry_after_ms: int | None = None) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str | None = None,
+        *,
+        retry_after_ms: int | None = None,
+        hint: str | None = None,
+        fix: list[str] | None = None,
+    ) -> None:
         self.code = code
         self.message = (message or code)[:400]
         self.exit, self.retryable = disposition(code)
         self.retry_after_ms = retry_after_ms
+        self.hint = hint[:400] if hint else None
+        self.fix = list(fix[:32]) if fix else None
         super().__init__(f"{code}: {self.message}")
 
     def error(self) -> dict[str, Any]:
         out: dict[str, Any] = {"code": self.code, "message": self.message, "retryable": self.retryable}
+        if self.hint:
+            out["hint"] = self.hint
+        if self.fix:
+            out["fix"] = {"argv": list(self.fix)}
         if self.retry_after_ms is not None:
             out["retry_after_ms"] = self.retry_after_ms
         return out
@@ -75,6 +105,13 @@ class HostError(Exception):
 
     @classmethod
     def stored(cls, error: dict[str, Any]) -> HostError:
-        e = cls(error["code"], error.get("message"), retry_after_ms=error.get("retry_after_ms"))
+        fix = (error.get("fix") or {}).get("argv")
+        e = cls(
+            error["code"],
+            error.get("message"),
+            retry_after_ms=error.get("retry_after_ms"),
+            hint=error.get("hint"),
+            fix=fix,
+        )
         e.retryable = bool(error.get("retryable", e.retryable))
         return e

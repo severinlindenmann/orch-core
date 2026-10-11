@@ -128,7 +128,8 @@ def test_lock_busy_after_the_append_keeps_the_intent_and_a_retry_finishes_it(lab
         idem = new_idem()
         with OwnershipLock(lab.state, wid).shared(5) as held:  # a direct CLI in the new root, say
             assert held
-            assert err(c.call("host.bootstrap", args, idem=idem)) == "lock.busy"
+            # the genesis landed: never a refusal (H3b3 F1), the client asks again with the same idem
+            assert err(c.call("host.bootstrap", args, idem=idem)) == "outcome.unknown"
         assert (root / "events" / "workspace.jsonl").is_file()  # the genesis landed and stays
         assert ok(c.call("host.outcome", {"idem": idem}))["data"] == {"state": "pending"}
         result = ok(c.call("host.bootstrap", args, idem=idem))  # the same key finishes it

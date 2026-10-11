@@ -21,7 +21,7 @@ from orch.cli.session import STOP_AFTER, MemoryRecords, fingerprint
 from orch.ops import Context, NotImplementedYet, Operation, Result
 from orch.ops.errors import ERRORS, GLOBAL_ERRORS, OrchError
 
-__all__ = ["Hooks", "main", "run"]
+__all__ = ["Hooks", "main", "run", "stop_rule"]
 
 VERSION_LINE = "orch v2 (in development)"
 _SESSION = re.compile(schema.load("common")["$defs"]["sessionId"]["pattern"])
@@ -186,6 +186,32 @@ def run(parsed: parser.Parsed, ctx: Context, records: MemoryRecords, hooks: Hook
     return res
 
 
+def stop_rule(
+    op: Operation,
+    args: dict[str, Any],
+    ctx: Context | None,
+    session: str | None,
+    records: MemoryRecords,
+    hooks: Hooks,
+    e: OrchError,
+    now: Callable[[], float],
+) -> OrchError:
+    """Count a refusal for the stop rule (F1 10.4 item 6); the third identical one within 15 minutes is ``stop``.
+    Shared by the CLI and the host (H4a1), which passes records keyed by its principal."""
+    if not session or not _is_refusal(e):
+        return e
+    from orch.ops.runtime import keyed
+
+    kargs = _with_ticket(op, ctx, keyed(ctx, args), hooks) if ctx is not None else args
+    norm = _normalised(op, kargs, hooks)
+    try:
+        if records.refused(session, op.name, norm, e.code, now()) >= STOP_AFTER:
+            return OrchError("stop")
+    except OrchError as broken:  # unreadable records fail closed: say so instead of the refusal
+        return broken
+    return e
+
+
 def _plain(res: Result) -> dict[str, Any]:
     return {
         "data": res.data,
@@ -302,16 +328,8 @@ def main(
         return res.exit
     except OrchError as e:
         session = env.get("ORCH_SESSION") or None
-        if op is not None and parsed is not None and session and _is_refusal(e):
-            from orch.ops.runtime import keyed
-
-            kargs = _with_ticket(op, ctx, keyed(ctx, parsed.args), hooks) if ctx is not None else parsed.args
-            norm = _normalised(op, kargs, hooks)
-            try:
-                if records.refused(session, op.name, norm, e.code, now()) >= STOP_AFTER:
-                    e = OrchError("stop")
-            except OrchError as broken:  # unreadable records fail closed: say so instead of the refusal
-                e = broken
+        if op is not None and parsed is not None:
+            e = stop_rule(op, parsed.args, ctx, session, records, hooks, e, now)
         return fail(e, op)
     except render.TemplateError as e:
         return fail(OrchError("internal", _cap(f"output template: {e}", secrets, 200)), op)

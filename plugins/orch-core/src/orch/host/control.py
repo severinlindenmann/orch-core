@@ -4,8 +4,8 @@
 * ``host.wsk_create``: a new workspace id and key, ``O_CREAT|O_EXCL`` in a fresh 0700 directory; never replaces a key.
 * ``host.register``: adopt a workspace (D-P2-18): ownership lock, registration, serving, unlock.
 * ``host.unregister``: stop serving and remove the registration, which restores direct mode.
-* ``host.bootstrap``: append a signed genesis with the new key as ``seq`` 1, then register (the ``init`` composite;
-  H3b3 owns its client side and the full genesis acceptance list).
+* ``host.bootstrap``: append a signed genesis with the new key as ``seq`` 1, then register (the ``init`` composite,
+  whose client side is :func:`orch.ops.workspace_init.create_workspace_hosted`).
 * ``host.outcome``: the stored outcome of a control write.
 * ``host.restart``: drain (D-P2-4).
 
@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any
 from jsonschema import Draft202012Validator
 
 from . import frames
-from .custody import check_tree, check_workspace_files, ensure_private_dir, unsafe, write_private
+from .custody import check_tree, check_workspace_files, ensure_private_dir, same_or_inside, unsafe, write_private
 from .errors import HostError
 from .intents import Intent, IntentStore
 from .outcomes import CONTROL_WRITES, request_idem
@@ -102,6 +102,10 @@ def _replay(record: dict[str, Any]) -> dict[str, Any]:
     if record["step"] == "committed":
         return {**record["result"], "duplicate": True}
     raise HostError.stored(record["error"])
+
+
+def _unknown() -> HostError:
+    return HostError("outcome.unknown", "host.bootstrap is not finished yet; retry with the same idem")
 
 
 def _rolled_back(op: str) -> HostError:
@@ -199,8 +203,15 @@ class ControlOps:
                     created = json.loads(marker.read_bytes())["created_at"]
                 except (OSError, ValueError, KeyError, TypeError):
                     created = marker.stat().st_mtime
-                if now - created > KEY_TTL_SECONDS and not self.host.bootstrapping(name):
-                    shutil.rmtree(directory, ignore_errors=True)
+                if now - created <= KEY_TTL_SECONDS:
+                    continue
+                try:  # held across the check and the delete: a bootstrap of this id cannot start in between
+                    with self.host.bootstrap_guard(name):
+                        if (directory / "genesis").exists() or self.host.registry.get(name) is not None:
+                            continue
+                        shutil.rmtree(directory, ignore_errors=True)
+                except HostError:  # host.busy: this id is being bootstrapped right now
+                    continue
 
     # -- host.register
     def _inspect(self, root: str) -> tuple[str, str, Any]:
@@ -258,6 +269,8 @@ class ControlOps:
             self._refuse_host_paths(root)
             if self.host.registry.by_root(root) is not None:
                 raise HostError("host.busy", f"{root} is already registered")
+            if self.host.bootstrapping_root(root):
+                raise HostError("host.busy", f"{root} is being bootstrapped")
             workspace_id, prefix, ws = self._inspect(root)
             if self.host.registry.get(workspace_id) is not None:
                 raise HostError("host.busy", f"workspace {workspace_id} is already registered")
@@ -300,7 +313,7 @@ class ControlOps:
         """A workspace root never lies in the host's own state or run directory (custody list, sockets)."""
         for base in (self.state_dir, self.host.run_dir):
             real = os.path.realpath(base)
-            if root == real or root.startswith(real.rstrip("/") + "/"):
+            if root == real or root.startswith(real.rstrip("/") + "/") or same_or_inside(root, base):
                 raise HostError("invalid.input", f"{root} lies inside the host's {base}")
 
     # -- host.unregister
@@ -316,9 +329,7 @@ class ControlOps:
         def run() -> dict[str, Any]:
             if self.host.registry.get(workspace_id) is None:
                 raise HostError("not_found", f"workspace {workspace_id} is not registered")
-            # TODO(H4a1): drain this workspace's requests first, as host.restart does; today a write already on
-            # the worker thread finishes but its answer is lost (outcome.get recovers it once H2b lands).
-            self.host.unserve_from_thread(workspace_id)
+            self.host.unserve_from_thread(workspace_id)  # drains first: a write in flight finishes and is answered
             self.host.registry.remove(workspace_id)
             return self.intents.complete(intent, ok_result({}))["result"]
 
@@ -329,7 +340,7 @@ class ControlOps:
         root = os.path.realpath(args["root"])
         normalised = {**args, "root": root}
         workspace_id = args["workspace_id"]
-        with self.host.bootstrap_guard(workspace_id):
+        with self.host.bootstrap_guard(workspace_id, root):
             if self.intents.peek(self.namespace, self.principal, idem) is None:
                 self._validate_bootstrap(normalised)  # read-only: a refusal here leaves no record and changes nothing
             begun = self._begin(idem, "host.bootstrap", normalised)
@@ -419,19 +430,29 @@ class ControlOps:
             finally:
                 store.close()
         except BaseException as exc:
-            if not self._genesis_landed(root, event["id"]):
-                self._clean_root(root)  # the root was empty when validated: only store-made names go
+            landed = self._genesis_landed(root, event["id"])
+            if landed is None:  # cannot tell: keep every file; a same-key retry or the next start decides
+                self.intents.release(intent)
+                if not isinstance(exc, Exception):
+                    raise
+                raise _unknown() from None
+            if not landed:
+                if not self._foreign_root(root, workspace_id, event["id"]):
+                    self._clean_root(root)  # the root was empty when validated: only store-made names go
                 error = HostError(exc.code, exc.detail or exc.code) if isinstance(exc, StoreError) else None
                 self.intents.fail(intent, error or HostError("internal", "host.bootstrap failed"))
                 if error is not None:
                     raise error from None
                 raise
-        # The genesis is in the log: from here the bootstrap is only ever finished, never undone.
+        # The genesis is in the log: from here the bootstrap is only ever finished, never undone, and a failure to
+        # finish it is never a refusal: the client hears outcome.unknown and asks again with the same idem.
         try:
             return self._finish_bootstrap(intent, root, event, peers)
-        except BaseException:
+        except BaseException as exc:
             self.intents.release(intent)  # stays started: a same-key retry or the next start finishes it
-            raise
+            if not isinstance(exc, Exception):
+                raise
+            raise _unknown() from None
 
     def _finish_bootstrap(
         self, intent: Intent, root: str, event: dict[str, Any], peers: dict[str, dict[str, Any]]
@@ -448,15 +469,22 @@ class ControlOps:
         return self.intents.complete(intent, result)["result"]
 
     @staticmethod
-    def _genesis_landed(root: str, planned_id: str) -> bool:
+    def _genesis_landed(root: str, planned_id: str) -> bool | None:
+        """``True`` when the first line of the workspace log is the planned genesis, ``False`` when it is not (no log,
+        an empty or torn line, another event), ``None`` when the log cannot be read (EIO, EMFILE...): unknown."""
         from orch import canon
 
         path = Path(root) / "events" / "workspace.jsonl"
         try:
             with open(path, "rb") as handle:
                 line = handle.readline()
+        except FileNotFoundError:
+            return False
+        except OSError:
+            return None
+        try:
             return canon.parse_event_line(line).get("id") == planned_id
-        except Exception:  # noqa: BLE001 - a torn or unreadable first line: the genesis did not land
+        except Exception:  # noqa: BLE001 - a torn first line: the genesis did not land
             return False
 
     @staticmethod
@@ -486,8 +514,9 @@ class ControlOps:
         return isinstance(first, dict) and first.get("id") != planned_id
 
     @staticmethod
-    def _clean_root(root: str, *, remove_root: bool = False) -> None:
-        """Remove what the store created in a new root; never anything else."""
+    def _clean_root(root: str) -> None:
+        """Remove what the store created in a new root; never anything else, and never the root itself (bootstrap
+        did not create it: it is the person's own empty directory)."""
         for name in _ROOT_FILES:
             path = Path(root) / name
             if path.is_dir() and not path.is_symlink():
@@ -495,9 +524,6 @@ class ControlOps:
             else:
                 with contextlib.suppress(OSError):
                     path.unlink()
-        if remove_root:
-            with contextlib.suppress(OSError):
-                os.rmdir(root)
 
     # -- host.outcome
     def outcome(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -549,7 +575,11 @@ class ControlOps:
         if not intent.record.get("validated"):
             # Died before the checks passed: this bootstrap created nothing, so nothing is touched.
             return self.intents.fail(intent, _rolled_back("host.bootstrap"))
-        if self._genesis_landed(root, event["id"]):
+        landed = self._genesis_landed(root, event["id"])
+        if landed is None:  # the log cannot be read now: decide at the next start or same-key retry
+            self.intents.release(intent)
+            return intent.record
+        if landed:
             try:  # finish the append's projection and pin the genesis the host itself appended
                 store = Store.open(
                     root,
@@ -569,7 +599,7 @@ class ControlOps:
         registered = self.host.registry.get(workspace_id) is not None or self.host.registry.by_root(root) is not None
         if not registered:
             if not self._foreign_root(root, workspace_id, event["id"]):
-                self._clean_root(root, remove_root=True)
+                self._clean_root(root)  # the person's own directory stays, empty again
             pins = HostPins(self.state_dir, workspace_id)
             try:
                 pinned = (directory / "genesis").exists() or pins.genesis() is not None

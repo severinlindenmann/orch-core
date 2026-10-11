@@ -298,6 +298,7 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 | `frame.invalid` | 6 | no | close | §0.2 framing rules; an unreadable `req` id; reuse of an open id | — |
 | `frame.too_large` | 6 | no | close | `n` > 2 MiB | — |
 | `conn.overloaded` | 9 | yes | close | slow reader write deadline (10 s), write queue over 64 frames or 4 MiB, or connection byte budget exhausted | — |
+| `internal` | 1 | no | stays for a request whose handler failed or ended without an answer; close (as `fatal`, no request id) when the session itself failed outside any request | an unexpected host error | — |
 | `handshake.invalid` | 6 | no | close | missing, late or second `hello` | — |
 | `peer.denied` | 3 | no | close | unmapped UID; second worker connection | — |
 | `host.version_mismatch` | 1 | no | close | no shared `proto` | — |
@@ -309,7 +310,7 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 | `cancelled` | 9 | yes | stays | §0.2 cancellation | — |
 | `outcome.unknown` | 9 | yes | stays | a write's fate cannot be reported now; recover with `outcome.get` | — |
 | `rate.limited` | 9 | yes | stays | token bucket empty | yes |
-| `quota.host` | 9 | yes | stays (close at connect for the connection limit) | connections, requests in flight, subscriptions, pending human requests, blobs, outcome records, git reader children over their limit (§0.11) | when a slot frees in time |
+| `quota.host` | 9 | yes | stays (close, as `fatal` with no request id, at connect for the connection limit and for connection-attempt throttling: 20 per second, burst 40, per UID) | connections, requests in flight, subscriptions, pending human requests, blobs, outcome records, git reader children over their limit (§0.11) | when a slot frees in time |
 | `result.too_large` | 1 | no | stays | the result would exceed the frame; the hint names the paging argument | — |
 | `host.restarting` | 9 | yes | drain | the host is draining (D-P2-4) | yes |
 | `workspace.unavailable` | 1 | no | stays | the workspace cannot be served; the message names the cause | — |

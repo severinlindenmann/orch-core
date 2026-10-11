@@ -33,6 +33,7 @@ claim.not_live 4 retry:false
 lease.held 4 retry:false
 lease.required 4 retry:false
 lock.busy 4 retry:true
+host.required 3 retry:false
 invalid.input 5 retry:false
 ac.evidence_missing 5 retry:false
 verify.failed 5 retry:false

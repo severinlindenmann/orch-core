@@ -23,8 +23,8 @@ from typing import Any
 
 from .custody import ensure_private_dir, read_json, unsafe, write_private
 from .errors import HostError
+from .peer import Peer
 from .pins import AgentPins
-from .transport import Peer
 
 __all__ = ["Entry", "Registry", "host_dir", "registry_path", "validate_peers"]
 
@@ -160,7 +160,10 @@ def validate_peers(
 
 
 class Registry:
-    """The persisted registry, safe to share between the event loop and the control threads."""
+    """The persisted registry, safe to share between the event loop and the control threads.
+
+    A person-class UID that has since been pinned as an agent or worker (``pins``) reads as no-person.
+    """
 
     def __init__(
         self,
@@ -168,11 +171,13 @@ class Registry:
         host_uid: int,
         *,
         person_check: Callable[[str, str], bool] | None = None,
+        pins: AgentPins | None = None,
     ) -> None:
         self.state_dir = Path(state_dir)
         self.host_uid = host_uid
         self.path = registry_path(self.state_dir)
         self.person_check = person_check or (lambda workspace_id, person: False)
+        self.pins = pins or AgentPins()
         self._lock = threading.RLock()
         self._entries: dict[str, Entry] = {}
 
@@ -242,6 +247,8 @@ class Registry:
         entry = self.get(workspace_id)
         spec = entry.peers.get(str(uid)) if entry else None
         if not spec or spec["class"] != "person":
+            return None
+        if self.pins.pinned(uid):  # pinned after registration (H3c): never a person again, checked every time
             return None
         return spec["person"] if self.person_check(workspace_id, spec["person"]) else None
 

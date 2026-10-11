@@ -47,7 +47,13 @@ class OwnershipLock:
         self.holders_dir = self.dir / "owner.holders"
 
     def _open(self) -> int:
-        self.dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.dir.parent.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        for path in (self.dir.parent, self.dir):  # hosts/ and hosts/<ws>/: 0700 whatever the umask
+            try:
+                os.mkdir(path, 0o700)
+            except FileExistsError:
+                continue
+            os.chmod(path, 0o700)
         return os.open(self.path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
 
     def holders(self) -> list[int]:
@@ -119,7 +125,7 @@ def is_registered(state_dir: Path, workspace_id: str, *, uid: int | None = None,
     """Whether ``workspace_id`` is host-managed for this UID: in the person's own registry, or in the trusted pin of an
     agent UID. An unreadable registry fails closed (it counts as registered)."""
     uid = os.getuid() if uid is None else uid
-    if workspace_id in (pins or AgentPins()).workspaces(uid):
+    if (pins or AgentPins()).names_workspace(uid, workspace_id):
         return True
     try:
         doc = read_json(registry_path(state_dir), uid)

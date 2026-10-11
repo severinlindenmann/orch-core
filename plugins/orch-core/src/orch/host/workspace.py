@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from . import frames
 from .columns import Column, GrantState, OpKind, refusal, resolve
-from .custody import check_tree
+from .custody import check_tree, check_workspace_files
 from .errors import HostError
 from .registry import Entry
 from .transport import Peer, Session
@@ -110,6 +110,7 @@ class WorkspaceService:
             if os.path.realpath(self.entry.root) != self.entry.root:
                 raise HostError("custody.unsafe_mode", f"{self.entry.root} now resolves elsewhere")
             check_tree(Path(self.entry.root), self.host_uid)
+            check_workspace_files(self.state_dir, wid, Path(self.entry.root), self.host_uid)
             pin = HostPins(self.state_dir, wid).genesis()
             if pin is None:
                 raise HostError("trust.genesis_mismatch", "no genesis pin for this workspace")
@@ -250,6 +251,7 @@ class WorkspaceGate:
         if self.host.draining:
             session.respond(request, self.host.restarting().response(request.id))
             return None
+        # TODO(H4a1): the column check (§0.6 step 6) belongs here, before admit (step 7); it runs in _work today.
         if not session.admit(request):
             return None
         return self._work(session, frame, request, *kind)
@@ -257,7 +259,7 @@ class WorkspaceGate:
     def _column(self, service: WorkspaceService, peer: Peer, frame: dict[str, Any]) -> tuple[Column, str | None]:
         grant_state, grant_person = service.verify_grant((frame.get("auth") or {}).get("grant"))
         mapped = self.host.registry.mapped_person(peer.uid, self.workspace_id) if peer.kind == "person" else None
-        valid = mapped is not None and service.person_valid(mapped)
+        valid = mapped is not None and not self.host.pins.pinned(peer.uid) and service.person_valid(mapped)
         column = resolve(peer.kind, grant_state, valid)
         viewer = grant_person if column.name == "G" else (mapped if column.name == "P" else None)
         return column, viewer

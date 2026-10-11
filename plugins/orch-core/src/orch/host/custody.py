@@ -21,7 +21,7 @@ from orch.store.fsio import write_atomic
 from ._unix import UnsafePath, check_acl
 from .errors import HostError
 
-__all__ = ["check_tree", "ensure_private_dir", "read_json", "unsafe", "write_private"]
+__all__ = ["check_tree", "check_workspace_files", "ensure_private_dir", "read_json", "unsafe", "write_private"]
 
 _FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 
@@ -133,3 +133,45 @@ def read_json(path: Path, host_uid: int, *, limit: int = 16 * 1024 * 1024) -> An
         return json.loads(raw)
     except ValueError:
         raise unsafe(f"{path}: unreadable") from None
+
+
+def _lstat_owned(path: Path, host_uid: int) -> os.stat_result | None:
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        return None
+    if stat.S_ISLNK(info.st_mode):
+        raise unsafe(f"{path}: a symbolic link")
+    if info.st_uid != host_uid:
+        raise unsafe(f"{path}: owner {info.st_uid}, expected {host_uid}")
+    return info
+
+
+def check_workspace_files(state_dir: Path, workspace_id: str, root: Path, host_uid: int) -> None:
+    """D-P2-17 for one workspace's custody list, beyond the paths :func:`check_tree` walks.
+
+    * ``hosts/<ws>/keys/`` is 0700 and every key file a regular 0600 file of the host UID (a key others could read
+      is already compromised, so it is refused, never repaired);
+    * every other file in ``hosts/<ws>/`` (the genesis pin, noted revocations, checkpoints) and ``outcomes/``,
+      ``requests/``, ``blobs/`` there: owned by the host UID, writable by nobody else;
+    * the workspace's ``events/``, ``tickets/`` and ``.state/``: owned by the host UID, group-readable at most.
+    """
+    hosts = Path(state_dir) / "hosts" / workspace_id
+    keys = hosts / "keys"
+    info = _lstat_owned(keys, host_uid)
+    if info is not None:
+        if not stat.S_ISDIR(info.st_mode) or stat.S_IMODE(info.st_mode) & 0o077:
+            raise unsafe(f"{keys}: expected a 0700 directory")
+        for name in os.listdir(keys):
+            item = _lstat_owned(keys / name, host_uid)
+            if item is not None and (not stat.S_ISREG(item.st_mode) or stat.S_IMODE(item.st_mode) & 0o077):
+                raise unsafe(f"{keys / name}: a key must be a 0600 file")
+    if _lstat_owned(hosts, host_uid) is not None:
+        for name in os.listdir(hosts):
+            item = _lstat_owned(hosts / name, host_uid)
+            if item is not None and stat.S_IMODE(item.st_mode) & 0o022:
+                raise unsafe(f"{hosts / name}: writable by another principal")
+    for name in ("events", "tickets", ".state"):
+        item = _lstat_owned(Path(root) / name, host_uid)
+        if item is not None and (not stat.S_ISDIR(item.st_mode) or stat.S_IMODE(item.st_mode) & 0o022):
+            raise unsafe(f"{Path(root) / name}: writable by another principal")

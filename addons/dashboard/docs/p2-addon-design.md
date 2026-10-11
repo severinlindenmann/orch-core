@@ -1,428 +1,620 @@
 # P2 dashboard addon: design
 
-Status: **draft for review**, 11 Oct 2026. Branch `docs/dashboard-p2-design`. This document turns the Mission Control
-mockup (this folder) into the real dashboard addon of phase P2 (orch-v2.md §13), covering issues #304, #305 and #306.
-It builds on the host process of stream A (#325, #271; orch-52), which is still being designed. Where the spec is
-silent, this document says so and proposes; **proposals for stream A are marked NEW**. Open questions are in §12.
+Status: **draft for review, revision 2**, 11 Oct 2026. Branch `docs/dashboard-p2-design`. This document turns the
+Mission Control mockup (this folder) into the real dashboard addon of phase P2 (orch-v2.md §13), covering issues #304,
+#305 and #306. Revision 2 answers the Codex challenge of revision 1 and aligns with stream A's **socket API contract
+v1** (provisional; `p2-host-design-v1.md` §0, orch-52, including the manager's H9 ruling D-P2-22). §15 maps every Codex finding to its resolution. What this
+addon needs from stream A is collected in §13.
 
 Sources: orch-v2.md (§4, §5.5, §13, §16, §23, D33–D62), orch-v2-core.md (§1–§4, §7), orch-v2-portable-custody.md
 (D63–D66), orch-v2-ticket-format.md (§5.2–§5.9, §7, §8, §9, §10.3–§10.4, §10.8), orch-v2-carryover.md (D01–D22),
-`HANDOVER.md` (mock backend contract), `plugins/orch-core/src/orch/ops` (the 52 P1 operations).
+stream A's host design v1 (contract v1 §0, D-P2-1…22, H0–H10), `HANDOVER.md` (mock backend contract),
+`plugins/orch-core/src/orch/ops` (the P1 operations).
 
 ## 1. Goal and scope
 
 **Goal.** Daily work runs in the dashboard against a real workspace, so the cutover can happen (D44). The React app
-from the mockup is kept as is. Only the transport changes, from the in-process mock to HTTP against a local dashboard
-server, and that server talks to the host socket. As HANDOVER says, components only use `src/api/client.ts`.
+from the mockup stays. The in-process mock is replaced by HTTP to a local dashboard server, which is a person-class
+client of the host socket. "Only the transport changes" was wrong: P1 results do not have the mockup's shapes, so the
+server has an explicit **adapter layer** (§7, Appendix B), and the signing surface changes from a dialog that signs to
+a **hand-off** to a trusted signer (§4).
 
 | Issue | Carry-over | In P2 scope |
 |---|---|---|
-| #304 | D01 shell, D03 live updates | Shell, sidebar, workspace context, browser login with v2 identity (replaces D02 token auth), live updates |
-| #305 | D04–D08 | Today (needs you), board and backlog, ticket page (sections, tasks, evidence, log, changes), ticket actions (approve, request changes, verdict, answer, comment, label, move, close/reopen), new ticket (ticket mode) |
-| #306 | D20, D22 | Reduced settings (general, members, gate policies, grant length, grants list/revoke), workspace switcher by UUID |
+| #304 | D01 shell, D03 live updates | Shell (dark only, §14 Q1), sidebar, workspace context, browser login bound to the v2 identity the host derives (replaces D02 token auth), live updates |
+| #305 | D04–D08 | Today (needs you), board and backlog, ticket page (sections, tasks, evidence, log, changes), ticket actions (approve, request changes, verdict, answer, comment, label, move, close/reopen), new ticket (ticket mode, one signed event) |
+| #306 | D20, D22 | Reduced settings (members, gate policy, grant length, grants list/revoke), workspace switcher keyed by UUID |
 
-**Not in P2 for this addon** (they stay behind the mock transport, or are hidden on the real one): the agents page
-(D09, D11), terminals (D16), widgets (D17), guide (D19), and every addon page and action (each has its own P2 issue
-and reuses this server later). Also out: artifacts page (proposal `artifact.search`), relay and devices (P3), skills,
-connections and doctor (D55–D57, C25d), mandates (D62, preview only), Factory modes of New ticket (Phase 2), shared
-saved views, undo-create, workspace rename/archive, the review tour and Demo data. Phone signing (D49) is P4.
-
-**Spec conflict to settle:** #304's acceptance says "light and dark"; the owner's mockup decision (HANDOVER, 8 Oct) is
-**dark only**. This design follows dark only, and #304's checkbox should be amended (§12 Q14).
+**Not in P2 for this addon** (hidden on the real transport, still available on the mock): agents page (D09, D11),
+terminals (D16), widgets (D17), guide (D19), every addon page and action (own P2 issues; they reuse this server
+later), artifacts page, relay and devices (P3), skills, connections and doctor (D55–D57, C25d), mandates (D62),
+Factory modes of New ticket, shared saved views, undo-create, workspace rename/archive, the review tour, Demo data,
+**multi-event batches** (§4.5), **restricted visibility at creation** (§4.5), grant issue (CLI only), phone signing
+(D49, P4), WebAuthn (§4.6), Windows (§14 Q3). Gate policy and grant length wait for F1 events behind the
+reserved `policy.set` and `settings.set` (§13 R5).
 
 ## 2. Architecture
 
 ```
 Browser (React app, static build)
-   │  HTTP + SSE, http://localhost:<port>, session cookie
+   │  HTTP + fetch-streamed SSE, http://127.0.0.1:<random port>, Authorization: Bearer <session>
    ▼
-Dashboard server  (orch_dashboard, FastAPI + uvicorn, one per OS user, human UID, loopback only)
-   │  host socket frames (#271), one connection pool per workspace, human-UID peer class
+Dashboard server  (orch_dashboard, FastAPI + uvicorn, person's UID, one per OS user, loopback only, holds no key)
+   │  contract v1 frames, one connection per workspace socket <run>/<workspace_id>/host.sock, peer class `person`
    ▼
-Host process per workspace  (orch serve / orch host: registry, WSK, custody, Store.append)
+Host process (one per host UID; registry, WSK, Store.append; never prompts, holds no device key)
+
+Trusted signers (outside the browser):  `orch sign CODE` in the person's terminal  |  Touch ID helper (H9)
+   │  fetch the prepared request themselves, recompute hashes from `material`, render their own review, sign, human.submit
 ```
 
 **Process and user model.**
-- The dashboard server runs as the **person's own UID**. It is never the agent UID (#287). At start-up it reads the
-  configured agent UID of each workspace from the host (or the state dir) and refuses to start if they are equal. The
-  host refuses the human-peer op list from the agent UID anyway (§5.5 peer check), so this check is defence in depth.
-- It holds **no key**: no WSK, no `dk_sig`, no grant secret. Every write is an operation on the host socket, and the
-  host builds and signs the event (D3, §5.5: no raw `sign`).
-- **One server per OS user, serving every workspace.** The switcher (D22) is cross-workspace, but sockets are per
-  workspace (`<state>/hosts/<workspace_id>.sock`). So the server is not a child of any single host. It finds
-  workspaces from the state dir's host registry and opens each socket.
-- **Started by `orch dashboard`**, which the person runs in their own terminal. It starts the server if no server is
-  running (pid and lock files in `<state>/dashboard/`, mode 0700), asks it for a launch URL and opens the browser. A
-  login item can come later. The host does not spawn it: on a VPS the host runs as `orch-host-<ws>` (§5.5), and the
-  dashboard is desktop only (§13 P2). `orch dashboard --stop` stops it.
-- It is still an **addon** (format §8, C9): `addons/dashboard/orch-addon.json`, capability `serve_http`. The host
-  answers dashboard-class requests for a workspace only while the `dashboard` addon is granted and enabled there
-  (`addon.granted`, D40). This is how `serve_http` is enforced (format §8.1: enforced by the P2 host).
+- The dashboard server runs as the **person's UID**. After `hello`, it checks `welcome.peer.class == "person"` and
+  a non-null `welcome.peer.person` on every workspace socket and refuses to serve that workspace otherwise. It checks
+  the server side as v1 requires (D-P2-6): the server's UID and `welcome.workspace.id` must match the trusted pin in
+  its own host registry; `config.json` only names the id. It also checks `welcome.caps` (`ops/1`, `human/1`, `sub/1`,
+  `query/1`, `diff/1`) and the per-op versions it uses; a missing one hides that feature with "host too old".
+- It **holds no key** and **never handles a factor**: no WSK, no device key, no passphrase, no grant secret (D3, D65).
+  It can read and create unsigned sign requests (`human.prepare`); it cannot sign.
+- **One server per OS user, serving every workspace** registered with the host. Workspaces are found with
+  `host.list` on the host's control socket (`<run>/control/host.sock`, host UID only; the dashboard is the host UID on
+  a Mac and on a Linux desktop), then each workspace socket is opened by id and `workspace.show` gives its name and
+  prefix. The dashboard never proxies requests for another principal (D-P2-6).
+- **Started by `orch dashboard`** in the person's terminal (§3.1). The host does not spawn it (D-P2-7). On a VPS the
+  host runs as `orch-host-<ws>`, and the dashboard is desktop only (§13 P2).
+- It is packaged as an **addon** (`addons/dashboard/orch-addon.json`, capability `serve_http`). The host cannot tell
+  the dashboard from the person's CLI (both are `person` class), so `serve_http` is **not a host-enforced boundary**.
+  The server itself refuses to serve a workspace where the `dashboard` addon is disabled. That is a policy switch,
+  not security, and the person's signing authority does not depend on it. Format §8.1's "enforced by the P2 host"
+  needs a one-line amendment (§14 Q6).
 
-**Binding.** The server listens on loopback only: 127.0.0.1 and ::1, never 0.0.0.0. The canonical origin is
-`http://localhost:<port>`. It uses `localhost` because WebAuthn needs a host name and refuses IP addresses (§4 option
-c), and the mockup's dev setup already uses localhost. The port is a **stable preferred port** from the dashboard
-config (default proposed: 4747), so copied links (permanent URLs, G2) keep working. If that port is taken, the server
-uses a random free port and `orch dashboard` prints the URL. Copied links are only valid on the same machine.
+**Who trusts what.** This is the claim the design makes, stated plainly:
+- **The dashboard is not a trusted display.** A compromised page or server can show anything. It can show the
+  genuine code next to fake prose. So nothing shown in the browser is what the person relies on when signing.
+- **What you see is what you sign lives in the signer.** The terminal (`orch sign CODE`) and the Touch ID helper
+  (H9) each fetch the prepared request themselves, recompute every bound hash from its `material`, render their own
+  review from it and build the signing bytes themselves (C7, D-P2-21). A compromised dashboard can at most ask for a
+  signature on something the signer then shows truthfully.
+- **A compromised dashboard can read** everything its person can read in each workspace, and can create, cancel and
+  observe sign requests. It cannot sign, cannot read keys through the host, and cannot make the host open a path
+  (v1 §0.8).
+- **Same-UID attackers are out of scope** for the browser layer. A process running as the person can read memory and
+  files of the dashboard and, on a Mac without a dedicated host user, the WSK file (D-P2-7 "honest limit"). Before
+  #287, agents under the person's UID are such processes. Settings → General shows "agents share your user account"
+  while `host.status` reports tier A.
 
-**Why the browser never talks to the socket.** Browsers can't open Unix sockets or named pipes. A peer-UID check
-can't tell a browser tab from any other process of the same user. The socket's frames are built for trusted local
-clients, not for web origins that face DNS rebinding, CSRF and cross-origin reads. The dashboard server is the one
-place that does web security (§3). It turns REST/SSE into socket operations, filters what the session may see, and
-serves the static app.
-
-**Before #287 (agent as its own OS user).** If an agent runs under the person's UID, it can read the dashboard's state,
-call the dashboard's control socket and reach the host socket as the person. This is the same accepted limit as
-core §4 and portable-custody §3. Human signatures still need the factor (§4). The dashboard shows "agents share your
-user account" in Settings → General while the host reports it (from `doctor`'s tier line).
+**Why the browser never talks to the socket.** Browsers cannot open Unix sockets. The socket's peer-UID check cannot
+tell a tab from any other process. Web origins face DNS rebinding, CSRF and cross-origin reads, which the socket was
+not built for. The dashboard server is the one place that does web security (§3), adapts results (§7) and serves the
+static app.
 
 ## 3. Browser authentication (replaces D02)
 
-The threats are another local user or the agent UID reaching the loopback port, a web page in the same browser
-(CSRF, DNS rebinding, cross-origin reads), and a leaked URL.
+Threats: another local user or the agent UID reaching the loopback port; another local web service on a different
+port (cookies are not port-isolated, RFC 6265 §8.5); a web page in the same browser (CSRF, DNS rebinding, cross-origin
+reads); a leaked URL; a process that already owns a port the browser is pointed at.
 
-| Option | Verdict |
-|---|---|
-| Static token in a file or URL (v1, D02) | Rejected: portable-custody §3 forbids a bearer token in a file an agent can read; URL tokens leak into history |
-| No auth on loopback | Rejected: the agent UID and other users can connect to 127.0.0.1 |
-| **One-time launch token → session cookie** | **Recommended** |
-| WebAuthn login per session | Later, together with option (c) in §4. It authenticates the browser well, but adds nothing over the launch flow while the server is per-UID |
+**Decision: no cookies.** The session credential is a random bearer token that the app keeps in memory and in
+`sessionStorage`, and sends in an `Authorization` header. It is CSRF-proof by construction: a foreign page cannot set
+that header without a CORS preflight, and the server answers no CORS. It is not sent to other localhost ports,
+because the browser never attaches it on its own. The cost is that script in the page can read it; strict CSP, no
+inline script and React's escaping keep that surface small, and an XSS still cannot sign (§2). This deviates from
+D-P2-7's cookie bullet and from portable-custody's cookie wording; both should be amended (§13 R10, §14 Q6).
 
-**Recommended flow.**
-1. `orch dashboard` connects to the server's control socket `<state>/dashboard/ctl.sock`. The socket is mode 0600 in
-   a 0700 directory, and the server checks that the peer UID equals its own. The client asks for a launch.
-2. The server mints a 256-bit launch token. It is single use, valid for 60 s, kept only in memory and bound to the OS
-   user. The client opens `http://localhost:<port>/auth/launch#t=<token>`. The token is in the **fragment**, so it
-   never reaches server logs, `Referer` or the proxy. A tiny first-party script on that page (an external file, so the
-   CSP needs no inline script) POSTs the token to `/auth/session` and replaces the history entry.
-3. The server checks and consumes the token, then sets `orch_session`: 256-bit random, `HttpOnly`, `SameSite=Strict`,
-   `Path=/`, plus `Secure` where the browser accepts it on `http://localhost` (to verify per browser; §12 Q9). Sessions
-   live **in memory only**. They expire after 8 h idle or 24 h at most, and a server restart means running
-   `orch dashboard` again. Nothing goes to disk (portable-custody §3).
-4. The session is bound to the OS user, not to a typed person id. For each workspace the server asks the host
-   `whoami` (NEW). The host derives the person from the device key on this machine and the replayed roster, as
-   `orch.ops.human` does (§10.8 "Who signs"). The browser never names the person. The mock's `setViewer` does not
-   exist on the real transport.
+### 3.1 Server start and origin ownership
 
-**Every request** (GET included, because the data is private):
-- **Host header allowlist**: `localhost:<port>`, `127.0.0.1:<port>`, `[::1]:<port>`. Anything else gets 421 before
-  routing. This is the DNS-rebinding defence.
-- A valid session cookie, otherwise 401 `session.required` (the app shows "Run `orch dashboard` in your terminal").
-- On writes (POST): `Origin` must be the canonical origin (or one of the allowlisted spellings), `Sec-Fetch-Site` must
-  be `same-origin` when present, and the header `X-Orch-CSRF` must equal the per-session token from `GET /api/session`.
-  A custom header forces a CORS preflight, and the server answers no CORS at all.
-- Response headers: CSP `default-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none';
-  base-uri 'none'; form-action 'self'`, plus `frame-src`/`child-src` as the inert addon frames and pinned widget
-  templates need (review point §10). Also `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and
-  `Cache-Control: no-store` on `/api`.
+1. `orch dashboard` takes an exclusive `flock` on `<state>/dashboard/lock` (directory opened with `O_NOFOLLOW`,
+   owned by the person, mode 0700). If a server is running, it talks to it; otherwise it starts one and waits for it.
+2. The server binds **one listener, `127.0.0.1:0`** (a random free port; no `::1`, no `localhost` name, so there is
+   no IPv4/IPv6 split where another process answers one address). It never binds a non-loopback address.
+3. The server opens its control socket `<state>/dashboard/ctl.sock` (umask 0o177, mode 0600). A stale socket is
+   removed only if it is a socket owned by the person, nothing answers a connect, and the lock is held.
+4. **Both sides check each other** on the control socket with `getpeereid`/`SO_PEERCRED`: the server serves only its
+   own UID, and the launcher talks only to a server with its own UID.
+5. The launcher asks for a launch. The server answers `{instance, port, probe_key, code}`: a random instance id, the
+   **port it actually bound**, a per-instance probe key, and a launch code (below).
+6. **The server proves it owns the port.** The launcher sends `GET http://127.0.0.1:<port>/auth/probe?n=<nonce>` and
+   checks the answer equals `HMAC(probe_key, nonce ‖ instance)`. Only then does it open the browser. A process
+   squatting on a reused port fails the probe and the launcher refuses with a clear error.
+7. `orch dashboard --stop` stops the server through the control socket, never by PID.
 
-`createFetchTransport` changes in two places: base URL `''` (same origin), and the CSRF header on POSTs. `credentials`
-stays `same-origin`.
+Random ports mean a copied URL works only while the same server runs. Paths stay readable and stable, so
+`orch dashboard open <url-or-path>` reopens any link on the current port with a fresh launch code.
+
+### 3.2 Bootstrap: one-time code in the fragment
+
+- The launch code is 256 bits, single use, valid 60 s, held only in memory, bound to the server instance, and
+  consumed atomically. It is never printed or logged.
+- The launcher opens `http://127.0.0.1:<port>/#launch=<code>&to=<path>`. The fragment never reaches the server,
+  logs or `Referer`.
+- The first module of the app (an external file; there is no inline script) copies the code into a local variable and
+  **immediately** calls `history.replaceState` to strip the fragment, before any network request. It then sends
+  `POST /auth/session {code}` and receives `{token, expires_at}`.
+- The token is 256 bits. Sessions live in server memory only: 12 h idle, 24 h absolute. A server restart ends every
+  session, and the app shows "Run `orch dashboard` in your terminal".
+- **New tabs.** `sessionStorage` is per tab. A new tab without a token asks over `BroadcastChannel('orch-session')`,
+  which is same-origin, so it is port-isolated; an open tab of the same origin answers. With no open tab, the page
+  asks the person to run `orch dashboard` (or `orch dashboard open <path>`).
+- **Logout** (`POST /auth/logout`) revokes the session on the server, closes its streams, cancels its pending sign
+  requests (§4.3), clears `sessionStorage` and broadcasts to the other tabs.
+- Limitation, documented: browser extensions and crash restore can see the URL before it is scrubbed, and
+  `sessionStorage` can be restored with a tab. An expired or revoked token is useless.
+
+### 3.3 Every request
+
+| Route | Auth | Extra checks |
+|---|---|---|
+| `GET /`, SPA paths, `/assets/*` | public (no data; the bundle is the same for everyone) | Host check; `index.html` `no-store`, hashed assets immutable |
+| `GET /auth/probe` | public | Host check; answers only the HMAC |
+| `POST /auth/session` | launch code in the body | exact `Origin`, `Content-Type: application/json`, body ≤ 1 KiB, 10 attempts per minute, atomic consume |
+| `POST /auth/logout` | bearer token | exact `Origin` |
+| `GET /api/**` (reads, stream) | bearer token | Host check |
+| `POST`/`PUT`/`PATCH`/`DELETE /api/**` | bearer token | exact `Origin`; `Sec-Fetch-Site` must be `same-origin` when present (defence in depth, not authentication) |
+
+- **Host check, before routing**: the `Host` header must be exactly `127.0.0.1:<port>`, otherwise 421. Duplicate or
+  malformed `Host` is rejected. `localhost:<port>` is rejected too (one canonical origin). This is the DNS-rebinding
+  defence.
+- `Origin: null` is rejected. `Forwarded` and `X-Forwarded-*` are ignored (uvicorn `proxy_headers=False`,
+  no trusted proxies). The Vite dev proxy is a dev-only setting and never ships in the server.
+- Missing or bad token: 401 `session.required`, with no detail.
+- Response headers: CSP `default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self';
+  img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'` (no frame or widget allowances
+  until those features ship), `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
+  `Cache-Control: no-store` on `/api` and `/auth`.
+- Limits: request body ≤ 1 MiB (member certificate uploads ≤ 64 KiB), 16 open streams per session, 8 pending sign
+  requests per session. Validation errors never echo request bodies; the log redacts `Authorization` and launch
+  codes.
+
+The browser transport: `createFetchTransport('')` (same origin) with the `Authorization` header. `EventSource` cannot
+send headers, so live updates use `fetch` with a streamed body and a small SSE parser (`src/api/sse.ts`).
 
 ## 4. Human-signed actions
 
-Every person event is signed (format §5.2, "A person event is always signed", §12 N1). In the dashboard that means
-approve, request changes, verdict, answer, close and reopen, and also **comment, label, move, new ticket, settings,
-member changes and grant revoke**. Every one needs the person's factor (D41, D65, D66, T16). The mockup's SignDialog
-already shows each signed value in full through `visible.tsx`, and the real flow keeps that.
+Every person event is signed (format §5.2, §12 N1): approve, request changes, verdict, answer, close, reopen, and also
+comment, label, move, new ticket, settings, member changes and grant revoke. **The browser never handles a factor**
+(D65): there is no passphrase field in the dashboard, ever.
 
-| Option | Custody (D3, §5.5, D64) | What you see is what you sign | Verdict |
+### 4.1 The flow
+
+1. The person clicks an action. The dashboard server calls **`human.prepare {op, args, signer:{device, auth},
+   handoff: true}`** with `opts.idem` (one id per click, reused on retry). The host re-reads the content, observes git,
+   puts the gate hash, `gate_gen`, `source_sha` or question hash into the unsigned event (so the mockup's `expect` is
+   not needed), judges it with `model.preview`, and returns `{request:{id, code, expires_at}, workspace_id, log,
+   event, material, review_digest}`. `signer` names the device that will sign: the person's `passphrase` device on
+   this machine for the terminal, the `secure-enclave` device for Touch ID (§13 R7).
+2. The dashboard shows the **hand-off panel** (it replaces the mockup's SignDialog):
+   - "Sign in your terminal: `orch sign 7F3K-Q2MA`" with a copy button, and "Sign with Touch ID" once H9 is there;
+   - an **informational preview rendered from `material`**, never from the dashboard's cached ticket view, through
+     `visible.tsx` (every value as data), under the heading "Preview. Your terminal shows what you sign.";
+   - the request fingerprint (first 12 hex of `review_digest`, which `orch sign` also prints, §13 R8) and, where a gate
+     is involved, the gate hash from `event`, labelled "content hash".
+3. **The person signs in a trusted place.** `orch sign CODE` finds the request with `human.pending`, recomputes the
+   hashes from `material`, renders its own review on `/dev/tty`, asks for the confirmation word and the passphrase,
+   builds the signing bytes, signs and calls `human.submit` (H5a, H5b).
+4. **The dashboard learns the outcome** by streaming and polling: an item for that ticket on the subscription
+   triggers a check, and while the panel is open the server polls `human.pending` every 2 s. When the request leaves
+   the pending list, the server refetches the ticket and shows "Signed" if the event is there. The dashboard never
+   calls `human.submit`.
+
+### 4.2 Touch ID helper (H9, in P2 before the cutover)
+
+The terminal is the guaranteed path and works today with the `passphrase` backend on every OS. On macOS the Touch ID
+signer H9 (`orch-signer`, D-P2-22) lands before the cutover: the dashboard server starts it with **only the request
+code**. The helper fetches the request itself, recomputes the hashes from `material`, renders its own review in its
+**own native window** (not the dashboard's rendering), builds the signing bytes, shows the Touch ID prompt with a reason
+built from those bytes, signs with the Secure Enclave key (`auth: secure-enclave`) and submits. It is the terminal's
+contract with a different display and factor.
+
+### 4.3 Request lifecycle, replay and ambiguous completion
+
+The host owns the request (v1 §0.6): bound to `(workspace, mapped person, signer.device, op, review_digest)`, valid
+10 minutes, submit and cancel serialized, a tombstone with the result after completion, at most 20 pending per
+person. The dashboard adds:
+
+- **One pending request per (workspace UUID, ticket, action).** Reopening the panel reuses an unexpired request
+  instead of preparing a new one. A double click or a retry reuses `opts.idem`; a lost response is recovered with
+  `outcome.get {idem}` (never a second prepare).
+- **Cancel.** Closing the panel, logout, session expiry, a ticket that goes `gone` (§6), or switching workspace while
+  the panel is open calls `human.cancel`. An in-flight socket request is stopped with a `cancel` frame.
+- **Ambiguous completion.** On return after a drop, the server checks `human.pending` and the ticket. Event present:
+  "Already signed". Request still pending: the panel reopens on it. Neither: "Expired or cancelled. Prepare again".
+  The server **never re-prepares or retries automatically**. A per-request state lookup would make this exact (§13 R6).
+- **Already done.** A prepare refused with `gate.already_approved`, `transition.refused` or a question that is no
+  longer open shows "Already done" and refetches.
+- **Stale.** If the state changed between prepare and submit, the signer gets `gate.stale`, `members.stale` or
+  `question.stale`; the panel shows "Changed since you started. Prepare again" after a refetch.
+
+### 4.4 Inputs are typed, never CLI forwarding
+
+The server has a **closed allowlist** of (route → op), each with a typed request model (`extra = "forbid"`). It
+never passes a filesystem path, a stdin selector, an environment value, a raw event or an op name chosen by the
+browser. Bytes (a member's device certificate) are uploaded with `blob.put` and referenced through `files`
+(v1 §0.8). The host never opens a path a client names and refuses path-like arguments with `blob.invalid`, which
+closes the confused-deputy read in prepare reviews.
+
+### 4.5 No batches in P2
+
+There is no multi-event signing in P2.
+- **New ticket** is one signed `new` event (person version through `human.prepare`): title, type, priority, size,
+  labels, parent and the description (`message`). Further sections and acceptance criteria are edited after creation
+  with the person versions of `section.set` and `ac.add` (later issues).
+- **Restricted visibility at creation is hidden** until stream A provides a creation that is restricted from its
+  first durable event (§13 R4). Create-then-restrict as two appends would publish the title in between.
+- **Settings** save one change per signature (a gate policy change will be one `policy.set` event with the whole
+  map, once F1 defines it).
+
+### 4.6 Platforms and backends
+
+| Platform | P2 signing route | Before cutover | Notes |
 |---|---|---|---|
-| **(a) Host signs after its own check and prompt.** Dashboard sends intent + expected values; host builds the event from verified state, renders the review, prompts through the custody backend, signs, appends | Keys stay in the host; no new signing path | The host renders the review. With `secure-enclave`, the OS Touch ID dialog shows action + short hash on a channel the browser can't forge (D41) | **Recommended** |
-| (b) Dashboard server signs with a client library on the human UID | `dk_sig` would be opened by a second process: breaks D3 ("loaded only by the host") and doubles the key code to review | The server decides the bytes; nothing checks it | Rejected |
-| (c) WebAuthn/passkey in the browser | The key never leaves the authenticator; works on every OS (D63) | The OS dialog shows only the site, not the action, so the browser page is the only display. The assertion signs `authenticatorData ‖ SHA-256(clientDataJSON)`, not `sig/ticket-event` bytes, so it needs a **new signed-event contract** (format §5.3: "a change to these bytes is a new contract") and verifier and vector changes in core and orch-relay | Later, as a backend inside (a) (§12 Q3) |
+| macOS | terminal hand-off (`passphrase`) | Touch ID helper (H9, `secure-enclave`; in P2, D-P2-22) | — |
+| Linux desktop | terminal hand-off (`passphrase`) | — | — |
+| Windows | not supported in P2 | — | the host has no named-pipe transport in P2 (stream A §9 Q2); owner decision §14 Q3 |
+| WebAuthn | not in P2 | — | needs a new signed-event contract (format §5.3) and assertion verification (origin with port, RP ID, challenge); D64's "webauthn (dashboard, P2)" needs amending (§14 Q4) |
 
-**Recommended protocol (two steps, both host ops; NEW for stream A).**
+## 5. Identity and workspaces
 
-1. `sign.prepare {op, args, expect}`, where `op` is a human operation name from the registry (`approve`, `verdict`,
-   `answer`, …). `args` are the CLI arguments. `expect` holds what the person saw on the page: gate `hash`, question
-   `hash`, `source_sha`. The host runs everything the CLI runs before the prompt (§10.8): visibility, eligibility,
-   `refuse_repeat`, artifact bytes, `observe` for D58/D59, `model.preview`. If `expect` differs from the verified state
-   it refuses with `gate.stale` (or the model's question refusal), so the dialog the person read is the dialog that is
-   bound. This fills HANDOVER's `hash`/`source_sha` contract. The CLI has no such argument, because there the review
-   is shown in the same step. The host returns:
-   `{request, review, digest, short_hash, summary, factor, expires_at}`.
-   - `review` is the **same content the CLI review prints** (§10.8: section texts checked against their hashes,
-     criteria, tasks with verify commands, links, source list, artifact names and digests, receipts for `verify`), in
-     structured JSON.
-   - `digest` is the SHA-256 of the exact signed bytes (`sig/ticket-event|…` or `sig/ws-event|…`).
-   - `summary` is the one-line action, for example `approve plan of DEMO-0043`.
-   - `request` is single use, lives 120 s, and is bound to the dashboard session, op, normalised args and digest. It
-     replaces the mock's boolean `confirmed` (HANDOVER "Known gaps").
-2. The SignDialog draws `review` through `visible.tsx`, with the 12-hex short gate hash (the same as `orch show`'s
-   `plan:open#8163ab12cd34`) and the digest under Details. The person confirms.
-3. `sign.commit {request, factor}`. The host unlocks the factor, signs the event it built in step 1, and appends with
-   `Store.append`, which judges again. A change in between gives `gate.stale` or `members.stale`, nothing is written,
-   and the dialog reopens with a fresh prepare. The answer carries the appended event and the new ticket document.
+- **Who the person is** comes from the host: the person mapped to the dashboard's UID in the host registry
+  (`welcome.peer.person`, `whoami`; v1 §0.4), never a key file and never the browser. All reads, `needs`, counts,
+  errors and subscriptions run as that principal. The mock's `setViewer` does not exist on the real transport. An
+  unmapped UID is refused by the host; the dashboard shows "this account is not a person of that workspace".
+- **Every API call, cache key, stream and sign request is keyed by workspace UUID.** API paths are
+  `/api/w/<workspace_uuid>/…`. Query keys become `['ticket', wsUuid, key]`, `['tickets', wsUuid, params]`, and so on.
+  Pending sign requests carry the workspace UUID and log UID.
+- **Routes keep the readable prefix.** `/ticket/DEMO-0043` resolves the prefix to a UUID through the workspace list
+  (`host.list` + `workspace.show`). If two workspaces share a prefix, the app adds `?ws=<first 8 hex of the UUID>` to
+  every link it generates, and a link without it asks which workspace. `workspaceOfTicket` returns a UUID, never a
+  prefix.
+- **Switching** cancels the open hand-off panel of the old workspace and keeps both workspaces' caches apart by key.
+  An unavailable host shows that workspace as "host not running" in the switcher; the others keep working.
 
-**The factor, per backend (D64).**
-- `secure-enclave` (macOS, P1b). The host calls the Touch ID dialog itself, with the reason text
-  `"<summary> · <short_hash>"`, and `factor` is empty. This is the strongest end-to-end guarantee: a compromised page
-  can lie on screen, but not in the OS dialog.
-- `passphrase` (D65, every OS; the P1 default). The passphrase is typed into the SignDialog, travels once over the
-  loopback session to the dashboard server, goes in the `sign.commit` frame to the host, is used for one signature and
-  is zeroised. It is never logged, cached or stored. This **deviates from D65's "real terminal only" rule**. The
-  equivalent guard is the human-peer class, the session and the single-use request. The weakness is the same one D65
-  already accepts for a terminal: anything that can read the page or the person's typing can capture it. This needs the
-  owner's decision (§12 Q2). The fallback that keeps D65 literal is `orch sign <request>` in the person's terminal: the
-  terminal prints the host's review and prompts on `/dev/tty`, and the dashboard waits for the result over the change
-  stream.
-- `webauthn` (later; option c inside a). `prepare` returns a challenge equal to `digest`, the browser calls
-  `navigator.credentials.get`, and `commit` carries the assertion. This needs the contract amendment.
-- `auth` in the event records the backend actually used (D66). The SignDialog's toast says which one ("signed with
-  passphrase", not "Touch ID", as the mock says today).
+## 6. Live updates (D03)
 
-**Batches.** New ticket (`ticket.created` plus sections, people and visibility) and settings forms produce several
-events. §5.3 allows one decryption per signature; the only exception is `import v1` (§14.2.2). So this design proposes
-`sign.prepare` with an ordered list of events, **one factor unlock and N signatures**, all reviewed in one dialog (§12
-Q4). Without that, New ticket costs up to four prompts.
+Built on contract v1 `sub.open` / `sub.close` (§0.7): metadata-only items, opaque scoped cursors, revalidation of
+membership and visibility before every delivery, `gone` items, and invalidation by snapshot plus cursor.
 
-**Grant issue stays in the CLI.** `grant` writes the secret only to `/dev/tty` (§10.8). The dashboard lists grants
-and revokes them (a signed revoke). Issuing one with a hand-over to an agent arrives with start agent (D09), where the
-host gives the secret straight to the agent it spawns.
+- **Upstream, per workspace.** The server takes a snapshot (`ticket.query`, `needs`; each returns `sub_cursor`) and
+  opens `sub.open {topics:["workspace","tickets","needs"], after: sub_cursor}`. All tabs of this server share one
+  principal per workspace (one UID, one mapped person), so one subscription is enough. Items are deduplicated by
+  `jpos`.
+- **Upstream invalidation.** `{"invalidated":"overflow"}`, `sub.reset`, `host.restarting` or a lost connection → the
+  server takes a new snapshot, reopens with its `sub_cursor`, and sends `resync` to every tab of that workspace.
+- **To the browser.** `GET /api/w/<uuid>/stream`, fetch-streamed SSE with the bearer token. The server stamps every
+  forwarded batch with an id `<instance>:<n>`. The first message is `ready {id}`.
+- **Subscribe before snapshot.** A tab opens the stream and waits for `ready` before its first data fetch, so no
+  item falls between fetch and subscribe.
+- **Per-tab resume, simple version.** Each tab keeps its own `Last-Event-ID` and sends it on reconnect. If it equals
+  the server's latest id, nothing happened. Otherwise the server sends `resync`, and the tab refetches every query of
+  that workspace. There is **no replay buffer in P2**; a bounded per-workspace ring buffer is a later optimisation.
+- **Slow tabs.** 256 queued messages per tab; past that the server closes the stream and the tab reconnects (and
+  resyncs). A heartbeat every 15 s; reconnect backoff 1, 2, 5, 10 s; after three failures the app polls
+  `GET /api/w/<uuid>/head` every 10 s.
+- **Authorization over the stream's lifetime.**
+  - A stream belongs to a session. Logout or expiry closes it.
+  - The host revalidates membership and visibility before every delivery, queued items included.
+  - **A ticket that becomes invisible** arrives as `{jpos, uid, gone:true}`. The server forwards `gone {uid}`; the tab
+    **purges** every cached query of that ticket (`removeQueries`), its page shows "no longer visible", and its
+    pending request is cancelled. A ticket that becomes visible arrives as `visibility.changed` and is fetched.
+  - Membership: on `member.*`, `role.changed` or `device.*` the server re-runs `whoami` and `member.list`. If the
+    person is no longer a member, it sends `revoked` and closes; the tab purges every query of that workspace and
+    closes the hand-off panel.
+  - Accepted leakage: the timing and count of items the person may see; nothing about hidden tickets.
+- **Invalidation** (coarse on purpose):
 
-## 5. Live updates (D03)
-
-There is no change-stream operation yet (`wait` is per ticket and per agent session; `status` shows a session
-cursor). This design proposes:
-
-- **NEW `changes.watch {after}`**, a streaming host op on the human-peer class. Frames are
-  `{cursor, log: "workspace" | <uid>, key?, seq, type, ws_seq}`. The host filters by visibility (§9): events of a
-  restricted ticket the person can't see are omitted, and when visibility changes they are replaced by a frame that
-  only invalidates. Frames carry no payload. The client refetches through the normal reads, so one renderer and one
-  visibility check stay authoritative.
-- **The cursor is opaque** (`"<host_run>:<n>"`, where `n` is a host-wide counter that only increases with every append
-  in merged order, §5.5). If the host restarts or `after` is unknown, it sends `{resync: true}`.
-- **Dashboard server → browser over SSE.** `GET /api/workspaces/:ws/changes`, using `EventSource` with the cookie.
-  The event `id` is the cursor, so a reconnect sends `Last-Event-ID` and the server resumes with `after`. The server
-  keeps **one host subscription per workspace** and fans out to tabs. It sends a heartbeat every 15 s, and the browser
-  reconnects with backoff (1, 2, 5, 10 s). After three failures the app falls back to the mock's existing poll of
-  `getCursor` (NEW `changes.head`) every 10 s. Order is the host's merged order, and frames are never reordered.
-  SSE is chosen over WebSocket because traffic is one way and it reconnects with resume for free.
-- **`useLiveUpdates` (`src/app/live.ts`)** now subscribes to SSE and invalidates by event instead of invalidating all
-  `LIVE_KEYS` on any cursor change. The keys are those of `src/api/queries.ts`:
-
-| Frame | Invalidate |
+| Item | Invalidate |
 |---|---|
-| Any ticket-log event of `key` | `['ticket', key]`, `['tickets', ws]` (all params), `['board', ws]`, `['today', ws]` |
-| `question.*`, `gate.*`, `verdict.given`, `ticket.submitted`, `branch.pushed` | as above, plus the workspace's needs-you count in `['workspaces']` |
-| `artifact.*` | as above (the ticket page reads artifacts from the ticket document) |
-| `member.*`, `role.changed`, `device.*` | `['people', ws]`, `['identity', ws]`, `['workspaces']`, `['me']` |
-| `policy.changed`, `settings.changed` | `['identity', ws]`, `['workspaces']`, `['today', ws]`, `['tickets', ws]` |
-| `grant.*` | `['grants', ws]` |
-| `addon.*` | `['workspace-addons', ws]`, `['addons']` |
-| `resync`, or a reconnect gap | every key of `ws` |
+| any item of a ticket log (`key`) | `['ticket', ws, key]`, `['tickets', ws]`, `['board', ws]` |
+| `needs.changed` | `['today', ws]`, `['workspaces']` (needs-you count) |
+| `gone` | remove every query of that ticket; invalidate `['tickets', ws]`, `['board', ws]`, `['today', ws]` |
+| `member.*`, `role.changed`, `device.*` | every key of `ws` plus `['me']` (after the check above) |
+| any other workspace-log item | every key of `ws` |
+| `resync` | every key of `ws` |
 
-The board's optimistic move rolls back when the server answers with an error. An open SignDialog keeps its snapshot,
-as it does today; the host's stale refusal (§4) is what protects the person.
+The board's optimistic move is removed: a move is a signed hand-off, so the card moves when the event arrives.
 
-## 6. API mapping
+## 7. API mapping
 
-The baseline is the P1 operation names (52 ops in `plugins/orch-core/src/orch/ops/commands`). Following stream A's
-working assumption, the CLI op names, args and Result/error envelope (§10.4) carry over 1:1 to the socket. The
-dashboard server is thin: one route calls one op (or a fixed short list). "As person" means the op runs from the
-human peer through `sign.prepare`/`commit` (§4).
+The dashboard server maps one route to one contract v1 op (or a fixed short list), through an adapter that turns the
+op's `result.data` into the UI's types (Appendix B). Adapters are typed, **never parse `lines`**, never synthesize
+hashes or state from mock conventions, and show "not available" when a field is missing. "Prepare" means
+`human.prepare {op, args, signer, handoff:true}` (§4). Every socket write carries `opts.idem`.
 
-| Client method (`client.ts`) | Host op | Notes |
+| Client method (`client.ts`) | Contract v1 op | Notes |
 |---|---|---|
-| `getMe` | NEW `whoami` | `{person, name, roles: {ws: role}, factor}`; server merges across workspaces |
-| `getWorkspaces` | server's host registry + NEW `workspace.show` per ws | uuid, prefix, name, role, needs-you count (from `needs`), host status |
-| `getIdentity` | NEW `workspace.show` | uuid, prefix, epoch, WSK fingerprint, `hosted by` (§4 threat model), custody tier |
-| `getCursor` | NEW `changes.head` | fallback only (§5); live through NEW `changes.watch` |
-| `getAddons`, `getWorkspaceAddons` | `addon.list` | shell nav only; addon pages hidden in P2 (§1) |
-| `getToday` | NEW `needs` | needs-you for the person: questions to them, gates and verdicts they are eligible for, C9 `needs` rules, plus `waiting_on_others`. `inbox` is peer hand-over plus session decisions, not this |
-| `listTickets` | `list`, `search` | **Deviation:** `list` has only `status`, `mine`, `label`, `limit ≤ 200`. Board and Tickets need `type`, `priority`, `parent`, `person`, `needs`, `sort`, `repo`, `restricted`, and summary rows with turn and gate state. Proposal: extend `list` (or NEW `ticket.query`) |
-| `listPeople` | NEW `member.list` | members, roles, devices (no keys) |
-| `getTicket` | `show {ref, full: true}` (JSON) | the ticket document (§7). Needs open-gate hashes (full and 12-hex), question hashes, the branch head and diffstat (D58) |
-| `getEvents` | `show {ref, log: true, since}` | JSON events; agent text fenced (§10.4.11) |
-| `getChanges` | NEW `diff` | host reads git, never agent-reported SHAs (D58) |
-| `postAction` `answer` | `answer {ref, question, option?, message?}` as person | `expect.hash` = question hash |
-| … `approve` | `approve {ref, gate}` as person | `expect.hash` (requirements, plan) or `expect.source_sha` (code, D59) |
-| … `request_changes` | `request_changes {ref, gate, message}` as person | `expect.hash` |
-| … `verdict` | `verdict {ref, outcome, message?}` as person | `expect.hash` + `expect.source_sha` (D58) |
-| … `comment` | `log {ref, message}` as person | **Deviation:** `log` is `who: unattended`; `log.added` allows a person (A), signed |
-| … `ask` | `ask` as person | signed `question.asked` |
-| … `add_label` | `set {ref, pairs: ["labels=…"]}` as person | signed `ticket.updated` |
-| … `set_status` | NEW `move {ref, to: backlog \| open, reason?}`; `close`, `reopen` | `status.changed` exists (§5.4.1), no op emits it. **UI change:** §5.9 allows manual moves only between backlog and open. In progress, testing and done are derived (claim, submit, verdict), so the board limits drop targets accordingly |
-| … `claim`, `release` | not offered | agents only; a person releasing a claim (§5.2) is not in P2 |
-| `createTicket` | `new` as person (+ `section.set`, `ac.add`, people, visibility) | **Deviation:** `new` is `who: agent` (`grant_valid`); `ticket.created` allows a person. Proposal: `new` from the human peer accepts the full `NewTicketRequest` as one batch (§4). `people.changed` and `visibility.changed` have no op yet (§10.8): NEW `people.set`, `visibility.set` |
-| `postSettings` `member.add` | `member.add {name, role, pk, cert}` as person | **UI change:** the mock takes `{person, name, role}`. Core takes the invitee's key and first device certificate, and the owner compares the person id out of band (§10.8) |
-| … `member.role`, `member.remove` | `member.role`, `member.remove` as person | `members.last_owner` → refusal |
-| … `gate.policy` | NEW `policy.set {gates}` as person (+ NEW `policy.preview` for the code gate, `previewCodeReview`) | event `policy.changed` exists, no op (§10.8) |
-| … `grant.hours` | NEW `settings.set {grant_hours}` as person | event `settings.changed` (D60) exists, no op |
-| `listGrants`, `revokeGrant` | NEW `grant.list`; `grant.revoke` as person | issue stays CLI (§4) |
-| `issueGrant` | hidden | secret only to `/dev/tty` (§10.8) |
-| `postSettings` `rename`, `archive`, `repos` | hidden | no format event for rename; archive is CLI only; repos is the Repos addon |
-| `listViews`, `saveView`, `deleteView` | dashboard server state (`<state>/dashboard/views.json`, per person, 0600) | personal views only; `shared` hidden (not ticket data; no format event) |
-| `undoCreateTicket` | hidden | logs are append-only; proposal `ticket.discard` has no format basis |
-| `getTicketRefusals`, `getAgents`, `getAgentActivity`, `previewLaunch` | hidden | agents page and refusals: D09/D11 issues (proposals `session.*`) |
-| `listArtifacts`, relay, skills, connections, secrets, doctor, addon state/actions/decisions/catalog/op | hidden | later issues (§1) |
-| `simulatePush`, `simulateRelay`, `setViewer`, `resetDemo`, `getDataset`, mandates preview | **mock only** | not served by the real server (it answers 404); UI hides them when `transport.demo` is false |
+| `getMe` | `whoami` per workspace + `member.list` | person, name, role and tier per workspace |
+| `getWorkspaces` | control `host.list` + `workspace.show` + `needs` (count) | uuid, prefix, name, role, needs-you count, host state |
+| `getIdentity` | `workspace.show` + `host.status` | uuid, prefix, genesis, epoch, WSK fingerprint, tier |
+| `getCursor` | — | replaced by the stream's `ready` id; fallback `GET …/head` |
+| `getAddons`, `getWorkspaceAddons` | `addon.list` | shell nav only; addon pages hidden |
+| `getToday` | `needs` | computed by core from `model.needs` (addons only declare rules); kinds `question`, `approve`, `no_eligible`, `acknowledge`, `addon`; live through the `needs` topic |
+| `listTickets` (board, backlog, tickets) | `ticket.query` | summary rows (type, status, priority, size, labels, assignees, owner, parent, epic, claim, gate states, needs, `head_seq`), filters, sort, `limit ≤ 200`, `next_page` paging, `sub_cursor` |
+| `listPeople` | `member.list` | members, roles, devices (no keys) |
+| `getTicket` | `show {ref, full:true}` + the ticket's `ticket.query` row | the F1 §7 document plus gate states from the row; question states and evidence digests per R1 |
+| evidence content | `artifact.get {ref, name, offset}` | chunked (≤ 768 KiB); shown as data |
+| `getEvents` | `show {ref, log:true, since}` | P1 returns formatted strings; structured events per R1. Until then the log tab shows the fenced lines as data |
+| `getChanges` | `diff {ref, repo?}` | bound to D58 `source_sha`; returns `sources[{repo, branch, base_sha, head_sha}]`, files, `truncated`; cache key includes the returned head OIDs; the UI shows them and does not claim the signature binds the diff |
+| `postAction` `answer` | prepare `answer {ref, question, option?, message?}` | |
+| … `approve` | prepare `approve {ref, gate}` | host binds gate hash or `source_sha` |
+| … `request_changes` | prepare `request_changes {ref, gate, message}` | |
+| … `verdict` | prepare `verdict {ref, outcome, message?}` | |
+| … `comment` | prepare `log {ref, message}` (person version) | `comment` stays a reserved name, not served |
+| … `ask` | prepare `ask` (person version) | |
+| … `add_label` | prepare `set {ref, pairs:["labels=…"]}` (person version) | |
+| … `set_status` | prepare `move {ref, to: backlog \| open, reason?}` (provisional, R3), `close`, `reopen` | `move` allowed from backlog, open, and in progress without a live claim; the board limits drop targets accordingly |
+| … `claim`, `release` | not offered | agent ops |
+| `createTicket` | prepare `new {title, type, priority, size, label, parent, message}` (person version) | no `file`, no batch, no restricted creation (§4.5) |
+| `postSettings` `member.add` | `blob.put` (certificate JSON) → prepare `member.add {name, role, pk}` with `files.cert` (R9) | **UI change**: the invitee's key and certificate, not `{person, name, role}`; the owner compares the person id out of band |
+| … `member.role`, `member.remove` | prepare `member.role`, `member.remove` | `members.last_owner` → refusal |
+| … `gate.policy` | prepare `policy.set {gates}` | reserved, not served until F1 defines the event (R5); the form is read-only until then |
+| … `grant.hours` | prepare `settings.set {grant_hours}` | as above (R5) |
+| `listGrants`, `revokeGrant` | `grant.list` (R2); prepare `grant.revoke` | |
+| `issueGrant` | hidden | the client draws the secret and writes it to `/dev/tty` (D-P2-16) |
+| `listViews`, `saveView`, `deleteView` | dashboard addon storage `<state>/dashboard/views.json` (0600), keyed by workspace UUID | personal views only; v1 keeps views out of core |
+| everything listed as out of scope in §1 | hidden | the server answers 404 |
+| `simulatePush`, `simulateRelay`, `setViewer`, `resetDemo`, `getDataset`, mandates preview | mock only | absent from the real server |
 
-**Feature gating.** `GET /api/session` returns `{csrf, features: [...]}`. The shell hides nav entries, Demo data and
-the review tour that the real server does not list. The mock transport lists everything, so the mockup and its 1,790
-tests stay as they are.
+**Feature gating.** `GET /api/session` returns `{features: [...]}`, derived from what the server serves and from each
+host's `welcome.caps`/`ops`; the shell hides what is not listed. The mock transport lists everything, so the mockup and
+its tests stay as they are.
 
-## 7. Error envelope
+## 8. Errors and limits
 
-The host returns the core envelope `{"ok":false,"error":{code, message, hint?, fix?, retryable}}` (§10.4, the
-`error_envelope` in `orch/cli/render.py`). The dashboard server passes `code`, `message`, `hint` and `retryable`
-through **unchanged** and drops `fix.argv` (a CLI command). It shows `fix.argv` only on the CLI-fallback screens as "In
-a terminal: `orch …`". It picks the HTTP status from the code family, so `client.ts` (`res.status >= 400` →
-`ApiError`) needs no change:
+The host returns contract v1's `res err`: `exit` plus the F1 §10.4 error body `{code, message, hint?, fix?,
+retryable, retry_after_ms?}`. The server passes `code`, `message`, `hint`, `retryable` and `exit` through unchanged as
+`ApiError`, drops `fix.argv` except on the "do it in a terminal" screens, and picks the HTTP status from the code. A
+`fatal` frame closes that workspace connection; the server reconnects and resyncs.
 
-| Core code (exit) | HTTP | UI |
+| Code | HTTP | UI |
 |---|---|---|
-| `not_found` (2), incl. tickets the person can't see (§9) | 404 | existing missing-ticket state. The mock's `not_visible` is renamed to `not_found` |
-| `usage`, `unknown_command`, `invalid.input`, `parse.*`, `grant.secret_in_args` (2, 5, 6) | 400 | inline form error with `hint` |
-| `human_only`, `role.denied`, `grant.*`, `device.scope` (3) | 403 | refusal toast; "Hiding a button is not authorization" stays true |
-| `transition.refused`, `gate.already_approved`, `claim.*`, `lease.*` (3, 4) | 409 | refusal with hint |
-| `gate.stale`, `members.stale`, `artifact.mismatch`, `observe.unavailable`, `source.missing`, `conflict.*` (5, 8), model refusals of §10.4a (`question.stale` …) | 409 | **close the SignDialog, refetch, reopen it with a fresh prepare** (the existing decision-refresh pattern) |
-| `custody.wrong_passphrase` | 401 | stay in the dialog, clear the field; nothing was written |
-| `custody.no_key`, `custody.no_prompt`, `custody.no_batch` | 409 | "This machine has no device key for this workspace: run `orch init`/`keys`" |
-| `lock.busy`, `retry.later` (4, 9) | 503 | automatic retry with backoff when `retryable` |
-| `stop` | not expected | no session dedup or stop rule for the human peer |
-| `internal`, `not_implemented` (1) | 500 | error boundary; `not_implemented` names the op |
-| dashboard's own: `session.required` 401, `csrf.bad` 403, `host.unavailable` 503 (socket down), `addon.disabled` 409 (dashboard not granted in that workspace) | — | full-page states |
+| `not_found` (also for tickets the person cannot see) | 404 | missing-ticket state; the mock's `not_visible` becomes `not_found` |
+| `usage`, `invalid.input`, `parse.*`, `blob.invalid`, `frame.invalid`, `frame.too_large` | 400 | inline form error with `hint` |
+| `human_only`, `role.denied`, `op.not_allowed`, `peer.denied`, `grant.*`, `host.required` | 403 | refusal; hiding a button is not authorization |
+| `gate.already_approved`, `transition.refused` | 409 | "Already done", refetch (§4.3) |
+| `gate.stale`, `members.stale`, `question.stale`, `artifact.mismatch`, `observe.unavailable`, `source.missing` and the other §10.4a model refusals | 409 | "Changed since you started", refetch, "Prepare again" |
+| `human.request_expired` | 410 | "Expired", "Prepare again" |
+| `human.request_mismatch`, `idem.conflict` | 409 | shown as an internal error; never retried |
+| `idem.expired`, `outcome.unknown_idem` | 409 | "Unknown outcome": refetch, then offer "Prepare again" |
+| `outcome.unknown`, `cancelled` | 503 | recover with `outcome.get {idem}`; never a new idem |
+| `op.unsupported`, `host.version_mismatch` | 501 | "host too old for this feature", feature hidden |
+| `host.unavailable`, `host.restarting`, `host.busy` | 503 | "host not running" or "restarting" banner; reads retry with backoff |
+| `rate.limited`, `lock.busy` | 503 | reads retry after `retry_after_ms` |
+| `sub.reset`, `invalidated: overflow` | — | snapshot, reopen, `resync` (§6) |
+| `internal`, `not_implemented` | 500 | error boundary |
+| dashboard's own: `session.required` 401, `origin.bad` 403, `host.bad` 421, `addon.disabled` 409 | — | full-page states |
 
-The mock's own codes (`verdict.stale`, `question.stale`, `validation.*`, `cli_only`, …) become the core codes above.
-A contract test fails if the UI keys on a code that is not in `ops/errors.py` or the dashboard list.
+- **Only reads retry automatically.** A `human.prepare` is retried only with the same `opts.idem`, and a lost result is
+  recovered with `outcome.get`; `human.cancel` is idempotent; nothing else is retried.
+- Host limits the dashboard respects (v1 §0.9): 8 requests in flight and 8 subscriptions per connection, 20 pending
+  human requests per person, 32 connections per UID. The server uses one connection per workspace for requests and the
+  subscription.
+- The UI keys only on codes from `ops/errors.py`, contract v1's §0.10 codes and the dashboard's list. A contract test
+  enforces this.
 
-## 8. Packaging and layout
+## 9. Packaging, dev host and layout
 
 ```
 addons/dashboard/
-├── orch-addon.json          addon manifest: name "dashboard", entry {cmd: ["orch-dashboard", "serve"]}, capabilities ["serve_http"]
-├── pyproject.toml, uv.lock  package "orch-dashboard": fastapi, uvicorn (exact pins); orch-core as a uv path source (../../plugins/orch-core)
+├── orch-addon.json          name "dashboard", entry {cmd: ["orch-dashboard", "serve"]}, capabilities ["serve_http"]
+├── pyproject.toml, uv.lock  package "orch-dashboard": fastapi, uvicorn (exact pins); orch-core as a uv path source
 ├── server/
 │   ├── src/orch_dashboard/
-│   │   ├── __main__.py      serve / launch / stop (the `orch dashboard` command calls these)
-│   │   ├── app.py           FastAPI app, static files + SPA fallback (HANDOVER Routes), /assets
-│   │   ├── security.py      Host allowlist, Origin/Sec-Fetch/CSRF, CSP and headers
-│   │   ├── auth.py          control socket, launch tokens, in-memory sessions
-│   │   ├── hostlink.py      HostLink interface: SocketHostLink (#271 frames, orch.hostclient) and InProcessHostLink
-│   │   ├── routes/          one module per screen group: shell, today, tickets, ticket, sign, settings
-│   │   ├── live.py          one changes.watch per workspace, SSE fan-out
-│   │   ├── errors.py        core envelope → HTTP (§7)
-│   │   └── static/          the Vite build output (gitignored, filled by the build)
-│   └── tests/               test_dashboard_*.py
-├── package.json, src/, vite.config.ts   the React app, unchanged location
+│   │   ├── __main__.py      serve / launch / open / stop
+│   │   ├── app.py           FastAPI app, static files + SPA fallback
+│   │   ├── security.py      Host check, Origin, headers, limits, redaction
+│   │   ├── auth.py          control socket, probe, launch codes, in-memory sessions
+│   │   ├── hostlink.py      contract v1 client (frames, hello/caps, req/res, cancel, evt, outcome.get), one connection per workspace
+│   │   ├── adapters/        Result data → UI types (Appendix B), one module per shape
+│   │   ├── routes/          shell, today, tickets, ticket, handoff, settings (closed allowlist, typed models)
+│   │   ├── live.py          one sub.open per workspace, fetch-SSE fan-out, resync
+│   │   ├── errors.py        error body → HTTP (§8)
+│   │   └── static/          the Vite build output (gitignored)
+│   └── tests/
+├── devhost/                 stub host for dev and tests only (not in the wheel)
+├── package.json, src/, vite.config.ts
 └── docs/
 ```
 
-- **Build.** `npm run build` writes `dist/`. A Python build step copies it to `orch_dashboard/static/`, so the wheel is
-  self-contained and `orch dashboard` needs no Node at run time.
-- **Python deps stay in the addon** (core §2: FastAPI belongs to the addon package, not to the core).
-- **Transport selection.** `client.ts` picks the transport from `import.meta.env.VITE_ORCH_TRANSPORT`: `mock` is the
-  default for `npm run dev`, vitest and the layout guard, and `fetch` is used for the production build served by the
-  server. In dev, Vite proxies `/api` and `/auth` to a running dashboard server.
-- **Development before stream A lands: `InProcessHostLink`.** It runs the P1 registry in-process against a dev
-  workspace (`bin/ws1`, the same dispatch `orch.cli.main` uses) and maps ops 1:1. NEW ops that core does not have yet
-  (`whoami`, `needs`, `changes.watch`, `sign.*` …) are stubbed in `orch_dashboard.testing.stubhost` on top of the
-  registry's reads, and marked so the stubs are deleted when the socket offers them. Signing in-process uses the D51
-  dev override's test human, and only in dev-marked workspaces (§19). The server refuses `InProcessHostLink` unless
-  `ORCH_DEV=1` and the workspace is marked dev.
-- **CI** (new workflow `dashboard.yml` on `addons/dashboard/**`, PRs into `develop`):
-  - node job: `npm ci`, `npm run typecheck`, `npx vitest run`, `npm run build`;
-  - python job: `uv sync --locked`, `ruff check`, `ruff format --check`, `pytest -q -m "not slow"`, and the slow tests.
-  - Today CI doesn't run the dashboard suite (HANDOVER); P2 changes that. The layout guard and e2e stay local or T2
-    (D32).
+- **Build.** `npm run build` writes `dist/`; a build step copies it into `orch_dashboard/static/`, so the wheel is
+  self-contained and needs no Node at run time. FastAPI stays in the addon package (core §2).
+- **Two front-end entry points.** Production (`src/main.prod.tsx`) never imports the mock: no persistent mock store,
+  no mock clock. The mock entry stays the default for `npm run dev`, vitest and the layout guard. Today `client.ts`
+  builds the mock store at module load; that moves into the mock entry.
+- **Stub host (`devhost/`).** Until stream A's H4a lands, a stub speaks **contract v1 frames** on a temporary Unix
+  socket and serves the P1 registry in-process: read ops, `whoami`, `workspace.show`, `member.list` from the
+  roster, `ticket.query` and `needs` as thin wrappers over the P1 model, and `sub.*` by polling the store. It does
+  **not** implement `human.*`: signing waits for the real host
+  (H5a/H5b). It runs only on workspaces marked dev and only with `ORCH_DEV=1`, it is not in the wheel, and the server has
+  no setting that selects it; it is reached through `ORCH_HOST_SOCKET` like any host. Stubs of reserved ops are listed
+  in one file and deleted when the real host serves them. No issue is closed on stub-only tests.
+- **CI** (new `dashboard.yml` on `addons/dashboard/**`, PRs into `develop`): node job (`npm ci`, typecheck,
+  `npx vitest run`, build) and python job (`uv sync --locked`, ruff, `pytest -q`). Real-browser e2e runs in the
+  orch-dev-kit harness (T2, D32).
 
-## 9. Testing (§16, §23)
+## 10. Testing (§16, §23)
 
 | Tier | Dashboard |
 |---|---|
-| T0 | the issues' files: `tests/test_dashboard_shell.py`, `tests/test_live_updates.py` (#304); `tests/test_dashboard_today.py`, `…_board.py`, `…_ticket.py`, `…_actions.py` (#305); `tests/test_dashboard_settings.py`, `tests/test_workspace_switcher.py` (#306); plus `tests/test_dashboard_auth.py`, `tests/test_dashboard_sign.py`, `tests/test_dashboard_errors.py`. FastAPI `TestClient` over `InProcessHostLink` on a tmp workspace, e.g. `uv run pytest server/tests/test_dashboard_auth.py -x -q`. Front end: `npx vitest run <file>` |
+| T0 | the issues' files: `tests/test_dashboard_shell.py`, `tests/test_live_updates.py` (#304); `tests/test_dashboard_today.py`, `…_board.py`, `…_ticket.py`, `…_actions.py` (#305); `tests/test_dashboard_settings.py`, `tests/test_workspace_switcher.py` (#306); plus `test_dashboard_auth.py`, `test_dashboard_handoff.py`, `test_dashboard_errors.py`, `test_dashboard_adapters.py`. FastAPI `TestClient` against the stub host or, from H4a on, `orch host run --foreground`. Front end: `npx vitest run <file>` |
 | T1 | `pytest server/tests` + ruff; full vitest, typecheck, build |
-| T2 | the above against a real host socket (once #325 lands), golden JSON per route, and the Playwright scenarios in orch-dev-kit `e2e/`: `e2e/dashboard_shell.spec` (launch, shell, live update from a CLI write in another terminal), `e2e/new_ticket.spec`, plus `dashboard_actions.spec` (approve, request changes, verdict, answer with the test human), `dashboard_settings.spec`, `dashboard_switcher.spec` (two workspaces) |
-| Layout guard | unchanged on the mock dev build (`npm run layout:guard -- --url … --docks min,max`). One extra run against the real server with the DEMO import, to catch layout from real data |
+| T2 | everything against a real host (`orch host run --foreground` on a demo workspace) and the Playwright scenarios in orch-dev-kit `e2e/` (Appendix C), in Chromium, Firefox and WebKit |
+| Layout guard | unchanged on the mock build; one extra run against the real server with the DEMO import |
 
-**Adversarial tests the security reviewer writes** (§15):
-- wrong Host → 421; foreign Origin or no CSRF header → 403;
-- launch token reused or expired;
-- session cookie flags; no CORS headers;
-- `/api` without a session → 401;
-- agent UID refused by the server and by the host;
-- `sign.commit` with another session's request, after expiry, twice, or with changed args → refused;
-- `expect` mismatch → `gate.stale`;
-- a restricted ticket never shows in the SSE stream, a list, a 404 message or a log line;
-- passphrase never in logs or exceptions (log capture assertion).
+**Adversarial tests** (the security reviewer writes or reviews them, §15):
+- wrong, duplicate or `localhost` Host → 421; `Origin: null` or a foreign origin on a write → 403;
+- a page on another localhost port cannot read data or trigger a write (real browser; no cookie exists to steal);
+- launch code reused, expired, from another server instance; the fragment is gone before the first request;
+- probe: a squatter on the port is refused by the launcher;
+- `/api` without a token → 401; no CORS headers on any response;
+- a `person`-class check: the server refuses a socket whose `welcome.peer.class` is not `person`;
+- path, stdin or unknown fields in any route body → 400; the host never sees a path from the dashboard;
+- a restricted ticket never shows in a stream, list, count, 404 message or log line; hiding a ticket purges it from
+  an open tab;
+- revocation while a stream is open closes it and purges the cache;
+- lost response after submit → "Already signed"; expired request; concurrent prepares reuse one request; logout
+  cancels pending requests;
+- two workspaces with the same prefix and the same ticket key, with a hand-off panel open during a switch;
+- the confirmation word never reaches the browser; `Authorization` and launch codes never appear in logs.
 
-Per §23, every feature in #304–#306 needs a passing e2e scenario. `src/test/signing-surface.test.tsx` gets a case for
-each real signed path, with the displayed values compared against the host's `review`.
+`src/test/signing-surface.test.tsx` changes: the hand-off panel renders its preview only from `material`, labels it a
+preview, and has no factor input.
 
-## 10. Security review points (Opus, #304 and #305)
+## 11. Security review points (Opus, #304 and #305)
 
-1. Launch flow: token entropy, single use, fragment delivery, control-socket peer check, what happens if two
-   `orch dashboard` races or another user's process connects.
-2. Loopback binding, the Host allowlist and DNS rebinding; IPv6 `::1`; the port fallback must not move to a
-   non-loopback interface.
-3. CSRF and Origin rules on every write and on SSE; no CORS; `SameSite=Strict` behaviour on `localhost` across
-   browsers; the `Secure` flag.
-4. Session storage in memory only; logout; expiry; what the server writes to disk (views only, 0600).
-5. The process user: never the agent UID; the stated limit before #287; the control socket and state dir modes.
-6. Signing: does `sign.prepare` build exactly the bytes `commit` signs; request binding (session, op, args, digest,
-   TTL, single use); TOCTOU between prepare, the prompt and `Store.append`; `expect` checks; batches.
-7. WYSIWYS: is the dialog drawn only from the host's `review`; is the Touch ID reason built by the host; does the
-   page's short hash match the reason; are agent-controlled strings escaped in both (`visible.tsx` and §10.4.11).
-8. Passphrase path (if Q2 is accepted): no logging, no caching, zeroised in the server and the host, never in a URL or
-   a GET.
-9. Visibility through every route and the change stream; error messages that could leak titles; 404 equal for missing
-   and hidden.
-10. CSP against the inert addon frames and pinned widget templates (`sandbox` iframes, `srcdoc`); no inline script on
-    `/auth/launch`.
-11. Mock-only routes are absent from the real server (a test lists the app's routes against an allowlist).
-12. Dependency pins (FastAPI, uvicorn, starlette) and the static build's integrity: the server serves only files from
-    its packaged `static/`.
+1. Bearer token in memory/`sessionStorage`: XSS surface, CSP, `BroadcastChannel` sharing, logout and expiry.
+2. Bootstrap: code entropy, single use, instance binding, fragment scrub before any request, `/auth/session` limits.
+3. Origin ownership: single `127.0.0.1` listener, control-socket peer checks both ways, the probe, stale-socket and
+   lock handling, stop over IPC.
+4. Host check and DNS rebinding; one canonical origin; no proxy headers; every unsafe method checked.
+5. The process user and the `person`-class check; the stated same-UID limit before #287.
+6. Hand-off: the panel never handles a factor or the confirmation word; the preview is labelled untrusted; cancel and
+   replay behaviour; no automatic re-prepare.
+7. Closed op allowlist and typed inputs; no paths, no stdin, no raw events; `blob.put` bounds.
+8. Visibility through every route, the stream and errors; purge on `gone` and revocation.
+9. Workspace UUID through routes, caches, streams and requests; duplicate prefixes.
+10. Mock code absent from the production bundle and routes (a test lists routes against an allowlist; a bundle test
+    checks no mock module is included).
+11. Dependency pins (FastAPI, uvicorn, starlette); the server serves only its packaged `static/`.
 
-## 11. Milestones
+## 12. Milestones
 
-Each one is a PR into `develop`, mergeable on its own on green CI (D33). The real host is switched on by config once
-#325 is there; until then `InProcessHostLink` serves dev workspaces.
+Each milestone is one PR into `develop`, mergeable on green CI (D33). "Mergeable" is not "accepted": an issue
+checkbox is ticked only when its Appendix C scenario passes against a **real host** in a real browser.
 
-| # | Content | Depends on | Review |
-|---|---|---|---|
-| M0 Skeleton | `pyproject`, `orch-addon.json`, `orch_dashboard` with static serving and SPA fallback, `security.py` (Host/Origin/CSP), the HostLink interface with the in-process stub, transport selection in `client.ts` (mock stays default), feature gating, `dashboard.yml` CI. No data routes | — | code |
-| M1 #304 | `orch dashboard`, control socket, launch → session, `/api/session`, `me`, `workspaces`, `identity`, SSE live updates, `useLiveUpdates` on SSE, error mapping, `test_dashboard_shell.py`, `test_live_updates.py`, `test_dashboard_auth.py`, `e2e/dashboard_shell.spec` | M0; stream A `whoami`, `workspace.show`, `changes.*` (stubbed until then) | **Opus security** |
-| M2 #305 reads | Today, board, tickets, ticket page, events, changes; extended `list`; board drop targets limited per §5.9 | M1; `needs`, `list` extension, `diff` | code |
-| M3 #305 actions | `sign.prepare`/`commit`, SignDialog from the host `review`, approve, request changes, verdict, answer, comment, label, move, close, reopen, New ticket (batch), `test_dashboard_actions.py`, `e2e/new_ticket.spec` | M2; `sign.*`, `move`, person `new`/`log`/`ask`/`set` | **Opus security** |
-| M4 #306 | Settings (members with invite material, gate policy, grant length, grants list/revoke), switcher by UUID, `test_dashboard_settings.py`, `test_workspace_switcher.py` | M3 (signing); `member.list`, `policy.set`, `settings.set`, `grant.list` | code (+ security for member/policy signing, which uses M3's path) |
+| # | Content | Acceptance | Depends on | Review |
+|---|---|---|---|---|
+| **M0 Skeleton, auth, read-only shell** | package, `orch-addon.json`, server with static serving, `security.py`, `auth.py` (control socket, probe, launch code, bearer sessions), `hostlink.py` (contract v1), stub host, production entry without mock, feature gating from `caps`, dark shell with sidebar, switcher list and identity (read only), `dashboard.yml` | #304 "auth uses v2 identity" (stub; ticked on the real host from H4a), "shell renders" (dark; after the §14 Q1 amendment). Tests: `test_dashboard_auth.py`, `test_dashboard_shell.py`, adversarial auth tests. e2e S1, S2 | — (stub); H4a for acceptance | **Opus security** |
+| **M1 #304 live updates** | `live.py` (snapshot + `sub.open`, invalidation and reopen), fetch-SSE, `ready`/`resync`, per-tab `Last-Event-ID`, coarse invalidation, `gone` purge, revocation, poll fallback | #304 "live updates push ticket changes". Tests: `test_live_updates.py`. e2e S3, S4 | M0; H6a for acceptance | Opus (visibility) |
+| **M2 #305 reads** | adapters (Appendix B), Today (`needs`), board and backlog (read, `ticket.query` with paging), ticket page (sections, tasks, evidence via `artifact.get`, log), Changes tab (`diff`), UUID-keyed queries | #305 "Today lists items", "ticket page shows sections, tasks, evidence and log", board half of "show and move". Tests: `test_dashboard_today.py`, `…_board.py`, `…_ticket.py`, `test_dashboard_adapters.py`. e2e S5, S6, S7 | M1; H6b, H3b (`diff`); R1 for the structured log | code |
+| **M3 #305 actions via hand-off** | hand-off panel (preview from `material`), `human.prepare`/`pending`/`cancel`, `outcome.get`, approve, request changes, verdict, answer, comment (`log`), label (`set`), move, close, reopen, New ticket (one `new`) | #305 "ticket actions work", move half of "show and move", "new ticket creates a ticket". Tests: `test_dashboard_actions.py`, `test_dashboard_handoff.py`. e2e S8–S11, `e2e/new_ticket.spec` | M2; H5a, H5b; R3 (`move`), R7 | **Opus security** |
+| **M4 #306** | reduced settings (members with certificate upload, grants list/revoke; gate policy and grant length read-only until R5), switcher by UUID with duplicate prefixes and an unavailable host | #306 both boxes ("saves" needs R5 for policy and grant length, else the checkbox is ticked on member changes and grant revoke with the owner's agreement, §14 Q8). Tests: `test_dashboard_settings.py`, `test_workspace_switcher.py`. e2e S12, S13 | M3; R2, R5, R9 | code + security for member signing |
+| **M5 Touch ID** (P2, before cutover) | "Sign with Touch ID" in the hand-off panel, starting the H9 helper with the request code | e2e S14 (macOS, manual T2 run with a real Secure Enclave) | M3; H9 | Opus security |
 
-## 12. Open questions and decisions to make
+Deferred beyond these milestones: batches, restricted creation, a stream replay buffer, WebAuthn, Windows.
 
-**For stream A (orch-52)**
-1. **Human-peer op list.** Confirm a peer class for the human UID with: reads (`show`, `list`, `search`, `addon.list`,
-   NEW `whoami`, `workspace.show`, `member.list`, `grant.list`, `needs`, `diff`, `changes.head`, `changes.watch`), the
-   human operations through `sign.prepare`/`sign.commit`, and the person variants of `new`, `log`, `ask`, `set`,
-   NEW `move`, `people.set`, `visibility.set`, `policy.set`, `settings.set`. On macOS the host UID equals the human
-   UID: how does the host tell "the dashboard" from "the CLI as host"? Proposal: it doesn't need to; both are the
-   human peer.
-2. **Where the factor is collected.** Option (a) with the host prompting (secure-enclave), and the passphrase entered in
-   the dashboard and passed through (deviates from D65's TTY rule), or `orch sign <request>` in a terminal as the
-   D65-literal fallback. Needs the owner's decision.
-3. **WebAuthn (D64 says "webauthn (dashboard, P2)").** Is it in P2? It needs a new signed-event contract for
-   assertions (format §5.3), verifier support in core and orch-relay vectors, and a device certificate holding the
-   COSE key. Proposal: after M3, as a backend of (a).
-4. **Batch signing**: one factor unlock for N events reviewed together (New ticket, settings). This needs a §5.3
-   amendment like the `import v1` exception.
-5. **`expect` on human ops** (gate hash, question hash, `source_sha`), refused as `gate.stale`. Add it to the CLI too,
-   or socket only?
-6. **Change stream**: frame shape, the opaque cursor and its counter (persisted in `.state/index.sqlite`?), visibility
-   filtering, `resync`.
-7. **`list` extension vs a new `ticket.query`**, and the summary row shape (turn, gate state, needs-me).
-8. **`needs`** (Today): which rules core owns vs C9 addon `needs` rules; per person, with counts for the switcher.
+## 13. Requests to stream A
 
-**For the owner / core**
-9. Cookie `Secure` on `http://localhost` and `SameSite` across Safari, Chrome and Firefox. If Safari misbehaves, does
-   the dashboard support it in P2?
-10. Every comment, label and move is a signed person event (format §12 N1), so each needs the factor. Is that
-    acceptable UX in daily use, especially with the passphrase? Or should the spec get a lighter "person note" event
-    (a format change)?
-11. Preferred fixed port (4747?) and whether `orch dashboard` should install a login item.
-12. Windows (D63, portable-custody §7): is the dashboard required on Windows in P2? Named pipe plus ACL for the human
-    peer, and no `secure-enclave`.
-13. Saved views: personal only (dashboard state) in P2; shared views need a format event.
-14. Amend #304's "light and dark" to dark only (owner decision, HANDOVER). Also retitle #304–#306 from "P1a" to "P2"
-    (D42).
-15. Member invites: the dashboard flow for an invitee's `pk` and `cert` (paste or file), and how the person id is
-    compared out of band (§10.8).
+| # | Request | Needed by |
+|---|---|---|
+| R1 | **Structured `show` data**: events for `show --log` as objects (`seq, type, at, actor, summary`), question states and evidence digests per criterion in the `full` document | M2 (log tab falls back to fenced text) |
+| R2 | **`grant.list`** (not in v1) | M4 |
+| R3 | **`move`**: land the F1 amendment H0 (`ticket.moved`) so the provisional op becomes served | M3 |
+| R4 | A **restricted creation** that is restricted from its first durable event (or atomic create-then-restrict) | after P2 |
+| R5 | F1 events for the reserved **`policy.set`** and **`settings.set`**, then serve them | M4 |
+| R6 | A **per-request state lookup**: `human.pending {request_id}` (own person) returning `prepared`, `submitted` (from the tombstone, with event id and seq), `cancelled` or `expired` | M3 (heuristic in §4.3 until then) |
+| R7 | **Signer choice in a hand-off**: `human.prepare` needs `signer:{device, auth}`, but the dashboard does not know which device will sign. Either `whoami` lists this machine's devices of the person with their `auth`, or `handoff:true` lets the signer bind its device when it fetches the request | M3 |
+| R8 | `orch sign` and H9 **print the request fingerprint** (first 12 hex of `review_digest`) so the person can match it with the panel | M3 |
+| R9 | Confirm that `human.prepare` takes **`files`** for the inner op (the `member.add` certificate as a blob) | M4 |
+| R10 | Amend **D-P2-7's HTTP rules**: bearer header instead of cookie; `Host` exactly `127.0.0.1:<port>` (no `localhost`) | M0 |
+| R11 | Confirm that **control-socket `host.list`** may be called by the dashboard (host UID) and lists, per workspace, the id and whether the caller's UID is mapped to a person there | M0 |
+
+Answered by contract v1 and removed from this list: `ticket.query` (summary rows, filters, paging), `needs` (core,
+plus the `needs` topic), person versions of `new`/`set`/`log`/`ask`, `diff` bound to `source_sha`, identifier-free
+loss of visibility (`gone` items), omitting the confirmation word (v1 returns `material`, not review lines), H9 as a
+signer with its own native review (D-P2-22), `opts.idem` and outcome recovery.
+
+## 14. Questions for the owner
+
+1. **Dark only.** #304's acceptance says "light and dark"; the owner decided dark only. Proposal: amend the checkbox
+   to "Shell renders with the new look and feel (dark)". Also relabel #304–#306 from "P1a" to "P2" (D42).
+2. **Daily friction until H9.** Every comment, label and move is a signed person event (N1), so each one is a terminal
+   round-trip until the Touch ID helper lands (in P2 before the cutover, D-P2-22). Accept the interim friction?
+3. **Windows** (D63): the dashboard is not supported on Windows in P2. Accept?
+4. **WebAuthn**: amend D64's "webauthn (dashboard, P2)" to "later, with a new signed-event contract".
+5. **Random port**: accept that copied links need `orch dashboard open` after a server restart, instead of a fixed
+   port that another process could squat?
+6. **Spec amendments**: format §8.1 (`serve_http` enforced by the launcher, not the host) and portable-custody's
+   cookie wording (bearer header).
+7. **Member invites**: the invitee's `pk` and certificate arrive as an uploaded file or pasted JSON; the person id is
+   compared out of band (§10.8). Is that enough for P2?
+8. **#306 "saves the reduced settings"** while `policy.set`/`settings.set` wait for F1 events: wait for R5, or accept
+   member changes and grant revoke as the saved settings in P2?
+
+## 15. Changes after the Codex challenge
+
+| Codex # | Finding | Resolution |
+|---|---|---|
+| 1 (Critical) | browser passphrase entry | **Removed.** No factor ever enters the browser; terminal hand-off is the baseline, Touch ID helper before cutover (§4). The zeroisation claim is gone |
+| 2 | localhost cookie exposed to other ports | **No cookies**: bearer token in memory/`sessionStorage`, sent in a header, fetch-streamed SSE (§3) |
+| 3 | dashboard-rendered review is not trusted | Stated plainly: the dashboard is not a trusted display; the signer recomputes hashes from `material` and renders its own review (§2, §4.1, §4.2) |
+| 4 | short hash conflates gate content and request | The panel shows a request fingerprint (from `review_digest`) and labels the gate hash "content hash"; the signer prints the same fingerprint (R8) and builds the signing bytes itself (§4.1) |
+| 5 | immutable signing object | Contract v1: `human.prepare` freezes the event and `material`; `human.submit` compares canonical JSON; the signer recomputes hashes (H5a, D-P2-21). The dashboard never signs or rebuilds |
+| 6 | external-state checks at commit | Stream A's prepared `precommit` (git re-read under the lock) runs at submit; the residual git race is stream A's to state (H5a) |
+| 7 | request ownership, replay, ambiguous completion | §4.3: host-owned request with tombstones (v1), one request per action, required `opts.idem` + `outcome.get`, cancel on close/logout/switch/`gone`, "Already signed/done", no auto re-prepare; R6 |
+| 8 | human read identity | v1 maps the UID to a person in the host registry and uses that principal for reads, `needs` and subscriptions; the dashboard uses `whoami` and never names a person (§5) |
+| 9 | UUID vs prefix | Every API path, cache key, stream and request keyed by workspace UUID; routes keep the prefix, disambiguated with `?ws=` (§5); duplicate-prefix tests (§10, S13) |
+| 10 | filesystem-oriented CLI args | Closed allowlist with typed models; no paths or stdin; bytes via `blob.put`; the host never opens client paths (§4.4) |
+| 11 | batch creation leaks restricted tickets | No batches in P2; New ticket is one `new`; restricted creation hidden until R4 (§4.5) |
+| 12 | SSE authz and revocation | Streams bound to sessions; v1 revalidates before every delivery and sends `gone` for hidden tickets; the tab purges them and cancels their requests; membership re-check with `revoked` (§6) |
+| 13 | shared subscription vs per-tab resume | Per-tab `Last-Event-ID`; mismatch → `resync` and refetch; subscribe before snapshot; upstream snapshot + `sub_cursor` reopen on invalidation; slow-tab bound (§6) |
+| 14 | bootstrap contradiction | Route-by-route auth table (§3.3) |
+| 15 | fragment leakage | Scrub before any request, no-store, instance-bound atomic consume, never printed; limitation documented (§3.2) |
+| 16 | Host/Origin precision | One canonical origin `127.0.0.1:<port>`, `localhost` rejected, `Origin: null` rejected, no proxy headers, every unsafe method (§3.3) |
+| 17 | launch/server identity | flock startup, single listener, stale-socket rules, two-way peer check, HMAC probe of the port, stop over IPC; same-UID scoped out (§3.1, §2) |
+| 18 | addon capability without a dashboard principal | Dropped the claim: `serve_http` is a launcher policy switch, signing independent of it; spec amendment (§2, §14 Q6) |
+| 19 | P1 results vs mockup shapes | Adapter layer with a listed shape table (§7, Appendix B); `ticket.query`/`needs` close most gaps, R1 the rest; no parsing of `lines` |
+| 20 | review coverage | The trusted review is the signer's, rendered from `material` after recomputing hashes (D-P2-21). The panel's preview is rendered from the same frozen `material`, never from the cached ticket, so it is pinned by construction. Per-op coverage (member key/cert, policy before/after) is a stream A H5a acceptance item |
+| 21 | diff base and immutability | v1 `diff` is bound to D58 `source_sha` and returns base/head OIDs and `truncated`; the cache key includes the returned OIDs; the UI does not claim the signature binds the diff (§7) |
+| 22 | platform/backend matrix | §4.6: terminal everywhere supported, Touch ID before cutover, Windows and WebAuthn out with amendments (§14 Q3, Q4) |
+| 23 | stub host becomes a second host | The stub speaks contract v1, serves reads only, no `human.*`, dev-only, not in the wheel, not selectable by setting; production entry without mock; real-host tests gate acceptance (§9) |
+| 24 | acceptance incomplete | Checkbox-to-scenario matrix (Appendix C); "mergeable" vs "accepted" (§12); real-browser tests for browser security |
+| 25 | complexity | Coarse invalidation, resync instead of replay, no batches, no widget CSP, query requirements limited to daily screens (§6, §4.5) |
+| 26 | error mapping and limits | Codes mapped individually, custody codes gone (the dashboard never touches custody), only reads retry, limits listed (§3.3, §6, §8) |
+
+**Where this revision does not follow Codex exactly:**
+- **#20, pinning evidence and diff navigation to the reviewed versions.** Not done in the dashboard. The browser is
+  explicitly untrusted, and the preview is rendered from the frozen `material`, so pinning other tabs would add complexity
+  without adding a guarantee. The guarantee lives in the signer.
+- **#25, granular invalidation.** Kept as a small table instead of "workspace invalidation only": it is a few lines
+  and avoids refetching every ticket on each task event.
+- **#12, "specify a generic invalidation frame".** Not needed: contract v1's `gone {uid}` names only a ticket the
+  subscriber already knew, which reveals nothing new.
+- **#2, the trade-off.** Codex presented a header credential as one option needing reconciliation. This revision
+  decides it (no cookies) and asks for the spec amendments, accepting script-readable tokens because an XSS still
+  cannot sign.
+
+## Appendix A. Route list (real server)
+
+`GET /`, SPA paths, `/assets/*`; `GET /auth/probe`; `POST /auth/session`, `/auth/logout`; `GET /api/session`;
+`GET /api/workspaces`; `GET /api/me`; `GET /api/w/<uuid>/identity`, `/today`, `/tickets`, `/board`, `/people`,
+`/tickets/<key>`, `/tickets/<key>/events`, `/tickets/<key>/changes`, `/grants`, `/views`, `/stream`, `/head`;
+`POST /api/w/<uuid>/handoff` (prepare), `GET /api/w/<uuid>/handoff/<request_id>` (state),
+`DELETE /api/w/<uuid>/handoff/<request_id>` (cancel), `POST /api/w/<uuid>/blobs`, `POST /api/w/<uuid>/views`,
+`DELETE /api/w/<uuid>/views/<id>`. A test compares the app's routes with this list.
+
+## Appendix B. Shapes to adapt
+
+| Source (contract v1 `result.data`) | UI type (`src/api/types.ts`) | Adaptation |
+|---|---|---|
+| every `res ok` | endpoint objects | unwrap `result.data`; drop `lines`, `hints`; keep `cursor` only for the stream |
+| status `in_progress` etc. | `Status` (`in-progress`) | spelling map |
+| `show {full:true}` document + `ticket.query` row | `TicketDocument` | fields map 1:1 where present; gate states from the row; evidence per AC and question states per R1; people, visibility, turn and section revisions → "not available" until served |
+| `show {log:true}` (`events` as strings) | `OrchEvent[]` | needs structured events (R1); until then a plain fenced text log |
+| `ticket.query` rows | `TicketSummary` | map `assignees`, `claim`, `gates`, `needs`, `head_seq`; `next_page` drives paging |
+| `diff` | `TicketChanges` | `sources[]` per repo, `files[]`, `unified`, `truncated` |
+| `artifact.get` | evidence viewer | chunked, digest checked, rendered as data |
+| `search` hits `{key, where, line}` | palette results | new small type; snippets rendered as data |
+| `source_sha` list `[{repo, branch, sha}]` | `TicketBranch` | multi-repo; UI shows one row per repo (UI change) |
+| `whoami` + `member.list` | `Me`, `Member[]` | person, name, role per workspace; devices without keys |
+| control `host.list`, `workspace.show`, `host.status` | `Workspace`, `WorkspaceIdentity` | UUID primary key, prefix as label, tier |
+| `needs` items | `TodayDocument`, `NeedsYouItem` | kinds `question`, `approve`, `no_eligible`, `acknowledge`, `addon` mapped to the UI's kinds |
+| `human.prepare` result | new `HandoffRequest` | `{id, code, expires_at, fingerprint (from review_digest), material, gate_hash?}`; the preview renders `material` per op |
+| `human.pending` | new `HandoffState` | pending or not (R6 adds the final state) |
+| `res err` | `ApiError` | `{code, message, hint, retryable, exit}` |
+
+## Appendix C. Acceptance: checkbox to scenario
+
+All scenarios run in orch-dev-kit `e2e/` against `orch host run --foreground` on a demo workspace, in a real browser.
+
+| Issue checkbox | Scenario |
+|---|---|
+| #304 shell renders (dark) | S1 `dashboard_shell.spec`: `orch dashboard` opens the browser, the fragment is scrubbed, the dark shell shows the workspace from `whoami` |
+| #304 auth uses v2 identity | S2 `dashboard_auth.spec`: no token → "run orch dashboard"; a page on another localhost port gets nothing; a second tab joins via `BroadcastChannel`; logout ends both tabs |
+| #304 live updates | S3 `dashboard_live.spec`: a CLI write in a terminal shows on the open ticket page within 2 s. S4: kill the stream, write, reconnect → resync shows the write; hiding a ticket purges it from the tab |
+| #305 Today | S5 `dashboard_today.spec`: a question to the person and an open plan gate appear in Today and disappear after they are handled |
+| #305 board and backlog show | S6 `dashboard_board.spec`: tickets in every status appear in the right column; backlog lists backlog tickets |
+| #305 ticket page | S7 `dashboard_ticket.spec`: sections, tasks with state, evidence with digests, and the log of a demo ticket |
+| #305 actions | S8 approve plan via hand-off (`orch sign CODE` in a pty); S9 request changes and verdict; S10 answer; S11 move backlog → open, comment, label, close, reopen; lost response → "Already signed"; expired request |
+| #305 new ticket | `e2e/new_ticket.spec`: New ticket → hand-off → the ticket appears on the board |
+| #306 settings | S12 `dashboard_settings.spec`: change grant length and gate policy via hand-off; add a member from a certificate file; revoke a grant |
+| #306 switcher | S13 `dashboard_switcher.spec`: two workspaces with the same prefix and the same ticket key; switch with a hand-off panel open (it cancels); one host stopped shows "host not running" |
+| M5 (no checkbox) | S14 `dashboard_touchid.spec` (macOS, manual): the helper window shows its own review from `material`; Touch ID signs; the board refreshes |

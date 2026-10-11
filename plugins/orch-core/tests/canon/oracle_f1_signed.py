@@ -301,6 +301,7 @@ def tamper_vector() -> dict[str, Any]:
         at=ow.stamp(w.clock),
     )
     ticket.pop()  # keep the shared base logs unchanged
+    add("agent_field_set_valid", "an agent event without person-only fields", TICKET, [*ticket, agent_event], None)
     add(
         "agent_field_set_sig",
         "5.2: sig appears on person events and on no others; agent event host_sig verifies",

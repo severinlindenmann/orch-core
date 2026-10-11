@@ -1,5 +1,5 @@
 {
- "pins": "workspace restore and revocations",
+ "pins": "workspace restore and revocations; replay_only steps replay successfully but admit refuses chain.bad_ws_seq; schema_refused marks steps refused by schema validation before the model",
  "scenarios": [
   {
    "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",

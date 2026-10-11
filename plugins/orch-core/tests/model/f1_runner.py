@@ -1,6 +1,7 @@
 """Runs an F1 scenario vector (``tests/vectors/f1/*.json`` ``scenarios``) through ``orch.model`` with the real
-``CryptoVerifier``: every step except ``replay_only`` is offered to ``admit`` on the accepted prefix. A refused event
-is also replayed as the next line of the log; optional ``after`` checks read the state after an accepted step."""
+``CryptoVerifier``: every step is offered to ``admit`` on the accepted prefix. ``replay_only`` steps must refuse
+append with ``chain.bad_ws_seq`` but replay successfully. Other refused events are also replayed as the next line
+of the log; optional ``after`` checks read the state after an accepted step."""
 
 from __future__ import annotations
 
@@ -110,6 +111,8 @@ def run_scenario(sc: dict[str, Any], *, validate: bool = True) -> tuple[list, di
         st = state_of(sc, ws, tl)
         if step.get("replay_only"):
             assert expect == "ok", where
+            unsigned = {k: v for k, v in event.items() if k != "host_sig"}
+            assert admit(st, unsigned, log=log).code == Code.CHAIN_BAD_WS_SEQ, where
             (ws if log == WORKSPACE else tl.setdefault(log, [])).append(event)
             now = state_of(sc, ws, tl)
             assert not now.chain_errors, (where, now.chain_errors)

@@ -596,7 +596,10 @@ def all_vectors() -> dict[str, dict[str, Any]]:
             out[name] = {"pins": INDEX[name], **v}
     out["index.json"] = {
         "files": {k: INDEX[k] for k in sorted(INDEX)},
-        "note": "files tagged [shared] are copied verbatim into orch-relay; the others are core-only",
+        "note": "files tagged [shared] are copied verbatim into orch-relay; the others are core-only. "
+        "Step keys: replay_only accepts historical replay but admit refuses chain.bad_ws_seq; "
+        "schema_refused means schema validation refuses before the model; "
+        "replay_expect pins a distinct replay outcome.",
     }
     return out
 
@@ -613,7 +616,11 @@ def _vectors() -> dict[str, dict[str, Any]]:
         "devices.json": {"pins": "device.added and device roster rules", "scenarios": sg.devices_scenarios()},
         "revocation.json": {"pins": "device.revoked and recovery", "scenarios": sg.revocation_scenarios()},
         "checkpoint.json": sg.checkpoint_vector(),
-        "restore.json": {"pins": "workspace restore and revocations", "scenarios": sg.restore_scenarios()},
+        "restore.json": {
+            "pins": "workspace restore and revocations; replay_only steps replay successfully but admit refuses "
+            "chain.bad_ws_seq; schema_refused marks steps refused by schema validation before the model",
+            "scenarios": sg.restore_scenarios(),
+        },
         "refusal_order.json": {"pins": "5.11 refusal order", "scenarios": sg.refusal_order_scenarios()},
         "generation.json": {"pins": "the 5.7 raise table", "scenarios": fl.generation_scenarios()},
         "status.json": {"pins": "the 5.9 status table", "scenarios": fl.status_scenarios()},

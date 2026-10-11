@@ -116,7 +116,7 @@ it('Agents waiting-on-you link opens the exact question', async () => {
   const bar = screen.getByRole('region', { name: 'Agents' })
   await user.click(within(bar).getByRole('button', { name: 'Show' }))
   const link = await within(await screen.findByRole('dialog')).findByRole('link', { name: /^waiting on you · Q2, answer it on DEMO-0043$/ })
-  expect(link).toHaveAttribute('href', '/ticket/DEMO-0043#question-Q2')
+  expect(link).toHaveAttribute('href', '/w/DEMO/ticket/DEMO-0043#question-Q2')
   await user.click(link)
   expect(await screen.findByRole('tab', { name: /Questions/ })).toHaveAttribute('data-state', 'active')
   expect(document.getElementById('question-Q2')).toBeInTheDocument()

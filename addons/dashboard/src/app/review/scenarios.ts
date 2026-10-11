@@ -186,14 +186,22 @@ export const SCENARIOS: TourScenario[] = [
     { title: 'Re-login from Today', detail: 'Connections group: copy the login hint, Run check again (Demo).', go: { path: '/' } },
     { title: 'Unblocked', detail: 'After Run check again for gcloud-billing, DEMO-0054 no longer says Blocked and Start agent works.', go: { path: '/ticket/DEMO-0054' } },
   ]),
-  S(19, 'Mandates (preview)', 'How the approved Step 1 pilot would look. A non-functional preview: nothing signs.', [
+  S(19, 'Mandates (preview)', 'How the wide mandate (owner decision 10 Oct evening) would look. A non-functional preview: nothing signs.', [
     { title: 'Preflight', detail: 'Agents → Mandates: the four prerequisites are "not available in this build", so issuing is blocked.', go: { path: '/agents?tab=mandates' } },
-    { title: 'Issue a pilot mandate', detail: 'Show the pilot anyway (preview), then Issue a pilot mandate…: the fixed scope, the never list and the protected paths; "Sign mandate (preview — nothing is signed)".', go: { path: '/agents?tab=mandates' } },
-    { title: 'The banner', detail: 'One calm line on every page: Mandate md_3 · for Severin · epic DEMO-0050 · 9 decisions · until Tue. Details opens the tab; × hides it for this session.', go: { path: '/board' } },
-    { title: 'Decided for you', detail: 'Today, below the real queue: one folded row. Open it for up to 3 decisions (Looks right, Veto), the refused or skipped items and Show all; "Revoke mandate and void…" sits in its header.', go: { path: '/' } },
+    { title: 'Issue a mandate', detail: 'Show the mandate anyway (preview), then Issue a mandate…: "Steers the whole workspace in your name", what it may do (approve waiting agents and gates, unblock tickets, enable factories and start their runs including Deliver, issue grants), what stays yours (settings, addons, members and roles, devices, relay pairing, secrets and connections, protected paths, another mandate), a length up to 30 days; "Sign mandate (preview — nothing is signed)".', go: { path: '/agents?tab=mandates' } },
+    { title: 'Renew', detail: 'Renew… in the mandate: pick a new length (up to 30 days) from now; revision 2, same scope.', go: { path: '/agents?tab=mandates' } },
+    { title: 'The banner', detail: 'One calm line on every page: Mandate md_3 · for Severin · whole workspace · 10 decisions · until Tue. Details opens the tab; × hides it for this session.', go: { path: '/board' } },
+    { title: 'Decided for you', detail: 'Today, below the real queue: one folded row. Open it for up to 3 decisions (a grant, a factory run, a permit … with Looks right, Veto), the refused items (protected path, your veto, an addon install and a second mandate, both refused) and Show all; "Revoke mandate and void…" sits in its header.', go: { path: '/' } },
     { title: 'Stop', detail: 'Stop in the banner (optionally also stop agents): "Stopping…", then "Stopped at #1842".', go: { path: '/agents?tab=mandates' } },
-    { title: 'Revoke and void', detail: 'Lists the 7 decisions it would void and the 2 on landed work it only lists for review.', go: { path: '/agents?tab=mandates' } },
+    { title: 'Revoke and void', detail: 'Lists the 8 decisions it would void and the 2 on landed work it only lists for review.', go: { path: '/agents?tab=mandates' } },
     { title: 'Off again', detail: 'Demo data → Preview: mandates (or Reset demo): Today and the shell look exactly as before.', go: { path: '/' } },
+  ]),
+  S(20, 'Factory full run', 'Owner decision 10 Oct evening (D61 option): one signed request, the factory goes to Preview or all the way to Deliver, with a hold window and Stop.', [
+    { title: 'A run on hold', detail: 'Demo data → Busy day, then AI Factory: "Delivering in 28 min · Publish campaign to the newsletter list" above the tabs with Stop delivery, the same line in the shell, and a needs-you item on Today.', go: { path: '/addon/factory/factory' } },
+    { title: 'Stop the delivery', detail: 'Stop… in the shell line (or Stop delivery on the page): core\'s prompt names the run, the destination and the end of the window; Send answer. "Stopped by Severin …: nothing went out."', go: { path: '/addon/factory/factory' } },
+    { title: 'Request a full run', detail: 'Full runs tab: Goal, "How far may the factory go on its own?" → All the way to Deliver, What Deliver means (required), Hold window → Review request → Sign and start (or Fill in a demo request). The prompt lists every value in core lines.', go: { path: '/addon/factory/factory' } },
+    { title: 'Watch the steps', detail: 'Plan, then Requirements / Build and test / Validate / Evidence per child, then Preview: each reads "via the factory full run you signed on … — no person reviewed this step". About 30 s later it holds before Deliver.', go: { path: '/addon/factory/factory' } },
+    { title: 'Delivered', detail: 'Simulate: let the hold time pass (demo) ends the hold now: "Delivered: Deploy to production at …". The epic\'s History has the run\'s milestones.', go: { path: '/addon/factory/factory' } },
   ]),
 ]
 

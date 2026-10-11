@@ -2,6 +2,7 @@ import { screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { mockStore } from '@/api/client'
 import type { MockStore } from '@/mocks/store'
+import { seedRuns } from '@/mocks/addons/factory-runs'
 import { installAndGrant } from '@/test/installAddon'
 import { renderApp } from '@/test/renderApp'
 
@@ -138,5 +139,67 @@ describe('permits on Today', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Send answer' }))
     await waitFor(() => expect(screen.queryByTestId(`card-addon:${id}`)).not.toBeInTheDocument(), T)
     expect(mockStore.eventsOf('DEMO-0050').some((e) => e.type === 'factory.permit_granted' && e.scope === 'once')).toBe(true)
+  })
+})
+
+// Full runs (owner decision 2026-10-10 evening, D61 option).
+describe('factory full runs', () => {
+  const holding = (s: MockStore) => {
+    on(s)
+    Object.assign(s.addonState(wsOf(s), 'factory'), seedRuns(s, 'p_sev', wsOf(s)))
+  }
+  it('the request form: Deliver needs a destination; the signing prompt names every value in core lines', async () => {
+    const { user } = renderApp('/addon/factory/factory', { viewer: 'p_sev', setup: on })
+    await user.click(await screen.findByRole('tab', { name: /^Full runs/ }, T))
+    await user.type(await screen.findByLabelText(/^Goal/, {}, T), 'Autumn tariff campaign')
+    await user.click(screen.getByRole('radio', { name: /^All the way to Deliver/ }))
+    await user.click(screen.getByRole('button', { name: 'Review request' }))
+    // No destination: nothing is reviewed, the field says why.
+    expect((await screen.findAllByText(/Fill in What Deliver means/, {}, T)).length).toBeGreaterThan(0)
+    expect(screen.queryByRole('button', { name: 'Sign and start' })).not.toBeInTheDocument()
+    await user.type(screen.getByLabelText(/^What Deliver means/), 'Publish campaign')
+    await user.selectOptions(screen.getByLabelText(/^Hold window/), '1 h')
+    await user.click(screen.getByRole('button', { name: 'Review request' }))
+    await user.click(await screen.findByRole('button', { name: 'Sign and start' }, T))
+    const dialog = await screen.findByRole('dialog', { name: /^Sign: Start run \(start_run\) · AI Factory \(factory\)$/ }, T)
+    const lines = [...dialog.querySelectorAll('[data-arg-key]')].map((e) => [e.getAttribute('data-arg-key'), e.getAttribute('data-arg-value')])
+    expect(lines[0][1]).toMatch(/^rq-DEMO-[0-9a-f]{8}-1$/)
+    expect(lines).toEqual([['request', lines[0][1]], ['goal', 'Autumn tariff campaign'], ['goes_up_to', 'Deliver'], ['deliver_means', 'Publish campaign'], ['hold_minutes', '60'], ['largest_child', 'm']])
+    expect(dialog.textContent).toContain('Deliver means (deliver_means): "Publish campaign"')
+    await user.click(within(dialog).getByRole('button', { name: 'Sign and run' }))
+    await waitFor(() => expect(mockStore.eventsOf('DEMO-0050').some((e) => e.type === 'factory.run_requested' && e.deliver_means === 'Publish campaign')).toBe(true), T)
+    expect(await screen.findByText('R-1 · Autumn tariff campaign', {}, T)).toBeInTheDocument()
+  })
+  it('a run on hold: the calm notice above the tabs, on Today and in the shell; Stop from the shell cancels it', async () => {
+    const { user } = renderApp('/addon/factory/factory', { viewer: 'p_sev', setup: holding })
+    expect(await screen.findByText('Full run R-1 · Autumn tariff campaign: on hold before Deliver', { selector: 'strong' }, T)).toBeInTheDocument()
+    // The signed question is stable (no countdown, Codex integration review #1); the minutes left are core's own line.
+    expect(await screen.findByText(/^Delivery at .+: Publish campaign to the newsletter list$/, {}, T)).toBeInTheDocument()
+    const banner = await screen.findByTestId('delivery-hold-banner', {}, T)
+    expect(banner).toHaveTextContent(/^Delivering in 28 min · Publish campaign to the newsletter list · at \d\d:\d\d · AI Factory \(factory\)/)
+    expect(banner.className).not.toMatch(/warning|danger|orange/)
+    // The destination is never cut: the line wraps.
+    expect(banner.querySelector('.truncate')).toBeNull()
+    await user.click(within(banner).getByRole('button', { name: 'Stop…' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Decide for AI Factory (factory)' }, T)
+    expect(dialog.textContent).toContain('Deliver means (deliver_means): "Publish campaign to the newsletter list"')
+    await user.click(within(dialog).getByRole('button', { name: 'Send answer' }))
+    await waitFor(() => expect(screen.queryByTestId('delivery-hold-banner')).not.toBeInTheDocument(), T)
+    expect(mockStore.eventsOf('DEMO-0050').filter((e) => e.type === 'factory.deliver_stopped')).toHaveLength(1)
+    expect(mockStore.eventsOf('DEMO-0050').some((e) => e.type === 'factory.delivered' && e.run === 'R-1')).toBe(false)
+  })
+  it('Today lists the hold as a needs-you item with Stop delivery', async () => {
+    renderApp('/', { viewer: 'p_sev', setup: holding })
+    const card = await screen.findByTestId('card-addon:factory.hold:R-1', {}, T)
+    expect(card).toHaveTextContent(/Delivery at .+: Publish campaign to the newsletter list/)
+    expect(card.querySelector('[data-hold-countdown]')).toHaveTextContent(/^Delivering in 28 min, at \d\d:\d\d$/)
+  })
+  it('Simulate: let the hold time pass (demo) delivers: "Delivered: <destination> at <time>"', async () => {
+    const { user } = renderApp('/addon/factory/factory', { viewer: 'p_sev', setup: holding })
+    await user.click(await screen.findByRole('button', { name: 'Simulate: let the hold time pass (demo)' }, T))
+    await waitFor(() => expect(screen.queryByTestId('delivery-hold-banner')).not.toBeInTheDocument(), T)
+    await user.click(await screen.findByRole('tab', { name: /^Full runs/ }, T))
+    expect(await screen.findByText(/^Delivered: Publish campaign to the newsletter list at /, {}, T)).toBeInTheDocument()
+    expect(mockStore.eventsOf('DEMO-0050').some((e) => e.type === 'factory.delivered' && e.run === 'R-1')).toBe(true)
   })
 })

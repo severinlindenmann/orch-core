@@ -7,6 +7,7 @@ const NEEDS = ['me', 'agent', 'nobody'] as const
 
 /** Router search params of /tickets. Task 6's saved views are exactly this object. */
 export interface TicketsSearch {
+  repo?: string
   q?: string
   status?: Status[]
   type?: string
@@ -30,11 +31,12 @@ function listOf<T extends string>(all: readonly T[], v: unknown): T[] | undefine
 /** Tolerant parser: unknown or malformed params are dropped instead of failing the route. */
 /** The filters the host applies (status is filtered in the page, so its chips can count the other filters). */
 export function ticketsServerParams(s: TicketsSearch) {
-  return { q: s.q, type: s.type, priority: s.priority, person: s.person, needs: s.needs, label: s.label, sort: s.sort }
+  return { repo: s.repo, q: s.q, type: s.type, priority: s.priority, person: s.person, needs: s.needs, label: s.label, sort: s.sort }
 }
 
 export function validateTicketsSearch(raw: Record<string, unknown>): TicketsSearch {
   const out: TicketsSearch = {
+    repo: str(raw.repo),
     q: str(raw.q),
     status: listOf(STATUSES, raw.status),
     type: str(raw.type),

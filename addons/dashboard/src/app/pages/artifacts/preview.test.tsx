@@ -109,7 +109,7 @@ describe('Artifacts preview pane (a wide page)', () => {
     const { user } = renderApp('/artifacts')
     await user.click(await screen.findByRole('button', { name: 'Preview reconciliation-demo.html' }, T))
     const p = await pane('reconciliation-demo.html')
-    expect(await within(p).findByTitle(/Sandboxed preview of reconciliation-demo.html/, {}, T)).toHaveAttribute('sandbox', 'allow-scripts')
+    expect(await within(p).findByTitle(/Sandboxed preview of reconciliation-demo.html/, {}, T)).toHaveAttribute('sandbox', '') // agent HTML is inert (security review #1)
   })
   it('closing the pane puts focus back on the item’s Preview button', async () => {
     wide(true)

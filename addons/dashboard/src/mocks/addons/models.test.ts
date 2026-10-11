@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { offered } from '@/test/offered'
 import { createApi } from '@/api/client'
 import { createMockTransport } from '@/api/transport'
 import type { LaunchPreview } from '@/api/types'
@@ -190,7 +191,7 @@ describe('escalation after a task failed its check in two sessions', () => {
   it('"Next start on Strong" makes the next start on DEMO-0045 run on Strong, once', async () => {
     const s = setup()
     const d = (await s.api.getAddonDecisions(s.ws)).find((x) => x.addon === 'models')!
-    await s.api.runAddonAction(s.ws, 'models', 'escalate', { id: d.id, confirmed: true, option: 'strong', ticket: 'DEMO-0045' })
+    await s.api.runAddonAction(s.ws, 'models', 'escalate', offered(s.store, s.ws, 'models', 'escalate', { id: d.id, confirmed: true, option: 'strong', ticket: 'DEMO-0045' }))
     expect((await s.api.getAddonDecisions(s.ws)).some((x) => x.addon === 'models')).toBe(false)
     expect((await models(s)).nextStrong).toEqual(['DEMO-0045'])
     expect((await preview(s, 'DEMO-0045')).model).toBe('Model: Strong (opus), after failed checks · subagents on haiku')
@@ -203,14 +204,14 @@ describe('escalation after a task failed its check in two sessions', () => {
   it('"Not now" hides the card until another session fails the task', async () => {
     const s = setup()
     const d = (await s.api.getAddonDecisions(s.ws)).find((x) => x.addon === 'models')!
-    await s.api.runAddonAction(s.ws, 'models', 'escalate', { id: d.id, confirmed: true, option: 'not_now', ticket: 'DEMO-0045' })
+    await s.api.runAddonAction(s.ws, 'models', 'escalate', offered(s.store, s.ws, 'models', 'escalate', { id: d.id, confirmed: true, option: 'not_now', ticket: 'DEMO-0045' }))
     expect((await s.api.getAddonDecisions(s.ws)).some((x) => x.addon === 'models')).toBe(false)
     s.store.append('DEMO-0045', { type: 'task.run', actor: 'claude-code:s_c0de:p_sev', task: 'T2', receipt: { exit: 1, ms: 50_000 } })
     expect((await s.api.getAddonDecisions(s.ws)).find((x) => x.addon === 'models')!.question).toBe('T2 failed its check in 3 sessions: start the next session on Strong?')
   })
   it('a closed or made-up decision does nothing', async () => {
     const s = setup()
-    const res = await refused(s.api.runAddonAction(s.ws, 'models', 'escalate', { id: 'models.escalate:DEMO-0044:T1:2', confirmed: true, option: 'strong', ticket: 'DEMO-0044' }))
+    const res = await refused(s.api.runAddonAction(s.ws, 'models', 'escalate', offered(s.store, s.ws, 'models', 'escalate', { id: 'models.escalate:DEMO-0044:T1:2', confirmed: true, option: 'strong', ticket: 'DEMO-0044' })))
     expect(res).toMatchObject({ status: 409, code: 'decision.closed', message: 'That decision is closed.' })
     expect((await models(s)).nextStrong).toEqual([])
   })
@@ -218,7 +219,7 @@ describe('escalation after a task failed its check in two sessions', () => {
     const s = setup('p_mara')
     ;(s.store as unknown as { defs: Map<string, { visibility: unknown }> }).defs.get('DEMO-0045')!.visibility = { restricted: ['p_sev'] }
     expect((await s.api.getAddonDecisions(s.ws)).some((x) => x.addon === 'models')).toBe(false)
-    expect(await fail(s.api.runAddonAction(s.ws, 'models', 'escalate', { id: 'models.escalate:DEMO-0045:T2:2', confirmed: true, option: 'strong', ticket: 'DEMO-0045' }))).toMatch(/^404/)
+    expect(await fail(s.api.runAddonAction(s.ws, 'models', 'escalate', offered(s.store, s.ws, 'models', 'escalate', { id: 'models.escalate:DEMO-0045:T2:2', confirmed: true, option: 'strong', ticket: 'DEMO-0045' })))).toMatch(/^404/)
     expect(JSON.stringify(await models(s))).not.toContain('DEMO-0045')
   })
 })

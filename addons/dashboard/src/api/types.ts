@@ -43,6 +43,8 @@ export interface WorkspaceAddon {
 }
 
 export interface Workspace {
+  /** The workspace's folder on the host (the harness root that holds its repos); read-only, relative paths resolve against it. */
+  root_folder?: string
   id: string
   prefix: string // DEMO
   name: string
@@ -56,6 +58,23 @@ export interface Workspace {
   relay?: 'on' | 'off'
   /** Default agent grant length in hours (absent: 8); also the longest grant a member may sign for themselves. */
   grant_hours?: number
+  /**
+   * `config.json` → `settings.repos` (ticket format §2): repo name → working copy. Owner-signed (`settings.changed`,
+   * §5.4.2); `links.repos` names must be in it. This is the one declared repo list (the Repos addon shows and edits it,
+   * it keeps no second list).
+   */
+  repos?: Record<string, WorkspaceRepo>
+}
+
+/**
+ * One `settings.repos` entry. `path` is the format's (absolute, or relative to the workspace folder). `remote` and
+ * `default_branch` are a PROPOSED format amendment (docs/repos-addon-proposal.md): the source a missing repo is cloned
+ * from; credential-free, never a secret.
+ */
+export interface WorkspaceRepo {
+  path: string
+  remote?: string
+  default_branch?: string
 }
 
 /** A person this device knows (from any workspace or the identity registry): what the Add member combobox offers. */
@@ -607,6 +626,8 @@ export type SettingsRequest =
   | { op: 'member.remove'; person: string }
   | { op: 'gate.policy'; gate: GateName; approvers: string; count: number; not?: 'assignees' | null; applies?: CodeReviewApplies }
   | { op: 'grant.hours'; hours: number }
+  /** Format §5.4.2 `settings.changed` `set.repos`: repo name → entry, or null to remove it (signed in the UI). */
+  | { op: 'repos'; set: Record<string, WorkspaceRepo | null> }
   | { op: 'archive'; prefix: string }
 
 /** POST /api/workspaces/:ws/addons/:name. Owner only; grant and update are signed in the UI. */
@@ -658,6 +679,12 @@ export interface AddonDecision {
    * no longer match (409 decision.closed) and records them in `addon.decided`. Invalid terms: the decision is not offered.
    */
   terms?: Record<string, string | number>
+  /**
+   * A delivery that waits out its hold window (factory full run, owner decision 2026-10-10 evening; provisional): it goes
+   * out at `until` unless a person answers. The decision then has one option, `stop`. Core shows it on Today, in place
+   * on the addon's page, and as a calm notice in the shell ("Delivering in 28 min · <deliver_means> · Stop…").
+   */
+  hold?: { until: string; deliver_means: string }
   /** Posted to POST /api/workspaces/:ws/addons/:addon/actions/:action with { option, ticket }. */
   action: string
 }
@@ -718,6 +745,18 @@ export interface ActionMeta {
    * records `addon.decided` in the workspace log. Today asks for presence (core's signing prompt) first.
    */
   decision?: boolean
+  /**
+   * The decision authorises something to run (a factory permit). Core requires such a decision to carry its execution
+   * values as typed `terms` and refuses an answer to one without them (409 decision.terms_required); the host records
+   * each answer once (a second answer to the same decision is 409 decision.closed). Security review #3.
+   */
+  authorises?: boolean
+  /**
+   * 'eligible': who may answer is the decision's own eligibility rule (a factory code review: core's gate eligibility
+   * under the code-gate policy), not the owners-and-maintainers floor of addon decisions. Core still refuses viewers;
+   * the addon offers the decision only to eligible people and its handler checks eligibility again (core's rule).
+   */
+  deciders?: 'eligible'
 }
 
 export interface AddonUpdate {
@@ -777,9 +816,13 @@ export interface AddonActionResult {
 // ---------------------------------------------------------------- actions & errors
 
 export type ActionRequest =
-  | { action: 'answer'; question: string; option?: string; text?: string }
-  /** `source_sha` (code gate): the commit the person reviewed; refused when the branch moved since. */
-  | { action: 'approve'; gate: GateName; source_sha?: string }
+  /** `hash`: the question's hash as the dialog showed it; refused when the question changed since (`question.stale`). */
+  | { action: 'answer'; question: string; option?: string; text?: string; hash: string }
+  /**
+   * `source_sha` (code gate): the commit the person reviewed; refused when the branch moved since. `hash` (requirements
+   * and plan): the gate's content hash as the dialog showed it; required, refused when the content changed (`gate.stale`).
+   */
+  | { action: 'approve'; gate: GateName; source_sha?: string; hash?: string }
   | { action: 'request_changes'; gate: GateName; text: string }
   /** `source_sha`: the branch head the dialog showed; the host refuses a verdict on another commit (`verdict.stale`). */
   | { action: 'verdict'; result: 'pass' | 'fail'; text?: string; source_sha: string }
@@ -818,6 +861,8 @@ export class ApiError extends Error {
 // ---------------------------------------------------------------- workspace event log
 
 export type WorkspaceEventType =
+  | 'repos.checked' | 'repos.clone_queued' | 'repos.cloned' | 'repos.clone_failed' | 'repos.clone_cancelled' | 'repos.fetched' | 'repos.terminal_opened'
+  | 'settings.changed'
   | 'member.added' | 'member.role_changed' | 'member.removed'
   | 'gate.policy_set'
   | 'addon.installed' | 'addon.granted' | 'addon.enabled' | 'addon.disabled' | 'addon.updated' | 'addon.uninstalled'
@@ -832,7 +877,7 @@ export type WorkspaceEventType =
   | 'skill.credentials_granted' | 'connection.checked'
   | 'records.committed' | 'records.pushed' | 'records.pulled'
   | 'links.pairing_started' | 'links.pairing_cancelled' | 'links.terms_set' | 'links.pairing_denied' | 'links.paired' | 'links.revoked'
-  | 'links.request_received' | 'links.request_accepted' | 'links.request_denied' | 'links.answered' | 'links.scope_changed' | 'links.sent'
+  | 'links.request_received' | 'links.request_accepted' | 'links.request_denied' | 'links.answered' | 'links.scope_changed' | 'links.sent' | 'links.handoff_returned'
 export interface WorkspaceEvent {
   v: 2
   id: string

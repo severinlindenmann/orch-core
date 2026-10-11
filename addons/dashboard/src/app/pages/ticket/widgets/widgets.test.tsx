@@ -81,7 +81,8 @@ describe('html widgets (DEMO-0041)', () => {
     const { user } = renderApp('/ticket/DEMO-0041')
     await waitFor(() => expect(widget('proto')).toBeTruthy(), T)
     const ok = widget('proto')
-    expect(ok.querySelector('iframe')).toHaveAttribute('sandbox', 'allow-scripts')
+    // A one-off page is agent HTML: inert, no scripts (security review #1).
+    expect(ok.querySelector('iframe')).toHaveAttribute('sandbox', '')
     expect(ok.querySelector('iframe')).toHaveAttribute('title', 'Sandboxed preview · one-off')
     const art = mockStore.ticket('DEMO-0041')!.artifacts.find((a) => a.name === 'reconciliation-demo.html')!
     expect(ok.querySelector('iframe')!.srcdoc).toContain(art.preview!.slice(0, 40))

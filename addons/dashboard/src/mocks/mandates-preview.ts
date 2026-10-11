@@ -1,12 +1,13 @@
-// Mandates, PREVIEW ONLY (docs/concept-mandates.md, Step 1 pilot; owner decision 10 Oct 2026). A mock of how the
-// pilot would look, for the owner to see. Nothing here is real:
+// Mandates, PREVIEW ONLY (docs/concept-mandates.md; owner decision 10 Oct 2026 evening: the wide mandate). A mock of
+// how it would look, for the owner to see. Nothing here is real:
 //  - nothing is signed, no Touch ID runs, and no request reaches a signing or decision path (tickets' actions, grants,
 //    addon ops, settings, relay): this module keeps its own little state and never touches the workspace or ticket logs;
 //  - the preflight is honest: none of the four prerequisites exists in this build, so a real host would refuse every
-//    mandate. "Show the pilot anyway" only turns the preview on;
-//  - the decision log is seeded ("as if the mandate had run for three days"), on the chosen epic's children.
+//    mandate. "Show the mandate anyway" only turns the preview on;
+//  - the decision log is seeded ("as if the mandate had run for three days"): a mix of gate approvals, a code review,
+//    an unblocked ticket, a factory permit, a factory enabled, a full run started and a grant.
 // Off by default. Kept in the browser under its own key (the demo's Reset clears it); tests keep it in memory.
-import type { MandateDecision, MandateDecisionKind, MandatePreflightCheck, MandateRefusal, MandatesPreviewRequest, MandatesPreviewState, PreviewMandate } from '@/api/mandatesPreview'
+import { MAX_MANDATE_DAYS, type MandateDecision, type MandateDecisionKind, type MandatePreflightCheck, type MandateRefusal, type MandatesPreviewRequest, type MandatesPreviewState, type PreviewMandate } from '@/api/mandatesPreview'
 import { can } from '@/api/permissions'
 import type { MockStore, StoreFailure } from './store'
 
@@ -14,7 +15,7 @@ export const STORAGE_KEY = 'orch.preview.mandates'
 /** How long the host takes to acknowledge a Stop (mock clock). */
 export const STOP_ACK_MS = import.meta.env.MODE === 'test' ? 150 : 1_500
 const DAY = 86_400_000
-const PILOT_DAYS = 7
+const DEFAULT_DAYS = 7
 /** Where the seeded log starts in the workspace log, and where a Stop draws its boundary. */
 const FIRST_SEQ = 1831
 const BOUNDARY_SEQ = 1842
@@ -50,17 +51,27 @@ export const PREFLIGHT: MandatePreflightCheck[] = [
   },
 ]
 
-/** Concept §Summary, "What it can never do". Core text, shown in full. */
-export const NEVER: string[] = [
-  'Issue grants or mandates.',
-  'Change members, roles, devices or relay pairing.',
-  'Touch secrets, credentials or connections.',
-  'Install or upgrade addons or their capabilities.',
-  'Change policies or settings.',
-  'Restore, purge, make a first send to a peer, publish publicly, or land on main.',
-  'Sign the code review gate.',
-  'Approve a change to protected paths: a person approves those, always.',
-  'Override a person’s “no”: it stays in place until a person lifts it.',
+/** What the mandate may do in your name (owner decision 10 Oct evening). Core text, shown in full. */
+export const MAY: string[] = [
+  'Approve agents that wait for an approval: requirements, plan, verdicts and the code review gate.',
+  'Answer agents\u2019 questions (typed choices only).',
+  'Unblock tickets.',
+  'Answer addon decisions and factory permits.',
+  'Enable factories and start factory runs, including Deliver (after the hold window).',
+  'Issue grants that start agents (they stay inside this mandate).',
+]
+
+/** What stays human, always (owner decision 10 Oct evening; concept §Summary). Core text, shown in full. */
+export const ALWAYS_HUMAN: string[] = [
+  'Settings and policies.',
+  'Addons: install, update, capabilities.',
+  'Members and roles.',
+  'Devices.',
+  'Relay pairing.',
+  'Secrets and connections.',
+  'Changes to protected paths (listed below).',
+  'Another mandate: a mandate never issues, extends or renews one.',
+  'Overriding a person\u2019s \u201cno\u201d: it stays until a person lifts it.',
 ]
 
 /** Concept §2.2: the workspace default. A person can extend it, never shrink it below this. */
@@ -77,7 +88,7 @@ export const PROTECTED_PATHS: string[] = [
 interface Sim {
   on: boolean
   mandate: PreviewMandate | null
-  /** The next mandate number (md_3 is the first: the factory charter and one earlier pilot came before, as in the concept). */
+  /** The next mandate number (md_3 is the first: the factory charter and one earlier mandate came before, as in the concept). */
   next: number
 }
 interface Saved {
@@ -162,9 +173,12 @@ export class MandatesPreviewHost {
     return this.store.workspaces.find((w) => w.id === ws)?.members.find((m) => m.person === person)?.name ?? person
   }
 
-  private epics(ws: string) {
-    const tickets = this.store.listTickets(ws)
-    return tickets.filter((t) => t.type === 'epic').map((e) => ({ key: e.key, title: e.title, children: tickets.filter((t) => t.parent === e.key).sort((a, b) => a.key.localeCompare(b.key)) }))
+  /** Tickets the seeded log decides on: the factory epic's children first, then other open work (never restricted). */
+  private tickets(ws: string) {
+    const all = this.store.listTickets(ws).filter((t) => !t.restricted && t.type !== 'epic')
+    const kids = all.filter((t) => t.parent?.endsWith('-0050')).sort((a, b) => a.key.localeCompare(b.key))
+    const rest = all.filter((t) => !t.parent).sort((a, b) => a.key.localeCompare(b.key))
+    return [...kids, ...rest]
   }
 
   private orchestrators(ws: string) {
@@ -188,48 +202,52 @@ export class MandatesPreviewHost {
       on: s.on,
       preflight: PREFLIGHT,
       orchestrators: this.orchestrators(ws),
-      epics: this.epics(ws).map((e) => ({ key: e.key, title: e.title, children: e.children.length })),
-      never: NEVER,
+      may: MAY,
+      always_human: ALWAYS_HUMAN,
       protected_paths: PROTECTED_PATHS,
       // A copy, as a host would serialise it (the cache must never hold the mock's own object).
       mandate: s.on && m ? structuredClone(m) : null,
     }
   }
 
-  /** A mandate as if it had run for three days on the epic's children (the seeded log). */
-  private seedMandate(ws: string, s: Sim, orchestrator: { name: string; session: string }, epicKey: string): PreviewMandate | StoreFailure {
-    const epic = this.epics(ws).find((e) => e.key === epicKey)
-    if (!epic) return fail(400, 'validation', `No epic ${epicKey} in this workspace.`, 'Pick one of the listed epics.')
-    if (epic.children.length === 0) return fail(400, 'validation', `${epic.key} has no children yet.`, 'Pick an epic with children.')
+  /** A mandate as if it had run for three days across the workspace (the seeded log). */
+  private seedMandate(ws: string, s: Sim, orchestrator: { name: string; session: string }, days: number): PreviewMandate | StoreFailure {
+    if (!Number.isInteger(days) || days < 1 || days > MAX_MANDATE_DAYS) return fail(400, 'validation', `Pick a length from 1 to ${MAX_MANDATE_DAYS} days.`)
+    const kids = this.tickets(ws)
+    if (kids.length < 6) return fail(400, 'validation', 'This workspace has too few tickets for the preview.')
+    const prefix = this.store.workspaces.find((w) => w.id === ws)?.prefix ?? ws
     const now = Date.parse(this.store.now())
     const issued = now - 3 * DAY
-    const kids = epic.children
     const kid = (i: number) => kids[i % kids.length]
-    // Nine decisions: requirements, plan and verdict per child, in that order, two of the verdicts on work that landed.
-    const plan: { k: number; kind: MandateDecisionKind; landed?: boolean }[] = [
+    // Ten decisions in the order they happened: gate approvals, verdicts (two on work that landed), a code review, an
+    // unblocked ticket, a factory permit, a factory enabled, a full run started and a grant that started an agent.
+    const plan: { k?: number; kind: MandateDecisionKind; landed?: boolean; target?: string }[] = [
       { k: 0, kind: 'requirements' }, { k: 0, kind: 'plan' }, { k: 0, kind: 'verdict', landed: true },
-      { k: 2, kind: 'requirements' }, { k: 2, kind: 'plan' }, { k: 2, kind: 'verdict', landed: true },
-      { k: 1, kind: 'requirements' }, { k: 1, kind: 'plan' },
-      { k: 3, kind: 'requirements' },
+      { k: 4, kind: 'unblock' },
+      { k: 2, kind: 'verdict', landed: true }, { k: 2, kind: 'code_review' },
+      { kind: 'factory_enabled', target: `AI Factory in ${prefix}` },
+      { k: 1, kind: 'permit', target: 'uv run pytest tests/billing -q' },
+      { kind: 'factory_run', target: 'full run R-3 “Tariff page copy”, up to Preview' },
+      { kind: 'grant', target: 'grant for 8 h, started Claude Code on the next ticket' },
     ]
     const commits = ['b7e1f02', '4c9a3d1', 'e02f7b8']
     let c = 0
     const md = `md_${s.next}`
     const checker = 'si_chk_4f2a'
     const decisions: MandateDecision[] = plan.map((p, i) => {
-      const t = kid(p.k)
+      const t = p.k === undefined ? undefined : kid(p.k)
       return {
         seq: FIRST_SEQ + i,
         id: `${md}.d${i + 1}`,
-        ticket: t.key,
-        title: t.title,
+        ...(t ? { ticket: t.key, title: t.title } : {}),
+        ...(p.target ? { target: p.target } : {}),
         kind: p.kind,
-        ...(p.kind === 'verdict' ? { commit: commits[c++ % commits.length] } : {}),
-        at: iso(issued + (i + 1) * 7 * 3_600_000),
+        ...(p.kind === 'verdict' || p.kind === 'code_review' ? { commit: commits[c++ % commits.length] } : {}),
+        at: iso(issued + (i + 1) * 6 * 3_600_000),
         checker: { identity: checker, result: 'passed' as const },
         landed: !!p.landed,
-        // Looked at on earlier days: the first four. The rest is new since your last look.
-        ...(i < 4 ? { review: 'looks_right' as const } : {}),
+        // Looked at on earlier days: the first five. The rest is new since your last look.
+        ...(i < 5 ? { review: 'looks_right' as const } : {}),
       }
     })
     const refused: MandateRefusal[] = [
@@ -243,6 +261,16 @@ export class MandatesPreviewHost {
         detail: 'Plan approval skipped: you requested changes on this plan. Your “no” stands until you lift it.',
         at: iso(now - 5 * 3_600_000),
       },
+      {
+        id: `${md}.r3`, asked: 'Install the addon drop', reason: 'always_human',
+        detail: 'Refused: addons are always yours. The orchestrator asked to install drop for a handoff; a person installs addons.',
+        at: iso(now - 3 * 3_600_000),
+      },
+      {
+        id: `${md}.r4`, asked: 'Issue a mandate to a second orchestrator', reason: 'chain',
+        detail: 'Refused (mandate.chain_refused): a mandate never issues another mandate. Grants that start agents are allowed.',
+        at: iso(now - 2 * 3_600_000),
+      },
     ]
     return {
       id: md,
@@ -250,19 +278,18 @@ export class MandatesPreviewHost {
       issuer: this.name(ws, this.store.viewer),
       orchestrator: { name: orchestrator.name, identity: 'si_orc_91c3' },
       checker: { identity: checker },
-      epic: { key: epic.key, title: epic.title },
-      decides: ['requirements', 'plan', 'verdict'],
-      max_size: 'm',
+      scope: 'workspace',
+      days,
       issued_at: iso(issued),
-      expires: iso(issued + PILOT_DAYS * DAY),
+      expires: iso(issued + days * DAY),
       state: 'active',
       limits: {
-        decisions: { used: decisions.length, max: 40 },
-        children: { used: Math.min(kids.length, 25), max: 25 },
+        decisions: { used: decisions.length, max: 200 },
+        grants: { used: decisions.filter((d) => d.kind === 'grant').length, max: 20 },
       },
       decisions,
       refused,
-      revisions: [{ revision: 1, at: iso(issued), what: `Issued on this Mac with Touch ID (preview: nothing was signed). Epic ${epic.key}, 7 days, no renewal.` }],
+      revisions: [{ revision: 1, at: iso(issued), what: `Issued on this Mac with Touch ID (preview: nothing was signed). Whole workspace, ${days} ${days === 1 ? 'day' : 'days'}, renewable.` }],
     }
   }
 
@@ -276,12 +303,9 @@ export class MandatesPreviewHost {
         s.on = true
         if (body.seed && (!m || m.state === 'revoked')) {
           const orch = this.orchestrators(ws)[0] ?? { name: 'Claude Code', session: 's_orc' }
-          const epic = this.epics(ws).find((e) => e.key.endsWith('-0050') && e.children.length) ?? this.epics(ws).find((e) => e.children.length)
-          if (epic) {
-            const seeded = this.seedMandate(ws, s, orch, epic.key)
-            if ('ok' in seeded) return seeded
-            s.mandate = seeded
-          }
+          const seeded = this.seedMandate(ws, s, orch, DEFAULT_DAYS)
+          if ('ok' in seeded) return seeded
+          s.mandate = seeded
         }
         break
       }
@@ -290,14 +314,28 @@ export class MandatesPreviewHost {
         s.mandate = null
         break
       case 'issue': {
-        if (!s.on) return fail(409, 'conflict', 'Turn the preview on first.', 'Use “Show the pilot anyway (preview)”.')
-        if (m && m.state !== 'revoked' && m.state !== 'stopped') return fail(409, 'conflict', `Mandate ${m.id} is still in force.`, 'The pilot runs one mandate at a time: stop it first.')
+        if (!s.on) return fail(409, 'conflict', 'Turn the preview on first.', 'Use “Show the mandate anyway (preview)”.')
+        if (m && m.state !== 'revoked' && m.state !== 'stopped') return fail(409, 'conflict', `Mandate ${m.id} is still in force.`, 'One mandate at a time in the preview: stop it first.')
         const orch = this.orchestrators(ws).find((o) => o.session === body.orchestrator)
         if (!orch) return fail(400, 'validation', 'Pick the orchestrator.')
         if (m) s.next += 1
-        const seeded = this.seedMandate(ws, s, orch, body.epic)
-        if ('ok' in seeded) return seeded
+        const seeded = this.seedMandate(ws, s, orch, body.days)
+        if ('ok' in seeded) {
+          if (m) s.next -= 1
+          return seeded
+        }
         s.mandate = seeded
+        break
+      }
+      case 'renew': {
+        // Renewing is one new signature on the Mac: a new revision with a new length from now (at most 30 days).
+        if (!m || m.state !== 'active') return fail(409, 'conflict', 'No mandate in force to renew.', 'A stopped or revoked mandate is not renewed: issue a new one.')
+        if (!Number.isInteger(body.days) || body.days < 1 || body.days > MAX_MANDATE_DAYS) return fail(400, 'validation', `Pick a length from 1 to ${MAX_MANDATE_DAYS} days.`)
+        const now = this.store.now()
+        m.revision += 1
+        m.days = body.days
+        m.expires = iso(Date.parse(now) + body.days * DAY)
+        m.revisions.push({ revision: m.revision, at: now, what: `Renewed on this Mac with Touch ID (preview: nothing was signed). ${body.days} ${body.days === 1 ? 'day' : 'days'} from now; same scope, lifetime counters kept.` })
         break
       }
       case 'stop':

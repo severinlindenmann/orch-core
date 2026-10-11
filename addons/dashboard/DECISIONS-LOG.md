@@ -937,3 +937,222 @@ The owner answered the eight open questions of REVIEW.md. Items 1, 2, 5 and 6 ch
   M3's seeded times still follow the demo clock after a reload (the log is seeded relative to "now" when turned on).
 - **Why:** review M1, controller rulings for fix round 1.
 - **Revert:** revert the M1 fix-round commit.
+
+## Owner decision 2026-10-10 — ticket addresses carry the workspace
+
+- **Decision:** a ticket's address is `/w/<PREFIX>/ticket/<KEY>` (e.g. `/w/DEMO/ticket/DEMO-0201?tab=history`), like every
+  other page. The prefix is the key's workspace (`prefixOfKey`), never the remembered one, so every ticket link in the
+  app (lists, breadcrumbs, Copy link, ⌘K, toasts, addon nodes, the dock) is canonical: `toPublicPath` maps `/ticket/<KEY>`
+  to it whatever the current workspace is. The old `/ticket/<KEY>` keeps working and is replaced by the canonical
+  address (`?tab=` and `#question-…` kept); `/w/<OTHER>/ticket/<KEY>` where the key belongs to another workspace is
+  replaced by the key's own workspace (the key is authoritative). A ticket address never moves the in-app links'
+  workspace (the rewrite's input ignores its prefix); the ticket page still makes the key's workspace current as before.
+  An unknown or restricted ticket behaves as before (no redirect when no workspace owns the key; nothing of the ticket
+  is shown). Supersedes the G2 rule "tickets stay `/ticket/<KEY>`; `/w/X/ticket/K` drops the `/w/X`".
+- **Why:** owner decision 2026-10-10: one address shape for every page, and a pasted ticket link names its workspace.
+- **Revert:** in `src/app/urls.ts` drop the ticket branch of `toPublicPath` and the ticket guard in the rewrite's input;
+  in `workspace.tsx` restore the old redirect effect (a ticket address loses its `/w/X`); restore the tests in
+  `urls.test.tsx` and the HANDOVER routes row.
+## 2026-10-10 U4: dashboard developer guide
+
+- **Decision:** make `AGENTS.md` the shared app guide, with `CLAUDE.md` pointing to it. Document the signing boundary, host enforcement, addon workflow, G4 loading and 13" layout checks; correct README setup, latency and browser-history routing. Describe `view()` as serializable state containing declarative UI nodes, matching the registry. Mark factory full-run and repos proposals as absent in this checkout instead of linking nonexistent files.
+- **Why:** a new agent session needs current, source-checked instructions without prior conversation context; the README still described the retired sandbox routing and relative build base.
+- **Revert:** remove the two guide files and revert this documentation change; runtime behavior is unchanged.
+## Owner request 2026-10-10 — Repos addon (U3)
+
+- Added the Repos preview, installed in all demo workspaces, with separate declarations and last-check observations under the host's workspace root. The addon returns core UI nodes only.
+- Core signs exact remote and destination values, checks stale clone plans, and enforces roles. Credential-bearing URLs never enter drafts. Removal changes the declaration only; an owner must explicitly override linked open tickets in an options confirmation.
+- Fetch updates remote tracking without pretending to pull or clear dirty work. Clone jobs and scheduled checks use the mock clock; `private-api` demonstrates first-attempt failure and Retry in busy data.
+- Added narrow internal links for repo-filtered tickets and expanded repo rows, using existing permanent workspace URLs. A repo shell reuses Terminals' ownership/grant checks and types a quoted `cd` without Enter.
+- Proposal and unresolved host identity/credentials, naming, scheduling and event decisions: [Repos proposal](docs/repos-addon-proposal.md). Revert by removing the catalog/fixture installation and `repos` registry import, then the narrow core integrations.
+
+- Verification follow-up: the Busy-day 50 ms Today-query budget failed intermittently in the full suite. Today now shares a request-local visible-ticket snapshot and blocker lookup across its attention sections instead of repeatedly deriving every ticket and agent. No cache crosses requests or viewers; the performance thresholds are unchanged.
+
+## U3 review round 2026-10-11 — Repos aligned with the v2 format
+
+- **Declared list = `settings.repos`** (format §2): `Workspace.repos`, folded from core's owner-signed
+  `settings.changed` (`set.repos`, §5.4.2), written only by `store.changeRepos` (owner, person, same-path refusal) and
+  `POST /settings {op: 'repos'}`. The addon's own `declared` list, `repos.added`/`repos.removed` events and the
+  "primary" flag are gone. `remote`/`default_branch` are a proposed format amendment (docs/repos-addon-proposal.md).
+- **Owner only** for add / adopt / remove (manifest and core); clone stays maintainer, fetch/check member.
+- **Clone identity**: the git-login connection (D56 A / D55; DEMO `gh`, the bot account) shown as "Clones as" and
+  bound into the clone signature as `clone_as`; no login, no clone. orch stores no git credentials.
+- **One validator** (`src/api/repos.ts`) for host and UI: repo names per §10, no userinfo in any form, ASCII only, no
+  part starting with `-` (argument injection), strict host; folder = one name, no `..`/slash/absolute.
+- **Restricted tickets**: removal counts only open linked tickets the signer can see (Codex counted hidden ones, which
+  revealed them); hidden ones become stale per §5.11.
+- **Core changes reduced**: the row deep link is the generic `?row=` (no `repo`/`tab.repos` hard-coding in
+  AddonNode); the remove dialogs' sentence comes from one core map (`coreNotes.ts`), not an `addon === 'repos'` branch
+  in each dialog; the shared addon-state query polls on the generic `moving: true` only (it polled every second
+  forever whenever an auto-check interval was set); the ticket `repo` filter is exact (no hidden "not done").
+- Every `links.repos` name in the fixtures and the Busy day is now declared (a test guards it).
+- **Revert:** revert the U3 review-round commit.
+
+## U3 fix round 2 2026-10-11 — Codex re-review of a57bf69d
+
+- `settings` (and `branch`, `invalid`, `terminal`, `visibility`) reserved as core event namespaces; `settings.changed`
+  is refused at `store.appendWs` unless an owner person signs it, and the fold ignores any other signer.
+- Clone jobs snapshot the signed spec. **Chosen rule:** a declaration change, removal or git-login change after signing
+  cancels the queued clone (`repos.clone_cancelled`, recorded); it never clones an unapproved target. (Refusing the
+  settings change instead would make core's settings route depend on an addon's jobs.)
+- `resolveRepoPath` normalises absolute and `~` paths as well as relative ones.
+- Shared addon-state query: generic `nextRefreshMs` (bounded 30 s – 1 h) so an idle scheduled check still runs.
+- Fetch requires a declared git login inside the one fetch operation (check, scheduled check, fetch, fetch all).
+- **Revert:** revert the U3 fix-round-2 commit.
+
+## U3 fix round 3 2026-10-11 — Codex final check of d0d45f89
+
+- `clone_as` is the full git identity (connection · tool · account with host · OS user), signed, snapshotted and
+  compared; `default_branch` is in every clone / clone-all / Today-decision signature (stale prompt → 409).
+- A queued clone also keeps a per-repo declaration revision (count of `settings.changed` naming it): any later
+  change, including remove-then-restore, cancels it. Changes to other repos do not.
+- **Revert:** revert the U3 fix-round-3 commit.
+
+## Owner decisions 2026-10-10 (evening) — D58–D60 confirmed, D61 full run, D62 wider mandate
+
+- **Decision:** (1) **D58, D59, D60 confirmed**; nothing to build. (2) **D61 full run** (an extra option on the AI
+  Factory; `docs/factory-full-run-proposal.md`): one signed request ("How far may the factory go on its own?" Up to
+  Preview (default) / All the way to Deliver; "What Deliver means" required for Deliver; hold window 15 min / 30 min
+  (default) / 1 h / 4 h; children of size m or smaller). Stage words: **Preview** (made and checked, visible only in
+  the workspace) and **Deliver** (it goes out). The factory goes Plan → per child Requirements, Build and test,
+  Validate, Evidence → Preview → (hold) → Deliver; every decided step reads "via the factory full run you signed on
+  <date> — no person reviewed this step". At Deliver: a core decision with one option, Stop delivery, shown above the
+  factory's tabs, on Today and as a calm shell line (`DeliveryHoldBanner`, new optional `AddonDecision.hold`); Stop is
+  signed by a person and cancels (no `factory.delivered`); after the window: "Delivered: <destination> at <time>".
+  Events and fields in HANDOVER ("Factory full runs"). (3) **D62 wider mandate** (`docs/concept-mandates.md`
+  revision 3): it steers the whole workspace in the owner's name except settings, addons, members/roles, devices,
+  relay pairing, secrets/connections and protected paths; up to 30 days, renewable with one new signature; P2
+  custody and the other prerequisites stay mandatory. Follow-up owner rulings via the coordinator: a mandate **may**
+  start full runs with a Deliver target (the hold notice is the only human checkpoint; the risk is stated in the
+  concept's Summary and §2.16); a mandate may issue grants but **never another mandate** (host refuses
+  mandate → mandate, `mandate.chain_refused`). The mandates preview shows the wide scope: issue dialog with "Steers the
+  whole workspace in your name", the may-do list ("Enable factories and start factory runs, including Deliver (after
+  the hold window)"), the always-yours list and protected paths, a length picker up to 30 days, Renew… in the
+  mandate view (new revision, same scope), and a seeded log mixing gate approvals, a verdict and code review, an
+  unblocked ticket, a factory permit, a factory enabled, a full run started and a grant; refused items now include
+  an addon install (always yours) and a second mandate (no chains). The "one admitted epic" pilot wording is gone.
+- **Choices made here:** a full run to Deliver is owner-only (maintainers may request Preview runs) — open point 1 of
+  the proposal; the run's children are steps in the addon state, not tickets, and its milestones are events on the
+  factory epic (a real host would give a run its own epic); the hold is a core decision so Stop goes through core's
+  one decision path (who decides, terms checked again, `addon.decided`); the mock clock runs in real time, so the demo
+  adds "Fill in a demo request" (prefills the form; it is still signed) and a simulator control "Simulate: let the hold
+  time pass (demo)" (`simulate_time`, owner only, refused outside the demo datasets; coordinator security ruling: no
+  operation shortens a Deliver hold, it is not a host operation); a paused factory
+  holds the delivery and gives the paused time back. Concept open points left for the owner: the code review gate
+  under a mandate, the old "never" items not named either way (restore/purge treated as settings; first peer send,
+  public publish, landing on `main` as delegable), a ceiling across renewals and a weekly acknowledgement.
+- **Why:** owner answers 10 Oct evening (brief U2) and two coordinator follow-ups the same evening.
+- **Revert:** revert the U2 commits (delete `src/mocks/addons/factory-runs.ts`, `src/app/shell/DeliveryHoldBanner.tsx`,
+  `docs/factory-full-run-proposal.md`; restore the factory manifest, `AddonDecision.hold`, the mandates preview types
+  and pages, concept revision 2).
+
+## U2 fix round 1 (Codex review, controller rulings)
+
+- **Decision:** (1) **One charter check** for full runs (`runGate`): at admission, every simulator step and every
+  settlement. Paused holds everything (the hold clock too); a charter stopped by time, or an over-committed child
+  budget, stops progress and ends a hold "Not delivered: the charter stopped" (`factory.deliver_cancelled`). A run
+  reserves its 3 children against the shared 25-child budget at admission, in the same step that consumes the request
+  id and creates the run (refused whole, 409 `factory.budget`). Reaching the budget stops new children (the page's
+  mode); admitted children are inside it and go on. (2) **Code review stays human** (D61): when the workspace code
+  review policy applies, each child waits at "Code review (waits for a person)" before Validate; a core decision
+  `factory.code:<run>:<n>` (maintainer+, signed); Preview needs every review; the policy is sticky for a run once on.
+  The form says so. (3) **Single-use request ids:** Review request issues `rq-<n>`; it is a signed arg; consumed with the
+  run's creation; a replay is 409 `factory.request_used`; reviewing again issues a new id. (4) **The factory stays on
+  during a hold:** disable / update / uninstall → 409 `addon.delivery_on_hold` naming the run (`MockAddon.offBlocked`,
+  checked in `store.addonOp`); HANDOVER: the real host keeps Stop independent of addon activation. (5) **Reloads:** a
+  hold keeps a wall-clock deadline (`holdWallUntil`); the mock deadline is re-derived from it when the mock clock
+  restarted, so a reload never extends a hold (factory state version 3). (6) **Values via visible.tsx:** the goal,
+  destination and child titles go through `plain()` in the run view, the alerts, the kv, the hold and review decisions'
+  question and detail (markdown-escaped in headings); the signed terms keep the exact value; the shell hold line wraps
+  instead of truncating. (7) Concept: landing on `main` is refused until the owner decides (§2.4, §2.14, §6 point 2).
+  (8) Concept: `max_until` is optional and pending, consistently in the schema, the prompt text, §2.11 and the review
+  table.
+- **Why:** Codex review of U2 (findings 1–8), controller rulings.
+- **Revert:** revert the fix-round commits.
+
+## U2 fix round 2 (Codex re-check, controller rulings)
+
+- **Decision:** (1) Full-run code reviews use core's D59 rule: `store.gateEligibility` (extracted from `canApprove`, so
+  tickets and run children share it): the policy's approver group, the requester and the child's author count as
+  assignees, one approval per person, the policy's `count` of distinct people; the decision is offered only to eligible
+  people. (2) Pause keeps the remaining hold (`holdRemainingMs`, wall clock); Resume rebuilds both deadlines; pause →
+  reload 40 min → resume keeps about 30 min. (3) A review signs the child's commit (mock sha, in the terms); a new commit
+  (`factory.child_pushed`) voids the approvals and sends the child back before Validate. (4) Request ids are
+  `rq-<PREFIX>-<nonce>-<n>`, the nonce new per seeding (a reset never reissues one). (5) `addonOp` initialises and the
+  factory settles its state before `offBlocked`. (6) `MockAddon.saveOnSeed`: the factory's seeded state is saved at
+  once. (7) The busy seed is a valid charter: one run on hold (R-1), its 3 children reserved (23 of 25); the delivered
+  example run was dropped (25 would be exceeded). (8) `plain()` at the event-summary and simulator-toast boundaries;
+  events keep the exact value. (9) Factory state version 4 with `MockAddon.migrate` for 2 and 3: runs and counters kept,
+  a legacy hold without a wall deadline gets its full window again (never shorter than what was left).
+- **Why:** Codex re-check of U2, controller rulings for fix round 2.
+- **Revert:** revert the fix-round-2 commits.
+
+## Security review fixes (Codex review 2026-10-10)
+
+- **Decision:** the 11 findings of Codex's adversarial review were checked against the code (all real) and fixed, with
+  regression tests in `src/test/security-review.test.ts`, `src/test/security-review-sign.test.tsx`,
+  `src/addon-ui/frameSanitize.test.tsx` and `src/components/sign/visible.test.tsx`:
+  (1) addon frame nodes, agent HTML artifacts and one-off widget pages render inert (`sandbox=""`, core's sanitizer,
+  no-script CSP, fixed height the person can drag); only core's pinned widget templates run scripts. The two seeded
+  agent HTML prototypes on DEMO-0041 are now script-free (details rows, a static table) and re-pinned.
+  (2, 7) `approve` on requirements/plan carries the gate's content hash (now a full sha256) and `answer` the
+  question's hash (full sha256); the host refuses a mismatch (409 `gate.stale` / `question.stale`). The dialog
+  snapshots the ticket when it opens, posts what it shows (the trimmed answer text, never more) and says when the
+  ticket changed underneath. (3, core part) decision answers carry `digest` (the decision as shown); the host compares
+  it and the ticket; `decisionChanged` compares the digest (question, title, detail, ticket included). (4, 8) the
+  signing dialog shows each signed field separately (plan, task text, assignee, verify command, proves; question,
+  option, answer text) with a provenance caption; `visible.tsx` is injective (backslash, `""`, ␠, default-ignorables
+  incl. U+034F, non-ASCII spaces, non-NFC marks) and typed (`RawValue`: strings quoted, numbers/booleans bare); addon
+  prose goes through `Prose`/`Inline`. (5) every package response is the public package without `decisions`.
+  (6) a link revocation's shared row names no ticket; each returned handoff is its own row with its ticket.
+  (9) contributions are bounded (depth 64, 20,000 values, 2 MB) iteratively before binding detection/resolution.
+  (10) undeclared actions are refused (403 `addon.undeclared_action`); the seeded manifests now declare every
+  implemented action. (11) `newShell` checks the pty grant for every shell-creating path.
+- **Not done (#3, factory):** `src/mocks/addons/factory.ts` is being rewritten on another branch. After that merge a
+  permit decision must carry typed `terms` for everything it authorises (`command`, `ticket`, `epic`, `scope` and any
+  other execution parameter), the `permit` action must read the command from the decision's terms (or the signed
+  digest's snapshot), never from live permit state, and the host should then require `digest` on every decision and
+  refuse a privilege-bearing decision without terms. Requiring `digest` now would break the existing addon tests that
+  post decisions directly (factory's among them).
+- **Why:** Codex adversarial review of e2e035e2 (5 High, 6 Medium); controller rulings for #1, #2/#7, #4/#8, #5, #6,
+  #9, #10, #11.
+- **Revert:** revert the "security review" commits on `fix/dashboard-security`.
+
+## Security review fixes, round 2 (Codex re-check 2026-10-11)
+
+- **Decision:** (1) every decision answer must carry the digest (409 `decision.digest_required`), so the factory
+  replay without a digest is refused too; the addon tests post through `test/offered.ts` (digest of the decision as
+  offered). (2) the contribution budget also runs on the node after binding resolution, counts each value before it is
+  queued, and interpolation never stringifies objects. (3) a non-NFC string shows every non-ASCII code point escaped.
+  (4) `open` on a running person shell and `interactive` need the pty grant; transcripts stay readable. (5) the
+  content-hash cache keeps one entry per (ticket, gate/question) slot and is cleared on reset. (6) scripted agent HTML
+  shows core's notice and its source instead of an empty inert frame.
+- **Still open:** factory permits' typed terms (see the round 1 entry), after the factory rewrite merges.
+- **Why:** Codex re-check of the round 1 fixes (1 High, 4 Medium, 1 Low); controller rulings.
+- **Revert:** revert the "round 2" commits on `fix/dashboard-security`.
+
+## Security review #3 completed: factory permits (after the factory rewrite)
+
+- **Decision:** a factory permit decision carries typed terms `command`, `ticket`, `epic` (or "not visible to you"),
+  `scope` ("this exact command"); core shows each as its own covers line and the host compares them with the
+  decision now. The `permit` action grants and logs the command and child from the matched decision's terms and fails
+  closed when the live permit differs. The manifest marks the action `authorises: true`: the host refuses an answer to
+  such a decision without terms (409 `decision.terms_required`) and refuses a second answer to the same decision
+  (409 `decision.closed`). Tests: `src/mocks/addons/factory-permit-terms.test.ts` (terms, the Codex replay with and
+  without the digest, run-from-terms, single use, termless refusal).
+- **Merge note:** `fix/dashboard-security` merged into `feat/dashboard-round3`; the round-3 decision paths (factory
+  hold and code-review decisions, repos clone decisions) post the digest as offered (`test/offered.ts`), Repos'
+  `openRepoShell` goes through the central `newShell` pty check, and the factory/repos tests read typed (quoted) values.
+- **Why:** Codex review 2026-10-10 #3; controller ruling after the factory rewrite merged.
+- **Revert:** revert the "#3 completed" commit (the merge stays).
+
+## Codex integration review of feat/dashboard-round3 (2026-10-11)
+
+- **Decision:** (1) the factory hold decision's signed question is stable ("Delivery at <time>: <destination>"); the
+  countdown is drawn from `hold.until` outside the digest (Today row, shell banner), so a Stop signed after the minute
+  ticks over still stops; a 409 on any decision answer refetches the decisions (no stale snapshot reused). (2) Repos
+  `adopt` signs and re-checks the observed `default_branch`. (3) factory code reviews use core's gate eligibility as
+  the only authority: manifest `code_review` is `minRole: member`, `deciders: 'eligible'`; core skips the
+  maintainer floor for such actions, offers members only those decisions, and still refuses viewers.
+- **Why:** Codex integration review (1 High, 2 Medium).
+- **Revert:** revert the integration-review commit.

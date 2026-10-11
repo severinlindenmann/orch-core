@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from subprocess import SubprocessError
@@ -101,50 +101,88 @@ def _label(s: InspectStore, log: str) -> str:
 def inspect(
     root: Path,
     wid: str,
-    state_dir: Path,
+    state_dir: Path | None,
     *,
     fast: bool,
     instructions: list[dict[str, str]] | None = None,
     caps: Capabilities,
-) -> tuple[list[Finding], InspectStore | None]:
+    store: Store | None = None,
+    sees: Callable[[Any], bool] | None = None,
+) -> tuple[list[Finding], Store | None]:
     """Every finding about the workspace at ``root``. ``fast`` leaves out the checks that only ``doctor`` makes
-    (checkpoint presence, pins, index, repositories, orphan keys)."""
+    (checkpoint presence, pins, index, repositories, orphan keys).
+
+    Host mode (H4a1) passes ``store`` (the host's own; it is used as it is, never closed here, and no second store is
+    opened, no ``config.json`` and no state directory read) and ``sees`` (the viewer's visibility test). Every finding
+    about a ticket the viewer may not see, or whose visibility cannot be told (a log that does not replay), is left out
+    before anything is counted (F6)."""
     out: list[Finding] = []
-    s = _open(root, wid, state_dir, out)
+    hosted = store is not None
+    if hosted:
+        s: Store | None = store
+        store.load_all()
+    else:
+        assert state_dir is not None
+        s = _open(root, wid, state_dir, out)
     if s is None:
         return out, None
+
+    def ok(log: str | None) -> bool:
+        if sees is None or log is None or log == "workspace":
+            return True
+        view = s.state.tickets.get(log)
+        return view is not None and sees(view)
+
     try:
         for r in s.reports:  # what the store met while reading (a torn write, a date from the future)
-            out.append(Finding("error", _label(s, r.log) if r.log else "store", r.code, r.detail))
+            if ok(r.log):
+                out.append(Finding("error", _label(s, r.log) if r.log else "store", r.code, r.detail))
         for log, seq, code, detail in s.chain_errors():
-            out.append(Finding("error", f"{_label(s, log)}#{seq}", code, detail))
+            if ok(log):
+                out.append(Finding("error", f"{_label(s, log)}#{seq}", code, detail))
         for log, d in sorted(s.diverged.items()):
-            if any(broken_log == log for broken_log, *_ in s.chain_errors()):
+            if any(broken_log == log for broken_log, *_ in s.chain_errors()) or not ok(log):
                 continue
             out.append(Finding("error", f"{_label(s, log)}#{d.seq}", d.code, d.detail))
         core = s.state._core
         for log, lc in sorted(core.logs.items()):
+            if not ok(log):
+                continue
             for i in lc.invalid:
                 if i.seq not in lc.acked:
                     out.append(
                         Finding("error", f"{_label(s, log)}#{i.seq}", "auth.invalid_event", f"{i.type}: {i.code}")
                     )
-        out += _projections(s, caps.files)
-        out += _checkpoints(s, _has_host_key(state_dir, wid), caps.files, HostPins(state_dir, wid))
+        out += _projections(s, caps.files, ok)
+        host_key = s.can_write if hosted else _has_host_key(state_dir, wid)  # type: ignore[arg-type]
+        pins = s._pins if hosted else HostPins(state_dir, wid)  # type: ignore[arg-type]
+        out += _checkpoints(s, host_key, caps.files, pins, ok)
         if not fast:
             out += _pins(s, state_dir, wid)
             out += _index(s)
             out += _repos(s, root, caps)
-            out += _orphans(state_dir, wid, caps)
+            if not hosted:  # the host's state directory is not a handler's (a control op of the host, later)
+                out += _orphans(state_dir, wid, caps)  # type: ignore[arg-type]
         for f in instructions or []:
             out.append(Finding("warn", f["where"], "instructions.stale", f["what"], None))
     except Exception:
-        s.close()
+        if not hosted:
+            s.close()
         raise
     return out, s
 
 
-def _projections(s: InspectStore, files: Files) -> list[Finding]:
+def _read(files: Files, path: Path, limit: int | None = None) -> bytes | None:
+    """A file's bytes or ``None``: in host mode through the capability (roots, no symlink), else as before."""
+    if files.roots is None:
+        return read_or_none(path) if limit is None else read_or_none(path, limit)
+    try:
+        return files.read_bytes(path)
+    except OSError:
+        return None
+
+
+def _projections(s: Store, files: Files, ok: Callable[[str], bool] = lambda log: True) -> list[Finding]:
     """What the files hold against what the log says: ``ticket.json``, ``body.md``, artifacts, ``config.json``,
     ``keys.jsonl`` (an external edit, a torn write, a file somebody replaced)."""
     out: list[Finding] = []
@@ -157,27 +195,27 @@ def _projections(s: InspectStore, files: Files) -> list[Finding]:
         ("keys.jsonl", s._keys_bytes(), "projection.keys"),
     ]
     for rel, want, code in pairs:
-        if read_or_none(root / rel) != want:
+        if _read(files, root / rel) != want:
             out.append(Finding("error", rel, code, f"{rel} differs from what the log says", "scan"))
     tdir = root / "tickets"
     for p in [tdir / n for n in sorted(files.listdir(tdir))] if tdir.is_dir() else []:
-        if p.is_dir() and not p.is_symlink() and ULID.fullmatch(p.name):
+        if p.is_dir() and not p.is_symlink() and ULID.fullmatch(p.name) and ok(p.name):
             log = p / "events.jsonl"
             if not log.is_file() or log.stat().st_size == 0:
                 out.append(Finding("error", f"tickets/{p.name}", "ticket.nolog", "a ticket folder with no event log"))
     bad = {c.log for c in st.chain_errors} | {log for log, *_ in s.chain_errors()}
     for uid, view in sorted(st.tickets.items()):
-        if uid in bad:
+        if uid in bad or not ok(uid):
             continue
         where = f"{view.key}"
         tdir = root / "tickets" / uid
-        if read_or_none(tdir / "ticket.json") != s._ticket_bytes(uid):
+        if _read(files, tdir / "ticket.json") != s._ticket_bytes(uid):
             out.append(
                 Finding(
                     "error", where, "projection.ticket", "ticket.json differs from the log (edited by hand)", "scan"
                 )
             )
-        raw = read_or_none(tdir / "body.md")
+        raw = _read(files, tdir / "body.md")
         try:
             texts = store_render.parse_body(raw or b"", view.type)
             have = {
@@ -206,7 +244,7 @@ def _projections(s: InspectStore, files: Files) -> list[Finding]:
                 continue
             p = tdir / "artifacts" / a.name
             try:
-                data = None if p.is_symlink() else read_or_none(p, 256 * 1024 * 1024)
+                data = None if p.is_symlink() else _read(files, p, 256 * 1024 * 1024)
             except OSError:
                 data = None
             if data is None:
@@ -226,7 +264,13 @@ def _has_host_key(state_dir: Path, wid: str) -> bool:
         return True
 
 
-def _checkpoints(s: InspectStore, host_here: bool, files: Files, pins: HostPins | None = None) -> list[Finding]:
+def _checkpoints(
+    s: Store,
+    host_here: bool,
+    files: Files,
+    pins: HostPins | None = None,
+    ok: Callable[[str], bool] = lambda log: True,
+) -> list[Finding]:
     """A missing checkpoint can hide a rollback or follow a crash: an error on the host, a warning on clones."""
     out: list[Finding] = []
     cps = s._checkpoints
@@ -247,7 +291,7 @@ def _checkpoints(s: InspectStore, host_here: bool, files: Files, pins: HostPins 
             )
         out.append(Finding(lvl, "checkpoints", "checkpoint.missing", msg))
     have = set(cps.ticket_uids())
-    missing = sorted(u for u in s.state.tickets if u not in have)
+    missing = sorted(u for u in s.state.tickets if u not in have and ok(u))
     for repairable in (False, True):
         group = [u for u in missing if (host_here and s.repairable_checkpoint(u)) == repairable]
         if not group:
@@ -271,7 +315,9 @@ def _checkpoints(s: InspectStore, host_here: bool, files: Files, pins: HostPins 
     wsk = s._wsk_pub()
     cdir = s.state_dir / "checkpoints"
     for p in [cdir / n for n in sorted(files.listdir(cdir)) if n.endswith(".json")] if cdir.is_dir() else []:
-        raw = read_or_none(p)
+        if ULID.fullmatch(p.stem) and not ok(p.stem):
+            continue
+        raw = _read(files, p)
         try:
             ok = wsk is not None and verify_object(wsk, json.loads(raw or b""))
         except (ValueError, TypeError):
@@ -283,9 +329,11 @@ def _checkpoints(s: InspectStore, host_here: bool, files: Files, pins: HostPins 
     return out
 
 
-def _pins(s: InspectStore, state_dir: Path, wid: str) -> list[Finding]:
+def _pins(s: Store, state_dir: Path | None, wid: str) -> list[Finding]:
     out: list[Finding] = []
-    pins = HostPins(state_dir, wid)
+    pins = HostPins(state_dir, wid) if state_dir is not None else s._pins  # host mode: the store's own pins
+    if pins is None:
+        return out
     accepted = s.state.revocation_evidence()
     for r in pins.revocations():
         entry = accepted.get(r.get("device"))

@@ -52,6 +52,8 @@ __all__ = [
     "find_workspace",
     "guarded",
     "records_dir",
+    "scoped_key",
+    "visible_to",
     "state_dir",
 ]
 
@@ -111,6 +113,23 @@ def find_workspace(env: Mapping[str, str], cwd: str | os.PathLike[str] | None, f
     return None
 
 
+def scoped_key(principal: str, session: str) -> str:
+    """Host mode: the file key of a session's notes and records, from (principal, session) (§0.5, F4). One helper, so
+    notes and the dedup records can never drift apart."""
+    import hashlib
+
+    return "h_" + hashlib.sha256(f"{principal}\0{session}".encode()).hexdigest()[:40]
+
+
+def visible_to(person: str | None, view: Any) -> bool:
+    """F1 §10.7: ``workspace`` tickets for everyone, a restricted one only for a person on its list (``None``:
+    no-person). The one visibility test of the registry reads and the host's hooks."""
+    vis = view.visibility
+    if vis == "workspace":
+        return True
+    return person is not None and isinstance(vis, Mapping) and person in vis.get("restricted", ())
+
+
 def records_dir(root: Path) -> Path:
     return root / ".state" / "sessions"
 
@@ -135,6 +154,8 @@ class Workspace:
         self._store: Any = None
         #: set by opening the store: was the genesis pin created by this call (trust on first use)?
         self.pin_created = False
+        #: the host's view (:meth:`hosted`): there is no state directory for handlers (keys, pins live there)
+        self.hosted = False
 
     @classmethod
     def hosted(
@@ -143,11 +164,13 @@ class Workspace:
         """The host's view (H4a1): the root and the store are the host's own, injected. Nothing is discovered (no cwd,
         no ``ORCH_WORKSPACE``), no ``config.json`` is read and no second store is opened."""
         ws = cls(env, now, files=files)
-        ws._root, ws._looked, ws._store = Path(root), True, store
+        ws._root, ws._looked, ws._store, ws.hosted = Path(root), True, store, True
         return ws
 
     @property
     def state_dir(self) -> Path:
+        if self.hosted:  # fail closed: the host never hands its state directory (keys, pins) to a handler
+            raise OrchError("internal", "a handler run by the host has no state directory")
         return state_dir(self.env, self.files)
 
     @property
@@ -251,10 +274,7 @@ class Notes:
         if self.directory is None or not self.session:
             return None
         if self.principal is not None:
-            import hashlib
-
-            digest = hashlib.sha256(f"{self.principal}\0{self.session}".encode()).hexdigest()[:40]
-            return self.directory / f"h_{digest}.notes.json"
+            return self.directory / f"{scoped_key(self.principal, self.session)}.notes.json"
         return self.directory / (re.sub(r"[^A-Za-z0-9_-]", "_", self.session)[:120] + ".notes.json")
 
     @staticmethod
@@ -604,10 +624,7 @@ class Call:
 
     # -- tickets
     def sees(self, view: Any) -> bool:
-        if view.visibility == "workspace":
-            return True
-        viewer = self.viewer
-        return viewer is not None and viewer in view.visibility["restricted"]
+        return visible_to(self.viewer, view)
 
     def claimed_uids(self) -> list[str]:
         """The uids this session (and the sessions it works under: ``s_X.1`` under ``s_X``) recorded as claimed."""

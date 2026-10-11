@@ -57,7 +57,12 @@ class Context:
     principal: str | None = field(default=None, repr=False)
     #: Host mode: called with the events a write is about to append, as ``(log, event id, type, actor)`` tuples plus
     #: the ticket key when known, **before** the first of them is appended, so the outcome record lists them (§0.7).
-    plan: Callable[..., None] | None = field(default=None, repr=False)
+    plan: Callable[[list[tuple[str, str, str, dict[str, Any]]], str | None], None] | None = field(
+        default=None, repr=False
+    )
+    #: Host mode: registry ops the host does not serve (``task.done`` until H3b2...). No other op may reach them, so
+    #: ``apply`` refuses a batch item naming one.
+    unserved: frozenset[str] = field(default=frozenset(), repr=False)
 
     def __post_init__(self) -> None:
         if self.caps is None:

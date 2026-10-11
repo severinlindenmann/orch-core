@@ -133,6 +133,20 @@ class _Write:
     body_copy: str | None = None  # uid whose .state/body copy follows this body.md
 
 
+# §5.10: the recovery for a host whose state shows checkpoints existed but none is held (doctor says the same).
+MISSING_CHECKPOINT_RECOVERY = (
+    "P1 has no in-place repair (a restore cannot succeed without its source checkpoint): restore .state/checkpoints "
+    "and the host pin from a backup, or wait for the P3 owner-authenticated baseline. Do not delete the host state "
+    "dir (hosts/<workspace id>/): it holds the genesis pin and the durable revocation evidence"
+)
+
+
+def _drop(path: Path) -> None:
+    """Remove a stale pending transition durably (§5.10: crash recovery keeps only live ones)."""
+    path.unlink(missing_ok=True)
+    fsync_dir(path.parent)
+
+
 def _epoch(stamp: str) -> int:
     return calendar.timegm(time.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ"))
 
@@ -1270,12 +1284,30 @@ class Store:
             raise StoreError("chain.broken", f"workspace: {self._read_errors[WORKSPACE]}")
         if typ != "restore" and self._missing_checkpoint(log):
             raise StoreError("checkpoint.missing", f"{log}: missing checkpoint is not explained by the last append")
+        if self._workspace_checkpoint_missing():
+            raise StoreError(
+                "checkpoint.missing", "workspace: no workspace checkpoint is held although the workspace log has grown"
+            )
         for failure in self._state.chain_errors if self._state else ():
             if failure.log in (WORKSPACE, log) and failure.code == "chain.broken":
                 raise StoreError(failure.code, failure.detail)
         d = self._diverged.get(log) or (self._diverged.get(WORKSPACE) if log != WORKSPACE else None)
         if d is not None and not (typ == "restore" and d.log == log):
             raise StoreError("chain.diverged", f"{d.log}: {d.detail} (an owner-signed restore is needed)")
+
+    def _workspace_checkpoint_missing(self) -> bool:
+        """No workspace checkpoint (host pin nor ``.state``) although the log grew past the genesis, on a host whose
+        state dir shows checkpoints existed. Every append writes one and a crash keeps the previous one, so this is
+        never a crash state: no append and no new baseline; an owner restores (§5.10). A host without such evidence (a
+        fresh clone, a lost state dir) starts a baseline instead: F1 "What P1 can't detect".
+
+        ``seq < 2``: the genesis append itself writes the first checkpoint after it is committed, so a log of only the
+        genesis may lack one after a crash. (``restore_facts`` uses ``seq >= 1``: any restore needs a source once a
+        genesis exists, because a restore always comes after it.)"""
+        ws = self._logs.get(WORKSPACE)
+        if ws is None or ws.seq < 2 or self._pins is None or not self._pins.checkpoint_evidence():
+            return False
+        return self._pins.held() is None and self._checkpoints.workspace() is None
 
     def _missing_checkpoint(self, log: str) -> bool:
         info = self._logs.get(log)
@@ -1393,6 +1425,15 @@ class Store:
         facts = self.restore_facts(log)
         if e.get("source") != facts["source"]:
             raise StoreError("chain.diverged", "restore source is not the held workspace checkpoint")
+        signer = e["actor"]["device"]
+        if self._pins and any(r["device"] == signer for r in self._pins.revocations()):
+            # Replay authorizes against the kept chain, which lacks a revocation from the given-up part; the host's
+            # durable evidence still has it, and every receiver refuses a revoked signer (§5.10, C3).
+            raise StoreError("device.invalid", f"{signer} is revoked in the host's durable revocation evidence")
+        if any("d_" + r["revocation"]["o"]["device_id"] == signer for r in e.get("revocations", [])):
+            # §5.10: receivers refuse a bundle that revokes its own signer, so the host never appends one (replay
+            # keeps pre-event authorization). Sign from an eligible replacement device, or recover by person key.
+            raise StoreError("validation.restore", f"the restore revokes its own signer {signer}")
         if log == WORKSPACE:
             supplied = {"d_" + r["revocation"]["o"]["device_id"]: r for r in e.get("revocations", [])}
             for entry in facts["revocations"]:
@@ -1495,16 +1536,12 @@ class Store:
         if floor is not None:
             last_pos = floor if last_pos is None or floor > last_pos else last_pos
             last_at = max(last_at, floor[1])
-        t = max(int(self._clock()), last_at)
+        now = int(self._clock())  # one sampled clock for the stamp and the ceiling
+        t = max(now, last_at)
         if ev["type"] == "restore":
             cp = self._held_checkpoint()
             if cp:
-                checkpoint_at = _epoch(cp["o"]["at"])
-                if checkpoint_at > int(self._clock()) + 300:
-                    raise StoreError(
-                        "validation.restore", "held checkpoint is more than 300 seconds ahead of the clock"
-                    )
-                t = max(t, checkpoint_at)
+                t = max(t, _epoch(cp["o"]["at"]))
         if log != WORKSPACE:
             wsh = self._logs[WORKSPACE].seq if WORKSPACE in self._logs else 0
             ev["ws_seq"] = wsh
@@ -1513,6 +1550,12 @@ class Store:
                     t = last_pos[1]
                 if t == last_pos[1] and (log, seq) <= (last_pos[2], last_pos[3]):
                     t += 1
+        if ev["type"] == "restore" and t > now + 300:
+            # §5.10 C2: the computed restore `at` (source, last merged-order at) is checked, not only C's. Host
+            # acceptance does not guarantee receiver acceptance: receivers sample their own clocks.
+            raise StoreError(
+                "validation.restore", "the restore's computed at is more than 300 seconds ahead of the clock"
+            )
         ev["at"] = _fmt(t)
 
     # -- text, artifacts
@@ -1780,12 +1823,19 @@ class Store:
         broken = {failure.log for failure in state.chain_errors} | set(self._read_errors) | set(self._diverged)
         if WORKSPACE in broken:
             return
+        if self._workspace_checkpoint_missing():
+            return  # never start a new baseline after the checkpoint files were lost (§5.10); appends refuse
         logs = {
             uid: info for uid, info in self._logs.items() if uid not in broken and not self._missing_checkpoint(uid)
         }
         if (
             self._checkpoints.write_workspace(
-                self._host.sign, state.workspace.genesis, at_, logs, self._held_checkpoint()
+                self._host.sign,
+                state.workspace.genesis,
+                at_,
+                logs,
+                self._held_checkpoint(),
+                floor_n=self._pins.high_n() if self._pins is not None else 0,
             )
             == "diverged"
         ):
@@ -1841,8 +1891,15 @@ class Store:
         self._checkpoints.write_ticket(self._host.sign, uid, info.seq, info.head or "", self._now(), info.acc)
 
     def checkpoint(self) -> None:
-        """Write the workspace checkpoint and finish crash-repairable ticket checkpoints."""
+        """Write the workspace checkpoint and finish crash-repairable ticket checkpoints. Raises
+        ``checkpoint.missing`` when the host must not start a new baseline (§5.10)."""
         with self._locked():
+            if self._workspace_checkpoint_missing():
+                raise StoreError(
+                    "checkpoint.missing",
+                    "workspace: this host's state shows checkpoints existed but none is held. "
+                    + MISSING_CHECKPOINT_RECOVERY,
+                )
             self._checkpoint_all()
 
     def _checkpoint_all(self) -> None:
@@ -2237,6 +2294,11 @@ class Store:
             if seq > info.seq:
                 abandoned = {"seq": seq, "head": head}
         held = self._held_checkpoint()
+        if held is None and self._logs[WORKSPACE].seq >= 1:
+            # seq >= 1 (not the append guard's >= 2): a restore always follows the genesis, whose append wrote the
+            # first checkpoint. Every append writes a workspace checkpoint, so a workspace log is evidence: a null
+            # source would start a new baseline after every checkpoint file was deleted (§5.10).
+            raise StoreError("chain.diverged", "workspace checkpoint source is missing but the workspace log exists")
         if held:
             entry = held["o"]["workspace_log"] if log == WORKSPACE else held["o"]["tickets"].get(log)
             if entry and entry["seq"] > info.seq:
@@ -2360,7 +2422,12 @@ class Store:
                 "kind": "workspace_checkpoint",
                 "workspace_id": self.workspace_id,
                 "genesis": self._pin,
-                "n": max(self._checkpoints.highest_n(), cp["o"]["n"] if cp else 0) + 1,
+                "n": max(
+                    self._checkpoints.highest_n(),
+                    cp["o"]["n"] if cp else 0,
+                    self._pins.high_n(),
+                )
+                + 1,
                 "at": ev["at"],
                 "workspace_log": workspace_entry,
                 "tickets": dict(sorted(tickets.items())),
@@ -2419,12 +2486,16 @@ class Store:
             ):
                 raise StoreError("chain.diverged", "invalid pending transition checkpoint")
             info = self._logs.get(log)
-            if info is None or info.seq < ev["seq"] or info.heads[ev["seq"] - 1] != canon.event_head(ev):
+            if info is None or info.seq < ev["seq"]:
+                continue  # not appended (yet): the restore may still be committed by a retry
+            if info.heads[ev["seq"] - 1] != canon.event_head(ev):
+                _drop(path)  # its slot holds another head: this restore can never commit
                 continue
             if any(i.id == ev["id"] for i in self._state._core.logs[log].invalid):
                 continue
             held = self._held_checkpoint()
             if held and held["o"]["n"] > target["o"]["n"]:
+                _drop(path)  # the held checkpoint moved past T: the transition is stale
                 continue
             if held != transition["C"] and held != target:
                 raise StoreError("chain.diverged", "pending restore source differs from held checkpoint")

@@ -1164,6 +1164,17 @@ def status_scenarios() -> list[dict[str, Any]]:
     s.decide("approve", "code", "mara", note="done again")
     out.append(s.scenario())
 
+    s = _new("done_new_sha_under_case_variant_remote", pins + "repo identities are compared ignoring ASCII case "
+             "(5.7): on a done ticket a new sha on the same ref of the same repo counts even when the remote's case "
+             "changed; the same sha under that remote is no change")  # fmt: skip
+    _to_done(s)
+    variant = "git@github.com:Acme/Energy-DBT.git"
+    s.pushed(SHA_A, remote=variant, expect="source.not_new", note="same repo, ref and sha: nothing changed")
+    s.pushed(SHA_B, remote=variant, note="a new sha under the case-variant remote: back to testing, raw form kept")
+    s.decide("pass", V, note="a new verdict over the new source list")
+    s.decide("approve", "code", "mara", note="done again")
+    out.append(s.scenario())
+
     s = _new("done_then_reopened", pins + "after a reopen the old verdict and code approval no longer count")
     _to_done(s)
     s.reopen(note="reopen from done: every gate is raised")

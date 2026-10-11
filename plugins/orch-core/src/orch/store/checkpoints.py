@@ -21,15 +21,25 @@ from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from orch import canon, crypto, schema
+from orch.model.types import ts
 
 from .fsio import loads, read_or_none, write_atomic
 from .logs import WORKSPACE, LogInfo
 from .paths import ULID, check_uid
 
-__all__ = ["Checkpoints", "Divergence", "find_divergence", "judge_offer", "verify_object"]
+__all__ = [
+    "Checkpoints",
+    "Divergence",
+    "ReceiverView",
+    "Restore",
+    "Verdict",
+    "find_divergence",
+    "judge_offer",
+    "verify_object",
+]
 
 LABEL = canon.LABELS["sig_checkpoint"].encode("ascii")
 WORKSPACE_EVERY = 50  # ticket appends between workspace checkpoints
@@ -69,152 +79,276 @@ def _extension(old: Mapping[str, Any], new: Mapping[str, Any], heads: Any) -> bo
         return False
 
 
+_ZERO_ACC = "sha256:" + "0" * 64
+_PLACEHOLDER_SIG = crypto.b64u(bytes(crypto.SIG_LEN))
+SKEW_S = 300  # receivers refuse a checkpoint whose `at` is more than this ahead of their clock (§5.10)
+
+
+def _offer_ok(offered: object) -> bool:
+    """A workspace checkpoint ``o`` of the §5.10 shape, with real calendar timestamps and ``n ≥ 1``."""
+    if not isinstance(offered, Mapping):
+        return False
+    try:
+        schema.validate("checkpoint", {"o": dict(offered), "sig": _PLACEHOLDER_SIG})
+    except (schema.SchemaError, KeyError, TypeError, ValueError):
+        return False
+    return offered.get("kind") == "workspace_checkpoint"
+
+
+@dataclass(frozen=True)
+class ReceiverView:
+    """A receiver's trusted snapshot when it judges one offer (§5.10). Every field is required: ``{}`` and ``()`` say
+    explicitly that the receiver knows none. The caller supplies all of it from its own pinned state, never from the
+    offer or the relay; ``now`` is the receiver's one sampled clock and is trusted (a malformed value raises).
+
+    - ``known_devices``: every device id (hex, no ``d_``) the receiver knows, active or revoked, mapped to
+      ``{"person_id", "pk_pub"?}``; listed revocation evidence for such a device must be of that person and key.
+    - ``known_revocations``: the revocations it holds when it judges, in its own order (before the sync, or from
+      lower-``n`` bundles already judged in the walk). Any of them for the signer refuses (C3).
+    - ``learned_later``: revocations first learned after this judgment (a higher-``n`` bundle of the walk). They never
+      refuse; a ``compromised`` one of the signer of an accepted restore is reported in :attr:`Verdict.alarms`.
+    """
+
+    workspace_id: str
+    pinned_genesis: str
+    wsk_pub: bytes
+    pinned_delegation: Mapping[str, Any]
+    now: str
+    held: Mapping[str, Any] | None
+    known_devices: Mapping[str, Mapping[str, Any]]
+    known_revocations: Collection[Mapping[str, Any]]
+    learned_later: Collection[Mapping[str, Any]]
+
+
+@dataclass(frozen=True)
+class Restore:
+    """A restore transition bundle: the full transition (C, T, line, log, owner-device evidence, accumulator
+    material), the proof heads per log, and the restore ids this receiver already applied."""
+
+    transition: Mapping[str, Any]
+    proofs: Mapping[str, Any]
+    applied: Collection[str]
+
+
+class Verdict(NamedTuple):
+    code: str
+    restore_id: str | None = None
+    alarms: tuple[str, ...] = ()
+
+
 def judge_offer(
-    held: Mapping[str, Any] | None,
+    view: ReceiverView,
     offered: Mapping[str, Any],
     *,
-    pinned_genesis: str,
-    restore: Mapping[str, Any] | None = None,
-    applied: Collection[str] = (),
-    proofs: Mapping[str, list[str]] | None = None,
-    wsk_pub: bytes | None = None,
-    known_revocations: Collection[Mapping[str, Any]] = (),
-) -> tuple[str, str | None]:
-    """Judge authenticated checkpoint objects; ancestry is mandatory for growth (§5.10).
+    proofs: Mapping[str, Any] | None = None,
+    restore: Restore | None = None,
+) -> Verdict:
+    """Judge an authenticated workspace checkpoint ``o`` against ``view.held``; ancestry is mandatory for growth
+    (§5.10). ``proofs`` serve a plain offer; a restore carries its own in :class:`Restore`.
 
-    ``restore`` carries the full transition and owner-device evidence. Hosts additionally replay authorization;
-    this log-free receiver uses the delegation-owner policy. Missing proof returns ``sync.incomplete``.
+    The caller verifies the WSK signature of a plain offer; everything else is checked here: the shape (strict
+    timestamps, ``n ≥ 1``, kind), the pinned genesis and ``workspace_id``, and the clock ceiling ``now + 300 s``
+    (``checkpoint.future``: retryable, H unchanged; a local admission rule against one sampled clock, never evidence
+    of divergence). A restore is accepted only for the delegation pinned for this workspace (the card's / genesis
+    event's). Hosts additionally replay authorization; this log-free receiver uses the delegation-owner policy. A
+    missing or non-folding proof returns ``sync.incomplete``; a proof that binds another head is ``chain.diverged``.
+    This judges one transition against the caller's snapshot; the walk, its serialization and the persistence of
+    judgments belong to the receiver runtime.
     """
-    if offered["genesis"] != pinned_genesis:
-        return "trust.genesis_mismatch", None
-    if held and offered["workspace_id"] != held["workspace_id"]:
-        return "chain.diverged", None
+    held = view.held
+    if not _offer_ok(offered):
+        return Verdict("chain.diverged")
+    if offered["genesis"] != view.pinned_genesis:
+        return Verdict("trust.genesis_mismatch")
+    if offered["workspace_id"] != view.workspace_id or (held and held["workspace_id"] != view.workspace_id):
+        return Verdict("chain.diverged")
     h = _entries(held) if held else {}
     o = _entries(offered)
+    if restore is not None:
+        if proofs is not None:
+            raise TypeError("a restore carries its own proofs")
+        proofs = restore.proofs
     proofs = {} if proofs is None else proofs
     if held and offered["n"] == held["n"]:
-        return ("ok" if offered == held else "chain.diverged"), None
+        return Verdict("ok" if offered == held else "chain.diverged")
     if held and offered["n"] < held["n"]:
         bad = any(k not in h or v["seq"] > h[k]["seq"] or (v["seq"] == h[k]["seq"] and v != h[k]) for k, v in o.items())
-        return ("chain.diverged" if bad else "ignored"), None
+        return Verdict("chain.diverged" if bad else "ignored")
+    if ts(offered["at"]) > ts(view.now) + SKEW_S:
+        return Verdict("checkpoint.future")
     if held and (offered["at"] < held["at"] or h.keys() - o.keys()):
-        return "chain.diverged", None
+        return Verdict("chain.diverged")
     if not isinstance(proofs, Mapping):
-        return "sync.incomplete", None
+        return Verdict("sync.incomplete")
     restored = None
     if restore is not None:
-        from orch.identity import CryptoVerifier
-        from orch.identity.certs import check_cert, check_delegation, person_scope_ok
-        from orch.identity.errors import Refused
-        from orch.model.types import ts
-        from orch.model.verifier import SigContext
-
-        try:
-            ev, log, c = restore["event"], restore["log"], restore["C"]
-            target = restore["T"]
-            if target["o"] != offered or wsk_pub is None or not verify_object(wsk_pub, target):
-                return "chain.diverged", None
-            schema.validate("event", ev, log="workspace" if log == WORKSPACE else "ticket")
-            if ev["type"] != "restore" or ev["id"] in applied or ev["source"] != reference(c):
-                return "chain.diverged", None
-            if (held is None) != (c is None) or (held is not None and c["o"] != held):
-                return "chain.diverged", None
-            if c and (wsk_pub is None or not verify_object(wsk_pub, c)):
-                return "chain.diverged", None
-            pk = crypto.unb64u(restore["pk_pub"], crypto.PUB_LEN)
-            cert = check_cert(restore["device_cert"], pk)
-            delegation = check_delegation(restore["delegation"], pk)
-            if (
-                delegation["workspace_id"] != offered["workspace_id"]
-                or crypto.unb64u(delegation["wsk_pub"], crypto.PUB_LEN) != wsk_pub
-                or ev["actor"]["id"] != "p_" + cert["person_id"]
-                or ev["actor"]["device"] != "d_" + cert["device_id"]
-                or not person_scope_ok(cert, needs_operate=True)
-                or cert["created_ms"] > ts(ev["at"]) * 1000 + 300000
-                or (cert["expires_ms"] is not None and cert["expires_ms"] <= ts(ev["at"]) * 1000)
-            ):
-                return "chain.diverged", None
-            verifier = CryptoVerifier()
-            if not verifier.verify_person(ev, SigContext(offered["workspace_id"], log, restore["device_cert"])):
-                return "chain.diverged", None
-            if not verifier.verify_host(ev, log=log, wsk_pub=wsk_pub, workspace_id=offered["workspace_id"]):
-                return "chain.diverged", None
-            if len(canon.event_line(ev)) > schema.MAX_EVENT_LINE_BYTES or (held and ev["at"] < held["at"]):
-                return "chain.diverged", None
-            for entry in ev["revocations"]:
-                if not verifier.verify_embedded({"type": "restore.revocation", **entry}, pk_pub=entry["pk_pub"]):
-                    return "chain.diverged", None
-            listed = {
-                entry["revocation"]["o"]["device_id"]: entry["revocation"]["o"]["reason"] for entry in ev["revocations"]
-            }
-            for known in known_revocations:
-                rev = known["revocation"]["o"]
-                if (
-                    log == WORKSPACE
-                    and (
-                        rev["device_id"] not in listed
-                        or (rev["reason"] == "compromised" and listed[rev["device_id"]] != "compromised")
-                    )
-                ) or ev["actor"]["device"] == "d_" + rev["device_id"]:
-                    return "chain.diverged", None
-            acc = restore.get("acc_from")
-            try:
-                canon.parse_hash(acc)
-            except (canon.HashError, TypeError):
-                return "sync.incomplete", None
-            retained = {"seq": ev["from_seq"], "head": ev["head"], "acc": acc}
-            baseline = h.get(log, {"seq": 0, "head": None, "acc": "sha256:" + "0" * 64})
-            if log == WORKSPACE and baseline["seq"] == 0:
-                forward = restore.get("forward_heads")
-                if not isinstance(forward, list) or not forward or forward[0] != pinned_genesis:
-                    return "sync.incomplete", None
-            if ev["from_seq"] >= baseline["seq"]:
-                if not _extension(baseline, retained, restore.get("forward_heads", [])):
-                    return "sync.incomplete", None
-            else:
-                try:
-                    if canon.log_acc(restore.get("acc_before"), ev["head"]) != acc:
-                        return "sync.incomplete", None
-                except (canon.HashError, TypeError):
-                    return "sync.incomplete", None
-                if not _extension(retained, baseline, restore.get("abandoned_heads")):
-                    return "sync.incomplete", None
-                ab = ev["abandoned"]
-                if (
-                    not ab
-                    or ab["seq"] < baseline["seq"]
-                    or (ab["seq"] == baseline["seq"] and ab["head"] != baseline["head"])
-                ):
-                    return "chain.diverged", None
-            if (
-                log == WORKSPACE
-                and ev["from_seq"] == 1
-                and (ev["head"] != pinned_genesis or acc != canon.log_acc("sha256:" + "0" * 64, pinned_genesis))
-            ):
-                return "sync.incomplete", None
-            tail = proofs.get(log)
-            if (
-                not isinstance(tail, list)
-                or not tail
-                or tail[0] != canon.event_head(ev)
-                or log not in o
-                or not _extension({"seq": ev["from_seq"], "head": ev["head"], "acc": acc}, o[log], tail)
-            ):
-                return "sync.incomplete", None
-            restored = (log, ev["id"])
-        except (KeyError, TypeError, ValueError, IndexError, Refused, schema.SchemaError, canon.HashError):
-            return "chain.diverged", None
+        code, restored = _judge_restore(view=view, offered=offered, h=h, o=o, restore=restore, proofs=proofs)
+        if code != "ok":
+            return Verdict(code)
     if held is None and restore is None:
-        return "ok", None
+        return Verdict("ok")
     for log, entry in o.items():
         if restored and log == restored[0]:
             continue
-        old = h.get(log, {"seq": 0, "head": None, "acc": "sha256:" + "0" * 64})
+        old = h.get(log, {"seq": 0, "head": None, "acc": _ZERO_ACC})
         if entry["seq"] < old["seq"] or (entry["seq"] == old["seq"] and entry != old):
-            return "chain.diverged", None
+            return Verdict("chain.diverged")
         if not _extension(old, entry, proofs.get(log, [])):
+            return Verdict("sync.incomplete")
+    if not restored:
+        return Verdict("ok")
+    _, restore_id, signer = restored
+    alarms = tuple(
+        sorted(
+            {
+                "d_" + signer
+                for later in view.learned_later  # learned after the judgment: an alarm, never a refusal (C3)
+                if later["revocation"]["o"]["device_id"] == signer
+                and later["revocation"]["o"]["reason"] == "compromised"
+            }
+        )
+    )
+    return Verdict("ok", restore_id, alarms)
+
+
+def _same_evidence(entry: Mapping[str, Any], person_id: str, pk_pub: str | None) -> bool:
+    """A listed ``{revocation, device_cert, pk_pub}`` entry is of this person (and key, where known)."""
+    return entry["revocation"]["o"]["person_id"] == person_id and (pk_pub is None or entry["pk_pub"] == pk_pub)
+
+
+def _judge_restore(
+    *,
+    view: ReceiverView,
+    offered: Mapping[str, Any],
+    h: Mapping[str, Any],
+    o: Mapping[str, Any],
+    restore: Restore,
+    proofs: Mapping[str, Any],
+) -> tuple[str, tuple[str, str, str] | None]:
+    """The restore half of :func:`judge_offer`: ``("ok", (log, id, signer))`` or a refusal ``(code, None)``."""
+    from orch.identity import CryptoVerifier
+    from orch.identity.certs import check_cert, check_delegation, person_scope_ok
+    from orch.identity.errors import Refused
+    from orch.model.verifier import SigContext
+
+    held, wsk_pub, applied, pinned_genesis = view.held, view.wsk_pub, restore.applied, view.pinned_genesis
+    pinned_delegation, restore = view.pinned_delegation, restore.transition  # type: ignore[assignment]
+    diverged = "chain.diverged", None
+    try:
+        ev, log, c = restore["event"], restore["log"], restore["C"]
+        target = restore["T"]
+        if target["o"] != offered or wsk_pub is None or not verify_object(wsk_pub, target):
+            return diverged
+        schema.validate("event", ev, log="workspace" if log == WORKSPACE else "ticket")
+        if ev["type"] != "restore" or ev["id"] in applied or ev["source"] != reference(c):
+            return diverged
+        if (held is None) != (c is None) or (held is not None and c["o"] != held):
+            return diverged
+        if c and not verify_object(wsk_pub, c):
+            return diverged
+        # The delegation must be the card's (pinned for this workspace), not any person's own: its verified `o`
+        # equals the card's `o` (an owner re-signing the same content is the same delegation).
+        if not isinstance(pinned_delegation, Mapping) or not isinstance(restore["delegation"], Mapping):
+            return diverged
+        if restore["delegation"].get("o") != pinned_delegation.get("o"):
+            return diverged
+        pk = crypto.unb64u(restore["pk_pub"], crypto.PUB_LEN)
+        cert = check_cert(restore["device_cert"], pk)
+        delegation = check_delegation(restore["delegation"], pk)
+        at_ms = ts(ev["at"]) * 1000
+        if (
+            delegation["workspace_id"] != offered["workspace_id"]
+            or crypto.unb64u(delegation["wsk_pub"], crypto.PUB_LEN) != wsk_pub
+            or ev["actor"]["id"] != "p_" + delegation["owner_person_id"]
+            or ev["actor"]["id"] != "p_" + cert["person_id"]
+            or ev["actor"]["device"] != "d_" + cert["device_id"]
+            or not person_scope_ok(cert, needs_operate=True)
+            or cert["created_ms"] > at_ms + SKEW_S * 1000
+            or (cert["expires_ms"] is not None and cert["expires_ms"] <= at_ms)
+        ):
+            return diverged
+        verifier = CryptoVerifier()
+        if not verifier.verify_person(ev, SigContext(offered["workspace_id"], log, restore["device_cert"])):
+            return diverged
+        if not verifier.verify_host(ev, log=log, wsk_pub=wsk_pub, workspace_id=offered["workspace_id"]):
+            return diverged
+        if len(canon.event_line(ev)) > schema.MAX_EVENT_LINE_BYTES:
+            return diverged
+        # C.o.at ≤ line.at ≤ T.o.at (equality accepted): the host stamps the restore no earlier than C, and T after it.
+        if (c is not None and ev["at"] < c["o"]["at"]) or ev["at"] > offered["at"]:
+            return diverged
+        if log != WORKSPACE and ev["ws_seq"] > offered["workspace_log"]["seq"]:
+            return diverged
+        carried: dict[str, Mapping[str, Any]] = {}
+        for entry in ev["revocations"]:
+            if not verifier.verify_embedded({"type": "restore.revocation", **entry}, pk_pub=entry["pk_pub"]):
+                return diverged
+            carried[entry["revocation"]["o"]["device_id"]] = entry
+        signer = ev["actor"]["device"][2:]
+        if signer in carried:
+            return diverged  # the bundle revokes its own signer: a log-free receiver cannot place the revocation
+        # Evidence for a device the receiver knows (active or revoked) must be of its known person and key.
+        knowledge = [(device, mine["person_id"], mine.get("pk_pub")) for device, mine in view.known_devices.items()]
+        knowledge += [
+            (k["revocation"]["o"]["device_id"], k["revocation"]["o"]["person_id"], k.get("pk_pub"))
+            for k in view.known_revocations
+        ]
+        for device, person_id, pk_pub in knowledge:
+            got = carried.get(device)
+            if got is not None and not _same_evidence(got, person_id, pk_pub):
+                return diverged
+        for known in view.known_revocations:
+            rev = known["revocation"]["o"]
+            got = carried.get(rev["device_id"])
+            if rev["device_id"] == signer:
+                return diverged  # held when judged: any reason, any host-chosen position (C3)
+            if log == WORKSPACE and (
+                got is None or (rev["reason"] == "compromised" and got["revocation"]["o"]["reason"] != "compromised")
+            ):
+                return diverged
+        acc = restore.get("acc_from")
+        try:
+            canon.parse_hash(acc)
+        except (canon.HashError, TypeError):
             return "sync.incomplete", None
-    return "ok", restored[1] if restored else None
+        retained = {"seq": ev["from_seq"], "head": ev["head"], "acc": acc}
+        baseline = h.get(log, {"seq": 0, "head": None, "acc": _ZERO_ACC})
+        if log == WORKSPACE and baseline["seq"] == 0:
+            forward = restore.get("forward_heads")
+            if not isinstance(forward, list) or not forward or forward[0] != pinned_genesis:
+                return "sync.incomplete", None
+        if ev["from_seq"] >= baseline["seq"]:
+            if not _extension(baseline, retained, restore.get("forward_heads", [])):
+                return "sync.incomplete", None
+        else:
+            try:
+                if canon.log_acc(restore.get("acc_before"), ev["head"]) != acc:
+                    return "sync.incomplete", None
+            except (canon.HashError, TypeError):
+                return "sync.incomplete", None
+            if not _extension(retained, baseline, restore.get("abandoned_heads")):
+                return "sync.incomplete", None
+            ab = ev["abandoned"]
+            if (
+                not ab
+                or ab["seq"] < baseline["seq"]
+                or (ab["seq"] == baseline["seq"] and ab["head"] != baseline["head"])
+            ):
+                return diverged
+        if (
+            log == WORKSPACE
+            and ev["from_seq"] == 1
+            and (ev["head"] != pinned_genesis or acc != canon.log_acc(_ZERO_ACC, pinned_genesis))
+        ):
+            return "sync.incomplete", None
+        tail = proofs.get(log)
+        if not isinstance(tail, list) or not tail or log not in o or not _extension(retained, o[log], tail):
+            return "sync.incomplete", None
+        if tail[0] != canon.event_head(ev):
+            return diverged  # a WSK-signed T whose entry at from_seq + 1 is another event than this restore
+        return "ok", (log, ev["id"], signer)
+    except (KeyError, TypeError, ValueError, IndexError, Refused, schema.SchemaError, canon.HashError):
+        return diverged
 
 
 def sign_object(sign: Callable[[bytes], bytes], o: dict[str, Any]) -> dict[str, Any]:
@@ -330,6 +464,7 @@ class Checkpoints:
         at: str,
         logs: Mapping[str, LogInfo],
         baseline: Mapping[str, Any] | None = None,
+        floor_n: int = 0,
     ) -> str | None:
         ws = logs[WORKSPACE]
         old = baseline or self.workspace()
@@ -352,7 +487,7 @@ class Checkpoints:
             "kind": "workspace_checkpoint",
             "workspace_id": self.workspace_id,
             "genesis": genesis,
-            "n": max(self.highest_n(), old["o"]["n"] if old and "o" in old else 0) + 1,
+            "n": max(self.highest_n(), old["o"]["n"] if old and "o" in old else 0, floor_n) + 1,
             "at": max(at, old["o"]["at"]) if old and "o" in old else at,
             "workspace_log": {"seq": ws.seq, "head": ws.head, "acc": ws.acc},
             "tickets": dict(sorted(tickets.items())),

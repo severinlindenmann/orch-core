@@ -352,7 +352,7 @@ def test_a_forged_grant_issued_does_not_provide_a_secret_hash(env):
     with open(env.root / "events" / "workspace.jsonl", "ab") as f:
         f.write(canon.event_line(e))
     s = env.open()
-    assert s.state.workspace.invalid and s.grant_secret_hash(other_grant) is None  # refused by replay: no hash
+    assert s.state.chain_errors and s.grant_secret_hash(other_grant) is None  # a bad sig breaks the chain: no hash
     assert s.grant_secret_hash(env.grant_id) == canon.grant_secret_hash(GRANT_SECRET)
 
 

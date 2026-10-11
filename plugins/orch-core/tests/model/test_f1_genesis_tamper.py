@@ -41,9 +41,11 @@ def test_a_pinned_genesis_or_workspace_id_that_differs_is_refused():
 def test_a_genesis_that_fails_a_check_creates_no_workspace(c):
     st = rp([c["event"]])
     assert st.workspace.genesis is None and not st.workspace.members
-    assert st.chain_errors or st.workspace.invalid  # reported either way
-    r = admit(rp([]), c["event"], log="workspace")
-    assert hasattr(r, "code")
+    if c["replay"] == "chain.broken":
+        assert [e.code for e in st.chain_errors] == ["chain.broken"] and not st.workspace.invalid
+    else:
+        assert [i.code for i in st.workspace.invalid] == [c["replay"]] and not st.chain_errors
+    assert getattr(admit(rp([]), c["event"], log="workspace"), "code", None).value == c["append"]
 
 
 T = load("tamper.json")
@@ -78,6 +80,7 @@ CHECK_CHAIN_STOPS_AT = {
     "payload_changed_host_resigned": 3,
     "event_deleted": 2,
     "events_swapped": 3,
+    "at_goes_back_host_resigned": None,  # check_chain sees links only, not `at`
     "prev_rewritten": 3,
     "seq_rewritten": 3,
     "host_sig_swapped": 3,
@@ -86,14 +89,6 @@ CHECK_CHAIN_STOPS_AT = {
     "member_role_raised_not_resigned": 4,
     "member_role_raised_host_resigned": 4,
     "workspace_event_deleted": 2,
-}
-
-# Where orch.model disagrees with F1 §5.5 as amended in PR #361 (code fix in PR #363's next round):
-REPLAY_GAPS = {
-    "payload_changed_host_resigned": "a bad person sig is recorded as auth.invalid_event, F1 5.5 breaks the chain",
-    "member_role_raised_host_resigned": "a bad person sig is recorded as auth.invalid_event, F1 5.5 breaks the chain "
-    "there and stops every ticket event with ws_seq >= 3",
-    "events_swapped": "replay sorts a log's lines by (ws_seq, at, uid, seq); F1 5.5 checks them in file order",
 }
 
 
@@ -108,12 +103,7 @@ def test_check_chain_stops_at_the_first_broken_link(c):
         assert ei.value.seq == at, c["mutation"]
 
 
-def _case(c):
-    marks = [pytest.mark.xfail(strict=True, reason=REPLAY_GAPS[c["name"]])] if c["name"] in REPLAY_GAPS else []
-    return pytest.param(c, id=c["name"], marks=marks)
-
-
-@pytest.mark.parametrize("c", [_case(c) for c in T["cases"]])
+@pytest.mark.parametrize("c", T["cases"], ids=lambda c: c["name"])
 def test_a_tampered_line_breaks_the_chain_where_the_vector_says(c):
     st = _replay_with(c)
     broken = [x.seq for x in st.chain_errors if x.log == c["log"]]

@@ -430,6 +430,7 @@ def repo_identity_vectors() -> dict[str, Any]:
         ("https_plain", "https://github.com/acme/x", "x"),
         ("https_dot_git", "https://github.com/acme/x.git", "x"),
         ("https_trailing_slash", "https://github.com/acme/x/", "x"),
+        ("https_dot_git_trailing_slash", "https://github.com/acme/x.git/", "x"),
         ("https_user_token", "https://user:s3cr3t-token@github.com/acme/x.git", "x"),
         ("https_token_only", "https://ghp_abc123@github.com/acme/x", "x"),
         ("https_host_lowercased_path_kept", "https://GitHub.COM/Acme/X", "x"),
@@ -450,22 +451,37 @@ def repo_identity_vectors() -> dict[str, Any]:
         ("relative_path", "../x", "x"),
         ("no_remote", "", "x"),
         ("http_not_https", "http://github.com/acme/x", "x"),
-        ("https_upper_dot_git_refused", "https://github.com/acme/x.GIT", "x"),
-        ("https_double_trailing_slash_refused", "https://github.com/acme/x//", "x"),
-        ("ssh_port_443_refused", "ssh://git@git.example.com:443/a/b", "x"),
+        ("https_upper_dot_git_is_local", "https://github.com/acme/x.GIT", "x"),
+        ("https_upper_dot_git_other_case_is_local", "https://h/a/b.GIT", "x"),
+        ("https_double_trailing_slash_is_local", "https://github.com/acme/x//", "x"),
+        ("ssh_port_443_is_local", "ssh://git@git.example.com:443/a/b", "x"),
+        ("ssh_port_0443_is_local", "ssh://git@git.example.com:0443/a/b", "x"),
+        ("https_dot_git_dot_git_is_local", "https://h/a/b.git.git", "x"),
+        ("https_percent_20_is_local", "https://h/a/b%20c", "x"),
+        ("https_dotdot_segment_is_local", "https://h/a/../b", "x"),
+        ("https_segment_exactly_dot_git_is_local", "https://h/a/.git", "x"),
+        ("scp_like_absolute_path_is_local", "git@git.example.com:/srv/x.git", "x"),
+        ("scp_like_ipv6_is_local", "git@[::1]:a/b", "x"),
+        ("https_ipv6_is_local", "https://[::1]/a/b", "x"),
+        ("https_unicode_host_is_local", "https://b\u00fccher.example/a/b", "x"),
+        ("https_leading_space_is_local", " https://github.com/acme/x", "x"),
+        ("https_trailing_space_is_local", "https://github.com/acme/x ", "x"),
         ("https_dot_git_in_a_middle_segment", "https://github.com/acme.git/x", "x"),
         ("scp_like_with_a_local_insteadof", "gh:acme/x", "x"),
+        ("two_origin_urls_is_local", "https://github.com/acme/x", "x"),
     ]
     # git config the test repo carries itself; the mapping reads the raw remote, so it never applies (5.7)
     local_config = {"scp_like_with_a_local_insteadof": {"url.https://evil.example/.insteadOf": "gh:"}}
+    # a second `remote.origin.url` value (git config --add): more than one value is local:<name>
+    local_add = {"two_origin_urls_is_local": {"remote.origin.url": "https://evil.example/x/y"}}
     mapping = []
     for n, r, nm in raw:
-        out = g.mapped_identity(r, nm)
-        case: dict[str, Any] = {"name": n, "raw": r, "repo_name": nm, "canonical": out}
-        if out is None:
-            case["refused"] = True
+        values = [r, *local_add[n].values()] if n in local_add else r
+        case: dict[str, Any] = {"name": n, "raw": r, "repo_name": nm, "canonical": g.repo_identity(values, nm)}
         if n in local_config:
             case["local_git_config"] = local_config[n]
+        if n in local_add:
+            case["local_git_add"] = local_add[n]
         mapping.append(case)
     assert all(g.is_canonical_identity(v) for v in ok) and not any(g.is_canonical_identity(v) for v in refused)
     return {
@@ -474,11 +490,12 @@ def repo_identity_vectors() -> dict[str, Any]:
         "same": [["https://github.com/Acme/X", "https://github.com/acme/x"]],
         "mapping": mapping,
         "mapping_note": "userinfo (user:token@) is removed before anything else and never appears in a result; one "
-        "trailing / and one trailing (lower-case) .git are removed from the end of the path; the https default port "
-        "443 and the ssh default port 22 are dropped, every other port is kept (so ssh on 443 keeps it); anything that "
-        "is not https, ssh or scp-like is local:<repo name>. A mapped result that is not in the canonical form is "
-        "refused, never converted: `canonical` is null and `refused` is true (x.GIT, x//, ssh port 443). A .git that "
-        "ends a middle segment is not a .git suffix of the path and is kept.",
+        "trailing / and then one trailing (lower-case) .git are removed from the end of the path; the https default "
+        "port 443 and the ssh default port 22 are dropped, every other port is kept (so ssh on 443 keeps it); anything "
+        "that is not https, ssh or scp-like is local:<repo name>. A mapped result that is not in the canonical form "
+        "(x.GIT, x//, ssh port 443, %, .., IPv6, Unicode, a segment that is exactly .git) is local:<repo name> as "
+        "well; so is a remote.origin.url with more than one value (`local_git_add` adds a second one). `canonical` is "
+        "never null. A .git that ends a middle segment is not a .git suffix of the path and is kept.",
     }
 
 
@@ -590,6 +607,7 @@ def _vectors() -> dict[str, dict[str, Any]]:
         "revocation.json": {"pins": "device.revoked and recovery", "scenarios": sg.revocation_scenarios()},
         "checkpoint.json": sg.checkpoint_vector(),
         "restore.json": {"pins": "workspace restore and revocations", "scenarios": sg.restore_scenarios()},
+        "refusal_order.json": {"pins": "5.11 refusal order", "scenarios": sg.refusal_order_scenarios()},
         "generation.json": {"pins": "the 5.7 raise table", "scenarios": fl.generation_scenarios()},
         "status.json": {"pins": "the 5.9 status table", "scenarios": fl.status_scenarios()},
         "questions.json": {
@@ -642,6 +660,8 @@ INDEX: dict[str, str] = {
     "revocation.json": "device.revoked: embedded revocation as authority, reason mismatch, recovery (5.3)",
     "checkpoint.json": "checkpoint objects, signed bytes, refusals, divergence (5.10)",
     "restore.json": "workspace restore re-appends every PK-signed revocation (5.10)",
+    "refusal_order.json": "model scenarios: an event breaking two rules gets the code of the earlier step of the "
+    "refusal order (5.11)",
     "generation.json": "the 5.7 raise table row by row, delayed approval, reverted edit, voided approvals",
     "status.json": "the 5.9 status table, done is sticky, reopen",
     "effective_policy.json": "the 5.7 intersection, a later workspace change, gate.no_eligible",

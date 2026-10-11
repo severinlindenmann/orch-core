@@ -1155,6 +1155,11 @@ class Store:
             raise StoreError("chain.broken", f"{log}: {self._read_errors[log]}")
         if WORKSPACE in self._read_errors:
             raise StoreError("chain.broken", f"workspace: {self._read_errors[WORKSPACE]}")
+        # NOTE: despite the name this also *writes*: it finishes a restore's pending device.revoked re-appends first
+        if log != WORKSPACE and self._pending_revs:  # §5.10: no ticket event may name the restore's window
+            self._enforce_revocations()
+            if self._pending_revs:
+                raise StoreError("store.torn_write", "a restore's device.revoked re-appends are not all written yet")
         d = self._diverged.get(log) or (self._diverged.get(WORKSPACE) if log != WORKSPACE else None)
         if d is not None and not (typ == "restore" and d.log == log):
             raise StoreError("chain.diverged", f"{d.log}: {d.detail} (an owner-signed restore is needed)")
@@ -1971,8 +1976,8 @@ class Store:
 
     def restore_facts(self, log: str) -> dict[str, Any]:
         """What an owner needs to sign ``restore`` for ``log``: the last event on disk (``from_seq``, ``head``), the
-        highest checkpoint above it (``abandoned``, or None) and the signed decisions the host still knows of in the
-        part it archived with :meth:`abandon_tail` (``abandoned_decisions``)."""
+        highest checkpoint above it (``abandoned``, or None) and the ids of every person-signed event (actor P) the host
+        still knows of in the part it archived with :meth:`abandon_tail` (``abandoned_decisions``)."""
         info = self._logs.get(log)
         if info is None:
             raise StoreError("validation.log", f"unknown log {log}")
@@ -1995,7 +2000,7 @@ class Store:
             for line in p.read_bytes().splitlines():
                 with contextlib.suppress(canon.HashError, KeyError):
                     e = canon.parse_event_line(line + b"\n")
-                    if e["type"] in ("gate.approved", "gate.changes_requested", "verdict.given", "question.answered"):
+                    if e["actor"]["kind"] == "person":  # §5.10: every person-signed event of the given-up part
                         decisions.append(e["id"])
         return {
             "from_seq": info.seq,
@@ -2058,20 +2063,21 @@ class Store:
     def _enforce_revocations(self) -> None:
         """Re-append the revocations of :meth:`_revocation_plan` (host actor, allowed by the embedded revocation, §5.3).
         A read-only store cannot: it marks the workspace diverged instead."""
-        todo, self._pending_revs = self._pending_revs, []
-        if not todo or self._healing:
+        if not self._pending_revs or self._healing:
             return
         if self._host is None:
             self._diverged.setdefault(
                 WORKSPACE, Divergence(WORKSPACE, self._logs[WORKSPACE].seq, "a restore lacks noted revocations")
             )
             return
-        for rec in todo:
+        for rec in list(self._pending_revs):  # kept until each is written: a failure leaves the rest pending
             dev = self._state.workspace.devices.get(rec["device"]) if self._state else None
             if dev is None or dev.revoked:
+                self._pending_revs.remove(rec)
                 continue
             self._host_append(
                 "device.revoked",
                 WORKSPACE,
                 {"device": rec["device"], "reason": rec["reason"], "revocation": rec["revocation"]},
             )
+            self._pending_revs.remove(rec)

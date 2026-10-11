@@ -180,11 +180,10 @@ def settle(ws: WsCore, t: TCore, before: dict[str, Snap]) -> Settled:
 # --- effects of workspace events on a ticket --------------------------------------------------------------------
 
 
-def void_person(ws: WsCore, t: TCore, person: str, closed_statuses=("done", "closed")) -> None:
-    """``member.removed`` / ``role.changed``: the person's approvals are voided only on gates that have not yet
-    reached ``count`` (§5.7); a done or closed ticket keeps its state."""
-    if t.status in closed_statuses:
-        return
+SETTLED = ("done", "closed")
+
+
+def _void_person_now(ws: WsCore, t: TCore, person: str) -> None:
     for g in GATES:
         mine = [d for d in counting(t, g) if d.person == person]
         if mine and not reached(ws, t, g):
@@ -193,21 +192,48 @@ def void_person(ws: WsCore, t: TCore, person: str, closed_statuses=("done", "clo
             t.marks.add(g)
 
 
-def void_device(ws: WsCore, t: TCore, device: str) -> None:
-    """``device.revoked`` (compromised): voids what the device signed on tickets that are not yet done; on a done
-    ticket it only flags "approved by a revoked device" (§5.7)."""
-    if t.status == "closed":
+def void_person(ws: WsCore, t: TCore, person: str) -> None:
+    """``member.removed`` / ``role.changed`` (§5.7): the person's counting approvals are voided on the gates that have
+    not yet reached ``count``, on every unsettled ticket. A settled (done or closed) ticket keeps its state; the void
+    waits in ``exempt_persons`` for the moment the ticket becomes unsettled other than by a reopen."""
+    if t.status in SETTLED:
+        t.exempt_persons.add(person)
         return
+    _void_person_now(ws, t, person)
+
+
+def _void_device_now(t: TCore, device: str) -> None:
     for g in GATES:
         mine = [d for d in counting(t, g) if d.device == device]
-        if not mine:
-            continue
-        if t.status == "done":
-            t.gates[g].revoked_flag |= {d.id for d in mine}
-        else:
-            for d in mine:
-                d.voided = True
+        for d in mine:
+            d.voided = True
+        if mine:
             t.marks.add(g)
+
+
+def void_device(ws: WsCore, t: TCore, device: str) -> None:
+    """``device.revoked`` (compromised): voids what the device signed on every unsettled ticket, reached or not. A
+    settled ticket keeps its state; each gate lists the device's decisions that were counting (``revoked_flag``) and
+    the void waits in ``exempt_devices`` (§5.7)."""
+    if t.status in SETTLED:
+        t.exempt_devices.add(device)
+        for g in GATES:
+            t.gates[g].revoked_flag |= {d.id for d in counting(t, g) if d.device == device}
+        return
+    _void_device_now(t, device)
+
+
+def on_unsettle(ws: WsCore, t: TCore, before_status: str) -> None:
+    """A settled ticket that becomes unsettled other than by ``ticket.reopened`` (a push after ``done``): the voids it
+    was exempt from apply now, and ``settle`` raises each gate that loses a counting approval. A reopen raises every
+    gate and clears the record itself."""
+    if before_status in SETTLED and t.status not in SETTLED:
+        for device in sorted(t.exempt_devices):
+            _void_device_now(t, device)
+        for person in sorted(t.exempt_persons):
+            _void_person_now(ws, t, person)
+        t.exempt_devices.clear()
+        t.exempt_persons.clear()
 
 
 def addon_binds_gates(binds: dict[str, Any] | None) -> set[str]:

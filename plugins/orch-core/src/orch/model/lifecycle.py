@@ -95,6 +95,8 @@ def reopened(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
         return Refusal(Code.STATUS_TRANSITION, f"ticket.reopened from {t.status}")
     t.status = "open"
     t.workers = set()  # "since the ticket was last reopened" (§5.7)
+    t.exempt_persons.clear()  # a reopen raises every gate, which retires what the settled ticket was exempt from
+    t.exempt_devices.clear()
     generations.mark(t, *GATES)
     return None
 

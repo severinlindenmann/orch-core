@@ -522,7 +522,7 @@ Workspace views, agent starts, relay links, epochs and terminal events are defin
   included, computed from the strictly parsed object, never from the raw line.
 - **Chain:** `prev` of event `n` is `head` of event `n−1`; `prev` of `seq` 1 is `null`. The **log head** is the head
   of the last event. An empty log has no head.
-- **Merged order.** `ws_seq` is non-decreasing along a ticket log and at most the workspace log's last `seq`;
+- **Merged order.** `ws_seq` is non-decreasing along a ticket log, `at` does not go back within one `ws_seq`, and `ws_seq` is at most the workspace log's last `seq`;
   otherwise the line fails like a bad `host_sig`. The merged order of all logs is by `ws_seq`, the workspace log
   first, then ticket events ordered by `(at, uid, seq)` (§5.11): an event with `ws_seq = k` is evaluated against the
   workspace state after workspace event `k`. The host holds the workspace-log lock (shared) while it appends a ticket event. `ws_seq` and
@@ -562,7 +562,7 @@ the field it belongs to; no code looks a hash up by value alone.
 | section hash | `H("orch/v2/section\|" \|\| UTF-8(section text))`; a missing section has the hash of `""` | edit events, `base_rev`, gate `sections` |
 | value hash | `H("orch/v2/value\|" \|\| cj(value))` | `base_rev` for `ticket.json` paths |
 | gate hash | `H("orch/v2/gate\|" \|\| cj(G))`, `G` in §5.7 | `gate.*`, `verdict.given` |
-| policy hash | `H("orch/v2/policy\|" \|\| cj({"gate": gate, "policy": P}))`, `P` the effective policy in canonical form (§5.7) | `gate.*`, `verdict.given`, gate hash |
+| policy hash | `H("orch/v2/policy\|" \|\| cj({"gate": gate, "policy": P}))`, `P` the effective policy in canonical form (§5.7). Undefined for a blocked gate (§5.7): nothing is hashed and no prompt is built | `gate.*`, `verdict.given`, gate hash |
 | people hash | `H("orch/v2/people\|" \|\| cj({role: value}))` over only the ticket roles the gate's effective policy names in `approvers` or `not`, plus `assignees` when `independent` is on; lists sorted, `owner` as `ticket_owner`, a person id or null | gate hash |
 | question id (`qid`) | the first 16 bytes, in 32 hex, of `H("orch/v2/question-id\|" \|\| cj({"workspace_id": W, "ticket": uid, "question": "Q1"}))` | `question.asked`; the protocol §13 `question_id` |
 | question hash | `H("orch/v2/question\|" \|\| cj({"question_id": qid, "ticket": uid, "text", "options"}))` (protocol §13's shape; `options` `[]` when none) | `question.*` |
@@ -590,7 +590,7 @@ their fields and sections join one of these (the `gate` of a field or section in
 | `approvers` | list of approver tokens, at least one | who may approve |
 | `count` | int ≥ 1 | how many distinct persons must approve at the current hash and generation |
 | `not` | list of approver tokens, may be empty | excluded, even when also in `approvers` |
-| `applies` | `"all"`, `"off"` or a list of ticket types | the workspace default is `"all"`, for `code` `"off"` (D59) |
+| `applies` | `"all"`, `"off"` or a non-empty list of ticket types | the workspace default is `"all"`, for `code` `"off"` (D59) |
 | `independent` | bool | default `false`; `true` adds the independence rule below. Always `true` for `code`. |
 
 - **Approver tokens:** the workspace roles `owner`, `maintainer`, `member`, and the ticket roles `ticket_owner`,
@@ -601,7 +601,9 @@ their fields and sections join one of these (the `gate` of a field or section in
   either side is `"all"`; `"off"` only if both are `"off"`; otherwise the sorted, de-duplicated list (kept as a list
   even when it names every type). An override can never end up looser, even after a later workspace change.
   "No eligible approver" is judged on tokens, not persons: an override that leaves no token is refused; if a later
-  workspace change empties the set, the gate is blocked (`gate.no_eligible`) until someone fixes the policy.
+  workspace change empties the set, the gate is blocked (`gate.no_eligible`) until someone fixes the policy. A blocked gate
+  has no policy hash and no gate hash, so it has no counting approvals. An approval prompt for it, and every decision on
+  it, is refused with `gate.no_eligible`; their `hash` and `policy_hash` are never compared.
 - **Canonical form** for hashing: all five keys, `approvers` and `not` sorted and de-duplicated, `applies` `"all"`, `"off"` or a non-empty sorted list. Policies and people lists are stored in events and files **in this canonical form** (people lists sorted and de-duplicated too); a non-canonical one is refused at append. Hashing applies the canonical form as well, as a safeguard; every other list this document calls "sorted" (for example `source_sha`, `prior.approvals`) must already be sorted and is refused otherwise. "Sorted" always means by Unicode code point (equal to UTF-8 byte order).
 - For `code`, `not` always includes `assignees` and `independent` is `true`; the host refuses a policy without them
   (D59).
@@ -619,7 +621,7 @@ Not bound by any gate, so never presented as approved: `title`, `priority`, `lab
 `visibility`, questions (also `why` and `recommended`), Current state, and addon fields without a binding.
 
 **Generations.** Each gate `g` of a ticket has a generation, starting at 0. The events in this table raise it **in
-every status**. **An event raises a gate by at most 1, however many rows match** (when `g` applies):
+every status**. **An event raises a gate by at most 1, however many rows match.** A row raises `g` only if `g` applies to the ticket before or after the event, so an event that turns a gate on or off (a `policy.changed` of `applies`, a change of `ticket.type`) raises it. "Every later gate" uses the same test.
 
 | Event | Raises |
 |---|---|
@@ -694,16 +696,21 @@ carry `source_sha: []`; a ticket that links a repo must have a non-empty list.
   refused with `gate.stale`), and again at landing.
 - **Repo identity.** From the raw `remote.origin.url`, without `insteadOf` rewriting: `https://` and
   `ssh://`/scp-like forms map to `https://host[:port]/path`, keeping every port except 443 (https) and 22 (ssh),
-  userinfo (`user:token@`) always removed, host lower-case and nothing else changed, one trailing `.git` and `/`
-  removed. Anything else (no remote, `file://`,
-  a path) is `local:<repo name>`. The result must match the canonical form exactly, and anything that doesn't is
-  **refused, never converted**: host labels `[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?` joined by single dots (at most 253
+  userinfo (`user:token@`) always removed, host lower-case and nothing else changed, one trailing `/` removed first, then one
+  trailing `.git` (so `x.git/` becomes `x`). Anything else (no remote, `file://`,
+  a path) is `local:<repo name>`; so is a remote that is not canonical after this mapping, and a `remote.origin.url`
+  with more than one value (git fetches from the first and pushes to all, so no single identity names the repo; read
+  `git config --get-all`). Nothing is repaired or partly cleaned. The mapped result must match the canonical form
+  exactly (a stored identity that doesn't is **refused, never converted**): host labels `[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?` joined by single dots (at most 253
   characters, no trailing dot; punycode `xn--` allowed; Unicode hosts and IPv6 refused; an all-numeric last label only
   as a plain dotted quad without leading zeros); port `[1-9][0-9]{0,4}` up to 65535, never 443; path segments
-  `[A-Za-z0-9._~-]+` joined by single slashes, no empty, `.` or `..` segment, no trailing slash, no `.git` suffix in
-  any case; ASCII only, no `%`, `?`, `#`, `@` or whitespace. A prompt is refused when two linked repos share an
+  `[A-Za-z0-9._~-]+` joined by single slashes, no empty, `.` or `..` segment, no trailing slash, and the last segment does not end in
+  `.git` in any ASCII case (after the one lower-case `.git` is removed; an inner segment such as `acme.git` is
+  allowed, a segment that is exactly `.git` is not); ASCII only, no `%`, `?`, `#`, `@` or whitespace. A prompt is refused when two linked repos share an
   identity, compared **ignoring ASCII case** (hosts like GitHub treat `Acme/X` and `acme/x` as one repo); the hashed
   value keeps the raw form.
+- Consequences: scp `host:x` (relative to the ssh home) and `ssh://host/x` both map to `https://host/x`; scp
+  `host:/abs/path` is `local:<name>` while `ssh://host/abs/path` maps to `https://host/abs/path`.
 - **P1 limit:** the identity is read from a working copy the agent can write, so it protects against mistakes and
   aliasing, not against the agent.
 
@@ -722,11 +729,19 @@ carry `source_sha: []`; a ticket that links a repo must have a non-empty list.
 their own agents**: with it off, a person may verify work their own agent did, even under `not: assignees`
 (§12 O4). It is always on for `code`.
 
-**Removal, role changes, revoked devices** (§12 O3). Eligibility is evaluated at the decision's position. A later
-`member.removed` or `role.changed` voids that person's approvals only on gates that haven't yet reached `count`.
-`people` lists are not changed by a removal: removed persons stay listed and become ineligible. A `device.revoked`
-with reason `compromised` voids the decisions that device signed on tickets that are not yet `done`; a `done` ticket
-it approved keeps its state and shows the flag "approved by a revoked device". It also ends every grant that device signed. `member.removed` ends every grant of the removed person and every
+**Removal, role changes, revoked devices** (§12 O3). Eligibility is evaluated at the decision's position. A ticket that
+is `done` or `closed` is **settled**. A later `member.removed` or `role.changed` (to any role, even one that leaves the
+person eligible) voids that person's counting approvals on the gates of every unsettled ticket that haven't yet reached
+`count`; it raises those gates, and so (the table below) retires everyone's approvals on them. On a settled ticket it
+voids nothing and raises nothing. `people` lists are not changed by a removal: removed persons stay listed and become
+ineligible. A `device.revoked` with reason `compromised` voids the decisions that device signed on every unsettled
+ticket, whether or not the gate reached `count`. A settled ticket keeps its state. Its view lists, per gate, the ids of
+that device's decisions that were counting at the revocation (`revoked_decisions`); the list is shown while those
+decisions still count and is dropped when they stop counting. When a settled ticket becomes unsettled other than by
+`ticket.reopened` (`branch.pushed` after `done`, the D59 rule), the voids it was exempt from apply at that event:
+decisions signed by a device revoked `compromised` are voided, and approvals of a person removed or role-changed while
+it was settled are voided on gates that haven't reached `count`; each gate that loses a counting approval is raised.
+A reopen raises every gate anyway. It also ends every grant that device signed. `member.removed` ends every grant of the removed person and every
 device of that person in this workspace: a later `member.added` starts with new devices and grants only.
 
 A gate is approved when `count` distinct persons have counting approvals. A gate that doesn't apply to the ticket's
@@ -836,30 +851,72 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
 - Refused: a checkpoint with a lower `seq` (or `n`) than one already seen, and **one with the same `seq` but a
   different `head`** (`chain.diverged`). A log whose head at a checkpointed `seq` differs from the checkpoint is
   diverged too: reads report it and no new events are appended until a `restore`.
+- **Receivers** (the host, the relay, devices) keep, per workspace, the highest workspace checkpoint they have
+  accepted. The first one is accepted when its signature verifies and its `genesis` equals the pin. A new checkpoint
+  is compared with the held one, H:
+  - accepted if its `n` is higher and no `seq` is lower than in H (gaps in `n` are normal);
+  - ignored, without an alarm, if its `n` is lower and no `seq` is higher than in H (a stale delivery);
+  - `chain.diverged` in every other case: the same `n` with a different `o`; a log whose `seq` equals H's but whose
+    `head` differs; a higher `n` with a lower `seq`; a lower `n` with a higher `seq`; or a uid of H that is missing.
+  - **After a restore:** a checkpoint with lower `seq`s is accepted only with the owner-signed `restore` event,
+    verified under the owner's device, under the rule below. H is then replaced.
+
+  A restore comes with a checkpoint as `{id, log, from_seq, abandoned}`. It is looked at only for a higher `n`, and
+  only when its log (the workspace log or one ticket log) really drops below H or reaches H's `seq` again with
+  another `head`; otherwise it is ignored and the rules above decide. When it applies: its `id` is not among the
+  restore ids this receiver has already applied (receivers record the id when they accept the offer, so an old restore
+  can't be used again), `from_seq < H.seq <= abandoned.seq` (H's entry may lag the checkpoint the restore gives up,
+  and the receiver may have missed checkpoints; with the same `head` when the seqs are equal), the offered `seq` of
+  that log is at least `from_seq + 1`, and no other log drops or changes a head at a shared `seq`. Otherwise
+  `chain.diverged`.
+  **Limits:** a receiver holding only checkpoints compares heights, so it accepts a fork that has grown past H and a
+  forged H whose `n` and `seq` are both inflated (every honest checkpoint is then ignored); a receiver that holds the
+  logs checks H's heads against them.
+
+  Only `chain.diverged` stops the receiver. In P1 the host only writes its own checkpoints and never lowers `n`;
+  the relay and orch-mobile implement the rest from P3.
 - **Restore** (§12 O5). After a rollback (a restored backup, a git force-push of the workspace repo) an owner signs
   `restore {from_seq, head, abandoned, abandoned_decisions, reason}`: `from_seq` and `head` name the last event on
   disk that stays valid; `abandoned` gives up every checkpoint above `from_seq` and names the highest (`null` if
-  none); `abandoned_decisions` lists the ids of the signed decisions in the given-up part that the host still knows
-  of. The host appends it as `from_seq + 1` with `prev = head` and accepts checkpoints of the new chain from then on.
-  It raises every gate's generation, so no decision from the abandoned part counts again; a workspace-log `restore`
-  does so on every ticket.
-- **Restore never drops revocations.** The host keeps every PK-signed revocation it has seen in host state. A
-  workspace `restore` is accepted only if the host re-appends each of them to the new chain at once, as
-  `device.revoked` with actor H (allowed by the embedded revocation, §5.3).
+  none); `abandoned_decisions` lists the `id` of every person-signed event (actor P) in the given-up part that the
+  host still knows of. A later event in the same log with one of these ids is an authorization failure (§5.11,
+  `event.duplicate_id`): readers add them to the log's seen ids. Ids the host no longer knows can be replayed (P1
+  limit; follow-up: the host keeps the ids of every person-signed event it admits in `.state`). A workspace-log
+  `restore` lists the person-signed workspace events of its given-up part (`member.added`, `role.changed`,
+  `device.added`, `policy.changed`, ...): an abandoned one appended again would otherwise match (`based_on` is still on
+  the kept chain, `roster_v` fits again) and generations don't cover membership. The host appends the restore as `from_seq + 1`
+  with `prev = head` and accepts checkpoints of the new chain from then on. It raises every gate's generation, so no
+  decision from the abandoned part counts again; a workspace-log `restore` does so on every ticket.
+- **Restore never drops revocations.** The host keeps every PK-signed revocation it has seen in host state. The host
+  appends a workspace `restore` and, under the same lock and before any other append, one `device.revoked` (actor H,
+  a new `id`, the revocation verbatim, allowed by §5.3) for each PK-signed revocation in host state that the new chain
+  lacks; each is its own atomic append, so for a moment the files show the restore without them. Crash recovery
+  finishes them first, and while any is missing the host refuses ticket appends. A ticket event's `ws_seq` may not name the restore or any of these
+  re-appends except the last (`chain.bad_ws_seq`). A log-only reader can't check that the set is complete.
+  `reader_cannot_see_a_dropped_revocation` pins only that such a reader accepts the restore, and that the host
+  refuses it.
 - **What P1 can't detect:** if both the history and the local checkpoints in `.state/` are replaced, the rollback
   is invisible. From P3, checkpoints on the relay and on member devices catch it.
 
 ### 5.11 Trust root and authorization replay
 
-- **Genesis.** The trust root of a workspace is the head of its `workspace.created` event. Readers check it in this
-  order:
+- **Genesis.** The trust root of a workspace is the head of its `workspace.created` event. Checks 4 and 6 are line
+  checks (§5.5): when one of them fails together with another check, it is the one reported (on replay both; at
+  append check 4, and check 6 is reported last). Checks 1, 2, 3 and 5 are then made in no pinned order:
   1. `person_id(owner.pk_pub) == delegation.o.owner_person_id == device_cert.o.person_id`, and
      `owner.person == "p_" +` that id;
   2. the delegation's signature under `owner.pk_pub` (label `sig/ws-delegation|`) and its exact field set;
   3. `delegation.o.workspace_id == workspace_id` and `delegation.o.wsk_pub == wsk_pub`;
   4. this event's `host_sig` under `wsk_pub`;
-  5. `device_cert` under `owner.pk_pub`, and `actor.device == "d_" + device_cert.o.device_id`;
+  5. `device_cert` under `owner.pk_pub` and valid at this event's `at`: not expired, `scopes_max` a level list that
+     contains `operate` (the genesis installs members, policies and settings; levels are prefixes, so `operate`
+     implies `decide`), no `drop:` scope; and `actor.device == "d_" + device_cert.o.device_id`;
   6. `sig` under `device_cert.o.dk_sig_pub`.
+
+  A failure of check 1, 2, 3 or 5 is `genesis.invalid`. Check 4 fails as
+  `chain.broken`. Check 6 fails as `sig.invalid` at append and as `chain.broken` on replay. A genesis for another
+  workspace id, or one that differs from the pin, is `trust.genesis_mismatch` (step 1 below). Limit: no workspace is
+  created by a decide-only device.
 - **Pinning.** The host remembers the genesis outside the workspace (`<host state dir>/hosts/<workspace_id>/genesis`)
   and puts it in every workspace checkpoint. The person's client records it in its custody key file when it joins,
   and a human-only verb refuses to sign for a workspace whose genesis differs (`trust.genesis_mismatch`). Devices
@@ -886,6 +943,29 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
     merged order.
   - `replay` requires the expected workspace id and refuses a genesis that doesn't match the pin
     (`trust.genesis_mismatch`).
+- **Refusal order.** An event is refused with the first failing step:
+  0. Strict parse and field set: `validation.*` from the store at append; `chain.broken` on replay.
+  1. Line (§5.5): `chain.broken` (log already broken, `seq`/`prev`), `trust.genesis_mismatch`, `chain.broken`
+     (`host_sig`), `chain.bad_ws_seq`.
+  2. Envelope: `event.duplicate_id`, `event.bad_base`.
+  3. Log: `ticket.unknown`, `ticket.exists`.
+  4. Type: `event.unknown_type` (a type of the other log included), `event.bad_actor`; `genesis.invalid` (a second
+     genesis, an event before it, then the genesis checks above).
+  5. Signer. For a person: `member.unknown` (for a `device.added` in recovery, §5.3, the embedded `cert` stands in for
+     the registered one), `device.unknown`, `device.invalid`, `device.scope`, `role.denied` (viewer), `members.stale`,
+     `sig.invalid`. For an agent: `grant.invalid`, `grant.verb`, `grant.scope`. For an unattended agent:
+     `unattended.denied`, `quota.unattended`.
+  6. `freeze.active`, then `ticket.not_visible`.
+  7. The type's own rules. For decisions: `gate.not_applicable`, `gate.no_eligible`, `gate.status`,
+     `gate.not_eligible` (token, `not`, and independence on an approval or `pass`), `gate.stale` (generation, policy
+     hash; `source_sha` present on a change request or a non-verify gate, or missing on a verdict or code approval),
+     `source.missing`, `gate.stale` (source list, gate hash), `gate.incomplete`. For addon writes: `addon.field_unknown`,
+     `addon.value_invalid` and the other §8.1 codes. For other types the order is not pinned, and a vector must not
+     break two step-7 rules at once.
+  8. Derived fields: `auth.invalid_event`, `gate.invalidated_mismatch`.
+
+  On replay, an `actor.device` with no certificate, or a person `sig` that doesn't verify, breaks the chain (§5.5),
+  whatever step 5 says. A certificate of another person is `device.unknown`, an authorization failure.
 - **Verifier interface.** Signature checks are injected into replay:
 
   | Method | Arguments |
@@ -1774,7 +1854,7 @@ Every string in `ticket.json`, `body.md` and events:
 | approver token (policies) | `owner`, `maintainer`, `member`, `ticket_owner`, `assignees`, `reviewers`, `watchers` |
 | question `to` role | `ticket_owner`, `assignees`, `reviewers`, `watchers` |
 | gate | `requirements`, `plan`, `verify`, `code` |
-| gate `applies` | `all`, `off`, or a list of ticket types |
+| gate `applies` | `all`, `off`, or a non-empty list of ticket types |
 | verdict outcome | `pass`, `fail` |
 | close resolution | `wont_do`, `duplicate`, `obsolete`, `other` |
 | claim release reason | `released`, `handoff`, `expired`, `grant_ended`, `member_removed`, `ticket_done`, `ticket_closed` |
@@ -1841,7 +1921,7 @@ owner's confirmation.
 | N14 | Rollback and trust in P1 | Equal-height divergent heads are refused and `restore` is defined, but **P1 can't detect a rollback when both the history and the local checkpoints are replaced**, and the genesis pin lives in files the same OS user owns (O7). Relay checkpoints (P3) and host-held keys (P2) fix it. | new from the Codex review |
 | O1 | Where the factor is recorded | In the event's `auth` only, not in the device certificate. **D64's wording ("recorded in the person's device certificate") needs amending**; F1 doesn't edit D64. | agreed with Opus reviewer |
 | O2 | Custody of `dk_sig` in P1 | `dk_sig` is held by the backend named in `auth`; in P1 it is passphrase-encrypted like the person key, decrypted for one signature on a TTY, never cached; a key that signs without its factor is `file`-tier and never signs person events (§5.3). | agreed with Opus reviewer |
-| O3 | Done is sticky; compromised devices | A `done` ticket leaves `done` only by `ticket.reopened`, `branch.pushed` of a source ref (D58) or the D59 code-gate rule; bound edits are refused from every actor. A `device.revoked` with `compromised` voids that device's decisions on tickets not yet `done`; `done` tickets it approved show "approved by a revoked device", with no state change (§5.7). | agreed with Opus reviewer |
+| O3 | Done is sticky; compromised devices | A `done` ticket leaves `done` only by `ticket.reopened`, `branch.pushed` of a source ref (D58) or the D59 code-gate rule; bound edits are refused from every actor. A `device.revoked` with `compromised` voids that device's decisions on unsettled tickets; settled (`done` or `closed`) tickets list them (`revoked_decisions`) with no state change until the ticket becomes unsettled (§5.7). A void raises the gate for everyone: a `role.changed` is a cheap way for an owner to reset a gate, which is accepted because owners can already edit bound content. | agreed with Opus reviewer |
 | O4 | Self-approval | With `independent` on, `not: assignees` also excludes the `for` person of agent events that touched a bound path in the gate's current generation. With it off (the single-owner default), a person may approve their own agent's work, and the doc says so (§5.7). | agreed with Opus reviewer |
 | O5 | `restore` power | Owner only; never drops revocations (the host re-appends every PK-signed revocation it has seen); records the abandoned signed decisions in `abandoned_decisions` (§5.10). | agreed with Opus reviewer |
 | O6 | Unattended evidence | Unattended artifacts carry no `ac`/`task` and are never evidence (§6). | agreed with Opus reviewer |

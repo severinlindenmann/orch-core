@@ -86,8 +86,8 @@ class Gateway:
         requirements = {
             "identity": [
                 ("whoami", "ops/1"),
-                ("member.list", "ops/1"),
-                ("workspace.show", "ops/1"),
+                ("member.list", "query/1"),
+                ("workspace.show", "query/1"),
                 ("host.status", "ops/1"),
             ],
             "today": [("needs", "query/1")],
@@ -108,8 +108,8 @@ class Gateway:
         from .errors import HostError
 
         for row in rows:
-            ws = row["id"]
-            if ws not in pins:
+            ws = row["workspace_id"]
+            if ws not in pins or row.get("person") != pins[ws]["peers"][str(os.getuid())]["person"]:
                 continue
             try:
                 link = self.enabled(ws)

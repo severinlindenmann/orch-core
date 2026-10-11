@@ -1,0 +1,160 @@
+"""The versioned, immutable release the service runs (D-P2-4).
+
+``orch host install`` copies the ``orch`` package to ``~/.local/share/orch/releases/<version>/`` (``$XDG_DATA_HOME``
+when set), with a launcher ``bin/orch-host`` and a manifest ``RELEASE.json`` of every file's SHA-256. Files are made
+read-only (0444, directories 0555). A version that is already installed is never changed: installing the same bytes
+again is a no-op, different bytes under the same version are refused. An upgrade is a new version, then
+``host.restart`` (or the service manager's restart).
+
+At start the host imports every ``orch`` module (:func:`preload`), so a later change on disk cannot change code the
+running host has not loaded yet. ``releases/current`` points at the installed version.
+
+Known limit: only ``orch/`` is copied. The dependencies (``jsonschema``, ``cryptography``) come from the
+interpreter's environment, and ``python -I`` still runs that environment's ``site-packages/*.pth`` files, so the
+interpreter's environment is trusted like any other code of the host UID (same-UID processes are trusted, §7).
+"""
+
+from __future__ import annotations
+
+import contextlib
+import hashlib
+import importlib
+import json
+import os
+import pkgutil
+import secrets
+import shutil
+import stat
+import sys
+from pathlib import Path
+
+__all__ = ["ReleaseError", "default_version", "install_release", "preload", "releases_dir"]
+
+LAUNCHER = """import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from orch.host.cli import main  # noqa: E402
+
+raise SystemExit(main(sys.argv[1:]))
+"""
+
+
+class ReleaseError(Exception):
+    pass
+
+
+def releases_dir(env: dict[str, str] | None = None) -> Path:
+    env = dict(os.environ) if env is None else env
+    data = env.get("XDG_DATA_HOME", "")
+    base = Path(data) if data.startswith("/") else Path(env.get("HOME") or Path.home()) / ".local" / "share"
+    return base / "orch" / "releases"
+
+
+def _package_dir() -> Path:
+    import orch
+
+    return Path(orch.__file__).resolve().parent
+
+
+def _files(source: Path) -> list[Path]:
+    out = []
+    for path in sorted(source.rglob("*")):
+        rel = path.relative_to(source)
+        if "__pycache__" in rel.parts or path.suffix in {".pyc", ".pyo"} or path.is_symlink():
+            continue
+        if path.is_file():
+            out.append(rel)
+    return out
+
+
+def _manifest(source: Path) -> dict[str, str]:
+    return {str(rel): hashlib.sha256((source / rel).read_bytes()).hexdigest() for rel in _files(source)}
+
+
+def default_version(source: Path | None = None) -> str:
+    """The package version plus 12 hex of the tree digest, so two dev builds never share a release directory."""
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        base = version("orch-core")
+    except PackageNotFoundError:
+        base = "0"
+    tree = json.dumps(_manifest(source or _package_dir()), sort_keys=True).encode()
+    return f"{base}+{hashlib.sha256(tree).hexdigest()[:12]}"
+
+
+def _freeze(root: Path) -> None:
+    for path in sorted(root.rglob("*"), key=lambda p: len(p.parts), reverse=True):
+        os.chmod(path, 0o555 if path.is_dir() else (0o555 if path.parent.name == "bin" else 0o444))
+    os.chmod(root, 0o555)
+
+
+def install_release(version: str | None = None, *, target: Path | None = None, source: Path | None = None) -> Path:
+    source = source or _package_dir()
+    version = version or default_version(source)
+    if not version or "/" in version or version.startswith("."):
+        raise ReleaseError(f"invalid version {version!r}")
+    releases = target or releases_dir()
+    final = releases / version
+    manifest = _manifest(source)
+    if final.exists():
+        try:
+            have = json.loads((final / "RELEASE.json").read_text())
+            on_disk = _manifest(final / "orch")  # re-hash: the manifest alone could hide an edited file
+        except (OSError, ValueError) as exc:
+            raise ReleaseError(f"{final} exists but has no readable manifest") from exc
+        if have.get("files") != manifest or on_disk != manifest:
+            raise ReleaseError(f"release {version} is already installed with other content; use a new version")
+        _point_current(releases, version)
+        return final
+    releases.mkdir(parents=True, exist_ok=True, mode=0o755)
+    staging = releases / f".staging-{secrets.token_hex(6)}"
+    try:
+        (staging / "orch").mkdir(parents=True, mode=0o755)
+        for rel in manifest:
+            dest = staging / "orch" / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source / rel, dest)
+        (staging / "bin").mkdir()
+        (staging / "bin" / "orch-host").write_text(f"#!{sys.executable} -I\n" + LAUNCHER)
+        (staging / "RELEASE.json").write_text(json.dumps({"version": version, "files": manifest}, sort_keys=True))
+        _freeze(staging)
+        os.rename(staging, final)  # atomic: a release appears complete or not at all
+        _point_current(releases, version)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            for path in [staging, *staging.rglob("*")]:
+                os.chmod(path, stat.S_IRWXU)
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    return final
+
+
+def _point_current(releases: Path, version: str) -> None:
+    """``releases/current`` → ``<version>``, replaced atomically (the units run ``current/bin/orch-host``)."""
+    link = releases / f".current-{secrets.token_hex(4)}"
+    os.symlink(version, link)
+    try:
+        os.replace(link, releases / "current")
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(link)
+        raise
+
+
+#: modules that only import on another platform
+_SKIP = ("orch.custody.windows",)
+
+
+def preload() -> list[str]:
+    """Import every ``orch`` module now; returns their names."""
+    import orch
+
+    names = []
+    for info in pkgutil.walk_packages(orch.__path__, "orch."):
+        if info.name.startswith(_SKIP) or info.name.endswith(".__main__"):
+            continue
+        importlib.import_module(info.name)
+        names.append(info.name)
+    return names

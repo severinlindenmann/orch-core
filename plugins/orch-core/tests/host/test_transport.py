@@ -6,7 +6,6 @@ import asyncio
 import contextlib
 import errno
 import os
-import secrets
 import shutil
 import socket
 import stat
@@ -107,34 +106,11 @@ def handler(session, frame, request):
     return None
 
 
-# listener.py refuses a socket path over 100 UTF-8 bytes; the tree below the base adds "/.hXXXX/r/<32 hex>/host.sock".
-SOCKET_PATH_LIMIT = 100
-TREE_SUFFIX = len("/.h0000/r/" + "0" * 32 + "/host.sock")
-
-
-def _trusted_base() -> Path:
-    """The checkout root when the socket path fits under it, else the home directory: common on dev laptops, where
-    worktrees live under long paths such as ~/orch-dev/.worktrees/<name>. Not /tmp: a user-owned child of the sticky
-    /tmp is refused by §2 (``expected root 0755``), and mkdtemp creates exactly that."""
-    root = Path(__file__).resolve().parents[4]
-    if len(str(root).encode()) + TREE_SUFFIX <= SOCKET_PATH_LIMIT:
-        return root
-    home = Path.home().resolve()
-    if len(str(home).encode()) + TREE_SUFFIX > SOCKET_PATH_LIMIT or not os.access(home, os.W_OK):
-        pytest.skip(f"no trusted base short enough for a {SOCKET_PATH_LIMIT}-byte socket path")
-    return home
-
-
 @pytest.fixture
 def secure_tree():
-    base = _trusted_base()
-    while True:
-        path = base / (".h" + secrets.token_hex(2))
-        try:
-            path.mkdir(mode=0o700)
-            break
-        except FileExistsError:
-            continue
+    from tests.host.lifecycle_helpers import short_dir
+
+    path = short_dir()
     try:
         yield path
     finally:
@@ -166,11 +142,11 @@ def server_for(listener, **kwargs):
     )
 
 
-async def read_frame(sock):
+async def read_frame(sock, timeout=2):
     loop = asyncio.get_running_loop()
     decoder = frames.Decoder()
     while True:
-        data = await asyncio.wait_for(loop.sock_recv(sock, 1), 2)
+        data = await asyncio.wait_for(loop.sock_recv(sock, 1), timeout)
         if not data:
             return None
         items = decoder.feed(data)
@@ -1097,6 +1073,8 @@ def test_dispatch_precedence_before_rate_limit():
         async with pair_session(callback=denied) as (session, client, _, _):
             for _ in range(100):
                 session.server.limits.request_allowed(session.peer)
+            for bucket in session.server.limits.agents.values():
+                bucket.rate = 0  # no refill: the result must not depend on how fast this machine is
             await send_frame(client, HELLO)
             await read_frame(client)
             await send_frame(client, req())
@@ -1437,7 +1415,7 @@ def test_oversized_result_is_request_scoped_and_id_reusable():
             await send_frame(client, HELLO)
             await read_frame(client)
             await send_frame(client, req())
-            response = await read_frame(client)
+            response = await read_frame(client, timeout=10)  # encoding a 2 MiB result is slow under load
             assert response["t"] == "res"
             assert response["error"]["code"] == "result.too_large"
             assert response["exit"] == 1

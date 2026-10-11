@@ -11,7 +11,6 @@ from orch.ops.errors import OrchError
 from orch.ops.runtime import Call
 from orch.ops.views import fence
 from orch.schema import SECTIONS_BY_TYPE
-from orch.store import observe
 from orch.store.render import HEADINGS, thaw
 
 LAST = 4  # events in the default view
@@ -180,7 +179,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         raise OrchError("invalid.input", "--since goes with --log or --diff")
     view = c.resolve(args.get("ref"))
     problems: list[str] = []
-    if observe.observe(c.store, view.uid, problems):  # a repository moved: show what is there now
+    if c.ctx.caps.git.observe(c.store, view.uid, problems):  # a repository moved: show what is there now
         view = c.resolve(args.get("ref"))
     head = c.store.head_seq(view.uid)
     name = modes[0] if modes else "default"

@@ -10,9 +10,8 @@ import resource
 import socket
 from collections import deque
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
 from time import monotonic
-from typing import Any, Literal, Protocol
+from typing import Any, Protocol
 
 from . import frames
 from ._socket import Credentials as Credentials
@@ -30,6 +29,7 @@ from .listener import (
 from .listener import (
     default_run_directory as default_run_directory,
 )
+from .peer import Peer as Peer
 
 IDLE_SECONDS = 600
 RECHECK_SECONDS = 60
@@ -39,13 +39,6 @@ WRITE_QUEUE_FRAMES = 64
 BYTES_PER_MINUTE = 64 * 1024 * 1024
 TRANSIENT_ACCEPT_ERRORS = {errno.EMFILE, errno.ENFILE, errno.ECONNABORTED, errno.EINTR, errno.ENOBUFS, errno.ENOMEM}
 LOG = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class Peer:
-    uid: int
-    kind: Literal["person", "agent", "worker", "control"]
-    person: str | None = None
 
 
 class PeerRegistry(Protocol):

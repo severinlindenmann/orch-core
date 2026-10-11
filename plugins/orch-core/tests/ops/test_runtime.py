@@ -7,23 +7,26 @@ import json
 
 from orch import model
 from orch.ops import runtime
+from orch.ops.caps import Files
 from tests.ops.helpers import OTHER, SESSION, Cli
 
 
 def test_the_workspace_is_found_from_the_environment_or_by_walking_up(ws, tmp_path):
-    assert runtime.find_workspace({"ORCH_WORKSPACE": str(ws.root)}) == ws.root
-    assert runtime.find_workspace({"ORCH_WORKSPACE": str(tmp_path)}) is None  # not a workspace: no fallback
+    assert runtime.find_workspace({"ORCH_WORKSPACE": str(ws.root)}, None, Files.direct()) == ws.root
+    assert (
+        runtime.find_workspace({"ORCH_WORKSPACE": str(tmp_path)}, None, Files.direct()) is None
+    )  # not a workspace: no fallback
     deep = ws.root / "tickets" / "x" / "y"
     deep.mkdir(parents=True)
-    assert runtime.find_workspace({}, deep) == ws.root
+    assert runtime.find_workspace({}, deep, Files.direct()) == ws.root
     parent = tmp_path / "repo"
     (parent / "orchestrator").mkdir(parents=True)
     (parent / "orchestrator" / "config.json").write_text((ws.root / "config.json").read_text())
-    assert runtime.find_workspace({}, parent) == parent / "orchestrator"
-    assert runtime.find_workspace({}, tmp_path / "nowhere") is None
+    assert runtime.find_workspace({}, parent, Files.direct()) == parent / "orchestrator"
+    assert runtime.find_workspace({}, tmp_path / "nowhere", Files.direct()) is None
     (tmp_path / "bad").mkdir()
     (tmp_path / "bad" / "config.json").write_text('{"schema": "other"}')
-    assert runtime.find_workspace({}, tmp_path / "bad") is None
+    assert runtime.find_workspace({}, tmp_path / "bad", Files.direct()) is None
 
 
 def test_the_state_directory_order(tmp_path):

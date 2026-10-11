@@ -19,7 +19,7 @@ def welcome(**changes):
         "host_uid": os.getuid(),
         "workspace": {"id": WS},
         "peer": {"uid": os.getuid(), "class": "person", "person": "p_test"},
-        "caps": ["ops/1"],
+        "caps": ["ops/1", "human/1"],
         "ops": {"whoami": 1, "human.prepare": 1},
         **changes,
     }
@@ -49,6 +49,9 @@ def test_partial_and_coalesced():
         b"[]",
         b'{"x":1,"x":2}',
         b'{"n":NaN}',
+        b'{"n":1.0}',
+        b'{"n":1e2}',
+        b'{"n":9007199254740992}',
         b'{"n":Infinity}',
         b'{"n":9007199254740993}',
         b'{"x":"\xff"}',
@@ -145,3 +148,46 @@ def test_errors_events_idem_and_result_unwrap():
     assert link.call("whoami") == {"person": "p_test"}
     link.close()
     t.join()
+
+
+def test_frame_value_and_depth_boundaries():
+    encode({"items": [0] * 65534})
+    with pytest.raises(HostError, match="frame.invalid"):
+        encode({"items": [0] * 65535})
+    value = 0
+    for _ in range(31):
+        value = [value]
+    encode({"nested": value})
+    with pytest.raises(HostError, match="frame.invalid"):
+        encode({"nested": [value]})
+
+
+def test_human_v13_shapes_and_dry_run_opts():
+    a, b = socket.socketpair()
+    requests = []
+
+    def host():
+        with b:
+            receive(b)
+            b.sendall(encode(welcome(ops={"human.prepare": 1, "human.submit": 1, "human.pending": 1})))
+            for _ in range(3):
+                req = receive(b)
+                requests.append(req)
+                b.sendall(encode({"t": "res", "id": req["id"], "ok": True, "result": {"data": {}}}))
+
+    t = threading.Thread(target=host)
+    t.start()
+    link = HostLink(a, os.getuid(), WS)
+    try:
+        link.call("human.prepare", {"op": "log", "args": {}, "handoff": True}, dry_run=True, idem="ignored")
+        link.call("human.pending", {"request_id": "hr_demo"})
+        with pytest.raises(ValueError, match="events"):
+            link.call("human.submit", {"event": {}}, idem="test")
+        link.call("human.submit", {"request_id": "hr_demo", "events": [{}]}, idem="test")
+        assert requests[0]["opts"] == {"dry_run": True}
+        assert "dry_run" not in requests[0]["args"]
+        assert requests[1]["args"] == {"request_id": "hr_demo"}
+        assert requests[2]["args"]["events"] == [{}]
+    finally:
+        link.close()
+        t.join(2)

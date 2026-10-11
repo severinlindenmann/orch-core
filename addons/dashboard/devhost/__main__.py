@@ -94,16 +94,20 @@ def run_stub(host, run, sockets, stopped):
                 sock.listen(8)
                 sockets.append((sock, path))
 
-        def accept(sock):
+        def accept(sock, control):
             while not stopped.is_set():
                 try:
                     connection, _ = sock.accept()
                 except OSError:
                     return
-                threading.Thread(target=host.serve_connection, args=(connection,), daemon=True).start()
+                threading.Thread(
+                    target=host.serve_connection,
+                    args=(connection, control),
+                    daemon=True,
+                ).start()
 
-        for sock, _ in sockets:
-            threading.Thread(target=accept, args=(sock,), daemon=True).start()
+        for sock, path in sockets:
+            threading.Thread(target=accept, args=(sock, path.parent.name == "control"), daemon=True).start()
         stopped.wait()
 
 

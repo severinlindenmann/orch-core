@@ -126,7 +126,7 @@ All workspace reads are members only (404 unknown workspace, 403 non-member); hi
 
 | Endpoint | Operation |
 |---|---|
-| GET `/api/workspaces/:ws/agents`, `…/agents/activity` | no operation yet — proposal `session.list`, `session.refusals` |
+| GET `/api/workspaces/:ws/agents`, `…/agents/activity` | no operation yet — proposal `session.list`, `session.refusals` (refusals are the session's CLI error envelopes, not log events) |
 | GET `/api/workspaces/:ws/agents/launch?ticket&mode&harness&where` | no operation yet — proposal `session.preview` (core-computed facts for the start dialog) |
 | (start/stop run through the start-agent addon actions) | no operation yet — proposal `session.start` / `session.stop` (human; needs `spawn_agent`, a grant, a server-issued single-use confirmation) |
 | GET/POST `/api/workspaces/:ws/preview/mandates` | **PREVIEW ONLY — not part of the contract.** Served by the mock for the non-functional mandates preview (M1, updated in U2 to the wide mandate, `docs/concept-mandates.md`; ops `enable`, `disable`, `issue {orchestrator, days ≤ 30}`, `renew {days ≤ 30}`, `stop`, `review`, `revoke`); nothing is signed. A host implements nothing here until core specifies mandates (D62 draft, PR #340); the shape will change. |
@@ -254,9 +254,14 @@ undecided). Everything below that is not in that list is **provisional**.
   `status.changed`, `claim.taken`, `claim.released`, `lease.taken`, `lease.released`, `task.run`, `task.blocked`,
   `task.skipped` (these two are derived by `derive.ts` but never written by the mock), `log.added`, `comment.added`, `question.asked`, `question.answered`, `gate.changes_requested`,
   `gate.invalidated` (also core's landing void, and `cause: 'new_commits'` with `sha` for new commits after a verdict),
-  `verdict.given` (with `source_sha`; a charter verdict adds `via`, `charter`, `charter_signed_by`), `agent.refused`,
+  `verdict.given` (with `source_sha`; a charter verdict adds `via`, `charter`, `charter_signed_by`),
   `branch.pushed` (an agent pushed `sha` to the ticket branch). `gate.approved` may name gate `code` (the code
   review, with `source_sha`).
+- **Refusals are not events** (format F1; `docs/architecture/orch-v2-ticket-format.md`): a refusal is a CLI error envelope
+  (`code` + `hint`, format §10 / core §3 `errors`) returned to the agent, never a ticket-log entry. The mock keeps them
+  as a `refusals` list on the agent session rows (`fixtures/me.json`, `busy/agents.ts`); the Agents page and Ticket
+  History read them from there (`GET /api/tickets/:key/refusals`, `agents/activity`). History draws them apart under
+  "From the agent session — not part of the signed log": not in the event list, its counts or Raw.
 - Provisional, workspace log: `ticket.discarded`, `workspace.renamed`, `member.removed`, `view.saved`,
   `view.deleted`, `grant.issued`, `grant.revoked`, `agent.started`, `agent.stopped`, `addon.installed`,
   `addon.enabled`, `addon.disabled`, `addon.updated`, `addon.uninstalled`, `addon.settings_saved`, `addon.decided`,

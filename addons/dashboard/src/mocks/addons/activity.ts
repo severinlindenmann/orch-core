@@ -93,7 +93,7 @@ function groupOf(type: string, ws: boolean): Group {
   if (type === 'gate.policy_set') return 'workspace' // a workspace rule, not a ticket gate event
   if (type.startsWith('gate.') || type === 'verdict.given') return 'gates'
   if (type.startsWith('question.')) return 'questions'
-  if (type.startsWith('lease.') || type.startsWith('claim.') || type.startsWith('task.') || type === 'agent.refused' || type === 'handoff.written') return 'tasks'
+  if (type.startsWith('lease.') || type.startsWith('claim.') || type.startsWith('task.') || type === 'handoff.written') return 'tasks'
   if (type.startsWith('artifact.')) return 'artifacts'
   if (/^(publish|estimate|github|usage|records|quick|wiki|factory|schedules|land|links|addon)\./.test(type)) return 'addons'
   return ws ? 'workspace' : 'status'
@@ -246,7 +246,7 @@ function collapse(list: Entry[], titleOf: (k: string) => string, now: string): R
   return rows
 }
 
-const WARN = new Set(['agent.refused', 'gate.changes_requested', 'gate.invalidated'])
+const WARN = new Set(['gate.changes_requested', 'gate.invalidated'])
 
 const opt = (value: string, title: string) => ({ const: value, title })
 

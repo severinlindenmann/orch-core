@@ -423,6 +423,25 @@ export interface AgentSession extends AgentInfo {
   state: 'working' | 'waiting' | 'idle' | 'stopped'
   waiting_on?: { kind: 'question' | 'approval' | 'verdict'; ticket: string; ref?: string }
 }
+/**
+ * A refusal core returned to an agent: a CLI error envelope (code + hint), not a ticket-log event (format F1). It lives on
+ * the agent session (the mock keeps it on the session's registry row) and is never signed or counted as an event.
+ */
+export interface SessionRefusal {
+  at: string
+  ticket: string
+  code: string
+  message: string
+  hint?: string
+  retryable: boolean
+  op: string
+}
+/** A session's refusal on one ticket, with who it was for. */
+export interface TicketRefusal extends SessionRefusal {
+  session: string
+  agent: string
+  for: string
+}
 export interface AgentActivityItem {
   at: string
   ticket: string
@@ -431,7 +450,7 @@ export interface AgentActivityItem {
   for: string
   type: string // task.started, task.done, ask, claim.taken, refused, ...
   summary: string
-  refusal?: { code: string; message: string; retryable: boolean; stop: boolean } // stop: the third same refusal
+  refusal?: { code: string; message: string; hint?: string; retryable: boolean; stop: boolean } // stop: the third same refusal
 }
 
 // ---------------------------------------------------------------- starting agents

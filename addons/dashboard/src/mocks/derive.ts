@@ -472,18 +472,6 @@ export function computeTurn(
   return { who: people.owner ?? 'nobody', why: 'Next step' }
 }
 
-/** Why core refused an agent, in plain words (agent.refused codes). */
-const REFUSAL_WORDS: Record<string, string> = {
-  human_only: 'only people approve',
-  'claim.held': 'another session holds the ticket',
-  'lease.held': 'another session holds that task',
-  'gate.not_approved': 'the plan is not approved yet',
-  'verify.failed': "the task's check failed",
-  'grant.scope': 'its grant does not cover that',
-  'grant.expired': 'its grant has ended',
-  'grant.revoked': 'its grant was revoked',
-}
-
 /** One-line description of an event for feeds. */
 export function describeEvent(e: Pick<OrchEvent, 'type'> & Record<string, unknown>): string {
   // A one-line, never-empty summary. Sparse events fall back to a plain phrase instead of "undefined" or a dangling verb.
@@ -509,9 +497,6 @@ export function describeEvent(e: Pick<OrchEvent, 'type'> & Record<string, unknow
       return e.reason ? `released the claim (${t(e.reason, '')})` : 'released the claim'
     case 'lease.released':
       return e.reason ? `released ${t(e.task, 'a task')} (${t(e.reason, '')})` : `released ${t(e.task, 'a task')}`
-    case 'agent.refused':
-      // In plain words, never the code: the code stays in the event (Raw) for tools.
-      return `was refused: ${REFUSAL_WORDS[String(e.code)] ?? t(e.message, 'no reason given')}`
     case 'lease.taken':
       return `started ${t(e.task, 'a task')}`
     case 'task.done':

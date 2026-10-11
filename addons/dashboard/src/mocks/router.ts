@@ -525,6 +525,11 @@ export function buildRouter(): MockRouter {
     const since = Number(c.query.get('since') ?? 0)
     return ok(s.eventsOf(c.params.key).filter((e) => e.seq > since))
   })
+  // Refusals core returned to agents on this ticket: from the agent sessions, not the ticket log (format F1).
+  r.add('GET', '/api/tickets/:key/refusals', (s, c) => {
+    const t = visibleTicket(s, c.params.key)
+    return isResponse(t) ? t : ok(s.ticketRefusals(c.params.key))
+  })
   r.add('POST', '/api/tickets/:key/actions', postAction)
   // Dry run of a code review policy: which tickets it would move (for the signing covers). Owners only.
   r.add('POST', '/api/workspaces/:ws/code-review-preview', (s, c) => {

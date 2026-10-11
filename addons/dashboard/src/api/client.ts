@@ -12,6 +12,7 @@ import {
   type KnownPerson,
   type AddonOpRequest,
   type AgentActivityItem,
+  type TicketRefusal,
   type AgentSession,
   type CoreLaunch,
   type GrantInfo,
@@ -137,6 +138,7 @@ export function createApi(transport: Transport) {
     /** What core would start for this choice (core-computed: ticket, labels, command, model line). */
     previewLaunch: (ws: string, req: { ticket: string; mode: string; harness: string; where: string }) =>
       call<CoreLaunch>('GET', `/api/workspaces/${ws}/agents/launch${qs(req)}`),
+    getTicketRefusals: (key: string) => call<TicketRefusal[]>('GET', `/api/tickets/${key}/refusals`),
     getAgentActivity: (workspaceId: string) => call<AgentActivityItem[]>('GET', `/api/workspaces/${workspaceId}/agents/activity`),
     listGrants: (ws: string) => call<GrantInfo[]>('GET', `/api/workspaces/${ws}/grants`),
     /** Human only, signed in the dashboard. */

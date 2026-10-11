@@ -109,7 +109,7 @@ describe('activity timeline', () => {
     expect(shell(await everything(s))).toBe(false) // member
   })
 
-  it('R2: actors by display name (addon titles, "Claude Code for Severin"), refusals in plain words, Records events listed', async () => {
+  it('R2: actors by display name (addon titles, "Claude Code for Severin"), Records events listed', async () => {
     const s = setup()
     installAndGrant(s.store, s.ws, 'records')
     tick()
@@ -117,15 +117,15 @@ describe('activity timeline', () => {
     tick()
     await s.api.runAddonAction(s.ws, 'records', 'push', {})
     tick()
-    s.store.append('DEMO-0044', { type: 'agent.refused', actor: AGENT, code: 'human_only', message: 'raw' })
+    s.store.append('DEMO-0044', { type: 'task.done', task: 'T9', actor: AGENT })
     const st = await everything(s)
     const titles = st.timeline.map((r) => r.title).join('\n')
     // The commit and the push are one run by Records in the workspace log.
     const rec = st.timeline.find((r) => r.actor === 'Records (records)')!
     expect(rec).toMatchObject({ count: 2, ticket: undefined })
     expect(rec.subtitle).toMatch(/latest: pushed \w+ to the remote \(Severin\)/)
-    expect(titles).toContain('Claude Code for Severin · DEMO-0044 · was refused: only people approve')
-    expect(titles).not.toMatch(/human_only|^(estimate|github|codex|claude-code) · /m)
+    expect(titles).toContain('Claude Code for Severin · DEMO-0044 · finished T9')
+    expect(titles).not.toMatch(/^(estimate|github|codex|claude-code) · /m)
   })
   it('groups by day: a day heading per day, newest first', async () => {
     const s = setup()
@@ -584,7 +584,7 @@ describe('every event type has a one-line summary', () => {
   const types = [
     'ticket.created', 'status.changed', 'labels.changed', 'claim.taken', 'claim.released', 'lease.taken', 'lease.released', 'task.done', 'task.run', 'artifact.added',
     'question.asked', 'question.answered', 'gate.approved', 'gate.changes_requested', 'gate.invalidated', 'verdict.given', 'handoff.written', 'section.edited',
-    'log.added', 'comment.added', 'people.set', 'agent.refused', 'github.pr_linked', 'github.imported', 'publish.shared', 'publish.revoked', 'publish.decided',
+    'log.added', 'comment.added', 'people.set', 'github.pr_linked', 'github.imported', 'publish.shared', 'publish.revoked', 'publish.decided',
     'estimate.set', 'usage.recorded', 'records.committed', 'records.pushed', 'quick.made_ticket', 'wiki.linked',
     'member.added', 'member.role_changed', 'member.removed', 'gate.policy_set', 'addon.installed', 'addon.granted', 'addon.enabled', 'addon.disabled', 'addon.updated',
     'addon.uninstalled', 'addon.settings_saved', 'grant.issued', 'grant.revoked', 'agent.started', 'agent.stopped', 'view.saved', 'view.deleted', 'ticket.discarded', 'workspace.renamed', 'bogus.type',

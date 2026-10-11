@@ -65,6 +65,8 @@ export function People({ ticket, people, max }: { ticket: TicketSummary; people:
 }
 
 export function ProgressBar({ ticket }: { ticket: TicketSummary }) {
+  // Unknown counts (a host without read_ext/1) draw no bar: neither an empty one nor a full one.
+  if (!ticket.progress) return null
   const { tasks_done, tasks_total, ac_proven, ac_total } = ticket.progress
   if (tasks_total === 0 && ac_total === 0) return null
   const done = tasks_total ? tasks_done : ac_proven
@@ -96,7 +98,7 @@ function StateGlyph({ ticket, people, me, task }: { ticket: TicketSummary; peopl
   if (me && ticket.turn.who === me && ticket.status !== 'done') {
     return <span role="img" aria-label="Needs you" title={`Needs you: ${ticket.turn.why}`} className="size-1.5 rounded-full bg-brand" />
   }
-  if (ticket.blocking_questions > 0) {
+  if (ticket.blocking_questions && ticket.blocking_questions > 0) {
     const n = ticket.blocking_questions
     return (
       <span title={`Blocked by ${n} open question${n > 1 ? 's' : ''}`} className="inline-flex">

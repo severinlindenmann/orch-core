@@ -21,6 +21,11 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/identity",
         "/api/w/{ws}/today",
         "/api/w/{ws}/tickets",
+        "/api/w/{ws}/board",
+        "/api/w/{ws}/tickets/{key}",
+        "/api/w/{ws}/tickets/{key}/events",
+        "/api/w/{ws}/tickets/{key}/changes",
+        "/api/w/{ws}/tickets/{key}/artifacts/{name}",
         "/{path:path}",
     }
     assert {route.path for route in create_app(PORT).routes} == expected
@@ -31,15 +36,15 @@ def test_shell_p1_reads(client, token, stub):
     workspaces = client.get("/api/workspaces", headers=headers).json()
     assert workspaces[0]["id"] == stub.ws
     assert workspaces[0]["members"][0]["person"] == stub.person
-    assert workspaces[0]["features"] == ["identity", "today", "tickets"]
-    assert client.get("/api/session", headers=headers).json()["features"] == ["identity", "tickets", "today"]
+    every = ["identity", "today", "tickets", "board", "ticket", "changes", "evidence", "activity", "read_ext"]
+    assert workspaces[0]["features"] == every
+    assert client.get("/api/session", headers=headers).json()["features"] == sorted(every)
     assert client.get("/api/me", headers=headers).json()[0]["person"] == stub.person
     identity = client.get(f"/api/w/{stub.ws}/identity", headers=headers).json()
     assert identity["uuid"] == stub.ws and identity["tier"] == "A"
     tickets = client.get(f"/api/w/{stub.ws}/tickets", headers=headers)
     assert tickets.status_code == 200, tickets.text
     assert tickets.json()["rows"][0]["title"] == "Real P1 ticket"
-    assert "progress" not in tickets.json()["rows"][0]
     assert client.get(f"/api/w/{stub.ws}/today", headers=headers).json()["workspace"] == stub.ws
     assert client.get("/", headers=headers).headers["cache-control"] == "no-store"
     assert "immutable" in client.get("/assets/main-hash.js").headers["cache-control"]
@@ -56,7 +61,29 @@ def test_shell_p1_reads(client, token, stub):
 
 
 @pytest.mark.parametrize(
-    "query", ["limit=201", "limit=0", "sort=status", "file=/etc/passwd", "op=show", "page=../../x"]
+    "path",
+    ["/w/DEMO", "/w/DEMO/today", "/w/DEMO/board", "/w/DEMO/tickets", "/w/DEMO/ticket/DEMO-0001", "/ticket/DEMO-0001"],
+)
+def test_app_addresses_open_the_app(client, path):
+    res = client.get(path)
+    assert res.status_code == 200 and "main-hash.js" in res.text and res.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/w/DEMO/settings/general",
+        "/w/DEMO/ticket/x",
+        "/w/DEMO/ticket/DEMO-1/extra",
+        "/ticket/DEMO-1/x",
+    ],
+)
+def test_other_addresses_are_not_the_app(client, path):
+    assert client.get(path).status_code == 404
+
+
+@pytest.mark.parametrize(
+    "query", ["limit=201", "limit=0", "sort=status", "file=/etc/passwd", "op=show", "page=../../x", "status=nope"]
 )
 def test_typed_route_inputs(client, token, stub, query):
     r = client.get(f"/api/w/{stub.ws}/tickets?{query}", headers={"Authorization": f"Bearer {token}"})
@@ -67,6 +94,8 @@ def test_typed_route_inputs(client, token, stub, query):
 def test_caps_hide_unavailable(gateway, stub):
     link = gateway.link(stub.ws)
     link.welcome["caps"].remove("query/1")
+    assert gateway.features(stub.ws) == ["activity", "read_ext"]  # these two do not depend on query/1
+    link.welcome["caps"][:] = [c for c in link.welcome["caps"] if c not in ("read_ext/1", "activity/1")]
     assert gateway.features(stub.ws) == []
     link.welcome["ops"]["whoami"] = 2
     assert gateway.features(stub.ws) == []
@@ -126,3 +155,14 @@ def test_malformed_workspace_welcome_is_one_error_row(client, token, stub, gatew
     assert reply.status_code == 200
     assert len(reply.json()) == 1
     assert reply.json()[0]["host_state"] == "frame.invalid"
+
+
+def test_artifact_get_needs_the_diff_capability(gateway, stub):
+    from orch_dashboard.errors import HostError
+
+    link = gateway.link(stub.ws)
+    link.welcome["caps"].remove("diff/1")  # query/1 stays: artifact.get belongs to diff/1 (contract 0.4)
+    assert "evidence" not in gateway.features(stub.ws) and "ticket" in gateway.features(stub.ws)
+    with pytest.raises(HostError) as err:
+        link.call("artifact.get", {"ref": "DEMO-0001", "name": "x", "offset": 0})
+    assert err.value.error["code"] == "op.unsupported"

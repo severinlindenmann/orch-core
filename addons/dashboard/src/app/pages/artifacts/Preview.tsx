@@ -22,8 +22,9 @@ type State = 'loading' | 'ready' | 'missing' | 'failed' | 'denied'
  * Fails closed: an error never shows cached content, and a ticket the viewer may no longer see shows nothing about it.
  */
 function useArtifactContent(item: ArtifactItem | null) {
-  const ticket = useQuery({ ...queries.ticket(item?.ticket as string), enabled: !!item })
   const workspaces = useQuery(queries.workspaces())
+  const home = workspaceOfTicket(item?.ticket ?? '', workspaces.data ?? [])
+  const ticket = useQuery({ ...queries.ticket(home?.id as string, item?.ticket as string), enabled: !!item && !!home })
   const agentHtml = !!item && addonActive(workspaceOfTicket(item.ticket, workspaces.data ?? []), 'widgets')
   const err = ticket.error
   const state: State = err
@@ -99,7 +100,7 @@ export function ArtifactPane({ item, members, onClose }: { item: ArtifactItem; m
           <>
             <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-[12px] text-text-muted">
               <Pill>{a.kind}</Pill>
-              {a.bytes > 0 && <span>{fmtBytes(a.bytes)}</span>}
+              {!!a.bytes && <span>{fmtBytes(a.bytes)}</span>}
               <TicketLink a={item} className="min-w-0 flex-1" />
             </div>
             <ArtifactFacts a={a} by={byLabel(item.by, members)} />

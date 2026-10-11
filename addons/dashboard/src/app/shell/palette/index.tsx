@@ -119,8 +119,8 @@ export function CommandPalette() {
   })
 
   const ticket = useQuery({
-    ...queries.ticket(ticketKey as string),
-    enabled: paletteOpen && !!ticketKey,
+    ...queries.ticket(workspace?.id as string, ticketKey as string),
+    enabled: paletteOpen && !!ticketKey && !!workspace,
   })
   const viewer = useViewer(ticketKey ?? '')
 

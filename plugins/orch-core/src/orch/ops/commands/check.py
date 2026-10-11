@@ -5,7 +5,7 @@ from typing import Any
 from orch.ops._dsl import INT, STR, B, arr, err, obj, operation
 from orch.ops.base import Context, Result
 from orch.ops.errors import OrchError
-from orch.ops.runtime import Workspace, _config
+from orch.ops.runtime import Call, Workspace, _config
 
 _SHOWN = 20
 
@@ -20,19 +20,30 @@ def _handle(ctx: Context, args: dict[str, Any]) -> Result:
 
     ws = ctx.workspace or Workspace(ctx.env, ctx.now, files=ctx.caps.files)
     root = ws.require_root()
-    cfg = _config(root, ctx.caps.files)
-    if cfg is None:
-        raise OrchError("not_found", "config.json of the workspace is missing or unreadable", hint="orch init")
-    wid = cfg["workspace"]["id"]
-    findings, store = health.inspect(
-        root, wid, ws.state_dir, fast=True, instructions=stale_findings(root), caps=ctx.caps
-    )
-    try:
-        if args.get("staged") and store is not None:
-            findings += health.check_staged(store, root, ctx.caps)
-    finally:
-        if store is not None:
-            store.close()
+    if ctx.hosted:
+        # Host mode (H4a1): the host's own store, filtered for the viewer before anything is counted (F6); no second
+        # store, no config.json. --staged needs git, which the host's handlers do not have (problem line).
+        c = Call.of(ctx, "check")
+        findings, _ = health.inspect(
+            root, c.store.workspace_id, None, fast=True, instructions=stale_findings(root), caps=ctx.caps,
+            store=c.store, sees=c.sees,
+        )  # fmt: skip
+        if args.get("staged"):
+            findings += health.check_staged(c.store, root, ctx.caps)
+    else:
+        cfg = _config(root, ctx.caps.files)
+        if cfg is None:
+            raise OrchError("not_found", "config.json of the workspace is missing or unreadable", hint="orch init")
+        wid = cfg["workspace"]["id"]
+        findings, store = health.inspect(
+            root, wid, ws.state_dir, fast=True, instructions=stale_findings(root), caps=ctx.caps
+        )
+        try:
+            if args.get("staged") and store is not None:
+                findings += health.check_staged(store, root, ctx.caps)
+        finally:
+            if store is not None:
+                store.close()
     shown = findings[:_SHOWN]
     lines = [f"{f.where}: {what(f)}" for f in shown]
     if len(findings) > len(shown):

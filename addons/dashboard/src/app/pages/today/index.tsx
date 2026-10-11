@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useQueries, useQuery } from '@tanstack/react-query'
 import { ChevronDown, Eye } from 'lucide-react'
-import { can } from '@/api/permissions'
+import { atLeast, can } from '@/api/permissions'
+import { canAct, hasFeature } from '@/api/features'
 import type { AddonDecision, NeedsYouItem, TicketDocument } from '@/api/types'
 import { useAddons, useSlot } from '@/addon-ui'
 import { cn } from '@/lib/utils'
@@ -20,7 +21,7 @@ import type { HumanAction } from '../ticket/shared'
 import { QueueGroup } from './groups'
 import { acceptOrder, buildGroups, foldLabel, pruneOrder, reconcile, toEntries, type Entry, type Row } from './queue'
 import { ReloginGroup } from './relogin'
-import { ApprovalRow, DecisionRow, FoldRow, NewItemContext, SigningContext, QuestionRow, VerdictRow } from './rows'
+import { ApprovalRow, DecisionRow, FoldRow, NewItemContext, NoticeRow, SigningContext, QuestionRow, VerdictRow } from './rows'
 import { AgentsBar, AgentsPanel, Glance, GLANCE_TILES, Recently } from './side'
 import { displayName, useSessionState, useTodayWide, type Directory } from './shared'
 import { queries } from '@/api/queries'
@@ -105,7 +106,8 @@ export function TodayPage() {
   }, [stale, refetchToday, refetchDecisions])
   const attention = useAttention(ws)
   const role = useRole()
-  const readOnly = !can(role, 'ticket.act')
+  // A viewer decides nothing. A dashboard that cannot sign yet (`canAct`) still lists what needs you, without buttons.
+  const readOnly = !atLeast(role, 'member')
 
   // The Glance is part of the first screen: Today waits for its addon states too (at most LOADER_WAIT_MS, then it
   // shows with the Glance's own placeholders), so nothing appears beside the queue a moment later.
@@ -132,17 +134,19 @@ export function TodayPage() {
       decisions={decisionsQ.data}
       readOnly={readOnly}
       canAddon={can(role, 'addon.action')}
+      locked={!canAct(ws)}
       viewer={me.data.person}
       attention={attention}
     />
   )
 }
 
-function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention, generation }: {
+function TodayInbox({ items, decisions, readOnly, locked, canAddon, viewer, attention, generation }: {
   generation: string
   items: NeedsYouItem[]
   decisions: AddonDecision[]
   readOnly: boolean
+  locked: boolean
   canAddon: boolean
   viewer: string
   attention: Attention
@@ -203,7 +207,7 @@ function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention, g
 
   const claimTickets = sessions.flatMap((a) => a.claims.map((c) => c.ticket))
   const keys = [...new Set([...entries.flatMap((e) => (e.group === 'addons' ? (e.decision.ticket ? [e.decision.ticket] : []) : [e.item.ticket])), ...claimTickets])]
-  const ticketQs = useQueries({ queries: keys.map((k) => queries.ticket(k)) })
+  const ticketQs = useQueries({ queries: keys.map((k) => queries.ticket(ws!, k)) })
   const byKey: Record<string, TicketDocument | undefined> = {}
   keys.forEach((k, i) => (byKey[k] = ticketQs[i]?.data))
 
@@ -253,10 +257,11 @@ function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention, g
       )
     }
     const askedBy = e.item.kind === 'question' ? byKey[e.item.ticket]?.questions_state.find((q) => q.id === e.item.ref)?.asked_by : undefined
-    const props = { item: e.item, ticket: byKey[e.item.ticket], askedBy: askedBy ? displayName(dir, askedBy) : undefined, now, expanded: expanded === row.id, onToggle: () => toggle(row.id), sign, decider: readOnly ? deciderOf(e) : undefined }
+    const props = { item: e.item, ticket: byKey[e.item.ticket], askedBy: askedBy ? displayName(dir, askedBy) : undefined, now, expanded: expanded === row.id, onToggle: () => toggle(row.id), sign, decider: readOnly ? deciderOf(e) : undefined, locked }
     if (e.item.kind === 'question') return <QuestionRow key={row.id} {...props} />
     if (e.item.kind === 'approval') return <ApprovalRow key={row.id} {...props} />
-    return <VerdictRow key={row.id} {...props} />
+    if (e.item.kind === 'verdict') return <VerdictRow key={row.id} {...props} />
+    return <NoticeRow key={row.id} item={e.item} now={now} />
   }
 
   const renderRow = (row: Row) => {
@@ -274,6 +279,8 @@ function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention, g
   const byPerson = new Map<string, Entry[]>()
   if (readOnly) for (const e of shown) byPerson.set(deciderOf(e), [...(byPerson.get(deciderOf(e)) ?? []), e])
 
+  // A host that does not serve agent sessions says nothing about them: no count, no panel.
+  const agentsKnown = hasFeature('agents', ws)
   const n = attention.needsYou.total
   const counts = attention.agents
   const waiting = attention.waitingOnOthers
@@ -288,7 +295,7 @@ function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention, g
         <span>
           {readOnly
             ? `${dateLine(now)} · Nothing needs you · ${waiting.count} open in the workspace`
-            : `${dateLine(now)} · ${n} need you · ${plural(counts.working, 'agent', 'agents')} working`}
+            : `${dateLine(now)} · ${n} need you${agentsKnown ? ` · ${plural(counts.working, 'agent', 'agents')} working` : ''}`}
         </span>
         {readOnly && (
           <span className="inline-flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-[11px] text-text-muted">
@@ -336,9 +343,11 @@ function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention, g
         <div className="rounded-lg border border-dashed border-border px-6 py-10 text-center">
           <p className="text-[15px] font-medium text-text">{readOnly ? 'Nothing is open in the workspace' : 'Nothing needs you right now'}</p>
           <p className="mt-1 text-[13px] text-text-muted">
-            {counts.working > 0
-              ? `${plural(counts.working, 'agent is', 'agents are')} working. You will see a row here when one needs a decision.`
-              : 'No agent is working either. Pick a ticket from the board to start something.'}
+            {!agentsKnown
+              ? 'You will see a row here when a question, a gate or a verdict waits for you.'
+              : counts.working > 0
+                ? `${plural(counts.working, 'agent is', 'agents are')} working. You will see a row here when one needs a decision.`
+                : 'No agent is working either. Pick a ticket from the board to start something.'}
           </p>
         </div>
       )}
@@ -362,14 +371,14 @@ function TodayInbox({ items, decisions, readOnly, canAddon, viewer, attention, g
         <div className="grid grid-cols-[minmax(0,1fr)_320px] gap-6">
           {queue}
           <aside className="min-w-0 space-y-4">
-            <AgentsPanel {...agentProps} />
+            {agentsKnown && <AgentsPanel {...agentProps} />}
             <Glance readOnly={!canAddon} max={GLANCE_TILES} />
             <Recently recent={today.data!.recent} now={now} />
           </aside>
         </div>
       ) : (
         <div className="space-y-4">
-          <AgentsBar {...agentProps} />
+          {agentsKnown && <AgentsBar {...agentProps} />}
           {queue}
           <Glance readOnly={!canAddon} />
         </div>

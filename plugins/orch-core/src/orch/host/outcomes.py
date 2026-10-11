@@ -401,17 +401,21 @@ class OutcomeStore(IntentStore):
         files: Mapping[str, str] | None = None,
         session: str | None = None,
         digest_args: frozenset[str] = frozenset(),
+        deferred: bool = False,
     ) -> Intent | dict[str, Any]:
         """A new ``pending`` record (fsynced before the caller appends), or the stored answer of a duplicate.
 
         ``args`` are the normalised args, ``planned`` every event the call will append, in order (never empty: a
         crash after an append with nothing planned could not be told from one before it, and the retry would append
-        again). A duplicate of a running call waits for it, at most ``wait_seconds``. Raises ``idem.conflict``
+        again). ``deferred``: the call cannot know its events yet (a registry handler plans them itself, H4a1); the
+        record starts with none, and :meth:`plan` adds each batch **before** it is appended. A record with nothing
+        planned never had an append, so reconciliation removes it. A duplicate of a running call waits for it, at most
+        ``wait_seconds``. Raises ``idem.conflict``
         (another binding), ``idem.expired`` (a tombstone), the stored error of a ``failed`` or ``partial`` record,
         ``blob.invalid`` (a ``{digest}`` file where the op would have to run again), ``outcome.unknown`` (an earlier
         attempt that cannot be reconciled yet, or a running one that did not finish in time) and ``quota.host``.
         """
-        if not planned:
+        if not planned and not deferred:
             raise ValueError("a write plans at least one event")
         key = self.key(self.namespace, principal, idem)
         binding = binding_of(op, args, session, files)
@@ -465,6 +469,23 @@ class OutcomeStore(IntentStore):
             return {**record["result"], "duplicate": True}
         raise HostError.stored(record["error"])
 
+    def plan(self, intent: Intent, planned: Sequence[Planned], key: str | None = None) -> None:
+        """Add events to a running ``pending`` record (fsynced) **before** they are appended: the deferred plan of
+        :meth:`begin`. An event already listed (by id) is not added twice; ``key`` is the ticket key, kept for the
+        result builder."""
+        known = {p.get("id") for p in intent.record.get("planned") or []}
+        new = [{k: v for k, v in p._asdict().items() if v is not None} for p in planned if p.id not in known]
+        if not new and (key is None or intent.record.get("key") == key):
+            return
+        record = {**intent.record, "planned": [*(intent.record.get("planned") or []), *new]}
+        if key is not None:
+            record["key"] = key
+        with self._lock:
+            if self._running.get(intent.key) is None:
+                raise HostError("internal", "the outcome record is no longer running")
+            self._write(intent.key, record)
+            intent.record = record
+
     def commit(self, intent: Intent, result: dict[str, Any]) -> dict[str, Any]:
         """The change landed: store the (redacted) ``result``; the record is ``committed``."""
         return self._finish(intent, {"step": "committed", "result": result, "exit": 0})
@@ -498,10 +519,12 @@ class OutcomeStore(IntentStore):
         args: dict[str, Any],
         apply: Callable[[Intent], dict[str, Any]],
         *,
-        planned: Sequence[Planned],
+        planned: Sequence[Planned] | None,
         files: Mapping[str, str] | None = None,
         session: str | None = None,
         digest_args: frozenset[str] = frozenset(),
+        before: Callable[[], None] | None = None,
+        redactor: Any = None,
     ) -> dict[str, Any]:
         """``begin``, ``apply`` (which appends the planned events and returns the result) and the end of the record.
 
@@ -510,26 +533,48 @@ class OutcomeStore(IntentStore):
         the record is ``partial`` (``human.submit``: stays ``pending``); all landed, it is ``committed`` and the rebuilt
         result is returned. Any other failure leaves the record ``pending``: the log says what landed. Returns the
         result (a duplicate's has ``duplicate: true``).
+
+        ``planned`` ``None`` is a deferred plan (:meth:`begin`): ``apply`` calls :meth:`plan` before each append.
+        ``before`` runs after a new record is made and before ``apply`` (the workspace-state checks of §0.6 step 10,
+        which come after the replay of step 9); if it raises, the record is removed and nothing ran.
+
+        ``redactor`` (``obj(value)`` and ``error(HostError)``, D-P2-10): every error and every result rebuilt from the
+        log passes through it **before** the record stores it.
         """
         from orch.store import StoreError
 
         begun = self.begin(
-            principal, idem, op, args, files=files, session=session, planned=planned, digest_args=digest_args
+            principal,
+            idem,
+            op,
+            args,
+            files=files,
+            session=session,
+            planned=planned or (),
+            digest_args=digest_args,
+            deferred=planned is None,
         )
         if isinstance(begun, dict):
             return begun
+        if before is not None:
+            try:
+                before()
+            except BaseException:
+                self.abandon(begun)
+                raise
+        clean = redactor.error if redactor is not None else (lambda e: e)
         try:
             result = apply(begun)
         except HostError as exc:
-            return self._refused(begun, exc)
+            return self._refused(begun, clean(exc), redactor)
         except StoreError as exc:  # the model's refusal (or store.busy): its disposition comes from the host table
-            return self._refused(begun, HostError(exc.code, exc.detail or exc.code))
+            return self._refused(begun, clean(HostError(exc.code, exc.detail or exc.code)), redactor)
         except BaseException:
             self.release(begun)
             raise
         return self.commit(begun, result)["result"]
 
-    def _refused(self, intent: Intent, error: HostError) -> dict[str, Any]:
+    def _refused(self, intent: Intent, error: HostError, redactor: Any = None) -> dict[str, Any]:
         """``apply`` raised ``error``: ask the log what landed, then end the record accordingly (raise or return)."""
         try:
             with self.reconciler.locked() if self.reconciler is not None else contextlib.nullcontext():
@@ -545,6 +590,8 @@ class OutcomeStore(IntentStore):
             self.release(intent)
             raise error
         assert isinstance(fields, dict)
+        if redactor is not None:
+            fields = {**fields, **{k: redactor.obj(fields[k]) for k in ("result", "error") if k in fields}}
         record = self._finish(intent, fields)
         if record["step"] == "committed":
             return record["result"]

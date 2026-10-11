@@ -156,10 +156,9 @@ def test_bootstrap_killed_before_the_append_is_rolled_back_and_init_restarts_fro
         assert outcome["state"] == "failed" and outcome["error"]["code"] == "control.rolled_back"
         res = c.call("host.bootstrap", args, idem=idem)
         assert err(res) == "control.rolled_back"  # the same key never runs again
-        # nothing is left behind: no root, no key, no id
-        assert not root.exists()
+        # nothing is left behind: no workspace in the root (the person's own directory stays, empty), no key, no id
+        assert os.listdir(root) == []
         assert not (lab.state / "hosts" / created["workspace_id"]).exists()
-        root.mkdir()
         stale = c.call("host.bootstrap", bootstrap_args(created, root, owner), idem=new_idem())
         assert err(stale) == "not_found"  # the id is gone: init starts again from wsk_create
         fresh = ok(c.call("host.wsk_create"))["data"]

@@ -498,7 +498,7 @@ state**:
 | `register` | no registry entry | nothing to undo | `failed` | `{state:"failed", error:{code:"control.rolled_back", retryable:true}}`; the client retries with a **new** idem |
 | `unregister` | any | serving stops, entry removed | `committed` | `{state:"committed", result:{}}` |
 | `bootstrap` | the genesis is in the new log (its planned event id) | registration finished | `committed` | `{state:"committed", result:{workspace_id, seq:1}}` |
-| `bootstrap` | no genesis | the half-made root, its key directory and the workspace id are removed | `failed` | `{state:"failed", error:{code:"control.rolled_back", retryable:true}}` |
+| `bootstrap` | no genesis | the store's files in the root (the person's empty directory stays), its key directory and the workspace id are removed | `failed` | `{state:"failed", error:{code:"control.rolled_back", retryable:true}}` |
 
 - **A rolled-back bootstrap restarts from `host.wsk_create`.** The id and key are gone, and the genesis signs both
   `workspace_id` and `wsk_pub`, so the client gets a new id and key, signs a new genesis, and calls `host.bootstrap`
@@ -866,18 +866,52 @@ ActivityItem = {id:ItemId, jpos:int, log:Uid | "workspace", key:Key | null, uid:
 
 Errors: `invalid.input`, `page.expired`, `not_found` (`ticket`).
 
-`diff {ref:Ref, repo?:str, context?:int 0..10 = 3, max_bytes?:int 1024..1048576 = 262144}` (read) →
+`diff {ref:Ref, repo?:str, context?:int 0..10 = 3, max_bytes?:int 1024..1048576 = 262144, since?:"my_approval"}`
+(read) →
 
 ```
-{sources:[{repo:str, branch:str, base_sha:str, head_sha:str}],
- files:[{repo:str, path:str, old_path:str | null, status:"A"|"M"|"D"|"R"|"T", add:int, del:int, binary:bool}],
+{sources:[{repo:str, branch:str, base_sha:str, head_sha:str,
+           base_source:"host_pinned"|"local_ref"|"first_parent"|"approved", base_moved:int,
+           commits:[{sha:str, subject:str}], commits_more:int}],
+ files:[{repo:str, path:str, old_path:str | null, status:"A"|"M"|"D"|"R"|"T", add:int, del:int, binary:bool,
+         too_large:bool}],
  unified:str, truncated:bool}
 ```
 
 - **head** is the branch head the host reader observes, which is the `source_sha` a verdict would sign (D58).
-- **base** is the merge base of head and the repo's `default_branch` (`settings.repos`; if none, `main`, then
-  `master`). If no merge base exists, base is the head's first parent. With no parent: `observe.unavailable`.
-- Renames are detected at 50 % similarity.
+- **base** is chosen in this order, and `sources[].base_source` says which rule chose it:
+  1. `host_pinned`: the merge base the host recorded the first time it observed this repo for this ticket (host state,
+     never moved forward automatically), while it is still an ancestor of head;
+  2. `local_ref`: the merge base of head and the repo's `default_branch` in the working copy (`settings.repos`; if
+     none, `main`, then `master`). The working copy is agent-writable, so a client labels it "base chosen by the
+     working copy (unverified)". When a `host_pinned` base exists and is an ancestor of this one, `base_moved` is the
+     number of the branch's commits between them;
+  3. `first_parent`: no merge base exists (or no default branch exists and none is declared): head's first parent,
+     labelled "only the last commit". A declared `default_branch` that does not exist is `observe.unavailable`, and so
+     is a head with no parent.
+  An optional `since:"my_approval"` argument instead diffs from the newest **code-gate approve** decision by the
+  caller whose signed `source_sha` names this repo identity and is an ancestor of head (`base_source:"approved"`);
+  without such a decision it is `not_found`. A verdict's `source_sha` is never a base.
+- `sources[]` also carries `commits:[{sha, subject}]` for `base..head` (newest first, at most 50, `commits_more:int`),
+  as display only; subjects are cleaned of control and bidi characters.
+- A client that prompts for a code approval shows, per repo, `base_sha`, `base_source`, `base_moved` when non-zero,
+  and the commit list. The approval itself still signs only the head `source_sha` (D58); the diff is a display.
+- **H3b1 implements** `local_ref` and `first_parent` (`base_moved` is always 0) and the commit list. `host_pinned`
+  and `since:"my_approval"` are follow-ups (§9 Q9). A base the caller chose (`declared`, a later option) is never the
+  approval screen's default: the approving client shows it with its sha and whether it is an ancestor of head, and
+  the signing path never takes a base from the agent's side.
+- **Too large to diff.** A file whose side is over 8 MiB or 200 000 lines, or that would take the request past
+  1 000 000 diffed lines (both sides of every file), is not diffed as text: its `files` entry has `too_large:true`,
+  `binary:true`, `add` and `del` 0, and `unified` carries `diff --git a/<p> b/<p>` followed by
+  `Too large to diff: <reason>`. The check is made from the blob sizes and line counts before any line is split.
+- **Untrusted text.** `files[].path`, hunk bodies and function headers are repository content: they may contain
+  control and bidi characters (the `diff --git`, `---` and `+++` names are C-quoted as git quotes them, the rest is
+  raw). Clients must render them escaped.
+- Renames are not detected in v1.4: `status` is never `R` and `old_path` is always `null` (a rename is a deletion and
+  an addition; a file/symlink/gitlink type change is `T`, patched as a deletion then an addition). The `R` value and
+  `old_path` stay in the schema for a later version.
+- When there are several merge bases, the chosen one is the one with the newest committer time, then the smallest
+  id. A detached HEAD gives `null` (no branch) in host mode.
 - `unified` is cut at `max_bytes` on a line boundary, and `truncated` says so.
 
 Errors: `not_found`, `observe.unavailable`, `repo.remote_mismatch`, `quota.host`.
@@ -1360,7 +1394,9 @@ BlobId = str/b_[A-Z2-7]{26}/
 | pending human requests | 20 per person |
 | request rate | token bucket of 20/s, burst 100, per agent UID |
 | git reader children | 4 per host, 1 per principal at a time; others queue and count as in flight |
-| git reader child limits | CPU 10 s, address space 512 MiB, wall clock 30 s, 64 open files |
+| git reader child limits | CPU 10 s, address space 512 MiB (Linux; macOS has no working `RLIMIT_AS`: the host polls each child's resident memory and kills its group above 512 MiB, §3), wall clock 30 s from when the request is queued, 64 open files |
+| git reader queue | 8 waiting per principal, 64 host-wide; over either: `quota.host` |
+| git reader diff text | per file side 8 MiB and 200 000 lines; 1 000 000 diffed lines per request; over: "too large to diff" (§0.8) |
 | git reader inputs | object inflated ≤ 64 MiB (equal to its header); delta depth ≤ 64; `packed-refs` ≤ 32 MiB; pack `.idx` ≤ 256 MiB; `.git/index` ≤ 128 MiB and ≤ 1 000 000 entries; worktree walk ≤ 200 000 entries |
 | outcome records | 100 000 per principal |
 | audit log | `audit.jsonl` rotated at 10 MiB, 20 files kept. `human.*`, writes, `peer.denied` and control ops go to `audit-security.jsonl`, which read traffic never rotates away. |
@@ -1716,6 +1752,18 @@ paths, run subprocesses and sign. Before the host serves them, H3a gives `Contex
 - The same hook fails any `open` outside the workspace root and the state directory. The host itself never opens a
   repo file: only the reader child does.
 
+**Reader memory (H3b1).** `RLIMIT_AS` is a no-op on macOS, so while a child runs the host polls its resident memory
+every 100 ms (`proc_pid_rusage` on macOS, the larger of resident size and physical footprint; `/proc/<pid>/statm`
+on Linux, through a `/proc` fd opened before the audit hook) and kills its process group above **512 MiB**; the
+request is `observe.unavailable`. Each read runs under the caller's principal (`Capabilities.with_principal`); a
+host-mode read without one is refused.
+
+**Declared paths.** Repos are opened by an `O_NOFOLLOW` walk of the path the host joins from `settings.repos`,
+byte for byte and never resolved. A path with a symlinked component (a workspace under `/tmp` or `/var` on macOS)
+is refused: **declare the real path** (`realpath`) of each repo. A `.git` directory must have no `commondir` file;
+a `.git` file must name `<C>/worktrees/<id>` of another declared repo's `.git` `<C>`, with that worktree's
+`commondir` naming `<C>` and its `gitdir` back-pointer naming this working copy's `.git`.
+
 **Reader profiles.** `orch.gitread` takes its profile and pins as its first request on stdin and installs its own
 audit hook before it reads anything.
 
@@ -1737,6 +1785,17 @@ audit hook before it reads anything.
   2. `host.wsk_create` → `{workspace_id, wsk_pub}`;
   3. the client signs the delegation and `workspace.created` locally;
   4. `host.bootstrap` appends the genesis and registers the workspace.
+
+  `orch init --host` runs it (H3b3) until H7 makes host mode the default. The directory must be empty; the peers map
+  is the caller's UID as the genesis owner (agents and the worker are added later by `unregister` + `register`). The
+  device key is kept under `hosts/<ws>/person` as in direct mode. Once the genesis is in the log, a failure to finish
+  the bootstrap is answered `outcome.unknown`, never a refusal. The client treats `outcome.unknown`, `host.restarting`
+  and a lost connection as undecided and asks again with the same idem for up to 30 s. Any other refusal is checked
+  with `host.outcome`. Only no stored record (refused before any write) or a `failed` record drops the device key and
+  tells the person that nothing was created. `control.rolled_back` starts again from step 2 after one confirmation.
+  Without a definite answer the result is `host.unavailable`, which names the idem for `orch host outcome` and keeps the
+  device key. A rollback removes the store's files from the root but never the person's own directory. The root guard
+  and `by_root` compare directories by `(st_dev, st_ino)`, not by spelling (APFS case and normalisation variants).
 - **`import v1`** runs in direct mode only, on an unregistered workspace: `orch import v1`, then `orch host register`.
   A registered workspace answers `host.required` (`unregister`, import, `register`). The importer reads v1 files, which
   the host must never do for a client, and the plan signs a large batch under one unlock (F1 §14.2). Neither fits a
@@ -1995,7 +2054,7 @@ dispatch is turned on.
 | **H2a Lifecycle** | registry, states, ownership lock, control ops (`list`, `register`, `unregister`, `wsk_create`, `restart`), units, release install, drain | second host gets `host.busy`; direct CLI gets `host.required` after adoption; `register` gives up after 60 s with `lock.busy`; `unregister` restores direct mode; `degraded` refuses writes, `unavailable` refuses all; drain finishes a write in flight and ends `wait` with `host.restarting`; `wsk_create` never replaces a key; `register` refuses a pinned agent UID as person; a removed member's UID reads as no-person (F8); `host.list` shows the caller's mapping (R11); kill -9 during `register`, `unregister` and `bootstrap`, then the intent is finished or rolled back at start and `host.outcome` returns the stored result; the effective-column table (§0.5) row by row (a person-class UID with an invalid mapping gets `op.not_allowed` for every write, L1; an unverified grant on an agent op gives `grant.expired`, not `op.not_allowed`); a `register` and a `bootstrap` rolled back at start answer `control.rolled_back` from `host.outcome` and from a same-key retry; `init` restarts from `wsk_create` after a rolled-back bootstrap, including an unverified grant from person class and an invalid person mapping | Codex, Opus (control ops) |
 | **H2b Outcomes** | idempotency store, classification, reconciliation, tombstones, `outcome.get`, cancel after commit | two-process kill -9 between append and record, then the retry is a duplicate rebuilt from the log; concurrent duplicates get one append; `idem.conflict`; `idem.expired`; a retryable failure is re-run; `outcome.get` with another person's grant id and a wrong secret gives `outcome.unknown_idem` (F4); a `{digest}` retry that has to run again answers `blob.invalid`, even when a blob or artifact with that digest exists (M1); `outcome.get` on a tombstone answers `idem.expired`; a dry run with an idem that has a record neither replays nor answers `idem.*`; a replay is re-enveloped with the retry's request id; a retry after the blob was consumed binds through `files.<arg>: {digest}`; `{digest}` without a record is `blob.invalid`; `dry_run` on a read, `human.submit`, control, job, blob or sub op is `invalid.input`; `job.done` repeated for a completed job answers `{}` | Opus |
 | **H3a Handler capabilities** | `Context` capabilities; handlers lose env, path and exec access; direct mode unchanged | goldens unchanged; with the audit hook in host mode, no open outside the roots and no spawn except the launcher | Codex |
-| **H3b1 git reader and `diff`** | `orch.gitread`, the launcher, pins, refs, extensions, identity, `diff` | a malicious `.git/config` runs nothing; a `.git` file or symlinked `objects/` pointing elsewhere is refused; a 1 GB zlib bomb is refused within the limits; reftable is unavailable; the `gitdir` profile cannot open a worktree file and the `worktree` profile cannot open outside its three pins (audit hook); diff equals `git diff --no-ext-diff --no-textconv` on fixtures; the F7 cases (changed `origin` against a declared `remote`, a `.git` file planted before the repo is added, a swapped `commondir`, loose/packed disagreement, case-colliding refs, `worktreeConfig`); at most 4 children under a burst of 100 `diff` calls (F10) | Opus |
+| **H3b1 git reader and `diff`** | `orch.gitread`, the launcher, pins, refs, extensions, identity, `diff` | a malicious `.git/config` runs nothing; a `.git` file or symlinked `objects/` pointing elsewhere is refused; a 1 GB zlib bomb is refused within the limits; reftable is unavailable; the `gitdir` profile cannot open a worktree file and the `worktree` profile cannot open outside its three pins (audit hook); `diff` is a valid unified diff that `git apply` accepts, reproducing the head exactly; identical to `git diff --no-ext-diff --no-textconv --no-renames` on simple fixtures; hunk placement may differ where git uses its heuristics; the F7 cases (changed `origin` against a declared `remote`, a `.git` file planted before the repo is added, a swapped `commondir`, loose/packed disagreement, case-colliding refs, `worktreeConfig`); at most 4 children under a burst of 100 `diff` calls (F10) | Opus |
 | **H3b2 Client receipts** | `task.done` contract 2, client-side `verify.cmd`, `attested_by` | `run:true` refused by the host; a receipt with a `cmd` other than `verify.cmd` refused; the output file goes through `files`; the receipt is labelled | Codex |
 | **H3b3 Bootstrap** | `host.bootstrap`, the `init` composite | `init` through the host yields the same genesis bytes as direct mode; `bootstrap` refuses a non-empty root, a foreign owner, or an id not from `wsk_create`; a second `bootstrap` for an id that has a genesis or a registration is `host.busy` (N5); a bootstrap killed after the append is finished at restart, and one killed before it leaves no root, key or id behind | Opus |
 | **H3c Agent and worker users (#287)** | the macOS and Linux setup helper: users outside `staff`, groups, root-owned `orch` directories, `<run>`, pins, workspace modes, the worker LaunchDaemon | e2e `keys-isolation` and `mac-agent-uid`: the agent cannot read `wsk` or `dk` but can call `status`; the helper refuses a pre-existing foreign `/Users/Shared/orch` (`needs_os_users`, real foreign owner) | Opus |
@@ -2042,8 +2101,10 @@ dispatch is turned on.
 2. **A dedicated host user on macOS.** Not in P2; the peer map already supports it.
 3. **Own reader; dulwich is rejected** (it honours grafts, alternates and shallow, and adds a dependency).
 4. **An issuer-chosen UID restriction on grants.** Not in P2; it could come later as an optional `grant.issued` field.
-5. **To confirm during H3b1/H10:** that macOS has no subreaper and reparents to launchd, and how reftable shows up in
-   config.
+5. **To confirm during H3b1/H10:** that macOS has no subreaper and reparents to launchd (H10). **Reftable (H3b1,
+   git 2.45+):** `core.repositoryformatversion = 1` with `extensions.refStorage = reftable`, a `reftable/` directory in
+   the `commondir`, and a stub `HEAD` (`ref: refs/heads/.invalid`). The reader refuses on the extension and on the
+   directory, so either alone is observe.unavailable.
 6. **H10 settles** the macOS source of the worker's main PID: `launchctl print system/io.orch.worker` if a non-root
    host can read it, otherwise the root-owned pid file written by the setup helper's wrapper (N1).
 7. **H5a settles** that a multi-event submit is judged and appended under one held store lock, with no other append in
@@ -2063,6 +2124,17 @@ dispatch is turned on.
      included. The v1.5 live-tail work must apply the per-type rule of `activity.list` (the `grant.list` rule for `grant.*`,
      nothing from the workspace log for `no-person`).
    - `diff` with several heads or bases per repo, and commits (F1 stores only `branch.pushed`).
+9. **H3b1 follow-ups (#381 reviews).**
+   - **`host_pinned` base** (§10 entry 6, hole 4): the host keeps the first-seen merge base per (ticket uid, repo
+     identity) in its state dir (0600, never moved forward automatically) and reports `base_moved`. P3 replaces
+     first observation with a base pinned at claim.
+   - **`since:"my_approval"`** (holes 1, 2): only the caller's own code-gate approve decisions, in the dispatcher
+     when `diff` is registered (H6b); the default view stays the full change.
+   - **A `declared` base is never the approval screen's default** (hole 5): a client rule, noted in §0.8.
+   - **SHA-1 collision detection:** the reader checks SHA-1 ids with plain SHA-1, not git's SHA-1DC, so a
+     SHAttered-style colliding object would be accepted. Accepted risk at today's cost; sha256 repos are unaffected.
+     Add the known collision-disturbance check, or prefer sha256 repos.
+   - **Rename detection** (§0.8 keeps `R` and `old_path` for a later version).
 
 ## 10. Decisions record
 
@@ -2112,6 +2184,20 @@ disputed. Two choices were made where the reviews left room:
   `base_rev`, so the signed `set` is the whole effect.
 
 Two items wait for their groups (§9 Q6: H10, Q7: H5a).
+
+**6. Who chooses the diff base (#381 security review, finding 4).**
+
+- **Problem:** §0.8 took the base from the working copy's `main`, which the agent writes. Moving `main` forward, deleting
+  it, or committing on an orphan branch made `diff` show only the last commits while a person signed a head containing
+  all of them.
+- **Draft (orch-52):** prefer the newest signed `source_sha` as base, else the local ref, labelled; show base and count.
+- **Security review:** a verdict's sha was judged on tests, not code, and a second reviewer never saw the first one's
+  range; the missing-`main` and orphan fallbacks were silent; nothing host-held resisted a per-review move.
+- **Decision:** the default base is host-pinned at first observation (host state), else the local merge base labelled
+  unverified with `base_moved`, else head's first parent labelled "only the last commit"; a declared default branch
+  that is missing is `observe.unavailable`. "Since my approval" is an explicit option over code-gate approvals by the
+  caller only. The approval prompt shows the base, its source and the commit list. D58 is unchanged: the signature binds
+  the head; the base is display. P3 replaces first observation with a base pinned when the ticket is claimed.
 
 
 ## 11. P3: the host↔relay bridge (input from orch-relay §9)
@@ -2169,10 +2255,17 @@ orch-relay's `docs/p3-relay-design.md` §9 defines what the host owes the relay 
   and the host never signs a different one for an epoch. Rules:
   - **One WK per epoch, ever.** The host never creates a second key for an epoch number. Epochs may skip, never fall. Epochs are u32 (1..2^32-1). The
     relay accepts a later list only with `prev <= epoch <= prev + 2^16`. The host alarms, and clamps: it never allocates
-    an epoch above `committed + 2^16`, whether through repeated burns or H7 jumps. If the next allocation (including H7's `EHW + 1`) would exceed that clamp, the host alarms, keeps
-    the rotation gate up and allocates nothing until the relay commits a list. A list that removes a member has a
+    an epoch above `committed + 2^16`, whether through repeated burns or H7 jumps. The rotation target is `min(EHW + 1, committed + 2^16)`: the clamp wins. When the clamp is at or
+    below `EHW` (every epoch up to it is already used or burned), the host cannot rotate without a second key for an
+    epoch, which it never creates: it alarms, keeps the rotation gate up and allocates nothing. The workspace's
+    membership is then frozen: no rotation and so no member removal. The only ways out are the relay committing a
+    body that is already out (which raises `committed`), or an operator action outside this protocol (P3 owner-run
+    recovery).
+    Liveness limit, accepted in v1.4: reaching it needs about 65,000 burns, or about 63 H7 jumps of 1024 with no
+    commit in between. A list that removes a member has a
     higher epoch than the previous list. A list at the same epoch carries the same `wk_commit`, else the relay answers
-    409 `wk_commit_changed`.
+    409 `wk_commit_changed` (the relay checks list rules before grants, so a same-epoch re-seal with a changed
+    `wk_commit` always gets this code; a divergence refusal under H4).
   - **First list.** The first publication for a workspace may use any epoch `1..2^16` and any `list_seq >= 1`. A refused
     first publication burns its epoch and `list_seq` like any other, and the retry uses (2,2) or higher.
   - **Allocation.** The host allocates `list_seq` and epoch from durable high-water marks (`LHW`, `EHW`). It never

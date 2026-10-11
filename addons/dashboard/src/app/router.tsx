@@ -9,6 +9,7 @@ import { validateTicketsSearch } from './pages/tickets/search'
 import { addonPageData, agentsData, artifactsData, boardData, loadShell, pageLoader, settingsData, ticketData, ticketsData, todayData, type LoaderContext } from './routeData'
 import { validateAgentsSearch, validateArtifactsSearch, validateBoardSearch, validateTicketSearch } from './search'
 import { workspaceRewrite, type UrlState } from './urls'
+import { hasFeature } from '@/api/features'
 
 // Every page is its own chunk. The route loaders load it (and warm the page's data) before the router shows the page:
 // the old page stays until then, or until `PENDING_MS`, after which the page's skeleton shows (see routeData.ts).
@@ -28,6 +29,11 @@ const addonNodes = () => import('@/addon-ui/preloadNodes').then((m) => m.preload
 export const PENDING_MS = 200
 export const PENDING_MIN_MS = 300
 
+/** A page this build or host does not serve (the read-only production app) goes to the board; the mock serves all. */
+const serves = (feature: string) => () => {
+  if (!hasFeature(feature)) throw redirect({ to: hasFeature('board') ? '/board' : '/' })
+}
+
 // Code-based route tree with short in-app paths. The address bar carries the workspace (`/w/DEMO/board`): the router's
 // rewrite (urls.ts) strips it on the way in and adds the current one on the way out. Browser history (real paths) in
 // the app; memory history only where a test passes an initial path.
@@ -43,19 +49,20 @@ const rootRoute = createRootRouteWithContext<RouterContext>()({
 })
 
 const todayRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: TodayPage, loader: pageLoader(todayData, [TodayPage.preload]), pendingComponent: () => <TodaySkeleton /> })
-const boardRoute = createRoute({ getParentRoute: () => rootRoute, path: 'board', validateSearch: validateBoardSearch, component: BoardPage, loader: pageLoader(boardData, [BoardPage.preload]), pendingComponent: BoardSkeleton })
+const boardRoute = createRoute({ getParentRoute: () => rootRoute, path: 'board', beforeLoad: serves('board'), validateSearch: validateBoardSearch, component: BoardPage, loader: pageLoader(boardData, [BoardPage.preload]), pendingComponent: BoardSkeleton })
 const ticketsRoute = createRoute({
-  getParentRoute: () => rootRoute, path: 'tickets',
+  getParentRoute: () => rootRoute, path: 'tickets', beforeLoad: serves('tickets'),
   validateSearch: validateTicketsSearch,
   component: TicketsPage,
   // The search is read once, on entering the page: a filter change keeps the page and refetches in place.
   loader: ({ context, location }) => pageLoader(ticketsData(validateTicketsSearch(location.search as Record<string, unknown>)), [TicketsPage.preload])({ context }),
   pendingComponent: TicketsSkeleton,
 })
-const newTicketRoute = createRoute({ getParentRoute: () => rootRoute, path: 'tickets/new', component: NewTicketPage, loader: pageLoader(() => [], [NewTicketPage.preload]) })
+const newTicketRoute = createRoute({ getParentRoute: () => rootRoute, path: 'tickets/new', beforeLoad: serves('actions'), component: NewTicketPage, loader: pageLoader(() => [], [NewTicketPage.preload]) })
 const ticketRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'ticket/$key',
+  beforeLoad: serves('ticket'),
   validateSearch: validateTicketSearch,
   // The addon renderers a ticket's panels use load when the app is idle (Shell), not on every hovered ticket link.
   // A real visit waits for the addon renderers too (its panels then render without placeholders of another size);
@@ -73,6 +80,7 @@ const ticketRoute = createRoute({
 const artifactsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'artifacts',
+  beforeLoad: serves('artifacts'),
   validateSearch: validateArtifactsSearch,
   component: ArtifactsPage,
   loader: pageLoader(artifactsData, [ArtifactsPage.preload]),
@@ -85,6 +93,7 @@ const artifactsRoute = createRoute({
 const agentsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'agents',
+  beforeLoad: serves('agents'),
   validateSearch: validateAgentsSearch,
   component: AgentsPage,
   loader: pageLoader(agentsData, [AgentsPage.preload]),
@@ -97,6 +106,7 @@ const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'settings',
   beforeLoad: () => {
+    serves('settings')()
     throw redirect({ to: '/settings/$tab', params: { tab: 'general' } })
   },
 })
@@ -105,6 +115,7 @@ const settingsTabRoute = createRoute({
   path: 'settings/$tab',
   // An unknown tab (or /settings/addon without a name) would render only the sub-nav: go to General instead.
   beforeLoad: ({ params }) => {
+    serves('settings')()
     if (!SETTINGS_TABS.includes(params.tab)) throw redirect({ to: '/settings/$tab', params: { tab: 'general' } })
   },
   loader: ({ context, params }) => pageLoader(settingsData(params.tab), [SettingsPage.preload])({ context }),
@@ -117,6 +128,7 @@ const settingsTabRoute = createRoute({
 const settingsAddonRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'settings/addon/$name',
+  beforeLoad: serves('settings'),
   loader: ({ context, params }) => pageLoader(settingsData('addons', params.name), [SettingsPage.preload, addonNodes])({ context }),
   pendingComponent: SettingsSkeleton,
   component: function SettingsAddonRoute() {
@@ -135,6 +147,7 @@ const settingsAddonsAliasRoute = createRoute({
 const addonRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'addon/$name/$page',
+  beforeLoad: serves('addons'),
   loader: ({ context, params }) => pageLoader(addonPageData(params.name), [AddonPage.preload, addonNodes])({ context }),
   pendingComponent: () => <AddonPageSkeleton />,
   component: function AddonRoute() {

@@ -22,7 +22,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     if args.get("label"):
         where.append("uid IN (SELECT uid FROM ticket_labels WHERE label = ?)")
         params.append(args["label"])
-    me = c.person
+    me = c.viewer  # direct mode: the grant's person; host mode: the viewer
     mine_keys: set[str] = set()
     if args.get("mine"):
         mine_keys = {v.key for v in c.mine()}

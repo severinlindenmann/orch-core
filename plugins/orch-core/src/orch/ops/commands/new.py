@@ -41,12 +41,23 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
             hints=[f"orch claim {view_key}"],
             lines=["dry-run: nothing was written"],
         )
+    planned: dict[str, Any] = {}
+    if ctx.plan is not None:  # host mode: the uid and every event id are fixed and announced before the append (§0.7)
+        from orch.ops.runtime import canon_ulid
+
+        planned = {"uid": canon_ulid(), "created": canon_ulid(), "updated": canon_ulid()}
+        events = [(planned["uid"], planned["created"], "ticket.created", actor)]
+        if sets or summary:
+            events.append((planned["uid"], planned["updated"], "ticket.updated", actor))
+        ctx.plan(events, None)
     made = c.store.create_ticket(
         actor=actor,
         ticket_type=kind,
         title=title,
         owner=actor["for"],
         idem=f"{ctx.idem}:new" if ctx.idem else None,
+        uid=planned.get("uid"),
+        event_id=planned.get("created"),
     )
     key, seq = made.event["key"], made.event["seq"]
     with c.locked():
@@ -63,7 +74,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
             if summary:
                 ev["base_rev"]["body.summary"] = path_hash(view, "body.summary")
             p.add(ev, body={"summary": summary} if summary else None)
-            seq = p.commit()[-1].event["seq"]
+            seq = p.commit(ids=[planned["updated"]] if planned else None)[-1].event["seq"]
             view = c.store.ticket(key)
         c.shown(view, fields=views.ALL_FIELDS, sections=tuple(SECTIONS_BY_TYPE[view.type]))
     return c.result(view, {"title": title, "ticket_type": kind}, seq=seq, hints=[f"orch claim {key}"])

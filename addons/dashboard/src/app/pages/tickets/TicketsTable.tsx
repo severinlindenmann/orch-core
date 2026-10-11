@@ -165,7 +165,7 @@ export function TicketsTable({
                   {turn}
                 </span>
               )}
-              {folded.has('progress') && (t.progress.tasks_total > 0 || t.progress.ac_total > 0) && (
+              {folded.has('progress') && !!t.progress && (t.progress.tasks_total > 0 || t.progress.ac_total > 0) && (
                 // Folded under the title it says what it is, also to a screen reader (the column header is gone).
                 <span className="flex w-28 items-center gap-1.5">
                   <span className="text-text-faint">Progress</span>

@@ -9,6 +9,9 @@ OPS = (
     "ticket.query",
     "ticket.get",
     "needs",
+    "activity.list",
+    "diff",
+    "artifact.get",
     "sub.open",
     "sub.close",
 )

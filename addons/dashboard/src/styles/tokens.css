@@ -1,5 +1,7 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
+/* sonner's own styles, built into the page: its injected <style> is blocked by the server's CSP (style-src 'self'). */
+@import 'sonner/dist/styles.css';
 
 @custom-variant dark (&:is(.dark *));
 

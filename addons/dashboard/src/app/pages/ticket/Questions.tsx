@@ -58,7 +58,8 @@ function AnswerForm({ q, sign }: { q: QuestionStatus; sign: TabProps['sign'] }) 
 
 function QuestionCard({ q, viewer, sign }: { q: QuestionStatus; viewer: Viewer; sign: TabProps['sign'] }) {
   const open = q.state === 'open'
-  const answered = q.answer
+  const stale = q.state === 'stale'
+  const answered = stale ? null : q.answer
   const chosen = q.options?.find((o) => o.key === answered?.option)
   return (
     <li
@@ -73,6 +74,11 @@ function QuestionCard({ q, viewer, sign }: { q: QuestionStatus; viewer: Viewer; 
             {q.blocking ? <OctagonAlert /> : <CircleHelp />}
             {q.blocking ? 'Open, blocking' : 'Open'}
           </Pill>
+        ) : stale ? (
+          <Pill tone="warning">
+            <OctagonAlert />
+            Changed since it was answered
+          </Pill>
         ) : (
           <Pill tone="success">
             <CheckCircle2 />
@@ -80,7 +86,9 @@ function QuestionCard({ q, viewer, sign }: { q: QuestionStatus; viewer: Viewer; 
           </Pill>
         )}
         <span className="text-[12px] text-text-muted">
-          to <span className="text-text">{viewer.name(q.to)}</span> · asked by {viewer.name(q.asked_by)} · {ago(q.asked_at)}
+          to <span className="text-text">{viewer.name(q.to)}</span>
+          {q.asked_by ? ` · asked by ${viewer.name(q.asked_by)}` : ''}
+          {q.asked_at ? ` · ${ago(q.asked_at)}` : ''}
         </span>
         {q.hash && (
           <Mono className="ml-auto text-[11px] text-text-faint" >
@@ -109,7 +117,10 @@ function QuestionCard({ q, viewer, sign }: { q: QuestionStatus; viewer: Viewer; 
           <p className="font-medium text-text">{chosen ? chosen.label : answered.text}</p>
           {chosen && answered.text && <p className="mt-0.5 text-text-muted">{answered.text}</p>}
           <p className="mt-1 text-[12px] text-text-muted">
-            {viewer.name(answered.by)} · {ago(answered.at)} · via {VIA[answered.via ?? 'dashboard']} · {PRESENCE[answered.presence ?? 'touchid']}
+            {viewer.name(answered.by)}{answered.at ? ` · ${ago(answered.at)}` : ''}
+            {/* Only a host that says how it came in: nothing is made up for one that does not. */}
+            {answered.via ? ` · via ${VIA[answered.via]}` : ''}
+            {answered.presence ? ` · ${PRESENCE[answered.presence]}` : ''}
           </p>
         </div>
       )}

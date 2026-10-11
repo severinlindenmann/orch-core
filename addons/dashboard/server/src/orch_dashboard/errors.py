@@ -12,7 +12,8 @@ def fail(code: str, message: str | None = None, exit: int = 9):
         {
             "code": code,
             "message": message or code,
-            "retryable": code in {"host.unavailable", "sub.reset", "quota.host", "timeout", "host.restarting"},
+            "retryable": code
+            in {"host.unavailable", "sub.reset", "quota.host", "timeout", "host.restarting", "page.expired"},
         },
         exit,
     )

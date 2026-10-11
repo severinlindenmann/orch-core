@@ -8,13 +8,15 @@ Handlers never touch ``os.environ``, ``open()`` or ``subprocess`` themselves; th
 | ``env``    | fixed and minimal, never the client's   | the CLI's environment                     |
 | ``files``  | only under the roots; no cwd, no stdin  | any path the CLI names; cwd; stdin        |
 | ``exec``   | none (raises :class:`CapabilityDenied`) | the subprocess runner (``verify.cmd``)    |
-| ``git``    | none until the reader launcher (H3b1)   | the in-process reader (``store.observe``) |
+| ``git``    | reader children under pins (H3b1)       | the git CLI (``store.observe``); ``diff`` |
+|            |                                         | through orch's reader in-process          |
 | ``signer`` | none                                    | custody                                   |
 | ``clock``  | host clock                              | system clock                              |
 
 Reading D-P2-9 strictly (an ambiguity, the stricter side taken): in host mode ``files`` is limited to the roots even
 for reads of client-named paths (the client sends bytes through ``ctx.files`` instead), the working directory and
-stdin are denied, and ``exec`` and ``git`` are denied outright rather than "restricted".
+stdin are denied, and ``exec`` is denied outright rather than "restricted". ``git`` in host mode is only the
+reader launcher (:mod:`orch.gitread.client`); a host built without one denies git.
 """
 
 from __future__ import annotations
@@ -396,35 +398,92 @@ class Exec:
 
 @dataclass(frozen=True)
 class Git:
-    """Reading the linked repositories. Direct mode: the in-process reader (``orch.store.observe``). Host mode: none
-    here; H3b1 supplies the reader launcher."""
+    """Reading the linked repositories.
+
+    * **Direct mode** (``reader`` ``None``): P1's behaviour, unchanged: the git CLI on a scrubbed environment
+      (``orch.store.observe``); :meth:`diff` (new) uses orch's own reader in-process (:mod:`orch.gitread.local`).
+    * **Host mode** (``reader`` a :class:`orch.gitread.client.HostGitReader`): no git process; every read is a
+      ``python -I -m orch.gitread`` child under the repo's pins (D-P2-19). :meth:`dirty` answers ``None`` ("cannot be
+      asked"): the clean-tree check is the worker's ``tree.check`` (H10), and without it ``verdict`` and ``approve
+      code`` are ``observe.unavailable``. :meth:`run` (an arbitrary git command) is denied.
+    * **Principal** (host mode): every read runs under the caller's principal, so the pool's one-child-per-principal
+      rule (F10) is real. The dispatcher binds it per request with :meth:`Capabilities.with_principal`; a host-mode
+      read without one is refused.
+    """
 
     enabled: bool
+    reader: Any = field(default=None, repr=False)
+    principal: str | None = None
 
     def _need(self) -> None:
         if not self.enabled:
             raise CapabilityDenied("git")
+        if self.reader is not None and not self.principal:
+            raise CapabilityDenied("git", "git: a host-mode read needs the caller's principal")
+
+    def repo_path(self, root: Path, repos: Any, name: str) -> Path | None:
+        """Where repo ``name`` of ``settings.repos`` lives. Direct mode: P1's ``observe.repo_path`` (resolved).
+        Host mode: joined and normalised **lexically**, never resolved: the components are agent-writable, and the
+        reader's pins are keyed by this path (a symlink planted there must not lead to another repo's pins)."""
+        from orch.store import observe
+
+        if self.reader is None:
+            return observe.repo_path(root, repos, name)
+        spec = repos.get(name)
+        if not spec:
+            return None
+        return Path(os.path.normpath(os.path.join(os.fspath(root), spec["path"])))
+
+    def _look(self, path: Path, refs: list[str]) -> dict[str, Any] | None:
+        from orch.gitread.errors import Unavailable
+
+        try:
+            return self.reader.observe(path, refs, principal=self.principal)
+        except Unavailable:
+            return None
 
     def head(self, path: Path) -> str | None:
         self._need()
+        if self.reader is not None:
+            got = self._look(path, [])
+            return got["head_sha"] if got else None
         from orch.store import observe
 
         return observe.head(path)
 
+    def symbolic_head(self, path: Path) -> str | None:
+        """The branch ref ``HEAD`` names (``refs/heads/<branch>``), ``None`` when detached or unreadable."""
+        self._need()
+        if self.reader is not None:
+            got = self._look(path, [])
+            return got["head_ref"] if got else None
+        from orch.store import observe
+
+        return observe.git(path, "symbolic-ref", "-q", "HEAD")
+
     def dirty(self, path: Path) -> str | None:
         self._need()
+        if self.reader is not None:
+            return None  # the worker's tree.check (H10); never a git process in the host
         from orch.store import observe
 
         return observe.dirty(path)
 
     def run(self, path: Path, *args: str, strip: bool = True) -> str | None:
         self._need()
+        if self.reader is not None:
+            raise CapabilityDenied("git", "git: no git process runs in the host")
         from orch.store import observe
 
         return observe.git(path, *args, strip=strip)
 
     def identity(self, path: Path, name: str) -> str:
         self._need()
+        if self.reader is not None:
+            from orch.gitread.client import identity_of
+
+            got = self._look(path, [])
+            return identity_of(got["origin_urls"], name) if got else f"local:{name}"
         from orch.store import observe
 
         return observe.repo_identity(path, name)
@@ -438,7 +497,67 @@ class Git:
             return []
         from orch.store import observe
 
-        return observe.observe(store, ref, problems)
+        if self.reader is None:
+            return observe.observe(store, ref, problems)
+        if not self.principal:
+            if problems is not None:
+                problems.append("git: a host-mode read needs the caller's principal; nothing was observed")
+            return []
+        repos = store.state.workspace.repos
+        declared = [p for n in repos if (p := self.repo_path(store.root, repos, n)) is not None]
+        self.reader.sync(declared)  # pins a repo that first appears; an existing pin is never replaced
+        return observe.observe(store, ref, problems, backend=_ReaderBackend(self.reader, self))
+
+    def diff(
+        self,
+        path: Path,
+        *,
+        name: str,
+        branch: str,
+        default_branch: str | None,
+        remote: str | None,
+        context: int = 3,
+        max_bytes: int = 262144,
+    ) -> dict[str, Any]:
+        """The ``diff`` core for one repo (section 0.8): ``{branch, base_sha, head_sha, files, patch (base64),
+        truncated, origin_urls}``. Raises :class:`orch.gitread.errors.Unavailable`, or
+        :class:`~orch.gitread.errors.RemoteMismatch` when ``remote`` is declared and the observed identity differs."""
+        self._need()
+        from orch import canon
+        from orch.gitread.client import identity_of
+        from orch.gitread.errors import RemoteMismatch
+
+        if self.reader is not None:
+            got = self.reader.diff(
+                path,
+                branch=branch,
+                default_branch=default_branch,
+                context=context,
+                max_bytes=max_bytes,
+                principal=self.principal,
+            )
+        else:
+            from orch.gitread import local
+
+            got = local.diff(path, branch=branch, default_branch=default_branch, context=context, max_bytes=max_bytes)
+        if remote is not None and not canon.same_repo_identity(remote, identity_of(got["origin_urls"], name)):
+            raise RemoteMismatch("the observed origin differs from the declared remote")
+        return got
+
+
+class _ReaderBackend:
+    """What ``orch.store.observe.observe`` asks of the host reader: one child per repo for the ref and identity."""
+
+    def __init__(self, reader: Any, git: Git) -> None:
+        self.reader = reader
+        self.repo_path = git.repo_path
+        self.principal = git.principal
+
+    def look(self, path: Path, name: str, ref_name: str) -> tuple[str | None, str]:
+        from orch.gitread.client import identity_of
+
+        got = self.reader.observe(path, [ref_name], principal=self.principal)
+        return got["refs"].get(ref_name), identity_of(got["origin_urls"], name)
 
 
 @dataclass(frozen=True)
@@ -482,19 +601,28 @@ class Capabilities:
         roots: tuple[str | os.PathLike[str], ...],
         env: Mapping[str, str] | None = None,
         clock: Callable[[], float] = time.time,
+        git: Any = None,
     ) -> Capabilities:
         """What the host's handlers get: files only under ``roots`` (the workspace root and the state directory), no
-        client-named paths, cwd or stdin, no exec, no git (until H3b1), no signer, and an environment the caller
-        fixes (empty by default), never the client's. **Build it once per workspace** (it holds the root fds) and
-        ``close()`` it when the workspace goes away."""
+        client-named paths, cwd or stdin, no exec, no signer, and an environment the caller fixes (empty by default),
+        never the client's. ``git``: the workspace's :class:`orch.gitread.client.HostGitReader` (reader children
+        under pins); ``None`` denies git. **Build it once per workspace** (it holds the root fds) and ``close()`` it
+        when the workspace goes away."""
         return cls(
             env=dict(env or {}),
             files=Files.host(roots),
             exec=Exec(enabled=False, base_env=dict),
-            git=Git(enabled=False),
+            git=Git(enabled=git is not None, reader=git),
             signer=Signer(enabled=False),
             clock=clock,
         )
+
+    def with_principal(self, principal: str) -> Capabilities:
+        """The same capabilities for one request: git reads run under ``principal`` (F10 fairness). Shares the file
+        capability (its root fds); do not ``close()`` the copy."""
+        from dataclasses import replace
+
+        return replace(self, git=replace(self.git, principal=principal))
 
     def close(self) -> None:
         self.files.close()

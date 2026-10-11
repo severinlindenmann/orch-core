@@ -19,6 +19,8 @@ import {
   SquareKanban,
 } from 'lucide-react'
 import { api } from '@/api/client'
+import { hasFeature, isRealHost } from '@/api/features'
+import { logout } from '@/api/prodApi'
 import { activeGrantOf } from '@/api/grants'
 import { roleOf } from '@/api/permissions'
 import { useAttention } from '../attention'
@@ -230,7 +232,7 @@ export function Sidebar() {
 
         <div className="relative flex min-h-0 flex-1 flex-col">
         <nav ref={navRef} className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-2 py-2" aria-label="Main">
-          {CORE_NAV.map(({ to, label: text, icon: Icon }) => (
+          {CORE_NAV.filter((n) => hasFeature(n.feature, workspace?.id)).map(({ to, label: text, icon: Icon }) => (
             <RailTip key={to} label={text}>
               <Link to={to} className={link} activeProps={activeProps} activeOptions={{ exact: to === '/' || to === '/tickets', includeSearch: false }} aria-label={to === '/' && attention.badge > 0 ? `${text}, ${attention.badge} need you` : text}>
                 <span className="relative">
@@ -325,14 +327,16 @@ export function Sidebar() {
         </div>
 
         <div className="space-y-1 border-t border-border p-2">
-          <RailTip label="Settings">
-            <Link to="/settings" className={link} activeProps={activeProps} aria-label="Settings">
-              <Settings className="size-4" />
-              <span className={label}>Settings</span>
-            </Link>
-          </RailTip>
+          {hasFeature('settings') && (
+            <RailTip label="Settings">
+              <Link to="/settings" className={link} activeProps={activeProps} aria-label="Settings">
+                <Settings className="size-4" />
+                <span className={label}>Settings</span>
+              </Link>
+            </RailTip>
+          )}
 
-          <RailTip label={grant ? `Agents granted until ${grantTime}` : 'No grant · run orch grant'}>
+          {hasFeature('grants') && <RailTip label={grant ? `Agents granted until ${grantTime}` : 'No grant · run orch grant'}>
             <div
               className={cn(
                 'flex items-center gap-2 py-1 text-[11px]',
@@ -343,8 +347,26 @@ export function Sidebar() {
               {grant ? <ShieldCheck className="size-3.5 shrink-0" /> : <ShieldOff className="size-3.5 shrink-0" />}
               <span className={label}>{grant ? `agents granted until ${grantTime}` : 'no grant · run orch grant'}</span>
             </div>
-          </RailTip>
+          </RailTip>}
 
+          {isRealHost() ? (
+            <div className={cn('flex items-center gap-2 py-1.5', collapsed ? 'justify-center px-0' : 'px-2')}>
+              <Avatar className="size-7">
+                <AvatarFallback className="bg-surface-3 text-[11px]">{me?.name.slice(0, 2).toUpperCase()}</AvatarFallback>
+              </Avatar>
+              <span className={cn('min-w-0 flex-1', label)}>
+                <span className="block truncate text-[13px] text-text">{me?.name}</span>
+                <span className="block truncate text-[11px] text-text-faint">{role}</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => void logout().then(() => qc.clear())}
+                className={cn('rounded-md px-1.5 py-1 text-[11px] text-text-muted outline-none hover:bg-surface-2 hover:text-text focus-visible:ring-2 focus-visible:ring-brand', collapsed && 'hidden')}
+              >
+                Log out
+              </button>
+            </div>
+          ) : (
           <DropdownMenu>
             <RailTip label={me ? `${me.name} (${role})` : 'Viewer'}>
               <DropdownMenuTrigger asChild>
@@ -384,16 +406,18 @@ export function Sidebar() {
               <div className="px-2 py-1 text-[11px] text-text-faint">Mock only. Changes what Today and permissions show.</div>
             </DropdownMenuContent>
           </DropdownMenu>
+          )}
         </div>
       </aside>
     </RailContext.Provider>
   )
 }
 
+/** `feature`: the page is drawn only where the host serves it (the mock serves all; see api/features.ts). */
 const CORE_NAV = [
-  { to: '/', label: 'Today', icon: LayoutDashboard },
-  { to: '/board', label: 'Board', icon: SquareKanban },
-  { to: '/tickets', label: 'Tickets', icon: ListChecks },
-  { to: '/artifacts', label: 'Artifacts', icon: Files },
-  { to: '/agents', label: 'Agents', icon: Bot },
+  { to: '/', label: 'Today', icon: LayoutDashboard, feature: 'today' },
+  { to: '/board', label: 'Board', icon: SquareKanban, feature: 'board' },
+  { to: '/tickets', label: 'Tickets', icon: ListChecks, feature: 'tickets' },
+  { to: '/artifacts', label: 'Artifacts', icon: Files, feature: 'artifacts' },
+  { to: '/agents', label: 'Agents', icon: Bot, feature: 'agents' },
 ] as const

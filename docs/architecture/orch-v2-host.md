@@ -1633,8 +1633,24 @@ orch-relay's `docs/p3-relay-design.md` §9 defines what the host owes the relay 
     runs on the workspace worker. A drain (D-P2-4) releases nothing early: the lease simply runs out.
 - **Staged checkpoint publication.** The bridge sends staged pages (at most 4 MiB each, at most 2 open sets and
   64 MiB per workspace), then one final `PUT checkpoint` that commits atomically. At startup it compares the relay's
-  held checkpoint with the logs, and a mismatch is `chain.diverged`, so the host refuses appends until an owner
-  restore. This is the same "degraded" machinery as D-P2-12.
+  held checkpoint with the logs. A relay checkpoint the host's logs don't contain (the relay is ahead of the host, or
+  on another branch) means the host was rolled back: that is `chain.diverged`, and the host refuses appends until an
+  owner restore, using the same "degraded" machinery as D-P2-12. A mismatch with a checkpoint still queued in the
+  host's own outbox is not that case; the outbox rules below decide it. Devices are shown only checkpoints the relay
+  has accepted.
+- **Checkpoint capacity (P3-D20).** The host refuses `ticket.created` when the workspace checkpoint nears its size
+  capacity. P2 reserves the check; the limit comes from the P3 measurement (G4), about 5000 tickets for now.
+- **First link to a relay (P3-D18).** The bridge sends `PUT card` and `PUT genesis`. The genesis pin is signed by an
+  owner device, which is one human step when the workspace is first linked. Reauthentication is single-flight.
+- **Card changes.** The workspace exchange key (WXK) rotates every 90 days: `PUT card`, then `PUT card-keys`, with
+  `card_seq` strictly rising.
+- **Serving devices.** The host advances its poll cursor (`after`) only to `n`s recorded in its request-id store; its
+  sequence window and that store are committed atomically. Once the rotation gate is up, nothing is sealed under the
+  old epoch.
+- **The restore flow.** Before preparing a restore, the host fetches the revocations the relay holds, so the relay's
+  completeness check (R4) can't refuse the signed restore. No outbox flush is required. When the relay refuses the
+  host's own queued checkpoints as diverged, the host shows the conflict and takes the relay's held checkpoint as the
+  restore's `source`. On `restore_source_mismatch` the owner signs again.
 - **The pairing baseline pin.** The authenticated `approved` pairing answer carries the host's exact held checkpoint
   `{n, hash}` (or `null` only when none exists). The host registers it with `POST baselines` (7 days) and releases it
   when the pairing ends. A baseline is never downgraded. The host keeps the checkpoints that baselines name.

@@ -141,7 +141,8 @@ export function SessionGroup({ id, title, list, ctx, defaultOpen = true, empty }
       <h2 id={id} className="text-[13px] font-semibold text-text">
         <button type="button" aria-expanded={open} onClick={() => setOpen((v) => !v)} className="flex w-full items-center gap-2 px-3 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring">
           <ChevronRight className={cn('size-3.5 text-text-muted transition-transform', open && 'rotate-90')} aria-hidden />
-          {title} ({list.length})
+          {title}
+          <span className="font-normal tabular-nums text-text-muted">· {list.length}</span>
         </button>
       </h2>
       {open && (

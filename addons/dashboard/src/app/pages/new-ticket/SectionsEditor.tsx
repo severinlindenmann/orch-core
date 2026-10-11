@@ -31,7 +31,7 @@ function Section({ type, name, value, onChange, error }: { type: TicketType; nam
           {label}
         </label>
         <span id={`${id}-need`} className="text-[11px] text-text-faint">
-          {atCreation ? 'Required' : need === 'required' ? 'needed before the plan gate' : 'Optional'}
+          {atCreation ? 'required' : need === 'required' ? 'needed before the plan gate' : 'optional'}
         </span>
         <div className="flex-1" />
         <Button type="button" variant="ghost" size="sm" className="h-6 gap-1 px-1.5 text-[11px]" aria-pressed={preview} onClick={() => setPreview((p) => !p)}>

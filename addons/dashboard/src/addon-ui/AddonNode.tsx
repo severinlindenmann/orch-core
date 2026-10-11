@@ -923,14 +923,19 @@ const CHIP_TONE: Record<string, string> = {
   pending: 'bg-warning', open: 'bg-warning', waiting: 'bg-warning', blocked: 'bg-warning', review: 'bg-warning',
   pass: 'bg-success', fail: 'bg-danger', requested: 'bg-warning', 'changes requested': 'bg-danger', enabled: 'bg-success', 'granted once': 'bg-success', 'granted for this epic': 'bg-success',
   active: 'bg-success', accepted: 'bg-success', answered: 'bg-success', expiring: 'bg-warning', queued: 'bg-warning', denied: 'bg-danger',
+  // Repos: a declared repo that is not ready reads as needing attention, not as a neutral word.
+  present: 'bg-success', missing: 'bg-warning', untracked: 'bg-warning', 'remote differs': 'bg-warning', 'not a repo': 'bg-danger',
 }
-/** State words in a `status`/`state` column read as a small chip with a dot (neutral surface, no orange). */
+/**
+ * State words in a `status`/`state` column read as a small chip with a dot (neutral surface, no orange). Shown in
+ * sentence case whatever the addon sends ("running" and "Enabled" read alike); the text itself is unchanged.
+ */
 function StateChip({ text }: { text: string }) {
   const tone = CHIP_TONE[text.toLowerCase()] ?? 'bg-text-faint'
   return (
     <span className="inline-flex items-center gap-1.5 rounded-full border border-border px-2 py-px text-[12px] leading-4 text-text-muted">
       <span aria-hidden className={cn('size-1.5 rounded-full', tone)} />
-      {text}
+      <span className="inline-block first-letter:uppercase">{text}</span>
     </span>
   )
 }

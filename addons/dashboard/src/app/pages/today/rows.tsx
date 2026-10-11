@@ -19,7 +19,7 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { toastApiError } from '@/app/toast'
 import { useWorkspace } from '@/app/workspace'
-import type { HumanAction } from '../ticket/shared'
+import { RecommendedTag, type HumanAction } from '../ticket/shared'
 import { ago } from './shared'
 import { fmtClock, nowMs, plural } from '@/lib/time'
 
@@ -32,10 +32,6 @@ function BlockingChip() {
   return <span className="inline-flex shrink-0 items-center rounded bg-danger-soft px-1.5 py-0.5 text-[11px] font-medium leading-none text-danger">blocking</span>
 }
 
-/** The tag beside a recommended option: a word, not a filled button. */
-function RecommendedTag() {
-  return <span className="rounded border border-border px-1 py-px text-[10px] font-medium uppercase tracking-wide text-text-muted">Recommended</span>
-}
 
 const toggleCls =
   'block max-w-full min-w-0 rounded text-left text-[13px] font-medium leading-5 text-text outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring'
@@ -181,7 +177,7 @@ export function QuestionRow({ item, ticket, now, expanded, onToggle, sign, asked
             ))}
           </div>
           <Button size="sm" disabled={!choice || !ticket} onClick={() => choice && sign(item.ticket, { kind: 'answer', question: item.ref!, option: choice })}>
-            Send answer…
+            Send answer
           </Button>
         </div>
       ) : (

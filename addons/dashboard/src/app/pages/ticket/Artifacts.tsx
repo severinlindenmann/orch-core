@@ -208,7 +208,7 @@ export function Viewer({ a, agentHtml }: { a: Artifact; agentHtml: boolean }) {
     return (
       <div className="space-y-2">
         <Thumb a={a} large />
-        <p className="text-[12px] text-text-faint">Placeholder rendering. The real host serves the file; the hash below is what an approval binds.</p>
+        <p className="text-[12px] text-text-faint">Placeholder rendering. The real host serves the file; the sha256 above is what an approval binds.</p>
       </div>
     )
   if (!a.preview) return <p className="text-[13px] text-text-muted">No inline preview for this kind of file. Its content is not shown here; the sha256 above is what an approval binds.</p>

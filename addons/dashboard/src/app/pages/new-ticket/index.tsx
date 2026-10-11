@@ -125,7 +125,7 @@ function TypeControl({ value, onChange }: { value: TicketType; onChange: (t: Tic
         <RadioGroupPrimitive.Item
           key={t}
           value={t}
-          className="inline-flex h-7 items-center gap-1.5 rounded-md px-3 text-[13px] text-text-muted outline-none hover:text-text focus-visible:ring-2 focus-visible:ring-brand data-[state=checked]:bg-surface-3 data-[state=checked]:text-text"
+          className="inline-flex h-7 items-center gap-1.5 rounded-md px-3 text-[13px] capitalize text-text-muted outline-none hover:text-text focus-visible:ring-2 focus-visible:ring-brand data-[state=checked]:bg-surface-3 data-[state=checked]:text-text"
         >
           {(() => {
             const Icon = TYPE_ICON[t]
@@ -395,7 +395,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
             <select id="nt-priority" className={fieldCls} value={draft.priority} onChange={(e) => patch({ priority: e.target.value as Priority })}>
               {PRIORITIES.map((p) => (
                 <option key={p} value={p}>
-                  {p}
+                  {p[0].toUpperCase() + p.slice(1)}
                 </option>
               ))}
             </select>

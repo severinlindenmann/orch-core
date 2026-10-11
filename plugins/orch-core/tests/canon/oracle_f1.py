@@ -254,6 +254,14 @@ def hash_vectors() -> dict[str, Any]:
 # ``oracle_f1_gate.derive_G`` (see its docstring); the cases below are variants of that one ticket.
 
 
+def gate_inputs() -> dict[str, dict[str, Any]]:
+    """The four gate hash inputs ``G`` of the sample ticket, for tests that mutate them."""
+    from . import oracle_f1_gate as g
+
+    t = g.sample_ticket()
+    return {gate: g.derive_G(t, gate) for gate in g.GATES}
+
+
 def gate_vectors() -> dict[str, Any]:
     from . import oracle_f1_gate as g
 

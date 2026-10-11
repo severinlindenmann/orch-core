@@ -83,7 +83,7 @@ def _applies_union(a: Any, b: Any) -> Any:
 
 
 def effective_policy(ws: dict[str, Any], override: dict[str, Any] | None) -> dict[str, Any]:
-    """§5.7: approvers = workspace ∩ override, count = the larger, not = the union, independent = either, applies =
+    """§5.7: approvers = workspace intersect override, count = the larger, not = the union, independent = either, applies =
     the union (``all`` if either is, ``off`` only if both are, else the sorted de-duplicated list)."""
     if override is None:
         return canonical_policy(ws)
@@ -360,7 +360,7 @@ def sample_ticket() -> dict[str, Any]:
         "sections": {
             "summary": "Load tariffs.",
             "context": "",
-            "requirements": "- R1 café\n![mock](artifact:mock.png)",
+            "requirements": "- R1 caf\u00e9\n![mock](artifact:mock.png)",
             "out_of_scope": "Nothing.",
             "plan": "1. export\n2. seed",
             "decisions": "",

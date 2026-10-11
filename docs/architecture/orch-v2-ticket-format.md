@@ -868,8 +868,9 @@ stays unchanged).
 
 For `ticket.moved`, `from` must equal the current status. A destination outside `backlog`/`open` is a schema refusal. A disallowed source or a live claim in
 `in_progress` is `status.transition`; a non-owner/non-maintainer person is `role.denied`. Same-status moves are
-allowed. It changes only status, not gate generations, workers or claim history; claim liveness uses §5.9
-expiry and grant rules, not the replay clock. Agents and the host are refused (`event.bad_actor`).
+allowed. A move out of `in_progress` ends the claim and releases its task leases, as `claim.released` does;
+raising the TTL or re-adding a removed member cannot revive it. Gate generations and workers stay unchanged;
+claim liveness uses §5.9 expiry and grant rules, not the replay clock. Agents and the host are refused (`event.bad_actor`).
 
 Verdicts and `code` approvals and change requests are accepted only in `testing`. The **done rule**: `verify` has its count of `pass` verdicts, and `code` has its count where it applies, all at the
 current generations. A duplicate approval by one person counts once. `gate.invalidated` changes no status. "Waiting" (a blocking question is open, or a gate waits

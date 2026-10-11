@@ -54,6 +54,9 @@ def moved(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
         or (t.status == "in_progress" and claims.live(ws, t, ts(e["at"])))
     ):
         return Refusal(Code.STATUS_TRANSITION, "move requires the current from-state and unclaimed work")
+    if t.status == "in_progress":
+        t.claim = None
+        claims.release_leases(t)
     t.status = e["to"]
     return None
 

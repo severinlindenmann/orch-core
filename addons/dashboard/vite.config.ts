@@ -7,6 +7,16 @@ export default defineConfig(({ command }) => ({
   // Absolute asset paths: the app owns real paths (/w/DEMO/settings/addon/x), so a reload there must still find /assets.
   base: '/',
   plugins: [react(), tailwindcss(), {
+    // The server's CSP is `style-src 'self'`, which blocks the <style> element sonner injects when it loads. Its
+    // stylesheet is imported in tokens.css instead (built into the page's CSS), and the injection becomes a no-op.
+    name: 'sonner-no-inline-style',
+    transform(code, id) {
+      if (!/node_modules\/sonner\/dist\/index\.mjs$/.test(id)) return null
+      const out = code.replace(/^__insertCSS\(/m, 'void (')
+      if (out === code) throw new Error('sonner no longer calls __insertCSS at its top level: update vite.config.ts')
+      return { code: out, map: null }
+    },
+  }, {
     name: 'production-entry',
     transformIndexHtml: { order: 'pre', handler(html) {
       if (command !== 'build') return html

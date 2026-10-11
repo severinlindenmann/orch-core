@@ -396,3 +396,63 @@ D33 follow-up: as Severin, set Landing → Allowed targets to `main, develop`, o
 ticket and Add to the landing queue. Check Covers shows ticket, target `main`, and approved commit,
 then Sign and run; run the demo worker. As Mara or a member main enqueue is refused. For red checks
 on main, take it off the queue and sign again. Other targets keep their existing roles.
+
+## Try P2 M1 live updates (dev stub, own terminal)
+
+Use a disposable P1 workspace that already contains a workspace-visible ticket, prepared
+with the existing dev-kit or P1 CLI. All terminals use the same marked state and workspace.
+Build once from this checkout; the Vite mock remains independent and does not use SSE.
+The following example uses short real paths, not symlink aliases:
+
+```sh
+# Set these in every terminal; substitute your disposable workspace and person id.
+export ORCH_DEV=1
+export ORCH_WORKSPACE=/tmp/orch-m1/workspace
+export ORCH_STATE_DIR=/tmp/orch-m1/state
+export ORCH_RUN_DIR=/tmp/orch-m1/state/run
+mkdir -p "$ORCH_STATE_DIR"
+chmod 700 "$ORCH_STATE_DIR"
+touch "$ORCH_STATE_DIR/.orch-dev" "$ORCH_WORKSPACE/.orch-dev"
+
+# From the checkout root, install/grant the dashboard package in the disposable workspace.
+mkdir -p "$ORCH_WORKSPACE/addons/dashboard"
+cp addons/dashboard/orch-addon.json "$ORCH_WORKSPACE/addons/dashboard/orch-addon.json"
+cd addons/dashboard/server
+uv sync --locked
+uv run orch addon grant dashboard
+cd ..
+export PATH=/Users/severin/.nvm/versions/node/v24.21.0/bin:$PATH
+npm run build
+server/.venv/bin/python -m devhost "$ORCH_WORKSPACE" --person p_YOUR_PERSON_ID
+```
+
+In terminal 2, export the same four variables, then from `addons/dashboard/server`:
+
+```sh
+uv run orch-dashboard open /w/DEMO/tickets
+# If browser confinement blocks the redirect file:
+uv run orch-dashboard open /w/DEMO/tickets --print-url
+```
+
+In terminal 3, export the same variables, then from `addons/dashboard/server` append a real
+P1 unattended log note (replace `DEMO-0001` with a workspace-visible ticket's key):
+
+```sh
+unset ORCH_GRANT
+export ORCH_SESSION=s_01J9ZP0000000000000000000S
+uv run orch log 'M1 live-update check' --ref DEMO-0001
+```
+
+The stub polls the log within 200 ms and emits an event item plus needs invalidation; the
+Tickets table refetches and its updated ordering changes where applicable. In browser DevTools,
+inspect `/api/events?ws=…` for `ready`, then `items`; inspect the follow-up ticket request.
+Open two tabs, disconnect one via DevTools Offline, append another note, restore networking:
+it should reconnect with its own Last-Event-ID and resync. Three failed streams switch that
+tab to the 10-second head poll. Log out in one tab: both tabs sharing the token must clear,
+and the server streams must close. Stop the launcher with `uv run orch-dashboard --stop`.
+
+Visibility/gone and slow-client bounds have automated signed-store/in-memory coverage. For
+real-host acceptance, run S3/S4 with a second member, hide a ticket from that member while its
+view is open, restart the host during a stream, and verify no queued ticket metadata leaks.
+Run browser layout/cross-origin tests in Chromium, Firefox and WebKit with real listeners.
+These live-port acceptance steps were not run in the implementation sandbox.

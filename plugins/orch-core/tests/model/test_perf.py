@@ -29,7 +29,7 @@ def test_advance_and_at_stay_fast_at_scale():
         st = advance(st, e, log=uid)
         timings.append(time.process_time() - t0)
         w.tl[uid].append(e)
-    assert min(timings) < 0.005, timings  # best of N, CPU time: robust to a busy machine
+    assert sum(timings) / len(timings) < 0.005, timings  # CPU time; the mean sees late events slow down
     best = float("inf")
     for _ in range(5):
         t0 = time.process_time()

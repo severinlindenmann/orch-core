@@ -858,8 +858,8 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
   - ignored, without an alarm, if its `n` is lower and no `seq` is higher than in H (a stale delivery);
   - `chain.diverged` in every other case: the same `n` with a different `o`; a log whose `seq` equals H's but whose
     `head` differs; a higher `n` with a lower `seq`; a lower `n` with a higher `seq`; or a uid of H that is missing.
-  - **After a restore:** a checkpoint with lower `seq`s is accepted only if it comes with the owner-signed `restore`
-    event, verified under the owner's device, whose `abandoned` is at least H's workspace-log `seq`. H is then replaced.
+  - **After a restore:** a checkpoint with lower `seq`s is accepted only with the owner-signed `restore` event,
+    verified under the owner's device, under the rule below. H is then replaced.
 
   A restore comes with a checkpoint as `{id, log, from_seq, abandoned}`. It is looked at only for a higher `n`, and
   only when its log (the workspace log or one ticket log) really drops below H or reaches H's `seq` again with

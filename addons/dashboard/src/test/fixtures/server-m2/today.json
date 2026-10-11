@@ -1,0 +1,37 @@
+{
+ "counts": {
+  "open": 4
+ },
+ "needs_you": [
+  {
+   "blocking": false,
+   "kind": "question",
+   "ref": "Q2",
+   "since": "",
+   "text": "",
+   "ticket": "DEMO-0001",
+   "title": "Real P1 ticket",
+   "uid": "UID1"
+  },
+  {
+   "blocking": false,
+   "kind": "approval",
+   "ref": "requirements",
+   "since": "",
+   "text": "",
+   "ticket": "DEMO-0001",
+   "title": "Real P1 ticket",
+   "uid": "UID1"
+  }
+ ],
+ "now": "2026-10-11T09:00:00Z",
+ "read_only_open": [],
+ "recent": [],
+ "sub_cursor": "CURSOR",
+ "waiting_on_others": {
+  "count": 0,
+  "people": []
+ },
+ "working": [],
+ "workspace": "705d40abbb8c1c90354a1acaa94c935c"
+}

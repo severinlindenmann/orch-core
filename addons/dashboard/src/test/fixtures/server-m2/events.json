@@ -1,0 +1,98 @@
+[
+ {
+  "actor": {
+   "id": "claude-code",
+   "kind": "agent"
+  },
+  "at": "2026-09-21T14:13:20Z",
+  "id": "1",
+  "seq": 1,
+  "summary": "",
+  "type": "ticket.created",
+  "v": 2
+ },
+ {
+  "actor": {
+   "id": "claude-code",
+   "kind": "agent"
+  },
+  "at": "2026-09-21T14:13:24Z",
+  "id": "2",
+  "seq": 2,
+  "summary": "AC1 added, section context, section out_of_scope, section requirements",
+  "type": "ticket.updated",
+  "v": 2
+ },
+ {
+  "actor": {
+   "id": "claude-code",
+   "kind": "agent"
+  },
+  "at": "2026-09-21T14:13:25Z",
+  "id": "3",
+  "seq": 3,
+  "summary": "labels, links, priority, T1 added, T2 added",
+  "type": "ticket.updated",
+  "v": 2
+ },
+ {
+  "actor": {
+   "id": "claude-code",
+   "kind": "agent"
+  },
+  "at": "2026-09-21T14:13:26Z",
+  "id": "4",
+  "seq": 4,
+  "summary": "Q1",
+  "type": "question.asked",
+  "v": 2
+ },
+ {
+  "actor": {
+   "id": "p_user1",
+   "kind": "person"
+  },
+  "at": "2026-09-21T14:13:27Z",
+  "id": "5",
+  "seq": 5,
+  "summary": "answered Q1 option=csv",
+  "type": "question.answered",
+  "v": 2
+ },
+ {
+  "actor": {
+   "id": "claude-code",
+   "kind": "agent"
+  },
+  "at": "2026-09-21T14:13:28Z",
+  "id": "6",
+  "seq": 6,
+  "summary": "Q2",
+  "type": "question.asked",
+  "v": 2
+ },
+ {
+  "actor": {
+   "id": "orch",
+   "kind": "host"
+  },
+  "at": "2026-09-21T14:13:28Z",
+  "id": "7",
+  "seq": 7,
+  "summary": "",
+  "type": "branch.pushed",
+  "v": 2
+ },
+ {
+  "actor": {
+   "id": "claude-code",
+   "kind": "agent"
+  },
+  "at": "2026-09-21T14:13:29Z",
+  "id": "8",
+  "seq": 8,
+  "summary": "hello world",
+  "type": "log.added",
+  "v": 2
+ }
+]

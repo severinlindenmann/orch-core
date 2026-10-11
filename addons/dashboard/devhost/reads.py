@@ -14,7 +14,7 @@ import time
 from orch.ops import views as p1_views
 from orch.schema import SECTIONS_BY_TYPE
 from orch.store import observe
-from orch.store.render import HEADINGS
+from orch.store.render import HEADINGS, thaw
 
 from orch_dashboard.errors import fail
 
@@ -257,6 +257,7 @@ def get(host, store, views, args, person):
     sections = tuple(h for h in HEADINGS if h in SECTIONS_BY_TYPE[v.type])
     defs = {q["id"]: q for q in v.fields["questions"]}
     doc = {
+        "uid": v.uid,
         "key": v.key,
         "title": v.title,
         "type": v.type,
@@ -268,6 +269,9 @@ def get(host, store, views, args, person):
         "parent": v.fields["parent"],
         "blocked_by": list(v.fields["blocked_by"]),
         "owner": v.owner,
+        "people": {r: list(v.people[r]) for r in ("assignees", "reviewers", "watchers")},
+        "visibility": thaw(v.visibility),
+        "links": thaw(v.fields["links"]),
         "claim": {"session": v.claim.session, "live": v.claim.live} if v.claim else None,
         "waiting": v.waiting,
         "acceptance": [{"id": a.id, "text": a.text, "evidence": list(a.evidence)} for a in v.acceptance],
@@ -303,6 +307,10 @@ def get(host, store, views, args, person):
             }
         )
     questions = []
+    answered_at = {}
+    for e in store.events(v.uid):
+        if e["type"] == "question.answered":
+            answered_at[e["question"]] = e["seq"]
     for q in v.questions:
         answer = q.answer or {}
         questions.append(
@@ -312,7 +320,7 @@ def get(host, store, views, args, person):
                 "to": list(q.addressees),
                 "blocking": q.blocking,
                 "answered_by": answer.get("by") if q.answered else None,
-                "answered_seq": answer.get("seq") if q.answered else None,
+                "answered_seq": answered_at.get(q.id) if q.answered else None,
             }
         )
     by_name = {a.name: a for a in v.artifacts}

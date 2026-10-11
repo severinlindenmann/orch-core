@@ -90,8 +90,12 @@ class Gateway:
                 ("workspace.show", "query/1"),
                 ("host.status", "ops/1"),
             ],
-            "today": [("needs", "query/1")],
-            "tickets": [("ticket.query", "query/1")],
+            "today": [("needs", "query/1"), ("ticket.query", "query/1")],
+            "tickets": [("ticket.query", "query/1"), ("needs", "query/1")],
+            "board": [("ticket.query", "query/1"), ("needs", "query/1")],
+            "ticket": [("ticket.get", "query/1"), ("needs", "query/1")],
+            "changes": [("ticket.get", "query/1"), ("diff", "diff/1")],
+            "evidence": [("ticket.get", "query/1"), ("artifact.get", "query/1")],
         }
         for feature, ops in requirements.items():
             if all(link.supports(op, cap) for op, cap in ops):

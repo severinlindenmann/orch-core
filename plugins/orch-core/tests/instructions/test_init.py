@@ -349,7 +349,7 @@ def test_no_production_path_skips_the_prompts():
         text = path.read_text()
         offenders += [(path.name, s) for s in SEAMS if re.search(rf"(?<![A-Za-z0-9]){s}\b", text)]
     assert offenders == []
-    assert set(OP.input["properties"]) == {"prefix", "name"}
+    assert set(OP.input["properties"]) == {"prefix", "name", "host"}  # --host runs the same prompts (H3b3)
     assert wi.TERMINAL.__class__ is wi.Terminal  # the module default is the real /dev/tty terminal
 
 

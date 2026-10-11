@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "host.busy",
+    "message": "the host is already creating or serving this workspace",
+    "hint": "orch host list",
+    "fix": {
+      "argv": [
+        "orch",
+        "host",
+        "list"
+      ]
+    },
+    "retryable": false
+  }
+}

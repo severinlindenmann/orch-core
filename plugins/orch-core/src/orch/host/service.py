@@ -37,7 +37,7 @@ from orch import canon
 
 from . import frames
 from .control import CONTROL_OPS, ControlGate, ControlOps
-from .custody import check_tree, ensure_private_dir
+from .custody import check_tree, ensure_private_dir, root_key
 from .errors import HostError
 from .intents import IntentStore
 from .jobs import CompletionStore
@@ -100,6 +100,7 @@ class Host:
         self._stopped: asyncio.Event | None = None
         self._drain: asyncio.Task[None] | None = None
         self._bootstrapping: set[str] = set()
+        self._bootstrapping_roots: set[tuple[int, int] | str] = set()
         self._guard = threading.Lock()
         self.recovered: list[tuple[str, str]] = []
 
@@ -293,20 +294,35 @@ class Host:
         self._on_loop(self.unserve(workspace_id))
 
     @contextlib.contextmanager
-    def bootstrap_guard(self, workspace_id: str) -> Iterator[None]:
+    def bootstrap_guard(self, workspace_id: str, root: str | None = None) -> Iterator[None]:
+        """One bootstrap per workspace id **and** per root at a time (N5): two bootstraps of one empty root under two
+        ids would otherwise both pass the emptiness check, and the loser's clean-up could remove the winner's files.
+        The root is keyed by its identity (:func:`~orch.host.custody.root_key`), never by its spelling."""
+        root = None if root is None else root_key(root)  # type: ignore[assignment]
         with self._guard:
             if workspace_id in self._bootstrapping:
                 raise HostError("host.busy", f"workspace {workspace_id} is being bootstrapped")
+            if root is not None and root in self._bootstrapping_roots:
+                raise HostError("host.busy", f"{root} is being bootstrapped")
             self._bootstrapping.add(workspace_id)
+            if root is not None:
+                self._bootstrapping_roots.add(root)
         try:
             yield
         finally:
             with self._guard:
                 self._bootstrapping.discard(workspace_id)
+                if root is not None:
+                    self._bootstrapping_roots.discard(root)
 
     def bootstrapping(self, workspace_id: str) -> bool:
         with self._guard:
             return workspace_id in self._bootstrapping
+
+    def bootstrapping_root(self, root: str) -> bool:
+        key = root_key(root)
+        with self._guard:
+            return key in self._bootstrapping_roots
 
     # -- drain
     def begin_drain(self) -> None:

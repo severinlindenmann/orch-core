@@ -81,7 +81,8 @@ orchestrator/
 - `settings.repos` maps the repo names used in `links` to a working copy (absolute, or relative to the workspace
   directory), with a required `path` and optional `remote` and `default_branch` fields; there is no primary flag.
   Repo names must be unique ignoring ASCII case. Paths must be unique after POSIX lexical normalisation
-  (`.` and `..` components and redundant slashes, including leading `//`), then ASCII-only case folding (A–Z → a–z); non-ASCII characters compare exactly after Unicode 16.0 NFC. Check the resulting settings,
+  (`.` and `..` components and redundant slashes, including leading `//`), then ASCII-only case folding (A–Z → a–z).
+  Non-ASCII characters compare exactly after Unicode 16.0 NFC. Check the resulting settings,
   including unchanged repos; collisions give `validation.*` at append and `chain.broken` on replay (step 0).
   All fields are owner-signed in the same `settings.changed` event. `remote` must already be a canonical repo
   identity (§5.7): refuse a non-canonical value, never convert it. Under §5.11 step 0, malformed
@@ -269,9 +270,11 @@ on. Defaults for a new ticket:
 
 The `spike` type covers the format's "spike / investigation" column; there is no separate `investigation` type.
 A repo name in `links` matches `^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$`; a branch name is a valid git ref name,
-with no leading `-`, no `refs/` prefix, not exactly `HEAD` or `@`, and no Unicode category Cc, Cf, Zs, Zl, Zp or Cn character
-(controls, format characters, separators or unassigned code points, using the bundled Unicode 16.0 data).
-This shared rule applies to `links.branches` and `default_branch`.
+with no leading `-`, no `refs/` prefix, not exactly `HEAD` or `@`, and no Unicode category Cc, Cf, Co, Zs, Zl, Zp or Cn character
+(controls, format characters, private use, separators or unassigned code points, using the bundled Unicode 16.0 data).
+This shared rule applies to `links.branches` and `default_branch`. Branch names also refuse
+U+FE00–FE0F, U+E0100–E01EF, U+034F, U+115F, U+1160, U+3164, U+FFA0, U+180B–180F,
+U+17B4–17B5, U+2800 and a leading combining mark (any M* category). All categories use Unicode 16.0.
 
 ## 4. `body.md`
 
@@ -778,7 +781,7 @@ later gate, so all their earlier approvals stop counting.
 
 **Text in approved content.** The approval is refused (`gate.suspicious_text`) when gated text contains a bidi
 control (U+202A–202E, U+2066–2069, U+200E, U+200F, U+061C). Other invisible characters (U+200B–200D, U+2060,
-U+FEFF, tag characters, other `Cf`, and these non-`Cf` look-alikes: U+034F, U+115F, U+1160, U+2028, U+2029, U+3164, U+FFA0, U+FE00–U+FE0F, U+E0100–U+E01EF) are shown as `⟨U+200B⟩` in every approval prompt and in `orch show`
+U+FEFF, tag characters, other `Cf`, and these non-`Cf` look-alikes: U+034F, U+115F, U+1160, U+2028, U+2029, U+3164, U+FFA0, U+FE00–U+FE0F, U+E0100–U+E01EF, U+180B–180F, U+17B4–17B5, U+2800, private-use `Co`, and a leading `M*` mark) are shown as `⟨U+200B⟩` in every approval prompt and in `orch show`
 (§12 N5).
 
 **The verdict binds to the commit (D58).** The verify gate hash includes the source list, and the prompt shows the
@@ -1482,9 +1485,8 @@ these codes; they are the stable `error.code` strings of §10.4 for these refusa
 | `grant.unknown` | §10.1 `grant.revoked` names no grant |
 | `quota.unattended` | §5.2 the unattended quota is exceeded |
 | `unattended.denied` | §5.2 an unattended event outside what unattended agents may do |
-| `validation.event` | Malformed event payload, including duplicate repo names or normalised repo paths (§5.4.2) |
+| `validation.event` | §5.11 step 0 malformed event payload, including duplicate repo names or normalised repo paths (§5.4.2); replay breaks the chain at that line |
 | `settings.invalid` | §5.4.2 duplicate declared identities, or a `local:` remote naming another repo |
-| `validation.event` | §5.11 step 0 malformed settings payload; replay breaks the chain at that line |
 | `addon.unknown` | §5.4.2 the addon is not granted or not enabled |
 | `addon.field_unknown` | §8.1 the field is not declared in the addon's grant |
 | `addon.value_invalid` | §8.1 the value is not valid for the declared field type and limits |

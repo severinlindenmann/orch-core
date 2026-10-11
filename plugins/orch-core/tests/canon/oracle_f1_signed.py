@@ -226,8 +226,8 @@ def tamper_vector() -> dict[str, Any]:
 
     def add(name: str, mutation: str, log: str, events: list[dict[str, Any]], broken_at: int | None) -> None:
         """One F1 outcome per case (§5.5 "Reading"): the reader checks each log's lines in file order and reports
-        ``chain.broken`` at the first line that fails cj, field set, seq, prev, ws_seq, host_sig or the person sig,
-        naming the line's position (the seq it should carry). A break at workspace seq n also stops every ticket
+        ``chain.broken`` at the first line that fails cj, field set, seq, prev, host_sig or the person sig
+        (``chain.bad_ws_seq`` for workspace-position/order checks), naming the line's position (the seq it should carry). A break at workspace seq n also stops every ticket
         event with ws_seq >= n."""
         case: dict[str, Any] = {"name": name, "mutation": mutation, "log": log, "events": events,
                                 "chain_broken_at": broken_at}  # fmt: skip
@@ -938,6 +938,35 @@ def refusal_order_scenarios() -> list[dict[str, Any]]:
                 "a\u3000b",
                 "a\u0378b",
                 "a\U0001e6c0b",
+                *[
+                    "a" + chr(cp) + "b"
+                    for cp in (
+                        0xFE00,
+                        0xFE0F,
+                        0xE0100,
+                        0xE01EF,
+                        0x034F,
+                        0x115F,
+                        0x1160,
+                        0x3164,
+                        0xFFA0,
+                        0x180B,
+                        0x180C,
+                        0x180D,
+                        0x180E,
+                        0x180F,
+                        0x17B4,
+                        0x17B5,
+                        0x2800,
+                        0xE000,
+                        0xF0000,
+                        0x100000,
+                    )
+                ],
+                "\u0301branch",
+                "\u0903branch",  # Mc with combining class zero is still a leading mark
+                "\u20ddbranch",  # Me
+                "\U00010d69branch",  # Unicode 16.0 mark
             )
         ],
     ]:
@@ -1004,9 +1033,19 @@ def refusal_order_scenarios() -> list[dict[str, Any]]:
         note="removing the old entry allows its name and path to be reused",
     )
     w.ev(
-        "workspace", "settings.changed", w.actor("sev"),
-        {"set": {"repos": {"c": {"path": "../Stra\u00dfe"}, "d": {"path": "../STRASSE"},
-                           "e": {"path": "../\ua7cb"}, "f": {"path": "../\u0264"}}}},
+        "workspace",
+        "settings.changed",
+        w.actor("sev"),
+        {
+            "set": {
+                "repos": {
+                    "c": {"path": "../Stra\u00dfe"},
+                    "d": {"path": "../STRASSE"},
+                    "e": {"path": "../\ua7cb"},
+                    "f": {"path": "../\u0264"},
+                }
+            }
+        },
         note="only ASCII case folds: non-ASCII case pairs remain distinct on every runtime",
     )
     out.append(w.scenario())

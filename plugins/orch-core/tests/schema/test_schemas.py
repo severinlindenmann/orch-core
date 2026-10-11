@@ -2282,6 +2282,28 @@ def test_addon_heading_keys_are_required_and_unique():
         ],
         "a\u0378b",
         "a\U0001e6c0b",
+        *[
+            "a" + chr(cp) + "b"
+            for cp in (
+                0x034F,
+                0x115F,
+                0x1160,
+                0x3164,
+                0xFFA0,
+                0x2800,
+                *range(0xFE00, 0xFE10),
+                *range(0xE0100, 0xE01F0),
+                *range(0x180B, 0x1810),
+                *range(0x17B4, 0x17B6),
+                0xE000,
+                0xF8FF,
+                0xF0000,
+                0xFFFFD,
+                0x100000,
+                0x10FFFD,
+            )
+        ],
+        *[chr(cp) + "branch" for cp in (0x0301, 0x0903, 0x20DD, 0x10D69)],
     ],
 )
 def test_shared_branch_rule(branch):
@@ -2291,6 +2313,7 @@ def test_shared_branch_rule(branch):
         "/set/repos/repo/default_branch",
     )
     bad("ticket", mut(ex.TICKET, lambda o: o["links"]["branches"].update(repo=branch)), "/links/branches/repo")
+    bad("event", mut(ex.EVENTS["branch.pushed"], lambda e: e.update(ref="refs/heads/" + branch)), "/ref")
 
 
 def test_branch_assignment_uses_unicode_16():

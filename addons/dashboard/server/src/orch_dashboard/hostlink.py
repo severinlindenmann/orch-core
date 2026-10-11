@@ -31,6 +31,8 @@ OPS = {
         "needs",
         "ticket.query",
         "ticket.get",
+        "diff",
+        "artifact.get",
         "grant.list",
         "human.get",
         "human.pending",
@@ -42,6 +44,8 @@ OPS = {
         "outcome.get",
     )
 }
+
+QUERY_OPS = {"ticket.query", "ticket.get", "artifact.get", "grant.list", "needs", "workspace.show", "member.list"}
 
 
 def peer_uid(sock: socket.socket) -> int:
@@ -220,8 +224,10 @@ class HostLink:
             if op.startswith("human.")
             else "outcome/1"
             if op == "outcome.get"
+            else "diff/1"
+            if op == "diff"
             else "query/1"
-            if op in {"ticket.query", "ticket.get", "grant.list", "needs", "workspace.show", "member.list"}
+            if op in QUERY_OPS
             else "ops/1"
         )
         if not self.supports(op, cap):

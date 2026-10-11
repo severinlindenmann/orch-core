@@ -13,9 +13,11 @@ from orch.ops import Context, Result
 from orch.ops.errors import OrchError
 from orch.ops.runtime import Call, Workspace
 from orch.ops.views import verified
+
 from orch_dashboard.errors import HostError, fail
 from orch_dashboard.hostlink import check_uid, encode, receive
 
+from . import reads
 from .reserved import OPS
 
 # Registry reads that do not accept filesystem paths or need a P1 agent grant.
@@ -39,6 +41,7 @@ class StubHost:
         self.history = []
         self.journal = deque(maxlen=10000)
         self.cursors = {self.cursor: 0}
+        self.pages = reads.Pages()
         self.visible = {}
 
     def refresh(self, store, views):
@@ -124,7 +127,7 @@ class StubHost:
             "host_uid": os.getuid(),
             "workspace": {"id": self.ws, "prefix": data["prefix"]},
             "peer": {"uid": os.getuid(), "class": "person", "person": self.person},
-            "caps": ["ops/1", "query/1", "sub/1"],
+            "caps": ["ops/1", "query/1", "sub/1", "diff/1"],
             "ops": self.versions,
             "registry": "sha256:" + hashlib.sha256(json.dumps(self.versions, sort_keys=True).encode()).hexdigest(),
             "tier": "A",
@@ -164,7 +167,7 @@ class StubHost:
                     return asdict(decl.handler(ctx, args))
                 if op not in OPS:
                     raise fail("unknown_command", exit=2)
-                if op != "ticket.query" and args:
+                if args and op not in reads.TAKES_ARGS:
                     raise fail("invalid.input", exit=5)
                 if op == "host.list":
                     data = {
@@ -228,87 +231,15 @@ class StubHost:
                         ]
                     }
                 elif op == "needs":
-                    items = [
-                        {
-                            "kind": n.kind,
-                            "key": v.key,
-                            "uid": v.uid,
-                            "ref": n.ref,
-                            "detail": n.detail,
-                            "who": list(n.who),
-                        }
-                        for v in views
-                        for n in v.needs
-                        if self.person in n.who
-                    ]
-                    items += [
-                        {
-                            "kind": n.kind,
-                            "key": None,
-                            "uid": None,
-                            "ref": n.ref,
-                            "detail": n.detail,
-                            "who": list(n.who),
-                        }
-                        for n in ws.needs
-                        if self.person in n.who
-                    ]
-                    data = {"items": items, "sub_cursor": self.cursor}
+                    data = reads.needs(self, views, ws, self.person, args)
                 elif op == "ticket.query":
-                    from orch_dashboard.app import TicketQuery
-                    from pydantic import ValidationError
-
-                    try:
-                        query = TicketQuery(**args)
-                        start = int(query.page or "0")
-                        if start < 0:
-                            raise ValueError()
-                    except (ValidationError, ValueError):
-                        raise fail("invalid.input", exit=5) from None
-                    rows = []
-                    for v in views:
-                        events = store.events(v.uid)
-                        updated = events[-1]["at"] if events else None
-                        rows.append(
-                            {
-                                "key": v.key,
-                                "uid": v.uid,
-                                "title": v.title,
-                                "type": v.type,
-                                "status": v.status,
-                                "priority": v.fields["priority"],
-                                "size": v.fields["size"],
-                                "labels": list(v.fields["labels"]),
-                                "assignees": list(v.people["assignees"]),
-                                "owner": v.owner,
-                                "parent": v.fields.get("parent"),
-                                "epic": None,
-                                "claim": {"session": v.claim.session, "agent": None} if v.claim else None,
-                                "gates": {
-                                    g: "n/a" if not x.applies else "approved" if x.approved else "open"
-                                    for g, x in v.gates.items()
-                                },
-                                "needs": [n.kind for n in v.needs if self.person in n.who],
-                                "updated_at": updated,
-                                "head_seq": store.head_seq(v.uid),
-                            }
-                        )
-                    if query.sort == "priority":
-                        ranks = {"urgent": 0, "high": 1, "medium": 2, "low": 3}
-                        rows.sort(key=lambda r: (ranks[r["priority"]], r["key"]))
-                    else:
-                        rows.sort(
-                            key=lambda r: r["updated_at"] or "" if query.sort == "updated" else r["key"],
-                            reverse=query.sort == "updated",
-                        )
-                    end = start + query.limit
-                    data = {
-                        "rows": rows[start:end],
-                        "total": len(rows),
-                        "next_page": str(end) if end < len(rows) else None,
-                        "sub_cursor": self.cursor,
-                        "as_of": store.state.now,
-                    }
+                    data = reads.query(self, store, views, args, self.person)
+                elif op == "ticket.get":
+                    data = reads.get(self, store, views, args, self.person)
+                elif op == "diff":
+                    data = reads.diff(store, views, args)
+                elif op == "artifact.get":
+                    data = reads.artifact(store, views, args)
                 else:
                     raise fail("unknown_command", exit=2)
                 return asdict(Result(data=data))

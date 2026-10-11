@@ -8,6 +8,9 @@ OPS = (
     "member.list",
     "ticket.query",
     "needs",
+    "ticket.get",
+    "diff",
+    "artifact.get",
     "sub.open",
     "sub.close",
 )

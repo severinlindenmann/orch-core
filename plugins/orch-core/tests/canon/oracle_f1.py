@@ -713,7 +713,7 @@ INDEX: dict[str, str] = {
     "refusal_order.json": "model scenarios: an event breaking two rules gets the code of the earlier step of the "
     "refusal order (5.11)",
     "generation.json": "the 5.7 raise table row by row, delayed approval, reverted edit, voided approvals",
-    "status.json": "the 5.9 status table, done is sticky, reopen",
+    "status.json": "the 5.9 status table, done is sticky, reopen, a new sha under a case-variant remote",
     "effective_policy.json": "the 5.7 intersection, a later workspace change, gate.no_eligible",
     "approvals.json": "model scenarios: who may approve (5.7), host events (5.2, 5.12), gate.incomplete, "
     "gate.not_applicable, a stale source_sha",

@@ -832,8 +832,10 @@ It covers the op, its outcome and every payload field, so `verdict pass` and `ve
     The request-level rules, in order:
     - `not_found`;
     - a `submitted` request whose stored signed events equal the submitted ones (canonical, signatures included): the
-      request's stored result with `duplicate:true`. **A fresh outcome record is written for this idem**, `committed`
-      with that result, so a later retry with the same idem replays at step 2;
+      request's stored terminal answer, unchanged. That is its result with `duplicate:true` when its outcome is
+      `committed`, or its stored error (exit and retryable included) when its outcome is `failed`, for example after a
+      failed roll-forward. **A fresh outcome record is written for this idem with the same outcome state and the same
+      answer**, so a later retry with the same idem replays it at step 2 and `outcome.get` reports the same state;
     - `human.request_state` (submitted with other events, cancelled, unbound);
     - `human.request_expired`;
     - the checks above.

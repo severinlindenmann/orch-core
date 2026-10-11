@@ -164,6 +164,15 @@
    "name": "https_dot_git_in_a_middle_segment",
    "raw": "https://github.com/acme.git/x",
    "repo_name": "x"
+  },
+  {
+   "canonical": "https://gh/acme/x",
+   "local_git_config": {
+    "url.https://evil.example/.insteadOf": "gh:"
+   },
+   "name": "scp_like_with_a_local_insteadof",
+   "raw": "gh:acme/x",
+   "repo_name": "x"
   }
  ],
  "mapping_note": "userinfo (user:token@) is removed before anything else and never appears in a result; one trailing / and one trailing (lower-case) .git are removed from the end of the path; the https default port 443 and the ssh default port 22 are dropped, every other port is kept (so ssh on 443 keeps it); anything that is not https, ssh or scp-like is local:<repo name>. A mapped result that is not in the canonical form is refused, never converted: `canonical` is null and `refused` is true (x.GIT, x//, ssh port 443). A .git that ends a middle segment is not a .git suffix of the path and is kept.",

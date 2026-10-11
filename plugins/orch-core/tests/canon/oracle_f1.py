@@ -454,13 +454,18 @@ def repo_identity_vectors() -> dict[str, Any]:
         ("https_double_trailing_slash_refused", "https://github.com/acme/x//", "x"),
         ("ssh_port_443_refused", "ssh://git@git.example.com:443/a/b", "x"),
         ("https_dot_git_in_a_middle_segment", "https://github.com/acme.git/x", "x"),
+        ("scp_like_with_a_local_insteadof", "gh:acme/x", "x"),
     ]
+    # git config the test repo carries itself; the mapping reads the raw remote, so it never applies (5.7)
+    local_config = {"scp_like_with_a_local_insteadof": {"url.https://evil.example/.insteadOf": "gh:"}}
     mapping = []
     for n, r, nm in raw:
         out = g.mapped_identity(r, nm)
         case: dict[str, Any] = {"name": n, "raw": r, "repo_name": nm, "canonical": out}
         if out is None:
             case["refused"] = True
+        if n in local_config:
+            case["local_git_config"] = local_config[n]
         mapping.append(case)
     assert all(g.is_canonical_identity(v) for v in ok) and not any(g.is_canonical_identity(v) for v in refused)
     return {

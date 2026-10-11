@@ -532,8 +532,10 @@ Workspace views, agent starts, relay links, epochs and terminal events are defin
   these checks breaks the chain: every read and `orch doctor` report `chain.broken` with its `seq`, and nothing
   after it counts until an owner-signed `restore`. An event that passes them but fails authorization is handled as
   §5.11 says. `sig` is checked under `dk_sig_pub` of the certificate for `actor.device` (if there is none, or the
-  signature doesn't verify, the line breaks the chain). Whether that certificate is valid at this point (expired,
-  removed, revoked, missing a scope) is authorization (§5.11). A break at workspace `seq` n also stops every ticket
+  signature doesn't verify, the line breaks the chain). A `device.added` whose `actor.device` is the device it adds
+  is checked under the `cert` inside the event; whether that self-signature is allowed is authorization (§5.3, for
+  example `device.unknown`). Whether that certificate is valid at this point (expired, removed, revoked, missing a
+  scope) is authorization (§5.11). A break at workspace `seq` n also stops every ticket
   event with `ws_seq ≥ n`. Each log's lines are checked in file order before merging; a reader never sorts a log's
   lines. `chain.broken` names the line's position, which is the `seq` it should carry.
 - **Writing** is atomic per event, under the store lock: (1) write the new `ticket.json`/`body.md` to

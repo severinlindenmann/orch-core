@@ -91,6 +91,10 @@ REFUSED_GAPS = {
 def _mapping_param(c):
     if c["name"] in KNOWN_GAPS:
         return pytest.param(c, marks=pytest.mark.xfail(strict=True, reason="repo_identity deviates from F1 5.7"))
+    if c["name"] == "scp_like_with_a_local_insteadof":
+        return pytest.param(c, marks=pytest.mark.xfail(strict=True, reason="orch reads `git remote get-url`, which "
+                            "applies the repo-local insteadOf (https://evil.example/acme/x); F1 5.7 maps the raw "
+                            "remote.origin.url. Fixed in #363"))  # fmt: skip
     if c["name"] in REFUSED_GAPS:
         return pytest.param(c, marks=pytest.mark.xfail(strict=True, reason=REFUSED_GAPS[c["name"]]))
     return c
@@ -109,6 +113,8 @@ def test_repo_identity_from_a_raw_remote(tmp_path, monkeypatch, c):
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     if c["raw"]:
         subprocess.run(["git", "-C", str(tmp_path), "remote", "add", "origin", c["raw"]], check=True)
+    for k, v in c.get("local_git_config", {}).items():
+        subprocess.run(["git", "-C", str(tmp_path), "config", k, v], check=True)
     if c.get("refused"):  # §5.7: a mapped result that is not canonical is refused, never converted to a https identity
         try:
             got = observe.repo_identity(tmp_path, c["repo_name"])

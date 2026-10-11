@@ -17,8 +17,10 @@ Rules that keep it complete:
   and the actor's person and device.
 * A ticket-format §5.4 diffstat is not part of any signed payload, so it cannot be shown from the signed bytes; the
   source list (every repo, ref and sha) and the gate hash that bind the decision are.
-* Event types an agent or the host appends (``task.*``, ``claim.*``, ``artifact.*``, ``edit.external`` ...) are never
-  signed by a person and refuse here, as does any unknown type, label or shape.
+* Event types only an agent or the host appends (``task.*``, ``claim.*``, ``edit.external`` ...) are never signed by
+  a person and refuse here, as does any unknown type, label or shape. The A types a person may sign through
+  ``human.prepare`` (the person versions of ``set``, ``section.set``, ``ac.*``, ``log``, ``ask``, ``artifact.*``,
+  ``new``: H5a, §0.8) have their tables like every person type.
 """
 
 from __future__ import annotations
@@ -47,6 +49,14 @@ EVENT_FIELDS: dict[str, tuple[str, ...]] = {
     "gate.approved": (*_GATE, "source_sha"),
     "gate.changes_requested": (*_GATE, "text"),
     "verdict.given": ("outcome", "gate_gen", "hash", "policy_hash", "source_sha", "text"),
+    "ticket.moved": ("from", "to", "reason"),
+    # ticket log, actor A or AU, signed by a person through human.prepare (H5a: person versions of agent ops)
+    "ticket.created": ("key", "ticket_type", "title", "owner"),
+    "ticket.updated": ("base_rev", "set", "sections"),
+    "log.added": ("text",),
+    "question.asked": ("question", "qid", "hash"),
+    "artifact.added": ("name", "kind", "sha256", "bytes", "ac", "task", "label", "addon", "ref"),
+    "artifact.replaced": ("name", "kind", "sha256", "bytes", "ac", "task", "label", "replaces"),
     # both logs
     "restore": ("from_seq", "head", "abandoned", "abandoned_decisions", "source", "revocations", "reason", "note"),
     "invalid.acknowledged": ("invalid_seq", "invalid_head", "reason"),

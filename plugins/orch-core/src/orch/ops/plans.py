@@ -78,7 +78,7 @@ def run(
             )
     with c.locked():
         view = c.resolve(args.get(ref_key), live_only=live_only)
-        if claim:
+        if claim and ctx.prepare is None:  # a person's signed edit needs no claim (F1: A types, signed by a person)
             c.require_claim(view)
         p = c.projection(view)
         out = build(c, p, args)

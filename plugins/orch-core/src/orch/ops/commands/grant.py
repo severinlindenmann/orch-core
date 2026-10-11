@@ -3,7 +3,7 @@
 import re
 from typing import Any
 
-from orch.identity import new_grant
+from orch.identity import new_grant, new_ulid
 from orch.ops import human
 from orch.ops._dsl import STR, E, I, S, err, obj, operation
 from orch.ops.base import Context, Result
@@ -35,10 +35,14 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     h = Human(ctx, "grant")
     hours = args.get("hours", 8)
     issued = ctx.now()
-    token, value, secret_hash = new_grant(int(issued * 1000))
+    if ctx.prepare is not None:  # human.prepare: the signing client draws the secret, never the preparer (F1, D-P2-16)
+        grant_id, value, secret_hash = "gr_" + new_ulid(int(issued * 1000)), None, None
+    else:
+        token, value, secret_hash = new_grant(int(issued * 1000))
+        grant_id = token.grant_id
     event: dict[str, Any] = {
         "type": "grant.issued",
-        "grant": token.grant_id,
+        "grant": grant_id,
         "scope": args.get("scope", "workable"),
         "verbs": _verbs(args.get("verbs", "agent")),
         "issued_at": iso(issued),
@@ -48,8 +52,12 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     }
     if args.get("label"):
         event["label"] = h.call.text(args["label"], one_line=True, what="label")
-    done = h.run(event, "workspace", f"issue grant {token.grant_id} for {hours} h")
+    done = h.run(event, "workspace", f"issue grant {grant_id} for {hours} h")
     lines: list[str] = []
+    if ctx.prepare is not None:  # the result human.submit answers with once the signed grant landed
+        return h.workspace_result(
+            None, {"grant": grant_id, "until": event["expires_at"], "scope": event["scope"]}, None
+        )
     if done is not None:
         try:
             human.show_secret(  # looked up at call time: a test replaces it, nothing else does
@@ -59,11 +67,11 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         except Exception as e:  # the grant exists but nobody can use it: say how to end it
             raise OrchError(
                 "custody.no_prompt",
-                f"{token.grant_id} was issued but its secret could not be shown ({e}); revoke it: orch grant revoke "
-                f"{token.grant_id}",
+                f"{grant_id} was issued but its secret could not be shown ({e}); revoke it: orch grant revoke "
+                f"{grant_id}",
             ) from None
         lines.append("the secret was shown on your terminal; clear its scrollback when the harness has it")
-        data = {"grant": token.grant_id, "until": event["expires_at"], "scope": event["scope"]}
+        data = {"grant": grant_id, "until": event["expires_at"], "scope": event["scope"]}
         return h.workspace_result(done, data, "set ORCH_GRANT=<the value shown> for the harness", lines)
     # a dry run made no grant: no id, no end time, no hint (the id above was never used)
     return h.workspace_result(None, {"scope": event["scope"]}, None, ["no grant was made"])

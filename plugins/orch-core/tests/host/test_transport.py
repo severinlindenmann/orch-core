@@ -593,8 +593,10 @@ def test_byte_budget_and_bucket_are_bounded():
     clock = Clock()
     budget = ByteBudget(clock)
     budget.add(transport.BYTES_PER_MINUTE)
-    with pytest.raises(frames.FrameError):
+    with pytest.raises(frames.FrameError) as exc:
         budget.add(1)
+    assert exc.value.code == "conn.overloaded"
+    assert exc.value.fate == "close"
     clock.now = 61
     budget.add(1)
     assert budget.total == 1
@@ -788,7 +790,7 @@ def test_bounded_queue_and_fatal_disposition(monkeypatch):
             while (reply := await read_frame(client)) is not None:
                 replies.append(reply)
             assert replies[-1]["t"] == "fatal"
-            assert replies[-1]["error"]["code"] == "quota.host"
+            assert replies[-1]["error"]["code"] == "conn.overloaded"
             assert len(replies) <= 3
 
     asyncio.run(scenario())
@@ -1294,3 +1296,114 @@ def test_default_attempt_bucket_refills_per_uid():
     limits.acquire(Peer(456, "agent"))
     clock.now += 0.05
     limits.acquire(peer)
+
+
+def test_eight_unanswered_handlers_release_ids_slots_and_idle():
+    def unanswered(session, frame, request):
+        session.admit(request)
+
+        async def run():
+            session.state.start(request, "read")
+
+        return run()
+
+    async def scenario():
+        async with pair_session(callback=unanswered) as (session, client, _, clock):
+            await send_frame(client, HELLO)
+            await read_frame(client)
+            for i in range(8):
+                await send_frame(client, req(str(i)))
+                response = await read_frame(client)
+                assert response["id"] == str(i)
+                assert response["error"]["code"] == "internal"
+            assert session.state.slots == 0
+            session.server.handler = handler
+            await send_frame(client, req("0"))
+            assert (await read_frame(client))["ok"]
+            clock.now = 601
+            assert await read_frame(client) is None
+
+    asyncio.run(scenario())
+
+
+def test_cancelled_work_without_cancel_frame_answers_internal():
+    async def scenario():
+        entered = asyncio.Event()
+
+        def parked(session, frame, request):
+            session.admit(request)
+
+            async def run():
+                session.state.start(request, "wait")
+                entered.set()
+                await asyncio.Event().wait()
+
+            return run()
+
+        async with pair_session(callback=parked) as (session, client, _, _):
+            await send_frame(client, HELLO)
+            await read_frame(client)
+            await send_frame(client, req())
+            await entered.wait()
+            next(iter(session.tasks.values())).cancel()
+            assert (await read_frame(client))["error"]["code"] == "internal"
+            assert session.state.slots == 0
+            session.server.handler = handler
+            await send_frame(client, req())
+            assert (await read_frame(client))["ok"]
+
+    asyncio.run(scenario())
+
+
+def test_oversized_result_is_request_scoped_and_id_reusable():
+    def oversized(session, frame, request):
+        session.admit(request)
+
+        async def run():
+            session.state.start(request, "read")
+            response = result(request.id)
+            response["result"]["data"] = "x" * frames.MAX_FRAME
+            session.respond(request, response)
+
+        return run()
+
+    async def scenario():
+        async with pair_session(callback=oversized) as (session, client, _, _):
+            await send_frame(client, HELLO)
+            await read_frame(client)
+            await send_frame(client, req())
+            response = await read_frame(client)
+            assert response["t"] == "res"
+            assert response["error"]["code"] == "result.too_large"
+            assert response["exit"] == 1
+            assert response["error"]["retryable"] is False
+            assert "limit" in response["error"]["hint"] and "page" in response["error"]["hint"]
+            session.server.handler = handler
+            await send_frame(client, req())
+            assert (await read_frame(client))["ok"]
+
+    asyncio.run(scenario())
+
+
+def test_write_deadline_has_overloaded_disposition(monkeypatch):
+    async def scenario():
+        async with pair_session() as (session, client, _, _):
+            await send_frame(client, HELLO)
+            await read_frame(client)
+
+            async def timeout(sock, data):
+                raise TimeoutError
+
+            monkeypatch.setattr(asyncio.get_running_loop(), "sock_sendall", timeout)
+            session.send(result())
+            # Run a separate writer to inspect the protocol error directly.
+            with pytest.raises(frames.FrameError) as exc:
+                await session._write()
+            assert (exc.value.code, exc.value.exit, exc.value.retryable, exc.value.fate) == (
+                "conn.overloaded",
+                9,
+                True,
+                "close",
+            )
+
+    asyncio.run(scenario())

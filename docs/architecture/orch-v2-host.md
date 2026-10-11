@@ -4,13 +4,13 @@ Status: Decided 11 Oct 2026 (draft by orch-52, Codex challenge, Opus tie-break o
 after the Opus security review (F1–F15), the Codex clarity review (14 points) and the dashboard stream's requests
 (R1–R11), and again after the security re-review (N1–N5), the Codex clarity re-review (12 points) and orch-relay's P3
 host interface (§11), and finally after the Opus diff check (M1, L1–L3) and the Codex re-check (8 points). The socket
-API contract §0 is **v1.3.1 (provisional)**: changes go through the coordination log.
+API contract §0 is **v1.3.2 (provisional)**: changes go through the coordination log.
 
 Built on `origin/develop` 908f2511. Decisions are numbered **D-P2-n**, each with a one-line reason.
 
 ---
 
-## 0. Socket API contract v1.3.1 (provisional)
+## 0. Socket API contract v1.3.2 (provisional)
 
 §0 is complete on its own. Streams B (dashboard), C (mobile, from P3) and D (relay bridge) build on it without reading
 the rest. Everything in §0 is normative: a host or client that differs from it is wrong.
@@ -289,13 +289,15 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 **Connection fate:**
 
 - **stays**: the connection remains usable;
-- **close**: sent as `fatal`, then the connection is closed;
+- **close**: sent as `fatal`, then the connection is closed; `conn.overloaded` has this disposition.
+  If a write has already partially sent a frame, close directly because appending a fatal would corrupt framing;
 - **drain**: the connection stays only until the drain ends.
 
 | Code | Exit | Retryable | Fate | When | `retry_after_ms` |
 |---|---|---|---|---|---|
 | `frame.invalid` | 6 | no | close | §0.2 framing rules; an unreadable `req` id; reuse of an open id | — |
 | `frame.too_large` | 6 | no | close | `n` > 2 MiB | — |
+| `conn.overloaded` | 9 | yes | close | slow reader write deadline (10 s), write queue over 64 frames or 4 MiB, or connection byte budget exhausted | — |
 | `handshake.invalid` | 6 | no | close | missing, late or second `hello` | — |
 | `peer.denied` | 3 | no | close | unmapped UID; second worker connection | — |
 | `host.version_mismatch` | 1 | no | close | no shared `proto` | — |
@@ -1208,6 +1210,10 @@ The dashboard sees `seq` 20 through its subscription, or polls `human.pending {r
 8. New code `control.rolled_back`.
 
 **v1.3 → v1.3.1.** Frames contain at most 65,536 JSON values; exceeding the cap is fatal `frame.invalid` (§0.2).
+
+**v1.3.1 → v1.3.2.** Add fatal `conn.overloaded` (exit 9, retryable) for connection-level backpressure;
+`quota.host` remains request-scoped except at connect. Bound host-wide connections and default per-UID connection
+attempts to 20/s, burst 40. Runtime binding uses per-thread cwd on macOS or `/proc/self/fd` on Linux (orch-52).
 
 
 ---

@@ -142,7 +142,7 @@ class ByteBudget:
         while self.samples and self.samples[0][0] < now - 60:
             self.total -= self.samples.popleft()[1]
         if self.total + size > BYTES_PER_MINUTE:
-            raise frames.FrameError("quota.host", "Connection byte limit exceeded")
+            raise frames.FrameError("conn.overloaded", "Connection byte limit exceeded")
         if self.samples and self.samples[-1][0] == now:
             size += self.samples.pop()[1]
         self.samples.append((now, size))
@@ -214,7 +214,7 @@ class Session:
         data = frames.encode(frame)
         self.output_budget.add(len(data))
         if self.queue.full() or self.queued_bytes + len(data) > WRITE_QUEUE_BYTES:
-            raise frames.FrameError("quota.host", "Slow reader exceeded the write queue")
+            raise frames.FrameError("conn.overloaded", "Slow reader exceeded the write queue")
         self.queue.put_nowait((data, done))
         self.queued_bytes += len(data)
 
@@ -223,7 +223,14 @@ class Session:
             return
         if frame.get("t") != "res" or frame.get("id") != request.id:
             raise ValueError("Response does not match its request")
-        self.send(frame, lambda: self._responded(request))
+        try:
+            self.send(frame, lambda: self._responded(request))
+        except frames.FrameError as exc:
+            if exc.code != "frame.too_large":
+                raise
+            response = frames.FrameError("result.too_large", request_id=request.id).response()
+            response["error"]["hint"] = "Use a smaller limit; pass next_page as page to fetch subsequent results."
+            self.send(response, lambda: self._responded(request))
         self.answering.add(request)
 
     def _responded(self, request: frames.Request) -> None:
@@ -238,7 +245,7 @@ class Session:
             try:
                 await asyncio.wait_for(loop.sock_sendall(self.sock, data), WRITE_TIMEOUT_SECONDS)
             except TimeoutError as exc:
-                raise frames.FrameError("quota.host", "Slow reader write deadline exceeded") from exc
+                raise frames.FrameError("conn.overloaded", "Slow reader write deadline exceeded") from exc
             self.writing = False
             self.queued_bytes -= len(data)
             self.last_activity = self.server.clock()
@@ -248,6 +255,7 @@ class Session:
     async def _work(self, request: frames.Request, work: Awaitable[None]) -> None:
         try:
             await work
+            self._internal(request)  # No-op if work already answered or queued its response.
         except frames.FrameError as exc:
             if exc.fate == "close":
                 self.failure = exc
@@ -322,7 +330,12 @@ class Session:
                         work.close()
                     if not task.cancelled() and task.exception() is not None:
                         exc = task.exception()
-                        self.failure = exc if isinstance(exc, frames.FrameError) else frames.FrameError("quota.host")
+                        self.failure = exc if isinstance(exc, frames.FrameError) else frames.FrameError("internal")
+                    elif task.cancelled():
+                        try:
+                            self._internal(request)
+                        except frames.FrameError as exc:
+                            self.failure = exc
 
                 task.add_done_callback(finished)
             else:
@@ -366,8 +379,6 @@ class Session:
                 task.result()
         except frames.FrameError as exc:
             error = exc
-        except (ConnectionError, OSError):
-            pass
         except Exception:
             error = frames.FrameError("internal")
         finally:

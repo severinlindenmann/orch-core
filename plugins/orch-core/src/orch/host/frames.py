@@ -1,4 +1,4 @@
-"""Socket contract v1.3.1: framing, envelope validation and connection bookkeeping.
+"""Socket contract v1.3.2: framing, envelope validation and connection bookkeeping.
 
 No I/O lives here. Decoder.feed returns objects or terminal FrameErrors in
 wire order; validate_envelope checks their shape, and Connection receives client
@@ -30,6 +30,8 @@ ULID = r"[0-7][0-9A-HJKMNP-TV-Z]{25}"
 HASH = r"sha256:[0-9a-f]{64}"
 KEY = r"[A-Z][A-Z0-9]{1,9}-[0-9]{4,}"
 _DISPOSITIONS = {
+    "conn.overloaded": (9, True, "close"),
+    "result.too_large": (1, False, "stays"),
     "internal": (1, False, "stays"),
     "frame.invalid": (6, False, "close"),
     "frame.too_large": (6, False, "close"),
@@ -43,6 +45,8 @@ _DISPOSITIONS = {
 }
 
 _MESSAGES = {
+    "conn.overloaded": "Connection resource limit exceeded",
+    "result.too_large": "Result exceeds the frame size limit",
     "internal": "Internal host error",
     "frame.invalid": "Invalid frame",
     "frame.too_large": "Frame exceeds the size limit",

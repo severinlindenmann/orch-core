@@ -315,6 +315,7 @@ class Store:
             self._loaded |= {m["log"] for _, m in pend if m["log"] != WORKSPACE}
             self._load()
             self._finish_pending(pend)
+            self._finish_applied_checkpoint()
             self._enforce_revocations()
             if self._host is not None:
                 self._after_open_heal(eager)
@@ -926,6 +927,7 @@ class Store:
                 self._report("store.torn_write", f"event {m['id']} is not in the verified part of {log}", log)
                 shutil.rmtree(d, ignore_errors=True)
                 continue
+            self._finish_applied_checkpoint()
             torn = self._install(m, d, check=self._expected_bytes)
             for rel in torn:
                 self._torn.add(rel)
@@ -1218,6 +1220,7 @@ class Store:
             check_uid(log)
         if self._host is None:
             raise StoreError("store.read_only", "no workspace key signer: this store can only read")
+        self._finish_applied_checkpoint()
         if log in self._read_errors:
             raise StoreError("chain.broken", f"{log}: {self._read_errors[log]}")
         if WORKSPACE in self._read_errors:
@@ -1227,9 +1230,21 @@ class Store:
             self._enforce_revocations()
             if self._pending_revs:
                 raise StoreError("store.torn_write", "a restore's device.revoked re-appends are not all written yet")
+        if typ != "restore" and self._missing_checkpoint(log):
+            raise StoreError("checkpoint.missing", f"{log}: missing checkpoint is not explained by the last append")
         d = self._diverged.get(log) or (self._diverged.get(WORKSPACE) if log != WORKSPACE else None)
         if d is not None and not (typ == "restore" and d.log == log):
             raise StoreError("chain.diverged", f"{d.log}: {d.detail} (an owner-signed restore is needed)")
+
+    def _missing_checkpoint(self, log: str) -> bool:
+        info = self._logs.get(log)
+        return bool(
+            log != WORKSPACE
+            and info is not None
+            and info.seq
+            and self._checkpoints.ticket(log) is None
+            and not self.repairable_checkpoint(log)
+        )
 
     def _envelope(self, event: dict[str, Any], log: str) -> dict[str, Any]:
         bad = [k for k in _HOST_FIELDS if k in event]
@@ -1272,6 +1287,8 @@ class Store:
         host_event = isinstance(actor, dict) and actor.get("kind") == "host"
         if not self._healing:
             self._ensure_for(e, log)
+        if typ != "restore" and self._missing_checkpoint(log):
+            raise StoreError("checkpoint.missing", f"{log}: missing checkpoint is not explained by the last append")
         if idem is not None:
             dup = self._idem_hit(idem, log, e)
             if dup is not None:
@@ -1671,7 +1688,9 @@ class Store:
         assert self._host is not None
         if state.workspace.genesis is None or self._logs[WORKSPACE].seq == 0:
             return
-        if self._checkpoints.write_workspace(self._host.sign, state.workspace.genesis, at_, self._logs) == "diverged":
+        # Do not certify a rolled-back head just because its ticket checkpoint was deleted.
+        logs = {uid: info for uid, info in self._logs.items() if not self._missing_checkpoint(uid)}
+        if self._checkpoints.write_workspace(self._host.sign, state.workspace.genesis, at_, logs) == "diverged":
             self._diverged[WORKSPACE] = Divergence(
                 WORKSPACE, self._logs[WORKSPACE].seq, "a checkpoint at this height has another head"
             )
@@ -1695,18 +1714,32 @@ class Store:
     def repair_checkpoints(self) -> None:
         """Fill only a missing checkpoint explained by the last recorded append."""
         with self._locked():
-            if self._host is None or self._state is None or self._diverged or self.chain_errors():
-                return
-            if self._state.workspace.invalid:
-                return
-            for uid, view in self._state.tickets.items():
-                if view.frozen or self._checkpoints.ticket(uid) is not None or not self.repairable_checkpoint(uid):
-                    continue
-                info = self._logs[uid]
-                self._checkpoints.write_ticket(self._host.sign, uid, info.seq, info.head or "", self._now())
+            self._finish_applied_checkpoint()
+
+    def _finish_applied_checkpoint(self) -> None:
+        """Finish the last append's missing ticket checkpoint before its crash evidence moves on."""
+        if self._host is None:
+            return
+        uid = self._read_applied().get("log")
+        if not isinstance(uid, str) or not _ULID.fullmatch(uid) or self._checkpoints.ticket(uid) is not None:
+            return
+        if uid not in self._exists:
+            self._scan_dirs()  # another writer may have created the ticket since this store opened
+        if uid not in self._exists:
+            return
+        if uid not in self._loaded:
+            self._loaded.add(uid)
+            self._load()  # no healing or revocation appends until this checkpoint is finished
+        if self._state is None or self._diverged or self.chain_errors() or self._state.workspace.invalid:
+            return
+        view = self._state.tickets.get(uid)
+        if view is None or view.frozen or not self.repairable_checkpoint(uid):
+            return
+        info = self._logs[uid]
+        self._checkpoints.write_ticket(self._host.sign, uid, info.seq, info.head or "", self._now())
 
     def checkpoint(self) -> None:
-        """Write the workspace checkpoint now (and a ticket checkpoint for every log that has none yet)."""
+        """Write the workspace checkpoint and finish crash-repairable ticket checkpoints."""
         with self._locked():
             self._checkpoint_all()
 
@@ -1723,7 +1756,7 @@ class Store:
             if view is None or view.frozen:
                 continue
             cp = self._checkpoints.ticket(uid)
-            if cp is None or "o" not in cp or cp["o"]["seq"] != info.seq:
+            if (cp is None or "o" not in cp or cp["o"]["seq"] != info.seq) and self.repairable_checkpoint(uid):
                 self._checkpoints.write_ticket(self._host.sign, uid, info.seq, info.head or "", at_)
         self._write_workspace_checkpoint(at_, self._state)
 

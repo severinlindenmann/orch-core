@@ -270,3 +270,10 @@ def test_same_repo_identity_ignores_ascii_case_only():
     g["source_sha"] = [dict(g["source_sha"][0], repo=a) for a in R["same"][0]]
     with pytest.raises(canon.HashError):
         canon.gate_hash(g)
+
+
+def test_repo_userinfo_decision_defers_to_the_operative_rule():
+    spec = DIR.parents[4] / "docs" / "architecture" / "orch-v2-ticket-format.md"
+    row = next(line for line in spec.read_text(encoding="utf-8").splitlines() if line.startswith("| 116 |"))
+    assert "Only ssh/scp `git@` userinfo is allowed and removed" in row
+    assert "all https userinfo" in row and "`local:<name>`" in row and "§5.7" in row

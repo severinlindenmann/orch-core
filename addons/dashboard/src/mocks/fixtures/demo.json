@@ -2002,7 +2002,7 @@
         "at": "2026-10-09T11:19:30Z",
         "type": "land.queued",
         "actor": "addon:land",
-        "remote": "github.com/acme-energy/billing-api",
+        "remote": "git.example.test/acme/billing-api",
         "target": "develop",
         "source_sha": "2e45f05",
         "by": "p_mara"
@@ -2123,7 +2123,7 @@
         "at": "2026-10-09T10:40:30Z",
         "type": "land.queued",
         "actor": "addon:land",
-        "remote": "github.com/acme-energy/billing-api",
+        "remote": "git.example.test/acme/billing-api",
         "target": "develop",
         "source_sha": "3378c92",
         "by": "p_mara"
@@ -2134,7 +2134,7 @@
         "actor": "addon:land",
         "attempt": 12,
         "ticket": "DEMO-0053",
-        "remote": "github.com/acme-energy/billing-api",
+        "remote": "git.example.test/acme/billing-api",
         "target": "develop",
         "source_sha": "3378c92",
         "target_sha": "759a460",
@@ -2143,12 +2143,12 @@
           {
             "name": "T2 integration checks",
             "result": "pass",
-            "url": "https://github.com/acme-energy/billing-api/commit/1804f99/checks"
+            "url": "https://git.example.test/acme/billing-api/commit/1804f99/checks"
           },
           {
             "name": "CI on the pull request",
             "result": "waiting",
-            "url": "https://github.com/acme-energy/billing-api/actions/runs/1025186201"
+            "url": "https://git.example.test/acme/billing-api/actions/runs/1025186201"
           }
         ],
         "outcome": "requeued",
@@ -2160,7 +2160,7 @@
         "actor": "addon:land",
         "attempt": 13,
         "ticket": "DEMO-0053",
-        "remote": "github.com/acme-energy/billing-api",
+        "remote": "git.example.test/acme/billing-api",
         "target": "develop",
         "source_sha": "3378c92",
         "target_sha": "9dbf05c",

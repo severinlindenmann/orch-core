@@ -145,6 +145,7 @@ See [plugins/orch-session/README.md](plugins/orch-session/README.md).
 
 ## Documentation
 
+- [P2 host process design](docs/architecture/orch-v2-host.md): socket API, signing, custody and worker isolation
 - [Plugin README](plugins/orch-core/README.md): the full reference, including who counts as the human, epics, task lists, Start agent and what goes into git
 - [ADDONS.md](plugins/orch-core/ADDONS.md): writing addons
 - [DESIGN.md](plugins/orch-core/DESIGN.md): Mission Control's design system

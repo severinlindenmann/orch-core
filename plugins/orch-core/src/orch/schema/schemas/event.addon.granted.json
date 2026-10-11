@@ -576,7 +576,7 @@
           "heading_key": {
             "type": "string",
             "pattern": "^[a-z0-9]{1,40}(?![\\s\\S])",
-            "description": "The heading casefolded with all but letters and digits removed (8.1)."
+            "description": "The heading with ASCII A-Z folded to a-z with all but letters and digits removed (8.1)."
           }
         },
         "additionalProperties": false,

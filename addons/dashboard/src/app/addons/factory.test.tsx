@@ -68,7 +68,10 @@ describe('AI Factory page', () => {
     const { user } = renderApp('/addon/factory/factory', { viewer: 'p_sev', setup: on })
     expect(screen.queryByText(/Answer on Today/)).not.toBeInTheDocument()
     // What waits for a person is above the tabs: no tab click needed, and it says how many.
-    expect(await screen.findByText('1 permission request needs your decision', {}, T)).toBeInTheDocument()
+    const fold = await screen.findByRole('button', { name: '1 permit waiting · Review' }, T)
+    expect(fold).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('button', { name: 'Grant once' })).not.toBeInTheDocument()
+    await user.click(fold)
     expect(screen.getByRole('tab', { name: /^Overview/ })).toHaveAttribute('aria-selected', 'true')
     await user.click(await screen.findByRole('button', { name: 'Grant once' }, T))
     await user.click(await screen.findByRole('button', { name: 'Send answer' }, T))
@@ -94,6 +97,7 @@ describe('AI Factory page', () => {
 describe('permits on the page', () => {
   it('the Permits tab keeps the history and the open request is not drawn twice', async () => {
     const { user } = renderApp('/addon/factory/factory', { viewer: 'p_sev', setup: on })
+    await user.click(await screen.findByRole('button', { name: '1 permit waiting · Review' }, T))
     await screen.findByRole('button', { name: 'Grant once' }, T)
     await user.click(await screen.findByRole('tab', { name: /^Permits\s*\d+/ }, T))
     expect(await screen.findByRole('columnheader', { name: 'Command' }, T)).toBeInTheDocument()
@@ -180,7 +184,7 @@ describe('factory full runs', () => {
     expect(banner.className).not.toMatch(/warning|danger|orange/)
     // The destination is never cut: the line wraps.
     expect(banner.querySelector('.truncate')).toBeNull()
-    await user.click(within(banner).getByRole('button', { name: 'Stop…' }))
+    await user.click(within(banner).getByRole('button', { name: 'Stop' }))
     const dialog = await screen.findByRole('dialog', { name: 'Decide for AI Factory (factory)' }, T)
     expect(dialog.textContent).toContain('Deliver means (deliver_means): "Publish campaign to the newsletter list"')
     await user.click(within(dialog).getByRole('button', { name: 'Send answer' }))
@@ -202,4 +206,26 @@ describe('factory full runs', () => {
     expect(await screen.findByText(/^Delivered: Publish campaign to the newsletter list at /, {}, T)).toBeInTheDocument()
     expect(mockStore.eventsOf('DEMO-0050').some((e) => e.type === 'factory.delivered' && e.run === 'R-1')).toBe(true)
   })
+})
+
+
+it('a stopped run offers both input panels and signs a new delivery without rebuilding', async () => {
+  const { user } = renderApp('/addon/factory/factory', { viewer: 'p_sev', setup: s => {
+    on(s)
+    const st = s.addonState(wsOf(s), 'factory')
+    Object.assign(st, seedRuns(s, 'p_sev', wsOf(s)))
+    const r = (st.runs as import('@/mocks/addons/factory-runs').Run[])[0]
+    r.stage = 'stopped'
+    r.stopped = { at: s.now(), by: 'p_sev' }
+  } })
+  await user.click(await screen.findByRole('tab', { name: /^Full runs/ }, T))
+  expect(await screen.findByRole('button', { name: 'Deliver now…' }, T)).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Deliver with a new hold…' }))
+  await user.selectOptions(await screen.findByRole('combobox', { name: /New hold window/ }), '1 h')
+  await user.click(await screen.findByRole('button', { name: 'Review delivery' }))
+  await user.click(await screen.findByRole('button', { name: 'Sign delivery' }, T))
+  const d = await screen.findByRole('dialog', { name: /^Sign: Redeliver/ }, T)
+  expect(d.querySelector('[data-arg-key="hold_minutes"]')).toHaveAttribute('data-arg-value', '60')
+  await user.click(within(d).getByRole('button', { name: 'Sign and run' }))
+  await waitFor(() => expect((mockStore.addonState(wsOf(mockStore), 'factory').runs as { stage: string }[])[0].stage).toBe('holding'), T)
 })

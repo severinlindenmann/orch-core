@@ -75,7 +75,7 @@ describe('Addon manager', () => {
   it('only the owner grants', async () => {
     renderApp('/settings/addons', { viewer: 'p_mara' })
     expect(await screen.findByText('Only owners change settings.')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /Grant…/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Grant/ })).toBeNull()
   })
   it('explains each capability on the chips', async () => {
     const { user } = renderApp('/settings/addons')
@@ -101,7 +101,7 @@ describe('Grant and update dialogs list what viewers can run', () => {
     const { user } = renderApp('/settings/addons', {
       setup: (s) => s.appendWs(s.workspaces[0].id, { type: 'addon.updated', name: 'wiki', version: '0.1.4', package_sha256: 'c'.repeat(64), capabilities: [] }),
     })
-    await user.click(within(await screen.findByRole('row', { name: /Wiki/ })).getByRole('button', { name: 'Grant…' }))
+    await user.click(within(await screen.findByRole('row', { name: /Wiki/ })).getByRole('button', { name: 'Grant' }))
     const dialog = await screen.findByRole('dialog')
     expect(within(dialog).getAllByText('Viewers can: Open (open), Search (search), Close (close), Clear search (clear_search)').length).toBeGreaterThan(0)
     // "All pages" is what the addon calls `close`: shown, labelled as the addon's, never in core's covers.
@@ -112,7 +112,7 @@ describe('Grant and update dialogs list what viewers can run', () => {
     const { user } = renderApp('/settings/addons', {
       setup: (s) => s.appendWs(s.workspaces[0].id, { type: 'addon.updated', name: 'estimate', version: '0.2.0', package_sha256: 'c'.repeat(64), capabilities: [] }),
     })
-    await user.click(within(await screen.findByRole('row', { name: /Estimate/ })).getByRole('button', { name: 'Grant…' }))
+    await user.click(within(await screen.findByRole('row', { name: /Estimate/ })).getByRole('button', { name: 'Grant' }))
     expect(within(await screen.findByRole('dialog')).getAllByText('Viewers can: nothing').length).toBeGreaterThan(0)
   })
   it('an update that adds a viewer action shows it in the diff and the grant still signs', async () => {
@@ -135,7 +135,7 @@ describe('Grant dialog says each thing once', () => {
     const { user } = renderApp('/settings/addons', {
       setup: (s) => s.appendWs(s.workspaces[0].id, { type: 'addon.updated', name: 'wiki', version: '0.1.4', package_sha256: 'c'.repeat(64), capabilities: [] }),
     })
-    await user.click(within(await screen.findByRole('row', { name: /Wiki/ })).getByRole('button', { name: 'Grant…' }))
+    await user.click(within(await screen.findByRole('row', { name: /Wiki/ })).getByRole('button', { name: 'Grant' }))
     const dialog = await screen.findByRole('dialog')
     expect(within(dialog).getAllByText(/^Viewers can:/)).toHaveLength(1)
     expect(dialog).not.toHaveTextContent(/never get pty/)

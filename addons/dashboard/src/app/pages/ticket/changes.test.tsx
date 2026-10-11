@@ -26,7 +26,7 @@ describe('ticket: the changes the verdict signs', () => {
     expect(await screen.findByText(/the verdict signed this commit/, {}, T)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Simulate: the agent pushes a commit' }))
     await waitFor(() => expect(mockStore.ticket('DEMO-0042')!.status).toBe('testing'), T)
-    expect(await screen.findByTestId('gate-notes', {}, T)).toHaveTextContent(/Verification: New commits after the verdict: [0-9a-f]{7}/)
+    expect(await screen.findByTestId('gate-notes', {}, T)).toHaveTextContent(/Verify: New commits after the verdict: [0-9a-f]{7}/)
   })
 
   it('a viewer sees the diff but not the demo push', async () => {

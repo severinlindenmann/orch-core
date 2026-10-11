@@ -16,7 +16,7 @@ describe('Workspace links page (Preview)', () => {
     renderApp(PATH, { viewer: 'p_sev', setup: on })
     const h1 = await screen.findByRole('heading', { level: 1, name: /Workspace links/ }, T)
     expect(within(h1).getByText('Preview')).toBeInTheDocument()
-    for (const name of [/^Links/, /^Requests/, /^Log/, /^Set up/]) expect(screen.getByRole('tab', { name })).toBeInTheDocument()
+    for (const name of [/^Links/, /^Requests/, /^Activity/, /^Set up/]) expect(screen.getByRole('tab', { name })).toBeInTheDocument()
     const row = (await screen.findByText('INT · Internal', {}, T)).closest('tr')!
     expect(within(row).getByText('Same machine')).toBeInTheDocument()
     expect(within(row).getByText('active')).toBeInTheDocument()
@@ -104,7 +104,7 @@ describe('Workspace links page (Preview)', () => {
     const { user } = renderApp(PATH, { viewer: 'p_tom', setup: on })
     const row = (await screen.findByText('INT · Internal', {}, T)).closest('tr')!
     expect(within(row).queryByRole('button', { name: 'Revoke' })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('tab', { name: /^Log/ }))
+    await user.click(screen.getByRole('tab', { name: /^Activity/ }))
     await waitFor(() => expect(screen.getByText(/Handed off DEMO-0042 to INT/)).toBeInTheDocument(), T)
     expect(screen.queryByText(/DEMO-0044/)).not.toBeInTheDocument()
   })

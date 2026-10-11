@@ -14,7 +14,7 @@ import { iconByName } from '../../icons'
 import { useWorkspace } from '../../workspace'
 import { useRole } from '../../useRole'
 import { STATUS_LABEL } from '../../pages/board/lib'
-import { availableActions, GATE_LABEL } from '../../pages/ticket/actions'
+import { availableActions, gateActionName } from '../../pages/ticket/actions'
 import { SignDialog } from '../../pages/ticket/SignDialog'
 import { statusLabel, useViewer, type HumanAction } from '../../pages/ticket/shared'
 import { requestSaveView } from '../../pages/tickets/saveViewRequest'
@@ -264,7 +264,7 @@ export function CommandPalette() {
     out.push({ id: 'comment', label: 'Comment', icon: <MessageSquare />, run: () => (setQ(''), setMode('comment')) })
     out.push({ id: 'ask', label: 'Ask a question', icon: <MessageSquareReply />, run: () => (setQ(''), setMode('ask-to')) })
     if (can(ticketRole, 'ticket.move')) out.push({ id: 'move', label: 'Move to…', icon: <ArrowRightLeft />, run: () => (setQ(''), setMode('move')) })
-    for (const g of av.approve) out.push({ id: `approve-${g}`, label: `Approve ${GATE_LABEL[g].toLowerCase()}`, icon: <Check />, run: () => sign({ kind: 'approve', gate: g }) })
+    for (const g of av.approve) out.push({ id: `approve-${g}`, label: `Approve ${gateActionName(g)}`, icon: <Check />, run: () => sign({ kind: 'approve', gate: g }) })
     if (av.verdict) out.push({ id: 'verdict', label: 'Give verdict', icon: <Check />, run: () => sign({ kind: 'verdict' }) })
     return out
   }, [ticket.data, ticketKey, viewer.ready, viewer.person, viewer.role])

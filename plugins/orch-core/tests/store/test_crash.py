@@ -7,6 +7,7 @@ import multiprocessing as mp
 import pytest
 
 from orch import canon
+from orch.identity import new_ulid
 from orch.store import StoreError
 from tests.store import workers
 from tests.store.helpers import Env, snapshot
@@ -17,7 +18,7 @@ def crash(env: Env, uid: str, step: str) -> int:
     env.store.close()
     p = mp.get_context("spawn").Process(
         target=workers.crash_at,
-        args=(str(env.root), str(env.tmp / "wsk"), str(env.host_state), uid, env.agent, step),
+        args=(str(env.root), str(env.tmp / "wsk"), str(env.host_state), uid, env.agent, step, env.owner.ref),
     )
     p.start()
     p.join(60)
@@ -60,6 +61,32 @@ def test_crash_after_the_append_before_the_rename_finishes_the_install(ws):
     assert s.state.tickets[uid] and len(env.read_events(uid)) == 3 and s.reports == []
     assert (env.root / ".state" / "applied").read_bytes()
     env.log(uid, "after")
+
+
+@pytest.mark.parametrize("second_log", ["ticket", "workspace"])
+@pytest.mark.parametrize("reopen", [True, False])
+def test_missing_checkpoint_is_finished_before_another_log_is_appended(env, second_log, reopen):
+    env.bootstrap()
+    other = env.new_ticket()
+    uid = new_ulid()
+    checkpoint = env.root / ".state" / "checkpoints" / f"ticket-{uid}.json"
+    if not reopen:
+        reader = env.other(load="lazy")
+    assert crash(env, uid, "before_checkpoint") == 7
+    assert not checkpoint.exists()
+    store = env.open(load="lazy") if reopen else reader
+    env.store = store
+    if reopen:
+        assert checkpoint.exists()  # opening alone finishes it, without touching the ticket
+    else:
+        assert not checkpoint.exists()
+    if second_log == "ticket":
+        env.log(other, "another ticket")
+    else:
+        env.add_device()
+    assert checkpoint.exists()
+    assert env.log(uid, "after recovery").event["seq"] == 2
+    assert store.chain_errors() == [] and store.diverged == {}
 
 
 def test_crash_in_the_middle_of_the_install_is_finished_from_the_pending_files(env):

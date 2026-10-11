@@ -96,7 +96,7 @@ describe('page', () => {
   it('has four tabs: Links, Requests, Log, Set up', async () => {
     const p = await page(setup())
     const tabs = nodes(p).find((n) => n.type === 'tabs')!.tabs as { id: string; label: string; count?: number }[]
-    expect(tabs.map((t) => t.label)).toEqual(['Links', 'Requests', 'Log', 'Set up'])
+    expect(tabs.map((t) => t.label)).toEqual(['Links', 'Requests', 'Activity', 'Set up'])
     expect(tabs[0].count).toBe(2) // INT and Northwind; Contoso is revoked
   })
   it('shows each link with its carrier, scopes both ways, expiry and state', async () => {

@@ -226,8 +226,8 @@ def tamper_vector() -> dict[str, Any]:
 
     def add(name: str, mutation: str, log: str, events: list[dict[str, Any]], broken_at: int | None) -> None:
         """One F1 outcome per case (§5.5 "Reading"): the reader checks each log's lines in file order and reports
-        ``chain.broken`` at the first line that fails cj, field set, seq, prev, ws_seq, host_sig or the person sig,
-        naming the line's position (the seq it should carry). A break at workspace seq n also stops every ticket
+        ``chain.broken`` at the first line that fails cj, field set, seq, prev, host_sig or the person sig
+        (``chain.bad_ws_seq`` for workspace-position/order checks), naming the line's position (the seq it should carry). A break at workspace seq n also stops every ticket
         event with ws_seq >= n."""
         case: dict[str, Any] = {"name": name, "mutation": mutation, "log": log, "events": events,
                                 "chain_broken_at": broken_at}  # fmt: skip
@@ -258,6 +258,16 @@ def tamper_vector() -> dict[str, Any]:
     add("at_goes_back_host_resigned", "seq 4: `at` set before seq 3's and host_sig re-made (an attacker holding the "
         "workspace key; `at` is not signed by the person): (ws_seq, at) never goes back along a log, so the line "
         "breaks the chain", TICKET, [e1, e2, e3, resign_host(setp(e4, at=e1["at"]), TICKET)], 4)  # fmt: skip
+    add("ws_seq_goes_back_host_resigned", "seq 4: ws_seq lowered from 3 to 2, at unchanged, host_sig re-made; "
+        "seq/prev and person signature remain valid. Replay keeps this single ticket log in file order: "
+        "the workspace head is 3 when this line is read, so only the per-log ws_seq decrease fails. "
+        "The cross-ticket merged-order guard is append-only; this history is append-unreachable", TICKET,
+        [e1, e2, e3, resign_host(setp(e4, ws_seq=e3["ws_seq"] - 1), TICKET)], 4)  # fmt: skip
+    cases[-1].update(replay_only=True, replay_expect="chain.bad_ws_seq")
+    add("bad_person_sig_and_ws_seq", "seq 4: bad person signature and backwards ws_seq, valid host signature; "
+        "step 1 checks the person signature first and reports chain.broken", TICKET,
+        [e1, e2, e3, resign_host(setp(e4, sig="A" * 86, ws_seq=e3["ws_seq"] - 1), TICKET)], 4)  # fmt: skip
+    cases[-1]["replay_expect"] = "chain.broken"
     add(
         "tail_truncated", "seq 4 removed: the chain is intact, only a checkpoint can see it", TICKET, [e1, e2, e3], None
     )
@@ -314,6 +324,8 @@ def tamper_vector() -> dict[str, Any]:
         "line position where a reader reports chain.broken (lines checked in file order, a bad host_sig or person sig "
         "breaks the chain at that line); for a workspace-log break at seq n, the first seq of each ticket log whose "
         "events stop counting (ws_seq >= n); full lines of both logs with real signatures",
+        "note": "Case keys: replay_only marks an append-unreachable tampered log, checked directly on replay; "
+        "replay_expect pins its refusal code in addition to chain_broken_at.",
         "workspace_id": W,
         "genesis": w.genesis,
         "now": ow.stamp(w.clock + 60),
@@ -907,7 +919,55 @@ def refusal_order_scenarios() -> list[dict[str, Any]]:
         ("remote", "https://git@host/a"),
         *[
             ("default_branch", b)
-            for b in ("bad..branch", "-x", "HEAD", "@", "refs/heads/main", "a\u202eb", "a\u0085b", "a\u200db")
+            for b in (
+                "bad..branch",
+                "-x",
+                "HEAD",
+                "@",
+                "refs/heads/main",
+                "a\u202eb",
+                "a\u0085b",
+                "a\u200db",
+                "a\u00a0b",
+                "a\u1680b",
+                "a\u2000b",
+                "a\u2028b",
+                "a\u2029b",
+                "a\u202fb",
+                "a\u205fb",
+                "a\u3000b",
+                "a\u0378b",
+                "a\U0001e6c0b",
+                *[
+                    "a" + chr(cp) + "b"
+                    for cp in (
+                        0xFE00,
+                        0xFE0F,
+                        0xE0100,
+                        0xE01EF,
+                        0x034F,
+                        0x115F,
+                        0x1160,
+                        0x3164,
+                        0xFFA0,
+                        0x180B,
+                        0x180C,
+                        0x180D,
+                        0x180E,
+                        0x180F,
+                        0x17B4,
+                        0x17B5,
+                        0x2800,
+                        0xE000,
+                        0xF0000,
+                        0x100000,
+                    )
+                ],
+                "\u0301branch",
+                "\u0903branch",  # Mc with combining class zero is still a leading mark
+                "\u20ddbranch",  # Me
+                "\U00010d69branch",  # Unicode 16.0 mark
+            )
         ],
     ]:
         w.ev(
@@ -944,6 +1004,49 @@ def refusal_order_scenarios() -> list[dict[str, Any]]:
         "settings.changed",
         w.actor("sev"),
         {"set": {"repos": {"a": None, "b": {"path": "../b", "remote": "https://h/X"}}}},
+    )
+    for repos in (
+        {"c": {"path": "../same"}, "d": {"path": "../same"}},
+        {"c": {"path": "../same"}, "d": {"path": "../other/../same/./"}},
+        {"c": {"path": "../Same"}, "d": {"path": "../same"}},
+        {"c": {"path": "../Street"}, "d": {"path": "../STREET"}},
+        {"c": {"path": "//same"}, "d": {"path": "/same"}},
+        {"c": {"path": "../c"}, "C": {"path": "../d"}},
+        {"c": {"path": "../B/./"}},
+        {"B": {"path": "../other"}},
+    ):
+        w.ev(
+            "workspace",
+            "settings.changed",
+            w.actor("sev"),
+            {"set": {"repos": repos}},
+            expect="validation.event",
+            schema_refused=len(repos) == 2,
+            note="decision 94: duplicate normalized paths or case-insensitive names, including unchanged repos",
+        )
+        w.steps[-1]["replay_expect"] = "chain.broken"
+    w.ev(
+        "workspace",
+        "settings.changed",
+        w.actor("sev"),
+        {"set": {"repos": {"b": None, "B": {"path": "../b"}}}},
+        note="removing the old entry allows its name and path to be reused",
+    )
+    w.ev(
+        "workspace",
+        "settings.changed",
+        w.actor("sev"),
+        {
+            "set": {
+                "repos": {
+                    "c": {"path": "../Stra\u00dfe"},
+                    "d": {"path": "../STRASSE"},
+                    "e": {"path": "../\ua7cb"},
+                    "f": {"path": "../\u0264"},
+                }
+            }
+        },
+        note="only ASCII case folds: non-ASCII case pairs remain distinct on every runtime",
     )
     out.append(w.scenario())
     return out

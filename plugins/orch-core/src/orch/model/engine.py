@@ -328,7 +328,7 @@ def apply_event(
         lc = copy.deepcopy(lc)
     if e["type"] == "settings.changed":
         try:
-            validate_settings(e["set"])
+            validate_settings(e["set"], repos=core.ws.repos)
         except SchemaError as exc:
             if commit and not ctx.admit and lc.broken is None:
                 lc.broken = str(exc)
@@ -337,6 +337,7 @@ def apply_event(
     if (r := _chain_check(core, log, lc, e, ctx)) is not None:
         if commit and lc.broken is None:
             lc.broken = r.detail
+            lc.broken_code = r.code.value
             core.logs[log] = lc
         return r
     r = _envelope_check(lc, e)

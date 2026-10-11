@@ -1256,12 +1256,25 @@ class Store:
             raise StoreError("chain.broken", f"workspace: {self._read_errors[WORKSPACE]}")
         if typ != "restore" and self._missing_checkpoint(log):
             raise StoreError("checkpoint.missing", f"{log}: missing checkpoint is not explained by the last append")
+        if self._workspace_checkpoint_missing():
+            raise StoreError(
+                "checkpoint.missing", "workspace: no workspace checkpoint is held although the workspace log has grown"
+            )
         for failure in self._state.chain_errors if self._state else ():
             if failure.log in (WORKSPACE, log) and failure.code == "chain.broken":
                 raise StoreError(failure.code, failure.detail)
         d = self._diverged.get(log) or (self._diverged.get(WORKSPACE) if log != WORKSPACE else None)
         if d is not None and not (typ == "restore" and d.log == log):
             raise StoreError("chain.diverged", f"{d.log}: {d.detail} (an owner-signed restore is needed)")
+
+    def _workspace_checkpoint_missing(self) -> bool:
+        """No workspace checkpoint (host pin nor ``.state``) although the log grew past the genesis. Every append
+        writes one and a crash keeps the previous one, so this is never a crash state: no append and no new baseline
+        until an owner repairs it (§5.10, §14.3)."""
+        ws = self._logs.get(WORKSPACE)
+        if ws is None or ws.seq < 2:
+            return False
+        return (self._pins.held() if self._pins is not None else None) is None and self._checkpoints.workspace() is None
 
     def _missing_checkpoint(self, log: str) -> bool:
         info = self._logs.get(log)
@@ -1777,12 +1790,19 @@ class Store:
         broken = {failure.log for failure in state.chain_errors} | set(self._read_errors) | set(self._diverged)
         if WORKSPACE in broken:
             return
+        if self._workspace_checkpoint_missing():
+            return  # never start a new baseline after the checkpoint files were lost (§5.10); appends refuse
         logs = {
             uid: info for uid, info in self._logs.items() if uid not in broken and not self._missing_checkpoint(uid)
         }
         if (
             self._checkpoints.write_workspace(
-                self._host.sign, state.workspace.genesis, at_, logs, self._held_checkpoint()
+                self._host.sign,
+                state.workspace.genesis,
+                at_,
+                logs,
+                self._held_checkpoint(),
+                floor_n=self._pins.high_n() if self._pins is not None else 0,
             )
             == "diverged"
         ):
@@ -2361,7 +2381,12 @@ class Store:
                 "kind": "workspace_checkpoint",
                 "workspace_id": self.workspace_id,
                 "genesis": self._pin,
-                "n": max(self._checkpoints.highest_n(), cp["o"]["n"] if cp else 0) + 1,
+                "n": max(
+                    self._checkpoints.highest_n(),
+                    cp["o"]["n"] if cp else 0,
+                    self._pins.high_n(),
+                )
+                + 1,
                 "at": ev["at"],
                 "workspace_log": workspace_entry,
                 "tickets": dict(sorted(tickets.items())),

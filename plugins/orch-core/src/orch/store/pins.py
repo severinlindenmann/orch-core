@@ -102,7 +102,19 @@ class HostPins:
         return loads(raw) if raw else None
 
     def accept_checkpoint(self, cp: dict[str, Any]) -> None:
+        if cp["o"]["n"] > self.high_n():  # the durable high-water mark: n never restarts below it
+            write_atomic(self.dir / "checkpoint-n", str(cp["o"]["n"]).encode() + b"\n", mode=0o600)
         write_atomic(self.dir / "checkpoint.json", canon.cj_checked(cp) + b"\n", mode=0o600)
+
+    def high_n(self) -> int:
+        """The highest workspace checkpoint ``n`` this host ever accepted (0 if none)."""
+        raw = read_or_none(self.dir / "checkpoint-n")
+        held = self.held()
+        try:
+            mark = int(raw) if raw else 0
+        except ValueError:
+            raise StoreError("store.torn_write", "unreadable checkpoint high-water mark") from None
+        return max(mark, held["o"]["n"] if held and "o" in held else 0)
 
     @contextmanager
     def _heads(self) -> Iterator[sqlite3.Connection]:

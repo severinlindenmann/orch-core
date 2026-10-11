@@ -16,6 +16,7 @@ A missing ticket checkpoint can be written only for the last recorded append, af
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -172,6 +173,32 @@ def inspect(
     return out, s
 
 
+def _isdir(files: Files, path: Path, *, follow: bool = False) -> bool:
+    """A directory: in host mode opened through the capability's fd walk (never through a link); in direct mode as
+    before (``follow``: a link to a directory counts)."""
+    if files.roots is None:
+        return path.is_dir() and (follow or not path.is_symlink())
+    try:
+        files.listdir(path)
+    except OSError:
+        return False
+    return True
+
+
+def _size(files: Files, path: Path) -> int | None:
+    """The size of a regular file (``None``: missing, a link, not a regular file); host mode through the capability."""
+    if files.roots is None:
+        return path.stat().st_size if path.is_file() else None
+    try:
+        fd = files.open_fd(path, os.O_RDONLY)
+    except OSError:
+        return None
+    try:
+        return os.fstat(fd).st_size
+    finally:
+        os.close(fd)
+
+
 def _read(files: Files, path: Path, limit: int | None = None) -> bytes | None:
     """A file's bytes or ``None``: in host mode through the capability (roots, no symlink), else as before."""
     if files.roots is None:
@@ -198,10 +225,9 @@ def _projections(s: Store, files: Files, ok: Callable[[str], bool] = lambda log:
         if _read(files, root / rel) != want:
             out.append(Finding("error", rel, code, f"{rel} differs from what the log says", "scan"))
     tdir = root / "tickets"
-    for p in [tdir / n for n in sorted(files.listdir(tdir))] if tdir.is_dir() else []:
-        if p.is_dir() and not p.is_symlink() and ULID.fullmatch(p.name) and ok(p.name):
-            log = p / "events.jsonl"
-            if not log.is_file() or log.stat().st_size == 0:
+    for p in [tdir / n for n in sorted(files.listdir(tdir))] if _isdir(files, tdir, follow=True) else []:
+        if ULID.fullmatch(p.name) and ok(p.name) and _isdir(files, p):
+            if not _size(files, p / "events.jsonl"):
                 out.append(Finding("error", f"tickets/{p.name}", "ticket.nolog", "a ticket folder with no event log"))
     bad = {c.log for c in st.chain_errors} | {log for log, *_ in s.chain_errors()}
     for uid, view in sorted(st.tickets.items()):
@@ -234,7 +260,7 @@ def _projections(s: Store, files: Files, ok: Callable[[str], bool] = lambda log:
             )
         listed = {a.name for a in view.artifacts}
         adir = tdir / "artifacts"
-        for f in [adir / n for n in sorted(files.listdir(adir))] if adir.is_dir() and not adir.is_symlink() else []:
+        for f in [adir / n for n in sorted(files.listdir(adir))] if _isdir(files, adir) else []:
             if f.name not in listed:
                 out.append(
                     Finding("warn", where, "artifact.unlisted", f"{f.name[:60]} is in artifacts/ but not in the log")
@@ -244,7 +270,7 @@ def _projections(s: Store, files: Files, ok: Callable[[str], bool] = lambda log:
                 continue
             p = tdir / "artifacts" / a.name
             try:
-                data = None if p.is_symlink() else _read(files, p, 256 * 1024 * 1024)
+                data = None if files.roots is None and p.is_symlink() else _read(files, p, 256 * 1024 * 1024)
             except OSError:
                 data = None
             if data is None:
@@ -314,7 +340,8 @@ def _checkpoints(
         )
     wsk = s._wsk_pub()
     cdir = s.state_dir / "checkpoints"
-    for p in [cdir / n for n in sorted(files.listdir(cdir)) if n.endswith(".json")] if cdir.is_dir() else []:
+    names = sorted(files.listdir(cdir)) if _isdir(files, cdir, follow=True) else []
+    for p in [cdir / n for n in names if n.endswith(".json")]:
         if ULID.fullmatch(p.stem) and not ok(p.stem):
             continue
         raw = _read(files, p)
@@ -368,6 +395,9 @@ def _repos(s: InspectStore, root: Path, caps: Capabilities) -> list[Finding]:
 
     out: list[Finding] = []
     for name in sorted(s.state.workspace.repos):
+        if caps.files.roots is not None:  # host mode: never touch a path outside the root; git is the reader's
+            out.append(Finding("warn", f"repo {name}", "repo.unobservable", "git cannot be read here"))
+            continue
         p = observe.repo_path(root, s.state.workspace.repos, name)
         if p is None or not p.is_dir():
             out.append(Finding("warn", f"repo {name}", "repo.unobservable", "the working copy does not exist"))

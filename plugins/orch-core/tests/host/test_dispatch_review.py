@@ -226,3 +226,18 @@ def test_a_person_in_column_p_is_the_viewer_of_list_and_status(served):
     c = served.client()
     assert ok(c.req("status"))["data"]["person"] != "unattended"
     assert key in json.dumps(ok(c.req("list")))
+
+
+def test_host_mode_doctor_reads_files_only_through_the_capability(served, monkeypatch):
+    """Health's file reads in host mode go through caps.files (roots, fd walk, no links), never read_or_none."""
+    import orch.ops.health as health
+
+    uid, _ = served.ticket("x")
+    edit_ticket_json(served, uid)
+
+    def refuse(*a, **k):
+        raise AssertionError("direct file I/O in host mode")
+
+    monkeypatch.setattr(health, "read_or_none", refuse)
+    res = ok(served.client().req("doctor"))
+    assert "projection.ticket" in json.dumps(res)

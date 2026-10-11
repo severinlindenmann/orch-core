@@ -7,7 +7,8 @@ Sections **deferred**, with the phase that owns them (nothing in C2 builds those
 bridge or Drop code): ``card`` (card/sealed part, relay update rules), ``wk_grants`` and ``member_lists`` (relay
 member lists, P2/P3), ``cert_request``, ``cert_binding``, ``rejected_forms``, ``approved_anchor``
 (pairing attempt binding, P3-D28; the formulas are checked in ``test_pairing_binding.py``), ``enroll`` and
-``bridge`` (pairing and bridge v2, P2/P3), ``revocation_op`` (host revocation op, P2), ``push`` (P3), ``drop`` and ``ws_envelopes`` (Drop and ws-to-ws, P2+), ``relay_auth``
+``bridge`` (pairing and bridge v2, P2/P3), ``revocation_op`` (host revocation op, P2), ``push`` (P3),
+``drop`` and ``ws_envelopes`` (Drop and ws-to-ws, P2+), ``relay_auth``
 (relay login, P3). ``test_deferred_sections_are_complete`` fails when the vector file gains a section nobody has
 listed, so a vector update cannot go unconsumed silently.
 """

@@ -418,16 +418,20 @@ def _check_body(obj: dict[str, Any]) -> None:
             raise SchemaError("body", _pointer(["sections", sid]), f"line {problem[0] + 1} {problem[1]}")
 
 
+_ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+
+
 def _check_repos(name: str, path: tuple[Any, ...], repos: dict[str, Any]) -> None:
     names: set[str] = set()
     paths: set[str] = set()
     for repo, entry in repos.items():
         if entry is None:
             continue
-        if repo.lower() in names:
+        if repo.translate(_ASCII_LOWER) in names:
             raise SchemaError(name, _pointer(path), "two repo names differ only in case")
-        names.add(repo.lower())
-        normalized = posixpath.normpath(entry["path"]).casefold()
+        names.add(repo.translate(_ASCII_LOWER))
+        raw = entry["path"]
+        normalized = posixpath.normpath("/" + raw.lstrip("/") if raw.startswith("/") else raw).translate(_ASCII_LOWER)
         if normalized in paths:
             raise SchemaError(name, _pointer(path), "two repos resolve to the same path")
         paths.add(normalized)
@@ -463,9 +467,9 @@ _HEADING = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9,&/'-]| (?! ))*(?![\s\S])")
 
 
 def heading_key(heading: str) -> str:
-    """Casefold with every character that is not a letter or digit removed: two headings with one key are the same
-    heading for a reader (ticket-format 8.1)."""
-    return "".join(c for c in heading.casefold() if c.isalnum())
+    """Fold ASCII case with every character that is not a letter or digit removed: headings with one key are
+    the same heading for a reader (ticket-format 8.1)."""
+    return "".join(c for c in heading.translate(_ASCII_LOWER) if c.isalnum())
 
 
 CORE_HEADING_KEYS = frozenset(heading_key(h) for h in _CORE_HEADINGS)
@@ -747,10 +751,8 @@ def validate_settings(value: Any, *, repos: dict[str, Any] | None = None) -> Non
     error = next(_validator(name + "#/properties/set").iter_errors(value), None)
     if error is not None:
         raise SchemaError(name, _pointer(("set", *error.absolute_path)), error.message)
-    _check_repos(name, ("set", "repos"), value.get("repos", {}))
-    if repos is not None:
-        resulting = {**repos, **value.get("repos", {})}
-        _check_repos(name, ("set", "repos"), resulting)
+    resulting = {**(repos or {}), **value.get("repos", {})}
+    _check_repos(name, ("set", "repos"), resulting)
 
 
 def _ev_settings_changed(obj: dict[str, Any], actor: dict[str, Any]) -> None:

@@ -2298,3 +2298,30 @@ def test_branch_assignment_uses_unicode_16():
     branch = "a\u1c89b"
     V("ticket", mut(ex.TICKET, lambda o: o["links"]["branches"].update(repo=branch)))
     V("event", ev("settings.changed", set={"repos": {"repo": {"path": "../repo", "default_branch": branch}}}))
+
+
+@pytest.mark.parametrize("left,right", [("Stra\u00dfe", "STRASSE"), ("\ua7cb", "\u0264"), ("\u1c89", "\u1c8a")])
+def test_repo_paths_fold_only_ascii(left, right):
+    schema.validate_settings({"repos": {"a": {"path": "../" + left}, "b": {"path": "../" + right}}})
+
+
+def test_repo_paths_collapse_leading_double_slash():
+    with pytest.raises(SchemaError, match="same path"):
+        schema.validate_settings({"repos": {"a": {"path": "//repo"}, "b": {"path": "/repo"}}})
+
+
+def test_settings_validate_the_resulting_repos_once(monkeypatch):
+    calls = []
+    original = schema._check_repos
+
+    def check(name, path, repos):
+        calls.append(repos)
+        original(name, path, repos)
+
+    monkeypatch.setattr(schema, "_check_repos", check)
+    schema.validate_settings({"repos": {"a": None, "A": {"path": "../a"}}}, repos={"a": {"path": "../a"}})
+    assert calls == [{"a": None, "A": {"path": "../a"}}]
+
+
+def test_heading_keys_fold_only_ascii():
+    assert schema.heading_key("Stra\u00dfe") != schema.heading_key("STRASSE")

@@ -81,11 +81,13 @@ orchestrator/
 - `settings.repos` maps the repo names used in `links` to a working copy (absolute, or relative to the workspace
   directory), with a required `path` and optional `remote` and `default_branch` fields; there is no primary flag.
   Repo names must be unique ignoring ASCII case. Paths must be unique after POSIX lexical normalisation
-  (`.` and `..` components and redundant slashes), then Unicode case folding. Check the resulting settings,
+  (`.` and `..` components and redundant slashes, including leading `//`), then ASCII-only case folding (A–Z → a–z); non-ASCII characters compare exactly after Unicode 16.0 NFC. Check the resulting settings,
   including unchanged repos; collisions give `validation.*` at append and `chain.broken` on replay (step 0).
   All fields are owner-signed in the same `settings.changed` event. `remote` must already be a canonical repo
   identity (§5.7): refuse a non-canonical value, never convert it. Under §5.11 step 0, malformed
   repo fields give `validation.*` at append and `chain.broken` at that line on replay, stopping the log.
+  **P1 limit:** relative versus absolute paths, `~`, trailing dots or spaces in path components, backslashes and
+  symlinks are not normalised. Settings are owner-signed; this collision check guards against mistakes.
   `default_branch` follows the same git branch name rules as `links.branches`. In P1 nothing decides anything
   from `remote` or `default_branch`;
   identity still comes from the observed `remote.origin.url` (§5.7). The planned future rule for a mismatch
@@ -1144,7 +1146,7 @@ executable, so `entry.cmd[0]` is a program found on `PATH` or an absolute path, 
 package bytes it read. `version` and `capabilities` are the manifest's (the owner grants exactly what the manifest
 declares, sorted, never a subset). `fields` are the manifest's fields without `show` and `filter` (type, limits,
 `set_by`, `gate`), `sections` are all its sections named `<name>.<id>` with their `types`, `heading_key` (the
-heading casefolded, letters and digits only), and `gate` when it has one; `artifact_kinds` its kinds, all sorted.
+heading with ASCII A–Z folded to a–z, letters and digits only), and `gate` when it has one; `artifact_kinds` its kinds, all sorted.
 `package_sha256` is the digest above. Replay uses only the event, never a manifest. A new version, a changed byte
 or a changed capability is a new grant.
 
@@ -1185,7 +1187,7 @@ and is never counted (no total, filter or "waiting"). Data of an addon that was 
 **Registration.** From a granted, enabled addon whose package digest still equals the granted one: the fields, sections
 and artifact kinds come from the **grant**; the section headings and places, the `needs` rules and `agents_md` come
 from the manifest (checked against the digest). A section heading is ASCII, at most 40 characters, `^[A-Za-z0-9](?:[A-Za-z0-9,&/'-]| (?! ))*$`.
-Its key, the heading casefolded with every character other than a letter or digit removed, must differ from the key of
+Its key, the heading with ASCII A–Z folded to a–z with every character other than a letter or digit removed, must differ from the key of
 every core heading and of every other heading of the manifest, and `orch addon grant` refuses a key equal to one of
 another granted addon (the body parser needs headings that differ). An addon artifact always carries its `addon`, so
 kinds never collide. A write is checked as above; ids are prefixed by the addon name, so two addons never share a
@@ -1473,7 +1475,8 @@ these codes; they are the stable `error.code` strings of §10.4 for these refusa
 | `grant.unknown` | §10.1 `grant.revoked` names no grant |
 | `quota.unattended` | §5.2 the unattended quota is exceeded |
 | `unattended.denied` | §5.2 an unattended event outside what unattended agents may do |
-| `settings.invalid` | §5.4.2 duplicate repo paths or declared identities, or a `local:` remote naming another repo |
+| `validation.event` | Malformed event payload, including duplicate repo names or normalised repo paths (§5.4.2) |
+| `settings.invalid` | §5.4.2 duplicate declared identities, or a `local:` remote naming another repo |
 | `validation.event` | §5.11 step 0 malformed settings payload; replay breaks the chain at that line |
 | `addon.unknown` | §5.4.2 the addon is not granted or not enabled |
 | `addon.field_unknown` | §8.1 the field is not declared in the addon's grant |
@@ -2057,7 +2060,7 @@ A1–A20 (PR body), HO (dashboard handover, input only), D58–D60, the adversar
 | 91 | Status from-states (Opus S6) | A from→to table for every event (§5.9). | Replay can check transitions. |
 | 92 | Torn writes vs external edits (Opus S7) | `.state/applied`; recovery only when the last event isn't applied; a torn write ends in `edit.external`. | An ordinary external edit isn't misreported, and `base_rev` keeps working. |
 | 93 | Effective policy canonical form (Opus S8) | Every policy has all five keys; `applies` union rules; tokens, not persons, for "no eligible approver". | A partial override can't switch `code` on by accident. |
-| 94 | Repo identity incomplete (Opus S9) | Raw `remote.origin.url`, port rules, scp-like forms, `local:` otherwise; duplicate names ignoring ASCII case and paths after POSIX lexical normalisation and Unicode case folding refused at step 0 (including unchanged repos); duplicate identities refused; a declared `local:` remote must be exactly `local:<own repo name>`, and declared remote identities must be unique ignoring ASCII case across the resulting settings (including unchanged repos); P1 limit stated. | One canonical identity across runtimes. |
+| 94 | Repo identity incomplete (Opus S9) | Raw `remote.origin.url`, port rules, scp-like forms, `local:` otherwise; duplicate names ignoring ASCII case and paths after POSIX lexical normalisation and ASCII-only case folding refused at step 0 (including unchanged repos); duplicate identities refused; a declared `local:` remote must be exactly `local:<own repo name>`, and declared remote identities must be unique ignoring ASCII case across the resulting settings (including unchanged repos); P1 limit stated. | One canonical identity across runtimes. |
 | 95 | Receipts (Opus S10) | `receipt.cmd` = `verify.cmd`; latest `task.done` of a done task; evidence only at the current source `sha`; prompt rechecks file digests. | Stale or substituted evidence doesn't count. |
 | 96 | Restore drops revocations (Opus S11) | Revocations re-appended at once; `abandoned` gives up every checkpoint above `from_seq`; workspace restore raises every ticket's gates. | A rollback can't resurrect a revoked device. |
 | 97 | Question id frozen wrongly; `evidence` half-defined (Opus S12) | Derived `qid` (32 hex, `orch/v2/question-id\|`) used in the question hash; `evidence` refused in P1, defined in P3 with a new contract. | Protocol §13 needs hex ids; no person event without `sig`. |
@@ -2107,7 +2110,7 @@ A1–A20 (PR body), HO (dashboard handover, input only), D58–D60, the adversar
 | 141 | `needs` language (C9) | JSON expressions, closed variable list, total and deterministic, no effect on core state (§8.1). | No code execution and no parser; waiting lists never change a gate. |
 | 142 | `cli`, `skills` and `agents_md` (C9) | `cli` and `skills` stay empty-only until P2; `agents_md` is one line of printable ASCII, rendered by the host with the addon's name, shown at grant (§8.1). | Nothing is invented for features that do not run in P1; an addon must not give hidden or structured instructions to agents that hold capabilities it lacks. |
 | 143 | Runner (C9) | One process per call, JSON-RPC over stdio, bound to the grant (manifest from the granted bytes), private package copy, clean environment, caps and deadline, workspace-visible tickets only, proposals only; process tracking and a separate UID are P2 requirements (§8.1). | An addon can propose values and nothing else, and the wording does not promise more than the code. |
-| 144 | Section headings (C9) | ASCII, with a key (casefold, letters and digits only) that differs from every core heading and every other granted addon's (§8.1). | Look-alike headings must not make `body.md` ambiguous or misleading. |
+| 144 | Section headings (C9) | ASCII, with a key (ASCII case folding, letters and digits only) that differs from every core heading and every other granted addon's (§8.1). | Look-alike headings must not make `body.md` ambiguous or misleading. |
 Open after F1 (not settled here):
 
 - The P3 envelope for phone decisions (`evidence`); the `qid` mapping itself is settled (§5.6).

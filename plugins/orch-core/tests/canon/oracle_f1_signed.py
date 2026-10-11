@@ -976,7 +976,8 @@ def refusal_order_scenarios() -> list[dict[str, Any]]:
         {"c": {"path": "../same"}, "d": {"path": "../same"}},
         {"c": {"path": "../same"}, "d": {"path": "../other/../same/./"}},
         {"c": {"path": "../Same"}, "d": {"path": "../same"}},
-        {"c": {"path": "../Stra\u00dfe"}, "d": {"path": "../STRASSE"}},
+        {"c": {"path": "../Street"}, "d": {"path": "../STREET"}},
+        {"c": {"path": "//same"}, "d": {"path": "/same"}},
         {"c": {"path": "../c"}, "C": {"path": "../d"}},
         {"c": {"path": "../B/./"}},
         {"B": {"path": "../other"}},
@@ -997,6 +998,12 @@ def refusal_order_scenarios() -> list[dict[str, Any]]:
         w.actor("sev"),
         {"set": {"repos": {"b": None, "B": {"path": "../b"}}}},
         note="removing the old entry allows its name and path to be reused",
+    )
+    w.ev(
+        "workspace", "settings.changed", w.actor("sev"),
+        {"set": {"repos": {"c": {"path": "../Stra\u00dfe"}, "d": {"path": "../STRASSE"},
+                           "e": {"path": "../\ua7cb"}, "f": {"path": "../\u0264"}}}},
+        note="only ASCII case folds: non-ASCII case pairs remain distinct on every runtime",
     )
     out.append(w.scenario())
     return out

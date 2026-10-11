@@ -31,6 +31,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+WHOLE_FILE_LIMIT = 64 << 20  # host mode: read_bytes and read_text refuse a larger file
+
 __all__ = ["CapabilityDenied", "Capabilities", "Exec", "Files", "Git", "Signer", "open_tty"]
 
 
@@ -126,7 +128,18 @@ class Files:
         if self.roots is None:
             return os.open(os.fspath(path), flags, mode)
         with self._parent(path) as (dfd, name):
-            return os.open(name if name is not None else ".", flags | os.O_NOFOLLOW, mode, dir_fd=dfd)
+            # O_NONBLOCK: a FIFO cannot hang the open. Then only a regular file (or a directory, when one was asked
+            # for with O_DIRECTORY) is accepted: no FIFO, socket or device is ever read or written.
+            fd = os.open(name if name is not None else ".", flags | os.O_NOFOLLOW | os.O_NONBLOCK, mode, dir_fd=dfd)
+        try:
+            kind = os.fstat(fd).st_mode
+            if not (stat.S_ISDIR(kind) if flags & os.O_DIRECTORY else stat.S_ISREG(kind)):
+                raise CapabilityDenied(f"not a regular file: {os.fspath(path)!r}")
+            os.set_blocking(fd, True)
+        except BaseException:
+            os.close(fd)
+            raise
+        return fd
 
     # -- the capability
     def getcwd(self) -> str:
@@ -159,7 +172,10 @@ class Files:
         if self.roots is None:
             return Path(path).read_bytes()
         with os.fdopen(self._open(path, os.O_RDONLY), "rb") as f:
-            return f.read()
+            data = f.read(WHOLE_FILE_LIMIT + 1)
+        if len(data) > WHOLE_FILE_LIMIT:
+            raise CapabilityDenied(f"file larger than {WHOLE_FILE_LIMIT} bytes: {os.fspath(path)!r}")
+        return data
 
     def read_text(self, path: str | os.PathLike[str]) -> str:
         if self.roots is None:

@@ -3,6 +3,7 @@ capability has exactly one reading of a path, which is also the open."""
 
 import os
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -186,3 +187,55 @@ def test_root_spelling_is_exact(tree, tmp_path):
 def test_roots_must_be_absolute_and_free_of_nul():
     with pytest.raises(ValueError):
         Files(("rel",))
+
+
+# ------------------------------------------------------------------------------------------------- special files
+
+
+def test_fifo_does_not_hang_and_is_refused(tree):
+    root, _ = tree
+    os.mkfifo(root / "a" / "fifo")
+    f = host(tree).files
+    for call in (f.read_bytes, lambda p: f.read_regular(str(p), 10), f.read_text):
+        with pytest.raises(OSError):  # CapabilityDenied (not regular); never a hang
+            call(root / "a" / "fifo")
+    with pytest.raises(OSError):
+        f.write_text(root / "a" / "fifo", "x")
+
+
+def test_device_is_refused(tree, tmp_path):
+    root, _ = tree
+    if not os.path.exists("/dev/zero"):
+        pytest.skip("no /dev/zero")
+    # a device node cannot be made unprivileged, so reach one through the root spelled as /dev
+    f = Files((Path("/dev"),))
+    with pytest.raises(CapabilityDenied):
+        f.read_bytes("/dev/zero")
+    with pytest.raises(CapabilityDenied):
+        f.read_regular("/dev/zero", 10)
+
+
+def test_socket_file_is_refused():
+    import shutil
+    import socket
+    import tempfile
+
+    short = Path(tempfile.mkdtemp(prefix="oc", dir="/tmp")).resolve()  # AF_UNIX paths are short
+    s = socket.socket(socket.AF_UNIX)
+    try:
+        s.bind(str(short / "s"))
+        with pytest.raises(OSError):
+            Files((short,)).read_bytes(short / "s")
+    finally:
+        s.close()
+        shutil.rmtree(short, ignore_errors=True)
+
+
+def test_whole_file_reads_are_capped(tree, monkeypatch):
+    root, _ = tree
+    monkeypatch.setattr("orch.ops.caps.WHOLE_FILE_LIMIT", 4)
+    (root / "a" / "big").write_bytes(b"12345")
+    with pytest.raises(CapabilityDenied):
+        host(tree).files.read_bytes(root / "a" / "big")
+    (root / "a" / "ok").write_bytes(b"1234")
+    assert host(tree).files.read_bytes(root / "a" / "ok") == b"1234"

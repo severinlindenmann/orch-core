@@ -2,8 +2,9 @@
 
 from typing import Any
 
-from orch.ops._dsl import INT, STR, B, arr, obj, operation
+from orch.ops._dsl import INT, STR, B, arr, err, obj, operation
 from orch.ops.base import Context, Result
+from orch.ops.errors import OrchError
 from orch.ops.runtime import Workspace, _config
 
 _SHOWN = 20
@@ -15,7 +16,10 @@ def _handle(ctx: Context, args: dict[str, Any]) -> Result:
 
     ws = ctx.workspace or Workspace(ctx.env, ctx.now)
     root = ws.require_root()
-    wid = (_config(root) or {})["workspace"]["id"]
+    cfg = _config(root)
+    if cfg is None:
+        raise OrchError("not_found", "config.json of the workspace is missing or unreadable", hint="orch init")
+    wid = cfg["workspace"]["id"]
     lines: list[str] = []
 
     def run() -> list[health.Finding]:
@@ -48,6 +52,7 @@ def _handle(ctx: Context, args: dict[str, Any]) -> Result:
         lines=lines,
         hints=[hint],
         exit=5 if errors else 0,
+        head=f"doctor: {len(errors)} errors, {len(findings) - len(errors)} warnings" if errors else None,
     )
 
 
@@ -61,5 +66,6 @@ OP = operation(
     pre=("workspace_exists",),
     text="ok doctor {problems}\nnext: {next}",
     data=obj({"problems": INT, "findings": arr(obj({"where": STR, "what": STR, "level": STR}))}),
+    errors=(err("not_found", "run orch init in a workspace", ["orch", "describe", "init"]),),
     handler=_handle,
 )

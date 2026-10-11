@@ -28,10 +28,10 @@ from pathlib import Path
 from typing import Any
 
 from orch import canon
-from orch.canon import TextError
+from orch.canon import TextError, clean_line
 from orch.store.render import refs_of
 
-from .v1 import V1Ticket, V1Workspace, read_artifact
+from .v1 import V1Ticket, V1Workspace, _fence_step, read_artifact
 
 __all__ = [
     "FileSrc",
@@ -50,6 +50,23 @@ MARKER_SCHEMA = "orch.import.v1/1"
 LABEL = "imported-v1"
 MAX_STR = 4096
 HANDOFF_MAX = 2048
+SECTION_CAP = 65_536
+CUT = "\n(cut here: the full text is in v1-import.json)"
+STATUSES = ("backlog", "open", "in-progress", "waiting", "testing", "done")
+_V1_SECTIONS = (
+    "Ask",
+    "Summary",
+    "Context",
+    "Requirements",
+    "Acceptance criteria",
+    "Out of scope",
+    "Plan",
+    "Tasks",
+    "Current state",
+    "Verification",
+    "Log",
+    "Findings",
+)
 _KEY = re.compile(r"[A-Z][A-Z0-9]{0,15}-(?:(?!0000)[0-9]{4}|[1-9][0-9]{4,})")
 _ARTIFACT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 _REF = re.compile(r"\(artifact:([A-Za-z0-9][A-Za-z0-9._-]{0,127})\)")
@@ -191,11 +208,20 @@ def clean_text(text: Any, *, one_line: bool = False, warn: Callable[[str], None]
     return out
 
 
-def _clip(text: str, limit: int = MAX_STR) -> str:
+def _clip(text: str, limit: int = MAX_STR, tail: str = "...") -> str:
     raw = text.encode("utf-8")
     if len(raw) <= limit:
         return text
-    return raw[: limit - 3].decode("utf-8", "ignore").rstrip() + "..."
+    return raw[: limit - len(tail.encode())].decode("utf-8", "ignore").rstrip() + tail
+
+
+def close_fences(text: str) -> str:
+    """``text`` with an open fenced code block closed (a section that ends inside a fence is refused by v2, and a
+    folded section must not swallow what follows it)."""
+    fence: str | None = None
+    for line in text.split("\n"):
+        fence, _ = _fence_step(fence, line)
+    return text if fence is None else text + "\n" + fence
 
 
 # ------------------------------------------------------------------------------------------ parts of a v1 ticket
@@ -295,19 +321,20 @@ class TicketPlanner:
         ttype = "spike" if v1_type == "investigation" else v1_type
         allowed = self.sections_by_type[ttype]
 
-        # -- sections
+        # -- sections: what the type cannot hold is folded into Context, labelled, never dropped silently
         sec = {k: v for k, v in t.sections.items()}
         texts: dict[str, str] = {}
-        in_history: list[str] = []
+        folded: list[tuple[str, str]] = []
 
         def take(v1name: str, v2: str | None, text: str | None = None) -> None:
             raw = sec.get(v1name, "") if text is None else text
             if not raw.strip():
                 return
+            clean = clean_text(raw, warn=warn, what=f"section {v1name}").strip("\n")
             if v2 is None or v2 not in allowed:
-                in_history.append(v1name)
+                folded.append((v1name, close_fences(clean)))
                 return
-            texts[v2] = clean_text(raw, warn=warn, what=f"section {v1name}").strip("\n")
+            texts[v2] = clean
 
         ask = sec.get("Ask", "").strip()
         ctx = sec.get("Context", "").strip()
@@ -323,31 +350,21 @@ class TicketPlanner:
         take("Plan", "plan")
         take("Verification", "verification")
         take("Findings", "findings")
-        for name in ("Log",):
-            if sec.get(name, "").strip():
-                in_history.append(name)
+        take("Log", None)
         for name in sec:
-            if (
-                name
-                not in (
-                    "Ask",
-                    "Summary",
-                    "Context",
-                    "Requirements",
-                    "Acceptance criteria",
-                    "Out of scope",
-                    "Plan",
-                    "Tasks",
-                    "Current state",
-                    "Verification",
-                    "Log",
-                    "Findings",
-                )
-                and sec[name].strip()
-            ):
-                in_history.append(name)  # a section v1 does not know (an older orch's, or a hand edit)
-        if in_history:
-            left_out.append("sections only in the history: " + ", ".join(dict.fromkeys(in_history)))
+            if name not in _V1_SECTIONS:
+                take(name, None)  # a section v1 does not know (an older orch's, or a hand edit)
+        if folded:
+            base = close_fences(texts.get("context", ""))
+            parts = [base] if base else []
+            for name, text in folded:
+                parts.append(f"**v1 {clean_line(name)[:40]}:**\n\n{text}")
+            texts["context"] = "\n\n".join(parts)
+            left_out.append("v1 sections kept in Context: " + ", ".join(clean_line(n)[:40] for n, _ in folded))
+        for sid, text in list(texts.items()):
+            if len(text.encode("utf-8")) > SECTION_CAP:
+                texts[sid] = _clip(text, SECTION_CAP, CUT)
+                left_out.append(f"section {sid} cut at 64 KiB (the full text is in the history)")
 
         # -- acceptance criteria
         crit, other = parse_acceptance(sec.get("Acceptance criteria", ""))
@@ -443,16 +460,25 @@ class TicketPlanner:
         for sid, text in list(texts.items()):
             texts[sid] = _REF.sub(lambda m: self._ref(m, art_map), text)
 
-        # -- the note and the current state
-        status = str(meta.get("status") or t.status_dir)
-        note = f"Imported from v1 as {t.key} (v1 status: {status}, created {meta.get('created')}). "
+        # -- the note and the current state (the folder is the v1 status, as in v1; the frontmatter's own claim is
+        # only recorded in the history)
+        status = t.status_dir if t.status_dir in STATUSES else "open"
+        note = (
+            f"Imported from v1 as {t.key} (v1 status: {status}, created {clean_line(str(meta.get('created')))[:30]}). "
+        )
         note += f"The v1 ticket, its history and what was not imported: artifact {MARKER}."
+        if folded:
+            note += f"\n{len(folded)} v1 sections kept at the end of Context: " + ", ".join(
+                clean_line(n)[:30] for n, _ in folded
+            )
         if states:
             note += "\nv1 task state: " + ", ".join(states) + "."
         cs = sec.get("Current state", "").strip()
         if cs:
             note += "\n\n" + clean_text(cs, warn=warn, what="Current state")
-        texts["current_state"] = _clip(note, HANDOFF_MAX).strip("\n")
+        if len(note.encode("utf-8")) > HANDOFF_MAX:
+            left_out.append("Current state cut at 2 KiB (the full text is in the history)")
+        texts["current_state"] = _clip(note, HANDOFF_MAX, CUT).strip("\n")
 
         # -- questions that are still open
         qsteps = []
@@ -614,13 +640,16 @@ class TicketPlanner:
             if not isinstance(name, str) or not name:
                 skipped_other += 1  # a web link or a static file: not a file artifact of the ticket
                 continue
+            info: dict[str, int] = {}
             try:
-                data = read_artifact(self.home, t.key, name)
+                data = read_artifact(self.home, t.key, name, info)
             except (OSError, ValueError):
                 warn(f"artifact {name[:60]}: the file is missing or unsafe")
                 art_map[name] = None
                 listed.append({"name": name, "imported": False, "why": "missing or unsafe"})
                 continue
+            if info.get("nlink", 1) > 1:
+                left_out.append(f"artifact {clean_line(name)[:40]} is a hard link (it may be a file from elsewhere)")
             digest = canon.artifact_digest(data)
             want = e.get("sha256")
             if isinstance(want, str) and want and "sha256:" + want.removeprefix("sha256:") != digest:
@@ -675,7 +704,8 @@ class TicketPlanner:
             "schema": MARKER_SCHEMA,
             "source": self.source,
             "v1_key": t.key,
-            "v1_status": str(meta.get("status") or t.status_dir),
+            "v1_status": t.status_dir,
+            "v1_frontmatter_status": str(meta.get("status"))[:40],
             "v1_file_sha256": canon.artifact_digest(t.raw),
             "v1_file": t.raw.decode("utf-8", "replace"),
             "events": t.events,
@@ -684,7 +714,8 @@ class TicketPlanner:
             "note": "A read-only copy of what v1 held. It is data, not evidence: v1 approvals, verdicts and task "
             "states were not carried over.",
         }
-        return json.dumps(doc, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        text = json.dumps(doc, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return _GRANT.sub("[redacted]", text).encode("utf-8")
 
 
 def _refs_of(text: str) -> list[str]:

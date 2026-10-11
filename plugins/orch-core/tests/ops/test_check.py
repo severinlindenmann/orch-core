@@ -111,3 +111,29 @@ def test_stale_instructions_still_fail_the_check(repo):
     (repo.root / "AGENTS.orch.md").unlink()
     r = check(repo)
     assert r.code == 5 and r.data["findings"][0]["what"] == "missing"
+
+
+def test_a_type_change_to_a_symlink_and_a_deleted_log_cannot_be_committed(repo):
+    import os
+
+    uid = repo.uid("DEMO-0001")
+    p = repo.root / "tickets" / uid / "ticket.json"
+    keep = p.read_bytes()
+    p.unlink()
+    os.symlink("/etc/passwd", p)
+    repo.git("add", "-f", f"tickets/{uid}/ticket.json")
+    p.unlink()
+    p.write_bytes(keep)  # the file is put back on disk, the link is what is staged
+    r = check(repo, "--staged")
+    assert "commit.link" in codes(r) and r.code == 5
+    repo.git("reset", "-q")
+    repo.git("add", "-f", "tickets")
+    repo.git("commit", "-qm", "base")
+    repo.git("rm", "--cached", "-q", f"tickets/{uid}/events.jsonl")
+    assert "commit.deleted" in codes(check(repo, "--staged"))
+
+
+def test_a_failing_check_does_not_start_with_ok(repo):
+    (repo.root / "AGENTS.orch.md").unlink()
+    r = Cli(repo, grant=False, session=None)("check")
+    assert r.code == 5 and r.first.startswith("check: ") and not r.out.startswith("ok")

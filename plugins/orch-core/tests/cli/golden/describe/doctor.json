@@ -64,7 +64,19 @@
         "additionalProperties": false
       }
     },
-    "errors": []
+    "errors": [
+      {
+        "code": "not_found",
+        "exit": 2,
+        "retryable": false,
+        "hint": "run orch init in a workspace",
+        "fix": [
+          "orch",
+          "describe",
+          "init"
+        ]
+      }
+    ]
   },
   "key": null,
   "seq": 0,

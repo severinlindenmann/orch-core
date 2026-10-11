@@ -181,8 +181,21 @@ def test_keys_of_a_dead_init_are_reported_and_swept_by_repair(two):
     d = ws.host_state / "hosts" / ("a" * 32)
     (d / "keys").mkdir(parents=True)
     (d / "keys" / "wsk.key").write_text("x")
+    import subprocess
+    import sys
+
+    dead = subprocess.Popen([sys.executable, "-c", "pass"])
+    dead.wait()
+    (d / ".init-incomplete").write_text(f"{dead.pid}\n")
     r = doctor(ws)
     assert "keys.orphan" in codes(r) and d.exists()
+    r = doctor(ws, "--repair")
+    assert "keys.orphan" not in codes(r) and not d.exists()
+    other = (
+        ws.host_state / "hosts" / ("b" * 32)
+    )  # keys with no marker are not an init of ours: left alone, not reported
+    (other / "keys").mkdir(parents=True)
+    assert "keys.orphan" not in codes(doctor(ws))
 
 
 def test_an_unobservable_repository_is_a_warning(two):
@@ -197,3 +210,56 @@ def test_an_unobservable_repository_is_a_warning(two):
 def test_doctor_is_terse(two):
     r = Cli(two, grant=False, session=None)("doctor")
     assert r.code == 0 and len(r.out.splitlines()) <= 25 and r.out.startswith("ok doctor ")
+
+
+def test_deleted_checkpoints_cannot_hide_a_rollback_where_the_host_key_is(two):
+    ws = two
+    p = log_path(ws, "DEMO-0001")
+    lines = p.read_bytes().splitlines(keepends=True)
+    p.write_bytes(b"".join(lines[:-1]))
+    shutil.rmtree(ws.root / ".state" / "checkpoints")
+    r = doctor(ws)
+    assert r.code == 5 and "checkpoint.missing" in codes(r)
+    assert Cli(ws, grant=False, session=None).j("check").code == 5  # the fast check says so too
+
+
+def test_missing_checkpoints_are_only_a_warning_without_the_host_key(two):
+    ws = two
+    shutil.rmtree(ws.root / ".state" / "checkpoints")
+    shutil.rmtree(ws.host_state / "hosts" / "705d40abbb8c1c90354a1acaa94c935c" / "keys")  # a clone: no workspace key
+    r = doctor(ws)
+    assert r.code == 0 and "checkpoint.missing" in codes(r)
+
+
+def test_a_ticket_folder_without_a_log_and_an_unlisted_artifact_are_reported(two):
+    ws = two
+    uid = ws.uid("DEMO-0001")
+    shutil.copytree(ws.root / "tickets" / uid, ws.root / "tickets" / "01J9ZK4Q7M3R8T2V6X0B5N1C9D")
+    (ws.root / "tickets" / "01J9ZK4Q7M3R8T2V6X0B5N1C9D" / "events.jsonl").unlink()
+    (ws.root / "tickets" / uid / "artifacts").mkdir(exist_ok=True)
+    (ws.root / "tickets" / uid / "artifacts" / "stray.txt").write_text("x")
+    r = doctor(ws)
+    assert r.code == 5 and "ticket.nolog" in codes(r) and "artifact.unlisted" in codes(r)
+
+
+def test_no_workspace_and_a_corrupt_config_are_a_declared_not_found(two, tmp_path):
+    for target in (tmp_path / "nothing",):
+        target.mkdir()
+        env = {"ORCH_WORKSPACE": str(target), "ORCH_STATE_DIR": str(two.host_state), "HOME": str(tmp_path)}
+        import io
+
+        from orch.cli.main import main
+
+        for cmd in ("doctor", "check"):
+            out, err = io.StringIO(), io.StringIO()
+            code = main([cmd, "--json"], env=env, stdout=out, stderr=err, now=lambda: two.clock[0])
+            assert code == 2 and json.loads(out.getvalue())["error"]["code"] == "not_found"
+    (two.root / "config.json").write_text("{not json")
+    assert doctor(two).code == 2 and doctor(two).err_code == "not_found"
+
+
+def test_a_failing_doctor_does_not_start_with_ok(two):
+    p = two.root / "tickets" / two.uid("DEMO-0001") / "ticket.json"
+    p.write_text(p.read_text().replace('"medium"', '"urgent"'))
+    r = Cli(two, grant=False, session=None)("doctor")
+    assert r.code == 5 and r.first.startswith("doctor: 1 errors") and not r.out.startswith("ok")

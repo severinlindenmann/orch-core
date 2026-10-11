@@ -47,4 +47,9 @@ def _raw_cases() -> Iterator[tuple[str, str]]:
     )
     yield "errors/_usage.txt", run_cli("task", "done").err
     yield "errors/_unknown.txt", run_cli("frobnicate").err
-    yield "errors/_not-implemented.txt", run_cli("addon", "purge", "x").err
+    real = ops.get("inbox").handler  # no real command stays unimplemented: take a handler away for this one case
+    ops.bind("inbox", ops._unimplemented("inbox"))
+    try:
+        yield "errors/_not-implemented.txt", run_cli("inbox").err
+    finally:
+        ops.bind("inbox", real)

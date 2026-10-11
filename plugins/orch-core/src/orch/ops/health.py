@@ -27,6 +27,7 @@ from orch.store import Store, StoreError
 from orch.store import render as store_render
 from orch.store.checkpoints import verify_object
 from orch.store.fsio import read_or_none
+from orch.store.paths import ULID
 from orch.store.pins import HostPins
 
 __all__ = ["Finding", "InspectStore", "check_staged", "inspect", "repair"]
@@ -104,6 +105,8 @@ def inspect(
     if s is None:
         return out, None
     try:
+        for r in s.reports:  # what the store met while reading (a torn write, a date from the future)
+            out.append(Finding("error", _label(s, r.log) if r.log else "store", r.code, r.detail))
         for log, seq, code, detail in s.chain_errors():
             out.append(Finding("error", f"{_label(s, log)}#{seq}", code, detail))
         for log, d in sorted(s.diverged.items()):
@@ -116,8 +119,8 @@ def inspect(
                         Finding("error", f"{_label(s, log)}#{i.seq}", "auth.invalid_event", f"{i.type}: {i.code}")
                     )
         out += _projections(s)
+        out += _checkpoints(s, _has_host_key(state_dir, wid))
         if not fast:
-            out += _checkpoints(s)
             out += _pins(s, state_dir, wid)
             out += _index(s)
             out += _repos(s, root)
@@ -145,6 +148,12 @@ def _projections(s: InspectStore) -> list[Finding]:
     for rel, want, code in pairs:
         if read_or_none(root / rel) != want:
             out.append(Finding("error", rel, code, f"{rel} differs from what the log says", "scan"))
+    tdir = root / "tickets"
+    for p in sorted(tdir.iterdir()) if tdir.is_dir() else []:
+        if p.is_dir() and not p.is_symlink() and ULID.fullmatch(p.name):
+            log = p / "events.jsonl"
+            if not log.is_file() or log.stat().st_size == 0:
+                out.append(Finding("error", f"tickets/{p.name}", "ticket.nolog", "a ticket folder with no event log"))
     bad = {c.log for c in st.chain_errors} | {log for log, *_ in s.chain_errors()}
     for uid, view in sorted(st.tickets.items()):
         if uid in bad:
@@ -174,6 +183,13 @@ def _projections(s: InspectStore) -> list[Finding]:
                     "error", where, "projection.body", "body.md differs from the log in " + ", ".join(names), "scan"
                 )
             )
+        listed = {a.name for a in view.artifacts}
+        adir = tdir / "artifacts"
+        for f in sorted(adir.iterdir()) if adir.is_dir() and not adir.is_symlink() else []:
+            if f.name not in listed:
+                out.append(
+                    Finding("warn", where, "artifact.unlisted", f"{f.name[:60]} is in artifacts/ but not in the log")
+                )
         for a in view.artifacts:
             if a.digest is None:
                 continue
@@ -189,14 +205,27 @@ def _projections(s: InspectStore) -> list[Finding]:
     return out
 
 
-def _checkpoints(s: InspectStore) -> list[Finding]:
+def _has_host_key(state_dir: Path, wid: str) -> bool:
+    from orch.custody.file import FILE_SUFFIX
+    from orch.custody.files import key_path
+
+    try:
+        return key_path(state_dir / "hosts" / wid / "keys", "wsk", FILE_SUFFIX).is_file()
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _checkpoints(s: InspectStore, host_here: bool) -> list[Finding]:
+    """Where this machine holds the workspace key it writes a checkpoint after every append, so a missing one means
+    somebody deleted it (that hides a rollback): an error. Without the key (a clone) it is only a warning."""
     out: list[Finding] = []
     cps = s._checkpoints
     if s._wsk_pub() is None:
         return out
+    lvl = "error" if host_here else "warn"
     if cps.workspace() is None:
         out.append(
-            Finding("warn", "checkpoints", "checkpoint.missing", "no workspace checkpoint: a rollback would not show")
+            Finding(lvl, "checkpoints", "checkpoint.missing", "no workspace checkpoint: a rollback would not show")
         )
     have = set(cps.ticket_uids())
     missing = sorted(u for u in s.state.tickets if u not in have)
@@ -268,22 +297,28 @@ def _repos(s: InspectStore, root: Path) -> list[Finding]:
 
 
 def _orphans(state_dir: Path, wid: str) -> list[Finding]:
-    from orch.ops.workspace_init import MARKER
+    """Key folders of an init that died: the ones ``--repair`` can remove (a marker of a process that is gone)."""
+    from orch.ops.workspace_init import MARKER, _alive
 
     hosts = state_dir / "hosts"
     out: list[Finding] = []
     if not hosts.is_dir():
         return out
     for d in sorted(hosts.iterdir()):
-        if d.name == wid or d.is_symlink() or not d.is_dir() or (d / "genesis").exists():
+        marker = d / MARKER
+        try:
+            if d.name == wid or d.is_symlink() or not marker.is_file() or (d / "genesis").exists():
+                continue
+            pid = int(marker.read_text().strip() or "0")
+        except (OSError, ValueError):
             continue
-        if (d / "keys").is_dir() or (d / MARKER).exists():
+        if pid and not _alive(pid):
             out.append(
                 Finding(
                     "warn",
                     f"keys/{d.name[:40]}",
                     "keys.orphan",
-                    "keys of an init that never finished (no pinned workspace)",
+                    "keys of an init that died before it finished",
                     "orphans",
                 )
             )
@@ -332,15 +367,32 @@ def _git(root: Path, *args: str) -> bytes | None:
 
 def check_staged(s: InspectStore, root: Path) -> list[Finding]:
     """What a pre-commit hook refuses: staged files that are not what the log says, a staged log that is not a prefix
-    of the verified one, anything of ``.state``, key material and grant secrets."""
+    of the verified one, deleted logs, links, anything of ``.state``, key material and grant secrets."""
     out: list[Finding] = []
-    names = _git(root, "diff", "--cached", "--name-only", "-z", "--relative", "--diff-filter=ACMR")
-    if names is None:
+    raw = _git(root, "diff", "--cached", "--raw", "-z", "--no-renames", "--relative")
+    if raw is None:
         return [Finding("error", "git", "git.unavailable", "git cannot list the staged files here")]
     st = s.state
-    for rel in sorted(n for n in names.decode("utf-8", "replace").split("\0") if n):
+    fields = raw.decode("utf-8", "replace").split("\0")
+    entries: list[tuple[str, str, str]] = []  # (status, new mode, path)
+    for i in range(0, len(fields) - 1, 2):
+        meta = fields[i].lstrip(":").split()
+        if len(meta) >= 5:
+            entries.append((meta[4], meta[1], fields[i + 1]))
+    guarded = re.compile(r"(?:tickets/|events/|\.state(?:/|$))|(?:config|keys)\.jsonl?$")
+    for status, mode, rel in sorted(entries, key=lambda e: e[2]):
+        if status == "D":
+            if rel.endswith(("events.jsonl", "workspace.jsonl", "ticket.json", "body.md", "config.json", "keys.jsonl")):
+                out.append(
+                    Finding("error", rel, "commit.deleted", "a log or a projection may not be deleted from history")
+                )
+            continue
+        if mode in ("120000", "160000") and guarded.search(rel):
+            out.append(Finding("error", rel, "commit.link", "a symlink or submodule where the workspace keeps a file"))
+            continue
         blob = _git(root, "show", f":{rel}")
         if blob is None:
+            out.append(Finding("error", rel, "git.unavailable", "git cannot read the staged file"))
             continue
         if rel.startswith(".state/") or rel == ".state":
             out.append(

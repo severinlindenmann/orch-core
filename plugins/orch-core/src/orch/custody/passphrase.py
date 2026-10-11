@@ -142,6 +142,15 @@ def render_prompt(request: PassphraseRequest) -> str:
         if request.digest and set(request.digest) <= set("0123456789abcdef")
         else _value(request.digest, 64)
     )
+    if request.kind == "batch":
+        lines = ["", "=== orch: passphrase for a batch of signatures ===", f"plan digest: {digest}"]
+        lines.append(f"key: {_value(request.key_id, 64)}")
+        for name, value in request.fields:
+            lines += _field_lines(name, value)
+        lines.append("this one passphrase signs every event of the plan you just read, and nothing else")
+        if request.action:
+            lines.append(f'note (caller text, not signed): "{_value(request.action)}"')
+        return "\n".join(lines) + "\n"
     lines = ["", "=== orch: passphrase ===", f"sha256: {digest}", f"key: {_value(request.key_id, 64)}"]
     if request.kind == "create":
         lines.append("action: create this key")
@@ -153,6 +162,44 @@ def render_prompt(request: PassphraseRequest) -> str:
     if len(lines) > MAX_PROMPT_LINES:
         raise CustodyError("refusing to prompt: too much to show faithfully")
     return "\n".join(lines) + "\n"
+
+
+def _harden() -> Callable[[], None]:
+    """While a key is unlocked for a batch: no core dump (``RLIMIT_CORE`` 0), and no debugger attach (Linux
+    ``PR_SET_DUMPABLE`` 0, macOS ``PT_DENY_ATTACH``, which cannot be undone for the process). Best effort, never an
+    error. Returns what puts the reversible parts back."""
+    undo: list[Callable[[], None]] = []
+    try:
+        import resource
+
+        old = resource.getrlimit(resource.RLIMIT_CORE)
+        resource.setrlimit(resource.RLIMIT_CORE, (0, old[1]))
+        undo.append(lambda: resource.setrlimit(resource.RLIMIT_CORE, old))
+    except (ImportError, OSError, ValueError):
+        pass
+    try:
+        import ctypes
+        import sys
+
+        libc = ctypes.CDLL(None, use_errno=True)
+        if sys.platform == "darwin":
+            libc.ptrace(31, 0, 0, 0)  # PT_DENY_ATTACH
+        elif sys.platform.startswith("linux"):
+            was = libc.prctl(3, 0, 0, 0, 0)  # PR_GET_DUMPABLE
+            libc.prctl(4, 0, 0, 0, 0)  # PR_SET_DUMPABLE
+            if was in (0, 1, 2):
+                undo.append(lambda: libc.prctl(4, was, 0, 0, 0))
+    except (ImportError, OSError, AttributeError):
+        pass
+
+    def restore() -> None:
+        for f in reversed(undo):
+            try:
+                f()
+            except (OSError, ValueError):
+                pass
+
+    return restore
 
 
 def _open_tty():
@@ -385,16 +432,27 @@ class PassphraseBackend:
 
     @contextlib.contextmanager
     def unlocked(
-        self, key_id: str, *, action: str, digest: str, fields: tuple[tuple[str, str], ...] = ()
+        self,
+        key_id: str,
+        *,
+        action: str,
+        digest: str,
+        labels: tuple[bytes, ...],
+        fields: tuple[tuple[str, str], ...] = (),
     ) -> Iterator[Callable[[bytes], bytes]]:
         """One passphrase for a batch of signatures (``orch import v1``, ticket-format 14): ask once, with ``action``,
         the ``digest`` of what the batch will sign and ``fields`` describing it; hold the unlocked key in this process
         for the ``with`` block only; yield ``sign(payload)``, which refuses every payload ``sign`` would refuse. The
-        scalar is zeroised when the block ends, however it ends. Per-signature prompts (D65) stay the rule everywhere
-        else: only a caller that shows the person the whole batch first may use this."""
+        scalar is zeroised when the block ends, however it ends. ``labels`` limits what the key signs to those domain
+        labels (``orch import v1`` passes the ticket-event label only), on top of the role's own. For the length of
+        the block core dumps are off and a debugger cannot attach (:func:`_harden`). Per-signature prompts (D65) stay
+        the rule everywhere else: only a caller that shows the person the whole batch first may use this (a test
+        checks that only ``ops/import_run.py`` calls it)."""
+        if not labels or not all(label_allowed(lb, ROLE_LABELS["device"]) for lb in labels):
+            raise CustodyError("an unlocked batch names the device labels it may sign")
         check_key_id(key_id)
         doc, header, params, salt, nonce, ct = self._read(key_id)
-        request = PassphraseRequest("unlock", key_id, action if isinstance(action, str) else "", digest, fields)
+        request = PassphraseRequest("batch", key_id, action if isinstance(action, str) else "", digest, fields)
         pw = _passphrase_bytes(self._provider(request))
         if not pw:
             raise WrongPassphrase("empty passphrase")
@@ -409,7 +467,7 @@ class PassphraseBackend:
             key = crypto.private_key_from_scalar(int.from_bytes(scalar, "big"))
             if crypto.public_bytes(key) != crypto.unb64u(doc["pub"], crypto.PUB_LEN):
                 raise CustodyError("key file does not match its public key")
-            allowed = ROLE_LABELS[doc["role"]]
+            allowed = labels
             live = [key]
 
             def sign(payload: bytes) -> bytes:
@@ -421,10 +479,12 @@ class PassphraseBackend:
                     )
                 return crypto.sign(live[0], payload)
 
+            restore = _harden()
             try:
                 yield sign
             finally:
                 live.clear()
+                restore()
         finally:
             _zeroise(derived)
             _zeroise(scalar)

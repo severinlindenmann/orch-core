@@ -16,7 +16,7 @@ def test_the_marker_holds_the_v1_file_and_the_ticket_history(imported, hws, v1):
     assert m["v1_file"].encode() == src and m["v1_file_sha256"] == canon.artifact_digest(src)
     assert [e["kind"] for e in m["events"]] == ["ticket.created", "claim.taken", "gate.approved"]
     assert m["events"][2]["data"] == {"gate": "requirements"}  # v1's approval is history, not a v2 decision
-    assert any("sections only in the history" in x and "Log" in x for x in m["not_imported"])
+    assert any("v1 sections kept in Context" in x and "Log" in x for x in m["not_imported"])
     assert any("verify lines" in x for x in m["not_imported"])
 
 

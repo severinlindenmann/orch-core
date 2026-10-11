@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from orch.canon import clean_line
+
 from . import yamlsub
 
 __all__ = ["V1Problem", "V1Ticket", "V1Workspace", "find_v1", "read_v1"]
@@ -115,10 +117,13 @@ def _open_rel(home: Path, parts: tuple[str, ...]) -> int:
     return fd
 
 
-def _read_rel(home: Path, parts: tuple[str, ...], limit: int) -> bytes:
+def _read_rel(home: Path, parts: tuple[str, ...], limit: int, info: dict[str, int] | None = None) -> bytes:
     fd = _open_rel(home, parts)
     try:
-        if os.fstat(fd).st_size > limit:
+        st = os.fstat(fd)
+        if info is not None:
+            info["nlink"] = st.st_nlink
+        if st.st_size > limit:
             raise OSError(f"larger than {limit} bytes")
         with os.fdopen(fd, "rb", closefd=False) as f:
             data = f.read(limit + 1)
@@ -149,19 +154,22 @@ def _is_home(p: Path) -> bool:
 def find_v1(path: str | os.PathLike[str]) -> Path | None:
     """The ``orchestrator`` folder of the v1 workspace at ``path`` (the project folder or the folder itself)."""
     p = Path(path)
-    for cand in (p, p / "orchestrator"):
-        if _is_home(cand):
-            return cand
-    return None
+    if _is_home(p):
+        return p  # the person named this folder, a link or not
+    try:
+        os.close(_dir_fd(p, ("orchestrator",)))  # but ``orchestrator/`` below a named folder is never a link
+    except OSError:
+        return None
+    return p / "orchestrator" if _is_home(p / "orchestrator") else None
 
 
-def read_artifact(home: Path, key: str, name: str) -> bytes:
+def read_artifact(home: Path, key: str, name: str, info: dict[str, int] | None = None) -> bytes:
     """The bytes of ``artifacts/<key>/<name>``: no ``..``, no symlink in any component, a regular file of at most
     64 MiB. (A hard link to a file outside cannot be told from a file; the person is told in the review.)"""
     parts = name.split("/")
     if any(p in ("", ".", "..") or p.startswith(".") or "\\" in p for p in parts) or "/" in key:
         raise OSError("unsafe artifact name")
-    return _read_rel(home, ("artifacts", key, *parts), MAX_ARTIFACT_BYTES)
+    return _read_rel(home, ("artifacts", key, *parts), MAX_ARTIFACT_BYTES, info)
 
 
 _FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
@@ -208,14 +216,22 @@ def parse_ticket_file(raw: bytes) -> tuple[dict[str, Any], dict[str, str], str]:
         text = raw.decode("utf-8")
     except UnicodeDecodeError as e:
         raise ValueError("not UTF-8") from e
-    text = text.lstrip("﻿").replace("\r\n", "\n").replace("\r", "\n")
+    text = text.lstrip("\ufeff")
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
     if not text.startswith("---\n"):
         raise ValueError("no frontmatter")
     end = re.compile(r"^---[ \t]*$", re.M).search(text, 4)
     if end is None:
         raise ValueError("unterminated frontmatter")
+    front = text[4 : end.start()]
+    # PyYAML (what v1 showed) breaks lines at NEL, LS and PS and refuses other non-printables; a reader that did not
+    # would read something v1 never showed
+    if re.search("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\x85\u2028\u2029]", front):
+        raise ValueError("a control or line-separator character the v1 reader would treat differently")
     try:
-        meta = yamlsub.loads(text[4 : end.start()]) or {}
+        meta = yamlsub.loads(front) or {}
+    except RecursionError as e:
+        raise ValueError("frontmatter: nested too deeply") from e
     except yamlsub.YamlError as e:
         raise ValueError(f"frontmatter: {e}") from e
     if not isinstance(meta, dict) or not isinstance(meta.get("id"), str):
@@ -287,12 +303,14 @@ def read_v1(home: Path) -> V1Workspace:
             try:
                 raw = _read_rel(home, ("tickets", status, name), MAX_TICKET_BYTES)
                 meta, sections, _pre = parse_ticket_file(raw)
-            except (OSError, ValueError) as e:
+            except (OSError, ValueError, RecursionError) as e:
                 problems.append(V1Problem(where, f"cannot be read: {e}"))
                 continue
             key = m.group(1)
             if meta["id"] != key:
-                problems.append(V1Problem(where, f"the file name says {key}, the frontmatter says {meta['id']}"))
+                problems.append(
+                    V1Problem(where, f"the file name says {key}, the frontmatter says {clean_line(meta['id'])[:40]}")
+                )
                 continue
             if key in tickets:
                 problems.append(V1Problem(where, f"{key} is in two folders; the first one is imported"))

@@ -4,6 +4,7 @@ from typing import Any
 
 from orch.ops._dsl import INT, STR, B, arr, err, obj, operation
 from orch.ops.base import Context, Result
+from orch.ops.errors import OrchError
 from orch.ops.runtime import Workspace, _config
 
 _SHOWN = 20
@@ -19,7 +20,10 @@ def _handle(ctx: Context, args: dict[str, Any]) -> Result:
 
     ws = ctx.workspace or Workspace(ctx.env, ctx.now)
     root = ws.require_root()
-    wid = (_config(root) or {})["workspace"]["id"]
+    cfg = _config(root)
+    if cfg is None:
+        raise OrchError("not_found", "config.json of the workspace is missing or unreadable", hint="orch init")
+    wid = cfg["workspace"]["id"]
     findings, store = health.inspect(root, wid, ws.state_dir, fast=True, instructions=stale_findings(root))
     try:
         if args.get("staged") and store is not None:
@@ -42,10 +46,14 @@ def _handle(ctx: Context, args: dict[str, Any]) -> Result:
         else ("orch doctor" if findings else "orch status")
     )
     return Result(
-        data={"problems": len(findings), "findings": [{"where": f.where, "what": what(f)} for f in shown]},
+        data={
+            "problems": len(findings),
+            "findings": [{"where": f.where, "what": what(f)} for f in shown],
+        },
         lines=lines,
         hints=[hint],
         exit=5 if findings else 0,
+        head=f"check: {len(findings)} problems" if findings else None,
     )
 
 

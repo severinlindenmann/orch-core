@@ -80,4 +80,29 @@ EMITS_V1: dict[str, frozenset[str]] = {
     "verdict": frozenset({"verdict.given"}),
 }
 
+HUMAN_ONLY: frozenset[str] = frozenset(
+    {
+        "addon.disable",
+        "addon.grant",
+        "addon.purge",
+        "answer",
+        "approve",
+        "close",
+        "grant",
+        "grant.revoke",
+        "import.v1",
+        "init",
+        "member.add",
+        "member.remove",
+        "member.role",
+        "reopen",
+        "request_changes",
+        "verdict",
+    }
+)
+"""The operations a person runs with their own signature (``who: human``). **A verb that names one grants nothing**
+(F1 10.1): a model rule, not only a check of ``orch grant``, so a ``grant.issued`` written by another client cannot make
+an agent's event covered by ``approve`` or ``import.v1``. ``tests/ops/test_emits.py`` checks the set equals the
+registry's human operations."""
+
 CURRENT = EMITS_V1

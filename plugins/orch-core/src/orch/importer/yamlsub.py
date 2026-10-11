@@ -82,6 +82,8 @@ class _Parser:
         return self.scalar(text, indent)
 
     def sequence(self, indent: int, depth: int) -> list[Any]:
+        if depth > MAX_DEPTH:
+            raise YamlError("nested too deeply")
         out: list[Any] = []
         while True:
             self.skip()

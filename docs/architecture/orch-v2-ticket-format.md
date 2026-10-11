@@ -857,7 +857,9 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
   - accepted if its `n` is higher and no `seq` is lower than in H (gaps in `n` are normal);
   - ignored, without an alarm, if its `n` is lower and no `seq` is higher than in H (a stale delivery);
   - `chain.diverged` in every other case: the same `n` with a different `o`; a log whose `seq` equals H's but whose
-    `head` differs; a higher `n` with a lower `seq`; a lower `n` with a higher `seq`; or a uid of H that is missing.
+    `head` differs; a higher `n` with a lower `seq`; a lower `n` with a higher `seq`; or a higher `n` that lacks a uid of H.
+    A lower `n` that lacks a uid of H is a stale delivery and is ignored, provided no `seq` is higher.
+    A lower `n` that names a uid H lacks has a higher `seq` for it (H's counts as 0), so it is `chain.diverged`.
   - **After a restore:** a checkpoint with lower `seq`s is accepted only with the owner-signed `restore` event,
     verified under the owner's device, under the rule below. H is then replaced.
 

@@ -104,6 +104,8 @@ def _chain_check(core: Core, log: str, lc: LogCore, e: dict[str, Any], ctx: Ctx)
         return Refusal(Code.CHAIN_BROKEN, f"the log is broken ({lc.broken})")
     if e["seq"] != lc.seq + 1 or e["prev"] != lc.head:
         return Refusal(Code.CHAIN_BROKEN, "seq/prev do not continue the log")
+    if e["actor"]["kind"] != "person" and any(field in e for field in ("sig", "auth", "roster_v")):
+        return Refusal(Code.CHAIN_BROKEN, "sig, auth and roster_v appear only on person events")
     # a second one, or one that is not seq 1, is checked like any event (and never trusted with wsk_pub=None)
     genesis = e["type"] == "workspace.created" and not core.ws.created and e["seq"] == 1
     if genesis:  # refuse a foreign genesis before it is trusted with wsk_pub=None

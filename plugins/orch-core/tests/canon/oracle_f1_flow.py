@@ -480,7 +480,7 @@ class Sim:
             "head": ow.head(last),
             "abandoned": None,
             "abandoned_decisions": [],
-            "reason": "restored",
+            "reason": "rollback",
         }
         e = self._t("restore", self._sev(), pay, expect, note=note)
         if expect == "ok":
@@ -488,7 +488,7 @@ class Sim:
         self._fin(expect)
         return e
 
-    def ws_restore(self, *, note: str | None = None) -> dict[str, Any]:
+    def ws_restore(self, *, note: str | None = None, revocations: list | None = None) -> dict[str, Any]:
         events = self.w.logs["workspace"]
         last = events[-1]
         before = self.snap()
@@ -497,7 +497,8 @@ class Sim:
             "head": ow.head(last),
             "abandoned": None,
             "abandoned_decisions": [],
-            "reason": "restored",
+            "reason": "rollback",
+            "revocations": revocations or [],
         }
         e = self.w.ev("workspace", "restore", self._sev(), pay, note=note)
         self.settle(before, set(GATES))
@@ -1320,7 +1321,7 @@ def question_scenarios() -> list[dict[str, Any]]:
         gone = s.w.logs[TICKET].pop()  # the new chain does not have it, and neither does the scenario
         s.w.steps.pop()
         restore = {"from_seq": asked["seq"], "head": ow.head(asked), "abandoned": {"seq": answered["seq"], "head": ow.head(gone)},
-                   "abandoned_decisions": [answered["id"]], "reason": "restored a backup"}  # fmt: skip
+                   "abandoned_decisions": [answered["id"]], "reason": "rollback"}  # fmt: skip
         s._t("restore", s._sev(), restore, note="the owner restores to the question")
         if replay:
             s.w.raw(

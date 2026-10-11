@@ -44,7 +44,11 @@ def test_the_checkpoint_names_the_log_heads_and_the_genesis():
     t, w = C["ticket_checkpoint"]["signed"]["o"], C["workspace_checkpoint"]["signed"]["o"]
     assert t["head"] == C["ticket_log"]["heads"][t["seq"] - 1]
     assert w["workspace_log"]["head"] == C["workspace_log"]["heads"][w["workspace_log"]["seq"] - 1]
-    assert w["tickets"] == {UID: {"seq": t["seq"], "head": t["head"]}} and w["genesis"] == C["genesis"] and w["n"] == 1
+    assert (
+        w["tickets"] == {UID: {"seq": t["seq"], "head": t["head"], "acc": t["acc"]}}
+        and w["genesis"] == C["genesis"]
+        and w["n"] == 1
+    )
 
 
 @pytest.mark.parametrize("c", C["forged"], ids=lambda c: c["name"])
@@ -64,7 +68,7 @@ def _store(tmp_path, ticket=True, workspace=True):
 @pytest.mark.parametrize("offer", C["ticket_offers"], ids=lambda o: o["name"])
 def test_ticket_checkpoint_offers(tmp_path, offer):
     cp = _store(tmp_path)
-    r = cp.write_ticket(sign, UID, offer["seq"], offer["head"], "2026-10-10T10:05:00Z")
+    r = cp.write_ticket(sign, UID, offer["seq"], offer["head"], "2026-10-10T10:05:00Z", offer["acc"])
     stored = cp.ticket(UID)
     assert cps.verify_object(WSK, stored)
     if offer["expect"] == "ok":
@@ -105,6 +109,8 @@ def test_n_offers_are_signed_and_judged_by_a_receiver(o):
         pinned_genesis=C["genesis"],
         restore=o.get("restore"),
         applied=o.get("applied", []),
+        proofs=o.get("proofs"),
+        wsk_pub=WSK,
     )
     assert got == (o["expect"], o.get("recorded"))
 
@@ -145,20 +151,26 @@ R = json.loads((DIR / "restore.json").read_text(encoding="utf-8"))["scenarios"]
 
 @pytest.mark.parametrize("sc", R, ids=lambda s: s["name"])
 def test_restore_vectors_through_the_model(sc):
-    # ``reader_cannot_see_a_dropped_revocation`` is accepted by a log-only reader (the model) but must be refused by
-    # the host (``host_expect``); the host side is test_the_store_re_appends_the_revocation_as_the_vector_says.
-    ws, _ = run_scenario(sc)
-    # Scenarios may continue past the restore and its immediate re-appends.
-    assert len(ws) >= (6 if sc["reappends"] else 5)
-    assert ws[4]["type"] == "restore" and ws[4]["prev"] == canon.event_head(ws[3])
-    assert ws[4]["from_seq"] == 4 and ws[4]["head"] == canon.event_head(ws[3])
-    if sc["reappends"]:
-        assert ws[5]["type"] == "device.revoked" and ws[5]["actor"] == {
-            "kind": "host"
-        }  # allowed by the embedded revocation, never by a person's say-so
+    run_scenario(sc)
 
 
-def test_the_store_re_appends_the_revocation_as_the_vector_says(tmp_path):
+@pytest.mark.parametrize("case", C["transition_cases"], ids=lambda c: c["name"])
+def test_source_and_accumulator_transitions(case):
+    assert cps.verify_object(WSK, case["offered"])
+    got = cps.judge_offer(
+        case["held"]["o"] if case["held"] else None,
+        case["offered"]["o"],
+        pinned_genesis=case["offered"]["o"]["genesis"],
+        wsk_pub=WSK,
+        restore=case["restore"],
+        proofs=case["proofs"],
+        applied=case["applied"],
+        known_revocations=case.get("known_revocations", []),
+    )
+    assert got == (case["expect"], case["recorded"])
+
+
+def test_the_store_carries_the_revocation_as_the_vector_says(tmp_path):
     import shutil
 
     from tests.store.test_checkpoints import rollback
@@ -176,13 +188,10 @@ def test_the_store_re_appends_the_revocation_as_the_vector_says(tmp_path):
     rollback(env, backup)
     s = env.open()
     facts = s.restore_facts("workspace")
-    s.append(env.person_event(env.owner, "workspace", "restore", **facts, reason="rolled back"), log="workspace")
+    s.append(env.person_event(env.owner, "workspace", "restore", **facts, reason="rollback"), log="workspace")
     evs = env.read_events("workspace")
-    vector_host = next(st["event"] for st in R[0]["steps"] if st["event"]["type"] == "device.revoked")
-    assert [e["type"] for e in evs[-2:]] == ["restore", "device.revoked"]
-    host = evs[-1]
-    assert host["actor"] == vector_host["actor"] == {"kind": "host"}
-    assert set(host) == set(vector_host)
-    assert host["revocation"] == person_signed["revocation"] and host["reason"] == person_signed["reason"] == "lost"
+    assert evs[-1]["type"] == "restore"
+    assert evs[-1]["revocations"][0]["revocation"] == person_signed["revocation"]
+    assert s.state.workspace.devices[d2].revoked == "lost"
     s.close()
     env.store = None

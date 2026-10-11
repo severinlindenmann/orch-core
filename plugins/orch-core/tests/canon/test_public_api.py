@@ -48,6 +48,8 @@ GROUPS = {
         "SUITE",
         "ChainError",
         "check_chain",
+        "checkpoint_hash",
+        "log_acc",
         "event_head",
         "event_line",
         "host_signing_bytes",

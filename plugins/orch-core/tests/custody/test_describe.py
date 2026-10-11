@@ -69,6 +69,8 @@ CASES: dict[str, tuple[str, dict]] = {
             "abandoned": {"seq": 9, "head": H2},
             "abandoned_decisions": ["01J9ZP0000000000000000000B"],
             "reason": "rollback",
+            "source": None,
+            "revocations": [],
         },
     ),
     "invalid.acknowledged": ("workspace", {"invalid_seq": 8, "invalid_head": H1, "reason": "known"}),

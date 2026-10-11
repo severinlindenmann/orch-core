@@ -22,6 +22,8 @@ P_SEV = "p_" + "5e" * 16
 P_MARA = "p_" + "3a" * 16
 SIG = "A" * 86
 LABELS = {
+    "h_checkpoint": "orch/v2/checkpoint-hash|",
+    "h_log_acc": "orch/v2/log-acc|",
     "gate": "orch/v2/gate|",
     "section": "orch/v2/section|",
     "value": "orch/v2/value|",
@@ -609,18 +611,24 @@ def _vectors() -> dict[str, dict[str, Any]]:
     from . import oracle_f1_flow as fl
     from . import oracle_f1_signed as sg
 
+    restore = sg.restore_scenarios()
+    plain_revocations = {"fresh_host_revocation_and_plain_upgrade", "sole_owner_recovery_after_host_revocation"}
     return {
         "signatures.json": sg.signatures_vector(),
         "replay.json": sg.replay_scenario(),
         "tamper.json": sg.tamper_vector(),
         "genesis.json": sg.genesis_vector(),
         "devices.json": {"pins": "device.added and device roster rules", "scenarios": sg.devices_scenarios()},
-        "revocation.json": {"pins": "device.revoked and recovery", "scenarios": sg.revocation_scenarios()},
+        "revocation.json": {
+            "pins": "device.revoked, B1 upgrades and recovery",
+            "scenarios": sg.revocation_scenarios() + [s for s in restore if s["name"] in plain_revocations],
+        },
         "checkpoint.json": sg.checkpoint_vector(),
         "restore.json": {
             "pins": "workspace restore and revocations; replay_only steps replay successfully but admit refuses "
             "chain.bad_ws_seq; schema_refused marks steps refused by schema validation before the model",
-            "scenarios": sg.restore_scenarios(),
+            "scenarios": [s for s in restore if s["name"] not in plain_revocations],
+            **sg.restore_contract_vectors(),
         },
         "refusal_order.json": {"pins": "5.11 refusal order", "scenarios": sg.refusal_order_scenarios()},
         "generation.json": {"pins": "the 5.7 raise table", "scenarios": fl.generation_scenarios()},
@@ -674,7 +682,7 @@ INDEX: dict[str, str] = {
     "devices.json": "device.added rules: drop: and scope refusals, self-signed, stale roster_v, recovery (5.3, 5.11)",
     "revocation.json": "device.revoked: embedded revocation as authority, reason mismatch, recovery (5.3)",
     "checkpoint.json": "checkpoint objects, signed bytes, refusals, divergence (5.10)",
-    "restore.json": "workspace restore re-appends every PK-signed revocation (5.10)",
+    "restore.json": "workspace restore carries effective revocations atomically (5.10)",
     "refusal_order.json": "model scenarios: an event breaking two rules gets the code of the earlier step of the "
     "refusal order (5.11)",
     "generation.json": "the 5.7 raise table row by row, delayed approval, reverted edit, voided approvals",

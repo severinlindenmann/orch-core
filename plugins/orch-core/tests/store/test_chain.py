@@ -55,7 +55,9 @@ def test_changing_a_field_breaks_the_host_sig_at_that_event(ws):
     with pytest.raises(StoreError) as ex:
         s.append({"type": "log.added", "actor": env.agent, "text": "after"}, log=uid)
     assert ex.value.code == "chain.broken"
-    assert s.append({"type": "log.added", "actor": env.agent, "text": "elsewhere"}, log=env.new_ticket())  # others live
+    # The signed accumulator also detects the changed interior prefix, even with an unchanged final head.
+    with pytest.raises(StoreError, match="chain.broken"):
+        env.new_ticket()
 
 
 def test_a_line_that_is_not_exactly_cj_ends_the_readable_log(ws):

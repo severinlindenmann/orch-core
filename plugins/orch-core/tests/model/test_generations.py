@@ -248,7 +248,9 @@ def test_reopen_and_restore_raise_every_gate(env):
                 head=canon.event_head(head),
                 abandoned=None,
                 abandoned_decisions=[],
-                reason="r",
+                reason="rollback",
+                source=None,
+                revocations=[],
                 based_on_override=canon.event_head(head),
             ),
         )[0]

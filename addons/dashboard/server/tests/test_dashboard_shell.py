@@ -14,6 +14,8 @@ def test_closed_route_allowlist():
         "/auth/session",
         "/auth/logout",
         "/api/session",
+        "/api/events",
+        "/api/w/{ws}/head",
         "/api/workspaces",
         "/api/me",
         "/api/w/{ws}/identity",
@@ -65,7 +67,7 @@ def test_typed_route_inputs(client, token, stub, query):
 def test_caps_hide_unavailable(gateway, stub):
     link = gateway.link(stub.ws)
     link.welcome["caps"].remove("query/1")
-    assert gateway.features(stub.ws) == ["identity"]
+    assert gateway.features(stub.ws) == []
     link.welcome["ops"]["whoami"] = 2
     assert gateway.features(stub.ws) == []
 

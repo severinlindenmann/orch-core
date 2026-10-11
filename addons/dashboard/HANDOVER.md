@@ -629,3 +629,32 @@ and landing remotes agree; no authority is inferred solely from sharing a remote
 When mandates become functional, a `via: mandate` signature for main is valid only if its issuer is still
 an owner of the ticket's workspace at merge time, with the same declared-repository requirement.
 The current mock accepts only person signatures.
+
+## P2 server (M1 live updates)
+
+Implemented 2026-10-11 on contract v1.3.1. Supersedes the M0 live-update and control-discovery
+limitations above. `server/src/orch_dashboard/live.py` owns one subscription per active UUID,
+snapshot → subscribe, item-id deduplication, reset → snapshot/reopen, and browser fan-out.
+`GET /api/events?ws=<uuid>` requires bearer auth and accepts per-tab `Last-Event-ID`;
+`GET /api/w/<uuid>/head` supports fallback polling. No server replay buffer. Ready gates the
+production shell's first workspace fetch; gap/reset invalidates workspace queries.
+
+Visibility and membership are checked again when a browser drains a batch. Gone cancels and
+purges ticket details and removes visible rows immediately; revoked purges workspace state.
+The 256-message queue and 16-stream session cap bound fan-out. Heartbeats run every 15 seconds;
+logout/expiry also cancels a blocked ASGI send. Mock transport is unchanged.
+
+The dev-only stub emits metadata from P1 log polling and supports in-memory scoped cursor
+replay, gone, sub.close and reset/overflow. It stays read-only, without human operations.
+The client supports v1.3.1 frame bounds, control welcome, host.list person mapping and newer
+human argument shapes. See [server/README.md](server/README.md) for precise stub contract gaps.
+
+Carry-overs N1–N3: prefer the private XDG runtime redirect directory; `open --print-url`
+requires a terminal and labels the link single-use/30 s; startup sweeps stale redirects;
+run-directory guidance requires a short real directory, never a symlink alias.
+
+No port listeners were started for implementation tests. Socketpair/P1, in-memory ASGI and
+Vitest cover lifecycle, reconnect, resync, visibility, gone, revocation and bounds. Real-host
+S3/S4, the real-browser layout guard and cross-browser network behavior remain acceptance
+work. Full ticket views/hand-off are later milestones; their future consumers must use
+UUID-keyed ticket factories and the live hook's close-view callback.

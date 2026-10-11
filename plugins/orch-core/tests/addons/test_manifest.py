@@ -37,8 +37,8 @@ def test_a_valid_manifest_loads_and_the_declarations_are_derived():
     assert d["fields"]["mood"]["gate"] == ["plan", "verify"] and "gate" not in d["fields"]["note"]
     # every section is declared, qualified, with its types; only gated ones carry a gate
     assert d["sections"] == [
-        {"id": "echo.extra", "types": ["feature"]},
-        {"id": "echo.notes", "types": ["bug", "feature"], "gate": ["plan"]},
+        {"id": "echo.extra", "types": ["feature"], "heading_key": "echoextra"},
+        {"id": "echo.notes", "types": ["bug", "feature"], "gate": ["plan"], "heading_key": "echonotes"},
     ]
     from orch.model.types import Addon
 

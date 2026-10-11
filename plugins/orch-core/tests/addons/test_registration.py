@@ -215,3 +215,14 @@ def test_headings_taken_by_another_active_addon_are_reported():
     assert reg.heading_conflicts(load_manifest(json.dumps(clash).encode())) == ["ECHO-notes"]
     mine = load()
     assert reg.heading_conflicts(mine) == []  # an addon does not collide with itself (a re-grant)
+
+
+@pytest.mark.parametrize("status", ["missing", "disabled", "purged"])
+def test_heading_conflicts_use_grants_even_without_the_packages(status):
+    m = load()
+    addon = Addon(m.name, m.version, DIGEST, m.capabilities, **declarations(m))
+    addon.enabled = status != "disabled"
+    addon.purged = status == "purged"
+    reg = Registry({m.name: addon}, {})
+    other = load(name="other", sections=[{"id": "n", "heading": "ECHO-notes", "after": "plan", "types": ["bug"]}])
+    assert reg.heading_conflicts(other) == ([] if status == "purged" else ["ECHO-notes"])

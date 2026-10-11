@@ -68,8 +68,8 @@ def test_the_owner_grants_a_package_and_the_event_carries_digest_capabilities_an
         and "show" not in e["fields"]["points"]
     )
     assert e["sections"] == [
-        {"id": "echo.extra", "types": ["feature"]},
-        {"id": "echo.notes", "types": ["bug", "feature"], "gate": ["plan"]},
+        {"id": "echo.extra", "types": ["feature"], "heading_key": "echoextra"},
+        {"id": "echo.notes", "types": ["bug", "feature"], "gate": ["plan"], "heading_key": "echonotes"},
     ]
     assert e["actor"]["id"] == hws.owner.ref and e["auth"] == "passphrase"  # a person signed it
     assert f"package {pkg.digest}" in r.out and "capabilities serve_http" in r.out

@@ -1046,16 +1046,19 @@ executable, so `entry.cmd[0]` is a program found on `PATH` or an absolute path, 
 **Grant.** `orch addon grant NAME` (a person, owner only, user presence) builds the `addon.granted` event from the
 package bytes it read. `version` and `capabilities` are the manifest's (the owner grants exactly what the manifest
 declares, sorted, never a subset). `fields` are the manifest's fields without `show` and `filter` (type, limits,
-`set_by`, `gate`), `sections` are all its sections named `<name>.<id>` with their `types` (and `gate` when it has
-one), `artifact_kinds` its kinds, all sorted. `package_sha256` is the digest above. Replay uses only the event, never
-a manifest. A new version, a changed byte or a changed capability is a new grant.
+`set_by`, `gate`), `sections` are all its sections named `<name>.<id>` with their `types`, `heading_key` (the
+heading casefolded, letters and digits only), and `gate` when it has one; `artifact_kinds` its kinds, all sorted.
+`package_sha256` is the digest above. Replay uses only the event, never a manifest. A new version, a changed byte
+or a changed capability is a new grant.
 
 Before the passphrase the owner reads, on the terminal, and types the addon's name to go on: the version, the full
 package digest, `entry.cmd`, the capabilities, the `agents_md` line as an agent would see it, the `needs` rules'
 `for` and `text`, every field with its type, `set_by` and bindings, the sections and kinds, and on a re-grant the
 previous version and digest and what changed in capabilities, fields, sections and kinds (a new digest with nothing
 else changed is said to be the package bytes only). Text from the package is shown as escaped printable ASCII.
-`orch addon grant` refuses a section heading whose key (below) equals the key of a heading of another granted addon.
+The host and replay refuse a section heading whose key equals one of another granted, unpurged addon, including
+a disabled addon. A re-grant replaces its own heading keys. Replay checks the signed `heading_key` declarations
+without reading packages; a collision is refused as an invalid addon value (§10.4a).
 
 **Replay checks every addon write against the grant.** An event that sets `ticket.addons.<a>.<f>` is refused unless
 `a` is granted, enabled and not purged (an unknown addon), `f` is declared in the grant's `fields` (an unknown field),

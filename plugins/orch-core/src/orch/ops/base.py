@@ -53,6 +53,8 @@ class Context:
             self.caps = Capabilities.direct(self.env, self.now)
         else:
             self.env = self.caps.env
+            if self.now is time.time:  # the host's clock, unless the caller chose one
+                self.now = self.caps.clock
 
 
 @dataclass

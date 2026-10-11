@@ -23,7 +23,6 @@ and P2 uses client-run receipts checked by the host against that command (§10.7
 from __future__ import annotations
 
 import contextlib
-import os
 import shlex
 import signal
 import subprocess
@@ -35,7 +34,7 @@ from typing import Any
 
 from orch.canon.text import clean_line
 from orch.cli import render
-from orch.ops.caps import Capabilities
+from orch.ops.caps import Capabilities, Proc
 from orch.ops.errors import OrchError
 
 __all__ = ["OUTPUT_LIMIT", "RUN_TIMEOUT", "TRUNCATED", "Ran", "allowed_env", "run_verify"]
@@ -71,9 +70,9 @@ def _pump(stream: Any, limit: int, sink: bytearray) -> None:
         sink += TRUNCATED
 
 
-def _kill_group(proc: Any) -> None:
+def _kill_group(proc: Proc[bytes], caps: Capabilities) -> None:
     with contextlib.suppress(ProcessLookupError, PermissionError):
-        os.killpg(proc.pid, signal.SIGKILL)
+        caps.exec.killpg(proc.pid, signal.SIGKILL)
 
 
 def run_verify(
@@ -118,7 +117,7 @@ def run_verify(
     except subprocess.TimeoutExpired:
         timed_out, code = True, -1
     finally:
-        _kill_group(proc)  # the command, and what it left running in its group
+        _kill_group(proc, caps)  # the command, and what it left running in its group
         proc.wait()
     reader.join(5)
     ms = int((time.monotonic() - start) * 1000)

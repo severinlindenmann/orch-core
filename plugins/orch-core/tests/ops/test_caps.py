@@ -1,6 +1,8 @@
 """The capability object (D-P2-9): direct mode keeps today's powers, host mode is restricted, and the host file
 capability has exactly one reading of a path, which is also the open."""
 
+import gc
+import hashlib
 import os
 import sys
 from pathlib import Path
@@ -38,10 +40,13 @@ def test_direct_files_reach_any_path(tree):
     f = Capabilities.direct({}).files
     assert f.read_text(outside / "secret.txt") == "outside"
     assert f.getcwd() == os.getcwd()
-    data, size = f.read_regular(str(outside / "secret.txt"), 100)
+    data, size = f.read_client(str(outside / "secret.txt"), 100)
     assert (data, size) == (b"outside", 7)
+    assert f.read_client(str(outside / "secret.txt"), 3) == (b"", 7)  # too big: not read
+    assert f.sha256_client(str(outside / "secret.txt"), 100) == hashlib.sha256(b"outside").hexdigest()
+    assert f.sha256_client(str(outside / "secret.txt"), 3) is None
     with pytest.raises(NotARegularFile):
-        f.read_regular(str(outside), 10)
+        f.read_client(str(outside), 10)
     f.write_text(outside / "w.txt", "x")
     assert f.lexists(outside / "w.txt")
     f.unlink(outside / "w.txt")
@@ -96,7 +101,6 @@ def test_host_files_work_inside_the_roots(tree):
     f.unlink(root / "a" / "g.txt")
     f.rmtree(root / "x")
     assert not (root / "x").exists()
-    assert f.read_regular(str(root / "a" / "f.txt"), 3) == (b"ins", 6)
 
 
 def test_host_files_refuse_outside_the_roots(tree):
@@ -139,8 +143,6 @@ def test_symlinked_final_component_is_refused(tree):
     (root / "a" / "l.txt").symlink_to(outside / "secret.txt")
     with pytest.raises(OSError):
         host(tree).files.read_bytes(root / "a" / "l.txt")
-    with pytest.raises(OSError):
-        host(tree).files.read_regular(str(root / "a" / "l.txt"), 10)
 
 
 def test_symlink_swapped_after_validation_cannot_escape(tree):
@@ -156,7 +158,7 @@ def test_symlink_swapped_after_validation_cannot_escape(tree):
             (outside / "f.txt").write_text("outside")
             return got
 
-    f = Racy((root,))
+    f = Racy(roots=(root,), cwd_allowed=False, stdin_allowed=False, client_paths=False)
     with pytest.raises(OSError):
         f.read_bytes(root / "a" / "f.txt")
 
@@ -186,7 +188,7 @@ def test_root_spelling_is_exact(tree, tmp_path):
 
 def test_roots_must_be_absolute_and_free_of_nul():
     with pytest.raises(ValueError):
-        Files(("rel",))
+        Files.host(("rel",))
 
 
 # ------------------------------------------------------------------------------------------------- special files
@@ -196,7 +198,9 @@ def test_fifo_does_not_hang_and_is_refused(tree):
     root, _ = tree
     os.mkfifo(root / "a" / "fifo")
     f = host(tree).files
-    for call in (f.read_bytes, lambda p: f.read_regular(str(p), 10), f.read_text):
+    with pytest.raises(CapabilityDenied):
+        f.read_bytes(root / "a" / "fifo")  # the type, not a bare OSError
+    for call in (f.read_bytes, lambda p: f.read_client(str(p), 10), f.read_text):
         with pytest.raises(OSError):  # CapabilityDenied (not regular); never a hang
             call(root / "a" / "fifo")
     with pytest.raises(OSError):
@@ -208,11 +212,9 @@ def test_device_is_refused(tree, tmp_path):
     if not os.path.exists("/dev/zero"):
         pytest.skip("no /dev/zero")
     # a device node cannot be made unprivileged, so reach one through the root spelled as /dev
-    f = Files((Path("/dev"),))
+    f = Files.host((Path("/dev"),))
     with pytest.raises(CapabilityDenied):
         f.read_bytes("/dev/zero")
-    with pytest.raises(CapabilityDenied):
-        f.read_regular("/dev/zero", 10)
 
 
 def test_socket_file_is_refused():
@@ -225,7 +227,7 @@ def test_socket_file_is_refused():
     try:
         s.bind(str(short / "s"))
         with pytest.raises(OSError):
-            Files((short,)).read_bytes(short / "s")
+            Files.host((short,)).read_bytes(short / "s")
     finally:
         s.close()
         shutil.rmtree(short, ignore_errors=True)
@@ -239,3 +241,132 @@ def test_whole_file_reads_are_capped(tree, monkeypatch):
         host(tree).files.read_bytes(root / "a" / "big")
     (root / "a" / "ok").write_bytes(b"1234")
     assert host(tree).files.read_bytes(root / "a" / "ok") == b"1234"
+
+
+# ------------------------------------------------------------------------------------ the review round (#375)
+
+
+def test_host_refuses_client_named_paths_even_inside_the_roots(tmp_path):
+    """The state directory is a root; a client must not be able to name the workspace key in it."""
+    base = tmp_path.resolve()
+    ws, state = base / "ws", base / "state"
+    (state / "hosts" / "W" / "keys").mkdir(parents=True)
+    ws.mkdir()
+    wsk = state / "hosts" / "W" / "keys" / "wsk"
+    wsk.write_bytes(b"WSK-PRIVATE-KEY-BYTES")
+    ctx = Context(caps=Capabilities.host((ws, state)))
+    from orch.ops.errors import OrchError
+    from orch.ops.runtime import Call, input_digest
+
+    c = Call.__new__(Call)
+    c.ctx = ctx
+    for fn in (c.read_artifact, c.read_file_text):
+        with pytest.raises(OrchError) as e:
+            fn(str(wsk))
+        assert "WSK" not in str(e.value) and "client" in e.value.message
+    assert input_digest(ctx, str(wsk)) is None
+    # what the client sent with the call is the only source
+    ctx.files["art.txt"] = b"uploaded"
+    assert c.read_artifact("art.txt") == b"uploaded"
+    assert c.read_file_text("art.txt") == "uploaded"
+    # the capability itself refuses, so a new caller cannot forget
+    with pytest.raises(CapabilityDenied):
+        ctx.caps.files.read_client(str(wsk), 100)
+    with pytest.raises(CapabilityDenied):
+        ctx.caps.files.sha256_client(str(wsk), 100)
+
+
+def test_denied_and_non_regular_messages_are_words_not_none(tree):
+    from orch.ops.errors import OrchError
+    from orch.ops.runtime import Call
+
+    root, _ = tree
+    os.mkfifo(root / "ff")
+    c = Call.__new__(Call)
+    c.ctx = Context(caps=Capabilities.direct({}))
+    with pytest.raises(OrchError) as e:
+        c.read_artifact(str(root / "ff"))
+    assert "None" not in e.value.message and "regular" in e.value.message
+    c.ctx = Context(caps=Capabilities.host((root,)))
+    with pytest.raises(OrchError) as e:
+        c.read_artifact(str(root / "a" / "f.txt"))
+    assert "None" not in e.value.message
+
+
+def test_root_fds_are_released(tree):
+    root, _ = tree
+
+    def fds() -> int:
+        return len(os.listdir("/dev/fd"))
+
+    before = fds()
+    for _ in range(200):
+        Capabilities.host((root,))  # dropped at once: the finalizer closes
+    gc.collect()
+    assert fds() <= before + 2
+    before = fds()
+    held = [Files.host((root,)) for _ in range(5)]
+    assert fds() == before + 5
+    for f in held:
+        f.close()
+        f.close()  # idempotent
+    with Files.host((root,)) as f:
+        assert f.read_text(root / "a" / "f.txt") == "inside"
+    gc.collect()
+    assert fds() <= before + 2
+
+
+def test_hard_links_are_refused_and_never_truncated(tree):
+    root, outside = tree
+    os.link(outside / "secret.txt", root / "hl")
+    f = host(tree).files
+    with pytest.raises(CapabilityDenied):
+        f.read_bytes(root / "hl")
+    with pytest.raises(CapabilityDenied):
+        f.write_text(root / "hl", "overwritten")
+    assert (outside / "secret.txt").read_text() == "outside"  # not truncated either
+
+
+def test_write_truncates_only_after_the_checks(tree):
+    root, _ = tree
+    f = host(tree).files
+    f.write_text(root / "a" / "f.txt", "x")
+    assert (root / "a" / "f.txt").read_text() == "x"
+    os.mkfifo(root / "ff")
+    with pytest.raises(OSError):
+        f.write_text(root / "ff", "x")
+
+
+def test_host_rmtree_removes_trees_without_following_links_and_reports_failures(tree):
+    root, outside = tree
+    d = root / "tree"
+    (d / "sub").mkdir(parents=True)
+    (d / "sub" / "f").write_text("x")
+    (d / "link").symlink_to(outside)
+    f = host(tree).files
+    f.rmtree(d)
+    assert not d.exists()
+    assert (outside / "secret.txt").exists()  # the link was removed, not followed
+    with pytest.raises(OSError):
+        f.rmtree(root / "missing")
+    f.rmtree(root / "missing", ignore_errors=True)
+    with pytest.raises(CapabilityDenied):
+        f.rmtree(outside)
+
+
+def test_a_bare_capabilities_does_not_exist_and_the_clock_is_wired(tree):
+    with pytest.raises(TypeError):
+        Capabilities()
+    with pytest.raises(TypeError):
+        Files()
+    ctx = Context(caps=Capabilities.host((tree[0],), clock=lambda: 42.0))
+    assert ctx.now() == 42.0
+    explicit = Context(caps=Capabilities.host((tree[0],), clock=lambda: 42.0), now=lambda: 1.0)
+    assert explicit.now() == 1.0
+
+
+def test_git_off_is_a_problem_line_not_an_internal_error(tree):
+    c = host(tree)
+    problems: list[str] = []
+    assert c.git.observe(object(), "T-1", problems) == []
+    assert problems and "git" in problems[0]

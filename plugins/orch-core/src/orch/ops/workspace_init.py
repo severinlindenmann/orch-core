@@ -184,7 +184,9 @@ def _preflight(ctx: Context, root: Path, sd: Path) -> None:
 
 
 def _no_workspace(ctx: Context, root: Path) -> None:
-    if find_workspace(ctx.env, root) is not None or any(os.path.lexists(root / n) for n in _WORKSPACE_FILES):
+    if find_workspace(ctx.env, root, ctx.caps.files) is not None or any(
+        os.path.lexists(root / n) for n in _WORKSPACE_FILES
+    ):
         raise _refuse("invalid.input", "a workspace already exists here", "orch status")
 
 
@@ -267,21 +269,26 @@ def _alive(pid: int) -> bool:
     return True
 
 
-def _sweep_orphans(sd: Path, files: Files | None = None) -> None:
+def _sweep_orphans(sd: Path, files: Files) -> list[Path]:
     """Remove the key directories of an init that died (SIGKILL, power loss): marked by a process that is gone."""
     hosts = sd / "hosts"
+    failed: list[Path] = []
     if not hosts.is_dir():
-        return
+        return failed
     for d in hosts.iterdir():
         marker = d / MARKER
         try:
             if d.is_symlink() or not marker.is_file() or (d / "genesis").exists():
                 continue  # a pinned genesis means a workspace exists for these keys: never swept
-            pid = int((files or Files()).read_text(marker).strip() or "0")
+            pid = int(files.read_text(marker).strip() or "0")
         except (OSError, ValueError):
             continue
         if pid and not _alive(pid):
-            (files or Files()).rmtree(d)
+            try:
+                files.rmtree(d)
+            except OSError:
+                failed.append(d)  # said so, never swallowed: the caller reports what it could not remove
+    return failed
 
 
 @contextlib.contextmanager
@@ -344,7 +351,7 @@ def _lock(root: Path) -> int:
 
 def create_workspace(ctx: Context, args: dict[str, Any]) -> Result:
     root = Path(ctx.workspace._cwd if ctx.workspace is not None and ctx.workspace._cwd else os.getcwd())
-    sd = state_dir(ctx.env)
+    sd = state_dir(ctx.env, ctx.caps.files)
     prefix = args["prefix"]
     _preflight(ctx, root, sd)
     owner_name = _name(ctx, args.get("name"))
@@ -362,7 +369,7 @@ def create_workspace(ctx: Context, args: dict[str, Any]) -> Result:
     try:
         _no_workspace(ctx, root)  # again, now that no other init can be between this check and the files
         existed_before = {n for n in _WORKSPACE_FILES if os.path.lexists(root / n)}
-        _sweep_orphans(sd)
+        _sweep_orphans(sd, ctx.caps.files)
         with _hangup_as_interrupt():
             try:
                 shown_secrets = True

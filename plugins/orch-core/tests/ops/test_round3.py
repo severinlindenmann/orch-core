@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 
+from orch.ops.caps import Files
 from tests.ops.helpers import wait_for
 from tests.ops.test_observe import LINKS, types
 from tests.ops.test_task_ac import claimed, fill_and_approve, py
@@ -56,7 +57,7 @@ def test_malformed_notes_never_crash_and_are_reported(ws, cli):
 def test_notes_keep_claims_and_unread_decisions_past_the_limit(ws, cli):
     from orch.ops.runtime import Notes
 
-    n = Notes(ws.root / ".state" / "sessions", "s_01J9ZP0000000000000000000S")
+    n = Notes(ws.root / ".state" / "sessions", "s_01J9ZP0000000000000000000S", Files.direct())
     n.add_claim("CLAIMED")
     n.update("CLAIMED", now=1)
     n.update("UNREAD", now=2, keep=True)

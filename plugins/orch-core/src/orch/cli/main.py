@@ -228,10 +228,11 @@ def main(
     env = os.environ if env is None else env
     out = sys.stdout if stdout is None else stdout
     err = sys.stderr if stderr is None else stderr
+    from orch.ops.caps import Files
     from orch.ops.runtime import Workspace  # the workspace is found and opened only when something asks for it
 
     render.new_nonce()
-    workspace = Workspace(env, now)
+    workspace = Workspace(env, now, files=Files.direct())
     if hooks is None or records is None:
         from orch.cli.store_hooks import workspace_hooks, workspace_records
     hooks = hooks or workspace_hooks(workspace)

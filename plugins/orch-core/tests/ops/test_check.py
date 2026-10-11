@@ -6,6 +6,7 @@ import subprocess
 
 import pytest
 
+from orch.ops.caps import Capabilities
 from tests.ops.helpers import Cli
 from tests.store.helpers import snapshot
 
@@ -184,7 +185,7 @@ def test_staged_paths_are_guarded_without_case_or_ascii_aliases(ws, cli, monkeyp
     monkeypatch.setattr(health, "_git", lambda root, *args, **kw: raw if args[0] == "diff" else b"innocent")
     store = ws.other()
     try:
-        findings = health.check_staged(store, ws.root)
+        findings = health.check_staged(store, ws.root, Capabilities.direct())
         assert len(findings) == 1 and findings[0].code in ("commit.unknown", "commit.state")
     finally:
         store.close()

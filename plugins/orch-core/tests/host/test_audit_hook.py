@@ -5,32 +5,51 @@ import subprocess
 import sys
 import textwrap
 
-SCRIPT = textwrap.dedent(
+PRELUDE = textwrap.dedent(
     """
     import json, os, subprocess, sys
     root, outside = sys.argv[1], sys.argv[2]
     from orch.host import audit, launcher
     from orch.ops.caps import Capabilities
-    import orch.ops.caps
-    caps = Capabilities.host((root,))
-    audit.install([root])
     out = {}
     def t(name, fn):
         try:
             fn()
             out[name] = "ok"
-        except PermissionError as e:
+        except PermissionError:
             out[name] = "denied"
         except Exception as e:
             out[name] = "error:" + type(e).__name__
+    """
+)
+
+MAIN = PRELUDE + textwrap.dedent(
+    """
+    caps = Capabilities.host((root,))
+    import ctypes  # preloaded, as the host would
+    audit.install([root])
+    t("cwd_is_root", lambda: os.getcwd() == root or (_ for _ in ()).throw(PermissionError()))
     t("open_in_root", lambda: open(root + "/in.txt").close())
     t("open_in_root_write", lambda: open(root + "/new.txt", "w").close())
+    t("open_relative_in_root_cwd", lambda: os.close(os.open("in.txt", os.O_RDONLY | os.O_NOFOLLOW)))
+    t("open_relative_follow", lambda: open("in.txt").close())
     t("open_outside", lambda: open(outside + "/secret.txt").close())
     t("open_dotdot", lambda: open(root + "/../outside/secret.txt").close())
-    t("open_relative", lambda: open("in.txt").close())
     t("open_etc", lambda: open("/etc/hosts").close())
     t("open_tty", lambda: open("/dev/tty").close())
     t("caps_files_in_root", lambda: caps.files.read_bytes(root + "/in.txt"))
+    t("chdir_outside", lambda: os.chdir(outside))
+    t("rename_out", lambda: os.rename(root + "/in.txt", outside + "/moved"))
+    t("rename_in", lambda: os.rename(root + "/new.txt", root + "/new2.txt"))
+    t("listdir_outside", lambda: os.listdir(outside))
+    t("listdir_in", lambda: os.listdir(root))
+    t("truncate_outside", lambda: os.truncate(outside + "/secret.txt", 0))
+    t("symlink_outside", lambda: os.symlink("x", outside + "/sl"))
+    t("link_outside", lambda: os.link(root + "/in.txt", outside + "/hl"))
+    t("mkdir_outside", lambda: os.mkdir(outside + "/d"))
+    t("remove_outside", lambda: os.remove(outside + "/secret.txt"))
+    t("chmod_outside", lambda: os.chmod(outside + "/secret.txt", 0o600))
+    t("dlopen", lambda: ctypes.CDLL(None))
     t("subprocess_run", lambda: subprocess.run(["true"]))
     t("subprocess_popen_shell", lambda: subprocess.Popen("true", shell=True))
     t("subprocess_fake_gitread", lambda: subprocess.Popen([sys.executable, "-I", "-m", "orch.gitread"]))
@@ -38,6 +57,42 @@ SCRIPT = textwrap.dedent(
     t("posix_spawn", lambda: os.posix_spawn("/usr/bin/true", ["true"], {}))
     t("execv", lambda: os.execv("/usr/bin/true", ["true"]))
     t("fork", lambda: os.fork())
+
+    def forged_frame():
+        ns = {"__name__": "orch.host.launcher", "subprocess": subprocess, "launcher": launcher}
+        exec(
+            "def spawn_gitread():\\n"
+            "    return subprocess.Popen(launcher.gitread_argv(), executable='/bin/sh', env={}, close_fds=True)",
+            ns,
+        )
+        ns["spawn_gitread"]()
+    t("forged_frame_other_executable", forged_frame)
+
+    def forged_name_same_args():
+        ns = {"__name__": "orch.host.launcher", "subprocess": subprocess, "launcher": launcher}
+        exec(
+            "def spawn_gitread():\\n"
+            "    return subprocess.Popen(launcher.gitread_argv(), env={}, close_fds=True)",
+            ns,
+        )
+        ns["spawn_gitread"]()
+    t("forged_frame_same_args", forged_name_same_args)
+
+    def patched_launcher_subprocess():
+        real = subprocess.Popen
+        class Sneaky(real):
+            def __init__(self, argv, **kw):
+                super().__init__(argv, executable="/bin/echo", **kw)
+        class Fake:
+            Popen = Sneaky
+            PIPE, DEVNULL = subprocess.PIPE, subprocess.DEVNULL
+        launcher.subprocess = Fake
+        try:
+            launcher.spawn_gitread()
+        finally:
+            launcher.subprocess = subprocess
+    t("patched_launcher_subprocess", patched_launcher_subprocess)
+
     def launch():
         p = launcher.spawn_gitread()
         p.stdin.close(); p.stdout.close(); p.wait(timeout=30)
@@ -46,20 +101,32 @@ SCRIPT = textwrap.dedent(
     """
 )
 
+OUTSIDE_CWD = PRELUDE + textwrap.dedent(
+    """
+    hook = audit.make_hook([root])   # no chdir: the cwd (outside) is not a root
+    sys.addaudithook(hook)
+    t("relative_open_from_outside_cwd", lambda: os.close(os.open("secret.txt", os.O_RDONLY | os.O_NOFOLLOW)))
+    print(json.dumps(out))
+    """
+)
 
-def run_hooked(tmp_path):
-    root = (tmp_path / "root").resolve() if (tmp_path / "root").exists() else None
+
+def _setup(tmp_path):
     base = tmp_path.resolve()
     root, outside = base / "root", base / "outside"
     root.mkdir()
     outside.mkdir()
     (root / "in.txt").write_text("x")
     (outside / "secret.txt").write_text("y")
+    return root, outside
+
+
+def _run(script, root, outside, cwd):
     done = subprocess.run(
-        [sys.executable, "-c", SCRIPT, str(root), str(outside)],
+        [sys.executable, "-c", script, str(root), str(outside)],
         capture_output=True,
         text=True,
-        cwd=root,
+        cwd=cwd,
         timeout=120,
         check=False,
     )
@@ -68,13 +135,35 @@ def run_hooked(tmp_path):
 
 
 def test_hook_in_host_mode(tmp_path):
-    r = run_hooked(tmp_path)
-    assert r["open_in_root"] == "ok"
-    assert r["open_in_root_write"] == "ok"
-    assert r["caps_files_in_root"] == "ok"
-    for refused in ("open_outside", "open_dotdot", "open_relative", "open_etc", "open_tty"):
-        assert r[refused] == "denied", (refused, r)
+    root, outside = _setup(tmp_path)
+    r = _run(MAIN, root, outside, cwd=outside)  # starts outside; install moves it into the root
+    for ok in (
+        "cwd_is_root",
+        "open_in_root",
+        "open_in_root_write",
+        "open_relative_in_root_cwd",
+        "caps_files_in_root",
+        "rename_in",
+        "listdir_in",
+        "launcher",
+    ):
+        assert r[ok] == "ok", (ok, r)
     for refused in (
+        "open_relative_follow",
+        "open_outside",
+        "open_dotdot",
+        "open_etc",
+        "open_tty",
+        "chdir_outside",
+        "rename_out",
+        "listdir_outside",
+        "truncate_outside",
+        "symlink_outside",
+        "link_outside",
+        "mkdir_outside",
+        "remove_outside",
+        "chmod_outside",
+        "dlopen",
         "subprocess_run",
         "subprocess_popen_shell",
         "subprocess_fake_gitread",
@@ -82,6 +171,15 @@ def test_hook_in_host_mode(tmp_path):
         "posix_spawn",
         "execv",
         "fork",
+        "forged_frame_other_executable",
+        "forged_frame_same_args",
+        "patched_launcher_subprocess",
     ):
         assert r[refused] == "denied", (refused, r)
-    assert r["launcher"] == "ok", r
+    assert (outside / "secret.txt").read_text() == "y" and not (outside / "moved").exists()
+
+
+def test_relative_open_from_a_cwd_outside_the_roots_is_refused(tmp_path):
+    root, outside = _setup(tmp_path)
+    r = _run(OUTSIDE_CWD, root, outside, cwd=outside)
+    assert r["relative_open_from_outside_cwd"] == "denied"

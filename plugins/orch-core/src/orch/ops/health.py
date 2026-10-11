@@ -24,7 +24,7 @@ from subprocess import SubprocessError
 from typing import Any
 
 from orch import canon
-from orch.ops.caps import Capabilities
+from orch.ops.caps import Capabilities, CapabilityDenied, Files
 from orch.store import Store, StoreError
 from orch.store import render as store_render
 from orch.store.checkpoints import verify_object
@@ -104,11 +104,10 @@ def inspect(
     *,
     fast: bool,
     instructions: list[dict[str, str]] | None = None,
-    caps: Capabilities | None = None,
+    caps: Capabilities,
 ) -> tuple[list[Finding], InspectStore | None]:
     """Every finding about the workspace at ``root``. ``fast`` leaves out the checks that only ``doctor`` makes
     (checkpoint presence, pins, index, repositories, orphan keys)."""
-    caps = caps or Capabilities.direct()  # the doctor and check handlers pass ctx.caps
     out: list[Finding] = []
     s = _open(root, wid, state_dir, out)
     if s is None:
@@ -129,8 +128,8 @@ def inspect(
                     out.append(
                         Finding("error", f"{_label(s, log)}#{i.seq}", "auth.invalid_event", f"{i.type}: {i.code}")
                     )
-        out += _projections(s)
-        out += _checkpoints(s, _has_host_key(state_dir, wid))
+        out += _projections(s, caps.files)
+        out += _checkpoints(s, _has_host_key(state_dir, wid), caps.files)
         if not fast:
             out += _pins(s, state_dir, wid)
             out += _index(s)
@@ -144,7 +143,7 @@ def inspect(
     return out, s
 
 
-def _projections(s: InspectStore) -> list[Finding]:
+def _projections(s: InspectStore, files: Files) -> list[Finding]:
     """What the files hold against what the log says: ``ticket.json``, ``body.md``, artifacts, ``config.json``,
     ``keys.jsonl`` (an external edit, a torn write, a file somebody replaced)."""
     out: list[Finding] = []
@@ -160,7 +159,7 @@ def _projections(s: InspectStore) -> list[Finding]:
         if read_or_none(root / rel) != want:
             out.append(Finding("error", rel, code, f"{rel} differs from what the log says", "scan"))
     tdir = root / "tickets"
-    for p in sorted(tdir.iterdir()) if tdir.is_dir() else []:
+    for p in [tdir / n for n in sorted(files.listdir(tdir))] if tdir.is_dir() else []:
         if p.is_dir() and not p.is_symlink() and ULID.fullmatch(p.name):
             log = p / "events.jsonl"
             if not log.is_file() or log.stat().st_size == 0:
@@ -196,7 +195,7 @@ def _projections(s: InspectStore) -> list[Finding]:
             )
         listed = {a.name for a in view.artifacts}
         adir = tdir / "artifacts"
-        for f in sorted(adir.iterdir()) if adir.is_dir() and not adir.is_symlink() else []:
+        for f in [adir / n for n in sorted(files.listdir(adir))] if adir.is_dir() and not adir.is_symlink() else []:
             if f.name not in listed:
                 out.append(
                     Finding("warn", where, "artifact.unlisted", f"{f.name[:60]} is in artifacts/ but not in the log")
@@ -226,7 +225,7 @@ def _has_host_key(state_dir: Path, wid: str) -> bool:
         return True
 
 
-def _checkpoints(s: InspectStore, host_here: bool) -> list[Finding]:
+def _checkpoints(s: InspectStore, host_here: bool, files: Files) -> list[Finding]:
     """A missing checkpoint can hide a rollback or follow a crash: an error on the host, a warning on clones."""
     out: list[Finding] = []
     cps = s._checkpoints
@@ -260,7 +259,7 @@ def _checkpoints(s: InspectStore, host_here: bool) -> list[Finding]:
         )
     wsk = s._wsk_pub()
     cdir = s.state_dir / "checkpoints"
-    for p in sorted(cdir.glob("*.json")) if cdir.is_dir() else []:
+    for p in [cdir / n for n in sorted(files.listdir(cdir)) if n.endswith(".json")] if cdir.is_dir() else []:
         raw = read_or_none(p)
         try:
             ok = wsk is not None and verify_object(wsk, json.loads(raw or b""))
@@ -313,8 +312,13 @@ def _repos(s: InspectStore, root: Path, caps: Capabilities) -> list[Finding]:
         p = observe.repo_path(root, s.state.workspace.repos, name)
         if p is None or not p.is_dir():
             out.append(Finding("warn", f"repo {name}", "repo.unobservable", "the working copy does not exist"))
-        elif caps.git.head(p) is None:
-            out.append(Finding("warn", f"repo {name}", "repo.unobservable", "git cannot read HEAD there"))
+        else:
+            try:
+                head = caps.git.head(p)
+            except CapabilityDenied:
+                head = None
+            if head is None:
+                out.append(Finding("warn", f"repo {name}", "repo.unobservable", "git cannot read HEAD there"))
     return out
 
 
@@ -326,7 +330,7 @@ def _orphans(state_dir: Path, wid: str, caps: Capabilities) -> list[Finding]:
     out: list[Finding] = []
     if not hosts.is_dir():
         return out
-    for d in sorted(hosts.iterdir()):
+    for d in [hosts / n for n in sorted(caps.files.listdir(hosts))]:
         marker = d / MARKER
         try:
             if d.name == wid or d.is_symlink() or not marker.is_file() or (d / "genesis").exists():
@@ -351,7 +355,7 @@ def _orphans(state_dir: Path, wid: str, caps: Capabilities) -> list[Finding]:
 
 
 def repair(
-    root: Path, wid: str, env: Mapping[str, str], findings: list[Finding], now: Any, caps: Capabilities | None = None
+    root: Path, wid: str, env: Mapping[str, str], findings: list[Finding], now: Any, caps: Capabilities
 ) -> list[str]:
     """The safe repairs for ``findings``, done through the normal store. Returns what was done."""
     from orch.ops.runtime import Workspace
@@ -360,7 +364,6 @@ def repair(
     wanted = {f.repair for f in findings if f.repair}
     if not wanted:
         return did
-    caps = caps or Capabilities.direct(env)
     ws = Workspace(env, now, files=caps.files)
     if "scan" in wanted:
         store = ws.store
@@ -377,8 +380,10 @@ def repair(
     if "orphans" in wanted:
         from orch.ops.workspace_init import _sweep_orphans
 
-        _sweep_orphans(ws.state_dir, caps.files)
-        did.append("removed the keys of dead inits")
+        failed = _sweep_orphans(ws.state_dir, caps.files)
+        did.append(
+            f"could not remove the keys of {len(failed)} dead inits" if failed else "removed the keys of dead inits"
+        )
     return did
 
 
@@ -398,10 +403,9 @@ def _git(root: Path, *args: str, caps: Capabilities) -> bytes | None:
 _TICKET_FILE = re.compile(r"tickets/([0-7][0-9A-HJKMNP-TV-Z]{25})/(ticket\.json|body\.md|events\.jsonl|artifacts/.+)")
 
 
-def check_staged(s: InspectStore, root: Path, caps: Capabilities | None = None) -> list[Finding]:
+def check_staged(s: InspectStore, root: Path, caps: Capabilities) -> list[Finding]:
     """What a pre-commit hook refuses: staged files that are not what the log says, a staged log that is not a prefix
     of the verified one, deleted logs, links, anything of ``.state``, key material and grant secrets."""
-    caps = caps or Capabilities.direct()
     out: list[Finding] = []
     raw = _git(root, "diff", "--cached", "--raw", "-z", "--no-renames", "--relative", caps=caps)
     if raw is None:

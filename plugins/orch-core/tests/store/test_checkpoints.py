@@ -8,6 +8,7 @@ import shutil
 import pytest
 
 from orch import canon, crypto, schema
+from orch.ops.caps import Files
 from orch.store import StoreError, checkpoints
 from tests.store.helpers import WS
 
@@ -308,7 +309,7 @@ def test_checkpoint_only_finishes_the_recorded_append(env, load, rollback):
         store.ticket(uid)
         store.checkpoint()
     assert path.exists() is not rollback
-    findings = _checkpoints(store, host_here=True)
+    findings = _checkpoints(store, host_here=True, files=Files.direct())
     assert any(f.code == "checkpoint.missing" for f in findings) is rollback
 
 
@@ -338,12 +339,12 @@ def test_rollback_with_deleted_checkpoint_cannot_be_laundered_by_append(env, loa
     assert exc.value.code == "checkpoint.missing"
     assert log.read_bytes() == rolled_back
     assert not checkpoint.exists()
-    assert any(f.code == "checkpoint.missing" for f in _checkpoints(store, host_here=True))
+    assert any(f.code == "checkpoint.missing" for f in _checkpoints(store, host_here=True, files=Files.direct()))
     store.close()
     store = env.open(load=load)
     store.ticket(uid)
     assert not store.repairable_checkpoint(uid)
-    assert any(f.code == "checkpoint.missing" for f in _checkpoints(store, host_here=True))
+    assert any(f.code == "checkpoint.missing" for f in _checkpoints(store, host_here=True, files=Files.direct()))
 
 
 def test_checkpoint_cache_is_bound_to_content_and_key(env):

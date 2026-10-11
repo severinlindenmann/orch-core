@@ -9,6 +9,7 @@ import orch.ops as ops
 from orch.model import emits
 
 DIGEST_V1 = "dc086fd5ad0dee3afff93646a3d4f9a0369d1be6037ef969e2d74b36131bfe8a"
+HUMAN_ONLY_V1 = "63726a5fa56ebeabd06dbfc4f5b8a81d88c512c1544dc99e602b815ae58c7676"
 
 
 def digest(table):
@@ -18,6 +19,9 @@ def digest(table):
 
 def test_v1_is_frozen():
     assert emits.VERSION == 1 and digest(emits.EMITS_V1) == DIGEST_V1  # changing it means a new version, not an edit
+    # HUMAN_ONLY decides on replay which verbs grant nothing: it is part of what version 1 means, frozen with the table
+    flat = json.dumps(sorted(emits.HUMAN_ONLY), separators=(",", ":")).encode()
+    assert hashlib.sha256(flat).hexdigest() == HUMAN_ONLY_V1
     assert emits.EMITS_V1["task.done"] == {"task.done", "artifact.added"}  # a CI grant for task done runs --run
     assert emits.EMITS_V1["handoff"] == {"handoff.written", "claim.released"}
     assert emits.EMITS_V1["log"] == {"log.added"} and "set" in emits.EMITS_V1 and "log.added" not in emits.EMITS_V1

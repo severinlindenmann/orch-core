@@ -463,7 +463,9 @@ _SPEC = {
                 "points": {"type": "integer", "min": 0, "max": 100, "set_by": ["owner", "agent"], "gate": ["plan"]},
                 "note": {"type": "string", "set_by": ["addon"]},
             },
-            "sections": [{"id": "estimate.notes", "types": ["feature", "bug"], "gate": ["plan"]}],
+            "sections": [
+                {"id": "estimate.notes", "heading_key": "estimatenotes", "types": ["feature", "bug"], "gate": ["plan"]}
+            ],
             "artifact_kinds": ["chart"],
         },
         5,

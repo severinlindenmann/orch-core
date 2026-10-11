@@ -103,6 +103,7 @@ HUMAN_ONLY: frozenset[str] = frozenset(
 """The operations a person runs with their own signature (``who: human``). **A verb that names one grants nothing**
 (F1 10.1): a model rule, not only a check of ``orch grant``, so a ``grant.issued`` written by another client cannot make
 an agent's event covered by ``approve`` or ``import.v1``. ``tests/ops/test_emits.py`` checks the set equals the
-registry's human operations."""
+registry's human operations and pins its digest next to ``EMITS_V1``: replay judges old logs by it, so changing it
+means a new table version, like a change of the emits."""
 
 CURRENT = EMITS_V1

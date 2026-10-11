@@ -283,6 +283,8 @@ def addon_event(core: Core, e: dict[str, Any]) -> Refusal | None:
         return Refusal(Code.ADDON_UNKNOWN, name)
     named = generations.addon_binds_gates(old.binds if old else None)  # the gates it named before
     if typ == "addon.granted":
+        if (r := addon_rules.check_headings(name, e["sections"], ws.addons)) is not None:
+            return r
         new = Addon(
             name,
             e["version"],

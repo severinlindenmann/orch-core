@@ -108,7 +108,7 @@ def declarations(m: Manifest) -> dict[str, Any]:
         fields[name] = d
     sections = []
     for s in sorted(m.sections, key=lambda s: s["id"]):
-        d = {"id": f"{m.name}.{s['id']}", "types": sorted(s["types"])}
+        d = {"id": f"{m.name}.{s['id']}", "types": sorted(s["types"]), "heading_key": schema.heading_key(s["heading"])}
         if s.get("gate"):
             d["gate"] = sorted(s["gate"], key=_GATES.index)
         sections.append(d)

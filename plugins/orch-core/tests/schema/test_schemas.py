@@ -908,6 +908,7 @@ def test_host_events():
         "member_changed",
         "device_compromised",
         "conflict_resolved",
+        "restored",
     ):
         V("event", ev("gate.invalidated", cause=c), log="ticket")
     bad("event", ev("gate.invalidated", gate="deploy"), "/gate")
@@ -1828,7 +1829,7 @@ def test_addon_sections_are_named_in_full_with_the_addons_prefix():
     V("event", mut(A, lambda e: e["sections"][0].update(id="estimate.more_notes")))
     bad(
         "event",
-        mut(A, lambda e: e["sections"].append({"id": "x.y", "types": ["bug"]})),
+        mut(A, lambda e: e["sections"].append({"id": "x.y", "types": ["bug"], "heading_key": "xy"})),
         "/sections/1/id",
     )
 
@@ -2238,4 +2239,24 @@ def test_repo_settings_refuse_invalid_fields(field, value):
         "workspace",
         mut(ex.WORKSPACE, lambda o: o["settings"].update(repos={"repo": entry})),
         f"/settings/repos/repo/{field}",
+    )
+
+
+@pytest.mark.parametrize("key", ["", "EchoNotes", "echo-notes", "echo notes", "plan", "x" * 41])
+def test_addon_heading_keys_are_canonical_and_not_core(key):
+    bad(
+        "event",
+        mut(ex.EVENTS["addon.granted"], lambda e: e["sections"][0].update(heading_key=key)),
+        "/sections/0/heading_key",
+    )
+
+
+def test_addon_heading_keys_are_required_and_unique():
+    event = ex.EVENTS["addon.granted"]
+    bad("event", mut(event, lambda e: e["sections"][0].pop("heading_key")), "/sections/0", "heading_key")
+    bad(
+        "event",
+        mut(event, lambda e: e["sections"].append({**e["sections"][0], "id": "estimate.other"})),
+        "/sections/1/heading_key",
+        "taken",
     )

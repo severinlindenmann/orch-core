@@ -617,7 +617,8 @@ class Sim:
                                    "capabilities": ["serve_http"],
                                    "fields": {"points": {"type": "integer", "min": 0, "max": 100, "set_by": ["owner", "agent"],
                                                          "gate": ["plan"]}},
-                                   "sections": binds["sections"], "artifact_kinds": []}  # fmt: skip
+                                   "sections": [dict(section, heading_key="estimatenotes") for section in binds["sections"]],
+                                   "artifact_kinds": []}  # fmt: skip
         else:
             pay = {"name": "estimate"}
         e = self.w.ev("workspace", "addon." + verb, self._sev(), pay, note=note)
@@ -906,6 +907,15 @@ def generation_scenarios() -> list[dict[str, Any]]:
     s.row([R, P, V])
     s.ws_restore(note="restore in the workspace log reaches every ticket")
     s.row([R, P, V])
+    out.append(s.scenario())
+
+    s = _new("voided_by_restore", "restore retires approvals; gate.invalidated with cause restored records them")
+    s.ready()
+    approval = s.decide("approve", R, "sev")
+    s.ticket_restore()
+    s.row([R, P, V])
+    s.invalidated(R, "restored", [approval["id"]])
+    s.row([])
     out.append(s.scenario())
 
     # delayed approval

@@ -19,6 +19,7 @@ from .types import Addon
 __all__ = [
     "check_artifact_kind",
     "check_field_write",
+    "check_headings",
     "check_section",
     "check_value",
     "holds_value",
@@ -130,4 +131,18 @@ def check_section(addon: Addon, section_id: str, ticket_type: str) -> Refusal | 
 def check_artifact_kind(addon: Addon, kind: str) -> Refusal | None:
     if kind not in addon.artifact_kinds:
         return Refusal(Code.ARTIFACT_KIND, f"{addon.name} declares no artifact kind {kind!r}")
+    return None
+
+
+def check_headings(name: str, sections: list[dict[str, Any]], addons: Mapping[str, Addon]) -> Refusal | None:
+    """Disabled grants still reserve their headings; purged grants and the grant being replaced do not."""
+    taken = {
+        s["heading_key"]
+        for other, addon in addons.items()
+        if other != name and not addon.purged
+        for s in addon.sections
+    }
+    for section in sections:
+        if section["heading_key"] in taken:
+            return Refusal(Code.ADDON_VALUE_INVALID, f"section heading {section['heading_key']!r} is taken")
     return None

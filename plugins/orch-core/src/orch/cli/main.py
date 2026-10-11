@@ -203,6 +203,17 @@ def _is_refusal(e: OrchError) -> bool:
     return bool(cat) and e.code not in _NOT_COUNTED and cat.exit in (2, 3, 4, 5, 6) and not cat.retryable
 
 
+def _progress(line: str, err: TextIO) -> None:
+    """A progress line on stderr (stdout carries only the result, F1 10.4 item 1)."""
+    from orch.canon import clean_line
+
+    try:
+        err.write(clean_line(line)[:200] + "\n")
+        err.flush()
+    except (OSError, ValueError):
+        pass
+
+
 def main(
     argv: list[str] | None = None,
     *,
@@ -276,6 +287,7 @@ def main(
             now=now,
             env={k: v for k, v in env.items() if k != "ORCH_GRANT"},
             workspace=workspace,
+            progress=lambda line: _progress(line, err),
         )
         res = run(parsed, ctx, records, hooks)
         if not (isinstance(res.data, dict) and res.data.get("silent") is True):  # a hook outside a workspace is silent

@@ -145,6 +145,16 @@ _SPECS = [
         "The passphrase did not unlock the device key; nothing was signed and nothing was written.",
     ),
     _e(
+        "custody.no_batch",
+        3,
+        False,
+        "this key backend cannot sign a reviewed batch",
+        "use a passphrase device key (orch init sets one up)",
+        ["orch", "help"],
+        "orch import v1 signs a reviewed batch under one unlock; a key backend that asks per signature cannot, so "
+        "nothing is signed (F1 10.4a, 14.2).",
+    ),
+    _e(
         "grant.required",
         3,
         False,

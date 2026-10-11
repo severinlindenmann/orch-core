@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -110,7 +111,7 @@ def review_lines(manifest: Manifest, package: Package, event: Mapping[str, Any],
     out = [
         f"addon {manifest.name} {manifest.version} ({show(manifest.title)})",
         f"package {package.digest}",
-        f"command {show(' '.join(manifest.entry_cmd))}",
+        f"command {show(shlex.join(manifest.entry_cmd))}",  # quoted: an argument with a space cannot hide in it
         f"capabilities {', '.join(event['capabilities']) or 'none'} (granted exactly as the package declares them)",
     ]
     if manifest.agents_md:

@@ -168,11 +168,11 @@ def test_a_crash_between_branch_pushed_and_the_invalidation_does_not_silence_lat
     real = Store._flush
     state = {"crash": True}
 
-    def flaky(self, u):
-        if state["crash"]:
+    def flaky(self, u, **kwargs):
+        if state["crash"] and kwargs.get("cause") == "new_commits":
             state["crash"] = False
             raise KeyboardInterrupt("crash after branch.pushed")
-        return real(self, u)
+        return real(self, u, **kwargs)
 
     monkeypatch.setattr(Store, "_flush", flaky)
     (repo / "impl.txt").write_text("one\n")
@@ -209,7 +209,7 @@ def test_a_flush_repairs_an_invalidation_that_was_never_written(ws, cli, monkeyp
     repo, uid = _submitted(ws, cli)
     ws.store = ws.other()
     verdict(ws, uid, "pass")
-    monkeypatch.setattr(Store, "_flush", lambda self, u: [])  # the invalidation is lost
+    monkeypatch.setattr(Store, "_flush", lambda self, u, **kwargs: [])  # the invalidation is lost
     (repo / "impl.txt").write_text("one\n")
     ws.git("commit", "-qam", "one")
     cli("show", "1")
@@ -224,6 +224,28 @@ def test_a_flush_repairs_an_invalidation_that_was_never_written(ws, cli, monkeyp
         s.close()
 
 
+def test_a_content_edit_records_its_real_cause_after_reopening_the_store(ws, cli):
+    from tests.ops.test_ask_wait import OPEN, verdict
+
+    _repo, uid = _submitted(ws, cli)
+    ws.store = ws.other()
+    ws.store.append(
+        ws.person_event(ws.owner, "workspace", "policy.changed", gates={"verify": {**OPEN, "count": 2}}),
+        log="workspace",
+    )
+    verdict(ws, uid, "pass")
+    r = cli("section", "set", "verification", "--ref", "1", "-m", "changed verification")
+    assert r.code == 0, r.err
+    assert not [e for e in ws.events("1") if e["type"] == "gate.invalidated"]
+    store = ws.other()
+    try:
+        out = store.flush_invalidations("1")
+        assert [(e["gate"], e["cause"]) for e in out] == [("verify", "content_changed")]
+        assert store.flush_invalidations("1") == []
+    finally:
+        store.close()
+
+
 def test_a_refused_invalidation_is_reported_not_swallowed(ws, cli, monkeypatch):
     from orch.store import Store, StoreError
 
@@ -231,7 +253,7 @@ def test_a_refused_invalidation_is_reported_not_swallowed(ws, cli, monkeypatch):
     (repo / "impl.txt").write_text("one\n")
     ws.git("commit", "-qam", "one")
 
-    def refuse(self, u):
+    def refuse(self, u, **kwargs):
         raise StoreError("gate.invalidated_mismatch", "voided should be something else")
 
     monkeypatch.setattr(Store, "_flush", refuse)

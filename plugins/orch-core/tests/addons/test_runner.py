@@ -343,3 +343,30 @@ def test_a_process_that_leaves_its_group_is_not_tracked(pkg):
             os.kill(pid, 9)
         except ProcessLookupError:
             pass
+
+
+@pytest.mark.parametrize(
+    ("host", "code"),
+    [
+        ("#!/bin/sh\necho 'usage: orch COMMAND' >&2\nexit 2\n", "addon.crashed"),  # a frozen orch: -I -S -c is usage
+        ('#!/bin/sh\necho "$@"\nexit 0\n', "addon.bad_response"),  # a host that takes any arguments and succeeds
+        (None, "addon.start_failed"),  # an embedded host: no executable at all
+    ],
+)
+def test_a_frozen_host_fails_closed(pkg, tmp_path, monkeypatch, host, code):
+    """A4: when ``sys.executable`` is not a Python interpreter the trampoline cannot run, so the addon never runs
+    (nothing without the limits), and the call is refused."""
+    from orch.addons import runner
+
+    marker = tmp_path / "addon-ran"
+    d, _, _ = pkg
+    (d / "addon.py").write_text(f"from pathlib import Path\nPath({str(marker)!r}).touch()\n")
+    package = read_package(d)
+    pkg = d, package, granted_for(package)
+    exe = tmp_path / "frozen-host"
+    if host is not None:
+        exe.write_text(host)
+        exe.chmod(0o755)
+    monkeypatch.setattr(runner.sys, "executable", str(exe) if host is not None else "")
+    refused(pkg, "ok", code)
+    assert not marker.exists()

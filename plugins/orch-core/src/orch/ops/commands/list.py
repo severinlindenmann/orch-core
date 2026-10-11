@@ -39,9 +39,14 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     rows: list[Any] = []
     extra = 0  # visible, matching tickets beyond the limit, counted only from verified tickets
     scanned_extra = 0
-    for _uid, v in views.verified(c, (r[0] for r in cands)):
-        if len(rows) >= limit and scanned_extra >= MORE_SCAN:
+    # Load the display and count candidates together; each load replays all previously loaded logs.
+    # Stop before requesting another chunk.
+    found = views.verified(c, (r[0] for r in cands), chunk=limit + MORE_SCAN)
+    while not (len(rows) >= limit and scanned_extra >= MORE_SCAN):
+        nxt = next(found, None)
+        if nxt is None:
             break
+        v = nxt[1]
         if len(rows) >= limit:
             scanned_extra += 1
         if args.get("status") and v.status != args["status"]:

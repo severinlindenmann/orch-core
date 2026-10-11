@@ -8,6 +8,7 @@ args:
   --dry-run  say what would happen, append nothing
 errors:
   not_found (exit 2): orch list
+  custody.no_batch (exit 3): use a passphrase device key (orch init sets one up) | fix: orch help
   custody.no_key (exit 3): orch init sets up your device key | fix: orch help
   custody.no_prompt (exit 3): run this command yourself, in your own terminal | fix: orch help
   custody.wrong_passphrase (exit 3): run the command again and type your passphrase | fix: orch help

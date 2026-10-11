@@ -272,7 +272,8 @@
         "policy_changed",
         "member_changed",
         "device_compromised",
-        "conflict_resolved"
+        "conflict_resolved",
+        "restored"
       ]
     },
     "revokeReason": {

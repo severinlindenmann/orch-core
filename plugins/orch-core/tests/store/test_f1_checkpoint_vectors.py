@@ -148,7 +148,8 @@ def test_restore_vectors_through_the_model(sc):
     # ``reader_cannot_see_a_dropped_revocation`` is accepted by a log-only reader (the model) but must be refused by
     # the host (``host_expect``); the host side is test_the_store_re_appends_the_revocation_as_the_vector_says.
     ws, _ = run_scenario(sc)
-    assert len(ws) == (6 if sc["reappends"] else 5)
+    # Scenarios may continue past the restore and its immediate re-appends.
+    assert len(ws) >= (6 if sc["reappends"] else 5)
     assert ws[4]["type"] == "restore" and ws[4]["prev"] == canon.event_head(ws[3])
     assert ws[4]["from_seq"] == 4 and ws[4]["head"] == canon.event_head(ws[3])
     if sc["reappends"]:

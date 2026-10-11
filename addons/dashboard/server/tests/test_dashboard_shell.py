@@ -26,6 +26,8 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/tickets/{key}/events",
         "/api/w/{ws}/tickets/{key}/changes",
         "/api/w/{ws}/tickets/{key}/artifacts/{name}",
+        "/api/w/{ws}/handoff",
+        "/api/w/{ws}/handoff/{request_id}",
         "/{path:path}",
     }
     assert {route.path for route in create_app(PORT).routes} == expected
@@ -36,7 +38,18 @@ def test_shell_p1_reads(client, token, stub):
     workspaces = client.get("/api/workspaces", headers=headers).json()
     assert workspaces[0]["id"] == stub.ws
     assert workspaces[0]["members"][0]["person"] == stub.person
-    every = ["identity", "today", "tickets", "board", "ticket", "changes", "evidence", "activity", "read_ext"]
+    every = [
+        "identity",
+        "today",
+        "tickets",
+        "board",
+        "ticket",
+        "changes",
+        "evidence",
+        "activity",
+        "actions",
+        "read_ext",
+    ]
     assert workspaces[0]["features"] == every
     assert client.get("/api/session", headers=headers).json()["features"] == sorted(every)
     assert client.get("/api/me", headers=headers).json()[0]["person"] == stub.person

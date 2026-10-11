@@ -19,7 +19,7 @@ from orch_dashboard.errors import HostError, fail
 from orch_dashboard.hostlink import check_uid, encode, receive
 
 from . import reads
-from .handoff import Requests
+from .humanops import Requests
 from .reserved import HUMAN_OPS, OPS
 
 # Registry reads that do not accept filesystem paths or need a P1 agent grant.

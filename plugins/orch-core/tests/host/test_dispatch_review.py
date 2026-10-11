@@ -263,3 +263,57 @@ def test_hosted_doctor_and_check_with_several_ticket_checkpoints(served):
     n = served.client()
     body = json.dumps(ok(n.req("check")))
     assert uids[0] not in body and f"ticket-{uids[1]}" in body
+
+
+# --- #381: host-mode git reads run under the caller's principal ----------------------------------------------------
+
+
+class FakeReader:
+    """A HostGitReader stand-in: records the principal of every read."""
+
+    def __init__(self):
+        self.principals = []
+        self.synced = 0
+
+    def sync(self, declared):
+        self.synced += 1
+        return {}
+
+    def observe(self, path, refs, *, principal=None):
+        self.principals.append(principal)
+        return {"head_sha": "a" * 40, "refs": {}, "origin_urls": []}
+
+
+def test_a_git_read_through_the_dispatcher_runs_under_the_callers_principal(served):
+    from pathlib import Path
+
+    from orch.ops.caps import Capabilities
+    from tests.host.dispatch_helpers import UID
+
+    _, key = served.ticket("x")
+    service = served.service
+    reader = FakeReader()
+
+    def install():
+        if service.caps is not None:
+            service.caps.close()
+        service.caps = Capabilities.host((service.entry.root,), env={}, clock=service.clock, git=reader)
+
+    service.submit(install).result(10)
+    assert service.caps.git.principal is None  # the workspace's caps carry no principal of their own
+    original = ops.get("status").handler
+
+    def reads_git(ctx, args):
+        return Result(data={"head": ctx.caps.git.head(Path(ctx.workspace.root))})
+
+    ops.bind("status", reads_git)
+    try:
+        c = served.client()
+        ok(c.req("status", grant=served.grant, session=SESSION))
+        ok(c.req("status"))
+    finally:
+        ops.bind("status", original)
+    assert reader.principals == [f"g:{served.lab.ws.grant_id}@{UID}", f"uid:{UID}"]
+    shown = ok(served.client().req("show", {"ref": key}, grant=served.grant))  # observe, through the real handler
+    assert reader.synced >= 1 and "needs the caller's principal" not in json.dumps(shown)
+    assert service.caps.git.principal is None  # bound per request on a copy, never on the shared caps

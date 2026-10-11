@@ -392,14 +392,18 @@ def _index(s: InspectStore) -> list[Finding]:
 
 
 def _repos(s: InspectStore, root: Path, caps: Capabilities) -> list[Finding]:
-    from orch.store import observe
-
     out: list[Finding] = []
     for name in sorted(s.state.workspace.repos):
-        if caps.files.roots is not None:  # host mode: never touch a path outside the root; git is the reader's
-            out.append(Finding("warn", f"repo {name}", "repo.unobservable", "git cannot be read here"))
+        p = caps.git.repo_path(root, s.state.workspace.repos, name)  # host mode: lexical, no I/O
+        if caps.files.roots is not None:
+            # Host mode: never stat a path outside the root; the reader child opens the repo under its pins.
+            try:
+                head = caps.git.head(p) if p is not None else None
+            except CapabilityDenied:
+                head = None
+            if head is None:
+                out.append(Finding("warn", f"repo {name}", "repo.unobservable", "git cannot read HEAD there"))
             continue
-        p = observe.repo_path(root, s.state.workspace.repos, name)
         if p is None or not p.is_dir():
             out.append(Finding("warn", f"repo {name}", "repo.unobservable", "the working copy does not exist"))
         else:

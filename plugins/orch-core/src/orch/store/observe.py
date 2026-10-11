@@ -109,7 +109,7 @@ def repo_identity(path: Path, name: str) -> str:
     return canon.canonical_repo_identity(values[0] if len(values) == 1 else "", name)
 
 
-def observe(store: Any, ref: str, problems: list[str] | None = None) -> list[dict[str, Any]]:
+def observe(store: Any, ref: str, problems: list[str] | None = None, backend: Any = None) -> list[dict[str, Any]]:
     """Append the ``branch.pushed`` (host) events the ticket ``ref`` is owed: for each linked repo that has a branch in
     ``links.branches``, compare the branch head in git with the source-list entry and append when they differ (the first
     sighting has ``before: null``). When an append voids ``verify`` or ``code`` approvals, the host's
@@ -120,7 +120,10 @@ def observe(store: Any, ref: str, problems: list[str] | None = None) -> list[dic
     A read-only store, a repo without a working copy, a branch git does not know and a ref that names no commit object
     are skipped; the last is added to ``problems`` (never signed). Call it before ``submit``, ``show`` and ``wait`` (and
     a person's approval prompt, C7). In P1 the source list is only as trustworthy as the working copy the agent can
-    write."""
+    write.
+
+    ``backend`` (host mode): orch's reader instead of the git CLI, ``look(path, name, ref) -> (sha | None, identity)``
+    (:mod:`orch.gitread`); ``None`` keeps the git CLI calls exactly as in P1."""
     from .errors import StoreError
 
     if not store.can_write:
@@ -132,7 +135,7 @@ def observe(store: Any, ref: str, problems: list[str] | None = None) -> list[dic
     wanted = []
     for name in links["repos"]:  # git, with no lock held
         branch = links["branches"].get(name)
-        path = repo_path(store.root, store.state.workspace.repos, name)
+        path = (backend.repo_path if backend is not None else repo_path)(store.root, store.state.workspace.repos, name)
         if not branch:
             continue  # the ticket names no branch yet: submit says so itself
         if path is None or not path.is_dir():
@@ -140,16 +143,31 @@ def observe(store: Any, ref: str, problems: list[str] | None = None) -> list[dic
                 problems.append(f"{name}: no working copy in settings.repos; its code cannot be observed")
             continue
         ref_name = f"refs/heads/{branch}"
-        if git(path, "rev-parse", "--verify", "-q", ref_name) is None:
-            if problems is not None:
-                problems.append(f"{name}: git does not know {ref_name}; its code cannot be observed")
-            continue
-        sha = git(path, "rev-parse", "--verify", "-q", f"{ref_name}^{{commit}}")
-        if not sha or not _HEX.fullmatch(sha):
-            if problems is not None:
-                problems.append(f"{name}: {ref_name} names no commit object; nothing was recorded")
-            continue
-        rid = repo_identity(path, name)
+        if backend is not None:
+            from orch.gitread.errors import Unavailable
+
+            try:
+                found, rid = backend.look(path, name, ref_name)
+            except Unavailable as e:
+                if problems is not None:
+                    problems.append(f"{name}: {e.reason}; its code cannot be observed")
+                continue
+            if found is None:
+                if problems is not None:
+                    problems.append(f"{name}: git does not know {ref_name}; its code cannot be observed")
+                continue
+            sha = found
+        else:
+            if git(path, "rev-parse", "--verify", "-q", ref_name) is None:
+                if problems is not None:
+                    problems.append(f"{name}: git does not know {ref_name}; its code cannot be observed")
+                continue
+            sha = git(path, "rev-parse", "--verify", "-q", f"{ref_name}^{{commit}}")
+            if not sha or not _HEX.fullmatch(sha):
+                if problems is not None:
+                    problems.append(f"{name}: {ref_name} names no commit object; nothing was recorded")
+                continue
+            rid = repo_identity(path, name)
         declared = store.state.workspace.repos[name].get("remote")
         if declared is not None and not canon.same_repo_identity(declared, rid):
             if problems is not None:

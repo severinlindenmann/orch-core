@@ -466,7 +466,7 @@ class RegistryBackend:
         from orch.ops.runtime import Workspace
 
         service = call.service
-        caps = service.capabilities()
+        caps = service.capabilities().with_principal(call.principal)  # git reads run under the caller (F10)
         workspace = Workspace.hosted(
             Path(service.entry.root), service.store, env=caps.env, now=service.clock, files=caps.files
         )

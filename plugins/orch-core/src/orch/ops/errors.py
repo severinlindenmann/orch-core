@@ -263,6 +263,15 @@ _SPECS = [
         ["orch", "status"],
         "Another writer holds the file lock.",
     ),
+    _e(
+        "host.required",
+        3,
+        False,
+        "this workspace is served by the orch host",
+        "the host owns this workspace now; start its service instead of using direct mode",
+        ["orch", "host", "list"],
+        "A direct-mode call on a workspace the host has adopted (D-P2-18): there is no silent fallback.",
+    ),
     # 5 validation
     _e(
         "invalid.input",
@@ -429,6 +438,7 @@ GLOBAL_ERRORS = (
     "not_implemented",
     "stop",
     "retry.later",
+    "host.required",
 )
 
 

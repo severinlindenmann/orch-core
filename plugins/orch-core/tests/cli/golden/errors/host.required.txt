@@ -1,0 +1,1 @@
+err host.required this workspace is served by the orch host · retry:false · next: the host owns this workspace now; start its service instead of using direct mode · fix: orch host list

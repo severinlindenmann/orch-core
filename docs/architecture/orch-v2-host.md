@@ -2037,8 +2037,10 @@ dispatch is turned on.
 2. **A dedicated host user on macOS.** Not in P2; the peer map already supports it.
 3. **Own reader; dulwich is rejected** (it honours grafts, alternates and shallow, and adds a dependency).
 4. **An issuer-chosen UID restriction on grants.** Not in P2; it could come later as an optional `grant.issued` field.
-5. **To confirm during H3b1/H10:** that macOS has no subreaper and reparents to launchd, and how reftable shows up in
-   config.
+5. **To confirm during H3b1/H10:** that macOS has no subreaper and reparents to launchd (H10). **Reftable (H3b1,
+   git 2.45+):** `core.repositoryformatversion = 1` with `extensions.refStorage = reftable`, a `reftable/` directory in
+   the `commondir`, and a stub `HEAD` (`ref: refs/heads/.invalid`). The reader refuses on the extension and on the
+   directory, so either alone is observe.unavailable.
 6. **H10 settles** the macOS source of the worker's main PID: `launchctl print system/io.orch.worker` if a non-root
    host can read it, otherwise the root-owned pid file written by the setup helper's wrapper (N1).
 7. **H5a settles** that a multi-event submit is judged and appended under one held store lock, with no other append in

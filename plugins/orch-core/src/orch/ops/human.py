@@ -221,7 +221,7 @@ class Human:
             ref = f"refs/heads/{branch}"
             git = self.ctx.caps.git
             head = git.head(path)
-            on = git.run(path, "symbolic-ref", "-q", "HEAD")
+            on = git.symbolic_head(path)
             entry = next((e for e in signed if e["repo"] == git.identity(path, name)), None)
             if head is None or entry is None or entry["ref"] != ref or entry["sha"] != head:
                 out.append(f"{name}: {ref} is not recorded at the commit checked out; look again with orch show")

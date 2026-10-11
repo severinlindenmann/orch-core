@@ -133,6 +133,14 @@ class _Write:
     body_copy: str | None = None  # uid whose .state/body copy follows this body.md
 
 
+# §5.10: the recovery for a host whose state shows checkpoints existed but none is held (doctor says the same).
+MISSING_CHECKPOINT_RECOVERY = (
+    "P1 has no in-place repair (a restore cannot succeed without its source checkpoint): restore .state/checkpoints "
+    "and the host pin from a backup, or wait for the P3 owner-authenticated baseline. Do not delete the host state "
+    "dir (hosts/<workspace id>/): it holds the genesis pin and the durable revocation evidence"
+)
+
+
 def _drop(path: Path) -> None:
     """Remove a stale pending transition durably (§5.10: crash recovery keeps only live ones)."""
     path.unlink(missing_ok=True)
@@ -1889,7 +1897,8 @@ class Store:
             if self._workspace_checkpoint_missing():
                 raise StoreError(
                     "checkpoint.missing",
-                    "workspace: this host's state shows checkpoints existed but none is held; an owner must restore",
+                    "workspace: this host's state shows checkpoints existed but none is held. "
+                    + MISSING_CHECKPOINT_RECOVERY,
                 )
             self._checkpoint_all()
 

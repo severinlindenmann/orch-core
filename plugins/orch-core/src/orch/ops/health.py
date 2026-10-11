@@ -31,6 +31,7 @@ from orch.store.checkpoints import verify_object
 from orch.store.fsio import read_or_none
 from orch.store.paths import ULID
 from orch.store.pins import HostPins
+from orch.store.store import MISSING_CHECKPOINT_RECOVERY
 
 __all__ = ["Finding", "InspectStore", "check_staged", "inspect", "repair"]
 
@@ -232,11 +233,12 @@ def _checkpoints(s: InspectStore, host_here: bool, files: Files, pins: HostPins 
     if s._wsk_pub() is None:
         return out
     lvl = "error" if host_here else "warn"
-    if cps.workspace() is None:
+    workspace_missing = cps.workspace() is None  # a restore needs that source: point to its finding instead
+    if workspace_missing:
         if host_here and pins is not None and pins.held() is None and pins.checkpoint_evidence():
             msg = (
-                "no workspace checkpoint, but this host's state shows checkpoints existed: appends are refused; "
-                "an owner must restore (orch restore)"
+                "no workspace checkpoint, but this host's state shows checkpoints existed: appends are refused. "
+                + MISSING_CHECKPOINT_RECOVERY
             )
         else:
             msg = (
@@ -260,7 +262,8 @@ def _checkpoints(s: InspectStore, host_here: bool, files: Files, pins: HostPins 
                 + (
                     "; doctor --repair can finish the last recorded append"
                     if repairable
-                    else "; a rollback is possible; use orch restore"
+                    else "; a rollback is possible; "
+                    + ("see the workspace checkpoint finding" if workspace_missing else "use orch restore")
                 ),
                 "checkpoint" if repairable else None,
             )

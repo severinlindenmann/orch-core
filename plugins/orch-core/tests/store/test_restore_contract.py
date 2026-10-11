@@ -442,6 +442,8 @@ def test_a_host_with_checkpoint_evidence_refuses_without_a_checkpoint(env, evide
     with pytest.raises(StoreError) as exc:
         store.checkpoint()
     assert exc.value.code == "checkpoint.missing"
+    assert "no in-place repair" in exc.value.detail and "from a backup" in exc.value.detail
+    assert "Do not delete the host state dir" in exc.value.detail and "must restore" not in exc.value.detail
     assert store._checkpoints.workspace() is None
 
 

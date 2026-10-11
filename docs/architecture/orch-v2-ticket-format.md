@@ -975,7 +975,11 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
   one on a host whose state dir shows checkpoints existed (its `n` high-water mark, ancestry recorded by an earlier
   run, or a published transition): with no workspace checkpoint held (host pin nor `.state`) once the log has grown
   past the genesis, it writes no checkpoint, refuses appends and `checkpoint` (`checkpoint.missing`), and `health`
-  says so; an owner must sign a restore. A crash keeps the previous checkpoint, so this is never a crash state.
+  says so. A crash keeps the previous checkpoint, so this is never a crash state. P1 has no in-place repair: a
+  restore cannot succeed here (`restore_facts` gives `chain.diverged`, a null-source restore `checkpoint.missing`).
+  Recovery is to restore `.state/checkpoints` and the host pin from a backup, or to wait for the P3
+  owner-authenticated baseline. Do not delete the host state dir (`hosts/<workspace id>/`): that throws away the
+  genesis pin and the durable revocation evidence, and only then would the host start a new baseline.
   A host without such evidence starts a baseline (below, "What P1 can't detect"). Checkpoint `n` never restarts
   below the durable high-water mark the host keeps in its state dir.
   Pairing `approved` carries that exact held reference, retained and retrievable, never downgraded; relay-reported
@@ -1029,7 +1033,9 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
 - **What P1 can't detect:** if both the history and the local checkpoints in `.state/` are replaced, the rollback
   is invisible. Likewise a host with no checkpoint evidence in its state dir (a fresh clone on a new machine, or a
   lost host state dir) starts a new baseline automatically at its next append (`health` names this), so a rollback
-  before that baseline does not show. From P3, checkpoints on the relay and on member devices catch it.
+  before that baseline does not show. A host whose state dir shows checkpoints existed but holds none has no P1
+  in-place repair (above): restore the checkpoint files from a backup or wait for the P3 owner-authenticated
+  baseline, and never delete the host state dir to get unstuck. From P3, checkpoints on the relay and on member devices catch it.
 
 ### 5.11 Trust root and authorization replay
 

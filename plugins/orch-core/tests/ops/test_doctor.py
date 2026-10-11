@@ -225,7 +225,8 @@ def test_deleted_checkpoints_cannot_hide_a_rollback_where_the_host_key_is(two):
 
 @pytest.mark.parametrize("evidence", [True, False])
 def test_doctor_names_the_missing_workspace_checkpoint_repair(two, evidence):
-    """With checkpoint evidence in the host state the owner must restore; without it the next append rebaselines."""
+    """With checkpoint evidence in the host state P1 has no in-place repair (backup or the P3 baseline, never delete the
+    host state dir); without it the next append rebaselines."""
     ws = two
     shutil.rmtree(ws.root / ".state" / "checkpoints")  # .state is git-ignored: a clone has none
     pins = ws.host_state / "hosts" / "705d40abbb8c1c90354a1acaa94c935c"
@@ -237,7 +238,10 @@ def test_doctor_names_the_missing_workspace_checkpoint_repair(two, evidence):
     r = doctor(ws)
     text = json.dumps(r.data["findings"])
     assert "checkpoint.missing" in codes(r)
-    assert ("an owner must restore" in text) == evidence
+    assert (
+        "has no in-place repair" in text and "from a backup" in text and "Do not delete the host state" in text
+    ) == (evidence)
+    assert "orch restore" not in text
     assert ("starts a new baseline automatically" in text) == (not evidence)
 
 

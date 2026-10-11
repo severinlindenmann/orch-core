@@ -63,6 +63,9 @@ class Context:
     #: Host mode: registry ops the host does not serve (``task.done`` until H3b2...). No other op may reach them, so
     #: ``apply`` refuses a batch item naming one.
     unserved: frozenset[str] = field(default=frozenset(), repr=False)
+    #: Host mode (H6a): ``wait`` looks once per call and raises ``Parked`` instead of sleeping on the worker thread
+    #: (:class:`orch.ops.commands.wait.Step`); ``None``: the P1 loop.
+    wait_step: Any = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if self.caps is None:

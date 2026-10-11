@@ -1,6 +1,7 @@
 """orch wait: wait for a decision"""
 
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from orch.ops._dsl import REF_PATTERN, B, I, S, err, operation
@@ -22,6 +23,20 @@ HINT = {
 }
 
 
+class Parked(Exception):  # noqa: N818 - a signal, not an error
+    """Host mode: no decision yet; the host parks the request on its bus and calls again (``Step``)."""
+
+
+@dataclass
+class Step:
+    """Host mode (H6a): the state of one ``wait`` across its looks. ``after`` is fixed by the first look; ``log`` is the
+    ticket uid the host watches; ``expired`` makes the next look give the timeout answer."""
+
+    after: int | None = None
+    log: str | None = None
+    expired: bool = False
+
+
 def handle(ctx: Context, args: dict[str, Any]) -> Result:
     """Wait for the first decision after the session's decision cursor, which only ``wait`` (and ``inbox``) moves: a
     decision ``show`` displayed is still handed over here. A session that never touched the ticket waits for what is
@@ -33,10 +48,16 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     c.ctx.caps.git.observe(c.store, view.uid, problems)
     notes_ = [f"observe: {x}" for x in problems]
     note = c.notes.get(view.uid)
-    start = c.store.head_seq(view.uid)
-    if note["decided"] is None:  # the session never touched this ticket: wait for what is decided from now on
-        c.notes.update(view.uid, now=c.now, first_decided=start)
-    after = start if note["decided"] is None else note["decided"]
+    step: Step | None = getattr(ctx, "wait_step", None)
+    if step is not None and step.after is not None:
+        after = step.after  # a later look of one hosted wait
+    else:
+        start = c.store.head_seq(view.uid)
+        if note["decided"] is None:  # the session never touched this ticket: wait for what is decided from now on
+            c.notes.update(view.uid, now=c.now, first_decided=start)
+        after = start if note["decided"] is None else note["decided"]
+    if step is not None:
+        step.after, step.log = after, view.uid
     deadline = time.monotonic() + args.get("timeout", 540)
     pause = iter(POLL)
     wait = POLL[0]
@@ -51,6 +72,10 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
             data = {**fields, "cursor": e["seq"], "next": hints[0]}
             lines = notes_ + (fence(fields["text"], "decision text") if fields.get("text") else [])
             return Result(data=data, key=view.key, seq=e["seq"], cursor=e["seq"], hints=hints, lines=lines, exit=code)
+        if step is not None:  # hosted: never sleep on the worker thread; the host wakes us on the next entry
+            if not step.expired:
+                raise Parked
+            break
         now = time.monotonic()
         if now >= deadline:
             break

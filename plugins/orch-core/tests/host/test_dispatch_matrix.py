@@ -66,13 +66,14 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
     welcome = served.client().welcome
     registry = {op.name for op in ops.all()}
     assert set(welcome["ops"]) == (registry - set(NOT_SERVED)) | set(HOST_OPS)
-    assert set(NOT_SERVED) == {"init", "import.v1", "task.done", "wait"}
+    assert set(NOT_SERVED) == {"init", "import.v1", "task.done"}
+    assert {"wait", "sub.open", "sub.close"} <= set(welcome["ops"])  # H6a: served on the bus
     assert all(v == 1 for v in welcome["ops"].values())
-    assert {"ops/1", "outcome/1"} <= set(welcome["caps"])
+    assert {"ops/1", "outcome/1", "sub/1"} <= set(welcome["caps"])
     assert welcome["peer"] == {"uid": UID, "class": "person", "person": served.lab.owner}
 
 
-@pytest.mark.parametrize("op", ["init", "task.done", "wait", "nope", "host.list", "job.next", "human.get"])
+@pytest.mark.parametrize("op", ["init", "task.done", "nope", "host.list", "job.next", "human.get"])
 def test_an_op_outside_the_list_is_unknown_command(served, op):
     assert err(served.client().req(op)) == "unknown_command"
 
@@ -132,7 +133,7 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
         else:
             who = ops.get(op).who
             assert kind[0] == ("person_read" if op in PERSON_READS else who)
-            assert kind[1] == ("read" if who == "read" else "write")
+            assert kind[1] == ("wait" if op == "wait" else "read" if who == "read" else "write")
         for row, (peer, grant, valid) in ROWS.items():
             assert refusal(resolve(peer, grant, valid), kind[0]) == expected(row, kind[0]), (op, row)
             seen.add((kind[0], expected(row, kind[0])))

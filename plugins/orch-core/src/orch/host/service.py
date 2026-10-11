@@ -9,8 +9,12 @@ Start-up, in order:
 
 Drain (``host.restart``, D-P2-4): new requests answer ``host.restarting`` with ``retry_after_ms``; writes in flight
 finish (no deadline inside a commit); parked ``wait``s answer ``host.restarting``; subscriptions end with
-``end: "host.restarting"`` (**seam, H6a**: :attr:`Host.subscriptions_end`); then the listeners close and
+``end: "host.restarting"`` (:attr:`Host.subscriptions_end`, the bus of H6a); then the listeners close and
 :meth:`Host.run` returns, so the service manager starts the new release.
+
+**Live updates (H6a).** Each workspace's worker keeps its subscription journal (:mod:`orch.host.journal`) and hands
+new entries to the host's :class:`~orch.host.bus.Bus` on the event loop. Every :data:`JOURNAL_CHECK_SECONDS` the host
+also looks for foreign appends (F11) on every workspace's worker.
 
 **Seams.** The workspace ops come from ``backend`` (default :class:`~orch.host.dispatch.RegistryBackend`, H4a1);
 the worker socket and its PID check are H10; OS users, groups and the root-owned run directory are H3c (in dev and
@@ -36,6 +40,7 @@ from typing import Any
 from orch import canon
 
 from . import frames
+from .bus import Bus
 from .control import CONTROL_OPS, ControlGate, ControlOps
 from .custody import check_tree, ensure_private_dir, root_key
 from .errors import HostError
@@ -51,6 +56,8 @@ from .workspace import OpBackend, WorkspaceGate, WorkspaceService
 LOG = logging.getLogger(__name__)
 #: how often retention runs in a host that stays up (§0.7)
 SWEEP_SECONDS = 3600.0
+#: how often every workspace's logs are compared with its journal (F11, D-P2-12)
+JOURNAL_CHECK_SECONDS = 60.0
 
 __all__ = ["RETRY_AFTER_MS", "Host"]
 
@@ -75,6 +82,7 @@ class Host:
         lock_wait: float = LOCK_WAIT_SECONDS,
         limits: HostLimits | None = None,
         sweep_interval: float = SWEEP_SECONDS,
+        journal_check_interval: float = JOURNAL_CHECK_SECONDS,
     ) -> None:
         self.state_dir = Path(state_dir)
         self.host_uid = os.getuid() if host_uid is None else host_uid
@@ -84,7 +92,9 @@ class Host:
         self.clock = clock
         self.lock_wait = lock_wait
         self.sweep_interval = sweep_interval
+        self.journal_check_interval = journal_check_interval
         self._sweeper: asyncio.Task[None] | None = None
+        self._checker: asyncio.Task[None] | None = None
         self.limits = limits or HostLimits()
         self.registry = Registry(self.state_dir, self.host_uid, person_check=self._person_check, pins=self.pins)
         self.intents = IntentStore(self.state_dir, self.host_uid, clock=clock)
@@ -94,7 +104,8 @@ class Host:
         self.servers: dict[str, tuple[Server, asyncio.Task[None]]] = {}
         self.draining = False
         self.started_at = time.monotonic()
-        self.subscriptions_end: Callable[[str], None] = lambda reason: None  # H6a ends subscriptions here
+        self.bus = Bus(self)
+        self.subscriptions_end: Callable[[str], None] = self.bus.end_all
         self.loop: asyncio.AbstractEventLoop | None = None
         self._lock_fd: int | None = None
         self._stopped: asyncio.Event | None = None
@@ -221,9 +232,11 @@ class Host:
         }
         server = Server(listener, self.registry, self.limits, ControlGate(self), welcome)
         self.servers["control"] = (server, asyncio.create_task(server.serve()))
+        self.bus.start()
         for entry in self.registry.entries():
             await self.serve(entry)
         self._sweeper = asyncio.create_task(self._sweep_loop())
+        self._checker = asyncio.create_task(self._check_loop())
 
     def _gid(self, entry: Entry) -> int:
         try:
@@ -239,6 +252,7 @@ class Host:
     async def serve(self, entry: Entry) -> None:
         """Open the workspace on its worker thread and start its socket. A failure leaves it ``unavailable``."""
         service = WorkspaceService(entry, self.state_dir, self.host_uid, clock=self.clock)
+        service.bus, service.publish = self.bus, self.bus.publisher(entry.workspace_id)
         await service.call(service.open)
         self.services[entry.workspace_id] = service  # an unavailable workspace is still bound: ops name the cause
         try:
@@ -269,6 +283,7 @@ class Host:
         service = self.services.get(workspace_id)
         if service is not None:
             service.closing = True
+        self.bus.end_all("closed", workspace_id)
         pair = self.servers.get(workspace_id)
         if pair is not None:
             gone = HostError("workspace.unavailable", "the workspace was unregistered")
@@ -354,6 +369,21 @@ class Host:
                 except Exception:  # noqa: BLE001
                     LOG.exception("outcome sweep failed")
 
+    async def check_journals(self) -> None:
+        """F11: compare every workspace's logs with its journal on its worker thread (a foreign append rebuilds the
+        journal and ends its subscriptions with ``reset``)."""
+        for service in list(self.services.values()):
+            if service.state != "unavailable" and not service.closing:
+                try:
+                    await service.call(lambda s=service: s.sync(check=True))
+                except Exception:  # noqa: BLE001 - the check must never stop the host
+                    LOG.exception("journal check failed")
+
+    async def _check_loop(self) -> None:
+        while True:
+            await asyncio.sleep(self.journal_check_interval)
+            await self.check_journals()
+
     async def _sweep_loop(self) -> None:
         while True:
             await asyncio.sleep(self.sweep_interval)
@@ -390,10 +420,12 @@ class Host:
             await asyncio.sleep(0.01)
 
     async def close(self) -> None:
-        if self._sweeper is not None:
-            self._sweeper.cancel()
-            await asyncio.gather(self._sweeper, return_exceptions=True)
-            self._sweeper = None
+        for task in (self._sweeper, self._checker):
+            if task is not None:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+        self._sweeper = self._checker = None
+        await self.bus.stop()
         for name in list(self.servers):
             pair = self.servers.pop(name)
             pair[1].cancel()

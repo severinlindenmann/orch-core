@@ -70,14 +70,14 @@ def fill_hint(view: Any, gate: str) -> str | None:
     return None
 
 
-CLAIM_HINT_SCAN = 40  # open candidates
+CLAIM_HINT_SCAN = 40  # visible open candidates
 CLAIM_HINT_WORK = 120  # ticket reads and key ownership checks, including dependencies
 
 
 def claim_hint(c: Any) -> str:
     """What to do when there is no claim: claim a ticket that is free, else create one (never a command that fails).
-    It looks at the best :data:`CLAIM_HINT_SCAN` open tickets only; when none of them is free and there are more, it
-    says ``orch next``, which looks at all of them."""
+    It looks at the best :data:`CLAIM_HINT_SCAN` visible open tickets only; when none is free and there are more,
+    it says ``orch next``, which looks at all of them."""
     try:
         with c.store.load_budget(CLAIM_HINT_WORK):
             view, complete = _free_ticket(c, CLAIM_HINT_SCAN)
@@ -243,9 +243,16 @@ def next_ticket(c: Any, *, mine_first: bool = True) -> Any | None:
 
 
 def _free_ticket(c: Any, limit: int | None = None) -> tuple[Any | None, bool]:
-    """The best free ticket among the first ``limit`` open candidates (all without a limit), and whether every
+    """The best free ticket among the first ``limit`` visible open candidates (all without a limit), and whether every
     candidate was looked at."""
-    rows = c.store.index.query("SELECT uid, key, priority FROM tickets WHERE status = 'open'")
+    # Hidden rows must not consume the scan cap or the verification budget. The index is only a hint;
+    # verified() still checks the selected logs and their visibility before using them.
+    rows = c.store.index.query(
+        "SELECT uid, key, priority FROM tickets WHERE status = 'open' AND "
+        "(json_extract(visibility, '$') = 'workspace' OR EXISTS "
+        "(SELECT 1 FROM json_each(visibility, '$.restricted') WHERE value = ?))",
+        (c.person,),
+    )
     rows.sort(key=lambda r: (PRIORITY.get(r[2], 2), key_number(r[1])))
     complete = limit is None or len(rows) <= limit
     uids = [r[0] for r in (rows if limit is None else rows[:limit])]

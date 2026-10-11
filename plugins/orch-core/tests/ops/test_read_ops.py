@@ -337,3 +337,18 @@ def test_claim_hint_does_not_count_hidden_tickets(ws, cli, anon):
     cli("new", "another secret")
     ws.sign("3", "visibility.changed", visibility={"restricted": [ws.owner.ref]})
     assert anon("status").out.splitlines()[-1] == hint
+
+
+@pytest.mark.parametrize("cap", [2, 40])
+def test_hidden_tickets_do_not_cross_the_claim_hint_scan_cap(ws, cli, anon, monkeypatch, cap):
+    from orch.ops import views
+
+    monkeypatch.setattr(views, "CLAIM_HINT_SCAN", cap)
+    monkeypatch.setattr(views, "CLAIM_HINT_WORK", 3)
+    hint = anon("status").out.splitlines()[-1]
+    for i in range(1, cap + 3):
+        assert cli("new", f"hidden {i}").code == 0
+        ws.sign(str(i), "visibility.changed", visibility={"restricted": [ws.owner.ref]})
+        assert anon("status").out.splitlines()[-1] == hint
+    assert cli("new", "visible").code == 0
+    assert anon("status").out.splitlines()[-1] == "next: orch claim --next"

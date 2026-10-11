@@ -19,13 +19,13 @@ from .logs import LogInfo
 
 __all__ = ["Index"]
 
-VERSION = "1"
+VERSION = "2"
 _SCHEMA = """
 CREATE TABLE meta(k TEXT PRIMARY KEY, v TEXT NOT NULL);
 CREATE TABLE logs(log TEXT PRIMARY KEY, seq INTEGER NOT NULL, head TEXT NOT NULL, size INTEGER NOT NULL);
 CREATE TABLE tickets(uid TEXT PRIMARY KEY, key TEXT NOT NULL UNIQUE, title TEXT NOT NULL, type TEXT NOT NULL,
   status TEXT NOT NULL, owner TEXT NOT NULL, priority TEXT NOT NULL, size TEXT, due TEXT, parent TEXT,
-  waiting INTEGER NOT NULL, frozen INTEGER NOT NULL, seq INTEGER NOT NULL);
+  waiting INTEGER NOT NULL, frozen INTEGER NOT NULL, seq INTEGER NOT NULL, visibility TEXT NOT NULL);
 CREATE TABLE ticket_people(uid TEXT NOT NULL, role TEXT NOT NULL, person TEXT NOT NULL, PRIMARY KEY(uid, role, person));
 CREATE TABLE ticket_labels(uid TEXT NOT NULL, label TEXT NOT NULL, PRIMARY KEY(uid, label));
 CREATE TABLE members(person TEXT PRIMARY KEY, name TEXT NOT NULL, role TEXT NOT NULL, ord INTEGER NOT NULL);
@@ -52,6 +52,9 @@ def _row(view: Any, seq: int) -> tuple[Any, ...]:
         int(view.waiting),
         int(view.frozen),
         seq,
+        json.dumps(
+            "workspace" if view.visibility == "workspace" else {"restricted": list(view.visibility["restricted"])}
+        ),
     )
 
 
@@ -165,7 +168,7 @@ class Index:
             sig = (row, tuple(people), tuple(labels))
             if self._rows.get(uid) == sig:
                 continue
-            db.execute("INSERT OR REPLACE INTO tickets VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", row)
+            db.execute("INSERT OR REPLACE INTO tickets VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)", row)
             db.execute("DELETE FROM ticket_people WHERE uid=?", (uid,))
             db.execute("DELETE FROM ticket_labels WHERE uid=?", (uid,))
             db.executemany("INSERT INTO ticket_people VALUES(?,?,?)", [(uid, r, p) for r, p in people])

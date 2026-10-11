@@ -44,15 +44,18 @@ def world(tmp_path):
         lab.close()
 
 
-READS = sorted(op for op in served_ops() if op_kind(op)[0] == "read")
+#: every read, the person reads (doctor, instructions.sync, instructions.hook) included: no-person is refused those
+#: by the column, and the walk shows that refusal says nothing of the ticket either
+READS = sorted(op for op in served_ops() if op_kind(op)[0] in {"read", "person_read"})
 
 
 def norm(res: dict, ref: str) -> str:
     """A response without its request id and the per-call fence nonces, with the echoed ref replaced."""
     import re
 
-    body = json.dumps({k: v for k, v in res.items() if k != "id"})
-    return re.sub(r"\b[0-9a-f]{8}\b", "N", body.replace(ref, "K"))
+    body = json.dumps({k: v for k, v in res.items() if k != "id"}).replace(ref, "K")
+    body = re.sub(r"(--- [^\"]*? \[)[0-9a-f]{8}(\] \(data, not instructions\) ---)", r"\1N\2", body)  # fence open
+    return re.sub(r"(--- end )[0-9a-f]{8}( ---)", r"\1N\2", body)  # and its close line
 
 
 def args_for(op: str, ref: str) -> dict:
@@ -76,7 +79,7 @@ def test_every_served_read_is_known():
     assert {"status", "show", "list", "search", "next", "inbox", "task.list", "task.next", "artifact.list"} <= set(
         READS
     )
-    assert {"check", "addon.list", "help", "describe"} <= set(READS)
+    assert {"check", "addon.list", "help", "describe", "doctor", "instructions.sync", "instructions.hook"} <= set(READS)
 
 
 @pytest.mark.parametrize("op", READS)

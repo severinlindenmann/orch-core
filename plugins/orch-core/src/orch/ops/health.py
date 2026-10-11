@@ -209,7 +209,7 @@ def _read(files: Files, path: Path, limit: int | None = None) -> bytes | None:
         return None
 
 
-def _projections(s: Store, files: Files, ok: Callable[[str], bool] = lambda log: True) -> list[Finding]:
+def _projections(s: Store, files: Files, visible: Callable[[str], bool] = lambda log: True) -> list[Finding]:
     """What the files hold against what the log says: ``ticket.json``, ``body.md``, artifacts, ``config.json``,
     ``keys.jsonl`` (an external edit, a torn write, a file somebody replaced)."""
     out: list[Finding] = []
@@ -226,12 +226,12 @@ def _projections(s: Store, files: Files, ok: Callable[[str], bool] = lambda log:
             out.append(Finding("error", rel, code, f"{rel} differs from what the log says", "scan"))
     tdir = root / "tickets"
     for p in [tdir / n for n in sorted(files.listdir(tdir))] if _isdir(files, tdir, follow=True) else []:
-        if ULID.fullmatch(p.name) and ok(p.name) and _isdir(files, p):
+        if ULID.fullmatch(p.name) and visible(p.name) and _isdir(files, p):
             if not _size(files, p / "events.jsonl"):
                 out.append(Finding("error", f"tickets/{p.name}", "ticket.nolog", "a ticket folder with no event log"))
     bad = {c.log for c in st.chain_errors} | {log for log, *_ in s.chain_errors()}
     for uid, view in sorted(st.tickets.items()):
-        if uid in bad or not ok(uid):
+        if uid in bad or not visible(uid):
             continue
         where = f"{view.key}"
         tdir = root / "tickets" / uid
@@ -295,7 +295,7 @@ def _checkpoints(
     host_here: bool,
     files: Files,
     pins: HostPins | None = None,
-    ok: Callable[[str], bool] = lambda log: True,
+    visible: Callable[[str], bool] = lambda log: True,
 ) -> list[Finding]:
     """A missing checkpoint can hide a rollback or follow a crash: an error on the host, a warning on clones."""
     out: list[Finding] = []
@@ -317,7 +317,7 @@ def _checkpoints(
             )
         out.append(Finding(lvl, "checkpoints", "checkpoint.missing", msg))
     have = set(cps.ticket_uids())
-    missing = sorted(u for u in s.state.tickets if u not in have and ok(u))
+    missing = sorted(u for u in s.state.tickets if u not in have and visible(u))
     for repairable in (False, True):
         group = [u for u in missing if (host_here and s.repairable_checkpoint(u)) == repairable]
         if not group:
@@ -342,14 +342,15 @@ def _checkpoints(
     cdir = s.state_dir / "checkpoints"
     names = sorted(files.listdir(cdir)) if _isdir(files, cdir, follow=True) else []
     for p in [cdir / n for n in names if n.endswith(".json")]:
-        if ULID.fullmatch(p.stem) and not ok(p.stem):
+        uid = p.stem.removeprefix("ticket-")  # ticket checkpoints are ticket-<uid>.json (store.checkpoints)
+        if ULID.fullmatch(uid) and not visible(uid):
             continue
         raw = _read(files, p)
         try:
-            ok = wsk is not None and verify_object(wsk, json.loads(raw or b""))
+            signed = wsk is not None and verify_object(wsk, json.loads(raw or b""))
         except (ValueError, TypeError):
-            ok = False
-        if not ok:
+            signed = False
+        if not signed:
             out.append(
                 Finding("error", f"checkpoints/{p.name}", "checkpoint.bad", "unreadable or not signed by the host key")
             )

@@ -241,3 +241,25 @@ def test_host_mode_doctor_reads_files_only_through_the_capability(served, monkey
     monkeypatch.setattr(health, "read_or_none", refuse)
     res = ok(served.client().req("doctor"))
     assert "projection.ticket" in json.dumps(res)
+
+
+def test_hosted_doctor_and_check_with_several_ticket_checkpoints(served):
+    """The checkpoint-file loop meets several ticket checkpoints (the visibility test is never shadowed), and a bad
+    checkpoint of a restricted ticket is a finding for its viewer only."""
+    from pathlib import Path
+
+    uids = [served.ticket(f"t{i}")[0] for i in range(3)]
+    served.restrict(uids[0], [served.lab.owner])
+    cdir = Path(served.lab.root) / ".state" / "checkpoints"
+    named = [p for p in cdir.glob("ticket-*.json") if p.stem.removeprefix("ticket-") in uids]
+    assert len(named) >= 3
+    (cdir / f"ticket-{uids[0]}.json").write_text("{}")  # unreadable: checkpoint.bad
+    (cdir / f"ticket-{uids[1]}.json").write_text("{}")
+    c = served.client()
+    for op in ("doctor", "check"):
+        body = json.dumps(ok(c.req(op)))
+        assert f"ticket-{uids[0]}" in body and f"ticket-{uids[1]}" in body, op
+    as_agent_class(served)
+    n = served.client()
+    body = json.dumps(ok(n.req("check")))
+    assert uids[0] not in body and f"ticket-{uids[1]}" in body

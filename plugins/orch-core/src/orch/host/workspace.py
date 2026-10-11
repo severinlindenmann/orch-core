@@ -30,6 +30,7 @@ from . import frames
 from .columns import Column, GrantState, OpKind, refusal, resolve
 from .custody import check_tree, check_workspace_files
 from .errors import HostError
+from .outcomes import OutcomeStore, StoreReconciler
 from .registry import Entry
 from .transport import Peer, Session
 
@@ -80,6 +81,13 @@ class WorkspaceService:
         self.clock = clock
         self.executor = ThreadPoolExecutor(1, thread_name_prefix=f"orch-ws-{entry.workspace_id[:8]}")
         self.store: Any = None
+        self.outcomes = OutcomeStore(
+            self.state_dir,
+            entry.workspace_id,
+            host_uid,
+            clock=clock,
+            reconciler=StoreReconciler(lambda: self.store),
+        )
         self.state: State = "unavailable"
         self.cause = "not opened yet"
 
@@ -133,6 +141,13 @@ class WorkspaceService:
             self.store.close()
         self.store = store
         self._judge()
+        if self.state != "unavailable":
+            try:
+                self.outcomes.open()
+                self.outcomes.reconcile_all()  # a crash between an append and its record (§0.7)
+                self.outcomes.sweep()
+            except (HostError, OSError, ValueError) as exc:
+                self._unavailable(f"{getattr(exc, 'code', type(exc).__name__)}: {exc}")
 
     def _judge(self) -> None:
         ws = self.store.state.workspace

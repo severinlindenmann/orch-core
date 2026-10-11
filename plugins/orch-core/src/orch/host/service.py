@@ -39,6 +39,7 @@ from .control import CONTROL_OPS, ControlGate, ControlOps
 from .custody import check_tree, ensure_private_dir
 from .errors import HostError
 from .intents import IntentStore
+from .jobs import CompletionStore
 from .listener import Listener, default_run_directory
 from .ownership import LOCK_WAIT_SECONDS
 from .pins import AgentPins
@@ -79,6 +80,7 @@ class Host:
         self.limits = limits or HostLimits()
         self.registry = Registry(self.state_dir, self.host_uid, person_check=self._person_check, pins=self.pins)
         self.intents = IntentStore(self.state_dir, self.host_uid, clock=clock)
+        self.jobs = CompletionStore(self.state_dir, self.host_uid, clock=clock)
         self.control = ControlOps(self)
         self.services: dict[str, WorkspaceService] = {}
         self.servers: dict[str, tuple[Server, asyncio.Task[None]]] = {}
@@ -156,9 +158,11 @@ class Host:
         try:
             self.registry.load()
             self.intents.open()
+            self.jobs.open()
             self.recovered = self.control.recover()
             self.control.sweep_keys()
             self.intents.sweep()
+            self.jobs.sweep()
         except BaseException:
             self._release_host_lock()
             raise

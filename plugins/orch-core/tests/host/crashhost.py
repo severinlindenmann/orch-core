@@ -49,6 +49,12 @@ def patch(point: str) -> None:
         store.Store.append = die
     elif point == "bootstrap-after-append":
         store.Store.append = after(store.Store.append)
+    elif point == "outcome-before-append":
+        store.Store.create_ticket = die
+    elif point == "outcome-before-commit":
+        from orch.host import outcomes
+
+        outcomes.OutcomeStore.commit = die  # the append is in the log; the record still says pending
     elif point != "none":
         raise SystemExit(f"unknown crash point {point}")
 
@@ -60,7 +66,14 @@ def main() -> None:
     from orch.host.service import Host
 
     pins = AgentPins(Path(sys.argv[4]), owner=os.getuid()) if len(sys.argv) > 4 else None
-    host = Host(Path(state), Path(run), pins=pins)
+    kw = {}
+    if "T_CLOCK" in os.environ:  # tests whose grants and certificates live on a fixed clock
+        kw["clock"] = lambda: float(os.environ["T_CLOCK"])
+    if point.startswith("outcome-"):
+        from outcome_helpers import OutcomeBackend  # a sibling of this script
+
+        kw["backend"] = OutcomeBackend
+    host = Host(Path(state), Path(run), pins=pins, **kw)
     try:
         asyncio.run(host.run())
     except Exception as exc:  # noqa: BLE001 - report the code the way orch host run does

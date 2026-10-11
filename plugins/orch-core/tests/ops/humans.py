@@ -23,7 +23,7 @@ from tests.identity.helpers import Person
 from tests.ops.helpers import Cli, Ws
 from tests.store.helpers import WS
 
-PASSPHRASE = "correct horse battery staple"
+PASSPHRASE = "Zq7!mPx2-vL9#rTb4w"
 KDF = KdfParams(n=2**15)  # the floor the production backend accepts: a key made here loads in a real process too
 
 

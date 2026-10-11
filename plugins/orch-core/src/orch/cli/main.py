@@ -278,8 +278,8 @@ def main(
             workspace=workspace,
         )
         res = run(parsed, ctx, records, hooks)
-        text = render.dumps(render.result_envelope(res)) if as_json else render.result_text(op, res)
-        emit(text, out)
+        if not (isinstance(res.data, dict) and res.data.get("silent") is True):  # a hook outside a workspace is silent
+            emit(render.dumps(render.result_envelope(res)) if as_json else render.result_text(op, res), out)
         if session and op.is_write and not parsed.dry_run:
             records.succeeded_write(session)
         return res.exit

@@ -1099,7 +1099,7 @@ claim"**, if the session holds exactly one; otherwise `ambiguous_ref` comes back
 | Lifecycle | `new`, `claim [REF \| --next \| --takeover --reason]`, `release`, `handoff -m`, `submit`, `ask "…" --options a,b --rec a [--to p]`, `wait` |
 | Edit | `set REF key=value` (keys: title, priority, size, labels, due, links, parent, blocked_by; person-only fields have their own operations), `section set`, `ac add\|edit`, `task list\|next\|add\|start\|done\|skip\|block\|reopen`, `artifact add\|replace\|list`, `log`, `apply --file -` (an atomic batch) |
 | Human only | `approve`, `request-changes`, `verdict`, `answer`, `close`, `reopen`, `grant`, `member`. Agents get `human_only`, `retry:false`. |
-| Admin | `init`, `doctor`, `check`, `instructions sync`, `import v1`, `addon …` |
+| Admin | `init`, `doctor`, `check`, `instructions sync`, `instructions hook`, `import v1`, `addon …` |
 
 Combined calls for the common loops:
 
@@ -1365,6 +1365,94 @@ Where this chapter was silent, `orch.ops` does the following. Each is a rule the
 - **`new -m/--file`** is the `summary` section. **`ask`** defaults to `--to ticket_owner`, labels every option with its key
   and gives the question the next free `Q` id.
 
+**Decisions of C8 (instructions and `orch init` as built).** Where §10.2, the harness doc and the custody doc were silent,
+`orch.instructions` and `orch.ops.workspace_init` do the following. Each is a rule the tests pin (`tests/instructions/`).
+
+- **Where the workspace is.** `orch init --prefix DEMO [--name NAME]` makes the workspace **in the current directory**
+  (`config.json`, `keys.jsonl`, `events/`, `tickets/`, `.state/` next to your files), not in an `orchestrator/` folder;
+  `find_workspace` still accepts both. It is refused as invalid input when a workspace is here or above, or when any of
+  those five names exists, and when the state directory lies inside the workspace (the workspace key would be committed).
+  The workspace name in `config.json` is the directory name; the owner's name is `--name`, else `$USER`. A lock directory
+  (`.orch-init.lock`) keeps two inits in one directory apart (`lock.busy`), so one rollback never deletes the other's files.
+- **Refusals come before any key exists.** A grant (`ORCH_GRANT`) or a missing person's presence is `human_only`; no
+  controlling terminal (`/dev/tty`) is `human_only` too; so is an instruction-file path that is or lies below a symbolic
+  link. Any failure after a key was made removes the key directory and the workspace files this call made, so a second try
+  starts clean. Ctrl-C and SIGHUP (closing the terminal) do the same and print one line (`stop: init cancelled, nothing
+  was created`), no traceback. Key directories of an init that was killed (SIGKILL, power loss) carry an
+  `.init-incomplete` marker with the process id; the next `init` removes those whose process is gone. Every failure after
+  a passphrase or the code was shown says that what was shown is void.
+- **The passphrase comes first.** `/dev/tty` shows a generated passphrase (six distinct words of the BIP-39 list, about
+  66 bits, shown once); the person types it back to confirm, or types one of their own instead (asked twice). Only then
+  is the recovery code made. Three tries, then `init` stops with nothing created.
+- **The recovery code is confirmed and then wiped.** The 24-word code is shown on `/dev/tty` and nowhere else (never
+  stdout, stderr, a file or the result), the person writes it down and types **three words from random positions** back
+  (echo off); a wrong word shows the code again, three failures stop the init. Then the screen and the scrollback are
+  cleared (`ESC[3J ESC[2J ESC[H`; a terminal that ignores it keeps its scrollback, which is stated, not hidden).
+- **The person key** derived from the code signs the first device certificate and the workspace key's delegation and is
+  then dropped: **nothing on disk holds it**. This is a P1 deviation from D50 and §5.1/§5.2, which keep it wrapped by a
+  Secure Enclave key on the primary device (a stored copy under a passphrase would be a file every agent of the same OS
+  user can read); it is recorded in orch-v2.md §5.1 and portable-custody D65 pending the owner's confirmation, and is
+  revisited with the `secure-enclave`/`tpm` backend. The consequence: adding or revoking a device, or issuing the
+  key-exchange certificate of P3, needs the code, typed on `/dev/tty` with echo off, never from an argument, stdin or the
+  environment. The label of the first device is sealed with an HKDF of the person key's scalar; the certificate's
+  `dk_kx_pub` is a fresh key whose private half is discarded (P1 has no key-exchange user; the relay is P3).
+- **The device key** is a `passphrase` backend key (`dk`, role `device`) at
+  `<state dir>/hosts/<workspace id>/person/dk.key.json` (where the human operations of C7 read), made from the passphrase
+  the person settled on; the backend asks it once more when it signs the genesis, showing the signed fields (§5.3). The
+  workspace key is the `file`-tier key `keys/wsk` of §10.7. `Store.append` writes `config.json` and `keys.jsonl` and pins
+  the genesis in the state directory (§5.11). **P1 deviation:** the genesis is not also recorded in the device key file
+  (§5.11 "custody key file"): the file's authenticated header is fixed and its passphrase is needed to change it; the pin
+  in the state directory is the only record until pairing (P3) adds one.
+- **Passphrase strength** (C7 and C8 security reviews; `orch.custody.strength`, checked by the passphrase backend on every
+  key it creates, so it holds for `init` and any later device key): at least 14 Unicode scalars after NFC, not on the
+  vendored list of the 5000 most common passwords (also with leet substitutions), and an entropy estimate of at least
+  60 bits, where the estimate is the cheapest parse of the text into common words (12 bits each), ascending, descending
+  and keyboard runs (5 bits), repeats (1 to 2), years (7) and single characters (log2 of the character pool). The
+  generated six-word phrase (about 66 bits) is judged by the same rule.
+- **Files written, never through a link.** `AGENTS.orch.md` (workspace root), the three built-in skills in
+  `.claude/skills/<name>/` with their `orch.skill.json` (scope `builtin`), one line `Before working on tickets, read
+  AGENTS.orch.md (orch).` in `AGENTS.md` (Codex and others), `@AGENTS.orch.md` in `CLAUDE.md` (Claude Code) and `.state/`
+  in `.gitignore`, each appended to an existing file and created otherwise, never duplicated. No file or directory on the
+  way (`.claude`, `.claude/skills`, the skill folder, the file) may be a symbolic link: `init` refuses before any key is
+  made, `instructions sync` writes nothing (invalid input). Reads open with `O_NOFOLLOW`; temporary files come from
+  `mkstemp` in the target directory (exclusive, random name). A skill whose sidecar names another scope than `builtin`
+  is the owner's and is kept, and `init` and `sync` say so (`kept .claude/skills/orch-tickets (scope workspace ...)`). A
+  Claude Code user who also installs the plugin sees each skill twice (the plugin's and the workspace's); the plugin
+  layout (`plugins/orch-core/skills/`, `hooks/hooks.json`) is generated by `scripts/sync-plugin.sh` and kept equal to the
+  generator by a test. If writing the files fails after the genesis, the workspace stays and the result says so and what to
+  run (`orch instructions sync`; the `AGENTS.md`/`CLAUDE.md` lines are added by hand).
+- **`AGENTS.orch.md`** is a template whose commands are registry markers and whose example calls come from
+  `orch.ops.workflows`: renaming or removing an operation fails the generator, not a reader. The first line is
+  `orch v2.0 (instructions rN) · ...`; `N` is `INSTRUCTIONS_REV`, raised whenever this text or a skill changes (each skill's
+  text is pinned to its `skill_version` by a hash in the tests). Addons may add one line each before the last line, within
+  the 25. It does not promise `artifact add --ac` without a grant.
+- **The stale check.** Installed instructions are stale when `AGENTS.orch.md` is missing, has no stamp or a lower `rN`,
+  or when a built-in skill is missing, has no sidecar, a lower `skill_version`, or a `SKILL.md` that differs from the
+  shipped one at the same version while its scope is still `builtin`. A higher number is reported too. `orch check` lists
+  these, exits 5 when it finds any problem (so a commit hook can gate), and its next step is `orch instructions sync`; the
+  session-start text carries `instructions stale: run orch instructions sync`. C10's `doctor` and commit check extend it.
+- **`instructions sync [--dry-run] [--force]`** is a `read` operation (it was declared `agent`) that writes files: they
+  are pure functions of the installed CLI, no event is appended and no grant is needed, so the person can run it too. A
+  consumer that treats `read` as "no side effects" must know this one exception. It never overwrites a built-in skill that
+  was edited by hand (same `skill_version`, different text) without `--force`; setting `scope` to `workspace` in the
+  sidecar keeps an edit for good. An older `skill_version` is upgraded without `--force`.
+- **`instructions hook session-start|pre-compact`** is a new Admin command (§10.3). Session start prints at most six lines
+  (the `ok` line with the person and the grant, the claim line, `unread:` for at most two undelivered decisions **as ids
+  only** (`DEMO-0001 #5 answered Q1 option=a`: the text of an answer or a change request is ticket data and never reaches
+  a hook, whose output the harness injects as context; `wait` and `show` hand it over, fenced), the stale notice, `next:`);
+  pre-compact at most four. It **never pins a genesis**: a workspace this machine has not pinned (by `orch status` or
+  `init`) gives `not initialised on this machine`, and a log with chain errors gives `DAMAGED ... trust no state` and exit 5
+  instead of `ok`. Outside a workspace it prints nothing and exits 0. The plugin runs it on `SessionStart`
+  (`startup|resume|clear|compact`) and `PreCompact`; harnesses without hooks rely on `orch status` first.
+- **Budgets** (tests/instructions/test_budget.py): `AGENTS.orch.md` at most 25 lines and 300 tokens, the session-start text
+  at most 6 lines and 150 tokens, a skill at most 600 tokens (a token is four characters), all always-loaded text under
+  450 tokens (measured on the real texts), and `orch help` within its pinned size.
+- **Follow-ups.** Writing the instruction files with directory file descriptors (`dir_fd`, `O_NOFOLLOW`) to close the lstat-then-act race (a same-user process can still create empty directories outside via a swapped link; no file escapes); refusing hardlinked instruction files.
+- **Locks and signals.** The init lock is an `flock` on `.orch-init.lock` (dropped by the kernel when the process dies; the stale file blocks nothing); SIGTERM and SIGHUP are handled like Ctrl-C. A relative `ORCH_STATE_DIR` is made absolute. Files over 1 MiB are never rewritten (`init` reports it, `sync` refuses). The hook exits 0 even when it prints `DAMAGED`.
+- **Strength check** is applied to the NFKC text without invisible format characters; dictionary words (BIP-39, the common list, a few famous phrases, the user's name and the prefix) are one unit each.
+- **Skill sidecar.** `orch.skill.json` is validated in plain Python (D55): exactly `schema_version` (1), `skill_version`
+  (`x.y.z`), `scope` (`builtin`, `workspace` or `org`), `connections` and `env` (lists of names).
+
 ### 10.8 Decisions of C7 (the human operations as built)
 
 Where §5.3, §5.7, §10.1 and §10.3 were silent, `orch.ops.human` and the eleven human operations (`approve`,
@@ -1586,7 +1674,7 @@ owner's confirmation.
 | N10 | The code gate (D59) | `not` always includes `assignees` and `independent` is always `true`, enforced by the host. Only a person's signature approves it; no `via` field in P1. In P1 turning it on moves no ticket back. | agreed with Codex |
 | N11 | Addon writes | Addons hold no key; the host appends their events. `set_by` is a list of actor alternatives checked per write (`agent`, `addon`, human tokens = a signed person event). Only leaf paths can be set, so replacing `ticket.addons.<addon>` can't bypass `set_by`. Addon events never carry core authority. | agreed with Codex, modified |
 | N12 | Independence of approvers | The policy option `independent`, **off by default** for `requirements`, `plan` and `verify`, so a sole owner can approve their own agents' work; always on for `code` (D59). See O4 for what `not: assignees` covers. | new from the Codex review |
-| N13 | Trust root | The head of `workspace.created` is the genesis, checked in six ordered steps (§5.11); remembered by the host outside the workspace, in every workspace checkpoint, in the person's custody key file, shown at pairing. Readers replay authorization, not only signatures. **P1 limit:** see O7. | new from the Codex review; tightened with the Opus reviewer |
+| N13 | Trust root | The head of `workspace.created` is the genesis, checked in six ordered steps (§5.11); remembered by the host outside the workspace, in every workspace checkpoint, shown at pairing (the person's custody key file records it from P3 pairing on; `orch init` does not, see §10.7). Readers replay authorization, not only signatures. **P1 limit:** see O7. | new from the Codex review; tightened with the Opus reviewer |
 | N14 | Rollback and trust in P1 | Equal-height divergent heads are refused and `restore` is defined, but **P1 can't detect a rollback when both the history and the local checkpoints are replaced**, and the genesis pin lives in files the same OS user owns (O7). Relay checkpoints (P3) and host-held keys (P2) fix it. | new from the Codex review |
 | O1 | Where the factor is recorded | In the event's `auth` only, not in the device certificate. **D64's wording ("recorded in the person's device certificate") needs amending**; F1 doesn't edit D64. | agreed with Opus reviewer |
 | O2 | Custody of `dk_sig` in P1 | `dk_sig` is held by the backend named in `auth`; in P1 it is passphrase-encrypted like the person key, decrypted for one signature on a TTY, never cached; a key that signs without its factor is `file`-tier and never signs person events (§5.3). | agreed with Opus reviewer |
@@ -1594,7 +1682,7 @@ owner's confirmation.
 | O4 | Self-approval | With `independent` on, `not: assignees` also excludes the `for` person of agent events that touched a bound path in the gate's current generation. With it off (the single-owner default), a person may approve their own agent's work, and the doc says so (§5.7). | agreed with Opus reviewer |
 | O5 | `restore` power | Owner only; never drops revocations (the host re-appends every PK-signed revocation it has seen); records the abandoned signed decisions in `abandoned_decisions` (§5.10). | agreed with Opus reviewer |
 | O6 | Unattended evidence | Unattended artifacts carry no `ac`/`task` and are never evidence (§6). | agreed with Opus reviewer |
-| O7 | P1 trust root | The genesis pin is in the host state dir and the person's custody key file, both owned by the same OS user as the agents in P1, so an agent can replace them together; stated plainly next to N14. | agreed with Opus reviewer |
+| O7 | P1 trust root | The genesis pin is in the host state dir (P1; the person's custody key file gets it at pairing), owned by the same OS user as the agents in P1, so an agent can replace them together; stated plainly next to N14. | agreed with Opus reviewer |
 | R3 | Device recovery and who appends revocations | `device.revoked` may be appended by any member's device or by the host; its authority is the embedded PK-signed revocation (protocol §6.2). A device vouched for by the person key (with `decide`) may add itself when its person has no valid device left (the D50 recovery path); otherwise losing the owner's only device would leave the workspace without owner signatures. | agreed with Opus reviewer |
 | R5 | Decision freeze after an invalid event | An owner signs `invalid.acknowledged {invalid_seq, invalid_head, reason?}` to lift the freeze; the event stays absent. An invalid event in the workspace log freezes all person decisions in the workspace until acknowledged. In P1 an agent with the workspace key can cause the freeze (N4). | agreed with Opus reviewer |
 
@@ -1703,7 +1791,7 @@ A1–A20 (PR body), HO (dashboard handover, input only), D58–D60, the adversar
 | 96 | Restore drops revocations (Opus S11) | Revocations re-appended at once; `abandoned` gives up every checkpoint above `from_seq`; workspace restore raises every ticket's gates. | A rollback can't resurrect a revoked device. |
 | 97 | Question id frozen wrongly; `evidence` half-defined (Opus S12) | Derived `qid` (32 hex, `orch/v2/question-id\|`) used in the question hash; `evidence` refused in P1, defined in P3 with a new contract. | Protocol §13 needs hex ids; no person event without `sig`. |
 | 98 | `based_on` unchecked (Opus S13) | Must name an earlier event of the same log (`event.bad_base`); staleness via `gate_gen`, `hash`, `base_rev`. | A meaningless `based_on` can't be signed. |
-| 99 | Genesis pin agent-writable (Opus S14) | Also pinned in the person's custody key file; human-only verbs refuse a different genesis; P1 limit in O7. | The human signer checks the root, not only the host. |
+| 99 | Genesis pin agent-writable (Opus S14) | Pinned in the host state dir (the custody key file only from pairing, P1 deviation in §10.7); human-only verbs refuse a different genesis; P1 limit in O7. | The human signer checks the root, not only the host. |
 | 100 | Grant time checks (Opus S15) | `\|at − issued_at\| ≤ 300 s`, `expires_at == issued_at + 3600·hours`, role terms at position, all on replay. | Grants are checkable by any reader. |
 | 101 | `not: assignees` bypass through claims (Opus S16) | Per O4: with `independent` on it also excludes the agents' `for` person; off by default, and self-approval is stated. | The owner's single-person default stays usable. |
 | 102 | Three `v` fields (Opus note) | Envelope `v` (2), signed-context `contract` (1), checkpoint `o.v` (2, protocol §2.4). | Distinct names, no misreads. |

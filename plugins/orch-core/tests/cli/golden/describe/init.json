@@ -91,11 +91,11 @@
         "code": "human_only",
         "exit": 3,
         "retryable": false,
-        "hint": "orch ask or orch wait",
+        "hint": "run orch init in your own terminal, not through an agent",
         "fix": [
           "orch",
           "describe",
-          "ask"
+          "init"
         ]
       },
       {

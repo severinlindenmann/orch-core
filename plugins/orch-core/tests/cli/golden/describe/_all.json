@@ -324,14 +324,21 @@
         "cli": "check",
         "group": "Admin",
         "who": "read",
-        "summary": "Check that the ticket files match their events (for a commit hook)."
+        "summary": "Check that the ticket files match their events and the instructions are current (for a commit hook)."
       },
       {
         "name": "instructions.sync",
         "cli": "instructions sync",
         "group": "Admin",
-        "who": "agent",
-        "summary": "Rewrite AGENTS.orch.md and the skills to the installed version."
+        "who": "read",
+        "summary": "Rewrite AGENTS.orch.md and the built-in skills to the installed version; no grant needed, no event."
+      },
+      {
+        "name": "instructions.hook",
+        "cli": "instructions hook",
+        "group": "Admin",
+        "who": "read",
+        "summary": "The text a harness hook injects at session start or before compaction: at most six lines."
       },
       {
         "name": "import.v1",

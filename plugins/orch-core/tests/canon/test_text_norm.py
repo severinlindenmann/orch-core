@@ -95,8 +95,11 @@ def test_suspicious_and_show_invisible():
         (3, 0xFEFF, "invisible"),
         (5, 0xE0041, "invisible"),
         (6, 0xAD, "invisible"),
+        (7, 0xE000, "invisible"),
     ]
-    assert show_invisible(s) == "a\u27e8U+200B\u27e9b\u27e8U+FEFF\u27e9c\u27e8U+E0041\u27e9\u27e8U+00AD\u27e9\ue000"
+    assert show_invisible(s) == (
+        "a\u27e8U+200B\u27e9b\u27e8U+FEFF\u27e9c\u27e8U+E0041\u27e9\u27e8U+00AD\u27e9\u27e8U+E000\u27e9"
+    )
     assert show_invisible("plain") == "plain"
     assert [x.kind for x in suspicious("x\u202ey\u061c")] == ["bidi", "bidi"]
     assert suspicious("clean text \u00e9") == []
@@ -188,3 +191,32 @@ def test_source_files_hold_no_raw_invisible_or_nfd_text():
         t = p.read_text(encoding="utf-8")
         assert not suspicious(t.replace("\u00a7", "")), p.name
         assert all(ord(c) < 128 or c == "\u00a7" for c in t), p.name
+
+
+@pytest.mark.parametrize(
+    "cp",
+    [
+        0x17B4,
+        0x17B5,
+        0x180B,
+        0x180C,
+        0x180D,
+        0x180E,
+        0x180F,
+        0x2800,
+        0xE000,
+        0xF8FF,
+        0xF0000,
+        0xFFFFD,
+        0x100000,
+        0x10FFFD,
+    ],
+)
+def test_deceptive_characters_are_shown(cp):
+    assert [(s.index, s.codepoint) for s in suspicious("a" + chr(cp))] == [(1, cp)]
+
+
+@pytest.mark.parametrize("cp", [0x0301, 0x0903, 0x20DD, 0x10D69])
+def test_leading_marks_are_shown_using_unicode_16(cp):
+    assert [(s.index, s.codepoint) for s in suspicious(chr(cp) + "branch")] == [(0, cp)]
+    assert suspicious("a" + chr(cp)) == []

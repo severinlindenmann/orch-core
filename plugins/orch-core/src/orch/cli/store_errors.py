@@ -20,7 +20,7 @@ __all__ = ["TABLE", "to_orch_error"]
 _INTERNAL = (
     "chain.broken chain.diverged chain.bad_ws_seq trust.genesis_mismatch genesis.invalid auth.invalid_event "
     "event.bad_base event.duplicate_id event.bad_actor event.unknown_type store.torn_write store.read_only "
-    "restore.bad_head ack.unknown"
+    "restore.bad_head ack.unknown checkpoint.missing"
 ).split()
 _REFUSED = (  # an event the model refused: the request is what is wrong
     "sig.invalid freeze.active member.unknown member.exists members.last_owner device.unknown device.exists "

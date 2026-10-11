@@ -80,9 +80,15 @@ orchestrator/
 - `config.json` mirrors what the signed events in `events/workspace.jsonl` say (§5.4.2).
 - `settings.repos` maps the repo names used in `links` to a working copy (absolute, or relative to the workspace
   directory), with a required `path` and optional `remote` and `default_branch` fields; there is no primary flag.
+  Repo names must be unique ignoring ASCII case. Paths must be unique after POSIX lexical normalisation
+  (`.` and `..` components and redundant slashes, including leading `//`), then ASCII-only case folding (A–Z → a–z).
+  Non-ASCII characters compare exactly after Unicode 16.0 NFC. Check the resulting settings,
+  including unchanged repos; collisions give `validation.*` at append and `chain.broken` on replay (step 0).
   All fields are owner-signed in the same `settings.changed` event. `remote` must already be a canonical repo
   identity (§5.7): refuse a non-canonical value, never convert it. Under §5.11 step 0, malformed
   repo fields give `validation.*` at append and `chain.broken` at that line on replay, stopping the log.
+  **P1 limit:** relative versus absolute paths, `~`, trailing dots or spaces in path components, backslashes and
+  symlinks are not normalised. Settings are owner-signed; this collision check guards against mistakes.
   `default_branch` follows the same git branch name rules as `links.branches`. In P1 nothing decides anything
   from `remote` or `default_branch`;
   identity still comes from the observed `remote.origin.url` (§5.7). The planned future rule for a mismatch
@@ -264,8 +270,11 @@ on. Defaults for a new ticket:
 
 The `spike` type covers the format's "spike / investigation" column; there is no separate `investigation` type.
 A repo name in `links` matches `^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$`; a branch name is a valid git ref name,
-with no leading `-`, no `refs/` prefix, not exactly `HEAD` or `@`, and no Unicode category Cc or Cf character
-(control or bidi characters). This shared rule applies to `links.branches` and `default_branch`.
+with no leading `-`, no `refs/` prefix, not exactly `HEAD` or `@`, and no Unicode category Cc, Cf, Co, Zs, Zl, Zp or Cn character
+(controls, format characters, private use, separators or unassigned code points, using the bundled Unicode 16.0 data).
+This shared rule applies to `links.branches` and `default_branch`. Branch names also refuse
+U+FE00–FE0F, U+E0100–E01EF, U+034F, U+115F, U+1160, U+3164, U+FFA0, U+180B–180F,
+U+17B4–17B5, U+2800 and a leading combining mark (any M* category). All categories use Unicode 16.0.
 
 ## 4. `body.md`
 
@@ -535,9 +544,10 @@ Workspace views, agent starts, relay links, epochs and terminal events are defin
   first, then ticket events ordered by `(at, uid, seq)` (§5.11): an event with `ws_seq = k` is evaluated against the
   workspace state after workspace event `k`. The host holds the workspace-log lock (shared) while it appends a ticket event. `ws_seq` and
   `at` are chosen by the host and not signed by the person (§12 N4).
-- **Reading** a log: strictly parse each line, check that it is `cj`, check the field set, `seq`, `prev`, `ws_seq`
-  and `host_sig`, then `sig` against the device certificate, then replay authorization (§5.11). A line that fails
-  these checks breaks the chain: every read and `orch doctor` report `chain.broken` with its `seq`, and nothing
+- **Reading** a log: strictly parse each line, check that it is `cj`, check the field set, `seq`, `prev`,
+  `host_sig`, then `sig` against the device certificate, then `ws_seq`, then replay authorization (§5.11). A line that fails
+  these checks breaks the chain: every read and `orch doctor` report `chain.bad_ws_seq` for a failing `ws_seq`
+  or ordering check, otherwise `chain.broken`, with its `seq`, and nothing
   after it counts until an owner-signed `restore`. An event that passes them but fails authorization is handled as
   §5.11 says. `sig` is checked under `dk_sig_pub` of the certificate for `actor.device` (if there is none, or the
   signature doesn't verify, the line breaks the chain). A `device.added` whose `actor.device` is the device it adds
@@ -771,7 +781,7 @@ later gate, so all their earlier approvals stop counting.
 
 **Text in approved content.** The approval is refused (`gate.suspicious_text`) when gated text contains a bidi
 control (U+202A–202E, U+2066–2069, U+200E, U+200F, U+061C). Other invisible characters (U+200B–200D, U+2060,
-U+FEFF, tag characters, other `Cf`, and these non-`Cf` look-alikes: U+034F, U+115F, U+1160, U+2028, U+2029, U+3164, U+FFA0, U+FE00–U+FE0F, U+E0100–U+E01EF) are shown as `⟨U+200B⟩` in every approval prompt and in `orch show`
+U+FEFF, tag characters, other `Cf`, and these non-`Cf` look-alikes: U+034F, U+115F, U+1160, U+2028, U+2029, U+3164, U+FFA0, U+FE00–U+FE0F, U+E0100–U+E01EF, U+180B–180F, U+17B4–17B5, U+2800, private-use `Co`, and a leading `M*` mark) are shown as `⟨U+200B⟩` in every approval prompt and in `orch show`
 (§12 N5).
 
 **The verdict binds to the commit (D58).** The verify gate hash includes the source list, and the prompt shows the
@@ -956,10 +966,16 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
     merged order.
   - `replay` requires the expected workspace id and refuses a genesis that doesn't match the pin
     (`trust.genesis_mismatch`).
+- A missing ticket checkpoint may be repaired only when the last `.state/applied` record matches the current
+  ticket head and it is not below the workspace checkpoint. Otherwise normal ticket appends refuse
+  `checkpoint.missing`, and new workspace checkpoints do not record that ticket’s current head (any previously
+  checkpointed head is retained).
 - **Refusal order.** An event is refused with the first failing step:
   0. Strict parse and field set: `validation.*` from the store at append; `chain.broken` on replay.
   1. Line (§5.5): `chain.broken` (log already broken, `seq`/`prev`), `trust.genesis_mismatch`, `chain.broken`
-     (`host_sig`), `chain.bad_ws_seq`.
+     (`host_sig`, then on replay the person `sig`), `chain.bad_ws_seq` (`ws_seq` and ordering). This is the
+     order within step 1: on replay a bad person signature wins over a bad `ws_seq` (`chain.broken`). A malformed
+     `ws_seq` rejected by the field schema is step 0 (`chain.broken`); step 1 handles its range and ordering.
   2. Envelope: `event.duplicate_id`, `event.bad_base`.
   3. Log: `ticket.unknown`, `ticket.exists`.
   4. Type: `event.unknown_type` (a type of the other log included), `event.bad_actor`; `genesis.invalid` (a second
@@ -1140,7 +1156,7 @@ executable, so `entry.cmd[0]` is a program found on `PATH` or an absolute path, 
 package bytes it read. `version` and `capabilities` are the manifest's (the owner grants exactly what the manifest
 declares, sorted, never a subset). `fields` are the manifest's fields without `show` and `filter` (type, limits,
 `set_by`, `gate`), `sections` are all its sections named `<name>.<id>` with their `types`, `heading_key` (the
-heading casefolded, letters and digits only), and `gate` when it has one; `artifact_kinds` its kinds, all sorted.
+heading with ASCII A–Z folded to a–z, letters and digits only), and `gate` when it has one; `artifact_kinds` its kinds, all sorted.
 `package_sha256` is the digest above. Replay uses only the event, never a manifest. A new version, a changed byte
 or a changed capability is a new grant.
 
@@ -1181,7 +1197,7 @@ and is never counted (no total, filter or "waiting"). Data of an addon that was 
 **Registration.** From a granted, enabled addon whose package digest still equals the granted one: the fields, sections
 and artifact kinds come from the **grant**; the section headings and places, the `needs` rules and `agents_md` come
 from the manifest (checked against the digest). A section heading is ASCII, at most 40 characters, `^[A-Za-z0-9](?:[A-Za-z0-9,&/'-]| (?! ))*$`.
-Its key, the heading casefolded with every character other than a letter or digit removed, must differ from the key of
+Its key, the heading with ASCII A–Z folded to a–z with every character other than a letter or digit removed, must differ from the key of
 every core heading and of every other heading of the manifest, and `orch addon grant` refuses a key equal to one of
 another granted addon (the body parser needs headings that differ). An addon artifact always carries its `addon`, so
 kinds never collide. A write is checked as above; ids are prefixed by the addon name, so two addons never share a
@@ -1469,8 +1485,8 @@ these codes; they are the stable `error.code` strings of §10.4 for these refusa
 | `grant.unknown` | §10.1 `grant.revoked` names no grant |
 | `quota.unattended` | §5.2 the unattended quota is exceeded |
 | `unattended.denied` | §5.2 an unattended event outside what unattended agents may do |
-| `settings.invalid` | §5.4.2 duplicate repo paths or declared identities, or a `local:` remote naming another repo |
-| `validation.event` | §5.11 step 0 malformed settings payload; replay breaks the chain at that line |
+| `validation.event` | §5.11 step 0 malformed event payload, including duplicate repo names or normalised repo paths (§5.4.2); replay breaks the chain at that line |
+| `settings.invalid` | §5.4.2 duplicate declared identities, or a `local:` remote naming another repo |
 | `addon.unknown` | §5.4.2 the addon is not granted or not enabled |
 | `addon.field_unknown` | §8.1 the field is not declared in the addon's grant |
 | `addon.value_invalid` | §8.1 the value is not valid for the declared field type and limits |
@@ -1942,7 +1958,7 @@ owner's confirmation.
 | N11 | Addon writes | Addons hold no key; the host appends their events. `set_by` is a list of actor alternatives checked per write (`agent`, `addon`, human tokens = a signed person event). Only leaf paths can be set, so replacing `ticket.addons.<addon>` can't bypass `set_by`. Addon events never carry core authority. | agreed with Codex, modified |
 | N12 | Independence of approvers | The policy option `independent`, **off by default** for `requirements`, `plan` and `verify`, so a sole owner can approve their own agents' work; always on for `code` (D59). See O4 for what `not: assignees` covers. | new from the Codex review |
 | N13 | Trust root | The head of `workspace.created` is the genesis, checked in six ordered steps (§5.11); remembered by the host outside the workspace, in every workspace checkpoint, shown at pairing (the person's custody key file records it from P3 pairing on; `orch init` does not, see §10.7). Readers replay authorization, not only signatures. **P1 limit:** see O7. | new from the Codex review; tightened with the Opus reviewer |
-| N14 | Rollback and trust in P1 | Equal-height divergent heads are refused and `restore` is defined, but **P1 can't detect a rollback when both the history and the local checkpoints are replaced**, and the genesis pin lives in files the same OS user owns (O7). Relay checkpoints (P3) and host-held keys (P2) fix it. | new from the Codex review |
+| N14 | Rollback and trust in P1 | Equal-height divergent heads are refused and `restore` is defined, but **P1 can't detect a rollback when both the history and the local checkpoints are replaced**, and the genesis pin lives in files the same OS user owns (O7). The workspace’s `.state/applied` crash marker is unsigned: anyone who can write `.state` can make a rollback look like a repairable crash. Relay checkpoints (P3) and host-held keys (P2) address these limits. | new from the Codex review |
 | O1 | Where the factor is recorded | In the event's `auth` only, not in the device certificate. **D64's wording ("recorded in the person's device certificate") needs amending**; F1 doesn't edit D64. | agreed with Opus reviewer |
 | O2 | Custody of `dk_sig` in P1 | `dk_sig` is held by the backend named in `auth`; in P1 it is passphrase-encrypted like the person key, decrypted for one signature on a TTY, never cached; a key that signs without its factor is `file`-tier and never signs person events (§5.3). | agreed with Opus reviewer |
 | O3 | Done is sticky; compromised devices | A `done` ticket leaves `done` only by `ticket.reopened`, `branch.pushed` of a source ref (D58) or the D59 code-gate rule; bound edits are refused from every actor. A `device.revoked` with `compromised` voids that device's decisions on unsettled tickets; settled (`done` or `closed`) tickets list them (`revoked_decisions`) with no state change until the ticket becomes unsettled (§5.7). A void raises the gate for everyone: a `role.changed` is a cheap way for an owner to reset a gate, which is accepted because owners can already edit bound content. | agreed with Opus reviewer |
@@ -2053,7 +2069,7 @@ A1–A20 (PR body), HO (dashboard handover, input only), D58–D60, the adversar
 | 91 | Status from-states (Opus S6) | A from→to table for every event (§5.9). | Replay can check transitions. |
 | 92 | Torn writes vs external edits (Opus S7) | `.state/applied`; recovery only when the last event isn't applied; a torn write ends in `edit.external`. | An ordinary external edit isn't misreported, and `base_rev` keeps working. |
 | 93 | Effective policy canonical form (Opus S8) | Every policy has all five keys; `applies` union rules; tokens, not persons, for "no eligible approver". | A partial override can't switch `code` on by accident. |
-| 94 | Repo identity incomplete (Opus S9) | Raw `remote.origin.url`, port rules, scp-like forms, `local:` otherwise; duplicate paths and identities refused; a declared `local:` remote must be exactly `local:<own repo name>`, and declared remote identities must be unique ignoring ASCII case across the resulting settings (including unchanged repos); P1 limit stated. | One canonical identity across runtimes. |
+| 94 | Repo identity incomplete (Opus S9) | Raw `remote.origin.url`, port rules, scp-like forms, `local:` otherwise; duplicate names ignoring ASCII case and paths after POSIX lexical normalisation and ASCII-only case folding refused at step 0 (including unchanged repos); duplicate identities refused; a declared `local:` remote must be exactly `local:<own repo name>`, and declared remote identities must be unique ignoring ASCII case across the resulting settings (including unchanged repos); P1 limit stated. | One canonical identity across runtimes. |
 | 95 | Receipts (Opus S10) | `receipt.cmd` = `verify.cmd`; latest `task.done` of a done task; evidence only at the current source `sha`; prompt rechecks file digests. | Stale or substituted evidence doesn't count. |
 | 96 | Restore drops revocations (Opus S11) | Revocations re-appended at once; `abandoned` gives up every checkpoint above `from_seq`; workspace restore raises every ticket's gates. | A rollback can't resurrect a revoked device. |
 | 97 | Question id frozen wrongly; `evidence` half-defined (Opus S12) | Derived `qid` (32 hex, `orch/v2/question-id\|`) used in the question hash; `evidence` refused in P1, defined in P3 with a new contract. | Protocol §13 needs hex ids; no person event without `sig`. |
@@ -2075,7 +2091,7 @@ A1–A20 (PR body), HO (dashboard handover, input only), D58–D60, the adversar
 | 113 | Host can't re-append revocations; lockout after losing every device (re-review R3) | `device.revoked` P or H, authorised by the embedded revocation; recovery `device.added` by a PK-vouched new device when none is left. | Protocol §6.2: the PK signature is the authority; D50 recovery. |
 | 114 | Several matching raise rows (re-review S-a) | An event raises a gate by at most 1. | +1 vs +2 would split `gate_gen`. |
 | 115 | Branch deletion after landing (re-review S-b) | A missing ref is not a change; on `done` only a new `sha` on an existing ref counts; pending `branch.pushed` appended before a prompt. | Landed tickets don't bounce. |
-| 116 | Credentials in the repo identity (re-review S-c) | Userinfo always removed. | No secrets in hashed, signed data. |
+| 116 | Credentials in the repo identity (re-review S-c) | Only ssh/scp `git@` userinfo is allowed and removed; any other userinfo, including all https userinfo, maps to `local:<name>` (§5.7). | No secrets in hashed, signed data. |
 | 117 | Revocation reason mismatch (re-review S-d) | Payload `reason` must equal `revocation.o.reason`. | The compromised effects can't be dodged. |
 | 118 | `.state/body` copy agent-writable (re-review S-e) | Used only when its section hashes match the log; otherwise `store.torn_write`. | A tampered copy can't become the reverted text. |
 | 119 | Signer-computed `refs` (re-review S-f) | Refused when they differ from the regex (`body.bad_refs`). | Bindings come from the text, not the signer's claim. |
@@ -2103,7 +2119,7 @@ A1–A20 (PR body), HO (dashboard handover, input only), D58–D60, the adversar
 | 141 | `needs` language (C9) | JSON expressions, closed variable list, total and deterministic, no effect on core state (§8.1). | No code execution and no parser; waiting lists never change a gate. |
 | 142 | `cli`, `skills` and `agents_md` (C9) | `cli` and `skills` stay empty-only until P2; `agents_md` is one line of printable ASCII, rendered by the host with the addon's name, shown at grant (§8.1). | Nothing is invented for features that do not run in P1; an addon must not give hidden or structured instructions to agents that hold capabilities it lacks. |
 | 143 | Runner (C9) | One process per call, JSON-RPC over stdio, bound to the grant (manifest from the granted bytes), private package copy, clean environment, caps and deadline, workspace-visible tickets only, proposals only; process tracking and a separate UID are P2 requirements (§8.1). | An addon can propose values and nothing else, and the wording does not promise more than the code. |
-| 144 | Section headings (C9) | ASCII, with a key (casefold, letters and digits only) that differs from every core heading and every other granted addon's (§8.1). | Look-alike headings must not make `body.md` ambiguous or misleading. |
+| 144 | Section headings (C9) | ASCII, with a key (ASCII case folding, letters and digits only) that differs from every core heading and every other granted addon's (§8.1). | Look-alike headings must not make `body.md` ambiguous or misleading. |
 Open after F1 (not settled here):
 
 - The P3 envelope for phone decisions (`evidence`); the `qid` mapping itself is settled (§5.6).
@@ -2209,7 +2225,8 @@ replay gives:
 
 | Check | Code |
 |---|---|
-| a line that is not the canonical bytes, a bad `prev`, `seq`, `ws_seq`, `host_sig`, or a person signature | `chain.broken` (log, `seq`, cause) |
+| an out-of-range or backwards `ws_seq`, or a failing merged-order check (§5.11 step 1) | `chain.bad_ws_seq` (log, `seq`, cause) |
+| a line that is not the canonical bytes, a malformed field (including `ws_seq`), a bad `prev`, `seq`, `host_sig`, or a person signature | `chain.broken` (log, `seq`, cause) |
 | a log shorter than, or with another head than, a signed checkpoint | `chain.diverged` |
 | a checkpoint that is unreadable or not signed by the host key | `checkpoint.bad` |
 | a missing workspace or ticket checkpoint: an **error** where this machine holds the workspace key (it writes one after every append; deletion or a crash can leave one missing), a warning on a clone | `checkpoint.missing`; `doctor --repair` can write a missing ticket checkpoint where the host holds the key and the log verifies |

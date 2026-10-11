@@ -43,7 +43,7 @@ def create_tickets(root: str, host_dir: str, host_state: str, agent: dict, owner
     return keys
 
 
-def crash_at(root: str, host_dir: str, host_state: str, uid: str, agent: dict, step: str) -> None:
+def crash_at(root: str, host_dir: str, host_state: str, uid: str, agent: dict, step: str, owner: str = "") -> None:
     """Append one event and die (``os._exit``) at ``step`` of the write order. Used by the crash tests."""
     import os
 
@@ -60,6 +60,9 @@ def crash_at(root: str, host_dir: str, host_state: str, uid: str, agent: dict, s
         _ = orig
     elif step == "after_append":
         s._finish = die  # type: ignore[method-assign]
+    elif step == "before_checkpoint":
+        s._write_checkpoints = die  # type: ignore[method-assign]
+        s.create_ticket(actor=agent, ticket_type="chore", title="crashed", owner=owner, uid=uid)
     elif step == "mid_install":
         real = s._install
 

@@ -39,6 +39,7 @@ def generate() -> str:
         raise SystemExit(f"need Unicode 16.0.0, this runtime has {unicodedata.unidata_version}")
     assigned = _ranges(lambda cp: unicodedata.category(chr(cp)) != "Cn")
     cf = _ranges(lambda cp: unicodedata.category(chr(cp)) == "Cf")
+    marks = _ranges(lambda cp: unicodedata.category(chr(cp)).startswith("M"))
     ccc: list[tuple[int, int, int]] = []
     for cp in range(MAX):
         c = unicodedata.combining(chr(cp))
@@ -67,6 +68,7 @@ def generate() -> str:
         "",
         "ASSIGNED_RANGES: code points whose General_Category is not Cn (Cs and Co count as assigned).",
         "CF_RANGES: code points whose General_Category is Cf (format characters, bidi controls among them).",
+        "MARK_RANGES: code points whose General_Category is Mn, Mc or Me.",
         "CCC_RANGES: canonical combining classes other than 0.",
         "DECOMP: canonical (non-compatibility) single-step decompositions, Hangul syllables excluded.",
         "COMPOSABLE: the primary composites (two-character decomposition, not composition-excluded).",
@@ -79,6 +81,8 @@ def generate() -> str:
     lines += [f"{a:X} {b:X}" for a, b in assigned]
     lines += [Q, "", 'CF_RANGES = """']
     lines += [f"{a:X} {b:X}" for a, b in cf]
+    lines += [Q, "", 'MARK_RANGES = """']
+    lines += [f"{a:X} {b:X}" for a, b in marks]
     lines += [Q, "", 'CCC_RANGES = """']
     lines += [f"{a:X} {b:X} {c}" for a, b, c in ccc]
     lines += [Q, "", 'DECOMP = """']

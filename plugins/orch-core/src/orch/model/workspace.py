@@ -8,7 +8,6 @@ restore) are applied to every ticket in the same step, with one ``settle`` each,
 from __future__ import annotations
 
 import copy
-import posixpath
 from collections.abc import Callable
 from typing import Any
 
@@ -229,9 +228,6 @@ def settings_changed(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
                 if v["remote"].startswith("local:") and v["remote"] != f"local:{name}":
                     return Refusal(Code.SETTINGS_INVALID, "local remote must name its own repo")
             repos[name] = copy.deepcopy(v)
-    paths = [posixpath.normpath(p["path"]) for p in repos.values()]
-    if len(set(paths)) != len(paths):
-        return Refusal(Code.SETTINGS_INVALID, "two repos resolve to the same path")
     remotes = [p["remote"] for p in repos.values() if "remote" in p]
     if any(same_repo_identity(a, b) for i, a in enumerate(remotes) for b in remotes[i + 1 :]):
         return Refusal(Code.SETTINGS_INVALID, "two repos declare the same identity")

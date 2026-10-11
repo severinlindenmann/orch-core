@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import copy
 import json
+import posixpath
 import re
 from datetime import UTC, datetime
 from functools import cache
@@ -46,7 +47,7 @@ from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT202012
 
 from orch.canon import TextError, canonical_policy, check_text, dumps, loads_strict, suspicious
-from orch.canon.text import has_control_or_format
+from orch.canon.text import has_forbidden_branch_character
 
 __all__ = ["LOG_TYPES", "SchemaError", "event_types", "load", "names", "parse_json", "validate", "validate_settings"]
 
@@ -275,7 +276,7 @@ def _check_ref(name: str, path: tuple[Any, ...], ref: str) -> None:
         not _valid_ref(ref)
         or branch.startswith(("-", "refs/"))
         or branch in ("HEAD", "@")
-        or has_control_or_format(branch)
+        or has_forbidden_branch_character(branch)
     ):
         raise SchemaError(name, _pointer(path), f"{ref!r} is not a valid git ref name")
 
@@ -417,10 +418,23 @@ def _check_body(obj: dict[str, Any]) -> None:
             raise SchemaError("body", _pointer(["sections", sid]), f"line {problem[0] + 1} {problem[1]}")
 
 
+_ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+
+
 def _check_repos(name: str, path: tuple[Any, ...], repos: dict[str, Any]) -> None:
+    names: set[str] = set()
+    paths: set[str] = set()
     for repo, entry in repos.items():
         if entry is None:
             continue
+        if repo.translate(_ASCII_LOWER) in names:
+            raise SchemaError(name, _pointer(path), "two repo names differ only in case")
+        names.add(repo.translate(_ASCII_LOWER))
+        raw = entry["path"]
+        normalized = posixpath.normpath("/" + raw.lstrip("/") if raw.startswith("/") else raw).translate(_ASCII_LOWER)
+        if normalized in paths:
+            raise SchemaError(name, _pointer(path), "two repos resolve to the same path")
+        paths.add(normalized)
         if "remote" in entry:
             _check_identity(name, (*path, repo, "remote"), entry["remote"])
         if "default_branch" in entry:
@@ -453,9 +467,9 @@ _HEADING = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9,&/'-]| (?! ))*(?![\s\S])")
 
 
 def heading_key(heading: str) -> str:
-    """Casefold with every character that is not a letter or digit removed: two headings with one key are the same
-    heading for a reader (ticket-format 8.1)."""
-    return "".join(c for c in heading.casefold() if c.isalnum())
+    """Fold ASCII case with every character that is not a letter or digit removed: headings with one key are
+    the same heading for a reader (ticket-format 8.1)."""
+    return "".join(c for c in heading.translate(_ASCII_LOWER) if c.isalnum())
 
 
 CORE_HEADING_KEYS = frozenset(heading_key(h) for h in _CORE_HEADINGS)
@@ -730,14 +744,15 @@ def _ev_grant_issued(obj: dict[str, Any], actor: dict[str, Any]) -> None:
         raise SchemaError("event", "/issued_at", "issued_at is more than 300 s away from at")
 
 
-def validate_settings(value: Any) -> None:
+def validate_settings(value: Any, *, repos: dict[str, Any] | None = None) -> None:
     """Validate a settings.changed payload, including repo fields, before model authorization (F1 step 0)."""
     name = "event.settings.changed"
     _walk(name, value, ("set",))
     error = next(_validator(name + "#/properties/set").iter_errors(value), None)
     if error is not None:
         raise SchemaError(name, _pointer(("set", *error.absolute_path)), error.message)
-    _check_repos(name, ("set", "repos"), value.get("repos", {}))
+    resulting = {**(repos or {}), **value.get("repos", {})}
+    _check_repos(name, ("set", "repos"), resulting)
 
 
 def _ev_settings_changed(obj: dict[str, Any], actor: dict[str, Any]) -> None:

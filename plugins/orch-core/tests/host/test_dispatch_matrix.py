@@ -15,6 +15,7 @@ from orch.host import frames
 from orch.host.columns import refusal, resolve
 from orch.host.dispatch import HOST_OPS, NOT_SERVED, PERSON_READS, op_kind, served_ops
 from orch.host.errors import HostError, disposition
+from orch.host.human import HUMAN_OPS
 from orch.ops.errors import ERRORS
 from tests.host.dispatch_helpers import SESSION, UID, Served, err, ok
 from tests.host.lifecycle_helpers import REPO, Lab
@@ -65,14 +66,15 @@ def as_agent_class(served: Served) -> None:
 def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
     welcome = served.client().welcome
     registry = {op.name for op in ops.all()}
-    assert set(welcome["ops"]) == (registry - set(NOT_SERVED)) | set(HOST_OPS)
+    assert set(welcome["ops"]) == (registry - set(NOT_SERVED)) | set(HOST_OPS) | set(HUMAN_OPS)
+    assert set(HUMAN_OPS) == {"human.prepare", "human.get", "human.submit", "human.cancel", "human.pending"}
     assert set(NOT_SERVED) == {"init", "import.v1", "task.done", "wait"}
     assert all(v == 1 for v in welcome["ops"].values())
     assert {"ops/1", "outcome/1"} <= set(welcome["caps"])
     assert welcome["peer"] == {"uid": UID, "class": "person", "person": served.lab.owner}
 
 
-@pytest.mark.parametrize("op", ["init", "task.done", "wait", "nope", "host.list", "job.next", "human.get"])
+@pytest.mark.parametrize("op", ["init", "task.done", "wait", "nope", "host.list", "job.next", "human.sign"])
 def test_an_op_outside_the_list_is_unknown_command(served, op):
     assert err(served.client().req(op)) == "unknown_command"
 
@@ -111,6 +113,10 @@ ALLOWED = {
 def expected(row: str, kind: str) -> str | None:
     if kind == "human":
         return "human_only"  # a human registry op as a plain req, in every workspace column
+    if kind == "human_api":  # human.*: column P only; with a grant (verified or not) from person class, human_only
+        if row == "P":
+            return None
+        return "human_only" if row.startswith(("G person", "N person")) else "op.not_allowed"
     write = kind in {"agent", "unattended"}
     if write and "unverified" in row:
         return "grant.expired"
@@ -129,6 +135,8 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
         assert kind is not None
         if op in HOST_OPS:
             assert kind == ("read", "read")
+        elif op in HUMAN_OPS:
+            assert kind == ("human_api", "write" if op == "human.submit" else "read")
         else:
             who = ops.get(op).who
             assert kind[0] == ("person_read" if op in PERSON_READS else who)
@@ -136,7 +144,7 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
         for row, (peer, grant, valid) in ROWS.items():
             assert refusal(resolve(peer, grant, valid), kind[0]) == expected(row, kind[0]), (op, row)
             seen.add((kind[0], expected(row, kind[0])))
-    assert {"read", "person_read", "agent", "unattended", "human"} == {k for k, _ in seen}
+    assert {"read", "person_read", "agent", "unattended", "human", "human_api"} == {k for k, _ in seen}
     for op in NOT_SERVED:
         assert op_kind(op) is None
 
@@ -148,6 +156,7 @@ SAMPLES = {
     "new": {"title": "x"},
     "log": {"text": "a note", "ref": "DEMO-0001"},
     "approve": {"ref": "DEMO-0001"},
+    "human.cancel": {"request_id": "hr_" + "0" * 26},
 }
 
 

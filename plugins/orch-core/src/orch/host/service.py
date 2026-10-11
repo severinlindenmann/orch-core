@@ -351,6 +351,8 @@ class Host:
             if service.state != "unavailable":
                 try:
                     await service.call(service.outcomes.sweep)
+                    if service.requests is not None:
+                        await service.call(service.requests.sweep)
                 except Exception:  # noqa: BLE001
                     LOG.exception("outcome sweep failed")
 

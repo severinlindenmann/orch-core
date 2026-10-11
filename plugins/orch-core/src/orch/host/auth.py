@@ -234,7 +234,9 @@ class Redactor:
         if isinstance(value, list | tuple):
             return [self.obj(v) for v in value]
         if isinstance(value, Mapping):
-            return {self.text(str(k)): self.obj(v) for k, v in value.items() if str(k) not in SECRET_KEYS}
+            # a null value carries nothing (a prepared grant.issued has "secret_hash": null, F1): kept, so the
+            # signer sees exactly the event it signs
+            return {self.text(str(k)): self.obj(v) for k, v in value.items() if str(k) not in SECRET_KEYS or v is None}
         return value
 
     def error(self, error: HostError) -> HostError:

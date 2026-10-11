@@ -96,14 +96,15 @@ def test_a_disabled_or_purged_addon_cannot_be_written_by_any_actor(hws, me):
     assert code_of(hws, uid, "points", 1) == "addon.unknown"
 
 
-def test_a_person_signs_no_ticket_update_in_p1(hws, me):
-    """So a human-token ``set_by`` (owner, maintainer...) has no route in P1: the custody layer refuses to prompt."""
-    from orch.custody.base import CustodyError
-
+def test_a_persons_ticket_update_is_prompted_in_full(hws, me):
+    """P1 refused to prompt for a person's ``ticket.updated``; H5a's person versions of agent ops (``set`` through
+    ``human.prepare``) sign one, so the prompt shows every path it sets, an addon field included (the model then judges
+    the field's ``set_by`` as for any writer)."""
     uid = granted(hws, me)
     path = "ticket.addons.echo.mood"
-    with pytest.raises(CustodyError):
-        hws.person_event(hws.owner, uid, "ticket.updated", set={path: "good"}, base_rev={path: "x"})
+    hws.person_event(hws.owner, uid, "ticket.updated", set={path: "good"}, base_rev={path: "x"})
+    shown = hws.provider.requests[-1].fields
+    assert ("type", "ticket.updated") in shown and (f"set.{path}", "good") in shown
 
 
 def artifact(hws, uid, kind, name="c.png", addon="echo"):

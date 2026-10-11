@@ -11,8 +11,6 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, TextIO
 
-from jsonschema import Draft202012Validator
-
 from orch import schema
 from orch.cli import meta, parser, render
 from orch.cli.args import arg_specs
@@ -58,31 +56,10 @@ def _cap(text: str, secrets: list[str], n: int) -> str:
     return render.redact(text, secrets)[:n]
 
 
-def _short_error(e: Any) -> str:
-    where = ".".join(str(p) for p in e.absolute_path)
-    kind = e.validator
-    if kind == "enum":
-        what = "must be one of " + ", ".join(str(v) for v in e.validator_value)
-    elif kind == "type":
-        what = f"must be {e.validator_value}"
-    elif kind == "pattern":
-        what = "has the wrong form"
-    elif kind in ("minimum", "maximum", "maxLength", "minLength"):
-        what = f"fails {kind} {e.validator_value}"
-    elif kind == "required":
-        what = e.message.split(" is a required")[0] + " is required" if "is a required" in e.message else "is required"
-    elif kind == "oneOf":
-        names = [n for sub in e.validator_value for n in sub.get("required", [])]
-        what = "give exactly one of " + ", ".join(names)
-    else:
-        what = "is not valid"
-    return f"{where}: {what}" if where else what
-
-
 def _check_input(op: Operation, args: dict[str, Any], secrets: list[str]) -> None:
-    errors = sorted(Draft202012Validator(op.input).iter_errors(args), key=lambda e: (list(map(str, e.path)), e.message))
-    if errors:
-        raise OrchError("invalid.input", _cap(f"{op.cli}: {_short_error(errors[0])}", secrets, 200))
+    from orch.ops.inputs import check_input
+
+    check_input(op, args, lambda text: _cap(text, secrets, 200))
 
 
 def _check_who(op: Operation, ctx: Context, args: dict[str, Any], hooks: Hooks) -> None:

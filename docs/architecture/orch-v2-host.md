@@ -498,7 +498,7 @@ state**:
 | `register` | no registry entry | nothing to undo | `failed` | `{state:"failed", error:{code:"control.rolled_back", retryable:true}}`; the client retries with a **new** idem |
 | `unregister` | any | serving stops, entry removed | `committed` | `{state:"committed", result:{}}` |
 | `bootstrap` | the genesis is in the new log (its planned event id) | registration finished | `committed` | `{state:"committed", result:{workspace_id, seq:1}}` |
-| `bootstrap` | no genesis | the half-made root, its key directory and the workspace id are removed | `failed` | `{state:"failed", error:{code:"control.rolled_back", retryable:true}}` |
+| `bootstrap` | no genesis | the store's files in the root (the person's empty directory stays), its key directory and the workspace id are removed | `failed` | `{state:"failed", error:{code:"control.rolled_back", retryable:true}}` |
 
 - **A rolled-back bootstrap restarts from `host.wsk_create`.** The id and key are gone, and the genesis signs both
   `workspace_id` and `wsk_pub`, so the client gets a new id and key, signs a new genesis, and calls `host.bootstrap`
@@ -1788,9 +1788,14 @@ audit hook before it reads anything.
 
   `orch init --host` runs it (H3b3) until H7 makes host mode the default. The directory must be empty; the peers map
   is the caller's UID as the genesis owner (agents and the worker are added later by `unregister` + `register`). The
-  device key is kept under `hosts/<ws>/person` as in direct mode. When the connection drops during `host.bootstrap`,
-  the client asks again with the same idem for up to 30 s; `control.rolled_back` starts again from step 2 after one
-  confirmation, and no answer is `host.unavailable` naming the idem for `orch host outcome`.
+  device key is kept under `hosts/<ws>/person` as in direct mode. Once the genesis is in the log, a failure to finish
+  the bootstrap is answered `outcome.unknown`, never a refusal. The client treats `outcome.unknown`, `host.restarting`
+  and a lost connection as undecided and asks again with the same idem for up to 30 s. Any other refusal is checked
+  with `host.outcome`. Only no stored record (refused before any write) or a `failed` record drops the device key and
+  tells the person that nothing was created. `control.rolled_back` starts again from step 2 after one confirmation.
+  Without a definite answer the result is `host.unavailable`, which names the idem for `orch host outcome` and keeps the
+  device key. A rollback removes the store's files from the root but never the person's own directory. The root guard
+  and `by_root` compare directories by `(st_dev, st_ino)`, not by spelling (APFS case and normalisation variants).
 - **`import v1`** runs in direct mode only, on an unregistered workspace: `orch import v1`, then `orch host register`.
   A registered workspace answers `host.required` (`unregister`, import, `register`). The importer reads v1 files, which
   the host must never do for a client, and the plan signs a large batch under one unlock (F1 §14.2). Neither fits a

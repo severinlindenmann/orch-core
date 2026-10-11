@@ -34,6 +34,7 @@ import re
 import secrets
 import shutil
 import signal
+import time
 from pathlib import Path
 from typing import Any
 
@@ -424,9 +425,16 @@ def _dialogue(ctx: Context, owner_name: str, prefix: str) -> tuple[str, str]:
 
 # ------------------------------------------------------------------------------------- host mode: the init composite
 
-#: How long the composite waits for a restarted host after the connection dropped during ``host.bootstrap``.
+#: How long the composite keeps asking about its ``host.bootstrap`` (same idem) while the outcome is unknown: the
+#: connection dropped, or the host answered ``outcome.unknown`` / ``host.restarting``.
 RECONNECT_SECONDS = 30.0
+#: How many times a bootstrap the host rolled back (``control.rolled_back``) starts again from ``host.wsk_create``.
+BOOTSTRAP_ATTEMPTS = 3
+#: Answers that say "not decided yet": the same idem is asked again.
+_UNDECIDED = frozenset({"outcome.unknown", "host.restarting"})
 _WID = re.compile(r"[0-9a-f]{32}")
+_now = time.monotonic  # test seams: a fake clock for the reconnect deadline
+_sleep = time.sleep
 
 
 def connect_host(sd: Path) -> Any:
@@ -456,30 +464,40 @@ def _call(client: Any, op: str, args: dict[str, Any], idem: str | None = None) -
     return res
 
 
+def _close(client: Any) -> None:
+    if client is not None:
+        with contextlib.suppress(Exception):
+            client.close()
+
+
 def _unavailable(message: str, idem: str | None = None) -> OrchError:
     if idem is None:
         return _refuse("host.unavailable", f"{message}; nothing was created", "start the host service, then retry")
     return OrchError(
         "host.unavailable",
-        f"{message}; the outcome of host.bootstrap is unknown",
+        f"{message}; the outcome of host.bootstrap is unknown: keep your passphrase and recovery code",
         hint=f"orch host outcome {idem} (it answers once the host is back); the device key is kept until then",
         fix=["orch", "host", "outcome", idem],
     )
 
 
 def _host_refusal(error: dict[str, Any]) -> OrchError:
-    """A host refusal of ``host.wsk_create`` or ``host.bootstrap`` as this op's error. The genesis model codes and
-    the rest have no entry of their own in ``init``'s catalog: they are ``invalid.input`` naming the host's code."""
+    """A **definite** host refusal of ``host.wsk_create`` or ``host.bootstrap`` as this op's error. The genesis
+    model codes and the rest have no entry of their own in ``init``'s catalog: they are ``invalid.input`` naming the
+    host's code. An undecided answer is never a refusal: it is ``host.unavailable``."""
     code = str(error.get("code", "internal"))
     message = str(error.get("message", code))[:300]
-    if code in ("host.busy", "custody.unsafe_mode", "lock.busy"):
+    if code in _UNDECIDED:
+        return _unavailable(f"the host is not ready ({code}: {message})")
+    if code in ("host.busy", "custody.unsafe_mode", "lock.busy", "internal"):
         return OrchError(code, f"{message}; nothing was created")
     return _refuse("invalid.input", f"the host refused the workspace ({code}): {message}; nothing was created")
 
 
-def _drop_person(sd: Path, wid: str) -> None:
-    """Remove the device key this composite made for ``wid`` (and the id's directory if nothing else is in it)."""
-    if not _WID.fullmatch(wid):
+def _drop_person(sd: Path, wid: str | None) -> None:
+    """Remove the device key this composite made for ``wid`` (and the id's directory if nothing else is in it).
+    Called only when the host's answer is definite: refused before any write, or failed / rolled back."""
+    if wid is None or not _WID.fullmatch(wid):
         return
     shutil.rmtree(person_dir(sd, wid), ignore_errors=True)
     with contextlib.suppress(OSError):
@@ -499,49 +517,74 @@ def _empty_root(root: Path) -> None:
         )
 
 
-def _bootstrap(sd: Path, client: Any, args: dict[str, Any], idem: str) -> tuple[Any, dict[str, Any]]:
-    """``host.bootstrap`` with a definite answer: after a dropped connection, the same idem again on a new
-    connection to the restarted host (a stored answer, never a second run: §0.7). Returns (client, response)."""
-    import time
+def _ask_outcome(client: Any, idem: str) -> tuple[str, dict[str, Any] | None]:
+    """``host.outcome``: ("committed", result) | ("failed", error) | ("none", None) when nothing is stored (the
+    refusal came before any write) | ("pending", None) for anything else."""
+    res = _call(client, "host.outcome", {"idem": idem})
+    if res.get("ok"):
+        data = (res.get("result") or {}).get("data") or {}
+        if data.get("state") == "committed":
+            return "committed", data.get("result") or {}
+        if data.get("state") == "failed":
+            return "failed", data.get("error") or {}
+        return "pending", None
+    if (res.get("error") or {}).get("code") == "outcome.unknown_idem":
+        return "none", None
+    return "pending", None
 
-    try:
-        return client, _call(client, "host.bootstrap", args, idem)
-    except _Lost as lost:
-        reason = str(lost)
-    with contextlib.suppress(Exception):
-        client.close()
-    deadline = time.monotonic() + RECONNECT_SECONDS
+
+def _bootstrap(
+    sd: Path, client: Any, args: dict[str, Any], idem: str
+) -> tuple[Any, dict[str, Any] | None, dict[str, Any] | None]:
+    """``host.bootstrap`` until the answer is **definite**; returns (client, result, error), one of them set.
+
+    The first call and every later one are treated alike: a dropped connection, ``outcome.unknown`` or
+    ``host.restarting`` means "ask again with the same idem" (on a new connection to a restarted host: a stored
+    answer, never a second run, §0.7). Any other refusal is checked with ``host.outcome``: it is definite only when
+    nothing is stored for the idem (refused before any write) or the stored state is ``failed`` (rolled back
+    included). No definite answer within :data:`RECONNECT_SECONDS` is ``host.unavailable`` naming the idem."""
+    deadline = _now() + RECONNECT_SECONDS
+    reason = "no answer"
     while True:
-        try:
-            client = connect_host(sd)
-        except Exception as e:  # noqa: BLE001 - not up yet: any failure to connect or to shake hands
-            reason = str(e)[:200]
-        else:
+        if client is None:
+            try:
+                client = connect_host(sd)
+            except Exception as e:  # noqa: BLE001 - not up yet: any failure to connect or to shake hands
+                reason = str(e)[:200]
+        if client is not None:
             try:
                 res = _call(client, "host.bootstrap", args, idem)
+                if res.get("ok"):
+                    return client, res["result"], None
+                error = res.get("error") or {}
+                reason = str(error.get("code"))
+                if error.get("code") not in _UNDECIDED:
+                    state, value = _ask_outcome(client, idem)
+                    if state == "committed":
+                        return client, value, None
+                    if state == "failed":
+                        return client, None, value
+                    if state == "none":
+                        return client, None, error
             except _Lost as lost:
                 reason = str(lost)
-                with contextlib.suppress(Exception):
-                    client.close()
-            else:
-                code = (res.get("error") or {}).get("code")
-                if code not in ("outcome.unknown", "host.restarting"):
-                    return client, res
-                with contextlib.suppress(Exception):
-                    client.close()
-        if time.monotonic() >= deadline:
-            raise _unavailable(f"the host connection dropped during host.bootstrap ({reason})", idem)
-        time.sleep(0.25)
+                _close(client)
+                client = None
+        if _now() >= deadline:
+            _close(client)
+            raise _unavailable(f"no definite answer to host.bootstrap ({reason})", idem)
+        _sleep(0.25)
 
 
 def create_workspace_hosted(ctx: Context, args: dict[str, Any]) -> Result:
     """``orch init --host``: the ``host.wsk_create`` + ``host.bootstrap`` composite (§0.8, D-P2-9).
 
     The terminal steps and the signing are the direct mode's own (:func:`_dialogue`, :func:`_signed_genesis`): the
-    person key is derived and dropped here, the device key is made here, and the host gets only the signed genesis,
+    person key is derived and dropped there, the device key is made there, and the host gets only the signed genesis,
     which carries public keys and signatures. The host draws the workspace id and keeps the workspace key; it never
-    sends it. A bootstrap the host rolled back (``control.rolled_back``) starts again from ``host.wsk_create`` after
-    one confirmation on the person's terminal: the new id and key need a new delegation and genesis."""
+    sends it. The device key is dropped, and the person told that nothing was created, **only** on a definite answer
+    (:func:`_bootstrap`). A bootstrap the host rolled back (``control.rolled_back``) starts again from
+    ``host.wsk_create`` after one confirmation on the person's terminal: the new id and key need a new genesis."""
     from orch.host.control_client import new_idem
 
     root = Path(ctx.workspace._cwd if ctx.workspace is not None and ctx.workspace._cwd else os.getcwd())
@@ -561,6 +604,7 @@ def create_workspace_hosted(ctx: Context, args: dict[str, Any]) -> Result:
     wid: str | None = None
     pending: str | None = None  # the idem of a bootstrap whose outcome is unknown: its device key is kept
     client: Any = None
+    result: dict[str, Any] | None = None
     try:
         with _hangup_as_interrupt():
             shown_secrets = True
@@ -569,7 +613,7 @@ def create_workspace_hosted(ctx: Context, args: dict[str, Any]) -> Result:
                 client = connect_host(sd)
             except Exception as e:  # noqa: BLE001 - socket missing, wrong owner, no welcome: all "no host here"
                 raise _unavailable(f"no orch host answers ({str(e)[:200]})") from None
-            for attempt in range(ATTEMPTS):
+            for attempt in range(BOOTSTRAP_ATTEMPTS):
                 try:
                     created = _call(client, "host.wsk_create", {})
                 except _Lost as lost:
@@ -580,10 +624,10 @@ def create_workspace_hosted(ctx: Context, args: dict[str, Any]) -> Result:
                 if not isinstance(data.get("workspace_id"), str) or not _WID.fullmatch(data["workspace_id"]):
                     raise _refuse("internal", "the host answered host.wsk_create without a workspace id")
                 wid = data["workspace_id"]
-                wsk_pub = crypto.unb64u(data["wsk_pub"], crypto.PUB_LEN)
                 try:
+                    wsk_pub = crypto.unb64u(data["wsk_pub"], crypto.PUB_LEN)
                     event, person = _signed_genesis(ctx, sd, wid, wsk_pub, prefix, owner_name, passphrase, code)
-                except (CustodyError, Refused, OSError, ValueError) as e:
+                except (CustodyError, Refused, OSError, ValueError, crypto.CryptoError) as e:
                     raise _failure(e) from e
                 request = {
                     "workspace_id": wid,
@@ -592,42 +636,44 @@ def create_workspace_hosted(ctx: Context, args: dict[str, Any]) -> Result:
                     "peers": {str(os.getuid()): {"class": "person", "person": person}},
                 }
                 pending = new_idem()
-                client, res = _bootstrap(sd, client, request, pending)
+                client, result, error = _bootstrap(sd, client, request, pending)
                 pending = None  # a definite answer
-                if res.get("ok"):
+                if result is not None:
                     break
-                error = res.get("error") or {}
                 _drop_person(sd, wid)
                 wid = None
-                if error.get("code") != "control.rolled_back" or attempt == ATTEMPTS - 1:
-                    raise _host_refusal(error)
+                if (error or {}).get("code") != "control.rolled_back" or attempt == BOOTSTRAP_ATTEMPTS - 1:
+                    raise _host_refusal(error or {})
                 TERMINAL.wait(
                     "\nThe host restarted and rolled the new workspace back; its id and key are gone.\n"
                     "Press Enter to sign a new genesis with a new workspace key (your passphrase is asked again): "
                 )
-                os.makedirs(root, exist_ok=True)  # the host removed the half-made root with the rest
+                if not root.exists():  # the person's directory, re-created as the host requires it (not the umask)
+                    os.mkdir(root, 0o700)
+                    os.chmod(root, 0o700)
     except KeyboardInterrupt:
-        if wid is not None and pending is None:
-            _drop_person(sd, wid)
+        _drop_unless_pending(sd, wid, pending)
         if pending is not None:
             raise _unavailable("init was interrupted during host.bootstrap", pending) from None
         raise _refuse("stop", "init cancelled; nothing was created" + _void(shown_secrets)) from None
     except OrchError as e:
-        if wid is not None and pending is None:
-            _drop_person(sd, wid)
+        _drop_unless_pending(sd, wid, pending)
         if shown_secrets and "void" not in e.message and e.code != "host.unavailable":
             e.message += _void(shown_secrets)
         raise
     except BaseException:
-        if wid is not None and pending is None:
-            _drop_person(sd, wid)
+        _drop_unless_pending(sd, wid, pending)
         raise
     finally:
-        if client is not None:
-            with contextlib.suppress(Exception):
-                client.close()
+        _close(client)
     key_line = "the workspace key stays with the orch host, which serves this workspace (orch host list)"
-    return _finish(root, sd, wid, key_line, prefix, owner_name, person, int(res["result"].get("seq", 1)))
+    return _finish(root, sd, wid, key_line, prefix, owner_name, person, int((result or {}).get("seq", 1)))
+
+
+def _drop_unless_pending(sd: Path, wid: str | None, pending: str | None) -> None:
+    """On a failure of the composite: the device key goes unless a bootstrap with that key may still land."""
+    if pending is None:
+        _drop_person(sd, wid)
 
 
 def _void(shown: bool) -> str:

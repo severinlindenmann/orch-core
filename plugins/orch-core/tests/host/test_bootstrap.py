@@ -186,26 +186,33 @@ def _files(root: Path, state: Path) -> dict[str, bytes]:
 def test_init_through_the_host_yields_the_same_genesis_bytes_as_direct_mode(
     lab, tmp_path, monkeypatch, term, passphrases, recording
 ):
-    seams = _deterministic(monkeypatch)
-    hosted_root = tmp_path / "h" / "work"
-    hosted_root.mkdir(parents=True)
-    direct_root = tmp_path / "d" / "work"
-    direct_root.mkdir(parents=True)
-    direct_state = tmp_path / "dstate"
-    args = {"prefix": "DEMO", "name": "Severin"}
-    with lab.host(clock=lambda: T):
+    other = Lab(tmp_path / "second")  # a second, independent host state, made before the seams pin the randomness
+    try:
+        seams = _deterministic(monkeypatch)
+        roots = {name: tmp_path / name / "work" for name in ("h1", "h2", "d")}
+        for root in roots.values():
+            root.mkdir(parents=True)
+        direct_state = tmp_path / "dstate"
+        args = {"prefix": "DEMO", "name": "Severin"}
+        hosted = []
+        for each, root in ((lab, roots["h1"]), (other, roots["h2"])):
+            monkeypatch.setattr(wi, "connect_host", lambda sd, each=each: Recording(each.run / "control" / "host.sock"))
+            with each.host(clock=lambda: T):
+                seams["reset"]()
+                hosted.append(wi.create_workspace_hosted(ctx_for(root, each.state, lambda: T), dict(args, host=True)))
         seams["reset"]()
-        hosted = wi.create_workspace_hosted(ctx_for(hosted_root, lab.state, lambda: T), dict(args, host=True))
-    seams["reset"]()
-    direct = wi.create_workspace(ctx_for(direct_root, direct_state, lambda: T), dict(args))
-    assert hosted.data == direct.data == {"prefix": "DEMO", "workspace_id": WID} and hosted.seq == direct.seq == 1
-    assert [f["op"] for f in recording.sent] == ["host.wsk_create", "host.bootstrap"]
-    got, want = _files(hosted_root, lab.state), _files(direct_root, direct_state)
-    assert got == want
-    line = json.loads(got["genesis line"])
-    assert line["type"] == "workspace.created" and line["seq"] == 1 and line["host_sig"]
-    # the seams really pinned everything: without them the bytes differ (a guard against a vacuous comparison)
-    assert crypto.b64u(crypto.public_bytes(derive_person_key(CODE))) == line["owner"]["pk_pub"]
+        direct = wi.create_workspace(ctx_for(roots["d"], direct_state, lambda: T), dict(args))
+        for res in (*hosted, direct):
+            assert res.data == {"prefix": "DEMO", "workspace_id": WID} and res.seq == 1
+        assert [f["op"] for f in recording.sent] == ["host.wsk_create", "host.bootstrap"] * 2
+        first, second = _files(roots["h1"], lab.state), _files(roots["h2"], other.state)
+        assert first == second  # two hosted runs: every random draw is pinned, so a byte comparison means something
+        assert first == _files(roots["d"], direct_state)  # and direct mode writes the same bytes
+        line = json.loads(first["genesis line"])
+        assert line["type"] == "workspace.created" and line["seq"] == 1 and line["host_sig"]
+        assert crypto.b64u(crypto.public_bytes(derive_person_key(CODE))) == line["owner"]["pk_pub"]
+    finally:
+        other.close()
 
 
 # --- 2. the CLI composite: the client signs, the host never sees the person key --------------------------------
@@ -486,8 +493,11 @@ def test_the_composite_starts_again_from_wsk_create_after_a_rolled_back_bootstra
     second: dict[str, Any] = {}
 
     def restart() -> None:
-        proc.wait(60)
-        second["host"] = lab.host().__enter__()
+        try:
+            proc.wait(60)
+            second["host"] = lab.host().__enter__()
+        except BaseException as exc:  # noqa: BLE001 - re-raised in the test thread after join
+            second["error"] = exc
 
     helper = threading.Thread(target=restart, daemon=True)
     try:
@@ -495,6 +505,8 @@ def test_the_composite_starts_again_from_wsk_create_after_a_rolled_back_bootstra
         helper.start()
         res = wi.create_workspace_hosted(ctx_for(root, lab.state), {"prefix": "DEMO", "host": True})
         helper.join(30)
+        if "error" in second:
+            raise second["error"]
         assert proc.returncode == -9
         host = second["host"].host
         assert host.recovered == [("host.bootstrap", "failed")]
@@ -521,3 +533,253 @@ def test_the_composite_starts_again_from_wsk_create_after_a_rolled_back_bootstra
         helper.join(30)
         if "host" in second:
             second["host"].stop()
+
+
+# --- 6. review round (#388): an unknown outcome is never "nothing was created" ----------------------------------
+
+
+def _once(real, exc):
+    """``real`` (a function, also as a method) failing its first call with ``exc``."""
+    left = [1]
+
+    def wrapped(*a, **k):
+        if left:
+            left.pop()
+            raise exc
+        return real(*a, **k)
+
+    return wrapped
+
+
+def _fake_clock(monkeypatch, seconds=1.0):
+    now = [0.0]
+    monkeypatch.setattr(wi, "_now", lambda: now[0])
+    monkeypatch.setattr(wi, "_sleep", lambda d: now.__setitem__(0, now[0] + d))
+    monkeypatch.setattr(wi, "RECONNECT_SECONDS", seconds)
+    return now
+
+
+def _assert_kept_and_unvoided(lab, wid, message):
+    assert (lab.state / "hosts" / wid / "person" / "dk.key.json").is_file()  # the device key is kept
+    assert "void" not in message and "nothing was created" not in message
+
+
+@pytest.mark.parametrize("failure", ["lock.busy", "RuntimeError in registry.add"])
+def test_a_failure_after_the_append_is_retried_with_the_same_idem_and_the_device_key_is_kept(
+    lab, tmp_path, monkeypatch, term, passphrases, recording, failure
+):
+    """Opus F1 repro: finishing the bootstrap fails once after the genesis landed. The host answers outcome.unknown,
+    the client asks again with the same idem, and the workspace ends registered with its device key."""
+    from orch.host import control, registry
+    from orch.host.errors import HostError
+    from orch.host.ownership import OwnershipLock
+
+    if failure == "lock.busy":
+        busy = HostError("lock.busy", "held by pid 1", retry_after_ms=1000)
+
+        class Flaky(OwnershipLock):
+            pass
+
+        Flaky.exclusive = _once(OwnershipLock.exclusive, busy)
+        monkeypatch.setattr(control, "OwnershipLock", Flaky)
+    else:
+        monkeypatch.setattr(registry.Registry, "add", _once(registry.Registry.add, RuntimeError("disk full")))
+    root = fresh_root(tmp_path, "work")
+    with lab.host() as h:
+        res = wi.create_workspace_hosted(ctx_for(root, lab.state), {"prefix": "DEMO", "host": True})
+        wid = res.data["workspace_id"]
+        bootstraps = [f for f in recording.sent if f["op"] == "host.bootstrap"]
+        assert len({f["idem"] for f in bootstraps}) == 1 and len(bootstraps) >= 2  # the same idem, asked again
+        first_answer = next(f for f in recording.received if not f.get("ok"))
+        assert first_answer["error"]["code"] == "outcome.unknown"  # never the raw cause
+        with h.client() as c:
+            assert [r["workspace_id"] for r in ok(c.call("host.list"))["data"]["workspaces"]] == [wid]
+    _assert_kept_and_unvoided(lab, wid, " ".join(res.lines))
+
+
+def test_an_outcome_that_stays_unknown_is_host_unavailable_naming_the_idem(
+    lab, tmp_path, monkeypatch, term, passphrases, recording
+):
+    from orch.host import control
+    from orch.host.errors import HostError
+    from orch.host.ownership import OwnershipLock
+
+    class Busy(OwnershipLock):
+        def exclusive(self, wait):
+            raise HostError("lock.busy", "held", retry_after_ms=1000)
+
+    monkeypatch.setattr(control, "OwnershipLock", Busy)
+    now = _fake_clock(monkeypatch, 1.0)
+    root = fresh_root(tmp_path, "work")
+    with lab.host() as h:
+        with pytest.raises(OrchError) as e:
+            wi.create_workspace_hosted(ctx_for(root, lab.state), {"prefix": "DEMO", "host": True})
+        assert now[0] >= 1.0  # it waited out the (fake) deadline
+        idem = next(f["idem"] for f in recording.sent if f["op"] == "host.bootstrap")
+        wid = next(f["args"]["workspace_id"] for f in recording.sent if f["op"] == "host.bootstrap")
+        assert (
+            e.value.code == "host.unavailable"
+            and idem in e.value.hint
+            and e.value.fix == ["orch", "host", "outcome", idem]
+        )
+        _assert_kept_and_unvoided(lab, wid, e.value.message)
+        monkeypatch.setattr(control, "OwnershipLock", OwnershipLock)
+        with h.client() as c:  # once the lock is free, the same idem finishes it
+            assert ok(c.call("host.bootstrap", recording.sent[-2]["args"], idem=idem))["data"]["seq"] == 1
+            assert [r["workspace_id"] for r in ok(c.call("host.list"))["data"]["workspaces"]] == [wid]
+
+
+def test_ctrl_c_during_bootstrap_keeps_the_device_key_and_names_the_idem(lab, tmp_path, monkeypatch, term, passphrases):
+    class Interrupted(Recording):
+        def send(self, op, args=None, *, idem=None, **extra):
+            request_id = super().send(op, args, idem=idem, **extra)
+            if op == "host.bootstrap":
+                raise KeyboardInterrupt  # the request is on its way; its answer is never read
+            return request_id
+
+    Recording.sent, Recording.received = [], []
+    monkeypatch.setattr(wi, "connect_host", lambda sd: Interrupted(lab.run / "control" / "host.sock"))
+    root = fresh_root(tmp_path, "work")
+    with lab.host(), pytest.raises(OrchError) as e:
+        wi.create_workspace_hosted(ctx_for(root, lab.state), {"prefix": "DEMO", "host": True})
+    idem = Recording.sent[-1]["idem"]
+    wid = Recording.sent[-1]["args"]["workspace_id"]
+    assert e.value.code == "host.unavailable" and idem in e.value.hint
+    _assert_kept_and_unvoided(lab, wid, e.value.message)
+
+
+def test_a_connection_that_never_comes_back_ends_after_the_reconnect_deadline(
+    lab, tmp_path, monkeypatch, term, passphrases
+):
+    connects: list[int] = []
+
+    class Dropped(Recording):
+        def send(self, op, args=None, *, idem=None, **extra):
+            Recording.sent.append({"op": op, "args": args, "idem": idem})
+            if op == "host.bootstrap":
+                raise ConnectionResetError("the host went away")
+            return ControlClient.send(self, op, args, idem=idem, **extra)
+
+    def connect(sd):
+        connects.append(1)
+        if len(connects) > 1:
+            raise FileNotFoundError("no socket")
+        return Dropped(lab.run / "control" / "host.sock")
+
+    Recording.sent, Recording.received = [], []
+    monkeypatch.setattr(wi, "connect_host", connect)
+    now = _fake_clock(monkeypatch, 30.0)
+    root = fresh_root(tmp_path, "work")
+    with lab.host(), pytest.raises(OrchError) as e:
+        wi.create_workspace_hosted(ctx_for(root, lab.state), {"prefix": "DEMO", "host": True})
+    assert 30.0 <= now[0] < 31.0 and len(connects) > 100  # retried every 0.25 s until the 30 s deadline
+    idem = next(f["idem"] for f in Recording.sent if f["op"] == "host.bootstrap")
+    wid = next(f["args"]["workspace_id"] for f in Recording.sent if f["op"] == "host.bootstrap")
+    assert e.value.code == "host.unavailable" and idem in e.value.hint
+    _assert_kept_and_unvoided(lab, wid, e.value.message)
+
+
+# --- F2: the root is one directory whatever its spelling --------------------------------------------------------
+
+
+def _variant(path: Path, kind: str) -> Path:
+    if kind == "case":
+        alt = path.parent / path.name.swapcase()
+    else:
+        import unicodedata
+
+        alt = path.parent / unicodedata.normalize("NFD", path.name)
+    if str(alt) == str(path) or not alt.exists() or not os.path.samefile(alt, path):
+        pytest.skip(f"this volume does not fold {kind} variants of a name")
+    return alt
+
+
+@pytest.mark.parametrize("kind", ["case", "nfd"])
+def test_the_root_guard_and_by_root_compare_directories_not_spellings(lab, tmp_path, kind):
+    owner = Person()
+    root = fresh_root(tmp_path, "work" if kind == "case" else "café")
+    alt = _variant(root, kind)
+    with lab.host() as h, h.client() as c:
+        first = ok(c.call("host.wsk_create"))["data"]
+        second = ok(c.call("host.wsk_create"))["data"]
+        with h.host.bootstrap_guard(first["workspace_id"], os.path.realpath(root)):
+            res = c.call("host.bootstrap", args_for(second, alt, owner), idem=new_idem())
+            assert err(res) == "host.busy" and "being bootstrapped" in res["error"]["message"]
+        ok(c.call("host.bootstrap", args_for(first, root, owner), idem=new_idem()))
+        res = c.call("host.bootstrap", args_for(second, alt, owner), idem=new_idem())
+        assert err(res) == "host.busy" and "already registered" in res["error"]["message"]  # by_root
+
+
+def test_a_root_inside_the_state_dir_is_refused_under_another_spelling(lab, tmp_path):
+    owner = Person()
+    inside = lab.state / "x"
+    inside.mkdir()
+    alt_state = _variant(lab.state, "case")
+    with lab.host() as h, h.client() as c:
+        created = ok(c.call("host.wsk_create"))["data"]
+        res = c.call("host.bootstrap", args_for(created, alt_state / "x", owner), idem=new_idem())
+        assert err(res) == "invalid.input" and "inside the host" in res["error"]["message"]
+
+
+# --- F3: the live failure path keeps what it cannot prove its own ------------------------------------------------
+
+
+def test_genesis_landed_is_unknown_when_the_log_cannot_be_read(tmp_path):
+    from orch.host.control import ControlOps
+
+    root = tmp_path / "r"
+    (root / "events" / "workspace.jsonl").mkdir(parents=True)  # opening it fails with an OSError other than ENOENT
+    assert ControlOps._genesis_landed(str(root), "x") is None
+    assert ControlOps._genesis_landed(str(tmp_path / "missing"), "x") is False
+
+
+def test_an_append_failure_that_cannot_be_judged_keeps_the_files_and_is_outcome_unknown(lab, tmp_path, monkeypatch):
+    from orch.host.control import ControlOps
+    from orch.store import store
+
+    owner, root = Person(), fresh_root(tmp_path)
+
+    def append(self, *a, **k):
+        (root / "config.json").write_text("{}")
+        raise RuntimeError("EIO")
+
+    monkeypatch.setattr(store.Store, "append", append)
+    monkeypatch.setattr(ControlOps, "_genesis_landed", staticmethod(lambda r, i: None))
+    with lab.host() as h, h.client() as c:
+        created = ok(c.call("host.wsk_create"))["data"]
+        idem = new_idem()
+        assert err(c.call("host.bootstrap", args_for(created, root, owner), idem=idem)) == "outcome.unknown"
+        assert ok(c.call("host.outcome", {"idem": idem}))["data"] == {"state": "pending"}
+    assert (root / "config.json").is_file()  # nothing deleted on a guess
+
+
+def test_the_live_failure_path_leaves_a_root_another_init_took(lab, tmp_path, monkeypatch):
+    from orch.store import StoreError, store
+
+    owner, root = Person(), fresh_root(tmp_path)
+    foreign = {"workspace": {"id": "f" * 32}}
+
+    def append(self, *a, **k):  # a direct `orch init` won the race into the same empty directory
+        (root / "config.json").write_text(json.dumps(foreign))
+        raise StoreError("chain.broken", "the log changed on disk")
+
+    monkeypatch.setattr(store.Store, "append", append)
+    with lab.host() as h, h.client() as c:
+        created = ok(c.call("host.wsk_create"))["data"]
+        assert err(c.call("host.bootstrap", args_for(created, root, owner), idem=new_idem())) == "chain.broken"
+    assert json.loads((root / "config.json").read_text()) == foreign
+
+
+# --- F4: the key sweep and a bootstrap of the same id never overlap ---------------------------------------------
+
+
+def test_the_key_sweep_skips_an_id_being_bootstrapped_and_deletes_it_afterwards(lab):
+    now = [T]
+    with lab.host(clock=lambda: now[0]) as h, h.client() as c:
+        wid = ok(c.call("host.wsk_create"))["data"]["workspace_id"]
+        now[0] += 3601
+        with h.host.bootstrap_guard(wid):
+            ok(c.call("host.wsk_create"))  # sweeps: the id in flight is kept
+            assert (lab.state / "hosts" / wid / "keys").is_dir()
+        ok(c.call("host.wsk_create"))
+        assert not (lab.state / "hosts" / wid).exists()

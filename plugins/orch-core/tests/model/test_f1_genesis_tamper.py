@@ -82,6 +82,7 @@ CHECK_CHAIN_STOPS_AT = {
     "events_swapped": 3,
     "at_goes_back_host_resigned": None,  # check_chain sees links only, not `at`
     "ws_seq_goes_back_host_resigned": None,  # valid links; replay must check per-log workspace positions
+    "bad_person_sig_and_ws_seq": None,  # signatures and ws_seq are outside check_chain
     "prev_rewritten": 3,
     "seq_rewritten": 3,
     "host_sig_swapped": 3,
@@ -125,8 +126,10 @@ def test_a_tampered_line_breaks_the_chain_where_the_vector_says(c):
         assert admit(before, event, log=c["log"]).code == "chain.bad_ws_seq"
     stopped = c.get("ticket_events_stopped_from", {})
     for uid in T["ticket_events"]:
+        if uid == c["log"]:
+            continue  # the directly tampered log was checked above
         got = [x.seq for x in st.chain_errors if x.log == uid]
-        assert got == ([stopped[uid]] if uid in stopped else ([] if uid != c["log"] else got)), (uid, c["mutation"])
+        assert got == ([stopped[uid]] if uid in stopped else []), (uid, c["mutation"])
         if stopped.get(uid) == 1:
             assert uid not in st.tickets
     assert not st.workspace.invalid, c["mutation"]

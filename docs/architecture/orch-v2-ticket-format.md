@@ -541,9 +541,10 @@ Workspace views, agent starts, relay links, epochs and terminal events are defin
   first, then ticket events ordered by `(at, uid, seq)` (§5.11): an event with `ws_seq = k` is evaluated against the
   workspace state after workspace event `k`. The host holds the workspace-log lock (shared) while it appends a ticket event. `ws_seq` and
   `at` are chosen by the host and not signed by the person (§12 N4).
-- **Reading** a log: strictly parse each line, check that it is `cj`, check the field set, `seq`, `prev`, `ws_seq`
-  and `host_sig`, then `sig` against the device certificate, then replay authorization (§5.11). A line that fails
-  these checks breaks the chain: every read and `orch doctor` report `chain.broken` with its `seq`, and nothing
+- **Reading** a log: strictly parse each line, check that it is `cj`, check the field set, `seq`, `prev`,
+  `host_sig`, then `sig` against the device certificate, then `ws_seq`, then replay authorization (§5.11). A line that fails
+  these checks breaks the chain: every read and `orch doctor` report `chain.bad_ws_seq` for a failing `ws_seq`
+  or ordering check, otherwise `chain.broken`, with its `seq`, and nothing
   after it counts until an owner-signed `restore`. An event that passes them but fails authorization is handled as
   §5.11 says. `sig` is checked under `dk_sig_pub` of the certificate for `actor.device` (if there is none, or the
   signature doesn't verify, the line breaks the chain). A `device.added` whose `actor.device` is the device it adds
@@ -965,7 +966,9 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
 - **Refusal order.** An event is refused with the first failing step:
   0. Strict parse and field set: `validation.*` from the store at append; `chain.broken` on replay.
   1. Line (§5.5): `chain.broken` (log already broken, `seq`/`prev`), `trust.genesis_mismatch`, `chain.broken`
-     (`host_sig`), `chain.bad_ws_seq`.
+     (`host_sig`, then on replay the person `sig`), `chain.bad_ws_seq` (`ws_seq` and ordering). This is the
+     order within step 1: on replay a bad person signature wins over a bad `ws_seq` (`chain.broken`). A malformed
+     `ws_seq` rejected by the field schema is step 0 (`chain.broken`); step 1 handles its range and ordering.
   2. Envelope: `event.duplicate_id`, `event.bad_base`.
   3. Log: `ticket.unknown`, `ticket.exists`.
   4. Type: `event.unknown_type` (a type of the other log included), `event.bad_actor`; `genesis.invalid` (a second
@@ -2216,7 +2219,8 @@ replay gives:
 
 | Check | Code |
 |---|---|
-| a line that is not the canonical bytes, a bad `prev`, `seq`, `ws_seq`, `host_sig`, or a person signature | `chain.broken` (log, `seq`, cause) |
+| an out-of-range or backwards `ws_seq`, or a failing merged-order check (§5.11 step 1) | `chain.bad_ws_seq` (log, `seq`, cause) |
+| a line that is not the canonical bytes, a malformed field (including `ws_seq`), a bad `prev`, `seq`, `host_sig`, or a person signature | `chain.broken` (log, `seq`, cause) |
 | a log shorter than, or with another head than, a signed checkpoint | `chain.diverged` |
 | a checkpoint that is unreadable or not signed by the host key | `checkpoint.bad` |
 | a missing workspace or ticket checkpoint: an **error** where this machine holds the workspace key (it writes one after every append; deletion or a crash can leave one missing), a warning on a clone | `checkpoint.missing`; `doctor --repair` can write a missing ticket checkpoint where the host holds the key and the log verifies |

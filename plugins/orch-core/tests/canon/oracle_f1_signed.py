@@ -264,6 +264,10 @@ def tamper_vector() -> dict[str, Any]:
         "The cross-ticket merged-order guard is append-only; this history is append-unreachable", TICKET,
         [e1, e2, e3, resign_host(setp(e4, ws_seq=e3["ws_seq"] - 1), TICKET)], 4)  # fmt: skip
     cases[-1].update(replay_only=True, replay_expect="chain.bad_ws_seq")
+    add("bad_person_sig_and_ws_seq", "seq 4: bad person signature and backwards ws_seq, valid host signature; "
+        "step 1 checks the person signature first and reports chain.broken", TICKET,
+        [e1, e2, e3, resign_host(setp(e4, sig="A" * 86, ws_seq=e3["ws_seq"] - 1), TICKET)], 4)  # fmt: skip
+    cases[-1]["replay_expect"] = "chain.broken"
     add(
         "tail_truncated", "seq 4 removed: the chain is intact, only a checkpoint can see it", TICKET, [e1, e2, e3], None
     )

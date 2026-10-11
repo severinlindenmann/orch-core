@@ -90,7 +90,7 @@ def _default(c: Call, view: Any, head: int) -> tuple[list[str], dict[str, Any]]:
         if len(pending) > 5:
             body.append(f"+{len(pending) - 5} more decisions (orch wait)")
     applies = [
-        f"{g}:{'ok' if v.approved else 'open'}"
+        f"{g}:{'ok' if v.approved else 'open#' + views.short_gate_hash(v.hash)}"
         for g, v in view.gates.items()
         if v.applies and g in ("requirements", "plan")
     ]
@@ -128,7 +128,8 @@ def _sections(
     lines = [_header(c, view)]
     if full:
         qs = {q["id"]: q for q in _questions(view)}
-        meta = [f"title: {views.short(view.title, 200)}"]
+        meta = [f"uid: {view.uid}  (the signing prompt names the ticket by this id)"]
+        meta += [f"title: {views.short(view.title, 200)}"]
         meta += [views.question_line(q, qs) for q in views.open_questions(view)]
         meta += [views.ac_line(a, 200) for a in view.acceptance] + [views.task_line(t, 200) for t in view.tasks]
         meta.append(
@@ -137,6 +138,7 @@ def _sections(
         )
         gates = [
             f"{g}:{'approved' if v.approved else ('waiting' if v.waiting else 'open')}"
+            + ("" if v.approved else "#" + views.short_gate_hash(v.hash))
             for g, v in view.gates.items()
             if v.applies
         ]

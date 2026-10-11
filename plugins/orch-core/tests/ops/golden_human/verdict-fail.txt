@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+ok DEMO-0002 verdict.given fail seq=19
+next: orch show DEMO-0002
+--- stderr

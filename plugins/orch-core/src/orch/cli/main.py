@@ -164,7 +164,8 @@ def run(parsed: parser.Parsed, ctx: Context, records: MemoryRecords, hooks: Hook
         res_args = args
     if session and records.stopped(session, op.name, _normalised(op, args, hooks), ctx.now()):
         raise OrchError("stop")
-    caching = bool(session) and op.is_write and not ctx.dry_run
+    # a person's operation is never replayed from a record: each one is a fresh signature, never a cached result
+    caching = bool(session) and op.is_write and op.who != "human" and not ctx.dry_run
     key = _dedup_key(op, ctx, args, hooks) if caching else ""
     if caching:
         hit = records.recall(session, key, ctx.now())  # type: ignore[arg-type]
@@ -268,7 +269,9 @@ def main(
         ctx = Context(
             session=session,
             grant=grant_env,
-            human_presence=False,
+            # a call that carries an agent's grant is never a person's; whether there is a person at a terminal is
+            # the custody prompt's business (/dev/tty, fail closed), not an environment variable's
+            human_presence="ORCH_GRANT" not in env,  # an empty value counts as set
             dry_run=parsed.dry_run,
             now=now,
             env={k: v for k, v in env.items() if k != "ORCH_GRANT"},

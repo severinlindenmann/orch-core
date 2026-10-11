@@ -1,0 +1,14 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "outcome": "pass"
+  },
+  "key": "DEMO-0002",
+  "seq": 19,
+  "cursor": 0,
+  "hints": [
+    "orch show DEMO-0002"
+  ]
+}
+# exit 0

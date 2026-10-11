@@ -1,0 +1,4 @@
+exit 3
+--- stdout
+--- stderr
+err transition.refused gate.status: verify decisions are accepted only in testing · retry:false · next: orch show --section current_state · fix: orch show

@@ -83,6 +83,36 @@
         ]
       },
       {
+        "code": "custody.no_key",
+        "exit": 3,
+        "retryable": false,
+        "hint": "orch init sets up your device key",
+        "fix": [
+          "orch",
+          "help"
+        ]
+      },
+      {
+        "code": "custody.no_prompt",
+        "exit": 3,
+        "retryable": false,
+        "hint": "run this command yourself, in your own terminal",
+        "fix": [
+          "orch",
+          "help"
+        ]
+      },
+      {
+        "code": "custody.wrong_passphrase",
+        "exit": 3,
+        "retryable": false,
+        "hint": "run the command again and type your passphrase",
+        "fix": [
+          "orch",
+          "help"
+        ]
+      },
+      {
         "code": "human_only",
         "exit": 3,
         "retryable": false,
@@ -124,10 +154,40 @@
         ]
       },
       {
+        "code": "artifact.mismatch",
+        "exit": 5,
+        "retryable": false,
+        "hint": "orch show",
+        "fix": [
+          "orch",
+          "show"
+        ]
+      },
+      {
+        "code": "gate.already_approved",
+        "exit": 5,
+        "retryable": false,
+        "hint": "orch show",
+        "fix": [
+          "orch",
+          "show"
+        ]
+      },
+      {
         "code": "gate.stale",
         "exit": 5,
         "retryable": false,
         "hint": "orch show",
+        "fix": [
+          "orch",
+          "show"
+        ]
+      },
+      {
+        "code": "observe.unavailable",
+        "exit": 5,
+        "retryable": false,
+        "hint": "orch show names the repository; fix settings.repos or links.branches",
         "fix": [
           "orch",
           "show"

@@ -222,7 +222,7 @@ def test_recovery_still_cleans_a_root_whose_config_names_this_workspace(lab, tmp
     (root / "config.json").write_text(json.dumps({"workspace": {"id": created["workspace_id"]}}))  # the host's own
     with lab.host():
         pass
-    assert not root.exists()
+    assert os.listdir(root) == []  # the store's files go; the person's own directory stays
 
 
 def test_recovery_leaves_a_root_whose_workspace_log_starts_with_another_genesis(lab, tmp_path):

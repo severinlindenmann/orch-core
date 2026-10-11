@@ -2,7 +2,10 @@
 
 * ``genesis``: the head of ``workspace.created`` (the trust root pin), one line. Written once; a different value is
   ``trust.genesis_mismatch``.
-* ``revocations.jsonl``: effective PK-signed revocations and verification evidence, retained across restores.
+* ``revocations.jsonl``: effective PK-signed revocations and verification evidence per ``(device, person)`` pair,
+  retained across restores. Evidence from accepted history (``chain``) is never evicted. Other (forwarded) evidence
+  is capped per device and in total; evidence of a person who is not a current or past member goes first, and a
+  member's evidence is never evicted by a non-member's (§5.10).
 * ``checkpoint.json``: last accepted workspace checkpoint.
 * ``heads.sqlite``: durable ancestry, indexed by head.
 * ``pending-transitions/``: recovery work; ``transitions/``: completed publication records.
@@ -24,7 +27,15 @@ from orch import canon
 from .errors import StoreError
 from .fsio import loads, read_or_none, write_atomic
 
-__all__ = ["HostPins"]
+__all__ = ["MAX_FORWARDED_PER_DEVICE", "MAX_FORWARDED_TOTAL", "HostPins", "pair"]
+
+MAX_FORWARDED_PER_DEVICE = 8  # forwarded (not chain) evidence records per device id
+MAX_FORWARDED_TOTAL = 4096  # forwarded evidence records in total
+
+
+def pair(rec: dict[str, Any]) -> tuple[str, str]:
+    """The ``(d_device, p_person)`` key of a noted revocation record."""
+    return rec["device"], "p_" + rec["revocation"]["o"]["person_id"]
 
 
 class HostPins:
@@ -84,6 +95,8 @@ class HostPins:
         write_atomic(self._genesis, genesis.encode("ascii") + b"\n", mode=0o600)
 
     def revocations(self) -> list[dict[str, Any]]:
+        """The effective evidence per ``(device, person)`` pair (§5.10), sorted by the pair: another person's evidence
+        for the same device id is a separate record, never merged into or replacing this one."""
         raw = read_or_none(self._revocations)
         if not raw:
             return []
@@ -93,31 +106,87 @@ class HostPins:
                 rec = loads(line)
             except ValueError:
                 raise StoreError("store.torn_write", "unreadable revocation evidence") from None
-            old = out.get(rec["device"])
+            try:
+                key = pair(rec)
+            except (KeyError, TypeError):
+                raise StoreError("store.torn_write", "unreadable revocation evidence") from None
+            old = out.get(key)
             if old is None or (old["reason"] != "compromised" and rec["reason"] == "compromised"):
-                out[rec["device"]] = rec
+                out[key] = rec
         return [out[k] for k in sorted(out)]
 
     def note_revocation(
-        self, device: str, reason: str, revocation: dict[str, Any], at: str, device_cert: dict[str, Any], pk_pub: str
-    ) -> None:
-        """Durably retain the earliest evidence of the highest reason, including upgrades."""
-        old = next((r for r in self.revocations() if r["device"] == device), None)
-        if old and (old["reason"] == "compromised" or reason != "compromised"):
-            return
-        self.dir.mkdir(parents=True, exist_ok=True)
+        self,
+        device: str,
+        reason: str,
+        revocation: dict[str, Any],
+        at: str,
+        device_cert: dict[str, Any],
+        pk_pub: str,
+        *,
+        chain: bool = True,
+        member: bool = True,
+    ) -> bool:
+        """Durably retain the earliest evidence of the highest reason per ``(device, person)``, including upgrades.
+
+        ``chain`` evidence (from accepted history) is always kept. Forwarded evidence (``chain=False``) is capped at
+        :data:`MAX_FORWARDED_PER_DEVICE` per device and :data:`MAX_FORWARDED_TOTAL` in total: over a cap the oldest
+        forwarded non-member record goes first; a member's evidence (``member``: the person is a current or past
+        member) is never evicted for a non-member's, and a non-member record that finds nothing to evict is dropped.
+        Returns whether the evidence is held afterwards."""
+        key = (device, "p_" + revocation["o"]["person_id"])
         records = self.revocations()
-        records.append(
-            {
-                "at": at,
-                "device": device,
-                "reason": reason,
-                "revocation": revocation,
-                "device_cert": device_cert,
-                "pk_pub": pk_pub,
-            }
-        )
+        old = next((r for r in records if pair(r) == key), None)
+        if old and (old["reason"] == "compromised" or reason != "compromised"):
+            return True
+        new = {
+            "at": at,
+            "device": device,
+            "reason": reason,
+            "revocation": revocation,
+            "device_cert": device_cert,
+            "pk_pub": pk_pub,
+        }
+        if not chain:
+            new["chain"], new["member"] = False, member
+        records = [r for r in records if pair(r) != key]  # an upgrade replaces the pair's weaker record
+        if not chain:
+            records = self._make_room(records, device, member)
+            if records is None:
+                return False
+        records.append(new)
+        self.dir.mkdir(parents=True, exist_ok=True)
         write_atomic(self._revocations, b"".join(canon.cj_checked(r) + b"\n" for r in records), mode=0o600)
+        return True
+
+    @staticmethod
+    def _make_room(records: list[dict[str, Any]], device: str, member: bool) -> list[dict[str, Any]] | None:
+        """``records`` with room for one more forwarded record of ``device``, or None when it must be dropped."""
+
+        def forwarded(r: dict[str, Any]) -> bool:
+            return r.get("chain", True) is False
+
+        def evict(scope: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
+            victims = [r for r in scope if forwarded(r) and not r.get("member", True)]
+            if not victims and member:
+                return records  # a member's evidence is kept even over the cap; never evict another member's
+            if not victims:
+                return None
+            gone = min(victims, key=lambda r: r["at"])
+            return [r for r in records if r is not gone]
+
+        mine = [r for r in records if r["device"] == device and forwarded(r)]
+        if len(mine) >= MAX_FORWARDED_PER_DEVICE:
+            got = evict(mine)
+            if got is None:
+                return None
+            records = got
+        if sum(forwarded(r) for r in records) >= MAX_FORWARDED_TOTAL:
+            got = evict(records)
+            if got is None:
+                return None
+            records = got
+        return records
 
     def held(self) -> dict[str, Any] | None:
         raw = read_or_none(self.dir / "checkpoint.json")

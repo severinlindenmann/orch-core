@@ -166,7 +166,8 @@ def test_durable_restore_contract(case, env, monkeypatch):
         assert "workspace" in store.diverged
         return
     assert env.read_events("workspace")[-1]["type"] == "restore"
-    assert store.state.revocation_evidence()[device]["revocation"] == revocation
+    pair = (device, "p_" + revocation["o"]["person_id"])
+    assert store.state.revocation_evidence()[pair]["revocation"] == revocation
     assert store._pins.revocations()[0]["revocation"] == revocation
     transition = json.loads(next((store._pins.dir / "transitions").glob("*.json")).read_text())
     assert transition["committed"] and transition["C"] == held

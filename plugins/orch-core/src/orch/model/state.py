@@ -51,9 +51,14 @@ class State:
     _core: Core = field(repr=False, compare=False)
     _ctx: Ctx = field(repr=False, compare=False)
 
-    def revocation_evidence(self) -> dict[str, dict[str, Any]]:
-        """Effective revocations, including permanent tombstones; detached from replay state."""
-        return copy.deepcopy(self._core.ws.revocations)
+    def revocation_evidence(self) -> dict[tuple[str, str], dict[str, Any]]:
+        """Effective revocations, including permanent tombstones, keyed by ``(d_device, p_person)`` (§5.10); detached
+        from replay state."""
+        return {
+            (device, person): copy.deepcopy(entry)
+            for device, by_person in self._core.ws.revocations.items()
+            for person, entry in by_person.items()
+        }
 
     def device_evidence(self, device: str) -> dict[str, Any]:
         ws = self._core.ws

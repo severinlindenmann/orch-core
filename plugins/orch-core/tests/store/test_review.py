@@ -86,7 +86,7 @@ def test_a_rolled_back_revocation_is_detected_even_without_checkpoints(env, tmp_
     ref = rolled_back(env, tmp_path)
     s = env.open()
     assert s.diverged["workspace"].code == "chain.diverged"
-    assert ref not in s.state.revocation_evidence() and s._pins.revocations()
+    assert ref not in {device for device, _person in s.state.revocation_evidence()} and s._pins.revocations()
     with pytest.raises(StoreError) as e:
         env.add_device()
     assert e.value.code == "chain.diverged"

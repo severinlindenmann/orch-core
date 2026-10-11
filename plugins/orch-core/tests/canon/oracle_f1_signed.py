@@ -759,14 +759,17 @@ def checkpoint_vector() -> dict[str, Any]:
         "retryable checkpoint.future); a workspace_n_offers case with a `held` key (null: an uninitialized receiver) "
         "replaces workspace_n_held; every transition case gives `pinned_delegation` (the workspace's card / genesis "
         "delegation, whose `o` the carried, PK-verified one must equal), `known_devices` (device_id -> person_id and "
-        "optional pk_pub the receiver knows for it, active or revoked), `known_revocations` (chain-learned: held when "
-        "judging and authenticated in this workspace's accepted history; signer refusal, evidence identity and "
-        "completeness; entries "
-        "may carry `pk_pub`), `local_revocations` (out of band: held when judging, not chain-learned; signer refusal "
-        "and evidence identity only, never completeness; never filtered) (a held revocation refuses the signer only "
-        "when it names the signer's device and person) and `learned_later_in_walk` (learned only from a higher-n "
-        "bundle; never refuses; `alarm: true` when it must raise the C3 alarm, otherwise no alarm). `unpublished` is "
-        "the expected sorted, de-duplicated d_ ids of revocation.unpublished for an accepted workspace restore ([] otherwise). "
+        "optional pk_pub: a workspace association, which binds carried entries' identity but never drops or suppresses "
+        "held evidence), `known_revocations` (chain-learned: held when judging and authenticated in this workspace's "
+        "accepted history; signer refusal, evidence identity of carried entries and per-pair completeness; entries may "
+        "carry `pk_pub`), `local_revocations` (out of band: held when judging, not chain-learned; signer refusal only, "
+        "no identity constraint on carried entries, never completeness; never filtered) and `learned_later_in_walk` "
+        "(learned only from a higher-n bundle; never refuses; `alarm: true` when it must raise the C3 alarm, otherwise "
+        "no alarm). Every held revocation is keyed by (device_id, person_id): it refuses the signer only when it names "
+        "the signer's device and person. `unpublished_pairs` is the expected sorted [d_, p_] pairs of "
+        "revocation.unpublished for an accepted workspace restore ([] otherwise), `unpublished` their sorted, "
+        "de-duplicated d_ hints, and `unpublished_evidence` the index in local_revocations of each pair's reported "
+        "entry (its strongest, the first on a tie). "
         "Every refusing transition keeps all signatures valid except the one a case names as its defect.",
         "note": KEY_NOTE,
         "workspace_id": W,
@@ -790,6 +793,19 @@ def checkpoint_vector() -> dict[str, Any]:
         "workspace_n_offers": n_offers,
         "divergence": divergences,
     }
+
+
+_STRENGTH = {"compromised": 2, "lost": 1, "retired": 1}  # compromised > lost = retired (F1 §5.10)
+
+
+def _strongest_held(held: list[dict[str, Any]], want: list[str]) -> int:
+    """The index of the strongest held entry of the ``[d_device, p_person]`` pair, the first on a tie."""
+    idx = [
+        i
+        for i, x in enumerate(held)
+        if ["d_" + x["revocation"]["o"]["device_id"], "p_" + x["revocation"]["o"]["person_id"]] == list(want)
+    ]
+    return max(idx, key=lambda i: (_STRENGTH[held[i]["revocation"]["o"]["reason"]], -i))
 
 
 def transition_vectors() -> list[dict[str, Any]]:
@@ -1299,7 +1315,7 @@ def transition_vectors() -> list[dict[str, Any]]:
         "out_of_band_non_signer_missing_accepted_unpublished",
         "ok",
         local_revocations=held_rev("lena", "lena1", "lost"),
-        unpublished=[lena],
+        unpublished_pairs=[[lena, pid("lena")]],
         note="learned out of band (another workspace, the relay's feed, the owner): never demanded as completeness "
         "evidence; the receiver keeps enforcing it and forwards it for publication",
     )
@@ -1335,7 +1351,7 @@ def transition_vectors() -> list[dict[str, Any]]:
         over={"revocations": [rev_entry("lena", "lena1", "lost")]},
         known_revocations=held_rev("lena", "lena1", "lost"),
         local_revocations=held_rev("lena", "lena1", "compromised"),
-        unpublished=[lena],
+        unpublished_pairs=[[lena, pid("lena")]],
         note="reasons are tracked separately: the chain-learned lost is carried (complete); the out-of-band "
         "compromised upgrade is not, which is the signal, not a refusal",
     )
@@ -1364,31 +1380,33 @@ def transition_vectors() -> list[dict[str, Any]]:
         "ok",
         over={"revocations": [rev_entry("lena", "lena1", "lost")]},
         local_revocations=held_rev("lena", "lena1", "compromised"),
-        unpublished=[lena],
+        unpublished_pairs=[[lena, pid("lena")]],
     )
-    # Evidence identity uses both sets: a listed entry for a device known through an out-of-band revocation must be
-    # of that revocation's person (and key, where known).
+    # Held revocations impose no identity constraint on carried entries (only known_devices associations do), and a
+    # carried entry of another person never stands in for a held pair (F1 §5.10, per (device, person) pair).
     variant(
-        "out_of_band_foreign_evidence_for_a_revoked_device",
-        "chain.diverged",
+        "wrong_person_carriage_never_suppresses_unpublished",
+        "ok",
         over={"revocations": [rev_entry("mara", "lena1", "compromised")]},
         local_revocations=[
             {"revocation": ow.make_revocation("lena", "lena1", "lost"), "pk_pub": key("pk_lena").pub_b64u}
         ],
+        unpublished_pairs=[[lena, pid("lena")]],
+        note="mara's carried entry for lena1 is a different pair: lena's held pair is still reported",
     )
     variant(
-        "out_of_band_foreign_evidence_for_a_revoked_device_person_only",
+        "wrong_person_carriage_never_satisfies_completeness",
         "chain.diverged",
         over={"revocations": [rev_entry("mara", "lena1", "compromised")]},
-        local_revocations=held_rev("lena", "lena1", "lost"),
+        known_revocations=held_rev("lena", "lena1", "lost"),
     )
     variant(
-        "out_of_band_evidence_under_another_stored_key",
-        "chain.diverged",
-        over={"revocations": [rev_entry("lena", "lena1", "compromised")]},
-        local_revocations=[
-            {"revocation": ow.make_revocation("lena", "lena1", "lost"), "pk_pub": key("pk_mara").pub_b64u}
-        ],
+        "unpublished_suppressed_for_conflicting_known_association",
+        "ok",
+        local_revocations=held_rev("mara", "lena1", "compromised"),
+        known_devices=lena_device,
+        note="known_devices associates lena1 with lena: mara's held pair is not reported (publication eligibility); "
+        "it stays retained and enforced by the runtime",
     )
     # The signer is matched by device and person: another person's "revocation" of the signer's device id (a
     # certificate any person can make for any public key) is not a revocation of the signing identity (F1 §5.10).
@@ -1415,7 +1433,7 @@ def transition_vectors() -> list[dict[str, Any]]:
         "out_of_band_several_missing_unpublished_sorted_unique",
         "ok",
         local_revocations=[{"revocation": r} for r in multi],
-        unpublished=sorted({did("lena1"), did("mara1")}),
+        unpublished_pairs=sorted([[did("lena1"), pid("lena")], [did("mara1"), pid("mara")]]),
         note="local_revocations in descending device-id order, the first device twice (lost and retired)",
     )
     # Hash-only withholding: C commits to a suffix holding device.revoked(lena1); the bundle proves the suffix with
@@ -1451,7 +1469,7 @@ def transition_vectors() -> list[dict[str, Any]]:
         (
             "hash_only_withheld_revocation_held_out_of_band",
             "ok",
-            {"local_revocations": held_rev("lena", "lena1", "lost"), "unpublished": [lena]},
+            {"local_revocations": held_rev("lena", "lena1", "lost"), "unpublished_pairs": [[lena, pid("lena")]]},
         ),
         (
             "hash_only_withheld_revocation_chain_learned_diverged",
@@ -1485,6 +1503,118 @@ def transition_vectors() -> list[dict[str, Any]]:
                 **copy.deepcopy(extra),
             }
         )
+
+    # --- the row-151 fail-open (relay PoC): bindings never drop evidence; signer refusal is per (device, person) ----
+    # Bob (mara) certifies the id of Alice's (sev's) laptop sev1 under his own PK and revokes it; that arrives first
+    # (feed or a failing bundle: local evidence either way); Alice's genuine compromised revocation arrives next. The
+    # stolen sev1 key then signs a restore as sev: the genuine pair is held, so it is refused in every order.
+    poison = held_rev("mara", "sev1", "lost")
+    genuine = held_rev("sev", "sev1", "compromised")
+    variant(
+        "poisoned_binding_never_drops_a_genuine_signer_revocation",
+        "chain.diverged",
+        local_revocations=[*poison, *genuine],
+        note="relay PoC: the poisoned (sev1, mara) pair arrived first; the genuine (sev1, sev) pair is retained and "
+        "refuses the signer pair",
+    )
+    variant(
+        "genuine_signer_revocation_first_then_poison_refused",
+        "chain.diverged",
+        local_revocations=[*genuine, *poison],
+    )
+    variant(
+        "failed_bundle_poison_then_chain_learned_genuine_refused",
+        "chain.diverged",
+        local_revocations=poison,
+        known_revocations=genuine,
+        note="the poison came from a bundle whose judgment failed (local evidence only); the genuine pair is "
+        "chain-learned",
+    )
+    variant(
+        "conflicting_known_device_association_never_suppresses_signer_pair_refusal",
+        "chain.diverged",
+        local_revocations=genuine,
+        known_devices={ow.device_id(key("dk_sev1").pub): {"person_id": ow.person_id(key("pk_mara").pub)}},
+        note="an association is not proof of key ownership: known_devices naming mara for sev1 never suppresses "
+        "the (sev1, sev) refusal",
+    )
+    variant(
+        "conflicting_known_device_association_never_suppresses_alarm",
+        "ok",
+        learned_later_in_walk=genuine,
+        known_devices={ow.device_id(key("dk_sev1").pub): {"person_id": ow.person_id(key("pk_mara").pub)}},
+        alarm=True,
+    )
+    # Another unrevoked owner device (sev2) signs an honest restore carrying Alice's genuine evidence; Bob's arrived
+    # first. Held revocations impose no identity constraint on carried entries, so it is not refused (the DoS is gone).
+    variant(
+        "honest_restore_by_another_owner_device_carries_genuine_evidence_after_poison",
+        "ok",
+        actor=w.actor("sev", "sev2"),
+        tr_over={"device_cert": ow.make_cert("sev", "sev2")},
+        over={"revocations": [rev_entry("sev", "sev1", "compromised")]},
+        local_revocations=[*poison, *genuine],
+        unpublished_pairs=[[did("sev1"), pid("mara")]],
+        note="the genuine pair is carried; mara's pair has no known association here, so it is reported (a hint; "
+        "the runtime decides eligibility)",
+    )
+    # The relay review (F4): sev1 known as sev's; mara's revocation of sev1 neither refuses sev1's restore nor alarms.
+    sev1_known = {
+        ow.device_id(key("dk_sev1").pub): {
+            "person_id": ow.person_id(key("pk_sev").pub),
+            "pk_pub": key("pk_sev").pub_b64u,
+        }
+    }
+    variant(
+        "known_signer_device_other_person_revocation_not_refused",
+        "ok",
+        local_revocations=held_rev("mara", "sev1", "compromised"),
+        known_devices=sev1_known,
+    )
+    variant(
+        "known_signer_device_other_person_compromised_learned_later_no_alarm",
+        "ok",
+        learned_later_in_walk=held_rev("mara", "sev1", "compromised"),
+        known_devices=sev1_known,
+    )
+    # Evidence identity binds carried entries to authenticated history: known_devices and chain-learned pairs.
+    lena_and_mara = sorted(
+        [rev_entry("lena", "lena1", "lost"), rev_entry("mara", "lena1", "compromised")],
+        key=lambda x: (x["revocation"]["o"]["device_id"], x["revocation"]["o"]["person_id"]),
+    )
+    variant(
+        "carried_entry_must_match_a_chain_learned_identity",
+        "chain.diverged",
+        over={"revocations": lena_and_mara},
+        known_revocations=held_rev("lena", "lena1", "lost"),
+        note="lena1's only authenticated identity is the chain-learned (lena1, lena): mara's carried entry for it is "
+        "refused, although lena's own obligation is carried",
+    )
+    variant(
+        "carried_other_person_entry_allowed_without_authenticated_identity",
+        "ok",
+        over={"revocations": lena_and_mara},
+        local_revocations=held_rev("lena", "lena1", "lost"),
+        note="out-of-band evidence imposes no identity: both pairs may be carried; lena's held pair is carried",
+    )
+    # Two persons' chain obligations for one device id: the list is unique per (device, person), so both can be carried.
+    both_lena1 = [*held_rev("lena", "lena1", "lost"), *held_rev("mara", "lena1", "lost")]
+    both_entries = sorted(
+        [rev_entry("lena", "lena1", "lost"), rev_entry("mara", "lena1", "lost")],
+        key=lambda x: (x["revocation"]["o"]["device_id"], x["revocation"]["o"]["person_id"]),
+    )
+    variant(
+        "conflicting_chain_obligations_both_carried_accepted",
+        "ok",
+        over={"revocations": both_entries},
+        known_revocations=both_lena1,
+    )
+    variant(
+        "conflicting_chain_obligations_one_carried_diverged",
+        "chain.diverged",
+        over={"revocations": [rev_entry("lena", "lena1", "lost")]},
+        known_revocations=both_lena1,
+    )
 
     # --- ticket-log restores: the same workspace checkpoint, ws_seq <= T's workspace seq, revocations [] -------
     tw = World("ticket_transition", "ticket-log restore at a receiver")
@@ -1662,8 +1792,14 @@ def transition_vectors() -> list[dict[str, Any]]:
         case_.setdefault("now", RECEIVER_NOW)
         for field in ("known_devices",):
             case_.setdefault(field, {})
-        for field in ("known_revocations", "local_revocations", "learned_later_in_walk", "unpublished"):
+        for field in ("known_revocations", "local_revocations", "learned_later_in_walk", "unpublished_pairs"):
             case_.setdefault(field, [])
+        # the d_ hints of revocation.unpublished: the sorted, de-duplicated devices of the expected pairs
+        case_["unpublished"] = sorted({device for device, _person in case_["unpublished_pairs"]})
+        # the evidence reported per pair: the index in local_revocations of its strongest entry, the first on a tie
+        case_["unpublished_evidence"] = [
+            _strongest_held(case_["local_revocations"], want) for want in case_["unpublished_pairs"]
+        ]
         tr = case_["restore"]
         if "retained_heads" not in tr:
             continue
@@ -1715,7 +1851,9 @@ def restore_scenarios() -> list[dict[str, Any]]:
             "abandoned_decisions": [],
             "reason": "rollback",
             "source": None,
-            "revocations": sorted(entries, key=lambda x: x["revocation"]["o"]["device_id"]),
+            "revocations": sorted(
+                entries, key=lambda x: (x["revocation"]["o"]["device_id"], x["revocation"]["o"]["person_id"])
+            ),
         }
         payload.update(kw.pop("payload", {}))
         return w.ev("workspace", "restore", kw.pop("actor", w.actor("sev")), payload, **kw)
@@ -1743,13 +1881,19 @@ def restore_scenarios() -> list[dict[str, Any]]:
         )
         out.append(w.scenario())
 
-    for tombstone in (False, True):
-        w = setup("foreign_person_evidence_" + ("tombstone" if tombstone else "known_device"))
-        dev = "zed1" if tombstone else "lena1"
-        if tombstone:
-            restore(w, [evidence("zed", dev)])
-        restore(w, [evidence("mara", dev, "compromised")], expect="device.cert")
-        out.append(w.scenario())
+    # A known device's evidence must be of its person and key. A tombstone is evidence, not a workspace association:
+    # another person's evidence for its device id is a separate (device, person) pair, retained next to it (§5.10).
+    w = setup("foreign_person_evidence_known_device")
+    restore(w, [evidence("mara", "lena1", "compromised")], expect="device.cert")
+    out.append(w.scenario())
+    w = setup("other_person_evidence_for_a_tombstone_is_a_new_pair")
+    restore(w, [evidence("zed", "zed1")])
+    restore(w, [evidence("mara", "zed1", "compromised"), evidence("zed", "zed1")])
+    out.append(w.scenario())
+    # One restore may carry two persons' evidence for one device id, sorted by (device_id, person_id): both retained.
+    w = setup("two_persons_evidence_for_one_unknown_device")
+    restore(w, [evidence("zed", "zed1"), evidence("mara", "zed1", "compromised")])
+    out.append(w.scenario())
 
     w = setup("all_evidence_precedes_any_B1_comparison")
     entries = sorted([evidence(), evidence("mara", "mara1")], key=lambda x: x["revocation"]["o"]["device_id"])
@@ -2098,6 +2242,16 @@ def restore_contract_vectors() -> dict[str, Any]:
     add(
         "unsorted_devices",
         {"revocations": sorted([entry, second], key=lambda x: x["revocation"]["o"]["device_id"], reverse=True)},
+    )
+    # Unique and sorted per (device_id, person_id): two persons' entries for one device are allowed, in person order.
+    other_person = {
+        "revocation": ow.make_revocation("mara", "lena1", "lost"),
+        "device_cert": ow.make_cert("mara", "lena1"),
+        "pk_pub": key("pk_mara").pub_b64u,
+    }
+    add(
+        "unsorted_persons_of_one_device",
+        {"revocations": sorted([entry, other_person], key=lambda x: x["revocation"]["o"]["person_id"], reverse=True)},
     )
     add("ticket_requires_empty_revocations", {"revocations": [entry], "ws_seq": 1}, TICKET)
     add("malformed_wins_over_signature", {"reason": "bad", "sig": b64u(bytes(64))})

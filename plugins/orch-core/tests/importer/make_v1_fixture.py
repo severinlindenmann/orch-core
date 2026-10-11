@@ -1,15 +1,8 @@
 """Writes the v1 fixture workspace of the import tests. Only the ticket *files* come from v1's own code
-(``orch.core.model.new_ticket`` and ``render_ticket``); ``events.jsonl``, ``counter.json``, ``config.json``, the artifact
-entries (``sha256``, ``size``, ``ac``, ``task``) and every ``resolution`` are written by hand here, in the shapes v1's
-``events``, ``artifacts`` and ``close`` produce. Cases that need another shape (a folder that disagrees with the
-frontmatter status, a hostile status, NEL, a deep list) are made by the tests from a copy.
-
-Run it once with a checkout of v1 (``origin/main``) when the fixture should change; the result is committed under
-``tests/importer/fixtures/v1/`` so the tests need no v1 code::
-
-    git worktree add --detach /tmp/v1-ref origin/main
-    uv run --project /tmp/v1-ref/plugins/orch-core python tests/importer/make_v1_fixture.py tests/importer/fixtures/v1
-"""
+(``orch.core.model.new_ticket`` and ``render_ticket``). ``events.jsonl``, ``counter.json``,
+``config.json``, the artifact entries (``sha256``, ``size``, ``ac``, ``task``) and every ``resolution`` are written
+by hand here, in the shapes that v1's events, artifacts and close produce. Cases that need another shape (a folder
+that disagrees with the frontmatter status, a hostile status, NEL, a deep list) are made by the tests from a copy."""
 
 from __future__ import annotations
 

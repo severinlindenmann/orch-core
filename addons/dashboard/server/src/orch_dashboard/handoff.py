@@ -198,6 +198,10 @@ class Handoffs:
             self.active.get(token, set()).discard(rid)
         return mine
 
+    def known_ids(self, token: str) -> set[str]:
+        with self.lock:
+            return set(self.prune(token))
+
     def owner_of(self, token: str, request_id: str) -> str | None:
         """The workspace a request was prepared in, if this session prepared it."""
         with self.lock:
@@ -220,15 +224,33 @@ def register(app: FastAPI, gateway: Gateway):
 
     app.state.human = human
 
-    def cancel_orphans(ws: str, op: str, key: str | None, since: float):
-        """A `human.prepare` whose answer was lost may have left a request open. Cancel the person's open requests that
-        match the action and were created after the lost call began (the host keeps no idem record for prepare)."""
-        for row in human(ws, "human.pending", {})["requests"]:
-            if row["state"] not in ("prepared", "bound") or row["op"] != op or (key and row.get("key") != key):
-                continue
-            created = _epoch(row["created_at"])
-            if created is not None and created >= since - 2:
-                human(ws, "human.cancel", {"request_id": row["id"]})
+    def recover(ws: str, token: str, op: str, key: str | None, since: float):
+        """`human.prepare` ignores `opts.idem` (host 0.8.1): every call makes a request. After a lost answer, list the
+        person's requests (no arguments), take those for the same op and ticket created during the lost attempt that
+        this session does not know, adopt the newest if it checks out and cancel the others. Never leave an orphan."""
+        known = handoffs.known_ids(token)
+        rows = [
+            row
+            for row in human(ws, "human.pending", {})["requests"]
+            if row["state"] == "prepared"
+            and row["id"] not in known
+            and row["op"] == op
+            and (key is None or row.get("key") == key)
+            and (_epoch(row["created_at"]) or 0) >= since - 2
+        ]
+        rows.sort(key=lambda row: row["created_at"])
+        adopted = None
+        for row in reversed(rows):
+            if adopted is None:
+                try:
+                    adopted = adapters.handoff.request(
+                        human(ws, "human.get", {"request_id": row["id"]}), ws, expect_op=op, expect_key=key
+                    )
+                    continue
+                except HostError:
+                    pass
+            human(ws, "human.cancel", {"request_id": row["id"]})
+        return adopted
 
     @app.post("/api/w/{ws}/handoff")
     def prepare(body: PrepareBody, request: Request, ws: str = Depends(workspace)):
@@ -257,10 +279,10 @@ def register(app: FastAPI, gateway: Gateway):
                 else None
             )
             op, args = host_call(body, labels)
-            if lost is not None:
-                cancel_orphans(ws, op, getattr(body, "key", None), lost)
-            prepared = human(ws, "human.prepare", {"op": op, "args": args, "handoff": True}, idem=body.idem)
-            response = adapters.handoff.request(prepared, ws, expect_op=op, expect_key=getattr(body, "key", None))
+            response = recover(ws, token, op, getattr(body, "key", None), lost) if lost is not None else None
+            if response is None:
+                prepared = human(ws, "human.prepare", {"op": op, "args": args, "handoff": True}, idem=body.idem)
+                response = adapters.handoff.request(prepared, ws, expect_op=op, expect_key=getattr(body, "key", None))
         except BaseException as exc:
             with handoffs.lock:
                 handoffs.by_idem.pop(slot, None)

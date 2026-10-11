@@ -34,34 +34,39 @@ def test_prepare_returns_the_v14_shape_and_recomputable_hashes(signing, rich):
     # The signer recomputes everything from material and events.
     assert got["material"]["review"] == review.reviews_of(got["events"], got["material"])
     digest = "sha256:" + hashlib.sha256(review.cj(got["material"])).hexdigest()
-    assert got["review_digest"] == digest and got["fingerprint"] == review.fingerprint(digest, got["events"])
+    assert got["review_digest"] == digest and got["fingerprint"] == review.fingerprint(digest, got["events"], got["op"])
     assert got["origin"]["client"] and set(got["origin"]) == {"uid", "pid", "client", "created_at"}
     # `human.get` without a signer returns the same bytes in any state, and binds nothing.
     again = link.call("human.get", {"request_id": request["id"]})
     assert again["events"] == got["events"] and again["request"]["state"] == "prepared"
 
 
-def test_fingerprint_vectors_are_stable():
-    material = {"kind": "payload", "ticket": {"key": "DEMO-0001", "uid": "01J9ZP0000000000000000000A"}, "review": []}
-    event = {
-        "v": 2,
-        "id": "01J9ZP0000000000000000000B",
-        "type": "log.added",
-        "actor": {"kind": "person", "id": "p_a", "device": "d_" + "a" * 16},
-        "auth": "passphrase",
-        "hash_v": 1,
-        "roster_v": 1,
-        "based_on": None,
-        "text": "hello",
-    }
-    digest = review.digest_of(material)
-    # The device and auth do not change the fingerprint; the text does.
-    other = {**event, "actor": {"kind": "person", "id": "p_a", "device": None}, "auth": None}
-    assert review.fingerprint(digest, [event]) == review.fingerprint(digest, [other])
-    assert review.fingerprint(digest, [event]) != review.fingerprint(digest, [{**event, "text": "hallo"}])
-    body = {"review_digest": digest, "events": [{k: v for k, v in other.items() if k not in ("auth",)}]}
-    body["events"][0]["actor"] = {"kind": "person", "id": "p_a"}
-    assert review.fingerprint(digest, [event]) == hashlib.sha256(review.cj(body)).hexdigest()[:12]
+DOC_EVENT = {
+    "v": 2,
+    "id": "01J9ZP0000000000000000000B",
+    "type": "log.added",
+    "actor": {"kind": "person", "id": "p_" + "1" * 32, "device": "d_" + "2" * 32},
+    "auth": "passphrase",
+    "hash_v": 1,
+    "roster_v": 1,
+    "based_on": "sha256:" + "cd" * 32,
+    "text": "hello",
+    "sig": "x",
+}
+
+
+def test_the_doc_fingerprint_vector_in_the_stub_the_server_and_the_signer():
+    """Host contract 0.8.1 (H5a): op log -> d8de03967462, op set -> 37cf21ef169c."""
+    from orch_dashboard.adapters import handoff as adapter
+
+    digest = "sha256:" + "ab" * 32
+    for op, want in (("log", "d8de03967462"), ("set", "37cf21ef169c")):
+        assert review.fingerprint(digest, [DOC_EVENT], op) == want
+        assert adapter.fingerprint(digest, [DOC_EVENT], op) == want
+    # The op is covered; the device, the factor and the signature are not; the text is.
+    other = {**DOC_EVENT, "actor": {**DOC_EVENT["actor"], "device": None}, "auth": None, "sig": "y"}
+    assert review.fingerprint(digest, [other], "log") == "d8de03967462"
+    assert review.fingerprint(digest, [{**DOC_EVENT, "text": "hallo"}], "log") != "d8de03967462"
 
 
 def test_signer_signs_and_the_store_appends_through_p1(signing, rich, stub):
@@ -71,7 +76,11 @@ def test_signer_signs_and_the_store_appends_through_p1(signing, rich, stub):
     status, shown = signing.sign(got["request"]["code"])
     assert status == 0, shown
     text, word = shown[0]
-    assert word == "DEMO-0001" and got["fingerprint"] in text and "only sign a code you created yourself" in text
+    assert (
+        word == f"DEMO-0001/{got['log'][-8:]}"
+        and got["fingerprint"] in text
+        and "only sign a code you created yourself" in text
+    )
     assert signing.backend.signed and "approve" in signing.backend.signed[0]
     env.store.refresh()
     assert env.store.state.tickets[ids["First"]].gates["requirements"].decisions
@@ -165,6 +174,7 @@ def test_stale_between_prepare_and_submit(signing, rich):
     env.update(ids["First"], {}, {"requirements": "changed after the prepare"})
     status, shown = signing.sign(got["request"]["code"])
     assert status == 1 and "gate.stale" in shown[-1]
+    assert pending(link, request_id=got["request"]["id"])[0]["state"] in ("prepared", "bound")  # never terminal
     assert not [d for d in env.store.state.tickets[ids["First"]].gates["requirements"].decisions]
 
 
@@ -283,7 +293,13 @@ def test_signer_output_is_dev_only_and_escapes_ticket_text(signing, rich):
     got = prepare(link, "log", {"ref": "DEMO-0001", "message": "line one\nline two"})
     status, shown = signing.sign(got["request"]["code"])
     text = shown[0][0]
-    assert status == 0 and "| line one" in text and "| line two" in text and "[from your own registry]" in text
+    assert (
+        status == 0
+        and "| line one" in text
+        and "| line two" in text
+        and "[from your own registry]" in text
+        and "ticket key per host, not proven" in text
+    )
     json.dumps(got)
 
 
@@ -301,9 +317,30 @@ def test_the_signer_checks_before_against_base_rev_and_needs_orch_dev(signing, r
     wrong["material"]["before"]["ticket.labels"] = ["not", "the", "labels"]
     wrong["material"]["review"] = review.reviews_of(wrong["events"], wrong["material"])
     wrong["review_digest"] = review.digest_of(wrong["material"])
-    wrong["fingerprint"] = review.fingerprint(wrong["review_digest"], wrong["events"])
+    wrong["fingerprint"] = review.fingerprint(wrong["review_digest"], wrong["events"], wrong["op"])
     with pytest.raises(stub_signer.Refused, match="base_rev"):
         stub_signer.check(wrong, **args)
     monkeypatch.delenv("ORCH_DEV", raising=False)
     with pytest.raises(RuntimeError, match="ORCH_DEV"):
         stub_signer.main("7F3K-Q2MA")
+
+
+def test_a_refused_submit_leaves_the_request_bound_with_the_error_code(signing, rich):
+    from orch import canon, crypto
+
+    env, ids = rich
+    link = signing.link()
+    got = prepare(link, "approve", {"ref": "DEMO-0001", "gate": "requirements"})
+    device = signing.p1.owner.device
+    bound = link.call(
+        "human.get", {"request_id": got["request"]["id"], "signer": {"device": device, "auth": "passphrase"}}
+    )
+    env.tick()
+    env.update(ids["First"], {}, {"requirements": "changed after the bind"})
+    event = dict(bound["events"][0])
+    event["sig"] = crypto.b64u(signing.p1.owner.dk_sign(canon.person_signing_bytes(signing.ws, got["log"], event)))
+    with pytest.raises(HostError, match="gate.stale"):
+        link.call("human.submit", {"request_id": got["request"]["id"], "events": [event]}, idem="a_" + "7" * 26)
+    row = pending(link, request_id=got["request"]["id"])[0]
+    assert row["state"] == "bound" and row["error"] == {"code": "gate.stale"} and row["event_ids"] == []
+    assert pending(link)[0]["id"] == got["request"]["id"]  # no arguments: the caller's requests in any state

@@ -31,6 +31,17 @@ from orch_dashboard.hostlink import HostLink
 from . import review
 
 KEY_ID = "dk"
+OP_WORDS = {
+    "approve": "approve a gate of",
+    "request_changes": "ask for changes on",
+    "verdict": "give the verdict on",
+    "answer": "answer a question on",
+    "close": "close",
+    "reopen": "reopen",
+    "log": "add a comment to",
+    "set": "change fields of",
+    "new": "create the ticket",
+}
 WARNING = "only sign a code you created yourself"
 
 
@@ -111,7 +122,7 @@ def recompute(prepared: dict[str, Any], *, workspace_id: str, person: str, devic
     digest = review.digest_of(material)
     if prepared.get("review_digest") != digest:
         raise Refused("review_digest differs from the one recomputed")
-    if prepared.get("fingerprint") != review.fingerprint(digest, events):
+    if prepared.get("fingerprint") != review.fingerprint(digest, events, op):
         raise Refused("the fingerprint differs from the one recomputed")
 
 
@@ -120,37 +131,44 @@ def render(prepared: dict[str, Any], *, workspace: dict[str, Any], person: str) 
     events, material = prepared["events"], prepared["material"]
     ticket = material.get("ticket") or {}
     origin = prepared.get("origin") or {}
+    frag = clean((prepared.get("log") or "")[-8:])
+    key = clean(ticket["key"]) if ticket.get("key") else None
+    words = OP_WORDS.get(prepared["op"], prepared["op"])
+    on = f" {key}/{frag}" if key else ""
     out = [
-        f"workspace: {clean(workspace['name'])} ({clean(workspace['prefix'])})  [from your own registry]",
-        f"operation: {clean(prepared['op'])}"
-        + (
-            f" on {clean(ticket['key'])} (key stated by the host, id ending {clean(ticket['uid'][-8:])})"
-            if ticket.get("key")
-            else ""
-        ),
+        f"workspace: {clean(workspace['name'])} ({clean(workspace['prefix'])}) {clean(prepared['workspace_id'])}"
+        "  [from your own registry]",
+        f"op: {clean(prepared['op'])}: {words}{on}",
+    ]
+    if key:
+        out.append(
+            f"ticket: {key} (ticket key per host, not proven) uid {clean(prepared['log'])}"
+            f" (signed; you type its last eight: {frag})"
+        )
+    out += [
+        f"requested by uid {clean(origin.get('uid'))} pid {clean(origin.get('pid'))}"
+        f" at {clean(origin.get('created_at'))}; client {clean(origin.get('client'))} (self-declared, unverified)",
         f"fingerprint: {prepared['fingerprint']}  (the dashboard shows the same)",
-        f"origin: uid {clean(origin.get('uid'))} pid {clean(origin.get('pid'))} client {clean(origin.get('client'))}"
-        " (kernel facts, and a name the client chose itself: unverified)",
         WARNING,
         "",
     ]
     reviews = material["review"]
     for n, r in enumerate(reviews, 1):
         out.append(f"--- event {n} of {len(reviews)}: {clean(r['type'])} ---")
-        for key in sorted(r["payload"]):
-            value = r["payload"][key]
-            if isinstance(value, str) and key in ("text", "title"):
-                out += [f"{clean(key)}:", *data(value)]
+        for name in sorted(r["payload"]):
+            value = r["payload"][name]
+            if isinstance(value, str) and name in ("text", "title"):
+                out += [f"{clean(name)}:", *data(value)]
             else:
-                out.append(f"{clean(key)}: {clean(value)}")
-        for key in sorted(r["derived"]):
-            out.append(f"derived {clean(key)}: {clean(r['derived'][key])}")
+                out.append(f"{clean(name)}: {clean(value)}")
+        for name in sorted(r["derived"]):
+            out.append(f"derived (stated by the host) {clean(name)}: {clean(r['derived'][name])}")
     if material.get("before"):
         out.append("current values according to the host, not signed:")
         out += [f"  {clean(k)}: {clean(v)}" for k, v in sorted(material["before"].items())]
     if material.get("kind") == "gate":
         out += ["", f"gate: {clean(material['gate'])}", f"gate hash {events[0].get('hash', '')[7:19]}"]
-    return "\n".join(out) + "\n", ticket.get("key") or person
+    return "\n".join(out) + "\n", f"{key}/{frag}" if key else person
 
 
 def run(

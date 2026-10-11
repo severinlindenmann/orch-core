@@ -18,7 +18,7 @@ CODE = re.compile(r"^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$")
 FINGERPRINT = re.compile(r"^[0-9a-f]{12}$")
 HASH = re.compile(r"^sha256:[0-9a-f]{64}$")
 STATES = ("prepared", "bound", "submitted", "cancelled", "expired")
-ENVELOPE = ("v", "id", "type", "actor", "auth", "hash_v", "roster_v", "based_on", "gate_gen", "sig")
+ENVELOPE = ("v", "id", "type", "actor", "auth", "hash_v", "roster_v", "based_on", "sig")
 TIME = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
 MAX_LIFE = 900  # the host lets a request live 10 minutes; anything much longer is not a request of this host
 GATE_EVENTS = ("gate.approved", "gate.changes_requested", "verdict.given")
@@ -42,8 +42,11 @@ def stripped(event: dict) -> dict:
     return out
 
 
-def fingerprint(digest: str, events: list) -> str:
-    return hashlib.sha256(cj({"review_digest": digest, "events": [stripped(e) for e in events]})).hexdigest()[:12]
+def fingerprint(digest: str, events: list, op: str) -> str:
+    """The first 12 hex of sha256(cj({op, review_digest, events: [V(e)]})) (host contract 0.8.1)."""
+    return hashlib.sha256(cj({"op": op, "review_digest": digest, "events": [stripped(e) for e in events]})).hexdigest()[
+        :12
+    ]
 
 
 def inconsistent():
@@ -63,7 +66,8 @@ def review_matches(material: dict, events: list) -> bool:
     if not isinstance(reviews, list) or len(reviews) != len(events):
         return False
     for block, event in zip(reviews, events, strict=True):
-        payload = {k: v for k, v in event.items() if k not in ENVELOPE}
+        skip = ENVELOPE + (("gate_gen",) if event.get("type") in GATE_EVENTS else ())
+        payload = {k: v for k, v in event.items() if k not in skip}
         if (
             block.get("event_id") != event.get("id")
             or block.get("type") != event.get("type")
@@ -104,7 +108,10 @@ def request(prepared: dict, ws: str, expect_op: str | None = None, expect_key: s
         ):
             raise inconsistent()
         digest = review_digest(material)
-        if digest != prepared["review_digest"] or fingerprint(digest, events) != prepared["fingerprint"]:
+        if (
+            digest != prepared["review_digest"]
+            or fingerprint(digest, events, prepared["op"]) != prepared["fingerprint"]
+        ):
             raise inconsistent()
         first = events[0]
         return {

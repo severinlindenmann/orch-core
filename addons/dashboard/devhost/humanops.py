@@ -27,7 +27,7 @@ from orch.ops.errors import OrchError
 from orch.store import StoreError
 from orch.store.render import thaw
 
-from orch_dashboard.errors import fail
+from orch_dashboard.errors import HostError, fail
 
 from . import review
 
@@ -186,7 +186,7 @@ class Requests:
             "events": events,
             "material": material,
             "review_digest": digest,
-            "fingerprint": review.fingerprint(digest, events),
+            "fingerprint": review.fingerprint(digest, events, op),
             "origin": {"uid": os.getuid(), "pid": os.getpid(), "client": "orch-dashboard", "created_at": stamp(now)},
             "created": now,
             "expires": now + TTL,
@@ -195,6 +195,7 @@ class Requests:
             "key": (material.get("ticket") or {}).get("key"),
             "signed": None,
             "result": None,
+            "error": None,
         }
         out = self.view(request)
         if dry:
@@ -275,6 +276,7 @@ class Requests:
                     "state": self.state(r),
                     "event_ids": [e["id"] for e in r["events"]] if r["state"] == "submitted" else [],
                     "seq": r["result"]["seq"] if r["state"] == "submitted" and r["result"] else None,
+                    **({"error": r["error"]} if r.get("error") else {}),
                 }
                 for r in rows
             ]
@@ -315,6 +317,21 @@ class Requests:
             raise fail("human.request_state", f"this request is {state}", exit=3)
         if state == "expired":
             raise fail("human.request_expired", "this request has expired", exit=3)
+        try:
+            self.append(store, request, events)
+        except (HostError, OrchError) as exc:
+            # A refusal before any append leaves the request bound (not terminal) until it expires; the catalog code
+            # shows in human.pending (host 0.8.1, H5a).
+            request["error"] = {"code": exc.error["code"] if isinstance(exc, HostError) else exc.code}
+            raise
+        appended = request["appended"]
+        seq = appended[-1].event["seq"]
+        answer = {"data": {"op": request["op"]}, "key": request["key"], "seq": seq}
+        request.update(state="submitted", signed=canonical(events), result={"seq": seq}, answer=answer, error=None)
+        self.idems[idem] = {"binding": binding, "answer": answer}
+        return self.replay(answer, duplicate=False)
+
+    def append(self, store, request: dict[str, Any], events: list[dict[str, Any]]) -> None:
         prepared = request["events"]
         if len(events) != len(prepared):
             raise fail("human.request_mismatch", "the events differ from the prepared ones", exit=5)
@@ -324,18 +341,11 @@ class Requests:
             ):
                 raise fail("human.request_mismatch", "the events differ from the prepared ones", exit=5)
         try:
-            appended = [store.append(dict(e), log=request["log"]) for e in events]
+            request["appended"] = [store.append(dict(e), log=request["log"]) for e in events]
         except StoreError as exc:
-            error = orch_error(exc)
-            answer = {"error": {"code": error.code, "message": error.message}, "exit": 5}
-            if exc.code in ("sig.invalid",):
+            if exc.code == "sig.invalid":
                 raise fail("sig.invalid", "the signature does not verify", exit=5) from None
-            raise error from None
-        seq = appended[-1].event["seq"]
-        answer = {"data": {"op": request["op"]}, "key": request["key"], "seq": seq}
-        request.update(state="submitted", signed=canonical(events), result={"seq": seq}, answer=answer)
-        self.idems[idem] = {"binding": binding, "answer": answer}
-        return self.replay(answer, duplicate=False)
+            raise orch_error(exc) from None
 
     @staticmethod
     def replay(answer: dict[str, Any], duplicate: bool = True) -> dict[str, Any]:

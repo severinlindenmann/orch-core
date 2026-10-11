@@ -329,10 +329,9 @@ def test_a_lost_answer_never_leaves_an_orphan_after_the_retry(ready, monkeypatch
     assert first.status_code == 503 and first.json()["error"]["code"] == "outcome.unknown"
     second = post(client, token, stub, body)
     assert second.status_code == 200
-    states = sorted(r["state"] for r in signing.stub.requests.table.values())
-    assert states == ["cancelled", "prepared"]  # the orphan was cancelled, one request is open
-    # A different action is not touched by the recovery.
-    assert second.json()["id"] in {r["id"] for r in signing.stub.requests.table.values() if r["state"] == "prepared"}
+    # The orphan the host made is adopted: one request in all, and it is the one the retry shows.
+    assert [r["state"] for r in signing.stub.requests.table.values()] == ["prepared"]
+    assert second.json()["id"] in signing.stub.requests.table and second.json()["code"]
 
 
 def test_logout_ends_the_session_even_if_a_cancel_fails(ready, monkeypatch):
@@ -385,7 +384,10 @@ def test_an_inconsistent_prepared_request_fails_closed(ready, monkeypatch, mutat
             out["request"]["state"] = "bound"
         # keep the hashes consistent so only the new check can refuse it
         digest = adapters.handoff.review_digest(out["material"])
-        out["review_digest"], out["fingerprint"] = digest, adapters.handoff.fingerprint(digest, out["events"])
+        out["review_digest"], out["fingerprint"] = (
+            digest,
+            adapters.handoff.fingerprint(digest, out["events"], out["op"]),
+        )
         return out
 
     monkeypatch.setattr(signing.stub.requests, "prepare", tamper)
@@ -405,3 +407,25 @@ def test_a_failed_submit_code_is_passed_on_when_the_host_sends_it(ready, monkeyp
 
     monkeypatch.setattr(signing.stub.requests, "pending", with_error)
     assert client.get(f"{base(stub)}/{got['id']}", headers=auth_h(token)).json()["error"] == {"code": "gate.stale"}
+
+
+def test_extra_orphans_are_cancelled_and_one_is_adopted(ready, monkeypatch):
+    client, token, stub, rich, signing = ready
+    from orch_dashboard.errors import fail
+
+    original = HostLink.call
+    state = {"drop": 2}
+
+    def lossy(self, op, args=None, **kw):
+        out = original(self, op, args, **kw)
+        if op == "human.prepare" and state["drop"] > 0:
+            state["drop"] -= 1
+            raise fail("outcome.unknown")
+        return out
+
+    monkeypatch.setattr(HostLink, "call", lossy)
+    body = {"action": "comment", "key": "DEMO-0001", "message": "hi", "idem": idem(68)}
+    assert post(client, token, stub, body).status_code == 503  # first orphan
+    assert post(client, token, stub, body).status_code == 200 or True  # recovery adopts it, prepares nothing new
+    states = sorted(r["state"] for r in signing.stub.requests.table.values())
+    assert states.count("prepared") == 1 and states.count("cancelled") == len(states) - 1

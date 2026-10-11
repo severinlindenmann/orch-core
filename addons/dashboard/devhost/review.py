@@ -5,8 +5,9 @@ nothing the host sends (the digest, the fingerprint and every `Review` are recom
 
 * `cj` is canonical JSON (RFC 8785 on the restricted subset): `orch.canon.jcs.dumps`.
 * `review_digest = "sha256:" + sha256(cj(material))`.
-* `fingerprint` = the first 12 hex digits of `sha256(cj({"review_digest": ..., "events": [each event without sig,
-  actor.device, auth (and, for grant.issued, secret_hash)]}))`.
+* `fingerprint` = the first 12 hex digits of
+  `sha256(cj({"op": ..., "review_digest": ..., "events": [each event without sig, actor.device, auth (and, for
+  grant.issued, secret_hash)]}))`.
 * `Review.payload` is the event minus the envelope keys; `derived` is computed by the signer from event and material.
 """
 
@@ -16,7 +17,9 @@ from typing import Any
 
 from orch import canon
 
-ENVELOPE = ("v", "id", "type", "actor", "auth", "hash_v", "roster_v", "based_on", "gate_gen", "sig")
+ENVELOPE = ("v", "id", "type", "actor", "auth", "hash_v", "roster_v", "based_on", "sig")
+# `gate_gen` leaves the payload on the three decision types only (shown on its own line); elsewhere it stays in it.
+GATE_GEN_ENVELOPE = ("gate.approved", "gate.changes_requested", "verdict.given")
 DECISIONS = ("gate.approved", "gate.changes_requested", "verdict.given", "question.answered")
 SECTIONED = ("ticket.updated", "ticket.created", "question.asked")
 # The frozen operation -> event types table (F1 10.7); the dev stub serves only these person operations.
@@ -53,8 +56,9 @@ def stripped(event: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def fingerprint(review_digest: str, events: list[dict[str, Any]]) -> str:
-    body = {"review_digest": review_digest, "events": [stripped(e) for e in events]}
+def fingerprint(review_digest: str, events: list[dict[str, Any]], op: str) -> str:
+    """hex(sha256(cj({op, review_digest, events: [V(e)]})))[:12] (host contract 0.8.1, H5a)."""
+    body = {"op": op, "review_digest": review_digest, "events": [stripped(e) for e in events]}
     return hashlib.sha256(cj(body)).hexdigest()[:12]
 
 
@@ -75,7 +79,8 @@ def derived_of(event: dict[str, Any], material: dict[str, Any]) -> dict[str, Any
 
 
 def review_of(event: dict[str, Any], material: dict[str, Any]) -> dict[str, Any]:
-    payload = {k: copy.deepcopy(v) for k, v in event.items() if k not in ENVELOPE}
+    skip = ENVELOPE + (("gate_gen",) if event["type"] in GATE_GEN_ENVELOPE else ())
+    payload = {k: copy.deepcopy(v) for k, v in event.items() if k not in skip}
     return {"event_id": event["id"], "type": event["type"], "payload": payload, "derived": derived_of(event, material)}
 
 

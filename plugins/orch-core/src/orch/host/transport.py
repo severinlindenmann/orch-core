@@ -1,63 +1,38 @@
-"""Unix transport for contract v1.3.1; dispatch and durable registries are injected.
-
-Construct/bind listeners before starting threads: Python has no bindat(), so both
-platforms use §2's fchdir fallback with a saved cwd fd. serve() uses raw nonblocking
-sockets, ensuring kernel credentials are checked before any recv (including hello).
-A HostLimits instance must be shared by all listeners in one host.
-"""
+"""Unix session I/O and supervision; share HostLimits across all listeners."""
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
-import errno
-import fcntl
-import os
-import re
 import socket
-import stat
-import struct
-import sys
-import threading
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from pathlib import Path
 from time import monotonic
 from typing import Any, Literal, Protocol
 
 from . import frames
-from ._unix import CheckedDirectory, UnsafePath, check_acl
+from ._socket import Credentials as Credentials
+from ._socket import peer_credentials as peer_credentials
+from .client import Pin as Pin
+from .client import connect_pinned as connect_pinned
+from .client import handshake_pinned as handshake_pinned
+from .listener import (
+    Listener as Listener,
+)
+from .listener import (
+    check_socket_path as check_socket_path,
+)
+from .listener import (
+    default_run_directory as default_run_directory,
+)
 
-SocketKind = Literal["workspace", "control", "worker"]
 IDLE_SECONDS = 600
 RECHECK_SECONDS = 60
 WRITE_TIMEOUT_SECONDS = 10
 WRITE_QUEUE_BYTES = 4 * 1024 * 1024
 WRITE_QUEUE_FRAMES = 64
 BYTES_PER_MINUTE = 64 * 1024 * 1024
-
-
-@dataclass(frozen=True)
-class Credentials:
-    uid: int
-    gid: int
-    pid: int
-
-
-def peer_credentials(sock: socket.socket) -> Credentials:
-    if sys.platform == "linux":
-        pid, uid, gid = struct.unpack("iII", sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
-        return Credentials(uid, gid, pid)
-    if sys.platform == "darwin":
-        # struct xucred: unsigned version, uid_t uid, short ngroups, gid_t groups[16].
-        raw = sock.getsockopt(0, 1, 76)  # SOL_LOCAL, LOCAL_PEERCRED
-        version, uid, groups, gid = struct.unpack_from("@IIh2xI", raw)
-        if version != 0 or not 1 <= groups <= 16:
-            raise OSError("Invalid LOCAL_PEERCRED")
-        pid = struct.unpack("i", sock.getsockopt(0, 2, 4))[0]  # LOCAL_PEERPID
-        return Credentials(uid, gid, pid)
-    raise OSError("Unix peer credentials are unsupported")
 
 
 @dataclass(frozen=True)
@@ -77,216 +52,6 @@ class PeerRegistry(Protocol):
     worker_uid: int | None
 
     def lookup(self, uid: int, workspace_id: str) -> Peer | None: ...
-
-
-@dataclass(frozen=True)
-class Pin:
-    """Trusted registry entry, NOT values read from workspace config.json.
-
-    Person clients obtain this from their own registry. Agent clients obtain it
-    from the root-owned setup-helper pin file; H2a/H3c supply its storage format.
-    workspace_id is None for a control/worker endpoint.
-    """
-
-    host_uid: int
-    workspace_id: str | None
-    socket_path: Path
-
-    def check_welcome(self, welcome: dict[str, Any]) -> None:
-        frames.validate_envelope(welcome, sender="host")
-        workspace = welcome.get("workspace")
-        actual = workspace.get("id") if isinstance(workspace, dict) else None
-        if welcome.get("t") != "welcome" or welcome.get("host_uid") != self.host_uid or actual != self.workspace_id:
-            raise UnsafePath("Server welcome does not match the trusted pin")
-
-
-def connect_pinned(pin: Pin, *, timeout: float = 2) -> socket.socket:
-    """Return a connected socket only after checking UID; sends no bytes.
-
-    Send hello next, then call pin.check_welcome BEFORE sending any request or
-    secret. The workspace claim necessarily arrives after hello, never before it.
-    """
-    check_socket_path(pin.socket_path)
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    try:
-        sock.settimeout(timeout)
-        sock.connect(str(pin.socket_path))
-        if peer_credentials(sock).uid != pin.host_uid:
-            raise UnsafePath("Server UID does not match the trusted pin")
-        return sock
-    except BaseException:
-        sock.close()
-        raise
-
-
-def handshake_pinned(pin: Pin, hello: dict[str, Any], *, timeout: float = 2) -> tuple[socket.socket, dict[str, Any]]:
-    """Verify the complete pin before returning a socket usable for requests.
-
-    Only a validated, credential-free hello is sent before the workspace check.
-    The deadline covers the whole welcome, including a trickled length prefix.
-    """
-    frames.validate_envelope(hello, sender="client")
-    if hello["t"] != "hello":
-        raise frames.FrameError("handshake.invalid")
-    sock = connect_pinned(pin, timeout=timeout)
-    try:
-        deadline = monotonic() + timeout
-        sock.sendall(frames.encode(hello))
-        decoder = frames.Decoder()
-        while True:
-            remaining = deadline - monotonic()
-            if remaining <= 0:
-                raise TimeoutError("Welcome deadline exceeded")
-            sock.settimeout(remaining)
-            data = sock.recv(65536)
-            if not data:
-                decoder.finish()
-                raise ConnectionError("Server closed before welcome")
-            received = decoder.feed(data)
-            if received:
-                welcome = received[0]
-                if isinstance(welcome, frames.FrameError):
-                    raise welcome
-                if len(received) != 1 or decoder.pending:
-                    raise frames.FrameError(message="Unexpected frame before any request")
-                pin.check_welcome(welcome)
-                if welcome["proto"] not in hello["proto"]:
-                    raise frames.FrameError("host.version_mismatch")
-                sock.settimeout(timeout)
-                return sock, welcome
-    except BaseException:
-        sock.close()
-        raise
-
-
-def check_socket_path(path: Path) -> None:
-    if not path.is_absolute() or ".." in path.parts or len(str(path).encode("utf-8")) > 100:
-        raise UnsafePath("Socket path must be absolute and at most 100 UTF-8 bytes")
-
-
-def default_run_directory(host_uid: int) -> Path:
-    if sys.platform == "darwin":
-        return Path("/Users/Shared/orch/run") / str(host_uid)
-    if sys.platform == "linux":
-        return Path("/run/orch") / str(host_uid)
-    raise UnsafePath("Unix transport is unsupported on this platform")
-
-
-class Listener:
-    """Own the locked, pinned directory and bound socket until close()."""
-
-    def __init__(self, run: Path, name: str, *, host_uid: int, gid: int, kind: SocketKind = "workspace"):
-        if kind not in {"workspace", "control", "worker"}:
-            raise ValueError("Unknown socket kind")
-        if (kind == "workspace" and not re.fullmatch("[0-9a-f]{32}", name)) or (kind != "workspace" and name != kind):
-            raise ValueError("Invalid listener directory name")
-        self.path = Path(run) / name / "host.sock"
-        check_socket_path(self.path)
-        if threading.current_thread() is not threading.main_thread() or threading.active_count() != 1:
-            raise RuntimeError("Bind listeners before starting any threads (fchdir fallback)")
-        self.host_uid, self.kind = host_uid, kind
-        self.workspace_id = name if kind == "workspace" else None
-        self.sock: socket.socket | None = None
-        self.lock_fd: int | None = None
-        self.run: CheckedDirectory | None = None
-        self.directory: CheckedDirectory | None = None
-        self.identity: tuple[int, int] | None = None
-        try:
-            self.run = CheckedDirectory(Path(run), host_uid, mode=0o711)
-            self.directory = CheckedDirectory(
-                self.path.parent, host_uid, mode=0o700 if kind == "control" else 0o750, gid=gid
-            )
-            self.run.recheck()
-            self.lock_fd = os.open(
-                "lock",
-                os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK,
-                0o600,
-                dir_fd=self.directory.fd,
-            )
-            info = os.fstat(self.lock_fd)
-            if (
-                not stat.S_ISREG(info.st_mode)
-                or info.st_uid != host_uid
-                or info.st_nlink != 1
-                or stat.S_IMODE(info.st_mode) != 0o600
-            ):
-                raise UnsafePath("Unsafe socket lock")
-            check_acl(self.lock_fd, {0, host_uid})
-            fcntl.flock(self.lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            self._bind(gid)
-        except BaseException:
-            self.close()
-            raise
-
-    def _bind(self, gid: int) -> None:
-        assert self.directory is not None
-        saved_cwd = os.open(".", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
-        old_umask = os.umask(0o177)
-        try:
-            os.fchdir(self.directory.fd)
-            try:
-                info = os.stat("host.sock", follow_symlinks=False)
-            except FileNotFoundError:
-                pass
-            else:
-                if not stat.S_ISSOCK(info.st_mode) or info.st_uid != self.host_uid:
-                    raise UnsafePath(f"Planted socket: owner {info.st_uid}")
-                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as probe:
-                    probe.settimeout(0.2)
-                    try:
-                        probe.connect("host.sock")
-                    except OSError as exc:
-                        if exc.errno != errno.ECONNREFUSED:
-                            raise UnsafePath("Cannot prove socket is stale") from exc
-                    else:
-                        raise UnsafePath("Socket is already serving")
-                os.unlink("host.sock")
-            self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            self.sock.bind("host.sock")
-            info = os.stat("host.sock", follow_symlinks=False)
-            self.identity = info.st_dev, info.st_ino
-            os.chown("host.sock", -1, gid, follow_symlinks=False)
-            os.chmod("host.sock", 0o660)
-            self.sock.listen(128)
-            self.sock.setblocking(False)
-        finally:
-            os.fchdir(saved_cwd)
-            os.close(saved_cwd)
-            os.umask(old_umask)
-        self.recheck()
-
-    def recheck(self) -> None:
-        assert self.run is not None and self.directory is not None
-        self.run.recheck()
-        self.directory.recheck()
-        info = os.stat("host.sock", dir_fd=self.directory.fd, follow_symlinks=False)
-        if (
-            (info.st_dev, info.st_ino) != self.identity
-            or not stat.S_ISSOCK(info.st_mode)
-            or info.st_uid != self.host_uid
-            or info.st_gid != self.directory.gid
-            or stat.S_IMODE(info.st_mode) != 0o660
-        ):
-            raise UnsafePath("Socket inode, owner, group or mode changed")
-
-    def close(self) -> None:
-        if self.sock is not None:
-            self.sock.close()
-            self.sock = None
-        if self.directory is not None:
-            if self.identity is not None:
-                with contextlib.suppress(FileNotFoundError):
-                    info = os.stat("host.sock", dir_fd=self.directory.fd, follow_symlinks=False)
-                    if (info.st_dev, info.st_ino) == self.identity:
-                        os.unlink("host.sock", dir_fd=self.directory.fd)
-            self.directory.close()
-            self.directory = None
-        if self.lock_fd is not None:
-            os.close(self.lock_fd)
-            self.lock_fd = None
-        if self.run is not None:
-            self.run.close()
-            self.run = None
 
 
 class Bucket:

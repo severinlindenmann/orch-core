@@ -19,7 +19,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from orch.host import client as client_module
 from orch.host import frames, transport
+from orch.host import listener as listener_module
 from orch.host._unix import CheckedDirectory, UnsafePath, _linux_acl, check_acl, check_directory
 from orch.host.transport import (
     Bucket,
@@ -398,7 +400,7 @@ def test_foreign_socket_owner_refused(listener, monkeypatch):
 
 
 def test_binding_requires_single_main_thread(secure_tree, monkeypatch):
-    monkeypatch.setattr(transport.threading, "active_count", lambda: 2)
+    monkeypatch.setattr(listener_module.threading, "active_count", lambda: 2)
     with pytest.raises(RuntimeError, match="threads"):
         Listener(secure_tree / "r", WS, host_uid=UID, gid=GID)
 
@@ -429,7 +431,7 @@ def test_peer_credential_structs(monkeypatch, platform):
 
 
 def test_uid_checked_before_client_sends(listener, monkeypatch):
-    monkeypatch.setattr(transport, "peer_credentials", lambda sock: Credentials(UID + 1, GID, 1))
+    monkeypatch.setattr(client_module, "peer_credentials", lambda sock: Credentials(UID + 1, GID, 1))
     with pytest.raises(UnsafePath, match="UID"):
         connect_pinned(Pin(UID, WS, listener.path))
     accepted, _ = listener.sock.accept()

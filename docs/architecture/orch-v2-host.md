@@ -2244,8 +2244,13 @@ orch-relay's `docs/p3-relay-design.md` §9 defines what the host owes the relay 
   and the host never signs a different one for an epoch. Rules:
   - **One WK per epoch, ever.** The host never creates a second key for an epoch number. Epochs may skip, never fall. Epochs are u32 (1..2^32-1). The
     relay accepts a later list only with `prev <= epoch <= prev + 2^16`. The host alarms, and clamps: it never allocates
-    an epoch above `committed + 2^16`, whether through repeated burns or H7 jumps. If the next allocation (including H7's `EHW + 1`) would exceed that clamp, the host alarms, keeps
-    the rotation gate up and allocates nothing until the relay commits a list. A list that removes a member has a
+    an epoch above `committed + 2^16`, whether through repeated burns or H7 jumps. The rotation target is `min(EHW + 1, committed + 2^16)`: the clamp wins. When the clamp is at or
+    below `EHW` (every epoch up to it is already used or burned), the host cannot rotate without a second key for an
+    epoch, which it never creates: it alarms, keeps the rotation gate up and allocates nothing. The workspace's
+    membership is then frozen until an operator intervenes (or the relay commits a list, which raises `committed`).
+    Liveness limit, accepted in v1.4: reaching it needs about 65,000 burns, or about 63 H7 jumps of 1024 with no
+    commit in between. On a same-epoch re-seal the relay checks list rules before grants, so a changed `wk_commit`
+    is answered `wk_commit_changed` (a divergence refusal under H4). A list that removes a member has a
     higher epoch than the previous list. A list at the same epoch carries the same `wk_commit`, else the relay answers
     409 `wk_commit_changed`.
   - **First list.** The first publication for a workspace may use any epoch `1..2^16` and any `list_seq >= 1`. A refused

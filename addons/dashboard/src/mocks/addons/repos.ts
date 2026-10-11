@@ -318,7 +318,7 @@ function view(s: ReposState, c: Ctx) {
         ),
       },
       { id: 'checks', label: 'Checks', node: stack(kv({ 'Last check': s.checked }), ...(atLeast(role, 'member') ? [button('Check now', 'check')] : []), { type: 'list', items: issues, empty: 'All repos are ready.' }) },
-      { id: 'activity', label: 'Activity log', node: { type: 'list', items: s.log.map((e, i) => ({ id: `log-${i}`, title: e.text, subtitle: `${e.at} · ${wsOf(c)?.members.find((m) => m.person === e.by)?.name ?? e.by} · ${e.type}` })), empty: 'No repo activity yet.' } },
+      { id: 'activity', label: 'Activity', node: { type: 'list', items: s.log.map((e, i) => ({ id: `log-${i}`, title: e.text, subtitle: `${e.at} · ${wsOf(c)?.members.find((m) => m.person === e.by)?.name ?? e.by} · ${e.type}` })), empty: 'No repo activity yet.' } },
     ],
   }
   const byTicket: Record<string, unknown> = {}

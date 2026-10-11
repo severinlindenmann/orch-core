@@ -58,6 +58,7 @@ describe('factory package and seed', () => {
     expect(store.workspaces.find((w) => w.id === ws)!.addons.factory).toBeUndefined()
     const pkg = store.addons.find((a) => a.name === 'factory')!
     expect(pkg.preview).toBe(true)
+    expect(pkg.actions!.prepare_redelivery).toEqual({ minRole: 'owner' })
     expect(pkg.actions).toMatchObject({
       pause: { minRole: 'maintainer', confirm: 'sign' },
       resume: { minRole: 'maintainer', confirm: 'sign' },

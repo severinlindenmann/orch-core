@@ -265,7 +265,7 @@ function SkillDetail({ skill, workspace, canEdit }: { skill: SkillInfo; workspac
               <>
                 {pendingConns.length + pendingEnv.length > 0 && (
                   <Button size="sm" onClick={() => setAsk({ connections: pendingConns, env: pendingEnv })}>
-                    Grant {[...pendingConns, ...pendingEnv].join(', ')}…
+                    Grant {[...pendingConns, ...pendingEnv].join(', ')}
                   </Button>
                 )}
                 <div className="flex flex-wrap items-end gap-2">

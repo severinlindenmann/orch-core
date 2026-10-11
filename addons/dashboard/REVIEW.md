@@ -62,7 +62,7 @@ Create a bug, find it, start an agent and answer its question.
 
 - [ ] **Create a bug** — Press c, choose Bug, fill Title and Requirements, Create. Page: `/tickets`.
 - [ ] **Find it with ⌘K** — Type its key or a word of the title; Enter opens it.
-- [ ] **Start an agent on it** — Actions → Start agent… on the new ticket; core shows what starts, then Start agent.
+- [ ] **Start an agent on it** — Actions → Start agent on the new ticket; core shows what starts, then Start agent.
 - [ ] **Watch it work** — Within about 15 s it claims the ticket, finishes T1 and asks you a question. Page: `/agents`.
 - [ ] **Answer from Today** — The question is at the top of Questions; answer it there. Page: `/`.
 
@@ -84,7 +84,7 @@ The same workspace as Mara: what she may and may not do.
 - [ ] **Owner-only gates** — DEMO-0044: "Approve plan (owners only)" is disabled with the reason. Page: `/ticket/DEMO-0044` as Mara.
 - [ ] **Settings are read-only** — Every control is off and says "Only owners can …". Page: `/settings/gates` as Mara.
 - [ ] **Approve what she may** — Approvals and verdicts that maintainers may sign. Page: `/` as Mara.
-- [ ] **Decide a factory permit** — AI Factory → the permission request above the tabs (Busy day: the factory is installed there). Page: `/addon/factory/factory` as Mara, Busy day.
+- [ ] **Decide a factory permit** — AI Factory → the folded permits row above the tabs (Busy day: the factory is installed there). Page: `/addon/factory/factory` as Mara, Busy day.
 
 ### 5. Viewer (Tom)
 
@@ -176,9 +176,9 @@ Compact addon pages; what needs you sits above the tabs.
 - [ ] **Usage by model** — The By model total equals the Overview tokens. Page: `/addon/usage/overview`.
 - [ ] **Wiki page view** — On this page, Linked from, Edit page and the unsaved-changes guard. Page: `/addon/wiki/pages`.
 - [ ] **GitHub** — Pull requests | Issues; Recently merged folded. Page: `/addon/github/reviews`.
-- [ ] **Records** — Pending | History; one headline that says the next step. Page: `/addon/records/records`, Busy day.
+- [ ] **Records** — Pending | Activity; one headline that says the next step. Page: `/addon/records/records`, Busy day.
 - [ ] **Schedules** — Schedules | Runs; the finding above the tabs. Page: `/addon/schedules/schedules`, Busy day.
-- [ ] **AI Factory** — The permit above the tabs. Page: `/addon/factory/factory`, Busy day.
+- [ ] **AI Factory** — The folded “n permits waiting · Review” row above the tabs; expand it to answer. Page: `/addon/factory/factory`, Busy day.
 - [ ] **Quick tasks** — Active | Completed. Page: `/addon/quick/quick`, Busy day.
 - [ ] **Worktrees** — Filters, then Add worktree. Page: `/addon/worktrees/worktrees`, Busy day.
 
@@ -217,7 +217,7 @@ The other settings tabs.
 
 The merge lane: approval, checks and merge bind to one candidate.
 
-- [ ] **Landing page** — Queues | Needs | History. Page: `/addon/land/landing`.
+- [ ] **Landing page** — Queues | Needs | Activity. Page: `/addon/land/landing`.
 - [ ] **A voided approval** — DEMO-0053: a conflict resolution voided the verify approval; back to review. Page: `/ticket/DEMO-0053`.
 - [ ] **New commits void the verdict** — DEMO-0042 → Changes → "Simulate: the agent pushes a commit". Core voids the verdict; the ticket is back in testing. Page: `/ticket/DEMO-0042`.
 - [ ] **The code review gate** — Gates → Code review: off by default; on for every ticket or by type. It follows the verdict on the same commit, never by an assignee. Page: `/settings/gates`.
@@ -239,7 +239,7 @@ All artifacts in one place; files shared through the relay.
 A ticket that needs a login that expired.
 
 - [ ] **Blocked tickets** — DEMO-0053 (databricks-prod auth expired) and DEMO-0054 (gcloud-billing wrong identity). Page: `/ticket/DEMO-0054`.
-- [ ] **Start agent is refused** — Actions → Start agent… is off with the reason. Page: `/ticket/DEMO-0053`.
+- [ ] **Start agent is refused** — Actions → Start agent is off with the reason. Page: `/ticket/DEMO-0053`.
 - [ ] **Re-login from Today** — Connections group: copy the login hint, Run check again (Demo). Page: `/`.
 - [ ] **Unblocked** — After Run check again for gcloud-billing, DEMO-0054 no longer says Blocked and Start agent works. Page: `/ticket/DEMO-0054`.
 
@@ -248,12 +248,12 @@ A ticket that needs a login that expired.
 How the wide mandate (owner decision 10 Oct evening) would look. A non-functional preview: nothing signs.
 
 - [ ] **Preflight** — Agents → Mandates: the four prerequisites are "not available in this build", so issuing is blocked. Page: `/agents?tab=mandates`.
-- [ ] **Issue a mandate** — Show the mandate anyway (preview), then Issue a mandate…: "Steers the whole workspace in your name", what it may do (approve waiting agents and gates, unblock tickets, enable factories and start their runs including Deliver, issue grants), what stays yours (settings, addons, members and roles, devices, relay pairing, secrets and connections, protected paths, another mandate), a length up to 30 days; "Sign mandate (preview — nothing is signed)". Page: `/agents?tab=mandates`.
-- [ ] **Renew** — Renew… in the mandate: pick a new length (up to 30 days) from now; revision 2, same scope. Page: `/agents?tab=mandates`.
+- [ ] **Issue a mandate** — Show the mandate anyway (preview), then Issue a mandate…: "Steers the whole workspace in your name", what it may do (approve waiting agents and gates including code review, land on main (owners may since 11 Oct; never more than its owner), first send to a linked workspace, publish publicly, restore/purge, unblock tickets, enable factories and start their runs including Deliver, issue grants), what stays yours (settings, addons, members and roles, devices, relay pairing, secrets and connections, protected paths, another mandate), a length up to 30 days; "Sign mandate (preview — nothing is signed)". Page: `/agents?tab=mandates`.
+- [ ] **Renew** — Renew… in the mandate: pick a new length (up to 30 days) from now; revision 2, same scope, no total renewal ceiling. Weekly check-in due on the named day; Still OK is preview-only. After 3 unconfirmed days it pauses, not revokes. Page: `/agents?tab=mandates`.
 - [ ] **The banner** — One calm line on every page: Mandate md_3 · for Severin · whole workspace · 10 decisions · until Tue. Details opens the tab; × hides it for this session. Page: `/board`.
-- [ ] **Decided for you** — Today, below the real queue: one folded row. Open it for up to 3 decisions (a grant, a factory run, a permit … with Looks right, Veto), the refused items (protected path, your veto, an addon install and a second mandate, both refused) and Show all; "Revoke mandate and void…" sits in its header. Page: `/`.
+- [ ] **Decided for you** — Today, below the real queue: one folded row. Open it for up to 3 decisions (a grant, a factory run, a permit … with Looks right, Veto), the refused items (protected path, your veto, an addon install and a second mandate, both refused) and Show all; "Revoke mandate and void" sits in its header. Page: `/`.
 - [ ] **Stop** — Stop in the banner (optionally also stop agents): "Stopping…", then "Stopped at #1842". Page: `/agents?tab=mandates`.
-- [ ] **Revoke and void** — Lists the 8 decisions it would void and the 2 on landed work it only lists for review. Page: `/agents?tab=mandates`.
+- [ ] **Revoke and void** — Lists the 8 decisions it would void and the 1 on landed work it only lists for review. Page: `/agents?tab=mandates`.
 - [ ] **Off again** — Demo data → Preview: mandates (or Reset demo): Today and the shell look exactly as before. Page: `/`.
 
 Quickest way in: **Demo data → Preview: mandates** turns the preview on with mandate md_3 already in force (seeded as if it had run for three days). Off by default; Reset demo turns it off.
@@ -263,12 +263,12 @@ Quickest way in: **Demo data → Preview: mandates** turns the preview on with m
 Owner decision 10 Oct evening (D61 option): one signed request, the factory goes to Preview or all the way to Deliver, with a hold window and Stop.
 
 - [ ] **A run on hold** — Demo data → Busy day, then AI Factory: "Delivering in 28 min · Publish campaign to the newsletter list" above the tabs with Stop delivery, the same line in the shell, and a needs-you item on Today. Page: `/addon/factory/factory`.
-- [ ] **Stop the delivery** — Stop… in the shell line (or Stop delivery on the page): core's prompt names the run, the destination and the end of the window; Send answer. "Stopped by Severin …: nothing went out." Page: `/addon/factory/factory`.
-- [ ] **Request a full run** — Full runs tab: Goal, "How far may the factory go on its own?" → All the way to Deliver, What Deliver means (required), Hold window → Review request → Sign and start (or Fill in a demo request). The prompt lists every value in core lines. Page: `/addon/factory/factory`.
+- [ ] **Stop the delivery** — Stop in the shell line (or Stop delivery on the page): core's prompt names the run, the destination and the end of the window; Send answer. "Stopped by Severin …: nothing went out." Full runs now offers Deliver now… and Deliver with a new hold…: choose, then sign the run, destination and new hold; no work is redone. Page: `/addon/factory/factory`.
+- [ ] **Request a full run** — Full runs tab: Goal, "How far may the factory go on its own?" → All the way to Deliver, What Deliver means (required), Hold window (0 no hold / 15 min default / 30 min / 1 h / 4 h / 24 h) → Review request → Sign and start (or Fill in a demo request). The prompt lists every value in core lines; zero says “No hold: delivers as soon as its checks pass”. Page: `/addon/factory/factory`.
 - [ ] **Watch the steps** — Plan, then Requirements / Build and test / Validate / Evidence per child, then Preview: each reads "via the factory full run you signed on … — no person reviewed this step". About 30 s later it holds before Deliver. Page: `/addon/factory/factory`.
 - [ ] **Delivered** — Simulate: let the hold time pass (demo) ends the hold now: "Delivered: Deploy to production at …". The epic's History has the run's milestones. Page: `/addon/factory/factory`.
 
-In the normal demo, install AI Factory (Settings → Addons → Browse addons), then Full runs → Fill in a demo request → Sign and start: it reaches the hold in about 30 s. The mock clock runs in real time, so a 30-minute hold really takes 30 minutes; Simulate: let the hold time pass (demo) ends it now. Proposal: `docs/factory-full-run-proposal.md`.
+In the normal demo, install AI Factory (Settings → Addons → Browse addons), then Full runs → Fill in a demo request → Sign and start: it reaches the hold in about 30 s. The mock clock runs in real time, so the default 15-minute hold really takes 15 minutes; Simulate: let the hold time pass (demo) ends it now. Proposal: `docs/factory-full-run-proposal.md`.
 
 ## What is simulated
 
@@ -351,7 +351,7 @@ format's own shape). `web-portal` links DEMO-0046; follow "Tickets linking web-p
 
 Clone billing-api: core's cover shows the full URL, the target folder and the git login. Wait six seconds for queued →
 cloning → present. In Busy day, Clone all missing includes private-api: it fails once, then Retry works. Fetch keeps
-dirty work. Checks → Check now; Activity log records who and when.
+dirty work. Checks → Check now; Activity records who and when.
 
 Declare a repo (owners only) → a fake HTTPS or SSH remote → Review repo → Sign and declare: core's
 `settings.changed` appears in the workspace log. Try a credential-bearing remote, `git@-oProxyCommand=x:y`, `..` or an
@@ -370,3 +370,21 @@ D58, D59, D60 confirmed. Two changes, both shown in the mockup and logged in DEC
   and roles, devices, relay pairing, secrets and connections and protected paths; up to 30 days, renewable with one
   new signature; it may start full runs that Deliver; it never issues another mandate. Concept:
   `docs/concept-mandates.md` (open points in §6).
+
+## Owner answers, 11 Oct morning (U8)
+
+- Mandates preview: issue, inspect code-review approval and the allowed land-on-main decision, then “Still OK” beside the weekly due day.
+  Nothing signs. Renewals have no total ceiling; 3 unconfirmed days pauses instead of revoking.
+- Factory Full runs: hold choices 0 (no hold), 15 min (default), 30 min, 1 h, 4 h, 24 h. Inspect the zero-hold signing
+  cover, then stop a positive hold and try Deliver now… / Deliver with a new hold…; sign the new delivery without
+  redoing work. Only owners can do this. Phone push + Face ID Stop belongs to orch-mobile.
+- Busy day factory: expand “n permits waiting · Review”; the same permits still wait on Today.
+- Repos: declare an SSH URL with literal git user; another user/password is refused. No primary flag;
+  remote/default_branch remain proposed for the format amendment (owner agreed 11 Oct).
+- Verify names the last gate; addon log tabs say Activity; the ticket tab still says History. Confirmation-only
+  buttons have no ellipsis; input dialogs retain it.
+
+D33 follow-up: as Severin, set Landing → Allowed targets to `main, develop`, open an approved unlanded
+ticket and Add to the landing queue. Check Covers shows ticket, target `main`, and approved commit,
+then Sign and run; run the demo worker. As Mara or a member main enqueue is refused. For red checks
+on main, take it off the queue and sign again. Other targets keep their existing roles.

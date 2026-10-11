@@ -33,7 +33,7 @@ export function MandateBanner() {
   if (dismissed[key] ?? readDismissed(key)) return null
 
   const live = m.decisions.filter((d) => !d.voided).length
-  const phase = m.state === 'stopping' ? 'Stopping…' : m.state === 'stopped' ? `Stopped at #${m.stop?.boundary_seq}` : `until ${weekday(m.expires)}`
+  const phase = m.state === 'paused' ? 'Paused: weekly check-in overdue' : m.state === 'stopping' ? 'Stopping…' : m.state === 'stopped' ? `Stopped at #${m.stop?.boundary_seq}` : `until ${weekday(m.expires)}`
   const text = `Mandate ${plain(m.id)} · for ${plain(m.issuer)} · whole workspace · ${live} decision${live === 1 ? '' : 's'} · ${phase}`
   return (
     <div role="region" aria-label="Mandate in force (preview)" data-testid="mandate-banner" className="flex h-9 shrink-0 items-center gap-2 border-b border-border bg-surface px-4 text-[13px]">

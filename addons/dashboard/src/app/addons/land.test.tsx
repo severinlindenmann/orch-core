@@ -12,18 +12,18 @@ describe('Landing page', () => {
     renderApp('/addon/land/landing', { viewer: 'p_sev' })
     const h1 = await screen.findByRole('heading', { level: 1, name: /Landing/ }, T)
     expect(within(h1).getByText('Preview')).toBeInTheDocument()
-    expect(await screen.findByRole('heading', { name: 'github.com/acme-energy/billing-api → develop' }, T)).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'git.example.test/acme/billing-api → develop' }, T)).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'github.com/acme-energy/energy-dbt → develop' })).toBeInTheDocument()
     expect(screen.getByText(/Worker: checking DEMO-0052 \(attempt #14\)/)).toBeInTheDocument()
     expect(screen.getByText(/Attempt #14 · DEMO-0052/)).toBeInTheDocument()
     expect(await screen.findByText('T2 integration checks', {}, T)).toBeInTheDocument()
-    expect(screen.getByText(/main \(D33: people merge to main by hand\)/)).toBeInTheDocument()
+    expect(screen.getByText('Owner signature required (D33, 11 Oct)')).toBeInTheDocument()
     expect(screen.getByText('1 from another workspace on this machine')).toBeInTheDocument()
   })
 
-  it('History lists land.attempt records with source, target and candidate (core tabs)', async () => {
+  it('Activity lists land.attempt records with source, target and candidate (core tabs)', async () => {
     const { user } = renderApp('/addon/land/landing', { viewer: 'p_sev' })
-    await user.click(await screen.findByRole('tab', { name: /History/ }, T))
+    await user.click(await screen.findByRole('tab', { name: /Activity/ }, T))
     expect(await screen.findByRole('columnheader', { name: 'Candidate' }, T)).toBeInTheDocument()
     const rows = screen.getAllByRole('row')
     expect(rows.some((r) => /DEMO-0053.*failed: conflict/.test(r.textContent ?? ''))).toBe(true)

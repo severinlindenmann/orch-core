@@ -15,7 +15,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { VIEWER_REASON } from '@/components/DisabledReason'
 import { CopyLinkButton } from '@/app/shell/CopyLinkButton'
 import { BlockedByConnection } from './Needs'
-import { availableActions, blockedApproval, GATE_LABEL, primaryAction, primaryLabel } from './actions'
+import { availableActions, gateActionName, blockedApproval, primaryAction, primaryLabel } from './actions'
 import { agentName, fmtClock, Mono, Pill, StatusChip, type Jump, type HumanAction, type Viewer } from './shared'
 
 export function CopyButton({ text, label }: { text: string; label: string }) {
@@ -60,7 +60,7 @@ function AgentStatus({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewe
 
 const START_AGENT = 'start-agent'
 
-/** "Start agent…" in the Actions menu (the start-agent addon, when active here). Core checks the claim before any dialog. */
+/** "Start agent" in the Actions menu (the start-agent addon, when active here). Core checks the claim before any dialog. */
 function StartAgentItem({ ticket, viewer, r }: { ticket: TicketDocument; viewer: Viewer; r: RunAddonAction }) {
   const { workspace } = useWorkspace()
   const { data: addons } = useAddons()
@@ -76,7 +76,7 @@ function StartAgentItem({ ticket, viewer, r }: { ticket: TicketDocument; viewer:
         <Bot className="mt-0.5" />
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-2">
-            Start agent…
+            Start agent
             <AddonBadge name={START_AGENT} title={pkg?.title} className="ml-auto" />
           </span>
           {reason && <span className="mt-0.5 block text-[12px] text-text-muted">{reason}</span>}
@@ -117,7 +117,7 @@ export function ActionsMenu({ ticket, viewer, sign, jump, signing = false }: { t
         {approve.map((g) => (
           <DropdownMenuItem key={g} onSelect={() => sign({ kind: 'approve', gate: g })}>
             <Check />
-            Approve {GATE_LABEL[g].toLowerCase()}
+            Approve {gateActionName(g)}
           </DropdownMenuItem>
         ))}
         {verdict && (
@@ -130,7 +130,7 @@ export function ActionsMenu({ ticket, viewer, sign, jump, signing = false }: { t
         {av.requestChanges.map((g) => (
           <DropdownMenuItem key={g} onSelect={() => sign({ kind: 'request_changes', gate: g })}>
             <Timer />
-            Request changes on {GATE_LABEL[g].toLowerCase()}
+            Request changes on {gateActionName(g)}
           </DropdownMenuItem>
         ))}
         <StartAgentItem ticket={ticket} viewer={viewer} r={r} />

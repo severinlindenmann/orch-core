@@ -48,7 +48,17 @@ EMITS_V1: dict[str, frozenset[str]] = {
     "grant": frozenset({"grant.issued"}),
     "grant.revoke": frozenset({"grant.revoked"}),
     "handoff": frozenset({"claim.released", "handoff.written"}),
-    "import.v1": frozenset({"log.added", "ticket.created"}),
+    "import.v1": frozenset(
+        {
+            "artifact.added",
+            "log.added",
+            "question.asked",
+            "status.changed",
+            "ticket.closed",
+            "ticket.created",
+            "ticket.updated",
+        }
+    ),
     "init": frozenset({"workspace.created"}),
     "log": frozenset({"log.added"}),
     "member.add": frozenset({"member.added"}),
@@ -69,5 +79,30 @@ EMITS_V1: dict[str, frozenset[str]] = {
     "task.start": frozenset({"task.started"}),
     "verdict": frozenset({"verdict.given"}),
 }
+
+HUMAN_ONLY: frozenset[str] = frozenset(
+    {
+        "addon.disable",
+        "addon.grant",
+        "addon.purge",
+        "answer",
+        "approve",
+        "close",
+        "grant",
+        "grant.revoke",
+        "import.v1",
+        "init",
+        "member.add",
+        "member.remove",
+        "member.role",
+        "reopen",
+        "request_changes",
+        "verdict",
+    }
+)
+"""The operations a person runs with their own signature (``who: human``). **A verb that names one grants nothing**
+(F1 10.1): a model rule, not only a check of ``orch grant``, so a ``grant.issued`` written by another client cannot make
+an agent's event covered by ``approve`` or ``import.v1``. ``tests/ops/test_emits.py`` checks the set equals the
+registry's human operations."""
 
 CURRENT = EMITS_V1

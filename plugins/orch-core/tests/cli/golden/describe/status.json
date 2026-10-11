@@ -7,7 +7,7 @@
     "cli": "orch status",
     "summary": "Who you are, your grant, your cursor, your claim and what needs you.",
     "who": "read",
-    "usage": "orch status",
+    "usage": "orch status [--verbose]",
     "pre": [
       "workspace_exists"
     ],
@@ -15,12 +15,17 @@
     "input": {
       "type": "object",
       "description": "Who you are, your grant, your cursor, your claim and what needs you.",
-      "properties": {},
+      "properties": {
+        "verbose": {
+          "type": "boolean",
+          "description": "also show the state directory"
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
     "output": {
-      "text": "ok status {person} cursor={cursor}[ grant={grant}][ claim={claim}]\nnext: {next}",
+      "text": "ok status person={person} cursor={cursor}[ grant={grant}][ claim={claim}]\nnext: {next}",
       "json": {
         "type": "object",
         "properties": {
@@ -50,8 +55,7 @@
         },
         "required": [
           "person",
-          "cursor",
-          "state_dir"
+          "cursor"
         ],
         "additionalProperties": false
       }

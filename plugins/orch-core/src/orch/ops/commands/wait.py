@@ -77,7 +77,7 @@ OP = operation(
         "strict_timeout": B("exit 7 when the timeout passes"),
     },
     pre=("ticket_exists", "ticket_visible"),
-    text="ok {key} wait {kind} cursor={cursor}\nnext: {next}",
+    text="ok {key} {kind} cursor={cursor}\nnext: {next}",
     output_ref="https://schemas.orch.dev/v2/wait-result",
     errors=(err("wait.timeout"), err("not_found"), err("ambiguous_ref")),
     handler=handle,

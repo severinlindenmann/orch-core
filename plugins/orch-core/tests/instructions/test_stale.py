@@ -95,7 +95,7 @@ def ws(tmp_path):
 
 def test_orch_check_reports_stale_instructions_and_sync_fixes_them(ws):
     code, out, err = cli(ws, "check")
-    assert code == 5 and out.splitlines()[0] == "ok check 4", out + err  # problems: exit 5 so a hook can gate
+    assert code == 5 and out.splitlines()[0] == "check: 4 problems", out + err  # problems: exit 5 so a hook can gate
     assert "AGENTS.orch.md: missing" in out and out.splitlines()[-1] == "next: orch instructions sync"
     code, out, err = cli(ws, "instructions", "sync", grant=False)  # no grant needed, no event
     assert code == 0 and out.splitlines()[0] == f"ok instructions.sync r{INSTRUCTIONS_REV}", out + err

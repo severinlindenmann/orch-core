@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from orch.ops import plans
+from orch.ops import plans, views
 from orch.ops._dsl import FILE, INT, MSG, REF, err, obj, operation
 from orch.ops.base import Context, Result
 from orch.ops.errors import OrchError
@@ -20,7 +20,7 @@ def build(c: Call, p: Projection, args: dict[str, Any]) -> plans.Out:
         raise OrchError("invalid.input", "the handoff is empty")
     p.add({"type": "handoff.written", "text": text})
     p.add({"type": "claim.released", "session": p.view.claim.session, "reason": "handoff"})
-    return plans.Out({"bytes": len(text.encode("utf-8"))}, ["orch claim --next"])
+    return plans.Out({"bytes": len(text.encode("utf-8"))}, [views.claim_hint(c)])
 
 
 OP = operation(

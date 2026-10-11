@@ -14,7 +14,7 @@ def test_claim_takes_the_ticket_and_moves_it_to_in_progress(ws, cli):
     make(cli, "A")
     r = cli("claim", "DEMO-0001")
     assert r.code == 0 and r.first == "ok DEMO-0001 claim.taken in_progress seq=2"
-    assert "next: orch show" in r.out
+    assert "next: orch section set context -m TEXT" in r.out  # a fresh ticket: its first gate needs text
     assert ws.view("DEMO-0001").claim.session == SESSION
     assert cli.j("claim", "1").code == 0  # your own live claim again: answered, nothing appended
     assert len(ws.read_events(ws.uid("1"))) == 2

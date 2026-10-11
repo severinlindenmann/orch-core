@@ -7,7 +7,7 @@ import json
 import pytest
 
 from orch.ops import runtime
-from tests.ops.helpers import Cli
+from tests.ops.helpers import OTHER, Cli
 from tests.ops.test_task_ac import claimed, fill_and_approve, py
 
 
@@ -25,10 +25,57 @@ def test_the_next_hint_of_each_operation(ws, cli):
     cli("task", "start", "T2")
     assert last(cli("task", "next")) == "next: orch task done T2"
     r = cli("task", "done", "T2")
-    assert last(r) == 'next: orch ask "approve the requirements gate?"'  # a gate is open: submit would be refused
+    assert last(r) == "next: orch section set context -m TEXT"  # a gate is open and empty: nobody can approve it yet
+    for sec in ("context", "requirements", "out_of_scope"):
+        assert last(cli("show")) == f"next: orch section set {sec} -m TEXT"
+        cli("section", "set", sec, "-m", "text")
+    assert last(cli("show")) == 'next: orch ask "approve the requirements gate?"'  # complete: asking works now
     r = cli.j("task", "add", "x", "--proves", "AC9")
     assert r.err_code == "not_found" and r.doc["error"]["hint"] == "orch ac add TEXT"
     assert last(cli("next")) == "next: orch show DEMO-0001"  # a ticket I hold
+
+
+def test_a_hint_never_names_a_command_that_cannot_succeed(ws, cli):
+    """Every ``next:`` of the walk from an empty workspace to a ready gate is a command that works as printed."""
+    assert last(cli("status")) == 'next: orch new "TITLE"'  # nothing to claim yet
+    cli("new", "A")
+    assert last(cli("status")) == "next: orch claim --next"
+    cli("claim", "1")
+    other = Cli(ws, session=OTHER)
+    assert last(other("show", "1")) == "next: orch show"  # not its claim: no edit hint
+    walk = [
+        ("orch section set context -m TEXT", ("section", "set", "context", "-m", "x")),
+        ("orch section set requirements -m TEXT", ("section", "set", "requirements", "-m", "x")),
+        ("orch section set out_of_scope -m TEXT", ("section", "set", "out_of_scope", "-m", "x")),
+        ("orch ac add TEXT", ("ac", "add", "a criterion")),
+    ]
+    for hint, argv in walk:
+        assert last(cli("show")) == f"next: {hint}"
+        assert cli(*argv).code == 0, hint
+    cli("section", "set", "plan", "-m", "p")
+    cli("section", "set", "decisions", "-m", "d")
+    assert last(cli("show")) == "next: orch show"  # requirements wait for a person: nothing to type
+    assert last(cli("task", "add", "t")) == "next: orch task start T1"
+    assert last(cli("task", "start", "T1")) == "next: orch task done T1"
+    assert (
+        last(cli("task", "done", "T1")) == 'next: orch ask "approve the requirements gate?"'
+    )  # complete: asking works
+
+
+def test_task_done_without_run_says_the_criterion_still_has_no_evidence(ws, cli):
+    claimed(cli)
+    cli("ac", "add", "it works")
+    cli("task", "add", "do it", "--verify", py("print(1)"), "--proves", "AC1")
+    cli("task", "add", "no check", "--proves", "AC1")
+    r = cli("task", "done", "T1")
+    assert (
+        "note: AC1 still has no evidence (done without --run); orch task reopen T1, then orch task done T1 --run"
+        in r.out
+    )
+    assert cli("task", "reopen", "T1").code == 0
+    assert "no evidence" not in cli("task", "done", "T1", "--run").out  # the receipt is the evidence
+    r = cli("task", "done", "T2")
+    assert "no evidence" not in r.out  # AC1 has evidence by now
 
 
 def test_the_hints_of_a_refused_submit_name_what_is_open(ws, cli):
@@ -118,12 +165,14 @@ def test_a_relative_xdg_path_is_ignored(tmp_path):
 
 
 def test_status_shows_the_state_dir_and_a_pin_made_by_this_call(ws, cli):
-    d = cli.j("status").data
+    assert "state_dir" not in cli.j("status").data and "state dir" not in cli("status").out  # only with --verbose
+    d = cli.j("status", "--verbose").data
     assert d["state_dir"] == str(ws.host_state) and "pin" not in d  # the bootstrap pinned the genesis already
     pin = ws.host_state / "hosts" / "705d40abbb8c1c90354a1acaa94c935c" / "genesis"
     pin.unlink()
     r = cli("status")
-    assert "genesis pin created by this call" in r.out and f"state dir {ws.host_state}" in r.out
+    assert "genesis pin created by this call" in r.out and "state dir" not in r.out
+    assert f"state dir {ws.host_state}" in cli("status", "--verbose").out
     assert cli.j("status").data.get("pin") is None  # the second call finds it
 
 

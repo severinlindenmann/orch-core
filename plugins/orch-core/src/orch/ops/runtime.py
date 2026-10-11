@@ -609,7 +609,9 @@ class Call:
             import orch.ops as ops
 
             cli = ops.get(self.op).cli
-            hint = f"orch {cli} {mine[0].key}" if mine else "orch claim --next"
+            from orch.ops import views
+
+            hint = f"orch {cli} {mine[0].key}" if mine else views.claim_hint(self)
             raise OrchError("ambiguous_ref", f"name the ticket REF; your claims: {names}", hint=hint)
         view = self.store.ticket(part)
         if view is None or not self.sees(view):

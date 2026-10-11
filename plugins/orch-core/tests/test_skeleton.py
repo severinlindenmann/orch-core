@@ -46,10 +46,22 @@ def test_entry_point_version():
     assert (r.returncode, r.stdout.strip()) == (0, "orch v2 (in development)")
 
 
-def test_unimplemented_exits_1_with_the_error_envelope():
+def test_unimplemented_exits_1_with_the_error_envelope(monkeypatch):
     # C5: a declared operation without a handler yet is `not_implemented`, exit 1 (format doc 10.4: internal).
-    r = subprocess.run([sys.executable, "-m", "orch", "doctor"], capture_output=True, text=True)
-    assert r.returncode == 1 and r.stderr.startswith("err not_implemented doctor: not implemented yet")
+    # No real command is named: once every operation has a handler this still holds (a handler is taken away here).
+    import io
+
+    from orch import ops
+    from orch.cli.main import main
+
+    real = ops.get("inbox").handler
+    ops.bind("inbox", ops._unimplemented("inbox"))
+    try:
+        out, err = io.StringIO(), io.StringIO()
+        code = main(["inbox"], env={}, stdout=out, stderr=err)
+    finally:
+        ops.bind("inbox", real)
+    assert code == 1 and err.getvalue().startswith("err not_implemented inbox: not implemented yet")
 
 
 def test_shared_vectors_parse():

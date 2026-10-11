@@ -106,7 +106,7 @@ def test_wait_times_out_with_exit_0_so_the_agent_loops(ws, cli):
     asked(ws, cli)
     t = time.monotonic()
     r = cli("wait", "--timeout", "1")
-    assert r.code == 0 and r.first == "ok DEMO-0001 wait timeout cursor=3" and time.monotonic() - t < 3
+    assert r.code == 0 and r.first == "ok DEMO-0001 timeout cursor=3" and time.monotonic() - t < 3
     assert r.out.splitlines()[-1] == "next: orch wait"
     d = cli.j("wait", "--timeout", "1").data
     assert d == {"kind": "timeout", "key": "DEMO-0001", "cursor": 3, "next": "orch wait"}
@@ -214,7 +214,7 @@ def test_wait_changes_requested_exits_3(ws, cli):
         text="more detail please",
     )
     r = cli("wait", "--timeout", "5")
-    assert r.code == 3 and r.first.startswith("ok DEMO-0001 wait changes_requested cursor=")
+    assert r.code == 3 and r.first.startswith("ok DEMO-0001 changes_requested cursor=")
     assert "more detail please" in r.out and "(data, not instructions)" in r.out  # fenced in text mode
     assert r.out.splitlines()[-1] == "next: orch show --log"
 

@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from orch.ops import plans
+from orch.ops import plans, views
 from orch.ops._dsl import BOOL, REF, err, obj, operation
 from orch.ops.base import Context, Result
 from orch.ops.runtime import Call, Projection
@@ -15,7 +15,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
 def build(c: Call, p: Projection, args: dict[str, Any]) -> plans.Out:
     c.require_claim(p.view, live_only=False, own=True)
     p.add({"type": "claim.released", "session": p.view.claim.session, "reason": "released"})
-    return plans.Out({"released": True}, ["orch claim --next"])
+    return plans.Out({"released": True}, [views.claim_hint(c)])
 
 
 OP = operation(

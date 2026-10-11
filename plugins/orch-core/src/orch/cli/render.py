@@ -171,6 +171,8 @@ def result_text(op: Operation, res: Result) -> str:
     head, _, tail = fill(op.output["text"], _fields(res)).partition("\n")
     if res.duplicate:
         head += " duplicate"
+    if res.head is not None:
+        head = res.head
     parts = [clean(head), *(x for line in res.lines for x in _body_lines(line))]
     if tail:
         parts.append(clean(tail))

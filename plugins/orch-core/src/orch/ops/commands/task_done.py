@@ -48,6 +48,23 @@ def _free_name(view: Any, base: str) -> str:
     return name
 
 
+def _no_evidence(
+    view: Any, tid: str, task: dict[str, Any], args: dict[str, Any], receipt: Any, evidence: Any
+) -> list[str]:
+    """A task that proves criteria finished without a receipt or evidence file leaves them without evidence: say so."""
+    if receipt is not None or evidence is not None or args.get("run"):
+        return []
+    bare = [a.id for a in view.acceptance if a.id in task["proves"] and not a.evidence]
+    if not bare:
+        return []
+    how = (
+        f"orch task reopen {tid}, then orch task done {tid} --run"
+        if task["verify"] is not None
+        else f"orch artifact add PATH --ac {bare[0]} --task {tid}"
+    )
+    return [f"note: {', '.join(bare)} still has no evidence (done without --run); {how}"]
+
+
 def handle(ctx: Context, args: dict[str, Any]) -> Result:
     c = Call.of(ctx, "task.done")
     ref, _, tid = args["task"].rpartition("/")
@@ -93,7 +110,11 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
             data["receipt"] = f"exit0/{receipt['ms']}ms"
         if art_name is not None:
             data["artifact"] = art_name
-        lines = [*notes, *plans.render_next_task(p.last_view, ctx.session)]
+        lines = [
+            *notes,
+            *_no_evidence(p.last_view, tid, task, args, receipt, evidence),
+            *plans.render_next_task(p.last_view, ctx.session),
+        ]
         return c.result(p.last_view, data, seq=seq, hints=[views.next_hint(p.last_view, ctx.session)], lines=lines)
 
 

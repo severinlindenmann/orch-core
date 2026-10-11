@@ -220,7 +220,7 @@ def test_an_agent_session_works_in_the_new_workspace(where, term, passphrases):
         return code, out.getvalue(), err.getvalue()
 
     code, out, err = orch("status")
-    assert code == 0 and out.startswith("ok status Severin"), out + err
+    assert code == 0 and out.startswith("ok status person=Severin"), out + err
     assert "genesis pin created" not in out  # init pinned it
     code, out, err = orch("new", "First ticket", "-m", "Do the thing.")
     assert code == 0 and out.startswith("ok DEMO-0001 ticket.created"), out + err

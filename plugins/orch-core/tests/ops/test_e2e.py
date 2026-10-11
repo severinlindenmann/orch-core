@@ -62,7 +62,7 @@ def test_a_scripted_agent_session(ws, orch, tmp_path):
     r = orch("new", "Load tariff tables", "--priority", "high", "-m", "Load the tables.")
     assert r.returncode == 0 and r.stdout.startswith("ok DEMO-0001 ticket.created feature"), r.stderr
     assert orch("claim", "DEMO-0001").returncode == 0
-    assert orch("status").stdout.splitlines()[0].startswith("ok status Owner cursor=")
+    assert orch("status").stdout.splitlines()[0].startswith("ok status person=Owner cursor=")
     for sec in ("context", "requirements", "out_of_scope", "plan", "decisions", "verification"):
         assert orch("section", "set", sec, "-m", f"text of {sec}").returncode == 0, sec
     assert orch("ac", "add", "the build is green").returncode == 0

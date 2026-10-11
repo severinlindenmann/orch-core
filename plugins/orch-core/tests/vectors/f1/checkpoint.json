@@ -319,10 +319,11 @@
      "sig": "2cAZbLGvTv0InQ53CxcvTZXz0lRFCfVI7eDwnBC4uyfN3l8C30Y1zvGZQUGZTUpaWPmI-Oz4wsYSuhznATdUTg"
     },
     "abandoned_heads": [
-     "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
      "sha256:90a514d49f67df9d29f1bdc76e0b91d5baedf156a0f222cd8d02338a7179d34e",
      "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920"
     ],
+    "acc_before": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "acc_from": "sha256:cc4f9dc2c75ad6af09128a145e1f4820eef5127aef629fc5c275826b0c4d921c",
     "delegation": {
      "o": {
       "client_hosted": false,
@@ -392,11 +393,9 @@
      "type": "restore",
      "v": 2
     },
+    "forward_heads": [],
     "log": "workspace",
-    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94",
-    "retained_heads": [
-     "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5"
-    ]
+    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94"
    }
   },
   {
@@ -499,10 +498,11 @@
      "sig": "2cAZbLGvTv0InQ53CxcvTZXz0lRFCfVI7eDwnBC4uyfN3l8C30Y1zvGZQUGZTUpaWPmI-Oz4wsYSuhznATdUTg"
     },
     "abandoned_heads": [
-     "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
      "sha256:90a514d49f67df9d29f1bdc76e0b91d5baedf156a0f222cd8d02338a7179d34e",
      "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920"
     ],
+    "acc_before": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "acc_from": "sha256:cc4f9dc2c75ad6af09128a145e1f4820eef5127aef629fc5c275826b0c4d921c",
     "delegation": {
      "o": {
       "client_hosted": false,
@@ -572,11 +572,9 @@
      "type": "restore",
      "v": 2
     },
+    "forward_heads": [],
     "log": "workspace",
-    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94",
-    "retained_heads": [
-     "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5"
-    ]
+    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94"
    }
   },
   {
@@ -679,10 +677,11 @@
      "sig": "2cAZbLGvTv0InQ53CxcvTZXz0lRFCfVI7eDwnBC4uyfN3l8C30Y1zvGZQUGZTUpaWPmI-Oz4wsYSuhznATdUTg"
     },
     "abandoned_heads": [
-     "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
      "sha256:90a514d49f67df9d29f1bdc76e0b91d5baedf156a0f222cd8d02338a7179d34e",
      "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920"
     ],
+    "acc_before": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "acc_from": "sha256:cc4f9dc2c75ad6af09128a145e1f4820eef5127aef629fc5c275826b0c4d921c",
     "delegation": {
      "o": {
       "client_hosted": false,
@@ -752,11 +751,9 @@
      "type": "restore",
      "v": 2
     },
+    "forward_heads": [],
     "log": "workspace",
-    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94",
-    "retained_heads": [
-     "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5"
-    ]
+    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94"
    }
   },
   {
@@ -843,10 +840,11 @@
      "sig": "2cAZbLGvTv0InQ53CxcvTZXz0lRFCfVI7eDwnBC4uyfN3l8C30Y1zvGZQUGZTUpaWPmI-Oz4wsYSuhznATdUTg"
     },
     "abandoned_heads": [
-     "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
      "sha256:90a514d49f67df9d29f1bdc76e0b91d5baedf156a0f222cd8d02338a7179d34e",
      "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920"
     ],
+    "acc_before": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "acc_from": "sha256:cc4f9dc2c75ad6af09128a145e1f4820eef5127aef629fc5c275826b0c4d921c",
     "delegation": {
      "o": {
       "client_hosted": false,
@@ -916,11 +914,9 @@
      "type": "restore",
      "v": 2
     },
+    "forward_heads": [],
     "log": "workspace",
-    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94",
-    "retained_heads": [
-     "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5"
-    ]
+    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94"
    }
   },
   {
@@ -990,10 +986,11 @@
      "sig": "2cAZbLGvTv0InQ53CxcvTZXz0lRFCfVI7eDwnBC4uyfN3l8C30Y1zvGZQUGZTUpaWPmI-Oz4wsYSuhznATdUTg"
     },
     "abandoned_heads": [
-     "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
      "sha256:90a514d49f67df9d29f1bdc76e0b91d5baedf156a0f222cd8d02338a7179d34e",
      "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920"
     ],
+    "acc_before": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "acc_from": "sha256:cc4f9dc2c75ad6af09128a145e1f4820eef5127aef629fc5c275826b0c4d921c",
     "delegation": {
      "o": {
       "client_hosted": false,
@@ -1063,11 +1060,11 @@
      "type": "restore",
      "v": 2
     },
-    "log": "workspace",
-    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94",
-    "retained_heads": [
+    "forward_heads": [
      "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5"
-    ]
+    ],
+    "log": "workspace",
+    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94"
    }
   },
   {
@@ -1137,10 +1134,11 @@
      "sig": "2cAZbLGvTv0InQ53CxcvTZXz0lRFCfVI7eDwnBC4uyfN3l8C30Y1zvGZQUGZTUpaWPmI-Oz4wsYSuhznATdUTg"
     },
     "abandoned_heads": [
-     "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
      "sha256:90a514d49f67df9d29f1bdc76e0b91d5baedf156a0f222cd8d02338a7179d34e",
      "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920"
     ],
+    "acc_before": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "acc_from": "sha256:cc4f9dc2c75ad6af09128a145e1f4820eef5127aef629fc5c275826b0c4d921c",
     "delegation": {
      "o": {
       "client_hosted": false,
@@ -1210,11 +1208,9 @@
      "type": "restore",
      "v": 2
     },
+    "forward_heads": [],
     "log": "workspace",
-    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94",
-    "retained_heads": [
-     "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5"
-    ]
+    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94"
    }
   },
   {
@@ -1301,10 +1297,11 @@
      "sig": "2cAZbLGvTv0InQ53CxcvTZXz0lRFCfVI7eDwnBC4uyfN3l8C30Y1zvGZQUGZTUpaWPmI-Oz4wsYSuhznATdUTg"
     },
     "abandoned_heads": [
-     "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
      "sha256:90a514d49f67df9d29f1bdc76e0b91d5baedf156a0f222cd8d02338a7179d34e",
      "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920"
     ],
+    "acc_before": "bad",
+    "acc_from": "bad",
     "delegation": {
      "o": {
       "client_hosted": false,
@@ -1374,11 +1371,9 @@
      "type": "restore",
      "v": 2
     },
+    "forward_heads": [],
     "log": "workspace",
-    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94",
-    "retained_heads": [
-     "bad"
-    ]
+    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94"
    }
   },
   {
@@ -1465,10 +1460,11 @@
      "sig": "2cAZbLGvTv0InQ53CxcvTZXz0lRFCfVI7eDwnBC4uyfN3l8C30Y1zvGZQUGZTUpaWPmI-Oz4wsYSuhznATdUTg"
     },
     "abandoned_heads": [
-     "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
      "sha256:90a514d49f67df9d29f1bdc76e0b91d5baedf156a0f222cd8d02338a7179d34e",
      "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920"
     ],
+    "acc_before": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "acc_from": "sha256:cc4f9dc2c75ad6af09128a145e1f4820eef5127aef629fc5c275826b0c4d921c",
     "delegation": {
      "o": {
       "client_hosted": false,
@@ -1538,11 +1534,9 @@
      "type": "restore",
      "v": 2
     },
+    "forward_heads": [],
     "log": "workspace",
-    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94",
-    "retained_heads": [
-     "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5"
-    ]
+    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94"
    }
   },
   {
@@ -1629,10 +1623,11 @@
      "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
     },
     "abandoned_heads": [
-     "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
      "sha256:90a514d49f67df9d29f1bdc76e0b91d5baedf156a0f222cd8d02338a7179d34e",
      "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920"
     ],
+    "acc_before": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "acc_from": "sha256:cc4f9dc2c75ad6af09128a145e1f4820eef5127aef629fc5c275826b0c4d921c",
     "delegation": {
      "o": {
       "client_hosted": false,
@@ -1702,11 +1697,9 @@
      "type": "restore",
      "v": 2
     },
+    "forward_heads": [],
     "log": "workspace",
-    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94",
-    "retained_heads": [
-     "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5"
-    ]
+    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94"
    }
   },
   {
@@ -1793,6 +1786,8 @@
      "sig": "2cAZbLGvTv0InQ53CxcvTZXz0lRFCfVI7eDwnBC4uyfN3l8C30Y1zvGZQUGZTUpaWPmI-Oz4wsYSuhznATdUTg"
     },
     "abandoned_heads": null,
+    "acc_before": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "acc_from": "sha256:cc4f9dc2c75ad6af09128a145e1f4820eef5127aef629fc5c275826b0c4d921c",
     "delegation": {
      "o": {
       "client_hosted": false,
@@ -1862,11 +1857,9 @@
      "type": "restore",
      "v": 2
     },
+    "forward_heads": [],
     "log": "workspace",
-    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94",
-    "retained_heads": [
-     "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5"
-    ]
+    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94"
    }
   },
   {
@@ -1953,10 +1946,11 @@
      "sig": "2cAZbLGvTv0InQ53CxcvTZXz0lRFCfVI7eDwnBC4uyfN3l8C30Y1zvGZQUGZTUpaWPmI-Oz4wsYSuhznATdUTg"
     },
     "abandoned_heads": [
-     "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
      "sha256:90a514d49f67df9d29f1bdc76e0b91d5baedf156a0f222cd8d02338a7179d34e",
      "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5"
     ],
+    "acc_before": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "acc_from": "sha256:cc4f9dc2c75ad6af09128a145e1f4820eef5127aef629fc5c275826b0c4d921c",
     "delegation": {
      "o": {
       "client_hosted": false,
@@ -2026,11 +2020,9 @@
      "type": "restore",
      "v": 2
     },
+    "forward_heads": [],
     "log": "workspace",
-    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94",
-    "retained_heads": [
-     "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5"
-    ]
+    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94"
    }
   },
   {
@@ -2117,10 +2109,11 @@
      "sig": "2cAZbLGvTv0InQ53CxcvTZXz0lRFCfVI7eDwnBC4uyfN3l8C30Y1zvGZQUGZTUpaWPmI-Oz4wsYSuhznATdUTg"
     },
     "abandoned_heads": [
-     "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
      "sha256:90a514d49f67df9d29f1bdc76e0b91d5baedf156a0f222cd8d02338a7179d34e",
      "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920"
     ],
+    "acc_before": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "acc_from": "sha256:cc4f9dc2c75ad6af09128a145e1f4820eef5127aef629fc5c275826b0c4d921c",
     "delegation": {
      "o": {
       "client_hosted": false,
@@ -2190,11 +2183,9 @@
      "type": "restore",
      "v": 2
     },
+    "forward_heads": [],
     "log": "workspace",
-    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94",
-    "retained_heads": [
-     "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5"
-    ]
+    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94"
    }
   },
   {
@@ -2283,10 +2274,11 @@
      "sig": "2cAZbLGvTv0InQ53CxcvTZXz0lRFCfVI7eDwnBC4uyfN3l8C30Y1zvGZQUGZTUpaWPmI-Oz4wsYSuhznATdUTg"
     },
     "abandoned_heads": [
-     "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
      "sha256:90a514d49f67df9d29f1bdc76e0b91d5baedf156a0f222cd8d02338a7179d34e",
      "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920"
     ],
+    "acc_before": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "acc_from": "sha256:cc4f9dc2c75ad6af09128a145e1f4820eef5127aef629fc5c275826b0c4d921c",
     "delegation": {
      "o": {
       "client_hosted": false,
@@ -2356,11 +2348,9 @@
      "type": "restore",
      "v": 2
     },
+    "forward_heads": [],
     "log": "workspace",
-    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94",
-    "retained_heads": [
-     "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5"
-    ]
+    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94"
    }
   },
   {
@@ -2447,10 +2437,11 @@
      "sig": "2cAZbLGvTv0InQ53CxcvTZXz0lRFCfVI7eDwnBC4uyfN3l8C30Y1zvGZQUGZTUpaWPmI-Oz4wsYSuhznATdUTg"
     },
     "abandoned_heads": [
-     "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
      "sha256:90a514d49f67df9d29f1bdc76e0b91d5baedf156a0f222cd8d02338a7179d34e",
      "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920"
     ],
+    "acc_before": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "acc_from": "sha256:cc4f9dc2c75ad6af09128a145e1f4820eef5127aef629fc5c275826b0c4d921c",
     "delegation": {
      "o": {
       "client_hosted": false,
@@ -2520,11 +2511,9 @@
      "type": "restore",
      "v": 2
     },
+    "forward_heads": [],
     "log": "workspace",
-    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94",
-    "retained_heads": [
-     "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5"
-    ]
+    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94"
    }
   },
   {
@@ -2667,10 +2656,11 @@
      "sig": "2cAZbLGvTv0InQ53CxcvTZXz0lRFCfVI7eDwnBC4uyfN3l8C30Y1zvGZQUGZTUpaWPmI-Oz4wsYSuhznATdUTg"
     },
     "abandoned_heads": [
-     "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
      "sha256:90a514d49f67df9d29f1bdc76e0b91d5baedf156a0f222cd8d02338a7179d34e",
      "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920"
     ],
+    "acc_before": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "acc_from": "sha256:cc4f9dc2c75ad6af09128a145e1f4820eef5127aef629fc5c275826b0c4d921c",
     "delegation": {
      "o": {
       "client_hosted": false,
@@ -2740,11 +2730,9 @@
      "type": "restore",
      "v": 2
     },
+    "forward_heads": [],
     "log": "workspace",
-    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94",
-    "retained_heads": [
-     "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5"
-    ]
+    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94"
    }
   },
   {
@@ -2830,9 +2818,9 @@
      },
      "sig": "cYl24FUQ2QguVD1xUWAz21VwD85mieov-RUN5qFXM4eda_rcG5j_9uU_x0g5SjNyIvp3SGkgP11o1plVXnVq8g"
     },
-    "abandoned_heads": [
-     "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5"
-    ],
+    "abandoned_heads": [],
+    "acc_before": "sha256:44a9df442095f6d167e9c15033122ccf8038126cb5d676595dc7e3164256493e",
+    "acc_from": "sha256:a3a6b067e85e9fae49be8c5b083944c66d11ff0c547bcfad5ec1d6092a53489e",
     "delegation": {
      "o": {
       "client_hosted": false,
@@ -2896,13 +2884,12 @@
      "type": "restore",
      "v": 2
     },
-    "log": "workspace",
-    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94",
-    "retained_heads": [
-     "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+    "forward_heads": [
      "sha256:90a514d49f67df9d29f1bdc76e0b91d5baedf156a0f222cd8d02338a7179d34e",
      "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920"
-    ]
+    ],
+    "log": "workspace",
+    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94"
    }
   },
   {
@@ -2988,9 +2975,9 @@
      },
      "sig": "cYl24FUQ2QguVD1xUWAz21VwD85mieov-RUN5qFXM4eda_rcG5j_9uU_x0g5SjNyIvp3SGkgP11o1plVXnVq8g"
     },
-    "abandoned_heads": [
-     "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5"
-    ],
+    "abandoned_heads": [],
+    "acc_before": "sha256:57dcf325f0149f8ed22b693e2ead23e3d56878b1aace4ec8dbef077952ef07ff",
+    "acc_from": "sha256:5b4398933c49dbfbfaac76724cb69f986b007c89f17352270008fdf78aff2cde",
     "delegation": {
      "o": {
       "client_hosted": false,
@@ -3054,13 +3041,12 @@
      "type": "restore",
      "v": 2
     },
-    "log": "workspace",
-    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94",
-    "retained_heads": [
-     "sha256:efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+    "forward_heads": [
      "sha256:90a514d49f67df9d29f1bdc76e0b91d5baedf156a0f222cd8d02338a7179d34e",
      "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920"
-    ]
+    ],
+    "log": "workspace",
+    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94"
    }
   },
   {
@@ -3400,13 +3386,9 @@
      },
      "sig": "QinMT2XnzY3eWp3P4jxmAzrmCYhshCsph2b2YZjm5GMi4jCYVCOrkxjMVhX6qYAHXRioq9d1xvLZu7sEqh80Ag"
     },
-    "abandoned_heads": [
-     "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
-     "sha256:90a514d49f67df9d29f1bdc76e0b91d5baedf156a0f222cd8d02338a7179d34e",
-     "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
-     "sha256:171161f9c4d564f75114a76950c336b2a4eee10a4b64324a0ff57a401376f051",
-     "sha256:c6d9a8e3c735ab9e2da8bc4d5508d453d2a79784492958d80c728f80f55e4162"
-    ],
+    "abandoned_heads": [],
+    "acc_before": "sha256:a32b98ab35f56fb41c1f3219647d36ea399b4d2cfc6b80d846ea8ad95335ab37",
+    "acc_from": "sha256:c8507515384e2e0a5c43d3215d9fe4f33e9c4fb697e41777c3c5ce858a722c0d",
     "delegation": {
      "o": {
       "client_hosted": false,
@@ -3470,15 +3452,9 @@
      "type": "restore",
      "v": 2
     },
+    "forward_heads": [],
     "log": "workspace",
-    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94",
-    "retained_heads": [
-     "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
-     "sha256:90a514d49f67df9d29f1bdc76e0b91d5baedf156a0f222cd8d02338a7179d34e",
-     "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
-     "sha256:171161f9c4d564f75114a76950c336b2a4eee10a4b64324a0ff57a401376f051",
-     "sha256:c6d9a8e3c735ab9e2da8bc4d5508d453d2a79784492958d80c728f80f55e4162"
-    ]
+    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94"
    }
   },
   {
@@ -3581,10 +3557,11 @@
      "sig": "W9-4W48fyW7hSMPq3LUxNfztyFi59bz2J0FdKZIzwoyJa1wioq8wQYSUedFEis_F61Ux3ymyQXatuwzkibH6JQ"
     },
     "abandoned_heads": [
-     "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
      "sha256:90a514d49f67df9d29f1bdc76e0b91d5baedf156a0f222cd8d02338a7179d34e",
      "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920"
     ],
+    "acc_before": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "acc_from": "sha256:cc4f9dc2c75ad6af09128a145e1f4820eef5127aef629fc5c275826b0c4d921c",
     "delegation": {
      "o": {
       "client_hosted": false,
@@ -3691,11 +3668,9 @@
      "type": "restore",
      "v": 2
     },
+    "forward_heads": [],
     "log": "workspace",
-    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94",
-    "retained_heads": [
-     "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5"
-    ]
+    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94"
    }
   },
   {
@@ -3798,10 +3773,11 @@
      "sig": "Q-NPE85hkF2sZsuIuZmUfHCukyGbDrnyy0WNPZgrUJBqK1h3M2hvbJpVLhZXfXReLeWCfrA6bZhXUcMuOwhv5g"
     },
     "abandoned_heads": [
-     "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
      "sha256:90a514d49f67df9d29f1bdc76e0b91d5baedf156a0f222cd8d02338a7179d34e",
      "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920"
     ],
+    "acc_before": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "acc_from": "sha256:cc4f9dc2c75ad6af09128a145e1f4820eef5127aef629fc5c275826b0c4d921c",
     "delegation": {
      "o": {
       "client_hosted": false,
@@ -3908,11 +3884,9 @@
      "type": "restore",
      "v": 2
     },
+    "forward_heads": [],
     "log": "workspace",
-    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94",
-    "retained_heads": [
-     "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5"
-    ]
+    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94"
    }
   },
   {
@@ -4015,10 +3989,11 @@
      "sig": "ZCcIePUzegyhzHGSYEK42Yp1MHkcok4Imqoxo4H3Snw3d-w2owSiapA4B8opgEA7ZK-2M7HlbX7aDRnMRfywXQ"
     },
     "abandoned_heads": [
-     "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
      "sha256:90a514d49f67df9d29f1bdc76e0b91d5baedf156a0f222cd8d02338a7179d34e",
      "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920"
     ],
+    "acc_before": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "acc_from": "sha256:cc4f9dc2c75ad6af09128a145e1f4820eef5127aef629fc5c275826b0c4d921c",
     "delegation": {
      "o": {
       "client_hosted": false,
@@ -4125,11 +4100,413 @@
      "type": "restore",
      "v": 2
     },
+    "forward_heads": [],
     "log": "workspace",
-    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94",
-    "retained_heads": [
-     "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5"
+    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94"
+   }
+  },
+  {
+   "applied": [],
+   "expect": "sync.incomplete",
+   "held": {
+    "o": {
+     "at": "2026-10-10T10:00:30Z",
+     "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+     "kind": "workspace_checkpoint",
+     "n": 3,
+     "suite": 2,
+     "tickets": {},
+     "v": 2,
+     "workspace_id": "0123456789abcdef0123456789abcdef",
+     "workspace_log": {
+      "acc": "sha256:a3a6b067e85e9fae49be8c5b083944c66d11ff0c547bcfad5ec1d6092a53489e",
+      "head": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
+      "seq": 3
+     }
+    },
+    "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
+   },
+   "name": "rollback_accumulator_must_bind_retained_head",
+   "offered": {
+    "o": {
+     "at": "2026-10-10T10:02:00Z",
+     "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+     "kind": "workspace_checkpoint",
+     "n": 4,
+     "suite": 2,
+     "tickets": {},
+     "v": 2,
+     "workspace_id": "0123456789abcdef0123456789abcdef",
+     "workspace_log": {
+      "acc": "sha256:132dd7374dadb4aafaf7b355a680f3bf2f4e9117d6166744b48b8b16d3b330b9",
+      "head": "sha256:7c71cabe3f543734af9cb0111a1e5b7bba30acf9cffe2286d884b652a2929649",
+      "seq": 3
+     }
+    },
+    "sig": "JgmHxgf_KXh6IHARf1IqE2WN1f-EMOC01OqeenuBHZJzaUWeVLpaSL3Uk5V7iY5_j3YH1v6C7WcvQ76MvXZrWA"
+   },
+   "proofs": {
+    "workspace": [
+     "sha256:7c71cabe3f543734af9cb0111a1e5b7bba30acf9cffe2286d884b652a2929649"
     ]
+   },
+   "recorded": null,
+   "restore": {
+    "C": {
+     "o": {
+      "at": "2026-10-10T10:00:30Z",
+      "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+      "kind": "workspace_checkpoint",
+      "n": 3,
+      "suite": 2,
+      "tickets": {},
+      "v": 2,
+      "workspace_id": "0123456789abcdef0123456789abcdef",
+      "workspace_log": {
+       "acc": "sha256:a3a6b067e85e9fae49be8c5b083944c66d11ff0c547bcfad5ec1d6092a53489e",
+       "head": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
+       "seq": 3
+      }
+     },
+     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
+    },
+    "T": {
+     "o": {
+      "at": "2026-10-10T10:02:00Z",
+      "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+      "kind": "workspace_checkpoint",
+      "n": 4,
+      "suite": 2,
+      "tickets": {},
+      "v": 2,
+      "workspace_id": "0123456789abcdef0123456789abcdef",
+      "workspace_log": {
+       "acc": "sha256:132dd7374dadb4aafaf7b355a680f3bf2f4e9117d6166744b48b8b16d3b330b9",
+       "head": "sha256:7c71cabe3f543734af9cb0111a1e5b7bba30acf9cffe2286d884b652a2929649",
+       "seq": 3
+      }
+     },
+     "sig": "JgmHxgf_KXh6IHARf1IqE2WN1f-EMOC01OqeenuBHZJzaUWeVLpaSL3Uk5V7iY5_j3YH1v6C7WcvQ76MvXZrWA"
+    },
+    "abandoned_heads": [
+     "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920"
+    ],
+    "acc_before": "sha256:cc4f9dc2c75ad6af09128a145e1f4820eef5127aef629fc5c275826b0c4d921c",
+    "acc_from": "sha256:44a9df442095f6d167e9c15033122ccf8038126cb5d676595dc7e3164256493e",
+    "delegation": {
+     "o": {
+      "client_hosted": false,
+      "issued_ms": 1790000000000,
+      "kind": "ws_delegation",
+      "owner_person_id": "75bf75a3bb50b0c4ac02f8a757b90e23",
+      "suite": 2,
+      "v": 2,
+      "workspace_id": "0123456789abcdef0123456789abcdef",
+      "wsk_pub": "BJy4pP7CRCCFIbgVcqF07OgGwnzyG5Mu6nAPOvYZl72rKNxeRWcBwNDpRGc1LBIdbPY6ZrGFuKL1INLjmAeu_Ro"
+     },
+     "sig": "NwRve78-SgAnF30XOlRhDEb9KlCWIYBu5xXmOkGOE6vn70YeyeOXOcF6liH50gz6SfJNWTgZ2wi_KZc-DWXxMA"
+    },
+    "device_cert": {
+     "o": {
+      "created_ms": 1790000000000,
+      "device_id": "c65032f21d43401cc223b05723c1e5b4",
+      "dk_kx_pub": "BFeVKX_gphRxHCfh2Uw6UQVtj12_1v9LteaSfrwG6oH3QG8yDkYojB0rOpi7i-NDHC0PY47WHle_uYaQHjI534c",
+      "dk_sig_pub": "BEtUkscP1t-MK_B-LkrM8KwbVTJ2kwZBYo-4vnk4QSaltalieRixn4XJf8Z2jR5y10cpdvNZ1i-70-cvOz5Wlwo",
+      "expires_ms": null,
+      "kind": "device_cert",
+      "label_sealed": "bGFiZWwgc2V2MQ",
+      "person_id": "75bf75a3bb50b0c4ac02f8a757b90e23",
+      "scopes_max": [
+       "look",
+       "decide",
+       "operate",
+       "type"
+      ],
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "GMFk6HGDHI919l9dSkUuvlioYdJz-QzNR-qUAQ4kPhZevsgiEZBTlZr2SAIfUiNASTIzsMW_c_8yTbnW8kuMfQ"
+    },
+    "event": {
+     "abandoned": {
+      "head": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
+      "seq": 3
+     },
+     "abandoned_decisions": [
+      "01J9ZK00000000000000000002",
+      "01J9ZK00000000000000000003"
+     ],
+     "actor": {
+      "device": "d_c65032f21d43401cc223b05723c1e5b4",
+      "id": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
+      "kind": "person"
+     },
+     "at": "2026-10-10T10:02:00Z",
+     "auth": "passphrase",
+     "based_on": "sha256:efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+     "from_seq": 2,
+     "hash_v": 1,
+     "head": "sha256:efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+     "host_sig": "Ng-ErRP7c1nfCCdhhdMOvt6b5_ymAEZxydkfBZBQNjjVTJZX7uZEqiMCqM8hSXSFU3HUJndTvMwu96wMqLDqIQ",
+     "id": "01J9ZK0000000000000000000C",
+     "prev": "sha256:efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+     "reason": "rollback",
+     "revocations": [],
+     "roster_v": 2,
+     "seq": 3,
+     "sig": "lg9VF0lQSvdtTIwi7ac4aFX2OfpwPU4fUQRIwSAjo1plRlXmVIUsfeHd0F5UO0lz1DXPNfqzQRV2wKBAxvKGwQ",
+     "source": {
+      "hash": "sha256:b26a1aa5b399205303364c5af75374d6dc785c59682af867fcdf55b4c31a9711",
+      "n": 3
+     },
+     "type": "restore",
+     "v": 2
+    },
+    "forward_heads": [],
+    "log": "workspace",
+    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94"
+   }
+  },
+  {
+   "applied": [],
+   "expect": "ok",
+   "held": null,
+   "name": "null_source_with_pinned_genesis",
+   "offered": {
+    "o": {
+     "at": "2026-10-10T10:02:10Z",
+     "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+     "kind": "workspace_checkpoint",
+     "n": 1,
+     "suite": 2,
+     "tickets": {},
+     "v": 2,
+     "workspace_id": "0123456789abcdef0123456789abcdef",
+     "workspace_log": {
+      "acc": "sha256:b691fed60d642226009861f852682d1c3a5c94380e6b1f3193a61a48a775f760",
+      "head": "sha256:2dffca651dad53e7dd1dbab0bdd0f3f478a84d24ebb8d274473b10b7e0eb9ddd",
+      "seq": 4
+     }
+    },
+    "sig": "F4YjsgJP5BETE64s2lOiItnqLSs6i8aeS467epImt6wPqo5N2lx-qYFGrQCSNy3vEumo1CIBCSm6jFQa6VzGfw"
+   },
+   "proofs": {
+    "workspace": [
+     "sha256:2dffca651dad53e7dd1dbab0bdd0f3f478a84d24ebb8d274473b10b7e0eb9ddd"
+    ]
+   },
+   "recorded": "01J9ZK0000000000000000000D",
+   "restore": {
+    "C": null,
+    "T": {
+     "o": {
+      "at": "2026-10-10T10:02:10Z",
+      "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+      "kind": "workspace_checkpoint",
+      "n": 1,
+      "suite": 2,
+      "tickets": {},
+      "v": 2,
+      "workspace_id": "0123456789abcdef0123456789abcdef",
+      "workspace_log": {
+       "acc": "sha256:b691fed60d642226009861f852682d1c3a5c94380e6b1f3193a61a48a775f760",
+       "head": "sha256:2dffca651dad53e7dd1dbab0bdd0f3f478a84d24ebb8d274473b10b7e0eb9ddd",
+       "seq": 4
+      }
+     },
+     "sig": "F4YjsgJP5BETE64s2lOiItnqLSs6i8aeS467epImt6wPqo5N2lx-qYFGrQCSNy3vEumo1CIBCSm6jFQa6VzGfw"
+    },
+    "abandoned_heads": [],
+    "acc_before": "sha256:44a9df442095f6d167e9c15033122ccf8038126cb5d676595dc7e3164256493e",
+    "acc_from": "sha256:a3a6b067e85e9fae49be8c5b083944c66d11ff0c547bcfad5ec1d6092a53489e",
+    "delegation": {
+     "o": {
+      "client_hosted": false,
+      "issued_ms": 1790000000000,
+      "kind": "ws_delegation",
+      "owner_person_id": "75bf75a3bb50b0c4ac02f8a757b90e23",
+      "suite": 2,
+      "v": 2,
+      "workspace_id": "0123456789abcdef0123456789abcdef",
+      "wsk_pub": "BJy4pP7CRCCFIbgVcqF07OgGwnzyG5Mu6nAPOvYZl72rKNxeRWcBwNDpRGc1LBIdbPY6ZrGFuKL1INLjmAeu_Ro"
+     },
+     "sig": "NwRve78-SgAnF30XOlRhDEb9KlCWIYBu5xXmOkGOE6vn70YeyeOXOcF6liH50gz6SfJNWTgZ2wi_KZc-DWXxMA"
+    },
+    "device_cert": {
+     "o": {
+      "created_ms": 1790000000000,
+      "device_id": "c65032f21d43401cc223b05723c1e5b4",
+      "dk_kx_pub": "BFeVKX_gphRxHCfh2Uw6UQVtj12_1v9LteaSfrwG6oH3QG8yDkYojB0rOpi7i-NDHC0PY47WHle_uYaQHjI534c",
+      "dk_sig_pub": "BEtUkscP1t-MK_B-LkrM8KwbVTJ2kwZBYo-4vnk4QSaltalieRixn4XJf8Z2jR5y10cpdvNZ1i-70-cvOz5Wlwo",
+      "expires_ms": null,
+      "kind": "device_cert",
+      "label_sealed": "bGFiZWwgc2V2MQ",
+      "person_id": "75bf75a3bb50b0c4ac02f8a757b90e23",
+      "scopes_max": [
+       "look",
+       "decide",
+       "operate",
+       "type"
+      ],
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "GMFk6HGDHI919l9dSkUuvlioYdJz-QzNR-qUAQ4kPhZevsgiEZBTlZr2SAIfUiNASTIzsMW_c_8yTbnW8kuMfQ"
+    },
+    "event": {
+     "abandoned": null,
+     "abandoned_decisions": [],
+     "actor": {
+      "device": "d_c65032f21d43401cc223b05723c1e5b4",
+      "id": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
+      "kind": "person"
+     },
+     "at": "2026-10-10T10:02:10Z",
+     "auth": "passphrase",
+     "based_on": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
+     "from_seq": 3,
+     "hash_v": 1,
+     "head": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
+     "host_sig": "hw8hLK_BwPFWI5_BlRYr1Tl_xCbX10k2sKiob8bCw1Sf-AzuwO9yJVcQ-4hsGL5LBjUDOnLlodGtQGHkJKJdzQ",
+     "id": "01J9ZK0000000000000000000D",
+     "prev": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
+     "reason": "rollback",
+     "revocations": [],
+     "roster_v": 3,
+     "seq": 4,
+     "sig": "3dVAEszwhcFPbskmAO1czZ_2SPka4f3WOJH0LcOuf-cIbOG1Qmt-FtbSs9gn8yfmJzMz4RacfiYPZgK8Q9K1cQ",
+     "source": null,
+     "type": "restore",
+     "v": 2
+    },
+    "forward_heads": [
+     "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+     "sha256:90a514d49f67df9d29f1bdc76e0b91d5baedf156a0f222cd8d02338a7179d34e",
+     "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920"
+    ],
+    "log": "workspace",
+    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94"
+   }
+  },
+  {
+   "applied": [],
+   "expect": "sync.incomplete",
+   "held": null,
+   "name": "null_source_cannot_substitute_genesis",
+   "offered": {
+    "o": {
+     "at": "2026-10-10T10:02:10Z",
+     "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+     "kind": "workspace_checkpoint",
+     "n": 1,
+     "suite": 2,
+     "tickets": {},
+     "v": 2,
+     "workspace_id": "0123456789abcdef0123456789abcdef",
+     "workspace_log": {
+      "acc": "sha256:4f4caf411131fd902923df16b02e4972d0187401b8ce628f27f27fec1880a20d",
+      "head": "sha256:2dffca651dad53e7dd1dbab0bdd0f3f478a84d24ebb8d274473b10b7e0eb9ddd",
+      "seq": 4
+     }
+    },
+    "sig": "k8Tb0HNYE7kpoiZJnJSwUiaLMahIx-xp-KkzMxx32GC5HstiMxtKVCUihYIS8K3EY6teBf1aeqZJFoIJb_QXSw"
+   },
+   "proofs": {
+    "workspace": [
+     "sha256:2dffca651dad53e7dd1dbab0bdd0f3f478a84d24ebb8d274473b10b7e0eb9ddd"
+    ]
+   },
+   "recorded": null,
+   "restore": {
+    "C": null,
+    "T": {
+     "o": {
+      "at": "2026-10-10T10:02:10Z",
+      "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+      "kind": "workspace_checkpoint",
+      "n": 1,
+      "suite": 2,
+      "tickets": {},
+      "v": 2,
+      "workspace_id": "0123456789abcdef0123456789abcdef",
+      "workspace_log": {
+       "acc": "sha256:4f4caf411131fd902923df16b02e4972d0187401b8ce628f27f27fec1880a20d",
+       "head": "sha256:2dffca651dad53e7dd1dbab0bdd0f3f478a84d24ebb8d274473b10b7e0eb9ddd",
+       "seq": 4
+      }
+     },
+     "sig": "k8Tb0HNYE7kpoiZJnJSwUiaLMahIx-xp-KkzMxx32GC5HstiMxtKVCUihYIS8K3EY6teBf1aeqZJFoIJb_QXSw"
+    },
+    "abandoned_heads": [],
+    "acc_before": "sha256:57dcf325f0149f8ed22b693e2ead23e3d56878b1aace4ec8dbef077952ef07ff",
+    "acc_from": "sha256:5b4398933c49dbfbfaac76724cb69f986b007c89f17352270008fdf78aff2cde",
+    "delegation": {
+     "o": {
+      "client_hosted": false,
+      "issued_ms": 1790000000000,
+      "kind": "ws_delegation",
+      "owner_person_id": "75bf75a3bb50b0c4ac02f8a757b90e23",
+      "suite": 2,
+      "v": 2,
+      "workspace_id": "0123456789abcdef0123456789abcdef",
+      "wsk_pub": "BJy4pP7CRCCFIbgVcqF07OgGwnzyG5Mu6nAPOvYZl72rKNxeRWcBwNDpRGc1LBIdbPY6ZrGFuKL1INLjmAeu_Ro"
+     },
+     "sig": "NwRve78-SgAnF30XOlRhDEb9KlCWIYBu5xXmOkGOE6vn70YeyeOXOcF6liH50gz6SfJNWTgZ2wi_KZc-DWXxMA"
+    },
+    "device_cert": {
+     "o": {
+      "created_ms": 1790000000000,
+      "device_id": "c65032f21d43401cc223b05723c1e5b4",
+      "dk_kx_pub": "BFeVKX_gphRxHCfh2Uw6UQVtj12_1v9LteaSfrwG6oH3QG8yDkYojB0rOpi7i-NDHC0PY47WHle_uYaQHjI534c",
+      "dk_sig_pub": "BEtUkscP1t-MK_B-LkrM8KwbVTJ2kwZBYo-4vnk4QSaltalieRixn4XJf8Z2jR5y10cpdvNZ1i-70-cvOz5Wlwo",
+      "expires_ms": null,
+      "kind": "device_cert",
+      "label_sealed": "bGFiZWwgc2V2MQ",
+      "person_id": "75bf75a3bb50b0c4ac02f8a757b90e23",
+      "scopes_max": [
+       "look",
+       "decide",
+       "operate",
+       "type"
+      ],
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "GMFk6HGDHI919l9dSkUuvlioYdJz-QzNR-qUAQ4kPhZevsgiEZBTlZr2SAIfUiNASTIzsMW_c_8yTbnW8kuMfQ"
+    },
+    "event": {
+     "abandoned": null,
+     "abandoned_decisions": [],
+     "actor": {
+      "device": "d_c65032f21d43401cc223b05723c1e5b4",
+      "id": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
+      "kind": "person"
+     },
+     "at": "2026-10-10T10:02:10Z",
+     "auth": "passphrase",
+     "based_on": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
+     "from_seq": 3,
+     "hash_v": 1,
+     "head": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
+     "host_sig": "hw8hLK_BwPFWI5_BlRYr1Tl_xCbX10k2sKiob8bCw1Sf-AzuwO9yJVcQ-4hsGL5LBjUDOnLlodGtQGHkJKJdzQ",
+     "id": "01J9ZK0000000000000000000D",
+     "prev": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
+     "reason": "rollback",
+     "revocations": [],
+     "roster_v": 3,
+     "seq": 4,
+     "sig": "3dVAEszwhcFPbskmAO1czZ_2SPka4f3WOJH0LcOuf-cIbOG1Qmt-FtbSs9gn8yfmJzMz4RacfiYPZgK8Q9K1cQ",
+     "source": null,
+     "type": "restore",
+     "v": 2
+    },
+    "forward_heads": [
+     "sha256:efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+     "sha256:90a514d49f67df9d29f1bdc76e0b91d5baedf156a0f222cd8d02338a7179d34e",
+     "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920"
+    ],
+    "log": "workspace",
+    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94"
    }
   }
  ],

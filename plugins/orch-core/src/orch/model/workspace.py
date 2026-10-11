@@ -2,7 +2,7 @@
 policies, settings, addons, restore.
 
 Events that change what tickets mean (members leaving, role changes, compromised devices, policies, addon binds,
-restore) are applied to every ticket in the same step, with one ``settle`` each, so generations follow §5.7.
+restore) are applied to every ticket in the same step, raising each gate at most once (§5.7).
 """
 
 from __future__ import annotations

@@ -344,3 +344,36 @@ def test_rollback_with_deleted_checkpoint_cannot_be_laundered_by_append(env, loa
     store.ticket(uid)
     assert not store.repairable_checkpoint(uid)
     assert any(f.code == "checkpoint.missing" for f in _checkpoints(store, host_here=True))
+
+
+def test_checkpoint_cache_is_bound_to_content_and_key(env):
+    from orch.store.checkpoints import verify_object
+
+    store = env.bootstrap()
+    checkpoint = store._checkpoints.workspace()
+    assert verify_object(env.wsk_pub, checkpoint)
+    checkpoint["o"]["n"] += 1
+    assert not verify_object(env.wsk_pub, checkpoint)
+    original = store._checkpoints.workspace()
+    assert original["o"]["n"] != checkpoint["o"]["n"]
+    assert verify_object(env.wsk_pub, original)
+    assert not verify_object(bytes(len(env.wsk_pub)), original)
+    store._checkpoints._write(store._checkpoints._workspace_path, checkpoint)
+    assert not verify_object(env.wsk_pub, store._checkpoints.workspace())
+
+
+def test_repeated_checkpoint_reads_and_verification_validate_once(env, monkeypatch):
+    store = env.bootstrap()
+    checkpoints._validated.cache_clear()
+    checkpoints._verified.cache_clear()
+    calls = []
+    validate = schema.validate
+
+    def counted(name, obj, **kw):
+        calls.append(name)
+        return validate(name, obj, **kw)
+
+    monkeypatch.setattr(schema, "validate", counted)
+    for _ in range(5):
+        assert checkpoints.verify_object(env.wsk_pub, store._checkpoints.workspace())
+    assert calls == ["checkpoint"]

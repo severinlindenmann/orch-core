@@ -952,6 +952,88 @@ def transition_vectors() -> list[dict[str, Any]]:
                 "known_revocations": [{"revocation": ow.make_revocation("lena", "lena1", held_reason)}],
             }
         )
+    w.logs["workspace"] = original[:2]
+    w.roster_v = 2
+    wrong_head = "sha256:" + "ef" * 32
+    substituted = w.ev(
+        "workspace",
+        "restore",
+        w.actor("sev"),
+        {
+            **payload,
+            "from_seq": 2,
+            "head": wrong_head,
+            "prev": wrong_head,
+            "based_on": wrong_head,
+        },
+        expect="restore.bad_head",
+    )
+    substituted_t = _checkpoint({**cp(4, [*heads[:2], head(substituted)])["o"], "at": substituted["at"]})
+    cases.append(
+        {
+            "name": "rollback_accumulator_must_bind_retained_head",
+            "held": c,
+            "offered": substituted_t,
+            "restore": {**transition, "T": substituted_t, "event": substituted, "retained_heads": heads[:2]},
+            "proofs": {"workspace": [head(substituted)]},
+            "applied": [],
+            "expect": "sync.incomplete",
+            "recorded": None,
+        }
+    )
+    # Without C, the forward proof starts at the pinned genesis, not an arbitrary branch.
+    w.logs["workspace"] = list(original)
+    w.roster_v = 3
+    initial = w.ev(
+        "workspace",
+        "restore",
+        w.actor("sev"),
+        {
+            **payload,
+            "from_seq": 3,
+            "head": heads[-1],
+            "abandoned": None,
+            "abandoned_decisions": [],
+            "source": None,
+        },
+    )
+    for name, prefix, expect in [
+        ("null_source_with_pinned_genesis", heads, "ok"),
+        ("null_source_cannot_substitute_genesis", ["sha256:" + "ef" * 32, *heads[1:]], "sync.incomplete"),
+    ]:
+        initial_t = _checkpoint({**cp(1, [*prefix, head(initial)])["o"], "at": initial["at"]})
+        cases.append(
+            {
+                "name": name,
+                "held": None,
+                "offered": initial_t,
+                "restore": {
+                    **transition,
+                    "C": None,
+                    "T": initial_t,
+                    "event": initial,
+                    "retained_heads": prefix,
+                    "abandoned_heads": [],
+                },
+                "proofs": {"workspace": [head(initial)]},
+                "applied": [],
+                "expect": expect,
+                "recorded": initial["id"] if expect == "ok" else None,
+            }
+        )
+    for case_ in cases:
+        tr = case_["restore"]
+        if "retained_heads" not in tr:
+            continue
+        prefix = tr.pop("retained_heads")
+        c_entry = tr["C"]["o"]["workspace_log"] if tr.get("C") else None
+        valid = all(isinstance(h, str) and len(h) == 71 for h in prefix)
+        tr["acc_from"] = acc_fold(prefix) if valid else "bad"
+        tr["acc_before"] = acc_fold(prefix[:-1]) if valid else "bad"
+        tr["forward_heads"] = prefix[c_entry["seq"] if c_entry else 0 :]
+        abandoned = tr.get("abandoned_heads")
+        if isinstance(abandoned, list):
+            tr["abandoned_heads"] = abandoned[len(prefix) :]
     return cases
 
 

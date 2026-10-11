@@ -322,6 +322,8 @@ class Store:
 
     def close(self) -> None:
         self._index.close()
+        if self._pins is not None:
+            self._pins.close()
 
     def refresh(self) -> None:
         """Take the lock and re-read what changed on disk since the last call: what a long-lived caller does before it
@@ -729,8 +731,7 @@ class Store:
         if self._pins is not None and self._host is not None:
             for log, info in self._logs.items():
                 verified = self._state._core.logs.get(log)
-                for i, head in enumerate(info.heads[: verified.seq if verified else 0]):
-                    self._pins.note_head(log, i + 1, head, info.heads[i - 1] if i else None, info.accs[i])
+                self._pins.note_heads(info.heads, verified.seq if verified else 0)
 
     def _sizes_now(self) -> dict[str, int]:
         sizes = dict(self._sizes)
@@ -864,10 +865,10 @@ class Store:
         """A committed restore must finish its checkpoint before any other append, including on a lazy open."""
         if self._pins is None:
             return
-        for path in (self._pins.dir / "transitions").glob("*.json"):
+        for path in (self._pins.dir / "pending-transitions").glob("*.json"):
             transition = loads(read_or_none(path, None))
             log = transition["log"]
-            if not transition.get("committed") and log != WORKSPACE and log not in self._loaded:
+            if log != WORKSPACE and log not in self._loaded:
                 self._loaded.add(check_uid(log))
                 self._needs_reload = True
 
@@ -1721,7 +1722,7 @@ class Store:
             self._grant_hashes.setdefault(ev["grant"], ev["secret_hash"])
         if self._pins is not None:
             info = self._logs[log]
-            self._pins.note_head(log, info.seq, info.head, ev["prev"], info.acc)
+            self._pins.note_head(info.seq, info.head, ev["prev"])
             for device, entry in new.revocation_evidence().items() if typ in ("restore", "device.revoked") else []:
                 rev = entry["revocation"]
                 self._pins.note_revocation(
@@ -2314,7 +2315,7 @@ class Store:
         return cp
 
     def _stage_transition(self, ev: dict[str, Any], log: str, state: State) -> None:
-        from .checkpoints import sign_object
+        from .checkpoints import _extension, sign_object
 
         assert self._pins is not None and self._host is not None
         cp = self._held_checkpoint()
@@ -2346,18 +2347,16 @@ class Store:
             },
         )
         baseline = (cp["o"]["workspace_log"] if log == WORKSPACE else cp["o"]["tickets"].get(log)) if cp else None
-        abandoned = self._pins.branch(baseline["head"]) if baseline else []
-        if baseline and abandoned is not None:
-            from .checkpoints import _fold
-
-            if (
-                len(abandoned) != baseline["seq"]
-                or abandoned[-1] != baseline["head"]
-                or _fold("sha256:" + "0" * 64, abandoned) != baseline["acc"]
-                or abandoned[: min(len(info.heads), len(abandoned))]
-                != info.heads[: min(len(info.heads), len(abandoned))]
-            ):
+        abandoned = self._pins.branch(baseline["head"], info.seq) if baseline and baseline["seq"] > info.seq else []
+        if baseline and baseline["seq"] > info.seq and abandoned is not None:
+            if not _extension({"seq": info.seq, "head": info.head, "acc": info.acc}, baseline, abandoned):
                 abandoned = None
+        forward = (
+            info.heads[baseline["seq"] if baseline else 0 :] if not baseline or info.seq >= baseline["seq"] else []
+        )
+        if baseline and info.seq >= baseline["seq"]:
+            if not _extension(baseline, {"seq": info.seq, "head": info.head, "acc": info.acc}, forward):
+                abandoned = None  # a retained fork cannot be published as an extension of C
         evidence = state.device_evidence(ev["actor"]["device"])
         proofs = {log: [entry["head"]]}
         if cp:
@@ -2375,21 +2374,21 @@ class Store:
             **evidence,
             "delegation": self._genesis_event["delegation"],
             "proofs": proofs,
-            "retained_heads": info.heads,
+            "acc_from": info.acc,
+            "acc_before": info.accs[-2] if info.seq > 1 else "sha256:" + "0" * 64,
+            "forward_heads": forward,
             "abandoned_heads": abandoned,
             "publication_complete": abandoned is not None,
         }
-        directory = self._pins.dir / "transitions"
+        directory = self._pins.dir / "pending-transitions"
         directory.mkdir(parents=True, exist_ok=True)
         write_atomic(directory / (ev["id"] + ".json"), canon.cj_checked(transition) + b"\n", mode=0o600)
 
     def _recover_transitions(self) -> None:
         if self._pins is None or self._host is None or self._state is None:
             return
-        for path in sorted((self._pins.dir / "transitions").glob("*.json")):
+        for path in sorted((self._pins.dir / "pending-transitions").glob("*.json")):
             transition = loads(read_or_none(path, None))
-            if transition.get("committed"):
-                continue
             ev, log, target = transition["event"], transition["log"], transition["T"]
             from .checkpoints import verify_object
 
@@ -2419,4 +2418,9 @@ class Store:
             self._pins.accept_checkpoint(target)
             transition["committed"] = True
             write_atomic(path, canon.cj_checked(transition) + b"\n", mode=0o600)
+            completed = self._pins.dir / "transitions"
+            completed.mkdir(parents=True, exist_ok=True)
+            os.replace(path, completed / path.name)
+            fsync_dir(completed)
+            fsync_dir(path.parent)
             self._diverged.pop(log, None)

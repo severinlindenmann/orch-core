@@ -4,7 +4,8 @@
   ``trust.genesis_mismatch``.
 * ``revocations.jsonl``: effective PK-signed revocations and verification evidence, retained across restores.
 * ``checkpoint.json``: last accepted workspace checkpoint.
-* ``heads/`` and ``transitions/``: durable ancestry and source-bound restore transitions for later publication.
+* ``heads.sqlite``: durable ancestry, indexed by head.
+* ``pending-transitions/``: recovery work; ``transitions/``: completed publication records.
 
 P1 limit (§12 O7): these are files the same OS user owns, like the workspace itself.
 """
@@ -12,6 +13,9 @@ P1 limit (§12 O7): these are files the same OS user owns, like the workspace it
 from __future__ import annotations
 
 import os
+import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +30,7 @@ __all__ = ["HostPins"]
 class HostPins:
     def __init__(self, state_dir: str | os.PathLike[str], workspace_id: str) -> None:
         self.dir = Path(state_dir) / "hosts" / workspace_id
+        self._db: sqlite3.Connection | None = None
 
     @property
     def _genesis(self) -> Path:
@@ -99,35 +104,50 @@ class HostPins:
     def accept_checkpoint(self, cp: dict[str, Any]) -> None:
         write_atomic(self.dir / "checkpoint.json", canon.cj_checked(cp) + b"\n", mode=0o600)
 
-    def note_head(self, log: str, seq: int, head: str, prev: str | None, acc: str) -> None:
-        path = self.dir / "heads" / head[7:]
-        if path.exists():
+    @contextmanager
+    def _heads(self) -> Iterator[sqlite3.Connection]:
+        if self._db is None:
+            self.dir.mkdir(parents=True, exist_ok=True)
+            self._db = sqlite3.connect(self.dir / "heads.sqlite")
+            self._db.execute("PRAGMA synchronous=FULL")  # ancestry survives a crash; unlike the derived index
+            self._db.execute("CREATE TABLE IF NOT EXISTS heads (head TEXT PRIMARY KEY, seq INTEGER, prev TEXT)")
+        with self._db:
+            yield self._db
+
+    def close(self) -> None:
+        if self._db is not None:
+            self._db.close()
+            self._db = None
+
+    def note_head(self, seq: int, head: str, prev: str | None) -> None:
+        with self._heads() as db:
+            db.execute("INSERT OR IGNORE INTO heads VALUES (?, ?, ?)", (head, seq, prev))
+
+    def note_heads(self, heads: list[str], verified: int) -> None:
+        """A single high-water lookup skips an already recorded branch on reload."""
+        if not verified:
             return
-        path.parent.mkdir(parents=True, exist_ok=True)
-        write_atomic(
-            path, canon.cj_checked({"log": log, "seq": seq, "head": head, "prev": prev, "acc": acc}), mode=0o600
-        )
+        with self._heads() as db:
+            if db.execute("SELECT 1 FROM heads WHERE head = ?", (heads[verified - 1],)).fetchone():
+                return
+            db.executemany(
+                "INSERT OR IGNORE INTO heads VALUES (?, ?, ?)",
+                ((heads[i], i + 1, heads[i - 1] if i else None) for i in range(verified)),
+            )
 
     def branch(self, head: str, stop: int = 0) -> list[str] | None:
         heads = []
         last_seq = None
-        while head:
-            try:
-                canon.parse_hash(head)
-            except canon.HashError:
-                return None
-            raw = read_or_none(self.dir / "heads" / head[7:])
-            if raw is None:
-                return None
-            try:
-                node = loads(raw)
-                if node["head"] != head or (last_seq is not None and node["seq"] != last_seq - 1):
+        with self._heads() as db:
+            while head:
+                row = db.execute("SELECT seq, prev FROM heads WHERE head = ?", (head,)).fetchone()
+                if row is None:
                     return None
-                last_seq = node["seq"]
-                if node["seq"] <= stop:
+                seq, prev = row
+                if last_seq is not None and seq != last_seq - 1:
+                    return None
+                if seq <= stop:
                     break
-                heads.append(node["head"])
-                head = node["prev"]
-            except (ValueError, KeyError, TypeError):
-                return None
+                heads.append(head)
+                last_seq, head = seq, prev
         return list(reversed(heads))

@@ -901,7 +901,11 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
   not necessarily the highest per-log entry. A ticket restore keeps all existing ticket entries present.
   Derive `acc_from` from the verified retained prefix. C's abandoned suffix must come from durable branch history or
   authenticated retrieval verified against C; when `from_seq ≥ C.seq`, require a forward proof from C to `from_seq`.
-  Fold the restore head and subsequent heads from `acc_from` to T. Unaffected entries follow ordinary growth rules.
+  Persist `acc_from` and only the abandoned suffix from `from_seq` to C's seq (or the forward heads from C to
+  `from_seq`); the full retained prefix is not transition evidence. Verify that suffix by folding from `acc_from`
+  to C's accumulator. For rollback proofs also carry the predecessor accumulator `acc_before` and require
+  `log_acc(acc_before, head) = acc_from`, binding the retained head without storing its prefix. Fold the restore head
+  and subsequent heads from `acc_from` to T. Unaffected entries follow ordinary growth rules.
   Missing evidence leaves publication incomplete. Applied restore ids are single-use; an exact retry returns the
   prior result. Compare, validate, persist the transition and advance H atomically; crash recovery keeps pending
   transitions. P1/P2 use the last locally accepted workspace checkpoint as source, null only before any exists.

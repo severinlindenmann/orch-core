@@ -15,9 +15,11 @@ missing ticket log). The store then refuses new events on that log until a ``res
 
 from __future__ import annotations
 
+import copy
 import os
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -155,36 +157,41 @@ def judge_offer(
                     )
                 ) or ev["actor"]["device"] == "d_" + rev["device_id"]:
                     return "chain.diverged", None
-            prefix = restore.get("retained_heads")
-            if not isinstance(prefix, list) or len(prefix) != ev["from_seq"] or prefix[-1] != ev["head"]:
-                return "sync.incomplete", None
+            acc = restore.get("acc_from")
             try:
-                acc = _fold("sha256:" + "0" * 64, prefix)
+                canon.parse_hash(acc)
             except (canon.HashError, TypeError):
                 return "sync.incomplete", None
-            if log == WORKSPACE and prefix[0] != pinned_genesis:
+            retained = {"seq": ev["from_seq"], "head": ev["head"], "acc": acc}
+            baseline = h.get(log, {"seq": 0, "head": None, "acc": "sha256:" + "0" * 64})
+            if log == WORKSPACE and baseline["seq"] == 0:
+                forward = restore.get("forward_heads")
+                if not isinstance(forward, list) or not forward or forward[0] != pinned_genesis:
+                    return "sync.incomplete", None
+            if ev["from_seq"] >= baseline["seq"]:
+                if not _extension(baseline, retained, restore.get("forward_heads", [])):
+                    return "sync.incomplete", None
+            else:
+                try:
+                    if canon.log_acc(restore.get("acc_before"), ev["head"]) != acc:
+                        return "sync.incomplete", None
+                except (canon.HashError, TypeError):
+                    return "sync.incomplete", None
+                if not _extension(retained, baseline, restore.get("abandoned_heads")):
+                    return "sync.incomplete", None
+                ab = ev["abandoned"]
+                if (
+                    not ab
+                    or ab["seq"] < baseline["seq"]
+                    or (ab["seq"] == baseline["seq"] and ab["head"] != baseline["head"])
+                ):
+                    return "chain.diverged", None
+            if (
+                log == WORKSPACE
+                and ev["from_seq"] == 1
+                and (ev["head"] != pinned_genesis or acc != canon.log_acc("sha256:" + "0" * 64, pinned_genesis))
+            ):
                 return "sync.incomplete", None
-            if log in h:
-                baseline = h[log]
-                if ev["from_seq"] >= baseline["seq"]:
-                    if (
-                        prefix[baseline["seq"] - 1] != baseline["head"]
-                        or _fold("sha256:" + "0" * 64, prefix[: baseline["seq"]]) != baseline["acc"]
-                    ):
-                        return "sync.incomplete", None
-                else:
-                    abandoned = restore.get("abandoned_heads")
-                    if not isinstance(abandoned, list) or abandoned[: len(prefix)] != prefix:
-                        return "sync.incomplete", None
-                    if not _extension({"seq": 0, "head": None, "acc": "sha256:" + "0" * 64}, baseline, abandoned):
-                        return "sync.incomplete", None
-                    ab = ev["abandoned"]
-                    if (
-                        not ab
-                        or ab["seq"] < baseline["seq"]
-                        or (ab["seq"] == baseline["seq"] and ab["head"] != baseline["head"])
-                    ):
-                        return "chain.diverged", None
             tail = proofs.get(log)
             if (
                 not isinstance(tail, list)
@@ -214,12 +221,34 @@ def sign_object(sign: Callable[[bytes], bytes], o: dict[str, Any]) -> dict[str, 
     return {"o": o, "sig": crypto.b64u(sign(LABEL + canon.cj_checked(o)))}
 
 
+@lru_cache(maxsize=32)
+def _validated(raw: bytes) -> dict[str, Any]:
+    cp = loads(raw)
+    schema.validate("checkpoint", cp)
+    return cp
+
+
+@lru_cache(maxsize=32)
+def _verified(wsk_pub: bytes, raw: bytes) -> bool:
+    cp = _validated(raw)
+    sig = crypto.unb64u(cp["sig"], crypto.SIG_LEN)
+    return crypto.verify(wsk_pub, sig, LABEL + canon.cj_checked(cp["o"]))
+
+
 def verify_object(wsk_pub: bytes, cp: Mapping[str, Any]) -> bool:
     try:
-        schema.validate("checkpoint", cp)
-        sig = crypto.unb64u(cp["sig"], crypto.SIG_LEN)
-        return crypto.verify(wsk_pub, sig, LABEL + canon.cj_checked(cp["o"]))
-    except (schema.SchemaError, crypto.EncodingError, crypto.CryptoError, canon.HashError, KeyError, TypeError):
+        # Cache by complete content and key, never object identity or mutable file metadata.
+        raw = canon.cj_checked(cp)
+        return _verified(wsk_pub, raw)
+    except (
+        ValueError,
+        schema.SchemaError,
+        crypto.EncodingError,
+        crypto.CryptoError,
+        canon.HashError,
+        KeyError,
+        TypeError,
+    ):
         return False
 
 
@@ -241,9 +270,7 @@ class Checkpoints:
         if raw is None:
             return None
         try:
-            cp = loads(raw)
-            schema.validate("checkpoint", cp)
-            return cp
+            return copy.deepcopy(_validated(raw.rstrip(b"\n")))
         except (ValueError, schema.SchemaError):
             return {"unreadable": True, "path": path.name}
 

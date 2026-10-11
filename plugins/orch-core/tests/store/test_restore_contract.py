@@ -217,6 +217,78 @@ def test_restore_refuses_checkpoint_more_than_300_seconds_ahead(env):
     assert env.read_events("workspace") == before and store._pins.held() == held
 
 
+def test_completed_restores_do_not_add_work_to_append(env, monkeypatch):
+    import statistics
+    import time
+
+    import orch.store.store as sm
+
+    store = env.bootstrap()
+    uid = env.new_ticket()
+    reads = []
+    read = sm.read_or_none
+
+    def tracked(path, *args):
+        if path.parent.name == "transitions":
+            reads.append(path)
+        return read(path, *args)
+
+    monkeypatch.setattr(sm, "read_or_none", tracked)
+
+    def append_cost():
+        samples = []
+        for _ in range(7):
+            start = time.process_time()
+            env.log(uid)
+            samples.append((time.process_time() - start) * 1000)
+        return statistics.median(samples)
+
+    before = append_cost()
+    for _ in range(40):
+        candidate = env.person_event(
+            env.owner, "workspace", "restore", **store.restore_facts("workspace"), reason="other"
+        )
+        store.append(candidate, log="workspace")
+    reads.clear()
+    after = append_cost()
+    assert not reads  # completed publication records never enter the append recovery scan
+    assert after < before * 2 + 5, (before, after)
+    assert len(list((store._pins.dir / "transitions").glob("*.json"))) == 40
+    assert not list((store._pins.dir / "pending-transitions").glob("*.json"))
+
+
+def test_transition_keeps_only_the_abandoned_suffix(env):
+    store = env.bootstrap()
+    uid = env.new_ticket()
+    for _ in range(25):
+        env.log(uid)
+    store.checkpoint()
+    old = store._logs[uid]
+    expected = old.heads[-2:]
+    acc_from = old.accs[-3]
+    store.abandon_tail(uid, old.seq - 2)
+    candidate = env.person_event(env.owner, uid, "restore", **store.restore_facts(uid), reason="rollback")
+    store.append(candidate, log=uid)
+    transition = json.loads(next((store._pins.dir / "transitions").glob("*.json")).read_text())
+    assert "retained_heads" not in transition
+    assert transition["acc_from"] == acc_from
+    assert transition["abandoned_heads"] == expected
+    assert transition["forward_heads"] == []
+    from orch.store.checkpoints import judge_offer
+
+    assert (
+        judge_offer(
+            transition["C"]["o"],
+            transition["T"]["o"],
+            proofs=transition["proofs"],
+            restore=transition,
+            wsk_pub=env.wsk_pub,
+            pinned_genesis=store.state.workspace.genesis,
+        )[0]
+        == "ok"
+    )
+
+
 @pytest.mark.parametrize("evidence", ["ticket", "transition"])
 def test_null_source_refused_when_workspace_checkpoint_files_are_lost(env, evidence):
     store = env.bootstrap()
@@ -231,6 +303,71 @@ def test_null_source_refused_when_workspace_checkpoint_files_are_lost(env, evide
     store._checkpoints._workspace_path.unlink()
     with pytest.raises(StoreError, match="checkpoint evidence exists"):
         store.restore_facts("workspace")
+
+
+def test_reload_skips_already_recorded_ancestry(env, monkeypatch):
+    store = env.bootstrap()
+    uid = env.new_ticket()
+    for _ in range(50):
+        env.log(uid)
+
+    def unexpected(*args, **kw):
+        pytest.fail("reload visited an individual event's ancestry")
+
+    monkeypatch.setattr(store._pins, "note_head", unexpected)
+    statements = []
+    store._pins._db.set_trace_callback(statements.append)
+    store._needs_reload = True
+    store.refresh()
+    assert sum(s.startswith("SELECT 1 FROM heads") for s in statements) == 2
+    assert not any(s.startswith("INSERT") for s in statements)
+
+
+def test_lazy_open_finishes_transition_interrupted_before_archive(env, monkeypatch):
+    import orch.store.store as sm
+
+    store = env.bootstrap()
+    uid = env.new_ticket()
+    env.log(uid)
+    store.checkpoint()
+    store.abandon_tail(uid, 1)
+    candidate = env.person_event(env.owner, uid, "restore", **store.restore_facts(uid), reason="rollback")
+    replace = sm.os.replace
+
+    def crash(source, target):
+        if target.parent.name == "transitions":
+            raise RuntimeError("before archive")
+        return replace(source, target)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(sm.os, "replace", crash)
+        with pytest.raises(RuntimeError, match="before archive"):
+            store.append(candidate, log=uid)
+    store.close()
+    store = env.open(load="lazy")
+    assert not list((store._pins.dir / "pending-transitions").glob("*.json"))
+    assert store.append(candidate, log=uid).duplicate
+
+
+def test_retained_fork_leaves_publication_incomplete(env):
+    from orch import crypto
+    from tests.store.helpers import WS
+
+    store = env.bootstrap()
+    uid = env.new_ticket()
+    env.log(uid, "original")
+    store.checkpoint()
+    store.close()
+    path = env.path(uid, "events.jsonl")
+    lines = path.read_bytes().splitlines(keepends=True)
+    event = canon.parse_event_line(lines[-1])
+    event["text"] = "fork"
+    event["host_sig"] = crypto.b64u(env.signer.sign(canon.host_signing_bytes(WS, uid, event)))
+    path.write_bytes(b"".join([*lines[:-1], canon.event_line(event)]))
+    store = env.open()
+    store.append(env.person_event(env.owner, uid, "restore", **store.restore_facts(uid), reason="diverged"), log=uid)
+    transition = json.loads(next((store._pins.dir / "transitions").glob("*.json")).read_text())
+    assert not transition["publication_complete"]
 
 
 def test_malformed_checkpoint_pin_is_not_treated_as_missing(env):

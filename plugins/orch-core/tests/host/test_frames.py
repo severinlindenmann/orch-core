@@ -617,3 +617,41 @@ def test_start_requires_known_admitted_handle():
     assert connection.slots == 1
     connection.responded(request)
     assert connection.slots == 0
+
+
+def test_connection_quota_is_fatal():
+    error = FrameError("quota.host")
+    assert (error.exit, error.retryable, error.fate) == (9, True, "close")
+    frame = error.response()
+    assert frame["t"] == "fatal" and "id" not in frame
+    validate_envelope(frame, sender="host")
+    request_error = FrameError("quota.host", request_id="r1")
+    assert request_error.fate == "stays"
+    assert request_error.response()["id"] == "r1"
+    validate_envelope(request_error.response(), sender="host")
+
+
+@pytest.mark.parametrize("code", ["req.invalid", "quota.host", "cancelled", "outcome.unknown"])
+@pytest.mark.parametrize("request_id", [None, "", "unknown id", "x" * 33, 1])
+def test_request_errors_require_valid_ids(code, request_id):
+    if code == "quota.host" and request_id is None:
+        return
+    with pytest.raises(ValueError, match="valid request id"):
+        FrameError(code, request_id=request_id)
+
+
+def test_error_default_messages_are_specific():
+    codes = [
+        "frame.invalid",
+        "frame.too_large",
+        "handshake.invalid",
+        "peer.denied",
+        "host.version_mismatch",
+        "req.invalid",
+        "quota.host",
+        "cancelled",
+        "outcome.unknown",
+    ]
+    messages = [str(FrameError(code, request_id="r1")) for code in codes]
+    assert len(set(messages)) == len(codes)
+    assert all(messages)

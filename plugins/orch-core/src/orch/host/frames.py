@@ -39,15 +39,31 @@ _DISPOSITIONS = {
     "outcome.unknown": (9, True, "stays"),
 }
 
+_MESSAGES = {
+    "frame.invalid": "Invalid frame",
+    "frame.too_large": "Frame exceeds the size limit",
+    "handshake.invalid": "Invalid handshake",
+    "peer.denied": "Peer is not allowed to connect",
+    "host.version_mismatch": "No shared protocol version",
+    "req.invalid": "Invalid request envelope",
+    "quota.host": "Host resource limit exceeded",
+    "cancelled": "Request cancelled",
+    "outcome.unknown": "Request outcome is unknown",
+}
+
 
 class FrameError(ValueError):
     """A wire error, including its exact §0.6 disposition."""
 
-    def __init__(self, code: str = "frame.invalid", message: str = "Invalid frame", request_id: str | None = None):
-        super().__init__(message)
+    def __init__(self, code: str = "frame.invalid", message: str | None = None, request_id: str | None = None):
+        super().__init__(_MESSAGES[code] if message is None else message)
         self.code = code
         self.request_id = request_id
         self.exit, self.retryable, self.fate = _DISPOSITIONS[code]
+        if code == "quota.host" and request_id is None:
+            self.fate = "close"
+        if self.fate == "stays" and (type(request_id) is not str or not re.fullmatch(REQ_ID, request_id)):
+            raise ValueError("Request-scoped errors require a valid request id")
 
     def response(self) -> dict[str, Any]:
         error = {"code": self.code, "message": str(self), "retryable": self.retryable}

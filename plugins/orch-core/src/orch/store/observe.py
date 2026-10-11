@@ -149,7 +149,13 @@ def observe(store: Any, ref: str, problems: list[str] | None = None) -> list[dic
             if problems is not None:
                 problems.append(f"{name}: {ref_name} names no commit object; nothing was recorded")
             continue
-        wanted.append((name, ref_name, sha, repo_identity(path, name)))
+        rid = repo_identity(path, name)
+        declared = store.state.workspace.repos[name].get("remote")
+        if declared is not None and not canon.same_repo_identity(declared, rid):
+            if problems is not None:
+                problems.append(f"{name}: repo.remote_mismatch; its code cannot be observed")
+            continue
+        wanted.append((name, ref_name, sha, rid))
     out = []
     for name, ref_name, sha, rid in wanted:
         view = store.ticket(ref) or view

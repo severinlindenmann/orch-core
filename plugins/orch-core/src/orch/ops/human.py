@@ -206,22 +206,20 @@ class Human:
         """Read-only: for each linked repository with a branch, is the working copy **on the bound branch, at the bound
         commit, with nothing uncommitted**? The decision binds a commit; a person who ran or read the files must have
         had exactly that commit in front of them (D58, security review R2). ``signed`` is the source list bound."""
-        from orch.store import observe
-
         out: list[str] = []
         links = view.fields["links"]
         for name in links["repos"]:
             branch = links["branches"].get(name)
             if not branch:
                 continue
-            path = observe.repo_path(self.store.root, self.store.state.workspace.repos, name)
+            path = self.ctx.caps.git.repo_path(self.store.root, self.store.state.workspace.repos, name)
             if path is None or not path.is_dir():
                 out.append(f"{name}: no working copy in settings.repos")
                 continue
             ref = f"refs/heads/{branch}"
             git = self.ctx.caps.git
             head = git.head(path)
-            on = git.run(path, "symbolic-ref", "-q", "HEAD")
+            on = git.symbolic_head(path)
             entry = next((e for e in signed if e["repo"] == git.identity(path, name)), None)
             if head is None or entry is None or entry["ref"] != ref or entry["sha"] != head:
                 out.append(f"{name}: {ref} is not recorded at the commit checked out; look again with orch show")

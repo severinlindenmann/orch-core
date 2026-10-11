@@ -316,11 +316,9 @@ def _index(s: InspectStore) -> list[Finding]:
 
 
 def _repos(s: InspectStore, root: Path, caps: Capabilities) -> list[Finding]:
-    from orch.store import observe
-
     out: list[Finding] = []
     for name in sorted(s.state.workspace.repos):
-        p = observe.repo_path(root, s.state.workspace.repos, name)
+        p = caps.git.repo_path(root, s.state.workspace.repos, name)
         if p is None or not p.is_dir():
             out.append(Finding("warn", f"repo {name}", "repo.unobservable", "the working copy does not exist"))
         else:

@@ -134,7 +134,6 @@ function MandateView({ ws, m, now, owner }: { ws: string; m: PreviewMandate; now
           <span className="flex flex-wrap items-center gap-2">
             Mandate {m.id}
             <Pill tone={s.tone}>{s.text}</Pill>
-            <Pill>Preview</Pill>
           </span>
         }
         aside={

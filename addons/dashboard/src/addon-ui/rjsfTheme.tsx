@@ -76,10 +76,20 @@ function CheckboxWidget({ id, value, label, disabled, readonly, onChange }: Widg
   )
 }
 
+/**
+ * rjsf's own radio group and field description (no themed widget here) take the form's type scale: 13px options with
+ * the brand accent and a gap between dot and label, a 12px muted description, like every other field.
+ */
+const FIELD_PARTS =
+  '[&_.field-description]:text-[12px] [&_.field-description]:leading-relaxed [&_.field-description]:text-text-muted ' +
+  '[&_.field-radio-group]:space-y-1 [&_.field-radio-group]:text-[13px] [&_.field-radio-group_label]:cursor-pointer ' +
+  '[&_.field-radio-group_label>span]:inline-flex [&_.field-radio-group_label>span]:items-center [&_.field-radio-group_label>span]:gap-2 ' +
+  '[&_.field-radio-group_input]:accent-[var(--brand)]'
+
 function FieldTemplate({ id, label, children, errors, help, description, hidden, displayLabel, required }: FieldTemplateProps) {
   if (hidden) return <div className="hidden">{children}</div>
   return (
-    <div className="space-y-1.5">
+    <div className={`space-y-1.5 ${FIELD_PARTS}`}>
       {displayLabel && label && (
         <Label htmlFor={id} className="text-[12px] text-text-muted">
           {label}

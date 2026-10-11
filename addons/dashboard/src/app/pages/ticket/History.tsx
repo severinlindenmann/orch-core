@@ -11,7 +11,33 @@ import { cn } from '@/lib/utils'
 import { sectionTitle } from './Overview'
 import { ActorIcon, agentName, ago, fmtExact, fmtTime, Mono, Pill, type TabProps, type Viewer } from './shared'
 
-const CORE_PREFIXES = new Set(['ticket', 'status', 'people', 'claim', 'lease', 'task', 'artifact', 'question', 'gate', 'verdict', 'handoff', 'log', 'section', 'edit', 'projection', 'restore'])
+const CORE_PREFIXES = new Set(['ticket', 'status', 'people', 'claim', 'lease', 'task', 'artifact', 'question', 'gate', 'verdict', 'handoff', 'log', 'section', 'edit', 'projection', 'restore', 'agent'])
+/** Why core refused an agent, in plain words (the code stays in the event, see Raw). */
+const REFUSAL_WORDS: Record<string, string> = {
+  human_only: 'only people approve',
+  'claim.held': 'another session holds the ticket',
+  'lease.held': 'another session holds that task',
+  'gate.not_approved': 'the plan is not approved yet',
+  'verify.failed': "the task's check failed",
+  'grant.scope': 'its grant does not cover that',
+  'grant.expired': 'its grant has ended',
+  'grant.revoked': 'its grant was revoked',
+}
+
+/** A handoff's embedded widget blocks (```orch … ```) read as their title here; the ticket shows the widget itself. */
+function handoffText(text: string): string {
+  return text.replace(/```orch\s*\n([\s\S]*?)```/g, (_, body: string) => {
+    let title = ''
+    try {
+      const t = (JSON.parse(body) as { title?: unknown }).title
+      if (typeof t === 'string') title = t
+    } catch {
+      /* not a widget block: a plain mention */
+    }
+    return title ? `[widget: ${title}]` : '[widget]'
+  }).trim()
+}
+
 const SIGNED_TYPES = new Set(['gate.approved', 'gate.changes_requested', 'verdict.given', 'question.answered', 'people.set'])
 
 type Who = 'person' | 'agent' | 'host' | 'addon'
@@ -62,7 +88,9 @@ export function eventDetail(e: OrchEvent, v: Viewer): string {
       if (e.via === 'factory_charter') return `Verdict ${s('result')} via the factory charter — no person reviewed this${e.source_sha ? ` (commit ${s('source_sha')})` : ''}`
       return `Verdict ${s('result')}${e.source_sha ? ` on ${s('source_sha')}` : ''}${e.text ? `: ${s('text')}` : ''}`
     case 'handoff.written':
-      return `Handoff: ${s('text')}`
+      return `Handoff: ${handoffText(s('text'))}`
+    case 'agent.refused':
+      return `Refused: ${REFUSAL_WORDS[s('code')] ?? (s('message') || 'not allowed')}`
     case 'section.edited':
       return `Edited section ${s('section').replace('_', ' ')}`
     case 'log.added':

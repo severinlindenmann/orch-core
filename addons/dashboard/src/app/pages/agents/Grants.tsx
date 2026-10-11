@@ -93,11 +93,11 @@ export function Grants({ grants, now, name, canRevoke, onRevoke }: { grants: Gra
                 </TableCell>
                 {show('sessions') && <TableCell className="tabular-nums">{g.sessions.length}</TableCell>}
                 <TableCell>
-                  <Pill tone={TONE[state]}>{state}</Pill>
+                  <Pill tone={TONE[state]} className="capitalize">{state}</Pill>
                 </TableCell>
                 <TableCell className="text-right">
                   {state === 'active' && canRevoke(g) && (
-                    <Button variant="destructive" size="xs" onClick={() => onRevoke(g)}>
+                    <Button variant="outline" size="xs" className="text-danger hover:text-danger" onClick={() => onRevoke(g)}>
                       Revoke
                     </Button>
                   )}

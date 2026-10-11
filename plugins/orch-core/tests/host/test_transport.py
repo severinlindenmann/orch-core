@@ -14,6 +14,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -324,7 +325,7 @@ def test_bind_uses_checked_fd_despite_replacement(secure_tree, monkeypatch):
     original_bind = socket.socket.bind
 
     def bind_socket(sock, address):
-        bound_at.append((address, Path.cwd()))
+        bound_at.append(Path(address).resolve().parent)
         return original_bind(sock, address)
 
     def replaced(self, gid):
@@ -341,7 +342,7 @@ def test_bind_uses_checked_fd_despite_replacement(secure_tree, monkeypatch):
         if exc.errno == errno.EPERM:
             pytest.skip("Sandbox forbids AF_UNIX bind (EPERM)")
         raise
-    assert bound_at == [("host.sock", secure_tree / "r" / "old")]
+    assert bound_at == [secure_tree / "r" / "old"]
     assert not (secure_tree / "r" / WS / "host.sock").exists()
     assert not (secure_tree / "r" / "old" / "host.sock").exists()
 
@@ -399,10 +400,79 @@ def test_foreign_socket_owner_refused(listener, monkeypatch):
     assert path.exists()
 
 
-def test_binding_requires_single_main_thread(secure_tree, monkeypatch):
-    monkeypatch.setattr(listener_module.threading, "active_count", lambda: 2)
-    with pytest.raises(RuntimeError, match="threads"):
+def test_binding_while_threads_do_relative_file_work(secure_tree, monkeypatch):
+    monkeypatch.chdir(secure_tree)
+    Path("sentinel").write_text("unchanged")
+    stop = threading.Event()
+    started = threading.Event()
+    failures = []
+
+    def relative_work():
+        while not stop.is_set():
+            try:
+                assert Path("sentinel").read_text() == "unchanged"
+                Path("worker-output").write_text("worker")
+            except Exception as exc:
+                failures.append(exc)
+            started.set()
+
+    thread = threading.Thread(target=relative_work)
+    thread.start()
+    started.wait()
+    try:
+        try:
+            value = Listener(secure_tree / "r", WS, host_uid=UID, gid=GID)
+        except OSError as exc:
+            if exc.errno == errno.EPERM:
+                pytest.skip("Sandbox forbids AF_UNIX bind (EPERM)")
+            raise
+        try:
+            value.recheck()
+            assert Path.cwd() == secure_tree
+            assert not failures
+        finally:
+            value.close()
+    finally:
+        stop.set()
+        thread.join()
+
+
+def test_binding_refuses_missing_safe_primitive(secure_tree, monkeypatch):
+    monkeypatch.setattr(listener_module.ctypes, "CDLL", lambda *args, **kwargs: SimpleNamespace())
+    if sys.platform != "darwin":
+        monkeypatch.setattr(Path, "is_dir", lambda self: False)
+    value = Listener.__new__(Listener)
+    value.directory = SimpleNamespace(fd=42)
+    with pytest.raises(UnsafePath, match="requires"):
+        value._bind(GID)
+
+
+def test_bind_does_not_chmod_planted_symlink(secure_tree, monkeypatch):
+    target = secure_tree / "target"
+    target.write_text("private")
+    target.chmod(0o600)
+
+    def replaced(sock, address):
+        (secure_tree / "r" / WS / "host.sock").symlink_to(target)
+
+    monkeypatch.setattr(socket.socket, "bind", replaced)
+    with pytest.raises(UnsafePath, match="replaced"):
         Listener(secure_tree / "r", WS, host_uid=UID, gid=GID)
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+
+
+@pytest.mark.parametrize("code", [errno.ENOTSUP, errno.EOPNOTSUPP, errno.ENODATA])
+def test_linux_no_acl_support_is_no_acl(monkeypatch, code):
+    monkeypatch.setattr(sys, "platform", "linux")
+    calls = []
+
+    def unsupported(fd, name):
+        calls.append(name)
+        raise OSError(code, "No ACL support")
+
+    monkeypatch.setattr(os, "getxattr", unsupported, raising=False)
+    check_acl(42, {UID})
+    assert calls == ["system.posix_acl_access", "system.posix_acl_default"]
 
 
 def test_native_peer_credentials():

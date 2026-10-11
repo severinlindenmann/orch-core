@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import ctypes
 import errno
 import fcntl
 import os
@@ -42,8 +43,6 @@ class Listener:
             raise ValueError("Invalid listener directory name")
         self.path = Path(run) / name / "host.sock"
         check_socket_path(self.path)
-        if threading.current_thread() is not threading.main_thread() or threading.active_count() != 1:
-            raise RuntimeError("Bind listeners before starting any threads (fchdir fallback)")
         self.host_uid, self.kind = host_uid, kind
         self.workspace_id = name if kind == "workspace" else None
         self.sock: socket.socket | None = None
@@ -80,40 +79,67 @@ class Listener:
 
     def _bind(self, gid: int) -> None:
         assert self.directory is not None
-        saved_cwd = os.open(".", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
-        old_umask = os.umask(0o177)
-        try:
-            os.fchdir(self.directory.fd)
-            try:
-                info = os.stat("host.sock", follow_symlinks=False)
-            except FileNotFoundError:
-                pass
-            else:
-                if not stat.S_ISSOCK(info.st_mode) or info.st_uid != self.host_uid:
-                    raise UnsafePath(f"Planted socket: owner {info.st_uid}")
-                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as probe:
-                    probe.settimeout(0.2)
+        if sys.platform == "linux" and Path("/proc/self/fd").is_dir():
+            self._bind_at(f"/proc/self/fd/{self.directory.fd}/host.sock", gid)
+        elif sys.platform == "darwin":
+            lib = ctypes.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True)
+            change = getattr(lib, "pthread_fchdir_np", None)
+            if change is None:
+                raise UnsafePath("Binding requires pthread_fchdir_np on macOS")
+            change.argtypes, change.restype = [ctypes.c_int], ctypes.c_int
+            errors: list[BaseException] = []
+
+            def bind_thread() -> None:
+                try:
+                    if change(self.directory.fd) != 0:
+                        raise OSError(ctypes.get_errno(), "pthread_fchdir_np failed")
                     try:
-                        probe.connect("host.sock")
-                    except OSError as exc:
-                        if exc.errno != errno.ECONNREFUSED:
-                            raise UnsafePath("Cannot prove socket is stale") from exc
-                    else:
-                        raise UnsafePath("Socket is already serving")
-                os.unlink("host.sock")
-            self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            self.sock.bind("host.sock")
-            info = os.stat("host.sock", follow_symlinks=False)
-            self.identity = info.st_dev, info.st_ino
-            os.chown("host.sock", -1, gid, follow_symlinks=False)
-            os.chmod("host.sock", 0o660)
-            self.sock.listen(128)
-            self.sock.setblocking(False)
-        finally:
-            os.fchdir(saved_cwd)
-            os.close(saved_cwd)
-            os.umask(old_umask)
+                        self._bind_at("host.sock", gid)
+                    finally:
+                        if change(-1) != 0:
+                            raise OSError(ctypes.get_errno(), "Cannot restore thread working directory")
+                except BaseException as exc:
+                    errors.append(exc)
+
+            thread = threading.Thread(target=bind_thread)
+            thread.start()
+            thread.join()
+            if errors:
+                raise errors[0]
+        else:
+            raise UnsafePath("Safe binding requires /proc/self/fd on Linux or pthread_fchdir_np on macOS")
         self.recheck()
+
+    def _bind_at(self, address: str, gid: int) -> None:
+        assert self.directory is not None
+        fd = self.directory.fd
+        try:
+            info = os.stat("host.sock", dir_fd=fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            if not stat.S_ISSOCK(info.st_mode) or info.st_uid != self.host_uid:
+                raise UnsafePath(f"Planted socket: owner {info.st_uid}")
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as probe:
+                probe.settimeout(0.2)
+                try:
+                    probe.connect(address)
+                except OSError as exc:
+                    if exc.errno != errno.ECONNREFUSED:
+                        raise UnsafePath("Cannot prove socket is stale") from exc
+                else:
+                    raise UnsafePath("Socket is already serving")
+            os.unlink("host.sock", dir_fd=fd)
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.bind(address)
+        info = os.stat("host.sock", dir_fd=fd, follow_symlinks=False)
+        if not stat.S_ISSOCK(info.st_mode) or info.st_uid != self.host_uid:
+            raise UnsafePath("Socket replaced during bind")
+        self.identity = info.st_dev, info.st_ino
+        os.chown("host.sock", -1, gid, dir_fd=fd, follow_symlinks=False)
+        os.chmod("host.sock", 0o660, dir_fd=fd, follow_symlinks=False)
+        self.sock.listen(128)
+        self.sock.setblocking(False)
 
     def recheck(self) -> None:
         assert self.run is not None and self.directory is not None

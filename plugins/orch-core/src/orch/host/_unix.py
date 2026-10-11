@@ -42,7 +42,7 @@ def check_acl(fd: int, trusted: set[int], *, empty: bool = False) -> None:
             try:
                 data = os.getxattr(fd, name)
             except OSError as exc:
-                if exc.errno == errno.ENODATA:
+                if exc.errno in {errno.ENODATA, errno.ENOTSUP, errno.EOPNOTSUPP}:
                     continue
                 raise UnsafePath("Cannot inspect POSIX ACL") from exc
             _linux_acl(data, trusted, empty=empty)

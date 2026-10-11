@@ -2,9 +2,9 @@ name: dashboard
 on:
   pull_request:
     branches: [develop]
-    paths: ['addons/dashboard/**', '.github/workflows/dashboard.yml']
+    paths: ['addons/dashboard/**', 'plugins/orch-core/**', 'docs/architecture/orch-v2-host.md', '.github/workflows/dashboard.yml']
   push:
-    paths: ['addons/dashboard/**', '.github/workflows/dashboard.yml']
+    paths: ['addons/dashboard/**', 'plugins/orch-core/**', 'docs/architecture/orch-v2-host.md', '.github/workflows/dashboard.yml']
 permissions:
   contents: read
 concurrency:

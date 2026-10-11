@@ -7,6 +7,7 @@ import { realApi } from '../api/realApi'
 
 vi.mock('../api/bootstrap', () => ({ getToken: () => 'demo-not-a-real-token', onSessionChange: () => () => {} }))
 vi.mock('../api/realApi', () => ({ realApi: { workspaces: vi.fn(), session: vi.fn(), identity: vi.fn(), today: vi.fn(), tickets: vi.fn(), logout: vi.fn() } }))
+vi.mock('../api/useLiveUpdates', () => ({ useLiveUpdates: () => ({ ready: true, revoked: false }) }))
 const ws = 'a'.repeat(32)
 beforeEach(() => {
   vi.clearAllMocks()

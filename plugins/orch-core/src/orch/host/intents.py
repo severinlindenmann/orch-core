@@ -17,7 +17,7 @@ import hashlib
 import os
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -33,9 +33,14 @@ KEEP_SECONDS = 24 * 3600
 TOMBSTONE_SECONDS = 7 * 24 * 3600
 
 
-def binding_of(op: str, args_normalised: dict[str, Any], session: str | None = None) -> str:
-    """``sha256(cj({op, args_normalised, files, session}))``; control ops carry no files."""
-    doc = {"op": op, "args_normalised": args_normalised, "files": {}, "session": session}
+def binding_of(
+    op: str,
+    args_normalised: dict[str, Any],
+    session: str | None = None,
+    files: Mapping[str, str] | None = None,
+) -> str:
+    """``sha256(cj({op, args_normalised, files:{arg: Hash}, session}))``; control ops carry no files and no session."""
+    doc = {"op": op, "args_normalised": args_normalised, "files": dict(files or {}), "session": session}
     return "sha256:" + hashlib.sha256(canon.cj_checked(doc)).hexdigest()
 
 
@@ -61,8 +66,20 @@ class Intent:
 
 
 class IntentStore:
-    def __init__(self, state_dir: Path, host_uid: int, *, clock: Callable[[], float] = time.time) -> None:
-        self.dir = Path(state_dir) / "host" / "intents"
+    #: the ``step`` of a record whose change may or may not have landed (``pending`` for a log write's record)
+    START = "started"
+    #: the steps that end in a tombstone after 24 h
+    TERMINAL = frozenset({"committed", "failed"})
+
+    def __init__(
+        self,
+        state_dir: Path,
+        host_uid: int,
+        *,
+        clock: Callable[[], float] = time.time,
+        directory: Path | None = None,
+    ) -> None:
+        self.dir = Path(directory) if directory is not None else Path(state_dir) / "host" / "intents"
         self.host_uid = host_uid
         self.clock = clock
         self._lock = threading.Lock()
@@ -106,13 +123,13 @@ class IntentStore:
                             "binding": binding,
                             "op": op,
                             "args_normalised": args_normalised,
-                            "step": "started",
+                            "step": self.START,
                             "at": int(self.clock()),
                         }
                         self._write(key, record)
                         self._running[key] = threading.Event()
                         return Intent(key, record)
-                    if record.get("step") == "started" and record.get("binding") == binding:
+                    if record.get("step") == self.START and record.get("binding") == binding:
                         self._running[key] = threading.Event()
                         return Intent(key, record, resumed=True)
                     break
@@ -147,16 +164,20 @@ class IntentStore:
     def abandon(self, intent: Intent) -> None:
         """A retryable failure (``lock.busy``) stores nothing: the retry runs again."""
         with self._lock:
-            with contextlib.suppress(FileNotFoundError):
-                os.unlink(self._path(intent.key))
-            self._release(intent.key)
+            try:
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(self._path(intent.key))
+            finally:
+                self._release(intent.key)  # never leave the key marked running: a retry would wait for it forever
 
     def _finish(self, intent: Intent, fields: dict[str, Any]) -> dict[str, Any]:
         record = {**intent.record, **fields, "done_at": int(self.clock())}
         with self._lock:
-            self._write(intent.key, record)
-            intent.record = record
-            self._release(intent.key)
+            try:
+                self._write(intent.key, record)
+                intent.record = record
+            finally:
+                self._release(intent.key)  # also when the write fails (disk full): a retry must not wait forever
         return record
 
     def _release(self, key: str) -> None:
@@ -174,7 +195,7 @@ class IntentStore:
             raise HostError("outcome.unknown_idem", "no outcome for this idem")
         if record["step"] == "tombstone":
             raise HostError("idem.expired", "this idem has expired")
-        if running or record["step"] == "started":
+        if running or record["step"] == self.START:
             return {"state": "pending"}
         out: dict[str, Any] = {"state": record["step"], "exit": record["exit"]}
         if "result" in record:
@@ -189,7 +210,7 @@ class IntentStore:
             if len(name) != 64 or not all(c in "0123456789abcdef" for c in name):
                 continue
             record = self.read(name)
-            if record is not None and record.get("step") == "started":
+            if record is not None and record.get("step") == self.START:
                 out.append(Intent(name, record))
         return out
 
@@ -217,16 +238,20 @@ class IntentStore:
                     if now - done > TOMBSTONE_SECONDS:
                         with contextlib.suppress(FileNotFoundError):
                             os.unlink(self._path(name))
-                elif record["step"] in {"committed", "failed"} and now - done > KEEP_SECONDS:
-                    self._write(
-                        name,
-                        {
-                            "key": name,
-                            "namespace": record["namespace"],
-                            "principal": record["principal"],
-                            "binding": record["binding"],
-                            "state": record["step"],
-                            "step": "tombstone",
-                            "done_at": int(now),
-                        },
-                    )
+                elif record["step"] in self.TERMINAL and now - done > KEEP_SECONDS:
+                    self._tombstone(name, record, now)
+
+    def _tombstone(self, name: str, record: dict[str, Any], now: float) -> None:
+        """Replace a terminal record with ``{key, binding, state}`` (caller holds the lock)."""
+        self._write(
+            name,
+            {
+                "key": name,
+                "namespace": record["namespace"],
+                "principal": record["principal"],
+                "binding": record["binding"],
+                "state": record["step"],
+                "step": "tombstone",
+                "done_at": int(now),
+            },
+        )

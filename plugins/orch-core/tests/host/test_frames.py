@@ -261,7 +261,8 @@ def test_bad_request_envelopes(patch):
 @pytest.mark.parametrize("request_id", [None, 1, True, "", "x" * 33, "hello world", "é", "id\n"])
 def test_unreadable_ids(request_id):
     assert_error("frame.invalid", validate_envelope, REQ | {"id": request_id})
-    assert_error("frame.invalid", validate_envelope, {"t": "cancel", "id": request_id})
+    if not isinstance(request_id, str):
+        assert_error("frame.invalid", validate_envelope, {"t": "cancel", "id": request_id})
 
 
 def test_optional_and_nested_shapes():
@@ -535,3 +536,12 @@ def test_error_dispositions(code, exit_code, retryable, fate):
     error = FrameError(code, "Protocol error", "r1" if fate == "stays" else None)
     assert (error.exit, error.retryable, error.fate) == (exit_code, retryable, fate)
     validate_envelope(error.response(), sender="host")
+
+
+@pytest.mark.parametrize("request_id", ["", "unknown id", "x" * 33])
+def test_arbitrary_cancel_ids_are_ignored(request_id):
+    connection = ready()
+    frame = {"t": "cancel", "id": request_id}
+    validate_envelope(decode(encode(frame)[4:]), sender="client")
+    assert connection.receive(frame) is None
+    assert connection.phase == "ready" and not connection.inflight

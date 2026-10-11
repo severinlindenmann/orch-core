@@ -352,8 +352,7 @@ _SCHEMAS = {
         host=True,
     ),
     "fatal": _object({"t": _const("fatal"), "error": _ERROR}, host=True),
-    # §0.2 says str here; use the stricter common request-id bounds.
-    "cancel": _object({"t": _const("cancel"), "id": _str(REQ_ID)}),
+    "cancel": _object({"t": _const("cancel"), "id": _STRING}),
 }
 _FORMATS = FormatChecker()
 
@@ -468,7 +467,7 @@ class Connection:
                 # §0.11 gives the limit but no dedicated code; use §0.6 quota.host.
                 raise FrameError("quota.host", "Too many requests in flight", request_id)
         elif kind == "cancel":
-            return self.cancel(request_id)
+            return self.cancel(frame["id"])
         return None
 
     def start(self, request_id: str, kind: Literal["read", "wait", "write"]) -> bool:

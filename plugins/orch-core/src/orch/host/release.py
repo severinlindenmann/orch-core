@@ -7,7 +7,11 @@ again is a no-op, different bytes under the same version are refused. An upgrade
 ``host.restart`` (or the service manager's restart).
 
 At start the host imports every ``orch`` module (:func:`preload`), so a later change on disk cannot change code the
-running host has not loaded yet.
+running host has not loaded yet. ``releases/current`` points at the installed version.
+
+Known limit: only ``orch/`` is copied. The dependencies (``jsonschema``, ``cryptography``) come from the
+interpreter's environment, and ``python -I`` still runs that environment's ``site-packages/*.pth`` files, so the
+interpreter's environment is trusted like any other code of the host UID (same-UID processes are trusted, §7).
 """
 
 from __future__ import annotations
@@ -97,10 +101,12 @@ def install_release(version: str | None = None, *, target: Path | None = None, s
     if final.exists():
         try:
             have = json.loads((final / "RELEASE.json").read_text())
+            on_disk = _manifest(final / "orch")  # re-hash: the manifest alone could hide an edited file
         except (OSError, ValueError) as exc:
             raise ReleaseError(f"{final} exists but has no readable manifest") from exc
-        if have.get("files") != manifest:
+        if have.get("files") != manifest or on_disk != manifest:
             raise ReleaseError(f"release {version} is already installed with other content; use a new version")
+        _point_current(releases, version)
         return final
     releases.mkdir(parents=True, exist_ok=True, mode=0o755)
     staging = releases / f".staging-{secrets.token_hex(6)}"
@@ -115,6 +121,7 @@ def install_release(version: str | None = None, *, target: Path | None = None, s
         (staging / "RELEASE.json").write_text(json.dumps({"version": version, "files": manifest}, sort_keys=True))
         _freeze(staging)
         os.rename(staging, final)  # atomic: a release appears complete or not at all
+        _point_current(releases, version)
     except BaseException:
         with contextlib.suppress(OSError):
             for path in [staging, *staging.rglob("*")]:
@@ -122,6 +129,18 @@ def install_release(version: str | None = None, *, target: Path | None = None, s
         shutil.rmtree(staging, ignore_errors=True)
         raise
     return final
+
+
+def _point_current(releases: Path, version: str) -> None:
+    """``releases/current`` → ``<version>``, replaced atomically (the units run ``current/bin/orch-host``)."""
+    link = releases / f".current-{secrets.token_hex(4)}"
+    os.symlink(version, link)
+    try:
+        os.replace(link, releases / "current")
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(link)
+        raise
 
 
 #: modules that only import on another platform

@@ -72,6 +72,21 @@ def _peers(items: list[str]) -> dict[str, dict[str, str]]:
     return peers
 
 
+def _control_path(given: Path | None, state: Path) -> Path:
+    """``--run``, else the service-managed run directory when a host serves there, else the dev ``<state>/run``."""
+    from .listener import default_run_directory
+
+    if given is not None:
+        return given / "control" / "host.sock"
+    try:
+        service = default_run_directory(os.getuid()) / "control" / "host.sock"
+    except Exception:  # noqa: BLE001 - an unsupported platform has no service run directory
+        service = None
+    if service is not None and service.exists():
+        return service
+    return state / "run" / "control" / "host.sock"
+
+
 def main(argv: list[str], *, env: Mapping[str, str] | None = None, out: TextIO | None = None) -> int:
     env = os.environ if env is None else env
     out = sys.stdout if out is None else out
@@ -116,22 +131,31 @@ def main(argv: list[str], *, env: Mapping[str, str] | None = None, out: TextIO |
                 out.write(units.tmpfiles_conf(args.user or str(os.getuid()), args.group or "root", os.getuid()))
             return 0
         from .control_client import ControlClient, new_idem
+        from .ownership import LOCK_WAIT_SECONDS
 
         state = _state(args.state, env)
-        path = (args.run or state / "run") / "control" / "host.sock"
-        with ControlClient(path) as client:
-            if args.cmd == "list":
-                res = client.call("host.list")
-            elif args.cmd == "restart":
-                res = client.call("host.restart")
-            elif args.cmd == "register":
-                res = client.call(
-                    "host.register", {"root": os.path.abspath(args.root), "peers": _peers(args.peer)}, idem=new_idem()
-                )
-            elif args.cmd == "unregister":
-                res = client.call("host.unregister", {"workspace_id": args.workspace_id}, idem=new_idem())
-            else:
-                res = client.call("host.outcome", {"idem": args.idem})
+        idem = new_idem() if args.cmd in {"register", "unregister"} else None
+        try:
+            # A write may wait 60 s for the ownership lock: the client waits longer than the host does.
+            with ControlClient(_control_path(args.run, state), timeout=LOCK_WAIT_SECONDS + 30) as client:
+                if args.cmd == "list":
+                    res = client.call("host.list")
+                elif args.cmd == "restart":
+                    res = client.call("host.restart")
+                elif args.cmd == "register":
+                    root = os.path.abspath(args.root)
+                    res = client.call("host.register", {"root": root, "peers": _peers(args.peer)}, idem=idem)
+                elif args.cmd == "unregister":
+                    res = client.call("host.unregister", {"workspace_id": args.workspace_id}, idem=idem)
+                else:
+                    res = client.call("host.outcome", {"idem": args.idem})
+        except (OSError, ConnectionError) as exc:
+            error = {"code": "host.unavailable", "message": str(exc)[:400], "retryable": True}
+            doc = {"ok": False, "error": error, **({"idem": idem} if idem else {})}
+            out.write(json.dumps(doc, sort_keys=True) + "\n")  # with the idem: orch host outcome IDEM finds the result
+            return 9
+        if idem is not None:
+            res = {**res, "idem": idem}
         out.write(json.dumps(res, sort_keys=True) + "\n")
         return 0 if res.get("ok") else int(res.get("exit", 1))
     except HostError as exc:

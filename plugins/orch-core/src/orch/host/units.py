@@ -59,6 +59,8 @@ def systemd_unit(
     """A user unit (``systemctl --user``), or a system unit that runs as ``user`` (required with ``system``)."""
     if system and (not user or host_uid is None):
         raise ValueError("a system unit needs the host user and UID")
+    if user == "root" or host_uid == 0:
+        raise ValueError("the host never runs as root")
     run_dir = Path("/run/orch") / str(host_uid) if host_uid is not None else None
     exec_start = " ".join(shlex.quote(a) for a in program_arguments(python, release, state_dir, run_dir))
     lines = [

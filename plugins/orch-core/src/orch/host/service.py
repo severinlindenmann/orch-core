@@ -43,7 +43,7 @@ from .listener import Listener, default_run_directory
 from .ownership import LOCK_WAIT_SECONDS
 from .pins import AgentPins
 from .registry import Entry, Registry, host_dir
-from .transport import HostLimits, Server
+from .transport import WRITE_TIMEOUT_SECONDS, HostLimits, Server
 from .workspace import OpBackend, StatusBackend, WorkspaceGate, WorkspaceService
 
 __all__ = ["RETRY_AFTER_MS", "Host"]
@@ -77,7 +77,7 @@ class Host:
         self.clock = clock
         self.lock_wait = lock_wait
         self.limits = limits or HostLimits()
-        self.registry = Registry(self.state_dir, self.host_uid, person_check=self._person_check)
+        self.registry = Registry(self.state_dir, self.host_uid, person_check=self._person_check, pins=self.pins)
         self.intents = IntentStore(self.state_dir, self.host_uid, clock=clock)
         self.control = ControlOps(self)
         self.services: dict[str, WorkspaceService] = {}
@@ -121,6 +121,8 @@ class Host:
 
     # -- the person mapping check (F8), on the workspace's worker thread
     def _person_check(self, workspace_id: str, person: str) -> bool:
+        # TODO(H4a1): this blocks the event loop (up to 10 s) when the transport classifies a connection; move
+        # the per-connection check to an executor or a cache refreshed by the workspace worker.
         service = self.services.get(workspace_id)
         if service is None or service.store is None:
             return False
@@ -149,6 +151,7 @@ class Host:
         self.state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         check_tree(self.state_dir, self.host_uid)
         ensure_private_dir(host_dir(self.state_dir), self.host_uid)
+        ensure_private_dir(self.state_dir / "hosts", self.host_uid)
         self._take_host_lock()
         try:
             self.registry.load()
@@ -198,7 +201,10 @@ class Host:
             return grp.getgrnam(entry.group).gr_gid
         except KeyError:
             if entry.tier == "A":
-                return os.getgid()  # dev and tier A: no agent UIDs, no orch-<ws> group yet (H3c creates it)
+                # Dev and tier A: no agent UIDs and no orch-<ws> group yet (H3c creates it). Known limit: the
+                # primary group (staff on macOS) can traverse the 0750 socket directory, so any local user can
+                # take accept and handshake slots; unmapped UIDs are still refused before a byte is read (§7).
+                return os.getgid()
             raise HostError("workspace.unavailable", f"group {entry.group} is missing; run the setup helper") from None
 
     async def serve(self, entry: Entry) -> None:
@@ -289,9 +295,18 @@ class Host:
             if not pending:
                 break
             await asyncio.wait(pending)
-        await asyncio.sleep(0.05)  # let the last responses reach their writers before the sockets close
+        await self._flush()
         assert self._stopped is not None
         self._stopped.set()
+
+    async def _flush(self) -> None:
+        """Wait until every queued answer has been written, bounded by the transport's write deadline."""
+        deadline = time.monotonic() + WRITE_TIMEOUT_SECONDS
+        while time.monotonic() < deadline:
+            sessions = [s for server, _ in self.servers.values() for s in server.sessions if not s.closed]
+            if all(not s.answering and s.queue.empty() and not s.writing for s in sessions):
+                return
+            await asyncio.sleep(0.01)
 
     async def close(self) -> None:
         for name in list(self.servers):

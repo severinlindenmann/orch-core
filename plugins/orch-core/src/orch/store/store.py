@@ -375,6 +375,21 @@ class Store:
             self._ensure({uid})
             return self._flush(uid)
 
+    def replay_invalidations(self, uid: str, note: Callable[[str, str], None]) -> None:
+        """Observe invalidation transitions from the verified logs through the model's replay."""
+        with self._locked():
+            self._ensure({uid})
+            replay(
+                self._read_events(WORKSPACE, 1, self._logs[WORKSPACE].seq),
+                {u: self._read_events(u, 1, self._logs[u].seq) for u in sorted(self._loaded)},
+                verifier=self._verifier,
+                now=self.state.now,
+                expected_workspace_id=self.workspace_id,
+                expected_genesis=self._pin,
+                verb_events=_verb_events(),
+                invalidations=(uid, note),
+            )
+
     def _flush(self, uid: str, *, cause: str | None = None) -> list[dict[str, Any]]:
         assert self._state is not None
         from .invalidations import pending_causes
@@ -388,7 +403,10 @@ class Store:
             t = self._state._core.tickets.get(uid)
             ids = sorted(t.gates[g].pending_void) if t is not None else []
             if ids:
-                out.append(self._host_append("gate.invalidated", uid, {"gate": g, "cause": causes[g], "voided": ids}))
+                reason = causes.get(g)
+                if reason is None:
+                    raise StoreError("store.torn_write", f"cannot recover the invalidation cause for {uid} {g}")
+                out.append(self._host_append("gate.invalidated", uid, {"gate": g, "cause": reason, "voided": ids}))
         return out
 
     def attempt_logged(self, ref: str, idem: str) -> bool:

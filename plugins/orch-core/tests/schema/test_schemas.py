@@ -908,6 +908,7 @@ def test_host_events():
         "member_changed",
         "device_compromised",
         "conflict_resolved",
+        "restored",
     ):
         V("event", ev("gate.invalidated", cause=c), log="ticket")
     bad("event", ev("gate.invalidated", gate="deploy"), "/gate")

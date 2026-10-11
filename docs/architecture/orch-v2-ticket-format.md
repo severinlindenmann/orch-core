@@ -457,7 +457,7 @@ agent; **D** an addon; **H** the host only. Types marked D58–D60 are new with 
 | `gate.approved` | P | `gate`: `requirements`, `plan` or `code`; `gate_gen`: int; `hash`: gate hash; `policy_hash`; `source_sha?`: source list | `source_sha` only and always on `code` (D59). |
 | `gate.changes_requested` | P | `gate`: `requirements`, `plan` or `code`; `gate_gen`; `hash`; `policy_hash`; `text`: str | |
 | `verdict.given` | P | `outcome`: `pass` or `fail`; `gate_gen`; `hash`: verify gate hash; `policy_hash`; `source_sha`: source list; `text?`: str | The verify gate's decision. `text` is required on `fail`. `source_sha` is D58. |
-| `gate.invalidated` | H | `gate`: gate; `cause`: `new_commits`, `content_changed`, `policy_changed`, `member_changed`, `device_compromised` or `conflict_resolved`; `voided`: [event id] | **D58.** A record only: it raises no generation and changes no status. `voided` is derived (§5.11). `conflict_resolved` is D53 (P2). |
+| `gate.invalidated` | H | `gate`: gate; `cause`: `new_commits`, `content_changed`, `policy_changed`, `member_changed`, `device_compromised`, `restored` or `conflict_resolved`; `voided`: [event id] | **D58.** A record only: it raises no generation and changes no status. `voided` is derived (§5.11). `conflict_resolved` is D53 (P2). |
 | `branch.pushed` | H | `repo_name`: repo name; `repo_id`: repo identity; `ref`: str; `sha`: git commit id; `before`: {`repo_id`, `ref`, `sha`} or null | **D58.** Appended whenever any of (`repo_id`, `ref`, `sha`) of a linked repo differs from the source-list projection, including the first observation (`before: null`). Never taken from an agent. |
 | `artifact.added` | A, U | file: `name`, `kind`, `sha256`: hash, `bytes`: int; or addon: `name`, `kind`, `addon`, `ref`: str; both: `task?`, `ac?`, `label?`: str | `kind` `feedback` only from a person. Unattended: no `ac`, `task`. Refused on `done`/`closed`. |
 | `artifact.replaced` | A | as `artifact.added`, plus `replaces`: hash | Same `name`; `replaces` is the old digest. |
@@ -1870,7 +1870,7 @@ Every string in `ticket.json`, `body.md` and events:
 | verdict outcome | `pass`, `fail` |
 | close resolution | `wont_do`, `duplicate`, `obsolete`, `other` |
 | claim release reason | `released`, `handoff`, `expired`, `grant_ended`, `member_removed`, `ticket_done`, `ticket_closed` |
-| `gate.invalidated` cause | `new_commits` (D58), `content_changed`, `policy_changed`, `member_changed`, `device_compromised`, `conflict_resolved` (D53, P2) |
+| `gate.invalidated` cause | `new_commits` (D58), `content_changed`, `policy_changed`, `member_changed`, `device_compromised`, `restored`, `conflict_resolved` (D53, P2) |
 | `device.revoked` reason | `compromised`, `lost`, `retired` |
 | device scope levels needed | `decide` for every person event; also `operate` for member, policy, settings, grant, addon and `restore` events; `drop:` certificates never |
 | `projection.repaired` cause | `external_edit`, `projection_mismatch`, `keys_mismatch` |

@@ -608,6 +608,22 @@ export function describeEvent(e: Pick<OrchEvent, 'type'> & Record<string, unknow
       return `pushed ${t(e.commit, 'the record commits')} to the remote (${who})`
     case 'records.pulled':
       return `pulled the remote's record commits (${who})`
+    case 'repos.checked':
+      return 'checked the repo folders'
+    case 'repos.clone_queued':
+      return 'queued a repo clone'
+    case 'repos.cloned':
+      return 'cloned a repo'
+    case 'repos.clone_failed':
+      return 'could not clone a repo'
+    case 'repos.clone_cancelled':
+      return 'cancelled a repo clone'
+    case 'repos.fetched':
+      return 'fetched a repo'
+    case 'repos.declared':
+      return 'declared a repo'
+    case 'repos.removed':
+      return 'removed a repo declaration'
     case 'links.pairing_started':
       return 'started pairing a workspace link'
     case 'links.pairing_cancelled':

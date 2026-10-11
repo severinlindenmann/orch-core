@@ -148,7 +148,7 @@ function MandateView({ ws, m, now, owner }: { ws: string; m: PreviewMandate; now
               )}
               {m.state === 'active' && (
                 <Button size="sm" variant="outline" onClick={() => setDialog('stop')}>
-                  Stop
+                  Stop…
                 </Button>
               )}
               <Button size="sm" variant="outline" onClick={() => setDialog('revoke')}>

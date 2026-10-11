@@ -172,9 +172,17 @@ export function createApi(transport: Transport) {
     /** Mock only: a dropped connection, or a phone scanning the pairing code. */
     simulateRelay: (ws: string, req: RelaySimRequest) => call<RelayState>('POST', `/api/dev/relay/${ws}`, req),
     /** Mandates, PREVIEW ONLY (not part of the contract; served by the mock; nothing is signed). */
-    getMandatesPreview: (ws: string) => call<MandatesPreviewState>('GET', `/api/workspaces/${ws}/preview/mandates`),
+    getLocalMandatesPreview: (ws: string) => transport.previewState?.(ws),
+    getMandatesPreview: async (ws: string) => {
+      const local = transport.previewState?.(ws)
+      if (!local) throw new Error('Mandates preview is unavailable on this transport')
+      return local.on ? call<MandatesPreviewState>('GET', `/api/workspaces/${ws}/preview/mandates`) : local
+    },
     /** Mandates, PREVIEW ONLY: turn the preview on or off, issue, stop, review, revoke. Never a signing path. */
-    postMandatesPreview: (ws: string, req: MandatesPreviewRequest) => call<MandatesPreviewState>('POST', `/api/workspaces/${ws}/preview/mandates`, req),
+    postMandatesPreview: async (ws: string, req: MandatesPreviewRequest) => {
+      if (!transport.previewState) throw new Error('Mandates preview is unavailable on this transport')
+      return call<MandatesPreviewState>('POST', `/api/workspaces/${ws}/preview/mandates`, req)
+    },
     /** Mock only: switch the viewer (p_sev, p_mara, p_tom). */
     setViewer: (person: string) => call<{ ok: true }>('POST', '/api/dev/viewer', { person }),
     /** Mock only: restore the seeded demo data; `dataset` switches to the normal demo or the busy day. */

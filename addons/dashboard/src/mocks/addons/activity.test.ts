@@ -638,3 +638,23 @@ describe('activity review follow-ups (Task 26 minors)', () => {
     expect((await state(s)).timeline.some((r) => r.summary.includes('approval rule'))).toBe(false)
   })
 })
+
+it('filters legacy discard keys and fails closed for deleted tickets without visibility', async () => {
+  const s = setup('p_tom')
+  const key = 'DEMO-0041'
+  ;(s.store as unknown as { defs: Map<string, { visibility: unknown }> }).defs.get(key)!.visibility = { restricted: ['p_sev'] }
+  s.store.appendWs(s.ws, { type: 'ticket.discarded', key })
+  s.store.appendWs(s.ws, { type: 'ticket.discarded', key: 'DEMO-9999' })
+  const json = JSON.stringify(await everything(s))
+  expect(json).not.toContain(key)
+  expect(json).not.toContain('DEMO-9999')
+})
+
+it.each([
+  ['checked', 'checked the repo folders'], ['clone_queued', 'queued a repo clone'],
+  ['cloned', 'cloned a repo'], ['clone_failed', 'could not clone a repo'],
+  ['clone_cancelled', 'cancelled a repo clone'], ['fetched', 'fetched a repo'],
+  ['declared', 'declared a repo'], ['removed', 'removed a repo declaration'],
+])('describes repos.%s', (verb, sentence) => {
+  expect(describeEvent({ type: `repos.${verb}` })).toBe(sentence)
+})

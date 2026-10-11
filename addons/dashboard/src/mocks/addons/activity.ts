@@ -179,12 +179,20 @@ function entriesOf(c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>): Entry[] {
     for (const e of c.store.eventsOf(key)) if (e.type !== 'people.set') push(e, key, key)
   }
   // A workspace event about a ticket (addon.decided) follows that ticket's visibility.
-  for (const e of c.store.wsEventsOf(c.ws)) if ((sees || !isSensitive(e.type)) && (typeof e.ticket !== 'string' || canSeeTicket(c, e.ticket)) && seesDiscard(e, c.viewer)) push(e, '#ws', undefined)
+  for (const e of c.store.wsEventsOf(c.ws)) if ((sees || !isSensitive(e.type)) && (typeof e.ticket !== 'string' || canSeeTicket(c, e.ticket)) && seesEventKey(e, c)) push(e, '#ws', undefined)
   return out.sort((a, b) => b.at.localeCompare(a.at) || (a.src === b.src ? b.seq - a.seq : a.src.localeCompare(b.src)))
 }
 
 /** A discarded ticket is gone, so its log line carries the visibility the ticket had: only people who could see it see the line. */
-const seesDiscard = (e: { type: string; visibleTo?: unknown }, viewer: string) => e.type !== 'ticket.discarded' || !Array.isArray(e.visibleTo) || e.visibleTo.includes(viewer)
+function seesEventKey(e: { type: string; key?: unknown; visibleTo?: unknown }, c: Pick<AddonCtx, 'store' | 'ws' | 'viewer'>): boolean {
+  if (e.type === 'ticket.discarded') {
+    if (e.visibleTo === 'workspace') return true
+    if (Array.isArray(e.visibleTo)) return e.visibleTo.includes(c.viewer)
+    // Legacy records without a snapshot may use a surviving ticket; otherwise fail closed.
+    return typeof e.key === 'string' && canSeeTicket(c, e.key)
+  }
+  return typeof e.key !== 'string' || canSeeTicket(c, e.key)
+}
 
 const inPeriod = (e: Entry, period: Period, today: string) =>
   period === 'all' || (period === 'today' ? e.day === today : e.day >= new Date(Date.parse(`${today}T00:00:00Z`) - 6 * 86_400_000).toISOString().slice(0, 10) && e.day <= today)

@@ -1156,3 +1156,9 @@ The owner answered the eight open questions of REVIEW.md. Items 1, 2, 5 and 6 ch
   maintainer floor for such actions, offers members only those decisions, and still refuses viewers.
 - **Why:** Codex integration review (1 High, 2 Medium).
 - **Revert:** revert the integration-review commit.
+
+## Leftovers 2026-10-11
+
+- **Decision:** (1) The Mandates preview is read from the in-process Demo state (`transport.previewState`, absent on real transports) and only fetched through the endpoint when the preview is on; a real host never gets `/preview/mandates` requests. (2) The Mandates tab's stop button reads "Stop…" like the shell banner (both open a dialog). (3) Today's two-column rule adds back the width of a collapsed right dock's 32 px rail (`CollapsedDockWidthContext`), so a 1280 px window stays two-column with a collapsed dock. (4) Today decisions and addon on/off operations invalidate workspace-keyed queries as `[key, ws]` instead of every workspace's entry. (5) `ticket.discarded` workspace log entries follow the stored visibility snapshot and fail closed for legacy entries without one. (6) `repos.*` events have human sentences in `describeEvent`. (7) Speed tests use `bestOfFive` (`src/test/bestOf.ts`): one warm-up, best of five, 50 ms budget kept. Started by Codex (usage limit), finished by Claude.
+- **Why:** Avoid console 404s on real hosts; one label per behaviour; a collapsed rail should not reflow Today; unrelated workspaces should not refetch; restricted ticket keys must not leak; bare event types in feeds; load-induced flakes without hiding regressions.
+- **Revert:** Restore `getMandatesPreview` as a plain GET and `enabled: !!ws` in `useMandatesPreview`; "Stop" label in `Mandates.tsx`; drop `CollapsedDockWidthContext` in `useTodayWide`; use `[k]` keys in `rows.tsx` and `settings/addons/index.tsx`; restore `seesDiscard`; remove the `repos.*` cases; inline the timing loops.

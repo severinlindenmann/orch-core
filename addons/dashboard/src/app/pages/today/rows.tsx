@@ -282,7 +282,10 @@ export function VerdictRow({ item, ticket, now, expanded, onToggle, sign, decide
 // ------------------------------------------------------------------ addon decisions (rendered and signed by core)
 
 /** The queries an addon decision can change. */
-const DECISION_KEYS = ['today', 'addon-decisions', 'addon-state', 'ticket', 'ticket-events', 'ticket-children', 'tickets', 'board', 'agents', 'workspaces']
+// Keys whose second element is the workspace id; the others (ticket by key, the workspace list) have no workspace to scope to.
+const DECISION_WS_KEYS = ['today', 'addon-decisions', 'addon-state', 'tickets', 'board', 'agents']
+const DECISION_GLOBAL_KEYS = ['ticket', 'ticket-events', 'ticket-children', 'workspaces']
+const decisionKeys = (ws: string) => [...DECISION_WS_KEYS.map((k) => [k, ws]), ...DECISION_GLOBAL_KEYS.map((k) => [k])]
 
 /** Core's flow for one addon decision: core's prompt, presence, then the post with `confirmed`. */
 export function useDecide(d: AddonDecision, onError?: (e: unknown) => void, onDone?: () => void) {
@@ -307,11 +310,11 @@ export function useDecide(d: AddonDecision, onError?: (e: unknown) => void, onDo
       toast.success(t.message, { description: t.description })
       onDone?.()
       // A decision can move a ticket, an approval or the addon's own state; nothing else (not settings, relay, skills ...).
-      await Promise.all(DECISION_KEYS.map((k) => qc.invalidateQueries({ queryKey: [k] })))
+      await Promise.all(decisionKeys(workspace.id).map((queryKey) => qc.invalidateQueries({ queryKey })))
     } catch (e) {
       // The decision moved on the host (closed, changed, stale digest): the cached one must not be signed again. Fetch
       // the decisions anew, so the next choice snapshots the current one (Codex integration review #1).
-      if (e instanceof ApiError && e.status === 409) await Promise.all(['addon-decisions', 'today', 'addon-state'].map((k) => qc.invalidateQueries({ queryKey: [k] })))
+      if (e instanceof ApiError && e.status === 409) await Promise.all(['addon-decisions', 'today', 'addon-state'].map((k) => qc.invalidateQueries({ queryKey: [k, workspace.id] })))
       if (onError) onError(e)
       else toastApiError(e, 'That did not work.')
     } finally {

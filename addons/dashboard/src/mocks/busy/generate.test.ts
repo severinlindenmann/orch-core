@@ -1,3 +1,4 @@
+import { bestOfFive } from '@/test/bestOf'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApi } from '@/api/client'
 import { createMockTransport } from '@/api/transport'
@@ -196,22 +197,11 @@ describe('busy store: speed', () => {
   it('answers list, today and ticket queries in under 50 ms each', async () => {
     const { api, id } = setup()
     const ws = id('DEMO')
-    // Best of five: the budget guards against an O(n²) query, not against a busy machine stalling one call.
-    const timed = async (f: () => Promise<unknown>) => {
-      let best = Infinity
-      for (let i = 0; i < 5; i++) {
-        const t0 = performance.now()
-        await f()
-        best = Math.min(best, performance.now() - t0)
-      }
-      return best
-    }
-    await api.listTickets(ws) // warm up
-    const list = await timed(() => api.listTickets(ws))
-    const today = await timed(() => api.getToday(ws))
+    const list = await bestOfFive(() => api.listTickets(ws))
+    const today = await bestOfFive(() => api.getToday(ws))
     const rows = (await api.listTickets(ws)) as TicketSummary[]
-    const ticket = await timed(() => api.getTicket(rows[0].key))
-    const agents = await timed(() => api.getAgents(ws))
+    const ticket = await bestOfFive(() => api.getTicket(rows[0].key))
+    const agents = await bestOfFive(() => api.getAgents(ws))
     expect(list).toBeLessThan(50)
     expect(today).toBeLessThan(50)
     expect(ticket).toBeLessThan(50)

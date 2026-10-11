@@ -21,12 +21,14 @@ import { Pill } from '../pages/ticket/shared'
 
 /** The preview's state for a workspace (the shell's loader warms it, so the banner never pops in). */
 export function useMandatesPreview(ws: string | undefined, opts: { poll?: boolean } = {}) {
-  return useQuery({
+  const local = ws ? api.getLocalMandatesPreview(ws) : undefined
+  const query = useQuery({
     ...queries.mandatesPreview(ws!),
-    enabled: !!ws,
+    enabled: !!local?.on,
     // While a Stop waits for the host's acknowledgement, look again shortly.
     refetchInterval: (q) => (opts.poll !== false && q.state.data?.mandate?.state === 'stopping' ? 400 : false),
   })
+  return { ...query, data: local?.on ? query.data : local }
 }
 
 /** Is the preview on with a mandate the shell and Today should show (not revoked)? */

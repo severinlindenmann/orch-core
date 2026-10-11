@@ -656,10 +656,34 @@ def _vectors() -> dict[str, dict[str, Any]]:
         "gate_hash.json": gate_vectors(),
         "chain.json": chain_vectors(),
         "repo_identity.json": repo_identity_vectors(),
+        "repo_paths.json": {
+            "cases": [
+                {
+                    "name": "kelvin_collides_after_nfc_and_ascii_fold",
+                    "input": ["../\u212a", "../k"],
+                    "normalized": ["../K", "../k"],
+                    "collision": True,
+                },
+                {
+                    "name": "non_ascii_is_not_case_folded",
+                    "input": ["../Stra\u00dfe", "../strasse"],
+                    "normalized": ["../Stra\u00dfe", "../strasse"],
+                    "collision": False,
+                },
+                {
+                    "name": "outside_workspace_is_allowed",
+                    "input": ["../../other", "../sibling"],
+                    "normalized": ["../../other", "../sibling"],
+                    "collision": False,
+                },
+            ]
+        },
     }
 
 
 INDEX: dict[str, str] = {
+    "repo_paths.json": "repo paths: NFC before ASCII-only collision comparison; "
+    "owner-signed paths may leave the workspace (1, 11.3)",
     "canon.json": "[shared, unchanged] strict parse depth 16/17 and -0 -> 0 (ticket-format 11.2)",
     "labels.json": "[shared, unchanged] the F1 domain labels (5.6), prefix-free with the protocol's",
     "text.json": "[shared, unchanged] CRLF/CR -> LF, NFC (Unicode 16.0), refused controls, bidi and unassigned (11.3)",

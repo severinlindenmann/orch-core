@@ -2364,3 +2364,14 @@ def test_ticket_moved_reason_optional():
     e = ex.fresh(ex.EVENTS["ticket.moved"])
     e.pop("reason")
     V("event.ticket.moved", e, log="ticket")
+
+
+@pytest.mark.parametrize("mark", ["\u0301", "\u0903", "\u20dd", "\U00010d69"])
+@pytest.mark.parametrize("prefix", ["", "feat/", "feat/part/"])
+def test_branch_components_cannot_start_with_marks(mark, prefix):
+    e = ex.fresh(ex.EVENTS["ticket.updated"])
+    e["set"] = {
+        "ticket.links": {"repos": ["proj"], "branches": {"proj": prefix + mark + "branch"}, "prs": [], "external": []}
+    }
+    with pytest.raises(SchemaError):
+        V("event.ticket.updated", e, log="ticket")

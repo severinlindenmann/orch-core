@@ -89,6 +89,8 @@ orchestrator/
   repo fields give `validation.*` at append and `chain.broken` at that line on replay, stopping the log.
   **P1 limit:** relative versus absolute paths, `~`, trailing dots or spaces in path components, backslashes and
   symlinks are not normalised. Settings are owner-signed; this collision check guards against mistakes.
+  **P1/P2 limit:** `..` paths that leave the workspace are not refused; owner-signed settings may deliberately
+  name working copies outside it. This lexical collision check is not workspace containment.
   `default_branch` follows the same git branch name rules as `links.branches`. Identity comes from the observed
   `remote.origin.url` (§5.7). Where `remote` is declared, the observed canonical identity must equal it ignoring
   ASCII case; otherwise report `repo.remote_mismatch`, consider the repo observe.unavailable and append no
@@ -277,7 +279,8 @@ with no leading `-`, no `refs/` prefix, not exactly `HEAD` or `@`, and no Unicod
 (controls, format characters, private use, separators or unassigned code points, using the bundled Unicode 16.0 data).
 This shared rule applies to `links.branches` and `default_branch`. Branch names also refuse
 U+FE00–FE0F, U+E0100–E01EF, U+034F, U+115F, U+1160, U+3164, U+FFA0, U+180B–180F,
-U+17B4–17B5, U+2800 and a leading combining mark (any M* category). All categories use Unicode 16.0.
+U+17B4–17B5, U+2800 and a combining mark (any M* category) at the start of **every `/`-separated
+component**, not just the whole name. All categories use Unicode 16.0.
 
 ## 4. `body.md`
 

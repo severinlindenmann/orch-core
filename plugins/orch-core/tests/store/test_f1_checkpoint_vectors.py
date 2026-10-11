@@ -102,11 +102,16 @@ def test_workspace_checkpoint_offers(tmp_path, offer):
 def test_n_offers_are_signed_and_judged_by_a_receiver(o):
     """Receivers (the host, the relay, devices) judge a workspace checkpoint against the highest one they hold (§5.10):
     a higher n without a lower seq is accepted, a lower n without a higher seq is ignored, the rest is diverged."""
-    assert cps.verify_object(WSK, o["checkpoint"]) and cps.verify_object(WSK, C["workspace_n_held"])
+    cp = o["checkpoint"]  # signed by the WSK even where the content is invalid: the defect is not a signature
+    assert crypto.verify(WSK, crypto.unb64u(cp["sig"], crypto.SIG_LEN), cps.LABEL + canon.cj_checked(cp["o"]))
+    assert cps.verify_object(WSK, C["workspace_n_held"])
+    held = o["held"] if "held" in o else C["workspace_n_held"]
     got = cps.judge_offer(
-        C["workspace_n_held"]["o"],
+        held["o"] if held else None,
         o["checkpoint"]["o"],
         pinned_genesis=C["genesis"],
+        workspace_id=W,
+        now=o["now"],
         restore=o.get("restore"),
         applied=o.get("applied", []),
         proofs=o.get("proofs"),
@@ -117,8 +122,16 @@ def test_n_offers_are_signed_and_judged_by_a_receiver(o):
 
 def test_a_receiver_accepts_the_first_checkpoint_only_under_the_pinned_genesis():
     o = C["workspace_n_held"]["o"]
-    assert cps.judge_offer(None, o, pinned_genesis=C["genesis"]) == ("ok", None)
-    assert cps.judge_offer(None, o, pinned_genesis="sha256:" + "00" * 32) == ("trust.genesis_mismatch", None)
+    now = "2026-10-10T12:00:00Z"
+    assert cps.judge_offer(None, o, pinned_genesis=C["genesis"], workspace_id=W, now=now) == ("ok", None)
+    assert cps.judge_offer(None, o, pinned_genesis="sha256:" + "00" * 32, workspace_id=W, now=now) == (
+        "trust.genesis_mismatch",
+        None,
+    )
+    assert cps.judge_offer(None, o, pinned_genesis=C["genesis"], workspace_id="f" * 32, now=now) == (
+        "chain.diverged",
+        None,
+    )
 
 
 def test_the_p1_host_never_writes_a_lower_n(tmp_path):
@@ -162,14 +175,48 @@ def test_source_and_accumulator_transitions(case):
     got = cps.judge_offer(
         case["held"]["o"] if case["held"] else None,
         case["offered"]["o"],
-        pinned_genesis=case["offered"]["o"]["genesis"],
+        pinned_genesis=C["genesis"],
+        workspace_id=W,
+        now=case["now"],
         wsk_pub=WSK,
         restore=case["restore"],
         proofs=case["proofs"],
         applied=case["applied"],
         known_revocations=case.get("known_revocations", []),
+        pinned_delegation=case["pinned_delegation"],
     )
     assert got == (case["expect"], case["recorded"])
+
+
+# Cases whose one defect is a signature; every other refusal must keep both event signatures valid, so that the
+# defect it pins is not masked by a broken signature (a receiver that checks only signatures must fail them).
+SIGNATURE_DEFECTS = {
+    "full_restore_signature_required": ("person", "host"),
+    "source_signature_required": ("source",),
+    "restore_shape_hash_version": ("person", "host"),  # signed by the oracle; orch builds no bytes for hash_v 2
+    "owner_policy_person_sig_by_another_device": ("person",),
+    "owner_policy_host_sig_by_another_key": ("host",),
+    "owner_policy_actor_device_not_the_cert": ("person",),  # actor.device names no key of the certificate
+    "restore_shape_signature_encoding_malformed": ("person",),
+}
+
+
+@pytest.mark.parametrize(
+    "case",
+    [c for c in C["transition_cases"] if c["expect"] != "ok" and "event" in c["restore"]],
+    ids=lambda c: c["name"],
+)
+def test_receiver_refusals_carry_valid_signatures(case):
+    from orch.identity import CryptoVerifier
+    from orch.model.verifier import SigContext
+
+    tr, v = case["restore"], CryptoVerifier()
+    ev, log = tr["event"], tr["log"]
+    broken = SIGNATURE_DEFECTS.get(case["name"], ())
+    assert cps.verify_object(WSK, tr["T"])
+    assert tr["C"] is None or cps.verify_object(WSK, tr["C"]) == ("source" not in broken)
+    assert v.verify_host(ev, log=log, wsk_pub=WSK, workspace_id=W) == ("host" not in broken)
+    assert v.verify_person(ev, SigContext(W, log, tr["device_cert"])) == ("person" not in broken)
 
 
 def test_the_store_carries_the_revocation_as_the_vector_says(tmp_path):

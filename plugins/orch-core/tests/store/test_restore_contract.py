@@ -284,6 +284,9 @@ def test_transition_keeps_only_the_abandoned_suffix(env):
             restore=transition,
             wsk_pub=env.wsk_pub,
             pinned_genesis=store.state.workspace.genesis,
+            workspace_id=store.workspace_id,
+            now="2100-01-01T00:00:00Z",
+            pinned_delegation=transition["delegation"],
         )[0]
         == "ok"
     )

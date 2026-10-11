@@ -483,9 +483,56 @@ def test_a_commondir_file_naming_a_symlink_to_the_pinned_commondir_is_refused(ma
         assert rp.head_ref() == "refs/heads/side"
 
 
-def test_pin_keys_are_lexical(tmp_path):
-    from orch.gitread.client import _key
+def _case_insensitive(path) -> bool:
+    flipped = path.with_name(path.name.swapcase())
+    return flipped != path and flipped.exists()
 
-    assert _key(tmp_path / "x" / ".." / "y") == str(tmp_path / "y")
+
+@pytest.mark.parametrize("variant", ["trailing", "dot", "dotdot", "double", "case", "nfd"])
+def test_path_variants_never_reach_another_repo(make_repo, tmp_path, variant):
+    """One interpretation of a path: the declared string byte for byte. A variant is refused (unclean, or no pin),
+    and declaring it as a second repo is refused because it is the same (device, inode)."""
+    import unicodedata
+
+    r = make_repo("Repo\u00e9")  # NFC e-acute, mixed case
+    two_commits(r)
+    host = HostGitReader(ReaderPool(), PinStore())
+    assert host.sync([r.path]) == {str(r.path): None}
+    p = str(r.path)
+    parent, name = p.rsplit("/", 1)
+    v = {
+        "trailing": p + "/",
+        "dot": parent + "/./" + name,
+        "dotdot": parent + "/x/../" + name,
+        "double": parent + "//" + name,
+        "case": parent + "/" + name.swapcase(),
+        "nfd": parent + "/" + unicodedata.normalize("NFD", name),
+    }[variant]
+    assert v != p
     with pytest.raises(Unavailable):
-        _key("relative/path")
+        host.observe(v)  # unclean, or clean but not pinned
+    res = host.sync([r.path, v])
+    assert res[str(r.path)] is None
+    assert res[v] is not None  # refused: unclean, missing, or the same directory as the pinned repo
+    if variant in ("case", "nfd") and os.path.isdir(v):
+        assert "same directory" in res[v]  # APFS: one directory, two spellings
+    assert host.pins.get(v) is None and host.observe(r.path)["head_ref"] == "refs/heads/feat"
+
+
+def test_a_declared_path_with_a_symlinked_component_is_refused(make_repo, tmp_path):
+    r = make_repo()
+    two_commits(r)
+    alias = tmp_path.resolve() / "alias"
+    os.symlink(r.path, alias)
+    with pytest.raises(Unavailable, match="symlink"):
+        pin_repo(str(alias), [str(alias)])
+
+
+def test_path_files_are_read_byte_for_byte():
+    from orch.gitread.repo import resolve_named
+
+    assert resolve_named("/a/b/.git/worktrees/w", b"../..\n") == "/a/b/.git"
+    assert resolve_named("/a", b"/x/y\n") == "/x/y"
+    for bad in (b"/x/../y", b"/x//y", b"/x/y/", b"/x/./y", b"../a/../b", b"a/./b", b"../../../../../../.."):
+        with pytest.raises(Unavailable):
+            resolve_named("/a/b", bad)

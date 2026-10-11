@@ -20,14 +20,16 @@ import os
 
 from . import limits
 from .errors import Unavailable
-from .fs import Dir, DirPin, RepoPins, open_walk
+from .fs import Dir, DirPin, RepoPins, abs_parts, open_walk
 from .repo import resolve_named
 
 __all__ = ["pin_repo", "under"]
 
 
 def under(path: str, root: str) -> bool:
-    return path == root or path.startswith(root.rstrip("/") + "/")
+    """Component-wise, byte for byte (no case folding, no Unicode normalisation)."""
+    p, r = abs_parts(path), abs_parts(root)
+    return p[: len(r)] == r
 
 
 def _pin_dir(path: str) -> tuple[Dir, DirPin]:
@@ -41,10 +43,17 @@ def _pin_fd(d: Dir) -> DirPin:
 
 
 def pin_repo(path: str, roots: list[str]) -> RepoPins:
-    """Pins for the working copy at ``path``. ``roots``: the real paths of every repo declared in
-    ``settings.repos`` (``path``'s own included)."""
-    real = os.path.realpath(path)
-    roots = [os.path.realpath(r) for r in roots]
+    """Pins for the working copy at ``path``. ``roots``: the paths of every repo declared in ``settings.repos``
+    (``path``'s own included), as the host computed them once from the owner-signed settings.
+
+    **One interpretation of a path:** every path here is taken byte for byte and must be clean (absolute, no ``.``,
+    ``..``, empty component or trailing slash); it is never resolved, case-folded or Unicode-normalised. It is opened
+    by the ``O_NOFOLLOW`` walk, so a path with a symlinked component (``/var`` on macOS, or one an agent planted) is
+    refused: declare repos by their real paths. The pin is the ``fstat`` of the fd that walk produced."""
+    real = path
+    abs_parts(real)
+    for r in roots:
+        abs_parts(r)
     if real not in roots:
         raise Unavailable("the working copy is not one of the declared repos")
     wt, wt_pin = _pin_dir(real)

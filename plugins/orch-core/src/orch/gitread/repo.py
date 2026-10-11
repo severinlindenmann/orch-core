@@ -12,7 +12,6 @@ Opening checks, every time (F7):
 
 from __future__ import annotations
 
-import os
 import re
 import stat
 
@@ -234,17 +233,37 @@ class Repo:
 
 
 def resolve_named(base: str, named: bytes) -> str:
-    """A path written in a gitdir's ``commondir`` or a ``.git`` file (agent-writable content), relative to ``base``,
-    normalised **lexically** (``os.path.normpath``): nothing on the file system is resolved or followed. The caller
-    then compares it with a pin, or opens it with the ``O_NOFOLLOW`` walk, which refuses a symlinked component."""
+    """A path written in a gitdir's ``commondir`` or a ``.git`` file (agent-writable content), relative to ``base``.
+
+    One interpretation, no canonicalisation: an absolute path must already be clean (no ``.``, ``..``, empty
+    component or trailing slash) and is taken byte for byte; a relative one may only start with ``..`` steps (git
+    writes ``../..``) followed by plain names, each ``..`` dropping one component of ``base``. ``base`` is a path the
+    reader reached by an ``O_NOFOLLOW`` walk, so its lexical parent is its real parent. Nothing on the file system is
+    resolved; the caller compares the result with a pin byte for byte, or opens it with the ``O_NOFOLLOW`` walk."""
+    from .fs import abs_parts
+
     text = named.decode("utf-8", errors="strict") if named.isascii() or _utf8(named) else None
     if text is None:
         raise Unavailable("a path that is not UTF-8")
-    text = text.rstrip("\n").rstrip("\r")
-    if not text or "\n" in text or "\0" in text:
+    if text.endswith("\n"):
+        text = text[:-1]
+    if not text or "\n" in text or "\r" in text or "\0" in text:
         raise Unavailable("a malformed path file")
-    path = text if text.startswith("/") else os.path.join(base, text)
-    return os.path.normpath(path)
+    if text.startswith("/"):
+        abs_parts(text)  # refuses an unclean path
+        if text != "/" and text.endswith("/"):
+            raise Unavailable("a path with a trailing slash")
+        return text
+    parts = abs_parts(base)
+    comps = text.split("/")
+    while comps and comps[0] == "..":
+        if not parts:
+            raise Unavailable("a relative path above /")
+        parts.pop()
+        comps.pop(0)
+    if any(c in ("", ".", "..") for c in comps):
+        raise Unavailable("an unclean relative path")
+    return "/" + "/".join(parts + comps)
 
 
 def _utf8(b: bytes) -> bool:

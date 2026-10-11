@@ -222,10 +222,10 @@ def abs_parts(path: str) -> list[str]:
     """The components of an absolute path, refused unless it is lexically clean (no ``.``, ``..`` or empty part)."""
     if not path.startswith("/") or "\0" in path:
         raise Unavailable(f"not an absolute path: {path!r}")
+    if path == "/":
+        return []
     parts = path.split("/")[1:]
-    if parts and parts[-1] == "":
-        parts = parts[:-1]
-    if any(p in ("", ".", "..") for p in parts):
+    if any(p in ("", ".", "..") for p in parts):  # a trailing slash is an empty last component: refused too
         raise Unavailable(f"not a clean absolute path: {path!r}")
     return parts
 

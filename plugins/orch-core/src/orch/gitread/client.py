@@ -201,8 +201,13 @@ class HostGitReader:
         """Pin every declared working copy not pinned yet; drop pins of paths no longer declared. Returns
         ``{real path: None | why it could not be pinned}``. An existing pin is kept as it is (only a
         ``settings.changed`` that moves a repo, which gives it a new path, leads to a new pin)."""
-        reals = [_key(p) for p in declared]
         out: dict[str, str | None] = {}
+        reals: list[str] = []
+        for p in declared:
+            try:
+                reals.append(_key(p))
+            except Unavailable as e:
+                out[os.fspath(p)] = e.reason  # an unclean path is refused, never normalised into another one
         put: dict[str, RepoPins] = {}
         for real in reals:
             if self.pins.get(real) is not None:
@@ -216,6 +221,20 @@ class HostGitReader:
             except Unavailable as e:
                 out[real] = e.reason
         drop = [p for p in self.pins.paths() if p not in reals]
+        # one directory is one repo: two declared paths whose working copy or gitdir is the same (device, inode)
+        # (a case or Unicode variant on APFS, a hard link, a bind mount) are refused, never pinned twice
+        keep = {p: self.pins.get(p) for p in self.pins.paths() if p not in drop}
+        for real in list(put):
+            mine = put[real]
+            for other, theirs in [*keep.items(), *((k, v) for k, v in put.items() if k != real)]:
+                if theirs is None:
+                    continue
+                same_wt = (mine.worktree.dev, mine.worktree.ino) == (theirs.worktree.dev, theirs.worktree.ino)
+                same_gd = (mine.gitdir.dev, mine.gitdir.ino) == (theirs.gitdir.dev, theirs.gitdir.ino)
+                if same_wt or same_gd:
+                    out[real] = f"the same directory as the declared repo at {other}"
+                    del put[real]
+                    break
         if put or drop:
             self.pins.update(put, drop)
         return out
@@ -249,14 +268,16 @@ class HostGitReader:
 
 
 def _key(path: str | os.PathLike[str]) -> str:
-    """The pin store's key for a declared working copy: its absolute path, normalised **lexically**. Never
-    ``realpath``: after registration the path's components are agent-writable, and resolving them would let a
-    symlink planted at repo A's path select repo B's pins. A symlinked path simply finds no pin (or its own pin,
-    whose O_NOFOLLOW walk then refuses)."""
+    """The pin store's key for a declared working copy: the path **byte for byte** as the host computed it once from
+    the owner-signed settings (``Git.repo_path``), and it must be clean (absolute, no ``.``, ``..``, empty component
+    or trailing slash). Never resolved, normalised or case-folded again: a variant (``a/``, ``a/.``, ``x/../a``,
+    ``a//b``, another case or Unicode form) is refused or finds no pin; it can never find another repo's pin. Repos
+    themselves are told apart by the (device, inode) of their pins (:meth:`HostGitReader.sync`)."""
+    from .fs import abs_parts
+
     p = os.fspath(path)
-    if not os.path.isabs(p) or "\0" in p:
-        raise Unavailable("a working copy path must be absolute")
-    return os.path.normpath(p)
+    abs_parts(p)
+    return p
 
 
 def identity_of(urls: list[str], name: str) -> str:

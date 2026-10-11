@@ -386,13 +386,18 @@ def test_sighup_is_turned_into_an_interrupt_during_init():
 
 
 def test_a_second_init_in_the_same_directory_is_refused_and_deletes_nothing(where, term, passphrases):
-    (where["root"] / wi.LOCK_DIR).mkdir()  # another init holds the lock
-    (where["root"] / "mine.txt").write_text("keep")
-    with pytest.raises(OrchError) as e:
-        run_init(where)
-    assert e.value.code == "lock.busy"
-    assert (where["root"] / wi.LOCK_DIR).is_dir() and (where["root"] / "mine.txt").read_text() == "keep"
-    assert not term.shown
+    import fcntl
+
+    fd = os.open(where["root"] / wi.LOCK_DIR, os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(fd, fcntl.LOCK_EX)  # another live init holds the lock
+    try:
+        (where["root"] / "mine.txt").write_text("keep")
+        with pytest.raises(OrchError) as e:
+            run_init(where)
+        assert e.value.code == "lock.busy" and (where["root"] / "mine.txt").read_text() == "keep"
+        assert not term.shown
+    finally:
+        os.close(fd)
 
 
 def test_the_lock_is_released_after_success_and_after_failure(where, term, passphrases):
@@ -403,6 +408,40 @@ def test_the_lock_is_released_after_success_and_after_failure(where, term, passp
     term.wrong_words = False
     run_init(where)
     assert not (where["root"] / wi.LOCK_DIR).exists()
+
+
+@pytest.mark.parametrize("sig", ["SIGKILL", "SIGTERM"])
+def test_a_killed_init_leaves_no_lock_that_blocks_the_next_one(where, term, passphrases, sig):
+    """A child holds the lock like init does and is killed: the kernel drops the flock, a stale file blocks nothing."""
+    import signal
+    import subprocess
+    import sys
+    import time
+
+    code = (
+        "import fcntl,os,sys,time\n"
+        f"fd=os.open({str(where['root'] / wi.LOCK_DIR)!r},os.O_RDWR|os.O_CREAT,0o600)\n"
+        "fcntl.flock(fd,fcntl.LOCK_EX);print('locked',flush=True);time.sleep(60)\n"
+    )
+    child = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE)
+    assert child.stdout.readline().strip() == b"locked"
+    with pytest.raises(OrchError) as e:
+        run_init(where)
+    assert e.value.code == "lock.busy"
+    child.send_signal(getattr(signal, sig))
+    child.wait()
+    time.sleep(0.1)
+    assert (where["root"] / wi.LOCK_DIR).exists()  # the stale file is still there ...
+    run_init(where)  # ... and blocks nothing
+    assert (where["root"] / "config.json").is_file()
+
+
+def test_sigterm_is_turned_into_an_interrupt_during_init():
+    import signal
+
+    with wi._hangup_as_interrupt():
+        with pytest.raises(KeyboardInterrupt):
+            os.kill(os.getpid(), signal.SIGTERM)
 
 
 def test_keys_of_a_killed_init_are_swept_by_the_next_one_but_a_live_one_is_not(where, term, passphrases):
@@ -533,3 +572,32 @@ def test_init_through_main_with_the_cli_deciding_presence(where, term, passphras
     monkeypatch.chdir(other)
     assert main(["init", "--prefix", "DEMO"], env=env, stdout=io.StringIO(), stderr=io.StringIO()) == 3
     assert tree(other) == set()
+
+
+@pytest.mark.parametrize("name", ["AGENTS.md", "CLAUDE.md", ".gitignore"])
+def test_a_huge_file_is_refused_not_truncated(where, term, passphrases, name):
+    from orch.instructions.harness import READ_LIMIT
+
+    big = "x" * READ_LIMIT + "\nTAIL\n"
+    (where["root"] / name).write_text(big)
+    res = run_init(where)
+    assert (where["root"] / name).read_text() == big  # never rewritten from a partial read
+    assert "larger than 1 MiB" in "\n".join(res.lines) and (where["root"] / "config.json").is_file()
+
+
+def test_a_relative_state_dir_is_made_absolute(tmp_path, monkeypatch):
+    from orch.ops.runtime import state_dir
+
+    monkeypatch.chdir(tmp_path)
+    assert state_dir({"ORCH_STATE_DIR": "rel/state"}) == tmp_path / "rel" / "state"
+
+
+def test_only_init_passes_a_passphrase_to_create():
+    from tests.custody.test_seams import SRC
+
+    offenders = [
+        p.relative_to(SRC).as_posix()
+        for p in SRC.rglob("*.py")
+        if re.search(r"\.create\([^)]*passphrase=", p.read_text()) and p.name != "workspace_init.py"
+    ]
+    assert offenders == []

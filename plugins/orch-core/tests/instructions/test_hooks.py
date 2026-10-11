@@ -185,5 +185,6 @@ def test_a_damaged_log_is_reported_instead_of_ok(ws):
     log = ws.root / "events" / "workspace.jsonl"
     log.write_bytes(log.read_bytes() + b"this is not an event\n")
     code, out, err = hook(ws, "session-start")
-    assert code == 5 and "DAMAGED" in out and out.splitlines()[-1] == "next: orch check", out + err
+    assert code == 0 and "DAMAGED" in out  # exit 0: a harness shows a hook's stdout only then
+    assert "DAMAGED" in out and out.splitlines()[-1] == "next: orch check", out + err
     assert "ok session-start Owner" not in out

@@ -69,6 +69,9 @@ def plugin_files() -> dict[str, str]:
     return files
 
 
+READ_LIMIT = 1 << 20
+
+
 class UnsafePath(OSError):
     """A path orch would write or read is, or lies below, a symbolic link (or is not a regular file)."""
 
@@ -104,9 +107,12 @@ def safe_read(root: Path, rel: str) -> str | None:
     except OSError as e:  # ELOOP: it became a link between the check and the open
         raise UnsafePath(f"{rel}: {e.strerror}") from None
     with os.fdopen(fd, "rb") as f:
-        if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
+        st = os.fstat(f.fileno())
+        if not stat.S_ISREG(st.st_mode):
             raise UnsafePath(f"{rel}: not a regular file")
-        return f.read(1 << 20).decode("utf-8")
+        if st.st_size > READ_LIMIT:
+            raise UnsafePath(f"{rel}: larger than {READ_LIMIT >> 20} MiB, orch will not rewrite it")
+        return f.read(READ_LIMIT + 1).decode("utf-8")
 
 
 def _write(root: Path, rel: str, text: str) -> bool:

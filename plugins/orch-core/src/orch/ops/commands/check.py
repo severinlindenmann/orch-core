@@ -23,7 +23,15 @@ def _handle(ctx: Context, args: dict[str, Any]) -> Result:
     if len(findings) > len(shown):
         lines.append(f"+{len(findings) - len(shown)} more")
     stale = any(f["where"].startswith(("AGENTS", ".claude")) for f in findings)
-    hint = "orch instructions sync" if stale else ("orch doctor" if findings else "orch status")
+    hint = (
+        (
+            "orch instructions sync --force"
+            if any("edited by hand" in f["what"] for f in findings)
+            else "orch instructions sync"
+        )
+        if stale
+        else ("orch doctor" if findings else "orch status")
+    )
     return Result(
         data={"problems": len(findings), "findings": shown}, lines=lines, hints=[hint], exit=5 if findings else 0
     )

@@ -60,7 +60,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
                     "next: orch check",
                 ],
             )
-            res.exit = 5
+            # exit 0 on purpose: a harness adds a hook's stdout to the context only when it exits 0
             return res
         mine = c.mine() if ctx.session else []
         unread: list[str] = []

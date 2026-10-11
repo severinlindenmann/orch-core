@@ -7,8 +7,8 @@ What happens, in this order, and what is refused before any key exists:
 1. **Refusals first** (nothing is created): a grant in the environment (an agent never creates a workspace), no
    person's presence, no controlling terminal, a workspace already here or above (or any of its files), a state
    directory inside the workspace (the workspace key would be committed with it), an instruction file path that is or
-   lies below a symbolic link. A lock directory keeps two inits in one directory apart (one rollback must never delete
-   the other's files); keys of an interrupted init (``.init-incomplete`` marker, dead process) are swept.
+   lies below a symbolic link. A ``flock`` on a lock file keeps two inits in one directory apart (one rollback must
+   never delete the other's files); keys of an interrupted init (``.init-incomplete`` marker, dead process) are swept.
 2. **The passphrase first.** ``/dev/tty`` shows a generated passphrase (six words of the BIP-39 list); the person types
    it back, or types their own, which must pass :func:`orch.custody.strength.check_strength` and is asked twice.
 3. **Then the recovery code.** A new 24-word code is shown on ``/dev/tty`` and nowhere else, never written. The person
@@ -21,9 +21,9 @@ What happens, in this order, and what is refused before any key exists:
 6. The instruction files are written without following a symbolic link (:mod:`orch.instructions.harness`). A failure
    here leaves the workspace in place and says what to run.
 
-Any failure up to the genesis, Ctrl-C and SIGHUP included, removes what this call created. The test seams are the module
-attributes :data:`TERMINAL` and :func:`open_backend`, which the tests replace; no option, argument or environment
-variable skips a prompt.
+Any failure up to the genesis, Ctrl-C, SIGHUP and SIGTERM included, removes what this call created. The test seams
+are the module attributes :data:`TERMINAL` and :func:`open_backend`, which the tests replace; no option, argument or
+environment variable skips a prompt.
 """
 
 from __future__ import annotations
@@ -204,7 +204,7 @@ def _name(ctx: Context, given: str | None) -> str:
 # ------------------------------------------------------------------------------------------------ the terminal dialogue
 
 
-def _choose_passphrase() -> str:
+def _choose_passphrase(extra: tuple[str, ...] = ()) -> str:
     """The device passphrase: a generated one the person types back, or one of their own (asked twice, checked)."""
     generated = generate_passphrase()
     TERMINAL.show(
@@ -219,9 +219,9 @@ def _choose_passphrase() -> str:
         if typed == generated:
             return generated
         try:
-            check_strength(typed)
+            check_strength(typed, extra)
         except CustodyError as e:
-            TERMINAL.show(f"Not accepted: {e}\n")
+            TERMINAL.show(f"Not accepted: {e}. Type the generated phrase exactly, or choose your own.\n")
             continue
         if TERMINAL.ask_secret("Repeat your passphrase: ") != typed:
             TERMINAL.show("The two entries differ.\n")
@@ -285,29 +285,42 @@ def _sweep_orphans(sd: Path) -> None:
 
 @contextlib.contextmanager
 def _hangup_as_interrupt():
-    """Closing the terminal (SIGHUP) cancels the init like Ctrl-C, so the rollback runs."""
+    """Closing the terminal (SIGHUP) or SIGTERM cancels the init like Ctrl-C, so the rollback runs."""
 
     def handler(signum, frame):
         raise KeyboardInterrupt
 
-    try:
-        old = signal.signal(signal.SIGHUP, handler)
-    except (ValueError, AttributeError, OSError):  # not the main thread, or no SIGHUP (Windows)
-        yield
-        return
+    saved = []
+    for name in ("SIGHUP", "SIGTERM"):
+        sig = getattr(signal, name, None)
+        if sig is None:
+            continue
+        try:
+            saved.append((sig, signal.signal(sig, handler)))
+        except (ValueError, OSError):  # not the main thread
+            pass
     try:
         yield
     finally:
-        signal.signal(signal.SIGHUP, old)
+        for sig, old in saved:
+            signal.signal(sig, old)
 
 
-def _lock(root: Path) -> Path:
+def _lock(root: Path) -> int:
+    """An exclusive ``flock`` on ``.orch-init.lock``: the kernel drops it when the process dies, so SIGKILL leaves no
+    stale lock. Returns the open descriptor."""
     path = root / LOCK_DIR
+    fd = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
     try:
-        os.mkdir(path, 0o700)
-    except FileExistsError:
+        import fcntl
+
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except ImportError:  # pragma: no cover  (Windows: no flock; the workspace-exists check still applies)
+        pass
+    except OSError:
+        os.close(fd)
         raise _refuse("lock.busy", "another orch init is running in this directory", "wait for it to finish") from None
-    return path
+    return fd
 
 
 def create_workspace(ctx: Context, args: dict[str, Any]) -> Result:
@@ -334,7 +347,9 @@ def create_workspace(ctx: Context, args: dict[str, Any]) -> Result:
         with _hangup_as_interrupt():
             try:
                 shown_secrets = True
-                passphrase = _choose_passphrase()
+                passphrase = _choose_passphrase(
+                    tuple(canon.nfc(owner_name).split()) + (prefix, ctx.env.get("USER", ""))
+                )
                 code = generate_recovery_code()
                 _confirm_recovery_code(code)
             except CustodyError as e:
@@ -360,7 +375,8 @@ def create_workspace(ctx: Context, args: dict[str, Any]) -> Result:
         raise
     finally:
         with contextlib.suppress(OSError):
-            os.rmdir(lock)
+            os.unlink(root / LOCK_DIR)
+            os.close(lock)
     return _finish(root, sd, wid, host_dir, prefix, owner_name, person, appended)
 
 

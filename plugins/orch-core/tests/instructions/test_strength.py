@@ -8,6 +8,12 @@ from orch.identity._wordlist import WORDS
 
 # everything the Opus review got through the first version, and the classic patterns
 WEAK = [
+    "correct horse battery staple",
+    "correcthorsebatterystaple",
+    "constantinople1234",
+    "supercalifragilistic",
+    "\uff49\uff4c\uff4f\uff56\uff45\uff59\uff4f\uff55\uff46\uff4f\uff52\uff45\uff56\uff45\uff52",  # full-width
+    "p\u200ba\u200bs\u200bs\u200bw\u200bo\u200br\u200bd\u200bp\u200ba\u200bs\u200bs",  # zero-width
     "Password123!",
     "passwordpass",
     "abcdefghijklm",
@@ -95,3 +101,9 @@ def test_the_minimum_length_is_one_constant():
     from orch.custody import MIN_PASSPHRASE_CHARS
 
     assert MIN_PASSPHRASE_CHARS == MIN_CHARS
+
+
+def test_the_users_name_is_charged_as_a_word():
+    check_strength("Severin2026Severin")  # without context it is just letters and digits
+    with pytest.raises(CustodyError):
+        check_strength("Severin2026Severin", ("Severin",))

@@ -31,7 +31,7 @@ from orch import canon
 
 from .base import CustodyError
 
-__all__ = ["MIN_CHARS", "MIN_ENTROPY_BITS", "check_strength", "entropy_bits", "generate_passphrase"]
+__all__ = ["MIN_CHARS", "MIN_ENTROPY_BITS", "fold", "check_strength", "entropy_bits", "generate_passphrase"]
 
 MIN_CHARS = 14
 MIN_ENTROPY_BITS = 60.0
@@ -95,13 +95,29 @@ def _runs(low: str, i: int):
                 yield ln
 
 
-def entropy_bits(text: str) -> float:
-    s = canon.nfc(text)
+_EXTRA = frozenset(
+    "correct horse battery staple constantinople supercalifragilistic correcthorsebatterystaple dragon wizard "
+    "summer winter "
+    "autumn spring monkey shadow master hunter secret princess sunshine football baseball welcome freedom whatever "
+    "batman superman starwars ninja flower mustang computer internet orange purple yellow".split()
+)
+
+
+def fold(text: str) -> str:
+    """The text as the strength check sees it: NFKC (full-width and other compatibility forms become plain) with the
+    invisible format characters (zero-width spaces and joiners, ...) removed. The passphrase itself stays NFC."""
+    import unicodedata
+
+    return "".join(c for c in unicodedata.normalize("NFKC", text) if unicodedata.category(c) != "Cf")
+
+
+def entropy_bits(text: str, extra_words: tuple[str, ...] = ()) -> float:
+    s = canon.nfc(fold(text))
     low = s.lower()
     leet = low.translate(_LEET)
     n = len(s)
     char = _pool_bits(s)
-    words = _common() | _bip()
+    words = _common() | _bip() | _EXTRA | {w.lower() for w in extra_words if len(w) >= 3}
     inf = float("inf")
     best = [inf] * (n + 1)
     best[0] = 0.0
@@ -133,15 +149,16 @@ def entropy_bits(text: str) -> float:
     return best[n]
 
 
-def check_strength(passphrase: str) -> None:
-    """Raise :class:`CustodyError` unless ``passphrase`` meets the rules in the module docstring."""
-    text = canon.nfc(passphrase)
+def check_strength(passphrase: str, extra_words: tuple[str, ...] = ()) -> None:
+    """Raise :class:`CustodyError` unless ``passphrase`` meets the rules in the module docstring. ``extra_words`` (the
+    user's name, the workspace prefix) are charged as dictionary words."""
+    text = canon.nfc(fold(passphrase))
     if len(text) < MIN_CHARS:
         raise CustodyError(f"passphrase needs at least {MIN_CHARS} characters")
     folded = re.sub(r"[\s\-_.,]", "", text).lower().translate(_LEET)
     if folded in _common():
         raise CustodyError("that passphrase is on the list of common ones")
-    if entropy_bits(text) < MIN_ENTROPY_BITS:
+    if entropy_bits(text, extra_words) < MIN_ENTROPY_BITS:
         raise CustodyError(
             "passphrase is too predictable (common words, runs, repeats or too short): "
             "use the generated one, or a long mix of unrelated words, digits and symbols"

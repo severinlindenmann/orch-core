@@ -909,6 +909,15 @@ def generation_scenarios() -> list[dict[str, Any]]:
     s.row([R, P, V])
     out.append(s.scenario())
 
+    s = _new("voided_by_restore", "restore retires approvals; gate.invalidated with cause restored records them")
+    s.ready()
+    approval = s.decide("approve", R, "sev")
+    s.ticket_restore()
+    s.row([R, P, V])
+    s.invalidated(R, "restored", [approval["id"]])
+    s.row([])
+    out.append(s.scenario())
+
     # delayed approval
     s = _new("delayed_approval_is_stale", "a decision carries the gate_gen its signer saw: after a change request a delayed approval is refused "
              "(gate.stale), and so is one with a stale hash or policy hash")  # fmt: skip

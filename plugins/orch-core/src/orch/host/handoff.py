@@ -184,7 +184,13 @@ def main(
                 c = Connection(pin, client="orch sign")
             except (OSError, ConnectionError, ValueError):
                 continue  # not served now: the code cannot be there
-            found = c.call("human.pending", {"code": code})["data"]["requests"]
+            try:
+                found = c.call("human.pending", {"code": code})["data"]["requests"]
+            except BaseException:
+                c.close()
+                for _, other, _ in matches:
+                    other.close()
+                raise
             if found:
                 matches.append((entry, c, found))
             else:

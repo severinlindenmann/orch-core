@@ -92,6 +92,7 @@ class WorkspaceLive:
                 tab.queue.put_nowait((event, data, self.latest))
 
     def snapshot_open(self):
+        self.manager.invalidate(self.ws)
         self.link = self.manager.gateway.enabled(self.ws)
         # Use the earlier cursor so changes between the two snapshots are replayed.
         snapshot = self.link.call("ticket.query", {"limit": 200})
@@ -111,16 +112,13 @@ class WorkspaceLive:
         self.seen.clear()
 
     def admit(self, items):
-        """Forward `gone` only for tickets this person could see; invalidate shared visibility."""
+        """Forward every host `gone`; invalidate shared visibility on gone and membership events."""
         out = []
         for item in items:
             if item.get("gone"):
-                uid = item.get("uid")
-                known = uid in self.visible
-                self.visible.discard(uid)
+                # The host is the authority: it sends gone only for tickets that were visible (contract 0.9).
+                self.visible.discard(item.get("uid"))
                 self.manager.invalidate(self.ws)
-                if not known and not self.partial:
-                    continue
             elif str(item.get("type", "")).startswith(MEMBER_EVENTS):
                 self.manager.invalidate(self.ws)
             out.append(item)
@@ -181,6 +179,7 @@ class WorkspaceLive:
                         if items:
                             self.emit("items", items)
                 except HostError as exc:
+                    self.manager.invalidate(self.ws)
                     if exc.error["code"] in REVOKED:
                         self.emit("revoked", {})
                         return
@@ -221,6 +220,13 @@ class Live:
         return workspace, tab
 
     def checked(self, ws, items):
+        try:
+            return self._checked(ws, items)
+        except HostError:
+            self.invalidate(ws)
+            raise
+
+    def _checked(self, ws, items):
         """Recheck at drain time, shared by every tab of this person for a short TTL.
 
         The host call count depends on the batch, never on the number of tabs.
@@ -251,9 +257,8 @@ class Live:
                     try:
                         for uid, key in missing.items():
                             try:
-                                if key:
-                                    link.call("ticket.get", {"ref": key, "log_limit": 1})
-                                tickets[uid] = bool(key)
+                                got = link.call("ticket.get", {"ref": key, "log_limit": 1}) if key else None
+                                tickets[uid] = bool(key) and (got or {}).get("doc", {}).get("uid") == uid
                             except HostError as exc:
                                 if exc.error["code"] != "not_found":
                                     raise

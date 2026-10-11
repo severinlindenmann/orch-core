@@ -94,6 +94,7 @@ class FakeLink:
     def __init__(self, visible=("KNOWN-0001",), fail_with=None):
         self.visible, self.fail_with, self.calls = set(visible), fail_with, []
         self.welcome = {"peer": {"person": "p"}}
+        self.uids = {}
 
     def call(self, op, args=None):
         self.calls.append(op)
@@ -102,7 +103,7 @@ class FakeLink:
         if op == "ticket.get":
             if args["ref"] not in self.visible:
                 raise fail("not_found", exit=2)
-            return {"doc": {}}
+            return {"doc": {"uid": self.uids.get(args["ref"], "u")}}
         return {
             "member.list": {"members": [{"person": "p"}]},
             "addon.list": {"addons": []},
@@ -192,15 +193,45 @@ def test_membership_change_invalidates_shared_cache():
     assert len(gateway.resolved) == first + 1
 
 
-def test_gone_only_for_previously_visible_tickets():
+def test_every_host_gone_is_forwarded():
     live, *_ = fake_live(FakeLink())
     w = WorkspaceLive(live, "ws")
     w.partial = False
     w.visible = {"seen"}
-    out = w.admit([{"id": "1.g", "uid": "seen", "gone": True}, {"id": "2.g", "uid": "never", "gone": True}])
-    assert [i["uid"] for i in out] == ["seen"] and "seen" not in w.visible
-    w.partial = True  # unknown snapshot coverage: fail towards removal
-    assert len(w.admit([{"id": "3.g", "uid": "never", "gone": True}])) == 1
+    # A ticket never checked (e.g. the check failed with host.unavailable) must still be removed on the client.
+    out = w.admit([{"id": "1.g", "uid": "seen", "gone": True}, {"id": "2.g", "uid": "unseen", "gone": True}])
+    assert [i["uid"] for i in out] == ["seen", "unseen"] and not w.visible
+
+
+def test_ticket_get_must_answer_for_the_same_uid():
+    link = FakeLink()
+    link.uids["KNOWN-0001"] = "other-uid"
+    live, *_ = fake_live(link)
+    assert live.checked("ws", [{"id": "1", "uid": "u", "key": "KNOWN-0001"}]) == []
+
+
+def test_cache_dropped_on_host_error_and_reopen():
+    link = FakeLink()
+    live, gateway, auth, token = fake_live(link)
+    live.checked("ws", [{"id": "1", "uid": "u", "key": "KNOWN-0001"}])
+    assert "ws" in live.cache
+    link.fail_with = fail("host.unavailable")
+    live.cache["ws"]["at"] = 0  # stale entry forces a host call, which fails
+    with pytest.raises(HostError):
+        live.checked("ws", [{"id": "2", "uid": "u", "key": "KNOWN-0001"}])
+    assert "ws" not in live.cache
+    link.fail_with = None
+    live.checked("ws", [{"id": "3", "uid": "u", "key": "KNOWN-0001"}])
+    assert "ws" in live.cache
+    live.checked("ws", [{"id": "4", "uid": "u", "key": "KNOWN-0001"}])
+    assert "ws" in live.cache
+    w = WorkspaceLive(live, "ws")
+    gateway.enabled.side_effect = None
+    gateway.enabled.return_value = Mock(
+        call=Mock(side_effect=lambda op, args=None: {"rows": [], "next_page": None, "sub_cursor": "c", "sub": "s"})
+    )
+    w.snapshot_open()
+    assert "ws" not in live.cache
 
 
 def test_host_outage_is_resync_not_revoked(monkeypatch):

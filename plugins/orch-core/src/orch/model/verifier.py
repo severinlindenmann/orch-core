@@ -22,6 +22,10 @@ class SigContext:
 
 
 class Verifier(Protocol):
+    def genesis_failure(self, event: Mapping[str, Any]) -> str | None:
+        """The code of the first failing check of §5.11 for a ``workspace.created`` (``genesis.bad_sig`` for check 6),
+        or ``None`` when every check holds."""
+
     def verify_person(self, event: Mapping[str, Any], context: SigContext) -> bool:
         """``sig`` of a person event under ``context.cert``'s device signing key."""
 

@@ -1363,7 +1363,7 @@
       "v": 2,
       "ws_seq": 5
      },
-     "expect": "refused",
+     "expect": "event.duplicate_id",
      "log": "01J9ZK4Q7M3R8T2V6X0B5N1C9D",
      "note": "the abandoned signed answer appended again: same id, signature and based_on, a new seq and host_sig"
     }

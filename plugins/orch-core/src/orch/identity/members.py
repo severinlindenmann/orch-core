@@ -114,7 +114,8 @@ def check_genesis(event: Mapping[str, Any]) -> dict[str, Any]:
         cert_o = check_cert(device_cert, owner_pk)
     except Refused as e:
         raise Refused("genesis.bad_device_cert", e.code) from None
-    if not person_scope_ok(cert_o) or actor.get("device") != "d_" + cert_o["device_id"]:
+    # the genesis installs members, policies and settings, so its device needs `operate` (decide-only is refused)
+    if not person_scope_ok(cert_o, needs_operate=True) or actor.get("device") != "d_" + cert_o["device_id"]:
         raise Refused("genesis.bad_device_cert", "actor.device or scopes")
     try:
         dk_pub = crypto.unb64u(cert_o["dk_sig_pub"], crypto.PUB_LEN)

@@ -27,6 +27,7 @@ GROUPS = {
         "LABELS",
         "artifact_digest",
         "canonical_policy",
+        "canonical_repo_identity",
         "check_hash_v",
         "check_repo_identity",
         "cj_checked",

@@ -80,6 +80,10 @@ class Sim:
         self.last_raised: list[str] = []
         self.full_policy = False
         self.dec: dict[str, list[dict[str, Any]]] = {x: [] for x in GATES}
+        # voids a settled (done or closed) ticket was exempt from (5.7 "Removal, role changes, revoked devices")
+        self.exempt_persons: set[str] = set()
+        self.exempt_devices: set[str] = set()
+        self.flag: dict[str, set[str]] = {x: set() for x in GATES}  # per gate: the revoked device's counting decisions
         self.status = "open"
         self.tasks: dict[str, str] = {}
         self.fields_extra: dict[str, Any] = {"title": "A ticket"}
@@ -186,6 +190,9 @@ class Sim:
         }  # fmt: skip
         if self.source():
             t["source_list"] = self.source()
+        live = {x: sorted(self.flag[x] & {d["id"] for d in self.counting(x)}) for x in GATES}
+        if any(live.values()):  # a settled ticket's flag: the revoked device's decisions that still count (5.7)
+            t["revoked_decisions"] = {x: ids for x, ids in live.items() if ids}
         if self.full_policy:  # the effective policy is pinned in the scenarios that are about it
             t["policy"] = {x: self.pol()[x] for x in GATES}
             t["policy_hash"] = {x: self.phash(x) for x in GATES if self.pol()[x]["approvers"]}
@@ -424,9 +431,11 @@ class Sim:
         if expect == "ok":
             self.t["remotes"][repo] = remote
             g.observe(self.t, repo, sha, branch)
-            self.settle(before, {"verify", "code"})
+            marks = {"verify", "code"}
             if self.status == "done":
                 self.status = "testing"
+                marks |= self.unsettle()  # the voids a done ticket was exempt from apply now
+            self.settle(before, marks)
         self._fin(expect)
         return e
 
@@ -449,6 +458,8 @@ class Sim:
         e = self._t("ticket.reopened", self._sev(), {}, expect, note=note)
         if expect == "ok":
             self.status = "open"
+            self.exempt_persons.clear()
+            self.exempt_devices.clear()
             self.settle(before, set(GATES))
         self._fin(expect)
         return e
@@ -497,16 +508,14 @@ class Sim:
         before = self.snap()
         e = self.w.ev("workspace", "member.removed", self._sev(), {"person": pid(who)}, expect=expect, note=note)
         if expect == "ok":
-            marks = self.void(lambda d: d["person"] == pid(who))
-            self.settle(before, marks)
+            self.settle(before, self.void_person(pid(who)))
         self._fin(expect)
         return e
 
     def role_changed(self, who: str, role: str, *, note: str | None = None) -> dict[str, Any]:
         before = self.snap()
         e = self.w.ev("workspace", "role.changed", self._sev(), {"person": pid(who), "role": role}, note=note)
-        marks = self.void(lambda d: d["person"] == pid(who))
-        self.settle(before, marks)
+        self.settle(before, self.void_person(pid(who)))
         self._fin("ok")
         return e
 
@@ -516,24 +525,51 @@ class Sim:
         e = self.w.ev("workspace", "device.revoked", self._sev(), pay, note=note)
         marks: set[str] = set()
         if reason == "compromised":
-            marks = self.void(lambda d: d["device"] == did(dev), compromised=True)
+            marks = self.void_device(did(dev))
         self.settle(before, marks)
         self._fin("ok")
         return e
 
-    def void(self, match: Any, *, compromised: bool = False) -> set[str]:
-        """§5.7 "Removal, role changes, revoked devices", as written:
+    SETTLED = ("done", "closed")
 
-        - ``member.removed`` / ``role.changed`` void the person's approvals "only on gates that haven't yet reached
-          ``count``"; the text gives no exemption for done tickets and does not ask whether the new role is still
-          eligible, so neither is applied (both listed as F1 gaps);
-        - ``device.revoked`` ``compromised`` voids "the decisions that device signed on tickets that are not yet
-          ``done``", whether or not the gate reached ``count``.
+    def void_person(self, person: str) -> set[str]:
+        """``member.removed`` / ``role.changed`` (5.7): the person's counting approvals are voided on the gates that
+        have not reached ``count``, on every unsettled ticket, even when the new role is still eligible. A settled
+        (done or closed) ticket voids nothing and raises nothing; the void waits for the ticket to become unsettled
+        other than by a reopen."""
+        if self.status in self.SETTLED:
+            self.exempt_persons.add(person)
+            return set()
+        return self.void(lambda d: d["person"] == person)
 
-        Returns the gates that lost a counting approval (the raise row "that voids a counting decision of g")."""
+    def void_device(self, device: str) -> set[str]:
+        """``device.revoked`` ``compromised`` (5.7): voids the decisions the device signed on every unsettled ticket,
+        whether or not the gate reached ``count``. A settled ticket keeps its state; per gate it lists the device's
+        decisions that were counting."""
+        if self.status in self.SETTLED:
+            self.exempt_devices.add(device)
+            for x in GATES:
+                self.flag[x] |= {d["id"] for d in self.counting(x) if d["device"] == device}
+            return set()
+        return self.void(lambda d: d["device"] == device, compromised=True)
+
+    def unsettle(self) -> set[str]:
+        """A settled ticket becomes unsettled other than by a reopen (a push after ``done``): the voids it was exempt
+        from apply at that event."""
         hit: set[str] = set()
-        if compromised and self.status == "done":
-            return hit
+        for device in sorted(self.exempt_devices):
+            hit |= self.void(lambda d, device=device: d["device"] == device, compromised=True)
+        for person in sorted(self.exempt_persons):
+            hit |= self.void(lambda d, person=person: d["person"] == person)
+        self.exempt_devices.clear()
+        self.exempt_persons.clear()
+        return hit
+
+    def void(self, match: Any, *, compromised: bool = False) -> set[str]:
+        """Retire the matching approvals: all of them for a compromised device, only on gates that have not reached
+        ``count`` for a removed or role-changed person. Returns the gates that lost a counting approval (the raise row
+        "that voids a counting decision of g")."""
+        hit: set[str] = set()
         for x in GATES:
             if not compromised and self.reached(x):
                 continue
@@ -578,7 +614,10 @@ class Sim:
         old = self.t["addons"].get("estimate")
         if verb == "granted":
             pay: dict[str, Any] = {"name": "estimate", "version": "1.0.0", "package_sha256": g.digest(b"estimate package"),
-                                   "capabilities": ["serve_http"], "binds": binds}  # fmt: skip
+                                   "capabilities": ["serve_http"],
+                                   "fields": {"points": {"type": "integer", "min": 0, "max": 100, "set_by": ["owner", "agent"],
+                                                         "gate": ["plan"]}},
+                                   "sections": binds["sections"], "artifact_kinds": []}  # fmt: skip
         else:
             pay = {"name": "estimate"}
         e = self.w.ev("workspace", "addon." + verb, self._sev(), pay, note=note)
@@ -972,15 +1011,19 @@ def generation_scenarios() -> list[dict[str, Any]]:
     return out
 
 
-def _to_done(s: Sim) -> None:
+def _to_done(s: Sim, rp_by: str = "sev") -> None:
     """Decisions in each state on the way to ``done`` (5.9): approvals outside done/closed leave the status, verdicts and
     code decisions only in testing, a non-completing pass leaves it, the completing decision makes it done."""
     R, P, V, C = "requirements", "plan", "verify", "code"
     s.ws_policy({C: CODE_ON}, note="the code gate applies")
+    if rp_by != "sev":
+        s.ws_policy(
+            {R: policy(["maintainer", "owner"], 1), P: policy(["maintainer", "owner"], 1)}, note="maintainers approve"
+        )
     s.ready()
     s.people("reviewers", ["sev"], note="sev reviews (verify approvers: reviewers)")
-    s.decide("approve", R, note="requirements approval in open: status unchanged")
-    s.decide("approve", P, note="plan approval in open")
+    s.decide("approve", R, rp_by, note="requirements approval in open: status unchanged")
+    s.decide("approve", P, rp_by, note="plan approval in open")
     s.decide("pass", V, expect="gate.status", note="verdicts only in testing")
     s.decide("approve", C, "mara", expect="gate.status", note="code decisions only in testing")
     s.status_changed("open", "backlog")
@@ -1042,6 +1085,43 @@ def status_scenarios() -> list[dict[str, Any]]:
     s = _new("done_then_reopened", pins + "after a reopen the old verdict and code approval no longer count")
     _to_done(s)
     s.reopen(note="reopen from done: every gate is raised")
+    out.append(s.scenario())
+
+    s = _new("settled_done_keeps_state_for_removed_and_role_changed", pins + "a done ticket is settled: member.removed and "
+             "role.changed void nothing and raise nothing there")  # fmt: skip
+    _to_done(s)
+    s.role_changed("mara", "member", note="mara gave the code approval; the ticket is done, so nothing is voided")
+    s.member_removed("mara", note="removed: still nothing on a done ticket")
+    out.append(s.scenario())
+
+    s = _new("settled_done_compromised_device_flag_then_push", pins + "device.revoked (compromised) on a done ticket changes "
+             "no state; the gates list the device's counting decisions. A push sends the ticket back to testing and the "
+             "voids it was exempt from apply at that event, so requirements and plan approvals of the revoked device "
+             "stop counting too")  # fmt: skip
+    _to_done(s, rp_by="mara")
+    s.device_revoked(
+        "mara", "mara1", "compromised", note="done: the state stays, the flag lists mara's three decisions"
+    )
+    s.pushed(SHA_B, note="back to testing: mara's requirements, plan and code approvals are voided and raised")
+    out.append(s.scenario())
+
+    s = _new("settled_closed_compromised_device_flag_then_reopen", pins + "a closed ticket is settled too: the revoked "
+             "device's decisions are listed, nothing is voided, and a reopen raises every gate so the list is dropped")  # fmt: skip
+    s.ws_policy({"requirements": policy(["maintainer", "owner"], 1)})
+    s.ready()
+    s.decide("approve", "requirements", "mara", note="mara approves requirements")
+    s.close(note="closed from open")
+    s.device_revoked("mara", "mara1", "compromised", note="closed: listed, still counting")
+    s.reopen(note="reopen: every gate is raised, mara's approval no longer counts and is no longer listed")
+    out.append(s.scenario())
+
+    s = _new("settled_closed_removed_person_keeps_the_approval", pins + "member.removed on a closed ticket voids nothing "
+             "and raises nothing, even on a gate that has not reached count")  # fmt: skip
+    s.ws_policy({"requirements": policy(["maintainer", "owner"], 2)}, note="requirements needs two approvers")
+    s.ready()
+    s.decide("approve", "requirements", "mara", note="one of two")
+    s.close()
+    s.member_removed("mara", note="closed: settled, the approval keeps counting and no gate is raised")
     out.append(s.scenario())
     return out
 
@@ -1115,10 +1195,9 @@ def effective_policy_scenarios() -> list[dict[str, Any]]:
         "approve",
         R,
         stale=seen,
-        expect="refused",
-        note="a blocked gate takes no decisions. F1 defines no policy hash for a policy without approvers, so the "
-        "signer can only carry the hashes it saw before the block: the step breaks gate.no_eligible and gate.stale at "
-        "once, and no single code is pinned (F1 states no precedence)",
+        expect="gate.no_eligible",
+        note="a blocked gate has no policy hash and no gate hash (5.7), so it takes no decisions: the signer can only "
+        "carry the hashes it saw before the block, and they are never compared",
     )
     s.ws_policy(
         {R: policy(["owner", "maintainer"], 1)},
@@ -1237,7 +1316,7 @@ def question_scenarios() -> list[dict[str, Any]]:
             s.w.raw(
                 TICKET,
                 answered,
-                expect="refused",
+                expect="event.duplicate_id",
                 note="the abandoned signed answer appended again: same id, signature and based_on, a new seq and host_sig",
             )
         else:
@@ -1253,8 +1332,8 @@ def question_scenarios() -> list[dict[str, Any]]:
 
 def approval_scenarios() -> list[dict[str, Any]]:
     """§5.7 "Who may approve", §5.2/§5.12 host events, and the decision preconditions (completeness, applies, source
-    list). Every refused step is built to break one rule only, except where noted (``"refused"``: F1 gives no
-    precedence between the two rules the step breaks)."""
+    list). Every refused step is built to break one rule only (the refusal order of 5.11 decides where two rules
+    meet)."""
     R, P, V, C = "requirements", "plan", "verify", "code"
     out = []
 
@@ -1272,8 +1351,8 @@ def approval_scenarios() -> list[dict[str, Any]]:
     s.w.member("vic", "viewer", note="vic joins as a viewer")
     s.ws_policy({R: policy(["owner", "watchers"], 1)}, note="requirements: owner or watchers")
     s.people("watchers", ["vic"], note="vic watches the ticket")
-    s.decide("approve", R, "vic", expect="refused", note="a viewer never approves (5.7), and a viewer can't write (5.11): "
-             "gate.not_eligible or role.denied, F1 states no precedence")  # fmt: skip
+    s.decide("approve", R, "vic", expect="role.denied", note="a viewer never approves (5.7): the signer step (5.11 "
+             "refusal order, step 5) comes before the decision rules, so the watcher token is never looked at")  # fmt: skip
     s.decide("approve", R, "sev", note="the workspace owner approves")
     out.append(s.scenario())
 
@@ -1284,6 +1363,8 @@ def approval_scenarios() -> list[dict[str, Any]]:
     s.ready()
     s.claim(note="sev's agent claims the ticket: sev is a worker")
     s.decide("approve", R, "sev", expect="gate.not_eligible", note="sev's own agent worked on the ticket")
+    s.decide("approve", R, "sev", stale={"hash": "sha256:" + "00" * 32}, expect="gate.not_eligible",
+             note="the independence check sits beside the token check (5.11 step 7), before a stale hash")  # fmt: skip
     s.people("assignees", ["mara"], note="mara is assigned: a worker")
     s.decide("approve", R, "mara", expect="gate.not_eligible", note="an assignee is a worker")
     s.people("assignees", [], ["mara"], note="mara is unassigned")

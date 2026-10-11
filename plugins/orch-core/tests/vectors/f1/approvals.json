@@ -732,9 +732,9 @@
       "v": 2,
       "ws_seq": 8
      },
-     "expect": "refused",
+     "expect": "role.denied",
      "log": "01J9ZK4Q7M3R8T2V6X0B5N1C9D",
-     "note": "a viewer never approves (5.7), and a viewer can't write (5.11): gate.not_eligible or role.denied, F1 states no precedence"
+     "note": "a viewer never approves (5.7): the signer step (5.11 refusal order, step 5) comes before the decision rules, so the watcher token is never looked at"
     },
     {
      "after": {
@@ -798,7 +798,7 @@
   {
    "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
    "name": "independent_gate_refuses_workers",
-   "now": "2026-10-10T10:04:00Z",
+   "now": "2026-10-10T10:04:10Z",
    "pins": "with `independent` on, a worker never approves: anyone who was an assignee, held a claim or was the `for` person of an agent event since the last reopen; the set only grows, and a reopen starts it afresh",
    "steps": [
     {
@@ -1308,6 +1308,35 @@
      "note": "sev's own agent worked on the ticket"
     },
     {
+     "event": {
+      "actor": {
+       "device": "d_c65032f21d43401cc223b05723c1e5b4",
+       "id": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
+       "kind": "person"
+      },
+      "at": "2026-10-10T10:01:50Z",
+      "auth": "passphrase",
+      "based_on": "sha256:ac02089e4d144f214334ad9d71400478267ce3918b033c63627600cc039e49f9",
+      "gate": "requirements",
+      "gate_gen": 2,
+      "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "hash_v": 1,
+      "host_sig": "Fk13Rx2jlEtYy41PEhPB_CyagCya3woEz6VkQGzeWjN46xiu6fByr6oGJAAjLLB-lE1lsSFi71Nc4fwv1K6egQ",
+      "id": "01J9ZK0000000000000000000B",
+      "policy_hash": "sha256:64861222baa6192a6d01e92980bfa04f401520c17b9c77ac63c851c777fadd37",
+      "prev": "sha256:ac02089e4d144f214334ad9d71400478267ce3918b033c63627600cc039e49f9",
+      "roster_v": 3,
+      "seq": 4,
+      "sig": "UVi0Gema-8zndP_8J-CZiTDpVeUS5Iv7rYLaglC4NWfxarQE1SuaqvA2-kWofkOX724_mMliTAKxvvEqW6Hzkw",
+      "type": "gate.approved",
+      "v": 2,
+      "ws_seq": 6
+     },
+     "expect": "gate.not_eligible",
+     "log": "01J9ZK4Q7M3R8T2V6X0B5N1C9D",
+     "note": "the independence check sits beside the token check (5.11 step 7), before a stale hash"
+    },
+    {
      "after": {
       "tickets": {
        "01J9ZK4Q7M3R8T2V6X0B5N1C9D": {
@@ -1338,18 +1367,18 @@
       "add": [
        "p_6aae5cce832160e6f8cd9dadfbb4c5cd"
       ],
-      "at": "2026-10-10T10:01:50Z",
+      "at": "2026-10-10T10:02:00Z",
       "auth": "passphrase",
       "based_on": "sha256:ac02089e4d144f214334ad9d71400478267ce3918b033c63627600cc039e49f9",
       "hash_v": 1,
-      "host_sig": "W847skSwucvtYGdQexUQ6F5Z9skPF3EuNU-B-CXUEP39X9rJG29BpmYbvW_1VmFkghKgoK1UG6qRoHlmD9mqYA",
-      "id": "01J9ZK0000000000000000000B",
+      "host_sig": "3RdKIaOpJ-NCzx0h4nBsN1THovtducYGSTfJQOeP6G9_7nclNrrF0oxxMmB_zaFz9Jri5Uj7uW3TB5NTJJ96Lw",
+      "id": "01J9ZK0000000000000000000C",
       "prev": "sha256:ac02089e4d144f214334ad9d71400478267ce3918b033c63627600cc039e49f9",
       "remove": [],
       "role": "assignees",
       "roster_v": 3,
       "seq": 4,
-      "sig": "bPEY1F7fv6c2PDzwdXXNrUSFQOchwNU6OFZTndvm_w6p2XKAAThFhfDcfRyh7oUw_giPgwXnRfI6Nnw1qwnO3Q",
+      "sig": "X3rCDJT8dar8EHgDP35TuSosJtNN5OsowcOKmIOTxnxuQr_c1XkvVUBIbgja05I-ERLUmHWN5zoZ4YrQcUQemQ",
       "type": "people.changed",
       "v": 2,
       "ws_seq": 6
@@ -1365,20 +1394,20 @@
        "id": "p_6aae5cce832160e6f8cd9dadfbb4c5cd",
        "kind": "person"
       },
-      "at": "2026-10-10T10:02:00Z",
+      "at": "2026-10-10T10:02:10Z",
       "auth": "passphrase",
-      "based_on": "sha256:45f382304a82546acc5a50caf3a273d0fb77694fed0c749a63526ffb8a0afbd3",
+      "based_on": "sha256:196c177c99c3e3e23b1ffdd1ecd9dfcd29b7c6235dcd799fbec80b3df4ba66fd",
       "gate": "requirements",
       "gate_gen": 3,
       "hash": "sha256:5ad09f9f7379fb056d0d1f05324b135f610048ac7fea506fe981c65e2d183d20",
       "hash_v": 1,
-      "host_sig": "mqo6mTgiJCCef02z2Dcpz26zbt4WDptGxLAuTK86XsEqDhhrUu2pfgqYLONmZMBcsmjdmo29pZmPMeTJIBl-kQ",
-      "id": "01J9ZK0000000000000000000C",
+      "host_sig": "CTsfiGPkH2TgqlJx7OX8q4Dcx1tGiK2zZjcrx1p2NQG0NWMDqlNnWb_OmSeUkjEDpUsS0pK27cvYAUTaUr_Ecg",
+      "id": "01J9ZK0000000000000000000D",
       "policy_hash": "sha256:64861222baa6192a6d01e92980bfa04f401520c17b9c77ac63c851c777fadd37",
-      "prev": "sha256:45f382304a82546acc5a50caf3a273d0fb77694fed0c749a63526ffb8a0afbd3",
+      "prev": "sha256:196c177c99c3e3e23b1ffdd1ecd9dfcd29b7c6235dcd799fbec80b3df4ba66fd",
       "roster_v": 3,
       "seq": 5,
-      "sig": "AOpUelttxl7IkX5W1pmxihUo22Dj-mIFz0NxP6t8BCLZztI3CVaO5ga_cnRH_eI9rbFnhQzLwMcQlbISN1Sekw",
+      "sig": "zNP0QnaWqzm50TIOkBI_hqE3xab5XHA7WVAkNTrpuMqpb7j7pkTHt2hAox7arXWbfEqBVkWEvF4kTThmQl1olg",
       "type": "gate.approved",
       "v": 2,
       "ws_seq": 6
@@ -1416,20 +1445,20 @@
        "kind": "person"
       },
       "add": [],
-      "at": "2026-10-10T10:02:10Z",
+      "at": "2026-10-10T10:02:20Z",
       "auth": "passphrase",
-      "based_on": "sha256:45f382304a82546acc5a50caf3a273d0fb77694fed0c749a63526ffb8a0afbd3",
+      "based_on": "sha256:196c177c99c3e3e23b1ffdd1ecd9dfcd29b7c6235dcd799fbec80b3df4ba66fd",
       "hash_v": 1,
-      "host_sig": "pCQl6IqWZevPatiSlgHpuoRayH59wuXz13uU3ddnL8SMgmlAhP_LHOC_xiQFOjJlfkdI1W0E7PeGPU9EzCWVeA",
-      "id": "01J9ZK0000000000000000000D",
-      "prev": "sha256:45f382304a82546acc5a50caf3a273d0fb77694fed0c749a63526ffb8a0afbd3",
+      "host_sig": "LWnTdl1NguH5az2XEi0qXqp2kg2iAc5AyjnONM5EUmsovKdcBPu7pr0ZmcGKK4_by8QVAmRbPrjIJBntWUBFbg",
+      "id": "01J9ZK0000000000000000000E",
+      "prev": "sha256:196c177c99c3e3e23b1ffdd1ecd9dfcd29b7c6235dcd799fbec80b3df4ba66fd",
       "remove": [
        "p_6aae5cce832160e6f8cd9dadfbb4c5cd"
       ],
       "role": "assignees",
       "roster_v": 3,
       "seq": 5,
-      "sig": "PlJZfXZZ6V2WCKBUCC-1pf83Gha1jEcpyb8AIBdMWNkxwvz6BVvfKtWofATsc3ca1jYWIVu1MN-t3vtHNVzblw",
+      "sig": "Tq6PY0lzH64F1lK-EWzXjE5htkWsiBWg5NoBzXda0I0JvkWXgxIsur0mwub5zAhDg1AS3EhBB3tHER3Owwf08A",
       "type": "people.changed",
       "v": 2,
       "ws_seq": 6
@@ -1445,20 +1474,20 @@
        "id": "p_6aae5cce832160e6f8cd9dadfbb4c5cd",
        "kind": "person"
       },
-      "at": "2026-10-10T10:02:20Z",
+      "at": "2026-10-10T10:02:30Z",
       "auth": "passphrase",
-      "based_on": "sha256:46f7afb57f2311994bc15b765b20141d015ec06f9780d47903d13612cf375e1a",
+      "based_on": "sha256:81c9f6ee3083e1e48581c688688f8d6ea3f13e18ce30eb02b9ba384f389967a4",
       "gate": "requirements",
       "gate_gen": 4,
       "hash": "sha256:bbf06e35227ca833884e962fe66869d1a3ccfaa9a40587059174184e2ec01e77",
       "hash_v": 1,
-      "host_sig": "OXkHap9NJlsTzHClRLEo0UFXjl61uL-UpuoJFg8WlKH5_b0lva2SsBbf2OesRTStNluiYx2Ee3CVp7JG_qRgoA",
-      "id": "01J9ZK0000000000000000000E",
+      "host_sig": "N8K5ApnJ6C_V9rHyWkAzqig-IEHMDi1bhvSGNKy3Z0LVCjKg-YapLY2260alR5MDmTrCRvRmNBwe_WYbyw6e2Q",
+      "id": "01J9ZK0000000000000000000F",
       "policy_hash": "sha256:64861222baa6192a6d01e92980bfa04f401520c17b9c77ac63c851c777fadd37",
-      "prev": "sha256:46f7afb57f2311994bc15b765b20141d015ec06f9780d47903d13612cf375e1a",
+      "prev": "sha256:81c9f6ee3083e1e48581c688688f8d6ea3f13e18ce30eb02b9ba384f389967a4",
       "roster_v": 3,
       "seq": 6,
-      "sig": "iqGvyriQN4HMiYfZxk7tuBJnhaC4UGMTYEggiujmupu9EevAHM9hEg_z-A2359jj4ayZhMZ5lHCmopjZ2Yt9Ww",
+      "sig": "AuSFCRK8GR7QKDS9VwWnzv4WJ06p6fjHUBN8Zv7Q3hAH_4JbfsoaZYRSondzad3F4yCr1mElLrjHR5ma4EkZag",
       "type": "gate.approved",
       "v": 2,
       "ws_seq": 6
@@ -1497,12 +1526,12 @@
        "kind": "agent",
        "session": "s_01J9ZK00000000000000000S01"
       },
-      "at": "2026-10-10T10:02:30Z",
-      "based_on": "sha256:46f7afb57f2311994bc15b765b20141d015ec06f9780d47903d13612cf375e1a",
+      "at": "2026-10-10T10:02:40Z",
+      "based_on": "sha256:81c9f6ee3083e1e48581c688688f8d6ea3f13e18ce30eb02b9ba384f389967a4",
       "hash_v": 1,
-      "host_sig": "vzhssiSSmjCfZMrlCJVdpTOdB71wZRRKOmmWE4skvUl879qMMx1jJAgT8EYrof915Db8OVII7OE-AkpXLroWWg",
-      "id": "01J9ZK0000000000000000000F",
-      "prev": "sha256:46f7afb57f2311994bc15b765b20141d015ec06f9780d47903d13612cf375e1a",
+      "host_sig": "x-HVwt-IoRQeUZK5m4yOXuMW71D7r8SaeBD1LLQ41tU0NN11WsrstVKUtfRdLUsVNMe6p69qXLzEAYLY5L6e0g",
+      "id": "01J9ZK0000000000000000000G",
+      "prev": "sha256:81c9f6ee3083e1e48581c688688f8d6ea3f13e18ce30eb02b9ba384f389967a4",
       "reason": "released",
       "seq": 6,
       "session": "s_01J9ZK00000000000000000S01",
@@ -1542,17 +1571,17 @@
        "id": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
        "kind": "person"
       },
-      "at": "2026-10-10T10:02:40Z",
+      "at": "2026-10-10T10:02:50Z",
       "auth": "passphrase",
-      "based_on": "sha256:9bc25119b14d97fd1f6f57f68194c493689f28d3b0ce422432294e17050b393e",
+      "based_on": "sha256:db90bf5890134ee152d442bd616e84040e9043dcbaa1b2c75f323c3e95b2fcf9",
       "hash_v": 1,
-      "host_sig": "81NgXU134LJpsBK_g9YcmSMqfXvRDlBXBYTlsZhNklBmvcCCINSF21Y3PGQagF0IYLUDj1eeRwU5Pfig6Anqlg",
-      "id": "01J9ZK0000000000000000000G",
-      "prev": "sha256:9bc25119b14d97fd1f6f57f68194c493689f28d3b0ce422432294e17050b393e",
+      "host_sig": "WdsfLvie67zj8VOTojhaS55JGPDly3T_J4bN8aMDPeS1Ug6F1tXwGRxJorfrjzk3a91D_j27B6BYL15smW-yoA",
+      "id": "01J9ZK0000000000000000000H",
+      "prev": "sha256:db90bf5890134ee152d442bd616e84040e9043dcbaa1b2c75f323c3e95b2fcf9",
       "resolution": "other",
       "roster_v": 3,
       "seq": 7,
-      "sig": "F_fAt3gVJEkZfB3R_X28R2asMat4z8NhjCNAdmuAHMLb8hlP7RcxZVc61AjINdUdeguUI9p335qrWjCoutM3Ew",
+      "sig": "NQ7nGPOMzVGwxDFah7JRdiDcY5orM2MLJwF_unwpYvpgGR8OOanLT4LtmLysFh6hY72NaapuHAYVXwmhziuqbg",
       "type": "ticket.closed",
       "v": 2,
       "ws_seq": 6
@@ -1589,16 +1618,16 @@
        "id": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
        "kind": "person"
       },
-      "at": "2026-10-10T10:02:50Z",
+      "at": "2026-10-10T10:03:00Z",
       "auth": "passphrase",
-      "based_on": "sha256:002625dea4bcb45eeed47641bd0d6bfd79b6a4931021a53d227deaeba68d631d",
+      "based_on": "sha256:4352ebf3217ef4e89ab88625e8e250c10a53db5ff9e46566c80d5e33f52378ba",
       "hash_v": 1,
-      "host_sig": "qei3ldP973-wVZkIljBIl39si5Dcy2DQ1O35_Jm0LuT1AgbK6jzX3pG3yBc6E5DEMIuxCzWgYOuA7tGaxoArLQ",
-      "id": "01J9ZK0000000000000000000H",
-      "prev": "sha256:002625dea4bcb45eeed47641bd0d6bfd79b6a4931021a53d227deaeba68d631d",
+      "host_sig": "n-lr6c07yks8rGFonDGbfjikFy4CqQdNmcyEtGhgxZdTE0B_-48TOIhGGoaocjazAaB9UzMlv5Uq5FcHtzMAsg",
+      "id": "01J9ZK0000000000000000000J",
+      "prev": "sha256:4352ebf3217ef4e89ab88625e8e250c10a53db5ff9e46566c80d5e33f52378ba",
       "roster_v": 3,
       "seq": 8,
-      "sig": "pWlaFAh-8OSdoapw-sVN32aS1aW4YgrTB5voqfOd1xeO3NKqV6sWe8xkEgy9bIOPYJL5YlRvDoWvBwe8GZek6w",
+      "sig": "8_I9d_Vrjo_GqGIcoOlzwAO34M6IgldNEjgq7A_vxsUZAFPfLpT_zNHSlSjLDhnbwS5I_OotiVBOr7VrubghwQ",
       "type": "ticket.reopened",
       "v": 2,
       "ws_seq": 6
@@ -1626,10 +1655,10 @@
          0
         ],
         "hash": {
-         "code": "sha256:90854a0a2b29b9ad297b721c0ab8ebf072af3932946707bd7a5253e08022c896",
-         "plan": "sha256:526aebfb0135fc0f64f60a1184f533655526297e3af0fb0cdacec83bf13b3eb6",
+         "code": "sha256:7e1344b69e2d661d8fda2652137ed131e75b3bdca9f2f8311e8bb96b476359c0",
+         "plan": "sha256:a2676ce4c6f18dc0651fbdb6352495a56e711dded790a81c006ec0e11b10cf9c",
          "requirements": "sha256:bbf06e35227ca833884e962fe66869d1a3ccfaa9a40587059174184e2ec01e77",
-         "verify": "sha256:e9f61635654b1ddc04429dbaa85d20a0dcbebc6aa66f82762dd5392040d7bb07"
+         "verify": "sha256:8443e3707a42f6a53918c197582c12d1f598b36da82661c4366b9abb288b9776"
         },
         "status": "open"
        }
@@ -1641,20 +1670,20 @@
        "id": "p_6aae5cce832160e6f8cd9dadfbb4c5cd",
        "kind": "person"
       },
-      "at": "2026-10-10T10:03:00Z",
+      "at": "2026-10-10T10:03:10Z",
       "auth": "passphrase",
-      "based_on": "sha256:88af40fd9a7497f12231e9b359182c720ad1732896e5ead51b355643ea273546",
+      "based_on": "sha256:53017f362049285b5966c13b318dc0d1cc20c59f96d402005bd6f53eba42cad8",
       "gate": "requirements",
       "gate_gen": 5,
       "hash": "sha256:bbf06e35227ca833884e962fe66869d1a3ccfaa9a40587059174184e2ec01e77",
       "hash_v": 1,
-      "host_sig": "lo61iAOcNiSrPowTRHMi1S6eYeKUZkAPC3Qe-mf66Vb3gN6d7IQALMAEFQqWjgugh05HarEoY359FVdn9yj1YQ",
-      "id": "01J9ZK0000000000000000000J",
+      "host_sig": "hlimdq46Gzjby3XdTM-XsWUNbTjl2O1KGktOlNIJzq1NjZ2zPW3GxABGverUn1IhCpAth5Is0cvzpgfCpFggBg",
+      "id": "01J9ZK0000000000000000000K",
       "policy_hash": "sha256:64861222baa6192a6d01e92980bfa04f401520c17b9c77ac63c851c777fadd37",
-      "prev": "sha256:88af40fd9a7497f12231e9b359182c720ad1732896e5ead51b355643ea273546",
+      "prev": "sha256:53017f362049285b5966c13b318dc0d1cc20c59f96d402005bd6f53eba42cad8",
       "roster_v": 3,
       "seq": 9,
-      "sig": "YcoYjVeTfSH2SpreYWCn7pdS6WRXMSKNIeZpNi6S3n4a5kaLxarq1JJsZnymYCWwhCUPVT6VXRXuDxr1Su3erA",
+      "sig": "UCE7TVmAlk7sMkOeL9_GBWTTr-O3ZOrt63k27hOw69Nkl5pednDBXoYMXCWfg-ur2vvOqiayeYGcYZN451nMpA",
       "type": "gate.approved",
       "v": 2,
       "ws_seq": 6

@@ -1390,9 +1390,9 @@
       "v": 2,
       "ws_seq": 7
      },
-     "expect": "refused",
+     "expect": "gate.no_eligible",
      "log": "01J9ZK4Q7M3R8T2V6X0B5N1C9D",
-     "note": "a blocked gate takes no decisions. F1 defines no policy hash for a policy without approvers, so the signer can only carry the hashes it saw before the block: the step breaks gate.no_eligible and gate.stale at once, and no single code is pinned (F1 states no precedence)"
+     "note": "a blocked gate has no policy hash and no gate hash (5.7), so it takes no decisions: the signer can only carry the hashes it saw before the block, and they are never compared"
     },
     {
      "after": {

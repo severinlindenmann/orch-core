@@ -54,6 +54,7 @@ __all__ = [
     "HashError",
     "artifact_digest",
     "canonical_policy",
+    "canonical_repo_identity",
     "check_chain",
     "check_repo_identity",
     "cj_checked",
@@ -541,6 +542,33 @@ def _check_receipts(receipts: object, gate: str) -> None:
         if r["commit"] is not None:
             _match(_COMMIT, r["commit"], "receipt commit")
         _int(r["exit"], "receipt exit")
+
+
+_RAW_URL = re.compile(r"(https|ssh)://(?:[^/@]*@)?([^/:@]+)(?::([0-9]+))?/(.+)")
+_RAW_SCP = re.compile(r"(?:[^/@:]+@)?([^/:@]+):([^/].*)")
+
+
+def canonical_repo_identity(raw: str, name: str) -> str:
+    """The identity of a repo from its raw ``remote.origin.url`` (§5.7 "Repo identity"): ``https://`` and
+    ``ssh://``/scp-like forms become ``https://host[:port]/path`` (userinfo removed, host lower-case, every port kept
+    except 443 for https and 22 for ssh, then one trailing ``/`` and one ``.git`` removed, in that order); anything
+    else, and anything that is not canonical after that, is ``local:<name>``. The one canonicaliser every runtime
+    uses; the result passes :func:`check_repo_identity`."""
+    m = _RAW_URL.fullmatch(raw)
+    if m:
+        scheme, host, port, path = m.groups()
+        keep = port is not None and port != ("443" if scheme == "https" else "22")
+    else:
+        s = _RAW_SCP.fullmatch(raw)
+        if not s or "://" in raw:
+            return f"local:{name}"
+        host, path = s.groups()
+        port, keep = None, False
+    path = path.removesuffix("/").removesuffix(".git")
+    try:
+        return check_repo_identity(f"https://{host.lower()}{':' + port if keep else ''}/{path}")
+    except HashError:
+        return f"local:{name}"
 
 
 def check_repo_identity(value: object) -> str:

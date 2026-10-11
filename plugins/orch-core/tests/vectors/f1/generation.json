@@ -6725,40 +6725,48 @@
        "id": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
        "kind": "person"
       },
+      "artifact_kinds": [],
       "at": "2026-10-10T10:01:30Z",
       "auth": "passphrase",
       "based_on": "sha256:26aed66a8e4074fcc024c8ed055cd420536a1cd8948f9c7f20eb25d926d9ed58",
-      "binds": {
-       "fields": {
-        "points": [
-         "plan"
-        ]
-       },
-       "sections": [
-        {
-         "gate": [
-          "plan"
-         ],
-         "id": "estimate.notes",
-         "types": [
-          "feature",
-          "bug"
-         ]
-        }
-       ]
-      },
       "capabilities": [
        "serve_http"
       ],
+      "fields": {
+       "points": {
+        "gate": [
+         "plan"
+        ],
+        "max": 100,
+        "min": 0,
+        "set_by": [
+         "owner",
+         "agent"
+        ],
+        "type": "integer"
+       }
+      },
       "hash_v": 1,
-      "host_sig": "pZuvFmdVRWbN-rNVjDgaJyow0GXMmkVh1-H3EuH1OGdi-QQtv0Q1q3oMm7MQ4hIN4hKW3Dt6YKk786bS8fNV9A",
+      "host_sig": "KEl9p-KOwFjU3hngVjGMOSmwd4V1T1v8mKfV-X3lB4Iexm4vW_2gsHVbs0gB_aYs_BlO1PQJgj-s3kMruhNY5g",
       "id": "01J9ZK00000000000000000009",
       "name": "estimate",
       "package_sha256": "sha256:063a5af989bb48cf38d2a500c5a982e427e9e08f44d1c807277a43f08c16fe73",
       "prev": "sha256:26aed66a8e4074fcc024c8ed055cd420536a1cd8948f9c7f20eb25d926d9ed58",
       "roster_v": 3,
+      "sections": [
+       {
+        "gate": [
+         "plan"
+        ],
+        "id": "estimate.notes",
+        "types": [
+         "feature",
+         "bug"
+        ]
+       }
+      ],
       "seq": 6,
-      "sig": "1JZ7qnPzilPE3PMa9-IzPUGgbn_w7YoQgngMivK1vFkEwdHAwBF6D02WnK2AYSgmHEIJL4q8lrEmHyZUWQUboA",
+      "sig": "2Z3B7vF8dVgK_eAOMk62HnbU4-fcRh6Q4qZxFmJ-AEDZeze5vQx3znDPwQA0dEl2j0G7oLiz-ZkM-GPa-sCXJA",
       "type": "addon.granted",
       "v": 2,
       "version": "1.0.0"
@@ -6863,15 +6871,15 @@
       },
       "at": "2026-10-10T10:01:50Z",
       "auth": "passphrase",
-      "based_on": "sha256:e9540ac33dc2bf9c566694d046556f0c43c31ac34c432a9fafd47a9300a539b7",
+      "based_on": "sha256:1af37837c753de157cad63879abec24d05e75a528215c5cb61758e6cef45011d",
       "hash_v": 1,
-      "host_sig": "wJ3iEWeBNJcja-Cqpju7_8B4KcGQrH7A67Ti1no-0ZJB01ZkK4wy2n5zUPE--4Mu_1x_m8kijUsBsBq2eYRs-g",
+      "host_sig": "ghn1Sxvu_U7ZwzCsHlTVAF4mnGAABpkG-YcfttMvGGI-0dtIJ9dZn0tUOTbiDFRe3H2jVOwhRONqqkIgt0W78A",
       "id": "01J9ZK0000000000000000000B",
       "name": "estimate",
-      "prev": "sha256:e9540ac33dc2bf9c566694d046556f0c43c31ac34c432a9fafd47a9300a539b7",
+      "prev": "sha256:1af37837c753de157cad63879abec24d05e75a528215c5cb61758e6cef45011d",
       "roster_v": 3,
       "seq": 7,
-      "sig": "nn7RpJlG_SRSOzBFWnbQglcR3uBfWUrxD12AeUSOkNjvRsdUaSnodiAX6hbhzhmGGbMHIr9Lrpvm9u15H4CXxw",
+      "sig": "66bCsd1mApOq8yOgmsw8g13ZPc8wnWwTKull_B8kImyG_m7rr5TULUMAHb3yqY1gkG82OUDemKwtaM_6Vy472g",
       "type": "addon.disabled",
       "v": 2
      },
@@ -6910,40 +6918,48 @@
        "id": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
        "kind": "person"
       },
+      "artifact_kinds": [],
       "at": "2026-10-10T10:02:00Z",
       "auth": "passphrase",
-      "based_on": "sha256:ae6edc6e7980e0caec80eb2ca79a95eb62af156706f3e56e3848e06413e36d0c",
-      "binds": {
-       "fields": {
-        "points": [
-         "plan"
-        ]
-       },
-       "sections": [
-        {
-         "gate": [
-          "plan"
-         ],
-         "id": "estimate.notes",
-         "types": [
-          "feature",
-          "bug"
-         ]
-        }
-       ]
-      },
+      "based_on": "sha256:7aa7b0c845403411d012c0b1312336dc08ecfd4a4bfe47936e1388d05140ab38",
       "capabilities": [
        "serve_http"
       ],
+      "fields": {
+       "points": {
+        "gate": [
+         "plan"
+        ],
+        "max": 100,
+        "min": 0,
+        "set_by": [
+         "owner",
+         "agent"
+        ],
+        "type": "integer"
+       }
+      },
       "hash_v": 1,
-      "host_sig": "RYmSFDSmdxvvJGnBFJf2I_lz4zj2NbMI6ov_g_BuK6swlBSjysUgN0WeYzymNGQQ4e1-5xABDrCTgYunoRvRjA",
+      "host_sig": "tnDU6_jSXDVOzRaQX8JfKyx6pKlG1Y4SScwSGtyQMpIkwzuScfDrRUQklZSoKXLlzIFYQ2fiElaQO5I8ceLo7A",
       "id": "01J9ZK0000000000000000000C",
       "name": "estimate",
       "package_sha256": "sha256:063a5af989bb48cf38d2a500c5a982e427e9e08f44d1c807277a43f08c16fe73",
-      "prev": "sha256:ae6edc6e7980e0caec80eb2ca79a95eb62af156706f3e56e3848e06413e36d0c",
+      "prev": "sha256:7aa7b0c845403411d012c0b1312336dc08ecfd4a4bfe47936e1388d05140ab38",
       "roster_v": 3,
+      "sections": [
+       {
+        "gate": [
+         "plan"
+        ],
+        "id": "estimate.notes",
+        "types": [
+         "feature",
+         "bug"
+        ]
+       }
+      ],
       "seq": 8,
-      "sig": "OnYuEDvrVahjBdAahmrx7vDZVxshauco68Wzxuqxx6m-thApEDpu8ZE-aPPwuca5rOwv--sOdx6_7NpuNZX6_A",
+      "sig": "qUks32IGOGSGqKCP6RhTJMfCORbcT6Q0WoCSdTiKNZVcKEXaZWIDmz-vID-mrLcBpZeCgLXPxdJDuX1ULByJmw",
       "type": "addon.granted",
       "v": 2,
       "version": "1.0.0"
@@ -6986,15 +7002,15 @@
       },
       "at": "2026-10-10T10:02:10Z",
       "auth": "passphrase",
-      "based_on": "sha256:0c1459b6b597302eb7a63f6f06c1ee525147dadf0888fb6417f663083a701a9f",
+      "based_on": "sha256:4657b9b1f9635fb1d6a9d26dbe7b20d92c4681167e55ac880e179969ba757171",
       "hash_v": 1,
-      "host_sig": "9nCgvwKnGgYExfvDmnXA9J9R7XPI0FzbSNwVeLIRMLIDSK9DyZ5n4vHHsUJzH6r-OdDjd48Ui9Y6TwfbuNoBkg",
+      "host_sig": "8HIqZ0gUN8tZufdrkewSjqKmXgYewGx5sHIWsVJD8mq-L6cdCUbanUvUCI0sSz44egKUKB8_8WtOT6vhSHxY_Q",
       "id": "01J9ZK0000000000000000000D",
       "name": "estimate",
-      "prev": "sha256:0c1459b6b597302eb7a63f6f06c1ee525147dadf0888fb6417f663083a701a9f",
+      "prev": "sha256:4657b9b1f9635fb1d6a9d26dbe7b20d92c4681167e55ac880e179969ba757171",
       "roster_v": 3,
       "seq": 9,
-      "sig": "0c-kDg_9uVLDE-MaBh4ex1qzmIDWcl0PEXslQBanjj1UE2aE4qGUAvrYZQobBaVNI5EZbBCbbkOUMol_dlnG4A",
+      "sig": "sujXsK3oxJK_g8Fup-rhmwoRp_UQJYuYBNI1ny3_tMrfk7fMSMARHjXQW3T8gqGHlxnU565RYMTB75BCy03vdA",
       "type": "addon.purged",
       "v": 2
      },

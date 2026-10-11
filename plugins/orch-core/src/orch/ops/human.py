@@ -87,6 +87,9 @@ class _AcceptAll:
     def verify_embedded(self, event: Any, **kw: Any) -> bool:
         return True
 
+    def genesis_failure(self, event: Any) -> str | None:
+        return None
+
 
 def review_prompt(text: str, expect: str) -> bool:
     """Show ``text`` on the person's own terminal and go on only if the person types ``expect`` (the ticket key) and

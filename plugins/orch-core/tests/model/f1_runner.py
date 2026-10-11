@@ -77,6 +77,9 @@ def check_after(st: Any, after: dict[str, Any]) -> None:
         if "counting" in exp:
             for g in t.gates:
                 assert sorted(t.gates[g].counting) == sorted(exp["counting"].get(g, [])), (uid, g)
+        if "gens" in exp:  # 5.7: a settled ticket lists a revoked device's decisions that still count, per gate
+            for g in t.gates:
+                assert sorted(t.gates[g].revoked_decisions) == exp.get("revoked_decisions", {}).get(g, []), (uid, g)
         if "source_list" not in exp and "gens" in exp:
             assert not t.source_list, uid
         if "policy" in exp:

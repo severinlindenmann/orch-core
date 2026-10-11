@@ -54,7 +54,7 @@ class GateView:
     eligible: tuple[str, ...]
     decisions: tuple[DecisionView, ...]
     waiting: bool
-    revoked_device_flag: tuple[str, ...]  # decision ids "approved by a revoked device" (done tickets)
+    revoked_decisions: tuple[str, ...]  # a settled ticket: ids of a revoked device's decisions still counting here
     missing: tuple[
         str, ...
     ] = ()  # what an approval of requirements or plan still lacks: section ids, acceptance, tasks
@@ -231,7 +231,7 @@ def _gate_view(ws: WsCore, t: TCore, g: str) -> GateView:
             for d in gc.decisions
         ),
         needs.gate_waiting(ws, t, g),
-        tuple(sorted(gc.revoked_flag)),
+        tuple(sorted(gc.revoked_flag & {d.id for d in generations.counting(t, g)})),
         tuple(gates.missing_for_gate(ws, t, g)),
     )
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import heapq
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -99,13 +100,21 @@ def replay(
     """
     ctx = Ctx(verifier, expected_workspace_id, expected_genesis, verb_events=verb_events)
     core = Core()
-    merged: list[tuple[tuple[int, int, int, str, int], str, dict[str, Any]]] = [
-        ((e["seq"], 0, 0, "", e["seq"]), WORKSPACE, e) for e in workspace_events
+    workspace_events = list(workspace_events)
+    scan = Core()  # §5.10: which workspace seqs a ticket event may not name, known before the tickets are walked
+    for e in workspace_events:
+        engine.note_restore_window(scan, e)
+    core.rwin_forbidden = scan.rwin_forbidden
+    # Each log's lines are walked in file order, never sorted (§5.5 Reading); the logs are merged by the key below.
+    # ``heapq.merge`` only picks the smallest head, so a line out of place in its log stays out of place and breaks it.
+    streams = [
+        [((e["seq"], 0, 0, "", e["seq"]), WORKSPACE, e) for e in workspace_events],
+        *(
+            [((e["ws_seq"], 1, ts(e["at"]), uid, e["seq"]), uid, e) for e in events]
+            for uid, events in ticket_logs.items()
+        ),
     ]
-    for uid, events in ticket_logs.items():
-        merged += [((e["ws_seq"], 1, ts(e["at"]), uid, e["seq"]), uid, e) for e in events]
-    merged.sort(key=lambda x: x[0])
-    for _, log, e in merged:
+    for _, log, e in heapq.merge(*streams, key=lambda x: x[0]):
         apply_event(core, log, e, ctx, commit=True)
     return _build(core, ctx, now)
 
@@ -138,6 +147,8 @@ def _fork(core: Core) -> Core:
         created_at=core.created_at,
         last_pos=core.last_pos,
         logs=dict(core.logs),
+        rwin_forbidden=set(core.rwin_forbidden),
+        rwin_last=core.rwin_last,
     )
 
 

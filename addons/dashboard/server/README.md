@@ -133,7 +133,7 @@ Closed route surface (M1, extended by M2):
 | `GET /api/w/<uuid>/identity` | Workspace identity plus whoami/tier |
 | `GET /api/w/<uuid>/today` | `needs` + `ticket.query` as the UI's Today document (needs with ticket titles, counts, tickets in progress) |
 | `GET /api/w/<uuid>/tickets`, `/board` | `ticket.query` rows as the UI's ticket summaries, one page per call: `status` (repeated; `backlog open in-progress testing done`, never `closed`), `type`, `label` (repeated), `assignee`, `owner`, `parent`, `epic`, `q`, `needs_me`, `sort` (`updated priority key`), `order`, `limit` 1–200, `page` (host token, 10 min). Default statuses are the five open ones |
-| `GET /api/w/<uuid>/tickets/<key>` | `ticket.get` as the UI's ticket document (a closed ticket answers 409 `ticket.closed`) |
+| `GET /api/w/<uuid>/tickets/<key>` | `ticket.get` as the UI's ticket document (v1.4: a closed ticket reads like any other, with `status: closed` and a `closed` object; a host without `read_ext/1` leaves the optional fields out and the document says `read_ext: false`) |
 | `GET /api/w/<uuid>/tickets/<key>/events?since=&limit=` | The structured log (`seq`, `type`, `at`, `actor`, host `summary`) as UI events |
 | `GET /api/w/<uuid>/tickets/<key>/changes?repo=&context=` | `diff` as the UI's changes: files with their hunks, sources per repo, `truncated`; 409 `observe.unavailable` when the branch moved since the host observed it |
 | `GET /api/w/<uuid>/tickets/<key>/artifacts/<name>` | An evidence file, read in chunks up to 3 chunks, digest checked (409 `artifact.mismatch`), returned as text data or flagged binary |
@@ -195,7 +195,8 @@ Dev stub boundaries for stream A:
 - Visibility transitions discovered in one poll are coalesced. Losing multiple tickets in one
   position resets rather than inventing duplicate `.g` IDs. Exact per-event visibility history,
   restored-history epochs and durable cursors remain real-host acceptance work.
-- M2: the stub serves `ticket.query` with every v1.3.1 filter, sort and snapshot paging (the first
+- M2 (v1.4): the stub also serves `activity.list`, the optional `read_ext/1` fields and closed tickets
+  (`ORCH_DEV_READ_EXT=0` drops the two caps); page tokens are bound to the person. It serves `ticket.query` with every filter, sort and snapshot paging (the first
   page fixes the rows; tokens are bound to the query and expire after 10 minutes), `ticket.get`
   (document, structured log, question states, evidence digests per criterion, gate states),
   `needs` (own person only), `diff` (git state of the dev workspace, refused unless the branch head

@@ -18,7 +18,7 @@ from typing import Any
 from .errors import HostError, fail
 
 MAX_FRAME = 2_097_152
-CAPS = ["ops/1", "query/1", "sub/1", "human/1", "diff/1", "outcome/1", "control/1"]
+CAPS = ["ops/1", "query/1", "sub/1", "human/1", "diff/1", "outcome/1", "control/1", "read_ext/1", "activity/1"]
 OPS = {
     name: 1
     for name in (
@@ -29,6 +29,7 @@ OPS = {
         "member.list",
         "addon.list",
         "needs",
+        "activity.list",
         "ticket.query",
         "ticket.get",
         "diff",
@@ -193,6 +194,10 @@ class HostLink:
             sock.close()
             raise fail("host.unavailable") from None
 
+    def has(self, cap: str) -> bool:
+        """Does the host list `cap`? Without `read_ext/1` the optional fields of v1.4 mean unknown, not zero."""
+        return cap in self.welcome.get("caps", [])
+
     def supports(self, op: str, cap="ops/1") -> bool:
         return cap in self.welcome.get("caps", []) and self.welcome.get("ops", {}).get(op) == OPS.get(op, 1)
 
@@ -226,6 +231,8 @@ class HostLink:
             if op == "outcome.get"
             else "diff/1"
             if op == "diff"
+            else "activity/1"
+            if op == "activity.list"
             else "query/1"
             if op in QUERY_OPS
             else "ops/1"

@@ -1,6 +1,6 @@
 """`needs` and the ticket rows as the UI's TodayDocument."""
 
-from .tickets import summary
+from .tickets import summary, ui_actor
 
 KIND = {
     "question": "question",
@@ -20,34 +20,73 @@ ASK = {
 }
 
 
+NO_ELIGIBLE = {
+    # `no_token`: the policy names no approver token at all. `no_visible_person`: some do, but none can see the ticket.
+    "no_token": "The {gate} gate has no approver",
+    "no_visible_person": "No one who can see this ticket can approve the {gate} gate",
+}
+
+
 def ask(n: dict) -> str:
-    """The line a row shows. A question's own text is the ticket's (the page reads it there); the host sends none."""
+    """The line a row shows. The question text is a Snip of the ticket's own (the page reads the full one)."""
     if n["kind"] == "approve":
         return ASK.get(n.get("ref") or "", "Approve")
     if n["kind"] == "no_eligible":
-        return f"No one can approve the {n.get('ref') or 'gate'} gate"
+        gate = n.get("ref") or "gate"
+        cause = (n.get("payload") or {}).get("cause")
+        return NO_ELIGIBLE[cause].format(gate=gate) if cause in NO_ELIGIBLE else f"No one can approve the {gate} gate"
     if n["kind"] == "question":
-        return ""
+        return n.get("text") or ""
+    if n["kind"] == "addon":
+        return n.get("text") or n.get("detail") or ""  # the rule's own text (at most 120 characters)
     return n.get("detail") or ""
 
 
 def item(n: dict, titles: dict[str, str]) -> dict:
     kind = "verdict" if n["kind"] == "approve" and n.get("ref") == "verify" else KIND[n["kind"]]
-    return {
+    out = {
         "kind": kind,
         "ticket": n.get("key") or "",
         "uid": n.get("uid"),
         "title": titles.get(n.get("uid") or "", ""),
         "text": ask(n),
         "ref": n.get("ref"),
-        # When the need arose is not served: empty, not the ticket's update time.
-        "since": "",
+        # When the need arose: '' = unknown (the host leaves `since` out for acknowledge and for what it cannot date).
+        "since": n.get("since") or "",
         "blocking": n["kind"] == "question" and n.get("detail") == "blocking",
+    }
+    if n.get("text_cut"):
+        out["cut"] = True  # a Snip: shown as shortened; the ticket page has the full question
+    if n.get("status") == "closed":
+        out["closed"] = True  # an open question on a closed ticket is still listed (v1.4 section 0.8.4)
+    return out
+
+
+def recent_row(a: dict) -> dict:
+    """One activity item as a Today row. `jpos`, `ws_seq`, `log` and `uid` never reach the browser."""
+    return {
+        "seq": a["seq"],
+        "at": a["at"],
+        "type": a["type"],
+        "actor": ui_actor(a["actor"]),
+        "ticket": a.get("key") or "",
+        "title": a.get("title") or "",
+        "summary": a["summary"],
+        "id": a["id"],
     }
 
 
-def today(needs: dict, rows: list[dict], ws: str, now: str, viewer: str, role: str) -> dict:
-    titles = {r["uid"]: r["title"] for r in rows}
+def today(
+    needs: dict,
+    rows: list[dict],
+    ws: str,
+    now: str,
+    viewer: str,
+    role: str,
+    recent: list[dict] | None = None,
+    closed: list[dict] | None = None,
+) -> dict:
+    titles = {r["uid"]: r["title"] for r in [*rows, *(closed or [])]}
     mine = {}
     for n in needs["items"]:
         if n.get("uid"):
@@ -66,7 +105,7 @@ def today(needs: dict, rows: list[dict], ws: str, now: str, viewer: str, role: s
         "read_only_open": items if viewer_role else [],
         "waiting_on_others": {"count": len(waiting), "people": []},
         "working": [summary(r, viewer, mine) for r in rows if r["status"] == "in_progress"],
-        "recent": [],
+        "recent": [recent_row(a) for a in recent or []],
         "counts": counts,
         "sub_cursor": needs.get("sub_cursor"),
     }

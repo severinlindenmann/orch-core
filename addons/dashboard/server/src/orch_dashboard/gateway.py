@@ -96,10 +96,13 @@ class Gateway:
             "ticket": [("ticket.get", "query/1"), ("needs", "query/1")],
             "changes": [("ticket.get", "query/1"), ("diff", "diff/1")],
             "evidence": [("ticket.get", "query/1"), ("artifact.get", "query/1")],
+            "activity": [("activity.list", "activity/1")],
         }
         for feature, ops in requirements.items():
             if all(link.supports(op, cap) for op, cap in ops):
                 features.append(feature)
+        if link.has("read_ext/1"):
+            features.append("read_ext")  # the optional v1.4 fields are sent: an absent one is unknown, not zero
         return features
 
     def workspaces(self):

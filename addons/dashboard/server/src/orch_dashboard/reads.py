@@ -19,15 +19,18 @@ Key = Annotated[str, StringConstraints(pattern=r"^[A-Za-z][A-Za-z0-9]{0,15}-[0-9
 Person = Annotated[str, StringConstraints(pattern=r"^p_[A-Za-z0-9]{1,64}$")]
 Word = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9._ -]{0,63}$")]
 ArtifactName = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")]
-UiStatus = Literal["backlog", "open", "in-progress", "testing", "done"]
+UiStatus = Literal["backlog", "open", "in-progress", "testing", "done", "closed"]
 MAX_ROWS = 1000  # board and Today read at most this many rows; a larger workspace shows the newest
+MAX_PAGES = 30  # a page may hold fewer rows than asked (rows drop out between pages): follow next_page, but never loop
+RECENT = 6  # Today's "Recently" shows this many activity rows
+RECENT_PAGES = 5
 CHUNK = 786432
 MAX_ARTIFACT = 3 * CHUNK
 
 
 class TicketsQuery(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    status: list[UiStatus] | None = Field(default=None, min_length=1, max_length=5)
+    status: list[UiStatus] | None = Field(default=None, min_length=1, max_length=6)
     type: list[Word] | None = Field(default=None, min_length=1, max_length=16)
     label: list[Word] | None = Field(default=None, min_length=1, max_length=16)
     assignee: Person | None = None
@@ -71,15 +74,36 @@ def host_args(query: TicketsQuery) -> dict:
 
 
 def all_rows(gateway: Gateway, ws: str, args: dict, cap: int = MAX_ROWS):
-    """Every row of one snapshot (the first page fixes it), at most `cap`."""
+    """Every row of one snapshot (the first page fixes it), at most `cap`. Pages may be short or empty: only
+    `next_page` says whether more follow, never a count or a page size."""
     rows, page, last = [], None, {}
-    while True:
+    for _ in range(MAX_PAGES):
         data = gateway.call(ws, "ticket.query", {**args, "limit": 200, **({"page": page} if page else {})})
         rows += data["rows"]
         last = data
         page = data["next_page"]
         if not page or len(rows) >= cap:
-            return rows[:cap], last
+            break
+    return rows[:cap], last
+
+
+def recent_activity(gateway: Gateway, ws: str, want: int = RECENT):
+    """Today's feed: ticket events only (`scope: tickets`; workspace-log events name members, devices and settings and
+    belong on no ticket row). A page may be short under the host's scan budget, so follow `next_page`."""
+    link = gateway.link(ws)
+    if not link.supports("activity.list", "activity/1"):
+        return []
+    items, page, seen = [], None, set()
+    for _ in range(RECENT_PAGES):
+        data = gateway.call(ws, "activity.list", {"scope": "tickets", "limit": 50, **({"page": page} if page else {})})
+        for a in data["items"]:
+            if a["id"] not in seen:  # the live tail dedupes by id; so does this read
+                seen.add(a["id"])
+                items.append(a)
+        page = data["next_page"]
+        if not page or len(items) >= want:
+            break
+    return items[:want]
 
 
 def register(app: FastAPI, gateway: Gateway):
@@ -95,7 +119,11 @@ def register(app: FastAPI, gateway: Gateway):
         data = needs(ws)
         rows, last = all_rows(gateway, ws, {"status": adapters.board_statuses(), "sort": "updated"})
         role = next((m.role for m in adapters.members(gateway.call(ws, "member.list")) if m.person == who), "viewer")
-        return adapters.today(data, rows, ws, last.get("as_of") or "", who, role)
+        # An open question on a closed ticket is still a need: read the closed rows only then, for their titles.
+        closed = []
+        if any(n.get("status") == "closed" for n in data["items"]):
+            closed, _ = all_rows(gateway, ws, {"status": ["closed"], "sort": "updated"})
+        return adapters.today(data, rows, ws, last.get("as_of") or "", who, role, recent_activity(gateway, ws), closed)
 
     def listing(ws: str, query: TicketsQuery):
         who = viewer(ws)
@@ -119,11 +147,9 @@ def register(app: FastAPI, gateway: Gateway):
 
     @app.get("/api/w/{ws}/tickets/{key}")
     def ticket(key: Key, ws: str = Depends(workspace)):
+        # A plain read of a visible closed or done ticket never errors (v1.4 section 0.8.4): the page draws its state.
         data = gateway.call(ws, "ticket.get", {"ref": key})
-        if data["doc"]["status"] == "closed":
-            # The UI has no closed state yet (HANDOVER, M2 concerns): refuse plainly, never draw it as another status.
-            raise fail("ticket.closed", "Closed tickets are not shown in the dashboard yet.", exit=3)
-        return adapters.document(data, viewer(ws), mine(ws))
+        return adapters.document(data, viewer(ws), mine(ws), ext=gateway.link(ws).has("read_ext/1"))
 
     @app.get("/api/w/{ws}/tickets/{key}/events")
     def ticket_events(key: Key, query: Annotated[EventsQuery, Query()], ws: str = Depends(workspace)):

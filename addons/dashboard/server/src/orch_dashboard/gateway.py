@@ -1,0 +1,141 @@
+"""Host discovery. Only local trusted pins choose sockets; browser input never chooses paths."""
+
+import json
+import os
+import re
+import stat
+import threading
+from pathlib import Path
+
+from . import adapters
+from .errors import fail
+from .hostlink import HostLink
+
+WORKSPACE_ID = re.compile(r"^(?:[a-f0-9]{32}|[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})$")
+
+
+def state_dir():
+    return Path(os.environ.get("ORCH_STATE_DIR", str(Path.home() / ".config/orch")))
+
+
+def read_pins(path):
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        s = os.fstat(fd)
+        if not stat.S_ISREG(s.st_mode) or s.st_uid != os.getuid() or s.st_mode & 0o077 or s.st_size > 1_048_576:
+            raise fail("peer.denied", exit=3)
+        with os.fdopen(fd, "r", closefd=False) as f:
+            data = json.load(f)
+        # Provisional container shape, isolated pending stream A's host.list/registry schema.
+        rows = data["workspaces"]
+        if not isinstance(rows, list):
+            raise ValueError("registry workspaces must be a list")
+        pins = {}
+        for row in rows:
+            wid = row["workspace_id"]
+            peer = row["peers"].get(str(os.getuid()), {})
+            if not WORKSPACE_ID.fullmatch(wid) or row["host_uid"] != os.getuid():
+                raise fail("peer.denied", exit=3)
+            if peer.get("class") == "person" and peer.get("person"):
+                pins[wid] = row
+        return pins
+    finally:
+        os.close(fd)
+
+
+class Gateway:
+    def __init__(self, state=None):
+        self.state = state or state_dir()
+        self.run = Path(os.environ.get("ORCH_RUN_DIR", str(self.state / "run")))
+        self.links = {}
+        self.control = None
+        self.lock = threading.RLock()
+
+    def _pins(self):
+        try:
+            return read_pins(self.state / "host/workspaces.json")
+        except (OSError, ValueError, KeyError):
+            raise fail("host.unavailable", "Host registry unavailable") from None
+
+    def link(self, ws):
+        with self.lock:
+            pin = self._pins().get(ws)
+            if not pin:
+                raise fail("not_found", exit=2)
+            existing = self.links.get(ws)
+            if existing is None or existing.sock.fileno() < 0:
+                # A dev host is just another socket. Its identity still has to match the registry pin.
+                path = os.environ.get("ORCH_HOST_SOCKET") or self.run / ws / "host.sock"
+                existing = HostLink.connect(path, pin["host_uid"], ws)
+                self.links[ws] = existing
+            if existing.welcome["peer"]["person"] != pin["peers"][str(os.getuid())]["person"]:
+                existing.close()
+                raise fail("peer.denied", exit=3)
+            return existing
+
+    def enabled(self, ws):
+        link = self.link(ws)
+        addons = link.call("addon.list")["addons"]
+        if not any(a["name"] == "dashboard" and a["enabled"] is True for a in addons):
+            raise fail("addon.disabled", exit=3)
+        return link
+
+    def features(self, ws):
+        link = self.enabled(ws)
+        features = []
+        requirements = {
+            "identity": [
+                ("whoami", "ops/1"),
+                ("member.list", "ops/1"),
+                ("workspace.show", "ops/1"),
+                ("host.status", "ops/1"),
+            ],
+            "today": [("needs", "query/1")],
+            "tickets": [("ticket.query", "query/1")],
+        }
+        for feature, ops in requirements.items():
+            if all(link.supports(op, cap) for op, cap in ops):
+                features.append(feature)
+        return features
+
+    def workspaces(self):
+        with self.lock:
+            pins = self._pins()
+            if self.control is None or self.control.sock.fileno() < 0:
+                self.control = HostLink.connect(self.run / "control/host.sock", os.getuid(), None)
+            rows = self.control.call("host.list")["workspaces"]
+        result = []
+        from .errors import HostError
+
+        for row in rows:
+            ws = row["id"]
+            if ws not in pins:
+                continue
+            try:
+                link = self.enabled(ws)
+                show = link.call("workspace.show")
+                roster = adapters.members(link.call("member.list"))
+                features = self.features(ws)
+                count = len(link.call("needs")["items"]) if "today" in features else None
+                result.append(
+                    adapters.Workspace(
+                        id=ws,
+                        prefix=show["prefix"],
+                        name=show["name"],
+                        members=roster,
+                        needs_you=count,
+                        features=features,
+                    )
+                )
+            except HostError as exc:
+                # No untrusted title or principal is fabricated when the host is unavailable.
+                result.append(adapters.Workspace(id=ws, prefix="", name=ws, host_state=exc.error["code"]))
+        return result
+
+    def call(self, ws, op, args=None):
+        return self.enabled(ws).call(op, args)
+
+    def close(self):
+        for link in [self.control, *self.links.values()]:
+            if link:
+                link.close()

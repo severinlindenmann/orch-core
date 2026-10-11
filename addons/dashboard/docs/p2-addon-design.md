@@ -123,6 +123,12 @@ Random ports mean a copied URL works only while the same server runs. Paths stay
 
 ### 3.2 Bootstrap: one-time code in the fragment
 
+- **M0 review ruling (2026-10-11):** the launcher opens a 0600 HTML redirect file in the
+  private 0700 dashboard state directory, never a code-bearing URL in process arguments.
+  The file uses meta refresh and `location.replace`, and is deleted after exchange or 60 s.
+  Codes expire after **30 s** (superseding the original 60 s below); only failed exchanges
+  consume the per-minute failure budget. Dev stub state must be explicitly configured,
+  independently `.orch-dev` marked, and outside default host state and socket locations.
 - The launch code is 256 bits, single use, valid 60 s, held only in memory, bound to the server instance, and
   consumed atomically. It is never printed or logged.
 - The launcher opens `http://127.0.0.1:<port>/#launch=<code>&to=<path>`. The fragment never reaches the server,

@@ -302,12 +302,15 @@ def test_checkpoint_only_finishes_the_recorded_append(env, load, rollback):
 
 
 @pytest.mark.parametrize("load", ["all", "lazy"])
-def test_rollback_with_deleted_checkpoint_cannot_be_laundered_by_append(env, load):
+@pytest.mark.parametrize("applied_elsewhere", [False, True])
+def test_rollback_with_deleted_checkpoint_cannot_be_laundered_by_append(env, load, applied_elsewhere):
     from orch.ops.health import _checkpoints
 
     store = env.bootstrap()
     uid = env.new_ticket()
     env.log(uid, "last append")
+    if applied_elsewhere:
+        env.new_ticket()
     store.close()
     checkpoint = env.root / ".state" / "checkpoints" / f"ticket-{uid}.json"
     checkpoint.unlink()

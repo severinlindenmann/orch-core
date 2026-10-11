@@ -223,6 +223,28 @@ def test_deleted_checkpoints_cannot_hide_a_rollback_where_the_host_key_is(two):
     assert Cli(ws, grant=False, session=None).j("check").code == 5  # the fast check says so too
 
 
+@pytest.mark.parametrize("evidence", [True, False])
+def test_doctor_names_the_missing_workspace_checkpoint_repair(two, evidence):
+    """With checkpoint evidence in the host state P1 has no in-place repair (backup or the P3 baseline, never delete the
+    host state dir); without it the next append rebaselines."""
+    ws = two
+    shutil.rmtree(ws.root / ".state" / "checkpoints")  # .state is git-ignored: a clone has none
+    pins = ws.host_state / "hosts" / "705d40abbb8c1c90354a1acaa94c935c"
+    (pins / "checkpoint.json").unlink()
+    if not evidence:
+        for name in ("checkpoint-n", "heads.sqlite"):
+            (pins / name).unlink(missing_ok=True)
+        shutil.rmtree(pins / "transitions", ignore_errors=True)
+    r = doctor(ws)
+    text = json.dumps(r.data["findings"])
+    assert "checkpoint.missing" in codes(r)
+    assert (
+        "has no in-place repair" in text and "from a backup" in text and "Do not delete the host state" in text
+    ) == (evidence)
+    assert "orch restore" not in text
+    assert ("starts a new baseline automatically" in text) == (not evidence)
+
+
 def test_missing_checkpoints_are_only_a_warning_without_the_host_key(two):
     ws = two
     shutil.rmtree(ws.root / ".state" / "checkpoints")

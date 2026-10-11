@@ -15,6 +15,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from orch import canon, crypto
 from orch.host.control_client import ControlClient, new_idem
 from orch.host.pins import AgentPins
@@ -29,13 +31,28 @@ PLUGIN = Path(__file__).resolve().parents[2]
 REPO = Path(__file__).resolve().parents[4]
 
 
-def short_dir() -> Path:
-    """A directory with trusted ancestors and a short path (socket paths are at most 100 bytes).
+# listener.py refuses a socket path over 100 UTF-8 bytes; below the base come "/.hXXXX/r/<32 hex>/host.sock".
+SOCKET_PATH_LIMIT = 100
+TREE_SUFFIX = len("/.h0000/r/" + "0" * 32 + "/host.sock")
 
-    ``/tmp`` is sticky, and §2 forbids a user-owned run directory below it; the checkout's ancestors are trusted.
-    """
+
+def trusted_base() -> Path:
+    """The checkout root when the socket path fits under it, else the home directory: common on dev laptops, where
+    worktrees live under long paths such as ~/orch-dev/.worktrees/<name>. Not /tmp: a user-owned child of the sticky
+    /tmp is refused by §2 (``expected root 0755``), and mkdtemp creates exactly that."""
+    if len(str(REPO).encode()) + TREE_SUFFIX <= SOCKET_PATH_LIMIT:
+        return REPO
+    home = Path.home().resolve()
+    if len(str(home).encode()) + TREE_SUFFIX > SOCKET_PATH_LIMIT or not os.access(home, os.W_OK):
+        pytest.skip(f"no trusted base short enough for a {SOCKET_PATH_LIMIT}-byte socket path")
+    return home
+
+
+def short_dir() -> Path:
+    """A directory with trusted ancestors and a short path (socket paths are at most 100 bytes)."""
+    base = trusted_base()
     while True:
-        path = REPO / (".h" + secrets.token_hex(2))
+        path = base / (".h" + secrets.token_hex(2))
         try:
             path.mkdir(mode=0o700)
             return path

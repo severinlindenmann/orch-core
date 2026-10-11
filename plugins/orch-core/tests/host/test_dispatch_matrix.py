@@ -157,8 +157,7 @@ def _check_row(served, row, grant):
         want = expected(row, op_kind(op)[0])
         res = c.req(op, args, grant=grant, session=SESSION, idem=True)
         if want is None:
-            assert not res["ok"] or res["ok"], res  # allowed: whatever the op itself answers
-            if not res["ok"]:
+            if not res["ok"]:  # allowed by the column: whatever the op itself answers, never a column refusal
                 assert res["error"]["code"] not in {"op.not_allowed", "human_only", "grant.required", "grant.expired"}
         else:
             assert err(res) == want, (row, op)
@@ -294,18 +293,32 @@ def test_host_status_gives_column_n_only_version_and_tier(served):
 
 def _catalog_rows() -> list[tuple[str, int, bool, str]]:
     text = (REPO / "docs" / "architecture" / "orch-v2-host.md").read_text()
-    section = text.split("### 0.6 Errors and their disposition", 1)[1].split("`host.unavailable`", 1)[0]
+    lines = text.split("### 0.6 Errors and their disposition", 1)[1].splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith("| Code |"))
+    table = []
+    for line in lines[start + 2 :]:  # the header and its rule
+        if not line.startswith("|"):
+            break  # the table ends at its first non-table line
+        table.append(line)
     rows = []
-    for line in section.splitlines():
+    for line in table:
         m = re.match(r"\| `([a-z_.]+)` \| (\d) \| (yes|no) \| (\w+)", line)
         if m:
             rows.append((m.group(1), int(m.group(2)), m.group(3) == "yes", m.group(4)))
+    assert len(rows) == len(table), [line for line in table if not re.match(r"\| `[a-z_.]+` \| \d", line)]
     return rows
 
 
 def test_every_host_code_has_the_tables_exit_and_retryability():
+    from orch.host.errors import HOST_CODES
+
     rows = _catalog_rows()
     assert len(rows) >= 35
+    # the other way: every code the host table holds is in §0.6's table, or a P1 code §0.6 keeps as it is
+    p1_kept = {"store.busy", "custody.unsafe_mode", "trust.genesis_mismatch", "unknown_command", "invalid.input"}
+    p1_kept |= {"not_found", "internal", "human_only", "grant.required", "grant.expired"}
+    for code in HOST_CODES:
+        assert code in {r[0] for r in rows} or code in p1_kept, code
     for code, exit_code, retryable, fate in rows:
         assert disposition(code) == (exit_code, retryable), code
         e = HostError(code)

@@ -46,6 +46,32 @@ def record_of(served: Served, idem: str) -> dict:
     return outcomes.read(outcomes.key(served.wid, principal, idem))
 
 
+def hold(served: Served) -> threading.Event:
+    """Block the workspace's worker thread until the returned event is set (no wall-clock margins)."""
+    gate = threading.Event()
+    started = threading.Event()
+
+    def wait() -> None:
+        started.set()
+        gate.wait(60)
+
+    served.service.submit(wait)
+    started.wait(10)
+    return gate
+
+
+def in_flight(served: Served) -> list:
+    server = served.h.host.servers[served.wid][0]
+    return [t for s in server.sessions for t in s.tasks.values() if not t.done()]
+
+
+def until(cond, timeout: float = 20) -> None:
+    deadline = time.monotonic() + timeout
+    while not cond():
+        assert time.monotonic() < deadline, "condition not reached"
+        time.sleep(0.01)
+
+
 class Rebind:
     def __init__(self, name, handler):
         self.name, self.handler, self.original = name, handler, ops.get(name).handler
@@ -131,11 +157,14 @@ def test_a_refusal_after_the_append_is_not_believed_the_result_is_rebuilt_from_t
 def test_a_slow_read_times_out_and_a_slow_write_answers_outcome_unknown_then_commits(served):
     _, key = served.ticket()
     c, g = served.client(), served.grant
-    served.service.submit(time.sleep, 2.5)  # occupy the workspace's worker thread
-    assert err(c.req("list", timeout_ms=1000)) == "timeout"
-    idem = new_idem()
-    res = c.req("log", {"text": "late", "ref": key}, grant=g, session=SESSION, idem=idem, timeout_ms=1000)
-    assert err(res) == "outcome.unknown" and res["error"]["retryable"] is True
+    gate = hold(served)  # the workspace's worker thread is busy until the gate opens
+    try:
+        assert err(c.req("list", timeout_ms=1000)) == "timeout"
+        idem = new_idem()
+        res = c.req("log", {"text": "late", "ref": key}, grant=g, session=SESSION, idem=idem, timeout_ms=1000)
+        assert err(res) == "outcome.unknown" and res["error"]["retryable"] is True
+    finally:
+        gate.set()
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline:
         state = ok(c.req("outcome.get", {"idem": idem}, grant=g))["data"]["state"]
@@ -149,11 +178,15 @@ def test_a_slow_read_times_out_and_a_slow_write_answers_outcome_unknown_then_com
 def test_one_connections_writes_land_in_the_order_they_were_received(served):
     _, key = served.ticket()
     c, g = served.client(), served.grant
-    served.service.submit(time.sleep, 0.5)
+    gate = hold(served)
     auth = {"grant": g, "session": SESSION}
     texts = [f"note {i}" for i in range(6)]
-    for i, text in enumerate(texts):
-        c.ws.send(f"w{i}", "log", {"text": text, "ref": key}, auth=auth, opts={"idem": new_idem()})
+    try:
+        for i, text in enumerate(texts):
+            c.ws.send(f"w{i}", "log", {"text": text, "ref": key}, auth=auth, opts={"idem": new_idem()})
+        until(lambda: len(in_flight(served)) == len(texts))
+    finally:
+        gate.set()
     answers = [c.ws.read(20) for _ in texts]
     assert all(a["ok"] for a in answers), [a.get("error") for a in answers]
     logged = [e["text"] for e in served.lab.ws.read_events(served.lab.ws.uid(key)) if e["type"] == "log.added"]
@@ -163,10 +196,10 @@ def test_one_connections_writes_land_in_the_order_they_were_received(served):
 def test_unregister_drains_a_write_in_flight_and_answers_it(served):
     _, key = served.ticket()
     c, g = served.client(), served.grant
-    served.service.submit(time.sleep, 1.5)  # the write queues behind this on the worker thread
+    gate = hold(served)  # the write queues behind this on the worker thread
     c.ws.send("w", "log", {"text": "in flight", "ref": key}, auth={"grant": g, "session": SESSION},
               opts={"idem": new_idem()})  # fmt: skip
-    time.sleep(0.2)
+    until(lambda: len(in_flight(served)) == 1)
     done = {}
 
     def unregister():
@@ -178,6 +211,8 @@ def test_unregister_drains_a_write_in_flight_and_answers_it(served):
 
     t = threading.Thread(target=unregister)
     t.start()
+    until(lambda: served.service.closing)  # the drain has begun, with the write still waiting on the worker
+    gate.set()
     answer = c.ws.read(20)
     t.join(30)
     assert answer["id"] == "w" and answer["ok"] is True, answer
@@ -186,11 +221,14 @@ def test_unregister_drains_a_write_in_flight_and_answers_it(served):
 
 
 def test_a_busy_worker_thread_never_blocks_a_new_connections_handshake(served):
-    served.service.submit(time.sleep, 3)
-    start = time.monotonic()
-    c = served.client()
-    assert time.monotonic() - start < 1.5
-    assert c.welcome["peer"]["person"] == served.lab.owner  # from the fresh snapshot, without the worker thread
+    gate = hold(served)  # blocked until released: a handshake that needed the worker thread would hang
+    try:
+        start = time.monotonic()
+        c = served.client()
+        assert time.monotonic() - start < 10
+        assert c.welcome["peer"]["person"] == served.lab.owner  # from the fresh snapshot, not the worker thread
+    finally:
+        gate.set()
 
 
 def test_a_stale_snapshot_is_never_trusted_for_a_refusal(served, lab):

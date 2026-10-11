@@ -107,10 +107,25 @@ def test_diff_on_an_unlinked_repo_and_artifact_get_with_a_path_are_not_found():
 
 
 def test_sub_open_on_a_restricted_ticket_is_not_found():
-    # sub.open {ticket:<ref>} resolves through the same hook as show and ticket.get
+    """The named acceptance item (H6a wires sub.open {ticket} through Viewer.ticket, as show and ticket.get)."""
     with pytest.raises(HostError) as e:
         Viewer("G", "p_max").ticket(STORE, "DEMO-0002")
     assert e.value.code == "not_found"
+
+
+def test_viewer_of_a_call_is_an_owner_only_in_column_p():
+    from orch.host.columns import Column
+
+    auth = AuthView(None, {}, {"p_own": "owner", "p_mem": "member"}, {})
+    for column, person, owner in [
+        ("P", "p_own", True),
+        ("P", "p_mem", False),
+        ("G", "p_own", False),
+        ("N", None, False),
+    ]:
+        call = SimpleNamespace(service=SimpleNamespace(auth=auth), column=Column(column, "x"), viewer=person)
+        v = Viewer.of(call)
+        assert (v.column, v.person, v.owner) == (column, person, owner)
 
 
 # --- the authentication snapshot ----------------------------------------------------------------------------------

@@ -76,10 +76,11 @@ def test_a_grant_anywhere_in_args_opts_or_files_is_refused_and_nothing_runs(serv
     assert served.lab.ws.read_events(uid) == before
 
 
-def test_a_grant_shaped_idem_is_refused_too(served):
-    res = served.client().ws.call("status", {}, "r", opts={"idem": "a_01J9ZP0000000000000000000A"})
-    assert ok(res)
-    assert GRANT_SHAPE.fullmatch(served.grant)
+def test_a_grant_in_opts_idem_is_refused_and_never_echoed(served):
+    """``opts.idem`` has its own pattern, so a grant there fails the envelope (step 2) before the secret check."""
+    res = served.client().ws.call("status", {}, "r", opts={"idem": served.grant})
+    assert err(res) == "req.invalid"
+    assert served.grant.partition(".")[2] not in json.dumps(res) and not GRANT_SHAPE.search(json.dumps(res))
 
 
 # --- the reads rule (F1 §10.7) --------------------------------------------------------------------------------------

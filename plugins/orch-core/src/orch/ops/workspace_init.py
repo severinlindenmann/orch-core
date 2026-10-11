@@ -274,8 +274,8 @@ def _sweep_orphans(sd: Path) -> None:
     for d in hosts.iterdir():
         marker = d / MARKER
         try:
-            if d.is_symlink() or not marker.is_file():
-                continue
+            if d.is_symlink() or not marker.is_file() or (d / "genesis").exists():
+                continue  # a pinned genesis means a workspace exists for these keys: never swept
             pid = int(marker.read_text().strip() or "0")
         except (OSError, ValueError):
             continue
@@ -307,20 +307,38 @@ def _hangup_as_interrupt():
 
 
 def _lock(root: Path) -> int:
-    """An exclusive ``flock`` on ``.orch-init.lock``: the kernel drops it when the process dies, so SIGKILL leaves no
-    stale lock. Returns the open descriptor."""
+    """An exclusive ``flock`` on ``.orch-init.lock`` (opened without following a link): the kernel drops it when the
+    process dies, so SIGKILL leaves no stale lock. The lock only counts if the file we hold is still the one at
+    the path (the holder unlinks it when done): checked after taking it, the open is retried otherwise."""
     path = root / LOCK_DIR
-    fd = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
     try:
         import fcntl
-
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except ImportError:  # pragma: no cover  (Windows: no flock; the workspace-exists check still applies)
-        pass
-    except OSError:
-        os.close(fd)
-        raise _refuse("lock.busy", "another orch init is running in this directory", "wait for it to finish") from None
-    return fd
+        fcntl = None
+    for _ in range(5):
+        try:
+            fd = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        except OSError as e:  # a symbolic link planted there (ELOOP) or an unusable directory
+            raise _refuse(
+                "invalid.input", f"cannot take the init lock: {e.strerror}", "remove .orch-init.lock"
+            ) from None
+        if fcntl is None:
+            return fd
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            os.close(fd)
+            raise _refuse(
+                "lock.busy", "another orch init is running in this directory", "wait for it to finish"
+            ) from None
+        try:
+            same = os.path.samestat(os.fstat(fd), os.lstat(path))
+        except OSError:
+            same = False
+        if same:
+            return fd
+        os.close(fd)  # the previous holder unlinked it between our open and our lock: take the new file
+    raise _refuse("lock.busy", "could not take the init lock", "retry")
 
 
 def create_workspace(ctx: Context, args: dict[str, Any]) -> Result:

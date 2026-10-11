@@ -601,3 +601,88 @@ def test_only_init_passes_a_passphrase_to_create():
         if re.search(r"\.create\([^)]*passphrase=", p.read_text()) and p.name != "workspace_init.py"
     ]
     assert offenders == []
+
+
+def _child_init_holding_the_lock(where, mode):
+    """A real second process: runs init with the fake terminal up to the recovery-code prompt, then ``mode``
+    (``hang``: wait for a signal)."""
+    import subprocess
+    import sys
+
+    code = f"""
+import os, sys, time
+sys.path.insert(0, {str(Path(__file__).resolve().parents[2])!r})
+from pathlib import Path
+from orch.custody import KdfParams, PassphraseBackend
+from orch.ops import workspace_init as wi
+from tests.instructions.conftest import FakeTerminal, init_ctx
+t = FakeTerminal()
+orig = t.wait
+def wait(prompt):
+    print("ready", flush=True); time.sleep(120)
+t.wait = wait
+wi.TERMINAL = t
+kdf = KdfParams(2**15, 8, 1)
+wi.open_backend = lambda d: PassphraseBackend(d, _passphrase_provider=lambda r: t.generated, _kdf=kdf)
+paths = {{"root": {str(where["root"])!r}, "state": {str(where["state"])!r}, "home": {str(where["home"])!r}}}
+where = {{k: Path(v) for k, v in paths.items()}}
+wi.create_workspace(init_ctx(where), {{"prefix": "DEMO"}})
+"""
+    p = subprocess.Popen(
+        [sys.executable, "-c", code],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        cwd=str(Path(__file__).resolve().parents[2]),
+    )
+    assert p.stdout.readline().strip() == b"ready", p.stderr.read()
+    return p
+
+
+def test_two_processes_one_holds_the_lock_the_other_is_refused_and_touches_nothing(where, term, passphrases):
+    child = _child_init_holding_the_lock(where, "hang")
+    try:
+        before = {p.name for p in where["root"].iterdir()}
+        with pytest.raises(OrchError) as e:
+            run_init(where)
+        assert e.value.code == "lock.busy" and not term.shown
+        assert {p.name for p in where["root"].iterdir()} == before  # nothing of the child's was removed
+    finally:
+        child.kill()
+        child.wait()
+
+
+@pytest.mark.parametrize("sig", ["SIGKILL", "SIGTERM"])
+def test_two_processes_one_killed_midway_then_a_second_runs(where, term, passphrases, sig):
+    import signal
+
+    child = _child_init_holding_the_lock(where, "hang")
+    child.send_signal(getattr(signal, sig))
+    child.wait()
+    # SIGTERM rolled everything back; SIGKILL left the stale lock file: it blocks nothing
+    run_init(where)
+    assert (where["root"] / "config.json").is_file()
+    assert not list(where["state"].glob("hosts/*/" + wi.MARKER))
+    assert len(list((where["state"] / "hosts").iterdir())) == 1  # the dead init's keys were swept, ours remain
+
+
+def test_a_symlinked_lock_file_is_refused(where, term, passphrases, tmp_path):
+    target = tmp_path / "victim"
+    target.write_text("x")
+    (where["root"] / wi.LOCK_DIR).symlink_to(target)
+    with pytest.raises(OrchError) as e:
+        run_init(where)
+    assert e.value.code == "invalid.input" and target.read_text() == "x"
+
+
+def test_the_sweep_never_removes_a_finished_workspaces_keys(where, term, passphrases):
+    import subprocess
+    import sys
+
+    dead = subprocess.Popen([sys.executable, "-c", "pass"])
+    dead.wait()
+    d = where["state"] / "hosts" / ("c" * 32)
+    d.mkdir(parents=True)
+    (d / wi.MARKER).write_text(f"{dead.pid}\n")
+    (d / "genesis").write_text("sha256:x\n")
+    run_init(where)
+    assert d.exists()

@@ -1300,3 +1300,28 @@ subscribe-before-snapshot without a global read gate that could hang a non-curre
 restore `src/production/Shell.tsx`, `shell.css`, `shell.test.tsx` and `api/realApi.ts` from the M1 commit; revert
 `queries.ticket(ws, key)` to `queries.ticket(key)`. The server routes and adapters can stay (the M0 routes they
 replaced are `GET /api/w/<uuid>/today` and `/tickets`, whose shapes changed to the UI types).
+
+## 2026-10-11 — P2 M2 reads on host contract v1.4: unknown is not zero, closed is a state, no inline style
+
+**Decision:** M2 targets v1.4. (1) A field missing because the host lacks `read_ext/1` is `null`/absent in the
+adapter output and draws nothing; it is never turned into 0 or false. (2) `closed` is a UI `Status` that is not a
+board column: the 409 `ticket.closed` is removed, the ticket page shows a Closed notice (`duplicate_of` as plain
+text, never a link), the Tickets list gets a Closed filter that reads `status:["closed"]`, and Today flags needs on
+closed tickets. (3) `no_eligible`, `acknowledge` and `addon` needs get their own notice row (they were drawn as
+verdict rows). (4) Today's "Recently" comes from `activity.list` with `scope:"tickets"`; the server strips `jpos`,
+`ws_seq`, `log` and `uid`, follows `next_page` over short pages and dedupes by `id`. (5) A verdict keeps
+`outcome` and a list of sources; artifact digests lose their `sha256:` prefix; task "doing" is `leased_by`; gate
+`auth` maps to the presence labels. (6) Snips are shown with a "shortened" flag, never with a "…" added and never
+with a "more" button (no op returns the full text). (7) Gone and visibility changes purge Today's feed and the closed
+list, not only mark them stale. (8) The server's CSP stays `style-src 'self'`: sonner's injected `<style>` is
+replaced by its stylesheet imported into the built CSS.
+
+**Why:** Page tokens are principal-bound and rows can drop out between pages, so the client must follow
+`next_page` and never infer the end from a page size. A zero that means "unknown" would show a finished bar or
+no blocking marker on a host that never said so. A closed ticket that answers 409 hid a ticket the viewer may open.
+`duplicate_of` can name a ticket the viewer cannot see, so a link would answer not-found. Loosening the CSP for one
+library would weaken it for every page.
+
+**Revert:** Restore `ticket.closed` in `reads.py` and drop `ticket.closed`/`Status` `closed`; make the row
+counts non-null again in `adapters/tickets.py`; remove `activity.list` from `hostlink.py`, `reads.py` and the stub;
+delete the `sonner-no-inline-style` plugin and the stylesheet import (the CSP would then block sonner again).

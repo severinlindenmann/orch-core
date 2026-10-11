@@ -478,3 +478,17 @@ branch in the dev repo: the diff is refused until the host observes the new head
 serve are named in Raw. Append a log note in a terminal (`orch log ... --ref DEMO-0001`): the open ticket page
 updates within a second. Hide a ticket from this person (visibility change) while its page is open: the page
 closes with a toast and the board no longer lists it.
+
+### M2 on host contract v1.4 (what changed to try)
+
+The dev stub now serves the v1.4 read shapes and lists `read_ext/1` and `activity/1`. Also try it once with
+`ORCH_DEV_READ_EXT=0` in the stub's environment: the same pages must show no progress bar, lock or blocked marker
+and Raw lists what is unknown (nothing reads as zero).
+
+Look for: Today's "Recently" (ticket events only, no member or device items); question rows with their age; a
+need on a closed ticket marked "ticket closed"; a gate nobody can approve as a notice row, not a verdict row.
+Close a ticket in the workspace (`orch close DEMO-0004 --resolution duplicate --duplicate-of DEMO-0001`): its page
+opens (no error) with a Closed notice, `DEMO-0001` as plain text; the Tickets list shows it only under the
+Closed chip. A task leased by an agent reads as "doing". History › Changes lists who edited a section and the hash
+(no diff). A long log note (over 1 KiB) reads "(shortened by the host)", with no "…" and no "more" button. The
+browser console shows no CSP error (sonner's styles are in the built CSS).

@@ -661,7 +661,7 @@ UUID-keyed ticket factories and the live hook's close-view callback.
 
 ## P2 server (M2 reads)
 
-Implemented 2026-10-11 on contract v1.3.1, on top of M1. #305 reads only: nothing signs or mutates,
+Implemented 2026-10-11 on contract v1.3.1, then adapted to v1.4 (below), on top of the final M1 (#380). #305 reads only: nothing signs or mutates,
 and every control that would is not drawn (`/api/session` lists no `actions` feature until M3).
 
 **One app.** The production build now draws the mockup's own shell and pages (`src/production/Shell.tsx`
@@ -688,20 +688,41 @@ one-line event text (History shows it instead of guessing from payload fields). 
 adapters is written by pytest (`UPDATE_GOLDEN=1`) into `src/test/fixtures/server-m2/`, and the browser
 tests render the same files.
 
-**Not served by v1.3.1 (requests for stream A, collected here):**
+**Host contract v1.4 (adapted 2026-10-11, same milestone).** The branch now targets §0 v1.4 (`read_ext/1`,
+`activity/1`). The server reads the caps from `welcome.caps` (`HostLink.has`) and lists `read_ext` and `activity` as
+per-workspace features. **A field a host without `read_ext/1` leaves out is unknown, never zero:** row `progress`,
+`restricted` and `blocking_questions` are `null` (no bar, no lock, no marker), the document says `read_ext: false` and
+names what it lacks in `unavailable`. What v1.4 now provides, and how the UI uses it:
+
+| v1.3.1 gap | v1.4 | In the UI |
+|---|---|---|
+| Row counts, `restricted`, blocking questions | `tasks`, `criteria`, `restricted`, `blocking_questions` | Cards: progress bar, lock, blocked marker (`skipped` has no slot) |
+| `needs` question text, `since` | `text` (Snip), `since` (absent = unknown), `status`, `payload` | Today rows with age only when `since` is known; question text from the need; "shortened" flag for a cut Snip |
+| `ticket.get` option labels, `asked_*`, answer | `Question.options/answer/asked_*/to_ref/why/recommended` | Questions tab; `stale` state; no invented "via dashboard / Touch ID" |
+| Task receipts and leases | `Task` (`leased_by`, `receipt`) | "doing" = `leased_by`; lease shows the session only |
+| Gate approvals and policy | `GateView.decisions/policy/eligible/waiting/blocked/count` | Approvals, presence from `auth` (passphrase, secure-enclave), policy text; `eligible` lists people who can see the ticket |
+| Verdict | `verdict{outcome, source_sha:[Source], current, voided}` | `result` from `outcome`; a list of commits; "from before the latest change" when not current |
+| Artifact manifest | `artifacts[]` (`digest` with `sha256:`, `by` Actor, `bytes` null for addon artifacts) | Prefix stripped, `by` as a name, unknown size drawn as "–" |
+| Claim agent/`for` | `ClaimFull` (`live`, `lapsed`) | Turn "claim has lapsed" when `live` is false; expiry still unknown |
+| Closed tickets | §0.8.4: plain read, `closed{…}`, `status:["closed"]` | The 409 `ticket.closed` is gone; the page draws a Closed notice (`duplicate_of` as plain text); Tickets has a Closed filter; Today flags needs of closed tickets |
+| `needs` kinds `no_eligible`, `acknowledge`, `addon` | `payload.cause` (`no_token` or `no_visible_person`), rule text | New notice row on Today (it used to be drawn as a verdict row) |
+| Workspace-wide recent activity | `activity.list` (`scope:"tickets"`), snapshot paging | Today's "Recently"; follows `next_page` across short pages, dedupes by `id`; `jpos`, `ws_seq`, `log` and `uid` never reach the browser |
+| Event payloads | `LogItem.data` (nested, closed per type) | Flattened beside the core keys; `<field>_cut` becomes `truncated`, shown as "(shortened by the host)" |
+| Section history | `sections` (hashes only) | History › Changes lists who, when and the hash; no diff, ever |
+
+**Still not served (asks for v1.5, collected here):**
 
 | Gap | Effect in the UI today |
 |---|---|
-| `ticket.query` rows have no task/criteria counts, `restricted`, or blocking-question count | Cards show no progress; no lock icon; "blocking" marker only on Today |
-| `needs` has no question text, no `since` | Today fills the question text from the ticket; rows show no age |
-| `ticket.get`: option labels (only keys), question `asked_at`/`asked_by`/answer text, task receipts and leases, the gate approvals and policy, the verdict (result, `source_sha`), the artifact manifest (name, bytes, time, who), claim agent/`for`/expiry, section history, branch commits | Empty or "not available"; evidence is listed only for artifacts attached to a criterion |
-| Row `claim.agent`, `turn` (whose turn it is) | The server derives the turn from `needs` for the viewer; other people's turns read "nobody" |
-| Closed tickets | The UI has no closed state: lists exclude them and a direct link answers 409 `ticket.closed` |
-| `diff` | One head/base per repo; the UI shows the first and lists the others; commits are not served |
-| Workspace-wide recent activity | Today's "Recently" is empty |
-| `needs` kinds `no_eligible`, `acknowledge`, `addon` | Sent to the browser (kinds `no_eligible`, `acknowledge`, `addon`) but Today, like the mockup, has no row for them and does not count them; an owner is not told yet that a gate has no eligible approver or that a log holds an invalid event |
+| Workspace policy and settings read (`grant_hours`, `claim_ttl_min`, `lease_ttl_min`, `repos`, default gate policy) | `Claim.expires` is empty; settings stay unavailable (M4) |
+| Full text of comments, change requests, verdicts and closing reasons (Snips stop at 1 KiB) | Shown cut with a flag; no "more" button because no op returns the rest |
+| Question hash and the full gate hash for the signed dialogs (only `hash12`) | M3 must get them from `human.prepare`; confirm it binds them |
+| `via: 'factory_charter'` approvals, grant `revoked.by`, grant session ids, answer `via`/presence | Not expressed; nothing is made up |
+| Branch commits (`TicketBranch.commits`, base, per-commit data); `diff` one head/base per repo | Not stored; the Changes tab shows the diff only |
+| Subscription items carry no actor, summary or data | The feed refetches its first page on an invalidation |
+| Search snippets (`TicketSummary.match`), artifact `url`/`preview` for link and inline artifacts, per-status counts, workspace artifact browser, agent activity and refusals | Empty or absent |
 
-**Stub boundaries (dev only):** `ticket.query` snapshots live in memory (32, 10 minutes); the sort of
+**Stub boundaries (dev only):** the stub serves the v1.4 read shapes (`ORCH_DEV_READ_EXT=0` turns `read_ext/1` and `activity/1` off to test the unknown case); `ticket.query` and `activity.list` snapshots live in memory (32, 10 minutes, bound to the person and the arguments); the sort of
 `priority` puts `urgent` first for `desc`; `epic` is the parent when the parent is an epic; `diff` runs the
 scrubbed git helpers of core against the workspace's `settings.repos` and refuses unless the branch head
 equals the head the host observed. Nothing here is a real-host guarantee.

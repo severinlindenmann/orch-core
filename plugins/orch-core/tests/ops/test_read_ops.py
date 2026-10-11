@@ -4,7 +4,45 @@ from __future__ import annotations
 
 import math
 
+import pytest
+
 from tests.ops.helpers import OTHER, Cli
+
+
+@pytest.mark.parametrize("mode", [[], ["--log"], ["--diff"]])
+def test_show_reads_the_event_tail_once(ws, cli, monkeypatch, mode):
+    from orch.ops.commands import show
+    from orch.store import Store
+
+    cli("new", "Tail")
+    cli("claim", "1")
+    cli("ac", "add", "first")
+    after = ws.events("1")[-1]["seq"]
+    cli("ac", "add", "second")
+    cli("ac", "add", "third")
+    reads = []
+    real = Store.events
+
+    def events(self, ref, *, after=0, limit=None):
+        reads.append((after, limit))
+        return real(self, ref, after=after, limit=limit)
+
+    monkeypatch.setattr(Store, "events", events)
+    if mode:
+        result = cli("show", "1", *mode, "--since", str(after))
+        assert result.code == 0, result.err
+        out = result.out
+    else:
+        from types import SimpleNamespace
+
+        store = ws.other()
+        try:
+            out = "\n".join(show._recent(SimpleNamespace(store=store), store.ticket("1"), after))
+        finally:
+            store.close()
+    assert reads == [(after, None)]
+    assert "acceptance set (AC1, AC2)" in out
+    assert "AC3 added" in out
 
 
 def seed(cli):

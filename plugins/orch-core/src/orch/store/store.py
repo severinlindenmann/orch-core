@@ -343,7 +343,7 @@ class Store:
             if info is None or uid in self._read_errors:
                 return []
             last = info.seq if limit is None else min(info.seq, after + limit)
-            return [self._read_event(uid, n) for n in range(max(after, 0) + 1, last + 1)]
+            return self._read_events(uid, max(after, 0) + 1, last)
 
     @property
     def can_write(self) -> bool:
@@ -360,8 +360,9 @@ class Store:
             if uid is None:
                 raise StoreError("ticket.unknown", ref)
             self._ensure({uid})
-            out = [self._host_append(typ, uid, dict(payload))]
-            return out + self._flush(uid)
+            out = self._flush(uid)
+            out.append(self._host_append(typ, uid, dict(payload)))
+            return out + self._flush(uid, cause="new_commits")
 
     def flush_invalidations(self, ref: str) -> list[dict[str, Any]]:
         """Append a host ``gate.invalidated`` for every gate that still has approvals the model voided without a record
@@ -374,15 +375,20 @@ class Store:
             self._ensure({uid})
             return self._flush(uid)
 
-    def _flush(self, uid: str) -> list[dict[str, Any]]:
+    def _flush(self, uid: str, *, cause: str | None = None) -> list[dict[str, Any]]:
         assert self._state is not None
+        from .invalidations import pending_causes
+
+        t = self._state._core.tickets.get(uid)
+        if t is None or not any(g.pending_void for g in t.gates.values()):
+            return []
+        causes = pending_causes(self, uid) if cause is None else dict.fromkeys(t.gates, cause)
         out = []
         for g in ("requirements", "plan", "verify", "code"):
             t = self._state._core.tickets.get(uid)
             ids = sorted(t.gates[g].pending_void) if t is not None else []
             if ids:
-                cause = "new_commits" if g in ("verify", "code") else "content_changed"
-                out.append(self._host_append("gate.invalidated", uid, {"gate": g, "cause": cause, "voided": ids}))
+                out.append(self._host_append("gate.invalidated", uid, {"gate": g, "cause": causes[g], "voided": ids}))
         return out
 
     def attempt_logged(self, ref: str, idem: str) -> bool:
@@ -1705,11 +1711,21 @@ class Store:
         return None
 
     def _read_event(self, log: str, seq: int) -> dict[str, Any]:
+        return self._read_events(log, seq, seq)[0]
+
+    def _read_events(self, log: str, first: int, last: int) -> list[dict[str, Any]]:
+        """The events ``first`` to ``last`` of ``log``, with one open: each line is read at its verified offset (seek,
+        do not scan the log)."""
+        if first > last:
+            return []
         info = self._logs[log]
         fd = open_nofollow(self._path_of(log), os.O_RDONLY)
-        with os.fdopen(fd, "rb") as f:  # the line offsets come from the verified read: seek, do not scan the log
-            f.seek(info.starts[seq - 1])
-            return canon.parse_event_line(f.readline(MAX_LINE + 1))
+        out = []
+        with os.fdopen(fd, "rb") as f:
+            for seq in range(first, last + 1):
+                f.seek(info.starts[seq - 1])
+                out.append(canon.parse_event_line(f.readline(MAX_LINE + 1)))
+        return out
 
     def _idem_intent(self, idem: str, log: str, event_id: str) -> None:
         write_atomic(self._intent_path(idem), json.dumps({"log": log, "id": event_id}).encode("utf-8"), mode=0o600)

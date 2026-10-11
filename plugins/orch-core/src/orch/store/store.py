@@ -195,8 +195,10 @@ class Store:
         clock: Callable[[], float],
         workspace_name: str | None,
         lock_timeout: float | None,
+        guard: Callable[[], contextlib.AbstractContextManager[Any]] | None = None,
     ) -> None:
         self.root = root
+        self._guard = guard or contextlib.nullcontext
         self.workspace_id = workspace_id
         self._expected_genesis = expected_genesis
         self._host = host
@@ -258,6 +260,7 @@ class Store:
         workspace_name: str | None = None,
         load: str = "lazy",
         lock_timeout: float | None = LOCK_TIMEOUT,
+        guard: Callable[[], contextlib.AbstractContextManager[Any]] | None = None,
     ) -> Store:
         """Open (and, for a new directory, prepare) the workspace at ``path``.
 
@@ -270,7 +273,9 @@ class Store:
         ``store.read_only``). ``load="lazy"`` (default) replays the workspace log now and tickets when touched;
         ``load="all"`` replays every ticket and looks for external edits on the way in (see :meth:`scan`); what the
         store did is in ``reports``. A call that waits longer than ``lock_timeout`` seconds for the workspace lock
-        raises ``store.busy``.
+        raises ``store.busy``. ``guard`` wraps every outermost transaction, outside the workspace lock: the direct-mode
+        CLI passes :class:`orch.host.ownership.DirectGuard` (D-P2-18), which holds the ownership lock shared and
+        answers ``host.required`` for a workspace the host has adopted.
         """
         if host is not None and host_state_dir is None:
             raise StoreError("validation.host_state", "a store that can write needs host_state_dir (pin, revocations)")
@@ -287,6 +292,7 @@ class Store:
             clock=clock,
             workspace_name=workspace_name,
             lock_timeout=lock_timeout,
+            guard=guard,
         )
         store._open(load == "all")
         return store
@@ -304,7 +310,7 @@ class Store:
                 have = None
             if have is not None and have != self.workspace_id:
                 raise StoreError("trust.genesis_mismatch", "config.json belongs to another workspace")
-        with self._lock:
+        with self._guard(), self._lock:
             check_state_dirs(self.root)
             self._load_transition_logs()
             pend = self._recover_pending()
@@ -848,7 +854,7 @@ class Store:
 
     @contextlib.contextmanager
     def _locked(self) -> Iterator[None]:
-        with self._lock:
+        with self._guard(), self._lock:
             check_state_dirs(self.root)
             self._load_transition_logs()
             pend = self._recover_pending()

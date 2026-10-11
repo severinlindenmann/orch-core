@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useBlocker, useNavigate } from '@tanstack/react-router'
 import { Maximize2 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { handoffMode } from '@/api/features'
 import { can, roleOf } from '@/api/permissions'
 import type { TicketDocument } from '@/api/types'
 import { Button } from '@/components/ui/button'
@@ -173,12 +174,17 @@ export function NewTicketOverlay({ onClose, opener }: { onClose: () => void; ope
               <Skeleton className="h-96" aria-label="Loading" />
             ) : (
               <>
-                <QuickTicket workspaceId={workspace.id} canCreate={canCreate} value={quick} onChange={setQuick} onCreated={quickCreated} inputRef={quickRef} />
-                <div className="my-4 flex items-center gap-3 text-[12px] text-text-faint" aria-hidden>
-                  <span className="h-px flex-1 bg-border" />
-                  or fill in the form
-                  <span className="h-px flex-1 bg-border" />
-                </div>
+                {/* A quick ticket is created at once; on a real host every ticket is a signed hand-off, so only the form is offered. */}
+                {!handoffMode(workspace.id) && (
+                  <>
+                    <QuickTicket workspaceId={workspace.id} canCreate={canCreate} value={quick} onChange={setQuick} onCreated={quickCreated} inputRef={quickRef} />
+                    <div className="my-4 flex items-center gap-3 text-[12px] text-text-faint" aria-hidden>
+                      <span className="h-px flex-1 bg-border" />
+                      or fill in the form
+                      <span className="h-px flex-1 bg-border" />
+                    </div>
+                  </>
+                )}
                 <NewTicketForm
                   key={`${workspace.id}:${me.person}`}
                   me={me}

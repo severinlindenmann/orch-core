@@ -1,5 +1,5 @@
 // Role permissions: the one table the mock host and the UI both read (part of the API contract).
-import { canAct } from './features'
+import { canAct, hasFeature, isRealHost } from './features'
 import type { Role, Workspace } from './types'
 
 export type Permission =
@@ -53,7 +53,14 @@ export const atLeast = (role: Role | undefined, min: Role): boolean => !!role &&
  * changes data, so on a dashboard whose host serves none yet (api/features.ts `canAct`) the answer is no for every role.
  * `atLeast` answers the role question alone.
  */
-export const can = (role: Role | undefined, permission: Permission): boolean => canAct() && atLeast(role, MIN_ROLE[permission])
+export const can = (role: Role | undefined, permission: Permission): boolean =>
+  canAct() && atLeast(role, MIN_ROLE[permission]) && !unserved(permission)
+
+/**
+ * A permission whose action the real host does not serve yet is off for every role (hiding is a courtesy: the server
+ * answers 404 anyway). `move` waits for the host's `ticket.moved` (stream A, H6b); the mock lists everything.
+ */
+const unserved = (permission: Permission): boolean => isRealHost() && permission === 'ticket.move' && !hasFeature('move')
 
 /** Owners revoke any grant; whoever may issue grants revokes their own. */
 export const canRevokeGrant = (role: Role | undefined, grantPerson: string, person: string): boolean =>

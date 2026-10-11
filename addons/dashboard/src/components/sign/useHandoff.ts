@@ -1,0 +1,216 @@
+// One terminal hand-off from click to outcome (design 4.1, 4.3). It prepares a request once per click, follows it by
+// polling `GET /handoff/<id>` (bounded) and by the live stream (a query update triggers an early check), and never
+// prepares again on its own: a lost response is retried with the same `opts.idem`, anything else waits for the person.
+import { useQueryClient } from '@tanstack/react-query'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { api } from '@/api/client'
+import { ALREADY_DONE, CHANGED, newIdem, requestIsConsistent, type HandoffAction, type HandoffRequest, type HandoffState } from '@/api/handoff'
+import { ApiError } from '@/api/types'
+
+export type HandoffPhase =
+  | 'idle'
+  | 'preparing'
+  /** The request is open: the person signs in the terminal. */
+  | 'waiting'
+  /** The signer submitted: the event is in the log. */
+  | 'done'
+  | 'cancelled'
+  | 'expired'
+  /** The host says the thing is already done (idempotency, a second approval): nothing to sign. */
+  | 'already'
+  /** The ticket changed between prepare and sign: refetched; the person prepares again. */
+  | 'changed'
+  /** The outcome of a call is not known (a lost answer): refetch, then the person decides. */
+  | 'unknown'
+  /** The host's answer does not recompute to its own fingerprint: never shown as valid. */
+  | 'invalid'
+  | 'error'
+
+export const POLL_MS = 2000
+/** The poll gives up this long after the request would have expired on the host (clock skew, a slow host). */
+const GRACE_MS = 20000
+const MAX_FAILED_POLLS = 5
+
+export interface HandoffRun {
+  phase: HandoffPhase
+  request: HandoffRequest | null
+  state: HandoffState | null
+  error: ApiError | null
+  prepare: (action: HandoffAction) => Promise<void>
+  cancel: () => Promise<void>
+  /** Back to the start (the person chose "Prepare again"). The previous request must already be settled or cancelled. */
+  reset: () => void
+}
+
+const refetchKeys = ['ticket', 'tickets', 'board', 'today', 'workspaces', 'events']
+
+export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPhase, state: HandoffState | null) => void): HandoffRun {
+  const qc = useQueryClient()
+  const [phase, setPhaseState] = useState<HandoffPhase>('idle')
+  const [request, setRequest] = useState<HandoffRequest | null>(null)
+  const [state, setState] = useState<HandoffState | null>(null)
+  const [error, setError] = useState<ApiError | null>(null)
+  const live = useRef({ phase: 'idle' as HandoffPhase, request: null as HandoffRequest | null, ws })
+  live.current.ws = ws
+  const attempt = useRef<{ sig: string; idem: string } | null>(null)
+  const busy = useRef(false)
+  const mounted = useRef(true)
+  const settled = useRef(onSettled)
+  settled.current = onSettled
+
+  const setPhase = useCallback((p: HandoffPhase) => {
+    live.current.phase = p
+    setPhaseState(p)
+  }, [])
+  const refetch = useCallback(() => {
+    for (const k of refetchKeys) void qc.invalidateQueries({ queryKey: [k] })
+  }, [qc])
+
+  const prepare = useCallback(
+    async (action: HandoffAction) => {
+      if (!ws || busy.current || live.current.phase === 'waiting') return // a double click is one prepare
+      busy.current = true
+      setError(null)
+      setPhase('preparing')
+      const sig = JSON.stringify(action)
+      // The same click retried (after a lost answer) reuses its idem; another action draws a new one.
+      const idem = attempt.current?.sig === sig ? attempt.current.idem : newIdem()
+      attempt.current = { sig, idem }
+      try {
+        const got = await api.prepareHandoff(ws, action, idem)
+        attempt.current = null
+        if (!mounted.current) return
+        if (!requestIsConsistent(got)) {
+          // The host's own hashes do not recompute here: do not show it, and ask the host to drop it.
+          void api.cancelHandoff(ws, got.id).catch(() => {})
+          setPhase('invalid')
+          return
+        }
+        live.current.request = got
+        setRequest(got)
+        setPhase('waiting')
+      } catch (e) {
+        if (!mounted.current) return
+        const err = e instanceof ApiError ? e : new ApiError(0, { code: 'host.unavailable', message: 'Could not reach the dashboard server.', retryable: true })
+        setError(err)
+        if (ALREADY_DONE.has(err.code)) {
+          attempt.current = null
+          refetch()
+          setPhase('already')
+        } else if (CHANGED.has(err.code)) {
+          attempt.current = null
+          refetch()
+          setPhase('changed')
+        } else if (err.code === 'human.request_expired') {
+          attempt.current = null
+          setPhase('expired')
+        } else if (err.code === 'idem.expired' || err.code === 'outcome.unknown_idem' || err.code === 'outcome.unknown') {
+          setPhase('unknown')
+          refetch()
+        } else {
+          if (!err.retryable) attempt.current = null // a retryable failure keeps its idem for "Try again"
+          setPhase('error')
+        }
+      } finally {
+        busy.current = false
+      }
+    },
+    [ws, setPhase, refetch],
+  )
+
+  const finish = useCallback(
+    (next: HandoffPhase, got: HandoffState | null) => {
+      setState(got)
+      setPhase(next)
+      refetch()
+      settled.current?.(next, got)
+    },
+    [setPhase, refetch],
+  )
+
+  // Follow an open request: poll every 2 s (bounded by its expiry), and check at once when the live stream updates the
+  // ticket. The poll only reads; it never prepares and never submits.
+  useEffect(() => {
+    if (phase !== 'waiting' || !request || !ws) return
+    const deadline = Date.parse(request.expires_at) + GRACE_MS
+    let failed = 0
+    let stopped = false
+    let inflight = false
+    const check = async () => {
+      if (stopped || inflight) return
+      inflight = true
+      try {
+        const got = await api.getHandoff(ws, request.id)
+        failed = 0
+        if (stopped) return
+        // A terminal answer ends the watch before finish() refetches: that refetch is itself a query update.
+        if (got.state === 'submitted' || got.state === 'cancelled' || got.state === 'expired') {
+          stopped = true
+          finish(got.state === 'submitted' ? 'done' : got.state, got)
+        } else setState(got)
+      } catch (e) {
+        failed += 1
+        if ((e instanceof ApiError && e.code === 'not_found') || failed >= MAX_FAILED_POLLS) {
+          stopped = true
+          finish('unknown', null)
+        }
+      } finally {
+        inflight = false
+      }
+    }
+    const timer = setInterval(() => {
+      if (Date.now() > deadline) {
+        stopped = true
+        clearInterval(timer)
+        finish('expired', null)
+        return
+      }
+      void check()
+    }, POLL_MS)
+    // The live stream refreshes the ticket when the signer's event arrives: look at the request straight away.
+    const unsubscribe = qc.getQueryCache().subscribe((event) => {
+      if (event.type === 'updated' && event.action.type === 'success' && refetchKeys.includes(String(event.query.queryKey[0]))) void check()
+    })
+    return () => {
+      stopped = true
+      clearInterval(timer)
+      unsubscribe()
+    }
+  }, [phase, request, ws, qc, finish])
+
+  const cancel = useCallback(async () => {
+    const open = live.current.request
+    if (!ws || !open || (live.current.phase !== 'waiting' && live.current.phase !== 'invalid')) return
+    try {
+      await api.cancelHandoff(ws, open.id)
+    } catch {
+      /* the host expires it anyway */
+    }
+    if (mounted.current) setPhase('cancelled')
+  }, [ws, setPhase])
+
+  const reset = useCallback(() => {
+    live.current.request = null
+    setRequest(null)
+    setState(null)
+    setError(null)
+    setPhase('idle')
+  }, [setPhase])
+
+  // Leaving the screen with a request still open cancels it (design 4.3). Deferred one tick so React StrictMode's
+  // simulated unmount (which re-mounts at once) does not cancel a live request.
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      const { request: open, ws: where, phase: last } = live.current
+      if (open && where && last === 'waiting') {
+        setTimeout(() => {
+          if (!mounted.current) void api.cancelHandoff(where, open.id).catch(() => {})
+        }, 0)
+      }
+    }
+  }, [])
+
+  return { phase, request, state, error, prepare, cancel, reset }
+}

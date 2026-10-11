@@ -6,6 +6,7 @@ import { clearSession, getToken } from './bootstrap'
 import { createFetchTransport } from './fetchTransport'
 import type { MandatesPreviewState } from './mandatesPreview'
 import type { Api, ListTicketsParams } from './apiFactory'
+import type { HandoffAction, HandoffRequest, HandoffState } from './handoff'
 import {
   ApiError,
   type ApiErrorBody,
@@ -53,9 +54,9 @@ const ROLE_RANK: Record<Role, number> = { viewer: 0, member: 1, maintainer: 2, o
  */
 const MAX_PAGES = 25
 
-async function call<T>(path: string, method: 'GET' | 'POST' = 'GET'): Promise<T> {
+async function call<T>(path: string, method: 'GET' | 'POST' | 'DELETE' = 'GET', body?: unknown): Promise<T> {
   const token = getToken()
-  const result = await createFetchTransport('', () => token).request(method, path)
+  const result = await createFetchTransport('', () => token).request(method, path, body)
   if (result.status === 401) {
     clearSession(true, token)
     throw new ApiError(401, { code: 'session.required', message: 'Run orch dashboard in your terminal', retryable: false })
@@ -188,7 +189,17 @@ const empty = {
   getLocalMandatesPreview: (): MandatesPreviewState => ({ preview: true, on: false, preflight: [], orchestrators: [], may: [], always_human: [], protected_paths: [], mandate: null }),
 }
 
-const implemented: Record<string, unknown> = { ...reads, ...empty }
+/**
+ * The signed actions (M3): the server prepares a sign request and the person signs in a terminal. These three calls are
+ * the whole write surface of the dashboard; none of them signs, and nothing here ever submits a signature.
+ */
+const handoff = {
+  prepareHandoff: (ws: string, action: HandoffAction, idem: string) => call<HandoffRequest>(`${w(ws)}/handoff`, 'POST', { ...action, idem }),
+  getHandoff: (ws: string, id: string, full = false) => call<HandoffState>(`${w(ws)}/handoff/${encodeURIComponent(id)}${full ? '?full=1' : ''}`),
+  cancelHandoff: (ws: string, id: string) => call<{ id: string; state: string }>(`${w(ws)}/handoff/${encodeURIComponent(id)}`, 'DELETE'),
+}
+
+const implemented: Record<string, unknown> = { ...reads, ...empty, ...handoff }
 
 /** Every other method of the mock's api refuses plainly: a control that reaches one is a bug, not a silent no-op. */
 export const api = new Proxy(implemented, {

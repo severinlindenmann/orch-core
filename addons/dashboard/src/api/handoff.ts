@@ -1,0 +1,151 @@
+// The terminal hand-off (design 4, host contract v1.4 section 0.8.1): types, and the two hashes the person compares.
+//
+// The dashboard never signs and never holds a factor. It asks the host to prepare a sign request, shows the host's
+// `material` (never the cached ticket) with a fingerprint, and the person signs in a terminal with `orch sign CODE`.
+// The fingerprint is computed here exactly as `orch sign` computes it, from what the server sent:
+//   review_digest = "sha256:" + sha256(cj(material))
+//   fingerprint   = first 12 hex of sha256(cj({review_digest, events: [event without sig, actor.device, auth]}))
+// where `cj` is canonical JSON (RFC 8785 on the restricted subset: integers, ASCII keys). A request whose hashes do not
+// recompute is never shown as valid.
+import { sha256Hex } from './sha256'
+
+export type HandoffAction =
+  | { action: 'approve'; key: string; gate: 'requirements' | 'plan' | 'code' }
+  | { action: 'request_changes'; key: string; gate: 'requirements' | 'plan' | 'verify' | 'code'; message: string }
+  | { action: 'verdict'; key: string; outcome: 'pass' | 'fail'; message?: string }
+  | { action: 'answer'; key: string; question: string; option?: string; message?: string }
+  | { action: 'comment'; key: string; message: string }
+  | { action: 'label'; key: string; label: string }
+  | { action: 'close'; key: string; resolution?: 'wont_do' | 'duplicate' | 'obsolete' | 'other'; duplicate_of?: string; message?: string }
+  | { action: 'reopen'; key: string; message?: string }
+  | {
+      action: 'new'
+      title: string
+      type?: 'feature' | 'bug' | 'chore' | 'spike' | 'epic'
+      priority?: 'low' | 'medium' | 'high' | 'urgent'
+      size?: 'xs' | 's' | 'm' | 'l' | 'xl'
+      labels?: string[]
+      parent?: string
+      message?: string
+    }
+
+export type HandoffStateName = 'prepared' | 'bound' | 'submitted' | 'cancelled' | 'expired'
+
+export interface HandoffEvent {
+  type: string
+  actor: { kind: string; id: string; device: string | null }
+  auth: string | null
+  [field: string]: unknown
+}
+
+/** One event as the signer reviews it: the payload (every key, verbatim) and the values the signer derives itself. */
+export interface HandoffReview {
+  event_id: string
+  type: string
+  payload: Record<string, unknown>
+  derived: Record<string, unknown>
+}
+
+/** What the host says the person is about to sign. This is the only source of the preview. */
+export interface HandoffMaterial {
+  kind: 'gate' | 'question' | 'payload'
+  ticket?: { key: string; uid: string } | null
+  gate?: string
+  input?: Record<string, unknown>
+  /** Host v1.5 (optional; absent = not shown): the gate policy the host states. */
+  policy?: Record<string, unknown>
+  question?: Record<string, unknown>
+  texts?: Record<string, string>
+  before?: Record<string, unknown>
+  review: HandoffReview[]
+}
+
+export interface HandoffRequest {
+  id: string
+  code: string | null
+  expires_at: string
+  state: HandoffStateName
+  op: string
+  key: string | null
+  fingerprint: string
+  review_digest: string
+  gate_hash: string | null
+  material: HandoffMaterial
+  events: HandoffEvent[]
+  origin?: { uid: number; pid: number; client: string; created_at: string } | null
+}
+
+/** `GET /handoff/<id>`: where the request is now (host `human.pending`). `request` only with `?full=1` while open. */
+export interface HandoffState {
+  id: string
+  state: HandoffStateName
+  op: string
+  key: string | null
+  expires_at: string
+  event_ids: string[]
+  seq: number | null
+  request?: HandoffRequest
+}
+
+type Json = null | boolean | number | string | Json[] | { [key: string]: Json }
+
+/** Canonical JSON on the restricted subset: sorted keys, no spaces, strings escaped as RFC 8785 does. */
+export function cj(value: unknown): string {
+  if (value === null || typeof value === 'boolean') return JSON.stringify(value)
+  if (typeof value === 'number') {
+    if (!Number.isSafeInteger(value)) throw new Error('canonical JSON allows integers only')
+    return String(value)
+  }
+  if (typeof value === 'string') return JSON.stringify(value)
+  if (Array.isArray(value)) return `[${value.map(cj).join(',')}]`
+  if (typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, Json>)
+      .filter(([, v]) => v !== undefined)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${cj(v)}`).join(',')}}`
+  }
+  throw new Error('not canonical JSON')
+}
+
+export const reviewDigestOf = (material: unknown): string => `sha256:${sha256Hex(cj(material))}`
+
+/** An event as the fingerprint covers it: without `sig`, `actor.device` and `auth` (and a grant's `secret_hash`). */
+function stripped(event: HandoffEvent): unknown {
+  const { sig: _sig, auth: _auth, actor, ...rest } = event as HandoffEvent & { sig?: unknown }
+  const { device: _device, ...who } = actor
+  const out: Record<string, unknown> = { ...rest, actor: who }
+  if (event.type === 'grant.issued') delete out.secret_hash
+  return out
+}
+
+export const fingerprintOf = (digest: string, events: HandoffEvent[]): string =>
+  sha256Hex(cj({ review_digest: digest, events: events.map(stripped) })).slice(0, 12)
+
+/** True only when the digest and the fingerprint the server sent are what this browser computes from the same bytes. */
+export function requestIsConsistent(request: HandoffRequest): boolean {
+  try {
+    const digest = reviewDigestOf(request.material)
+    return digest === request.review_digest && fingerprintOf(digest, request.events) === request.fingerprint
+  } catch {
+    return false
+  }
+}
+
+/** The exact line the person runs. A code is 4+4 characters of the Crockford alphabet, so it is safe to put in a shell. */
+export const CODE = /^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/
+export const signCommand = (code: string): string => `orch sign ${code}`
+
+const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
+
+/** `opts.idem` for one click: `a_` and 26 Crockford characters (a ULID shape; the first is 0..7). Reused on a retry. */
+export function newIdem(random: (n: number) => Uint8Array = (n) => crypto.getRandomValues(new Uint8Array(n))): string {
+  const bytes = random(26)
+  return 'a_' + [...bytes].map((b, i) => CROCKFORD[i === 0 ? b & 7 : b & 31]).join('')
+}
+
+export const IDEM = /^a_[0-7][0-9A-HJKMNP-TV-Z]{25}$/
+
+/** Codes of a refusal that mean the work is already done (design 4.3): no signature is needed. */
+export const ALREADY_DONE = new Set(['gate.already_approved', 'transition.refused'])
+/** Codes that mean the state moved between prepare and submit: refetch, then offer to prepare again. */
+export const CHANGED = new Set(['gate.stale', 'members.stale', 'question.stale', 'artifact.mismatch', 'observe.unavailable', 'source.missing', 'conflict.field', 'conflict.section'])

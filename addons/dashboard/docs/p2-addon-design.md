@@ -192,7 +192,7 @@ comment, label, move, new ticket, settings, member changes and grant revoke. **T
    - "Sign in your terminal: `orch sign 7F3K-Q2MA`" with a copy button, and "Sign with Touch ID" once H9 is there;
    - an **informational preview rendered from `material`**, never from the dashboard's cached ticket view, through
      `visible.tsx` (every value as data), under the heading "Preview. Your terminal shows what you sign.";
-   - the request fingerprint (first 12 hex of `review_digest`, which `orch sign` also prints, §13 R8) and, where a gate
+   - the request fingerprint (`Prepared.fingerprint`, shown as the host returns it: the first 12 hex of sha256(cj({review_digest, events without sig, actor.device, auth})), which `orch sign` also prints, §13 R8; the dashboard verifies it with exactly this formula and fails closed on a mismatch) and, where a gate
      is involved, the gate hash from `event`, labelled "content hash".
 3. **The person signs in a trusted place.** `orch sign CODE` finds the request with `human.pending`, recomputes the
    hashes from `material`, renders its own review on `/dev/tty`, asks for the confirmation word and the passphrase,
@@ -508,7 +508,7 @@ Deferred beyond these milestones: batches, restricted creation, a stream replay 
 | R5 | F1 events for the reserved **`policy.set`** and **`settings.set`**, then serve them | M4 |
 | R6 | A **per-request state lookup**: `human.pending {request_id}` (own person) returning `prepared`, `submitted` (from the tombstone, with event id and seq), `cancelled` or `expired` | M3 (heuristic in §4.3 until then) |
 | R7 | **Signer choice in a hand-off**: `human.prepare` needs `signer:{device, auth}`, but the dashboard does not know which device will sign. Either `whoami` lists this machine's devices of the person with their `auth`, or `handoff:true` lets the signer bind its device when it fetches the request | M3 |
-| R8 | `orch sign` and H9 **print the request fingerprint** (first 12 hex of `review_digest`) so the person can match it with the panel | M3 |
+| R8 | `orch sign` and H9 **print the request fingerprint** (`Prepared.fingerprint`: first 12 hex of sha256(cj({review_digest, events stripped of sig/device/auth}))) so the person can match it with the panel | M3 |
 | R9 | Confirm that `human.prepare` takes **`files`** for the inner op (the `member.add` certificate as a blob) | M4 |
 | R10 | Amend **D-P2-7's HTTP rules**: bearer header instead of cookie; `Host` exactly `127.0.0.1:<port>` (no `localhost`) | M0 |
 | R11 | Confirm that **control-socket `host.list`** may be called by the dashboard (host UID) and lists, per workspace, the id and whether the caller's UID is mapped to a person there | M0 |
@@ -603,7 +603,7 @@ signer with its own native review (D-P2-22), `opts.idem` and outcome recovery.
 | `whoami` + `member.list` | `Me`, `Member[]` | person, name, role per workspace; devices without keys |
 | control `host.list`, `workspace.show`, `host.status` | `Workspace`, `WorkspaceIdentity` | UUID primary key, prefix as label, tier |
 | `needs` items | `TodayDocument`, `NeedsYouItem` | kinds `question`, `approve`, `no_eligible`, `acknowledge`, `addon` mapped to the UI's kinds |
-| `human.prepare` result | new `HandoffRequest` | `{id, code, expires_at, fingerprint (from review_digest), material, gate_hash?}`; the preview renders `material` per op |
+| `human.prepare` result | new `HandoffRequest` | `{id, code, expires_at, fingerprint (the host's Prepared.fingerprint), material, events, gate_hash?}`; the preview renders `material` per op |
 | `human.pending` | new `HandoffState` | pending or not (R6 adds the final state) |
 | `res err` | `ApiError` | `{code, message, hint, retryable, exit}` |
 

@@ -1,0 +1,205 @@
+// The hand-off panel (design 4.1): where the dashboard stops and the terminal begins. The dashboard is not where you
+// sign. It shows the command to run, the fingerprint to compare, and an informational preview rendered ONLY from the
+// host's `material` (never from a cached ticket) through visible.tsx, so every value is exact and nothing is hidden.
+import { Check, Copy, Terminal } from 'lucide-react'
+import { useEffect, useState, type ReactNode } from 'react'
+import { signCommand, type HandoffMaterial, type HandoffRequest } from '@/api/handoff'
+import { Button } from '@/components/ui/button'
+import { Inline, Prose, Raw, RawValue } from './visible'
+
+/** Core's words for what an event is, shown above its exact values. */
+const EVENT_WORDS: Record<string, string> = {
+  'gate.approved': 'Approval',
+  'gate.changes_requested': 'Request for changes',
+  'verdict.given': 'Verdict',
+  'question.answered': 'Answer',
+  'log.added': 'Comment',
+  'ticket.updated': 'Change to the ticket',
+  'ticket.closed': 'Close',
+  'ticket.reopened': 'Reopen',
+  'ticket.created': 'New ticket',
+}
+
+const MAX_DEPTH = 8
+
+/** Any JSON value, exactly: text as the person reads it, numbers and booleans bare, nothing cut. */
+function Value({ value, depth = 0 }: { value: unknown; depth?: number }): ReactNode {
+  if (typeof value === 'string') return value.includes('\n') ? <Prose className="text-text">{value}</Prose> : <Inline className="text-text">{value}</Inline>
+  if (value === null || typeof value !== 'object') return <RawValue value={value} />
+  if (depth >= MAX_DEPTH) return <span className="text-text-muted">(nested deeper than shown; your terminal shows all of it)</span>
+  if (Array.isArray(value)) {
+    if (!value.length) return <span className="text-text-muted">none</span>
+    return (
+      <ul className="space-y-1">
+        {value.map((v, i) => (
+          <li key={i}>
+            <Value value={v} depth={depth + 1} />
+          </li>
+        ))}
+      </ul>
+    )
+  }
+  const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+  if (!entries.length) return <span className="text-text-muted">none</span>
+  return (
+    <dl className="space-y-1">
+      {entries.map(([k, v]) => (
+        <div key={k} className="grid grid-cols-[minmax(0,9rem)_minmax(0,1fr)] gap-x-3">
+          <dt className="text-text-muted">
+            <Raw>{k}</Raw>
+          </dt>
+          <dd className="min-w-0">
+            <Value value={v} depth={depth + 1} />
+          </dd>
+        </div>
+      ))}
+    </dl>
+  )
+}
+
+function Block({ title, children }: { title: ReactNode; children: ReactNode }) {
+  return (
+    <section className="space-y-1.5 border-t border-border pt-2 first:border-t-0 first:pt-0">
+      <h3 className="text-[12px] font-medium text-text-muted">{title}</h3>
+      <div className="text-[13px]">{children}</div>
+    </section>
+  )
+}
+
+/** The preview: the host's `material` and nothing else. It says it is a preview and that the terminal shows what is signed. */
+export function MaterialPreview({ material }: { material: HandoffMaterial }) {
+  const total = material.review.length
+  return (
+    <div data-handoff-preview className="max-h-[38vh] space-y-3 overflow-auto rounded-md border border-border bg-bg p-3">
+      <p className="text-[12px] text-text-muted">Preview. Your terminal shows what you sign.</p>
+      {material.ticket?.key && (
+        <Block title="Ticket">
+          <Raw>{material.ticket.key}</Raw>
+        </Block>
+      )}
+      {material.kind === 'gate' && (
+        <Block title={`Gate: ${material.gate ?? ''} (your terminal recomputes the content hash from this)`}>
+          <Value value={material.input ?? {}} />
+        </Block>
+      )}
+      {material.policy && Object.keys(material.policy).length > 0 && (
+        <Block title="Gate policy (stated by the host, not recomputed)">
+          <Value value={material.policy} />
+        </Block>
+      )}
+      {material.kind === 'question' && (
+        <Block title="Question">
+          <Value value={material.question ?? {}} />
+        </Block>
+      )}
+      {material.review.map((r, n) => (
+        <Block key={r.event_id} title={`${EVENT_WORDS[r.type] ?? 'Event'}${total > 1 ? ` (${n + 1} of ${total})` : ''}`}>
+          <p className="mb-1 text-[11px] text-text-faint">
+            Event type <Raw>{r.type}</Raw>
+          </p>
+          <Value value={r.payload} />
+          {Object.keys(r.derived).length > 0 && (
+            <div className="mt-2">
+              <p className="text-[11px] text-text-faint">Worked out by the signer from the event</p>
+              <Value value={r.derived} />
+            </div>
+          )}
+        </Block>
+      ))}
+      {material.texts && Object.keys(material.texts).length > 0 && (
+        <Block title="Section texts">
+          <Value value={material.texts} />
+        </Block>
+      )}
+      {material.before && Object.keys(material.before).length > 0 && (
+        <Block title="Current values according to the host, not signed">
+          <Value value={material.before} />
+        </Block>
+      )}
+    </div>
+  )
+}
+
+export function formatRemaining(ms: number): string {
+  const s = Math.max(0, Math.ceil(ms / 1000))
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+}
+
+function useRemaining(expiresAt: string): number {
+  const end = Date.parse(expiresAt)
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [])
+  return Math.max(0, end - now)
+}
+
+/** The command to run, with a copy button. The code names a request; it is not a secret and authorises nothing. */
+export function CommandLine({ code }: { code: string }) {
+  const [copied, setCopied] = useState(false)
+  const command = signCommand(code)
+  return (
+    <div className="flex items-center gap-2 rounded-md border border-border bg-bg px-3 py-2">
+      <Terminal className="size-4 shrink-0 text-text-muted" aria-hidden />
+      <code data-testid="handoff-command" className="min-w-0 flex-1 break-all font-mono text-[14px] text-text">
+        {command}
+      </code>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        aria-label="Copy command"
+        onClick={() => {
+          void navigator.clipboard?.writeText(command).then(
+            () => {
+              setCopied(true)
+              setTimeout(() => setCopied(false), 1500)
+            },
+            () => {},
+          )
+        }}
+      >
+        {copied ? <Check /> : <Copy />}
+      </Button>
+    </div>
+  )
+}
+
+/** The open request: command, fingerprint, content hash, countdown and the preview. Cancel lives in the dialog footer. */
+export function HandoffPanel({ request }: { request: HandoffRequest }) {
+  const remaining = useRemaining(request.expires_at)
+  return (
+    <div data-handoff-panel className="space-y-3">
+      <p className="text-[13px] text-text">
+        Sign in your terminal. This dashboard is not where you sign: it never sees your passphrase or your key.
+      </p>
+      {request.code ? <CommandLine code={request.code} /> : <p className="text-[13px] text-warning">This request has no code any more.</p>}
+      <dl className="grid grid-cols-[auto_1fr] items-baseline gap-x-3 gap-y-1 text-[13px]">
+        <dt className="text-text-muted">Fingerprint</dt>
+        <dd>
+          <code data-testid="handoff-fingerprint" className="font-mono text-[14px] text-text">
+            {request.fingerprint}
+          </code>
+          <span className="block text-[12px] text-text-muted">Check the same fingerprint in your terminal.</span>
+        </dd>
+        {request.gate_hash && (
+          <>
+            <dt className="text-text-muted">Content hash</dt>
+            <dd className="min-w-0">
+              <Raw>{request.gate_hash}</Raw>
+            </dd>
+          </>
+        )}
+        <dt className="text-text-muted">Expires in</dt>
+        <dd>
+          <span role="timer" data-testid="handoff-expiry" className="font-mono text-text">
+            {formatRemaining(remaining)}
+          </span>
+        </dd>
+      </dl>
+      <MaterialPreview material={request.material} />
+      <p className="text-[12px] text-text-muted">Only sign a code you created yourself. This page follows the request and shows when it is signed.</p>
+    </div>
+  )
+}

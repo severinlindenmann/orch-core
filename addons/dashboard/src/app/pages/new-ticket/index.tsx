@@ -5,7 +5,10 @@ import { RadioGroup as RadioGroupPrimitive } from 'radix-ui'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { api } from '@/api/client'
+import { handoffMode } from '@/api/features'
+import type { HandoffAction } from '@/api/handoff'
 import { can, roleOf } from '@/api/permissions'
+import { HandoffDialog } from '@/components/sign/HandoffDialog'
 import { SECTIONS_BY_TYPE, requiredAtCreation, sectionLabel, type SectionName } from '@/api/sections'
 import { ApiError, type BodySections, type Me, type NewTicketRequest, type Priority, type Size, type TicketDocument, type TicketType, type Visibility, type Workspace } from '@/api/types'
 import { Button } from '@/components/ui/button'
@@ -24,6 +27,35 @@ import { queries } from '@/api/queries'
 const TYPES: TicketType[] = ['feature', 'bug', 'chore', 'spike', 'epic']
 const PRIORITIES = (Object.keys(PRIORITY_RANK) as Priority[]).sort((a, b) => PRIORITY_RANK[b] - PRIORITY_RANK[a])
 const SIZES: Size[] = ['xs', 's', 'm', 'l', 'xl']
+/**
+ * A new ticket through the terminal hand-off is one signed event: the title, the type, and the fields the host's `new`
+ * takes. What it does not carry yet is said instead of dropped: restricted visibility (contract R4), people, a due date
+ * and acceptance criteria are set after creation, and the description is the first written section.
+ */
+export function handoffNewTicket(d: Draft): { action: HandoffAction } | { problem: string } {
+  const texts = (Object.entries(d.sections) as [SectionName, string | undefined][]).filter(([n, t]) => SECTIONS_BY_TYPE[d.type][n] !== 'absent' && t?.trim())
+  const later = [
+    d.visibility !== 'workspace' && 'restricted visibility',
+    (d.people.owner || d.people.assignees.length || d.people.reviewers.length) && 'people',
+    d.due && 'a due date',
+    d.acceptance.length > 0 && 'acceptance criteria',
+    texts.length > 1 && 'more than one section',
+  ].filter(Boolean)
+  if (later.length) return { problem: `A signed new ticket does not carry ${later.join(', ')} yet. Create it first, then add these.` }
+  return {
+    action: {
+      action: 'new',
+      title: d.title.trim(),
+      type: d.type,
+      ...(d.priority !== 'medium' ? { priority: d.priority } : {}),
+      ...(d.size ? { size: d.size } : {}),
+      ...(d.labels.length ? { labels: d.labels } : {}),
+      ...(d.parent ? { parent: d.parent } : {}),
+      ...(texts.length ? { message: texts[0][1]!.trim() } : {}),
+    },
+  }
+}
+
 const isMac = typeof navigator !== 'undefined' && /mac|iphone|ipad/i.test(navigator.platform || navigator.userAgent)
 
 export interface Draft {
@@ -259,6 +291,9 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
   // The page guards its own route; the overlay's sheet guards for the overlay (it also counts the quick ticket line).
   const blocker = useBlocker({ shouldBlockFn: () => !overlay && dirty && !leaving.current, withResolver: true, enableBeforeUnload: () => !overlay && dirty && !leaving.current })
 
+  const [handoffNew, setHandoffNew] = useState<{ action: HandoffAction; another: boolean } | null>(null)
+  const handoffOn = handoffMode(workspace.id)
+
   const create = useMutation({
     mutationFn: (req: NewTicketRequest) => api.createTicket(workspace.id, req),
     onError: (e) => setServerError(e instanceof ApiError ? e.message : 'Could not create the ticket.'),
@@ -273,6 +308,12 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
     if (check.count) {
       setRefused((n) => n + 1) // the effect below moves the focus to the first field that explains itself
       return
+    }
+    if (handoffOn) {
+      // On a real host the ticket is created by a signed event: prepare it and sign in the terminal (design 4.5).
+      const made = handoffNewTicket(draft)
+      if ('problem' in made) return setServerError(made.problem)
+      return setHandoffNew({ action: made.action, another })
     }
     submitting.current = true
     const needs = SECTIONS_BY_TYPE[draft.type]
@@ -315,6 +356,24 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
     }
   }
 
+  /** The signer's event is in the log: the ticket exists. */
+  const handoffDone = (another: boolean, ticketKey: string | null) => {
+    void qc.invalidateQueries()
+    writeDraft(key, null)
+    setShowRestored(false)
+    setHandoffNew(null)
+    if (another) {
+      setDraft({ ...EMPTY, type: draft.type, priority: draft.priority })
+      setAttempted(false)
+      toast.success(`Created ${ticketKey ?? 'the ticket'}`)
+      titleRef.current?.focus()
+      return
+    }
+    leaving.current = true
+    setDraft(EMPTY)
+    if (overlay) onCancel?.()
+    if (ticketKey) void navigate({ to: '/ticket/$key', params: { key: ticketKey } })
+  }
   // A refused submit: focus the first invalid field (title, then the sections in page order).
   useEffect(() => {
     if (refused) root.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus()
@@ -443,7 +502,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
           </div>
         )}
         <div className="flex items-center gap-2">
-          <Button type="button" aria-label="Create" aria-keyshortcuts="Meta+Enter Control+Enter" onClick={() => void submit(false)} disabled={!canCreate || create.isPending}>
+          <Button type="button" aria-label="Create" aria-keyshortcuts="Meta+Enter Control+Enter" onClick={() => void submit(false)} disabled={!canCreate || create.isPending || !!handoffNew}>
             Create
             <kbd className="ml-1 rounded border border-border/40 px-1 font-mono text-[10px] opacity-70">{isMac ? '⌘↵' : 'Ctrl ↵'}</kbd>
           </Button>
@@ -456,6 +515,17 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
           </Button>
         </div>
       </div>
+
+      {handoffNew && (
+        <HandoffDialog
+          title="New ticket"
+          ws={workspace.id}
+          action={handoffNew.action}
+          autoStart
+          onClose={() => setHandoffNew(null)}
+          onSettled={(phase, state) => phase === 'done' && handoffDone(handoffNew.another, state?.key ?? null)}
+        />
+      )}
 
       <Dialog open={blocker.status === 'blocked'} onOpenChange={(o) => !o && blocker.reset?.()}>
         <DialogContent>

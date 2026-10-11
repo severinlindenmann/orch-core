@@ -150,6 +150,7 @@ class DeviceView:
     removed: bool
     revoked: str | None
     scopes: tuple[str, ...]
+    expires_ms: int | None = None  # the certificate's expiry (None: never)
 
 
 @dataclass(frozen=True)
@@ -318,7 +319,9 @@ def workspace_view(core: Core, now: int) -> WorkspaceView:
         MappingProxyType({p: MemberView(p, m.name, m.role) for p, m in ws.former.items()}),
         MappingProxyType(
             {
-                i: DeviceView(i, d.person, d.removed, d.revoked, tuple(d.cert["o"]["scopes_max"]))
+                i: DeviceView(
+                    i, d.person, d.removed, d.revoked, tuple(d.cert["o"]["scopes_max"]), d.cert["o"].get("expires_ms")
+                )
                 for i, d in ws.devices.items()
             }
         ),

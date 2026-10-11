@@ -10,7 +10,8 @@ member lists, P2/P3), ``cert_request``, ``cert_binding``, ``rejected_forms``, ``
 ``bridge`` (pairing and bridge v2, P2/P3), ``member_list_snapshots`` and ``wk_commit`` (membership publication
 and WK commitments, P3), ``p3`` (relay HTTP, restore and queue vectors, P3), ``checkpoints`` (relay checkpoint
 transport and restore, P3), ``revocation_op`` (host revocation op, P2), ``push`` (P3), ``drop`` and
-``ws_envelopes`` (Drop and ws-to-ws, P2+), ``relay_auth`` (relay login, P3). ``test_deferred_sections_are_complete`` fails when the vector file gains a section nobody has
+``ws_envelopes`` (Drop and ws-to-ws, P2+), ``relay_auth`` (relay login, P3).
+``test_deferred_sections_are_complete`` fails when the vector file gains a section nobody has
 listed, so a vector update cannot go unconsumed silently.
 """
 

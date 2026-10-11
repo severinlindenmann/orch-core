@@ -12,7 +12,7 @@ import posixpath
 from collections.abc import Callable
 from typing import Any
 
-from orch.canon import HashError, event_head
+from orch.canon import HashError, check_repo_identity, event_head
 
 from . import addon_rules, authz, generations, policies
 from .codes import Code, Refusal
@@ -221,8 +221,13 @@ def settings_changed(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
         if v is None:
             repos.pop(name, None)
         else:
-            repos[name] = v["path"]
-    paths = [posixpath.normpath(p) for p in repos.values()]
+            if "remote" in v:
+                try:
+                    check_repo_identity(v["remote"])
+                except HashError as exc:
+                    return Refusal(Code.SETTINGS_INVALID, str(exc))
+            repos[name] = copy.deepcopy(v)
+    paths = [posixpath.normpath(p["path"]) for p in repos.values()]
     if len(set(paths)) != len(paths):
         return Refusal(Code.SETTINGS_INVALID, "two repos resolve to the same path")
     ws.repos = repos

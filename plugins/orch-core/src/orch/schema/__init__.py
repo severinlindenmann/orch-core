@@ -410,7 +410,18 @@ def _check_body(obj: dict[str, Any]) -> None:
             raise SchemaError("body", _pointer(["sections", sid]), f"line {problem[0] + 1} {problem[1]}")
 
 
+def _check_repos(name: str, path: tuple[Any, ...], repos: dict[str, Any]) -> None:
+    for repo, entry in repos.items():
+        if entry is None:
+            continue
+        if "remote" in entry:
+            _check_identity(name, (*path, repo, "remote"), entry["remote"])
+        if "default_branch" in entry:
+            _check_ref(name, (*path, repo, "default_branch"), "refs/heads/" + entry["default_branch"])
+
+
 def _check_workspace(obj: dict[str, Any]) -> None:
+    _check_repos("workspace", ("settings", "repos"), obj["settings"]["repos"])
     for g, p in obj["gates"].items():
         _check_policy("workspace", ("gates", g), p)
     persons = [m["person"] for m in obj["members"]]
@@ -708,7 +719,12 @@ def _ev_grant_issued(obj: dict[str, Any], actor: dict[str, Any]) -> None:
         raise SchemaError("event", "/issued_at", "issued_at is more than 300 s away from at")
 
 
+def _ev_settings_changed(obj: dict[str, Any], actor: dict[str, Any]) -> None:
+    _check_repos("event", ("set", "repos"), obj["set"].get("repos", {}))
+
+
 _EVENT_CHECKS = {
+    "settings.changed": _ev_settings_changed,
     "ticket.created": _ev_ticket_created,
     "ticket.updated": _ev_ticket_updated,
     "edit.external": _ev_edit_external,

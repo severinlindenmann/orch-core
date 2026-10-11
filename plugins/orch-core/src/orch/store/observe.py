@@ -94,10 +94,10 @@ def dirty(path: Path) -> str | None:
     return status + ("\n" if status and hidden else "") + "\n".join(f"hidden change flag: {h}" for h in hidden)
 
 
-def repo_path(root: Path, repos: Mapping[str, str], name: str) -> Path | None:
+def repo_path(root: Path, repos: Mapping[str, Mapping[str, str]], name: str) -> Path | None:
     """The working copy of repo ``name`` (``settings.repos``, absolute or relative to the workspace directory)."""
     p = repos.get(name)
-    return (root / p).resolve() if p else None
+    return (root / p["path"]).resolve() if p else None
 
 
 def repo_identity(path: Path, name: str) -> str:

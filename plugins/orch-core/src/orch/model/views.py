@@ -186,7 +186,7 @@ class WorkspaceView:
     grants: Mapping[str, GrantView]
     policies: Mapping[str, Mapping[str, Any]]
     settings: Mapping[str, Any]
-    repos: Mapping[str, str]
+    repos: Mapping[str, Mapping[str, str]]
     addons: Mapping[str, Mapping[str, Any]]
     invalid: tuple[InvalidView, ...]
     frozen: bool

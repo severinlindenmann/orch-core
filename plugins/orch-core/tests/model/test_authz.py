@@ -623,3 +623,16 @@ def test_grant_verbs_by_operation_can_only_narrow():
     for human_only in ("gate.approved", "verdict.given", "ticket.closed", "grant.issued", "question.answered"):
         assert check_actor_kind({"type": human_only, "actor": agent}) is not None  # ... and never a person's action
     assert verb_covers("log.added", ["log.added"], None)  # without a table (a model test) names are event types
+
+
+def test_replay_refuses_noncanonical_stored_remote(w):
+    e = w.settings(repos={"repo": {"path": "../repo", "remote": "https://host/a/b"}})
+    e["set"]["repos"]["repo"]["remote"] = "https://HOST/a/b"
+    state = w.state()
+    assert [i.code for i in state.workspace.invalid] == [Code.SETTINGS_INVALID]
+    assert not state.workspace.repos
+
+
+def test_repo_metadata_still_requires_the_owner(w):
+    entry = {"path": "../repo", "remote": "https://host/a/b", "default_branch": "main"}
+    assert refused(w, "workspace", "settings.changed", "mara", set={"repos": {"repo": entry}}) == Code.ROLE_DENIED

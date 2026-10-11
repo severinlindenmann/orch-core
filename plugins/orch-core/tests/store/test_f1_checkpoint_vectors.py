@@ -193,7 +193,11 @@ def test_source_and_accumulator_transitions(case):
     if case["learned_later_in_walk"]:  # only the receiver's order separates this case from a refusal
         for field in ("known_revocations", "local_revocations"):  # held when judging, in either collection
             earlier = replace(case_view(case), **{field: case["learned_later_in_walk"]}, learned_later=())
-            assert cps.judge_offer(earlier, case["offered"]["o"], restore=bundle(case)) == cps.Verdict("chain.diverged")
+            got_earlier = cps.judge_offer(earlier, case["offered"]["o"], restore=bundle(case))
+            if case["name"] == "cross_person_compromised_learned_later_no_alarm":  # another person's: never refuses
+                assert got_earlier == cps.Verdict("ok", case["recorded"])
+            else:
+                assert got_earlier == cps.Verdict("chain.diverged")
 
 
 def case_view(case):

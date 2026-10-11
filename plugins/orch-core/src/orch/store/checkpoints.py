@@ -395,6 +395,10 @@ def _judge_restore(
         if log == WORKSPACE:  # out-of-band evidence the accepted restore does not carry at its strength
             for local in view.local_revocations:
                 rev = local["revocation"]["o"]
+                if rev["device_id"] == signer:
+                    # a same-person one has refused above; any left is another person's, contradicting the binding
+                    # this restore's certificate establishes: dropped, neither refusal nor unpublished (§5.10)
+                    continue
                 got = carried.get(rev["device_id"])
                 if got is None or _STRENGTH[rev["reason"]] > _STRENGTH[got["revocation"]["o"]["reason"]]:
                     unpublished.add("d_" + rev["device_id"])

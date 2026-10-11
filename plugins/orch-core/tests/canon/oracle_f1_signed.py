@@ -1396,10 +1396,10 @@ def transition_vectors() -> list[dict[str, Any]]:
         "cross_person_revocation_of_the_signer_device_not_refused",
         "ok",
         local_revocations=held_rev("mara", "sev1", "compromised"),
-        unpublished=[did("sev1")],
-        note="mara's PK signs a revocation of sev's device id: the runtime never admits evidence contradicting a "
-        "known person binding (F1), and judge_offer, given it anyway, does not refuse the owner's restore; like any "
-        "local revocation the restore does not carry, it is reported unpublished",
+        note="mara's PK signs a revocation of sev's device id; known_devices is {}, so the receiver knew no binding "
+        "for sev1 before this restore and first-come admission of mara's evidence is reachable: judge_offer must "
+        "stay safe on it. It does not refuse the owner's restore, and once accepted the restore's certificate binds "
+        "sev1 to sev, so the evidence is dropped: not unpublished either",
     )
     variant(
         "same_person_revocation_of_the_signer_device_refused",
@@ -1623,6 +1623,13 @@ def transition_vectors() -> list[dict[str, Any]]:
     )
     ticket_variant("ticket_restore_signer_out_of_band_compromised", "chain.diverged", local_revocations=sev_compromised)
     # C3 alarm filter: only a compromised revocation learned later alarms; a lost (or retired) one changes nothing.
+    ticket_variant(
+        "cross_person_compromised_learned_later_no_alarm",
+        "ok",
+        learned_later_in_walk=[{"revocation": ow.make_revocation("mara", "sev1", "compromised")}],
+        note="mara's compromised revocation of sev's device id, learned later: matched by device and person like the "
+        "refusal, so no alarm (and, held earlier, no refusal either)",
+    )
     ticket_variant(
         "walk_lost_learned_from_higher_n_bundle_no_alarm",
         "ok",

@@ -17897,7 +17897,7 @@
     }
    ],
    "name": "cross_person_revocation_of_the_signer_device_not_refused",
-   "note": "mara's PK signs a revocation of sev's device id: the runtime never admits evidence contradicting a known person binding (F1), and judge_offer, given it anyway, does not refuse the owner's restore; like any local revocation the restore does not carry, it is reported unpublished",
+   "note": "mara's PK signs a revocation of sev's device id; known_devices is {}, so the receiver knew no binding for sev1 before this restore and first-come admission of mara's evidence is reachable: judge_offer must stay safe on it. It does not refuse the owner's restore, and once accepted the restore's certificate binds sev1 to sev, so the evidence is dropped: not unpublished either",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
     "o": {
@@ -18052,9 +18052,7 @@
     "log": "workspace",
     "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94"
    },
-   "unpublished": [
-    "d_c65032f21d43401cc223b05723c1e5b4"
-   ]
+   "unpublished": []
   },
   {
    "applied": [],
@@ -22105,19 +22103,19 @@
       "o": {
        "device_id": "c65032f21d43401cc223b05723c1e5b4",
        "kind": "revocation",
-       "person_id": "75bf75a3bb50b0c4ac02f8a757b90e23",
-       "reason": "lost",
+       "person_id": "6aae5cce832160e6f8cd9dadfbb4c5cd",
+       "reason": "compromised",
        "revoked_ms": 1790000100000,
        "suite": 2,
        "v": 2
       },
-      "sig": "UM-KSEP_q-qAyEcWggITKJYemInLi2-LwxBQ3xAuC-IQWxzMHI-11DQVoCrM9isXte13qbhfmf_qqL4diovCSA"
+      "sig": "f2o-hzEsIQz4w-UQ24P8_k1LV-59Ydq2mIXecdQ_za93NVPvNzYbKDLiH1-b_TbovOxlojhTJP09aJ-D2IBDWA"
      }
     }
    ],
    "local_revocations": [],
-   "name": "walk_lost_learned_from_higher_n_bundle_no_alarm",
-   "note": "learned_later_in_walk holds a lost revocation of the signer: no alarm (only compromised alarms)",
+   "name": "cross_person_compromised_learned_later_no_alarm",
+   "note": "mara's compromised revocation of sev's device id, learned later: matched by device and person like the refusal, so no alarm (and, held earlier, no refusal either)",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
     "o": {
@@ -22296,7 +22294,7 @@
   },
   {
    "applied": [],
-   "expect": "sync.incomplete",
+   "expect": "ok",
    "held": {
     "o": {
      "at": "2026-10-10T10:01:00Z",
@@ -22323,10 +22321,25 @@
    },
    "known_devices": {},
    "known_revocations": [],
-   "learned_later_in_walk": [],
+   "learned_later_in_walk": [
+    {
+     "revocation": {
+      "o": {
+       "device_id": "c65032f21d43401cc223b05723c1e5b4",
+       "kind": "revocation",
+       "person_id": "75bf75a3bb50b0c4ac02f8a757b90e23",
+       "reason": "lost",
+       "revoked_ms": 1790000100000,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "UM-KSEP_q-qAyEcWggITKJYemInLi2-LwxBQ3xAuC-IQWxzMHI-11DQVoCrM9isXte13qbhfmf_qqL4diovCSA"
+     }
+    }
+   ],
    "local_revocations": [],
-   "name": "restore_tail_missing_and_other_log_conflict",
-   "note": "two defects: the restore's tail proof is removed and T's workspace entry conflicts with the held one; the restore tail is checked first",
+   "name": "walk_lost_learned_from_higher_n_bundle_no_alarm",
+   "note": "learned_later_in_walk holds a lost revocation of the signer: no alarm (only compromised alarms)",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
     "o": {
@@ -22345,12 +22358,12 @@
      "v": 2,
      "workspace_id": "0123456789abcdef0123456789abcdef",
      "workspace_log": {
-      "acc": "sha256:5ee4a85a5959e9dc97438b919428172e47807e5ac3f593e51e17b9d8f88e288c",
-      "head": "sha256:abababababababababababababababababababababababababababababababab",
+      "acc": "sha256:a3a6b067e85e9fae49be8c5b083944c66d11ff0c547bcfad5ec1d6092a53489e",
+      "head": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
       "seq": 3
      }
     },
-    "sig": "NDjF6JMsSb_5uQLTPJlZzuwBk1WxU3Me3LOtJqmClsKYOn-slxlpZzr93JUw0DC9H2UVpP2AWhpDtTdwU0AQ3Q"
+    "sig": "vOa4YuzQaGPpGID-y6ln9cQ1U7-b9YUd5izMfhuwenuqlZykH8flecoqQ3LnsPvYiASEU9UHnvonicIAg4F08w"
    },
    "pinned_delegation": {
     "o": {
@@ -22366,9 +22379,12 @@
     "sig": "NwRve78-SgAnF30XOlRhDEb9KlCWIYBu5xXmOkGOE6vn70YeyeOXOcF6liH50gz6SfJNWTgZ2wi_KZc-DWXxMA"
    },
    "proofs": {
+    "01J9ZK4Q7M3R8T2V6X0B5N1C9D": [
+     "sha256:c6a3ccc139504970e7f1fd612f6b746b14ed4b19220e9ecab0769e5b1330ed5e"
+    ],
     "workspace": []
    },
-   "recorded": null,
+   "recorded": "01J9ZK0000000000000000000N",
    "restore": {
     "C": {
      "o": {
@@ -22411,12 +22427,12 @@
       "v": 2,
       "workspace_id": "0123456789abcdef0123456789abcdef",
       "workspace_log": {
-       "acc": "sha256:5ee4a85a5959e9dc97438b919428172e47807e5ac3f593e51e17b9d8f88e288c",
-       "head": "sha256:abababababababababababababababababababababababababababababababab",
+       "acc": "sha256:a3a6b067e85e9fae49be8c5b083944c66d11ff0c547bcfad5ec1d6092a53489e",
+       "head": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
        "seq": 3
       }
      },
-     "sig": "NDjF6JMsSb_5uQLTPJlZzuwBk1WxU3Me3LOtJqmClsKYOn-slxlpZzr93JUw0DC9H2UVpP2AWhpDtTdwU0AQ3Q"
+     "sig": "vOa4YuzQaGPpGID-y6ln9cQ1U7-b9YUd5izMfhuwenuqlZykH8flecoqQ3LnsPvYiASEU9UHnvonicIAg4F08w"
     },
     "abandoned_heads": [
      "sha256:fad28ffc5d067bbdf1dbc3e1a5fcaaab1a7b38cd08822ca9c6d87a1efa5820fb",
@@ -22502,7 +22518,7 @@
   },
   {
    "applied": [],
-   "expect": "chain.diverged",
+   "expect": "sync.incomplete",
    "held": {
     "o": {
      "at": "2026-10-10T10:01:00Z",
@@ -22531,8 +22547,8 @@
    "known_revocations": [],
    "learned_later_in_walk": [],
    "local_revocations": [],
-   "name": "other_log_conflict_with_restore_tail_present",
-   "note": "the control of restore_tail_missing_and_other_log_conflict: the same T with the tail proof present",
+   "name": "restore_tail_missing_and_other_log_conflict",
+   "note": "two defects: the restore's tail proof is removed and T's workspace entry conflicts with the held one; the restore tail is checked first",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
     "o": {
@@ -22572,9 +22588,6 @@
     "sig": "NwRve78-SgAnF30XOlRhDEb9KlCWIYBu5xXmOkGOE6vn70YeyeOXOcF6liH50gz6SfJNWTgZ2wi_KZc-DWXxMA"
    },
    "proofs": {
-    "01J9ZK4Q7M3R8T2V6X0B5N1C9D": [
-     "sha256:f5ddb3e93d1d0c40a23913cb2d106fbfb29a2f3ad5224ec3c3c6a3843d63b941"
-    ],
     "workspace": []
    },
    "recorded": null,
@@ -22695,6 +22708,215 @@
      "roster_v": 3,
      "seq": 2,
      "sig": "ww495W7mS_r0rbRtWz9gEfxY-mfT652ei9FsbF_cuGhv6sru7cSLpmPlMn_ROe_mlaMBou-EOPYP0tijMUF1kA",
+     "source": {
+      "hash": "sha256:1adee8764d7cf3575618ce8546a588347e7b38ac2a439e429f6ed88ea1c9f2b5",
+      "n": 2
+     },
+     "type": "restore",
+     "v": 2,
+     "ws_seq": 3
+    },
+    "forward_heads": [],
+    "log": "01J9ZK4Q7M3R8T2V6X0B5N1C9D",
+    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94"
+   },
+   "unpublished": []
+  },
+  {
+   "applied": [],
+   "expect": "chain.diverged",
+   "held": {
+    "o": {
+     "at": "2026-10-10T10:01:00Z",
+     "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+     "kind": "workspace_checkpoint",
+     "n": 2,
+     "suite": 2,
+     "tickets": {
+      "01J9ZK4Q7M3R8T2V6X0B5N1C9D": {
+       "acc": "sha256:d3e99eb83a61f14f8ce530f891c49070d7e199392127d759c5f5c1359a8c1702",
+       "head": "sha256:756a84b0f81bf515302b00ba9ead80124121aef2dd66665907709604bf96a76a",
+       "seq": 3
+      }
+     },
+     "v": 2,
+     "workspace_id": "0123456789abcdef0123456789abcdef",
+     "workspace_log": {
+      "acc": "sha256:a3a6b067e85e9fae49be8c5b083944c66d11ff0c547bcfad5ec1d6092a53489e",
+      "head": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
+      "seq": 3
+     }
+    },
+    "sig": "u60_uMLlOySmN12uZZCRyEzy5d5GIag9JBz9KWkA42YGSWwGEpurFNvUwb6AHx_66QYivUqXIIchl5VC77wOXw"
+   },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
+   "local_revocations": [],
+   "name": "other_log_conflict_with_restore_tail_present",
+   "note": "the control of restore_tail_missing_and_other_log_conflict: the same T with the tail proof present",
+   "now": "2026-10-10T12:00:00Z",
+   "offered": {
+    "o": {
+     "at": "2026-10-10T10:03:50Z",
+     "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+     "kind": "workspace_checkpoint",
+     "n": 3,
+     "suite": 2,
+     "tickets": {
+      "01J9ZK4Q7M3R8T2V6X0B5N1C9D": {
+       "acc": "sha256:a665be49ed86beeeac32370d8e0942420a9bfcea2e6c19bf80dc4fcac42974f3",
+       "head": "sha256:8c54ca095c1e30c3ce860317c6c4427bf765f5a58a0b07b3842f71571c8bfe3b",
+       "seq": 2
+      }
+     },
+     "v": 2,
+     "workspace_id": "0123456789abcdef0123456789abcdef",
+     "workspace_log": {
+      "acc": "sha256:5ee4a85a5959e9dc97438b919428172e47807e5ac3f593e51e17b9d8f88e288c",
+      "head": "sha256:abababababababababababababababababababababababababababababababab",
+      "seq": 3
+     }
+    },
+    "sig": "Vqr0N1L2lsMaBuz-7i0XUnodWmF5CsTcIk6f107Aa1KzKIas_1hjoohu6P03Sk6gqYnNxuoHRswz3xqLgpgkYg"
+   },
+   "pinned_delegation": {
+    "o": {
+     "client_hosted": false,
+     "issued_ms": 1790000000000,
+     "kind": "ws_delegation",
+     "owner_person_id": "75bf75a3bb50b0c4ac02f8a757b90e23",
+     "suite": 2,
+     "v": 2,
+     "workspace_id": "0123456789abcdef0123456789abcdef",
+     "wsk_pub": "BJy4pP7CRCCFIbgVcqF07OgGwnzyG5Mu6nAPOvYZl72rKNxeRWcBwNDpRGc1LBIdbPY6ZrGFuKL1INLjmAeu_Ro"
+    },
+    "sig": "NwRve78-SgAnF30XOlRhDEb9KlCWIYBu5xXmOkGOE6vn70YeyeOXOcF6liH50gz6SfJNWTgZ2wi_KZc-DWXxMA"
+   },
+   "proofs": {
+    "01J9ZK4Q7M3R8T2V6X0B5N1C9D": [
+     "sha256:8c54ca095c1e30c3ce860317c6c4427bf765f5a58a0b07b3842f71571c8bfe3b"
+    ],
+    "workspace": []
+   },
+   "recorded": null,
+   "restore": {
+    "C": {
+     "o": {
+      "at": "2026-10-10T10:01:00Z",
+      "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+      "kind": "workspace_checkpoint",
+      "n": 2,
+      "suite": 2,
+      "tickets": {
+       "01J9ZK4Q7M3R8T2V6X0B5N1C9D": {
+        "acc": "sha256:d3e99eb83a61f14f8ce530f891c49070d7e199392127d759c5f5c1359a8c1702",
+        "head": "sha256:756a84b0f81bf515302b00ba9ead80124121aef2dd66665907709604bf96a76a",
+        "seq": 3
+       }
+      },
+      "v": 2,
+      "workspace_id": "0123456789abcdef0123456789abcdef",
+      "workspace_log": {
+       "acc": "sha256:a3a6b067e85e9fae49be8c5b083944c66d11ff0c547bcfad5ec1d6092a53489e",
+       "head": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
+       "seq": 3
+      }
+     },
+     "sig": "u60_uMLlOySmN12uZZCRyEzy5d5GIag9JBz9KWkA42YGSWwGEpurFNvUwb6AHx_66QYivUqXIIchl5VC77wOXw"
+    },
+    "T": {
+     "o": {
+      "at": "2026-10-10T10:03:50Z",
+      "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+      "kind": "workspace_checkpoint",
+      "n": 3,
+      "suite": 2,
+      "tickets": {
+       "01J9ZK4Q7M3R8T2V6X0B5N1C9D": {
+        "acc": "sha256:a665be49ed86beeeac32370d8e0942420a9bfcea2e6c19bf80dc4fcac42974f3",
+        "head": "sha256:8c54ca095c1e30c3ce860317c6c4427bf765f5a58a0b07b3842f71571c8bfe3b",
+        "seq": 2
+       }
+      },
+      "v": 2,
+      "workspace_id": "0123456789abcdef0123456789abcdef",
+      "workspace_log": {
+       "acc": "sha256:5ee4a85a5959e9dc97438b919428172e47807e5ac3f593e51e17b9d8f88e288c",
+       "head": "sha256:abababababababababababababababababababababababababababababababab",
+       "seq": 3
+      }
+     },
+     "sig": "Vqr0N1L2lsMaBuz-7i0XUnodWmF5CsTcIk6f107Aa1KzKIas_1hjoohu6P03Sk6gqYnNxuoHRswz3xqLgpgkYg"
+    },
+    "abandoned_heads": [
+     "sha256:fad28ffc5d067bbdf1dbc3e1a5fcaaab1a7b38cd08822ca9c6d87a1efa5820fb",
+     "sha256:756a84b0f81bf515302b00ba9ead80124121aef2dd66665907709604bf96a76a"
+    ],
+    "acc_before": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "acc_from": "sha256:2be584fd0d2ccf819b5e6e4239ed5197f8145316d26aa7895fac5a76b9456d0e",
+    "delegation": {
+     "o": {
+      "client_hosted": false,
+      "issued_ms": 1790000000000,
+      "kind": "ws_delegation",
+      "owner_person_id": "75bf75a3bb50b0c4ac02f8a757b90e23",
+      "suite": 2,
+      "v": 2,
+      "workspace_id": "0123456789abcdef0123456789abcdef",
+      "wsk_pub": "BJy4pP7CRCCFIbgVcqF07OgGwnzyG5Mu6nAPOvYZl72rKNxeRWcBwNDpRGc1LBIdbPY6ZrGFuKL1INLjmAeu_Ro"
+     },
+     "sig": "NwRve78-SgAnF30XOlRhDEb9KlCWIYBu5xXmOkGOE6vn70YeyeOXOcF6liH50gz6SfJNWTgZ2wi_KZc-DWXxMA"
+    },
+    "device_cert": {
+     "o": {
+      "created_ms": 1790000000000,
+      "device_id": "c65032f21d43401cc223b05723c1e5b4",
+      "dk_kx_pub": "BFeVKX_gphRxHCfh2Uw6UQVtj12_1v9LteaSfrwG6oH3QG8yDkYojB0rOpi7i-NDHC0PY47WHle_uYaQHjI534c",
+      "dk_sig_pub": "BEtUkscP1t-MK_B-LkrM8KwbVTJ2kwZBYo-4vnk4QSaltalieRixn4XJf8Z2jR5y10cpdvNZ1i-70-cvOz5Wlwo",
+      "expires_ms": null,
+      "kind": "device_cert",
+      "label_sealed": "bGFiZWwgc2V2MQ",
+      "person_id": "75bf75a3bb50b0c4ac02f8a757b90e23",
+      "scopes_max": [
+       "look",
+       "decide",
+       "operate",
+       "type"
+      ],
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "GMFk6HGDHI919l9dSkUuvlioYdJz-QzNR-qUAQ4kPhZevsgiEZBTlZr2SAIfUiNASTIzsMW_c_8yTbnW8kuMfQ"
+    },
+    "event": {
+     "abandoned": {
+      "head": "sha256:756a84b0f81bf515302b00ba9ead80124121aef2dd66665907709604bf96a76a",
+      "seq": 3
+     },
+     "abandoned_decisions": [
+      "01J9ZK00000000000000000005",
+      "01J9ZK00000000000000000006"
+     ],
+     "actor": {
+      "device": "d_c65032f21d43401cc223b05723c1e5b4",
+      "id": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
+      "kind": "person"
+     },
+     "at": "2026-10-10T10:03:50Z",
+     "auth": "passphrase",
+     "based_on": "sha256:215b81b6c40231c64eafa55fa4ff7ccd3cd933fca0bd849078aa4df36b548449",
+     "from_seq": 1,
+     "hash_v": 1,
+     "head": "sha256:215b81b6c40231c64eafa55fa4ff7ccd3cd933fca0bd849078aa4df36b548449",
+     "host_sig": "3IpT6mzr-ySUxy66Rk8RJN-lhBPnqWCIxK2wbaMt7LHOORi7eZSJuy5L7jJM4PkO5kGVz0RsUz0rESlsL97SgA",
+     "id": "01J9ZK0000000000000000000Q",
+     "prev": "sha256:215b81b6c40231c64eafa55fa4ff7ccd3cd933fca0bd849078aa4df36b548449",
+     "reason": "rollback",
+     "revocations": [],
+     "roster_v": 3,
+     "seq": 2,
+     "sig": "v5lUMVbNjqRd4tCqu5MyyMI7YXd1okkrCNbDk7ZTdCrJJYatUxzVqzGtcEXylckU9FTdVJ3zN9Ltw8S8go1Pkg",
      "source": {
       "hash": "sha256:1adee8764d7cf3575618ce8546a588347e7b38ac2a439e429f6ed88ea1c9f2b5",
       "n": 2

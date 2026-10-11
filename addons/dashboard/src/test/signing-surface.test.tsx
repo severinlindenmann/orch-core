@@ -92,7 +92,7 @@ const CASES: Case[] = [
     },
     open: async (user) => {
       const panel = await openTicketPanel(user, 'Landing')
-      await user.click(await within(panel).findByRole('button', { name: 'Add to the landing queue' }, T))
+      await user.click(await within(panel).findByRole('button', { name: 'Land on main' }, T))
       return screen.findByRole('dialog', {}, T)
     },
     confirm: press('Sign and run'), method: 'runAddonAction', arg: 3,

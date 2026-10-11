@@ -12,15 +12,11 @@
 //  - Pushes go only to the ticket's own branch (--force-with-lease); the worker never pushes to a shared branch.
 import { fnvHex } from '../derive'
 import type { MockStore } from '../store'
+import { normTarget } from '@/api/land'
+import { remoteIdentity } from '@/api/repos'
 
 export const ADDON = { kind: 'addon', id: 'land' } as const
-export const REMOTES = { dbt: 'github.com/acme-energy/energy-dbt', api: 'github.com/acme-energy/billing-api' } as const
-/** Canonicalise protected-target aliases before every authorization check. */
-export const normTarget = (raw: string) => {
-  const target = raw.trim().replace(/^refs\/heads\//i, '').replace(/^refs\/remotes\//i, '').replace(/^(origin|upstream)\//i, '')
-  return target.toLowerCase() === 'main' ? 'main' : target
-}
-export const isMain = (target: string) => normTarget(target) === 'main'
+export const REMOTES = { dbt: 'github.com/acme-energy/energy-dbt', api: 'git.example.test/acme/billing-api' } as const
 export const DEFAULT_TIMEOUT_MIN = 30
 
 export type CheckResult = 'pass' | 'fail' | 'running' | 'waiting' | 'timeout'
@@ -32,7 +28,7 @@ export interface Check {
   seconds?: number
 }
 export type Outcome = 'merged' | 'failed' | 'requeued'
-export type Reason = 'conflict' | 'red_checks' | 'timeout' | 'target_moved' | 'owner_required'
+export type Reason = 'conflict' | 'red_checks' | 'timeout' | 'target_moved' | 'owner_required' | 'invalid_target'
 /** What the simulated world does to an entry's next attempts, in order (seeds and the demo worker only). */
 export type Script = 'clean' | 'moves' | 'conflict' | 'red' | 'timeout'
 
@@ -58,6 +54,8 @@ export interface Attempt {
   script?: Script
 }
 export interface Entry {
+  id?: string
+  signed_event?: string
   ticket: string
   branch: string
   source_sha: string
@@ -107,7 +105,9 @@ export interface Resolution {
   diff: string
 }
 export interface LandState {
-  settings: { targets: string[]; timeout_minutes: number }
+  settings: { targets: string[]; timeout_minutes: number; remote_names?: string[] }
+  signature_entries?: Record<string, string>
+  consumed_signatures?: string[]
   queues: Queue[]
   attempts: Attempt[]
   needs: Need[]
@@ -246,16 +246,29 @@ export function tidy(state: LandState, a: Attempt) {
 
 /** Phase 1 of a merge: the outcome is recorded and the target head moves to the candidate. */
 export function recordMerge(store: MockStore, state: LandState, a: Attempt) {
-  // Core's signed record, not an addon flag, authorises the exact ticket/target/commit.
-  if (isMain(a.target)) {
+  if (a.outcome) return
+  const target = normTarget(a.target, state.settings.remote_names)
+  if (!target) {
+    a.outcome = 'failed'
+    a.reason = 'invalid_target'
+    a.ended = store.now()
+    landEvent(store, a)
+    return
+  }
+  // Core's exact signed record is bound to this queue entry, not a past matching request.
+  if (target === 'main') {
     const ws = store.workspaceOf(a.ticket)!.id
     const entry = queueOf(state, a.queue)?.entries.find((e) => e.ticket === a.ticket)
-    const signed = store.wsEventsOf(ws).some((e) => {
-      const args = e.args as Record<string, unknown> | undefined
-      return e.type === 'addon.action_signed' && e.name === 'land' && e.action === 'enqueue_main'
-        && e.actor.kind === 'person' && e.actor.id === entry?.by && store.roleIn(ws, e.actor.id) === 'owner'
-        && e.presence === 'touchid' && args?.ticket === a.ticket && args.target === 'main' && args.commit === a.source_sha
-    })
+    const declared = Object.values(store.workspaceOf(a.ticket)?.repos ?? {}).some((repo) => repo.remote && remoteIdentity(repo.remote) === a.remote)
+    const signed = declared && entry?.signed_event && entry.id
+      && state.signature_entries?.[entry.signed_event] === entry.id
+      && !state.consumed_signatures?.includes(entry.signed_event)
+      && store.wsEventsOf(ws).some((e) => {
+        const args = e.args as Record<string, unknown> | undefined
+        return e.id === entry.signed_event && e.type === 'addon.action_signed' && e.name === 'land' && e.action === 'enqueue_main'
+          && e.actor.kind === 'person' && e.actor.id === entry?.by && store.roleIn(ws, e.actor.id) === 'owner'
+          && e.presence === 'touchid' && args?.ticket === a.ticket && args.target === 'main' && args.commit === a.source_sha
+      })
     if (!signed) {
       a.outcome = 'failed'
       a.reason = 'owner_required'
@@ -264,6 +277,8 @@ export function recordMerge(store: MockStore, state: LandState, a: Attempt) {
       return
     }
   }
+  const entry = queueOf(state, a.queue)?.entries.find((e) => e.ticket === a.ticket)
+  if (target === 'main' && entry?.signed_event) (state.consumed_signatures ??= []).push(entry.signed_event)
   a.outcome = 'merged'
   a.ended = store.now()
   const q = queueOf(state, a.queue)

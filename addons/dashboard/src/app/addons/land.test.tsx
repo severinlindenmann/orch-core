@@ -12,7 +12,7 @@ describe('Landing page', () => {
     renderApp('/addon/land/landing', { viewer: 'p_sev' })
     const h1 = await screen.findByRole('heading', { level: 1, name: /Landing/ }, T)
     expect(within(h1).getByText('Preview')).toBeInTheDocument()
-    expect(await screen.findByRole('heading', { name: 'github.com/acme-energy/billing-api → develop' }, T)).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'git.example.test/acme/billing-api → develop' }, T)).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'github.com/acme-energy/energy-dbt → develop' })).toBeInTheDocument()
     expect(screen.getByText(/Worker: checking DEMO-0052 \(attempt #14\)/)).toBeInTheDocument()
     expect(screen.getByText(/Attempt #14 · DEMO-0052/)).toBeInTheDocument()

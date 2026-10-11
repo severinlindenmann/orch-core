@@ -560,7 +560,8 @@ Factory permits sit in a reserved folded “n permits waiting · Review” row; 
 ### D33 follow-up — owner landing on main (11 Oct)
 
 Owners can add `main` to Allowed targets. `refs/heads/main`, `origin/main`, remote refs and case variants
-resolve to `main`. The first allowed target remains the enqueue target. `enqueue_main` is an owner-only
+resolve to `main`. Enqueue explicitly names an allowed target; the default is the first non-main target
+(or main when it is the only target). The ticket panel offers each allowed target, preserving other roles. `enqueue_main` is an owner-only
 core `confirm: 'sign'` action; Covers show the ticket, target and approved commit. The ordinary `enqueue`
 refuses main without that signed path. Stale target/commit confirmation returns 409 `land.changed`.
 The simulated worker reads core's `addon.action_signed` record and rechecks owner authority at merge
@@ -569,3 +570,32 @@ For a red-check retry on main, take it off the queue and sign a new landing; the
 cannot bypass signing. The real worker must enforce the same signature and owner checks at push time.
 Mandates remain a non-functional preview: an owner's mandate may land on main but can never exceed
 its owner, and protected paths still need a person.
+
+
+### D33 fix round — ref and signature boundaries (11 Oct)
+
+Host, UI and worker share `src/api/land.ts`: repeatedly strip local and remote ref prefixes and configured
+remote names, case-fold, then refuse residual ref namespaces and invalid git branch names. The mock's
+`settings.remote_names` represents configured git remote names (origin/upstream are always recognised);
+the real host must obtain these names from git configuration, not from request arguments. Whitespace,
+control characters and Unicode lookalikes are refused; comma-separated settings permit delimiter spaces.
+At push time the real worker must fully resolve the remote target to `refs/heads/<name>` and compare that
+resolved ref against the remote's protected/default branch before applying the owner rule. A spelling-only
+check is insufficient. Recheck authority and the bound commit immediately before that push.
+
+Each enqueue_main entry stores the exact core `addon.action_signed` event ID, bound to its unique
+`land.queued` event ID. The worker checks that exact record and binding and consumes it on merge;
+a new entry requires a new signature even for the same ticket and commit. Rebuilding a candidate after
+target movement keeps the same entry. A real host must consume the signed confirmation once atomically
+with entry creation and persist the entry binding and merge consumption across crashes. Land state is v2;
+old mock state reseeds, so old unbound entries cannot gain authority.
+
+For queues shared across workspaces, the signer must still be an owner of the **ticket's workspace**,
+and that workspace must declare in `settings.repos` the repository whose canonical remote the queue uses.
+An owner of a different workspace sharing the same remote has no authority over this ticket's landing.
+Both conditions are enforced at enqueue and rechecked at merge/push time. The demo repository declarations
+and landing remotes agree; no authority is inferred solely from sharing a remote.
+
+When mandates become functional, a `via: mandate` signature for main is valid only if its issuer is still
+an owner of the ticket's workspace at merge time, with the same declared-repository requirement.
+The current mock accepts only person signatures.

@@ -1,3 +1,5 @@
+import { defaultTarget, normTarget, isMain } from '@/api/land'
+import { remoteIdentity } from '@/api/repos'
 import { addonActive } from '@/api/addons'
 import type { AddonDecision } from '@/api/types'
 import type { MockStore } from '../store'
@@ -12,8 +14,6 @@ import {
   blockOf,
   branchOf,
   mergedNow,
-  normTarget,
-  isMain,
   queueFor,
   remoteOf,
   resolve,
@@ -21,6 +21,7 @@ import {
   step,
   type Attempt,
   type Check,
+  type Entry,
   type LandState,
   type Need,
   type Queue,
@@ -43,7 +44,6 @@ import { fmtClock, fmtWhen } from '@/lib/time'
 
 const STEP_MS = 3000
 const MAX_STEPS = 40
-const TARGET_RE = /^[A-Za-z0-9._/-]{1,80}$/
 const MAX_TARGETS = 10
 const scriptId = (ws: string) => `land:${ws}`
 
@@ -110,7 +110,8 @@ function ticketPanel(c: Ctx, state: LandState, key: string): Node | null {
   const res = lastResolution(state, key)
   const voided = res && (!merged || merged.n < res.attempt) && t.gates.verify.state !== 'approved'
   const remote = remoteOf(c.store, key)
-  const target = state.settings.targets[0] ?? 'develop'
+  const targets = state.settings.targets.map((t) => normTarget(t, state.settings.remote_names)).filter((t): t is string => t !== null)
+  const target = defaultTarget(targets)
   const queued = state.queues.flatMap((q) => q.entries.map((e, i) => ({ q, e, pos: i + 1 }))).find((x) => x.e.ticket === key)
   const children: Node[] = []
   const kv = (pairs: { label: string; value: string | number; mono?: boolean }[]) => children.push({ type: 'kv', pairs })
@@ -177,8 +178,11 @@ function ticketPanel(c: Ctx, state: LandState, key: string): Node | null {
       { label: 'State', value: 'Not queued' },
       { label: 'Queue', value: `${repo(remote)} → ${target}` },
     ])
-    if (approved(c.store, key)) children.push({ type: 'button', label: 'Add to the landing queue', action: isMain(target) ? 'enqueue_main' : 'enqueue', variant: 'primary', ...(isMain(target) ? { args: { target: 'main', commit: signedSource(c.store, key) } } : {}) })
-    else children.push({ type: 'markdown', text: 'Enters the queue after the verdict: only approved tickets land.' })
+    if (approved(c.store, key)) {
+      for (const choice of [target, ...targets.filter((t) => t !== target)].filter(Boolean)) {
+        children.push({ type: 'button', label: targets.length === 1 ? 'Add to the landing queue' : `Land on ${choice}`, action: isMain(choice) ? 'enqueue_main' : 'enqueue', variant: choice === target ? 'primary' : 'secondary', args: { target: choice, ...(isMain(choice) ? { commit: signedSource(c.store, key) } : {}) } })
+      }
+    } else children.push({ type: 'markdown', text: 'Enters the queue after the verdict: only approved tickets land.' })
   }
   return { type: 'stack', children }
 }
@@ -275,7 +279,7 @@ function historyRows(c: Ctx, state: LandState) {
       target_sha: a.target_sha,
       candidate: a.candidate_sha,
       checks: checksLine(a),
-      outcome: a.outcome === 'failed' ? `failed: ${a.reason === 'conflict' ? 'conflict' : a.reason === 'timeout' ? 'timed out' : a.reason === 'owner_required' ? 'owner signature required' : 'red checks'}` : a.outcome === 'requeued' ? 'requeued: target moved' : (a.outcome ?? 'checking'),
+      outcome: a.outcome === 'failed' ? `failed: ${a.reason === 'conflict' ? 'conflict' : a.reason === 'timeout' ? 'timed out' : a.reason === 'owner_required' ? 'owner signature required' : a.reason === 'invalid_target' ? 'invalid target' : 'red checks'}` : a.outcome === 'requeued' ? 'requeued: target moved' : (a.outcome ?? 'checking'),
       when: when(c, a.ended ?? a.started),
       has_checks: a.checks.length > 0,
     }))
@@ -427,29 +431,31 @@ function startWorker(store: MockStore, ws: string) {
   store.sim.play(scriptId(ws), steps)
 }
 
-function parseTargets(raw: unknown): string[] | string {
-  const list = Array.isArray(raw) ? raw : typeof raw === 'string' ? raw.split(',') : null
+function parseTargets(raw: unknown, remoteNames: string[] = []): string[] | string {
+  const list = Array.isArray(raw) ? raw : typeof raw === 'string' ? raw.split(/, */) : null
   if (!list) return 'Write the allowed targets, separated by commas.'
   const out: string[] = []
   for (const x of list) {
-    const t = typeof x === 'string' ? normTarget(x) : ''
-    if (!t) continue
-    if (!TARGET_RE.test(t)) return `"${String(x).slice(0, 40)}" is not a branch name.`
+    if (x === '') continue
+    const t = typeof x === 'string' ? normTarget(x, remoteNames) : null
+    if (!t) return `"${String(x).slice(0, 40)}" is not a branch name.`
     if (!out.includes(t)) out.push(t)
   }
   if (out.length > MAX_TARGETS) return `At most ${MAX_TARGETS} targets.`
   return out
 }
 
-function enqueue({ state: s0, store, ws, viewer, ticket, body }: AddonCtx, signed = false): ReturnType<AddonActionFn> {
+function enqueue({ state: s0, store, ws, viewer, ticket, body, onSigned }: AddonCtx, signed = false): ReturnType<AddonActionFn> {
   const state = asLand(s0)
   const c = { store, ws, viewer }
-  const target = normTarget(state.settings.targets[0] ?? '')
+  const target = normTarget(typeof body.target === 'string' ? body.target : defaultTarget(state.settings.targets), state.settings.remote_names)
+  if (signed && (target !== 'main' || body.target !== 'main' || !ticket || body.commit !== signedSource(store, ticket))) return conflict('land.changed', 'The landing target or commit changed. Reopen and sign again.')
+  if (!target || !state.settings.targets.includes(target)) return conflict('land.no_target', 'Choose an allowed landing target.')
   if (isMain(target)) {
     if (store.roleIn(ws, viewer) !== 'owner') return refusal(403, 'land.owner_required', 'Only an owner may land on main.')
+    if (!ticket || !Object.values(store.workspaceOf(ticket)?.repos ?? {}).some((repo) => repo.remote && remoteIdentity(repo.remote) === remoteOf(store, ticket))) return refusal(403, 'land.owner_required', 'The ticket workspace must declare the landing repository.')
     if (!signed || body.confirmed !== true) return conflict('confirm.required', 'Landing on main needs an owner signature.')
   }
-  if (signed && (target !== 'main' || body.target !== 'main' || !ticket || body.commit !== signedSource(store, ticket))) return conflict('land.changed', 'The landing target or commit changed. Reopen and sign again.')
   if (!ticket || !canSeeTicket(c, ticket)) return notFound('Open a ticket to queue it.')
   if (!approved(store, ticket)) {
     const t = store.ticket(ticket)
@@ -464,15 +470,21 @@ function enqueue({ state: s0, store, ws, viewer, ticket, body }: AddonCtx, signe
   const need = openNeedOf(state, ticket)
   if (need) return conflict('land.needs_open', `${ticket} failed attempt #${need.attempt} (${need.kind === 'conflict' ? 'conflict' : 'red checks'}) and that is not answered yet.`, 'Answer it on Today (re-run, resolve or take it off the queue).')
   if (mergedNow(state, ticket)) return conflict('land.already_merged', `${ticket} already landed.`, 'A new change needs a new ticket.')
-  if (!target) return conflict('land.no_target', 'No landing target is allowed.', 'An owner allows one in Settings > Addons > Landing.')
   const q = queueFor(state, remoteOf(store, ticket), target)
-  q.entries.push({ ticket, branch: branchOf(store, ticket), source_sha: signedSource(store, ticket), enqueued: store.now(), by: viewer })
-  store.append(ticket, { type: 'land.queued', actor: ADDON, remote: q.remote, target: q.target, source_sha: signedSource(store, ticket), by: viewer })
+  const event = store.append(ticket, { type: 'land.queued', actor: ADDON, remote: q.remote, target: q.target, source_sha: signedSource(store, ticket), by: viewer })
+  const entry: Entry = { id: event.id, ticket, branch: branchOf(store, ticket), source_sha: signedSource(store, ticket), enqueued: store.now(), by: viewer }
+  q.entries.push(entry)
+  if (signed) onSigned?.((id) => {
+    entry.signed_event = id
+    const bindings = state.signature_entries ??= {}
+    bindings[id] = event.id
+  })
   return { ok: true, message: `${ticket} queued #${q.entries.length} on ${queueName(q)}.`, changed: true }
 }
 
 registerAddon({
   name: 'land',
+  stateVersion: 2,
   seed: (ws, store) => seedLand(ws, store),
   seedBusy: (ws, store, rng) => seedLandBusy(ws, store, rng),
   seedLog: (state) => landSeedLog(asLand(state)),
@@ -481,14 +493,14 @@ registerAddon({
   actions: {
     save_settings({ state: s0, body }) {
       const state = asLand(s0)
-      const targets = parseTargets(body.targets)
+      const targets = parseTargets(body.targets, state.settings.remote_names)
       if (typeof targets === 'string') return invalid(targets)
       const busy = state.queues.find((q) => q.entries.length > 0 && state.settings.targets.includes(q.target) && !targets.includes(q.target))
       if (busy) return conflict('land.target_busy', `${busy.target} still has tickets waiting in ${queueName(busy)}.`, 'Take them off the queue first, or keep the target.')
       const minutes = body.timeout_minutes === undefined ? state.settings.timeout_minutes : Number(body.timeout_minutes)
       if (!Number.isInteger(minutes) || minutes < 5 || minutes > 120) return invalid('The check timeout is 5 to 120 minutes.')
       const same = targets.join() === state.settings.targets.join() && minutes === state.settings.timeout_minutes
-      state.settings = { targets, timeout_minutes: minutes }
+      state.settings = { ...state.settings, targets, timeout_minutes: minutes }
       return { ok: true, message: same ? 'Nothing changed.' : 'Landing settings saved.', changed: !same }
     },
 
@@ -539,7 +551,7 @@ registerAddon({
           const a = attemptOf(state, need.attempt)
           const q = a ? queueOfAttempt(state, a) : undefined
           if (!a || !q || !approved(store, need.ticket)) return conflict('land.not_approved', `${need.ticket} is no longer approved; it needs a new verdict before it runs again.`, 'Give the verdict, then add it to the queue.')
-          if (isMain(q.target)) return store.roleIn(ws, viewer) !== 'owner'
+          if (isMain(q.target, state.settings.remote_names)) return store.roleIn(ws, viewer) !== 'owner'
             ? refusal(403, 'land.owner_required', 'Only an owner may land on main.')
             : conflict('land.signature_required', 'Take this failed landing off the queue, then sign a new landing on main.')
           need.open = false

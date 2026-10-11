@@ -69,7 +69,7 @@ describe('normal day seed', () => {
   it('one queue per remote and target; DEMO-0052 is checked now (#14); history #9–#13 with the rebuilt candidate and the conflict', async () => {
     const s = setup()
     const st = land(s)
-    expect(st.queues.map((q) => `${q.remote} → ${q.target}`).sort()).toEqual(['github.com/acme-energy/billing-api → develop', 'github.com/acme-energy/energy-dbt → develop'])
+    expect(st.queues.map((q) => `${q.remote} → ${q.target}`).sort()).toEqual(['git.example.test/acme/billing-api → develop', 'github.com/acme-energy/energy-dbt → develop'])
     const cur = attemptOf(st, st.worker.current)!
     expect(cur).toMatchObject({ n: 14, ticket: 'DEMO-0052', outcome: null, rebase: 'clean', timeout_at: '2026-10-09T11:50:00Z' })
     expect(cur.checks.map((c) => `${c.level}:${c.result}`)).toEqual(['T2:pass', 'CI:running'])
@@ -85,7 +85,7 @@ describe('normal day seed', () => {
     expect(st.attempts[4].target_sha).not.toBe(st.attempts[3].target_sha)
     const v = await view(s)
     expect(v.cards).toMatchObject({ 'DEMO-0052': 'checking', 'DEMO-0053': 'back to review' })
-    expect(v.workerAlert.title).toBe('Worker: checking DEMO-0052 (attempt #14) on github.com/acme-energy/billing-api → develop')
+    expect(v.workerAlert.title).toBe('Worker: checking DEMO-0052 (attempt #14) on git.example.test/acme/billing-api → develop')
     expect(text(v.body)).toContain('1 from another workspace on this machine')
     // Raw lists never leave the store: only the filtered, derived view does.
     expect(v.attempts).toBeUndefined()
@@ -354,7 +354,7 @@ describe('queue actions and settings', () => {
 
   it('owners can allow main (D33); aliases normalised; names checked; a busy target is kept', async () => {
     const s = setup()
-    for (const t of ['main', 'refs/heads/main', 'origin/main', 'Main', 'refs/remotes/origin/MAIN']) {
+    for (const t of ['main', 'refs/heads/main', 'origin/main', 'Main', 'refs/remotes/origin/MAIN', 'refs/heads/refs/heads/main', 'origin/refs/heads/main', 'heads/main', 'remotes/origin/main']) {
       expect(await run(s, 'save_settings', { targets: `develop, ${t}` })).toMatchObject({ ok: true })
       expect(land(s).settings.targets).toEqual(['develop', 'main'])
     }
@@ -416,6 +416,105 @@ describe('queue actions and settings', () => {
     expect(q.head).toBe(head)
   })
 
+  const invalidTargets = ['main/', '/main', 'main.', 'HEAD', ' main', 'main.lock', 'ｍain', 'mаin', 'main\u200b', 'refs/heads//main', 'refs/tags/main', 'tags/main', 'a//b', 'a..b', 'a@{b', 'a b', 'a~b', 'a^b', 'a:b', 'a?b', 'a*b', 'a[b', 'a\\b', '-main', '.main', 'a/.b', 'a.lock/b', 'a\n'];
+  it.each(invalidTargets)('rejects invalid settings target %j', async (target) => {
+    const s = setup()
+    expect((await refused(run(s, 'save_settings', { targets: ['develop', target] }))).code).toBe('validation')
+  })
+
+  it.each([...invalidTargets, 'refs/heads/refs/heads/main', 'origin/refs/heads/main', 'heads/main', 'remotes/origin/main', 'MAIN'])('worker refuses unsigned target %j', async (target) => {
+    const s = await mainReady()
+    await run(s, 'enqueue', { ticket: 'DEMO-0041', target: 'develop' })
+    step(s.store, land(s))
+    const a = land(s).attempts.at(-1)!
+    const q = land(s).queues.find((q) => q.id === a.queue)!
+    const head = q.head
+    a.target = target
+    recordMerge(s.store, land(s), a)
+    expect(a.outcome).toBe('failed')
+    expect(q.head).toBe(head)
+  })
+
+  it('normalises configured remote names in settings and the worker', async () => {
+    const s = await mainReady()
+    land(s).settings.remote_names = ['company']
+    await run(s, 'save_settings', { targets: ['company/refs/remotes/company/MAIN', 'develop'] })
+    expect(land(s).settings.targets).toEqual(['main', 'develop'])
+    await run(s, 'enqueue', { ticket: 'DEMO-0041', target: 'develop' })
+    step(s.store, land(s))
+    const a = land(s).attempts.at(-1)!
+    a.target = 'company/heads/main'
+    recordMerge(s.store, land(s), a)
+    expect(a.outcome).toBe('failed')
+  })
+
+  it('binds the exact signature to one entry, even for the same ticket and commit', async () => {
+    const s = await mainReady()
+    await run(s, 'enqueue_main', signedMain(s))
+    const q = land(s).queues.find((q) => q.target === 'main')!
+    const old = q.entries[0].signed_event
+    expect(old).toBe(s.store.wsEventsOf(s.ws).at(-1)!.id)
+    await run(s, 'dequeue', { ticket: 'DEMO-0041' })
+    await run(s, 'enqueue_main', signedMain(s))
+    expect(q.entries[0].signed_event).not.toBe(old)
+    q.entries[0].signed_event = old
+    drain(s)
+    expect(land(s).attempts.at(-1)).toMatchObject({ outcome: 'failed', reason: 'owner_required' })
+  })
+
+  it('consumes a signature once even if the same entry is replayed after a merge', async () => {
+    const s = await mainReady()
+    await run(s, 'enqueue_main', signedMain(s))
+    const q = land(s).queues.find((q) => q.target === 'main')!
+    const entry = structuredClone(q.entries[0])
+    drain(s)
+    expect(land(s).attempts.at(-1)!.outcome).toBe('merged')
+    q.entries.push(entry)
+    const replay = { ...land(s).attempts.at(-1)!, outcome: null }
+    const head = q.head
+    recordMerge(s.store, land(s), replay)
+    expect(replay).toMatchObject({ outcome: 'failed', reason: 'owner_required' })
+    expect(q.head).toBe(head)
+  })
+
+  it('requires the ticket workspace to declare the remote at enqueue too', async () => {
+    const s = await mainReady()
+    s.store.workspaces.find((w) => w.id === s.ws)!.repos = {}
+    expect((await refused(run(s, 'enqueue_main', signedMain(s)))).code).toBe('land.owner_required')
+    expect(land(s).queues.flatMap((q) => q.entries)).toHaveLength(0)
+  })
+
+  it.each(['other workspace owner', 'repo removed'])('refuses main when authority changes: %s', async (change) => {
+    const s = await mainReady()
+    await run(s, 'enqueue_main', signedMain(s))
+    const ws = s.store.workspaces.find((w) => w.id === s.ws)!
+    if (change === 'repo removed') ws.repos = {}
+    else {
+      const other = s.store.workspaces.find((w) => w.id !== s.ws)!
+      other.repos = structuredClone(ws.repos)
+      other.members.push({ ...ws.members.find((m) => m.person === 'p_sev')!, role: 'owner' })
+      ws.members.find((m) => m.person === 'p_sev')!.role = 'member'
+    }
+    drain(s)
+    expect(land(s).attempts.at(-1)).toMatchObject({ outcome: 'failed', reason: 'owner_required' })
+  })
+
+  it.each([undefined, 'develop'])('members can select develop with main first (target %s)', async (target) => {
+    const s = await mainReady()
+    s.store.workspaces.find((w) => w.id === s.ws)!.members.find((m) => m.person === 'p_sev')!.role = 'member'
+    const choices = (await panel(s, 'DEMO-0041')).children.filter((node) => node.type === 'button')
+    expect(choices[0]).toMatchObject({ action: 'enqueue', variant: 'primary', args: { target: 'develop' } })
+    expect(choices[1]).toMatchObject({ action: 'enqueue_main', args: { target: 'main', commit: signedMain(s).commit } })
+    await run(s, 'enqueue', { ticket: 'DEMO-0041', ...(target ? { target } : {}) })
+    drain(s)
+    expect(land(s).attempts.at(-1)).toMatchObject({ target: 'develop', outcome: 'merged' })
+  })
+
+  it('refuses a target outside allowed targets', async () => {
+    const s = await mainReady()
+    expect((await refused(run(s, 'enqueue', { ticket: 'DEMO-0041', target: 'release' }))).code).toBe('land.no_target')
+  })
+
   it('viewers read the tabs but cannot queue; open_checks hands out the CI link', async () => {
     const s = setup('p_tom')
     expect((await refused(run(s, 'enqueue', { ticket: 'DEMO-0052' }))).status).toBe(403)
@@ -424,7 +523,7 @@ describe('queue actions and settings', () => {
     expect((v.body as unknown as { tabs: { id: string }[] }).tabs.map((t) => t.id)).toEqual(['queues', 'needs', 'history'])
     expect(text(v.body)).toContain('"columns"')
     expect((await refused(run(s, 'open_checks', { n: 13 }))).code).toBe('not_found') // a conflict ran no checks
-    expect(((await run(s, 'open_checks', { n: 14 })) as { url: string }).url).toMatch(/^https:\/\/github\.com\/acme-energy\/billing-api\/actions\/runs\/\d+$/)
+    expect(((await run(s, 'open_checks', { n: 14 })) as { url: string }).url).toMatch(/^https:\/\/git\.example\.test\/acme\/billing-api\/actions\/runs\/\d+$/)
     expect((await refused(run(s, 'open_checks', { n: 999 }))).code).toBe('not_found')
   })
 })

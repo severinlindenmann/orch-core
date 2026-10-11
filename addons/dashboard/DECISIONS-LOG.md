@@ -1211,3 +1211,18 @@ entries, including N9's universal main refusal and the seeded mandate refusal. O
 
 **Revert:** Restore the normalised main refusal in settings, enqueue and worker, remove the main signing
 action, and restore the refused mandate example and corresponding documentation/tests.
+
+
+## 2026-10-11 U8 D33 fix round — canonical refs and entry-bound authority
+
+**Decision:** Use one repeated canonicalisation/validation rule for landing targets. Offer explicit allowed
+target choices and default to the first non-main target. Bind each main entry to its exact core signature
+and unique queued event, consume it once, and require current ownership of the ticket workspace plus its
+declaration of the queue's repository. Main mandate authority must likewise be current at merge time.
+
+**Why:** The D33 security review found nested/DWIM aliases bypassing the main boundary, signatures that
+could match older entries, ambiguous authority over shared remotes, and target ordering that blocked members.
+The real worker must compare fully resolved protected refs at push time. Mandate copy now says ten decisions.
+
+**Revert:** Revert this round (including land state v2); this restores the reviewed security defects and
+first-target behavior, so main must be disabled before reverting.

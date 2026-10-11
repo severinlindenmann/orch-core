@@ -2263,7 +2263,26 @@ def test_addon_heading_keys_are_required_and_unique():
 
 
 @pytest.mark.parametrize(
-    "branch", ["-x", "HEAD", "@", "refs/heads/main", "a\u202eb", "a\u0085b", "a\u200db", "a\U00013439b"]
+    "branch",
+    [
+        "-x",
+        "HEAD",
+        "@",
+        "refs/heads/main",
+        "a\u202eb",
+        "a\u0085b",
+        "a\u200db",
+        "a\U00013439b",
+        *[
+            f"a{c}b"
+            for c in (
+                " \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006"
+                "\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000"
+            )
+        ],
+        "a\u0378b",
+        "a\U0001e6c0b",
+    ],
 )
 def test_shared_branch_rule(branch):
     bad(
@@ -2272,3 +2291,10 @@ def test_shared_branch_rule(branch):
         "/set/repos/repo/default_branch",
     )
     bad("ticket", mut(ex.TICKET, lambda o: o["links"]["branches"].update(repo=branch)), "/links/branches/repo")
+
+
+def test_branch_assignment_uses_unicode_16():
+    # U+1C89 was assigned in 16.0; older runtime Unicode tables must not refuse it.
+    branch = "a\u1c89b"
+    V("ticket", mut(ex.TICKET, lambda o: o["links"]["branches"].update(repo=branch)))
+    V("event", ev("settings.changed", set={"repos": {"repo": {"path": "../repo", "default_branch": branch}}}))

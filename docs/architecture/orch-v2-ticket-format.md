@@ -267,8 +267,9 @@ on. Defaults for a new ticket:
 
 The `spike` type covers the format's "spike / investigation" column; there is no separate `investigation` type.
 A repo name in `links` matches `^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$`; a branch name is a valid git ref name,
-with no leading `-`, no `refs/` prefix, not exactly `HEAD` or `@`, and no Unicode category Cc or Cf character
-(control or bidi characters). This shared rule applies to `links.branches` and `default_branch`.
+with no leading `-`, no `refs/` prefix, not exactly `HEAD` or `@`, and no Unicode category Cc, Cf, Zs, Zl, Zp or Cn character
+(controls, format characters, separators or unassigned code points, using the bundled Unicode 16.0 data).
+This shared rule applies to `links.branches` and `default_branch`.
 
 ## 4. `body.md`
 

@@ -907,7 +907,26 @@ def refusal_order_scenarios() -> list[dict[str, Any]]:
         ("remote", "https://git@host/a"),
         *[
             ("default_branch", b)
-            for b in ("bad..branch", "-x", "HEAD", "@", "refs/heads/main", "a\u202eb", "a\u0085b", "a\u200db")
+            for b in (
+                "bad..branch",
+                "-x",
+                "HEAD",
+                "@",
+                "refs/heads/main",
+                "a\u202eb",
+                "a\u0085b",
+                "a\u200db",
+                "a\u00a0b",
+                "a\u1680b",
+                "a\u2000b",
+                "a\u2028b",
+                "a\u2029b",
+                "a\u202fb",
+                "a\u205fb",
+                "a\u3000b",
+                "a\u0378b",
+                "a\U0001e6c0b",
+            )
         ],
     ]:
         w.ev(

@@ -284,9 +284,22 @@ def suspicious(text: str) -> list[Suspect]:
 _LANGLE = "\u27e8"
 
 
-def has_control_or_format(text: str) -> bool:
-    """Whether text contains Unicode 16.0 Cc or Cf (the shared F1 branch-name restriction)."""
-    return any(ord(c) < 0x20 or 0x7F <= ord(c) <= 0x9F or _in_ranges(_CF_STARTS, _CF, ord(c)) for c in text)
+# Unicode 16.0 General_Category Zs, Zl and Zp (all separators).
+_SEPARATORS = frozenset(
+    " \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000"
+)
+
+
+def has_forbidden_branch_character(text: str) -> bool:
+    """Whether text contains Unicode 16.0 Cc, Cf, Zs, Zl, Zp or Cn (F1's shared branch rule)."""
+    return any(
+        ord(c) < 0x20
+        or 0x7F <= ord(c) <= 0x9F
+        or _in_ranges(_CF_STARTS, _CF, ord(c))
+        or c in _SEPARATORS
+        or not _assigned(ord(c))
+        for c in text
+    )
 
 
 def show_invisible(text: str) -> str:

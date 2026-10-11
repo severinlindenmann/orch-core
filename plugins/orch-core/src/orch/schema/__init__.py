@@ -47,7 +47,7 @@ from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT202012
 
 from orch.canon import TextError, canonical_policy, check_text, dumps, loads_strict, suspicious
-from orch.canon.text import has_control_or_format
+from orch.canon.text import has_forbidden_branch_character
 
 __all__ = ["LOG_TYPES", "SchemaError", "event_types", "load", "names", "parse_json", "validate", "validate_settings"]
 
@@ -276,7 +276,7 @@ def _check_ref(name: str, path: tuple[Any, ...], ref: str) -> None:
         not _valid_ref(ref)
         or branch.startswith(("-", "refs/"))
         or branch in ("HEAD", "@")
-        or has_control_or_format(branch)
+        or has_forbidden_branch_character(branch)
     ):
         raise SchemaError(name, _pointer(path), f"{ref!r} is not a valid git ref name")
 

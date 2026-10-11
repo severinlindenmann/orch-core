@@ -11,6 +11,7 @@ from orch.host.frames import (
     BODY_TIMEOUT_SECONDS,
     MAX_FRAME,
     MAX_INT,
+    MAX_VALUES,
     Connection,
     Decoder,
     FrameError,
@@ -724,3 +725,31 @@ def test_feed_is_eager_even_when_result_is_not_consumed():
     assert isinstance(result, list) and len(result) == 2
     assert result[0] == REQ and result[1].code == "frame.invalid"
     assert decoder.failed
+
+
+@pytest.mark.parametrize("value", [{}, [], "", 0, True, None])
+def test_json_value_cap(value):
+    # The root object and its array count; member names do not.
+    frame = {"values": [value] * (MAX_VALUES - 2)}
+    assert decode(encode(frame)[4:]) == frame
+    frame["values"].append(value)
+    assert_error("frame.invalid", decode, json.dumps(frame).encode())
+    assert_error("frame.invalid", encode, frame)
+    assert_error("frame.invalid", validate_envelope, frame)
+
+
+def test_value_budget_is_shared_across_nested_containers():
+    frame = {"a": [None] * (MAX_VALUES // 2), "b": [None] * (MAX_VALUES // 2)}
+    assert_error("frame.invalid", decode, json.dumps(frame).encode())
+
+
+def test_two_mib_of_empty_objects_is_fatal():
+    count = (MAX_FRAME - 7) // 3
+    body = b'{"x":[' + b"{}," * (count - 1) + b"{}]}"
+    body += b" " * (MAX_FRAME - len(body))
+    assert len(body) == MAX_FRAME
+    assert_error("frame.invalid", decode, body)
+    decoder = Decoder()
+    frames = decoder.feed(wire(body) + encode(REQ))
+    assert len(frames) == 1 and frames[0].code == "frame.invalid"
+    assert frames[0].fate == "close" and decoder.failed

@@ -1,4 +1,4 @@
-"""Socket contract v1.3: framing, envelope validation and connection bookkeeping.
+"""Socket contract v1.3.1: framing, envelope validation and connection bookkeeping.
 
 No I/O lives here. Decoder.feed returns objects or terminal FrameErrors in
 wire order; validate_envelope checks their shape, and Connection receives client
@@ -19,6 +19,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 
 MAX_FRAME = 2_097_152
 MAX_DEPTH = 32
+MAX_VALUES = 65_536
 MAX_INT = 2**53 - 1
 MAX_INFLIGHT = 8
 BODY_TIMEOUT_SECONDS = 10
@@ -94,7 +95,12 @@ def _pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def _check_json(value: Any, depth: int = 0) -> None:
+def _check_json(value: Any, depth: int = 0, *, remaining: list[int] | None = None) -> None:
+    if remaining is None:
+        remaining = [MAX_VALUES]
+    remaining[0] -= 1
+    if remaining[0] < 0:
+        raise FrameError(message="JSON exceeds 65,536 values")
     if type(value) in (dict, list):
         depth += 1
         if depth > MAX_DEPTH:
@@ -103,11 +109,13 @@ def _check_json(value: Any, depth: int = 0) -> None:
             for key, item in value.items():
                 if type(key) is not str:
                     raise FrameError(message="Object keys must be strings")
-                _check_json(key, depth)
-                _check_json(item, depth)
+                # Member names are not JSON values, but still require valid Unicode.
+                if any(0xD800 <= ord(char) <= 0xDFFF for char in key):
+                    raise FrameError(message="Lone surrogate")
+                _check_json(item, depth, remaining=remaining)
         else:
             for item in value:
-                _check_json(item, depth)
+                _check_json(item, depth, remaining=remaining)
     elif type(value) is str:
         if any(0xD800 <= ord(char) <= 0xDFFF for char in value):
             raise FrameError(message="Lone surrogate")

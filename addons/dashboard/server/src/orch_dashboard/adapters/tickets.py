@@ -67,7 +67,7 @@ def summary(row: dict, viewer: str | None = None, mine: dict[str, list[dict]] | 
         "parent": row.get("parent"),
         "owner": row.get("owner"),
         "assignees": list(row.get("assignees", [])),
-        "claim": {"agent": claim.get("agent"), "for": None, "session": claim["session"]} if claim else None,
+        "claim": {"agent": claim.get("agent") or "", "for": "", "session": claim["session"]} if claim else None,
         "turn": turn,
         # Row counts are not served: zero, so no progress bar is drawn.
         "progress": {"tasks_done": 0, "tasks_total": 0, "ac_proven": 0, "ac_total": 0},
@@ -249,7 +249,15 @@ def document(data: dict, viewer: str | None = None, mine: dict[str, list[dict]] 
         "created_at": log[0]["at"] if log and log[0]["type"] == "ticket.created" else "",
         "updated_at": log[-1]["at"] if complete else "",
         "restricted": visibility != "workspace",
-        "branch": None,
+        "branch": {
+            "name": next(iter((doc.get("links") or {}).get("branches", {}).values()), ""),
+            "base": "",
+            "head": "",
+            "commits": [],
+            "files": 0,
+            "additions": 0,
+            "deletions": 0,
+        },
         "unavailable": NOT_SERVED,
         "log_more": data.get("log_more", False),
     }

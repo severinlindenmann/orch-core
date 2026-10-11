@@ -11,6 +11,26 @@ KIND = {
 }
 
 
+# Core's words for what each gate asks of a person; the host sends only the gate name.
+ASK = {
+    "requirements": "Approve the requirements",
+    "plan": "Approve the plan",
+    "verify": "Give a verdict",
+    "code": "Review the code",
+}
+
+
+def ask(n: dict) -> str:
+    """The line a row shows. A question's own text is the ticket's (the page reads it there); the host sends none."""
+    if n["kind"] == "approve":
+        return ASK.get(n.get("ref") or "", "Approve")
+    if n["kind"] == "no_eligible":
+        return f"No one can approve the {n.get('ref') or 'gate'} gate"
+    if n["kind"] == "question":
+        return ""
+    return n.get("detail") or ""
+
+
 def item(n: dict, titles: dict[str, str]) -> dict:
     kind = "verdict" if n["kind"] == "approve" and n.get("ref") == "verify" else KIND[n["kind"]]
     return {
@@ -18,7 +38,7 @@ def item(n: dict, titles: dict[str, str]) -> dict:
         "ticket": n.get("key") or "",
         "uid": n.get("uid"),
         "title": titles.get(n.get("uid") or "", ""),
-        "text": "" if n.get("detail") == "blocking" else n.get("detail") or "",
+        "text": ask(n),
         "ref": n.get("ref"),
         # When the need arose is not served: empty, not the ticket's update time.
         "since": "",

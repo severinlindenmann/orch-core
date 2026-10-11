@@ -1,9 +1,11 @@
-# Dashboard server — M1 live updates
+# Dashboard server — M2 reads
 
 `orch-dashboard` is the addon-local launcher and FastAPI server. It holds bearer sessions,
-never signing keys, and connects to a host as the current UID's mapped person. M0 renders a
-dark, read-only shell: workspace switcher, identity, minimal Today/needs, and paged ticket rows. M1 adds live updates over authenticated fetch-streamed SSE.
-Signing, full ticket pages, settings and board belong to later milestones.
+never signing keys, and connects to a host as the current UID's mapped person. M0 is the shell
+(workspace switcher, identity), M1 adds live updates over authenticated fetch-streamed SSE, M2
+(#305 reads) serves the mockup's real pages from the host: Today, board, Tickets list, ticket
+page (sections, tasks, questions, evidence, log) and the Changes tab. Everything is read only.
+Signing (hand-off), settings, artifacts, agents and addon pages belong to later milestones.
 
 ## Install and build
 
@@ -113,7 +115,7 @@ revokes it and clears other tabs holding that same token. Restart ends every ses
 restore may see a launch fragment before scrub or restore sessionStorage; expired/revoked
 credentials are useless. Same-UID processes are outside this browser threat model.
 
-Closed M1 route surface:
+Closed route surface (M1, extended by M2):
 
 | Route | Purpose |
 | --- | --- |
@@ -127,8 +129,12 @@ Closed M1 route surface:
 | `GET /api/workspaces` | UUIDs, names, members, needs counts, availability |
 | `GET /api/me` | Person identity per available workspace |
 | `GET /api/w/<uuid>/identity` | Workspace identity plus whoami/tier |
-| `GET /api/w/<uuid>/today` | Minimal needs projection |
-| `GET /api/w/<uuid>/tickets?limit=50&sort=updated&page=…` | Typed query, limit 1–200, next-page cursor |
+| `GET /api/w/<uuid>/today` | `needs` + `ticket.query` as the UI's Today document (needs with ticket titles, counts, tickets in progress) |
+| `GET /api/w/<uuid>/tickets`, `/board` | `ticket.query` rows as the UI's ticket summaries, one page per call: `status` (repeated; `backlog open in-progress testing done`, never `closed`), `type`, `label` (repeated), `assignee`, `owner`, `parent`, `epic`, `q`, `needs_me`, `sort` (`updated priority key`), `order`, `limit` 1–200, `page` (host token, 10 min). Default statuses are the five open ones |
+| `GET /api/w/<uuid>/tickets/<key>` | `ticket.get` as the UI's ticket document (a closed ticket answers 409 `ticket.closed`) |
+| `GET /api/w/<uuid>/tickets/<key>/events?since=&limit=` | The structured log (`seq`, `type`, `at`, `actor`, host `summary`) as UI events |
+| `GET /api/w/<uuid>/tickets/<key>/changes?repo=&context=` | `diff` as the UI's changes: files with their hunks, sources per repo, `truncated`; 409 `observe.unavailable` when the branch moved since the host observed it |
+| `GET /api/w/<uuid>/tickets/<key>/artifacts/<name>` | An evidence file, read in chunks up to 3 chunks, digest checked (409 `artifact.mismatch`), returned as text data or flagged binary |
 
 Every API path, including unknown ones, needs a bearer token. Authenticated unknown routes
 return 404 (unsupported methods 405). Unsafe requests require exact Origin; `Sec-Fetch-Site`
@@ -181,9 +187,13 @@ Dev stub boundaries for stream A:
 - Visibility transitions discovered in one poll are coalesced. Losing multiple tickets in one
   position resets rather than inventing duplicate `.g` IDs. Exact per-event visibility history,
   restored-history epochs and durable cursors remain real-host acceptance work.
-- The stub implements the M0 query subset (limit/page/sort), not the full v1.3 filter/paging
-  surface or `ticket.get`, `grant.list`, `human.*`. Unsupported operations are unadvertised
-  and return `unknown_command`. Host capability checks gate calls.
+- M2: the stub serves `ticket.query` with every v1.3.1 filter, sort and snapshot paging (the first
+  page fixes the rows; tokens are bound to the query and expire after 10 minutes), `ticket.get`
+  (document, structured log, question states, evidence digests per criterion, gate states),
+  `needs` (own person only), `diff` (git state of the dev workspace, refused unless the branch head
+  equals the head the host observed, D58) and `artifact.get` (chunked, digest checked). It still
+  has no `grant.list` or `human.*`. Unsupported operations are unadvertised and return
+  `unknown_command`. Host capability checks gate calls.
 - `workspace.show` epoch/WSK fingerprint and device auth are unavailable in P1 and remain
   explicitly unavailable; the adapter never reads private keys to construct display values.
 - Local registry container compatibility still needs stream A confirmation. Control welcome

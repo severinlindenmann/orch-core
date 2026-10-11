@@ -51,7 +51,11 @@ def test_document_is_adapted_to_the_ui_type(client, token, stub, rich):
     assert answered["by"] == stub.person and answered["at"].startswith("2026-")
     assert doc["gates"]["requirements"]["state"] == "pending" and doc["gates"]["code"]["required"] is False
     assert doc["gates"]["requirements"]["hash"] and doc["body"]["requirements"] == "req"
-    assert doc["links"]["branches"] == {"code": "feat/one"} and doc["branch"] is None
+    assert (
+        doc["links"]["branches"] == {"code": "feat/one"}
+        and doc["branch"]["head"] == ""
+        and doc["branch"]["name"] == "feat/one"
+    )
     assert doc["restricted"] is False and doc["verdict"] is None
     assert "verdict" in doc["unavailable"]  # named, not invented
     assert doc["turn"]["who"] == stub.person

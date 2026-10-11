@@ -61,6 +61,28 @@ def test_shell_p1_reads(client, token, stub):
 
 
 @pytest.mark.parametrize(
+    "path",
+    ["/w/DEMO", "/w/DEMO/today", "/w/DEMO/board", "/w/DEMO/tickets", "/w/DEMO/ticket/DEMO-0001", "/ticket/DEMO-0001"],
+)
+def test_app_addresses_open_the_app(client, path):
+    res = client.get(path)
+    assert res.status_code == 200 and "main-hash.js" in res.text and res.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/w/DEMO/settings/general",
+        "/w/DEMO/ticket/x",
+        "/w/DEMO/ticket/DEMO-1/extra",
+        "/ticket/DEMO-1/x",
+    ],
+)
+def test_other_addresses_are_not_the_app(client, path):
+    assert client.get(path).status_code == 404
+
+
+@pytest.mark.parametrize(
     "query", ["limit=201", "limit=0", "sort=status", "file=/etc/passwd", "op=show", "page=../../x", "status=closed"]
 )
 def test_typed_route_inputs(client, token, stub, query):

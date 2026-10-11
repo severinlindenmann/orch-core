@@ -12,7 +12,7 @@ def test_adapter_maps_real_data_only(stub):
     assert "lines" not in result
     # What the row does not carry stays empty: no progress, no restricted flag, no answers.
     assert result["progress"] == {"tasks_done": 0, "tasks_total": 0, "ac_proven": 0, "ac_total": 0}
-    assert result["claim"] == {"agent": "claude-code", "for": None, "session": "s_1"}
+    assert result["claim"] == {"agent": "claude-code", "for": "", "session": "s_1"}
     assert result["turn"]["who"] == "agent:claude-code"
 
 

@@ -176,7 +176,7 @@ def test_observe_refuses_remote_mismatch_and_accepts_ascii_case_match(ws, cli):
     ws.git("remote", "set-url", "origin", "ssh://git@HOST/DECLARED.git")
     assert cli("show", "1").code == 0
     event = next(e for e in ws.events("1") if e["type"] == "branch.pushed")
-    assert event["repo_id"] == "https://host/DECLARED"
+    assert event["repo_id"] == "https://host/declared"
     assert event["ref"] == "refs/heads/feat/x"
 
     # Even an unchanged commit must not bypass a later identity mismatch.
@@ -189,3 +189,35 @@ def test_observe_refuses_remote_mismatch_and_accepts_ascii_case_match(ws, cli):
         store.close()
     assert len(problems) == 1 and "repo.remote_mismatch" in problems[0]
     assert len([e for e in ws.events("1") if e["type"] == "branch.pushed"]) == 1
+
+
+def test_observe_records_new_push_after_remote_case_change(ws, cli):
+    path = ws.repo()
+    ws.git("remote", "add", "origin", "https://host/Declared.git")
+    claimed(cli)
+    assert cli("set", "1", LINKS).code == 0
+    assert cli("show", "1").code == 0
+    first = next(e for e in ws.events("1") if e["type"] == "branch.pushed")
+    # Pin the same identity after its first observation, retaining the original entry's case.
+    ws.store.append(
+        ws.person_event(
+            ws.owner,
+            "workspace",
+            "settings.changed",
+            set={"repos": {"proj": {"path": str(path), "remote": "https://host/declared"}}},
+        ),
+        log="workspace",
+    )
+    ws.git("remote", "set-url", "origin", "https://HOST/DECLARED.git")
+    (path / "impl.txt").write_text("changed\n")
+    ws.git("commit", "-qam", "two")
+    head = ws.git("rev-parse", "HEAD")
+    assert cli("show", "1").code == 0
+    events = [e for e in ws.events("1") if e["type"] == "branch.pushed"]
+    assert len(events) == 2
+    assert events[-1]["before"] == {"repo_id": first["repo_id"], "ref": first["ref"], "sha": first["sha"]}
+    assert events[-1]["repo_id"] == "https://host/declared"
+    assert events[-1]["sha"] == head
+    assert ws.view("1").source_list[0]["sha"] == head
+    assert cli("show", "1").code == 0
+    assert len([e for e in ws.events("1") if e["type"] == "branch.pushed"]) == 2

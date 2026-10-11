@@ -155,11 +155,11 @@ def observe(store: Any, ref: str, problems: list[str] | None = None) -> list[dic
             if problems is not None:
                 problems.append(f"{name}: repo.remote_mismatch; its code cannot be observed")
             continue
-        wanted.append((name, ref_name, sha, rid))
+        wanted.append((name, ref_name, sha, declared if declared is not None else rid))
     out = []
     for name, ref_name, sha, rid in wanted:
         view = store.ticket(ref) or view
-        cur = next((dict(e) for e in view.source_list if e["repo"] == rid), None)
+        cur = next((dict(e) for e in view.source_list if canon.same_repo_identity(e["repo"], rid)), None)
         if cur is not None and cur["ref"] == ref_name and cur["sha"] == sha:
             continue
         before = {"repo_id": cur["repo"], "ref": cur["ref"], "sha": cur["sha"]} if cur else None

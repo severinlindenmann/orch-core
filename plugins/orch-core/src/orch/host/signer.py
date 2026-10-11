@@ -243,6 +243,17 @@ def _shape(
         _refuse("the events do not share one roster_v")
 
 
+#: kind -> (required keys, allowed keys) of ``Material`` (§0.8.1)
+_MATERIAL_KEYS = {
+    "gate": (
+        {"kind", "gate", "input", "policy", "texts", "ticket", "review"},
+        {"kind", "gate", "input", "policy", "texts", "ticket", "review"},
+    ),
+    "question": ({"kind", "ticket", "question", "review"}, {"kind", "ticket", "question", "review"}),
+    "payload": ({"kind", "ticket", "review"}, {"kind", "ticket", "review", "texts", "before"}),
+}
+
+
 def _hashes(prepared: Mapping[str, Any], workspace_id: str) -> None:
     """Recompute every hash an event binds from what the material shows."""
     material = prepared.get("material")
@@ -250,6 +261,9 @@ def _hashes(prepared: Mapping[str, Any], workspace_id: str) -> None:
         _refuse("no material")
     events, log, op = prepared["events"], prepared["log"], prepared["op"]
     kind = material.get("kind")
+    keys = _MATERIAL_KEYS.get(kind)
+    if keys is None or not keys[0] <= set(material) <= keys[1]:  # fail closed: a key outside the Material schema
+        _refuse(f"material has keys outside the {kind!r} schema")
     ticket = material.get("ticket")
     if ticket is not None and (not isinstance(ticket, dict) or set(ticket) != {"key", "uid"}):
         _refuse("material.ticket is malformed")

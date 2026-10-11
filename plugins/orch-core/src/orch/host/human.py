@@ -117,6 +117,12 @@ def _iso(epoch: float) -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(epoch)))
 
 
+def _expired(record: dict[str, Any], when: str = "") -> str:
+    """The expiry message with the request's actual lifetime (10 minutes; a grant's: 4)."""
+    minutes = round((record["expires"] - record["created"]) / 60)
+    return f"the request expired{' ' + when if when else ''}: it lives {minutes} minutes after prepare"
+
+
 def _validate(op: str, args: Any) -> None:
     errors = sorted(_VALIDATORS[op].iter_errors(args), key=lambda e: list(map(str, e.path)))
     if errors:
@@ -423,7 +429,7 @@ class HumanOps:
             return self._view(record)
         state = record["state"]
         if state == "expired":
-            raise HostError("human.request_expired", "the request is older than 10 minutes")
+            raise HostError("human.request_expired", _expired(record))
         if state in ("submitted", "cancelled"):
             raise HostError("human.request_state", f"the request is {state}")
         if state == "bound":
@@ -565,7 +571,7 @@ class HumanOps:
             raise _Stored(HostError.stored(outcome["error"]))
         if record["state"] != "bound":
             if record["state"] == "expired":
-                raise HostError("human.request_expired", "the request is older than 10 minutes")
+                raise HostError("human.request_expired", _expired(record))
             raise HostError("human.request_state", f"the request is {record['state']}, not bound to a signer")
         prepared = record["prepared"]["events"]
         if len(events) != len(prepared):
@@ -581,7 +587,7 @@ class HumanOps:
         with store.locked():
             record = requests.expire(record)  # expiry is checked again at append, under the lock
             if record["state"] == "expired":
-                raise HostError("human.request_expired", "the request expired before it was appended")
+                raise HostError("human.request_expired", _expired(record, "before it was appended"))
             git = service.capabilities().with_principal(call.principal).git
             self._judge(store, record, events, git)
             log = record["prepared"]["log"]

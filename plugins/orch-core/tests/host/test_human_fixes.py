@@ -90,7 +90,6 @@ def test_escape_characters_in_payload_values_are_shown_as_visible_markers(human,
     for esc in ESCAPES:
         bad = copy.deepcopy(p)
         bad["events"][0]["text"] = "before" + esc + "after"
-        bad["material"]["origin_note"] = "ignored"  # material keys the signer does not render are harmless
         reseal(bad)
         human.check(bad)
         text = signer.render(bad, REG)
@@ -263,7 +262,8 @@ def test_gate_material_carries_every_bound_section_text_and_the_policy(human, se
     for change, match in (
         (lambda b: b["material"]["texts"].update(requirements="something else"), "does not hash"),
         (lambda b: b["material"]["texts"].pop("context"), "every section"),
-        (lambda b: b["material"].pop("policy"), "no policy"),
+        (lambda b: b["material"].pop("policy"), "outside"),  # a required key: the schema check comes first
+        (lambda b: b["material"].update(policy="not a policy"), "no policy"),
         (lambda b: b["material"]["policy"].update(count=2), "policy hash"),
     ):
         bad = copy.deepcopy(p)
@@ -542,3 +542,34 @@ def test_prepare_ignores_opts_idem_and_creates_a_new_request_each_time(human, se
     a = human.prepare("log", {"ref": key, "text": "x"}, idem=idem)
     b = human.prepare("log", {"ref": key, "text": "x"}, idem=idem)
     assert a["request"]["id"] != b["request"]["id"]
+
+
+def test_a_material_key_outside_the_schema_is_refused(human, served):
+    _, key = human.ticket()
+    ready(human, key)
+    human.agent("ask", {"ref": key, "text": "q?", "options": ["a"]})
+    for op, args in (
+        ("log", {"ref": key, "text": "x"}),
+        ("approve", {"ref": key, "gate": "requirements"}),
+        ("answer", {"ref": key, "question": "Q1", "option": "a"}),
+    ):
+        p = human.prepare(op, args)
+        human.check(p)
+        bad = copy.deepcopy(p)
+        bad["material"]["note"] = "SAFE: nothing changes"
+        refused(human, reseal(bad), "outside")
+        if op == "approve":
+            bad = copy.deepcopy(p)
+            bad["material"].pop("texts")
+            refused(human, reseal(bad), "outside")
+
+
+def test_the_expiry_error_names_the_requests_lifetime(human, served):
+    _, key = human.ticket()
+    g = human.prepare("grant", {"hours": 1})
+    p = human.prepare("log", {"ref": key, "text": "x"})
+    tick(served, 601)
+    for prepared, minutes in ((g, 4), (p, 10)):
+        res = human.submit_res(prepared["request"]["id"], human.sign(prepared).events)
+        assert err(res) == "human.request_expired"
+        assert f"it lives {minutes} minutes" in res["error"]["message"]

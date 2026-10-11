@@ -1,9 +1,9 @@
-# Dashboard server — M0
+# Dashboard server — M1 live updates
 
 `orch-dashboard` is the addon-local launcher and FastAPI server. It holds bearer sessions,
 never signing keys, and connects to a host as the current UID's mapped person. M0 renders a
-dark, read-only shell: workspace switcher, identity, minimal Today/needs, and paged ticket rows.
-Signing, full ticket pages, settings, board and browser live updates belong to later milestones.
+dark, read-only shell: workspace switcher, identity, minimal Today/needs, and paged ticket rows. M1 adds live updates over authenticated fetch-streamed SSE.
+Signing, full ticket pages, settings and board belong to later milestones.
 
 ## Install and build
 
@@ -54,7 +54,8 @@ workspace prepared by the dev-kit). The terminal handles its signing factors.
    The stub creates a 0600 registry only if none exists. An existing registry must already
    contain the exact mapping. It never overwrites or adopts real registry entries. It opens
    `<state>/run/control/host.sock` and `<state>/run/<uuid>/host.sock`. Keep Unix socket paths
-   short (under 100 UTF-8 bytes). `ORCH_RUN_DIR` can point to a shorter private run directory.
+   short (under 100 UTF-8 bytes). `ORCH_RUN_DIR` must be a short **real directory**, with no symlink aliases; for the stub it
+   must remain inside the marked dev state (for example `/tmp/orch-m1/run`).
 4. In another terminal, launch the server and browser:
 
    ```sh
@@ -69,7 +70,9 @@ workspace prepared by the dev-kit). The terminal handles its signing factors.
 
    `serve` runs in the foreground if preferred. `open` starts or locates one server per OS
    user and opens the browser only after verifying an HMAC proof on its actual bound port.
-   Launch URLs/tokens are never printed. `orch dashboard` is the intended host CLI integration;
+   Launch URLs/tokens are not printed by default. If the browser cannot open the redirect file,
+   use `uv run orch-dashboard open --print-url` in an interactive terminal. The opt-in link
+   is single-use and expires after 30 seconds; redirected output is refused. `orch dashboard` is the intended host CLI integration;
    M0 deliberately adds no command to `plugins/orch-core`.
 5. For UI development start Vite in another terminal:
 
@@ -110,7 +113,7 @@ revokes it and clears other tabs holding that same token. Restart ends every ses
 restore may see a launch fragment before scrub or restore sessionStorage; expired/revoked
 credentials are useless. Same-UID processes are outside this browser threat model.
 
-Closed M0 route surface:
+Closed M1 route surface:
 
 | Route | Purpose |
 | --- | --- |
@@ -118,6 +121,8 @@ Closed M0 route surface:
 | `GET /auth/probe?n=…` | Public HMAC only |
 | `POST /auth/session` | Code exchange; exact Origin/JSON, 1 KiB, 10 failed exchanges/minute |
 | `POST /auth/logout` | Bearer and exact Origin |
+| `GET /api/events?ws=<uuid>` | Bearer SSE; optional `Last-Event-ID`, no replay buffer |
+| `GET /api/w/<uuid>/head` | Snapshot cursor for polling fallback |
 | `GET /api/session` | Features per workspace and union |
 | `GET /api/workspaces` | UUIDs, names, members, needs counts, availability |
 | `GET /api/me` | Person identity per available workspace |
@@ -131,35 +136,58 @@ when present must say same-origin. Foreign/null Origin is refused on reads too. 
 carry strict CSP, nosniff and no-referrer; API/auth are no-store. Validation errors never
 reflect submitted bodies. The launcher disables access logs. No request body exceeds 1 MiB.
 
-The launcher opens a private 0600 HTML redirect file inside the 0700 dashboard state
-folder. Browser process arguments contain only its file URL, never the launch code.
+The launcher opens a private 0600 HTML redirect file inside an owned 0700
+`$XDG_RUNTIME_DIR/orch-dashboard` directory when available, otherwise the 0700 dashboard state
+folder. Startup removes owned regular `launch-*.html` files older than 60 seconds from both
+locations; it does not follow symlinks. Browser process arguments contain only its file URL, never the launch code.
 The server deletes the redirect after a successful exchange or after 60 seconds.
 Failed exchanges share a per-minute budget; a valid code always bypasses that budget.
 
-## Contract v1 seams and M0 limits
+## Live updates and contract v1.3.1
 
-- v1 does not define `host.list`'s output container or the control socket welcome's workspace
-  and peer.person. The stub uses `{workspaces:[{id,mapped:true}]}` and its sole workspace's
-  person welcome on control. These assumptions are isolated in `gateway.py`/`devhost` for
-  stream A to confirm; control requires own UID, workspace connections require full pins.
-- `workspace.show` fields epoch/WSK fingerprint and device auth are unavailable in the P1
-  view: the stub returns null/"not available", never guesses hashes or reads private keys
-  to build display values. `created_at` is unavailable too.
-- M0's typed projections use `Pick` of `src/api/types.ts` where supported, plus explicit
-  nullable fields. They do not synthesize mock progress, turn, question counts or timestamps.
-  Needs retains `no_eligible`, `acknowledge` and `addon`, which the old mock union cannot
-  represent; approve maps to approval (verify to verdict). `closed` remains closed.
-- P1 lacks a person-read Context. The dev-only query wrapper sets its own local Call's
-  principal and uses P1 verified views/model needs. Its registry reads are allowlisted
-  (`list`, `addon.list`); P1 `list` conservatively returns workspace-visible tickets only.
-  All UI reads use the person-aware `ticket.query` wrapper. No global monkeypatch or second
-  ticket model. Neither `human.*` nor agent writes are available.
-- Stub query supports the M0 subset (limit/page/sort). Stub subscriptions poll verified
-  store state and conservatively emit v1 invalidation when it changes; they do not pretend
-  to supply the real host's durable journal replay. Browser live updates are M1.
-- The socket client serializes requests (within v1's eight-inflight limit), buffers bounded
-  interleaved events, preserves error envelopes, supports cancel/outcome lookup, and requires
-  a caller-owned idem on writes. It never retries a write. Missing hosts stay visible.
+One socket subscription per active workspace is shared by all tabs. The server reads
+`ticket.query` then `needs`, subscribes to `workspace`, `tickets`, `needs` after the earlier
+snapshot cursor, and sends `ready`. The browser enables workspace reads after `ready`.
+Reset, overflow, restart or a lost upstream connection takes new snapshots and reopens;
+browsers receive `resync`. Item deduplication uses `id`, not `jpos` (an event and a needs
+notification can share a position). The last tab leaving closes the upstream subscription.
+
+SSE uses an Authorization bearer header through fetch, never a query-string token or
+EventSource. Each workspace has instance-scoped increasing IDs. A tab reconnects with its
+own `Last-Event-ID`; a mismatch gets one resync, without replay. Queues hold 256 messages;
+overflow replaces queued messages with resync and ends the stream. Sessions have a cap of
+16 streams, 15-second heartbeat comments, and logout/expiry interrupts blocked sends too.
+Every drained batch rechecks membership, addon policy and current ticket visibility using
+paged host reads. Only a known-ticket `gone` bypasses ticket visibility. Membership loss
+sends `revoked`. The browser cancels and removes affected cached details and strips hidden
+rows before refetch; production currently has no ticket-detail or hand-off view to close.
+
+`useLiveUpdates` applies the design's per-item invalidation table with workspace UUID keys.
+Reconnect delays are 1, 2, 5 and then 10 seconds; the third consecutive failure also starts
+the 10-second head poll. A recovered stream stops polling. Poll cursor changes invalidate workspace queries. Mock Vite/test
+transport has no stream hook and keeps its existing behavior.
+
+The socket client accepts v1.3.1 strict frames (including the 65,536-value limit), null control
+workspace and control peer, and the defined `host.list` person mapping. Trusted local pins
+still select paths, never the `socket` string returned by a host. New human operation shapes
+are supported by the client only; no human operation or write is exposed by the stub/server.
+
+Dev stub boundaries for stream A:
+
+- Polls the P1 verified store every 200 ms while subscribed and projects metadata-only items.
+  Opaque cursors are in-memory and scoped to the stub workspace/person instance; a restart or
+  history change resets. More than 256 pending items/256 KiB ends with overflow. Old/out-of-scope
+  cursors answer `sub.reset`. It is a development adapter, not the durable real-host journal.
+- Visibility transitions discovered in one poll are coalesced. Losing multiple tickets in one
+  position resets rather than inventing duplicate `.g` IDs. Exact per-event visibility history,
+  restored-history epochs and durable cursors remain real-host acceptance work.
+- The stub implements the M0 query subset (limit/page/sort), not the full v1.3 filter/paging
+  surface or `ticket.get`, `grant.list`, `human.*`. Unsupported operations are unadvertised
+  and return `unknown_command`. Host capability checks gate calls.
+- `workspace.show` epoch/WSK fingerprint and device auth are unavailable in P1 and remain
+  explicitly unavailable; the adapter never reads private keys to construct display values.
+- Local registry container compatibility still needs stream A confirmation. Control welcome
+  and `host.list` output now follow §0.8.3; the former M0 discovery-shape assumption is removed.
 
 ## Checks
 

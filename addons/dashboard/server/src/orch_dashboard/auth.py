@@ -59,7 +59,7 @@ class Auth:
             self.sessions[token] = now, now
             return {"token": token, "expires_at": datetime.fromtimestamp(now + 86400, UTC).isoformat()}, 200
 
-    def valid(self, token):
+    def valid(self, token, touch=True):
         with self.lock:
             now = self.clock()
             # Bound retained state even if expired tabs never return.
@@ -71,7 +71,8 @@ class Auth:
             if token not in self.sessions:
                 return False
             born, _ = self.sessions[token]
-            self.sessions[token] = born, now
+            if touch:
+                self.sessions[token] = born, now
             return True
 
     def logout(self, token):

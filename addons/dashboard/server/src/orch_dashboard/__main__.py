@@ -19,6 +19,7 @@ import urllib.parse
 import urllib.request
 import webbrowser
 from contextlib import contextmanager
+from pathlib import Path
 
 import uvicorn
 
@@ -83,6 +84,27 @@ def stale_socket(path):
     path.unlink()
 
 
+def redirect_directory(fallback):
+    runtime = os.environ.get("XDG_RUNTIME_DIR", "")
+    if runtime.startswith("/"):
+        try:
+            with private_directory(Path(runtime)):
+                target = Path(runtime) / "orch-dashboard"
+                with private_directory(target):
+                    return target
+        except (OSError, RuntimeError):
+            pass
+    return fallback
+
+
+def sweep_redirects(directory, now=None):
+    now = time.time() if now is None else now
+    for path in directory.glob("launch-*.html"):
+        st = path.lstat()
+        if stat.S_ISREG(st.st_mode) and st.st_uid == os.getuid() and now - st.st_mtime >= 60:
+            path.unlink(missing_ok=True)
+
+
 def serve(lock_held=False):
     directory = state_dir() / "dashboard"
     with private_directory(directory) as fd:
@@ -96,7 +118,11 @@ def _serve(directory, lock_fd=None):
     # For a child, its launcher holds the startup lock until ctl.sock answers.
     ctl_path = directory / "ctl.sock"
     stale_socket(ctl_path)
-    auth = Auth(directory=directory)
+    redirects = redirect_directory(directory)
+    sweep_redirects(directory)
+    if redirects != directory:
+        sweep_redirects(redirects)
+    auth = Auth(directory=redirects)
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.bind(("127.0.0.1", 0))
     listener.listen(128)
@@ -177,7 +203,7 @@ def verify_probe(launch, fetch=None):
         raise RuntimeError("dashboard port ownership proof failed; browser was not opened")
 
 
-def open_dashboard(path="/"):
+def open_dashboard(path="/", print_url=False):
     path = safe_path(path)
     directory = state_dir() / "dashboard"
     with private_directory(directory) as fd, locked(fd):
@@ -215,6 +241,13 @@ def open_dashboard(path="/"):
             time.sleep(0.05)
     fragment = urllib.parse.urlencode({"launch": launch["code"], "to": path})
     url = f"http://127.0.0.1:{launch['port']}/#{fragment}"
+    if print_url:
+        if not sys.stdout.isatty():
+            raise RuntimeError("--print-url requires a terminal")
+        print("Single-use dashboard link; expires in 30 s.")
+        print(url)
+        return
+    directory = redirect_directory(directory)
     redirect = Auth(directory=directory).redirect_path(launch["code"])
     with private_directory(directory) as directory_fd:
         fd = os.open(redirect.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory_fd)
@@ -224,7 +257,7 @@ def open_dashboard(path="/"):
                 file.write(
                     '<!doctype html><meta name="referrer" content="no-referrer">'
                     f'<meta http-equiv="refresh" content="0;url={html.escape(url, quote=True)}">'
-                    f'<script>location.replace({json.dumps(url)});</script>'
+                    f"<script>location.replace({json.dumps(url)});</script>"
                 )
             webbrowser.open(redirect.resolve().as_uri())
         except BaseException:
@@ -236,6 +269,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("command", nargs="?", choices=["open", "launch", "serve", "stop"], default="open")
     parser.add_argument("path", nargs="?", default="/")
+    parser.add_argument("--print-url", action="store_true", help="print a single-use 30 s URL to a terminal")
     parser.add_argument("--stop", action="store_true")
     parser.add_argument("--launcher-lock", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -244,7 +278,7 @@ def main():
     elif args.command == "serve":
         serve(args.launcher_lock)
     else:
-        open_dashboard(args.path)
+        open_dashboard(args.path, print_url=args.print_url)
 
 
 if __name__ == "__main__":

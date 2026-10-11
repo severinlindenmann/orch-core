@@ -8,7 +8,14 @@ class HostError(Exception):
 
 
 def fail(code: str, message: str | None = None, exit: int = 9):
-    return HostError({"code": code, "message": message or code, "retryable": code == "host.unavailable"}, exit)
+    return HostError(
+        {
+            "code": code,
+            "message": message or code,
+            "retryable": code in {"host.unavailable", "sub.reset", "quota.host", "timeout", "host.restarting"},
+        },
+        exit,
+    )
 
 
 def status(code: str) -> int:
@@ -32,6 +39,9 @@ def status(code: str) -> int:
         "lock.busy",
         "outcome.unknown",
         "cancelled",
+        "quota.host",
+        "timeout",
+        "workspace.unavailable",
     }:
         return 503
     if code in {"internal", "not_implemented"}:

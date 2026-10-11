@@ -230,3 +230,45 @@ def test_launcher_opens_only_after_probe(tmp_path, monkeypatch, capsys):
     with pytest.raises(RuntimeError):
         launcher.open_dashboard()
     assert not opened
+
+
+def test_runtime_redirect_and_stale_sweep(tmp_path, monkeypatch):
+    import os
+
+    from orch_dashboard.__main__ import redirect_directory, sweep_redirects
+
+    runtime = tmp_path / "runtime"
+    runtime.mkdir(mode=0o700)
+    fallback = tmp_path / "state"
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime))
+    directory = redirect_directory(fallback)
+    assert directory == runtime / "orch-dashboard"
+    assert directory.stat().st_mode & 0o777 == 0o700
+    stale = directory / "launch-old.html"
+    stale.write_text("old")
+    os.utime(stale, (0, 0))
+    fresh = directory / "launch-new.html"
+    fresh.touch()
+    symlink = directory / "launch-link.html"
+    symlink.symlink_to(fresh)
+    sweep_redirects(directory)
+    assert not stale.exists() and fresh.exists() and symlink.is_symlink()
+    runtime.chmod(0o755)
+    assert redirect_directory(fallback) == fallback
+
+
+def test_print_url_terminal_only(tmp_path, monkeypatch, capsys):
+    from orch_dashboard import __main__ as launcher
+
+    monkeypatch.setenv("ORCH_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(launcher, "control", lambda *_: {"port": PORT, "code": "demo-not-a-real-code"})
+    monkeypatch.setattr(launcher, "verify_probe", lambda _: None)
+    monkeypatch.setattr(launcher.sys.stdout, "isatty", lambda: False)
+    with pytest.raises(RuntimeError, match="terminal"):
+        launcher.open_dashboard(print_url=True)
+    assert not capsys.readouterr().out
+    monkeypatch.setattr(launcher.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(launcher.webbrowser, "open", lambda _: pytest.fail("must print only"))
+    launcher.open_dashboard(print_url=True)
+    printed = capsys.readouterr().out
+    assert "Single-use" in printed and "30 s" in printed and "#launch=" in printed

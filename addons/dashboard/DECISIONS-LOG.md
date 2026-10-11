@@ -1259,3 +1259,22 @@ The real worker must compare fully resolved protected refs at push time. Mandate
 
 **Revert:** Revert this round (including land state v2); this restores the reviewed security defects and
 first-target behavior, so main must be disabled before reverting.
+
+## 2026-10-11 — P2 M1 live updates on host contract v1.3.1
+
+**Decision:** Share one snapshot-backed host subscription per active workspace; fan out
+metadata through bearer-authenticated fetch SSE at `/api/events?ws=<uuid>`. Deduplicate by
+item ID, use per-tab last IDs without server replay, and recheck authorization at queue drain.
+Reset takes new snapshots and reopens. Bound tab queues and session connections; stop blocked
+sends on logout. Production reads wait for ready, with polling fallback after three failures.
+Prefer private XDG runtime redirects and offer a terminal-only, opt-in single-use launch URL.
+
+**Why:** v1.3.1 allows several item IDs at one journal position and defines control discovery.
+Snapshot cursors close the read/subscribe gap. Queue-time checks alone miss visibility changes
+while a tab is slow. Header auth preserves the existing origin/session boundary. The Linux
+fallback makes launches usable when browser confinement prevents reading the state directory.
+
+**Revert:** Remove the production live hook and the two HTTP live routes, retaining read-only
+HTTP polling. Remove `live.py` and stub subscription support together; keep strict framing and
+control discovery aligned with the host. Remove `--print-url` and XDG selection independently
+if launcher behavior is rolled back. No core file or signing boundary changes are required.

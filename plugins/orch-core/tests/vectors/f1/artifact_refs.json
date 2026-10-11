@@ -100,5 +100,6 @@
    "text": "((artifact:a.png))"
   }
  ],
+ "pins": "the artifact reference regex (5.8)",
  "regex": "\\(artifact:([A-Za-z0-9][A-Za-z0-9._-]{0,127})\\)"
 }

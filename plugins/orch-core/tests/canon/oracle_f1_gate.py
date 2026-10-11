@@ -254,27 +254,29 @@ def _addon_sections(t: dict[str, Any], gate: str) -> list[str]:
 
 
 def _addon_fields(t: dict[str, Any], gate: str) -> dict[str, dict[str, Any]]:
+    """The fields whose ``binds`` name the gate, read from ``ticket.json`` (the values outlive the addon's grant)."""
     out: dict[str, dict[str, Any]] = {}
     for name, a in sorted(t["addons"].items()):
         for field, gates in sorted(a["binds"]["fields"].items()):
             if gate in gates:
-                out.setdefault(name, {})[field] = a["values"].get(field)
+                out.setdefault(name, {})[field] = t["addon_values"].get(name, {}).get(field)
     return out
 
 
+def observe(t: dict[str, Any], name: str, sha: str, branch: str) -> None:
+    """The host's ``branch.pushed`` for repo ``name``: its identity comes from the raw remote (§5.7), the ref from the
+    branch; the entry replaces the previous observation of that repo."""
+    t["heads"][name] = {"repo_id": repo_identity(t["remotes"][name], name), "ref": "refs/heads/" + branch, "sha": sha}
+
+
 def source_list(t: dict[str, Any]) -> list[dict[str, str]]:
-    """§5.7: one entry per linked repo with an observed head, sorted by repo identity."""
-    out = []
-    for name in t["links"]["repos"]:
-        head = t["heads"].get(name)
-        if head is not None:
-            out.append(
-                {
-                    "repo": repo_identity(t["remotes"][name], name),
-                    "ref": "refs/heads/" + t["links"]["branches"][name],
-                    "sha": head,
-                }
-            )
+    """§5.7: the projection of the latest ``branch.pushed`` per repo name in ``links.repos``, sorted by identity.
+    Nothing but an observation changes it: editing ``links`` alone does not."""
+    out = [
+        {"repo": h["repo_id"], "ref": h["ref"], "sha": h["sha"]}
+        for name in t["links"]["repos"]
+        if (h := t["heads"].get(name)) is not None
+    ]
     return sorted(out, key=lambda x: x["repo"])
 
 
@@ -350,7 +352,7 @@ def sample_ticket() -> dict[str, Any]:
     sha = "b7e1f02c" * 5
     ws_pol = copy.deepcopy(DEFAULT_POLICIES)
     ws_pol["code"]["applies"] = "all"
-    return {
+    t = {
         "workspace_id": W,
         "uid": UID,
         "type": "feature",
@@ -382,7 +384,7 @@ def sample_ticket() -> dict[str, Any]:
             "external": [],
         },
         "remotes": {"acme-energy-dbt": "git@github.com:acme/energy-dbt.git"},
-        "heads": {"acme-energy-dbt": sha},
+        "heads": {},
         "artifacts": {
             "mock.png": {"kind": "screenshot", "bytes_hex": b"png bytes".hex(), "ac": "AC1", "task": None},
             "run.log": {"kind": "log", "bytes_hex": b"log".hex(), "ac": None, "task": "T2"},
@@ -397,9 +399,9 @@ def sample_ticket() -> dict[str, Any]:
                     "fields": {"points": ["plan"]},
                     "sections": [{"id": "estimate.notes", "gate": ["plan"], "types": ["feature", "bug"]}],
                 },
-                "values": {"points": 5},
             }
         },
+        "addon_values": {"estimate": {"points": 5}},
         "ws_policies": ws_pol,
         "overrides": {
             "plan": {"approvers": ["owner"], "count": 2, "not": ["reviewers"], "applies": "all", "independent": True}
@@ -410,3 +412,5 @@ def sample_ticket() -> dict[str, Any]:
             "verify": {"gen": 1, "counting": ["01J9ZR0000000000000000000E"]},
         },
     }
+    observe(t, "acme-energy-dbt", sha, "feat/DEMO-0043")
+    return t

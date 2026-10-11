@@ -151,6 +151,7 @@
   "https://a.b-c.d/x",
   "local:my-repo"
  ],
+ "pins": "[shared, extended] canonical identities, refused forms, and `mapping`: raw remote -> canonical (5.7)",
  "refused": [
   "https://github.com./acme/x",
   "https://github.com:0443/acme/x",

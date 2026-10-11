@@ -316,6 +316,27 @@ class World:
                     self.roster_v += 1
         return e
 
+    def raw(self, log: str, e: dict[str, Any], *, expect: str = "ok", note: str | None = None) -> dict[str, Any]:
+        """Append an event built by hand (a replay of an earlier signed event): the host signs it as the next line."""
+        events = self.logs.setdefault(log, [])
+        e = {
+            **copy.deepcopy(e),
+            "seq": len(events) + 1,
+            "prev": head(events[-1]) if events else None,
+            "at": self.tick(),
+        }
+        if log != "workspace":
+            e["ws_seq"] = self.ws_len()
+        e.pop("host_sig", None)
+        e["host_sig"] = b64u(sign(self.wsk, host_bytes(self.workspace_id, log, e)))
+        step: dict[str, Any] = {"log": log, "event": e, "expect": expect}
+        if note:
+            step["note"] = note
+        self.steps.append(step)
+        if expect == "ok":
+            events.append(e)
+        return e
+
     # -- the common prefix
     def genesis_event(self, owner: str = "sev", dev: str = "sev1", **kw: Any) -> dict[str, Any]:
         self.dev[owner] = dev

@@ -276,5 +276,6 @@
    "type": "feature"
   }
  ],
- "note": "section text = what lies between a heading and the next one, leading and trailing LF removed; a heading is '## ' at column 0 outside a fence; the hash is of that text only (ticket-format 4, 5.6)"
+ "note": "section text = what lies between a heading and the next one, leading and trailing LF removed; a heading is '## ' at column 0 outside a fence; the hash is of that text only (ticket-format 4, 5.6)",
+ "pins": "body.md heading and fence rules, LF trimming, what is hashed (4, 5.6)"
 }

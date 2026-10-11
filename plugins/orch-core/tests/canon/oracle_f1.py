@@ -280,7 +280,7 @@ def gate_vectors() -> dict[str, Any]:
     two_repos["links"]["repos"] = ["acme-energy-dbt", "acme-infra"]
     two_repos["links"]["branches"]["acme-infra"] = "feat/DEMO-0043"
     two_repos["remotes"]["acme-infra"] = "ssh://git@git.example.com:2222/Acme/infra.git"
-    two_repos["heads"]["acme-infra"] = "a1" * 20
+    g.observe(two_repos, "acme-infra", "a1" * 20, "feat/DEMO-0043")
     cases = [
         ("requirements", "requirements", base),
         ("plan", "plan", base),
@@ -537,6 +537,19 @@ def artifact_refs_vectors() -> dict[str, Any]:
 
 
 def all_vectors() -> dict[str, dict[str, Any]]:
+    out = _vectors()
+    for name, v in out.items():  # every file that is new or changed states what it pins (the unchanged shared files
+        if not INDEX[name].startswith("[shared, unchanged]") and "pins" not in v:  # stay byte-identical to the relay's)
+            out[name] = {"pins": INDEX[name], **v}
+    out["index.json"] = {
+        "files": {k: INDEX[k] for k in sorted(INDEX)},
+        "note": "files tagged [shared] are copied verbatim into orch-relay; the others are core-only",
+    }
+    return out
+
+
+def _vectors() -> dict[str, dict[str, Any]]:
+    from . import oracle_f1_flow as fl
     from . import oracle_f1_signed as sg
 
     return {
@@ -548,6 +561,17 @@ def all_vectors() -> dict[str, dict[str, Any]]:
         "revocation.json": {"pins": "device.revoked and recovery", "scenarios": sg.revocation_scenarios()},
         "checkpoint.json": sg.checkpoint_vector(),
         "restore.json": {"pins": "workspace restore and revocations", "scenarios": sg.restore_scenarios()},
+        "generation.json": {"pins": "the 5.7 raise table", "scenarios": fl.generation_scenarios()},
+        "status.json": {"pins": "the 5.9 status table", "scenarios": fl.status_scenarios()},
+        "questions.json": {
+            "pins": "question ids and hashes, answers, and a decision for the same qid after a restore",
+            "scenarios": fl.question_scenarios(),
+        },
+        "effective_policy.json": {
+            "pins": "the 5.7 intersection of workspace and override, a later workspace change, gate.no_eligible",
+            "cases": fl.effective_policy_cases(),
+            "scenarios": fl.effective_policy_scenarios(),
+        },
         "labels.json": {"labels": LABELS},
         "section_text.json": section_text_vectors(),
         "artifact_refs.json": artifact_refs_vectors(),
@@ -558,6 +582,38 @@ def all_vectors() -> dict[str, dict[str, Any]]:
         "chain.json": chain_vectors(),
         "repo_identity.json": repo_identity_vectors(),
     }
+
+
+INDEX: dict[str, str] = {
+    "canon.json": "[shared, unchanged] strict parse depth 16/17 and -0 -> 0 (ticket-format 11.2)",
+    "labels.json": "[shared, unchanged] the F1 domain labels (5.6), prefix-free with the protocol's",
+    "text.json": "[shared, unchanged] CRLF/CR -> LF, NFC (Unicode 16.0), refused controls, bidi and unassigned (11.3)",
+    "hashes.json": "[shared, unchanged] known answers: artifact, section, value, policy, people, question id and hash, "
+    "grant secret; refused non-NFC inputs (5.6)",
+    "chain.json": "[shared, unchanged] three chained events: heads, prev, canonical lines, signing bytes; the sig and "
+    "host_sig values in it are PLACEHOLDERS, real signatures are pinned in signatures.json, tamper.json and the "
+    "scenarios",
+    "gate_hash.json": "[shared, CHANGED] gate hash known answers; every inner hash is derived from the `ticket` each "
+    "case ships (5.6, 5.7), with real policy names, people roles and `prior`",
+    "repo_identity.json": "[shared, extended] canonical identities, refused forms, and `mapping`: raw remote -> "
+    "canonical (5.7)",
+    "section_text.json": "body.md heading and fence rules, LF trimming, what is hashed (4, 5.6)",
+    "artifact_refs.json": "the artifact reference regex (5.8)",
+    "signatures.json": "real P-256 signatures of events and host_sig, what they cover, replay refusals (5.3, 5.5)",
+    "replay.json": "model scenario: replayed or re-contexted signed events are refused with the real verifier "
+    "(5.3, 5.11)",
+    "tamper.json": "tampered chain lines of the ticket and workspace log, the seq where the chain breaks (5.5)",
+    "genesis.json": "the six genesis checks in order (5.11)",
+    "devices.json": "device.added rules: drop: and scope refusals, self-signed, stale roster_v, recovery (5.3, 5.11)",
+    "revocation.json": "device.revoked: embedded revocation as authority, reason mismatch, recovery (5.3)",
+    "checkpoint.json": "checkpoint objects, signed bytes, refusals, divergence (5.10)",
+    "restore.json": "workspace restore re-appends every PK-signed revocation (5.10)",
+    "generation.json": "the 5.7 raise table row by row, delayed approval, reverted edit, voided approvals",
+    "status.json": "the 5.9 status table, done is sticky, reopen",
+    "effective_policy.json": "the 5.7 intersection, a later workspace change, gate.no_eligible",
+    "questions.json": "question id and hash, answers, a decision for the same qid after a restore",
+    "index.json": "this list",
+}
 
 
 def render(v: dict[str, Any]) -> str:

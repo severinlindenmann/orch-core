@@ -70,6 +70,11 @@
       "text": "Model joins the seeds"
      }
     ],
+    "addon_values": {
+     "estimate": {
+      "points": 5
+     }
+    },
     "addons": {
      "estimate": {
       "binds": {
@@ -91,10 +96,7 @@
         }
        ]
       },
-      "package_sha256": "sha256:063a5af989bb48cf38d2a500c5a982e427e9e08f44d1c807277a43f08c16fe73",
-      "values": {
-       "points": 5
-      }
+      "package_sha256": "sha256:063a5af989bb48cf38d2a500c5a982e427e9e08f44d1c807277a43f08c16fe73"
      }
     },
     "artifacts": {
@@ -112,7 +114,11 @@
      }
     },
     "heads": {
-     "acme-energy-dbt": "b7e1f02cb7e1f02cb7e1f02cb7e1f02cb7e1f02c"
+     "acme-energy-dbt": {
+      "ref": "refs/heads/feat/DEMO-0043",
+      "repo_id": "https://github.com/acme/energy-dbt",
+      "sha": "b7e1f02cb7e1f02cb7e1f02cb7e1f02cb7e1f02c"
+     }
     },
     "links": {
      "branches": {
@@ -357,6 +363,11 @@
       "text": "Model joins the seeds"
      }
     ],
+    "addon_values": {
+     "estimate": {
+      "points": 5
+     }
+    },
     "addons": {
      "estimate": {
       "binds": {
@@ -378,10 +389,7 @@
         }
        ]
       },
-      "package_sha256": "sha256:063a5af989bb48cf38d2a500c5a982e427e9e08f44d1c807277a43f08c16fe73",
-      "values": {
-       "points": 5
-      }
+      "package_sha256": "sha256:063a5af989bb48cf38d2a500c5a982e427e9e08f44d1c807277a43f08c16fe73"
      }
     },
     "artifacts": {
@@ -399,7 +407,11 @@
      }
     },
     "heads": {
-     "acme-energy-dbt": "b7e1f02cb7e1f02cb7e1f02cb7e1f02cb7e1f02c"
+     "acme-energy-dbt": {
+      "ref": "refs/heads/feat/DEMO-0043",
+      "repo_id": "https://github.com/acme/energy-dbt",
+      "sha": "b7e1f02cb7e1f02cb7e1f02cb7e1f02cb7e1f02c"
+     }
     },
     "links": {
      "branches": {
@@ -661,6 +673,11 @@
       "text": "Model joins the seeds"
      }
     ],
+    "addon_values": {
+     "estimate": {
+      "points": 5
+     }
+    },
     "addons": {
      "estimate": {
       "binds": {
@@ -682,10 +699,7 @@
         }
        ]
       },
-      "package_sha256": "sha256:063a5af989bb48cf38d2a500c5a982e427e9e08f44d1c807277a43f08c16fe73",
-      "values": {
-       "points": 5
-      }
+      "package_sha256": "sha256:063a5af989bb48cf38d2a500c5a982e427e9e08f44d1c807277a43f08c16fe73"
      }
     },
     "artifacts": {
@@ -703,7 +717,11 @@
      }
     },
     "heads": {
-     "acme-energy-dbt": "b7e1f02cb7e1f02cb7e1f02cb7e1f02cb7e1f02c"
+     "acme-energy-dbt": {
+      "ref": "refs/heads/feat/DEMO-0043",
+      "repo_id": "https://github.com/acme/energy-dbt",
+      "sha": "b7e1f02cb7e1f02cb7e1f02cb7e1f02cb7e1f02c"
+     }
     },
     "links": {
      "branches": {
@@ -947,6 +965,11 @@
       "text": "Model joins the seeds"
      }
     ],
+    "addon_values": {
+     "estimate": {
+      "points": 5
+     }
+    },
     "addons": {
      "estimate": {
       "binds": {
@@ -968,10 +991,7 @@
         }
        ]
       },
-      "package_sha256": "sha256:063a5af989bb48cf38d2a500c5a982e427e9e08f44d1c807277a43f08c16fe73",
-      "values": {
-       "points": 5
-      }
+      "package_sha256": "sha256:063a5af989bb48cf38d2a500c5a982e427e9e08f44d1c807277a43f08c16fe73"
      }
     },
     "artifacts": {
@@ -989,7 +1009,11 @@
      }
     },
     "heads": {
-     "acme-energy-dbt": "b7e1f02cb7e1f02cb7e1f02cb7e1f02cb7e1f02c"
+     "acme-energy-dbt": {
+      "ref": "refs/heads/feat/DEMO-0043",
+      "repo_id": "https://github.com/acme/energy-dbt",
+      "sha": "b7e1f02cb7e1f02cb7e1f02cb7e1f02cb7e1f02c"
+     }
     },
     "links": {
      "branches": {
@@ -1251,6 +1275,11 @@
       "text": "Model joins the seeds"
      }
     ],
+    "addon_values": {
+     "estimate": {
+      "points": 5
+     }
+    },
     "addons": {
      "estimate": {
       "binds": {
@@ -1272,10 +1301,7 @@
         }
        ]
       },
-      "package_sha256": "sha256:063a5af989bb48cf38d2a500c5a982e427e9e08f44d1c807277a43f08c16fe73",
-      "values": {
-       "points": 5
-      }
+      "package_sha256": "sha256:063a5af989bb48cf38d2a500c5a982e427e9e08f44d1c807277a43f08c16fe73"
      }
     },
     "artifacts": {
@@ -1293,7 +1319,11 @@
      }
     },
     "heads": {
-     "acme-energy-dbt": "b7e1f02cb7e1f02cb7e1f02cb7e1f02cb7e1f02c"
+     "acme-energy-dbt": {
+      "ref": "refs/heads/feat/DEMO-0043",
+      "repo_id": "https://github.com/acme/energy-dbt",
+      "sha": "b7e1f02cb7e1f02cb7e1f02cb7e1f02cb7e1f02c"
+     }
     },
     "links": {
      "branches": {
@@ -1506,6 +1536,11 @@
       "text": "Model joins the seeds"
      }
     ],
+    "addon_values": {
+     "estimate": {
+      "points": 5
+     }
+    },
     "addons": {
      "estimate": {
       "binds": {
@@ -1527,10 +1562,7 @@
         }
        ]
       },
-      "package_sha256": "sha256:063a5af989bb48cf38d2a500c5a982e427e9e08f44d1c807277a43f08c16fe73",
-      "values": {
-       "points": 5
-      }
+      "package_sha256": "sha256:063a5af989bb48cf38d2a500c5a982e427e9e08f44d1c807277a43f08c16fe73"
      }
     },
     "artifacts": {
@@ -1548,7 +1580,11 @@
      }
     },
     "heads": {
-     "acme-energy-dbt": "b7e1f02cb7e1f02cb7e1f02cb7e1f02cb7e1f02c"
+     "acme-energy-dbt": {
+      "ref": "refs/heads/feat/DEMO-0043",
+      "repo_id": "https://github.com/acme/energy-dbt",
+      "sha": "b7e1f02cb7e1f02cb7e1f02cb7e1f02cb7e1f02c"
+     }
     },
     "links": {
      "branches": {
@@ -1800,6 +1836,11 @@
       "text": "Model joins the seeds"
      }
     ],
+    "addon_values": {
+     "estimate": {
+      "points": 5
+     }
+    },
     "addons": {
      "estimate": {
       "binds": {
@@ -1821,10 +1862,7 @@
         }
        ]
       },
-      "package_sha256": "sha256:063a5af989bb48cf38d2a500c5a982e427e9e08f44d1c807277a43f08c16fe73",
-      "values": {
-       "points": 5
-      }
+      "package_sha256": "sha256:063a5af989bb48cf38d2a500c5a982e427e9e08f44d1c807277a43f08c16fe73"
      }
     },
     "artifacts": {
@@ -1842,7 +1880,11 @@
      }
     },
     "heads": {
-     "acme-energy-dbt": "b7e1f02cb7e1f02cb7e1f02cb7e1f02cb7e1f02c"
+     "acme-energy-dbt": {
+      "ref": "refs/heads/feat/DEMO-0043",
+      "repo_id": "https://github.com/acme/energy-dbt",
+      "sha": "b7e1f02cb7e1f02cb7e1f02cb7e1f02cb7e1f02c"
+     }
     },
     "links": {
      "branches": {
@@ -2083,6 +2125,11 @@
       "text": "Model joins the seeds"
      }
     ],
+    "addon_values": {
+     "estimate": {
+      "points": 5
+     }
+    },
     "addons": {
      "estimate": {
       "binds": {
@@ -2104,10 +2151,7 @@
         }
        ]
       },
-      "package_sha256": "sha256:063a5af989bb48cf38d2a500c5a982e427e9e08f44d1c807277a43f08c16fe73",
-      "values": {
-       "points": 5
-      }
+      "package_sha256": "sha256:063a5af989bb48cf38d2a500c5a982e427e9e08f44d1c807277a43f08c16fe73"
      }
     },
     "artifacts": {
@@ -2125,8 +2169,16 @@
      }
     },
     "heads": {
-     "acme-energy-dbt": "b7e1f02cb7e1f02cb7e1f02cb7e1f02cb7e1f02c",
-     "acme-infra": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+     "acme-energy-dbt": {
+      "ref": "refs/heads/feat/DEMO-0043",
+      "repo_id": "https://github.com/acme/energy-dbt",
+      "sha": "b7e1f02cb7e1f02cb7e1f02cb7e1f02cb7e1f02c"
+     },
+     "acme-infra": {
+      "ref": "refs/heads/feat/DEMO-0043",
+      "repo_id": "https://git.example.com:2222/Acme/infra",
+      "sha": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+     }
     },
     "links": {
      "branches": {
@@ -2274,5 +2326,6 @@
    }
   }
  ],
- "note": "G is derived from `ticket` by the rules of ticket-format 5.6/5.7: effective policy = workspace intersect override; the people hash covers the ticket roles the policy names (plus assignees when independent); prior lists every earlier gate that applies with its first `count` counting approvals sorted; code is switched on in this workspace."
+ "note": "G is derived from `ticket` by the rules of ticket-format 5.6/5.7: effective policy = workspace intersect override; the people hash covers the ticket roles the policy names (plus assignees when independent); prior lists every earlier gate that applies with its first `count` counting approvals sorted; code is switched on in this workspace.",
+ "pins": "[shared, CHANGED] gate hash known answers; every inner hash is derived from the `ticket` each case ships (5.6, 5.7), with real policy names, people roles and `prior`"
 }

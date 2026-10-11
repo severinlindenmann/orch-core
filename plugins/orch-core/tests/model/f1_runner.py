@@ -60,25 +60,34 @@ def check_after(st: Any, after: dict[str, Any]) -> None:
             assert t.status == exp["status"], uid
         if "approved" in exp:
             assert sorted(g for g, v in t.gates.items() if v.approved) == sorted(exp["approved"]), uid
-        for g, persons in exp.get("counting", {}).items():
-            assert sorted(t.gates[g].counting) == sorted(persons), (uid, g)
         for g, h in exp.get("hash", {}).items():
             assert t.gates[g].hash == h, (uid, g)
         for g, gin in exp.get("G", {}).items():
             assert thaw(t.gates[g].input) == gin, (uid, g)
+        if "blocked" in exp:
+            assert sorted(g for g, v in t.gates.items() if v.blocked) == sorted(exp["blocked"]), uid
         if "frozen" in exp:
             assert t.frozen == exp["frozen"], uid
         if "source_list" in exp:
             assert [dict(x) for x in t.source_list] == exp["source_list"], uid
-        for g, flagged in exp.get("revoked_flag", {}).items():
-            assert sorted(
-                t.gates[g].revoked_device_flag
-                if hasattr(t.gates[g], "revoked_device_flag")
-                else t.gates[g].revoked_flag
-            ) == sorted(flagged)  # noqa: E501
+        if "counting" in exp:
+            for g in t.gates:
+                assert sorted(t.gates[g].counting) == sorted(exp["counting"].get(g, [])), (uid, g)
+        if "source_list" not in exp and "gens" in exp:
+            assert not t.source_list, uid
+        if "policy" in exp:
+            assert {g: thaw(t.gates[g].policy) for g in t.gates} == exp["policy"], uid
+        if "policy_hash" in exp:
+            assert {g: t.gates[g].policy_hash for g in exp["policy_hash"]} == exp["policy_hash"], uid
+
+
+def _gens(st: Any, uid: str) -> list[int]:
+    t = st.tickets.get(uid)
+    return [t.gates[g].gen for g in ("requirements", "plan", "verify", "code")] if t else [0, 0, 0, 0]
 
 
 def run_scenario(sc: dict[str, Any], *, validate: bool = True) -> tuple[list, dict[str, list]]:
+    prev = [0, 0, 0, 0]
     ws: list[dict[str, Any]] = []
     tl: dict[str, list[dict[str, Any]]] = {}
     for i, step in enumerate(sc["steps"]):
@@ -95,11 +104,24 @@ def run_scenario(sc: dict[str, Any], *, validate: bool = True) -> tuple[list, di
         genesis = event["type"] == "workspace.created"  # checks its own host_sig (§5.11 step 4): admitted signed
         r = admit(st, event if genesis else {k: v for k, v in event.items() if k != "host_sig"}, log=log)
         got = "ok" if not hasattr(r, "code") else r.code.value
+        if expect == "refused":  # the spec says refused, no code is pinned
+            assert got != "ok", f"{where}: admit accepted an event the vector says is refused"
+            continue
         assert got == expect, f"{where}: admit said {got}, the vector says {expect}"
         if expect == "ok":
             (ws if log == WORKSPACE else tl.setdefault(log, [])).append(event)
+            now = state_of(sc, ws, tl)
             if "after" in step:
-                check_after(state_of(sc, ws, tl), step["after"])
+                check_after(now, step["after"])
+            if "raised" in step:  # the table row: exactly these gates went up, by one
+                uid = log if log != WORKSPACE else next(iter(now.tickets))
+                got = _gens(now, uid)
+                delta = [
+                    g for g, a, b in zip(("requirements", "plan", "verify", "code"), prev, got, strict=True) if a != b
+                ]
+                assert delta == step["raised"] and all(b - a <= 1 for a, b in zip(prev, got, strict=True)), where
+            if now.tickets:
+                prev = _gens(now, next(iter(now.tickets)))
             continue
         # replay: the same refused event as the next line of the log is absent for state and reported
         ws2, tl2 = list(ws), {u: list(v) for u, v in tl.items()}

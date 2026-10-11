@@ -81,8 +81,12 @@ orchestrator/
 - `settings.repos` maps the repo names used in `links` to a working copy (absolute, or relative to the workspace
   directory), with a required `path` and optional `remote` and `default_branch` fields; there is no primary flag.
   All fields are owner-signed in the same `settings.changed` event. `remote` must already be a canonical repo
-  identity (§5.7): refuse a non-canonical value, never convert it. `default_branch` follows the same git branch
-  name rules as `links.branches`. The repo's observed identity is read from git (§5.7).
+  identity (§5.7): refuse a non-canonical value, never convert it. Under §5.11 step 0, malformed
+  repo fields give `validation.*` at append and `chain.broken` at that line on replay, stopping the log.
+  `default_branch` follows the same git branch name rules as `links.branches`. In P1 nothing decides anything
+  from `remote` or `default_branch`;
+  identity still comes from the observed `remote.origin.url` (§5.7). The planned future rule for a mismatch
+  between declared and observed remotes is `repo.remote_mismatch`.
 - When the two disagree, the events win, and the host rewrites the file and logs `projection.repaired`.
 - `keys.jsonl` has one line per key: `{"key": "DEMO-0043", "uid": "01J9ZK…", "at": "2026-10-09T09:00:00Z"}`, written
   as `cj` plus LF, nothing else. It is a projection of the `ticket.created` events and the key allocator. The next
@@ -259,7 +263,9 @@ on. Defaults for a new ticket:
 | `addons` | object, `<addon name>` → object | `{}` | validated against the addon's manifest (§8) |
 
 The `spike` type covers the format's "spike / investigation" column; there is no separate `investigation` type.
-A repo name in `links` matches `^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$`; a branch name is a valid git ref name.
+A repo name in `links` matches `^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$`; a branch name is a valid git ref name,
+with no leading `-`, no `refs/` prefix, not exactly `HEAD` or `@`, and no Unicode category Cc or Cf character
+(control or bidi characters). This shared rule applies to `links.branches` and `default_branch`.
 
 ## 4. `body.md`
 
@@ -480,7 +486,7 @@ agent; **D** an addon; **H** the host only. Types marked D58–D60 are new with 
 | `device.removed` | P | `device`; `reason?`: str | Removes the device from **this** workspace only (protocol §6.3). By the device's person or an owner. |
 | `device.revoked` | P, H | `device`; `reason`: `compromised`, `lost` or `retired`; `revocation`: signed object | The global revocation (protocol §6.2), signed by the person key, verbatim; its authority (§5.3). `reason` must equal `revocation.o.reason`, otherwise refused. Every workspace refuses the device from then on. `compromised` has the effects in §5.7. |
 | `policy.changed` | P | `gates`: {gate: policy} | The workspace defaults. |
-| `settings.changed` | P | `set`: {`grant_hours?`: int 1–24, `claim_ttl_min?`: int 15–1440, `lease_ttl_min?`: int 5–1440, `repos?`: {repo name: {`path`: str, `remote?`: canonical repo identity, `default_branch?`: branch name} or null}} | **D60** (`grant_hours`). Existing grants keep their end time. `null` removes a repo. Refused when two repos resolve to the same path. |
+| `settings.changed` | P | `set`: {`grant_hours?`: int 1–24, `claim_ttl_min?`: int 15–1440, `lease_ttl_min?`: int 5–1440, `repos?`: {repo name: {`path`: str, `remote?`: canonical repo identity, `default_branch?`: branch name} or null}} | **D60** (`grant_hours`). Existing grants keep their end time. `null` removes a repo. Refused when two repos resolve to the same path or declare the same identity (ignoring ASCII case), or a `local:` remote names another repo. |
 | `grant.issued` | P | `grant`: grant id; `scope`: `all` or `workable`; `verbs`: `"agent"` or [operation name]; `issued_at`: timestamp; `hours`: int; `expires_at`: timestamp; `secret_hash`: hash; `label?`: str | **D60** terms in §10.1 A3. Always for the signer. Readers check `\|at − issued_at\| ≤ 300 s`, `expires_at == issued_at + 3600·hours` (seconds, no leap seconds) and the role terms at the event's position. |
 | `grant.revoked` | P | `grant`; `reason?`: str | **D60.** |
 | `addon.granted` | P | `name`: addon name; `version`: str; `package_sha256`: hash; `capabilities`: [token]; `fields`: {field: {`type`, its limits, `set_by`, `gate`?}}; `sections`: [{`id`, `types`, `gate`?}]; `artifact_kinds`: [kind] | Owner only. Also enables the addon. The host derives `fields`, `sections` and `artifact_kinds` from the package's manifest (§8.1); replay never reads the manifest and checks every later addon write against these three (§8.1). The bindings of §5.7 are the entries that have `gate`. |
@@ -1463,7 +1469,8 @@ these codes; they are the stable `error.code` strings of §10.4 for these refusa
 | `grant.unknown` | §10.1 `grant.revoked` names no grant |
 | `quota.unattended` | §5.2 the unattended quota is exceeded |
 | `unattended.denied` | §5.2 an unattended event outside what unattended agents may do |
-| `settings.invalid` | §5.4.2 two repos resolve to the same path |
+| `settings.invalid` | §5.4.2 duplicate repo paths or declared identities, or a `local:` remote naming another repo |
+| `validation.event` | §5.11 step 0 malformed settings payload; replay breaks the chain at that line |
 | `addon.unknown` | §5.4.2 the addon is not granted or not enabled |
 | `addon.field_unknown` | §8.1 the field is not declared in the addon's grant |
 | `addon.value_invalid` | §8.1 the value is not valid for the declared field type and limits |
@@ -1931,7 +1938,7 @@ owner's confirmation.
 | N7 | Verify gate, verdicts and stale decisions | A verdict **is** the verify decision (`pass`/`fail`). Every gate has a **generation**, raised in every status by the table in §5.7 (at most 1 per event); decisions sign `gate_gen` and `based_on`; a stale generation is refused and never counts; `gate.invalidated` raises nothing; later gates bind the earlier gates' generations and approvals (`prior`). | agreed with Codex, modified (generation barriers) |
 | N8 | Host events | Not "only take away": `edit.external` **installs** prose. §5.12 lists the exact effect of each host event and states that a host event never approves, answers, grants, adds a member or creates a ticket. | Codex was right; changed |
 | N9 | Unattended writes | Keep A3 (`ask`, `log`, `artifact add`) and change the harness plan's H2. Unattended writes only on tickets with `visibility: workspace`; quotas per session (30 events, 20 MiB per hour) and per workspace (120 events, 100 MiB per rolling hour); `question.asked` only for new ids; artifacts without `ac`/`task`, never evidence (O6). An unattended `artifact.added` can void a pending verify approval; accepted and visible. | agreed with Codex, modified; tightened with the Opus reviewer |
-| N10 | The code gate (D59) | `not` always includes `assignees` and `independent` is always `true`, enforced by the host. Only a person's signature approves it; no `via` field in P1. In P1 turning it on moves no ticket back. In P1 only a person's signature approves it; D62 mandates may sign it from P2 (spec PR #352). | agreed with Codex |
+| N10 | The code gate (D59) | `not` always includes `assignees` and `independent` is always `true`, enforced by the host. No `via` field in P1. In P1 turning it on moves no ticket back. In P1 only a person's signature approves it; D62 mandates may sign it from P2 (spec PR #352). | agreed with Codex |
 | N11 | Addon writes | Addons hold no key; the host appends their events. `set_by` is a list of actor alternatives checked per write (`agent`, `addon`, human tokens = a signed person event). Only leaf paths can be set, so replacing `ticket.addons.<addon>` can't bypass `set_by`. Addon events never carry core authority. | agreed with Codex, modified |
 | N12 | Independence of approvers | The policy option `independent`, **off by default** for `requirements`, `plan` and `verify`, so a sole owner can approve their own agents' work; always on for `code` (D59). See O4 for what `not: assignees` covers. | new from the Codex review |
 | N13 | Trust root | The head of `workspace.created` is the genesis, checked in six ordered steps (§5.11); remembered by the host outside the workspace, in every workspace checkpoint, shown at pairing (the person's custody key file records it from P3 pairing on; `orch init` does not, see §10.7). Readers replay authorization, not only signatures. **P1 limit:** see O7. | new from the Codex review; tightened with the Opus reviewer |
@@ -2046,7 +2053,7 @@ A1–A20 (PR body), HO (dashboard handover, input only), D58–D60, the adversar
 | 91 | Status from-states (Opus S6) | A from→to table for every event (§5.9). | Replay can check transitions. |
 | 92 | Torn writes vs external edits (Opus S7) | `.state/applied`; recovery only when the last event isn't applied; a torn write ends in `edit.external`. | An ordinary external edit isn't misreported, and `base_rev` keeps working. |
 | 93 | Effective policy canonical form (Opus S8) | Every policy has all five keys; `applies` union rules; tokens, not persons, for "no eligible approver". | A partial override can't switch `code` on by accident. |
-| 94 | Repo identity incomplete (Opus S9) | Raw `remote.origin.url`, port rules, scp-like forms, `local:` otherwise; duplicate paths and identities refused; P1 limit stated. | One canonical identity across runtimes. |
+| 94 | Repo identity incomplete (Opus S9) | Raw `remote.origin.url`, port rules, scp-like forms, `local:` otherwise; duplicate paths and identities refused; a declared `local:` remote must be exactly `local:<own repo name>`, and declared remote identities must be unique ignoring ASCII case across the resulting settings (including unchanged repos); P1 limit stated. | One canonical identity across runtimes. |
 | 95 | Receipts (Opus S10) | `receipt.cmd` = `verify.cmd`; latest `task.done` of a done task; evidence only at the current source `sha`; prompt rechecks file digests. | Stale or substituted evidence doesn't count. |
 | 96 | Restore drops revocations (Opus S11) | Revocations re-appended at once; `abandoned` gives up every checkpoint above `from_seq`; workspace restore raises every ticket's gates. | A rollback can't resurrect a revoked device. |
 | 97 | Question id frozen wrongly; `evidence` half-defined (Opus S12) | Derived `qid` (32 hex, `orch/v2/question-id\|`) used in the question hash; `evidence` refused in P1, defined in P3 with a new contract. | Protocol §13 needs hex ids; no person event without `sig`. |

@@ -144,3 +144,23 @@ def test_git_runs_without_a_controlling_terminal(ws, tmp_path):
     (repo / "impl.txt").write_text("broken\n")  # same content, new mtime: git runs the filter to compare
     observe.dirty(repo)
     assert marker.read_text() == "no tty"
+
+
+def test_observe_ignores_declared_remote_and_default_branch(ws, cli):
+    path = ws.repo()
+    ws.git("remote", "add", "origin", "ssh://git@host/observed.git")
+    ws.store.append(
+        ws.person_event(
+            ws.owner,
+            "workspace",
+            "settings.changed",
+            set={"repos": {"proj": {"path": str(path), "remote": "https://host/declared", "default_branch": "absent"}}},
+        ),
+        log="workspace",
+    )
+    claimed(cli)
+    assert cli("set", "1", LINKS).code == 0
+    assert cli("show", "1").code == 0
+    event = next(e for e in ws.events("1") if e["type"] == "branch.pushed")
+    assert event["repo_id"] == "https://host/observed"
+    assert event["ref"] == "refs/heads/feat/x"

@@ -46,6 +46,7 @@ class Code(StrEnum):
     GRANT_UNKNOWN = "grant.unknown"
     QUOTA_UNATTENDED = "quota.unattended"
     UNATTENDED_DENIED = "unattended.denied"
+    VALIDATION_EVENT = "validation.event"
     SETTINGS_INVALID = "settings.invalid"
     ADDON_UNKNOWN = "addon.unknown"
     ADDON_FIELD_UNKNOWN = "addon.field_unknown"

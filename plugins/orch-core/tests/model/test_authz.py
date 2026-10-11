@@ -628,8 +628,11 @@ def test_grant_verbs_by_operation_can_only_narrow():
 def test_replay_refuses_noncanonical_stored_remote(w):
     e = w.settings(repos={"repo": {"path": "../repo", "remote": "https://host/a/b"}})
     e["set"]["repos"]["repo"]["remote"] = "https://HOST/a/b"
+    w.settings(grant_hours=4)
     state = w.state()
-    assert [i.code for i in state.workspace.invalid] == [Code.SETTINGS_INVALID]
+    assert [(i.seq, i.code) for i in state.chain_errors] == [(e["seq"], "chain.broken")]
+    assert not state.workspace.invalid
+    assert state.workspace.settings["grant_hours"] == 8
     assert not state.workspace.repos
 
 

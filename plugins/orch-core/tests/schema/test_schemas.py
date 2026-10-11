@@ -2260,3 +2260,15 @@ def test_addon_heading_keys_are_required_and_unique():
         "/sections/1/heading_key",
         "taken",
     )
+
+
+@pytest.mark.parametrize(
+    "branch", ["-x", "HEAD", "@", "refs/heads/main", "a\u202eb", "a\u0085b", "a\u200db", "a\U00013439b"]
+)
+def test_shared_branch_rule(branch):
+    bad(
+        "event",
+        ev("settings.changed", set={"repos": {"repo": {"path": "../repo", "default_branch": branch}}}),
+        "/set/repos/repo/default_branch",
+    )
+    bad("ticket", mut(ex.TICKET, lambda o: o["links"]["branches"].update(repo=branch)), "/links/branches/repo")

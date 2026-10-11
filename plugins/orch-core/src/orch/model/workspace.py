@@ -12,7 +12,7 @@ import posixpath
 from collections.abc import Callable
 from typing import Any
 
-from orch.canon import HashError, check_repo_identity, event_head
+from orch.canon import HashError, check_repo_identity, event_head, same_repo_identity
 
 from . import addon_rules, authz, generations, policies
 from .codes import Code, Refusal
@@ -226,10 +226,15 @@ def settings_changed(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
                     check_repo_identity(v["remote"])
                 except HashError as exc:
                     return Refusal(Code.SETTINGS_INVALID, str(exc))
+                if v["remote"].startswith("local:") and v["remote"] != f"local:{name}":
+                    return Refusal(Code.SETTINGS_INVALID, "local remote must name its own repo")
             repos[name] = copy.deepcopy(v)
     paths = [posixpath.normpath(p["path"]) for p in repos.values()]
     if len(set(paths)) != len(paths):
         return Refusal(Code.SETTINGS_INVALID, "two repos resolve to the same path")
+    remotes = [p["remote"] for p in repos.values() if "remote" in p]
+    if any(same_repo_identity(a, b) for i, a in enumerate(remotes) for b in remotes[i + 1 :]):
+        return Refusal(Code.SETTINGS_INVALID, "two repos declare the same identity")
     ws.repos = repos
     for k in ("grant_hours", "claim_ttl_min", "lease_ttl_min"):
         if k in s:

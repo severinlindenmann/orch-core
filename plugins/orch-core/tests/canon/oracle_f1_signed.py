@@ -896,4 +896,53 @@ def refusal_order_scenarios() -> list[dict[str, Any]]:
     w.ev("01J9ZK4QXXXXXXXXXXXXXXXXXX", "settings.changed", mara, {"set": {"grant_hours": 4}}, expect="ticket.unknown",
          note="the log step (ticket.unknown) comes before the type step", schema_refused=True)  # fmt: skip
     w.ev(TICKET, "log.added", mara, {"text": "ok"}, note="an honest event is accepted")
-    return [w.scenario()]
+    out = [w.scenario()]
+    w = base_world(
+        "settings_repo_refusals",
+        "F1 step 0: malformed repo fields refuse append and break replay at the line; decision 94 aliases refuse settings",
+    )
+    for field, value in [
+        ("remote", "https://HOST/a"),
+        ("remote", "https://git@host/a"),
+        *[
+            ("default_branch", b)
+            for b in ("bad..branch", "-x", "HEAD", "@", "refs/heads/main", "a\u202eb", "a\u0085b", "a\u200db")
+        ],
+    ]:
+        w.ev(
+            "workspace",
+            "settings.changed",
+            w.actor("sev"),
+            {"set": {"repos": {"a": {"path": "../a", field: value}}}},
+            expect="validation.event",
+            schema_refused=True,
+        )
+        w.steps[-1]["replay_expect"] = "chain.broken"
+    w.ev(
+        "workspace",
+        "settings.changed",
+        w.actor("sev"),
+        {"set": {"repos": {"a": {"path": "../a", "remote": "local:b"}}}},
+        expect="settings.invalid",
+    )
+    w.ev(
+        "workspace",
+        "settings.changed",
+        w.actor("sev"),
+        {"set": {"repos": {"a": {"path": "../a", "remote": "https://h/x"}}}},
+    )
+    w.ev(
+        "workspace",
+        "settings.changed",
+        w.actor("sev"),
+        {"set": {"repos": {"b": {"path": "../b", "remote": "https://h/X"}}}},
+        expect="settings.invalid",
+    )
+    w.ev(
+        "workspace",
+        "settings.changed",
+        w.actor("sev"),
+        {"set": {"repos": {"a": None, "b": {"path": "../b", "remote": "https://h/X"}}}},
+    )
+    out.append(w.scenario())
+    return out

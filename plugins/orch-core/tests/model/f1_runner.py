@@ -143,7 +143,9 @@ def run_scenario(sc: dict[str, Any], *, validate: bool = True) -> tuple[list, di
         ws2, tl2 = list(ws), {u: list(v) for u, v in tl.items()}
         (ws2 if log == WORKSPACE else tl2.setdefault(log, [])).append(copy.deepcopy(event))
         st2 = state_of(sc, ws2, tl2)
-        if Code(expect) in CHAIN_CODES or expect in F1_CHAIN_BREAKS:
+        if step.get("replay_expect") == "chain.broken":
+            assert [(c.log, c.seq, c.code) for c in st2.chain_errors] == [(log, event["seq"], "chain.broken")], where
+        elif Code(expect) in CHAIN_CODES or expect in F1_CHAIN_BREAKS:
             assert any(c.log == log for c in st2.chain_errors), where
         elif log == WORKSPACE:
             bad = [x for x in st2.workspace.invalid if x.seq == event["seq"]]

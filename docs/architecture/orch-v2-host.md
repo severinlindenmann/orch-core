@@ -2169,7 +2169,8 @@ orch-relay's `docs/p3-relay-design.md` §9 defines what the host owes the relay 
   and the host never signs a different one for an epoch. Rules:
   - **One WK per epoch, ever.** The host never creates a second key for an epoch number. Epochs may skip, never fall. Epochs are u32 (1..2^32-1). The
     relay accepts a later list only with `prev <= epoch <= prev + 2^16`. The host alarms, and clamps: it never allocates
-    an epoch above `committed + 2^16`, whether through repeated burns or H7 jumps. A list that removes a member has a
+    an epoch above `committed + 2^16`, whether through repeated burns or H7 jumps. If the next allocation (including H7's `EHW + 1`) would exceed that clamp, the host alarms, keeps
+    the rotation gate up and allocates nothing until the relay commits a list. A list that removes a member has a
     higher epoch than the previous list. A list at the same epoch carries the same `wk_commit`, else the relay answers
     409 `wk_commit_changed`.
   - **First list.** The first publication for a workspace may use any epoch `1..2^16` and any `list_seq >= 1`. A refused
@@ -2181,7 +2182,7 @@ orch-relay's `docs/p3-relay-design.md` §9 defines what the host owes the relay 
   - **H1/H2, persistence before the first send.** The host writes the allocation, the signed list, the grants, the
     holder set and `WK_E` in one atomic write under `<state>/hosts/<ws>/membership/`, with keys under `keys/`, both in
     the D-P2-17 custody list. At most one body is exposed at a time. Exactly one writer: the fenced holder.
-  - **H3, transient outcomes** (lost response, connection error, timeout, 429, 5xx, 401/`expired` then re-login,
+  - **H3, transient outcomes** (lost response, connection error, timeout, 429, 5xx, 401 `unauthenticated` or `expired` then re-login (a 401 `bad_signature` is a content refusal, below),
     `fenced` then explicit re-hold) resend the exact bytes. A 429 does not burn the body. After a `fenced` and an
     explicit re-hold, or a re-login, first `GET members`. If the verified list is above `LHW` or `EHW`, or is not a body the host
     exposed, apply H7. Otherwise resend the exact bytes.

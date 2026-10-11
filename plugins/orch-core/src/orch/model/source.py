@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from orch.canon import same_repo_identity
+
 from . import generations
 from .codes import Code, Refusal
 from .types import TCore, WsCore
@@ -33,6 +35,12 @@ def repo_sha(t: TCore, repo_name: str | None) -> str | None:
     return h["sha"] if h else None
 
 
+def _same_entry(a: dict[str, str] | None, b: dict[str, str] | None) -> bool:
+    if a is None or b is None:
+        return a is b
+    return same_repo_identity(a["repo_id"], b["repo_id"]) and a["ref"] == b["ref"] and a["sha"] == b["sha"]
+
+
 def branch_pushed(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
     """Host event: sets one source-list entry; raises ``verify`` and ``code``; a ``done`` ticket goes back to
     ``testing`` (§5.12)."""
@@ -41,11 +49,13 @@ def branch_pushed(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
         return Refusal(Code.SOURCE_UNLINKED, f"{name} is not in links.repos")
     cur = t.branch_heads.get(name)
     new = {"repo_id": e["repo_id"], "ref": e["ref"], "sha": e["sha"]}
-    if e["before"] != cur:
+    if not _same_entry(e["before"], cur):
         return Refusal(Code.SOURCE_NOT_NEW, "`before` is not the current source-list entry")
-    if new == cur:
+    if _same_entry(new, cur):
         return Refusal(Code.SOURCE_NOT_NEW, "nothing changed")
-    if t.status == "done" and (cur is None or (cur["repo_id"], cur["ref"]) != (new["repo_id"], new["ref"])):
+    if t.status == "done" and (
+        cur is None or not same_repo_identity(cur["repo_id"], new["repo_id"]) or cur["ref"] != new["ref"]
+    ):
         return Refusal(Code.SOURCE_NOT_NEW, "on a done ticket only a new sha on an existing ref counts")
     t.branch_heads[name] = new
     generations.mark(t, "verify", "code")

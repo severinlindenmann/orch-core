@@ -150,6 +150,7 @@ class Workspace:
 
     def _open(self, root: Path) -> Any:
         from orch.custody import FileBackend
+        from orch.host.ownership import DirectGuard
         from orch.store import BackendSigner, Store
 
         cfg = _config(root) or {}
@@ -170,6 +171,7 @@ class Workspace:
             clock=self.now,
             workspace_name=cfg["workspace"].get("name"),
             load="lazy",
+            guard=DirectGuard(sd, wid),  # D-P2-18: a workspace the host has adopted answers host.required
         )
 
 

@@ -12,7 +12,7 @@ import { addonHairline } from '@/addon-ui/addonClasses'
 import { canUsePty } from '@/addon-ui/capabilities'
 import { useAddons, useAddonStates } from '@/addon-ui/slots'
 import { cn } from '@/lib/utils'
-import { PageWidthContext } from '../../pageWidth'
+import { CollapsedDockWidthContext, PageWidthContext } from '../../pageWidth'
 import { useWorkspace } from '../../workspace'
 import { DOCK_ADDON, DOCK_KEYS, sessionsIn, useDockTicket, type DockMemory } from './context'
 import { clampDock, DOCK_BAR, dockSqueezesSidebar, readDockPrefs, rightFits, useDockPrefs, useViewport } from './prefs'
@@ -138,8 +138,10 @@ export function DockArea({ children }: { children: ReactNode }) {
   return (
     <div ref={root} className={cn('flex min-h-0 min-w-0 flex-1', right ? 'flex-row' : 'flex-col')}>
       <PageWidthContext.Provider value={pageWidth}>
-        {/* The page area is a container (`@container/page`): pages lay out for their own width, not the window's. */}
-        <div className="@container/page flex min-h-0 min-w-0 flex-1 flex-col">{children}</div>
+        <CollapsedDockWidthContext.Provider value={allowed && right && !prefs.open ? DOCK_BAR : 0}>
+          {/* The page area is a container (`@container/page`): pages lay out for their own width, not the window's. */}
+          <div className="@container/page flex min-h-0 min-w-0 flex-1 flex-col">{children}</div>
+        </CollapsedDockWidthContext.Provider>
       </PageWidthContext.Provider>
       {allowed &&
         (prefs.open ? (

@@ -18,7 +18,9 @@ import { toastApiError } from '@/app/toast'
 import { queries } from '@/api/queries'
 
 /** The queries an install, enable, disable or uninstall can change. */
-const ADDON_OP_KEYS = ['workspace-addons', 'workspaces', 'addons', 'addon-state', 'addon-decisions', 'today', 'ticket', 'board', 'agents']
+// Keys scoped to this workspace (second element = id); 'workspaces', 'addons' and 'ticket' (by key) have no workspace to scope to.
+const ADDON_OP_WS_KEYS = ['workspace-addons', 'addon-state', 'addon-decisions', 'today', 'board', 'agents']
+const ADDON_OP_GLOBAL_KEYS = ['workspaces', 'addons', 'ticket']
 
 /** Settings > Addons: installed addons with signed capability grants, and the catalog. */
 export function AddonManager({ workspace, canEdit, settingsOf }: { workspace: Workspace; canEdit: boolean; settingsOf?: string }) {
@@ -36,7 +38,7 @@ export function AddonManager({ workspace, canEdit, settingsOf }: { workspace: Wo
     try {
       await api.postAddonOp(ws, name, req)
       // An addon turning on or off changes the lists of addons, every page's contributions, Today's cards and the board's lanes.
-      await Promise.all(ADDON_OP_KEYS.map((k) => qc.invalidateQueries({ queryKey: [k] })))
+      await Promise.all([...ADDON_OP_WS_KEYS.map((k) => [k, ws]), ...ADDON_OP_GLOBAL_KEYS.map((k) => [k])].map((queryKey) => qc.invalidateQueries({ queryKey })))
     } catch (e) {
       toastApiError(e, 'Could not change the addon')
     }

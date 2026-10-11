@@ -1,8 +1,9 @@
 // The agent side of the busy day: the session registry (rows like fixtures/me.json), the sessions each grant covers,
-// and a handful of refusals including one that trips the stop rule (the third same refusal by one session).
+// and a handful of refusals (on the session rows, not in any ticket log) including one that trips the stop rule (the third same refusal by one session).
 import type { Rng } from './rng'
-import { ENDED, GRANT_OF, SESSIONS, actorOf } from './roster'
-import { NOW_MS, MIN, iso, type GenEvent } from './timeline'
+import { ENDED, GRANT_OF, SESSIONS } from './roster'
+import type { SessionRefusal } from '@/api/types'
+import { NOW_MS, MIN, iso } from './timeline'
 import type { Built } from './types'
 
 export interface AgentRow {
@@ -17,12 +18,13 @@ export interface AgentRow {
   model: string
   state: 'working' | 'waiting' | 'stopped'
   waiting_on?: { kind: 'question'; ticket: string; ref: string }
+  refusals?: SessionRefusal[]
 }
 
 const NAME = { 'claude-code': 'Claude Code', codex: 'Codex' } as const
 
 /** Registry rows for the generated sessions plus two that have stopped. */
-export function agentRows(rng: Rng, demo: Built[]): AgentRow[] {
+export function agentRows(rng: Rng, demo: Built[], refusals: Map<string, SessionRefusal[]> = new Map()): AgentRow[] {
   const waiting = new Map<string, { ticket: string; ref: string }>()
   for (const b of demo) if (b.holder && b.waitingOn) waiting.set(b.holder, { ticket: b.definition.key, ref: b.waitingOn.question })
   const rows: AgentRow[] = SESSIONS.map((s) => {
@@ -39,6 +41,7 @@ export function agentRows(rng: Rng, demo: Built[]): AgentRow[] {
       model: s.model,
       state: w ? 'waiting' : 'working',
       ...(w ? { waiting_on: { kind: 'question' as const, ...w } } : {}),
+      ...(refusals.has(s.id) ? { refusals: refusals.get(s.id) } : {}),
     }
   })
   for (const e of ENDED.slice(0, 2))
@@ -55,29 +58,33 @@ export function grantSessions(): Record<string, string[]> {
 }
 
 const REFUSALS = [
-  { code: 'claim.held', message: (k: string, by: string) => `${k} is claimed by ${by}.`, op: 'claim', retryable: false },
-  { code: 'lease.held', message: (k: string, by: string) => `A task of ${k} is leased by ${by}.`, op: 'lease', retryable: false },
-  { code: 'gate.not_approved', message: (k: string) => `${k}: the plan is not approved yet.`, op: 'claim', retryable: false },
-  { code: 'verify.failed', message: (k: string) => `${k}: the task check failed (exit 1).`, op: 'task.done', retryable: true },
-  { code: 'grant.scope', message: () => 'This grant does not cover approvals.', op: 'approve', retryable: false },
+  { code: 'claim.held', message: (k: string, by: string) => `${k} is claimed by ${by}.`, hint: 'Wait for the other session to release it, or work on another ticket.', op: 'claim', retryable: false },
+  { code: 'lease.held', message: (k: string, by: string) => `A task of ${k} is leased by ${by}.`, hint: 'Pick another task, or wait until the lease is released.', op: 'lease', retryable: false },
+  { code: 'gate.not_approved', message: (k: string) => `${k}: the plan is not approved yet.`, hint: 'A person approves the plan first.', op: 'claim', retryable: false },
+  { code: 'verify.failed', message: (k: string) => `${k}: the task check failed (exit 1).`, hint: 'Fix the failing check and run it again.', op: 'task.done', retryable: true },
+  { code: 'grant.scope', message: () => 'This grant does not cover approvals.', hint: 'Ask a person to approve, or to widen the grant.', op: 'approve', retryable: false },
 ]
 
 /**
- * Refusals today: one session (s_b105) is refused `claim.held` three times in a row (the stop rule), and five other
- * sessions are refused once each for a different reason. Refused events are added to tickets agents work on.
+ * Refusals today (CLI error envelopes returned to the agents, kept on the session rows, never in a ticket log): one
+ * session (s_b105) is refused `claim.held` three times in a row (the stop rule), and five other sessions are refused
+ * once each for a different reason. The refusals sit on tickets agents work on.
  */
-export function addRefusals(rng: Rng, demo: Built[]): void {
+export function addRefusals(rng: Rng, demo: Built[]): Map<string, SessionRefusal[]> {
+  const out = new Map<string, SessionRefusal[]>()
   const working = demo.filter((b) => b.arch === 'wip' && b.holder)
   const open = demo.filter((b) => b.arch === 'openReady')
-  const events = (b: Built, session: (typeof SESSIONS)[number], r: (typeof REFUSALS)[number], minutesAgo: number) => {
+  const add = (b: Built, session: (typeof SESSIONS)[number], r: (typeof REFUSALS)[number], minutesAgo: number) => {
     const holder = b.holder ?? 'another session'
-    const e: GenEvent = { type: 'agent.refused', actor: actorOf(session), at: iso(NOW_MS - minutesAgo * MIN), code: r.code, message: r.message(b.definition.key, holder), retryable: r.retryable, op: r.op }
-    b.events.push(e)
-    b.events.sort((x, y) => x.at.localeCompare(y.at))
+    const list = out.get(session.id) ?? []
+    list.push({ at: iso(NOW_MS - minutesAgo * MIN), ticket: b.definition.key, code: r.code, message: r.message(b.definition.key, holder), hint: r.hint, retryable: r.retryable, op: r.op })
+    list.sort((x, y) => x.at.localeCompare(y.at))
+    out.set(session.id, list)
   }
   const stopper = SESSIONS.find((s) => s.id === 's_b105')!
   const targets = rng.sample(working, 3)
-  targets.forEach((b, i) => events(b, stopper, REFUSALS[0], 55 - i * 17))
+  targets.forEach((b, i) => add(b, stopper, REFUSALS[0], 55 - i * 17))
   const others = SESSIONS.filter((s) => !s.parent && s.id !== 's_b105')
-  rng.sample(others, 5).forEach((s, i) => events(rng.pick([...working, ...open]), s, REFUSALS[1 + (i % (REFUSALS.length - 1))], rng.int(5, 200)))
+  rng.sample(others, 5).forEach((s, i) => add(rng.pick([...working, ...open]), s, REFUSALS[1 + (i % (REFUSALS.length - 1))], rng.int(5, 200)))
+  return out
 }

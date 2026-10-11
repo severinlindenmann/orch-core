@@ -546,7 +546,7 @@ export function runsView(c: Ctx, state: Record<string, unknown>, opts: { epic: s
                   ],
                 },
               ]
-            : [{ type: 'button', label: 'Fill in a demo request', action: 'demo_run', variant: 'ghost' }]),
+            : [{ type: 'button', label: 'Fill in a demo request', action: 'demo_run', variant: 'secondary' }]),
         ]
   const list = runs.slice(0, MAX_RUNS_SHOWN).map((r) => runNode(c, r, now, gate))
   const holdNotice =

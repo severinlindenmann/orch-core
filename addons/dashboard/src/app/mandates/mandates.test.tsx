@@ -40,6 +40,12 @@ afterEach(() => {
 })
 
 describe('Agents → Mandates (preview)', () => {
+  it('both Stop buttons announce a dialog', async () => {
+    renderApp('/agents?tab=mandates', { setup: seeded })
+    await screen.findByTestId('mandates-tab', {}, T)
+    expect(screen.getAllByRole('button', { name: 'Stop…' })).toHaveLength(2)
+  })
+
   it('opens from the address, carries the preview line, and the tab click keeps the address', async () => {
     const { user, address } = renderApp('/agents?tab=mandates')
     const tab = await screen.findByRole('tab', { name: /Mandates/ }, T)

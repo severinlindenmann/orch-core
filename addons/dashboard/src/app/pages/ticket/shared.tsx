@@ -151,6 +151,11 @@ export function PriorityLabel({ priority }: { priority: Priority }) {
   return <span className={cn('text-[13px] font-medium capitalize', PRIORITY_TONE[priority])}>{priority}</span>
 }
 
+/** The tag beside a recommended answer option, the same quiet word on Today and on the ticket. */
+export function RecommendedTag() {
+  return <span className="rounded border border-border px-1.5 py-px text-[11px] font-medium text-text-muted">Recommended</span>
+}
+
 export function Pill({ children, tone = 'neutral', className }: { children: ReactNode; tone?: 'neutral' | 'success' | 'warning' | 'danger' | 'info' | 'brand'; className?: string }) {
   const tones = {
     neutral: 'border-border text-text-muted',

@@ -9,6 +9,8 @@ import type {
   AddonOpRequest,
   Actor,
   AgentActivityItem,
+  TicketRefusal,
+  SessionRefusal,
   AgentSession,
   SavedView,
   BodySections,
@@ -170,7 +172,7 @@ export class MockStore {
   private wsOfKey = new Map<string, string>() // key -> workspace id
   private events = new Map<string, OrchEvent[]>()
   private seeded = new Map<string, number>() // key -> number of seeded events
-  private agentRegistry: (Omit<AgentSession, 'grant' | 'claims' | 'leases'> & { grant: string })[] = []
+  private agentRegistry: (Omit<AgentSession, 'grant' | 'claims' | 'leases'> & { grant: string; refusals?: SessionRefusal[] })[] = []
   private startedAt = Date.now()
   private clockBase = Date.parse(MOCK_EPOCH)
   viewer = meFixture.person
@@ -1585,7 +1587,7 @@ export class MockStore {
             .map((x) => ({ ticket: t.key, task: x.id, session: x.lease!.session })),
         )
         const stopped = !!g.revoked || g.until <= now || a.state === 'stopped'
-        const { waiting_on, ...rest } = a
+        const { waiting_on, refusals: _refusals, ...rest } = a
         return { ...rest, grant: { id: g.id, until: g.until }, claims, leases, state: stopped ? 'stopped' : a.state, ...(!stopped && waiting_on ? { waiting_on } : {}) } satisfies AgentSession
       })
     return [...seeded, ...this.startedSessions(workspaceId).map((s) => this.startedAgent(s, tickets, grants, now))]
@@ -1618,23 +1620,35 @@ export class MockStore {
     }
   }
 
-  /** Agent-attributed ticket events of the workspace, newest first (50). The third same refusal by a session is the stop. */
+  /**
+   * Refusals core returned to agents on this ticket, oldest first. They are CLI error envelopes kept on the agent sessions,
+   * never ticket-log events (format F1): not signed, not in the event list, counts or Raw.
+   */
+  ticketRefusals(key: string): TicketRefusal[] {
+    const out: TicketRefusal[] = []
+    for (const a of this.agentRegistry) for (const r of a.refusals ?? []) if (r.ticket === key) out.push({ ...r, session: a.session, agent: a.id, for: a.for })
+    return out.sort((x, y) => x.at.localeCompare(y.at))
+  }
+
+  /** Agent-attributed ticket events of the workspace, plus the refusals on its agent sessions, newest first (50). The third same refusal by a session is the stop. */
   agentActivity(workspaceId: string): AgentActivityItem[] {
     const items: AgentActivityItem[] = []
     for (const [key, ws] of this.wsOfKey) {
       if (ws !== workspaceId || !this.isVisible(key)) continue
       for (const e of this.eventsOf(key)) {
         if (e.actor.kind !== 'agent') continue
-        const refused = e.type === 'agent.refused'
+        items.push({ at: e.at, ticket: key, session: e.actor.session, agent: e.actor.id, for: e.actor.for, type: e.type, summary: describeEvent(e) })
+      }
+      for (const r of this.ticketRefusals(key)) {
         items.push({
-          at: e.at,
+          at: r.at,
           ticket: key,
-          session: e.actor.session,
-          agent: e.actor.id,
-          for: e.actor.for,
-          type: refused ? 'refused' : e.type,
-          summary: describeEvent(e),
-          ...(refused ? { refusal: { code: String(e.code), message: String(e.message ?? ''), retryable: e.retryable === true, stop: false } } : {}),
+          session: r.session,
+          agent: r.agent,
+          for: r.for,
+          type: 'refused',
+          summary: `was refused: ${r.message}`,
+          refusal: { code: r.code, message: r.message, ...(r.hint ? { hint: r.hint } : {}), retryable: r.retryable, stop: false },
         })
       }
     }

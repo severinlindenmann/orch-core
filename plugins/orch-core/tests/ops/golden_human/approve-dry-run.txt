@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+ok DEMO-0001 gate.approved requirements seq=13
+dry-run: nothing was written
+next: orch show DEMO-0001
+--- stderr

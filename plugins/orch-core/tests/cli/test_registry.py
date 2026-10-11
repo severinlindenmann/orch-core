@@ -18,7 +18,7 @@ SECTION_10_3 = [
     *(f"artifact {v}" for v in "add replace list".split()),
     "log", "apply", "approve", "request-changes", "verdict", "answer", "close", "reopen",
     "grant", "grant revoke", "member add", "member remove", "member role",
-    "init", "doctor", "check", "instructions sync", "import v1",
+    "init", "doctor", "check", "instructions sync", "instructions hook", "import v1",
     *(f"addon {v}" for v in "list grant disable purge".split()),
 ]  # fmt: skip
 

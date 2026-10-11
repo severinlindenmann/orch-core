@@ -5,6 +5,8 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 
 /** The width a page should lay out for, as a window width; null outside the shell. */
+export const CollapsedDockWidthContext = createContext(0)
+
 export const PageWidthContext = createContext<number | null>(null)
 
 function useWindowWidth(): number {

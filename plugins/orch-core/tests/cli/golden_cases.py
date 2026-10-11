@@ -41,7 +41,15 @@ def _raw_cases() -> Iterator[tuple[str, str]]:
     table = "\n".join(f"{n} {w}" for n, w in EXIT_CODES.items())
     codes = "\n".join(f"{c} {s.exit} retry:{str(s.retryable).lower()}" for c, s in ERRORS.items())
     yield "errors/_exit-codes.txt", table + "\n\n" + codes + "\n"
-    yield "errors/_human-only.json", run_cli("approve", "plan", "--json").out
+    yield (
+        "errors/_human-only.json",
+        run_cli("approve", "plan", "--json", env={"ORCH_GRANT": "gr_01J9ZK4Q7M3R8T2V6X0B5N1C9D." + "A" * 43}).out,
+    )
     yield "errors/_usage.txt", run_cli("task", "done").err
     yield "errors/_unknown.txt", run_cli("frobnicate").err
-    yield "errors/_not-implemented.txt", run_cli("status").err
+    real = ops.get("inbox").handler  # no real command stays unimplemented: take a handler away for this one case
+    ops.bind("inbox", ops._unimplemented("inbox"))
+    try:
+        yield "errors/_not-implemented.txt", run_cli("inbox").err
+    finally:
+        ops.bind("inbox", real)

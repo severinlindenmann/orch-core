@@ -1,3 +1,4 @@
 Who you are, your grant, your cursor, your claim and what needs you.
-usage: orch status
+usage: orch status [--verbose]
+  --verbose  also show the state directory
 more: orch describe status

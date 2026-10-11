@@ -13,7 +13,18 @@
       "parent": null,
       "harness": "claude-code",
       "model": "claude-opus-4-5",
-      "state": "working"
+      "state": "working",
+      "refusals": [
+        {
+          "at": "2026-10-09T10:50:03Z",
+          "ticket": "DEMO-0043",
+          "code": "human_only",
+          "message": "Approving a gate is a human action; sign it from the dashboard.",
+          "hint": "Ask a person to sign it from the dashboard.",
+          "retryable": false,
+          "op": "approve"
+        }
+      ]
     },
     {
       "id": "claude-code",
@@ -54,7 +65,36 @@
       "parent": null,
       "harness": "claude-code",
       "model": "claude-opus-4-5",
-      "state": "stopped"
+      "state": "stopped",
+      "refusals": [
+        {
+          "at": "2026-10-09T10:55:10Z",
+          "ticket": "DEMO-0043",
+          "code": "lease.held",
+          "message": "T2 is leased by s_77c2.1.",
+          "hint": "Pick another task, or wait until the lease is released.",
+          "retryable": true,
+          "op": "lease T2"
+        },
+        {
+          "at": "2026-10-09T10:56:20Z",
+          "ticket": "DEMO-0043",
+          "code": "lease.held",
+          "message": "T2 is leased by s_77c2.1.",
+          "hint": "Pick another task, or wait until the lease is released.",
+          "retryable": true,
+          "op": "lease T2"
+        },
+        {
+          "at": "2026-10-09T10:57:30Z",
+          "ticket": "DEMO-0043",
+          "code": "lease.held",
+          "message": "T2 is leased by s_77c2.1.",
+          "hint": "Pick another task, or wait until the lease is released.",
+          "retryable": true,
+          "op": "lease T2"
+        }
+      ]
     },
     {
       "id": "codex",
@@ -66,7 +106,18 @@
       "parent": null,
       "harness": "codex",
       "model": "gpt-5-codex",
-      "state": "working"
+      "state": "working",
+      "refusals": [
+        {
+          "at": "2026-10-09T09:32:10Z",
+          "ticket": "DEMO-0043",
+          "code": "claim.held",
+          "message": "DEMO-0043 is claimed by claude-code (s_77c2).",
+          "hint": "Wait for the other session to release it, or work on another ticket.",
+          "retryable": false,
+          "op": "claim"
+        }
+      ]
     }
   ]
 }

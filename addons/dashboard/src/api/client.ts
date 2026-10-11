@@ -12,6 +12,7 @@ import {
   type KnownPerson,
   type AddonOpRequest,
   type AgentActivityItem,
+  type TicketRefusal,
   type AgentSession,
   type CoreLaunch,
   type GrantInfo,
@@ -41,6 +42,7 @@ import type { MandatesPreviewRequest, MandatesPreviewState } from './mandatesPre
 import { connectionInfo, connectionList, doctorReport, secretsFileInfo, skillInfo, skillList, type SkillGrantRequest } from './connections'
 
 export interface ListTicketsParams {
+  repo?: string
   status?: Status | Status[]
   q?: string
   type?: string
@@ -94,6 +96,7 @@ export function createApi(transport: Transport) {
             parent: p.parent,
             priority: p.priority?.join(','),
             label: p.label,
+            repo: p.repo,
             person: p.person,
             needs: p.needs,
             sort: p.sort,
@@ -135,6 +138,7 @@ export function createApi(transport: Transport) {
     /** What core would start for this choice (core-computed: ticket, labels, command, model line). */
     previewLaunch: (ws: string, req: { ticket: string; mode: string; harness: string; where: string }) =>
       call<CoreLaunch>('GET', `/api/workspaces/${ws}/agents/launch${qs(req)}`),
+    getTicketRefusals: (key: string) => call<TicketRefusal[]>('GET', `/api/tickets/${key}/refusals`),
     getAgentActivity: (workspaceId: string) => call<AgentActivityItem[]>('GET', `/api/workspaces/${workspaceId}/agents/activity`),
     listGrants: (ws: string) => call<GrantInfo[]>('GET', `/api/workspaces/${ws}/grants`),
     /** Human only, signed in the dashboard. */
@@ -170,9 +174,17 @@ export function createApi(transport: Transport) {
     /** Mock only: a dropped connection, or a phone scanning the pairing code. */
     simulateRelay: (ws: string, req: RelaySimRequest) => call<RelayState>('POST', `/api/dev/relay/${ws}`, req),
     /** Mandates, PREVIEW ONLY (not part of the contract; served by the mock; nothing is signed). */
-    getMandatesPreview: (ws: string) => call<MandatesPreviewState>('GET', `/api/workspaces/${ws}/preview/mandates`),
+    getLocalMandatesPreview: (ws: string) => transport.previewState?.(ws),
+    getMandatesPreview: async (ws: string) => {
+      const local = transport.previewState?.(ws)
+      if (!local) throw new Error('Mandates preview is unavailable on this transport')
+      return local.on ? call<MandatesPreviewState>('GET', `/api/workspaces/${ws}/preview/mandates`) : local
+    },
     /** Mandates, PREVIEW ONLY: turn the preview on or off, issue, stop, review, revoke. Never a signing path. */
-    postMandatesPreview: (ws: string, req: MandatesPreviewRequest) => call<MandatesPreviewState>('POST', `/api/workspaces/${ws}/preview/mandates`, req),
+    postMandatesPreview: async (ws: string, req: MandatesPreviewRequest) => {
+      if (!transport.previewState) throw new Error('Mandates preview is unavailable on this transport')
+      return call<MandatesPreviewState>('POST', `/api/workspaces/${ws}/preview/mandates`, req)
+    },
     /** Mock only: switch the viewer (p_sev, p_mara, p_tom). */
     setViewer: (person: string) => call<{ ok: true }>('POST', '/api/dev/viewer', { person }),
     /** Mock only: restore the seeded demo data; `dataset` switches to the normal demo or the busy day. */

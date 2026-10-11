@@ -137,8 +137,9 @@ describe('table presentation', () => {
   })
   it('shows a state word as a chip with a dot', () => {
     show(table)
-    expect(screen.getByText('running')).toHaveClass('rounded-full')
-    expect(screen.getByText('failed').firstElementChild).toHaveClass('bg-danger')
+    // The word sits in its own span (shown in sentence case) inside the chip.
+    expect(screen.getByText('running').parentElement).toHaveClass('rounded-full')
+    expect(screen.getByText('failed').parentElement!.firstElementChild).toHaveClass('bg-danger')
   })
   it('only a column marked cell state draws chips; the column name alone does not', () => {
     show(table)

@@ -10,6 +10,7 @@ import { wordsAndId } from '@/addon-ui/SignConfirm'
 import { api } from '@/api/client'
 import { approversText } from '@/api/gates'
 import { getAddon } from '@/mocks/addons'
+import { DEMO_REQUEST } from '@/mocks/addons/factory-runs'
 import type { MockStore } from '@/mocks/store'
 import { installAndGrant } from '@/test/installAddon'
 import { renderApp } from '@/test/renderApp'
@@ -55,6 +56,8 @@ interface Case {
 const wsOf = (s: MockStore) => s.workspaces.find((w) => w.prefix === 'DEMO')!.id
 const dialogNamed = (name: string | RegExp) => screen.findByRole('dialog', { name }, T)
 const press = (name: string | RegExp) => async (user: User, dialog: HTMLElement) => user.click(within(dialog).getByRole('button', { name }))
+/** A typed signed value's line (security review #8): a string quoted, a number or boolean bare. */
+const typed = (label: string) => (v: string) => (l: string) => l === `${label}: "${v}"` || (/^(-?\d+(\.\d+)?|true|false)$/.test(v) && l === `${label}: ${v}`)
 const line = (prefix: string, has: (v: string) => string) => (v: string) => (l: string) => l.startsWith(prefix) && l.includes(has(v))
 
 async function ticketAction(user: User, name: RegExp) {
@@ -79,6 +82,58 @@ const LINE = 'Routing picked this model for you, LINE-MARK'
 
 const CASES: Case[] = [
   {
+    name: 'repos clone attention decision', path: '/',
+    open: async user => {
+      const row = await screen.findByTestId('card-addon:repos.clone.billing-api', {}, T)
+      const decide = within(row).queryByRole('button', { name: 'Decide' })
+      if (decide) await user.click(decide)
+      await user.click(await within(row).findByRole('button', { name: 'Clone' }, T))
+      return dialogNamed('Decide for Repos (repos)')
+    },
+    confirm: press('Send answer'), method: 'runAddonAction', arg: 3, skip: ['confirmed'],
+    addon: ['Clone billing-api?'],
+    shown: {
+      id: v => `Decision ${v}`, option: v => `Answer: option ${v}`, digest: v => v,
+      name: typed('Name (name)'), remote: typed('Remote (remote)'),
+      target_folder: typed('Target folder (target_folder)'),
+      clone_as: typed('Clone as (clone_as)'),
+      default_branch: typed('Default branch (default_branch)'),
+    },
+  },
+  ...(['clone', 'clone_all', 'add', 'adopt', 'remove', 'remove_anyway'] as const).map((action): Case => ({
+    name: `repos ${action}`,
+    path: '/addon/repos/repos',
+    setup: s => {
+      if (action === 'add') s.addonState(wsOf(s), 'repos').drafts = { p_sev: { name: 'new-repo', path: 'new-repo', remote: 'https://git.example.test/acme/new-repo.git', branch: 'main' } }
+    },
+    open: async user => {
+      await screen.findByRole('tab', { name: 'Structure' }, T)
+      if (action === 'clone_all') await user.click(screen.getByRole('button', { name: 'Clone all missing' }))
+      else if (action === 'add') {
+        await user.click(screen.getByRole('button', { name: /Declare a repo/ }))
+        await user.click(await screen.findByRole('button', { name: 'Sign and declare' }, T))
+      } else {
+        const folder = action === 'clone' ? 'billing-api' : action === 'adopt' ? 'sandbox' : action === 'remove_anyway' ? 'web-portal' : 'shared-lib'
+        await user.click(screen.getByRole('button', { name: `Details for ${folder}` }))
+        await user.click(screen.getByRole('button', { name: action === 'clone' ? 'Clone' : action === 'adopt' ? 'Declare untracked repo' : action === 'remove_anyway' ? 'Remove anyway…' : 'Remove from declared repos' }))
+      }
+      if (action === 'remove') {
+        const alert = await screen.findByRole('alertdialog', {}, T)
+        // Core's own sentence (core carries out the settings.repos change), outside the addon's region.
+        expect(within(alert).getByTestId('core-note')).toHaveTextContent('The folder and its files stay on disk.')
+        return alert
+      }
+      const dialog = await screen.findByRole('dialog', {}, T)
+      if (action === 'remove_anyway') expect(within(dialog).getByTestId('core-note')).toHaveTextContent('The folder and its files stay on disk.')
+      if (action === 'remove_anyway') await user.selectOptions(within(dialog).getByRole('combobox'), 'remove')
+      return dialog
+    },
+    confirm: press(action === 'remove' ? 'Confirm: Remove (remove)' : action === 'remove_anyway' ? 'Continue: Remove anyway (remove_anyway)' : 'Sign and run'),
+    method: 'runAddonAction', arg: 3, skip: ['confirmed'], args: true,
+    expectArgs: action === 'clone_all' ? ['targets', 'clone_as'] : action === 'remove' || action === 'remove_anyway' ? ['name', 'target_folder'] : action === 'clone' ? ['remote', 'default_branch', 'target_folder', 'clone_as'] : ['name', 'path', 'remote', 'target_folder'],
+  })),
+
+  {
     name: 'gate approve',
     path: '/ticket/DEMO-0044',
     open: (user) => ticketAction(user, /Approve plan/),
@@ -86,7 +141,8 @@ const CASES: Case[] = [
     method: 'postAction',
     arg: 1,
     skip: ['action'],
-    shown: { gate: (v) => `Approve ${v}` },
+    // The content hash it binds (security review #2) is the one in the dialog's Details.
+    shown: { gate: (v) => `Approve ${v}`, hash: (v) => v },
   },
   {
     name: 'answer',
@@ -101,7 +157,7 @@ const CASES: Case[] = [
     method: 'postAction',
     arg: 1,
     skip: ['action'],
-    shown: { question: (v) => `Question ${v}:`, option: (v) => `(option ${v})` },
+    shown: { question: (v) => `Question ${v}:`, option: (v) => `(option ${v})`, hash: (v) => v },
   },
   {
     name: 'verdict',
@@ -150,7 +206,8 @@ const CASES: Case[] = [
     arg: 3,
     addon: ['Retry failed build', 'Ops notebook failed to build', 'Retry last good version'],
     skip: ['confirmed'],
-    shown: { id: (v) => `Decision ${v}`, option: (v) => `Answer: option ${v}`, ticket: (v) => `About ${v}` },
+    // The digest of the decision as shown (security review #3) sits in the prompt's Details.
+    shown: { id: (v) => `Decision ${v}`, option: (v) => `Answer: option ${v}`, ticket: (v) => `About ${v}`, digest: (v) => v },
   },
   {
     name: 'addon sign (confirm: sign)',
@@ -219,12 +276,13 @@ const CASES: Case[] = [
     shown: {
       id: (v) => (v.endsWith('.relay.recv-question+drop.send-handoff+question.90d') ? `Decision ${v}` : `unexpected id ${v}`),
       option: (v) => `Answer: option ${v}`,
-      peer: (v) => `Peer (peer): ${v}`,
-      comparison_code: (v) => `Comparison code (comparison_code): ${v}`,
-      carrier: (v) => `Carrier (carrier): ${v}`,
-      they_may_send_us: (v) => `They may send us (they_may_send_us): ${v}`,
-      we_may_send_them: (v) => `We may send them (we_may_send_them): ${v}`,
-      expires_after: (v) => `Expires after (expires_after): ${v}`,
+      digest: (v) => v,
+      peer: typed('Peer (peer)'),
+      comparison_code: typed('Comparison code (comparison_code)'),
+      carrier: typed('Carrier (carrier)'),
+      they_may_send_us: typed('They may send us (they_may_send_us)'),
+      we_may_send_them: typed('We may send them (we_may_send_them)'),
+      expires_after: typed('Expires after (expires_after)'),
     },
   },
   {
@@ -289,6 +347,28 @@ const CASES: Case[] = [
     skip: ['confirmed'],
     args: true,
     expectArgs: ['id', 'peer'],
+  },
+  {
+    // Owner decision 2026-10-10 evening (D61 option): one signature covers the goal, how far the factory goes, what
+    // Deliver means (the exact destination the host will deliver to), the hold window and the size cap.
+    name: 'factory full run (confirm: sign)',
+    path: '/addon/factory/factory',
+    setup: (s) => {
+      installAndGrant(s, wsOf(s), 'factory')
+      s.addonState(wsOf(s), 'factory').nav = { p_sev: { runDraft: { ...DEMO_REQUEST, request: 'rq-DEMO-0a1b2c3d-7' } } }
+    },
+    open: async (user) => {
+      await user.click(await screen.findByRole('tab', { name: /^Full runs/ }, T))
+      await user.click(await screen.findByRole('button', { name: 'Sign and start' }, T))
+      return dialogNamed(/^Sign: .* · AI Factory \(factory\)$/)
+    },
+    confirm: press('Sign and run'),
+    method: 'runAddonAction',
+    arg: 3,
+    addon: ['Start a factory full run'],
+    skip: ['confirmed'],
+    args: true,
+    expectArgs: ['request', 'goal', 'goes_up_to', 'deliver_means', 'hold_minutes', 'largest_child'],
   },
   {
     name: 'start agent (grant + start)',

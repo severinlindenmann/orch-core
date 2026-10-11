@@ -1,0 +1,23 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "view": "diff",
+    "ticket": {
+      "key": "DEMO-0001",
+      "since": 12,
+      "events": [
+        "#13 log.added agent: Seeds are in; the join is next.",
+        "#14 question.asked agent: Q1",
+        "#15 artifact.added agent: evidence.log"
+      ]
+    }
+  },
+  "key": "DEMO-0001",
+  "seq": 15,
+  "cursor": 15,
+  "hints": [
+    "orch wait"
+  ]
+}
+# exit 0

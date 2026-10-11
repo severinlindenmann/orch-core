@@ -45,7 +45,7 @@ export function AgentsPage() {
 
   const failure = useLoadFailure(today, sessions, grants, activity)
   if (failure.failed) return <LoadFailed what="agents" onRetry={failure.retry} />
-  if (!ws || !me.data || !today.data || !sessions.data || !grants.data || !activity.data || (tab === 'mandates' && mandates.isPending)) {
+  if (!ws || !me.data || !today.data || !sessions.data || !grants.data || !activity.data || (tab === 'mandates' && mandates.isLoading)) {
     return <AgentsSkeleton inPage tab={tab} />
   }
 

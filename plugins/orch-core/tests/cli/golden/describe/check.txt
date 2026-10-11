@@ -1,7 +1,10 @@
 ok describe check
-Check that the ticket files match their events (for a commit hook).
-usage: orch check
+Check that the ticket files match their events and the instructions are current (for a commit hook or CI); --staged also checks what is about to be committed.
+usage: orch check [--staged]
 who: read · emits: -
 pre: workspace_exists
+args:
+  --staged  also check the staged files: hand edits, forged log lines, .state, secrets
 errors:
+  not_found (exit 2): run orch init in a workspace | fix: orch describe init
 out: ok check {problems} / next: {next}

@@ -36,7 +36,8 @@ export function getPath(root: unknown, path: string): unknown {
 function interpolate(s: string, ctx: unknown): string {
   return s.replace(/\$\{([a-zA-Z0-9_.$]+)(?:\|([a-z]+))?\}/g, (_, path: string, fmt?: string) => {
     const v = getPath(ctx, path)
-    if (v === undefined || v === null) return ''
+    // Only a plain value is written into text: an object or array is never stringified (it could be arbitrarily deep).
+    if (v === undefined || v === null || typeof v === 'object' || typeof v === 'function') return ''
     return fmt && FORMATTERS[fmt] ? FORMATTERS[fmt](v) : String(v)
   })
 }
@@ -56,4 +57,47 @@ export function resolveBindings(node: unknown, ctx: unknown): unknown {
     }))
   }
   return node
+}
+
+/** What an addon's contribution may weigh before core walks it (bindings, the state check, rendering). */
+export const NODE_BUDGET = { depth: 64, nodes: 20_000, bytes: 2_000_000 } as const
+
+/**
+ * Why core will not walk this untrusted value at all (null when it fits): nested deeper than `depth` objects/arrays,
+ * more than `nodes` values in all, or more than `bytes` of strings and keys. Iterative, so no input can exhaust the
+ * stack, and it stops at the first limit hit (security review #9). Core checks it before binding detection and
+ * resolution; a contribution over budget becomes that addon's "could not be shown" box, nothing else fails.
+ */
+export function nodeBudgetProblem(root: unknown): string | null {
+  const stack: [unknown, number][] = [[root, 0]]
+  // Every value counted when it is queued, so the stack itself never holds more than the node budget.
+  let nodes = 1
+  let bytes = 0
+  const tooMany = `more than ${NODE_BUDGET.nodes} nodes`
+  while (stack.length) {
+    const [v, depth] = stack.pop()!
+    if (typeof v === 'string') {
+      bytes += v.length
+      if (bytes > NODE_BUDGET.bytes) return 'too large'
+      continue
+    }
+    if (v === null || typeof v !== 'object') continue
+    if (depth >= NODE_BUDGET.depth) return `nested deeper than ${NODE_BUDGET.depth}`
+    if (Array.isArray(v)) {
+      // The length is known up front: refuse before queuing anything of an array that cannot fit.
+      if (nodes + v.length > NODE_BUDGET.nodes) return tooMany
+      nodes += v.length
+      for (let i = 0; i < v.length; i++) stack.push([v[i], depth + 1])
+      continue
+    }
+    // Own keys one at a time (no keys array for a huge object), counted before each is queued.
+    for (const k in v) {
+      if (!Object.hasOwn(v, k)) continue
+      if (++nodes > NODE_BUDGET.nodes) return tooMany
+      bytes += k.length
+      if (bytes > NODE_BUDGET.bytes) return 'too large'
+      stack.push([(v as Record<string, unknown>)[k], depth + 1])
+    }
+  }
+  return null
 }

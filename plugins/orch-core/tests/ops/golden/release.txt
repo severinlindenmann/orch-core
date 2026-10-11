@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+ok DEMO-0001 claim.released released seq=16
+next: orch claim --next
+--- stderr

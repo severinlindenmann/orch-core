@@ -55,6 +55,9 @@ class GateView:
     decisions: tuple[DecisionView, ...]
     waiting: bool
     revoked_device_flag: tuple[str, ...]  # decision ids "approved by a revoked device" (done tickets)
+    missing: tuple[
+        str, ...
+    ] = ()  # what an approval of requirements or plan still lacks: section ids, acceptance, tasks
 
 
 @dataclass(frozen=True)
@@ -229,6 +232,7 @@ def _gate_view(ws: WsCore, t: TCore, g: str) -> GateView:
         ),
         needs.gate_waiting(ws, t, g),
         tuple(sorted(gc.revoked_flag)),
+        tuple(gates.missing_for_gate(ws, t, g)),
     )
 
 
@@ -337,7 +341,19 @@ def workspace_view(core: Core, now: int) -> WorkspaceView:
         freeze(ws.repos),
         MappingProxyType(
             {
-                n: freeze({"version": a.version, "enabled": a.enabled and not a.purged, "binds": a.binds})
+                n: freeze(
+                    {
+                        "version": a.version,
+                        "enabled": a.enabled and not a.purged,
+                        "binds": a.binds,
+                        "fields": a.fields,
+                        "sections": a.sections,
+                        "artifact_kinds": a.artifact_kinds,
+                        "package_sha256": a.package_sha256,
+                        "capabilities": a.capabilities,
+                        "purged": a.purged,
+                    }
+                )
                 for n, a in ws.addons.items()
             }
         ),

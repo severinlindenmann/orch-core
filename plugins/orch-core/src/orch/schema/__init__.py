@@ -23,7 +23,8 @@ section. ``common`` is a library of definitions, not a document: ``validate("com
 * In ``_DOC_CHECKS`` / ``_EVENT_CHECKS`` (this module): real calendar dates, git ref names, canonical repo
   identities, sorted lists and canonical policies, unique ids, ``proves`` and ``recommended``, body sections per
   type and forged headings, manifest titles, gate-input emptiness per gate, and for events the per-actor rules,
-  genesis links, ``base_rev`` paths, grant arithmetic, restore/ack positions and ``binds`` prefixes.
+  genesis links, ``base_rev`` paths, grant arithmetic, restore/ack positions and the section
+  prefixes of ``addon.granted``.
 * Not here (needs the store, keys or the operation registry): signatures, hash derivations, role and grant checks.
 
 Every pattern ends in ``(?![\\s\\S])`` instead of ``$``: Python's ``$`` also matches before a final LF.
@@ -418,6 +419,30 @@ def _check_workspace(obj: dict[str, Any]) -> None:
             raise SchemaError("workspace", _pointer(["members", i, "person"]), f"duplicate member {p!r}")
 
 
+# the headings of the core sections (store.render.HEADINGS; tests/addons/test_manifest.py keeps the two equal)
+_CORE_HEADINGS = (
+    "Summary",
+    "Context",
+    "Requirements",
+    "Out of scope",
+    "Plan",
+    "Decisions",
+    "Verification",
+    "Findings",
+    "Current state",
+)
+_HEADING = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9,&/'-]| (?! ))*(?![\s\S])")
+
+
+def heading_key(heading: str) -> str:
+    """Casefold with every character that is not a letter or digit removed: two headings with one key are the same
+    heading for a reader (ticket-format 8.1)."""
+    return "".join(c for c in heading.casefold() if c.isalnum())
+
+
+CORE_HEADING_KEYS = frozenset(heading_key(h) for h in _CORE_HEADINGS)
+
+
 def _check_manifest(obj: dict[str, Any]) -> None:
     flagged = suspicious(obj["title"])  # bidi, every Cf and F1's named look-alikes (5.7, 8)
     if flagged:
@@ -433,6 +458,47 @@ def _check_manifest(obj: dict[str, Any]) -> None:
             if s[label] in seen:
                 raise SchemaError("addon-manifest", _pointer([key, i, label]), f"duplicate {label} {s[label]!r}")
             seen.add(s[label])
+    seen_headings: set[str] = set(CORE_HEADING_KEYS)
+    for i, sec in enumerate(obj.get("sections", [])):
+        h = sec["heading"]
+        where = _pointer(["sections", i, "heading"])
+        if not _HEADING.fullmatch(h) or len(h) > 40:
+            raise SchemaError(
+                "addon-manifest", where, "a heading is ASCII letters, digits, single spaces and , & / ' -"
+            )
+        if heading_key(h) in seen_headings:
+            raise SchemaError("addon-manifest", where, f"heading {h!r} is taken (a core section or another section)")
+        seen_headings.add(heading_key(h))
+    _check_manifest_needs(obj)
+    line = obj.get("agents_md", "")
+    if line and (not _AGENTS_LINE.fullmatch(line) or _AGENTS_BAD & set(line)):
+        raise SchemaError(
+            "addon-manifest",
+            "/agents_md",
+            "printable ASCII, starts with a letter or digit, none of < > [ ] ` * |, no list marker",
+        )
+
+
+_AGENTS_LINE = re.compile(r"(?![0-9]+[.)] )[A-Za-z0-9][\x20-\x7e]{0,199}(?![\s\S])")
+_AGENTS_BAD = frozenset("<>[]`*|")
+
+
+def _check_manifest_needs(obj: dict[str, Any]) -> None:
+    from orch.addons.needs_rules import NeedsRuleError, validate_expr
+
+    seen: set[str] = set()
+    fields = {name: f["type"] for name, f in obj.get("fields", {}).items()}
+    for i, rule in enumerate(obj.get("needs", [])):
+        if rule["id"] in seen:
+            raise SchemaError("addon-manifest", _pointer(["needs", i, "id"]), f"duplicate id {rule['id']!r}")
+        seen.add(rule["id"])
+        try:
+            validate_expr(rule["when"], fields)
+        except NeedsRuleError as e:
+            raise SchemaError("addon-manifest", _pointer(["needs", i, "when"]), str(e)) from None
+        flagged = suspicious(rule["text"])
+        if flagged:
+            raise SchemaError("addon-manifest", _pointer(["needs", i, "text"]), "invisible character in text")
 
 
 def _check_gate_input(obj: dict[str, Any]) -> None:
@@ -528,11 +594,18 @@ def _ev_policy(obj: dict[str, Any], actor: dict[str, Any]) -> None:
 
 
 def _ev_addon_granted(obj: dict[str, Any], actor: dict[str, Any]) -> None:
-    for i, sec in enumerate(obj["binds"]["sections"]):
+    seen: set[str] = set()
+    for i, sec in enumerate(obj["sections"]):
         if sec["id"].split(".", 1)[0] != obj["name"]:
             raise SchemaError(
-                "event", _pointer(["binds", "sections", i, "id"]), "a section is named <addon>.<token> of this addon"
+                "event", _pointer(["sections", i, "id"]), "a section is named <addon>.<token> of this addon"
             )
+        if sec["id"] in seen:
+            raise SchemaError("event", _pointer(["sections", i, "id"]), f"duplicate section {sec['id']!r}")
+        seen.add(sec["id"])
+    for fname, f in obj["fields"].items():
+        if f["type"] == "integer" and "min" in f and "max" in f and f["min"] > f["max"]:
+            raise SchemaError("event", _pointer(["fields", fname, "min"]), "min is greater than max")
 
 
 def _ev_edit_external(obj: dict[str, Any], actor: dict[str, Any]) -> None:

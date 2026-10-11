@@ -1,6 +1,15 @@
 """orch ask: ask a person and carry on"""
 
+from typing import Any
+
+from orch.ops import plans
 from orch.ops._dsl import BOOL, REF_PATTERN, STR, TOKEN_PATTERN, B, L, S, err, obj, operation
+from orch.ops.base import Context, Result
+
+
+def handle(ctx: Context, args: dict[str, Any]) -> Result:
+    return plans.run(ctx, "ask", args, plans.ask)
+
 
 OP = operation(
     "ask",
@@ -28,4 +37,5 @@ OP = operation(
     text="ok {key} question.asked {question} seq={seq}\nnext: {next}",
     data=obj({"question": STR, "blocking": BOOL}),
     errors=(err("quota.unattended"), err("parse.text"), err("not_found"), err("ambiguous_ref")),
+    handler=handle,
 )

@@ -22,7 +22,7 @@ describe('SignConfirm', () => {
     expect(dialog.querySelector('h2')!.textContent).not.toContain(SPOOF)
     const region = within(dialog).getByRole('region', { name: 'From addon schedules' })
     expect(region.textContent).toContain(SPOOF)
-    expect(covers.textContent).toContain('Id (id): check-inbox') // the signed arg is core's cover line
+    expect(covers.textContent).toContain('Id (id): "check-inbox"') // the signed arg is core's cover line
     expect(region.className).toMatch(/dashed/)
   })
 
@@ -34,7 +34,7 @@ describe('SignConfirm', () => {
     )
     const dialog = screen.getByRole('dialog')
     const region = within(dialog).getByRole('region', { name: 'From addon publish' })
-    expect(within(dialog).getByText('Covers').nextElementSibling!.textContent).toContain('Share (share): B')
+    expect(within(dialog).getByText('Covers').nextElementSibling!.textContent).toContain('Share (share): "B"')
     expect(region.textContent).not.toContain('Share (share)')
     expect(region.textContent).toMatch(/Addon says:\s*Revoke share A/)
     expect(within(dialog).getByText('Covers').nextElementSibling!.textContent).not.toContain('Revoke share A')
@@ -60,11 +60,11 @@ describe('SignConfirm', () => {
     expect(a.covers).toContain('Runs "Arm schedule" (arm_schedule) of the addon Schedules (schedules)')
     expect(b.covers).toContain('(arm-schedule)')
     // An arg whose label is its words also shows its raw key, and the value verbatim.
-    expect(a.covers).toContain('Schedule id (schedule_id): smoke-on-testing')
+    expect(a.covers).toContain('Schedule id (schedule_id): "smoke-on-testing"')
     // The addon's own words stay labelled as the addon's.
     const c = one('run_now', 'Schedules', 'schedules', { id: 'smoke-on-testing' }, 'Smoke on testing')
     expect(c.region).toMatch(/Addon says:\s*Smoke on testing/)
-    expect(c.covers).toContain('Id (id): smoke-on-testing')
+    expect(c.covers).toContain('Id (id): "smoke-on-testing"')
     // An addon that calls itself "orch core" still shows its package id in core's lines.
     const d = one('arm', 'orch core', 'evil-addon')
     expect(d.heading).toBe('Sign: Arm (arm) · orch core (evil-addon)')
@@ -112,7 +112,7 @@ describe('SignConfirm', () => {
     const dialog = screen.getByRole('dialog')
     const covers = within(dialog).getByText('Covers').nextElementSibling!
     const region = within(dialog).getByRole('region', { name: 'From addon deploy' })
-    expect(covers).toHaveTextContent('Target (target): production')
+    expect(covers).toHaveTextContent('Target (target): "production"')
     expect(covers.textContent).not.toContain('staging')
     expect(region.textContent).toContain('Target (target): staging')
     expect(region.textContent).not.toContain('production')
@@ -122,7 +122,7 @@ describe('SignConfirm', () => {
   })
 
   it('values with invisible characters, newlines, edge spaces or nothing are shown distinguishably; NaN, Infinity, odd keys and more than 12 args fail closed', () => {
-    const args = { a: 'ab\u202Ecd', b: 'ab\u200Bcd', c: 'a\n\nb', d: ' x ', e: '' }
+    const args = { a: 'ab\u202Ecd', b: 'ab\u200Bcd', c: 'a\n\nb', d: ' x ', e: '', f: '1', g: 1, h: true }
     const view = render(
       <QueryClientProvider client={new QueryClient()}>
         <SignConfirm addon="schedules" addonTitle="Schedules" action="arm" workspace={{ prefix: 'DEMO', name: 'Acme Energy' }} args={args} onSign={() => {}} onClose={() => {}} />
@@ -130,12 +130,16 @@ describe('SignConfirm', () => {
     )
     const dialog = screen.getByRole('dialog')
     const lineOf = (k: string) => dialog.querySelector(`[data-arg-key="${k}"]`)!
-    expect(lineOf('a')).toHaveTextContent('A (a): ab\\u{202e}cd')
-    expect(lineOf('b')).toHaveTextContent('B (b): ab\\u{200b}cd')
-    expect(lineOf('c').textContent).toBe('C (c): a\\u{a}\\u{a}b')
-    expect(lineOf('d').textContent).toBe('D (d): ␠x␠')
+    expect(lineOf('a')).toHaveTextContent('A (a): "ab\\u{202e}cd"')
+    expect(lineOf('b')).toHaveTextContent('B (b): "ab\\u{200b}cd"')
+    expect(lineOf('c').textContent).toBe('C (c): "a\\u{a}\\u{a}b"')
+    expect(lineOf('d').textContent).toBe('D (d): " x "')
     expect(lineOf('e').textContent).toBe('E (e): ""')
-    for (const [k, v] of Object.entries(args)) expect(lineOf(k).getAttribute('data-arg-value')).toBe(v)
+    // Typed (security review #8): the string "1" and the number 1 never read alike, nor "true" and true.
+    expect(lineOf('f').textContent).toBe('F (f): "1"')
+    expect(lineOf('g').textContent).toBe('G (g): 1')
+    expect(lineOf('h').textContent).toBe('H (h): true')
+    for (const [k, v] of Object.entries(args)) expect(lineOf(k).getAttribute('data-arg-value')).toBe(String(v))
     view.unmount()
     for (const bad of [{ n: Number.NaN }, { n: Number.POSITIVE_INFINITY }, { 'Target (target)': 'staging' }, { 'a\u202Eb': 1 }, Object.fromEntries(Array.from({ length: 13 }, (_, i) => [`a${i}`, i]))]) {
       const v = render(

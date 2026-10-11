@@ -35,7 +35,7 @@ describe('ticket page', () => {
 
     const dialog = await screen.findByRole('dialog')
     expect(within(dialog).getByText(/sha256:/)).toBeInTheDocument()
-    expect(within(dialog).getByText(/Your answer: DATE/)).toBeInTheDocument()
+    expect(within(dialog).getByRole('region', { name: 'Your answer' })).toHaveTextContent(/Your answer: DATE/)
     await user.click(within(dialog).getByRole('button', { name: 'Send answer' }))
 
     await waitFor(() => expect(document.getElementById('question-Q2')).toHaveAttribute('data-state', 'answered'), T)
@@ -179,7 +179,10 @@ describe('ticket page structure: next action first, gates as a stepper, a rail t
     expect(within(pop).getByText('Plan needs 1 approval from owners.')).toBeInTheDocument()
     expect(within(pop).getByText(/Approved by Severin, 8 Oct/)).toHaveTextContent('Approved by Severin, 8 Oct · verified signature')
     expect(within(pop).getByText('Details')).toBeInTheDocument()
-    expect(within(pop).getByText(/a7ee20379eb5/)).toBeInTheDocument()
+    // The full content hash an approval binds (security review #2).
+    const hash = (await import('@/api/client')).mockStore.ticket('DEMO-0043')!.gates.plan.hash!
+    expect(hash).toMatch(/^sha256:[0-9a-f]{64}$/)
+    expect(within(pop).getByText(hash)).toBeInTheDocument()
   })
 
   it('an invalidated gate keeps its reason visible under the stepper', async () => {

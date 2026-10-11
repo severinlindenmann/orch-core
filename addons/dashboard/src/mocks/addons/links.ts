@@ -600,7 +600,7 @@ function page(state: Record<string, unknown>, c: Omit<AddonCtx, 'body' | 'state'
   const ownPeers = c.store.workspaces.filter((w) => w.id !== c.ws && w.members.some((m) => m.person === c.viewer && m.role === 'owner') && !linkedWs.has(w.prefix))
   const peerChoices = [...ownPeers.map((w) => `ws:${w.prefix}`), 'other']
   const peerNames = [...ownPeers.map((w) => `${WS_NAME[w.prefix] ?? w.prefix} · your workspace on ${MACHINE[w.prefix] === MACHINE[prefix] ? 'this machine' : (MACHINE[w.prefix] ?? 'another machine')}`), 'Another person or organisation']
-  const relayNote = relay === 'online' ? `The relay is online (${RELAY_URL}).` : `The relay is ${relay}: relay pairing waits until you connect it in Settings → Relay.`
+  const relayNote = relay === 'online' ? `The relay is online (${RELAY_URL}).` : `The relay is ${relay}: relay pairing waits until you connect it in Settings → Relay & devices.`
   let setup: unknown[]
   if (!owner) setup = [{ type: 'alert', tone: 'info', title: 'Owners set up links', text: 'Pairing links two workspaces\' trust, so an owner of each side signs it. Ask an owner of this workspace.' }]
   else if (pending) {
@@ -848,7 +848,7 @@ registerAddon({
       if (!p) return notFound('No pairing in progress.')
       if (p.joined) return { ok: true, message: `${p.peer.name} already entered the code.` }
       if (Date.parse(p.started_at) + PAIRING_MS <= Date.parse(c.store.now())) return conflict('links.code_expired', 'The pairing code expired.', 'Cancel and start again.')
-      if (p.carrier === 'relay' && relayLink(c) !== 'online') return conflict('links.relay_offline', `The relay is ${relayLink(c)}.`, 'Connect it in Settings → Relay, then try again.')
+      if (p.carrier === 'relay' && relayLink(c) !== 'online') return conflict('links.relay_offline', `The relay is ${relayLink(c)}.`, 'Connect it in Settings → Relay & devices, then try again.')
       // Each side works the comparison code out itself from both pairing values; nothing the other side sends sets it.
       p.joined = { at: c.store.now(), fingerprint: comparisonCode(prefixOf(c), p.peer), theyAccept: p.peer.ws ? ['handoff', 'question', 'status'] : ['question', 'drop'] }
       return { ok: true, message: `${p.peer.name} entered the code. Compare the codes.`, changed: true }
@@ -893,7 +893,10 @@ registerAddon({
       // Handoffs still waiting there come back to their people (as when a deadline passes, §9).
       const back = sentOf(c.state).filter((s) => s.link === l.id && s.state === 'waiting')
       for (const s of back) s.state = 'cancelled'
-      record(c, l.id, 'revoked', `Revoked the link. ${l.peer.name} was told with a signed revoke envelope${closed ? `; ${closed} open ${closed === 1 ? 'request' : 'requests'} closed` : ''}${back.length ? `; ${back.length} waiting ${back.length === 1 ? 'handoff' : 'handoffs'} came back (${back.map((s) => s.ticket).join(', ')})` : ''}.`, { by: c.viewer })
+      // The shared row names no ticket and counts none (a hidden one would leak through it, security review #6): each
+      // returned handoff is its own row carrying its ticket, so the per-viewer log filter applies to it.
+      record(c, l.id, 'revoked', `Revoked the link. ${l.peer.name} was told with a signed revoke envelope${closed ? `; ${closed} open ${closed === 1 ? 'request' : 'requests'} closed` : ''}.`, { by: c.viewer })
+      for (const s of back) record(c, l.id, 'handoff_returned', `The handoff of ${s.ticket} came back: the link was revoked before ${l.peer.name} took it.`, { by: c.viewer, ticket: s.ticket })
       return { ok: true, message: `Revoked the link with ${l.peer.name}. Nothing crosses it from now on.`, changed: true }
     },
 
@@ -990,7 +993,7 @@ function decideRequest(c: AddonCtx): AddonActionResult | StoreFailure {
   if (r.kind !== 'pairing' && (!l || !usable(l, now))) return conflict('links.inactive', 'The link this request came through is no longer active.')
   if (r.kind === 'pairing' && option === 'accept') {
     if (linksOf(c.state).some((x) => usable(x, now) && (r.from.ws ? x.peer.ws === r.from.ws : !x.peer.ws && x.peer.name === r.from.name))) return conflict('links.exists', `${r.from.name} is linked already.`, 'Revoke that link first, or deny this request.')
-    if ((r.carrier ?? 'relay') === 'relay' && relayLink(c) !== 'online') return conflict('links.relay_offline', `The relay is ${relayLink(c)}: the link cannot be confirmed to ${r.from.name}.`, 'Connect it in Settings → Relay, then accept again.')
+    if ((r.carrier ?? 'relay') === 'relay' && relayLink(c) !== 'online') return conflict('links.relay_offline', `The relay is ${relayLink(c)}: the link cannot be confirmed to ${r.from.name}.`, 'Connect it in Settings → Relay & devices, then accept again.')
   }
   const yes = r.kind === 'question' || option === 'accept' || option === 'allow'
   r.state = r.kind === 'question' ? 'answered' : yes ? 'accepted' : 'denied'

@@ -27,13 +27,14 @@ describe('mock router', () => {
   it('answering Q2 changes the store and appends an event', async () => {
     const { api, store } = setup()
     const before = store.eventsOf('DEMO-0043').length
-    const res = await api.postAction('DEMO-0043', { action: 'answer', question: 'Q2', option: 'date' })
+    const hash = store.ticket('DEMO-0043')!.questions_state.find((q) => q.id === 'Q2')!.hash!
+    const res = await api.postAction('DEMO-0043', { action: 'answer', question: 'Q2', option: 'date', hash })
     expect(res.event?.type).toBe('question.answered')
     expect(store.eventsOf('DEMO-0043')).toHaveLength(before + 1)
     expect(res.ticket.questions_state.find((q) => q.id === 'Q2')?.answer?.option).toBe('date')
     const today = await api.getToday(store.workspaces[0].id)
     expect(today.needs_you.some((n) => n.ticket === 'DEMO-0043' && n.ref === 'Q2')).toBe(false)
-    await expect(api.postAction('DEMO-0043', { action: 'answer', question: 'Q2', option: 'date' })).rejects.toMatchObject({
+    await expect(api.postAction('DEMO-0043', { action: 'answer', question: 'Q2', option: 'date', hash })).rejects.toMatchObject({
       code: 'question.already_answered',
     })
   })
@@ -252,6 +253,15 @@ describe('mock tickets search', () => {
       expect(refusals.filter((r) => r.refusal!.stop)).toHaveLength(1)
       expect(refusals.find((r) => r.refusal!.stop)!.refusal!.code).toBe('lease.held')
     })
+    it('refusals come from the agent sessions, never the ticket log (format F1)', async () => {
+      const { api, store } = setup()
+      const refusals = await api.getTicketRefusals('DEMO-0043')
+      expect(refusals.map((r) => r.code)).toEqual(['claim.held', 'human_only', 'lease.held', 'lease.held', 'lease.held'])
+      expect(refusals[1]).toMatchObject({ session: 's_77c2', agent: 'claude-code', for: 'p_sev', hint: expect.any(String) })
+      expect((await api.getEvents('DEMO-0043')).some((e) => e.type.startsWith('agent.'))).toBe(false)
+      expect(store.eventsOf('DEMO-0043').some((e) => e.type === 'agent.refused')).toBe(false)
+      expect((await api.getAgents(store.workspaces[0].id)).some((a) => 'refusals' in a)).toBe(false)
+    })
   })
 })
 
@@ -322,7 +332,8 @@ describe('stable ages and the attention count', () => {
     const ws = store.workspaces[0].id
     const before = (await api.getToday(ws)).needs_you
     const answered = before.find((i) => i.kind === 'question')!
-    await api.postAction(answered.ticket, { action: 'answer', question: answered.ref!, option: 'date' }).catch(() => undefined)
+    const hash = store.ticket(answered.ticket)!.questions_state.find((q) => q.id === answered.ref)!.hash!
+    await api.postAction(answered.ticket, { action: 'answer', question: answered.ref!, option: 'date', hash }).catch(() => undefined)
     store.append(answered.ticket, { type: 'comment.added', actor: 'p_sev', text: 'noted' })
     const after = (await api.getToday(ws)).needs_you
     const key = (i: { kind: string; ticket: string; ref?: string }) => `${i.kind}:${i.ticket}:${i.ref}`

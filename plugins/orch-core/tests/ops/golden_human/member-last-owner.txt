@@ -1,0 +1,4 @@
+exit 5
+--- stdout
+--- stderr
+err invalid.input members.last_owner: the last owner can't be removed · retry:false · next: orch describe member.remove

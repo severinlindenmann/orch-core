@@ -5,17 +5,22 @@
     "target": "check",
     "name": "check",
     "cli": "orch check",
-    "summary": "Check that the ticket files match their events (for a commit hook).",
+    "summary": "Check that the ticket files match their events and the instructions are current (for a commit hook or CI); --staged also checks what is about to be committed.",
     "who": "read",
-    "usage": "orch check",
+    "usage": "orch check [--staged]",
     "pre": [
       "workspace_exists"
     ],
     "emits": [],
     "input": {
       "type": "object",
-      "description": "Check that the ticket files match their events (for a commit hook).",
-      "properties": {},
+      "description": "Check that the ticket files match their events and the instructions are current (for a commit hook or CI); --staged also checks what is about to be committed.",
+      "properties": {
+        "staged": {
+          "type": "boolean",
+          "description": "also check the staged files: hand edits, forged log lines, .state, secrets"
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
@@ -55,7 +60,19 @@
         "additionalProperties": false
       }
     },
-    "errors": []
+    "errors": [
+      {
+        "code": "not_found",
+        "exit": 2,
+        "retryable": false,
+        "hint": "run orch init in a workspace",
+        "fix": [
+          "orch",
+          "describe",
+          "init"
+        ]
+      }
+    ]
   },
   "key": null,
   "seq": 0,

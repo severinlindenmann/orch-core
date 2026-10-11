@@ -1,0 +1,18 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "task": "T2",
+    "text": "Document the refresh command",
+    "proves": [
+      "AC2"
+    ]
+  },
+  "key": "DEMO-0001",
+  "seq": 15,
+  "cursor": 15,
+  "hints": [
+    "orch task start T2"
+  ]
+}
+# exit 0

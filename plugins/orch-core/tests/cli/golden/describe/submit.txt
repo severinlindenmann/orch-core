@@ -15,4 +15,5 @@ errors:
   claim.required (exit 4): orch claim
   lock.busy (exit 4 retry): retry in a moment | fix: orch status
   ac.evidence_missing (exit 5): orch artifact add FILE --ac AC1 | fix: orch describe artifact.add
+  observe.unavailable (exit 5): orch show names the repository; fix settings.repos or links.branches | fix: orch show
 out: ok {key} ticket.submitted testing seq={seq} / next: {next}

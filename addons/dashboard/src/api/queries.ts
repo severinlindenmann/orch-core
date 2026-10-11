@@ -35,10 +35,21 @@ export const queries = {
   /** The relay state with the time it was read (the page polls while something moves). */
   relay: (ws: string) => queryOptions({ queryKey: ['relay', ws], queryFn: async () => ({ state: await api.getRelay(ws), at: Date.now() }) }),
   workspaceAddons: (ws: string) => queryOptions({ queryKey: ['workspace-addons', ws], queryFn: () => api.getWorkspaceAddons(ws) }),
-  /** An addon's state; per-ticket requests sit under the addon's key, so invalidating it covers them. */
+  /**
+   * An addon's state; per-ticket requests sit under the addon's key, so invalidating it covers them. While the state
+   * says `moving: true` (work the host runs in the background, e.g. a clone in progress) it is read again every second;
+   * otherwise after `nextRefreshMs` when the state asks for it (a scheduled check), bounded to 30 s – 1 h.
+   */
   addonState: (ws: string, name: string, ticket?: string) =>
-    queryOptions({ queryKey: addonStateKey(ws, name, ticket), queryFn: () => api.getAddonState(ws, name, ticket), staleTime: 10_000, retry: false }),
+    queryOptions({ queryKey: addonStateKey(ws, name, ticket), queryFn: () => api.getAddonState(ws, name, ticket), staleTime: 10_000, refetchInterval: (q) => addonRefresh(q.state.data), retry: false }),
   /** Mandates, PREVIEW ONLY: the shell banner, Today's digest and Agents → Mandates read this one entry. */
-  mandatesPreview: (ws: string) => queryOptions({ queryKey: ['mandates-preview', ws], queryFn: () => api.getMandatesPreview(ws), retry: false }),
+  mandatesPreview: (ws: string) => queryOptions({ queryKey: ['mandates-preview', ws], queryFn: () => api.getMandatesPreview(ws), enabled: !!api.getLocalMandatesPreview(ws)?.on, initialData: () => api.getLocalMandatesPreview(ws), retry: false }),
   artifacts: (ws: string, query: ArtifactQuery) => queryOptions({ queryKey: ['artifacts', ws, query], queryFn: () => api.listArtifacts(ws, query) }),
+}
+
+/** How soon the shared addon-state query reads again: the generic `moving` / `nextRefreshMs` contract (no addon names). */
+export function addonRefresh(data: Record<string, unknown> | undefined): number | false {
+  if (data?.moving === true) return 1000
+  const next = data?.nextRefreshMs
+  return typeof next === 'number' && Number.isFinite(next) ? Math.min(3_600_000, Math.max(30_000, next)) : false
 }

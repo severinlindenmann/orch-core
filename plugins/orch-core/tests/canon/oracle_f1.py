@@ -54,7 +54,7 @@ def ctx(label: str, log: str, event: dict[str, Any]) -> bytes:
     return LABELS[label].encode() + cj({"contract": 1, "suite": 2, "workspace_id": W, "log": log, "event": event})
 
 
-# --- canonical json -----------------------------------------------------------------------------------------------
+# --- canonical json -------------------------------------------------------------------------------
 
 
 def canon_vectors() -> dict[str, Any]:
@@ -75,7 +75,7 @@ def canon_vectors() -> dict[str, Any]:
     }
 
 
-# --- text -----------------------------------------------------------------------------------------------------------
+# --- text -----------------------------------------------------------------------------------------
 
 
 NEW_IN_16 = [  # primary composites added after Unicode 14.0: (composite, decomposition); NFC differs on old runtimes
@@ -146,7 +146,7 @@ def text_vectors() -> dict[str, Any]:
     }
 
 
-# --- hashes -------------------------------------------------------------------------------------------------------
+# --- hashes ---------------------------------------------------------------------------------------
 
 
 def policy_obj() -> dict[str, Any]:
@@ -195,6 +195,17 @@ def hash_vectors() -> dict[str, Any]:
             {"value": "m", "hash": h("value", b'"m"')},
             {"value": 'a\nb\t"q" \\ \u2028', "hash": h("value", cj('a\nb\t"q" \\ \u2028'))},
             {"value": {'k\\"': ["\t\n"]}, "hash": h("value", cj({'k\\"': ["\t\n"]}))},
+        ],
+        "policy_hash_refused": [
+            {"gate": "requirements", "policy": {**policy_obj(), "applies": []}, "why": "applies is an empty list"},
+            {"gate": "requirements", "policy": {**policy_obj(), "approvers": []}, "why": "no approver token"},
+            {"gate": "requirements", "policy": {**policy_obj(), "count": 0}, "why": "count below 1"},
+            {
+                "gate": "requirements",
+                "policy": {**policy_obj(), "approvers": ["owner", "admin"]},
+                "why": "unknown approver token",
+            },
+            {"gate": "requirements", "policy": {**policy_obj(), "not": ["viewer"]}, "why": "unknown token in not"},
         ],
         "policy_hash": [
             {
@@ -248,120 +259,75 @@ def hash_vectors() -> dict[str, Any]:
     }
 
 
-# --- gate hash ----------------------------------------------------------------------------------------------------
-
-
-def _sec(text: str) -> str:
-    return h("section", text.encode())
+# --- gate hash ------------------------------------------------------------------------------------
+#
+# Every inner hash (section, artifact digest, policy, people) is derived from a small real ticket by
+# ``oracle_f1_gate.derive_G`` (see its docstring); the cases below are variants of that one ticket.
 
 
 def gate_inputs() -> dict[str, dict[str, Any]]:
-    base = {"workspace_id": W, "uid": UID, "schema": "orch.ticket/2", "hash_v": 1, "addon_packages": {}}
-    ac = [
-        {"id": "AC1", "text": "`dbt seed` loads all 40 tariff tables"},
-        {"id": "AC2", "text": "Model joins the seeds"},
-    ]
-    links = {"repos": ["acme-energy-dbt"], "branches": {"acme-energy-dbt": "feat/DEMO-0043"}, "prs": [], "external": []}
-    shot = digest(b"png bytes")
-    apol = h("policy", cj({"gate": "x", "policy": policy_obj()}))
-    ppl = h("people", b"{}")
-    sha1, sha2 = "b7e1f02c" * 5, "a1" * 20
-    req = {
-        **base,
-        "gate": "requirements",
-        "sections": {
-            "summary": _sec("Load tariffs.\n"),
-            "context": _sec(""),
-            "requirements": _sec("- R1 caf\u00e9\n"),
-            "out_of_scope": _sec("Nothing.\n"),
-        },
-        "fields": {"ticket_type": "feature", "size": "m", "acceptance": ac, "links": None, "addons": {}},
-        "tasks": [],
-        "artifacts": {"mock.png": {"kind": "screenshot", "digest": shot, "ac": "AC1", "task": None}},
-        "receipts": {},
-        "source_sha": [],
-        "prior": {},
-        "policy_hash": apol,
-        "people_hash": ppl,
-    }
-    plan = {
-        **base,
-        "gate": "plan",
-        "sections": {"plan": _sec("1. export\n2. seed\n"), "decisions": _sec("")},
-        "fields": {
-            "ticket_type": "feature",
-            "size": "m",
-            "acceptance": ac,
-            "links": None,
-            "addons": {"estimate": {"points": 5}},
-        },
-        "addon_packages": {"estimate": digest(b"estimate package")},
-        "tasks": [
-            {"id": "T1", "text": "Export CSVs", "verify": {"cmd": "ls seeds | wc -l"}, "proves": []},
-            {"id": "T2", "text": "Seed configs", "verify": None, "proves": ["AC1"]},
-        ],
-        "artifacts": {},
-        "receipts": {},
-        "source_sha": [],
-        "prior": {
-            "requirements": {"gen": 1, "approvals": ["01J9ZP0000000000000000000A", "01J9ZP0000000000000000000B"]}
-        },
-        "policy_hash": apol,
-        "people_hash": ppl,
-    }
-    verify = {
-        **base,
-        "gate": "verify",
-        "sections": {"verification": _sec("Ran dbt seed.\n")},
-        "fields": {"ticket_type": "feature", "size": "m", "acceptance": ac, "links": links, "addons": {}},
-        "tasks": [],
-        "artifacts": {"run.log": {"kind": "log", "digest": digest(b"log"), "ac": None, "task": "T2"}},
-        "receipts": {
-            "T2": {"event": "01J9ZQ0000000000000000000C", "repo": "acme-energy-dbt", "commit": sha1, "exit": 0}
-        },
-        "source_sha": [{"repo": "https://github.com/acme/energy-dbt", "ref": "refs/heads/feat/DEMO-0043", "sha": sha1}],
-        "prior": {
-            "requirements": {"gen": 1, "approvals": ["01J9ZP0000000000000000000A"]},
-            "plan": {"gen": 0, "approvals": ["01J9ZP0000000000000000000D"]},
-        },
-        "policy_hash": apol,
-        "people_hash": ppl,
-    }
-    code = {
-        **base,
-        "gate": "code",
-        "sections": {},
-        "fields": {"ticket_type": "feature", "size": None, "acceptance": ac, "links": links, "addons": {}},
-        "tasks": [],
-        "artifacts": {},
-        "receipts": {},
-        "source_sha": [{"repo": "https://github.com/acme/energy-dbt", "ref": "refs/heads/feat/DEMO-0043", "sha": sha2}],
-        "prior": {"verify": {"gen": 2, "approvals": ["01J9ZR0000000000000000000E"]}},
-        "policy_hash": apol,
-        "people_hash": ppl,
-    }
-    return {"requirements": req, "plan": plan, "verify": verify, "code": code}
+    """The four gate hash inputs ``G`` of the sample ticket, for tests that mutate them."""
+    from . import oracle_f1_gate as g
+
+    t = g.sample_ticket()
+    return {gate: g.derive_G(t, gate) for gate in g.GATES}
 
 
 def gate_vectors() -> dict[str, Any]:
-    gi = gate_inputs()
-    nulls = copy.deepcopy(gi["verify"])  # a receipt of a command that is not tied to a repo (ticket-format 5.4.1)
+    from . import oracle_f1_gate as g
+
+    base = g.sample_ticket()
+    nulls = copy.deepcopy(base)  # a receipt of a command that is not tied to a repo (ticket-format 5.4.1)
     nulls["receipts"]["T2"].update(repo=None, commit=None)
-    chore = copy.deepcopy(gi["requirements"])  # a chore has no out_of_scope section; a missing summary is H("")
-    chore["fields"]["ticket_type"] = "chore"
-    del chore["sections"]["out_of_scope"]
-    cases = [(g, g, v) for g, v in gi.items()] + [
+    chore = copy.deepcopy(base)  # a chore has no out_of_scope section; a missing summary is H("")
+    chore["type"] = "chore"
+    chore["size"] = None
+    for sid in ("summary", "out_of_scope", "verification"):
+        del chore["sections"][sid]
+    no_plan = copy.deepcopy(base)  # plan does not apply to a feature here, so it is not in `prior` (5.7)
+    no_plan["overrides"] = {}
+    no_plan["ws_policies"]["plan"]["applies"] = ["bug"]
+    two_repos = copy.deepcopy(base)  # source list sorted by identity, ssh remote with a port mapped by 5.7
+    two_repos["links"]["repos"] = ["acme-energy-dbt", "acme-infra"]
+    two_repos["links"]["branches"]["acme-infra"] = "feat/DEMO-0043"
+    two_repos["remotes"]["acme-infra"] = "ssh://git@git.example.com:2222/Acme/infra.git"
+    g.observe(two_repos, "acme-infra", "a1" * 20, "feat/DEMO-0043")
+    cases = [
+        ("requirements", "requirements", base),
+        ("plan", "plan", base),
+        ("verify", "verify", base),
+        ("code", "code", base),
         ("verify_null_receipt", "verify", nulls),
         ("requirements_chore", "requirements", chore),
+        ("verify_plan_not_applicable", "verify", no_plan),
+        ("code_two_repos", "code", two_repos),
     ]
+    out = []
+    for name, gate, t in cases:
+        gi = g.derive_G(t, gate)
+        pol = g.derive_policies(t)[gate]
+        out.append(
+            {
+                "name": name,
+                "gate": gate,
+                "ticket": t,
+                "effective_policy": pol,
+                "people": g.people_for(pol, t),
+                "G": gi,
+                "cj_hex": cj(gi).hex(),
+                "hash": h("gate", cj(gi)),
+            }
+        )
     return {
-        "gate_hash": [
-            {"name": n, "gate": g, "G": v, "cj_hex": cj(v).hex(), "hash": h("gate", cj(v))} for n, g, v in cases
-        ]
+        "note": "G is derived from `ticket` by the rules of ticket-format 5.6/5.7: effective policy = workspace "
+        "intersect override; the people hash covers the ticket roles the policy names (plus assignees when "
+        "independent); prior lists every earlier gate that applies with its first `count` counting approvals sorted; "
+        "code is switched on in this workspace.",
+        "gate_hash": out,
     }
 
 
-# --- chain and signed bytes -----------------------------------------------------------------------------------------
+# --- chain and signed bytes -----------------------------------------------------------------------
 
 
 def chain_events() -> list[dict[str, Any]]:
@@ -430,6 +396,8 @@ def chain_vectors() -> dict[str, Any]:
 
 
 def repo_identity_vectors() -> dict[str, Any]:
+    from . import oracle_f1_gate as g
+
     ok = [
         "https://github.com/acme/x",
         "https://github.com/Acme/X.y_z~1",
@@ -458,12 +426,189 @@ def repo_identity_vectors() -> dict[str, Any]:
         "http://github.com/x", "ssh://git@github.com/x", "git@github.com:acme/x", "file:///tmp/x", "/tmp/x",
         "local:", "local:a b", "local:a/b", "",
     ]  # fmt: skip
-    return {"ok": ok, "refused": refused, "same": [["https://github.com/Acme/X", "https://github.com/acme/x"]]}
+    raw = [  # (name, raw remote.origin.url, repo name): the canonical identity is derived by 5.7, independently
+        ("https_plain", "https://github.com/acme/x", "x"),
+        ("https_dot_git", "https://github.com/acme/x.git", "x"),
+        ("https_trailing_slash", "https://github.com/acme/x/", "x"),
+        ("https_user_token", "https://user:s3cr3t-token@github.com/acme/x.git", "x"),
+        ("https_token_only", "https://ghp_abc123@github.com/acme/x", "x"),
+        ("https_host_lowercased_path_kept", "https://GitHub.COM/Acme/X", "x"),
+        ("https_default_port_dropped", "https://github.com:443/acme/x", "x"),
+        ("https_other_port_kept", "https://git.example.com:8443/a/b", "x"),
+        ("https_port_22_kept", "https://git.example.com:22/a/b", "x"),
+        ("ssh_url", "ssh://git@github.com/acme/x.git", "x"),
+        ("ssh_url_no_user", "ssh://github.com/acme/x", "x"),
+        ("ssh_url_password", "ssh://git:pw@github.com/acme/x", "x"),
+        ("ssh_default_port_dropped", "ssh://git@github.com:22/acme/x", "x"),
+        ("ssh_other_port_kept", "ssh://git@git.example.com:2222/a/b.git", "x"),
+        ("scp_like", "git@github.com:acme/x.git", "x"),
+        ("scp_like_other_user", "deploy@git.example.com:acme/x.git", "x"),
+        ("scp_like_no_user", "github.com:acme/x", "x"),
+        ("scp_like_upper_host", "git@GitHub.com:Acme/X.git", "x"),
+        ("file_url", "file:///srv/git/x.git", "x"),
+        ("absolute_path", "/srv/git/x", "x"),
+        ("relative_path", "../x", "x"),
+        ("no_remote", "", "x"),
+        ("http_not_https", "http://github.com/acme/x", "x"),
+        ("https_upper_dot_git_refused", "https://github.com/acme/x.GIT", "x"),
+        ("https_double_trailing_slash_refused", "https://github.com/acme/x//", "x"),
+        ("ssh_port_443_refused", "ssh://git@git.example.com:443/a/b", "x"),
+        ("https_dot_git_in_a_middle_segment", "https://github.com/acme.git/x", "x"),
+        ("scp_like_with_a_local_insteadof", "gh:acme/x", "x"),
+    ]
+    # git config the test repo carries itself; the mapping reads the raw remote, so it never applies (5.7)
+    local_config = {"scp_like_with_a_local_insteadof": {"url.https://evil.example/.insteadOf": "gh:"}}
+    mapping = []
+    for n, r, nm in raw:
+        out = g.mapped_identity(r, nm)
+        case: dict[str, Any] = {"name": n, "raw": r, "repo_name": nm, "canonical": out}
+        if out is None:
+            case["refused"] = True
+        if n in local_config:
+            case["local_git_config"] = local_config[n]
+        mapping.append(case)
+    assert all(g.is_canonical_identity(v) for v in ok) and not any(g.is_canonical_identity(v) for v in refused)
+    return {
+        "ok": ok,
+        "refused": refused,
+        "same": [["https://github.com/Acme/X", "https://github.com/acme/x"]],
+        "mapping": mapping,
+        "mapping_note": "userinfo (user:token@) is removed before anything else and never appears in a result; one "
+        "trailing / and one trailing (lower-case) .git are removed from the end of the path; the https default port "
+        "443 and the ssh default port 22 are dropped, every other port is kept (so ssh on 443 keeps it); anything that "
+        "is not https, ssh or scp-like is local:<repo name>. A mapped result that is not in the canonical form is "
+        "refused, never converted: `canonical` is null and `refused` is true (x.GIT, x//, ssh port 443). A .git that "
+        "ends a middle segment is not a .git suffix of the path and is kept.",
+    }
+
+
+def section_text_vectors() -> dict[str, Any]:
+    from . import oracle_f1_gate as g
+
+    f = "`" * 3
+    cases: list[tuple[str, str, str]] = [  # (name, ticket type, body.md text)
+        ("two_sections", "feature", "## Context\n\nctx\n\n## Requirements\n\nreq\n"),
+        ("lf_trimmed_inner_kept", "feature", "\n\n## Context\n\n\n\nline 1  \n\n\tline 3\n\n\n## Plan\n\nx"),
+        ("empty_section", "feature", "## Context\n\n## Requirements\n\nr"),
+        ("no_final_newline", "feature", "## Context\n\nctx"),
+        ("heading_in_backtick_fence", "feature", f"## Context\n\nbefore\n{f}\n## Plan\n{f}\nafter"),
+        ("heading_in_tilde_fence", "feature", "## Context\n\n~~~\n## Plan\n~~~\nafter"),
+        ("fence_closes_only_when_long_enough", "feature", f"## Context\n\n{f}`\n{f}\n## Plan\n{f}`\nz"),
+        ("fence_closing_with_trailing_spaces", "feature", f"## Context\n\n{f}\n## Plan\n{f}   \n## Plan\n\nreal"),
+        ("tilde_does_not_close_backtick_fence", "feature", f"## Context\n\n{f}\n~~~\n## Plan\n{f}\n## Plan\n\nreal"),
+        ("fence_with_info_string_opens", "feature", f"## Context\n\n{f}python\n## Plan\n{f}"),
+        ("fence_closer_with_text_stays_open", "feature", f"## Context\n\n{f}\n{f} not a closer\n## Plan\n{f}\n"),
+        ("indented_fence_is_text", "feature", f"## Context\n\n {f}\n## Plan\n\np"),
+        ("two_backticks_are_text", "feature", "## Context\n\n``\n## Plan\n\np"),
+        ("indented_heading_is_text", "feature", "## Context\n\n ## Plan\n### Plan\n##Plan\n#### x"),
+        ("hash_marks_without_space_are_text", "feature", "## Context\n\n##\n###\n##x"),
+        ("empty_heading_refused", "feature", "## Context\n\n## \n"),
+        ("current_state_section", "chore", "## Requirements\n\nr\n\n## Current state\n\nhandoff"),
+        ("findings_of_a_spike", "spike", "## Findings\n\nf"),
+        ("unknown_heading", "feature", "## Notes\n\nn"),
+        ("heading_case_matters", "feature", "## context\n\nc"),
+        ("section_of_another_type", "feature", "## Findings\n\nf"),
+        ("dash_section_for_the_type", "chore", "## Out of scope\n\nnothing"),
+        ("duplicate_heading", "feature", "## Context\n\na\n\n## Context\n\nb"),
+        ("text_before_first_heading", "feature", "intro\n## Context\n\nc"),
+        ("blank_lines_before_first_heading", "feature", "\n\n\n## Context\n\nc"),
+        ("open_fence_at_the_end", "feature", f"## Context\n\n{f}\ncode"),
+        ("open_tilde_fence_at_the_end", "feature", "## Context\n\n~~~~\n~~~\n"),
+        ("empty_file", "feature", ""),
+    ]
+    out = []
+    for name, ty, body in cases:
+        try:
+            secs = g.parse_body(body, ty)
+            out.append(
+                {
+                    "name": name,
+                    "type": ty,
+                    "body": body,
+                    "sections": secs,
+                    "hashes": {k: h("section", v.encode()) for k, v in secs.items()},
+                }
+            )
+        except g.BodyRefused as e:
+            out.append({"name": name, "type": ty, "body": body, "refused": e.args[0]})
+    return {
+        "note": "section text = what lies between a heading and the next one, leading and trailing LF removed; "
+        "a heading is '## ' at column 0 outside a fence; the hash is of that text only (ticket-format 4, 5.6)",
+        "cases": out,
+    }
+
+
+def artifact_refs_vectors() -> dict[str, Any]:
+    from . import oracle_f1_gate as g
+
+    f = "`" * 3
+    texts = [
+        ("one", "see (artifact:after.png)"),
+        ("markdown_image", "![alt](artifact:after.png)"),
+        ("sorted_unique", "(artifact:b.png) (artifact:a.png) (artifact:b.png)"),
+        ("inside_code_fence", f"{f}\n(artifact:fenced.log)\n{f}"),
+        ("inside_inline_code", "`(artifact:inline.log)`"),
+        ("none", "no refs (artifact) (artifact:) artifact:x"),
+        ("must_start_alnum", "(artifact:.hidden) (artifact:-x) (artifact:_y) (artifact:ok)"),
+        ("name_chars", "(artifact:A-b_c.d9)"),
+        ("name_128_ok", "(artifact:" + "a" * 128 + ")"),
+        ("name_129_no_match", "(artifact:" + "a" * 129 + ")"),
+        ("spaces_inside_no_match", "(artifact: a.png) (artifact:a b.png) ( artifact:c.png)"),
+        ("unicode_name_no_match", "(artifact:caf\u00e9.png)"),
+        ("adjacent", "(artifact:a)(artifact:b)"),
+        ("case_matters", "(Artifact:a.png) (artifact:A.png)"),
+        ("nested_parens", "((artifact:a.png))"),
+    ]
+    return {
+        "regex": r"\(artifact:([A-Za-z0-9][A-Za-z0-9._-]{0,127})\)",
+        "cases": [{"name": n, "text": t, "refs": g.refs_of(t)} for n, t in texts],
+    }
 
 
 def all_vectors() -> dict[str, dict[str, Any]]:
+    out = _vectors()
+    for name, v in out.items():  # every file that is new or changed states what it pins (the unchanged shared files
+        if not INDEX[name].startswith("[shared, unchanged]") and "pins" not in v:  # stay byte-identical to the relay's)
+            out[name] = {"pins": INDEX[name], **v}
+    out["index.json"] = {
+        "files": {k: INDEX[k] for k in sorted(INDEX)},
+        "note": "files tagged [shared] are copied verbatim into orch-relay; the others are core-only",
+    }
+    return out
+
+
+def _vectors() -> dict[str, dict[str, Any]]:
+    from . import oracle_f1_flow as fl
+    from . import oracle_f1_signed as sg
+
     return {
+        "signatures.json": sg.signatures_vector(),
+        "replay.json": sg.replay_scenario(),
+        "tamper.json": sg.tamper_vector(),
+        "genesis.json": sg.genesis_vector(),
+        "devices.json": {"pins": "device.added and device roster rules", "scenarios": sg.devices_scenarios()},
+        "revocation.json": {"pins": "device.revoked and recovery", "scenarios": sg.revocation_scenarios()},
+        "checkpoint.json": sg.checkpoint_vector(),
+        "restore.json": {"pins": "workspace restore and revocations", "scenarios": sg.restore_scenarios()},
+        "generation.json": {"pins": "the 5.7 raise table", "scenarios": fl.generation_scenarios()},
+        "status.json": {"pins": "the 5.9 status table", "scenarios": fl.status_scenarios()},
+        "questions.json": {
+            "pins": "question ids and hashes, answers, and a decision for the same qid after a restore",
+            "scenarios": fl.question_scenarios(),
+        },
+        "effective_policy.json": {
+            "pins": "the 5.7 intersection of workspace and override, a later workspace change, gate.no_eligible",
+            "cases": fl.effective_policy_cases(),
+            "scenarios": fl.effective_policy_scenarios(),
+        },
+        "approvals.json": {
+            "pins": "who may approve (token, not, viewer, workers on independent and code gates), host events never "
+            "approve, incomplete and non-applying gates, a stale source list",
+            "scenarios": fl.approval_scenarios(),
+        },
         "labels.json": {"labels": LABELS},
+        "section_text.json": section_text_vectors(),
+        "artifact_refs.json": artifact_refs_vectors(),
         "canon.json": canon_vectors(),
         "text.json": text_vectors(),
         "hashes.json": hash_vectors(),
@@ -471,6 +616,40 @@ def all_vectors() -> dict[str, dict[str, Any]]:
         "chain.json": chain_vectors(),
         "repo_identity.json": repo_identity_vectors(),
     }
+
+
+INDEX: dict[str, str] = {
+    "canon.json": "[shared, unchanged] strict parse depth 16/17 and -0 -> 0 (ticket-format 11.2)",
+    "labels.json": "[shared, unchanged] the F1 domain labels (5.6), prefix-free with the protocol's",
+    "text.json": "[shared, unchanged] CRLF/CR -> LF, NFC (Unicode 16.0), refused controls, bidi and unassigned (11.3)",
+    "hashes.json": "[shared, CHANGED] known answers: artifact, section, value, policy, people, question id and hash, "
+    "grant secret; refused non-NFC inputs (5.6); refused non-canonical policies (5.7)",
+    "chain.json": "[shared, unchanged] three chained events: heads, prev, canonical lines, signing bytes; the sig and "
+    "host_sig values in it are PLACEHOLDERS, real signatures are pinned in signatures.json, tamper.json and the "
+    "scenarios",
+    "gate_hash.json": "[shared, CHANGED] gate hash known answers; every inner hash is derived from the `ticket` each "
+    "case ships (5.6, 5.7), with real policy names, people roles and `prior`",
+    "repo_identity.json": "[shared, extended] canonical identities, refused forms, and `mapping`: raw remote -> "
+    "canonical (5.7)",
+    "section_text.json": "body.md heading and fence rules, LF trimming, what is hashed (4, 5.6)",
+    "artifact_refs.json": "the artifact reference regex (5.8)",
+    "signatures.json": "real P-256 signatures of events and host_sig, what they cover, replay refusals (5.3, 5.5)",
+    "replay.json": "model scenario: replayed or re-contexted signed events are refused with the real verifier "
+    "(5.3, 5.11)",
+    "tamper.json": "tampered chain lines of the ticket and workspace log, the seq where the chain breaks (5.5)",
+    "genesis.json": "the six genesis checks in order (5.11)",
+    "devices.json": "device.added rules: drop: and scope refusals, self-signed, stale roster_v, recovery (5.3, 5.11)",
+    "revocation.json": "device.revoked: embedded revocation as authority, reason mismatch, recovery (5.3)",
+    "checkpoint.json": "checkpoint objects, signed bytes, refusals, divergence (5.10)",
+    "restore.json": "workspace restore re-appends every PK-signed revocation (5.10)",
+    "generation.json": "the 5.7 raise table row by row, delayed approval, reverted edit, voided approvals",
+    "status.json": "the 5.9 status table, done is sticky, reopen",
+    "effective_policy.json": "the 5.7 intersection, a later workspace change, gate.no_eligible",
+    "approvals.json": "model scenarios: who may approve (5.7), host events (5.2, 5.12), gate.incomplete, "
+    "gate.not_applicable, a stale source_sha",
+    "questions.json": "question id and hash, answers, a decision for the same qid after a restore",
+    "index.json": "this list",
+}
 
 
 def render(v: dict[str, Any]) -> str:

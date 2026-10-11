@@ -41,12 +41,16 @@
                 },
                 "enabled": {
                   "type": "boolean"
+                },
+                "state": {
+                  "type": "string"
                 }
               },
               "required": [
                 "name",
                 "version",
-                "enabled"
+                "enabled",
+                "state"
               ],
               "additionalProperties": false
             }

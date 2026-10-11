@@ -20,16 +20,18 @@ describe('permanent URLs: the address <-> in-app path mapping', () => {
     ['/settings/members', '/w/DEMO/settings/members'],
     ['/settings/addon/publish', '/w/DEMO/settings/addon/publish'],
     ['/addon/usage/overview', '/w/DEMO/addon/usage/overview'],
-    ['/ticket/DEMO-0043', '/ticket/DEMO-0043'],
+    ['/ticket/DEMO-0043', '/w/DEMO/ticket/DEMO-0043'],
   ]
   it.each(ROUTES)('%s <-> %s', (inApp, address) => {
     expect(toPublicPath(inApp, 'DEMO')).toBe(address)
     const { prefix, path } = splitWorkspacePath(address)
     expect(path).toBe(inApp)
-    expect(prefix).toBe(inApp.startsWith('/ticket/') ? undefined : 'DEMO')
+    expect(prefix).toBe('DEMO')
   })
 
-  it('a ticket is not a workspace page (its key names the workspace); /w/ paths are already addresses', () => {
+  it('a ticket takes the workspace of its key, not the current one; /w/ paths are already addresses', () => {
+    expect(toPublicPath('/ticket/INT-0007', 'DEMO')).toBe('/w/INT/ticket/INT-0007')
+    expect(toPublicPath('/ticket/INT-0007', null)).toBe('/w/INT/ticket/INT-0007')
     expect(isWorkspacePath('/ticket/INT-0007')).toBe(false)
     expect(isWorkspacePath('/w/DEMO/board')).toBe(false)
     expect(isWorkspacePath('/board')).toBe(true)
@@ -98,14 +100,14 @@ describe('permanent URLs in the app', () => {
     await waitFor(() => expect(screen.getByRole('link', { name: 'Board' })).toHaveAttribute('href', '/w/CLI/board'), T)
   })
 
-  it('a ticket URL keeps its key, opens the tab from ?tab= and writes the tab back', async () => {
-    const { user, address } = renderApp('/ticket/DEMO-0043?tab=history', { viewer: 'p_sev' })
+  it('a ticket URL carries its workspace, keeps its key, opens the tab from ?tab= and writes the tab back', async () => {
+    const { user, address } = renderApp('/w/DEMO/ticket/DEMO-0043?tab=history', { viewer: 'p_sev' })
     await screen.findByRole('heading', { level: 1, name: /Load tariff tables/ }, T)
     expect(screen.getByRole('tab', { name: 'History' })).toHaveAttribute('aria-selected', 'true')
     await user.click(screen.getByRole('tab', { name: 'Raw' }))
-    await waitFor(() => expect(address()).toBe('/ticket/DEMO-0043?tab=raw'), T)
+    await waitFor(() => expect(address()).toBe('/w/DEMO/ticket/DEMO-0043?tab=raw'), T)
     await user.click(screen.getByRole('tab', { name: 'Overview' }))
-    await waitFor(() => expect(address()).toBe('/ticket/DEMO-0043'), T)
+    await waitFor(() => expect(address()).toBe('/w/DEMO/ticket/DEMO-0043'), T)
   })
 
   it('an invalid ?tab= opens Overview instead of failing', async () => {
@@ -114,17 +116,54 @@ describe('permanent URLs in the app', () => {
     expect(screen.getAllByRole('tab', { selected: true }).map((t) => t.textContent)).toEqual(['Overview'])
   })
 
-  it('a ticket address with a workspace in front loses it (the key names the workspace)', async () => {
-    const { address } = renderApp('/w/INT/ticket/DEMO-0043', { viewer: 'p_sev' })
+  it('/ticket/KEY redirects (replace) to the canonical address, keeping ?tab and the hash', async () => {
+    const { router, address } = renderApp('/ticket/DEMO-0043?tab=history#question-q1', { viewer: 'p_sev', storage: { 'orch.workspace': workspacesFixture.find((w) => w.prefix === 'INT')!.id } })
     await screen.findByRole('heading', { level: 1, name: /Load tariff tables/ }, T)
-    await waitFor(() => expect(address()).toBe('/ticket/DEMO-0043'), T)
+    // The prefix is the key's workspace, not the remembered one (INT).
+    await waitFor(() => expect(address()).toBe('/w/DEMO/ticket/DEMO-0043?tab=history#question-q1'), T)
+    // Replaced, not pushed: Back leaves the ticket instead of returning to the short address.
+    expect(router.history.length).toBe(1)
   })
 
-  it('a pasted URL to a restricted ticket shows the restricted state, and nothing of the ticket', async () => {
-    const { address } = renderApp('/ticket/DEMO-0044?tab=history', { viewer: 'p_tom' })
+  it.each([
+    ['/ticket/DEMO-0043/?tab=history', '/w/DEMO/ticket/DEMO-0043?tab=history'],
+    ['/w/INT/ticket/DEMO-0043/?tab=history', '/w/DEMO/ticket/DEMO-0043?tab=history'],
+    ['/w/DEMO/ticket/DEMO-0043/?tab=history', '/w/DEMO/ticket/DEMO-0043?tab=history'],
+  ])('a ticket address with a trailing slash (%s) is redirected to the canonical one', async (from, to) => {
+    const { address } = renderApp(from, { viewer: 'p_sev' })
+    await screen.findByRole('heading', { level: 1, name: /Load tariff tables/ }, T)
+    await waitFor(() => expect(address()).toBe(to), T)
+  })
+
+  it('the prefix of a key may contain a dash', () => {
+    expect(toPublicPath('/ticket/MY-APP-0007', 'DEMO')).toBe('/w/MY-APP/ticket/MY-APP-0007')
+    expect(toPublicPath('/ticket/DEMO-0043/', 'INT')).toBe('/w/DEMO/ticket/DEMO-0043')
+  })
+
+  it('a ticket under another workspace prefix redirects to the key\'s own workspace', async () => {
+    const { address } = renderApp('/w/INT/ticket/DEMO-0043?tab=history', { viewer: 'p_sev' })
+    await screen.findByRole('heading', { level: 1, name: /Load tariff tables/ }, T)
+    await waitFor(() => expect(address()).toBe('/w/DEMO/ticket/DEMO-0043?tab=history'), T)
+  })
+
+  it('ticket links everywhere carry the key\'s workspace', async () => {
+    renderApp('/w/INT/tickets', { viewer: 'p_sev' })
+    await waitFor(() => expect(within(switcher()).getByText('INT')).toBeInTheDocument(), T)
+    const links = await screen.findAllByRole('link', { name: /DEMO-\d{4}|INT-\d{4}/ }, T)
+    const tickets = links.map((a) => a.getAttribute('href')!).filter((h) => h.includes('/ticket/'))
+    expect(tickets.length).toBeGreaterThan(0)
+    for (const h of tickets) expect(h).toMatch(/^\/w\/([A-Z]+)\/ticket\/\1-\d+/)
+  })
+
+  it.each([
+    ['/w/DEMO/ticket/DEMO-0044?tab=history'],
+    ['/ticket/DEMO-0044?tab=history'],
+  ])('a pasted URL to a restricted ticket (%s) shows the restricted state, and nothing of the ticket', async (from) => {
+    const { address } = renderApp(from, { viewer: 'p_tom' })
     expect(await screen.findByText('This ticket is not visible to you', undefined, T)).toBeInTheDocument()
     expect(screen.queryByText('Rotate warehouse service credentials')).not.toBeInTheDocument()
-    expect(address()).toBe('/ticket/DEMO-0044?tab=history')
+    await waitFor(() => expect(address()).toBe('/w/DEMO/ticket/DEMO-0044?tab=history'), T)
+    expect(screen.queryByText('Rotate warehouse service credentials')).not.toBeInTheDocument()
   })
 
   it('board view and filters come from the URL and go back into it', async () => {
@@ -156,7 +195,7 @@ describe('permanent URLs in the app', () => {
     const writeText = vi.spyOn(navigator.clipboard, 'writeText')
     await screen.findByRole('heading', { level: 1, name: /Load tariff tables/ }, T)
     await user.click(screen.getByRole('button', { name: 'Copy link to DEMO-0043' }))
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/ticket/DEMO-0043?tab=history`), T)
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/w/DEMO/ticket/DEMO-0043?tab=history`), T)
     // Only the key and the tab: never the title.
     expect(String((writeText.mock.calls[0] as unknown[])[0])).not.toMatch(/tariff/i)
   })
@@ -238,7 +277,7 @@ describe('permanent URLs in the app', () => {
     const writeText = vi.spyOn(navigator.clipboard, 'writeText')
     await user.keyboard('{Control>}k{/Control}')
     await user.click(await screen.findByRole('option', { name: /Copy link to this page/ }, T))
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/ticket/DEMO-0043?tab=history`), T)
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/w/DEMO/ticket/DEMO-0043?tab=history`), T)
   })
 
   it('an addon tab stays in the address when the address loses it (same page again)', async () => {

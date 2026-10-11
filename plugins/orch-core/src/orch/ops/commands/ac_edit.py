@@ -1,6 +1,15 @@
 """orch ac edit: change an acceptance criterion"""
 
+from typing import Any
+
+from orch.ops import plans
 from orch.ops._dsl import REF_PATTERN, STR, S, err, obj, operation
+from orch.ops.base import Context, Result
+
+
+def handle(ctx: Context, args: dict[str, Any]) -> Result:
+    return plans.run(ctx, "ac.edit", args, plans.ac_edit)
+
 
 OP = operation(
     "ac.edit",
@@ -19,4 +28,5 @@ OP = operation(
     text="ok {key} ticket.updated {ac} seq={seq}\nnext: {next}",
     data=obj({"ac": STR}),
     errors=(err("conflict.field"), err("transition.refused"), err("not_found"), err("parse.text")),
+    handler=handle,
 )

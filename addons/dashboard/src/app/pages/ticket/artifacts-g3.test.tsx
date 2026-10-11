@@ -55,11 +55,11 @@ describe('Ticket artifacts: viewer', () => {
     const { user } = await artifactsTab()
     await user.click(screen.getByRole('button', { name: 'Preview reconciliation-demo.html' }))
     const sheet = await screen.findByRole('dialog', {}, T)
-    await waitFor(() => expect(sheet.querySelector('iframe')).toHaveAttribute('sandbox', 'allow-scripts'), T)
+    await waitFor(() => expect(sheet.querySelector('iframe')).toHaveAttribute('sandbox', ''), T) // agent HTML is inert (security review #1)
     await user.click(within(sheet).getByRole('button', { name: 'View source' }))
     expect(sheet.querySelector('iframe')).toBeNull()
     await user.click(within(sheet).getByRole('button', { name: 'Show preview' }))
-    await waitFor(() => expect(sheet.querySelector('iframe')).toHaveAttribute('sandbox', 'allow-scripts'), T)
+    await waitFor(() => expect(sheet.querySelector('iframe')).toHaveAttribute('sandbox', ''), T) // agent HTML is inert (security review #1)
   })
   it('read-only CSV rows do not light up on hover', async () => {
     const { user } = await artifactsTab('DEMO-0043')

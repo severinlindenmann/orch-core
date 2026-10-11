@@ -31,7 +31,7 @@ from orch.custody import passphrase as pp
 FAST = KdfParams(n=2**10)
 WS = "705d40abbb8c1c90354a1acaa94c935c"
 TICKET = "01J9ZP0000000000000000000A"
-PHRASE = "correct horse battery"
+PHRASE = "Zq7!mPx2-vL9#rTb4w"
 
 
 def person_payload(extra="x"):

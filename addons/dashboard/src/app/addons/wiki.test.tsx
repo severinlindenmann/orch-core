@@ -27,7 +27,7 @@ describe('wiki page', () => {
     expect(screen.getByRole('button', { name: 'Reconciliation tolerance' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Imported from old wiki' })).not.toBeInTheDocument() // 30 days old: on the Pages tab only
     await user.click(screen.getByRole('tab', { name: /Linked to tickets/ }))
-    expect(await screen.findByRole('link', { name: 'DEMO-0042' })).toHaveAttribute('href', '/ticket/DEMO-0042')
+    expect(await screen.findByRole('link', { name: 'DEMO-0042' })).toHaveAttribute('href', '/w/DEMO/ticket/DEMO-0042')
     expect(screen.getByRole('button', { name: 'dbt model naming' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Glossary' })).not.toBeInTheDocument() // linked to no ticket
   })
@@ -39,7 +39,7 @@ describe('wiki page', () => {
     expect(await screen.findByText(/^by Mara · updated \d+ days? ago$/, {}, T)).toBeInTheDocument()
     expect(screen.queryAllByRole('heading', { name: 'Tariff data conventions' })).toHaveLength(1) // the body does not repeat the title
     const back = screen.getByRole('link', { name: 'DEMO-0041' })
-    expect(back).toHaveAttribute('href', '/ticket/DEMO-0041')
+    expect(back).toHaveAttribute('href', '/w/DEMO/ticket/DEMO-0041')
     expect(within(back.closest('tr')!).getByText('Add billing reconciliation tests')).toBeInTheDocument()
     expect(screen.queryByRole('tab')).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'All pages' }))

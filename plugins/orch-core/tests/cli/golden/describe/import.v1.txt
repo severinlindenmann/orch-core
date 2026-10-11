@@ -1,15 +1,18 @@
 ok describe import.v1
-Import a v1 workspace: tickets, history as imported events, artifacts.
+Import a v1 workspace: its tickets, with the v1 history and files; asks for your passphrase once.
 usage: orch import v1 PATH [--dry-run]
-who: human · emits: ticket.created,log.added
-pre: workspace_exists v1_workspace user_presence
+who: human · emits: artifact.added,log.added,question.asked,status.changed,ticket.closed,ticket.created,ticket.updated
+pre: workspace_exists v1_workspace user_presence text_clean
 args:
-  PATH  the v1 workspace
+  PATH  the v1 workspace (the project folder or its orchestrator folder)
   --dry-run  say what would happen, append nothing
 errors:
   not_found (exit 2): orch list
+  custody.no_key (exit 3): orch init sets up your device key | fix: orch help
+  custody.no_prompt (exit 3): run this command yourself, in your own terminal | fix: orch help
+  custody.wrong_passphrase (exit 3): run the command again and type your passphrase | fix: orch help
   human_only (exit 3): orch ask or orch wait | fix: orch describe ask
   lock.busy (exit 4 retry): retry in a moment | fix: orch status
-  parse.json (exit 6): orch describe import.v1
+  parse.text (exit 6): orch describe import.v1
   members.stale (exit 9 retry): retry; the person re-signs | fix: orch status
-out: ok import.v1 {count} tickets / next: {next}
+out: ok import.v1 {count} tickets ({events} events) / next: {next}

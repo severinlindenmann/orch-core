@@ -231,6 +231,63 @@
           "network",
           "git_push"
         ]
+      },
+      "repos": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "0.1.0",
+          "capabilities": [
+            "network",
+            "pty"
+          ],
+          "package_sha256": "6bb373cd1b090bd528a53b8e5290bc34894cfab2c2557446e03e482a54289bf9",
+          "at": "2026-10-09T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "0.1.0",
+        "package_sha256": "6bb373cd1b090bd528a53b8e5290bc34894cfab2c2557446e03e482a54289bf9",
+        "capabilities": [
+          "network",
+          "pty"
+        ]
+      }
+    },
+    "root_folder": "~/work/acme",
+    "repos": {
+      "acme-energy-dbt": {
+        "path": "acme-energy-dbt"
+      },
+      "billing-api": {
+        "path": "billing-api",
+        "remote": "https://git.example.test/acme/billing-api.git",
+        "default_branch": "main"
+      },
+      "docs-site": {
+        "path": "docs-site",
+        "remote": "https://git.example.test/acme/docs-site.git",
+        "default_branch": "main"
+      },
+      "infra": {
+        "path": "infra",
+        "remote": "git@git.example.test:acme/infra.git",
+        "default_branch": "main"
+      },
+      "meter-ingest": {
+        "path": "meter-ingest",
+        "remote": "https://git.example.test/acme/meter-ingest.git",
+        "default_branch": "main"
+      },
+      "shared-lib": {
+        "path": "shared-lib",
+        "remote": "https://git.example.test/acme/shared-lib.git",
+        "default_branch": "main"
+      },
+      "web-portal": {
+        "path": "web-portal",
+        "remote": "https://git.example.test/acme/web-portal.git",
+        "default_branch": "main"
       }
     }
   },
@@ -348,6 +405,40 @@
         "version": "0.1.5",
         "package_sha256": "12b9025be128bb7a6b74b9a1b80bb948db8d186a0ab470110811d0cbe4ccef19",
         "capabilities": []
+      },
+      "repos": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "0.1.0",
+          "capabilities": [
+            "network",
+            "pty"
+          ],
+          "package_sha256": "6bb373cd1b090bd528a53b8e5290bc34894cfab2c2557446e03e482a54289bf9",
+          "at": "2026-10-09T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "0.1.0",
+        "package_sha256": "6bb373cd1b090bd528a53b8e5290bc34894cfab2c2557446e03e482a54289bf9",
+        "capabilities": [
+          "network",
+          "pty"
+        ]
+      }
+    },
+    "root_folder": "~/work/internal",
+    "repos": {
+      "service": {
+        "path": "service",
+        "remote": "https://git.example.test/int/service.git",
+        "default_branch": "main"
+      },
+      "tooling": {
+        "path": "tooling",
+        "remote": "https://git.example.test/int/tooling.git",
+        "default_branch": "main"
       }
     }
   },
@@ -449,6 +540,40 @@
         "capabilities": [
           "pty"
         ]
+      },
+      "repos": {
+        "enabled": true,
+        "status": "active",
+        "installed": true,
+        "granted": {
+          "version": "0.1.0",
+          "capabilities": [
+            "network",
+            "pty"
+          ],
+          "package_sha256": "6bb373cd1b090bd528a53b8e5290bc34894cfab2c2557446e03e482a54289bf9",
+          "at": "2026-10-09T09:00:00Z",
+          "by": "p_sev"
+        },
+        "version": "0.1.0",
+        "package_sha256": "6bb373cd1b090bd528a53b8e5290bc34894cfab2c2557446e03e482a54289bf9",
+        "capabilities": [
+          "network",
+          "pty"
+        ]
+      }
+    },
+    "root_folder": "~/work/client",
+    "repos": {
+      "service": {
+        "path": "service",
+        "remote": "https://git.example.test/cli/service.git",
+        "default_branch": "main"
+      },
+      "tooling": {
+        "path": "tooling",
+        "remote": "https://git.example.test/cli/tooling.git",
+        "default_branch": "main"
       }
     }
   }

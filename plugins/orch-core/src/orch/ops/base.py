@@ -33,6 +33,11 @@ class Context:
     #: The retry-dedup key of this call (set by the CLI for writes with a session). A handler passes it to
     #: ``Store.append(idem=...)`` so a retry after a crash can never append twice.
     idem: str | None = field(default=None, repr=False)
+    #: The workspace of this call (``orch.ops.runtime.Workspace``), set by the CLI: opened lazily, shared by the hooks
+    #: and the handler, so one call opens the store once. ``None`` in a test that builds a Context by hand.
+    workspace: Any = field(default=None, repr=False)
+    #: Standard input read once (``--file -``), so the dedup key and the handler see the same bytes.
+    files: dict[str, bytes] = field(default_factory=dict, repr=False)
 
 
 @dataclass
@@ -49,6 +54,9 @@ class Result:
     lines: list[str] = field(default_factory=list)
     duplicate: bool = False
     exit: int = 0
+    #: Text mode only: replaces the ``ok ...`` first line. A command that exits non-zero because it found problems
+    #: (``doctor``, ``check``, a partial ``import v1``) says so in plain words instead of starting with ``ok``.
+    head: str | None = None
 
 
 Handler = Callable[[Context, dict[str, Any]], Result]

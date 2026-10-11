@@ -7,7 +7,7 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { canAnswer } from './actions'
-import { ago, Mono, Pill, shortHash, type TabProps, type Viewer } from './shared'
+import { ago, Mono, Pill, RecommendedTag, shortHash, type TabProps, type Viewer } from './shared'
 
 const VIA: Record<string, string> = { cli: 'CLI', dashboard: 'dashboard', phone: 'phone' }
 const PRESENCE: Record<string, string> = { touchid: 'Touch ID', passkey: 'passkey', password: 'password' }
@@ -35,7 +35,7 @@ function AnswerForm({ q, sign }: { q: QuestionStatus; sign: TabProps['sign'] }) 
               <RadioGroupItem id={`${q.id}-${o.key}`} value={o.key} />
               <span className="flex-1">{o.label}</span>
               {o.cost && <span className="text-[11px] text-text-muted">{o.cost}</span>}
-              {q.recommended === o.key && <Pill tone="brand">recommended</Pill>}
+              {q.recommended === o.key && <RecommendedTag />}
             </label>
           ))}
         </RadioGroup>
@@ -98,7 +98,7 @@ function QuestionCard({ q, viewer, sign }: { q: QuestionStatus; viewer: Viewer; 
               <span className="size-1.5 rounded-full bg-border-strong" aria-hidden />
               {o.label}
               {o.cost && <span className="text-[11px] text-text-faint">{o.cost}</span>}
-              {q.recommended === o.key && <Pill tone="brand">recommended</Pill>}
+              {q.recommended === o.key && <RecommendedTag />}
             </li>
           ))}
         </ul>

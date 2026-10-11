@@ -1172,17 +1172,40 @@ def test_addon_events():
     bad("event", ev(A, package_sha256="ab" * 32), "/package_sha256")
     bad("event", ev(A, capabilities=["root"]), "/capabilities/0")
     bad("event", ev(A, capabilities=["pty", "pty"]), "/capabilities")
-    bad("event", mut(ex.EVENTS[A], lambda e: e["binds"].pop("fields")), "/binds", "fields")
-    bad("event", mut(ex.EVENTS[A], lambda e: e["binds"]["fields"].update(points=[])), "/binds/fields/points")
-    bad("event", mut(ex.EVENTS[A], lambda e: e["binds"]["fields"].update(points=["deploy"])), "/binds/fields/points/0")
+    bad("event", mut(ex.EVENTS[A], lambda e: e.pop("fields")), "", "fields")
+    bad("event", mut(ex.EVENTS[A], lambda e: e.pop("sections")), "", "sections")
+    bad("event", mut(ex.EVENTS[A], lambda e: e.pop("artifact_kinds")), "", "artifact_kinds")
+    bad("event", mut(ex.EVENTS[A], lambda e: e.update(binds={})), "", "binds")  # the old shape is gone
+    bad("event", mut(ex.EVENTS[A], lambda e: e["fields"]["points"].update(gate=[])), "/fields/points")
+    bad("event", mut(ex.EVENTS[A], lambda e: e["fields"]["points"].update(gate=["deploy"])), "/fields/points")
+    bad("event", mut(ex.EVENTS[A], lambda e: e["fields"]["points"].update(set_by=["root"])), "/fields/points")
+    bad("event", mut(ex.EVENTS[A], lambda e: e["fields"]["points"].pop("set_by")), "/fields/points")
+    bad("event", mut(ex.EVENTS[A], lambda e: e["fields"]["points"].update(show=True)), "/fields/points")
     bad(
         "event",
-        mut(ex.EVENTS[A], lambda e: e["binds"]["sections"][0].update(types=["story"])),
-        "/binds/sections/0/types/0",
+        mut(ex.EVENTS[A], lambda e: e["fields"]["points"].update(min=9, max=1)),
+        "/fields/points/min",
+        "greater",
     )
-    bad("event", mut(ex.EVENTS[A], lambda e: e["binds"]["sections"][0].pop("gate")), "/binds/sections/0", "gate")
-    bad("event", mut(ex.EVENTS[A], lambda e: e["binds"].update(extra=1)), "/binds", "extra")
-    V("event", mut(ex.EVENTS[A], lambda e: e["binds"].update(fields={}, sections=[])), log="workspace")
+    bad(
+        "event",
+        mut(ex.EVENTS[A], lambda e: e["fields"].update({"Bad": {"type": "boolean", "set_by": ["agent"]}})),
+        "/fields",
+    )
+    bad("event", mut(ex.EVENTS[A], lambda e: e["sections"][0].update(types=["story"])), "/sections/0/types/0")
+    bad("event", mut(ex.EVENTS[A], lambda e: e["sections"][0].pop("types")), "/sections/0", "types")
+    bad(
+        "event",
+        mut(ex.EVENTS[A], lambda e: e["sections"].append(dict(e["sections"][0]))),
+        "/sections/1/id",
+        "duplicate",
+    )
+    bad("event", mut(ex.EVENTS[A], lambda e: e["artifact_kinds"].append("screenshot")), "/artifact_kinds/1")
+    bad("event", mut(ex.EVENTS[A], lambda e: e["artifact_kinds"].append("chart")), "/artifact_kinds")
+    V("event", mut(ex.EVENTS[A], lambda e: e.update(fields={}, sections=[], artifact_kinds=[])), log="workspace")
+    V(
+        "event", mut(ex.EVENTS[A], lambda e: e["sections"][0].pop("gate")), log="workspace"
+    )  # a section need not be gated
     bad("event", ev("addon.disabled", name="x" * 41), "/name")
     bad("event", ev("addon.purged", name="log"), "/name")
 
@@ -1404,12 +1427,11 @@ def test_manifest_invalid():
     bad("addon-manifest", mut(M, lambda m: m.update(capabilities=["pty", "pty"])), "/capabilities")
     for c in ("serve_http", "spawn_agent", "pty", "network", "git_push"):
         V("addon-manifest", mut(M, lambda m, c=c: m.update(capabilities=[c])))
-    # deferred to C9: accepted only empty
+    # cli and skills are reserved for P2 and accepted only empty (needs and agents_md: tests/addons/test_manifest.py)
     for k, empty, full in (
-        ("needs", [], [{"id": "x"}]),
         ("cli", {}, {"group": "e", "ops": []}),
         ("skills", [], ["a.md"]),
-        ("agents_md", "", "x"),
+        ("agents_md", "", 7),
     ):
         V("addon-manifest", mut(M, lambda m, k=k, e=empty: m.update({k: e})))
         bad("addon-manifest", mut(M, lambda m, k=k, f=full: m.update({k: f})), "/" + k)
@@ -1582,7 +1604,8 @@ def test_event_types_match_doc_tables():
 
 # Names in the doc that look like event types but are not: error codes, ticket.json paths, config paths.
 DOC_NON_EVENTS = {
-    "artifact.mismatch", "claim.not_live", "gate.incomplete", "gate.no_eligible", "gate.stale", "gate.suspicious_text",
+    "artifact.mismatch", "claim.held", "claim.not_live", "device.unknown", "grant.verb",
+    "gate.already_approved", "gate.incomplete", "gate.no_eligible", "gate.stale", "gate.suspicious_text",
     "settings.repos", "ticket.acceptance", "ticket.addons", "ticket.json", "ticket.key", "ticket.links",
     "ticket.questions", "ticket.schema", "ticket.size", "ticket.tasks", "ticket.title", "ticket.type", "ticket.uid",
     "ticket.visibility",
@@ -1788,21 +1811,21 @@ def test_invalid_acknowledged_field_names_are_f1s():
     bad("event", mut(e, lambda o: o.update(seq_=1, head=ex.H)), "", "")
 
 
-def test_binds_sections_are_named_in_full_with_the_addons_prefix():
+def test_addon_sections_are_named_in_full_with_the_addons_prefix():
     A = ex.EVENTS["addon.granted"]
     for bad_id in ("notes", "requirements", "Estimate.notes", "estimate.", ".notes", "estimate.Notes"):
-        bad("event", mut(A, lambda e, i=bad_id: e["binds"]["sections"][0].update(id=i)), "/binds/sections/0/id")
+        bad("event", mut(A, lambda e, i=bad_id: e["sections"][0].update(id=i)), "/sections/0/id")
     bad(
         "event",
-        mut(A, lambda e: e["binds"]["sections"][0].update(id="other.notes")),
-        "/binds/sections/0/id",
+        mut(A, lambda e: e["sections"][0].update(id="other.notes")),
+        "/sections/0/id",
         "this addon",
     )
-    V("event", mut(A, lambda e: e["binds"]["sections"][0].update(id="estimate.more_notes")))
+    V("event", mut(A, lambda e: e["sections"][0].update(id="estimate.more_notes")))
     bad(
         "event",
-        mut(A, lambda e: e["binds"]["sections"].append({"id": "x.y", "gate": ["plan"], "types": ["bug"]})),
-        "/binds/sections/1/id",
+        mut(A, lambda e: e["sections"].append({"id": "x.y", "types": ["bug"]})),
+        "/sections/1/id",
     )
 
 
@@ -2128,19 +2151,36 @@ def test_repeated_patterns_are_references_not_copies():
 
 @pytest.mark.slow
 def test_validation_speed_of_an_event_stays_cheap():
-    """Measured about 0.26 ms per event on a laptop (is_valid fast path, envelope and definitions inlined);
-    the bound is loose so a slow CI machine passes, but a return to $ref chains (about 1.5 ms) would not."""
+    """Measured about 0.26 ms per event on a laptop (is_valid fast path, envelope and definitions inlined). The
+    bound is relative to a calibration loop on the same machine (a slow CI box scales both), and the best of 5
+    runs counts, so a return to $ref chains (about 6x slower: over 200x the calibration, today about 40x)
+    fails and load noise does not."""
     import time
 
     events = [(e["type"], e) for e in ex.EVENTS.values()]
     for _t, e in events:
         V("event", e)
-    t0 = time.perf_counter()
-    for _ in range(20):
-        for _t, e in events:
-            V("event", e)
-    per_event = (time.perf_counter() - t0) / (20 * len(events))
-    assert per_event < 0.001, f"{per_event * 1000:.2f} ms per event"
+
+    def calibration() -> float:  # a JSON round trip of the same events: pure-Python work, per event
+        import json
+
+        t0 = time.process_time()
+        for _ in range(200):
+            for _t, e in events:
+                json.loads(json.dumps(e))
+        return (time.process_time() - t0) / (200 * len(events))
+
+    def validation() -> float:
+        t0 = time.process_time()
+        for _ in range(20):
+            for _t, e in events:
+                V("event", e)
+        return (time.process_time() - t0) / (20 * len(events))
+
+    cal = min(calibration() for _ in range(5))
+    per_event = min(validation() for _ in range(5))
+    print(f"validation {per_event * 1000:.3f} ms per event, calibration {cal * 1e6:.2f} us")
+    assert per_event < 100 * cal, f"{per_event * 1000:.2f} ms per event, calibration {cal * 1e6:.2f} us"
 
 
 def test_event_schemas_repeat_the_envelope_of_event_json():

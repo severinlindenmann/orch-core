@@ -19,9 +19,9 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { toastApiError } from '@/app/toast'
 import { useWorkspace } from '@/app/workspace'
-import type { HumanAction } from '../ticket/shared'
+import { RecommendedTag, type HumanAction } from '../ticket/shared'
 import { ago } from './shared'
-import { plural } from '@/lib/time'
+import { fmtClock, nowMs, plural } from '@/lib/time'
 
 export const NewItemContext = createContext(false)
 export const SigningContext = createContext(false)
@@ -32,10 +32,6 @@ function BlockingChip() {
   return <span className="inline-flex shrink-0 items-center rounded bg-danger-soft px-1.5 py-0.5 text-[11px] font-medium leading-none text-danger">blocking</span>
 }
 
-/** The tag beside a recommended option: a word, not a filled button. */
-function RecommendedTag() {
-  return <span className="rounded border border-border px-1 py-px text-[10px] font-medium uppercase tracking-wide text-text-muted">Recommended</span>
-}
 
 const toggleCls =
   'block max-w-full min-w-0 rounded text-left text-[13px] font-medium leading-5 text-text outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring'
@@ -181,7 +177,7 @@ export function QuestionRow({ item, ticket, now, expanded, onToggle, sign, asked
             ))}
           </div>
           <Button size="sm" disabled={!choice || !ticket} onClick={() => choice && sign(item.ticket, { kind: 'answer', question: item.ref!, option: choice })}>
-            Send answer…
+            Send answer
           </Button>
         </div>
       ) : (
@@ -282,10 +278,13 @@ export function VerdictRow({ item, ticket, now, expanded, onToggle, sign, decide
 // ------------------------------------------------------------------ addon decisions (rendered and signed by core)
 
 /** The queries an addon decision can change. */
-const DECISION_KEYS = ['today', 'addon-decisions', 'addon-state', 'ticket', 'ticket-events', 'ticket-children', 'tickets', 'board', 'agents', 'workspaces']
+// Keys whose second element is the workspace id; the others (ticket by key, the workspace list) have no workspace to scope to.
+const DECISION_WS_KEYS = ['today', 'addon-decisions', 'addon-state', 'tickets', 'board', 'agents']
+const DECISION_GLOBAL_KEYS = ['ticket', 'ticket-events', 'ticket-children', 'workspaces']
+const decisionKeys = (ws: string) => [...DECISION_WS_KEYS.map((k) => [k, ws]), ...DECISION_GLOBAL_KEYS.map((k) => [k])]
 
 /** Core's flow for one addon decision: core's prompt, presence, then the post with `confirmed`. */
-function useDecide(d: AddonDecision, onError?: (e: unknown) => void, onDone?: () => void) {
+export function useDecide(d: AddonDecision, onError?: (e: unknown) => void, onDone?: () => void) {
   const qc = useQueryClient()
   const { workspace } = useWorkspace()
   const { data: packages } = useAddons()
@@ -307,8 +306,11 @@ function useDecide(d: AddonDecision, onError?: (e: unknown) => void, onDone?: ()
       toast.success(t.message, { description: t.description })
       onDone?.()
       // A decision can move a ticket, an approval or the addon's own state; nothing else (not settings, relay, skills ...).
-      await Promise.all(DECISION_KEYS.map((k) => qc.invalidateQueries({ queryKey: [k] })))
+      await Promise.all(decisionKeys(workspace.id).map((queryKey) => qc.invalidateQueries({ queryKey })))
     } catch (e) {
+      // The decision moved on the host (closed, changed, stale digest): the cached one must not be signed again. Fetch
+      // the decisions anew, so the next choice snapshots the current one (Codex integration review #1).
+      if (e instanceof ApiError && e.status === 409) await Promise.all(['addon-decisions', 'today', 'addon-state'].map((k) => qc.invalidateQueries({ queryKey: [k, workspace.id] })))
       if (onError) onError(e)
       else toastApiError(e, 'That did not work.')
     } finally {
@@ -319,6 +321,15 @@ function useDecide(d: AddonDecision, onError?: (e: unknown) => void, onDone?: ()
     <DecisionSignPrompt d={signing.d} option={signing.o} changed={decisionChanged(signing.d, d)} workspacePrefix={workspace?.prefix ?? ''} onClose={() => setSigning(null)} onSign={() => void sign(signing)} />
   )
   return { choose: (o: AddonDecision['options'][number]) => setSigning({ o, d }), busy: pending || !!signing, pending, prompt }
+}
+
+/** A hold's countdown: core's own line from `hold.until`, outside the signed text, so it ticks while a prompt is open. */
+function HoldCountdown({ until }: { until: string }) {
+  return (
+    <span data-hold-countdown className="block text-[12px] text-text-muted">
+      Delivering in {Math.max(0, Math.ceil((Date.parse(until) - nowMs()) / 60_000))} min, at {fmtClock(until)}
+    </span>
+  )
 }
 
 function DecisionBody({ d, readOnly, showQuestion = true, inlineErrors, onPending, blockedReason }: { d: AddonDecision; readOnly: boolean; showQuestion?: boolean; inlineErrors?: boolean; onPending?: (pending: boolean) => void; blockedReason?: string }) {
@@ -333,6 +344,8 @@ function DecisionBody({ d, readOnly, showQuestion = true, inlineErrors, onPendin
     <>
       {pending && showQuestion && <p role="status" className="text-xs text-text-muted">Signing…</p>}
       {showQuestion && <p className="text-[13px] leading-relaxed text-text">{d.question}</p>}
+      {/* A hold's countdown is core's, from `hold.until`: outside the signed text, so it can tick while a prompt is open. */}
+      {showQuestion && d.hold && <HoldCountdown until={d.hold.until} />}
       {d.detail && <p className="whitespace-pre-line text-[13px] leading-relaxed text-text-muted">{d.detail}</p>}
       {!readOnly && (
         <div className="flex flex-wrap items-center gap-2">
@@ -393,7 +406,12 @@ export function DecisionRow({
       addon={!inline}
       icon={inline ? undefined : <AddonBadge name={addonTitle ?? d.addon} className="size-3.5 text-[9px]" />}
       ask={d.question}
-      sub={d.ticket ? <TicketLine ticket={d.ticket} title={ticketTitle ?? d.title} /> : <span>{d.title}</span>}
+      sub={
+        <>
+          {d.ticket ? <TicketLine ticket={d.ticket} title={ticketTitle ?? d.title} /> : <span>{d.title}</span>}
+          {d.hold && <HoldCountdown until={d.hold.until} />}
+        </>
+      }
       expanded={inline || expanded}
       onToggle={readOnly || inline ? undefined : toggle}
       action={

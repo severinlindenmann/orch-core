@@ -157,7 +157,7 @@ describe('Artifacts page: one action per item', () => {
     const { user } = renderApp('/artifacts')
     await user.click(await screen.findByRole('button', { name: 'Preview reconciliation-demo.html' }, T))
     const sheet = await screen.findByRole('dialog', {}, T)
-    expect(await within(sheet).findByTitle(/Sandboxed preview of reconciliation-demo.html/, {}, T)).toHaveAttribute('sandbox', 'allow-scripts')
+    expect(await within(sheet).findByTitle(/Sandboxed preview of reconciliation-demo.html/, {}, T)).toHaveAttribute('sandbox', '') // agent HTML is inert (security review #1)
   })
   it('while new results load, the old ones are inert and the count says "Updating…"', async () => {
     const real = api.listArtifacts

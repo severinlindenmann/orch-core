@@ -11,24 +11,19 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { commitCover, diffstat, gateSignedContent, type SignedSection } from '@/api/gates'
-import { visible } from '@/components/sign/visible'
+import { commitCover, diffstat, gateSignedContent, sectionWritten, type SignedField, type SignedSection } from '@/api/gates'
+import { Inline, Prose, Raw, visible } from '@/components/sign/visible'
 import { GATE_LABEL, policyText } from './actions'
 import type { HumanAction } from './shared'
 import { queries } from '@/api/queries'
 
 type Described = { title: string; gate?: GateName; hash: string; covers: string[]; policy?: string }
 
-/** The dialog title and what the signature covers, in core's words. */
+/** The dialog title and what the signature covers, in core's words (the answer itself is shown field by field, see Answer). */
 function describe(ticket: TicketDocument, a: HumanAction): Described {
   if (a.kind === 'answer') {
     const q = ticket.questions_state.find((x) => x.id === a.question)!
-    const picked = q.options?.find((o) => o.key === a.option)
-    return {
-      title: `Answer ${q.id}`,
-      hash: q.hash ?? '',
-      covers: [`Question ${q.id}: ${q.text}`, picked ? `Your answer: ${picked.label} (option ${picked.key})` : 'Your answer: free text', 'The current hash of the question'],
-    }
+    return { title: `Answer ${q.id}`, hash: q.hash ?? '', covers: ['The question, its options and its current hash', 'Your answer: the option and the text shown above'] }
   }
   const gate: GateName = a.kind === 'verdict' ? 'verify' : a.gate
   const g = ticket.gates[gate]
@@ -43,25 +38,100 @@ function signedSections(ticket: TicketDocument, gate: GateName, personName: (id:
   // The code review signs exactly the branch head and its diff against the base (the same commit the verdict signed).
   if (gate === 'code')
     return [
-      { label: 'Commit', text: visible(commitCover(ticket.branch)) },
-      { label: 'Commits on the branch', text: ticket.branch.commits.map((c) => `${visible(c.sha)}  ${c.task ? `${c.task} · ` : ''}${personName(c.by)}`).join('\n') },
+      { label: 'Commit', text: commitCover(ticket.branch) },
+      { label: 'Commits on the branch', text: ticket.branch.commits.map((c) => `${c.sha}  ${c.task ? `${c.task} · ` : ''}${personName(c.by)}`).join('\n') },
     ]
   return gateSignedContent(gate, ticket, personName).sections
 }
 
-const written = (sections: SignedSection[]) => sections.filter((s) => s.text && !s.meta)
+const written = (sections: SignedSection[]) => sections.filter(sectionWritten)
 
+/** One field of a signed item: the ticket's own text on its own line (escaped, newlines shown), core's fields labelled. */
+function Field({ f }: { f: SignedField }) {
+  const value = Array.isArray(f.value)
+    ? f.value.map((v, i) => (
+        <span key={i}>
+          {i > 0 && ', '}
+          <Raw>{v}</Raw>
+        </span>
+      ))
+    : f.mono
+      ? <Raw>{f.value}</Raw>
+      : <Inline className="text-text">{f.value}</Inline>
+  return (
+    <p data-signed-field={f.name} data-source={f.source} className={f.label ? 'pl-4 text-[12px] text-text-muted' : 'text-text'}>
+      {f.label && `${f.label}: `}
+      {value}
+    </p>
+  )
+}
+
+/**
+ * What an approval signs, each section and field on its own (security review #4): ticket text is shown exactly as
+ * hashed through the visible-string helpers (bidi-isolated, invisible characters as escapes); a list item's text cannot
+ * spill into core's labelled fields below it. The caption says who wrote it.
+ */
 function Signed({ sections }: { sections: SignedSection[] }) {
   return (
     <div className="max-h-[40vh] space-y-3 overflow-auto rounded-md border border-border bg-bg p-3 text-[13px]">
-      {sections
-        .filter((s) => s.text)
-        .map((s) => (
-          <section key={s.label} aria-label={s.label}>
-            <h3 className="mb-1 text-[12px] font-medium text-text-muted">{s.label}</h3>
-            <p className="whitespace-pre-wrap break-words text-text">{s.text}</p>
-          </section>
-        ))}
+      <p className="text-[11px] text-text-faint">Text from the ticket, exactly as signed (written by its people and agents).</p>
+      {sections.filter((s) => s.meta || sectionWritten(s)).map((s) => (
+        <section key={s.label} aria-label={s.label}>
+          <h3 className="mb-1 text-[12px] font-medium text-text-muted">{s.label}</h3>
+          {s.items ? (
+            <ul className="space-y-1.5">
+              {s.items.map((it) => (
+                <li key={it.id} data-signed-item={it.id}>
+                  {it.fields.map((f, i) =>
+                    i === 0 && f.name === 'text' ? (
+                      <p key={f.name} data-signed-field="text" data-source={f.source} className="text-text">
+                        <Raw>{it.id}</Raw> <Inline>{f.value as string}</Inline>
+                      </p>
+                    ) : (
+                      <Field key={f.name} f={f} />
+                    ),
+                  )}
+                </li>
+              ))}
+            </ul>
+          ) : s.meta ? (
+            <p className="text-text">{s.text}</p>
+          ) : (
+            <Prose className="break-words text-text">{s.text}</Prose>
+          )}
+        </section>
+      ))}
+    </div>
+  )
+}
+
+/** The answer, in core's area, field by field and exactly as it is posted (security review #7). */
+function Answer({ ticket, question, option, text }: { ticket: TicketDocument; question: string; option?: string; text?: string }) {
+  const q = ticket.questions_state.find((x) => x.id === question)!
+  const picked = q.options?.find((o) => o.key === option)
+  return (
+    <div className="max-h-[40vh] space-y-2 overflow-auto rounded-md border border-border bg-bg p-3 text-[13px]">
+      <section aria-label="Question">
+        <p className="text-[12px] font-medium text-text-muted">
+          Question <Raw>{q.id}</Raw>:
+        </p>
+        <Prose className="text-text">{q.text}</Prose>
+      </section>
+      <section aria-label="Your answer">
+        {picked ? (
+          <p data-signed-field="option" className="text-text">
+            Your answer: <Inline>{picked.label}</Inline> (option <Raw>{picked.key}</Raw>)
+          </p>
+        ) : (
+          <p className="text-text">Your answer: free text</p>
+        )}
+        {text && (
+          <div data-signed-field="text">
+            <p className="text-[12px] text-text-muted">{picked ? 'Your note, sent with it:' : 'Your text:'}</p>
+            <Prose className="text-text">{text}</Prose>
+          </div>
+        )}
+      </section>
     </div>
   )
 }
@@ -84,22 +154,26 @@ export function SignDialog({ ticket, action, onClose, onOpenEvidence, onOpenChan
   const cancel = useRef<HTMLButtonElement>(null)
   const firstRadio = useRef<HTMLInputElement>(null)
 
-  // The commit a verdict or code review signs is the head when the dialog opened: a push while it is open does not
-  // change what is shown, and the host refuses the stale sha (409).
-  const [openedHead, setOpenedHead] = useState(ticket.branch.head)
+  // What is signed is the ticket as it was when the dialog opened (security review #2): a refetch while it is open (an
+  // agent's edit, a push) does not change what is shown or posted; the host refuses the stale hash or sha (409), and
+  // the dialog says that the ticket changed.
+  const [snap, setSnap] = useState<{ action: HumanAction | null; ticket: TicketDocument }>({ action, ticket })
+  if (snap.action !== action) setSnap({ action, ticket })
+  const opened = snap.action === action ? snap.ticket : ticket
   useEffect(() => {
     setPhase('confirm')
     setText('')
     setResult(null)
     setError(null)
-    setOpenedHead(ticket.branch.head)
-    // Only when a new action opens: later refetches of the ticket must not move the signed commit.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [action])
 
   if (!action) return null
-  const d = describe(ticket, action)
-  const sections = action.kind === 'approve' || action.kind === 'request_changes' ? (d.gate ? signedSections({ ...ticket, branch: { ...ticket.branch, head: openedHead } }, d.gate, personName) : null) : null
+  const d = describe(opened, action)
+  const live = describe(ticket, action)
+  // Content-bound signatures (an answer, requirements, plan) say when the content moved; a verdict or code review keeps
+  // its existing behaviour (the commit shown is signed, a newer one is refused with verdict.stale / gate.stale).
+  const changed = (action.kind === 'answer' || d.gate === 'requirements' || d.gate === 'plan') && live.hash !== d.hash
+  const sections = action.kind === 'approve' || action.kind === 'request_changes' ? (d.gate ? signedSections(opened, d.gate, personName) : null) : null
   const hasContent = !!sections && written(sections).length > 0
   const nothing = action.kind === 'approve' && !!sections && !hasContent
   const needsText = action.kind === 'request_changes' || (action.kind === 'verdict' && result === 'fail')
@@ -117,23 +191,26 @@ export function SignDialog({ ticket, action, onClose, onOpenEvidence, onOpenChan
         : null
   const blocked = busy || !!hint
 
-  // The commit a verdict or code review signs: the branch head now, in full (owner decision 2026-10-10).
-  const head = openedHead
-  const shownBranch = { ...ticket.branch, head }
-  const passLabel = `Pass on ${visible(head)} · ${diffstat(ticket.branch)}: the evidence is enough`
+  // The commit a verdict or code review signs: the branch head when the dialog opened, in full (owner decision 2026-10-10).
+  const head = opened.branch.head
+  const shownBranch = opened.branch
+  const passLabel = `Pass on ${visible(head)} · ${diffstat(opened.branch)}: the evidence is enough`
   const proven = ticket.acceptance_state.filter((a) => a.state === 'proven').length
   const receipts = ticket.tasks_state.filter((t) => t.receipt).length
 
+  const answerText = action.kind === 'answer' ? action.text?.trim() || undefined : undefined
   const request = (): ActionRequest => {
     switch (action.kind) {
       case 'approve':
-        return action.gate === 'code' ? { action: 'approve', gate: 'code', source_sha: head } : { action: 'approve', gate: action.gate }
+        // Requirements and plan bind the content hash shown (security review #2); the code review binds the commit.
+        return action.gate === 'code' ? { action: 'approve', gate: 'code', source_sha: head } : { action: 'approve', gate: action.gate, hash: d.hash }
       case 'request_changes':
         return { action: 'request_changes', gate: action.gate, text }
       case 'verdict':
         return { action: 'verdict', result: result!, text: text || undefined, source_sha: head }
       case 'answer':
-        return { action: 'answer', question: action.question, option: action.option, text: action.text }
+        // Exactly what the dialog shows: the option, the trimmed text, and the question's hash when it opened.
+        return { action: 'answer', question: action.question, ...(action.option ? { option: action.option } : {}), ...(answerText ? { text: answerText } : {}), hash: d.hash }
     }
   }
 
@@ -201,14 +278,11 @@ export function SignDialog({ ticket, action, onClose, onOpenEvidence, onOpenChan
           </p>
         )}
 
-        {action.kind === 'answer' && (
-          <div className="space-y-1 rounded-md border border-border bg-bg p-3 text-[13px]">
-            {d.covers.slice(0, 2).map((c) => (
-              <p key={c} className="break-words text-text">
-                {c}
-              </p>
-            ))}
-          </div>
+        {action.kind === 'answer' && <Answer ticket={opened} question={action.question} option={action.option} text={answerText} />}
+        {changed && (
+          <p role="alert" className="text-[13px] text-warning">
+            This ticket changed after you opened this dialog. You sign what is shown here; orch refuses it if it no longer matches. Close and reopen it to see the current version.
+          </p>
         )}
 
         {action.kind === 'verdict' && (
@@ -254,7 +328,7 @@ export function SignDialog({ ticket, action, onClose, onOpenEvidence, onOpenChan
           </div>
         )}
 
-        <SignDetails hash={d.hash} covers={action.kind === 'answer' ? d.covers.slice(2) : d.covers} />
+        <SignDetails hash={d.hash} covers={d.covers} />
 
         {error && (
           <p role="alert" className="rounded-md border border-danger/40 bg-danger-soft px-3 py-2 text-[13px] text-danger">

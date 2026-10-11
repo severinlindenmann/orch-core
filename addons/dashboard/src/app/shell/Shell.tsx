@@ -18,6 +18,7 @@ import { ShellToaster } from './ShellToaster'
 import { Sidebar } from './Sidebar'
 import { Topbar } from './Topbar'
 import { MandateBanner } from '../mandates/MandateBanner'
+import { DeliveryHoldBanner } from './DeliveryHoldBanner'
 
 /** Keyboard shortcuts from `shortcuts.ts`. */
 function Shortcuts() {
@@ -82,6 +83,8 @@ export function Shell() {
               <Topbar />
               {/* Mandates, PREVIEW ONLY: nothing renders unless the preview is on with a mandate in force. */}
               <MandateBanner />
+              {/* A factory full run holding before Deliver: nothing renders unless one waits out its hold window. */}
+              <DeliveryHoldBanner />
               <DockArea>
               <main ref={main} id="main" tabIndex={-1} className="min-h-0 flex-1 overflow-y-auto p-4 outline-none @[60rem]/page:p-6">
                 <ErrorBoundary resetKey={path} fallback={(retry) => (

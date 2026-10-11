@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "transition.refused",
+    "message": "status.transition: ticket.reopened from testing",
+    "hint": "orch show --section current_state",
+    "fix": {
+      "argv": [
+        "orch",
+        "show"
+      ]
+    },
+    "retryable": false
+  }
+}
+# exit 3

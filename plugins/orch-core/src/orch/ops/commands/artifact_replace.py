@@ -1,6 +1,15 @@
 """orch artifact replace: replace a stored file"""
 
+from typing import Any
+
+from orch.ops import plans
 from orch.ops._dsl import INT, REF_PATTERN, STR, S, err, obj, operation
+from orch.ops.base import Context, Result
+
+
+def handle(ctx: Context, args: dict[str, Any]) -> Result:
+    return plans.run(ctx, "artifact.replace", args, plans.artifact_replace)
+
 
 OP = operation(
     "artifact.replace",
@@ -19,4 +28,5 @@ OP = operation(
     text="ok {key} artifact.replaced {name} seq={seq}\nnext: {next}",
     data=obj({"name": STR, "sha256": STR, "bytes": INT}),
     errors=(err("transition.refused"), err("not_found"), err("ambiguous_ref")),
+    handler=handle,
 )

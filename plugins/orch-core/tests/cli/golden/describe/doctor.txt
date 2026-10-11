@@ -1,7 +1,10 @@
 ok describe doctor
-Check the logs, chains, projections and keys; reports, never changes.
-usage: orch doctor
+Verify the logs, signatures, checkpoints, pins and files; reports and changes nothing unless --repair, which only does the safe repairs through the store.
+usage: orch doctor [--repair]
 who: read · emits: -
 pre: workspace_exists
+args:
+  --repair  do the safe repairs: answer external edits, rebuild the index, drop dead init keys
 errors:
+  not_found (exit 2): run orch init in a workspace | fix: orch describe init
 out: ok doctor {problems} / next: {next}

@@ -40,7 +40,7 @@
       "additionalProperties": false
     },
     "output": {
-      "text": "ok {key} wait {kind} cursor={cursor}\nnext: {next}",
+      "text": "ok {key} {kind} cursor={cursor}\nnext: {next}",
       "json": {
         "$ref": "https://schemas.orch.dev/v2/wait-result"
       }

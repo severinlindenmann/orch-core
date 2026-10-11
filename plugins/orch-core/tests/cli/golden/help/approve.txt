@@ -1,6 +1,6 @@
 Approve a gate (requirements, plan or code) with your signature.
-usage: orch approve requirements|plan|code [--ref REF] [--dry-run]
+usage: orch approve [REF] requirements|plan|code [--dry-run]
+  REF  ticket REF (DEMO-0043, 43); default: your claim
   GATE  gate (requirements|plan|code)
-  --ref REF  ticket REF (flag)
   --dry-run  say what would happen, append nothing
 more: orch describe approve

@@ -1,3 +1,4 @@
+import { bestOfFive } from '@/test/bestOf'
 import { describe, expect, it } from 'vitest'
 import { addonActive } from '@/api/addons'
 import { createApi } from '@/api/client'
@@ -78,7 +79,7 @@ describe('busy day: addons are installed and filled', () => {
     expect(s.store.ticket('DEMO-0050')!.children).toHaveLength(20)
     expect((raw('factory').permits as { state: string }[]).filter((p) => p.state === 'open').length).toBe(5)
     const view = (await s.api.getAddonState(s.ws, 'factory')) as { used: number; mode: string }
-    expect(view.used).toBe(20)
+    expect(view.used).toBe(23) // 20 children + the 3 a seeded full run reserved
     expect(view.mode).toBe('running')
   })
   it('activity is busy by itself: many events, many days', async () => {
@@ -138,16 +139,8 @@ describe('busy day: restricted tickets stay out of addon views', () => {
 describe('busy day: speed', () => {
   it('serves list, today and addon decisions in under 50 ms each with every addon on', async () => {
     const x = make()
-    await x.api.getToday(x.ws)
-    // Best of three: the full suite runs many workers at once, and one slow sample says more about the machine than the code.
     for (const f of [() => x.api.listTickets(x.ws), () => x.api.getToday(x.ws), () => x.api.getAddonDecisions(x.ws)]) {
-      const samples: number[] = []
-      for (let i = 0; i < 3; i++) {
-        const t0 = performance.now()
-        await f()
-        samples.push(performance.now() - t0)
-      }
-      expect(Math.min(...samples)).toBeLessThan(50)
+      expect(await bestOfFive(f)).toBeLessThan(50)
     }
   })
 })

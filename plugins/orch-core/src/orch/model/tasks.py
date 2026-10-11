@@ -10,7 +10,7 @@ from typing import Any
 
 from orch.canon import ARTIFACT_KINDS
 
-from . import claims, gates, generations, source
+from . import addon_rules, claims, gates, generations, source
 from .codes import Code, Refusal
 from .types import ArtifactCore, Lease, TaskCore, TCore, WsCore, ts
 
@@ -104,8 +104,8 @@ def ac_evidence(ws: WsCore, t: TCore) -> dict[str, list[str]]:
         if tk is None or tk.state != "done" or tk.receipt is None or tk.receipt["exit"] != 0:
             continue
         repo = tk.receipt["repo"]
-        if repo is not None and tk.receipt["commit"] != source.repo_sha(t, repo):
-            continue
+        if repo is not None and (tk.receipt["commit"] is None or tk.receipt["commit"] != source.repo_sha(t, repo)):
+            continue  # no commit (a dirty tree) or not the code the host observed: not evidence
         for ac in task["proves"]:
             if ac in out:
                 out[ac].append(f"task:{task['id']}")
@@ -122,6 +122,8 @@ def artifact_event(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
     unattended = a["kind"] == "agent" and a.get("unattended") is True
     if e["kind"] == "feedback" and a["kind"] != "person":
         return Refusal(Code.ARTIFACT_KIND, "feedback only from a person")
+    if e["kind"] == "receipt" and (typ == "artifact.replaced" or "task" not in e):
+        return Refusal(Code.ARTIFACT_KIND, "a receipt is made by task done --run (it names its task), never replaced")
     is_file = "sha256" in e
     if is_file and e["kind"] not in ARTIFACT_KINDS:
         return Refusal(Code.ARTIFACT_KIND, f"unknown core kind {e['kind']!r}")
@@ -129,6 +131,8 @@ def artifact_event(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
         ad = ws.addons.get(e.get("addon", ""))
         if ad is None or not ad.enabled or ad.purged:
             return Refusal(Code.ADDON_UNKNOWN, str(e.get("addon")))
+        if (r := addon_rules.check_artifact_kind(ad, e["kind"])) is not None:
+            return r
     if "ac" in e and e["ac"] not in {x["id"] for x in t.fields["acceptance"]}:
         return Refusal(Code.TICKET_BAD_REFERENCE, f"unknown acceptance criterion {e['ac']}")
     if "task" in e and e["task"] not in task_ids(t):

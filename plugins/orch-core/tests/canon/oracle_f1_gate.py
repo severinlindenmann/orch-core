@@ -1,0 +1,486 @@
+"""Independent oracle, part 2: everything that turns a small real ticket into the F1 gate hash inputs (ticket-format
+§4, §5.6, §5.7) and the pure text/identity rules that feed it. ``hashlib``, ``json`` and ``re`` only; nothing here
+imports ``orch`` (``tests/canon/test_f1_independence.py`` checks the imports).
+
+Everything is derived from a *ticket state* dict (see :func:`sample_ticket`) by the rules of the spec, never copied
+from ``orch``: the effective policy (§5.7), the people hash roles (§5.6), the sections of each gate (§4, §5.7), the
+artifact references (§5.8), the source list and the repo identity (§5.7), ``prior`` (§5.7).
+"""
+
+from __future__ import annotations
+
+import copy
+import hashlib
+import json
+import re
+from typing import Any
+
+W = "0123456789abcdef0123456789abcdef"
+UID = "01J9ZK4Q7M3R8T2V6X0B5N1C9D"
+P_SEV = "p_" + "5e" * 16
+P_MARA = "p_" + "3a" * 16
+P_LENA = "p_" + "7c" * 16
+GATES = ("requirements", "plan", "verify", "code")
+TICKET_ROLES = ("assignees", "reviewers", "watchers")
+
+_LABEL = {
+    "gate": "orch/v2/gate|",
+    "section": "orch/v2/section|",
+    "policy": "orch/v2/policy|",
+    "people": "orch/v2/people|",
+}
+
+
+def cj(o: Any) -> bytes:
+    return json.dumps(o, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+
+def hl(label: str, data: bytes) -> str:
+    return "sha256:" + hashlib.sha256(_LABEL[label].encode() + data).hexdigest()
+
+
+def digest(data: bytes) -> str:
+    return "sha256:" + hashlib.sha256(data).hexdigest()
+
+
+def section_h(text: str) -> str:
+    return hl("section", text.encode("utf-8"))
+
+
+# --- policies (§5.7) ------------------------------------------------------------------------------
+
+DEFAULT_POLICIES: dict[str, dict[str, Any]] = {  # the §2 config.json example
+    "requirements": {"approvers": ["owner"], "count": 1, "not": [], "applies": "all", "independent": False},
+    "plan": {"approvers": ["owner"], "count": 1, "not": [], "applies": "all", "independent": False},
+    "verify": {"approvers": ["reviewers"], "count": 1, "not": ["assignees"], "applies": "all", "independent": False},
+    "code": {
+        "approvers": ["maintainer", "owner"],
+        "count": 1,
+        "not": ["assignees"],
+        "applies": "off",
+        "independent": True,
+    },
+}
+
+
+APPROVER_TOKENS = ("owner", "maintainer", "member", "ticket_owner", "assignees", "reviewers", "watchers")
+TICKET_TYPES = ("feature", "bug", "chore", "spike", "epic")
+
+
+class PolicyRefused(ValueError):
+    """A policy that has no canonical form (§5.7): there is no policy hash for it."""
+
+
+def canonical_policy(p: dict[str, Any]) -> dict[str, Any]:
+    """§5.7 canonical form: all five keys; ``approvers`` (at least one) and ``not`` sorted and de-duplicated;
+    ``count`` an int >= 1; ``applies`` ``"all"``, ``"off"`` or a non-empty sorted list of ticket types."""
+    if set(p) != {"approvers", "count", "not", "applies", "independent"}:
+        raise PolicyRefused("keys")
+    approvers, excluded = set(p["approvers"]), set(p["not"])
+    if not approvers or not (approvers | excluded) <= set(APPROVER_TOKENS):
+        raise PolicyRefused("approvers")
+    if type(p["count"]) is not int or p["count"] < 1:
+        raise PolicyRefused("count")
+    if type(p["independent"]) is not bool:
+        raise PolicyRefused("independent")
+    applies = p["applies"]
+    if isinstance(applies, list):
+        if not applies or not set(applies) <= set(TICKET_TYPES):
+            raise PolicyRefused("applies")
+        applies = sorted(set(applies))
+    elif applies not in ("all", "off"):
+        raise PolicyRefused("applies")
+    return {"approvers": sorted(approvers), "count": p["count"], "not": sorted(excluded), "applies": applies,
+            "independent": p["independent"]}  # fmt: skip
+
+
+def _types(applies: Any) -> set[str]:
+    """The ticket types an ``applies`` value covers."""
+    if applies == "all":
+        return set(TICKET_TYPES)
+    if applies == "off":
+        return set()
+    return set(applies)
+
+
+def effective_policy(ws: dict[str, Any], override: dict[str, Any] | None) -> dict[str, Any]:
+    """The effective policy of one gate, read off the §5.7 bullet "The effective policy is an intersection". The
+    result may have no ``approvers`` (a blocked gate, ``gate.no_eligible``): it is then not a canonical policy and has
+    no policy hash."""
+    sides = [ws] if override is None else [ws, override]
+    tokens = set(APPROVER_TOKENS)
+    for side in sides:
+        tokens &= set(side["approvers"])
+    values = [side["applies"] for side in sides]
+    if "all" in values:
+        applies: Any = "all"
+    elif all(v == "off" for v in values):
+        applies = "off"
+    else:  # a list, kept as a list even when it covers every type
+        applies = sorted(set().union(*(_types(v) for v in values)))
+    return {
+        "approvers": sorted(tokens),
+        "count": max(side["count"] for side in sides),
+        "not": sorted(set().union(*(set(side["not"]) for side in sides))),
+        "applies": applies,
+        "independent": any(side["independent"] for side in sides),
+    }
+
+
+def applies_to(policy: dict[str, Any], ticket_type: str) -> bool:
+    """§5.7: a gate whose ``applies`` does not cover the ticket's type is not needed."""
+    return ticket_type in _types(policy["applies"])
+
+
+def policy_hash(gate: str, policy: dict[str, Any]) -> str:
+    return hl("policy", cj({"gate": gate, "policy": canonical_policy(policy)}))
+
+
+def named_ticket_roles(policy: dict[str, Any]) -> list[str]:
+    """The ticket roles the people hash covers: those named in ``approvers`` or ``not``, plus ``assignees`` when
+    ``independent`` is on (§5.6). Workspace roles (owner, maintainer, member) are not ticket roles."""
+    named = {t for t in (*policy["approvers"], *policy["not"]) if t in ("ticket_owner", *TICKET_ROLES)}
+    if policy["independent"]:
+        named.add("assignees")
+    return sorted(named)
+
+
+def people_for(policy: dict[str, Any], t: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for role in named_ticket_roles(policy):
+        out[role] = t["owner"] if role == "ticket_owner" else sorted(set(t["people"][role]))
+    return out
+
+
+def people_hash(people: dict[str, Any]) -> str:
+    return hl("people", cj(people))
+
+
+# --- text rules: section text (§4) ----------------------------------------------------------------
+
+HEADINGS = {
+    "summary": "Summary",
+    "context": "Context",
+    "requirements": "Requirements",
+    "out_of_scope": "Out of scope",
+    "plan": "Plan",
+    "decisions": "Decisions",
+    "verification": "Verification",
+    "findings": "Findings",
+    "current_state": "Current state",
+}
+_ALL = {"summary", "context", "requirements", "decisions", "current_state"}  # every type (§4 table)
+SECTIONS_OF_TYPE = {
+    "feature": _ALL | {"out_of_scope", "plan", "verification"},
+    "bug": _ALL | {"out_of_scope", "plan", "verification"},
+    "chore": _ALL | {"plan"},
+    "spike": _ALL | {"plan", "findings"},
+    "epic": _ALL | {"out_of_scope"},
+}
+
+
+class BodyRefused(ValueError):
+    """The §4 refusal reason of a ``body.md`` (kept as a short stable token in ``args[0]``)."""
+
+
+def _fence_run(line: str) -> str:
+    """The run of backticks or tildes a line starts with at column 0 (``""`` when it is shorter than three)."""
+    if not line or line[0] not in "`~":
+        return ""
+    n = len(line) - len(line.lstrip(line[0]))
+    return line[:n] if n >= 3 else ""
+
+
+def parse_body(text: str, ticket_type: str) -> dict[str, str]:
+    """``body.md`` -> {section id: section text}, read off §4 "Headings and section text" and "Code fence (exact)".
+
+    Two passes: first mark which lines are headings (a ``## `` line at column 0 that is not inside a fence), then cut
+    the text between consecutive headings and drop leading and trailing LF characters from each piece."""
+    lines = text.split("\n")
+    headings: list[int] = []
+    opener = ""  # the fence run that is open, "" outside a fence
+    for i, line in enumerate(lines):
+        run = _fence_run(line)
+        if opener:
+            if run[:1] == opener[:1] and len(run) >= len(opener) and line[len(run) :].strip(" ") == "":
+                opener = ""
+        elif line.startswith("## "):
+            headings.append(i)
+        elif run:
+            opener = run
+    if opener:
+        raise BodyRefused("body.open_fence")
+    first = headings[0] if headings else len(lines)
+    if any(line != "" for line in lines[:first]):
+        raise BodyRefused("body.text_before_heading")
+    ids = {heading: sid for sid, heading in HEADINGS.items()}
+    out: dict[str, str] = {}
+    for k, i in enumerate(headings):
+        sid = ids.get(lines[i][3:])
+        if sid is None or sid not in SECTIONS_OF_TYPE[ticket_type]:
+            raise BodyRefused("body.unknown_section")
+        if sid in out:
+            raise BodyRefused("body.duplicate_section")
+        stop = headings[k + 1] if k + 1 < len(headings) else len(lines)
+        out[sid] = "\n".join(lines[i + 1 : stop]).strip("\n")
+    return out
+
+
+_REF = re.compile(r"\(artifact:([A-Za-z0-9][A-Za-z0-9._-]{0,127})\)")
+
+
+def refs_of(text: str) -> list[str]:
+    """§5.8: every match of the regex over the raw text (no Markdown parsing, fences included), sorted, unique."""
+    return sorted(set(_REF.findall(text)))
+
+
+# --- repo identity (§5.7) -------------------------------------------------------------------------
+
+
+def repo_identity(raw: str, name: str) -> str:
+    """From the raw ``remote.origin.url``: https and ssh/scp-like forms become ``https://host[:port]/path`` (userinfo
+    removed, host lower-case, port kept except 443 for https and 22 for ssh, one trailing ``.git`` and ``/`` removed);
+    anything else is ``local:<name>``."""
+    m = re.fullmatch(r"(https|ssh)://(?:[^/@]*@)?([^/:@]+)(?::([0-9]+))?/(.+)", raw)
+    if m:
+        scheme, host, port, path = m.groups()
+        keep = port is not None and port != ("443" if scheme == "https" else "22")
+    else:
+        s = re.fullmatch(r"(?:[^/@:]+@)?([^/:@]+):([^/].*)", raw)  # scp-like: [user@]host:path, no slash before ':'
+        if not s or "://" in raw:
+            return f"local:{name}"
+        host, path = s.groups()
+        port, keep = None, False
+    path = path.removesuffix("/")
+    path = path.removesuffix(".git")
+    return f"https://{host.lower()}{':' + port if keep else ''}/{path}"
+
+
+# --- the ticket and G (§5.7) ----------------------------------------------------------------------
+
+REQ_SECTIONS = ("summary", "context", "requirements", "out_of_scope")
+
+
+def gate_sections(gate: str, ticket_type: str) -> list[str]:
+    """The core sections of a gate that this ticket's type has (§4, §5.7)."""
+    if gate == "requirements":
+        want: tuple[str, ...] = REQ_SECTIONS
+    elif gate == "plan":
+        want = ("plan", "decisions")
+    elif gate == "verify":
+        want = ("verification", "findings")
+    else:
+        want = ()
+    return [s for s in want if s in SECTIONS_OF_TYPE[ticket_type]]
+
+
+def _addon_sections(t: dict[str, Any], gate: str) -> list[str]:
+    out = []
+    for a in t["addons"].values():
+        out += [s["id"] for s in a["binds"]["sections"] if gate in s["gate"] and t["type"] in s["types"]]
+    return sorted(out)
+
+
+def _addon_fields(t: dict[str, Any], gate: str) -> dict[str, dict[str, Any]]:
+    """The fields whose ``binds`` name the gate, read from ``ticket.json`` (the values outlive the addon's grant)."""
+    out: dict[str, dict[str, Any]] = {}
+    for name, a in sorted(t["addons"].items()):
+        for field, gates in sorted(a["binds"]["fields"].items()):
+            if gate in gates:
+                out.setdefault(name, {})[field] = t["addon_values"].get(name, {}).get(field)
+    return out
+
+
+def observe(t: dict[str, Any], name: str, sha: str, branch: str) -> None:
+    """The host's ``branch.pushed`` for repo ``name``: its identity comes from the raw remote (§5.7), the ref from the
+    branch; the entry replaces the previous observation of that repo."""
+    t["heads"][name] = {"repo_id": repo_identity(t["remotes"][name], name), "ref": "refs/heads/" + branch, "sha": sha}
+
+
+def source_list(t: dict[str, Any]) -> list[dict[str, str]]:
+    """§5.7: the projection of the latest ``branch.pushed`` per repo name in ``links.repos``, sorted by identity.
+    Nothing but an observation changes it: editing ``links`` alone does not."""
+    out = [
+        {"repo": h["repo_id"], "ref": h["ref"], "sha": h["sha"]}
+        for name in t["links"]["repos"]
+        if (h := t["heads"].get(name)) is not None
+    ]
+    return sorted(out, key=lambda x: x["repo"])
+
+
+def derive_policies(t: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {g: effective_policy(t["ws_policies"][g], t["overrides"].get(g)) for g in GATES}
+
+
+def derive_G(t: dict[str, Any], gate: str) -> dict[str, Any]:
+    """The 15-key gate hash input of §5.7 for ``gate``, with every inner hash derived from the ticket state."""
+    pols = derive_policies(t)
+    pol = pols[gate]
+    sec_ids = gate_sections(gate, t["type"]) + _addon_sections(t, gate)
+    sections = {s: section_h(t["sections"].get(s, "")) for s in sec_ids}
+    if gate in ("requirements", "plan"):
+        names = sorted({n for s in sec_ids for n in refs_of(t["sections"].get(s, ""))})
+        names = [n for n in names if n in t["artifacts"]]
+    elif gate == "verify":
+        names = sorted(t["artifacts"])
+    else:
+        names = []
+    artifacts = {
+        n: {
+            "kind": t["artifacts"][n]["kind"],
+            "digest": digest(bytes.fromhex(t["artifacts"][n]["bytes_hex"])),
+            "ac": t["artifacts"][n]["ac"],
+            "task": t["artifacts"][n]["task"],
+        }
+        for n in names
+    }
+    packages = {}
+    for name, a in sorted(t["addons"].items()):
+        if any(gate in g for g in a["binds"]["fields"].values()) or any(
+            gate in s["gate"] and t["type"] in s["types"] for s in a["binds"]["sections"]
+        ):
+            packages[name] = a["package_sha256"]
+    prior = {}
+    for e in GATES[: GATES.index(gate)]:
+        if applies_to(pols[e], t["type"]):
+            counting = t["prior"][e]["counting"]  # approval ids in seq order, one per person
+            prior[e] = {"gen": t["prior"][e]["gen"], "approvals": sorted(counting[: pols[e]["count"]])}
+    return {
+        "workspace_id": t["workspace_id"],
+        "uid": t["uid"],
+        "gate": gate,
+        "schema": "orch.ticket/2",
+        "hash_v": 1,
+        "sections": sections,
+        "fields": {
+            "ticket_type": t["type"],
+            "size": t["size"],
+            "acceptance": copy.deepcopy(t["acceptance"]),
+            "links": copy.deepcopy(t["links"]) if gate in ("verify", "code") else None,
+            "addons": _addon_fields(t, gate),
+        },
+        "addon_packages": packages,
+        "tasks": copy.deepcopy(t["tasks"]) if gate == "plan" else [],
+        "artifacts": artifacts,
+        "receipts": copy.deepcopy(t["receipts"]) if gate == "verify" else {},
+        "source_sha": source_list(t) if gate in ("verify", "code") else [],
+        "prior": prior,
+        "policy_hash": policy_hash(gate, pol),
+        "people_hash": people_hash(people_for(pol, t)),
+    }
+
+
+def gate_hash_of(g: dict[str, Any]) -> str:
+    return hl("gate", cj(g))
+
+
+def sample_ticket() -> dict[str, Any]:
+    """A small real ticket: feature DEMO-0043 owned by sev, assigned to mara, with one linked repo, an estimate addon
+    bound to ``plan``, a plan override that tightens count and independence, and the code gate switched on."""
+    sha = "b7e1f02c" * 5
+    ws_pol = copy.deepcopy(DEFAULT_POLICIES)
+    ws_pol["code"]["applies"] = "all"
+    t = {
+        "workspace_id": W,
+        "uid": UID,
+        "type": "feature",
+        "size": "m",
+        "owner": P_SEV,
+        "people": {"assignees": [P_MARA], "reviewers": [P_SEV], "watchers": []},
+        "sections": {
+            "summary": "Load tariffs.",
+            "context": "",
+            "requirements": "- R1 caf\u00e9\n![mock](artifact:mock.png)",
+            "out_of_scope": "Nothing.",
+            "plan": "1. export\n2. seed",
+            "decisions": "",
+            "verification": "Ran dbt seed.",
+            "estimate.notes": "5 points",
+        },
+        "acceptance": [
+            {"id": "AC1", "text": "`dbt seed` loads all 40 tariff tables"},
+            {"id": "AC2", "text": "Model joins the seeds"},
+        ],
+        "tasks": [
+            {"id": "T1", "text": "Export CSVs", "verify": {"cmd": "ls seeds | wc -l"}, "proves": []},
+            {"id": "T2", "text": "Seed configs", "verify": None, "proves": ["AC1"]},
+        ],
+        "links": {
+            "repos": ["acme-energy-dbt"],
+            "branches": {"acme-energy-dbt": "feat/DEMO-0043"},
+            "prs": [],
+            "external": [],
+        },
+        "remotes": {"acme-energy-dbt": "git@github.com:acme/energy-dbt.git"},
+        "heads": {},
+        "artifacts": {
+            "mock.png": {"kind": "screenshot", "bytes_hex": b"png bytes".hex(), "ac": "AC1", "task": None},
+            "run.log": {"kind": "log", "bytes_hex": b"log".hex(), "ac": None, "task": "T2"},
+        },
+        "receipts": {
+            "T2": {"event": "01J9ZQ0000000000000000000C", "repo": "acme-energy-dbt", "commit": sha, "exit": 0}
+        },
+        "addons": {
+            "estimate": {
+                "package_sha256": digest(b"estimate package"),
+                "binds": {
+                    "fields": {"points": ["plan"]},
+                    "sections": [{"id": "estimate.notes", "gate": ["plan"], "types": ["feature", "bug"]}],
+                },
+            }
+        },
+        "addon_values": {"estimate": {"points": 5}},
+        "ws_policies": ws_pol,
+        "overrides": {
+            "plan": {"approvers": ["owner"], "count": 2, "not": ["reviewers"], "applies": "all", "independent": True}
+        },
+        "prior": {
+            "requirements": {"gen": 2, "counting": ["01J9ZP0000000000000000000A"]},
+            "plan": {"gen": 3, "counting": ["01J9ZP0000000000000000000D", "01J9ZP0000000000000000000B"]},
+            "verify": {"gen": 1, "counting": ["01J9ZR0000000000000000000E"]},
+        },
+    }
+    observe(t, "acme-energy-dbt", sha, "feat/DEMO-0043")
+    return t
+
+
+# --- the canonical repo identity (§5.7 "The result must match the canonical form exactly") ---------------------------
+
+_LABEL_RE = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?")
+_SEGMENT_RE = re.compile(r"[A-Za-z0-9._~-]+")
+_REPO_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
+
+
+def _canonical_host(host: str) -> bool:
+    labels = host.split(".")
+    if len(host) > 253 or not all(_LABEL_RE.fullmatch(x) for x in labels):
+        return False
+    if labels[-1].isdigit():  # an all-numeric last label only as a plain dotted quad without leading zeros
+        return len(labels) == 4 and all(x.isdigit() and str(int(x)) == x and int(x) <= 255 for x in labels)
+    return True
+
+
+def is_canonical_identity(identity: str) -> bool:
+    """§5.7 canonical form, checked part by part. "No ``.git`` suffix in any case" is read as a suffix of the whole
+    path (like "no trailing slash"), so a ``.git`` that ends a middle segment is allowed (listed as an F1 gap)."""
+    if identity.startswith("local:"):
+        return bool(_REPO_NAME_RE.fullmatch(identity[len("local:") :]))
+    m = re.fullmatch(r"https://([^/:]+)(?::([^/]*))?/(.*)", identity)
+    if not m or not identity.isascii():
+        return False
+    host, port, path = m.groups()
+    if not _canonical_host(host):
+        return False
+    if port is not None and not (re.fullmatch(r"[1-9][0-9]{0,4}", port) and int(port) <= 65535 and port != "443"):
+        return False
+    segments = path.split("/")
+    if not all(_SEGMENT_RE.fullmatch(x) and x not in (".", "..") for x in segments):
+        return False
+    return not path.lower().endswith(".git")
+
+
+def mapped_identity(raw: str, name: str) -> str | None:
+    """The identity a raw remote maps to, or ``None`` when the mapped result is not canonical: refused, never
+    converted (§5.7). What a refusal means for the host (no identity, ``source.missing``, ``local:``) is an F1 gap."""
+    out = repo_identity(raw, name)
+    return out if is_canonical_identity(out) else None

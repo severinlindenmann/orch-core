@@ -7,7 +7,7 @@
     "cli": "orch verdict",
     "summary": "Give the verify verdict: pass, or fail with a reason.",
     "who": "human",
-    "usage": "orch verdict pass|fail [--message TEXT] [--ref REF] [--dry-run]",
+    "usage": "orch verdict [REF] pass|fail [--message TEXT] [--dry-run]",
     "pre": [
       "ticket_exists",
       "ticket_in_testing",
@@ -40,12 +40,13 @@
         },
         "ref": {
           "type": "string",
-          "description": "ticket REF (flag)",
+          "description": "ticket REF (DEMO-0043, 43); default: your claim",
           "pattern": "^(?:(?:[A-Z][A-Z0-9]{0,15}-)?[0-9]+(?:/T[1-9][0-9]*)?|T[1-9][0-9]*)$",
           "x-metavar": "REF"
         }
       },
       "x-positional": [
+        "ref",
         "outcome"
       ],
       "required": [
@@ -70,6 +71,16 @@
     },
     "errors": [
       {
+        "code": "ambiguous_ref",
+        "exit": 2,
+        "retryable": false,
+        "hint": "name the ticket REF, for example DEMO-0043",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
         "code": "not_found",
         "exit": 2,
         "retryable": false,
@@ -77,6 +88,36 @@
         "fix": [
           "orch",
           "list"
+        ]
+      },
+      {
+        "code": "custody.no_key",
+        "exit": 3,
+        "retryable": false,
+        "hint": "orch init sets up your device key",
+        "fix": [
+          "orch",
+          "help"
+        ]
+      },
+      {
+        "code": "custody.no_prompt",
+        "exit": 3,
+        "retryable": false,
+        "hint": "run this command yourself, in your own terminal",
+        "fix": [
+          "orch",
+          "help"
+        ]
+      },
+      {
+        "code": "custody.wrong_passphrase",
+        "exit": 3,
+        "retryable": false,
+        "hint": "run the command again and type your passphrase",
+        "fix": [
+          "orch",
+          "help"
         ]
       },
       {
@@ -121,10 +162,40 @@
         ]
       },
       {
+        "code": "artifact.mismatch",
+        "exit": 5,
+        "retryable": false,
+        "hint": "orch show",
+        "fix": [
+          "orch",
+          "show"
+        ]
+      },
+      {
+        "code": "gate.already_approved",
+        "exit": 5,
+        "retryable": false,
+        "hint": "orch show",
+        "fix": [
+          "orch",
+          "show"
+        ]
+      },
+      {
         "code": "gate.stale",
         "exit": 5,
         "retryable": false,
         "hint": "orch show",
+        "fix": [
+          "orch",
+          "show"
+        ]
+      },
+      {
+        "code": "observe.unavailable",
+        "exit": 5,
+        "retryable": false,
+        "hint": "orch show names the repository; fix settings.repos or links.branches",
         "fix": [
           "orch",
           "show"

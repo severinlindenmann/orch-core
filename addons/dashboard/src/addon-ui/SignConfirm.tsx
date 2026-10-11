@@ -1,6 +1,6 @@
 import { ARG_KEY } from '@/api/addons'
 import { SignPrompt } from '@/components/sign/SignPrompt'
-import { plain, Raw } from '@/components/sign/visible'
+import { plain, Prose, Raw, RawValue } from '@/components/sign/visible'
 import { AddonBadge } from './AddonBadge'
 
 export { Raw } from '@/components/sign/visible'
@@ -36,13 +36,14 @@ export function signArgsProblem(args: Record<string, unknown> = {}): string | nu
 }
 
 /**
- * Core's lines for the args that are sent, one per arg: "Words (key): value", key and value exact (Raw). In core's own
+ * Core's lines for the args that are sent, one per arg: "Words (key): value", key exact (Raw) and value typed (RawValue:
+ * a string quoted, a number or boolean bare). In core's own
  * area (the covers, or the list above the addon region), never inside the addon's region where its text could imitate them.
  */
 export function argLines(args: Record<string, unknown> = {}) {
   return Object.entries(args).map(([k, v]) => (
     <span key={k} data-arg-key={k} data-arg-value={String(v)}>
-      {words(k) === k ? <Raw>{k}</Raw> : <>{plain(words(k))} (<Raw>{k}</Raw>)</>}: <Raw>{String(v)}</Raw>
+      {words(k) === k ? <Raw>{k}</Raw> : <>{plain(words(k))} (<Raw>{k}</Raw>)</>}: <RawValue value={v} />
     </span>
   ))
 }
@@ -123,11 +124,11 @@ export function FromAddon({ addon, addonTitle, label, text, subject }: { addon: 
           From the addon {addonTitle === addon ? <Raw>{addon}</Raw> : <>{plain(addonTitle)} (<Raw>{addon}</Raw>)</>}
         </span>
       </p>
-      {label && <p className="whitespace-pre-wrap text-text [overflow-wrap:anywhere]">{label}</p>}
-      {text && <p className="whitespace-pre-wrap text-text [overflow-wrap:anywhere]">{text}</p>}
+      {label && <Prose className="text-text">{label}</Prose>}
+      {text && <Prose className="text-text">{text}</Prose>}
       {subject && (
         <p className="whitespace-pre-wrap text-text-muted [overflow-wrap:anywhere]">
-          Addon says: <span className="text-text">{subject}</span>
+          Addon says: <Prose inline className="text-text">{subject}</Prose>
         </p>
       )}
     </section>

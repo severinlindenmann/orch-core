@@ -127,7 +127,9 @@ def test_the_relabel_probe_shows_the_real_tickets_uid_fragment(human, served):
 # --- 3. half-applied submits ------------------------------------------------------------------------------------------
 
 
-def test_an_injected_oserror_on_the_second_append_is_rolled_forward_never_cancelled_or_expired(human, served, monkeypatch):
+def test_an_injected_oserror_on_the_second_append_is_rolled_forward_never_cancelled_or_expired(
+    human, served, monkeypatch
+):
     _, key = human.ticket()
     with TwoNotes():
         p = human.prepare("log", {"ref": key, "text": "pair"})
@@ -316,9 +318,19 @@ def test_the_composite_checks_artifacts_against_the_bytes_it_uploaded(human, ser
             return ok(human.c.req(op, args, files=host_files if op == "human.prepare" else files, idem=idem))
 
         return signer.run(
-            call, "artifact.add", {"ref": key, "path": "e.txt"}, backend=human.backend, key_id="dk",
-            workspace_id=served.wid, person=human.person.ref, device=human.person.device, workspace=REG,
-            confirm=lambda text, word: True, show_secret=lambda t: None, idem=new_idem(), files=files,
+            call,
+            "artifact.add",
+            {"ref": key, "path": "e.txt"},
+            backend=human.backend,
+            key_id="dk",
+            workspace_id=served.wid,
+            person=human.person.ref,
+            device=human.person.device,
+            workspace=REG,
+            confirm=lambda text, word: True,
+            show_secret=lambda t: None,
+            idem=new_idem(),
+            files=files,
         )
 
     swapped = {"path": {"b64": base64.b64encode(b"the host's bytes\n").decode()}}
@@ -348,8 +360,14 @@ def _owner_device(lab, scopes, revoke=False):
     sig_key = crypto.generate_private_key()
     pub = crypto.public_bytes(sig_key)
     cert = certs.make_device_cert(
-        ws.owner.pk_pub, ws.owner.pk_sign, dk_sig_pub=pub, dk_kx_pub=crypto.public_bytes(crypto.generate_private_key()),
-        label_sealed=b"x", created_ms=ws.clock[0] * 1000, expires_ms=None, scopes_max=list(scopes),
+        ws.owner.pk_pub,
+        ws.owner.pk_sign,
+        dk_sig_pub=pub,
+        dk_kx_pub=crypto.public_bytes(crypto.generate_private_key()),
+        label_sealed=b"x",
+        created_ms=ws.clock[0] * 1000,
+        expires_ms=None,
+        scopes_max=list(scopes),
     )
     ref = certs.device_ref(pub)
     store = ws.other()
@@ -427,14 +445,28 @@ def test_a_question_changed_between_prepare_and_submit_is_question_stale(human, 
     human.agent("ask", {"ref": key, "text": "deploy?", "options": ["yes", "no"]})
     p = human.prepare("answer", {"ref": key, "question": "Q1", "option": "yes"})
     ws = served.lab.ws
-    q = {"id": "Q1", "to": "ticket_owner", "text": "deploy now?", "blocking": True,
-         "options": [{"key": "yes", "label": "yes"}, {"key": "no", "label": "no"}]}
+    q = {
+        "id": "Q1",
+        "to": "ticket_owner",
+        "text": "deploy now?",
+        "blocking": True,
+        "options": [{"key": "yes", "label": "yes"}, {"key": "no", "label": "no"}],
+    }
     qid = canon.question_id(served.wid, uid, "Q1")
 
     def reask(store):
         store.ticket(uid)
-        store.append(ws.person_event(ws.owner, uid, "question.asked", question=q, qid=qid,
-                                     hash=canon.question_hash(qid, uid, q["text"], q["options"])), log=uid)
+        store.append(
+            ws.person_event(
+                ws.owner,
+                uid,
+                "question.asked",
+                question=q,
+                qid=qid,
+                hash=canon.question_hash(qid, uid, q["text"], q["options"]),
+            ),
+            log=uid,
+        )
 
     served.append(reask)
     assert err(human.submit_res(p["request"]["id"], human.sign(p).events)) == "question.stale"

@@ -286,7 +286,9 @@ def test_the_fingerprint_sets_aside_only_device_auth_sig_and_a_grants_secret_has
     assert review.fingerprint(H1, [ev], "log") != review.fingerprint(H1, [{**ev, "secret_hash": H2}], "log")
     assert review.fingerprint(H1, [grant], "log") == review.fingerprint(H1, [{**grant, "secret_hash": None}], "log")
     bound = {**ev, "actor": {**ev["actor"], "device": None}, "auth": None}
-    assert review.fingerprint(H1, [ev], "log") == review.fingerprint(H1, [bound], "log")  # binding keeps the fingerprint
+    assert review.fingerprint(H1, [ev], "log") == review.fingerprint(
+        H1, [bound], "log"
+    )  # binding keeps the fingerprint
 
 
 def test_a_tampered_digest_or_fingerprint_is_refused(human, served):

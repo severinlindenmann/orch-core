@@ -1088,8 +1088,10 @@ State    = "prepared"|"bound"|"submitted"|"cancelled"|"expired"
 ReqHr    = str/hr_[0-7][0-9A-HJKMNP-TV-Z]{25}/          Code = str/[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}/
 Signer   = {device:Device, auth:"passphrase"|"secure-enclave"}
 Material = {kind:"gate", gate:Gate, input:<orch.model.gates.gate_input>, ticket:{key:Key, uid:Uid}, review:[Review]{1..16},
-            policy:Policy}                      // v1.5: the canonical effective policy (§0.8.1 "Bound hashes"); always
+            policy:Policy,                      // v1.5: the canonical effective policy (§0.8.1 "Bound hashes"); always
                                                 // present, because a blocked gate has no policy hash and gets no prompt
+            texts:{str: str}}                   // H5a: the full text of every section in input.sections; the signer
+                                                // checks each against input.sections and shows it (P1 parity)
          | {kind:"question", ticket:{key:Key, uid:Uid}, question:<the question object>, review:[Review]{1..16}}
          | {kind:"payload", ticket:{key:Key, uid:Uid} | null, review:[Review]{1..16},
             texts?:{str: str},                          // section id → full text, for every section the events reference
@@ -1101,8 +1103,9 @@ Review   = {event_id:ULID, type:str, payload:object, derived:{str: any}}
 material)` and recomputed by the signer, which refuses any difference:
 
 - **`payload`** = the event **minus** the envelope keys `v`, `id`, `type`, `actor`, `auth`, `hash_v`, `roster_v`,
-  `based_on`, `gate_gen` and `sig`, verbatim and complete. Every payload key is shown, including keys a future F1
-  version adds (L2). Nothing can be signed without being shown.
+  `based_on` and `sig`, and, on the three decision types only, `gate_gen` (shown on its own line as a host attestation),
+  verbatim and complete. Every payload key is shown, including keys a future F1 version adds (L2); a `gate_gen` on any
+  other type stays in the payload. Nothing can be signed without being shown.
 - **`derived`** holds values the signer computes itself from the event and `material`. It is never taken from the
   host. The per-type table is frozen in H5a:
 
@@ -1128,7 +1131,7 @@ material)` and recomputed by the signer, which refuses any difference:
 **Fingerprint (N2).** The first 12 hex digits of:
 
 ```
-sha256(cj({"review_digest": review_digest, "events": [each event without sig, actor.device, auth and,
+sha256(cj({"op": op, "review_digest": review_digest, "events": [each event without sig, actor.device, auth and,
            for grant.issued, secret_hash]}))
 ```
 
@@ -1262,6 +1265,8 @@ It covers the op, its outcome and every payload field, so `verdict pass` and `ve
   | `question.answered` | `hash` | the question hash `H("orch/v2/question\|" \|\| cj({question_id: qid, ticket: uid, text, options}))` | recomputed from `material.question`, the `qid` derived from the workspace id, `material.ticket.uid` and the question id (F1 §5.6) | recomputation |
   | `ticket.updated`, `ticket.created`, `question.asked` | section hashes | each referenced section's text | `derived.sections` (above) | recomputation |
   | `ticket.updated` | `base_rev` | the prior values | `before` (above) | consistency check |
+  | `gate.*`, `question.answered`, `verdict.given` | the gate's section texts | each section in `material.input.sections` | `section_hash(material.texts[sid]) == input.sections[sid]` for every section, and shown (H5a) | recomputation |
+  | every ticket op | (none: the key is in no signed field) | `material.ticket.key` | displayed as "ticket key per host" next to the full uid of the signed log; the confirmation word is `KEY/FRAG`, `FRAG` from that uid (H5a, item 7 below) | host attestation |
 
   This table describes decision bindings and section-edit checks; it is not an exhaustive list of hashes in all prepared
   event types. Hashes without supplied preimages (artifact and package digests, event references and others) are
@@ -1280,26 +1285,53 @@ It covers the op, its outcome and every payload field, so `verdict pass` and `ve
   - **In tier A any process of the person's UID can create a request**, so `orch sign` says "only sign a code you
     created yourself" every time it runs.
 
-**As built in H5a** (resolutions of points the text above leaves open; the wire schemas are unchanged):
+**As built in H5a** (resolutions of points the text above leaves open, and the #391 review round; the wire schemas
+change only where marked: gate `material.texts`, and `op` in the fingerprint input):
 
-- `human.cancel` on an `expired` request answers `{state:"cancelled"}`; the stored state stays `expired`.
-- A prepared `grant.issued` keeps `"secret_hash": null` in every answer (the host's redaction drops a secret-named key
-  only when its value is not `null`).
-- A person's `new` emits `ticket.created` only (`EMITS_V1["new"]`): it takes `title` and `type`; the other arguments
-  answer `invalid.input` (set them after with a person `set` or `section.set`). The key is the one the store would
-  allocate at prepare; a key taken before the submit answers `ticket.exists`.
-- `material.before` keys are the `base_rev` paths (`ticket.<field>`, `body.<section>`) for `set` and `section.set`, and
-  the keys of `set` for `settings.changed`.
-- "One `log`": the events carry no log of their own, so the signer checks that the request's `log` is the ticket of
-  `material.ticket` (or `workspace` with no ticket).
-- Number and order of events: one for a `who: human` op, one `ticket.created` for `new`, 1 to 16 events of the op's
-  `EMITS_V1` types otherwise.
-- Confirmation word for the ops the list above does not name: the addon name for addon ops (as P1), the ticket key for
-  any other ticket op, else the op name in capitals.
-- `human.prepare` takes inner-op files as `{b64}` only until H4a2's blobs land. A prepared grant's `issued_at` is the
-  prepare time, so F1's 300 s skew between `issued_at` and `at` refuses a grant submitted more than 5 minutes later.
-- `human.pending`, hand-off codes and `orch sign CODE` are H5b; a hand-off request has `code: null` until then, and
-  `human.get` with `signer` binds it.
+1. `human.cancel` on an `expired` request answers `{state:"cancelled"}`; the stored state stays `expired`.
+2. A prepared `grant.issued` keeps `"secret_hash": null` in every answer (the host's redaction drops a secret-named key
+   only when its value is not `null`).
+3. A person's `new` emits `ticket.created` only (`EMITS_V1["new"]`): it takes `title` and `type`; the other arguments
+   answer `invalid.input`, so a person-created ticket has no description at birth (set it after with a person `set` or
+   `section.set`). The key is the one the store would allocate at prepare; a key taken before the submit answers
+   `ticket.exists`.
+4. "One `log`": the events carry no log of their own, so the signer checks that the request's `log` is the ticket of
+   `material.ticket` (or `workspace` with no ticket).
+5. `material.before` keys are the `base_rev` paths (`ticket.<field>`, `body.<section>`) for `set` and `section.set`, and
+   the keys of `set` for `settings.changed`.
+6. Number and order of events: one for a `who: human` op, one `ticket.created` for `new`, 1 to 16 events of the op's
+   `EMITS_V1` types otherwise. **The op is bound:** it is in the fingerprint input, shown in the header, and the signer
+   checks what each op's `ticket.updated` may touch (`ac.add`/`ac.edit`: `ticket.acceptance` only; `section.set`: one
+   section and no `set`; `set`: the fields of `set` only).
+7. **The confirmation word.** A ticket op's word is `KEY/FRAG`: the key as the host gives it, and `FRAG`, the last four
+   characters of the uid of the log the signature names. The key is **not proven** in H5a: the header and the review
+   label it "ticket key per host" and show the full uid. (Follow-up: prove it by carrying the key-defining events,
+   `ticket.created` and `ticket.moved`, in `material`.) `GRANT` for grants, the person id for member ops, the addon name
+   for addon ops, else the op name in capitals. Every identifier the signer shows or the person types (key, uid,
+   person, device, section, addon, question id, `before` path, origin) is checked against its F1 format before
+   rendering, every other host string is escaped (control and bidi characters become visible markers), and a review
+   that would still carry a control character is refused.
+8. `human.pending`, hand-off codes and `orch sign CODE` are H5b; a hand-off request has `code: null` until then, and
+   `human.get` with `signer` binds it (device checks included).
+9. `human.prepare` takes inner-op files as `{b64}` only until H4a2's blobs land. The composite (`orch.host.signer.run`)
+   compares each `artifact.*` event's `sha256` and `bytes` with the bytes it uploaded itself.
+10. **A grant request expires after 4 minutes**, not 10: its `issued_at` is the prepare time, and F1 refuses a
+    `grant.issued` more than 300 s from its append.
+11. **D58 at submit.** Prepare appends nothing (no `branch.pushed` either). At submit, under the store lock, for every
+    event that signs a `source_sha`, the host reads each linked repo's head again through its git reader (under the
+    caller's principal) and refuses with `gate.stale` when it differs from the signed source list, or with
+    `observe.unavailable` when the reader cannot answer (fail closed). The working tree's cleanliness is the worker's
+    `tree.check` (H10); until then `verdict` and `approve code` answer `observe.unavailable` at prepare in host mode.
+12. **Gate texts.** Gate material carries `texts` for every section in `input.sections` (next to `material.policy`);
+    the signer checks each against `input.sections` and shows them with the criteria, tasks, links and policy, as P1's
+    review did. `gate_gen` and `source_sha` are shown labelled as host attestations; the policy hash is recomputed from
+    `material.policy` and must equal both `input.policy_hash` and the event's.
+13. **An interrupted submission is rolled forward, never re-judged.** A request whose signed events are being appended
+    (some landed, no outcome yet) neither expires nor cancels (`human.cancel` answers `submitted`). A `human.submit`
+    with the same signed events, or `outcome.get` / a retry of the interrupted idem, finishes the appends and gives the
+    interrupted idem the same terminal state; other events answer `human.request_state`.
+14. The CLI composite is the library function `orch.host.signer.run`; routing `orch approve` and the other person
+    commands to it is H4b's host-mode CLI.
 
 #### 0.8.2 Job ops (worker socket, H10)
 

@@ -60,7 +60,7 @@ describe('idempotency keys and the command', () => {
 })
 
 describe('a request must be what it says it is', () => {
-  const base = () => ({ material: structuredClone(vector.material), events, review_digest: vector.review_digest, fingerprint: vector.fingerprint, expires_at: new Date(Date.now() + 600_000).toISOString().replace(/\.\d+Z$/, 'Z') }) as unknown as HandoffRequest
+  const base = () => ({ op: 'approve', material: structuredClone(vector.material), events, review_digest: vector.review_digest, fingerprint: vector.fingerprint, expires_at: new Date(Date.now() + 600_000).toISOString().replace(/\.\d+Z$/, 'Z') }) as unknown as HandoffRequest
   const rehash = (r: HandoffRequest): HandoffRequest => {
     const digest = reviewDigestOf(r.material)
     return { ...r, review_digest: digest, fingerprint: fingerprintOf(digest, r.events, r.op) }

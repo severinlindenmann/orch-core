@@ -400,36 +400,49 @@ def validate_envelope(frame: dict[str, Any], *, sender: Literal["client", "host"
         raise FrameError("handshake.invalid" if kind == "hello" else "frame.invalid", "Invalid envelope")
 
 
-@dataclass
-class _Request:
-    phase: Literal["queued", "read", "wait", "write", "rejected"] = "queued"
+@dataclass(eq=False)
+class Request:
+    id: str
+    phase: Literal["pending", "queued", "read", "wait", "write", "rejected"] = "pending"
+    running: bool = False
+    answered: bool = False
     cancelled: bool = False
 
 
 class Connection:
-    """Host-side lifecycle; call responded only after a res has been sent.
+    """Host-side lifecycle, with generation-specific request handles.
 
-    receive reserves readable malformed request IDs too, until their error res.
-    start is called by dispatch before execution. cancel returns a suggested error
-    code (or None for ignore); a running write may still finish with its real result.
-    Quota responses also reserve their ID until sent. The transport must send those
-    promptly rather than continuing to accumulate rejected requests.
+    receive reserves IDs; request retrieves the handle for a malformed request.
+    Dispatch calls admit after op, version, drain and permission checks, then
+    start before execution. Call responded after sending the one res, and stopped
+    only when the handler actually exits (including after cancellation).
     """
 
     def __init__(self) -> None:
         self.phase: Literal["hello", "welcome", "ready", "closed"] = "hello"
-        self._requests: dict[str, _Request] = {}
+        self._requests: dict[str, Request] = {}
+        self._slots: set[Request] = set()
 
     @property
     def inflight(self) -> frozenset[str]:
         return frozenset(self._requests)
+
+    @property
+    def slots(self) -> int:
+        return len(self._slots)
+
+    def request(self, request_id: str) -> Request:
+        try:
+            return self._requests[request_id]
+        except KeyError:
+            raise ValueError("Request is not in flight") from None
 
     def welcomed(self) -> None:
         if self.phase != "welcome":
             raise ValueError("No hello awaiting welcome")
         self.phase = "ready"
 
-    def receive(self, frame: dict[str, Any]) -> str | None:
+    def receive(self, frame: dict[str, Any]) -> Request | str | None:
         try:
             return self._receive(frame)
         except FrameError as exc:
@@ -437,7 +450,7 @@ class Connection:
                 self.phase = "closed"
             raise
 
-    def _receive(self, frame: dict[str, Any]) -> str | None:
+    def _receive(self, frame: dict[str, Any]) -> Request | str | None:
         if self.phase == "closed":
             raise ValueError("Connection is closed")
         if type(frame) is not dict:
@@ -456,27 +469,44 @@ class Connection:
             validate_envelope(frame, sender="client")
         except FrameError as exc:
             if exc.code == "req.invalid":
-                self._requests[request_id] = _Request("rejected")
+                self._requests[request_id] = Request(request_id, "rejected")
+                # H1b must apply outbound backpressure: malformed requests skip the in-flight limit.
             raise
         if kind == "hello":
             self.phase = "welcome"
         elif kind == "req":
-            full = len(self._requests) >= MAX_INFLIGHT
-            self._requests[request_id] = _Request("rejected" if full else "queued")
-            if full:
-                # §0.11 gives the limit but no dedicated code; use §0.6 quota.host.
-                raise FrameError("quota.host", "Too many requests in flight", request_id)
+            request = Request(request_id)
+            self._requests[request_id] = request
+            return request
         elif kind == "cancel":
             return self.cancel(frame["id"])
         return None
 
-    def start(self, request_id: str, kind: Literal["read", "wait", "write"]) -> bool:
-        request = self._requests[request_id]
-        if kind not in {"read", "wait", "write"} or request.phase != "queued":
+    def _current(self, request: Request) -> bool:
+        return isinstance(request, Request) and self._requests.get(request.id) is request
+
+    def admit(self, request: Request) -> bool:
+        """Reserve quota after the dispatcher's higher-precedence checks."""
+        if not self._current(request) or request.phase != "pending":
             raise ValueError("Invalid request transition")
         if request.cancelled:
             return False
+        if self.slots >= MAX_INFLIGHT:
+            request.phase = "rejected"
+            raise FrameError("quota.host", "Too many requests in flight", request.id)
+        self._slots.add(request)
+        request.phase = "queued"
+        return True
+
+    def start(self, request: Request, kind: Literal["read", "wait", "write"]) -> bool:
+        if not self._current(request) or kind not in {"read", "wait", "write"}:
+            raise ValueError("Invalid request transition")
+        if request.cancelled:
+            return False
+        if request.phase != "queued":
+            raise ValueError("Invalid request transition")
         request.phase = kind
+        request.running = True
         return True
 
     def cancel(self, request_id: str) -> str | None:
@@ -486,8 +516,20 @@ class Connection:
         request.cancelled = True
         return "outcome.unknown" if request.phase == "write" else "cancelled"
 
-    def responded(self, request_id: str) -> None:
-        """Release an ID after its one response is sent, never on cancellation."""
-        if request_id not in self._requests:
-            raise ValueError("Request is not in flight")
-        del self._requests[request_id]
+    def responded(self, request: Request) -> bool:
+        """Release the wire ID once; stale generations never touch its replacement."""
+        if not self._current(request):
+            return False
+        del self._requests[request.id]
+        request.answered = True
+        if not request.running:
+            self._slots.discard(request)
+        return True
+
+    def stopped(self, request: Request) -> None:
+        """Release execution capacity only after the handler has actually stopped."""
+        if request not in self._slots:
+            return
+        request.running = False
+        if request.answered:
+            self._slots.discard(request)

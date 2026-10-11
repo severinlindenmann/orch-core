@@ -364,9 +364,9 @@ def test_id_reuse_and_out_of_order_responses():
     connection = ready()
     connection.receive(REQ)
     connection.receive(REQ | {"id": "r2"})
-    connection.responded("r2")
+    connection.responded(connection.request("r2"))
     connection.receive(REQ | {"id": "r2"})
-    connection.responded("r1")
+    connection.responded(connection.request("r1"))
     connection.receive(REQ)
     assert_error("frame.invalid", connection.receive, REQ | {"extra": 1})
     assert connection.phase == "closed"
@@ -378,12 +378,12 @@ def test_malformed_request_stays_open_until_error_sent():
     assert connection.inflight == {"r1"} and connection.phase == "ready"
     assert connection.receive({"t": "cancel", "id": "r1"}) is None
     with pytest.raises(ValueError):
-        connection.start("r1", "write")
-    connection.responded("r1")
+        connection.start(connection.request("r1"), "write")
+    connection.responded(connection.request("r1"))
     connection.receive(REQ)
-    connection.responded("r1")
+    connection.responded(connection.request("r1"))
     with pytest.raises(ValueError):
-        connection.responded("r1")
+        connection.responded(connection.request("r1"))
 
 
 @pytest.mark.parametrize("kind", ["queued", "read", "wait", "write"])
@@ -392,18 +392,20 @@ def test_cancel(kind):
     cancel = {"t": "cancel", "id": "r1"}
     assert connection.receive(cancel) is None
     connection.receive(REQ)
+    connection.admit(connection.request("r1"))
     if kind != "queued":
-        assert connection.start("r1", kind)
+        assert connection.start(connection.request("r1"), kind)
     expected = "outcome.unknown" if kind == "write" else "cancelled"
     assert connection.receive(cancel) == expected
     assert connection.receive(cancel) is None
     assert connection.inflight == {"r1"}
     if kind == "queued":
-        assert not connection.start("r1", "write")
-    connection.responded("r1")
+        assert not connection.start(connection.request("r1"), "write")
+    connection.responded(connection.request("r1"))
     assert connection.receive(cancel) is None
     connection.receive(REQ)
-    assert connection.start("r1", "write")
+    connection.admit(connection.request("r1"))
+    assert connection.start(connection.request("r1"), "write")
 
 
 def test_cancel_does_not_free_id():
@@ -426,10 +428,11 @@ def test_handshake_order():
 def test_inflight_limit():
     connection = ready()
     for i in range(8):
-        connection.receive(REQ | {"id": str(i)})
-    assert_error("quota.host", connection.receive, REQ | {"id": "overflow"})
-    connection.responded("overflow")
-    connection.responded("0")
+        connection.admit(connection.receive(REQ | {"id": str(i)}))
+    overflow = connection.receive(REQ | {"id": "overflow"})
+    assert_error("quota.host", connection.admit, overflow)
+    connection.responded(connection.request("overflow"))
+    connection.responded(connection.request("0"))
     connection.receive(REQ | {"id": "0"})
 
 
@@ -462,7 +465,7 @@ def test_request_round_trip(request_id, args):
     validate_envelope(decoded, sender="client")
     connection = ready()
     connection.receive(decoded)
-    connection.responded(request_id)
+    connection.responded(connection.request(request_id))
     assert not connection.inflight
 
 
@@ -545,3 +548,72 @@ def test_arbitrary_cancel_ids_are_ignored(request_id):
     validate_envelope(decode(encode(frame)[4:]), sender="client")
     assert connection.receive(frame) is None
     assert connection.phase == "ready" and not connection.inflight
+
+
+def test_cancelled_handler_keeps_slot_and_stale_completion_cannot_release_reused_id():
+    connection = ready()
+    old = connection.receive(REQ | {"id": "a"})
+    connection.admit(old)
+    connection.start(old, "read")
+    assert connection.cancel("a") == "cancelled"
+    assert connection.responded(old)
+    replacement = connection.receive(REQ | {"id": "a"})
+    connection.admit(replacement)
+    connection.start(replacement, "read")
+    assert not connection.responded(old)
+    assert connection.request("a") is replacement
+    for i in range(6):
+        request = connection.receive(REQ | {"id": str(i)})
+        connection.admit(request)
+        connection.start(request, "read")
+        connection.cancel(request.id)
+        connection.responded(request)
+    assert connection.slots == 8
+    overflow = connection.receive(REQ | {"id": "overflow"})
+    assert_error("quota.host", connection.admit, overflow)
+    connection.responded(overflow)
+    connection.stopped(old)
+    assert connection.slots == 7
+    connection.stopped(old)
+    assert not connection.responded(old)
+    assert connection.request("a") is replacement
+    connection.admit(connection.receive(REQ | {"id": "next"}))
+    assert connection.slots == 8
+
+
+@pytest.mark.parametrize("error", ["unknown_command", "op.unsupported", "host.restarting", "op.not_allowed"])
+def test_dispatch_checks_precede_quota(error):
+    connection = ready()
+    for i in range(8):
+        connection.admit(connection.receive(REQ | {"id": str(i)}))
+    # A ninth reserved ID also awaits its response.
+    ninth = connection.receive(REQ | {"id": "ninth"})
+    assert_error("quota.host", connection.admit, ninth)
+    frame = REQ | {"id": "check", "op": "unknown"}
+    request = connection.receive(frame)
+
+    def dispatch():
+        # H1c owns these checks and calls admit only if they pass.
+        if frame["op"] == "unknown":
+            return error
+        connection.admit(request)
+
+    assert dispatch() == error
+    assert connection.slots == 8
+    assert connection.request("check") is request
+    assert connection.responded(request)
+
+
+def test_start_requires_known_admitted_handle():
+    connection = ready()
+    with pytest.raises(ValueError):
+        connection.start("unknown", "read")
+    request = connection.receive(REQ)
+    with pytest.raises(ValueError):
+        connection.start(request, "read")
+    connection.admit(request)
+    assert connection.start(request, "read")
+    connection.stopped(request)
+    assert connection.slots == 1
+    connection.responded(request)
+    assert connection.slots == 0

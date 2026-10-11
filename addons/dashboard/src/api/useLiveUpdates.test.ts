@@ -68,3 +68,68 @@ it('gone cancels and purges details and rows, closes views; revoked purges works
   expect(client.getQueryData(['ticket', 'other', 'DEMO-0001'])).toEqual({ uid: 'other-u' })
   expect(close).toHaveBeenCalledWith()
 })
+it('any successful frame, including a heartbeat, resets the failure counter', async () => {
+  vi.useFakeTimers()
+  const fetcher = vi.fn<typeof fetch>()
+  fetcher.mockRejectedValueOnce(new Error('offline')).mockRejectedValueOnce(new Error('offline'))
+  fetcher.mockResolvedValueOnce(new Response(new ReadableStream({ start(c) { c.enqueue(encode(': heartbeat\n\n')); c.close() } }),
+    { headers: { 'content-type': 'text/event-stream' } }))
+  fetcher.mockRejectedValue(new Error('offline'))
+  const stop = startLiveUpdates('uuid', 'demo-not-a-real-token', vi.fn(), vi.fn(), fetcher)
+  await vi.advanceTimersByTimeAsync(0)
+  await vi.advanceTimersByTimeAsync(1000)
+  await vi.advanceTimersByTimeAsync(2000)
+  expect(fetcher).toHaveBeenCalledTimes(3)
+  // The healthy heartbeat stream restarts the ladder at 1 s, not at 5 s.
+  await vi.advanceTimersByTimeAsync(999)
+  expect(fetcher).toHaveBeenCalledTimes(3)
+  await vi.advanceTimersByTimeAsync(1)
+  expect(fetcher).toHaveBeenCalledTimes(4)
+  stop()
+})
+it('gone fails closed: removes every cached query that mentions the ticket, whatever its key or shape', () => {
+  const client = new QueryClient()
+  const uid = '01MNOPQRSTUVWXYZ0123456789', key = 'DEMO-0007'
+  client.setQueryData(['ticket', 'ws', key], { uid, key })
+  client.setQueryData(['search', 'ws', 'needle'], { hits: { groups: [{ tickets: [{ uid, key, title: 'secret' }] }] } })
+  client.setQueryData(['needs', 'ws'], { needs: [{ ref: key, detail: 'x' }], unrelated: 1 })
+  client.setQueryData(['x', { scope: 'ws' }, 'board'], { columns: [{ cards: [{ uid }] }] })
+  client.setQueryData(['ticket', 'ws', 'DEMO-0001'], { uid: 'other-uid', key: 'DEMO-0001' })
+  client.setQueryData(['ticket', 'other', key], { uid: 'foreign', key })
+  invalidateLive(client, 'ws', 'items', [{ id: '1.g', uid, gone: true }])
+  for (const k of [['ticket', 'ws', key], ['search', 'ws', 'needle'], ['needs', 'ws'], ['x', { scope: 'ws' }, 'board']])
+    expect(client.getQueryData(k)).toBeUndefined()
+  expect(client.getQueryData(['ticket', 'ws', 'DEMO-0001'])).toBeDefined()
+  expect(client.getQueryData(['ticket', 'other', key])).toBeDefined()
+})
+it('a malformed gone purges the whole workspace instead of being skipped', () => {
+  const client = new QueryClient()
+  client.setQueryData(['tickets', 'ws'], { rows: [{ uid: 'a' }] })
+  client.setQueryData(['today', 'other'], { keep: true })
+  invalidateLive(client, 'ws', 'items', [{ id: '1.g', gone: true } as never])
+  expect(client.getQueryData(['tickets', 'ws'])).toBeUndefined()
+  expect(client.getQueryData(['today', 'other'])).toEqual({ keep: true })
+})
+it('revoked removes workspace data wherever the UUID sits, and cross-workspace caches; resync keeps the cache', () => {
+  const client = new QueryClient()
+  const seed = () => {
+    client.setQueryData(['workspaces'], [{ id: 'ws', name: 'Secret workspace' }])
+    client.setQueryData(['me'], { roster: ['ws'] })
+    client.setQueryData(['search', 'q', 'ws'], { hits: 1 })
+    client.setQueryData(['today', 'ws'], { needs: [] })
+    client.setQueryData(['today', 'other'], { keep: true })
+  }
+  seed(); invalidateLive(client, 'ws', 'resync', [])
+  expect(client.getQueryData(['today', 'ws'])).toBeDefined(); expect(client.getQueryData(['workspaces'])).toBeDefined()
+  invalidateLive(client, 'ws', 'revoked', [])
+  for (const k of [['workspaces'], ['me'], ['search', 'q', 'ws'], ['today', 'ws']]) expect(client.getQueryData(k)).toBeUndefined()
+  expect(client.getQueryData(['today', 'other'])).toEqual({ keep: true })
+})
+it('a 403/404 on the stream is revocation, not an outage', async () => {
+  for (const status of [403, 404]) {
+    const receive = vi.fn(), fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response('{}', { status }))
+    const stop = startLiveUpdates('uuid', 'demo-not-a-real-token', receive, vi.fn(), fetcher)
+    await new Promise((r) => setTimeout(r, 10))
+    expect(receive).toHaveBeenCalledWith('revoked', []); expect(fetcher).toHaveBeenCalledTimes(1); stop()
+  }
+})

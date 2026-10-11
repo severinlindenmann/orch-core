@@ -1,7 +1,7 @@
 export type SSEMessage = { event: string; data: string; id?: string }
 
 /** Incremental UTF-8 SSE parser, including CRLF split across network chunks. */
-export async function readSSE(body: ReadableStream<Uint8Array>, receive: (message: SSEMessage) => void) {
+export async function readSSE(body: ReadableStream<Uint8Array>, receive: (message: SSEMessage) => void, alive: () => void = () => {}) {
   const reader = body.getReader()
   const decoder = new TextDecoder()
   let buffer = '', event = '', data: string[] = [], id: string | undefined
@@ -23,6 +23,7 @@ export async function readSSE(body: ReadableStream<Uint8Array>, receive: (messag
     while (true) {
       const { done, value } = await reader.read()
       if (done) return
+      alive()
       buffer += decoder.decode(value, { stream: true })
       if (buffer.length + data.join('').length > 1_048_576) throw new Error('Stream frame too large')
       let end: number

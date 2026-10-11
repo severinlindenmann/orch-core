@@ -55,7 +55,9 @@ workspace prepared by the dev-kit). The terminal handles its signing factors.
    contain the exact mapping. It never overwrites or adopts real registry entries. It opens
    `<state>/run/control/host.sock` and `<state>/run/<uuid>/host.sock`. Keep Unix socket paths
    short (under 100 UTF-8 bytes). `ORCH_RUN_DIR` must be a short **real directory**, with no symlink aliases; for the stub it
-   must remain inside the marked dev state (for example `/tmp/orch-m1/run`).
+   must remain inside the marked dev state (for example `/private/tmp/orch-m1/state/run`; macOS `/tmp` is a symlink
+   to `/private/tmp`, so do not use it). The `orch` CLI needs the workspace signing key (WSK) under
+   `$ORCH_STATE_DIR/hosts/<workspace-id>/keys` to append; a workspace not made by `orch init` has none and stays read-only.
 4. In another terminal, launch the server and browser:
 
    ```sh
@@ -137,13 +139,15 @@ carry strict CSP, nosniff and no-referrer; API/auth are no-store. Validation err
 reflect submitted bodies. The launcher disables access logs. No request body exceeds 1 MiB.
 
 The launcher opens a private 0600 HTML redirect file inside an owned 0700
-`$XDG_RUNTIME_DIR/orch-dashboard` directory when available, otherwise the 0700 dashboard state
+`$XDG_RUNTIME_DIR/orch-dashboard` directory when `$XDG_RUNTIME_DIR` already exists as a real 0700 directory
+you own (it is never created), otherwise the 0700 dashboard state
 folder. Startup removes owned regular `launch-*.html` files older than 60 seconds from both
 locations; it does not follow symlinks. Browser process arguments contain only its file URL, never the launch code.
+The server picks the directory and returns it to the launcher in the `launch` reply, so both agree.
 The server deletes the redirect after a successful exchange or after 60 seconds.
 Failed exchanges share a per-minute budget; a valid code always bypasses that budget.
 
-## Live updates and contract v1.3.1
+## Live updates and contract v1.3.2
 
 One socket subscription per active workspace is shared by all tabs. The server reads
 `ticket.query` then `needs`, subscribes to `workspace`, `tickets`, `needs` after the earlier
@@ -157,13 +161,17 @@ EventSource. Each workspace has instance-scoped increasing IDs. A tab reconnects
 own `Last-Event-ID`; a mismatch gets one resync, without replay. Queues hold 256 messages;
 overflow replaces queued messages with resync and ends the stream. Sessions have a cap of
 16 streams, 15-second heartbeat comments, and logout/expiry interrupts blocked sends too.
-Every drained batch rechecks membership, addon policy and current ticket visibility using
-paged host reads. Only a known-ticket `gone` bypasses ticket visibility. Membership loss
-sends `revoked`. The browser cancels and removes affected cached details and strips hidden
+Every drained batch rechecks membership, addon policy and the visibility of the batch's own tickets
+(`ticket.get` per ticket; paged `ticket.query` only if that op is unsupported or the batch is large). The answer is
+computed once per workspace and shared by all tabs for a 1 s TTL, so host calls do not grow with the number of tabs;
+member, role, device and `gone` events invalidate it. The workspace task does the 15-second membership check, once per
+workspace. A `gone` is forwarded only for a ticket the person could see; batches that end up empty are not sent.
+Membership loss, a disabled addon or `not_found` sends `revoked`; an unavailable host, a timeout or a connection
+error sends `resync` and the server retries with 1, 2, 5, 10 s backoff while tabs keep their caches. The browser cancels and removes affected cached details and strips hidden
 rows before refetch; production currently has no ticket-detail or hand-off view to close.
 
 `useLiveUpdates` applies the design's per-item invalidation table with workspace UUID keys.
-Reconnect delays are 1, 2, 5 and then 10 seconds; the third consecutive failure also starts
+Any received byte (including a heartbeat) resets the failure count. Reconnect delays are 1, 2, 5 and then 10 seconds; the third consecutive failure also starts
 the 10-second head poll. A recovered stream stops polling. Poll cursor changes invalidate workspace queries. Mock Vite/test
 transport has no stream hook and keeps its existing behavior.
 

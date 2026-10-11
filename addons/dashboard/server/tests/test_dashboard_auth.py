@@ -255,19 +255,46 @@ def test_runtime_redirect_and_stale_sweep(tmp_path, monkeypatch):
     assert not stale.exists() and fresh.exists() and symlink.is_symlink()
     runtime.chmod(0o755)
     assert redirect_directory(fallback) == fallback
+    # Never create a missing runtime directory or its parents.
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "missing/deep"))
+    assert redirect_directory(fallback) == fallback
+    assert not (tmp_path / "missing").exists()
+
+
+def test_launcher_uses_server_redirect_directory(tmp_path, monkeypatch):
+    from orch_dashboard import __main__ as launcher
+
+    server = tmp_path / "server-redirects"
+    server.mkdir(mode=0o700)
+    monkeypatch.setenv("ORCH_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "other"))
+    opened = []
+    monkeypatch.setattr(
+        launcher, "control", lambda *_: {"port": PORT, "code": "demo-not-a-real-code", "redirect": str(server)}
+    )
+    monkeypatch.setattr(launcher, "verify_probe", lambda _: None)
+    monkeypatch.setattr(launcher.webbrowser, "open", opened.append)
+    launcher.open_dashboard()
+    assert len(list(server.glob("launch-*.html"))) == 1 and opened[0].startswith(server.as_uri())
 
 
 def test_print_url_terminal_only(tmp_path, monkeypatch, capsys):
     from orch_dashboard import __main__ as launcher
 
     monkeypatch.setenv("ORCH_STATE_DIR", str(tmp_path))
-    monkeypatch.setattr(launcher, "control", lambda *_: {"port": PORT, "code": "demo-not-a-real-code"})
+
+    def started(*_):
+        pytest.fail("nothing may start or be minted without a terminal")
+
+    monkeypatch.setattr(launcher, "control", started)
+    monkeypatch.setattr(launcher.subprocess, "Popen", started)
     monkeypatch.setattr(launcher, "verify_probe", lambda _: None)
     monkeypatch.setattr(launcher.sys.stdout, "isatty", lambda: False)
     with pytest.raises(RuntimeError, match="terminal"):
         launcher.open_dashboard(print_url=True)
     assert not capsys.readouterr().out
     monkeypatch.setattr(launcher.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(launcher, "control", lambda *_: {"port": PORT, "code": "demo-not-a-real-code"})
     monkeypatch.setattr(launcher.webbrowser, "open", lambda _: pytest.fail("must print only"))
     launcher.open_dashboard(print_url=True)
     printed = capsys.readouterr().out

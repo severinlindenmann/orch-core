@@ -2,12 +2,22 @@
 
 import asyncio
 import json
+import threading
+import time
 from contextlib import suppress
 from dataclasses import dataclass, field
 
 from starlette.responses import StreamingResponse
 
 from .errors import HostError, fail
+
+VISIBILITY_TTL = 1.0
+HEARTBEAT = 15.0
+REVOKED = {"peer.denied", "addon.disabled", "not_found"}
+BACKOFF = (1, 2, 5, 10)
+SEED_PAGES = 50
+DIRECT_CHECKS = 20
+MEMBER_EVENTS = ("member.", "role.", "device.", "grant.")
 
 
 def sse(event, data, event_id):
@@ -60,6 +70,9 @@ class WorkspaceLive:
         self.link = None
         self.ready = False
         self.seen = set()
+        self.visible = set()
+        self.partial = True
+        self.outage = False
 
     @property
     def latest(self):
@@ -81,13 +94,37 @@ class WorkspaceLive:
     def snapshot_open(self):
         self.link = self.manager.gateway.enabled(self.ws)
         # Use the earlier cursor so changes between the two snapshots are replayed.
-        snapshot = self.link.call("ticket.query", {"limit": 1})
+        snapshot = self.link.call("ticket.query", {"limit": 200})
+        # Remember which tickets this person can see, so a host `gone` is only forwarded for those.
+        visible = {r["uid"] for r in snapshot.get("rows", [])}
+        page, pages = snapshot.get("next_page"), 1
+        while page and pages < SEED_PAGES:
+            data = self.link.call("ticket.query", {"limit": 200, "page": page})
+            visible.update(r["uid"] for r in data.get("rows", []))
+            page, pages = data.get("next_page"), pages + 1
+        self.visible, self.partial = visible, bool(page)
         self.link.call("needs")
         opened = self.link.call(
             "sub.open", {"topics": ["workspace", "tickets", "needs"], "after": snapshot["sub_cursor"]}
         )
         self.sub = opened["sub"]
         self.seen.clear()
+
+    def admit(self, items):
+        """Forward `gone` only for tickets this person could see; invalidate shared visibility."""
+        out = []
+        for item in items:
+            if item.get("gone"):
+                uid = item.get("uid")
+                known = uid in self.visible
+                self.visible.discard(uid)
+                self.manager.invalidate(self.ws)
+                if not known and not self.partial:
+                    continue
+            elif str(item.get("type", "")).startswith(MEMBER_EVENTS):
+                self.manager.invalidate(self.ws)
+            out.append(item)
+        return out
 
     def close_sub(self):
         if self.sub and self.link:
@@ -107,16 +144,24 @@ class WorkspaceLive:
             raise
 
     async def run(self):
+        delay = 0
         try:
             while True:
                 try:
                     await self.open()
+                    delay = 0
                     if self.ready:
                         self.emit("resync", {})
                     else:
                         self.ready = True
                         self.emit("ready", {})
+                    self.outage = False
+                    beat = time.monotonic()
                     while True:
+                        if time.monotonic() - beat >= HEARTBEAT:
+                            # One membership check per workspace, shared by every tab.
+                            await asyncio.to_thread(self.manager.checked, self.ws, [])
+                            beat = time.monotonic()
                         frame = await asyncio.to_thread(self.link.next_event)
                         if frame is None:
                             continue
@@ -132,14 +177,19 @@ class WorkspaceLive:
                         self.seen.update(i["id"] for i in items)
                         if len(self.seen) > 30000:
                             self.seen = {i["id"] for i in items}
+                        items = self.admit(items)
                         if items:
                             self.emit("items", items)
                 except HostError as exc:
-                    if exc.error["code"] in {"peer.denied", "addon.disabled", "not_found"}:
+                    if exc.error["code"] in REVOKED:
                         self.emit("revoked", {})
                         return
-                    self.emit("resync", {})
-                    await asyncio.sleep(1)
+                    # An outage is not a revocation: tell the tabs once, then retry with backoff.
+                    if not self.outage:
+                        self.outage = True
+                        self.emit("resync", {})
+                    await asyncio.sleep(BACKOFF[min(delay, len(BACKOFF) - 1)])
+                    delay += 1
                 finally:
                     await asyncio.to_thread(self.close_sub)
         finally:
@@ -150,6 +200,11 @@ class Live:
     def __init__(self, gateway, auth):
         self.gateway, self.auth = gateway, auth
         self.workspaces = {}
+        self.cache = {}
+        self.vis_lock = threading.Lock()
+
+    def invalidate(self, ws):
+        self.cache.pop(ws, None)
 
     def attach(self, ws, token, last=None):
         if sum(t.token == token for w in self.workspaces.values() for t in w.tabs) >= 16:
@@ -166,25 +221,64 @@ class Live:
         return workspace, tab
 
     def checked(self, ws, items):
-        """Recheck at drain time, not enqueue time. Only gone bypasses visibility."""
-        who = self.gateway.call(ws, "whoami")
-        members = self.gateway.call(ws, "member.list")["members"]
-        if who.get("person") not in {m["person"] for m in members}:
-            raise fail("peer.denied", exit=3)
-        if not items:
-            return []
-        visible = set()
-        page = None
-        while True:
-            args = {"limit": 200}
-            if page:
-                args["page"] = page
-            data = self.gateway.call(ws, "ticket.query", args)
-            visible.update(r["uid"] for r in data["rows"])
-            page = data["next_page"]
-            if not page:
-                break
-        return [i for i in items if i.get("gone") or not i.get("uid") or i["uid"] in visible]
+        """Recheck at drain time, shared by every tab of this person for a short TTL.
+
+        The host call count depends on the batch, never on the number of tabs.
+        Only `gone` bypasses visibility (it was already filtered once per workspace).
+        """
+        with self.vis_lock:
+            now = time.monotonic()
+            entry = self.cache.get(ws)
+            if entry is None or now - entry["at"] > VISIBILITY_TTL:
+                entry = self.cache[ws] = {"at": now, "member": False, "tickets": {}}
+            link = None
+            if not entry["member"]:
+                link = self.gateway.enabled(ws)
+                # The connection's person was pinned at connect; the roster says if they still belong.
+                members = link.call("member.list")["members"]
+                if link.welcome["peer"]["person"] not in {m["person"] for m in members}:
+                    raise fail("peer.denied", exit=3)
+                entry["member"] = True
+            if not items:
+                entry["at"] = time.monotonic()
+                return []
+            tickets = entry["tickets"]
+            wanted = {i["uid"]: i.get("key") for i in items if not i.get("gone") and i.get("uid")}
+            missing = {uid: key for uid, key in wanted.items() if uid not in tickets}
+            if missing:
+                link = link or self.gateway.enabled(ws)
+                if len(missing) <= DIRECT_CHECKS:
+                    try:
+                        for uid, key in missing.items():
+                            try:
+                                if key:
+                                    link.call("ticket.get", {"ref": key, "log_limit": 1})
+                                tickets[uid] = bool(key)
+                            except HostError as exc:
+                                if exc.error["code"] != "not_found":
+                                    raise
+                                tickets[uid] = False
+                    except HostError as exc:
+                        if exc.error["code"] != "op.unsupported":
+                            raise
+                        missing = {uid: None for uid in wanted if uid not in tickets}
+                if missing and any(uid not in tickets for uid in missing):
+                    visible, page = set(), None
+                    while True:
+                        args = {"limit": 200, **({"page": page} if page else {})}
+                        data = link.call("ticket.query", args)
+                        visible.update(r["uid"] for r in data["rows"])
+                        page = data["next_page"]
+                        if not page:
+                            break
+                    for uid in missing:
+                        tickets.setdefault(uid, uid in visible)
+            entry["at"] = time.monotonic()  # the TTL starts when the answer is complete
+            allowed = [i for i in items if i.get("gone") or not i.get("uid") or tickets.get(i["uid"])]
+        live = self.workspaces.get(ws)
+        if live is not None:
+            live.visible.update(i["uid"] for i in allowed if i.get("uid") and not i.get("gone"))
+        return allowed
 
     async def stream(self, workspace, tab):
         heartbeat = asyncio.get_running_loop().time()
@@ -194,12 +288,7 @@ class Live:
                     event, data, event_id = await asyncio.wait_for(tab.queue.get(), 0.25)
                 except TimeoutError:
                     if asyncio.get_running_loop().time() - heartbeat >= 15:
-                        # Also check membership while a workspace is quiet.
-                        try:
-                            await asyncio.to_thread(self.checked, workspace.ws, [])
-                        except HostError:
-                            yield sse("revoked", {}, workspace.latest)
-                            return
+                        # The workspace task owns the membership check.
                         yield ": heartbeat\n\n"
                         heartbeat = asyncio.get_running_loop().time()
                     continue
@@ -209,14 +298,10 @@ class Live:
                     try:
                         data = await asyncio.to_thread(self.checked, workspace.ws, data)
                     except HostError as exc:
-                        event, data = (
-                            (
-                                "revoked"
-                                if exc.error["code"] in {"peer.denied", "addon.disabled", "not_found"}
-                                else "resync"
-                            ),
-                            {},
-                        )
+                        event, data = ("revoked" if exc.error["code"] in REVOKED else "resync"), {}
+                    else:
+                        if not data:
+                            continue
                 if not self.auth.valid(tab.token, touch=False):
                     return
                 if tab.dropped:

@@ -6,38 +6,53 @@ import { readSSE } from './sse'
 export type LiveItem = { id: string; uid?: string; key?: string | null; type?: string; gone?: boolean }
 type CloseView = (uid?: string) => void
 
+/** Fail closed: anything we cannot prove unrelated is treated as related. */
+const mentions = (value: unknown, needles: string[]) => {
+  try { const text = JSON.stringify(value) ?? ''; return needles.some((n) => text.includes(n)) } catch { return true }
+}
+type Q = { queryKey: readonly unknown[]; state: { data: unknown } }
+
 export function invalidateLive(client: QueryClient, ws: string, event: string, items: LiveItem[], close: CloseView = () => {}) {
-  const scoped = { predicate: (q: { queryKey: readonly unknown[] }) => q.queryKey[1] === ws }
+  // Any key that mentions the workspace UUID anywhere, not only at the expected position.
+  const scoped = { predicate: (q: Q) => q.queryKey[1] === ws || mentions(q.queryKey, [ws]) }
   const invalidate = (name: string) => { void client.invalidateQueries({ queryKey: [name, ws] }) }
-  if (event === 'revoked') {
+  const purgeWorkspace = () => {
     void client.cancelQueries(scoped); client.removeQueries(scoped); close()
+    // Cross-workspace caches can carry this workspace's names, counts and roster: drop them, not just mark stale.
+    for (const name of ['workspaces', 'me']) { void client.cancelQueries({ queryKey: [name] }); client.removeQueries({ queryKey: [name] }) }
     void client.invalidateQueries({ queryKey: ['workspaces'] })
     void client.invalidateQueries({ queryKey: ['me'] })
-    return
   }
+  if (event === 'revoked') { purgeWorkspace(); return }
   if (event === 'resync' || event === 'ready') { void client.invalidateQueries(scoped); return }
   for (const item of items) {
     if (item.gone) {
-      // uid-only gone: discover keys from cached detail and list projections before removing.
-      const keys = new Set<string>([item.uid!])
-      for (const q of client.getQueryCache().findAll(scoped)) {
-        const value = q.state.data as { uid?: string; key?: string; rows?: { uid: string; key: string }[] } | undefined
-        if (value && value.uid === item.uid && value.key) keys.add(value.key)
-        for (const row of value?.rows ?? []) if (row.uid === item.uid) keys.add(row.key)
+      if (typeof item.uid !== 'string' || !item.uid) { purgeWorkspace(); continue } // malformed target: purge broadly
+      const uid = item.uid
+      // uid-only gone: discover keys from every cached projection before removing.
+      const keys = new Set<string>([uid])
+      const collect = (value: unknown, depth = 0) => {
+        if (!value || typeof value !== 'object' || depth > 6) return
+        if (Array.isArray(value)) { for (const v of value) collect(v, depth + 1); return }
+        const row = value as Record<string, unknown>
+        if (row.uid === uid && typeof row.key === 'string') keys.add(row.key)
+        for (const v of Object.values(row)) collect(v, depth + 1)
       }
-      const ticket = { predicate: (q: { queryKey: readonly unknown[]; state: { data: unknown } }) =>
-        q.queryKey[1] === ws && (q.queryKey[0] === 'ticket' && keys.has(String(q.queryKey[2])) ||
-          (q.state.data as { uid?: string } | undefined)?.uid === item.uid) }
-      void client.cancelQueries(ticket); client.removeQueries(ticket); close(item.uid)
-      // Remove stale restricted rows immediately, before a refetch can finish.
+      for (const q of client.getQueryCache().findAll(scoped)) collect(q.state.data)
+      const needles = [...keys]
+      // Remove detail and sub-resource queries by key or content; any query that still mentions the ticket goes too.
+      const ticket = { predicate: (q: Q) => (q.queryKey[1] === ws || mentions(q.queryKey, [ws])) &&
+        (q.queryKey.some((part) => typeof part === 'string' && keys.has(part)) || mentions(q.state.data, needles)) }
+      // Strip the known list shapes first (keeps lists mounted without flicker), then remove whatever still mentions it.
       client.setQueriesData(scoped, (value: unknown) => {
-        if (!value || typeof value !== 'object') return value
+        if (!value || typeof value !== 'object' || Array.isArray(value)) return value
         const data = value as Record<string, unknown>
         const next = { ...data }
-        for (const field of ['rows', 'needs_you']) if (Array.isArray(data[field]))
-          next[field] = (data[field] as { uid?: string }[]).filter((row) => row.uid !== item.uid)
+        for (const field of ['rows', 'needs_you', 'items']) if (Array.isArray(data[field]))
+          next[field] = (data[field] as { uid?: string }[]).filter((row) => row?.uid !== uid)
         return next
       })
+      void client.cancelQueries(ticket); client.removeQueries(ticket); close(uid)
       for (const name of ['tickets', 'board', 'today']) invalidate(name)
     } else if (item.type === 'needs.changed') {
       invalidate('today'); void client.invalidateQueries({ queryKey: ['workspaces'] })
@@ -76,16 +91,17 @@ export function startLiveUpdates(ws: string, token: string, receive: (event: str
     try {
       const response = await fetcher(`/api/events?ws=${encodeURIComponent(ws)}`, options())
       if (response.status === 401) { clearSession(true, token); return }
+      // The host no longer pins or allows this workspace for us: revoked, never an outage. Fail closed.
+      if (response.status === 403 || response.status === 404) { receive('revoked', []); controller.abort(); return }
       if (!response.ok || !response.body || !response.headers.get('content-type')?.includes('text/event-stream')) throw new Error('Streaming unavailable')
       await readSSE(response.body, (message) => {
         if (controller.signal.aborted) return
         const value: unknown = JSON.parse(message.data)
         if (message.id) last = message.id
         if (message.event === 'ready') { polling = false; pollEpoch += 1; clearTimeout(pollTimer); ready() }
-        if (message.event === 'items') failures = 0
         if (message.event === 'revoked') { receive('revoked', []); controller.abort(); return }
         receive(message.event, Array.isArray(value) ? value as LiveItem[] : [])
-      })
+      }, () => { failures = 0 }) // any received bytes, including a heartbeat comment, prove a healthy connection
       throw new Error('Stream ended')
     } catch {
       if (controller.signal.aborted) return

@@ -164,7 +164,7 @@ class StubHost:
                     return asdict(decl.handler(ctx, args))
                 if op not in OPS:
                     raise fail("unknown_command", exit=2)
-                if op != "ticket.query" and args:
+                if op not in {"ticket.query", "ticket.get"} and args:
                     raise fail("invalid.input", exit=5)
                 if op == "host.list":
                     data = {
@@ -254,6 +254,21 @@ class StubHost:
                         if self.person in n.who
                     ]
                     data = {"items": items, "sub_cursor": self.cursor}
+                elif op == "ticket.get":
+                    # Visible tickets only; an invisible ref answers like an unknown one.
+                    ref = args.get("ref")
+                    found = next((v for v in views if ref in {v.key, v.uid}), None) if isinstance(ref, str) else None
+                    if found is None:
+                        raise fail("not_found", exit=2)
+                    data = {
+                        "doc": {"uid": found.uid, "key": found.key, "title": found.title},
+                        "log": [],
+                        "log_more": False,
+                        "questions": [],
+                        "criteria": [],
+                        "gates": {},
+                        "sub_cursor": self.cursor,
+                    }
                 elif op == "ticket.query":
                     from orch_dashboard.app import TicketQuery
                     from pydantic import ValidationError

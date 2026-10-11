@@ -30,6 +30,7 @@ ULID = r"[0-7][0-9A-HJKMNP-TV-Z]{25}"
 HASH = r"sha256:[0-9a-f]{64}"
 KEY = r"[A-Z][A-Z0-9]{1,9}-[0-9]{4,}"
 _DISPOSITIONS = {
+    "internal": (1, False, "stays"),
     "frame.invalid": (6, False, "close"),
     "frame.too_large": (6, False, "close"),
     "handshake.invalid": (6, False, "close"),
@@ -42,6 +43,7 @@ _DISPOSITIONS = {
 }
 
 _MESSAGES = {
+    "internal": "Internal host error",
     "frame.invalid": "Invalid frame",
     "frame.too_large": "Frame exceeds the size limit",
     "handshake.invalid": "Invalid handshake",
@@ -62,7 +64,7 @@ class FrameError(ValueError):
         self.code = code
         self.request_id = request_id
         self.exit, self.retryable, self.fate = _DISPOSITIONS[code]
-        if code == "quota.host" and request_id is None:
+        if code in {"quota.host", "internal"} and request_id is None:
             self.fate = "close"
         if self.fate == "stays" and (type(request_id) is not str or not re.fullmatch(REQ_ID, request_id)):
             raise ValueError("Request-scoped errors require a valid request id")

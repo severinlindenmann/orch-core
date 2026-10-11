@@ -1115,3 +1115,108 @@ def test_hello_deadline_starts_at_accept_not_after_registry():
             assert (await read_frame(client))["error"]["code"] == "handshake.invalid"
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("after_hello", [False, True])
+def test_rights_are_closed_and_fatal(after_hello):
+    import array
+
+    async def scenario():
+        async with pair_session() as (_, client, task, _):
+            if after_hello:
+                await send_frame(client, HELLO)
+                await read_frame(client)
+            with open(__file__) as source:
+                before = len(os.listdir("/dev/fd"))
+                payload = frames.encode(req() if after_hello else HELLO)
+                client.sendmsg(
+                    [payload], [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array("i", [source.fileno()] * 50))]
+                )
+                fatal = await read_frame(client)
+                assert fatal["error"]["code"] == "frame.invalid"
+                await asyncio.wait_for(task, 1)
+                assert len(os.listdir("/dev/fd")) <= before
+
+    asyncio.run(scenario())
+
+
+def test_truncated_control_data_closes_visible_rights():
+    from orch.host._socket import recv
+
+    fd = os.open(__file__, os.O_RDONLY)
+    sock = SimpleNamespace(
+        recvmsg=lambda size, control: (
+            b"data",
+            [(socket.SOL_SOCKET, socket.SCM_RIGHTS, struct.pack("i", fd))],
+            socket.MSG_CTRUNC,
+            None,
+        )
+    )
+    with pytest.raises(frames.FrameError, match="Ancillary"):
+        recv(sock)
+    with pytest.raises(OSError):
+        os.fstat(fd)
+    with pytest.raises(frames.FrameError):
+        recv(SimpleNamespace(recvmsg=lambda *args: (b"", [], socket.MSG_CTRUNC, None)))
+
+
+def test_pinned_handshake_rejects_rights_without_leaking(monkeypatch):
+    import array
+
+    host, client = socket.socketpair()
+    monkeypatch.setattr(client_module, "connect_pinned", lambda *args, **kwargs: client)
+    try:
+        with open(__file__) as source:
+            before = len(os.listdir("/dev/fd"))
+            welcome = server_for(SimpleNamespace(kind="workspace", host_uid=UID, workspace_id=WS)).welcome(
+                Peer(UID, "agent"), 1
+            )
+            host.sendmsg(
+                [frames.encode(welcome)],
+                [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array("i", [source.fileno()] * 50))],
+            )
+            with pytest.raises(frames.FrameError, match="Ancillary"):
+                handshake_pinned(Pin(UID, WS, Path("/unused")), HELLO)
+            assert len(os.listdir("/dev/fd")) <= before
+    finally:
+        host.close()
+        client.close()
+
+
+def test_blocked_loop_does_not_lose_requests():
+    import time
+
+    async def scenario():
+        async with pair_session() as (_, client, _, _):
+            await send_frame(client, HELLO)
+            await read_frame(client)
+            for i in range(5):
+
+                def send(request_id=str(i)):
+                    time.sleep(0.05)
+                    client.sendall(frames.encode(req(request_id)))
+
+                thread = threading.Thread(target=send)
+                thread.start()
+                time.sleep(0.3)  # Reader and old wait_for timer become ready together.
+                thread.join()
+                response = await read_frame(client)
+                assert response["id"] == str(i)
+                assert response["ok"]
+
+    asyncio.run(scenario())
+
+
+def test_unexpected_receive_exception_is_fatal_internal():
+    async def scenario():
+        async with pair_session() as (session, client, _, _):
+            session.server.metadata = {}  # Invalid welcome, outside the request handler.
+            await send_frame(client, HELLO)
+            fatal = await read_frame(client)
+            assert fatal == {
+                "t": "fatal",
+                "error": {"code": "internal", "message": "Internal host error", "retryable": False},
+            }
+            assert await read_frame(client) is None
+
+    asyncio.run(scenario())

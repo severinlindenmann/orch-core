@@ -14,6 +14,7 @@ from typing import Any, Literal, Protocol
 from . import frames
 from ._socket import Credentials as Credentials
 from ._socket import peer_credentials as peer_credentials
+from ._socket import receive
 from .client import Pin as Pin
 from .client import connect_pinned as connect_pinned
 from .client import handshake_pinned as handshake_pinned
@@ -311,8 +312,7 @@ class Session:
                     self._internal(result)
                 self.state.stopped(result)
 
-    async def _read(self) -> None:
-        loop = asyncio.get_running_loop()
+    async def _deadlines(self) -> None:
         while True:
             if self.failure is not None:
                 raise self.failure
@@ -322,10 +322,11 @@ class Session:
             self.decoder.check_deadline()
             if now - self.last_activity >= IDLE_SECONDS and not self.state.inflight and not self.subscriptions:
                 return
-            try:
-                data = await asyncio.wait_for(loop.sock_recv(self.sock, 65536), 0.1)
-            except TimeoutError:
-                continue
+            await asyncio.sleep(0.1)
+
+    async def _read(self) -> None:
+        while True:
+            data = await receive(self.sock)
             if not data:
                 self.decoder.finish()
                 return
@@ -338,20 +339,24 @@ class Session:
 
     async def run(self) -> None:
         reader, writer = asyncio.create_task(self._read()), asyncio.create_task(self._write())
+        timer = asyncio.create_task(self._deadlines())
         error = None
         try:
-            done, _ = await asyncio.wait({reader, writer}, return_when=asyncio.FIRST_COMPLETED)
+            done, _ = await asyncio.wait({reader, writer, timer}, return_when=asyncio.FIRST_COMPLETED)
             for task in done:
                 task.result()
         except frames.FrameError as exc:
             error = exc
         except (ConnectionError, OSError):
             pass
+        except Exception:
+            error = frames.FrameError("internal")
         finally:
             self.closed = True
             reader.cancel()
             writer.cancel()
-            await asyncio.gather(reader, writer, return_exceptions=True)
+            timer.cancel()
+            await asyncio.gather(reader, writer, timer, return_exceptions=True)
             if error is not None:
                 # A timed-out write may have sent a partial frame. Sending a fatal
                 # after it would corrupt framing: close directly in that case.

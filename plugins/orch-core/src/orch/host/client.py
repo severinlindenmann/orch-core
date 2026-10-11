@@ -9,7 +9,7 @@ from time import monotonic
 from typing import Any
 
 from . import frames
-from ._socket import peer_credentials
+from ._socket import peer_credentials, recv
 from ._unix import UnsafePath
 from .listener import check_socket_path
 
@@ -73,7 +73,7 @@ def handshake_pinned(pin: Pin, hello: dict[str, Any], *, timeout: float = 2) -> 
             if remaining <= 0:
                 raise TimeoutError("Welcome deadline exceeded")
             sock.settimeout(remaining)
-            data = sock.recv(65536)
+            data = recv(sock)
             if not data:
                 decoder.finish()
                 raise ConnectionError("Server closed before welcome")

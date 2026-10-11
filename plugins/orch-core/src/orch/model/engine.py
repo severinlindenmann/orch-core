@@ -129,6 +129,8 @@ def _chain_check(core: Core, log: str, lc: LogCore, e: dict[str, Any], ctx: Ctx)
         wsh = core.logs[WORKSPACE].seq if WORKSPACE in core.logs else 0
         if e["ws_seq"] < lc.last_ws_seq or e["ws_seq"] > wsh or (ctx.admit and e["ws_seq"] != wsh):
             return Refusal(Code.CHAIN_BAD_WS_SEQ, f"ws_seq {e['ws_seq']} (workspace head {wsh})")
+        if e["ws_seq"] == lc.last_ws_seq and ts(e["at"]) < lc.last_at:
+            return Refusal(Code.CHAIN_BAD_WS_SEQ, "`at` goes back within the same ws_seq")
         if e["ws_seq"] in core.rwin_forbidden:
             return Refusal(Code.CHAIN_BAD_WS_SEQ, f"ws_seq {e['ws_seq']} names the restore or one of its re-appends")
         if ctx.admit and core.last_pos is not None and position(e, log) <= core.last_pos:
@@ -310,6 +312,8 @@ def _place(lc: LogCore, e: dict[str, Any]) -> None:
         lc.heads[head] = e["seq"]
     lc.ids.add(e["id"])
     lc.last_ws_seq = e.get("ws_seq", lc.last_ws_seq)
+    if "ws_seq" in e:
+        lc.last_at = ts(e["at"])
 
 
 def apply_event(

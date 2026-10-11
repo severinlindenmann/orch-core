@@ -584,7 +584,9 @@
     "abandoned": {
      "head": "sha256:c5bff55dc4158717ece7433499b52f79b344c00af79a071210a79625d94dbf2f",
      "seq": 4
-    }
+    },
+    "from_seq": 2,
+    "log": "workspace"
    }
   },
   {
@@ -616,8 +618,207 @@
     "abandoned": {
      "head": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
      "seq": 3
-    }
+    },
+    "from_seq": 1,
+    "log": "workspace"
    }
+  },
+  {
+   "checkpoint": {
+    "o": {
+     "at": "2026-10-10T10:03:30Z",
+     "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+     "kind": "workspace_checkpoint",
+     "n": 3,
+     "suite": 2,
+     "tickets": {
+      "01J9ZK4Q7M3R8T2V6X0B5N1C9D": {
+       "head": "sha256:08d494b703090846a430d99f8753f7e56621c0341517a5aeab9ad21deacc2e42",
+       "seq": 4
+      }
+     },
+     "v": 2,
+     "workspace_id": "0123456789abcdef0123456789abcdef",
+     "workspace_log": {
+      "head": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+      "seq": 4
+     }
+    },
+    "sig": "ec5DOAJ3V-u12hMWwtBLgKn8JQWGJiVCbs7b52OdXOba-1Uu8wK3t34tMqd7BzNLoQzt9U2vMFWuretX6asMuA"
+   },
+   "expect": "ok",
+   "name": "workspace_restore_regrown_to_the_held_seq",
+   "restore": {
+    "abandoned": {
+     "head": "sha256:c5bff55dc4158717ece7433499b52f79b344c00af79a071210a79625d94dbf2f",
+     "seq": 4
+    },
+    "from_seq": 2,
+    "log": "workspace"
+   }
+  },
+  {
+   "checkpoint": {
+    "o": {
+     "at": "2026-10-10T10:03:30Z",
+     "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+     "kind": "workspace_checkpoint",
+     "n": 3,
+     "suite": 2,
+     "tickets": {
+      "01J9ZK4Q7M3R8T2V6X0B5N1C9D": {
+       "head": "sha256:a48d2e965c6044dc684453fbad64352ac655665f6629c3d2e1e196eebd5ccea1",
+       "seq": 3
+      }
+     },
+     "v": 2,
+     "workspace_id": "0123456789abcdef0123456789abcdef",
+     "workspace_log": {
+      "head": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
+      "seq": 3
+     }
+    },
+    "sig": "tgUyL_4AmEMKq8sZJsv2DgBQtUDjhPZSeW1kkG0lChXpFCWBMnOGAducem0kYU-Z4xt_qryp2U31oY-Fj2C8Kw"
+   },
+   "expect": "chain.diverged",
+   "name": "workspace_restore_that_also_lowers_a_ticket",
+   "restore": {
+    "abandoned": {
+     "head": "sha256:c5bff55dc4158717ece7433499b52f79b344c00af79a071210a79625d94dbf2f",
+     "seq": 4
+    },
+    "from_seq": 2,
+    "log": "workspace"
+   }
+  },
+  {
+   "checkpoint": {
+    "o": {
+     "at": "2026-10-10T10:03:30Z",
+     "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+     "kind": "workspace_checkpoint",
+     "n": 3,
+     "suite": 2,
+     "tickets": {
+      "01J9ZK4Q7M3R8T2V6X0B5N1C9D": {
+       "head": "sha256:08d494b703090846a430d99f8753f7e56621c0341517a5aeab9ad21deacc2e42",
+       "seq": 4
+      }
+     },
+     "v": 2,
+     "workspace_id": "0123456789abcdef0123456789abcdef",
+     "workspace_log": {
+      "head": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
+      "seq": 3
+     }
+    },
+    "sig": "IP719k79F_d_t06t-8LuAK8dJyWDH8VTNJ36MlawlOUh3Uvu-CqxTMXth-gdAbRDp4SpAyYpoEib0TKFnwgfvg"
+   },
+   "expect": "chain.diverged",
+   "name": "an_old_restore_that_does_not_match_the_held_checkpoint",
+   "restore": {
+    "abandoned": {
+     "head": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+     "seq": 44
+    },
+    "from_seq": 2,
+    "log": "workspace"
+   }
+  },
+  {
+   "checkpoint": {
+    "o": {
+     "at": "2026-10-10T10:03:30Z",
+     "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+     "kind": "workspace_checkpoint",
+     "n": 3,
+     "suite": 2,
+     "tickets": {
+      "01J9ZK4Q7M3R8T2V6X0B5N1C9D": {
+       "head": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+       "seq": 4
+      }
+     },
+     "v": 2,
+     "workspace_id": "0123456789abcdef0123456789abcdef",
+     "workspace_log": {
+      "head": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "seq": 5
+     }
+    },
+    "sig": "uiexlf2qMlGrlDoffcozKfXfS4vuJghaq2R7xP9ZcnJj-mbpDbK7gd2OtHBx_1fk4ILCe7NVOnTRXuRuxmLBqA"
+   },
+   "expect": "ok",
+   "name": "ticket_restore_regrown_to_the_held_seq",
+   "restore": {
+    "abandoned": {
+     "head": "sha256:08d494b703090846a430d99f8753f7e56621c0341517a5aeab9ad21deacc2e42",
+     "seq": 4
+    },
+    "from_seq": 2,
+    "log": "01J9ZK4Q7M3R8T2V6X0B5N1C9D"
+   }
+  },
+  {
+   "checkpoint": {
+    "o": {
+     "at": "2026-10-10T10:03:30Z",
+     "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+     "kind": "workspace_checkpoint",
+     "n": 3,
+     "suite": 2,
+     "tickets": {
+      "01J9ZK4Q7M3R8T2V6X0B5N1C9D": {
+       "head": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+       "seq": 4
+      }
+     },
+     "v": 2,
+     "workspace_id": "0123456789abcdef0123456789abcdef",
+     "workspace_log": {
+      "head": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
+      "seq": 3
+     }
+    },
+    "sig": "b_8Bk5ZzWmp4oNDuQ9UCA3XqmbHDzoml6uH5xBEAT4irum8XxRCHOipy739xrTmZCqVj-mXcP-8-93HyVLicYg"
+   },
+   "expect": "chain.diverged",
+   "name": "ticket_restore_that_lowers_the_workspace_log",
+   "restore": {
+    "abandoned": {
+     "head": "sha256:08d494b703090846a430d99f8753f7e56621c0341517a5aeab9ad21deacc2e42",
+     "seq": 4
+    },
+    "from_seq": 2,
+    "log": "01J9ZK4Q7M3R8T2V6X0B5N1C9D"
+   }
+  },
+  {
+   "checkpoint": {
+    "o": {
+     "at": "2026-10-10T10:03:30Z",
+     "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+     "kind": "workspace_checkpoint",
+     "n": 3,
+     "suite": 2,
+     "tickets": {
+      "01J9ZK4Q7M3R8T2V6X0B5N1C9D": {
+       "head": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+       "seq": 5
+      }
+     },
+     "v": 2,
+     "workspace_id": "0123456789abcdef0123456789abcdef",
+     "workspace_log": {
+      "head": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "seq": 6
+     }
+    },
+    "sig": "zi0bWRZSHRo5dqLS6NxP1qvQ7m8sLqCQbasBjjowrITYVKXO1Z5tskvmfRRjF9KwHDpgo3-GquKBVFQ5A_wH-A"
+   },
+   "expect": "ok",
+   "limit": "height-only comparison: a receiver holding only checkpoints cannot see the fork",
+   "name": "a_fork_grown_past_the_held_height_is_accepted_without_the_logs"
   }
  ],
  "workspace_offers": [

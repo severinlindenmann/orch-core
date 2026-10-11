@@ -57,30 +57,48 @@ def judge_offer(
     """How a receiver (the host, the relay, a device) treats a workspace checkpoint ``offered`` to it when it already
     holds ``held`` (§5.10 "Receivers"; both are the ``o`` objects, signatures already verified). ``"ok"`` (accept and
     replace the held one), ``"ignored"`` (a stale delivery, no alarm), ``"chain.diverged"`` (stop) or
-    ``"trust.genesis_mismatch"``. ``restore`` is the owner-signed ``restore`` event (verified by the caller) that comes
-    with a checkpoint whose seqs are lower than the held one's.
+    ``"trust.genesis_mismatch"``. No P1 caller yet: the host, relay and devices that receive offers come later; this is
+    pinned by checkpoint.json.
 
     The first checkpoint is accepted when its genesis is the pin. After that: a higher ``n`` with no lower ``seq`` is
     accepted (gaps in ``n`` are normal); a lower ``n`` with no higher ``seq`` is ignored; anything else (the same ``n``
     with another ``o``, a shared ``seq`` with another ``head``, a higher ``n`` with a lower ``seq`` or a missing
-    ticket, a lower ``n`` with a higher ``seq``) is ``chain.diverged``. Lower seqs are accepted only with a
-    ``restore`` whose ``abandoned`` reaches the held checkpoint's workspace-log ``seq``."""
+    ticket, a lower ``n`` with a higher ``seq``) is ``chain.diverged``.
+
+    ``restore`` is the owner-signed ``restore`` event that comes with the offer (verified by the caller), as
+    ``{"log": "workspace" | <uid>, "from_seq", "abandoned": {"seq", "head"} | None}``. It is judged first, and only
+    for a higher ``n``: it must be about the log whose ``seq`` drops, give up exactly the checkpoint held for that
+    log (``from_seq < H.seq == abandoned.seq`` and the same ``head``), the offered ``seq`` of that log must be at
+    least ``from_seq + 1``, and no other log may drop or change a head at a shared ``seq``. Then the offer is ``ok``.
+
+    Limits (a receiver holding only checkpoints): a fork grown past H, and a forged H whose ``n`` and ``seq`` are both
+    inflated, are not detected (height-only comparison); a receiver holding the logs checks H's heads against them."""
     if offered["genesis"] != pinned_genesis:
         return "trust.genesis_mismatch"
     if held is None:
         return "ok"
+    h, o = _heights(held), _heights(offered)
+    if restore is not None and offered["n"] > held["n"]:
+        log = restore.get("log", WORKSPACE)
+        ab = restore.get("abandoned")
+        if log not in h or log not in o or not ab:
+            return "chain.diverged"
+        if not (restore["from_seq"] < h[log][0] == ab["seq"] and ab["head"] == h[log][1]):
+            return "chain.diverged"
+        if o[log][0] < restore["from_seq"] + 1:
+            return "chain.diverged"
+        for k in h.keys() - {log}:
+            if k not in o or o[k][0] < h[k][0] or (o[k][0] == h[k][0] and o[k][1] != h[k][1]):
+                return "chain.diverged"
+        return "ok"
     if offered["n"] == held["n"]:
         return "ok" if offered == held else "chain.diverged"
-    h, o = _heights(held), _heights(offered)
     if any(o[k][0] == h[k][0] and o[k][1] != h[k][1] for k in h.keys() & o.keys()):
         return "chain.diverged"
     lower = any(k not in o or o[k][0] < h[k][0] for k in h)
     higher = any(k not in h or o[k][0] > h[k][0] for k in o)
     if offered["n"] > held["n"]:
-        if not lower:
-            return "ok"
-        ab = restore.get("abandoned") if restore else None
-        return "ok" if ab and ab["seq"] >= held["workspace_log"]["seq"] else "chain.diverged"
+        return "chain.diverged" if lower else "ok"
     return "chain.diverged" if higher else "ignored"
 
 

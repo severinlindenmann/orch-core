@@ -142,6 +142,9 @@ class _AcceptSignatures:
     def verify_embedded(self, event: Any, **kw: Any) -> bool:
         return True
 
+    def genesis_failure(self, event: Any) -> str | None:
+        return None
+
 
 class Importer:
     def __init__(self, h: Human, v1: V1Workspace) -> None:

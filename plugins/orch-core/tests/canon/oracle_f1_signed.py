@@ -255,6 +255,9 @@ def tamper_vector() -> dict[str, Any]:
     add("seq_rewritten", "seq 3: seq set to 5", TICKET, [e1, e2, setp(e3, seq=5), e4], 3)
     add("host_sig_swapped", "seq 2 carries the host_sig of seq 3", TICKET,
         [e1, setp(e2, host_sig=e3["host_sig"]), e3, e4], 2)  # fmt: skip
+    add("at_goes_back_host_resigned", "seq 4: `at` set before seq 3's and host_sig re-made (an attacker holding the "
+        "workspace key; `at` is not signed by the person): (ws_seq, at) never goes back along a log, so the line "
+        "breaks the chain", TICKET, [e1, e2, e3, resign_host(setp(e4, at=e1["at"]), TICKET)], 4)  # fmt: skip
     add(
         "tail_truncated", "seq 4 removed: the chain is intact, only a checkpoint can see it", TICKET, [e1, e2, e3], None
     )
@@ -408,9 +411,9 @@ def genesis_vector() -> dict[str, Any]:
     for c in refused:
         c["append"], c["replay"] = codes.get(c["name"], ("genesis.invalid", "genesis.invalid"))
     return {
-        "pins": "the genesis checks of F1 5.11 in their stated order (1 owner ids, 2 delegation signature and field "
+        "pins": "the genesis checks of F1 5.11 (1 owner ids, 2 delegation signature and field "
         "set, 3 delegation binds workspace and wsk, 4 host_sig under wsk_pub, 5 device_cert (valid at `at`, with operate) "
-        "and actor.device, 6 sig under the certificate's key); genesis = the head of workspace.created. Each refused "
+        "and actor.device, 6 sig under the certificate's key; 4 and 6 are line checks and are reported first when they fail together with another); genesis = the head of workspace.created. Each refused "
         "case carries `append` (the code at append: checks 1, 2, 3, 5 genesis.invalid, check 4 chain.broken, check 6 "
         "sig.invalid) and `replay` (chain.broken where a line check fails first, else genesis.invalid)",
         "note": KEY_NOTE,
@@ -604,10 +607,34 @@ def checkpoint_vector() -> dict[str, Any]:
             TICKET: {"seq": len(tl), "head": heads_t[-1]}})), "expect": "chain.diverged"},
         {"name": "higher_n_lower_height_with_a_restore",
          "checkpoint": _checkpoint(wcp(3, len(wl) - 1, heads_w[-2], {TICKET: {"seq": len(tl), "head": heads_t[-1]}})),
-         "restore": {"abandoned": {"seq": len(wl), "head": heads_w[-1]}}, "expect": "ok"},
+         "restore": {"log": "workspace", "from_seq": len(wl) - 2, "abandoned": {"seq": len(wl), "head": heads_w[-1]}},
+         "expect": "ok"},
         {"name": "higher_n_lower_height_with_a_restore_that_abandons_less",
          "checkpoint": _checkpoint(wcp(3, len(wl) - 1, heads_w[-2], {TICKET: {"seq": len(tl), "head": heads_t[-1]}})),
-         "restore": {"abandoned": {"seq": len(wl) - 1, "head": heads_w[-2]}}, "expect": "chain.diverged"},
+         "restore": {"log": "workspace", "from_seq": len(wl) - 3, "abandoned": {"seq": len(wl) - 1, "head": heads_w[-2]}},
+         "expect": "chain.diverged"},
+        {"name": "workspace_restore_regrown_to_the_held_seq",
+         "checkpoint": _checkpoint(wcp(3, len(wl), "sha256:" + "88" * 32, {TICKET: {"seq": len(tl), "head": heads_t[-1]}})),
+         "restore": {"log": "workspace", "from_seq": len(wl) - 2, "abandoned": {"seq": len(wl), "head": heads_w[-1]}},
+         "expect": "ok"},
+        {"name": "workspace_restore_that_also_lowers_a_ticket",
+         "checkpoint": _checkpoint(wcp(3, len(wl) - 1, heads_w[-2], {TICKET: {"seq": len(tl) - 1, "head": heads_t[-2]}})),
+         "restore": {"log": "workspace", "from_seq": len(wl) - 2, "abandoned": {"seq": len(wl), "head": heads_w[-1]}},
+         "expect": "chain.diverged"},
+        {"name": "an_old_restore_that_does_not_match_the_held_checkpoint",
+         "checkpoint": _checkpoint(wcp(3, len(wl) - 1, heads_w[-2], {TICKET: {"seq": len(tl), "head": heads_t[-1]}})),
+         "restore": {"log": "workspace", "from_seq": len(wl) - 2, "abandoned": {"seq": len(wl) + 40, "head": "sha256:" + "99" * 32}},
+         "expect": "chain.diverged"},
+        {"name": "ticket_restore_regrown_to_the_held_seq",
+         "checkpoint": _checkpoint(wcp(3, len(wl) + 1, "sha256:" + "aa" * 32, {TICKET: {"seq": len(tl), "head": "sha256:" + "bb" * 32}})),
+         "restore": {"log": TICKET, "from_seq": 2, "abandoned": {"seq": len(tl), "head": heads_t[-1]}}, "expect": "ok"},
+        {"name": "ticket_restore_that_lowers_the_workspace_log",
+         "checkpoint": _checkpoint(wcp(3, len(wl) - 1, heads_w[-2], {TICKET: {"seq": len(tl), "head": "sha256:" + "bb" * 32}})),
+         "restore": {"log": TICKET, "from_seq": 2, "abandoned": {"seq": len(tl), "head": heads_t[-1]}},
+         "expect": "chain.diverged"},
+        {"name": "a_fork_grown_past_the_held_height_is_accepted_without_the_logs",
+         "checkpoint": _checkpoint(wcp(3, len(wl) + 2, "sha256:" + "cc" * 32, {TICKET: {"seq": len(tl) + 1, "head": "sha256:" + "dd" * 32}})),
+         "expect": "ok", "limit": "height-only comparison: a receiver holding only checkpoints cannot see the fork"},
     ]  # fmt: skip
     # logs as they are on disk when a checkpoint is checked (heads by seq, 0-based list)
     divergences = [
@@ -697,6 +724,21 @@ def restore_scenarios() -> list[dict[str, Any]]:
             extra["host_expect"] = "refused"
             extra["host_knows_revocations"] = [rev]
         out.append(w.scenario(**extra))
+    # a workspace restore lists the person-signed workspace events of its given-up part; one of them appended again
+    # (same id, signature and based_on, roster_v matches again after the rollback) is a duplicate id
+    w = World("workspace_restore_blocks_an_abandoned_member_added", "a workspace restore lists the abandoned "
+              "person-signed workspace events (here a member.added) and the engine refuses them per log")  # fmt: skip
+    prefix(w)
+    gone = w.member("zed", "member", note="(the member.added that the rollback gives up)")
+    w.logs["workspace"].pop()
+    w.steps.pop()
+    w.roster_v -= 1
+    payload = {"from_seq": 4, "head": head(w.logs["workspace"][-1]), "abandoned": {"seq": 5, "head": head(gone)},
+               "abandoned_decisions": [gone["id"]], "reason": "restored a backup"}  # fmt: skip
+    w.ev("workspace", "restore", w.actor("sev"), payload, note="the owner's restore lists the abandoned member.added")
+    w.raw("workspace", gone, expect="event.duplicate_id",
+          note="the abandoned member.added appended again: same id, signature and based_on, a new seq and host_sig")  # fmt: skip
+    out.append(w.scenario(reappends=False, note="model-only: no revocation is known to this host"))
     # a ticket event stamped with the host's ws_seq while the restore was being written: it may not name the restore
     # or a re-append except the last one (5.10); a log-only reader finds that out on replay
     name = "ticket_event_may_not_name_the_restore_window"

@@ -289,7 +289,10 @@ def test_delegation_round_trip_and_negatives():
         delegation_binds(o, workspace_id="00" * 16, wsk_pub_b64u=o["wsk_pub"], owner_person_id=o["owner_person_id"])
     with pytest.raises(Refused):
         delegation_binds(
-            o, workspace_id=WS, wsk_pub_b64u=crypto.b64u(wsk[:-1] + b"\0"), owner_person_id=o["owner_person_id"]
+            o,
+            workspace_id=WS,
+            wsk_pub_b64u=crypto.b64u(wsk[:-1] + bytes([wsk[-1] ^ 1])),
+            owner_person_id=o["owner_person_id"],
         )
     with pytest.raises(crypto.CryptoError):
         make_delegation(p.pk_pub, p.pk_sign, workspace_id=WS, wsk_pub=bytes(65), client_hosted=False, issued_ms=NOW)

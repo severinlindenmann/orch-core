@@ -69,7 +69,7 @@ def genesis(core: Core, e: dict[str, Any], v: Verifier, expected: str | None) ->
         )
     if not v.verify_embedded(e, pk_pub=e["owner"]["pk_pub"]):
         # the verifier reports the first failing check: checks 1, 2, 3 and 5 are genesis.invalid, check 6 sig.invalid
-        why = getattr(v, "genesis_failure", lambda _e: None)(e)
+        why = v.genesis_failure(e)
         if why == "genesis.bad_sig":
             return Refusal(Code.SIG_INVALID, "genesis signature does not verify")
         return Refusal(Code.GENESIS_INVALID, "delegation or device certificate does not verify")

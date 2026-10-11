@@ -32,6 +32,9 @@ class FakeVerifier:
         self.host_workspace_ids.append(workspace_id)
         return event["id"] not in self.bad_host
 
+    def genesis_failure(self, event: Mapping[str, Any]) -> str | None:
+        return None
+
     def verify_embedded(
         self, event: Mapping[str, Any], *, pk_pub: str, device_cert: Mapping[str, Any] | None = None
     ) -> bool:

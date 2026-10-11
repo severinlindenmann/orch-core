@@ -1,7 +1,7 @@
 {
  "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
  "note": "TEST KEYS ONLY. Every private scalar below is derived from the key name as sha256('orch-f1-test-key|' + name) mod (n-1) + 1 and is published on purpose; the signatures are RFC 6979 (deterministic), so consumers verify the stored signature and never re-sign.",
- "pins": "the genesis checks of F1 5.11 in their stated order (1 owner ids, 2 delegation signature and field set, 3 delegation binds workspace and wsk, 4 host_sig under wsk_pub, 5 device_cert (valid at `at`, with operate) and actor.device, 6 sig under the certificate's key); genesis = the head of workspace.created. Each refused case carries `append` (the code at append: checks 1, 2, 3, 5 genesis.invalid, check 4 chain.broken, check 6 sig.invalid) and `replay` (chain.broken where a line check fails first, else genesis.invalid)",
+ "pins": "the genesis checks of F1 5.11 (1 owner ids, 2 delegation signature and field set, 3 delegation binds workspace and wsk, 4 host_sig under wsk_pub, 5 device_cert (valid at `at`, with operate) and actor.device, 6 sig under the certificate's key; 4 and 6 are line checks and are reported first when they fail together with another); genesis = the head of workspace.created. Each refused case carries `append` (the code at append: checks 1, 2, 3, 5 genesis.invalid, check 4 chain.broken, check 6 sig.invalid) and `replay` (chain.broken where a line check fails first, else genesis.invalid)",
  "refused": [
   {
    "append": "genesis.invalid",

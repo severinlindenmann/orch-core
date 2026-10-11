@@ -101,11 +101,9 @@ def repo_path(root: Path, repos: Mapping[str, str], name: str) -> Path | None:
 
 
 def repo_identity(path: Path, name: str) -> str:
-    """The canonical identity of the repository (F1 5.7), from the raw ``remote.origin.url`` (no ``insteadOf``
-    rewriting, and not stripped: a value with a leading or trailing space is not canonical): the ``https://`` URL it
-    maps to when that is canonical, else ``local:<name>``. More than one configured value is ``local:<name>``: git
-    fetches from the first and pushes to all, so no single identity names the repo. Credentials in the remote
-    (``https://user:token@host/...``) are dropped by the mapping and never stored, printed or put on a command line."""
+    """The identity of the repository (F1 5.7) from the raw ``remote.origin.url`` (no ``insteadOf``, unstripped): the
+    canonical ``https://`` URL it maps to, else ``local:<name>``; more than one value is ``local:<name>`` (git fetches
+    from the first and pushes to all)."""
     out = git(path, "config", "--null", "--get-all", "remote.origin.url", strip=False)
     values = [v for v in (out or "").split("\0") if v]
     return canon.canonical_repo_identity(values[0] if len(values) == 1 else "", name)

@@ -522,7 +522,7 @@ Workspace views, agent starts, relay links, epochs and terminal events are defin
   included, computed from the strictly parsed object, never from the raw line.
 - **Chain:** `prev` of event `n` is `head` of event `n−1`; `prev` of `seq` 1 is `null`. The **log head** is the head
   of the last event. An empty log has no head.
-- **Merged order.** `ws_seq` is non-decreasing along a ticket log and at most the workspace log's last `seq`;
+- **Merged order.** `ws_seq` is non-decreasing along a ticket log, `at` does not go back within one `ws_seq`, and `ws_seq` is at most the workspace log's last `seq`;
   otherwise the line fails like a bad `host_sig`. The merged order of all logs is by `ws_seq`, the workspace log
   first, then ticket events ordered by `(at, uid, seq)` (§5.11): an event with `ws_seq = k` is evaluated against the
   workspace state after workspace event `k`. The host holds the workspace-log lock (shared) while it appends a ticket event. `ws_seq` and
@@ -861,6 +861,15 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
   - **After a restore:** a checkpoint with lower `seq`s is accepted only if it comes with the owner-signed `restore`
     event, verified under the owner's device, whose `abandoned` is at least H's workspace-log `seq`. H is then replaced.
 
+  A restore comes with a checkpoint as `{log, from_seq, abandoned}`: it is judged first, for a higher `n` only, and
+  only if it is about the log whose `seq` drops (the workspace log or one ticket log), gives up exactly the
+  checkpoint H holds for that log (`from_seq < H.seq == abandoned.seq`, same `head`), the offered `seq` of that log
+  is at least `from_seq + 1`, and no other log drops or changes a head at a shared `seq`. A restore that does not
+  match H is `chain.diverged` (a receiver that missed checkpoints between H and the restore must be re-synced).
+  **Limits:** a receiver holding only checkpoints compares heights, so it accepts a fork that has grown past H and a
+  forged H whose `n` and `seq` are both inflated (every honest checkpoint is then ignored); a receiver that holds the
+  logs checks H's heads against them.
+
   Only `chain.diverged` stops the receiver. In P1 the host only writes its own checkpoints and never lowers `n`;
   the relay and orch-mobile implement the rest from P3.
 - **Restore** (§12 O5). After a rollback (a restored backup, a git force-push of the workspace repo) an owner signs
@@ -870,13 +879,16 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
   host still knows of. A later event in the same log with one of these ids is an authorization failure (§5.11,
   `event.duplicate_id`): readers add them to the log's seen ids. Ids the host no longer knows can be replayed (P1
   limit; follow-up: the host keeps the ids of every person-signed event it admits in `.state`). A workspace-log
-  `restore` lists none (the ids it would protect live in ticket logs). The host appends the restore as `from_seq + 1`
+  `restore` lists the person-signed workspace events of its given-up part (`member.added`, `role.changed`,
+  `device.added`, `policy.changed`, ...): an abandoned one appended again would otherwise match (`based_on` is still on
+  the kept chain, `roster_v` fits again) and generations don't cover membership. The host appends the restore as `from_seq + 1`
   with `prev = head` and accepts checkpoints of the new chain from then on. It raises every gate's generation, so no
   decision from the abandoned part counts again; a workspace-log `restore` does so on every ticket.
 - **Restore never drops revocations.** The host keeps every PK-signed revocation it has seen in host state. The host
-  appends a workspace `restore` only in the same write as one `device.revoked` (actor H, a new `id`, the revocation
-  verbatim, allowed by §5.3) for each PK-signed revocation in host state that the new chain lacks. Crash recovery
-  finishes these before any other append. A ticket event's `ws_seq` may not name the restore or any of these
+  appends a workspace `restore` and, under the same lock and before any other append, one `device.revoked` (actor H,
+  a new `id`, the revocation verbatim, allowed by §5.3) for each PK-signed revocation in host state that the new chain
+  lacks; each is its own atomic append, so for a moment the files show the restore without them. Crash recovery
+  finishes them first, and while any is missing the host refuses ticket appends. A ticket event's `ws_seq` may not name the restore or any of these
   re-appends except the last (`chain.bad_ws_seq`). A log-only reader can't check that the set is complete.
   `reader_cannot_see_a_dropped_revocation` pins only that such a reader accepts the restore, and that the host
   refuses it.
@@ -885,8 +897,9 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
 
 ### 5.11 Trust root and authorization replay
 
-- **Genesis.** The trust root of a workspace is the head of its `workspace.created` event. Readers check it in this
-  order:
+- **Genesis.** The trust root of a workspace is the head of its `workspace.created` event. Checks 4 and 6 are line
+  checks (§5.5): when one of them fails together with another check, it is the one reported (on replay both; at
+  append check 4, and check 6 is reported last). Checks 1, 2, 3 and 5 are then made in no pinned order:
   1. `person_id(owner.pk_pub) == delegation.o.owner_person_id == device_cert.o.person_id`, and
      `owner.person == "p_" +` that id;
   2. the delegation's signature under `owner.pk_pub` (label `sig/ws-delegation|`) and its exact field set;
@@ -897,7 +910,7 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
      implies `decide`), no `drop:` scope; and `actor.device == "d_" + device_cert.o.device_id`;
   6. `sig` under `device_cert.o.dk_sig_pub`.
 
-  A failure of check 1, 2, 3 or 5 is `genesis.invalid` (no order is pinned among them). Check 4 fails as
+  A failure of check 1, 2, 3 or 5 is `genesis.invalid`. Check 4 fails as
   `chain.broken`. Check 6 fails as `sig.invalid` at append and as `chain.broken` on replay. A genesis for another
   workspace id, or one that differs from the pin, is `trust.genesis_mismatch` (step 1 below). Limit: no workspace is
   created by a decide-only device.

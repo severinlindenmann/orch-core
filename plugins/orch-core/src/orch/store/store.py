@@ -1155,6 +1155,10 @@ class Store:
             raise StoreError("chain.broken", f"{log}: {self._read_errors[log]}")
         if WORKSPACE in self._read_errors:
             raise StoreError("chain.broken", f"workspace: {self._read_errors[WORKSPACE]}")
+        if log != WORKSPACE and self._pending_revs:  # §5.10: no ticket event may name the restore's window
+            self._enforce_revocations()
+            if self._pending_revs:
+                raise StoreError("store.torn_write", "a restore's device.revoked re-appends are not all written yet")
         d = self._diverged.get(log) or (self._diverged.get(WORKSPACE) if log != WORKSPACE else None)
         if d is not None and not (typ == "restore" and d.log == log):
             raise StoreError("chain.diverged", f"{d.log}: {d.detail} (an owner-signed restore is needed)")
@@ -2058,20 +2062,21 @@ class Store:
     def _enforce_revocations(self) -> None:
         """Re-append the revocations of :meth:`_revocation_plan` (host actor, allowed by the embedded revocation, §5.3).
         A read-only store cannot: it marks the workspace diverged instead."""
-        todo, self._pending_revs = self._pending_revs, []
-        if not todo or self._healing:
+        if not self._pending_revs or self._healing:
             return
         if self._host is None:
             self._diverged.setdefault(
                 WORKSPACE, Divergence(WORKSPACE, self._logs[WORKSPACE].seq, "a restore lacks noted revocations")
             )
             return
-        for rec in todo:
+        for rec in list(self._pending_revs):  # kept until each is written: a failure leaves the rest pending
             dev = self._state.workspace.devices.get(rec["device"]) if self._state else None
             if dev is None or dev.revoked:
+                self._pending_revs.remove(rec)
                 continue
             self._host_append(
                 "device.revoked",
                 WORKSPACE,
                 {"device": rec["device"], "reason": rec["reason"], "revocation": rec["revocation"]},
             )
+            self._pending_revs.remove(rec)

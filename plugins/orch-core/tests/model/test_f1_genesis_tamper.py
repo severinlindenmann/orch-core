@@ -80,6 +80,7 @@ CHECK_CHAIN_STOPS_AT = {
     "payload_changed_host_resigned": 3,
     "event_deleted": 2,
     "events_swapped": 3,
+    "at_goes_back_host_resigned": None,  # check_chain sees links only, not `at`
     "prev_rewritten": 3,
     "seq_rewritten": 3,
     "host_sig_swapped": 3,

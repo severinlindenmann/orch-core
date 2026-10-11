@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "code": "gate.already_approved",
+    "message": "you already approved this gate at this generation",
+    "hint": "orch show",
+    "fix": {
+      "argv": [
+        "orch",
+        "show"
+      ]
+    },
+    "retryable": false
+  }
+}

@@ -245,7 +245,7 @@ def event(auth="passphrase"):
 
 def test_person_event_signed_through_passphrase_backend_verifies(tmp_path):
     b = PassphraseBackend(
-        tmp_path, _passphrase_provider=lambda r: "long enough pass", _kdf=KdfParams(n=2**10), _min_n=2**10
+        tmp_path, _passphrase_provider=lambda r: "Zq7!mPx2-vL9#rTb4w", _kdf=KdfParams(n=2**10), _min_n=2**10
     )
     pub = b.create("dk")
     log = "01J9ZP0000000000000000000A"
@@ -265,7 +265,7 @@ def test_file_tier_key_never_signs_person_events(tmp_path):
 
 def test_event_auth_must_match_the_backend(tmp_path):
     b = PassphraseBackend(
-        tmp_path, _passphrase_provider=lambda r: "long enough pass", _kdf=KdfParams(n=2**10), _min_n=2**10
+        tmp_path, _passphrase_provider=lambda r: "Zq7!mPx2-vL9#rTb4w", _kdf=KdfParams(n=2**10), _min_n=2**10
     )
     b.create("dk")
     for auth in ("secure-enclave", None, "none"):

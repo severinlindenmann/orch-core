@@ -16,7 +16,7 @@ NOW = 1_790_000_000_000
 
 def build(tmp_path):
     pw = PassphraseBackend(
-        tmp_path / "pw", _passphrase_provider=lambda r: "a long enough pass", _kdf=KdfParams(n=2**10), _min_n=2**10
+        tmp_path / "pw", _passphrase_provider=lambda r: "Zq7!mPx2-vL9#rTb4w", _kdf=KdfParams(n=2**10), _min_n=2**10
     )
     host = FileBackend(tmp_path / "host")
     pk = pw.create("pk", role="person")

@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "not_found",
+    "message": "no ticket 99",
+    "hint": "orch list",
+    "fix": {
+      "argv": [
+        "orch",
+        "list"
+      ]
+    },
+    "retryable": false
+  }
+}
+# exit 2

@@ -72,7 +72,7 @@ _EMPTY = canon.section_hash("")
 def state_dir(env: Mapping[str, str]) -> Path:
     """The host state directory (genesis pins, noted revocations, workspace keys)."""
     if env.get("ORCH_STATE_DIR"):
-        return Path(env["ORCH_STATE_DIR"])
+        return Path(os.path.abspath(env["ORCH_STATE_DIR"]))  # a relative path would land inside the workspace
     if env.get("XDG_CONFIG_HOME", "").startswith("/"):  # the XDG spec: a relative path is invalid and ignored
         return Path(env["XDG_CONFIG_HOME"]) / "orch"
     return Path(env.get("HOME") or os.path.expanduser("~")) / ".config" / "orch"
@@ -186,7 +186,10 @@ def guarded(handler: Handler, name: str, declared: list[str]) -> Handler:
         except StoreError as e:
             raise to_orch_error(e, declared) from e
         except CustodyError as e:
-            raise OrchError("internal", f"the workspace key: {e}") from e
+            # the person's passphrase prompt: kept distinct, agents branch on them (D65)
+            if e.code in ("custody.no_prompt", "custody.no_key", "custody.wrong_passphrase") and e.code in declared:
+                raise OrchError(e.code, str(e)) from e
+            raise OrchError("internal", f"the key custody: {e}") from e
 
     run.__name__ = f"handle_{name.replace('.', '_')}"
     return run

@@ -1,6 +1,16 @@
 """orch init: create a workspace"""
 
+from typing import Any
+
 from orch.ops._dsl import STR, S, err, obj, operation
+from orch.ops.base import Context, Result
+
+
+def handle(ctx: Context, args: dict[str, Any]) -> Result:
+    from orch.ops.workspace_init import create_workspace
+
+    return create_workspace(ctx, args)
+
 
 OP = operation(
     "init",
@@ -16,5 +26,9 @@ OP = operation(
     emits=("workspace.created",),
     text="ok init {prefix} seq={seq}\nnext: {next}",
     data=obj({"prefix": STR, "workspace_id": STR}),
-    errors=(err("parse.text"),),
+    errors=(
+        err("parse.text"),
+        err("human_only", "run orch init in your own terminal, not through an agent", ["orch", "describe", "init"]),
+    ),
+    handler=handle,
 )

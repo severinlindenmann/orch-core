@@ -1,7 +1,8 @@
 ok describe check
-Check that the ticket files match their events (for a commit hook).
+Check that the ticket files match their events and the instructions are current (for a commit hook).
 usage: orch check
 who: read · emits: -
 pre: workspace_exists
 errors:
+  not_found (exit 2): run orch init in a workspace | fix: orch describe init
 out: ok check {problems} / next: {next}

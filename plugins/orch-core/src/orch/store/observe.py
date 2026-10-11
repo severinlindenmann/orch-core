@@ -57,6 +57,7 @@ def git(path: Path, *args: str) -> str | None:
             check=False,
             env={**git_env(), "GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0"},
             stdin=subprocess.DEVNULL,
+            start_new_session=True,  # no controlling terminal: a repository's filter cannot reach the person's tty
         )
     except (OSError, subprocess.SubprocessError):
         return None

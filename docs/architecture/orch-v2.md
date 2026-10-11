@@ -114,7 +114,7 @@ Non-goals for v2:
 
 | Key | Kind | Where it lives | Purpose |
 |---|---|---|---|
-| Person key `PK` | signing | derived from the recovery code (D50); stored on the primary device wrapped by a Secure Enclave key | Signs device certificates. Peers pin it. |
+| Person key `PK` | signing | derived from the recovery code (D50); stored on the primary device wrapped by a Secure Enclave key (**P1: not stored at all**, see the note under this table) | Signs device certificates. Peers pin it. |
 | Device key `DK` | signing + key agreement | each device: the Secure Enclave on iPhone and Apple-silicon Macs, otherwise the keychain | Signs requests. `WK`s are sealed to it. |
 | Workspace key `WSK` | signing | the workspace host's keychain | Signs envelopes, member lists, directory cards and publish requests |
 | Workspace exchange key `WXK` | key agreement | the workspace host's keychain; public half in the card | Receives ws→ws bodies, Drop wraps addressed to the workspace, and `SK` wraps. Rotates with the 90-day epoch; its version is in the card. |
@@ -137,6 +137,12 @@ suite and the same vectors. A single suite is used across all components, never 
 - an ephemeral key-agreement key;
 - HKDF with context `"orch/v2/seal|" + purpose + "|" + recipient_device_id`;
 - AES-256-GCM, with AAD binding the object id, epoch and purpose.
+
+> **P1 deviation (C8, pending the owner's confirmation).** The `passphrase` backend of P1 has no hardware wrapping, so
+> `orch init` does **not** store the person key: it is derived from the recovery code, signs the first device certificate
+> and the workspace delegation, and is dropped. The code is the only way back to `PK`; adding or revoking a device needs
+> it, typed on the terminal. Wrapping `PK` on the primary device comes with the Secure Enclave / TPM backend, when this
+> is revisited.
 
 ### 5.2 Device certificates and recovery
 

@@ -1099,7 +1099,7 @@ claim"**, if the session holds exactly one; otherwise `ambiguous_ref` comes back
 | Lifecycle | `new`, `claim [REF \| --next \| --takeover --reason]`, `release`, `handoff -m`, `submit`, `ask "…" --options a,b --rec a [--to p]`, `wait` |
 | Edit | `set REF key=value` (keys: title, priority, size, labels, due, links, parent, blocked_by; person-only fields have their own operations), `section set`, `ac add\|edit`, `task list\|next\|add\|start\|done\|skip\|block\|reopen`, `artifact add\|replace\|list`, `log`, `apply --file -` (an atomic batch) |
 | Human only | `approve`, `request-changes`, `verdict`, `answer`, `close`, `reopen`, `grant`, `member`. Agents get `human_only`, `retry:false`. |
-| Admin | `init`, `doctor`, `check`, `instructions sync`, `import v1`, `addon …` |
+| Admin | `init`, `doctor`, `check`, `instructions sync`, `instructions hook`, `import v1`, `addon …` |
 
 Combined calls for the common loops:
 
@@ -1365,6 +1365,178 @@ Where this chapter was silent, `orch.ops` does the following. Each is a rule the
 - **`new -m/--file`** is the `summary` section. **`ask`** defaults to `--to ticket_owner`, labels every option with its key
   and gives the question the next free `Q` id.
 
+**Decisions of C8 (instructions and `orch init` as built).** Where §10.2, the harness doc and the custody doc were silent,
+`orch.instructions` and `orch.ops.workspace_init` do the following. Each is a rule the tests pin (`tests/instructions/`).
+
+- **Where the workspace is.** `orch init --prefix DEMO [--name NAME]` makes the workspace **in the current directory**
+  (`config.json`, `keys.jsonl`, `events/`, `tickets/`, `.state/` next to your files), not in an `orchestrator/` folder;
+  `find_workspace` still accepts both. It is refused as invalid input when a workspace is here or above, or when any of
+  those five names exists, and when the state directory lies inside the workspace (the workspace key would be committed).
+  The workspace name in `config.json` is the directory name; the owner's name is `--name`, else `$USER`. A lock directory
+  (`.orch-init.lock`) keeps two inits in one directory apart (`lock.busy`), so one rollback never deletes the other's files.
+- **Refusals come before any key exists.** A grant (`ORCH_GRANT`) or a missing person's presence is `human_only`; no
+  controlling terminal (`/dev/tty`) is `human_only` too; so is an instruction-file path that is or lies below a symbolic
+  link. Any failure after a key was made removes the key directory and the workspace files this call made, so a second try
+  starts clean. Ctrl-C and SIGHUP (closing the terminal) do the same and print one line (`stop: init cancelled, nothing
+  was created`), no traceback. Key directories of an init that was killed (SIGKILL, power loss) carry an
+  `.init-incomplete` marker with the process id; the next `init` removes those whose process is gone. Every failure after
+  a passphrase or the code was shown says that what was shown is void.
+- **The passphrase comes first.** `/dev/tty` shows a generated passphrase (six distinct words of the BIP-39 list, about
+  66 bits, shown once); the person types it back to confirm, or types one of their own instead (asked twice). Only then
+  is the recovery code made. Three tries, then `init` stops with nothing created.
+- **The recovery code is confirmed and then wiped.** The 24-word code is shown on `/dev/tty` and nowhere else (never
+  stdout, stderr, a file or the result), the person writes it down and types **three words from random positions** back
+  (echo off); a wrong word shows the code again, three failures stop the init. Then the screen and the scrollback are
+  cleared (`ESC[3J ESC[2J ESC[H`; a terminal that ignores it keeps its scrollback, which is stated, not hidden).
+- **The person key** derived from the code signs the first device certificate and the workspace key's delegation and is
+  then dropped: **nothing on disk holds it**. This is a P1 deviation from D50 and §5.1/§5.2, which keep it wrapped by a
+  Secure Enclave key on the primary device (a stored copy under a passphrase would be a file every agent of the same OS
+  user can read); it is recorded in orch-v2.md §5.1 and portable-custody D65 pending the owner's confirmation, and is
+  revisited with the `secure-enclave`/`tpm` backend. The consequence: adding or revoking a device, or issuing the
+  key-exchange certificate of P3, needs the code, typed on `/dev/tty` with echo off, never from an argument, stdin or the
+  environment. The label of the first device is sealed with an HKDF of the person key's scalar; the certificate's
+  `dk_kx_pub` is a fresh key whose private half is discarded (P1 has no key-exchange user; the relay is P3).
+- **The device key** is a `passphrase` backend key (`dk`, role `device`) at
+  `<state dir>/hosts/<workspace id>/person/dk.key.json` (where the human operations of C7 read), made from the passphrase
+  the person settled on; the backend asks it once more when it signs the genesis, showing the signed fields (§5.3). The
+  workspace key is the `file`-tier key `keys/wsk` of §10.7. `Store.append` writes `config.json` and `keys.jsonl` and pins
+  the genesis in the state directory (§5.11). **P1 deviation:** the genesis is not also recorded in the device key file
+  (§5.11 "custody key file"): the file's authenticated header is fixed and its passphrase is needed to change it; the pin
+  in the state directory is the only record until pairing (P3) adds one.
+- **Passphrase strength** (C7 and C8 security reviews; `orch.custody.strength`, checked by the passphrase backend on every
+  key it creates, so it holds for `init` and any later device key): at least 14 Unicode scalars after NFC, not on the
+  vendored list of the 5000 most common passwords (also with leet substitutions), and an entropy estimate of at least
+  60 bits, where the estimate is the cheapest parse of the text into common words (12 bits each), ascending, descending
+  and keyboard runs (5 bits), repeats (1 to 2), years (7) and single characters (log2 of the character pool). The
+  generated six-word phrase (about 66 bits) is judged by the same rule.
+- **Files written, never through a link.** `AGENTS.orch.md` (workspace root), the three built-in skills in
+  `.claude/skills/<name>/` with their `orch.skill.json` (scope `builtin`), one line `Before working on tickets, read
+  AGENTS.orch.md (orch).` in `AGENTS.md` (Codex and others), `@AGENTS.orch.md` in `CLAUDE.md` (Claude Code) and `.state/`
+  in `.gitignore`, each appended to an existing file and created otherwise, never duplicated. No file or directory on the
+  way (`.claude`, `.claude/skills`, the skill folder, the file) may be a symbolic link: `init` refuses before any key is
+  made, `instructions sync` writes nothing (invalid input). Reads open with `O_NOFOLLOW`; temporary files come from
+  `mkstemp` in the target directory (exclusive, random name). A skill whose sidecar names another scope than `builtin`
+  is the owner's and is kept, and `init` and `sync` say so (`kept .claude/skills/orch-tickets (scope workspace ...)`). A
+  Claude Code user who also installs the plugin sees each skill twice (the plugin's and the workspace's); the plugin
+  layout (`plugins/orch-core/skills/`, `hooks/hooks.json`) is generated by `scripts/sync-plugin.sh` and kept equal to the
+  generator by a test. If writing the files fails after the genesis, the workspace stays and the result says so and what to
+  run (`orch instructions sync`; the `AGENTS.md`/`CLAUDE.md` lines are added by hand).
+- **`AGENTS.orch.md`** is a template whose commands are registry markers and whose example calls come from
+  `orch.ops.workflows`: renaming or removing an operation fails the generator, not a reader. The first line is
+  `orch v2.0 (instructions rN) · ...`; `N` is `INSTRUCTIONS_REV`, raised whenever this text or a skill changes (each skill's
+  text is pinned to its `skill_version` by a hash in the tests). Addons may add one line each before the last line, within
+  the 25. It does not promise `artifact add --ac` without a grant.
+- **The stale check.** Installed instructions are stale when `AGENTS.orch.md` is missing, has no stamp or a lower `rN`,
+  or when a built-in skill is missing, has no sidecar, a lower `skill_version`, or a `SKILL.md` that differs from the
+  shipped one at the same version while its scope is still `builtin`. A higher number is reported too. `orch check` lists
+  these, exits 5 when it finds any problem (so a commit hook can gate), and its next step is `orch instructions sync`; the
+  session-start text carries `instructions stale: run orch instructions sync`. C10's `doctor` and commit check extend it.
+- **`instructions sync [--dry-run] [--force]`** is a `read` operation (it was declared `agent`) that writes files: they
+  are pure functions of the installed CLI, no event is appended and no grant is needed, so the person can run it too. A
+  consumer that treats `read` as "no side effects" must know this one exception. It never overwrites a built-in skill that
+  was edited by hand (same `skill_version`, different text) without `--force`; setting `scope` to `workspace` in the
+  sidecar keeps an edit for good. An older `skill_version` is upgraded without `--force`.
+- **`instructions hook session-start|pre-compact`** is a new Admin command (§10.3). Session start prints at most six lines
+  (the `ok` line with the person and the grant, the claim line, `unread:` for at most two undelivered decisions **as ids
+  only** (`DEMO-0001 #5 answered Q1 option=a`: the text of an answer or a change request is ticket data and never reaches
+  a hook, whose output the harness injects as context; `wait` and `show` hand it over, fenced), the stale notice, `next:`);
+  pre-compact at most four. It **never pins a genesis**: a workspace this machine has not pinned (by `orch status` or
+  `init`) gives `not initialised on this machine`, and a log with chain errors gives `DAMAGED ... trust no state` and exit 5
+  instead of `ok`. Outside a workspace it prints nothing and exits 0. The plugin runs it on `SessionStart`
+  (`startup|resume|clear|compact`) and `PreCompact`; harnesses without hooks rely on `orch status` first.
+- **Budgets** (tests/instructions/test_budget.py): `AGENTS.orch.md` at most 25 lines and 300 tokens, the session-start text
+  at most 6 lines and 150 tokens, a skill at most 600 tokens (a token is four characters), all always-loaded text under
+  450 tokens (measured on the real texts), and `orch help` within its pinned size.
+- **Follow-ups.** Writing the instruction files with directory file descriptors (`dir_fd`, `O_NOFOLLOW`) to close the lstat-then-act race (a same-user process can still create empty directories outside via a swapped link; no file escapes); refusing hardlinked instruction files.
+- **Locks and signals.** The init lock is an `flock` on `.orch-init.lock` (dropped by the kernel when the process dies; the stale file blocks nothing); SIGTERM and SIGHUP are handled like Ctrl-C. A relative `ORCH_STATE_DIR` is made absolute. Files over 1 MiB are never rewritten (`init` reports it, `sync` refuses). The hook exits 0 even when it prints `DAMAGED`.
+- **Strength check** is applied to the NFKC text without invisible format characters; dictionary words (BIP-39, the common list, a few famous phrases, the user's name and the prefix) are one unit each.
+- **Skill sidecar.** `orch.skill.json` is validated in plain Python (D55): exactly `schema_version` (1), `skill_version`
+  (`x.y.z`), `scope` (`builtin`, `workspace` or `org`), `connections` and `env` (lists of names).
+
+### 10.8 Decisions of C7 (the human operations as built)
+
+Where §5.3, §5.7, §10.1 and §10.3 were silent, `orch.ops.human` and the eleven human operations (`approve`,
+`request-changes`, `verdict`, `answer`, `close`, `reopen`, `grant`, `grant revoke`, `member add|remove|role`) do the
+following. Each is a rule the tests pin (`tests/ops/test_presence.py`, `test_review.py` and the test file of each
+operation).
+
+- **Presence.** A human operation is refused as `human_only` (exit 3) before its handler runs when `ORCH_GRANT` is
+  present in the environment, empty or not (§10.3: "Agents get `human_only`"), and the handler refuses again if a grant
+  ever reaches it. Every signature then asks for the passphrase on `/dev/tty` through the passphrase backend (§5.3, D65):
+  never stdin, stdout, stderr, an argument or an environment variable, and no option skips or carries it. No controlling
+  terminal is custody.no_prompt, a wrong or empty passphrase is custody.wrong_passphrase, a missing key file is
+  custody.no_key (hint: `orch init`, C8); all exit 3, not retryable, declared by every human operation and kept distinct
+  (D65: agents branch on them). Nothing is written in any case. A harness that shares the person's terminal can still
+  trigger the prompt; that limit is D65's. A person's operation is never deduplicated or answered from the session
+  records: every call is a fresh signature.
+- **Who signs.** The key is `<state dir>/hosts/<workspace id>/person/dk.key.json` (key id `dk`, passphrase backend,
+  role `device`), next to the workspace key. The person and the device are not named by the caller: the device id is
+  derived from the key file's public key and looked up in the replayed device roster, which says whose device it is. A key
+  the log does not know, a removed or revoked device and a person who is no longer a member sign nothing
+  (role.denied, before any prompt). P1 holds one device key per workspace per machine; creating it is `orch init`/`keys`
+  (C8), not C7.
+- **What is signed comes from the log.** `gate`, `gate_gen`, `hash`, `policy_hash`, `source_sha`, the question `hash`,
+  `roster_v` and `based_on` are read from the verified state at the moment of the call; the operations have no option
+  for any of them. The ticket is named with `--ref` (a person has no claim, so there is no "my claim" default:
+  ambiguous_ref); a ticket the signer may not see, and a key that does not exist, give the same not_found (§9).
+- **The review (§5.7: "the prompt shows the text").** For `approve`, `request-changes` and `verdict`, before the
+  passphrase prompt, orch writes the gated content to `/dev/tty` exactly as the gate hash binds it and asks the person to
+  type the ticket key and Enter (anything else, end of input, Ctrl-C: nothing is signed; no flag or variable skips it;
+  no terminal is custody.no_prompt): the ticket key (derived by orch from the log id, labelled as not signed) and the log id, then the gate's section
+  texts (each checked against its hash), acceptance criteria, tasks with their verify commands, links, the source list
+  and the artifact names with digests, then the short gate hash (the first 12 hex digits, 48 bits, of the verified gate hash). `orch show`
+  prints the same 12 digits per open gate (`plan:open#8163ab12cd34`), and `show --full` prints the ticket's log id, so a person can compare
+  what they read earlier with what they sign. Ticket text is data: every line is escaped and starts with `| `; orch's own headings and
+  labels are printed bare, so text cannot pass for one. The review opens with a summary line (lines per section, number
+  of criteria and tasks) and, for `verify`, lists the task receipts (task, commit, exit code); it says that addon fields
+  and packages, the policy and people lists and earlier approvals are bound by the gate hash but not shown. There is no
+  pager in P1: a long text scrolls, which is why the summary comes first and the confirmation comes after the content.
+  Input typed before the content appeared is discarded (`tcflush`) and confirms nothing. git runs in its own session
+  (no controlling terminal), so a repository's filter cannot reach the person's terminal. If the content changes while
+  the person reads or types, the append is refused as gate.stale. The decisive fields of the
+  signing bytes follow in the passphrase prompt (D41).
+- **Artifact bytes (§5.7).** Before the review, the SHA-256 of every bound artifact file (`requirements`/`plan`: those
+  named in the section refs; `verify`: the whole manifest) is recomputed; a missing, replaced or changed file is
+  artifact.mismatch and nothing is shown for signing.
+- **Judged before the prompt, the lock not held while typing.** The event is judged with `orch.model.preview` as
+  `Store.append` will judge it (all rules, the signature aside), so a refused event costs no passphrase. The workspace
+  lock is not held while the person types; `Store.append` then verifies the signature and judges again, so a change
+  during the prompt is gate.stale or members.stale and the person decides again.
+- **A person counts once per generation.** A second `approve` (or `verdict pass`) by the same person at the same gate
+  generation is refused as gate.already_approved before the prompt. The model counts a person once whatever the policy's
+  `count` (`generations.counting`), so with `count` 2 the second approval has to come from another person.
+- **D58/D59 binding.** `verdict` and `approve code` read git (`orch.store.observe`, which appends any owed
+  `branch.pushed`) right before the prompt and bind the commits it finds as `source_sha`. Each linked working copy must be
+  on the bound branch (`refs/heads/<branch>`), at the bound commit, with nothing uncommitted; otherwise
+  observe.unavailable. The decision binds a commit, so the files a person ran or read must be that commit (F1 was silent;
+  a detached HEAD elsewhere and another branch are refused). The same check runs again inside `Store.append` with the
+  workspace lock held (a `precommit` callback, read-only), after the passphrase: a source that moved meanwhile is
+  gate.stale and nothing is appended. A linked repository that cannot be observed is observe.unavailable, a missing ref
+  source.missing (§5.7). A ticket that links no repository signs `source_sha: []`.
+- **`--dry-run` writes nothing:** it does not observe (no `branch.pushed`), does not prompt and does not sign; it judges
+  with what the log holds and reports a source list the log has not recorded yet as observe.unavailable. `grant --dry-run`
+  makes no grant and prints no id and no hint.
+- **`grant`.** The 32-byte secret is drawn when the command runs, only its hash goes into the event, and
+  `ORCH_GRANT=...` is written to `/dev/tty` **after** the append and nowhere else: not stdout (a pipe, a log, an
+  agent's transcript), not stderr, not a file, not a record. The terminal keeps it in its scrollback, which a process
+  that can read the terminal (a multiplexer, D65) can read: orch says so and asks the person to clear the scrollback once
+  the harness has the value. If the terminal cannot show it the command fails with custody.no_prompt and names the grant
+  to revoke. Defaults: `--hours 8`, `--scope workable`, `--verbs agent`; `issued_at` is the clock when the command
+  starts (readers allow 300 s, §10.1). **`--verbs` is validated at issue:** each name must be an operation an agent or an
+  unattended agent may run (§10.1: a human-only operation is never in a grant; the model would otherwise accept a name
+  that grants nothing). The D60 role terms are the model's.
+- **`member add`** takes what the invitee made: `--pk` (their person key, base64url) and `--cert` (their first device
+  certificate, a path or `-`); the person id is derived from the key and the certificate is checked by the model
+  (device.cert). The output tells the owner to compare the invitee's person id out of band: whoever relays the
+  invitation can substitute their own key. `member role` and `member remove` of the last owner are invalid.input carrying
+  members.last_owner. Maintainers add members and viewers, owners do everything else; a device whose certificate lacks
+  `operate` cannot sign member, role, grant or settings events (device.scope, §5.3).
+- **Texts.** `request-changes` and a `fail` verdict need `-m`; every text passes the §11.3 rules (parse.text) and the
+  grant-secret filter. `close --duplicate-of` goes through the same visibility check as `--ref`.
+- **Not built here, because no operation is declared for it in §10.3:** `invalid acknowledge`, `restore`, ticket
+  `policy`/`people`/`visibility`, workspace `policy`/`settings`, `device` and `addon` events. Their person events exist
+  in §5.4; their operations arrive with the task that declares them.
+
 ## 11. Encodings, ids, text and value lists
 
 ### 11.1 Field types and ids
@@ -1502,7 +1674,7 @@ owner's confirmation.
 | N10 | The code gate (D59) | `not` always includes `assignees` and `independent` is always `true`, enforced by the host. Only a person's signature approves it; no `via` field in P1. In P1 turning it on moves no ticket back. | agreed with Codex |
 | N11 | Addon writes | Addons hold no key; the host appends their events. `set_by` is a list of actor alternatives checked per write (`agent`, `addon`, human tokens = a signed person event). Only leaf paths can be set, so replacing `ticket.addons.<addon>` can't bypass `set_by`. Addon events never carry core authority. | agreed with Codex, modified |
 | N12 | Independence of approvers | The policy option `independent`, **off by default** for `requirements`, `plan` and `verify`, so a sole owner can approve their own agents' work; always on for `code` (D59). See O4 for what `not: assignees` covers. | new from the Codex review |
-| N13 | Trust root | The head of `workspace.created` is the genesis, checked in six ordered steps (§5.11); remembered by the host outside the workspace, in every workspace checkpoint, in the person's custody key file, shown at pairing. Readers replay authorization, not only signatures. **P1 limit:** see O7. | new from the Codex review; tightened with the Opus reviewer |
+| N13 | Trust root | The head of `workspace.created` is the genesis, checked in six ordered steps (§5.11); remembered by the host outside the workspace, in every workspace checkpoint, shown at pairing (the person's custody key file records it from P3 pairing on; `orch init` does not, see §10.7). Readers replay authorization, not only signatures. **P1 limit:** see O7. | new from the Codex review; tightened with the Opus reviewer |
 | N14 | Rollback and trust in P1 | Equal-height divergent heads are refused and `restore` is defined, but **P1 can't detect a rollback when both the history and the local checkpoints are replaced**, and the genesis pin lives in files the same OS user owns (O7). Relay checkpoints (P3) and host-held keys (P2) fix it. | new from the Codex review |
 | O1 | Where the factor is recorded | In the event's `auth` only, not in the device certificate. **D64's wording ("recorded in the person's device certificate") needs amending**; F1 doesn't edit D64. | agreed with Opus reviewer |
 | O2 | Custody of `dk_sig` in P1 | `dk_sig` is held by the backend named in `auth`; in P1 it is passphrase-encrypted like the person key, decrypted for one signature on a TTY, never cached; a key that signs without its factor is `file`-tier and never signs person events (§5.3). | agreed with Opus reviewer |
@@ -1510,7 +1682,7 @@ owner's confirmation.
 | O4 | Self-approval | With `independent` on, `not: assignees` also excludes the `for` person of agent events that touched a bound path in the gate's current generation. With it off (the single-owner default), a person may approve their own agent's work, and the doc says so (§5.7). | agreed with Opus reviewer |
 | O5 | `restore` power | Owner only; never drops revocations (the host re-appends every PK-signed revocation it has seen); records the abandoned signed decisions in `abandoned_decisions` (§5.10). | agreed with Opus reviewer |
 | O6 | Unattended evidence | Unattended artifacts carry no `ac`/`task` and are never evidence (§6). | agreed with Opus reviewer |
-| O7 | P1 trust root | The genesis pin is in the host state dir and the person's custody key file, both owned by the same OS user as the agents in P1, so an agent can replace them together; stated plainly next to N14. | agreed with Opus reviewer |
+| O7 | P1 trust root | The genesis pin is in the host state dir (P1; the person's custody key file gets it at pairing), owned by the same OS user as the agents in P1, so an agent can replace them together; stated plainly next to N14. | agreed with Opus reviewer |
 | R3 | Device recovery and who appends revocations | `device.revoked` may be appended by any member's device or by the host; its authority is the embedded PK-signed revocation (protocol §6.2). A device vouched for by the person key (with `decide`) may add itself when its person has no valid device left (the D50 recovery path); otherwise losing the owner's only device would leave the workspace without owner signatures. | agreed with Opus reviewer |
 | R5 | Decision freeze after an invalid event | An owner signs `invalid.acknowledged {invalid_seq, invalid_head, reason?}` to lift the freeze; the event stays absent. An invalid event in the workspace log freezes all person decisions in the workspace until acknowledged. In P1 an agent with the workspace key can cause the freeze (N4). | agreed with Opus reviewer |
 
@@ -1619,7 +1791,7 @@ A1–A20 (PR body), HO (dashboard handover, input only), D58–D60, the adversar
 | 96 | Restore drops revocations (Opus S11) | Revocations re-appended at once; `abandoned` gives up every checkpoint above `from_seq`; workspace restore raises every ticket's gates. | A rollback can't resurrect a revoked device. |
 | 97 | Question id frozen wrongly; `evidence` half-defined (Opus S12) | Derived `qid` (32 hex, `orch/v2/question-id\|`) used in the question hash; `evidence` refused in P1, defined in P3 with a new contract. | Protocol §13 needs hex ids; no person event without `sig`. |
 | 98 | `based_on` unchecked (Opus S13) | Must name an earlier event of the same log (`event.bad_base`); staleness via `gate_gen`, `hash`, `base_rev`. | A meaningless `based_on` can't be signed. |
-| 99 | Genesis pin agent-writable (Opus S14) | Also pinned in the person's custody key file; human-only verbs refuse a different genesis; P1 limit in O7. | The human signer checks the root, not only the host. |
+| 99 | Genesis pin agent-writable (Opus S14) | Pinned in the host state dir (the custody key file only from pairing, P1 deviation in §10.7); human-only verbs refuse a different genesis; P1 limit in O7. | The human signer checks the root, not only the host. |
 | 100 | Grant time checks (Opus S15) | `\|at − issued_at\| ≤ 300 s`, `expires_at == issued_at + 3600·hours`, role terms at position, all on replay. | Grants are checkable by any reader. |
 | 101 | `not: assignees` bypass through claims (Opus S16) | Per O4: with `independent` on it also excludes the agents' `for` person; off by default, and self-approval is stated. | The owner's single-person default stays usable. |
 | 102 | Three `v` fields (Opus note) | Envelope `v` (2), signed-context `contract` (1), checkpoint `o.v` (2, protocol §2.4). | Distinct names, no misreads. |

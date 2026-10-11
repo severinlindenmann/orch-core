@@ -1096,6 +1096,7 @@ class Store:
         body: Mapping[str, str | None] | None = None,
         artifacts: Mapping[str, bytes] | None = None,
         idem: str | None = None,
+        precommit: Callable[[], None] | None = None,
     ) -> Appended:
         """Append ``event`` to ``log`` (``"workspace"`` or a ticket uid) and return the new state.
 
@@ -1110,6 +1111,8 @@ class Store:
         ``chain.diverged``, ``store.read_only``.
         """
         with self._locked():
+            if precommit is not None:  # runs with the lock held, right before the append: it may raise to refuse
+                precommit()
             return self._append(dict(event), log, body, artifacts, idem)
 
     def create_ticket(

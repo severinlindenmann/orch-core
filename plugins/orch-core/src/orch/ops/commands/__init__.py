@@ -54,6 +54,7 @@ MODULES = (
     "doctor",
     "check",
     "instructions_sync",
+    "instructions_hook",
     "import_v1",
     "addon_list",
     "addon_grant",

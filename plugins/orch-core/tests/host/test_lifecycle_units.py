@@ -234,16 +234,27 @@ def test_preload_imports_every_module():
 # --- pins and custody -----------------------------------------------------------------------------------------
 
 
-def test_pins_are_trusted_only_when_owned_by_the_trusted_owner(tmp_path):
-    pins = AgentPins(tmp_path, owner=UID)
-    assert pins.get(501) is None and not pins.pinned(501)
-    (tmp_path / "501.json").write_text(json.dumps({"class": "agent", "workspaces": ["a" * 32]}))
-    assert pins.pinned(501) and pins.workspaces(501) == {"a" * 32}
-    assert not AgentPins(tmp_path, owner=UID + 1).pinned(501)  # not root-owned: no pin
-    (tmp_path / "502.json").write_text("{broken")
-    assert AgentPins(tmp_path, owner=UID).pinned(502)  # a broken trusted pin still pins the UID
-    os.chmod(tmp_path / "501.json", 0o666)
-    assert not pins.pinned(501)
+def test_pins_fail_closed(tmp_path):
+    pins_dir = tmp_path / "pins"
+    pins = AgentPins(pins_dir, owner=UID)
+    assert pins.get(501) is None and not pins.pinned(501)  # no pin directory at all: nothing is pinned
+    pins_dir.mkdir(mode=0o755)
+    assert not pins.pinned(501)  # no pin file
+    (pins_dir / "501.json").write_text(json.dumps({"class": "agent", "workspaces": ["a" * 32]}))
+    assert pins.pinned(501) and pins.names_workspace(501, "a" * 32) and not pins.names_workspace(501, "b" * 32)
+    assert AgentPins(pins_dir, owner=UID + 1).pinned(501)  # a directory of another owner: fail closed
+    (pins_dir / "502.json").write_text("{broken")
+    assert pins.pinned(502) and pins.names_workspace(502, "b" * 32)  # unreadable: pinned for every workspace
+    os.chmod(pins_dir / "501.json", 0o666)
+    assert pins.names_workspace(501, "b" * 32)  # writable by others: fail closed
+    os.chmod(pins_dir / "501.json", 0o644)
+    os.chmod(pins_dir, 0o775)
+    assert pins.pinned(503)  # a pin directory others can write: fail closed for every UID
+    os.chmod(pins_dir, 0o000)
+    try:
+        assert pins.pinned(503)  # EACCES is never "no pin"
+    finally:
+        os.chmod(pins_dir, 0o755)
 
 
 def test_custody_tree_refuses_links_and_writable_ancestors(tmp_path):

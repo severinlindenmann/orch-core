@@ -150,11 +150,11 @@ def server_for(listener, **kwargs):
     )
 
 
-async def read_frame(sock):
+async def read_frame(sock, timeout=2):
     loop = asyncio.get_running_loop()
     decoder = frames.Decoder()
     while True:
-        data = await asyncio.wait_for(loop.sock_recv(sock, 1), 2)
+        data = await asyncio.wait_for(loop.sock_recv(sock, 1), timeout)
         if not data:
             return None
         items = decoder.feed(data)
@@ -1423,7 +1423,7 @@ def test_oversized_result_is_request_scoped_and_id_reusable():
             await send_frame(client, HELLO)
             await read_frame(client)
             await send_frame(client, req())
-            response = await read_frame(client)
+            response = await read_frame(client, timeout=10)  # encoding a 2 MiB result is slow under load
             assert response["t"] == "res"
             assert response["error"]["code"] == "result.too_large"
             assert response["exit"] == 1

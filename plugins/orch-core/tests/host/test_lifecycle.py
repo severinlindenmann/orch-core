@@ -106,10 +106,10 @@ def test_register_refuses_a_pinned_agent_uid_as_person(lab):
         assert ok(c.call("host.list"))["data"]["workspaces"] == []
 
 
-def test_a_pin_that_others_can_write_is_no_pin(lab):
-    lab.pin_agent(UID, mode=0o666)
+def test_a_pin_that_others_can_write_fails_closed(lab):
+    lab.pin_agent(UID, mode=0o666)  # tampered with, or could be: still a pin, never a person
     with lab.host() as h, h.client() as c:
-        ok(lab.register(c))
+        assert err(lab.register(c)) == "op.not_allowed"
 
 
 def test_register_refuses_a_person_who_is_not_a_member_with_a_decide_device(lab):
@@ -341,6 +341,7 @@ class Backend:
     def __init__(self):
         self.release = threading.Event()
         self.writing = threading.Event()
+        self.parked = threading.Event()
 
     def kind(self, op):
         return {
@@ -358,6 +359,7 @@ class Backend:
             self.writing.set()
             await asyncio.to_thread(self.release.wait, 10)
         if op == "t.wait":
+            self.parked.set()
             await asyncio.sleep(60)
         return ok_result({"op": op, "column": call.column.name, "viewer": call.viewer})
 
@@ -513,7 +515,7 @@ def test_drain_finishes_a_write_in_flight_and_ends_wait_with_host_restarting(lab
         ws.send("w", "t.write")
         ws.send("p", "t.wait")
         assert backend.writing.wait(5)
-        time.sleep(0.2)  # the wait is parked
+        assert backend.parked.wait(5)  # the wait is parked before the drain starts
         assert ok(c.call("host.restart"))["data"] == {"draining": True}
         parked = ws.read()
         assert parked["id"] == "p" and err(parked) == "host.restarting"

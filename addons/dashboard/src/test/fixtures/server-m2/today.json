@@ -1,0 +1,129 @@
+{
+ "counts": {
+  "open": 4
+ },
+ "needs_you": [
+  {
+   "blocking": false,
+   "kind": "question",
+   "ref": "Q2",
+   "since": "2026-09-21T14:13:28Z",
+   "text": "Any naming rule?",
+   "ticket": "DEMO-0001",
+   "title": "Real P1 ticket",
+   "uid": "UID1"
+  },
+  {
+   "blocking": false,
+   "kind": "approval",
+   "ref": "requirements",
+   "since": "2026-09-21T14:13:29Z",
+   "text": "Approve the requirements",
+   "ticket": "DEMO-0001",
+   "title": "Real P1 ticket",
+   "uid": "UID1"
+  }
+ ],
+ "now": "2026-10-11T09:00:00Z",
+ "read_only_open": [],
+ "recent": [
+  {
+   "actor": {
+    "for": "p_user1",
+    "grant": "gr_1",
+    "id": "claude-code",
+    "kind": "agent",
+    "session": "s_1"
+   },
+   "at": "2026-09-21T14:13:29Z",
+   "id": "15.e",
+   "seq": 8,
+   "summary": "log.added",
+   "ticket": "DEMO-0001",
+   "title": "Real P1 ticket",
+   "type": "log.added"
+  },
+  {
+   "actor": {
+    "id": "orch",
+    "kind": "host"
+   },
+   "at": "2026-09-21T14:13:28Z",
+   "id": "14.e",
+   "seq": 7,
+   "summary": "branch.pushed",
+   "ticket": "DEMO-0001",
+   "title": "Real P1 ticket",
+   "type": "branch.pushed"
+  },
+  {
+   "actor": {
+    "for": "p_user1",
+    "grant": "gr_1",
+    "id": "claude-code",
+    "kind": "agent",
+    "session": "s_1"
+   },
+   "at": "2026-09-21T14:13:28Z",
+   "id": "13.e",
+   "seq": 6,
+   "summary": "question.asked",
+   "ticket": "DEMO-0001",
+   "title": "Real P1 ticket",
+   "type": "question.asked"
+  },
+  {
+   "actor": {
+    "device": "d_1",
+    "id": "p_user1",
+    "kind": "person"
+   },
+   "at": "2026-09-21T14:13:27Z",
+   "id": "12.e",
+   "seq": 5,
+   "summary": "question.answered",
+   "ticket": "DEMO-0001",
+   "title": "Real P1 ticket",
+   "type": "question.answered"
+  },
+  {
+   "actor": {
+    "for": "p_user1",
+    "grant": "gr_1",
+    "id": "claude-code",
+    "kind": "agent",
+    "session": "s_1"
+   },
+   "at": "2026-09-21T14:13:26Z",
+   "id": "11.e",
+   "seq": 4,
+   "summary": "question.asked",
+   "ticket": "DEMO-0001",
+   "title": "Real P1 ticket",
+   "type": "question.asked"
+  },
+  {
+   "actor": {
+    "for": "p_user1",
+    "grant": "gr_1",
+    "id": "claude-code",
+    "kind": "agent",
+    "session": "s_1"
+   },
+   "at": "2026-09-21T14:13:25Z",
+   "id": "10.e",
+   "seq": 3,
+   "summary": "ticket.updated",
+   "ticket": "DEMO-0001",
+   "title": "Real P1 ticket",
+   "type": "ticket.updated"
+  }
+ ],
+ "sub_cursor": "CURSOR",
+ "waiting_on_others": {
+  "count": 0,
+  "people": []
+ },
+ "working": [],
+ "workspace": "705d40abbb8c1c90354a1acaa94c935c"
+}

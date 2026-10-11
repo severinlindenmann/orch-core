@@ -3,7 +3,7 @@
 // ensureQueryData, so a page and its loader can never drift apart. Keys are unchanged from before.
 
 import { queryOptions } from '@tanstack/react-query'
-import { api, type ListTicketsParams } from './client'
+import { api, type ListTicketsParams } from '@/api/client'
 import type { ArtifactQuery } from './types'
 
 /** Query key of an addon's state; per-ticket requests sit under the addon's key, so invalidating it covers them. */
@@ -22,12 +22,16 @@ export const queries = {
   grants: (ws: string) => queryOptions({ queryKey: ['grants', ws], queryFn: () => api.listGrants(ws) }),
   agentActivity: (ws: string) => queryOptions({ queryKey: ['agent-activity', ws], queryFn: () => api.getAgentActivity(ws) }),
   /** The board's own copy of the ticket list (moves update it optimistically). */
-  board: (ws: string) => queryOptions({ queryKey: ['board', ws], queryFn: () => api.listTickets(ws) }),
+  board: (ws: string) => queryOptions({ queryKey: ['board', ws], queryFn: () => api.listBoard(ws) }),
   /** Every ticket of the workspace, unfiltered (options, counts, titles). */
   ticketsAll: (ws: string) => queryOptions({ queryKey: ['tickets', ws, 'all'], queryFn: () => api.listTickets(ws) }),
   /** The Tickets list for its server-side filters (see ticketsServerParams). */
   tickets: (ws: string, params: ListTicketsParams) => queryOptions({ queryKey: ['tickets', ws, params], queryFn: () => api.listTickets(ws, params) }),
-  ticket: (key: string) => queryOptions({ queryKey: ['ticket', key], queryFn: () => api.getTicket(key), retry: false }),
+  /** Closed tickets (host v1.4 leaves them out unless asked): the Tickets list's Closed filter. */
+  ticketsClosed: (ws: string, params: ListTicketsParams) =>
+    queryOptions({ queryKey: ['tickets', ws, 'closed', params], queryFn: () => api.listTickets(ws, { ...params, status: ['closed'] }) }),
+  /** One ticket, keyed by its workspace (the id a real host knows it by) and its key. */
+  ticket: (ws: string, key: string) => queryOptions({ queryKey: ['ticket', ws, key], queryFn: () => api.getTicket(key, ws), retry: false }),
   connections: (ws: string) => queryOptions({ queryKey: ['connections', ws], queryFn: () => api.getConnections(ws) }),
   skills: (ws: string) => queryOptions({ queryKey: ['skills', ws], queryFn: () => api.getSkills(ws) }),
   identity: (ws: string) => queryOptions({ queryKey: ['identity', ws], queryFn: () => api.getIdentity(ws) }),

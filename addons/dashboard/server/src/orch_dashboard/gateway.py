@@ -90,12 +90,19 @@ class Gateway:
                 ("workspace.show", "query/1"),
                 ("host.status", "ops/1"),
             ],
-            "today": [("needs", "query/1")],
-            "tickets": [("ticket.query", "query/1")],
+            "today": [("needs", "query/1"), ("ticket.query", "query/1")],
+            "tickets": [("ticket.query", "query/1"), ("needs", "query/1")],
+            "board": [("ticket.query", "query/1"), ("needs", "query/1")],
+            "ticket": [("ticket.get", "query/1"), ("needs", "query/1")],
+            "changes": [("ticket.get", "query/1"), ("diff", "diff/1")],
+            "evidence": [("ticket.get", "query/1"), ("artifact.get", "diff/1")],
+            "activity": [("activity.list", "activity/1")],
         }
         for feature, ops in requirements.items():
             if all(link.supports(op, cap) for op, cap in ops):
                 features.append(feature)
+        if link.has("read_ext/1"):
+            features.append("read_ext")  # the optional v1.4 fields are sent: an absent one is unknown, not zero
         return features
 
     def workspaces(self):

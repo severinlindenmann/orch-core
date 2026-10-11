@@ -4,7 +4,7 @@ import { clearSession, getToken } from './bootstrap'
 import { readSSE } from './sse'
 
 export type LiveItem = { id: string; uid?: string; key?: string | null; type?: string; gone?: boolean }
-type CloseView = (uid?: string) => void
+type CloseView = (uid?: string, keys?: string[]) => void
 
 /** Fail closed: anything we cannot prove unrelated is treated as related. */
 const mentions = (value: unknown, needles: string[]) => {
@@ -52,15 +52,25 @@ export function invalidateLive(client: QueryClient, ws: string, event: string, i
           next[field] = (data[field] as { uid?: string }[]).filter((row) => row?.uid !== uid)
         return next
       })
-      void client.cancelQueries(ticket); client.removeQueries(ticket); close(uid)
+      void client.cancelQueries(ticket); client.removeQueries(ticket); close(uid, needles)
+      // The feed on Today and the closed list name the ticket by key and title: purge them whole, then read as the new viewer.
+      const feeds = { predicate: (q: Q) => q.queryKey[1] === ws && (q.queryKey[0] === 'today' || (q.queryKey[0] === 'tickets' && q.queryKey.includes('closed'))) }
+      void client.cancelQueries(feeds); client.removeQueries(feeds)
       for (const name of ['tickets', 'board', 'today']) invalidate(name)
     } else if (item.type === 'needs.changed') {
       invalidate('today'); void client.invalidateQueries({ queryKey: ['workspaces'] })
     } else if (item.type?.startsWith('member.') || item.type === 'role.changed' || item.type?.startsWith('device.')) {
       void client.invalidateQueries(scoped); void client.invalidateQueries({ queryKey: ['me'] })
       void client.invalidateQueries({ queryKey: ['workspaces'] })
+    } else if (item.type === 'visibility.changed' || item.type === 'people.changed' || item.type === 'ticket.closed' || item.type === 'ticket.reopened') {
+      // Who may see a ticket (or whether it is listed) changed. Today's activity and a closed list carry titles and rows
+      // that were visible a moment ago: drop them, not only mark them stale, then read again as the new viewer.
+      const lists = { predicate: (q: Q) => q.queryKey[1] === ws && (q.queryKey[0] === 'today' || (q.queryKey[0] === 'tickets' && q.queryKey.includes('closed'))) }
+      void client.cancelQueries(lists); client.removeQueries(lists)
+      if (item.key) void client.invalidateQueries({ queryKey: ['ticket', ws, item.key] })
+      for (const name of ['tickets', 'board', 'today']) invalidate(name)
     } else if (item.key) {
-      void client.invalidateQueries({ queryKey: ['ticket', ws, item.key] }); invalidate('tickets'); invalidate('board')
+      void client.invalidateQueries({ queryKey: ['ticket', ws, item.key] }); invalidate('tickets'); invalidate('board'); invalidate('today')
     } else { void client.invalidateQueries(scoped) }
   }
 }

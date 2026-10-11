@@ -38,7 +38,7 @@ export function validateTicketsSearch(raw: Record<string, unknown>): TicketsSear
   const out: TicketsSearch = {
     repo: str(raw.repo),
     q: str(raw.q),
-    status: listOf(STATUSES, raw.status),
+    status: listOf([...STATUSES, 'closed'] as Status[], raw.status),
     type: str(raw.type),
     priority: listOf(PRIORITIES, raw.priority),
     person: str(raw.person),

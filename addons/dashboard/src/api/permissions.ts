@@ -1,4 +1,5 @@
 // Role permissions: the one table the mock host and the UI both read (part of the API contract).
+import { canAct } from './features'
 import type { Role, Workspace } from './types'
 
 export type Permission =
@@ -47,8 +48,12 @@ const MIN_ROLE: Record<Permission, Role> = {
 /** Does `role` rank at least `min`? No role (not a member) meets nothing. */
 export const atLeast = (role: Role | undefined, min: Role): boolean => !!role && RANK[role] >= RANK[min]
 
-/** May a person with `role` (undefined: not a member) do `permission`? */
-export const can = (role: Role | undefined, permission: Permission): boolean => atLeast(role, MIN_ROLE[permission])
+/**
+ * May a person with `role` (undefined: not a member) do `permission` now? Every permission is an action that signs or
+ * changes data, so on a dashboard whose host serves none yet (api/features.ts `canAct`) the answer is no for every role.
+ * `atLeast` answers the role question alone.
+ */
+export const can = (role: Role | undefined, permission: Permission): boolean => canAct() && atLeast(role, MIN_ROLE[permission])
 
 /** Owners revoke any grant; whoever may issue grants revokes their own. */
 export const canRevokeGrant = (role: Role | undefined, grantPerson: string, person: string): boolean =>

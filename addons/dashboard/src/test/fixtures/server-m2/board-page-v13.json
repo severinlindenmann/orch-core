@@ -1,0 +1,119 @@
+{
+ "as_of": "2026-10-11T09:00:00Z",
+ "next_page": null,
+ "rows": [
+  {
+   "addons": {},
+   "assignees": [],
+   "awaiting_gate": "requirements",
+   "blocking_questions": null,
+   "claim": null,
+   "epic": null,
+   "head_seq": 8,
+   "key": "DEMO-0001",
+   "labels": [
+    "api",
+    "ui"
+   ],
+   "open_questions": 1,
+   "owner": "p_user1",
+   "parent": null,
+   "priority": "high",
+   "progress": null,
+   "restricted": null,
+   "size": null,
+   "status": "open",
+   "title": "Real P1 ticket",
+   "turn": {
+    "who": "p_user1",
+    "why": "A question is waiting for your answer"
+   },
+   "type": "feature",
+   "uid": "UID1",
+   "updated_at": "2026-09-21T14:13:29Z"
+  },
+  {
+   "addons": {},
+   "assignees": [],
+   "awaiting_gate": null,
+   "blocking_questions": null,
+   "claim": null,
+   "epic": null,
+   "head_seq": 1,
+   "key": "DEMO-0004",
+   "labels": [],
+   "open_questions": 0,
+   "owner": "p_user1",
+   "parent": null,
+   "priority": "medium",
+   "progress": null,
+   "restricted": null,
+   "size": null,
+   "status": "open",
+   "title": "Third",
+   "turn": {
+    "who": "nobody",
+    "why": ""
+   },
+   "type": "feature",
+   "uid": "UID2",
+   "updated_at": "2026-09-21T14:13:23Z"
+  },
+  {
+   "addons": {},
+   "assignees": [],
+   "awaiting_gate": null,
+   "blocking_questions": null,
+   "claim": null,
+   "epic": null,
+   "head_seq": 1,
+   "key": "DEMO-0003",
+   "labels": [],
+   "open_questions": 0,
+   "owner": "p_user1",
+   "parent": null,
+   "priority": "medium",
+   "progress": null,
+   "restricted": null,
+   "size": null,
+   "status": "open",
+   "title": "Epic one",
+   "turn": {
+    "who": "nobody",
+    "why": ""
+   },
+   "type": "epic",
+   "uid": "UID3",
+   "updated_at": "2026-09-21T14:13:22Z"
+  },
+  {
+   "addons": {},
+   "assignees": [],
+   "awaiting_gate": null,
+   "blocking_questions": null,
+   "claim": null,
+   "epic": null,
+   "head_seq": 1,
+   "key": "DEMO-0002",
+   "labels": [],
+   "open_questions": 0,
+   "owner": "p_user1",
+   "parent": null,
+   "priority": "medium",
+   "progress": null,
+   "restricted": null,
+   "size": null,
+   "status": "open",
+   "title": "Second",
+   "turn": {
+    "who": "nobody",
+    "why": ""
+   },
+   "type": "bug",
+   "uid": "UID4",
+   "updated_at": "2026-09-21T14:13:21Z"
+  }
+ ],
+ "sub_cursor": "CURSOR",
+ "total": 4
+}

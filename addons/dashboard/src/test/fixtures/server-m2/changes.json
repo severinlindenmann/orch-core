@@ -1,0 +1,39 @@
+{
+ "additions": 2,
+ "base": "sha1",
+ "branch": "feat/one",
+ "deletions": 0,
+ "files": [
+  {
+   "additions": 1,
+   "binary": false,
+   "deletions": 0,
+   "lines": "@@ -1 +1,2 @@\n one\n+two",
+   "old_path": null,
+   "path": "a.txt",
+   "repo": "code",
+   "status": "M"
+  },
+  {
+   "additions": 1,
+   "binary": false,
+   "deletions": 0,
+   "lines": "@@ -0,0 +1 @@\n+new",
+   "old_path": null,
+   "path": "b.txt",
+   "repo": "code",
+   "status": "A"
+  }
+ ],
+ "head": "sha2",
+ "sources": [
+  {
+   "base": "sha1",
+   "branch": "feat/one",
+   "head": "sha2",
+   "repo": "code"
+  }
+ ],
+ "ticket": "DEMO-0001",
+ "truncated": false
+}

@@ -77,44 +77,49 @@ export function createApi(transport: Transport) {
     return s ? '?' + s : ''
   }
 
+  const listTickets = (workspaceId: string, p: ListTicketsParams = {}) =>
+    call<TicketSummary[]>(
+      'GET',
+      `/api/workspaces/${workspaceId}/tickets` +
+        qs({
+          status: Array.isArray(p.status) ? p.status.join(',') : p.status,
+          q: p.q,
+          type: p.type,
+          parent: p.parent,
+          priority: p.priority?.join(','),
+          label: p.label,
+          repo: p.repo,
+          person: p.person,
+          needs: p.needs,
+          sort: p.sort,
+          restricted: p.restricted === undefined ? undefined : String(p.restricted),
+        }),
+    )
+
   return {
+    listTickets,
     getMe: () => call<Me>('GET', '/api/me'),
     listPeople: (ws: string) => call<KnownPerson[]>('GET', `/api/workspaces/${ws}/people`),
     getWorkspaces: () => call<Workspace[]>('GET', '/api/workspaces'),
     getToday: (workspaceId: string) => call<TodayDocument>('GET', `/api/workspaces/${workspaceId}/today`),
     getCursor: (workspaceId: string) => call<{ cursor: number }>('GET', `/api/workspaces/${workspaceId}/cursor`),
-    listTickets: (workspaceId: string, p: ListTicketsParams = {}) =>
-      call<TicketSummary[]>(
-        'GET',
-        `/api/workspaces/${workspaceId}/tickets` +
-          qs({
-            status: Array.isArray(p.status) ? p.status.join(',') : p.status,
-            q: p.q,
-            type: p.type,
-            parent: p.parent,
-            priority: p.priority?.join(','),
-            label: p.label,
-            repo: p.repo,
-            person: p.person,
-            needs: p.needs,
-            sort: p.sort,
-            restricted: p.restricted === undefined ? undefined : String(p.restricted),
-          }),
-      ),
+    /** The board's own list: every ticket the board draws. The mock serves it as the plain list. */
+    listBoard: (workspaceId: string): Promise<TicketSummary[]> => listTickets(workspaceId),
     /** Removes a ticket you just created, while nothing else has happened to it (409 `ticket.undo_too_late`). */
     undoCreateTicket: (ws: string, key: string) => call<{ ok: true }>('POST', `/api/workspaces/${ws}/tickets/${key}/undo-create`),
     listViews: (ws: string) => call<SavedView[]>('GET', `/api/workspaces/${ws}/views`),
     saveView: (ws: string, v: { name: string; shared: boolean; params: ViewParams }) => call<SavedView>('POST', `/api/workspaces/${ws}/views`, v),
     deleteView: (ws: string, id: string) => call<{ ok: true }>('POST', `/api/workspaces/${ws}/views/${id}/delete`),
     createTicket: (ws: string, req: NewTicketRequest) => call<{ ok: true; ticket: TicketDocument }>('POST', `/api/workspaces/${ws}/tickets`, req),
-    getTicket: (key: string) => call<TicketDocument>('GET', `/api/tickets/${key}`),
-    getEvents: (key: string, since = 0) => call<OrchEvent[]>('GET', `/api/tickets/${key}/events${qs({ since: String(since) })}`),
+    /** `ws` is used by a real host (workspace UUID); the mock finds the ticket by key. */
+    getTicket: (key: string, _ws?: string) => call<TicketDocument>('GET', `/api/tickets/${key}`),
+    getEvents: (key: string, since = 0, _ws?: string) => call<OrchEvent[]>('GET', `/api/tickets/${key}/events${qs({ since: String(since) })}`),
     postAction: (key: string, action: ActionRequest) => call<ActionResult>('POST', `/api/tickets/${key}/actions`, action),
     /** Dry run of a code review policy: the tickets it would move back to testing or to done (owners). */
     previewCodeReview: (ws: string, req: { count: number; applies: CodeReviewApplies }) =>
       call<{ back: { keys: string[]; hidden: number }; done: { keys: string[]; hidden: number } }>('POST', `/api/workspaces/${ws}/code-review-preview`, req),
     /** Core's diff of the ticket branch against its base. */
-    getChanges: (key: string) => call<TicketChanges>('GET', `/api/tickets/${key}/changes`),
+    getChanges: (key: string, _ws?: string) => call<TicketChanges>('GET', `/api/tickets/${key}/changes`),
     /** Demo: the ticket's agent pushes a commit to its branch (a standing verdict is then void). */
     simulatePush: (key: string) => call<{ ok: true; sha: string; ticket: TicketDocument }>('POST', `/api/dev/tickets/${key}/push`),
     /** Every known addon package (global; no per-workspace state). */

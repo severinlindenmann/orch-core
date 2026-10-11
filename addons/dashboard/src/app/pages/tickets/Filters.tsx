@@ -54,6 +54,7 @@ export function Filters({
   onSearch,
   options,
   counts,
+  closedAvailable = false,
   qInput,
   onQInput,
   searchRef,
@@ -65,6 +66,8 @@ export function Filters({
   onSearch: (patch: Partial<TicketsSearch>) => void
   options: FilterOptions
   counts: Record<Status, number>
+  /** A real host lists closed tickets on request: the Closed chip. */
+  closedAvailable?: boolean
   qInput: string
   onQInput: (v: string) => void
   searchRef: React.Ref<HTMLInputElement>
@@ -113,7 +116,7 @@ export function Filters({
   )
   const statuses = (
     <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Status">
-      {STATUSES.map((s) => (
+      {(closedAvailable ? [...STATUSES, 'closed' as Status] : STATUSES).map((s) => (
         <button key={s} type="button" aria-pressed={!!search.status?.includes(s)} onClick={() => onSearch({ status: toggle(search.status, s) })} className={chip(!!search.status?.includes(s))}>
           {STATUS_LABEL[s]}
           <span className="font-mono text-[11px] opacity-80">{counts[s]}</span>

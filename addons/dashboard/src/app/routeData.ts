@@ -125,7 +125,7 @@ async function todayTickets(qc: QueryClient, ws: string, canAct: boolean): Promi
     ...decisions.flatMap((d) => (d.ticket ? [d.ticket] : [])),
     ...agents.flatMap((a) => a.claims.map((c) => c.ticket)),
   ])
-  return settle([...keys].map((k) => qc.ensureQueryData(queries.ticket(k))))
+  return settle([...keys].map((k) => qc.ensureQueryData(queries.ticket(ws, k))))
 }
 
 export const todayData = ({ qc, ws, pkgs, person, owner }: PageScope): Ensure[] => [
@@ -207,7 +207,7 @@ export const ticketData =
   ({ qc, ws: shown, list, pkgs }: PageScope): Ensure[] => {
     const ws = workspaceOfKey(key, list) ?? shown
     return [
-      qc.ensureQueryData(queries.ticket(key)),
+      qc.ensureQueryData(queries.ticket(ws.id, key)),
       // The ticket's addon panels (their count shows in the header's Panels button).
       ...pkgs
         .filter((a) => addonActive(ws, a.name) && (a.contributions as AddonContribution[]).some((c) => c.slot === 'ticket.panel' && bindsAddonState(c)))

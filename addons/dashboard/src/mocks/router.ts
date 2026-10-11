@@ -215,6 +215,7 @@ function postAction(store: MockStore, ctx: RouteContext): TransportResponse {
 }
 
 const PRIORITY_ORDER: Priority[] = ['urgent', 'high', 'medium', 'low']
+const rankOf = (p: Priority | null) => (p ? PRIORITY_ORDER.indexOf(p) : PRIORITY_ORDER.length) // no priority sorts last
 const BODY_ORDER: (keyof BodySections)[] = ['summary', 'context', 'requirements', 'out_of_scope', 'plan', 'decisions', 'verification', 'current_state']
 
 /** First body-section hit for `needle` (lower case), as a snippet of at most 140 characters with the hit in «». */
@@ -253,7 +254,7 @@ function searchTickets(s: MockStore, ws: string, query: URLSearchParams): Ticket
   const rows = s
     .listTickets(ws)
     .filter((t) => !statuses?.length || statuses.includes(t.status))
-    .filter((t) => !priorities?.length || priorities.includes(t.priority))
+    .filter((t) => !priorities?.length || t.priority !== null && priorities.includes(t.priority))
     .filter((t) => !type || t.type === type)
     .filter((t) => !parent || t.parent === parent)
     .filter((t) => !label || t.labels.includes(label))
@@ -271,7 +272,7 @@ function searchTickets(s: MockStore, ws: string, query: URLSearchParams): Ticket
   rows.sort((a, b) => {
     switch (sort) {
       case 'priority':
-        return PRIORITY_ORDER.indexOf(a.t.priority) - PRIORITY_ORDER.indexOf(b.t.priority) || byUpdated(a.t, b.t)
+        return rankOf(a.t.priority) - rankOf(b.t.priority) || byUpdated(a.t, b.t)
       case 'key':
         return a.t.key.localeCompare(b.t.key)
       case 'status':

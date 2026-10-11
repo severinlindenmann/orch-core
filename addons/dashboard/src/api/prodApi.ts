@@ -1,0 +1,196 @@
+// The production `api`: the same object the mockup's pages use, behind the fetch transport to the dashboard server
+// (design 7). Reads the server serves are mapped to the UI's types; what a read-only M2 host does not serve answers
+// neutrally (an empty list) where a page needs an answer to draw, and with `op.unsupported` everywhere else. Nothing
+// here imports the mock.
+import { clearSession, getToken } from './bootstrap'
+import { createFetchTransport } from './fetchTransport'
+import type { MandatesPreviewState } from './mandatesPreview'
+import type { Api, ListTicketsParams } from './apiFactory'
+import {
+  ApiError,
+  type ApiErrorBody,
+  type KnownPerson,
+  type Me,
+  type Member,
+  type Role,
+  type Status,
+  type TicketChanges,
+  type TicketDocument,
+  type TicketSummary,
+  type TodayDocument,
+  type Workspace,
+  type WorkspaceIdentity,
+  type OrchEvent,
+} from './types'
+
+interface ServerWorkspace {
+  id: string
+  prefix: string
+  name: string
+  members: Member[]
+  needs_you: number | null
+  host_state: string
+  features: string[]
+}
+interface ServerMe {
+  person: string
+  name: string
+  role: Role
+  tier: string
+  workspace: string
+}
+interface ServerPage {
+  rows: TicketSummary[]
+  next_page: string | null
+  total: number
+  sub_cursor: string | null
+}
+
+const ROLE_RANK: Record<Role, number> = { viewer: 0, member: 1, maintainer: 2, owner: 3 }
+/**
+ * Pages the board, Today and the Tickets list read at most. A page may hold fewer rows than asked (rows drop out between
+ * pages, a scan budget ends a page early): only `next_page` says whether more follow, never the size of a page.
+ */
+const MAX_PAGES = 25
+
+async function call<T>(path: string, method: 'GET' | 'POST' = 'GET'): Promise<T> {
+  const token = getToken()
+  const result = await createFetchTransport('', () => token).request(method, path)
+  if (result.status === 401) {
+    clearSession(true, token)
+    throw new ApiError(401, { code: 'session.required', message: 'Run orch dashboard in your terminal', retryable: false })
+  }
+  if (result.status >= 400) {
+    const body = result.json as ApiErrorBody | null
+    throw new ApiError(
+      result.status,
+      body?.error ?? { code: 'host.unavailable', message: 'Host not available', retryable: result.status >= 500 },
+      body?.exit,
+    )
+  }
+  return result.json as T
+}
+
+const unsupported = (what: string) =>
+  Promise.reject(new ApiError(501, { code: 'op.unsupported', message: `${what} is not available in the read-only dashboard yet.`, retryable: false }))
+
+const w = (ws: string) => `/api/w/${encodeURIComponent(ws)}`
+
+function ticketQuery(p: ListTicketsParams, page?: string): string {
+  const q = new URLSearchParams()
+  // `waiting` is derived, not a host status: asking for only that matches nothing.
+  const statuses = (Array.isArray(p.status) ? p.status : p.status ? [p.status] : []).filter((s) => s !== 'waiting')
+  for (const s of statuses) q.append('status', s)
+  if (p.q) q.set('q', p.q)
+  if (p.type) q.set('type', p.type)
+  if (p.parent) q.set('parent', p.parent)
+  if (p.label) q.set('label', p.label)
+  if (p.needs === 'me') q.set('needs_me', 'true')
+  if (p.sort === 'priority' || p.sort === 'key') q.set('sort', p.sort)
+  if (p.sort === 'key') q.set('order', 'asc')
+  q.set('limit', '200')
+  if (page) q.set('page', page)
+  return q.toString()
+}
+
+/** What the host cannot filter or sort: the rest of the mock's list parameters, applied to the rows read. */
+function narrow(rows: TicketSummary[], p: ListTicketsParams): TicketSummary[] {
+  let out = rows
+  if (p.priority?.length) out = out.filter((t) => t.priority !== null && p.priority!.includes(t.priority))
+  if (p.person) out = out.filter((t) => t.owner === p.person || t.assignees.includes(p.person!) || t.claim?.for === p.person)
+  if (p.needs === 'agent') out = out.filter((t) => t.turn.who.startsWith('agent:'))
+  if (p.needs === 'nobody') out = out.filter((t) => t.turn.who === 'nobody')
+  if (p.restricted !== undefined) out = out.filter((t) => t.restricted === p.restricted)
+  if (p.sort === 'status') {
+    const order: Status[] = ['backlog', 'open', 'in-progress', 'waiting', 'testing', 'done']
+    out = [...out].sort((a, b) => order.indexOf(a.status) - order.indexOf(b.status))
+  }
+  return out
+}
+
+async function listTickets(ws: string, p: ListTicketsParams = {}, route = 'tickets'): Promise<TicketSummary[]> {
+  // Only `waiting` asked for: a derived state the host has no status for, so nothing matches.
+  if (p.status && (Array.isArray(p.status) ? p.status : [p.status]).every((s) => s === 'waiting')) return []
+  const rows: TicketSummary[] = []
+  let page: string | undefined
+  for (let i = 0; i < MAX_PAGES; i++) {
+    const data = await call<ServerPage>(`${w(ws)}/${route}?${ticketQuery(p, page)}`)
+    rows.push(...data.rows)
+    if (!data.next_page) break
+    page = data.next_page
+  }
+  return narrow(rows, p)
+}
+
+/** Workspaces in the UI's shape. What the shell never fills for a read-only host (gates, addons, counts) stays empty. */
+function workspace(s: ServerWorkspace): Workspace {
+  return {
+    id: s.id,
+    prefix: s.prefix,
+    name: s.name,
+    members: s.members,
+    gates: {} as Workspace['gates'],
+    addons: {},
+    counts: {},
+    needs_you: s.needs_you ?? 0,
+  }
+}
+
+const listWorkspaces = async () => (await call<ServerWorkspace[]>('/api/workspaces')).filter((x) => x.host_state === 'ok').map(workspace)
+
+export async function logout() {
+  const result = await createFetchTransport('', getToken).request('POST', '/auth/logout')
+  if (result.status >= 400 && result.status !== 401) throw new Error('Logout failed; please try again')
+  clearSession()
+}
+
+export const session = () => call<{ features: string[]; workspaces: Record<string, string[]> }>('/api/session')
+
+const reads = {
+  getMe: async (): Promise<Me> => {
+    const all = await call<ServerMe[]>('/api/me')
+    const first = all[0]
+    if (!first) throw new ApiError(404, { code: 'not_found', message: 'No workspace is available', retryable: false })
+    // The highest role across workspaces, as the mock's `Me` says.
+    const role = all.reduce<Role>((best, m) => (ROLE_RANK[m.role] > ROLE_RANK[best] ? m.role : best), first.role)
+    return { person: first.person, name: first.name, role }
+  },
+  getWorkspaces: listWorkspaces,
+  listPeople: async (ws: string): Promise<KnownPerson[]> =>
+    ((await listWorkspaces()).find((x) => x.id === ws)?.members ?? []).map((m) => ({ person: m.person, name: m.name, email: '' })),
+  getToday: (ws: string) => call<TodayDocument>(`${w(ws)}/today`),
+  listTickets: (ws: string, p?: ListTicketsParams) => listTickets(ws, p),
+  listBoard: (ws: string) => listTickets(ws, {}, 'board'),
+  getTicket: (key: string, ws?: string) =>
+    ws ? call<TicketDocument>(`${w(ws)}/tickets/${encodeURIComponent(key)}`) : unsupported('Reading a ticket without its workspace'),
+  getEvents: (key: string, since = 0, ws?: string) =>
+    ws ? call<OrchEvent[]>(`${w(ws)}/tickets/${encodeURIComponent(key)}/events?since=${since}`) : unsupported('The log without its workspace'),
+  getChanges: (key: string, ws?: string) =>
+    ws ? call<TicketChanges>(`${w(ws)}/tickets/${encodeURIComponent(key)}/changes`) : unsupported('Changes without their workspace'),
+  getIdentity: (ws: string) => call<WorkspaceIdentity>(`${w(ws)}/identity`),
+}
+
+/** Reads a page needs an answer to even when the host has nothing to say yet: an empty list, never a made-up one. */
+const empty = {
+  getAddons: async () => [],
+  getWorkspaceAddons: async () => [],
+  getAddonCatalog: async () => [],
+  getAddonDecisions: async () => [],
+  getAgents: async () => [],
+  getAgentActivity: async () => [],
+  listGrants: async () => [],
+  getConnections: async () => [],
+  getSkills: async () => [],
+  getTicketRefusals: async () => [],
+  listViews: async () => [],
+  getDataset: async () => ({ dataset: 'normal' as const }),
+  // Mandates are a mock-only preview: off, so no page waits for them.
+  getLocalMandatesPreview: (): MandatesPreviewState => ({ preview: true, on: false, preflight: [], orchestrators: [], may: [], always_human: [], protected_paths: [], mandate: null }),
+}
+
+const implemented: Record<string, unknown> = { ...reads, ...empty }
+
+/** Every other method of the mock's api refuses plainly: a control that reaches one is a bug, not a silent no-op. */
+export const api = new Proxy(implemented, {
+  get: (target, name) => (typeof name === 'symbol' || name === 'then' ? undefined : (target[name] ?? ((..._args: unknown[]) => unsupported(name)))),
+}) as unknown as Api

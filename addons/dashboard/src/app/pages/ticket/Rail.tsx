@@ -1,5 +1,4 @@
 import { useId, useState } from 'react'
-import { Link } from '@tanstack/react-router'
 import { CalendarClock, ExternalLink, GitBranch, GitPullRequest, PanelRight } from 'lucide-react'
 import type { TicketDocument } from '@/api/types'
 import { addonActive } from '@/api/addons'
@@ -9,7 +8,7 @@ import { useWorkspace } from '@/app/workspace'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
 import { NeedsValue } from './Needs'
-import { ago, fmtExact, PersonChip, PriorityLabel, Section, type Viewer } from './shared'
+import { ago, fmtExact, KeyRef, PersonChip, PriorityLabel, Section, useIsVisibleKey, type Viewer } from './shared'
 
 const isHttp = (u: string) => /^https?:\/\//i.test(u)
 
@@ -76,6 +75,7 @@ export function useSizeMeasure(ticket: TicketDocument): { label: 'Size' | 'Point
 /** Size or points, due, blockers, people and times: the ticket's properties (head seq and hash live in Raw). */
 function Details({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewer }) {
   const measure = useSizeMeasure(ticket)
+  const isVisible = useIsVisibleKey()
   const row = (label: string, value: React.ReactNode) => (
     <div className="flex items-baseline gap-2 py-1 text-[13px]">
       <dt className="w-24 shrink-0 text-text-muted">{label}</dt>
@@ -114,9 +114,7 @@ function Details({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewer })
             'Blocked by',
             <span className="flex flex-wrap gap-1.5">
               {ticket.blocked_by.map((k) => (
-                <Link key={k} to="/ticket/$key" params={{ key: k }} className="font-mono text-[12px] text-brand hover:underline">
-                  {k}
-                </Link>
+                <KeyRef key={k} k={k} visible={isVisible(k)} />
               ))}
             </span>,
           )}

@@ -316,9 +316,7 @@ class ControlOps:
         def run() -> dict[str, Any]:
             if self.host.registry.get(workspace_id) is None:
                 raise HostError("not_found", f"workspace {workspace_id} is not registered")
-            # TODO(H4a1): drain this workspace's requests first, as host.restart does; today a write already on
-            # the worker thread finishes but its answer is lost (outcome.get recovers it once H2b lands).
-            self.host.unserve_from_thread(workspace_id)
+            self.host.unserve_from_thread(workspace_id)  # drains first: a write in flight finishes and is answered
             self.host.registry.remove(workspace_id)
             return self.intents.complete(intent, ok_result({}))["result"]
 

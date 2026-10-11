@@ -831,3 +831,100 @@ def test_job_sweep_survives_a_concurrent_removal(jobs, monkeypatch):
 
     monkeypatch.setattr("orch.host.jobs.os.unlink", gone)
     store.sweep()  # no exception
+
+
+# --- deferred plans (H4a1): begin(deferred), plan(), execute(planned=None, before=, redactor=) ------------------------
+
+
+def reopen(tmp_path, log, now):
+    """The same records read by a fresh process (a crash: nothing is running any more)."""
+    store = OutcomeStore(tmp_path / "state", WS, UID, clock=lambda: now[0], reconciler=log)
+    store.open()
+    return store
+
+
+def test_a_deferred_record_with_nothing_planned_is_removed_by_reconciliation(env, tmp_path):
+    store, log, now = env
+    intent = store.begin(P, IDEM, "new", {"title": "x"}, planned=(), deferred=True)
+    assert intent.record["planned"] == []
+    again = reopen(tmp_path, log, now)
+    assert again.reconcile_all() == [("new", "removed")]  # nothing planned: nothing can have landed
+    assert again.read(intent.key) is None
+
+
+def test_a_crash_between_plan_and_append_removes_the_record_and_after_the_append_commits(env, tmp_path):
+    store, log, now = env
+    a = store.begin(P, IDEM, "new", {"title": "x"}, planned=(), deferred=True)
+    store.plan(a, [pl("L", "e1"), pl("L", "e2")], "DEMO-0001")
+    assert [p["id"] for p in store.read(a.key)["planned"]] == ["e1", "e2"]  # durable before any append
+    b = store.begin(P, IDEM2, "new", {"title": "y"}, planned=(), deferred=True)
+    store.plan(b, [pl("M", "f1")])
+    log.land("M", "f1", seq=3)
+    again = reopen(tmp_path, log, now)
+    assert sorted(again.reconcile_all()) == [("new", "committed"), ("new", "removed")]
+    assert again.read(a.key) is None  # planned, never appended: the retry runs again
+    assert again.read(b.key)["step"] == "committed"
+
+
+def test_a_crash_after_the_first_of_two_batches_is_partial(env, tmp_path):
+    store, log, now = env
+    a = store.begin(P, IDEM, "apply", {}, planned=(), deferred=True)
+    store.plan(a, [pl("L", "e1")])
+    log.land("L", "e1")
+    store.plan(a, [pl("L", "e2")])  # the second batch was announced but did not land
+    again = reopen(tmp_path, log, now)
+    assert again.reconcile_all() == [("apply", "partial")]
+
+
+def test_plan_dedups_by_id_and_refuses_a_record_that_no_longer_runs(env):
+    store, log, now = env
+    a = store.begin(P, IDEM, "new", {"title": "x"}, planned=(), deferred=True)
+    store.plan(a, [pl("L", "e1")])
+    store.plan(a, [pl("L", "e1"), pl("L", "e2")], "DEMO-0002")
+    record = store.read(a.key)
+    assert [p["id"] for p in record["planned"]] == ["e1", "e2"] and record["key"] == "DEMO-0002"
+    store.release(a)
+    with pytest.raises(HostError) as e:
+        store.plan(a, [pl("L", "e3")])
+    assert e.value.code == "internal"
+
+
+def test_execute_before_raising_removes_the_record_so_the_idem_runs_again(env):
+    store, log, now = env
+    ran = []
+
+    def refuse():
+        raise HostError("workspace.degraded", "read-only")
+
+    with pytest.raises(HostError) as e:
+        store.execute(P, IDEM, "new", {"title": "x"}, lambda i: ran.append(1), planned=None, before=refuse)
+    assert e.value.code == "workspace.degraded" and ran == []
+    assert store.read(store.key(WS, P, IDEM)) is None
+
+    def apply(intent):
+        store.plan(intent, [pl("L", "e9")])
+        log.land("L", "e9", seq=4)
+        return ok_result({"done": True}, seq=4)
+
+    assert store.execute(P, IDEM, "new", {"title": "x"}, apply, planned=None)["data"] == {"done": True}
+
+
+def test_execute_redacts_a_refusal_before_it_is_stored(env):
+    store, log, now = env
+
+    class Redact:
+        @staticmethod
+        def error(e):
+            return HostError(e.code, e.message.replace("SECRET", "[redacted]"))
+
+        @staticmethod
+        def obj(v):
+            return json.loads(json.dumps(v).replace("SECRET", "[redacted]"))
+
+    def apply(intent):
+        raise HostError("invalid.input", "has SECRET in it")
+
+    with pytest.raises(HostError) as e:
+        store.execute(P, IDEM, "new", {"title": "x"}, apply, planned=None, redactor=Redact)
+    assert "SECRET" not in e.value.message
+    assert "SECRET" not in json.dumps(store.read(store.key(WS, P, IDEM)))

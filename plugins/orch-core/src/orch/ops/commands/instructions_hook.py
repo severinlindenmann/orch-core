@@ -33,10 +33,17 @@ def _ids(e: dict[str, Any], key: str) -> str:
     return " ".join(bits)
 
 
+def _pinned(ws: Any, ctx: Context) -> bool:
+    from orch.ops.runtime import _config
+
+    cfg = _config(ws.root, ctx.caps.files) or {}
+    wid = cfg.get("workspace", {}).get("id", "")
+    return (ws.state_dir / "hosts" / wid / "genesis").is_file()
+
+
 def handle(ctx: Context, args: dict[str, Any]) -> Result:
     from orch.instructions import pre_compact_lines, session_start_lines, stale_findings
     from orch.ops.commands import status
-    from orch.ops.runtime import _config
 
     event = args["event"]
     ws = ctx.workspace or Workspace(ctx.env, ctx.now, files=ctx.caps.files)
@@ -44,9 +51,10 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         return _silent(event)
     # A hook never pins a genesis (no trust on first use from a hook that runs in every cloned repository): it reads
     # only a workspace this machine has pinned, on purpose, by `orch status` or `orch init`.
-    cfg = _config(ws.root, ctx.caps.files) or {}
-    wid = cfg.get("workspace", {}).get("id", "")
-    if not (ws.state_dir / "hosts" / wid / "genesis").is_file():
+    # Host mode: the host serves only a workspace whose genesis it pinned at registration, and gives the handler no
+    # state directory and no config.json read.
+    pinned = ctx.hosted or _pinned(ws, ctx)
+    if not pinned:
         return _split(event, [f"ok {event} not initialised on this machine (no genesis pin)", "next: orch status"])
     try:
         st = status.handle(ctx, {})

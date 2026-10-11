@@ -5,7 +5,7 @@ from typing import Any
 from orch.ops._dsl import INT, STR, B, arr, err, obj, operation
 from orch.ops.base import Context, Result
 from orch.ops.errors import OrchError
-from orch.ops.runtime import Workspace, _config
+from orch.ops.runtime import Call, Workspace, _config
 
 _SHOWN = 20
 
@@ -16,11 +16,22 @@ def _handle(ctx: Context, args: dict[str, Any]) -> Result:
 
     ws = ctx.workspace or Workspace(ctx.env, ctx.now, files=ctx.caps.files)
     root = ws.require_root()
+    lines: list[str] = []
+    if ctx.hosted:
+        # Host mode (H4a1): the host's own store, the viewer's filter, no second store, no config.json, no state
+        # directory. --repair is refused by the host before this runs (a control action, not a workspace op).
+        if args.get("repair"):
+            raise OrchError("internal", "doctor --repair is not served by the host")
+        c = Call.of(ctx, "doctor")
+        found, _ = health.inspect(
+            root, c.store.workspace_id, None, fast=False, instructions=stale_findings(root), caps=ctx.caps,
+            store=c.store, sees=c.sees,
+        )  # fmt: skip
+        return _result(found, lines)
     cfg = _config(root, ctx.caps.files)
     if cfg is None:
         raise OrchError("not_found", "config.json of the workspace is missing or unreadable", hint="orch init")
     wid = cfg["workspace"]["id"]
-    lines: list[str] = []
 
     def run() -> list[health.Finding]:
         found, store = health.inspect(
@@ -35,6 +46,10 @@ def _handle(ctx: Context, args: dict[str, Any]) -> Result:
         did = health.repair(root, wid, ctx.env, findings, ctx.now, ctx.caps)
         lines += [f"repaired: {d}" for d in did]
         findings = run()
+    return _result(findings, lines)
+
+
+def _result(findings: list[Any], lines: list[str]) -> Result:
     errors = [f for f in findings if f.level == "error"]
     shown = sorted(findings, key=lambda f: f.level != "error")[:_SHOWN]
     lines += [f"{f.level} {f.where}: {f.code}: {f.what}" for f in shown]

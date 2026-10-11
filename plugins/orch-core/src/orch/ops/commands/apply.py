@@ -35,11 +35,15 @@ def _items(c: Call, args: dict[str, Any]) -> tuple[str | None, list[dict[str, An
     return ref, doc["ops"]
 
 
-def _check(item: Any, i: int, table: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+def _check(
+    item: Any, i: int, table: dict[str, Any], unserved: frozenset[str] = frozenset()
+) -> tuple[str, dict[str, Any]]:
     """One item as ``(operation name, arguments)``, validated against that operation's own input schema."""
     if not isinstance(item, dict) or not isinstance(item.get("op"), str):
         raise OrchError("invalid.input", f'item {i}: an object with an "op"')
     name = item["op"]
+    if name in unserved:  # host mode: an op the host does not serve is not reachable through a batch either
+        raise OrchError("invalid.input", f"item {i}: {name} is not served by the host")
     if name not in table:
         raise OrchError("invalid.input", f"item {i}: {flat(name)[:40]!r} is not a batch operation")
     args = {k: v for k, v in item.items() if k != "op"}
@@ -63,7 +67,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     c = Call.of(ctx, "apply")
     ref, items = _items(c, args)
     table = plans.batch_ops()
-    checked = [_check(item, i, table) for i, item in enumerate(items, 1)]
+    checked = [_check(item, i, table, ctx.unserved) for i, item in enumerate(items, 1)]
     for name, _ in checked:
         c.check_verb(name)  # a grant that lists operations must list every operation the batch runs
     with c.locked():

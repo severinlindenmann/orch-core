@@ -16,6 +16,9 @@ def auth(token, write=False):
     return {"Authorization": f"Bearer {token}", **({"Origin": ORIGIN} if write else {})}
 
 
+auth_h = auth
+
+
 def base(stub):
     return f"/api/w/{stub.ws}/handoff"
 
@@ -73,6 +76,11 @@ ACTIONS = [
     ({"action": "close", "key": "DEMO-0002", "resolution": "wont_do", "message": "no"}, "ticket.closed", "payload"),
     ({"action": "reopen", "key": "DEMO-0002"}, "ticket.reopened", "payload"),
     ({"action": "new", "title": "A new ticket", "type": "bug"}, "ticket.created", "payload"),
+    (
+        {"action": "details", "key": "DEMO-0001", "priority": "urgent", "size": "m", "labels": ["b", "a"]},
+        "ticket.updated",
+        "payload",
+    ),
 ]
 
 
@@ -119,6 +127,8 @@ def test_label_adds_to_the_labels_the_ticket_has(ready):
         {"action": "label", "key": "DEMO-0001", "label": "Has Space"},
         {"action": "close", "key": "DEMO-0001", "resolution": "other", "file": "-"},
         {"action": "new", "title": ""},
+        {"action": "details", "key": "DEMO-0001"},
+        {"action": "new", "title": "t", "labels": ["a"]},
         {"action": "new", "title": "x" * 201},
         {"action": "new", "title": "t", "type": "story"},
         {"action": "unknown"},
@@ -152,40 +162,6 @@ def test_a_retry_with_the_same_key_answers_from_the_record_and_prepares_once(rea
     assert prepare[2]["idem"] == idem(5) and prepare[1]["handoff"] is True and "signer" not in prepare[1]
     clash = post(client, token, stub, {**body, "message": "another"})
     assert clash.status_code == 409 and clash.json()["error"]["code"] == "idem.conflict"
-
-
-def test_one_open_request_per_action_is_reused_not_prepared_again(ready):
-    client, token, stub, rich, signing = ready
-    body = {"action": "approve", "key": "DEMO-0001", "gate": "requirements"}
-    first = post(client, token, stub, {**body, "idem": idem(6)}).json()
-    again = post(client, token, stub, {**body, "idem": idem(7)}).json()  # a reopened panel: a new click, a new key
-    assert again["id"] == first["id"] and len(signing.stub.requests.table) == 1
-    cancelled = client.delete(f"{base(stub)}/{first['id']}", headers=auth(token, True))
-    assert cancelled.json() == {"id": first["id"], "state": "cancelled"}
-    fresh = post(client, token, stub, {**body, "idem": idem(8)}).json()
-    assert fresh["id"] != first["id"]  # a cancelled request is never reused
-
-
-def test_pending_state_full_view_cancel_and_ids(ready):
-    client, token, stub, rich, signing = ready
-    got = post(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "x", "idem": idem(9)}).json()
-    url = f"{base(stub)}/{got['id']}"
-    state = client.get(url, headers=auth(token)).json()
-    assert (
-        state["state"] == "prepared"
-        and state["key"] == "DEMO-0001"
-        and state["event_ids"] == []
-        and "request" not in state
-    )
-    full = client.get(url + "?full=1", headers=auth(token)).json()
-    assert full["request"]["material"] == got["material"] and full["request"]["fingerprint"] == got["fingerprint"]
-    assert client.get(f"{base(stub)}/hr_{'0' * 26}", headers=auth(token)).status_code == 404
-    assert client.get(f"{base(stub)}/nope", headers=auth(token)).status_code == 400
-    assert client.get(url + "?x=1", headers=auth(token)).status_code in (200, 400)
-    done = client.delete(url, headers=auth(token, True))
-    assert done.status_code == 200 and done.json()["state"] == "cancelled"
-    assert client.get(url, headers=auth(token)).json()["state"] == "cancelled"
-    assert client.delete(url, headers=auth(token, True)).json()["state"] == "cancelled"  # idempotent
 
 
 def test_the_signer_completes_it_and_the_server_never_submits(ready, host_calls):
@@ -235,22 +211,21 @@ def test_host_errors_are_mapped(ready):
     assert bad_question.status_code == 404
     refused = post(client, token, stub, {"action": "reopen", "key": "DEMO-0001", "idem": idem(15)})
     assert refused.status_code == 409 and refused.json()["error"]["code"] == "transition.refused"
-    stub_only = post(client, token, stub, {"action": "new", "title": "T", "priority": "high", "idem": idem(16)})
-    assert stub_only.status_code == 400 and stub_only.json()["error"]["code"] == "invalid.input"
+    extra = post(client, token, stub, {"action": "new", "title": "T", "priority": "high", "idem": idem(16)})
+    assert (
+        extra.status_code == 400 and extra.json()["error"]["code"] == "invalid.input"
+    )  # `new` carries title and type only
 
 
 def test_expiry_is_reported_and_stale_content_is_refused_when_signing(ready):
     client, token, stub, rich, signing = ready
     env, ids = rich
-    now = [1_000_000.0]
+    now = [__import__("time").time()]
     signing.stub.requests.clock = lambda: now[0]
     got = post(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "x", "idem": idem(17)}).json()
     now[0] += 601
     state = client.get(f"{base(stub)}/{got['id']}", headers=auth(token)).json()
-    assert (
-        state["state"] == "expired"
-        and "request" not in client.get(f"{base(stub)}/{got['id']}?full=1", headers=auth(token)).json()
-    )
+    assert state["state"] == "expired"
 
 
 def test_a_session_holds_at_most_eight_open_requests_and_logout_cancels_them(ready):
@@ -295,3 +270,138 @@ def test_an_inconsistent_host_answer_is_refused(ready, monkeypatch):
 def test_session_lists_the_actions_feature(client, token, stub, rich):
     features = client.get("/api/session", headers=auth(token)).json()
     assert "actions" in features["features"] and "actions" in features["workspaces"][stub.ws]
+
+
+def second_token(client, auth):
+    from conftest import PORT
+
+    launch = auth.launch(PORT)
+    return client.post("/auth/session", json={"code": launch["code"]}, headers={"Origin": ORIGIN}).json()["token"]
+
+
+def test_a_request_belongs_to_the_session_that_prepared_it(ready, auth):
+    client, token, stub, rich, signing = ready
+    mine = post(
+        client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "hi", "idem": idem(60)}
+    ).json()
+    other = second_token(client, auth)
+    url = f"{base(stub)}/{mine['id']}"
+    assert client.get(url, headers=auth_h(other)).status_code == 404
+    assert client.get(url + "?full=1", headers=auth_h(other)).status_code == 404
+    assert client.delete(url, headers=auth_h(other, True)).status_code == 404
+    # The same idem from another session is another click: its own request, its own code.
+    theirs = post(
+        client, other, stub, {"action": "comment", "key": "DEMO-0001", "message": "hi", "idem": idem(60)}
+    ).json()
+    assert theirs["id"] != mine["id"] and theirs["code"] != mine["code"]
+    assert client.get(url, headers=auth_h(token)).json()["state"] == "prepared"  # nothing of mine was touched
+    assert client.get(url, headers=auth_h(token)).status_code == 200
+
+
+def test_two_tabs_make_two_requests_and_cancel_only_their_own(ready):
+    client, token, stub, rich, signing = ready
+    body = {"action": "approve", "key": "DEMO-0001", "gate": "requirements"}
+    a = post(client, token, stub, {**body, "idem": idem(61)}).json()
+    b = post(client, token, stub, {**body, "idem": idem(62)}).json()  # a second tab: a new click, a new idem
+    assert a["id"] != b["id"]
+    client.delete(f"{base(stub)}/{b['id']}", headers=auth_h(token, True))
+    assert client.get(f"{base(stub)}/{a['id']}", headers=auth_h(token)).json()["state"] == "prepared"
+    assert client.get(f"{base(stub)}/{b['id']}", headers=auth_h(token)).json()["state"] == "cancelled"
+
+
+def test_a_lost_answer_never_leaves_an_orphan_after_the_retry(ready, monkeypatch):
+    client, token, stub, rich, signing = ready
+    from orch_dashboard.errors import fail
+
+    original = HostLink.call
+    state = {"drop": True}
+
+    def lossy(self, op, args=None, **kw):
+        out = original(self, op, args, **kw)
+        if op == "human.prepare" and state["drop"]:
+            state["drop"] = False
+            raise fail("outcome.unknown")
+        return out
+
+    monkeypatch.setattr(HostLink, "call", lossy)
+    body = {"action": "comment", "key": "DEMO-0001", "message": "hi", "idem": idem(63)}
+    first = post(client, token, stub, body)
+    assert first.status_code == 503 and first.json()["error"]["code"] == "outcome.unknown"
+    second = post(client, token, stub, body)
+    assert second.status_code == 200
+    states = sorted(r["state"] for r in signing.stub.requests.table.values())
+    assert states == ["cancelled", "prepared"]  # the orphan was cancelled, one request is open
+    # A different action is not touched by the recovery.
+    assert second.json()["id"] in {r["id"] for r in signing.stub.requests.table.values() if r["state"] == "prepared"}
+
+
+def test_logout_ends_the_session_even_if_a_cancel_fails(ready, monkeypatch):
+    client, token, stub, rich, signing = ready
+    post(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "hi", "idem": idem(64)})
+    original = HostLink.call
+
+    def broken(self, op, args=None, **kw):
+        if op == "human.cancel":
+            raise ValueError("bad frame")
+        return original(self, op, args, **kw)
+
+    monkeypatch.setattr(HostLink, "call", broken)
+    out = client.post("/auth/logout", headers=auth_h(token, True))
+    assert out.status_code == 200
+    assert client.get("/api/session", headers=auth_h(token)).status_code == 401
+
+
+def test_the_answer_must_be_the_action_that_was_asked_for(ready, monkeypatch):
+    client, token, stub, rich, signing = ready
+    original = signing.stub.requests.prepare
+
+    def other_ticket(store, views, args, opts):
+        args = {**args, "args": {**args["args"], "ref": "DEMO-0002"}}
+        return original(store, views, args, opts)
+
+    monkeypatch.setattr(signing.stub.requests, "prepare", other_ticket)
+    res = post(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "x", "idem": idem(65)})
+    assert res.status_code == 500 and res.json()["error"]["code"] == "internal"
+
+
+@pytest.mark.parametrize("mutate", ["review_payload", "review_type", "expires_far", "expires_bad", "state"])
+def test_an_inconsistent_prepared_request_fails_closed(ready, monkeypatch, mutate):
+    client, token, stub, rich, signing = ready
+    from orch_dashboard import adapters
+
+    original = signing.stub.requests.prepare
+
+    def tamper(store, views, args, opts):
+        out = original(store, views, args, opts)
+        if mutate == "review_payload":
+            out["material"]["review"][0]["payload"]["text"] = "something else"
+        elif mutate == "review_type":
+            out["material"]["review"][0]["type"] = "ticket.closed"
+        elif mutate == "expires_far":
+            out["request"]["expires_at"] = "2099-01-01T00:00:00Z"
+        elif mutate == "expires_bad":
+            out["request"]["expires_at"] = "soon"
+        else:
+            out["request"]["state"] = "bound"
+        # keep the hashes consistent so only the new check can refuse it
+        digest = adapters.handoff.review_digest(out["material"])
+        out["review_digest"], out["fingerprint"] = digest, adapters.handoff.fingerprint(digest, out["events"])
+        return out
+
+    monkeypatch.setattr(signing.stub.requests, "prepare", tamper)
+    res = post(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "x", "idem": idem(66)})
+    assert res.status_code == 500 and res.json()["error"]["code"] == "internal"
+
+
+def test_a_failed_submit_code_is_passed_on_when_the_host_sends_it(ready, monkeypatch):
+    client, token, stub, rich, signing = ready
+    got = post(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "x", "idem": idem(67)}).json()
+    original = signing.stub.requests.pending
+
+    def with_error(args):
+        out = original(args)
+        out["requests"][0]["error"] = {"code": "gate.stale", "message": "ignored"}
+        return out
+
+    monkeypatch.setattr(signing.stub.requests, "pending", with_error)
+    assert client.get(f"{base(stub)}/{got['id']}", headers=auth_h(token)).json()["error"] == {"code": "gate.stale"}

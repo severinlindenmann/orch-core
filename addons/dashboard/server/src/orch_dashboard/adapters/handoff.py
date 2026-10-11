@@ -8,6 +8,8 @@ them once more. The preview is only ever `material`; nothing here reads a cached
 import hashlib
 import json
 import re
+import time
+from datetime import UTC, datetime
 
 from ..errors import fail
 
@@ -16,6 +18,9 @@ CODE = re.compile(r"^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$")
 FINGERPRINT = re.compile(r"^[0-9a-f]{12}$")
 HASH = re.compile(r"^sha256:[0-9a-f]{64}$")
 STATES = ("prepared", "bound", "submitted", "cancelled", "expired")
+ENVELOPE = ("v", "id", "type", "actor", "auth", "hash_v", "roster_v", "based_on", "gate_gen", "sig")
+TIME = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
+MAX_LIFE = 900  # the host lets a request live 10 minutes; anything much longer is not a request of this host
 GATE_EVENTS = ("gate.approved", "gate.changes_requested", "verdict.given")
 
 
@@ -45,10 +50,46 @@ def inconsistent():
     return fail("internal", "The host's sign request does not match its own hashes.", exit=1)
 
 
-def request(prepared: dict, ws: str) -> dict:
-    """A `Prepared` as the dashboard's `HandoffRequest`. Raises `internal` if the host's hashes do not recompute."""
+def expires_ok(value) -> bool:
+    if not isinstance(value, str) or not TIME.fullmatch(value):
+        return False
+    end = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC).timestamp()
+    return time.time() - 60 < end < time.time() + MAX_LIFE
+
+
+def review_matches(material: dict, events: list) -> bool:
+    """Each review block describes exactly its event: same id and type, and payload = event minus envelope."""
+    reviews = material.get("review")
+    if not isinstance(reviews, list) or len(reviews) != len(events):
+        return False
+    for block, event in zip(reviews, events, strict=True):
+        payload = {k: v for k, v in event.items() if k not in ENVELOPE}
+        if (
+            block.get("event_id") != event.get("id")
+            or block.get("type") != event.get("type")
+            or block.get("payload") != payload
+        ):
+            return False
+    return True
+
+
+def request(prepared: dict, ws: str, expect_op: str | None = None, expect_key: str | None = None) -> dict:
+    """A `Prepared` as the dashboard's `HandoffRequest`. Raises `internal` if the host's answer is not the request that
+    was asked for, or its hashes or its review do not recompute (fail closed)."""
     try:
         info, material, events = prepared["request"], prepared["material"], prepared["events"]
+        if (
+            (expect_op is not None and prepared["op"] != expect_op)
+            or (expect_key is not None and (material.get("ticket") or {}).get("key") != expect_key)
+            or not isinstance(info, dict)
+            or info["state"] != "prepared"
+            or not expires_ok(info["expires_at"])
+            or not isinstance(events, list)
+            or not all(isinstance(e, dict) for e in events)
+            or not isinstance(material, dict)
+            or not review_matches(material, events)
+        ):
+            raise inconsistent()
         if (
             not isinstance(info, dict)
             or not REQUEST_ID.fullmatch(info["id"])
@@ -80,7 +121,7 @@ def request(prepared: dict, ws: str) -> dict:
             "events": events,
             "origin": prepared.get("origin"),
         }
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError, AttributeError):
         raise inconsistent() from None
 
 
@@ -94,4 +135,8 @@ def state(row: dict) -> dict:
         "expires_at": row["expires_at"],
         "event_ids": list(row.get("event_ids") or []),
         "seq": row.get("seq"),
+        # v1.5, optional: why a signer's submit failed (a catalog code); absent is not an error.
+        "error": {"code": row["error"]["code"]}
+        if isinstance(row.get("error"), dict) and re.fullmatch(r"[a-z_]+(\.[a-z_]+)*", str(row["error"].get("code")))
+        else None,
     }

@@ -67,8 +67,10 @@ def create_app(port: int, gateway=None, auth=None, static=None):
 
     @app.post("/auth/logout")
     def logout(request: Request):
-        app.state.cancel_session(request.state.token)  # an open sign request is cancelled with its session
-        auth.logout(request.state.token)
+        try:
+            app.state.cancel_session(request.state.token)  # an open sign request is cancelled with its session
+        finally:
+            auth.logout(request.state.token)  # the session ends even if a cancel failed
         return {"ok": True}
 
     @app.get("/api/events")

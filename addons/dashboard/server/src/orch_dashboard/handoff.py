@@ -13,9 +13,10 @@ import hashlib
 import threading
 import time
 from collections import OrderedDict
+from datetime import UTC, datetime
 from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI, Query, Request
+from fastapi import Depends, FastAPI, Request
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from . import adapters
@@ -109,18 +110,31 @@ class Reopen(Action):
 
 
 class NewTicket(Action):
+    """A person's `new` carries the key, type, title and owner only (stream A, 11 Oct); the rest is `Details`."""
+
     action: Literal["new"]
     title: Annotated[str, StringConstraints(min_length=1, max_length=200)]
     type: Literal["feature", "bug", "chore", "spike", "epic"] = "feature"
+
+
+class Details(Action):
+    """The follow-up hand-off after `new`: priority, size and labels as one signed change of the ticket."""
+
+    action: Literal["details"]
+    key: Key
     priority: Literal["low", "medium", "high", "urgent"] | None = None
     size: Literal["xs", "s", "m", "l", "xl"] | None = None
     labels: list[Label] | None = Field(default=None, min_length=1, max_length=16)
-    parent: Key | None = None
-    message: Text | None = None
+
+    @model_validator(mode="after")
+    def something(self):
+        if self.priority is None and self.size is None and self.labels is None:
+            raise ValueError("details change at least one field")
+        return self
 
 
 PrepareBody = Annotated[
-    Approve | RequestChanges | Verdict | Answer | Comment | AddLabel | Close | Reopen | NewTicket,
+    Approve | RequestChanges | Verdict | Answer | Comment | AddLabel | Close | Reopen | NewTicket | Details,
     Field(discriminator="action"),
 ]
 
@@ -151,49 +165,48 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
         case Reopen():
             return "reopen", {"ref": action.key} | ({"message": action.message} if action.message else {})
         case NewTicket():
-            args = {"title": action.title, "type": action.type}
-            args |= {"priority": action.priority} if action.priority else {}
-            args |= {"size": action.size} if action.size else {}
-            args |= {"label": action.labels} if action.labels else {}
-            args |= {"parent": action.parent} if action.parent else {}
-            return "new", args | ({"message": action.message} if action.message else {})
+            return "new", {"title": action.title, "type": action.type}
+        case Details():
+            pairs = [f"{k}={v}" for k, v in (("priority", action.priority), ("size", action.size)) if v]
+            if action.labels:
+                pairs.append("labels=" + ",".join(sorted(set(action.labels))))
+            return "set", {"ref": action.key, "pairs": pairs}
     raise AssertionError("closed allowlist")  # pragma: no cover
 
 
 class Handoffs:
-    """What this process remembers: idem records, the open request per action, and each session's open requests."""
+    """What this process remembers, **per session token**: the requests it prepared (kept to their expiry so a late poll
+    still works), the ones still open (the quota), and the idem records of its own clicks."""
 
     def __init__(self, clock=time.monotonic):
         self.clock = clock
         self.lock = threading.Lock()
-        self.by_idem: OrderedDict[tuple[str, str], tuple[str, dict]] = OrderedDict()
-        self.by_action: dict[tuple[str, str, str], dict] = {}
-        self.open: dict[str, dict[str, tuple[str, float]]] = {}  # token -> request id -> (workspace, deadline)
+        self.owned: dict[str, dict[str, tuple[str, float]]] = {}  # token -> request id -> (workspace, deadline)
+        self.active: dict[str, set[str]] = {}
+        self.by_idem: OrderedDict[tuple[str, str, str], tuple[str, dict | None]] = OrderedDict()  # None: in flight
+        self.unknown: dict[tuple[str, str, str], float] = {}  # (token, ws, binding) -> when the lost call started
 
     def binding(self, action: Action) -> str:
         body = action.model_dump(exclude={"idem"}, exclude_none=True)
         return hashlib.sha256(adapters.handoff.cj(body)).hexdigest()
 
-    def live(self, token: str) -> dict[str, tuple[str, float]]:
+    def prune(self, token: str):  # under the lock
         now = self.clock()
-        mine = self.open.setdefault(token, {})
+        mine = self.owned.setdefault(token, {})
         for rid in [rid for rid, (_, deadline) in mine.items() if deadline <= now]:
             del mine[rid]
+            self.active.get(token, set()).discard(rid)
         return mine
 
-    def remember(self, token: str, ws: str, idem: str, binding: str, response: dict):
+    def owner_of(self, token: str, request_id: str) -> str | None:
+        """The workspace a request was prepared in, if this session prepared it."""
         with self.lock:
-            self.by_idem[(ws, idem)] = (binding, response)
-            while len(self.by_idem) > REMEMBERED:
-                self.by_idem.popitem(last=False)
-            self.by_action[(token, ws, binding)] = response
-            self.live(token)[response["id"]] = (ws, self.clock() + TTL)
+            hit = self.prune(token).get(request_id)
+            return hit[0] if hit else None
 
-    def forget(self, token: str, request_id: str):
+    def settle(self, token: str, request_id: str):
         with self.lock:
-            self.live(token).pop(request_id, None)
-            for key in [k for k, v in self.by_action.items() if v["id"] == request_id]:
-                del self.by_action[key]
+            self.active.get(token, set()).discard(request_id)
 
 
 def register(app: FastAPI, gateway: Gateway):
@@ -207,69 +220,99 @@ def register(app: FastAPI, gateway: Gateway):
 
     app.state.human = human
 
+    def cancel_orphans(ws: str, op: str, key: str | None, since: float):
+        """A `human.prepare` whose answer was lost may have left a request open. Cancel the person's open requests that
+        match the action and were created after the lost call began (the host keeps no idem record for prepare)."""
+        for row in human(ws, "human.pending", {})["requests"]:
+            if row["state"] not in ("prepared", "bound") or row["op"] != op or (key and row.get("key") != key):
+                continue
+            created = _epoch(row["created_at"])
+            if created is not None and created >= since - 2:
+                human(ws, "human.cancel", {"request_id": row["id"]})
+
     @app.post("/api/w/{ws}/handoff")
     def prepare(body: PrepareBody, request: Request, ws: str = Depends(workspace)):
         token, binding = request.state.token, handoffs.binding(body)
-        known = handoffs.by_idem.get((ws, body.idem))
-        if known:
-            if known[0] != binding:
-                raise fail("idem.conflict", "This key was used for another action.", exit=5)
-            return known[1]
-        # One open request per (workspace, ticket, action): reopening the panel reuses it, never a second prepare.
-        reuse = handoffs.by_action.get((token, ws, binding))
-        if reuse:
-            try:
-                row = human(ws, "human.pending", {"request_id": reuse["id"]})["requests"][0]
-                if row["state"] in ("prepared", "bound"):
-                    handoffs.remember(token, ws, body.idem, binding, reuse)
-                    return reuse
-            except HostError:
-                pass
-            handoffs.forget(token, reuse["id"])
-        if len(handoffs.live(token)) >= PER_SESSION:
-            raise fail("quota.host", "Too many sign requests are open. Cancel one first.", exit=9)
-        labels = None
-        if isinstance(body, AddLabel):
-            labels = human_labels(ws, body.key)
-        op, args = host_call(body, labels)
-        prepared = human(ws, "human.prepare", {"op": op, "args": args, "handoff": True}, idem=body.idem)
-        response = adapters.handoff.request(prepared, ws)
-        handoffs.remember(token, ws, body.idem, binding, response)
+        slot = (token, ws, body.idem)
+        with handoffs.lock:
+            known = handoffs.by_idem.get(slot)
+            if known:
+                if known[0] != binding:
+                    raise fail("idem.conflict", "This key was used for another action.", exit=5)
+                if known[1] is None:
+                    raise fail("lock.busy", "This request is still being prepared.", exit=9)
+                return known[1]
+            handoffs.prune(token)
+            if len(handoffs.active.setdefault(token, set())) >= PER_SESSION:
+                raise fail("quota.host", "Too many sign requests are open. Cancel one first.", exit=9)
+            handoffs.by_idem[slot] = (binding, None)  # reserved: a concurrent twin is refused, not prepared again
+            while len(handoffs.by_idem) > REMEMBERED:
+                handoffs.by_idem.popitem(last=False)
+            lost = handoffs.unknown.pop((token, ws, binding), None)
+        started = time.time()
+        try:
+            labels = (
+                list(gateway.call(ws, "ticket.get", {"ref": body.key})["doc"].get("labels", []))
+                if isinstance(body, AddLabel)
+                else None
+            )
+            op, args = host_call(body, labels)
+            if lost is not None:
+                cancel_orphans(ws, op, getattr(body, "key", None), lost)
+            prepared = human(ws, "human.prepare", {"op": op, "args": args, "handoff": True}, idem=body.idem)
+            response = adapters.handoff.request(prepared, ws, expect_op=op, expect_key=getattr(body, "key", None))
+        except BaseException as exc:
+            with handoffs.lock:
+                handoffs.by_idem.pop(slot, None)
+                if isinstance(exc, HostError) and exc.error["code"] in ("outcome.unknown", "cancelled"):
+                    handoffs.unknown[(token, ws, binding)] = started  # the next prepare cancels any orphan first
+            raise
+        with handoffs.lock:
+            handoffs.by_idem[slot] = (binding, response)
+            handoffs.prune(token)[response["id"]] = (ws, handoffs.clock() + TTL)
+            handoffs.active.setdefault(token, set()).add(response["id"])
         return response
 
-    def human_labels(ws: str, key: str) -> list[str]:
-        return list(gateway.call(ws, "ticket.get", {"ref": key})["doc"].get("labels", []))
+    def owned_ws(request: Request, request_id: str, ws: str) -> str:
+        if handoffs.owner_of(request.state.token, request_id) != ws:
+            raise fail("not_found", exit=2)  # another session's request, or one that never existed, looks the same
+        return ws
 
     @app.get("/api/w/{ws}/handoff/{request_id}")
-    def state(
-        request_id: RequestId,
-        request: Request,
-        full: Annotated[bool, Query()] = False,
-        ws: str = Depends(workspace),
-    ):
+    def state(request_id: RequestId, request: Request, ws: str = Depends(workspace)):
+        owned_ws(request, request_id, ws)
         rows = human(ws, "human.pending", {"request_id": request_id})["requests"]
         if len(rows) != 1 or rows[0]["id"] != request_id:
             raise fail("not_found", exit=2)
-        out = adapters.handoff.state(rows[0])
         if rows[0]["state"] not in ("prepared", "bound"):
-            handoffs.forget(request.state.token, request_id)  # it no longer counts against the session's open requests
-        if full and rows[0]["state"] in ("prepared", "bound"):
-            out["request"] = adapters.handoff.request(human(ws, "human.get", {"request_id": request_id}), ws)
-        return out
+            handoffs.settle(request.state.token, request_id)  # it no longer counts against the session's open requests
+        return adapters.handoff.state(rows[0])
 
     @app.delete("/api/w/{ws}/handoff/{request_id}")
     def cancel(request_id: RequestId, request: Request, ws: str = Depends(workspace)):
+        owned_ws(request, request_id, ws)
         done = human(ws, "human.cancel", {"request_id": request_id})
-        handoffs.forget(request.state.token, request_id)
+        handoffs.settle(request.state.token, request_id)
         return {"id": request_id, "state": done["state"]}
 
     def cancel_session(token: str):
-        """Logout and session expiry: every request this session still holds is cancelled (best effort)."""
-        for rid, (ws, _) in list(handoffs.live(token).items()):
+        """Logout: every request this session still holds open is cancelled, each on its own (best effort)."""
+        with handoffs.lock:
+            mine = [
+                (rid, ws) for rid, (ws, _) in handoffs.prune(token).items() if rid in handoffs.active.get(token, set())
+            ]
+        for rid, ws in mine:
             try:
                 human(ws, "human.cancel", {"request_id": rid})
-            except HostError:
+            except Exception:  # noqa: BLE001 - one failed cancel must not stop the rest, nor the logout
                 pass
-            handoffs.forget(token, rid)
+            handoffs.settle(token, rid)
 
     app.state.cancel_session = cancel_session
+
+
+def _epoch(value: str) -> float | None:
+    try:
+        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC).timestamp()
+    except (TypeError, ValueError):
+        return None

@@ -285,3 +285,25 @@ def test_signer_output_is_dev_only_and_escapes_ticket_text(signing, rich):
     text = shown[0][0]
     assert status == 0 and "| line one" in text and "| line two" in text and "[from your own registry]" in text
     json.dumps(got)
+
+
+def test_the_signer_checks_before_against_base_rev_and_needs_orch_dev(signing, rich, monkeypatch):
+    import copy
+
+    link = signing.link()
+    got = prepare(link, "set", {"ref": "DEMO-0001", "pairs": ["labels=zz"]})
+    device = signing.p1.owner.device
+    signer = {"device": device, "auth": "passphrase"}
+    bound = link.call("human.get", {"request_id": got["request"]["id"], "signer": signer})
+    args = {"workspace_id": signing.ws, "person": signing.stub.person, "device": device, "auth": "passphrase"}
+    stub_signer.check(bound, **args)
+    wrong = copy.deepcopy(bound)
+    wrong["material"]["before"]["ticket.labels"] = ["not", "the", "labels"]
+    wrong["material"]["review"] = review.reviews_of(wrong["events"], wrong["material"])
+    wrong["review_digest"] = review.digest_of(wrong["material"])
+    wrong["fingerprint"] = review.fingerprint(wrong["review_digest"], wrong["events"])
+    with pytest.raises(stub_signer.Refused, match="base_rev"):
+        stub_signer.check(wrong, **args)
+    monkeypatch.delenv("ORCH_DEV", raising=False)
+    with pytest.raises(RuntimeError, match="ORCH_DEV"):
+        stub_signer.main("7F3K-Q2MA")

@@ -8,9 +8,13 @@ It plays `orch sign CODE` (H5b) against the dev stub host until the real command
 3. render its own review on the terminal from `material` and the events, ask for the confirmation word;
 4. sign with the dev workspace's P1 device custody (the passphrase backend, asked on /dev/tty) and `human.submit`.
 
+Not checked here (the stub has no data for them): `material.policy` against `policy_hash` (host v1.5), git state for a
+code gate, and the op in the fingerprint (H5a).
+
 This file lives under `devhost/`, which the wheel excludes. It is a dev aid, not a signing client to ship.
 """
 
+import os
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -60,8 +64,11 @@ def recompute(prepared: dict[str, Any], *, workspace_id: str, person: str, devic
         raise Refused(f"{clean(op)} is not an operation this signer knows")
     if not isinstance(events, list) or not 1 <= len(events) <= 16 or not isinstance(material, dict):
         raise Refused("the request has no 1 to 16 events and a material")
-    logs = {prepared.get("log")}
+    if len(events) != 1:
+        raise Refused("every operation of this signer is one event")
     bases = {e.get("based_on") for e in events}
+    if len({e.get("id") for e in events}) != len(events):
+        raise Refused("two events share an id")
     for e in events:
         if e.get("type") not in review.EMITS[op]:
             raise Refused(f"event type {clean(e.get('type'))} is not one of {op}")
@@ -72,8 +79,8 @@ def recompute(prepared: dict[str, Any], *, workspace_id: str, person: str, devic
             raise Refused("an event is not bound to this device")
         if "sig" in e:
             raise Refused("an event is already signed")
-    if len(logs) != 1 or len(bases) != 1:
-        raise Refused("the events do not share one log and one based_on")
+    if len(bases) != 1:
+        raise Refused("the events do not share one based_on")
     # Bound hashes, recomputed from the material that is shown.
     ticket = material.get("ticket") or {}
     for e in events:
@@ -85,8 +92,20 @@ def recompute(prepared: dict[str, Any], *, workspace_id: str, person: str, devic
             qid = canon.question_id(workspace_id, ticket["uid"], q["id"])
             if e.get("hash") != canon.question_hash(qid, ticket["uid"], q["text"], q.get("options") or []):
                 raise Refused("the question hash is not the hash of the question shown")
-        if e["type"] != "ticket.created" and prepared.get("log") != ticket.get("uid"):
-            raise Refused("the log is not the ticket shown")
+        if prepared.get("log") != ticket.get("uid"):
+            raise Refused("the log is not the ticket shown")  # one log per request: the ticket's own
+        if "source_sha" in e and (material.get("input") or {}).get("source_sha") not in (None, e["source_sha"]):
+            raise Refused("source_sha is not the one the material shows")
+        if e["type"] == "ticket.updated":
+            before = material.get("before") or {}
+            if set(before) - set(e.get("set") or {}):
+                raise Refused("a 'before' value for a field the event does not set")
+            for path, value in before.items():
+                if (e.get("base_rev") or {}).get(path) != canon.value_hash(value):
+                    raise Refused(f"the current value of {clean(path)} does not match base_rev")
+        for sid, entry in (review.derived_of(e, material).get("sections") or {}).items():
+            if entry["text"] is None or canon.section_hash(entry["text"]) != entry["hash"]:
+                raise Refused(f"section {clean(sid)} does not match its hash")
     if material.get("review") != review.reviews_of(events, material):
         raise Refused("the review of the host is not the review computed here")
     digest = review.digest_of(material)
@@ -203,6 +222,8 @@ def main(code: str) -> int:
 
     from .__main__ import dev_directories
 
+    if os.environ.get("ORCH_DEV") != "1":
+        raise RuntimeError("the stub signer requires ORCH_DEV=1 (never shipped)")
     state, run_dir = dev_directories()
     return run(
         code,

@@ -316,6 +316,11 @@ def test_only_the_importer_unlocks_a_batch():
 def test_a_backend_that_cannot_sign_a_batch_has_its_own_code(hws, me, v1, monkeypatch):  # noqa: F811
     with_repo(hws)
     monkeypatch.delattr(PassphraseBackend, "unlocked")
+
+    def no_review(*args):
+        pytest.fail("a backend without batch signing must refuse before review")
+
+    monkeypatch.setattr(import_run.human, "review_prompt", no_review)
     before = snapshot(hws.root)
     r = me.j("import", "v1", str(v1))
     assert r.code == 3 and r.err_code == "custody.no_batch" and "reviewed batch" in r.doc["error"]["message"]

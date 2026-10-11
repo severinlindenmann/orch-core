@@ -404,19 +404,19 @@ def run_import(ctx: Context, args: dict[str, Any]) -> Result:
         return _result(plan, count, plan.events, [], lines, "orch list")
     if not plan.work:
         return _result(plan, 0, 0, [], lines, "orch list")
+    backend = h.backend
+    unlock = getattr(backend, "unlocked", None)
+    if unlock is None:
+        raise OrchError("custody.no_batch", f"the {backend.name} key backend cannot sign a reviewed batch")
     review = _review(plan, v1, imp)
     if not human.review_prompt("\n".join(review), f"IMPORT {count}"):
         raise OrchError("invalid.input", "not confirmed: nothing was signed")
-    backend = h.backend
     digest = plan.digest().split(":")[1][:32]
     fields = (
         ("signatures", f"{plan.events} events of {count} tickets, all person events of import v1"),
         ("workspace", v1.prefix),
         ("importer", imp.person),
     )
-    unlock = getattr(backend, "unlocked", None)
-    if unlock is None:  # a person's per-signature prompt cannot show an import's events: refuse before signing anything
-        raise OrchError("custody.no_batch", f"the {backend.name} key backend cannot sign a reviewed batch")
     labels = (canon.LABELS["sig_ticket_event"].encode("ascii"),)
     with unlock(KEY_ID, action="import v1", digest=digest, fields=fields, labels=labels) as raw:
         ok, events, partial = imp.execute(plan, imp.signer(raw), ctx.progress)

@@ -358,10 +358,15 @@ def test_a_frozen_host_fails_closed(pkg, tmp_path, monkeypatch, host, code):
     (nothing without the limits), and the call is refused."""
     from orch.addons import runner
 
+    marker = tmp_path / "addon-ran"
+    d, _, _ = pkg
+    (d / "addon.py").write_text(f"from pathlib import Path\nPath({str(marker)!r}).touch()\n")
+    package = read_package(d)
+    pkg = d, package, granted_for(package)
     exe = tmp_path / "frozen-host"
     if host is not None:
         exe.write_text(host)
         exe.chmod(0o755)
     monkeypatch.setattr(runner.sys, "executable", str(exe) if host is not None else "")
-    e = refused(pkg, "ok", code)
-    assert "looked at" not in str(e) and "looked at" not in e.stderr
+    refused(pkg, "ok", code)
+    assert not marker.exists()

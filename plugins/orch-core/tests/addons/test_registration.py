@@ -226,3 +226,10 @@ def test_heading_conflicts_use_grants_even_without_the_packages(status):
     reg = Registry({m.name: addon}, {})
     other = load(name="other", sections=[{"id": "n", "heading": "ECHO-notes", "after": "plan", "types": ["bug"]}])
     assert reg.heading_conflicts(other) == ([] if status == "purged" else ["ECHO-notes"])
+
+
+def test_a_granted_heading_must_match_the_local_manifest():
+    m = load()
+    a = Addon(m.name, m.version, DIGEST, m.capabilities, **declarations(m))
+    a.sections[0]["heading_key"] = "another heading"
+    assert state_of(a, (m, DIGEST)) == "changed"

@@ -76,6 +76,9 @@ def state_of(addon: Any, loaded: tuple[Manifest, str] | None) -> str:
     manifest, digest = loaded
     if digest != addon.package_sha256 or manifest.version != addon.version or manifest.name != addon.name:
         return "changed"
+    headings = {f"{manifest.name}.{s['id']}": heading_key(s["heading"]) for s in manifest.sections}
+    if any(headings.get(s["id"]) != s["heading_key"] for s in addon.sections):
+        return "changed"
     return ACTIVE
 
 

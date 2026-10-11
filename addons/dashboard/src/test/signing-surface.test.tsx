@@ -10,7 +10,7 @@ import { wordsAndId } from '@/addon-ui/SignConfirm'
 import { api } from '@/api/client'
 import { approversText } from '@/api/gates'
 import { getAddon } from '@/mocks/addons'
-import { DEMO_REQUEST } from '@/mocks/addons/factory-runs'
+import { seedRuns, DEMO_REQUEST } from '@/mocks/addons/factory-runs'
 import type { MockStore } from '@/mocks/store'
 import { installAndGrant } from '@/test/installAddon'
 import { renderApp } from '@/test/renderApp'
@@ -81,6 +81,48 @@ const addonOpShown = (name: string): Record<string, Shown> => ({
 const LINE = 'Routing picked this model for you, LINE-MARK'
 
 const CASES: Case[] = [
+  {
+    name: 'owner landing on main', path: '/ticket/DEMO-0052', wide: true,
+    setup: (s) => {
+      const state = s.addonState(wsOf(s), 'land') as unknown as { settings: { targets: string[] }; queues: { entries: unknown[] }[]; attempts: unknown[]; worker: { current: number | null } }
+      state.settings.targets = ['main', 'develop']
+      state.queues.forEach((q) => { q.entries = [] })
+      state.attempts = []
+      state.worker.current = null
+    },
+    open: async (user) => {
+      const panel = await openTicketPanel(user, 'Landing')
+      await user.click(await within(panel).findByRole('button', { name: 'Land on main' }, T))
+      return screen.findByRole('dialog', {}, T)
+    },
+    confirm: press('Sign and run'), method: 'runAddonAction', arg: 3,
+    skip: ['confirmed'], args: true, expectArgs: ['ticket', 'target', 'commit'],
+  },
+
+  ...([0, 60] as const).map((hold): Case => ({
+    name: `factory re-delivery with hold ${hold}`, path: '/addon/factory/factory',
+    setup: s => {
+      const ws = wsOf(s)
+      installAndGrant(s, ws, 'factory')
+      const st = s.addonState(ws, 'factory')
+      Object.assign(st, seedRuns(s, 'p_sev', ws))
+      const runs = st.runs as import('@/mocks/addons/factory-runs').Run[]
+      runs[0].stage = 'stopped'
+      runs[0].stopped = { at: s.now(), by: 'p_sev' }
+      s.runAddon(ws, 'factory', 'prepare_redelivery', { formData: { run: 'R-1', hold_minutes: hold } })
+    },
+    open: async user => {
+      await user.click(await screen.findByRole('tab', { name: /^Full runs/ }, T))
+      await user.click(await screen.findByRole('button', { name: 'Sign delivery' }, T))
+      const dialog = await dialogNamed(/^Sign: Redeliver/)
+      if (!hold) expect(dialog).toHaveTextContent('Delivers as soon as you sign')
+      else expect(dialog).not.toHaveTextContent('Delivers as soon as you sign')
+      return dialog
+    },
+    confirm: press('Sign and run'), method: 'runAddonAction', arg: 3,
+    skip: ['confirmed'], args: true,
+    expectArgs: ['request', 'run', 'deliver_means', 'hold_minutes', 'revision'],
+  })),
   {
     name: 'repos clone attention decision', path: '/',
     open: async user => {
@@ -164,6 +206,7 @@ const CASES: Case[] = [
     path: '/ticket/DEMO-0041',
     open: async (user) => {
       const dialog = await ticketAction(user, /Give verdict/)
+      expect(dialog).toHaveAccessibleName('Give verdict (Verify)')
       await user.click(within(dialog).getByRole('radio', { name: /^Pass on .*: the evidence is enough$/ }))
       return dialog
     },
@@ -348,19 +391,25 @@ const CASES: Case[] = [
     args: true,
     expectArgs: ['id', 'peer'],
   },
-  {
+  ...([0, 60] as const).map((hold): Case => ({
     // Owner decision 2026-10-10 evening (D61 option): one signature covers the goal, how far the factory goes, what
     // Deliver means (the exact destination the host will deliver to), the hold window and the size cap.
-    name: 'factory full run (confirm: sign)',
+    name: `factory full run with hold ${hold}`,
     path: '/addon/factory/factory',
     setup: (s) => {
       installAndGrant(s, wsOf(s), 'factory')
-      s.addonState(wsOf(s), 'factory').nav = { p_sev: { runDraft: { ...DEMO_REQUEST, request: 'rq-DEMO-0a1b2c3d-7' } } }
+      s.addonState(wsOf(s), 'factory').nav = { p_sev: { runDraft: { ...DEMO_REQUEST, hold_minutes: hold, request: 'rq-DEMO-0a1b2c3d-7' } } }
     },
     open: async (user) => {
       await user.click(await screen.findByRole('tab', { name: /^Full runs/ }, T))
       await user.click(await screen.findByRole('button', { name: 'Sign and start' }, T))
-      return dialogNamed(/^Sign: .* · AI Factory \(factory\)$/)
+      const dialog = await dialogNamed(/^Sign: .* · AI Factory \(factory\)$/)
+      const note = within(dialog).queryByTestId('core-note')
+      if (hold === 0) {
+        expect(note).toHaveTextContent('No hold: delivers as soon as its checks pass')
+        expect(note!.compareDocumentPosition(dialog.querySelector('[data-arg-key]')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+      } else expect(note).toBeNull()
+      return dialog
     },
     confirm: press('Sign and run'),
     method: 'runAddonAction',
@@ -369,7 +418,7 @@ const CASES: Case[] = [
     skip: ['confirmed'],
     args: true,
     expectArgs: ['request', 'goal', 'goes_up_to', 'deliver_means', 'hold_minutes', 'largest_child'],
-  },
+  })),
   {
     name: 'start agent (grant + start)',
     path: '/ticket/DEMO-0044',
@@ -443,7 +492,7 @@ const CASES: Case[] = [
     open: async (user) => {
       await user.click(await screen.findByRole('button', { name: 'Open skill tariff-feed' }, T))
       const drawer = await dialogNamed(/tariff-feed/)
-      await user.click(within(drawer).getByRole('button', { name: 'Grant TARIFF_WEBHOOK_SECRET…' }))
+      await user.click(within(drawer).getByRole('button', { name: 'Grant TARIFF_WEBHOOK_SECRET' }))
       return dialogNamed('Grant credentials to tariff-feed')
     },
     confirm: press('Sign grant'),

@@ -17,18 +17,19 @@ is **untracked**. Repo identity is read from git (§5.7), never from the declara
 States: `present`, `missing` (declared, no folder), `not a repo`, `remote differs` (only when a remote is declared),
 `untracked`; a running or failed clone shows `queued`, `cloning n%`, `clone failed`.
 
-### Proposal (format amendment): `remote` and `default_branch`
+### `remote` and `default_branch`: proposed for the format amendment (owner agreed 11 Oct)
 
-Cloning needs a source the format lacks. Proposed: two optional keys per entry,
+Cloning needs a source the format lacks. Proposed for the format amendment (owner agreed 11 Oct): two optional keys per entry,
 
 ```json
 "repos": {"billing-api": {"path": "billing-api", "remote": "https://git.example.test/acme/billing-api.git", "default_branch": "main"}}
 ```
 
-`remote` is credential-free (HTTPS, `ssh://host/path` or `git@host:path`; any userinfo, query, fragment, non-ASCII or
+`remote` is credential-free (HTTPS, `ssh://host/path`, `ssh://git@host/path` or `git@host:path`; only the literal SSH user `git` is allowed. Other userinfo, passwords (including an empty password), query, fragment, non-ASCII or
 a part starting with `-` is refused) and is not identity: identity stays what git reports. An entry without `remote`
 is valid (the format's own shape, e.g. DEMO's `acme-energy-dbt`): it is shown and checked but cannot be cloned.
-Until the owner ratifies the amendment, the mock writes the two keys into `settings.changed` as proposed fields.
+The owner agreed on 11 Oct; until the core format amendment lands, the mock writes these as proposed fields.
+There is **no primary flag** (owner decision 11 Oct); all declared repos are peers.
 
 ## Who does what
 
@@ -70,8 +71,6 @@ remotes, drafts, events or signatures. Without a git-login connection nothing cl
 
 ## Open points for the owner
 
-- Ratify `remote` / `default_branch` as a format amendment (or keep sources outside the format).
-- Should a "primary" repo exist (the brief asked for it; it is not in the format and was left out)?
 - Remote canonicalisation for duplicate checks (host lowercase, `.git` and default ports ignored, scp ≡ ssh ≡ https).
 - Whether `remote differs` should block agent starts on tickets that link the repo.
 - Ratify the provisional event names and the `network`/`pty` capability boundary.

@@ -70,6 +70,7 @@ class LogCore:
     last_ws_seq: int = 0
     last_at: int = 0  # the previous line's `at` in this log (§5.5: (ws_seq, at) never goes back along a log)
     broken: str | None = None
+    broken_code: str = "chain.broken"
     invalid: list[InvalidEvent] = field(default_factory=list)
     acked: set[int] = field(default_factory=set)
 

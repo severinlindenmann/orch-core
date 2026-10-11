@@ -10,7 +10,7 @@ describe('Repos page', () => {
   it('shows the tree and row details, full copyable remote and working repo filter', async () => {
     const { user } = renderApp(PATH, { viewer: 'p_sev' })
     expect(await screen.findByRole('heading', { level: 1, name: /Repos/ }, T)).toHaveTextContent('Preview')
-    for (const name of ['Structure', 'Checks', 'Activity log']) expect(screen.getByRole('tab', { name })).toBeInTheDocument()
+    for (const name of ['Structure', 'Checks', 'Activity']) expect(screen.getByRole('tab', { name })).toBeInTheDocument()
     expect(screen.getByText('~/work/acme')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Details for web-portal' }))
     expect(screen.getByRole('button', { name: 'Copy Remote URL' })).toBeInTheDocument()
@@ -30,7 +30,7 @@ describe('Repos page', () => {
     await user.click(await screen.findByRole('tab', { name: 'Checks' }, T))
     expect(screen.getByText('meter-ingest: 3 behind origin/main')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Check now' }))
-    await user.click(screen.getByRole('tab', { name: 'Activity log' }))
+    await user.click(screen.getByRole('tab', { name: 'Activity' }))
     expect(await screen.findByText('Checked all repo folders.', {}, T)).toBeInTheDocument()
     expect(screen.getByText(/Severin · repos.checked/)).toBeInTheDocument()
   })

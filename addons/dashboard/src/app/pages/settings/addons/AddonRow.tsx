@@ -78,7 +78,7 @@ export function AddonRow({ addon, active, canEdit, hasSettings, settingsOpen, ac
         <div className="flex flex-wrap justify-end gap-1.5">
           {canEdit && needsGrant && (
             <Button size="sm" onClick={actions.grant}>
-              Grant…
+              Grant
             </Button>
           )}
           {hasSettings && active && (

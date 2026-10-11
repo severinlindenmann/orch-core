@@ -22,7 +22,7 @@ export function MandatesTab({ ws, state, now }: { ws: string; state: MandatesPre
   const [issuing, setIssuing] = useState(false)
   const m = state.on ? state.mandate : null
   const missing = state.preflight.filter((c) => c.state !== 'passed').length
-  const inForce = m && (m.state === 'active' || m.state === 'stopping')
+  const inForce = m && (m.state === 'active' || m.state === 'paused' || m.state === 'stopping')
 
   const preflight = (
     <Section title="Preflight" aside={<Pill tone={missing ? 'warning' : 'success'}>{missing ? `${missing} of ${state.preflight.length} missing` : 'All pass'}</Pill>}>
@@ -93,6 +93,8 @@ function stateLine(m: PreviewMandate): { text: string; tone: 'success' | 'neutra
   switch (m.state) {
     case 'active':
       return { text: 'In force', tone: 'success' }
+    case 'paused':
+      return { text: 'Paused: weekly check-in overdue', tone: 'info' }
     case 'stopping':
       return { text: 'Stopping…', tone: 'info' }
     case 'stopped':
@@ -123,6 +125,7 @@ function Meter({ label, value, max, text, reached = value >= max }: { label: str
 
 function MandateView({ ws, m, now, owner }: { ws: string; m: PreviewMandate; now: string; owner: boolean }) {
   const [dialog, setDialog] = useState<'stop' | 'revoke' | 'renew' | null>(null)
+  const op = useMandatesOp(ws)
   const s = stateLine(m)
   const total = Math.round((Date.parse(m.expires) - Date.parse(m.issued_at)) / DAY)
   const left = Math.max(0, Math.round((Date.parse(m.expires) - Date.parse(now)) / DAY))
@@ -145,18 +148,22 @@ function MandateView({ ws, m, now, owner }: { ws: string; m: PreviewMandate; now
                   Renew…
                 </Button>
               )}
-              {m.state === 'active' && (
+              {['active', 'paused'].includes(m.state) && (
                 <Button size="sm" variant="outline" onClick={() => setDialog('stop')}>
                   Stop…
                 </Button>
               )}
               <Button size="sm" variant="outline" onClick={() => setDialog('revoke')}>
-                Revoke and void…
+                Revoke and void
               </Button>
             </div>
           )
         }
       >
+        {['active', 'paused'].includes(m.state) && <div className="mb-3 flex min-h-9 items-center gap-3 text-[13px]">
+          <span>Weekly check-in due {weekday(m.check_in_due ?? new Date(Date.parse(m.issued_at) + 7 * DAY).toISOString())}</span>
+          {owner && <Button size="sm" variant="outline" onClick={() => void op({ op: 'check_in' }, 'Still OK (preview: nothing was signed)')}>Still OK</Button>}
+        </div>}
         <dl className="grid grid-cols-[120px_minmax(0,1fr)] gap-x-3 gap-y-1 text-[13px]">
           <dt className="text-text-muted">For</dt>
           <dd>{plain(m.issuer)} (issuer, owner)</dd>

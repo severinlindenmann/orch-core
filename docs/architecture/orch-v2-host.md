@@ -645,7 +645,7 @@ Class N gets only `version` and `tier`.
 when every event type the op emits passes `orch.ops.actors.allows("human", t)` (F1: an A type may be appended by a
 signed person). Other agent ops answer `op.not_allowed`.
 
-**`move` (provisional until H0 lands `ticket.moved`).**
+**`move` (F1 `ticket.moved`).**
 
 - A person op, owner or maintainer, through `human.prepare`: `{ref:Ref, to:"backlog"|"open", reason?:str{1..500}}`.
 - It emits `ticket.moved {from, to, reason?}`.

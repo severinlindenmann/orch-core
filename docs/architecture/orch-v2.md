@@ -214,7 +214,7 @@ The host loads keys through a custody backend:
 
 | Platform | Backend |
 |---|---|
-| macOS | Keychain. In development: a dedicated keychain file, never the login keychain. |
+| macOS | P2: 0600 file at `<state>/hosts/<ws>/keys/wsk` in a 0700 directory, owned by the host UID. No keychain; custody ancestors must pass host D-P2-17. |
 | Linux desktop | libsecret |
 | Linux server / VPS | Files mode 0600, owned by a separate `orch-host-<ws>` user. Agents run as a different UID. |
 

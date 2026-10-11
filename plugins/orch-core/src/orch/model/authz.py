@@ -27,6 +27,7 @@ ACTOR_RULES: dict[str, str] = {
     "ticket.submitted": "PA",
     "ticket.closed": "P",
     "ticket.reopened": "P",
+    "ticket.moved": "P",
     "visibility.changed": "P",
     "people.changed": "P",
     "policy.changed": "P",

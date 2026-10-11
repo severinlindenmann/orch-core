@@ -14,7 +14,7 @@ from orch.canon import HashError, section_hash
 
 from . import claims, gates, generations, policies, source, tasks
 from .codes import Code, Refusal
-from .types import GATES, Core, LogCore, TCore, WsCore, new_fields, position
+from .types import GATES, Core, LogCore, TCore, WsCore, new_fields, position, ts
 
 _KEY = re.compile(r"[A-Z][A-Z0-9]{0,15}-([1-9][0-9]{3,}|[1-9][0-9]{0,2}|0[0-9]{3})")
 
@@ -39,6 +39,24 @@ def created(core: Core, uid: str, e: dict[str, Any]) -> Refusal | None:
 def status_changed(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
     if t.status not in ("open", "backlog") or e["from"] != t.status:
         return Refusal(Code.STATUS_TRANSITION, f"status.changed from {e['from']} while the ticket is {t.status}")
+    t.status = e["to"]
+    return None
+
+
+def moved(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
+    """F1 5.9: a workspace owner or maintainer may return unclaimed work to open/backlog."""
+    if ws.members[e["actor"]["id"]].role not in ("owner", "maintainer"):
+        return Refusal(Code.ROLE_DENIED, "only workspace owners and maintainers move a ticket")
+    if (
+        e["from"] != t.status
+        or e["to"] not in ("backlog", "open")
+        or t.status not in ("backlog", "open", "in_progress")
+        or (t.status == "in_progress" and claims.live(ws, t, ts(e["at"])))
+    ):
+        return Refusal(Code.STATUS_TRANSITION, "move requires the current from-state and unclaimed work")
+    if t.status == "in_progress":
+        t.claim = None
+        claims.release_leases(t)
     t.status = e["to"]
     return None
 

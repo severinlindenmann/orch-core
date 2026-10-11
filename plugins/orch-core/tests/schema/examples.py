@@ -280,6 +280,7 @@ _SPEC = {
     "status.changed": (AGENT, {"from": "open", "to": "backlog", "reason": "later"}, 5),
     "ticket.submitted": (AGENT, {}, 5),
     "ticket.closed": (PERSON, {"resolution": "duplicate", "duplicate_of": "DEMO-0040", "text": "same"}, 5),
+    "ticket.moved": (PERSON, {"from": "open", "to": "backlog", "reason": "Later"}, 5),
     "ticket.reopened": (PERSON, {"text": "regression"}, 5),
     "visibility.changed": (PERSON, {"visibility": {"restricted": ["p_" + PID]}}, 5),
     "people.changed": (PERSON, {"role": "reviewers", "add": ["p_" + PID2], "remove": []}, 5),

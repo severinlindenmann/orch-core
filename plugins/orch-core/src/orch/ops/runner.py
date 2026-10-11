@@ -4,7 +4,7 @@ What the receipt is: "this command exited 0 in the agent's environment, in this 
 **attested by the agent's environment**, not independent verification: the agent controls ``PATH`` (a fake ``pytest``
 exits 0), may choose among the linked repositories by its working directory, and a ``verify.cmd`` such as
 ``sh -c '...'`` runs a shell (orch adds none). The control is that ``verify.cmd`` sits in the plan a person approves,
-and that the host runs it itself from P2. What orch does guarantee:
+and P2 uses client-run receipts checked by the host against that command (§10.7). What orch does guarantee:
 
 * the command is the ticket's ``verify.cmd`` split into arguments (``shlex``), never anything the agent passes;
 * it runs in its own process group with a hard timeout (the group is killed; a process that leaves it with ``setsid``

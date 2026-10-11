@@ -89,10 +89,15 @@ orchestrator/
   repo fields give `validation.*` at append and `chain.broken` at that line on replay, stopping the log.
   **P1 limit:** relative versus absolute paths, `~`, trailing dots or spaces in path components, backslashes and
   symlinks are not normalised. Settings are owner-signed; this collision check guards against mistakes.
-  `default_branch` follows the same git branch name rules as `links.branches`. In P1 nothing decides anything
-  from `remote` or `default_branch`;
-  identity still comes from the observed `remote.origin.url` (§5.7). The planned future rule for a mismatch
-  between declared and observed remotes is `repo.remote_mismatch`.
+  **P1/P2 limit:** `..` paths that leave the workspace are not refused; owner-signed settings may deliberately
+  name working copies outside it. This lexical collision check is not workspace containment.
+  `default_branch` follows the same git branch name rules as `links.branches`. Identity comes from the observed
+  `remote.origin.url` (§5.7). Where `remote` is declared, the observed canonical identity must equal it ignoring
+  ASCII case; otherwise report `repo.remote_mismatch`, consider the repo observe.unavailable and append no
+  observation for it. A match pins the identity label to the owner's declaration and catches mistakes; it proves
+  nothing about where the commits came from, because the agent can write the origin URL. Without a declaration,
+  label the identity "from the working copy (agent-writable)";
+  `doctor` should recommend declaring it. `default_branch` makes no decision in P1.
 - When the two disagree, the events win, and the host rewrites the file and logs `projection.repaired`.
 - `keys.jsonl` has one line per key: `{"key": "DEMO-0043", "uid": "01J9ZK…", "at": "2026-10-09T09:00:00Z"}`, written
   as `cj` plus LF, nothing else. It is a projection of the `ticket.created` events and the key allocator. The next
@@ -276,7 +281,8 @@ with no leading `-`, no `refs/` prefix, not exactly `HEAD` or `@`, and no Unicod
 (controls, format characters, private use, separators or unassigned code points, using the bundled Unicode 16.0 data).
 This shared rule applies to `links.branches` and `default_branch`. Branch names also refuse
 U+FE00–FE0F, U+E0100–E01EF, U+034F, U+115F, U+1160, U+3164, U+FFA0, U+180B–180F,
-U+17B4–17B5, U+2800 and a leading combining mark (any M* category). All categories use Unicode 16.0.
+U+17B4–17B5, U+2800 and a combining mark (any M* category) at the start of **every `/`-separated
+component**, not just the whole name. All categories use Unicode 16.0.
 
 ## 4. `body.md`
 
@@ -339,7 +345,7 @@ treated like a line with a bad `host_sig` (§5.5).
 | Field | Type | Rule |
 |---|---|---|
 | `v` | int | the envelope version, always `2` |
-| `id` | ULID | chosen by whoever builds the event. For a person event, the signer makes it when signing, so its ULID time is the signer's clock then. It is covered by `sig` but never checked against `at` or any clock, and no rule orders, accepts or refuses events by it. A repeated `id` in the same log is refused. |
+| `id` | ULID | chosen by whoever builds the event. In P1 the signer makes a person event id when signing. In P2 the host prepares it; the signer never chooses or changes it. It is covered by `sig` but never checked against `at` or any clock, and no rule orders, accepts or refuses events by it. A repeated `id` in the same log is refused. |
 | `seq` | int | `1` for the first event of a log, then +1, no gaps |
 | `at` | timestamp | the host's clock when it appends |
 | `type` | string | a type from §5.4; from P2 also `<addon>.<verb>` |
@@ -430,8 +436,8 @@ field is refused. Payload fields never reuse an envelope name.
   `passphrase`, `secure-enclave` (Mac, user presence per signature, D41), `secure-enclave-unlocked` (iPhone, D49),
   `webauthn`, `tpm`, `windows-hello`. It is covered by the signature, so nobody else can change it, but the format
   can't prove the factor: the device certificate (protocol §6.1) has no backend field, and F1 adds none. The factor
-  is recorded in the event's `auth`, not in the certificate; D64's wording ("recorded in the person's device
-  certificate") needs amending. A workspace policy may later refuse named factors for named verbs (D66); the
+  is recorded in the event's `auth`, not in the certificate (D64). WebAuthn needs a new signature contract
+  and is deferred past P2. A workspace policy may later refuse named factors for named verbs (D66); the
   default accepts any. The weaker guarantees stay as stated where they were decided: `secure-enclave-unlocked`
   signs whenever the phone is unlocked (D49), and `passphrase` does not protect a passphrase typed into a terminal
   an agent can read (D65, orch-v2-portable-custody.md §3).
@@ -459,6 +465,7 @@ agent; **D** an addon; **H** the host only. Types marked D58–D60 are new with 
 | `status.changed` | A | `from`: status; `to`: `backlog` or `open`; `reason?`: str | Manual moves only (§5.9). |
 | `ticket.submitted` | A | (none) | §5.9. |
 | `ticket.closed` | P | `resolution`: `wont_do`, `duplicate`, `obsolete` or `other`; `duplicate_of?`: key; `text?`: str | `duplicate_of` only with `duplicate`. |
+| `ticket.moved` | P | `from`: status; `to`: `backlog` or `open`; `reason?`: str, 1–500 characters | Workspace owner or maintainer only. `from` must equal the current status; §5.9. |
 | `ticket.reopened` | P | `text?`: str | Raises every gate's generation. |
 | `visibility.changed` | P | `visibility`: as in `ticket.json` | Also rewrites `ticket.json`. |
 | `people.changed` | P | `role`: `owner`, `assignees`, `reviewers` or `watchers`; `add`: [person id]; `remove`: [person id] | For `owner`, `add` has exactly one id and the old owner is removed. On `done`/`closed` refused for roles a gate policy names. |
@@ -517,6 +524,7 @@ with an old role.
 |---|---|
 | `gate.*`, `verdict.given` | eligible approvers of that gate (§5.7) |
 | `ticket.closed`, `ticket.reopened`, `people.changed`, `visibility.changed`, ticket `policy.changed` | the ticket owner, workspace owners and maintainers |
+| `ticket.moved` | workspace owners and maintainers (ticket ownership alone does not suffice) |
 | `member.added`, `member.removed` | owners; maintainers for the roles member and viewer |
 | `role.changed`, workspace `policy.changed`, `settings.changed`, `addon.*`, `restore`, `invalid.acknowledged`, `workspace.created` | owners |
 | `device.added` | the device's own person, from an existing device, or the new device when none is left |
@@ -858,6 +866,13 @@ stays unchanged).
 | D59 code-gate rule (P2) | `done` with an open landing | `testing` |
 | `ticket.closed` | any but `closed` | `closed` |
 | `ticket.reopened` | `done`, `closed` | `open` |
+| `ticket.moved` | `backlog`, `open`, or `in_progress` with no live claim at the event's `at` | `backlog` or `open` |
+
+For `ticket.moved`, `from` must equal the current status. A destination outside `backlog`/`open` is a schema refusal. A disallowed source or a live claim in
+`in_progress` is `status.transition`; a non-owner/non-maintainer person is `role.denied`. Same-status moves are
+allowed. A move out of `in_progress` ends the claim and releases its task leases, as `claim.released` does;
+raising the TTL or re-adding a removed member cannot revive it. Gate generations and workers stay unchanged;
+claim liveness uses §5.9 expiry and grant rules, not the replay clock. Agents and the host are refused (`event.bad_actor`).
 
 Verdicts and `code` approvals and change requests are accepted only in `testing`. The **done rule**: `verify` has its count of `pass` verdicts, and `code` has its count where it applies, all at the
 current generations. A duplicate approval by one person counts once. `gate.invalidated` changes no status. "Waiting" (a blocking question is open, or a gate waits
@@ -1307,7 +1322,10 @@ What the runner does not do, and what P2 must have before it calls the runner:
   code calls the runner before it exists.
 - **No key in reach.** "No addon holds a key" (core §4) holds only once addons run under a UID that cannot read the
   host's key store. In the same UID as the host it is false, whatever the environment says.
-- Capabilities are recorded and shown in P1; `serve_http`, `network`, `pty`, `spawn_agent` and `git_push` are
+- **`serve_http` is a launcher policy switch, not a runner capability.** In P2 an addon whose granted manifest
+  includes it may be launched as a long-running local HTTP service under the person's UID (the dashboard;
+  host design D-P2-7). It confers no capability on a per-call runner.
+- Capabilities are recorded and shown in P1; `network`, `pty`, `spawn_agent` and `git_push` are
   enforced by the P2 host (agent UID and sandbox, §4). The runner's process limits (CPU time, file size, no core
   files, set by a small exec trampoline before the command starts) and its closed environment are defence in depth
   and not a sandbox: until P2 an addon is trusted to the degree the owner trusts its package. `pty` is never granted
@@ -1641,7 +1659,10 @@ Where this chapter was silent, `orch.ops` does the following. Each is a rule the
   is **attested by the agent's environment**, not independent verification (the agent controls `PATH`, may pick among the
   linked repositories by its working directory, and a ticket with no linked repository gives `repo: null`, which counts as
   evidence; `verify.cmd = "sh -c '...'"` runs a shell, orch adds none). The control is that `verify.cmd` sits in the plan a
-  person approves; the P2 host runs it itself. `task done --run` runs the ticket's `verify.cmd` split into arguments, in
+  person approves. In P2 the client still runs it and sends the receipt; the host checks `cmd` against the
+  approved `verify.cmd`. H3b2 (client receipts) adds `attested_by: "agent"`; the current `task.done` receipt
+  has no such field. This proves an authenticated agent claimed a result,
+  not that the command ran, its exit code, output or commit. The host never executes workspace-controlled code. `task done --run` runs the ticket's `verify.cmd` split into arguments, in
   its own process group with a hard timeout (a process that leaves the group with `setsid` survives: without a separate
   user or job object nothing stops it), stdin closed, 1 MiB of output kept and the rest dropped, an **allow-list**
   environment (`PATH`, `HOME`, `LANG`, `LC_*`, `TMPDIR`, `TERM`, plus the names the ticket's skills declare, D56, none yet),
@@ -1768,6 +1789,31 @@ Where this chapter was silent, `orch.ops` does the following. Each is a rule the
 - **Skill sidecar.** `orch.skill.json` is validated in plain Python (D55): exactly `schema_version` (1), `skill_version`
   (`x.y.z`), `scope` (`builtin`, `workspace` or `org`), `connections` and `env` (lists of names).
 
+**P2 host person ops (H6b; not P1 CLI registry operations).** Only a person-class caller with a valid
+person mapping and no grant may use these through `human.prepare`; agents, unattended callers, workers and
+control callers cannot. The signing person must have the role stated below (host §0.5).
+
+```
+move         {ref:Ref, to:"backlog"|"open", reason?:str{1..500}}
+             → ticket.moved {from:<current status>, to, reason?}  // workspace owner or maintainer
+policy.set   {ref?:Ref, gates:{Gate: Policy}{1..4}}
+             → policy.changed {gates}  // owner only; ticket log with ref, else workspace log
+settings.set {set:{grant_hours?:int 1..24, claim_ttl_min?:int 15..1440, lease_ttl_min?:int 5..1440,
+                   repos?:{str/[a-z0-9][a-z0-9._-]{0,63}/: {path:str{1..1024}, remote?:str{1..512},
+                                                           default_branch?:str{1..255}} | null}{1..32}}}
+             → settings.changed {set}  // owner only, workspace log
+Policy = {approvers:[str{1..32}]{1..8}, count:int 1..9, not:[str{1..32}]{0..8},
+          applies:"all"|"off"|[str{1..32}]{1..16}, independent:bool}
+```
+
+`Gate` is one of the four gates. Policies also obey §5.7 (code: `not` includes `assignees`,
+`independent:true`); settings obey §1. These host ops do not extend the version-1 CLI registry/`EMITS_V1`
+or agent grant verbs. The existing ticket `policy.changed` event authorization remains §5.4.2;
+the owner-only restriction here is on the host op.
+
+**Reserved, not served:** `comment`, `ticket.discard`, `artifact.search`, `view.*` (including `view.save`
+and `view.delete`). Saved views are the dashboard addon's own data.
+
 ### 10.8 Decisions of C7 (the human operations as built)
 
 Where §5.3, §5.7, §10.1 and §10.3 were silent, `orch.ops.human` and the eleven human operations (`approve`,
@@ -1823,9 +1869,13 @@ operation).
 - **D58/D59 binding.** `verdict` and `approve code` read git (`orch.store.observe`, which appends any owed
   `branch.pushed`) right before the prompt and bind the commits it finds as `source_sha`. Each linked working copy must be
   on the bound branch (`refs/heads/<branch>`), at the bound commit, with nothing uncommitted; otherwise
-  observe.unavailable. The decision binds a commit, so the files a person ran or read must be that commit (F1 was silent;
-  a detached HEAD elsewhere and another branch are refused). The same check runs again inside `Store.append` with the
-  workspace lock held (a `precommit` callback, read-only), after the passphrase: a source that moved meanwhile is
+  observe.unavailable. The signature binds the commit; a detached HEAD elsewhere and another branch are refused. In P2
+  the clean-tree check runs before the prompt in the worker's reader (at `human.prepare`, and again
+  at `human.get` when binding a device for a hand-off). The signer shows `checks` as "attested by the worker,
+  best effort"; those checks are not signed material and are only as trustworthy as the worker account, which also
+  runs addons. The tree can change between the worker's check and the append. No worker means observe.unavailable.
+  `precommit` rechecks only the symbolic branch and bound commit under the workspace lock after signing,
+  never the clean tree (host design D-P2-19): a source that moved meanwhile is
   gate.stale and nothing is appended. A linked repository that cannot be observed is observe.unavailable, a missing ref
   source.missing (§5.7). A ticket that links no repository signs `source_sha: []`.
 - **`--dry-run` writes nothing:** it does not observe (no `branch.pushed`), does not prompt and does not sign; it judges
@@ -1992,7 +2042,7 @@ owner's confirmation.
 | N12 | Independence of approvers | The policy option `independent`, **off by default** for `requirements`, `plan` and `verify`, so a sole owner can approve their own agents' work; always on for `code` (D59). See O4 for what `not: assignees` covers. | new from the Codex review |
 | N13 | Trust root | The head of `workspace.created` is the genesis, checked in six ordered steps (§5.11); remembered by the host outside the workspace, in every workspace checkpoint, shown at pairing (the person's custody key file records it from P3 pairing on; `orch init` does not, see §10.7). Readers replay authorization, not only signatures. **P1 limit:** see O7. | new from the Codex review; tightened with the Opus reviewer |
 | N14 | Rollback and trust in P1 | Equal-height divergent heads are refused and `restore` is defined, but **P1 can't detect a rollback when both the history and the local checkpoints are replaced**, and the genesis pin lives in files the same OS user owns (O7). The workspace’s `.state/applied` crash marker is unsigned: anyone who can write `.state` can make a rollback look like a repairable crash. Relay checkpoints (P3) and host-held keys (P2) address these limits. | new from the Codex review |
-| O1 | Where the factor is recorded | In the event's `auth` only, not in the device certificate. **D64's wording ("recorded in the person's device certificate") needs amending**; F1 doesn't edit D64. | agreed with Opus reviewer |
+| O1 | Where the factor is recorded | In the event's `auth` only, not in the device certificate. D64 records custody in event `auth`; WebAuthn is deferred past P2 because it needs a new signature contract. | agreed with Opus reviewer |
 | O2 | Custody of `dk_sig` in P1 | `dk_sig` is held by the backend named in `auth`; in P1 it is passphrase-encrypted like the person key, decrypted for one signature on a TTY, never cached; a key that signs without its factor is `file`-tier and never signs person events (§5.3). | agreed with Opus reviewer |
 | O3 | Done is sticky; compromised devices | A `done` ticket leaves `done` only by `ticket.reopened`, `branch.pushed` of a source ref (D58) or the D59 code-gate rule; bound edits are refused from every actor. A `device.revoked` with `compromised` voids that device's decisions on unsettled tickets; settled (`done` or `closed`) tickets list them (`revoked_decisions`) with no state change until the ticket becomes unsettled (§5.7). A void raises the gate for everyone: a `role.changed` is a cheap way for an owner to reset a gate, which is accepted because owners can already edit bound content. | agreed with Opus reviewer |
 | O4 | Self-approval | With `independent` on, `not: assignees` also excludes the `for` person of agent events that touched a bound path in the gate's current generation. With it off (the single-owner default), a person may approve their own agent's work, and the doc says so (§5.7). | agreed with Opus reviewer |
@@ -2116,7 +2166,7 @@ A1–A20 (PR body), HO (dashboard handover, input only), D58–D60, the adversar
 | 105 | Claims across persons (Opus note) | Takeover by any covering grant and release by ticket owner/owners/maintainers, stated as accepted for P1. | Written down instead of implied. |
 | 106 | Completeness on replay (Opus note) | An approval of an incomplete gate doesn't count on replay either. | Same result at append and replay. |
 | 107 | `suite` wording (Opus note) | "the deployment suite (2, D46)". | Not a constant per format. |
-| 108 | D64 wording (Opus O1) | Listed for amendment; not edited here. | D64 says the backend is in the certificate; it isn't. |
+| 108 | D64 wording (Opus O1) | Amended by H0: custody is in event `auth`. | WebAuthn needs a new signature contract and is deferred past P2. |
 | 109 | Custom addon events in P1 | Refused until C9/P2 define them (A5). | Nothing unvalidated enters the logs. |
 | 110 | Compromised devices (Opus O3) | Void decisions on tickets not yet `done`; flag on `done` tickets. | Sticky `done` with visible risk. |
 | 111 | Raises suspended on `done` vs reopen/restore/push (re-review R1) | Generations are raised in every status; done is sticky is a separate status rule; reopen after `done` voids the old verdict. | One reading for every implementation. |
@@ -2159,7 +2209,7 @@ Open after F1 (not settled here):
 - orch-relay `vectors_v2.json` needs the vectors of §11.5. That is an orch-relay change.
 - Bundled Unicode 16.0 tables for Python 3.11–3.13 (C1).
 - Addon event payloads (P2: only the `propose` result of §8.1 exists). (Imported v1 history is settled by §14.)
-- D63–D66 are still drafts; `auth` (N2) depends on them, and D64's wording needs amending (O1).
+- D63–D66 are still drafts; `auth` (N2) depends on them, D64 records the backend in event `auth` (O1), with WebAuthn deferred past P2.
 
 ## 14. Amendment C10: importing v1, `doctor` and `check`
 

@@ -490,7 +490,8 @@ parsed CLI arguments), its handler and its `Result`. The changes from P1:
             repo:str{1..200} | null, output:"-"}
   ```
 
-  `output` comes through `files`, at most 1 MiB. The host stores the receipt with `attested_by: "agent"` (D-P2-19).
+  `output` comes through `files`, at most 1 MiB. H3b2 (client receipts) adds `attested_by: "agent"` to the stored
+  receipt (D-P2-19); the current receipt has no such field.
 - `import.v1` and `init` are not served (D-P2-9). `import.v1` runs in direct mode before registration. `init` is the
   `host.wsk_create` + `host.bootstrap` composite.
 - `help` and `describe` are answered by the client from its own registry. The host serves them too.
@@ -645,7 +646,7 @@ Class N gets only `version` and `tier`.
 when every event type the op emits passes `orch.ops.actors.allows("human", t)` (F1: an A type may be appended by a
 signed person). Other agent ops answer `op.not_allowed`.
 
-**`move` (provisional until H0 lands `ticket.moved`).**
+**`move` (F1 `ticket.moved`).**
 
 - A person op, owner or maintainer, through `human.prepare`: `{ref:Ref, to:"backlog"|"open", reason?:str{1..500}}`.
 - It emits `ticket.moved {from, to, reason?}`.
@@ -1308,7 +1309,8 @@ process under the human's UID. It serves `127.0.0.1:<random port>` and is person
 Required on the HTTP side (stream B; amended per R10):
 
 - **A bearer token in a header, no cookie.**
-  - The launch URL carries a one-time token in the fragment.
+  - The launch URL carries a one-time token in the fragment. The launch token must never appear in process arguments
+    (visible via `ps`) or in an environment readable by other users.
   - The page exchanges it, with an `Origin` check, for a session token held in page memory only.
   - Every API call sends `Authorization: Bearer <token>`.
   - With no ambient credential, a cross-site request carries nothing, so CSRF has nothing to ride on.
@@ -1561,7 +1563,7 @@ UID. P2 adds no keychain.**
   - The child runs the `worktree` profile.
   - Paths in `changed` are escaped and rendered with F1 §11.3's rules wherever they are shown.
 - **`task done --run`:** the client runs `verify.cmd` and sends the receipt (§0.8). The host checks that `cmd` equals
-  the approved `verify.cmd` and records `attested_by: "agent"`.
+  the approved `verify.cmd`; H3b2 (client receipts) adds `attested_by: "agent"`, absent from the current receipt.
   - This proves an authenticated agent **claimed** this result. It does not prove the command ran, its exit code, its
     output or its commit.
   - H0 amends F1 §10.7 ("the P2 host runs it itself") to say this. Independent verification needs a separate trusted
@@ -1637,10 +1639,10 @@ dispatch is turned on.
 
 **H0: the F1 and spec amendments.**
 
-1. **§10.7 receipts:** client-run, recorded `attested_by: "agent"`, proving a claim, not execution. Replaces "the P2
-   host runs it itself".
+1. **§10.7 receipts:** client-run, proving a claim, not execution. H3b2 (client receipts) adds
+   `attested_by: "agent"`; H0 adds no receipt field. Replaces "the P2 host runs it itself".
 2. **§10.8 clean-tree check:** run once, before the prompt, by the worker's reader, and shown as best effort.
-   `precommit` re-checks only the branch.
+   `precommit` re-checks the branch and commit under the lock.
 3. **§5.1 event ids:** host-prepared in P2; the signer never chooses or changes them.
 4. **`ticket.moved`:** a person event (owner, maintainer) with `{from, to, reason?}` and the `move` rules (§0.8).
 5. **`policy.set` and `settings.set`:** record the two ops of §0.8 (argument schemas fixed there) for the existing `policy.changed` and

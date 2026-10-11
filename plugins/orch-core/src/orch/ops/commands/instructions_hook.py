@@ -39,12 +39,12 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     from orch.ops.runtime import _config
 
     event = args["event"]
-    ws = ctx.workspace or Workspace(ctx.env, ctx.now)
+    ws = ctx.workspace or Workspace(ctx.env, ctx.now, files=ctx.caps.files)
     if ws.root is None:  # a plugin hook runs in every project: outside a workspace it says nothing
         return _silent(event)
     # A hook never pins a genesis (no trust on first use from a hook that runs in every cloned repository): it reads
     # only a workspace this machine has pinned, on purpose, by `orch status` or `orch init`.
-    cfg = _config(ws.root) or {}
+    cfg = _config(ws.root, ctx.caps.files) or {}
     wid = cfg.get("workspace", {}).get("id", "")
     if not (ws.state_dir / "hosts" / wid / "genesis").is_file():
         return _split(event, [f"ok {event} not initialised on this machine (no genesis pin)", "next: orch status"])

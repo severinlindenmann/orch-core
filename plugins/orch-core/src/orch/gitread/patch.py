@@ -11,7 +11,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from . import limits
-from .errors import Unavailable
 from .repo import Repo, TreeEntry
 from .xdiff import unified
 
@@ -38,19 +37,31 @@ def _key(e: TreeEntry) -> bytes:
     return e.name + b"/" if e.is_tree else e.name
 
 
-def diff_trees(repo: Repo, old: str | None, new: str | None) -> list[Change]:
-    """Every changed path below two trees, in git's traversal order."""
-    out: list[Change] = []
+class _Enough(Exception):
+    pass
+
+
+def diff_trees(
+    repo: Repo, old: str | None, new: str | None, max_changes: int = limits.DIFF_FILES_MAX
+) -> tuple[list[Change], bool]:
+    """The changed paths below two trees, in git's traversal order: ``(changes, cut)``. The walk stops as soon as
+    there are more than ``max_changes`` (``cut``), and the tree entries read in total are capped while parsing."""
     budget = [limits.TREE_ENTRIES_MAX]
 
     def entries(oid: str | None) -> list[TreeEntry]:
         if oid is None:
             return []
-        es = repo.tree(oid)
+        es = repo.tree(oid, budget[0])
         budget[0] -= len(es)
-        if budget[0] < 0:
-            raise Unavailable("too many paths to compare")
         return sorted(es, key=_key)
+
+    class _Out(list):
+        def append(self, ch: Change) -> None:
+            if len(self) >= max_changes:
+                raise _Enough
+            super().append(ch)
+
+    out = _Out()
 
     def walk(old_t: str | None, new_t: str | None, prefix: bytes) -> None:
         a, b = entries(old_t), entries(new_t)
@@ -86,8 +97,11 @@ def diff_trees(repo: Repo, old: str | None, new: str | None) -> list[Change]:
         else:
             out.append(Change(prefix + e.name, 0, None, e.mode, e.oid))
 
-    walk(old, new, b"")
-    return out
+    try:
+        walk(old, new, b"")
+    except _Enough:
+        return list(out), True
+    return list(out), False
 
 
 def quote_c(name: bytes) -> tuple[bytes, bool]:
@@ -170,20 +184,34 @@ def _one(repo: Repo, path: bytes, mode1: int, oid1: str | None, mode2: int, oid2
     return header + minus + plus + b"".join(hunks), added, deleted, False
 
 
-def render(repo: Repo, changes: list[Change], context: int) -> tuple[bytes, list[dict]]:
-    """The patch text and the ``files`` list of section 0.8 (status ``A``, ``M``, ``D`` or ``T``)."""
+def render(repo: Repo, changes: list[Change], context: int, max_text: int) -> tuple[bytes, list[dict], bool]:
+    """The patch text, the ``files`` list of section 0.8 (status ``A``, ``M``, ``D`` or ``T``) and whether the text
+    was cut. Text is kept only until it passes ``max_text`` (the caller cuts it on a line boundary); later files
+    still count their lines, but their text is dropped as it is made."""
     chunks: list[bytes] = []
     files: list[dict] = []
+    total = 0
+    cut = False
+
+    def keep(t: bytes) -> None:
+        nonlocal total, cut
+        if total > max_text:
+            cut = cut or bool(t)
+            return
+        chunks.append(t)
+        total += len(t)
+
     for ch in changes:
         path = ch.path
         if ch.old_oid is not None and ch.new_oid is not None and (ch.old_mode ^ ch.new_mode) & _IFMT:
             t1, a1, d1, b1 = _one(repo, path, ch.old_mode, ch.old_oid, 0, None, context)
             t2, a2, d2, b2 = _one(repo, path, 0, None, ch.new_mode, ch.new_oid, context)
-            chunks += (t1, t2)
+            keep(t1)
+            keep(t2)
             status, added, deleted, binary = "T", a1 + a2, d1 + d2, b1 or b2
         else:
             text, added, deleted, binary = _one(repo, path, ch.old_mode, ch.old_oid, ch.new_mode, ch.new_oid, context)
-            chunks.append(text)
+            keep(text)
             status = "A" if ch.old_oid is None else "D" if ch.new_oid is None else "M"
         files.append(
             {
@@ -195,4 +223,4 @@ def render(repo: Repo, changes: list[Change], context: int) -> tuple[bytes, list
                 "binary": binary,
             }
         )
-    return b"".join(chunks), files
+    return b"".join(chunks), files, cut

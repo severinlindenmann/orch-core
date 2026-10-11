@@ -92,6 +92,8 @@ def _openat(dirfd: int, base: str, name: str, flags: int) -> int:
 def _fail(what: str, e: OSError) -> Unavailable:
     if e.errno == errno.ELOOP:
         return Unavailable(f"{what} is a symlink")
+    if e.errno == errno.ENOTDIR:  # macOS answers O_DIRECTORY|O_NOFOLLOW on a symlink with ENOTDIR
+        return Unavailable(f"{what} is a symlink or not a directory")
     if e.errno == errno.ENOENT:
         return Unavailable(f"{what} does not exist")
     if isinstance(e, PermissionError):
@@ -216,24 +218,41 @@ class Dir:
             raise _fail(self.path, e) from None
 
 
-def open_abs(path: str) -> tuple[Dir, os.stat_result]:
-    """An absolute directory by its path (``O_NOFOLLOW`` on the last component). Used for pins and pinning only."""
+def abs_parts(path: str) -> list[str]:
+    """The components of an absolute path, refused unless it is lexically clean (no ``.``, ``..`` or empty part)."""
     if not path.startswith("/") or "\0" in path:
         raise Unavailable(f"not an absolute path: {path!r}")
+    parts = path.split("/")[1:]
+    if parts and parts[-1] == "":
+        parts = parts[:-1]
+    if any(p in ("", ".", "..") for p in parts):
+        raise Unavailable(f"not a clean absolute path: {path!r}")
+    return parts
+
+
+def open_walk(path: str) -> tuple[Dir, os.stat_result]:
+    """An absolute directory, walked from ``/`` **one component at a time with ``O_NOFOLLOW``** (every component, not
+    only the last). A path that is checked and then swapped for a symlink anywhere along it is refused (``ELOOP``)
+    instead of followed, so the directory opened is the one at that lexical path. Used for pins and pinning."""
+    parts = abs_parts(path)
     try:
-        fd = os.open(path, os.O_RDONLY | _DIRECTORY | _NOFOLLOW | _CLOEXEC | _NOCTTY)
+        fd = os.open("/", os.O_RDONLY | _DIRECTORY | _CLOEXEC)
     except OSError as e:
-        raise _fail(path, e) from None
-    st = os.fstat(fd)
-    if not stat.S_ISDIR(st.st_mode):
-        os.close(fd)
-        raise Unavailable(f"{path} is not a directory")
-    return Dir(fd, path), st
+        raise _fail("/", e) from None
+    root = Dir(fd, "/")
+    if not parts:
+        return root, os.fstat(root.fd)
+    try:
+        d = root.sub("/".join(parts))
+    finally:
+        root.close()
+    return d, os.fstat(d.fd)
 
 
 def open_pin(pin: DirPin) -> Dir:
-    """The pinned directory, refused unless its device and inode are still the pinned ones."""
-    d, st = open_abs(pin.path)
+    """The pinned directory, walked as :func:`open_walk` does, refused unless its device and inode (``fstat`` of the
+    opened fd) are still the pinned ones. Everything below it is then opened relative to this fd."""
+    d, st = open_walk(pin.path)
     if (st.st_dev, st.st_ino) != (pin.dev, pin.ino):
         d.close()
         raise Unavailable(f"{pin.path} is not the pinned directory any more")

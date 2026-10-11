@@ -166,7 +166,8 @@ class Repo:
         self._commits[oid] = c
         return c
 
-    def tree(self, oid: str) -> list[TreeEntry]:
+    def tree(self, oid: str, max_entries: int = limits.TREE_ENTRIES_MAX) -> list[TreeEntry]:
+        """The entries of a tree; more than ``max_entries`` is refused while parsing (before they are built)."""
         _, data = self.objects.read(oid, "tree")
         out: list[TreeEntry] = []
         i = 0
@@ -185,6 +186,8 @@ class Repo:
             name = data[sp + 1 : nul]
             if not name or b"/" in name or name in (b".", b".."):
                 raise Unavailable(f"tree {oid} has a bad entry name")
+            if len(out) >= max_entries:
+                raise Unavailable("too many paths to compare")
             out.append(TreeEntry(canon_mode(int(mode_b, 8)), name, data[nul + 1 : nul + 1 + r].hex()))
             i = nul + 1 + r
         return out

@@ -1,6 +1,9 @@
 """Pinning a repository when it first appears (F7): its working copy, gitdir and ``commondir`` by real path, device
 and inode.
 
+* Every directory is opened by walking its real path from ``/`` with ``O_NOFOLLOW`` on each component (or relative
+  to an fd already opened that way), and the pin is the ``fstat`` of that fd: a component swapped for a symlink
+  between the check and the open is refused, never followed.
 * The declared ``path`` must be a directory whose ``.git`` is a real directory (the gitdir), or a regular ``.git``
   file ``gitdir: <path>`` (a linked worktree). A ``.git`` symlink, or anything else, is refused.
 * The gitdir and the ``commondir`` (from the gitdir's ``commondir`` file, else the gitdir itself) must lie under the
@@ -17,7 +20,7 @@ import os
 
 from . import limits
 from .errors import Unavailable
-from .fs import Dir, DirPin, RepoPins, open_abs
+from .fs import Dir, DirPin, RepoPins, open_walk
 from .repo import resolve_named
 
 __all__ = ["pin_repo", "under"]
@@ -28,8 +31,13 @@ def under(path: str, root: str) -> bool:
 
 
 def _pin_dir(path: str) -> tuple[Dir, DirPin]:
-    d, st = open_abs(path)
+    d, st = open_walk(path)  # no symlink anywhere along the path: the fd is the directory at this real path
     return d, DirPin(path, st.st_dev, st.st_ino)
+
+
+def _pin_fd(d: Dir) -> DirPin:
+    st = os.fstat(d.fd)
+    return DirPin(d.path, st.st_dev, st.st_ino)
 
 
 def pin_repo(path: str, roots: list[str]) -> RepoPins:
@@ -43,8 +51,11 @@ def pin_repo(path: str, roots: list[str]) -> RepoPins:
     opened = [wt]
     try:
         kind = wt.kind(".git")
+        gd: Dir | None = None
         if kind == "dir":
-            gitdir_path = real.rstrip("/") + "/.git"
+            gd = wt.sub(".git")  # relative to the working copy's fd, O_NOFOLLOW: a swapped .git is refused
+            opened.append(gd)
+            gitdir_path = gd.path
         elif kind == "file":
             data = wt.read(".git", limits.SMALL_FILE_MAX)
             if not data.startswith(b"gitdir: "):
@@ -56,8 +67,11 @@ def pin_repo(path: str, roots: list[str]) -> RepoPins:
             raise Unavailable("the working copy's .git is a symlink or a special file")
         if not any(under(gitdir_path, r) for r in roots):
             raise Unavailable("the gitdir lies outside every declared repo")
-        gd, gd_pin = _pin_dir(gitdir_path)
-        opened.append(gd)
+        if gd is None:
+            gd, gd_pin = _pin_dir(gitdir_path)
+            opened.append(gd)
+        else:
+            gd_pin = _pin_fd(gd)
         if gd.kind("HEAD") != "file":
             raise Unavailable("the gitdir has no HEAD")
         named = gd.read_optional("commondir", limits.SMALL_FILE_MAX)

@@ -89,9 +89,8 @@ def diff(repo: Repo, branch: str, default_branch: str | None, context: int, max_
         if not parents:
             raise Unavailable("no merge base with the default branch and no parent commit")
         base = parents[0]
-    changes = diff_trees(repo, repo.commit(base).tree, repo.commit(head).tree)
-    files_cut = len(changes) > limits.DIFF_FILES_MAX
-    patch, files = render(repo, changes[: limits.DIFF_FILES_MAX], context)
+    changes, files_cut = diff_trees(repo, repo.commit(base).tree, repo.commit(head).tree, limits.DIFF_FILES_MAX)
+    patch, files, text_cut = render(repo, changes, context, max_bytes)
     cut = patch
     if len(patch) > max_bytes:
         nl = patch.rfind(b"\n", 0, max_bytes)
@@ -102,7 +101,8 @@ def diff(repo: Repo, branch: str, default_branch: str | None, context: int, max_
         "head_sha": head,
         "files": files,
         "patch": base64.b64encode(cut).decode("ascii"),
-        "truncated": len(cut) < len(patch) or files_cut,
+        "truncated": len(cut) < len(patch) or files_cut or text_cut,
+        "origin_urls": repo.config.origin_urls,
     }
 
 

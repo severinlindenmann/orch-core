@@ -1081,6 +1081,8 @@ def test_dispatch_precedence_before_rate_limit():
         async with pair_session(callback=denied) as (session, client, _, _):
             for _ in range(100):
                 session.server.limits.request_allowed(session.peer)
+            for bucket in session.server.limits.agents.values():
+                bucket.rate = 0  # no refill: the result must not depend on how fast this machine is
             await send_frame(client, HELLO)
             await read_frame(client)
             await send_frame(client, req())

@@ -438,6 +438,16 @@ class Store:
                 out.append(self._host_append("gate.invalidated", uid, {"gate": g, "cause": reason, "voided": ids}))
         return out
 
+    def logged_event(self, log: str, event_id: str) -> dict[str, Any] | None:
+        """The event of ``log`` (``"workspace"`` or a ticket uid) with this id, read from the verified log under the
+        lock, or ``None``. The host's reconciliation of an outcome record asks this for each planned event id."""
+        with self._locked():
+            if log != WORKSPACE:
+                check_uid(log)
+                self._ensure({log})
+            seq = self._seq_of_id(log, event_id)
+            return None if seq is None else self._read_event(log, seq)
+
     def attempt_logged(self, ref: str, idem: str) -> bool:
         """Did an append with this idempotency key reach the log of ticket ``ref``? (The log confirms the record.)"""
         with self._locked():
@@ -1222,9 +1232,11 @@ class Store:
         owner: str,
         uid: str | None = None,
         idem: str | None = None,
+        event_id: str | None = None,
     ) -> Appended:
         """Append a ``ticket.created`` for an actor nobody signs (an agent with a grant): allocates the key and the
-        uid under the lock, so two processes never take the same number."""
+        uid under the lock, so two processes never take the same number. ``event_id`` plans the event's id (the host
+        writes it into its outcome record first, so a crash after the append can be reconciled from the log)."""
         with self._locked():
             self._scan_dirs()
             self._verified_keys()
@@ -1240,6 +1252,8 @@ class Store:
                 "title": title,
                 "owner": owner,
             }
+            if event_id is not None:
+                ev["id"] = event_id
             return self._append(ev, new_uid, None, None, idem)
 
     # -- steps

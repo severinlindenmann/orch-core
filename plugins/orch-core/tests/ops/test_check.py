@@ -159,3 +159,32 @@ def test_unknown_files_and_a_deleted_artifact_cannot_be_committed(repo, cli):
     repo.git("rm", "--cached", "-q", f"tickets/{uid}/artifacts/a.txt")
     r = check(repo, "--staged")
     assert r.code == 5 and codes(r) == ["commit.deleted"]
+
+
+@pytest.mark.parametrize("status", ["A", "D"])
+@pytest.mark.parametrize(
+    "rel",
+    [
+        "Tickets/{uid}/events.jsonl",
+        "EVENTS/workspace.jsonl",
+        ".State/keys/x",
+        "tickets/{uid}/EVENTS.jsonl",
+        "events/WORKSPACE.jsonl",
+        "tickets/{uid}/artifacts/café.txt",
+        "EVENTS/café.jsonl",
+        ".STATE/kéys/x",
+    ],
+)
+def test_staged_paths_are_guarded_without_case_or_ascii_aliases(ws, cli, monkeypatch, status, rel):
+    from orch.ops import health
+
+    cli("new", "one")
+    rel = rel.format(uid=ws.uid("1"))
+    raw = f":100644 100644 {'0' * 40} {'1' * 40} {status}\0{rel}\0".encode()
+    monkeypatch.setattr(health, "_git", lambda root, *args: raw if args[0] == "diff" else b"innocent")
+    store = ws.other()
+    try:
+        findings = health.check_staged(store, ws.root)
+        assert len(findings) == 1 and findings[0].code in ("commit.unknown", "commit.state")
+    finally:
+        store.close()

@@ -407,6 +407,20 @@ def check_staged(s: InspectStore, root: Path) -> list[Finding]:
             entries.append((meta[4], meta[1], fields[i + 1]))
     guarded = re.compile(r"(?:tickets/|events/|\.state(?:/|$))|(?:config|keys)\.jsonl?$")
     for status, mode, rel in sorted(entries, key=lambda e: e[2]):
+        folded = rel.casefold()
+        if folded == ".state" or folded.startswith(".state/"):
+            out.append(Finding("error", rel, "commit.state", ".state is local: never commit it"))
+            continue
+        protected = folded.startswith(("tickets/", "events/")) or folded in (
+            "tickets",
+            "events",
+            "config.json",
+            "keys.jsonl",
+        )
+        known = rel in ("events/workspace.jsonl", "config.json", "keys.jsonl") or _TICKET_FILE.fullmatch(rel)
+        if protected and (not rel.isascii() or not known):
+            out.append(Finding("error", rel, "commit.unknown", "a file the workspace does not keep there"))
+            continue
         if status == "D":
             if rel.endswith(("events.jsonl", "workspace.jsonl", "ticket.json", "body.md", "config.json", "keys.jsonl")):
                 out.append(

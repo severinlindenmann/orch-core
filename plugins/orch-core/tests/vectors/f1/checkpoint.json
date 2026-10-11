@@ -177,7 +177,7 @@
  ],
  "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
  "note": "TEST KEYS ONLY. Every private scalar below is derived from the key name as sha256('orch-f1-test-key|' + name) mod (n-1) + 1 and is published on purpose; the signatures are RFC 6979 (deterministic), so consumers verify the stored signature and never re-sign.",
- "pins": "protocol 2.4 checkpoint objects of F1 5.10: the exact shape of `o`, the signed bytes ('orch/v2/sig/checkpoint|' + cj(o)), real signatures; forged variants fail; a lower seq or n, or the same seq with another head, is refused (chain.diverged); a log that disagrees with a checkpoint is diverged; restore (see restore.json); receivers judge workspace checkpoints by n and seq (workspace_n_offers: ok, ignored, chain.diverged). Receiver inputs (a receiver view; every field is given explicitly, {} or [] meaning none): the top-level workspace_id, genesis and wsk_pub are the receiver's pins; every offer and transition case gives the receiver clock `now` (one sampled, trusted clock; a WSK-signed `at` more than 300 s after it is the retryable checkpoint.future); a workspace_n_offers case with a `held` key (null: an uninitialized receiver) replaces workspace_n_held; every transition case gives `pinned_delegation` (the workspace's card / genesis delegation, whose `o` the carried, PK-verified one must equal), `known_devices` (device_id -> person_id and optional pk_pub the receiver knows for it, active or revoked), `known_revocations` (chain-learned: held when judging and authenticated in this workspace's accepted history; signer refusal and completeness; entries may carry `pk_pub`), `local_revocations` (out of band: held when judging, not chain-learned; signer refusal and evidence identity only, never completeness) and `learned_later_in_walk` (learned only from a higher-n bundle; never refuses; `alarm: true` when it must raise the C3 alarm, otherwise no alarm). `unpublished` is the expected sorted d_ ids of revocation.unpublished for an accepted workspace restore ([] otherwise). Every refusing transition keeps all signatures valid except the one a case names as its defect.",
+ "pins": "protocol 2.4 checkpoint objects of F1 5.10: the exact shape of `o`, the signed bytes ('orch/v2/sig/checkpoint|' + cj(o)), real signatures; forged variants fail; a lower seq or n, or the same seq with another head, is refused (chain.diverged); a log that disagrees with a checkpoint is diverged; restore (see restore.json); receivers judge workspace checkpoints by n and seq (workspace_n_offers: ok, ignored, chain.diverged). Receiver inputs (a receiver view; every field is given explicitly, {} or [] meaning none): the top-level workspace_id, genesis and wsk_pub are the receiver's pins; every offer and transition case gives the receiver clock `now` (one sampled, trusted clock; a WSK-signed `at` more than 300 s after it is the retryable checkpoint.future); a workspace_n_offers case with a `held` key (null: an uninitialized receiver) replaces workspace_n_held; every transition case gives `pinned_delegation` (the workspace's card / genesis delegation, whose `o` the carried, PK-verified one must equal), `known_devices` (device_id -> person_id and optional pk_pub the receiver knows for it, active or revoked), `known_revocations` (chain-learned: held when judging and authenticated in this workspace's accepted history; signer refusal, evidence identity and completeness; entries may carry `pk_pub`), `local_revocations` (out of band: held when judging, not chain-learned; signer refusal and evidence identity only, never completeness; never filtered) (a held revocation refuses the signer only when it names the signer's device and person) and `learned_later_in_walk` (learned only from a higher-n bundle; never refuses; `alarm: true` when it must raise the C3 alarm, otherwise no alarm). `unpublished` is the expected sorted, de-duplicated d_ ids of revocation.unpublished for an accepted workspace restore ([] otherwise). Every refusing transition keeps all signatures valid except the one a case names as its defect.",
  "ticket_checkpoint": {
   "signed": {
    "o": {
@@ -17864,43 +17864,58 @@
      "at": "2026-10-10T10:00:30Z",
      "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
      "kind": "workspace_checkpoint",
-     "n": 5,
+     "n": 3,
      "suite": 2,
      "tickets": {},
      "v": 2,
      "workspace_id": "0123456789abcdef0123456789abcdef",
      "workspace_log": {
-      "acc": "sha256:460257b487b567ee13d3b0eeeafd6bae677339f01d81132fecd5a6b892a39578",
-      "head": "sha256:4a7f315c433afc2e767a99b44724c5e28583183871ad706a4d668a890b849f3a",
-      "seq": 4
+      "acc": "sha256:a3a6b067e85e9fae49be8c5b083944c66d11ff0c547bcfad5ec1d6092a53489e",
+      "head": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
+      "seq": 3
      }
     },
-    "sig": "roKNqB_WaozKdnsNmIhVuu7__TSzfmX-NC6TXCZGCFJ_ZCepMj1IloVKI12HgLtOFpW_7KJlDmNjV-lrj05t1g"
+    "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
    },
    "known_devices": {},
    "known_revocations": [],
    "learned_later_in_walk": [],
-   "local_revocations": [],
-   "name": "hash_only_withheld_revocation_not_demanded",
-   "note": "the relay delivers only the head of withheld_event (abandoned_heads); the receiver never inspected its body, so the revocation is not chain-learned (known limit: the policy preserves only revocations the receiver established in accepted history)",
+   "local_revocations": [
+    {
+     "revocation": {
+      "o": {
+       "device_id": "c65032f21d43401cc223b05723c1e5b4",
+       "kind": "revocation",
+       "person_id": "6aae5cce832160e6f8cd9dadfbb4c5cd",
+       "reason": "compromised",
+       "revoked_ms": 1790000100000,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "f2o-hzEsIQz4w-UQ24P8_k1LV-59Ydq2mIXecdQ_za93NVPvNzYbKDLiH1-b_TbovOxlojhTJP09aJ-D2IBDWA"
+     }
+    }
+   ],
+   "name": "cross_person_revocation_of_the_signer_device_not_refused",
+   "note": "mara's PK signs a revocation of sev's device id: the runtime never admits evidence contradicting a known person binding (F1), and judge_offer, given it anyway, does not refuse the owner's restore; like any local revocation the restore does not carry, it is reported unpublished",
    "now": "2026-10-10T12:00:00Z",
    "offered": {
     "o": {
-     "at": "2026-10-10T10:12:20Z",
+     "at": "2026-10-10T10:12:10Z",
      "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
      "kind": "workspace_checkpoint",
-     "n": 6,
+     "n": 4,
      "suite": 2,
      "tickets": {},
      "v": 2,
      "workspace_id": "0123456789abcdef0123456789abcdef",
      "workspace_log": {
-      "acc": "sha256:265df0ac6793ba986733aa5683b971c70562523883841e1409eedb6af5cc9021",
-      "head": "sha256:4d8397c0acdd39d1032c98d1bcf2c69dbcde0ea128a574c1d6eb92de8f8d8fb7",
-      "seq": 4
+      "acc": "sha256:7da4ce88316e64e0f98b977ef92cb4abec5369c7698844d497822333978aaee3",
+      "head": "sha256:4aa45d786e8739910d729315460cefddc1f1a6f14d04179c9789d840156ca478",
+      "seq": 2
      }
     },
-    "sig": "jeZBhxXRFi_KIeWSGUcZmml1lbvxLnESueIvSi_IUZqsSE7PFlbEaflYTl0Qot18osF7oJx23Mm4Wf2O33DW5w"
+    "sig": "RLJJdLoc3rdJWJVrSSBBU68wAJ8T7pr3DYqNmRmqHdZs9m-sZZhibpM_WYWtnBWcUFHgeGAZaaetCMANPkHSMA"
    },
    "pinned_delegation": {
     "o": {
@@ -17917,10 +17932,622 @@
    },
    "proofs": {
     "workspace": [
-     "sha256:4d8397c0acdd39d1032c98d1bcf2c69dbcde0ea128a574c1d6eb92de8f8d8fb7"
+     "sha256:4aa45d786e8739910d729315460cefddc1f1a6f14d04179c9789d840156ca478"
     ]
    },
-   "recorded": "01J9ZK0000000000000000002H",
+   "recorded": "01J9ZK0000000000000000002G",
+   "restore": {
+    "C": {
+     "o": {
+      "at": "2026-10-10T10:00:30Z",
+      "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+      "kind": "workspace_checkpoint",
+      "n": 3,
+      "suite": 2,
+      "tickets": {},
+      "v": 2,
+      "workspace_id": "0123456789abcdef0123456789abcdef",
+      "workspace_log": {
+       "acc": "sha256:a3a6b067e85e9fae49be8c5b083944c66d11ff0c547bcfad5ec1d6092a53489e",
+       "head": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
+       "seq": 3
+      }
+     },
+     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
+    },
+    "T": {
+     "o": {
+      "at": "2026-10-10T10:12:10Z",
+      "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+      "kind": "workspace_checkpoint",
+      "n": 4,
+      "suite": 2,
+      "tickets": {},
+      "v": 2,
+      "workspace_id": "0123456789abcdef0123456789abcdef",
+      "workspace_log": {
+       "acc": "sha256:7da4ce88316e64e0f98b977ef92cb4abec5369c7698844d497822333978aaee3",
+       "head": "sha256:4aa45d786e8739910d729315460cefddc1f1a6f14d04179c9789d840156ca478",
+       "seq": 2
+      }
+     },
+     "sig": "RLJJdLoc3rdJWJVrSSBBU68wAJ8T7pr3DYqNmRmqHdZs9m-sZZhibpM_WYWtnBWcUFHgeGAZaaetCMANPkHSMA"
+    },
+    "abandoned_heads": [
+     "sha256:90a514d49f67df9d29f1bdc76e0b91d5baedf156a0f222cd8d02338a7179d34e",
+     "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920"
+    ],
+    "acc_before": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "acc_from": "sha256:cc4f9dc2c75ad6af09128a145e1f4820eef5127aef629fc5c275826b0c4d921c",
+    "delegation": {
+     "o": {
+      "client_hosted": false,
+      "issued_ms": 1790000000000,
+      "kind": "ws_delegation",
+      "owner_person_id": "75bf75a3bb50b0c4ac02f8a757b90e23",
+      "suite": 2,
+      "v": 2,
+      "workspace_id": "0123456789abcdef0123456789abcdef",
+      "wsk_pub": "BJy4pP7CRCCFIbgVcqF07OgGwnzyG5Mu6nAPOvYZl72rKNxeRWcBwNDpRGc1LBIdbPY6ZrGFuKL1INLjmAeu_Ro"
+     },
+     "sig": "NwRve78-SgAnF30XOlRhDEb9KlCWIYBu5xXmOkGOE6vn70YeyeOXOcF6liH50gz6SfJNWTgZ2wi_KZc-DWXxMA"
+    },
+    "device_cert": {
+     "o": {
+      "created_ms": 1790000000000,
+      "device_id": "c65032f21d43401cc223b05723c1e5b4",
+      "dk_kx_pub": "BFeVKX_gphRxHCfh2Uw6UQVtj12_1v9LteaSfrwG6oH3QG8yDkYojB0rOpi7i-NDHC0PY47WHle_uYaQHjI534c",
+      "dk_sig_pub": "BEtUkscP1t-MK_B-LkrM8KwbVTJ2kwZBYo-4vnk4QSaltalieRixn4XJf8Z2jR5y10cpdvNZ1i-70-cvOz5Wlwo",
+      "expires_ms": null,
+      "kind": "device_cert",
+      "label_sealed": "bGFiZWwgc2V2MQ",
+      "person_id": "75bf75a3bb50b0c4ac02f8a757b90e23",
+      "scopes_max": [
+       "look",
+       "decide",
+       "operate",
+       "type"
+      ],
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "GMFk6HGDHI919l9dSkUuvlioYdJz-QzNR-qUAQ4kPhZevsgiEZBTlZr2SAIfUiNASTIzsMW_c_8yTbnW8kuMfQ"
+    },
+    "event": {
+     "abandoned": {
+      "head": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
+      "seq": 3
+     },
+     "abandoned_decisions": [
+      "01J9ZK00000000000000000002",
+      "01J9ZK00000000000000000003"
+     ],
+     "actor": {
+      "device": "d_c65032f21d43401cc223b05723c1e5b4",
+      "id": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
+      "kind": "person"
+     },
+     "at": "2026-10-10T10:12:10Z",
+     "auth": "passphrase",
+     "based_on": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+     "from_seq": 1,
+     "hash_v": 1,
+     "head": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+     "host_sig": "zDQJXKUNY9Jq-tPk_vQfhaFpufEntjbvYaGTVEpR5I_xuHjSWnyT9C3TDu_WozRrudiR8guE9U_TwRe_DHzfNA",
+     "id": "01J9ZK0000000000000000002G",
+     "prev": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+     "reason": "rollback",
+     "revocations": [],
+     "roster_v": 1,
+     "seq": 2,
+     "sig": "Z7ZWE2_aY1QsPNm7B9xCzQzXMUoWyhyCL5EZgp2bIlXvmxDvvn1tqB2DLsx8EbT0h-U31QJoU0t8eThpRjoxoA",
+     "source": {
+      "hash": "sha256:b26a1aa5b399205303364c5af75374d6dc785c59682af867fcdf55b4c31a9711",
+      "n": 3
+     },
+     "type": "restore",
+     "v": 2
+    },
+    "forward_heads": [],
+    "log": "workspace",
+    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94"
+   },
+   "unpublished": [
+    "d_c65032f21d43401cc223b05723c1e5b4"
+   ]
+  },
+  {
+   "applied": [],
+   "expect": "chain.diverged",
+   "held": {
+    "o": {
+     "at": "2026-10-10T10:00:30Z",
+     "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+     "kind": "workspace_checkpoint",
+     "n": 3,
+     "suite": 2,
+     "tickets": {},
+     "v": 2,
+     "workspace_id": "0123456789abcdef0123456789abcdef",
+     "workspace_log": {
+      "acc": "sha256:a3a6b067e85e9fae49be8c5b083944c66d11ff0c547bcfad5ec1d6092a53489e",
+      "head": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
+      "seq": 3
+     }
+    },
+    "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
+   },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
+   "local_revocations": [
+    {
+     "revocation": {
+      "o": {
+       "device_id": "c65032f21d43401cc223b05723c1e5b4",
+       "kind": "revocation",
+       "person_id": "75bf75a3bb50b0c4ac02f8a757b90e23",
+       "reason": "compromised",
+       "revoked_ms": 1790000100000,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "m6Hn5CDdhaR2wa5eHoLyggWQLvGC6XCCeDA43UvLO7_0IssTDgZXz-sYW03mDMYXL4i1n-zsYMdLyCBqhaBxyw"
+     }
+    }
+   ],
+   "name": "same_person_revocation_of_the_signer_device_refused",
+   "note": "the genuine counterpart of cross_person_revocation_of_the_signer_device_not_refused",
+   "now": "2026-10-10T12:00:00Z",
+   "offered": {
+    "o": {
+     "at": "2026-10-10T10:12:20Z",
+     "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+     "kind": "workspace_checkpoint",
+     "n": 4,
+     "suite": 2,
+     "tickets": {},
+     "v": 2,
+     "workspace_id": "0123456789abcdef0123456789abcdef",
+     "workspace_log": {
+      "acc": "sha256:c25ce72f06c8a9b66a48858ca2062a7a06c7a574e664136b8acbdd6f7451f164",
+      "head": "sha256:5e145d60f583fa4baea4896af2b5131eba806ad6efddd82040c9c0794977d0af",
+      "seq": 2
+     }
+    },
+    "sig": "Eafutto0eu8UgvsHuq4Xvzy3ecl8ncRbbhUSafCpU-z_yptGjod6LyVG62LhXgnQbIPeSFLfRTFAkL51NN4ixA"
+   },
+   "pinned_delegation": {
+    "o": {
+     "client_hosted": false,
+     "issued_ms": 1790000000000,
+     "kind": "ws_delegation",
+     "owner_person_id": "75bf75a3bb50b0c4ac02f8a757b90e23",
+     "suite": 2,
+     "v": 2,
+     "workspace_id": "0123456789abcdef0123456789abcdef",
+     "wsk_pub": "BJy4pP7CRCCFIbgVcqF07OgGwnzyG5Mu6nAPOvYZl72rKNxeRWcBwNDpRGc1LBIdbPY6ZrGFuKL1INLjmAeu_Ro"
+    },
+    "sig": "NwRve78-SgAnF30XOlRhDEb9KlCWIYBu5xXmOkGOE6vn70YeyeOXOcF6liH50gz6SfJNWTgZ2wi_KZc-DWXxMA"
+   },
+   "proofs": {
+    "workspace": [
+     "sha256:5e145d60f583fa4baea4896af2b5131eba806ad6efddd82040c9c0794977d0af"
+    ]
+   },
+   "recorded": null,
+   "restore": {
+    "C": {
+     "o": {
+      "at": "2026-10-10T10:00:30Z",
+      "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+      "kind": "workspace_checkpoint",
+      "n": 3,
+      "suite": 2,
+      "tickets": {},
+      "v": 2,
+      "workspace_id": "0123456789abcdef0123456789abcdef",
+      "workspace_log": {
+       "acc": "sha256:a3a6b067e85e9fae49be8c5b083944c66d11ff0c547bcfad5ec1d6092a53489e",
+       "head": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
+       "seq": 3
+      }
+     },
+     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
+    },
+    "T": {
+     "o": {
+      "at": "2026-10-10T10:12:20Z",
+      "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+      "kind": "workspace_checkpoint",
+      "n": 4,
+      "suite": 2,
+      "tickets": {},
+      "v": 2,
+      "workspace_id": "0123456789abcdef0123456789abcdef",
+      "workspace_log": {
+       "acc": "sha256:c25ce72f06c8a9b66a48858ca2062a7a06c7a574e664136b8acbdd6f7451f164",
+       "head": "sha256:5e145d60f583fa4baea4896af2b5131eba806ad6efddd82040c9c0794977d0af",
+       "seq": 2
+      }
+     },
+     "sig": "Eafutto0eu8UgvsHuq4Xvzy3ecl8ncRbbhUSafCpU-z_yptGjod6LyVG62LhXgnQbIPeSFLfRTFAkL51NN4ixA"
+    },
+    "abandoned_heads": [
+     "sha256:90a514d49f67df9d29f1bdc76e0b91d5baedf156a0f222cd8d02338a7179d34e",
+     "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920"
+    ],
+    "acc_before": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "acc_from": "sha256:cc4f9dc2c75ad6af09128a145e1f4820eef5127aef629fc5c275826b0c4d921c",
+    "delegation": {
+     "o": {
+      "client_hosted": false,
+      "issued_ms": 1790000000000,
+      "kind": "ws_delegation",
+      "owner_person_id": "75bf75a3bb50b0c4ac02f8a757b90e23",
+      "suite": 2,
+      "v": 2,
+      "workspace_id": "0123456789abcdef0123456789abcdef",
+      "wsk_pub": "BJy4pP7CRCCFIbgVcqF07OgGwnzyG5Mu6nAPOvYZl72rKNxeRWcBwNDpRGc1LBIdbPY6ZrGFuKL1INLjmAeu_Ro"
+     },
+     "sig": "NwRve78-SgAnF30XOlRhDEb9KlCWIYBu5xXmOkGOE6vn70YeyeOXOcF6liH50gz6SfJNWTgZ2wi_KZc-DWXxMA"
+    },
+    "device_cert": {
+     "o": {
+      "created_ms": 1790000000000,
+      "device_id": "c65032f21d43401cc223b05723c1e5b4",
+      "dk_kx_pub": "BFeVKX_gphRxHCfh2Uw6UQVtj12_1v9LteaSfrwG6oH3QG8yDkYojB0rOpi7i-NDHC0PY47WHle_uYaQHjI534c",
+      "dk_sig_pub": "BEtUkscP1t-MK_B-LkrM8KwbVTJ2kwZBYo-4vnk4QSaltalieRixn4XJf8Z2jR5y10cpdvNZ1i-70-cvOz5Wlwo",
+      "expires_ms": null,
+      "kind": "device_cert",
+      "label_sealed": "bGFiZWwgc2V2MQ",
+      "person_id": "75bf75a3bb50b0c4ac02f8a757b90e23",
+      "scopes_max": [
+       "look",
+       "decide",
+       "operate",
+       "type"
+      ],
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "GMFk6HGDHI919l9dSkUuvlioYdJz-QzNR-qUAQ4kPhZevsgiEZBTlZr2SAIfUiNASTIzsMW_c_8yTbnW8kuMfQ"
+    },
+    "event": {
+     "abandoned": {
+      "head": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
+      "seq": 3
+     },
+     "abandoned_decisions": [
+      "01J9ZK00000000000000000002",
+      "01J9ZK00000000000000000003"
+     ],
+     "actor": {
+      "device": "d_c65032f21d43401cc223b05723c1e5b4",
+      "id": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
+      "kind": "person"
+     },
+     "at": "2026-10-10T10:12:20Z",
+     "auth": "passphrase",
+     "based_on": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+     "from_seq": 1,
+     "hash_v": 1,
+     "head": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+     "host_sig": "YoMVsYtDKPpNcPQ2OfKtWm3VmUiAy0U92tUCt-TR2_R9eXHk0Sp4Yr6WbGW_XNcePVSlC-80RyopJ5_YJOu4Dg",
+     "id": "01J9ZK0000000000000000002H",
+     "prev": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+     "reason": "rollback",
+     "revocations": [],
+     "roster_v": 1,
+     "seq": 2,
+     "sig": "P5RfJPEl9zwjPKerybDYokF8sLJs2KEgi7-gWWWn_nfua270Uv2lpFLj-6S2s1aMHDbZoJaX9HDuuMmMG0roqQ",
+     "source": {
+      "hash": "sha256:b26a1aa5b399205303364c5af75374d6dc785c59682af867fcdf55b4c31a9711",
+      "n": 3
+     },
+     "type": "restore",
+     "v": 2
+    },
+    "forward_heads": [],
+    "log": "workspace",
+    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94"
+   },
+   "unpublished": []
+  },
+  {
+   "applied": [],
+   "expect": "ok",
+   "held": {
+    "o": {
+     "at": "2026-10-10T10:00:30Z",
+     "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+     "kind": "workspace_checkpoint",
+     "n": 3,
+     "suite": 2,
+     "tickets": {},
+     "v": 2,
+     "workspace_id": "0123456789abcdef0123456789abcdef",
+     "workspace_log": {
+      "acc": "sha256:a3a6b067e85e9fae49be8c5b083944c66d11ff0c547bcfad5ec1d6092a53489e",
+      "head": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
+      "seq": 3
+     }
+    },
+    "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
+   },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
+   "local_revocations": [
+    {
+     "revocation": {
+      "o": {
+       "device_id": "a6dc67f56b74e07ca65b035348e03bc0",
+       "kind": "revocation",
+       "person_id": "6ce6085b169e8ee5111456b91dc4ae3c",
+       "reason": "lost",
+       "revoked_ms": 1790000100000,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "9hA3XWy2ZF_xS6Etgsmqu58g84EONyLW4ICmJ5nZB2YysJgcMYvwwOCh19fzuzqMyqdhKvycsT_JJeoNdKroOQ"
+     }
+    },
+    {
+     "revocation": {
+      "o": {
+       "device_id": "7efc1ba896b95f9151978a1dad982e3a",
+       "kind": "revocation",
+       "person_id": "6aae5cce832160e6f8cd9dadfbb4c5cd",
+       "reason": "lost",
+       "revoked_ms": 1790000100000,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "PQDvod7JbDNFm2Fw1tVa0xSdMU68-N2QWSWW3fb-9yJkb71QQMLDpEauWnAwYnO-LqbS2cgN98I8Z01epaM5nA"
+     }
+    },
+    {
+     "revocation": {
+      "o": {
+       "device_id": "a6dc67f56b74e07ca65b035348e03bc0",
+       "kind": "revocation",
+       "person_id": "6ce6085b169e8ee5111456b91dc4ae3c",
+       "reason": "retired",
+       "revoked_ms": 1790000100000,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "ctVK8f-WL6XMr40tHQmeM7YLzrqof7-49dYl02pRhL6XmmTUkL_-LgHCISrgOBzIJbAE2OFrmHcGTYriYPuzmQ"
+     }
+    }
+   ],
+   "name": "out_of_band_several_missing_unpublished_sorted_unique",
+   "note": "local_revocations in descending device-id order, the first device twice (lost and retired)",
+   "now": "2026-10-10T12:00:00Z",
+   "offered": {
+    "o": {
+     "at": "2026-10-10T10:12:30Z",
+     "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+     "kind": "workspace_checkpoint",
+     "n": 4,
+     "suite": 2,
+     "tickets": {},
+     "v": 2,
+     "workspace_id": "0123456789abcdef0123456789abcdef",
+     "workspace_log": {
+      "acc": "sha256:21ba0cfddeea8c1e69c26b1b6a5cdc88d4cdc1277c59a611420a9d92565cfe94",
+      "head": "sha256:e7b8defe3cee78db8d81badd3baa9c55ad6a54884f60aea9b06d64b360a24f2c",
+      "seq": 2
+     }
+    },
+    "sig": "YRt59GR83Dqo-3oRmyILugelNHzK5sRS2t7RU-EzhbBgX8CQn6ubkB4tdVA_B_K7RxNoT3hUGBmH6MbdO2_Jdw"
+   },
+   "pinned_delegation": {
+    "o": {
+     "client_hosted": false,
+     "issued_ms": 1790000000000,
+     "kind": "ws_delegation",
+     "owner_person_id": "75bf75a3bb50b0c4ac02f8a757b90e23",
+     "suite": 2,
+     "v": 2,
+     "workspace_id": "0123456789abcdef0123456789abcdef",
+     "wsk_pub": "BJy4pP7CRCCFIbgVcqF07OgGwnzyG5Mu6nAPOvYZl72rKNxeRWcBwNDpRGc1LBIdbPY6ZrGFuKL1INLjmAeu_Ro"
+    },
+    "sig": "NwRve78-SgAnF30XOlRhDEb9KlCWIYBu5xXmOkGOE6vn70YeyeOXOcF6liH50gz6SfJNWTgZ2wi_KZc-DWXxMA"
+   },
+   "proofs": {
+    "workspace": [
+     "sha256:e7b8defe3cee78db8d81badd3baa9c55ad6a54884f60aea9b06d64b360a24f2c"
+    ]
+   },
+   "recorded": "01J9ZK0000000000000000002J",
+   "restore": {
+    "C": {
+     "o": {
+      "at": "2026-10-10T10:00:30Z",
+      "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+      "kind": "workspace_checkpoint",
+      "n": 3,
+      "suite": 2,
+      "tickets": {},
+      "v": 2,
+      "workspace_id": "0123456789abcdef0123456789abcdef",
+      "workspace_log": {
+       "acc": "sha256:a3a6b067e85e9fae49be8c5b083944c66d11ff0c547bcfad5ec1d6092a53489e",
+       "head": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
+       "seq": 3
+      }
+     },
+     "sig": "RKXwxqMbPG00GSu6Oqzi1s5-07pWTaIv3i88-P5dqmeFyBfFid_QYd6PXB6R1NuUcDYrAyYSct5ryTIBuTSByA"
+    },
+    "T": {
+     "o": {
+      "at": "2026-10-10T10:12:30Z",
+      "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+      "kind": "workspace_checkpoint",
+      "n": 4,
+      "suite": 2,
+      "tickets": {},
+      "v": 2,
+      "workspace_id": "0123456789abcdef0123456789abcdef",
+      "workspace_log": {
+       "acc": "sha256:21ba0cfddeea8c1e69c26b1b6a5cdc88d4cdc1277c59a611420a9d92565cfe94",
+       "head": "sha256:e7b8defe3cee78db8d81badd3baa9c55ad6a54884f60aea9b06d64b360a24f2c",
+       "seq": 2
+      }
+     },
+     "sig": "YRt59GR83Dqo-3oRmyILugelNHzK5sRS2t7RU-EzhbBgX8CQn6ubkB4tdVA_B_K7RxNoT3hUGBmH6MbdO2_Jdw"
+    },
+    "abandoned_heads": [
+     "sha256:90a514d49f67df9d29f1bdc76e0b91d5baedf156a0f222cd8d02338a7179d34e",
+     "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920"
+    ],
+    "acc_before": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "acc_from": "sha256:cc4f9dc2c75ad6af09128a145e1f4820eef5127aef629fc5c275826b0c4d921c",
+    "delegation": {
+     "o": {
+      "client_hosted": false,
+      "issued_ms": 1790000000000,
+      "kind": "ws_delegation",
+      "owner_person_id": "75bf75a3bb50b0c4ac02f8a757b90e23",
+      "suite": 2,
+      "v": 2,
+      "workspace_id": "0123456789abcdef0123456789abcdef",
+      "wsk_pub": "BJy4pP7CRCCFIbgVcqF07OgGwnzyG5Mu6nAPOvYZl72rKNxeRWcBwNDpRGc1LBIdbPY6ZrGFuKL1INLjmAeu_Ro"
+     },
+     "sig": "NwRve78-SgAnF30XOlRhDEb9KlCWIYBu5xXmOkGOE6vn70YeyeOXOcF6liH50gz6SfJNWTgZ2wi_KZc-DWXxMA"
+    },
+    "device_cert": {
+     "o": {
+      "created_ms": 1790000000000,
+      "device_id": "c65032f21d43401cc223b05723c1e5b4",
+      "dk_kx_pub": "BFeVKX_gphRxHCfh2Uw6UQVtj12_1v9LteaSfrwG6oH3QG8yDkYojB0rOpi7i-NDHC0PY47WHle_uYaQHjI534c",
+      "dk_sig_pub": "BEtUkscP1t-MK_B-LkrM8KwbVTJ2kwZBYo-4vnk4QSaltalieRixn4XJf8Z2jR5y10cpdvNZ1i-70-cvOz5Wlwo",
+      "expires_ms": null,
+      "kind": "device_cert",
+      "label_sealed": "bGFiZWwgc2V2MQ",
+      "person_id": "75bf75a3bb50b0c4ac02f8a757b90e23",
+      "scopes_max": [
+       "look",
+       "decide",
+       "operate",
+       "type"
+      ],
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "GMFk6HGDHI919l9dSkUuvlioYdJz-QzNR-qUAQ4kPhZevsgiEZBTlZr2SAIfUiNASTIzsMW_c_8yTbnW8kuMfQ"
+    },
+    "event": {
+     "abandoned": {
+      "head": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
+      "seq": 3
+     },
+     "abandoned_decisions": [
+      "01J9ZK00000000000000000002",
+      "01J9ZK00000000000000000003"
+     ],
+     "actor": {
+      "device": "d_c65032f21d43401cc223b05723c1e5b4",
+      "id": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
+      "kind": "person"
+     },
+     "at": "2026-10-10T10:12:30Z",
+     "auth": "passphrase",
+     "based_on": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+     "from_seq": 1,
+     "hash_v": 1,
+     "head": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+     "host_sig": "8ycCL647AvlYFUX_9Tm85_J4ogOP9cQwKVOLrjInE_20sTAF8wx4ST9MY-aaPJ6qePwetLQEWVlQvwBAjdwCoQ",
+     "id": "01J9ZK0000000000000000002J",
+     "prev": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+     "reason": "rollback",
+     "revocations": [],
+     "roster_v": 1,
+     "seq": 2,
+     "sig": "K5vJ8AHuRwlTC8UJN3punEUOH2cJ1m988Oct-HuOZer4nf4gjYM2a6AyNCRoQdvScW9QadRo1lMyImSrfaZyBA",
+     "source": {
+      "hash": "sha256:b26a1aa5b399205303364c5af75374d6dc785c59682af867fcdf55b4c31a9711",
+      "n": 3
+     },
+     "type": "restore",
+     "v": 2
+    },
+    "forward_heads": [],
+    "log": "workspace",
+    "pk_pub": "BE9dWaAeWZ2MzJFlmbGeznA13dLlTv6B-2J8IC9YY9JFKzQFCcDEj0hVZhaSrJCcxP-1v9g2FRp2zo2eTKSQe94"
+   },
+   "unpublished": [
+    "d_7efc1ba896b95f9151978a1dad982e3a",
+    "d_a6dc67f56b74e07ca65b035348e03bc0"
+   ]
+  },
+  {
+   "applied": [],
+   "expect": "ok",
+   "held": {
+    "o": {
+     "at": "2026-10-10T10:00:30Z",
+     "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+     "kind": "workspace_checkpoint",
+     "n": 5,
+     "suite": 2,
+     "tickets": {},
+     "v": 2,
+     "workspace_id": "0123456789abcdef0123456789abcdef",
+     "workspace_log": {
+      "acc": "sha256:29130319de7c474a278d20313fcc7aad6929cd154b596718ea93c21633c75726",
+      "head": "sha256:97c3a811b131d15419e49be8ec548bf44dd331bc561e78663c682a7e88123f5b",
+      "seq": 4
+     }
+    },
+    "sig": "9NanCsQzCbSXITP0F9pn3Bgf0cGGPtn0E80mvPKOx8Zg3rpcEnbpf_tv_TRIKeRQSv8Y41y2w2heK9i7v-jiQQ"
+   },
+   "known_devices": {},
+   "known_revocations": [],
+   "learned_later_in_walk": [],
+   "local_revocations": [],
+   "name": "hash_only_withheld_revocation_not_demanded",
+   "note": "the relay delivers only the head of withheld_event (abandoned_heads); the receiver never inspected its body, so the revocation is not chain-learned (known limit: the policy preserves only revocations the receiver established in accepted history)",
+   "now": "2026-10-10T12:00:00Z",
+   "offered": {
+    "o": {
+     "at": "2026-10-10T10:12:50Z",
+     "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
+     "kind": "workspace_checkpoint",
+     "n": 6,
+     "suite": 2,
+     "tickets": {},
+     "v": 2,
+     "workspace_id": "0123456789abcdef0123456789abcdef",
+     "workspace_log": {
+      "acc": "sha256:d741284dba4a2f2c0f798740a2ef4786af935bff4f7f949233bce55838f5e624",
+      "head": "sha256:8e7465c2c8cc462d23cf0d990241d1fc670226f9d55a98e7fc671d409580c7dc",
+      "seq": 4
+     }
+    },
+    "sig": "LwTxxCJqTwRUtgqi8uskAhexietDvdUn697mGP_qPd0fY57pRwReAq_3-hyHzkOVs91ahpSsDEC1q9YmTf5Clg"
+   },
+   "pinned_delegation": {
+    "o": {
+     "client_hosted": false,
+     "issued_ms": 1790000000000,
+     "kind": "ws_delegation",
+     "owner_person_id": "75bf75a3bb50b0c4ac02f8a757b90e23",
+     "suite": 2,
+     "v": 2,
+     "workspace_id": "0123456789abcdef0123456789abcdef",
+     "wsk_pub": "BJy4pP7CRCCFIbgVcqF07OgGwnzyG5Mu6nAPOvYZl72rKNxeRWcBwNDpRGc1LBIdbPY6ZrGFuKL1INLjmAeu_Ro"
+    },
+    "sig": "NwRve78-SgAnF30XOlRhDEb9KlCWIYBu5xXmOkGOE6vn70YeyeOXOcF6liH50gz6SfJNWTgZ2wi_KZc-DWXxMA"
+   },
+   "proofs": {
+    "workspace": [
+     "sha256:8e7465c2c8cc462d23cf0d990241d1fc670226f9d55a98e7fc671d409580c7dc"
+    ]
+   },
+   "recorded": "01J9ZK0000000000000000002M",
    "restore": {
     "C": {
      "o": {
@@ -17933,16 +18560,16 @@
       "v": 2,
       "workspace_id": "0123456789abcdef0123456789abcdef",
       "workspace_log": {
-       "acc": "sha256:460257b487b567ee13d3b0eeeafd6bae677339f01d81132fecd5a6b892a39578",
-       "head": "sha256:4a7f315c433afc2e767a99b44724c5e28583183871ad706a4d668a890b849f3a",
+       "acc": "sha256:29130319de7c474a278d20313fcc7aad6929cd154b596718ea93c21633c75726",
+       "head": "sha256:97c3a811b131d15419e49be8ec548bf44dd331bc561e78663c682a7e88123f5b",
        "seq": 4
       }
      },
-     "sig": "roKNqB_WaozKdnsNmIhVuu7__TSzfmX-NC6TXCZGCFJ_ZCepMj1IloVKI12HgLtOFpW_7KJlDmNjV-lrj05t1g"
+     "sig": "9NanCsQzCbSXITP0F9pn3Bgf0cGGPtn0E80mvPKOx8Zg3rpcEnbpf_tv_TRIKeRQSv8Y41y2w2heK9i7v-jiQQ"
     },
     "T": {
      "o": {
-      "at": "2026-10-10T10:12:20Z",
+      "at": "2026-10-10T10:12:50Z",
       "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
       "kind": "workspace_checkpoint",
       "n": 6,
@@ -17951,15 +18578,15 @@
       "v": 2,
       "workspace_id": "0123456789abcdef0123456789abcdef",
       "workspace_log": {
-       "acc": "sha256:265df0ac6793ba986733aa5683b971c70562523883841e1409eedb6af5cc9021",
-       "head": "sha256:4d8397c0acdd39d1032c98d1bcf2c69dbcde0ea128a574c1d6eb92de8f8d8fb7",
+       "acc": "sha256:d741284dba4a2f2c0f798740a2ef4786af935bff4f7f949233bce55838f5e624",
+       "head": "sha256:8e7465c2c8cc462d23cf0d990241d1fc670226f9d55a98e7fc671d409580c7dc",
        "seq": 4
       }
      },
-     "sig": "jeZBhxXRFi_KIeWSGUcZmml1lbvxLnESueIvSi_IUZqsSE7PFlbEaflYTl0Qot18osF7oJx23Mm4Wf2O33DW5w"
+     "sig": "LwTxxCJqTwRUtgqi8uskAhexietDvdUn697mGP_qPd0fY57pRwReAq_3-hyHzkOVs91ahpSsDEC1q9YmTf5Clg"
     },
     "abandoned_heads": [
-     "sha256:4a7f315c433afc2e767a99b44724c5e28583183871ad706a4d668a890b849f3a"
+     "sha256:97c3a811b131d15419e49be8ec548bf44dd331bc561e78663c682a7e88123f5b"
     ],
     "acc_before": "sha256:44a9df442095f6d167e9c15033122ccf8038126cb5d676595dc7e3164256493e",
     "acc_from": "sha256:a3a6b067e85e9fae49be8c5b083944c66d11ff0c547bcfad5ec1d6092a53489e",
@@ -17999,33 +18626,33 @@
     },
     "event": {
      "abandoned": {
-      "head": "sha256:4a7f315c433afc2e767a99b44724c5e28583183871ad706a4d668a890b849f3a",
+      "head": "sha256:97c3a811b131d15419e49be8ec548bf44dd331bc561e78663c682a7e88123f5b",
       "seq": 4
      },
      "abandoned_decisions": [
-      "01J9ZK0000000000000000002G"
+      "01J9ZK0000000000000000002K"
      ],
      "actor": {
       "device": "d_c65032f21d43401cc223b05723c1e5b4",
       "id": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
       "kind": "person"
      },
-     "at": "2026-10-10T10:12:20Z",
+     "at": "2026-10-10T10:12:50Z",
      "auth": "passphrase",
      "based_on": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
      "from_seq": 3,
      "hash_v": 1,
      "head": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
-     "host_sig": "mwCDgRmey_uKzHa8UMnRpUQulGy20U6pNWvhdOyaMV4KrW7_ZqRPGIpfridKREnIxYxJWURZp__PspH_dHENkg",
-     "id": "01J9ZK0000000000000000002H",
+     "host_sig": "I1GEh7Xv91VVVIiat2kYdagiibyhRRvHdrFC92UijDag6uXAsqjO3e5RKqi_MAC3M9VsXW2_3Wxfnh6DbqhwvA",
+     "id": "01J9ZK0000000000000000002M",
      "prev": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
      "reason": "rollback",
      "revocations": [],
      "roster_v": 3,
      "seq": 4,
-     "sig": "UEiUs4dSnKhna0mfi2vY8fjce2_5npRNZRp2Ui22kdGBRgNI53jQ2Hrk5_d7i1LplbkLfP5Xzz_RfHDShBspmA",
+     "sig": "zla9kESztLwA7UKah4YhSZ8ITnjlp8V_wB7dANBkqWajStIqm4Nhf4qPIfqQ6FM2zyBmRorlQtitg2VfAxPqZw",
      "source": {
-      "hash": "sha256:69b7ec7dbabe1751fbec235e3d9d8194811a2754e48c9b0da15e5888052010a1",
+      "hash": "sha256:250df7d037b5ac1a6d5be43edee4ec6ebc44f04430b93d8593b093124ca8fd84",
       "n": 5
      },
      "type": "restore",
@@ -18042,13 +18669,13 @@
      "id": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
      "kind": "person"
     },
-    "at": "2026-10-10T10:12:10Z",
+    "at": "2026-10-10T10:12:40Z",
     "auth": "passphrase",
     "based_on": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
     "device": "d_a6dc67f56b74e07ca65b035348e03bc0",
     "hash_v": 1,
-    "host_sig": "VFisVMDdj5cg7hJ89nCEO2dEVELD9yGbvIAap1N_RRaqm1Vd1e95LWRl2t_pAIPNVZTKT1E5WO-zIjhUpSU5fA",
-    "id": "01J9ZK0000000000000000002G",
+    "host_sig": "A32O4XOfIY8tnOCNLVdwkQ67hH6LD0At8No1eSqsjq3zdnfwsWcy8lUbEPkz6C54wWlMBnk2L4XtDRUJoddgRw",
+    "id": "01J9ZK0000000000000000002K",
     "prev": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
     "reason": "lost",
     "revocation": {
@@ -18065,7 +18692,7 @@
     },
     "roster_v": 3,
     "seq": 4,
-    "sig": "OWlL9Q9STzlo_Sy1jXa42KzRBN62Mu6dAen3jx8T533VJqWD7ix-A859jOhkrgplvM9X-4MqiPlZs1PmSXB2vA",
+    "sig": "4qm3lQ4ZRR2G16eDUDxaYipdUqOv2Jelme6M8QxFh6J-pI1T5cozf0cBVAvIEw8Pg8WyfeOFOoNkbMDJyh1uZA",
     "type": "device.revoked",
     "v": 2
    }
@@ -18084,12 +18711,12 @@
      "v": 2,
      "workspace_id": "0123456789abcdef0123456789abcdef",
      "workspace_log": {
-      "acc": "sha256:460257b487b567ee13d3b0eeeafd6bae677339f01d81132fecd5a6b892a39578",
-      "head": "sha256:4a7f315c433afc2e767a99b44724c5e28583183871ad706a4d668a890b849f3a",
+      "acc": "sha256:29130319de7c474a278d20313fcc7aad6929cd154b596718ea93c21633c75726",
+      "head": "sha256:97c3a811b131d15419e49be8ec548bf44dd331bc561e78663c682a7e88123f5b",
       "seq": 4
      }
     },
-    "sig": "roKNqB_WaozKdnsNmIhVuu7__TSzfmX-NC6TXCZGCFJ_ZCepMj1IloVKI12HgLtOFpW_7KJlDmNjV-lrj05t1g"
+    "sig": "9NanCsQzCbSXITP0F9pn3Bgf0cGGPtn0E80mvPKOx8Zg3rpcEnbpf_tv_TRIKeRQSv8Y41y2w2heK9i7v-jiQQ"
    },
    "known_devices": {},
    "known_revocations": [],
@@ -18115,7 +18742,7 @@
    "now": "2026-10-10T12:00:00Z",
    "offered": {
     "o": {
-     "at": "2026-10-10T10:12:20Z",
+     "at": "2026-10-10T10:12:50Z",
      "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
      "kind": "workspace_checkpoint",
      "n": 6,
@@ -18124,12 +18751,12 @@
      "v": 2,
      "workspace_id": "0123456789abcdef0123456789abcdef",
      "workspace_log": {
-      "acc": "sha256:265df0ac6793ba986733aa5683b971c70562523883841e1409eedb6af5cc9021",
-      "head": "sha256:4d8397c0acdd39d1032c98d1bcf2c69dbcde0ea128a574c1d6eb92de8f8d8fb7",
+      "acc": "sha256:d741284dba4a2f2c0f798740a2ef4786af935bff4f7f949233bce55838f5e624",
+      "head": "sha256:8e7465c2c8cc462d23cf0d990241d1fc670226f9d55a98e7fc671d409580c7dc",
       "seq": 4
      }
     },
-    "sig": "jeZBhxXRFi_KIeWSGUcZmml1lbvxLnESueIvSi_IUZqsSE7PFlbEaflYTl0Qot18osF7oJx23Mm4Wf2O33DW5w"
+    "sig": "LwTxxCJqTwRUtgqi8uskAhexietDvdUn697mGP_qPd0fY57pRwReAq_3-hyHzkOVs91ahpSsDEC1q9YmTf5Clg"
    },
    "pinned_delegation": {
     "o": {
@@ -18146,10 +18773,10 @@
    },
    "proofs": {
     "workspace": [
-     "sha256:4d8397c0acdd39d1032c98d1bcf2c69dbcde0ea128a574c1d6eb92de8f8d8fb7"
+     "sha256:8e7465c2c8cc462d23cf0d990241d1fc670226f9d55a98e7fc671d409580c7dc"
     ]
    },
-   "recorded": "01J9ZK0000000000000000002H",
+   "recorded": "01J9ZK0000000000000000002M",
    "restore": {
     "C": {
      "o": {
@@ -18162,16 +18789,16 @@
       "v": 2,
       "workspace_id": "0123456789abcdef0123456789abcdef",
       "workspace_log": {
-       "acc": "sha256:460257b487b567ee13d3b0eeeafd6bae677339f01d81132fecd5a6b892a39578",
-       "head": "sha256:4a7f315c433afc2e767a99b44724c5e28583183871ad706a4d668a890b849f3a",
+       "acc": "sha256:29130319de7c474a278d20313fcc7aad6929cd154b596718ea93c21633c75726",
+       "head": "sha256:97c3a811b131d15419e49be8ec548bf44dd331bc561e78663c682a7e88123f5b",
        "seq": 4
       }
      },
-     "sig": "roKNqB_WaozKdnsNmIhVuu7__TSzfmX-NC6TXCZGCFJ_ZCepMj1IloVKI12HgLtOFpW_7KJlDmNjV-lrj05t1g"
+     "sig": "9NanCsQzCbSXITP0F9pn3Bgf0cGGPtn0E80mvPKOx8Zg3rpcEnbpf_tv_TRIKeRQSv8Y41y2w2heK9i7v-jiQQ"
     },
     "T": {
      "o": {
-      "at": "2026-10-10T10:12:20Z",
+      "at": "2026-10-10T10:12:50Z",
       "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
       "kind": "workspace_checkpoint",
       "n": 6,
@@ -18180,15 +18807,15 @@
       "v": 2,
       "workspace_id": "0123456789abcdef0123456789abcdef",
       "workspace_log": {
-       "acc": "sha256:265df0ac6793ba986733aa5683b971c70562523883841e1409eedb6af5cc9021",
-       "head": "sha256:4d8397c0acdd39d1032c98d1bcf2c69dbcde0ea128a574c1d6eb92de8f8d8fb7",
+       "acc": "sha256:d741284dba4a2f2c0f798740a2ef4786af935bff4f7f949233bce55838f5e624",
+       "head": "sha256:8e7465c2c8cc462d23cf0d990241d1fc670226f9d55a98e7fc671d409580c7dc",
        "seq": 4
       }
      },
-     "sig": "jeZBhxXRFi_KIeWSGUcZmml1lbvxLnESueIvSi_IUZqsSE7PFlbEaflYTl0Qot18osF7oJx23Mm4Wf2O33DW5w"
+     "sig": "LwTxxCJqTwRUtgqi8uskAhexietDvdUn697mGP_qPd0fY57pRwReAq_3-hyHzkOVs91ahpSsDEC1q9YmTf5Clg"
     },
     "abandoned_heads": [
-     "sha256:4a7f315c433afc2e767a99b44724c5e28583183871ad706a4d668a890b849f3a"
+     "sha256:97c3a811b131d15419e49be8ec548bf44dd331bc561e78663c682a7e88123f5b"
     ],
     "acc_before": "sha256:44a9df442095f6d167e9c15033122ccf8038126cb5d676595dc7e3164256493e",
     "acc_from": "sha256:a3a6b067e85e9fae49be8c5b083944c66d11ff0c547bcfad5ec1d6092a53489e",
@@ -18228,33 +18855,33 @@
     },
     "event": {
      "abandoned": {
-      "head": "sha256:4a7f315c433afc2e767a99b44724c5e28583183871ad706a4d668a890b849f3a",
+      "head": "sha256:97c3a811b131d15419e49be8ec548bf44dd331bc561e78663c682a7e88123f5b",
       "seq": 4
      },
      "abandoned_decisions": [
-      "01J9ZK0000000000000000002G"
+      "01J9ZK0000000000000000002K"
      ],
      "actor": {
       "device": "d_c65032f21d43401cc223b05723c1e5b4",
       "id": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
       "kind": "person"
      },
-     "at": "2026-10-10T10:12:20Z",
+     "at": "2026-10-10T10:12:50Z",
      "auth": "passphrase",
      "based_on": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
      "from_seq": 3,
      "hash_v": 1,
      "head": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
-     "host_sig": "mwCDgRmey_uKzHa8UMnRpUQulGy20U6pNWvhdOyaMV4KrW7_ZqRPGIpfridKREnIxYxJWURZp__PspH_dHENkg",
-     "id": "01J9ZK0000000000000000002H",
+     "host_sig": "I1GEh7Xv91VVVIiat2kYdagiibyhRRvHdrFC92UijDag6uXAsqjO3e5RKqi_MAC3M9VsXW2_3Wxfnh6DbqhwvA",
+     "id": "01J9ZK0000000000000000002M",
      "prev": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
      "reason": "rollback",
      "revocations": [],
      "roster_v": 3,
      "seq": 4,
-     "sig": "UEiUs4dSnKhna0mfi2vY8fjce2_5npRNZRp2Ui22kdGBRgNI53jQ2Hrk5_d7i1LplbkLfP5Xzz_RfHDShBspmA",
+     "sig": "zla9kESztLwA7UKah4YhSZ8ITnjlp8V_wB7dANBkqWajStIqm4Nhf4qPIfqQ6FM2zyBmRorlQtitg2VfAxPqZw",
      "source": {
-      "hash": "sha256:69b7ec7dbabe1751fbec235e3d9d8194811a2754e48c9b0da15e5888052010a1",
+      "hash": "sha256:250df7d037b5ac1a6d5be43edee4ec6ebc44f04430b93d8593b093124ca8fd84",
       "n": 5
      },
      "type": "restore",
@@ -18273,13 +18900,13 @@
      "id": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
      "kind": "person"
     },
-    "at": "2026-10-10T10:12:10Z",
+    "at": "2026-10-10T10:12:40Z",
     "auth": "passphrase",
     "based_on": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
     "device": "d_a6dc67f56b74e07ca65b035348e03bc0",
     "hash_v": 1,
-    "host_sig": "VFisVMDdj5cg7hJ89nCEO2dEVELD9yGbvIAap1N_RRaqm1Vd1e95LWRl2t_pAIPNVZTKT1E5WO-zIjhUpSU5fA",
-    "id": "01J9ZK0000000000000000002G",
+    "host_sig": "A32O4XOfIY8tnOCNLVdwkQ67hH6LD0At8No1eSqsjq3zdnfwsWcy8lUbEPkz6C54wWlMBnk2L4XtDRUJoddgRw",
+    "id": "01J9ZK0000000000000000002K",
     "prev": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
     "reason": "lost",
     "revocation": {
@@ -18296,7 +18923,7 @@
     },
     "roster_v": 3,
     "seq": 4,
-    "sig": "OWlL9Q9STzlo_Sy1jXa42KzRBN62Mu6dAen3jx8T533VJqWD7ix-A859jOhkrgplvM9X-4MqiPlZs1PmSXB2vA",
+    "sig": "4qm3lQ4ZRR2G16eDUDxaYipdUqOv2Jelme6M8QxFh6J-pI1T5cozf0cBVAvIEw8Pg8WyfeOFOoNkbMDJyh1uZA",
     "type": "device.revoked",
     "v": 2
    }
@@ -18315,12 +18942,12 @@
      "v": 2,
      "workspace_id": "0123456789abcdef0123456789abcdef",
      "workspace_log": {
-      "acc": "sha256:460257b487b567ee13d3b0eeeafd6bae677339f01d81132fecd5a6b892a39578",
-      "head": "sha256:4a7f315c433afc2e767a99b44724c5e28583183871ad706a4d668a890b849f3a",
+      "acc": "sha256:29130319de7c474a278d20313fcc7aad6929cd154b596718ea93c21633c75726",
+      "head": "sha256:97c3a811b131d15419e49be8ec548bf44dd331bc561e78663c682a7e88123f5b",
       "seq": 4
      }
     },
-    "sig": "roKNqB_WaozKdnsNmIhVuu7__TSzfmX-NC6TXCZGCFJ_ZCepMj1IloVKI12HgLtOFpW_7KJlDmNjV-lrj05t1g"
+    "sig": "9NanCsQzCbSXITP0F9pn3Bgf0cGGPtn0E80mvPKOx8Zg3rpcEnbpf_tv_TRIKeRQSv8Y41y2w2heK9i7v-jiQQ"
    },
    "known_devices": {},
    "known_revocations": [
@@ -18346,7 +18973,7 @@
    "now": "2026-10-10T12:00:00Z",
    "offered": {
     "o": {
-     "at": "2026-10-10T10:12:20Z",
+     "at": "2026-10-10T10:12:50Z",
      "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
      "kind": "workspace_checkpoint",
      "n": 6,
@@ -18355,12 +18982,12 @@
      "v": 2,
      "workspace_id": "0123456789abcdef0123456789abcdef",
      "workspace_log": {
-      "acc": "sha256:265df0ac6793ba986733aa5683b971c70562523883841e1409eedb6af5cc9021",
-      "head": "sha256:4d8397c0acdd39d1032c98d1bcf2c69dbcde0ea128a574c1d6eb92de8f8d8fb7",
+      "acc": "sha256:d741284dba4a2f2c0f798740a2ef4786af935bff4f7f949233bce55838f5e624",
+      "head": "sha256:8e7465c2c8cc462d23cf0d990241d1fc670226f9d55a98e7fc671d409580c7dc",
       "seq": 4
      }
     },
-    "sig": "jeZBhxXRFi_KIeWSGUcZmml1lbvxLnESueIvSi_IUZqsSE7PFlbEaflYTl0Qot18osF7oJx23Mm4Wf2O33DW5w"
+    "sig": "LwTxxCJqTwRUtgqi8uskAhexietDvdUn697mGP_qPd0fY57pRwReAq_3-hyHzkOVs91ahpSsDEC1q9YmTf5Clg"
    },
    "pinned_delegation": {
     "o": {
@@ -18377,7 +19004,7 @@
    },
    "proofs": {
     "workspace": [
-     "sha256:4d8397c0acdd39d1032c98d1bcf2c69dbcde0ea128a574c1d6eb92de8f8d8fb7"
+     "sha256:8e7465c2c8cc462d23cf0d990241d1fc670226f9d55a98e7fc671d409580c7dc"
     ]
    },
    "recorded": null,
@@ -18393,16 +19020,16 @@
       "v": 2,
       "workspace_id": "0123456789abcdef0123456789abcdef",
       "workspace_log": {
-       "acc": "sha256:460257b487b567ee13d3b0eeeafd6bae677339f01d81132fecd5a6b892a39578",
-       "head": "sha256:4a7f315c433afc2e767a99b44724c5e28583183871ad706a4d668a890b849f3a",
+       "acc": "sha256:29130319de7c474a278d20313fcc7aad6929cd154b596718ea93c21633c75726",
+       "head": "sha256:97c3a811b131d15419e49be8ec548bf44dd331bc561e78663c682a7e88123f5b",
        "seq": 4
       }
      },
-     "sig": "roKNqB_WaozKdnsNmIhVuu7__TSzfmX-NC6TXCZGCFJ_ZCepMj1IloVKI12HgLtOFpW_7KJlDmNjV-lrj05t1g"
+     "sig": "9NanCsQzCbSXITP0F9pn3Bgf0cGGPtn0E80mvPKOx8Zg3rpcEnbpf_tv_TRIKeRQSv8Y41y2w2heK9i7v-jiQQ"
     },
     "T": {
      "o": {
-      "at": "2026-10-10T10:12:20Z",
+      "at": "2026-10-10T10:12:50Z",
       "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
       "kind": "workspace_checkpoint",
       "n": 6,
@@ -18411,15 +19038,15 @@
       "v": 2,
       "workspace_id": "0123456789abcdef0123456789abcdef",
       "workspace_log": {
-       "acc": "sha256:265df0ac6793ba986733aa5683b971c70562523883841e1409eedb6af5cc9021",
-       "head": "sha256:4d8397c0acdd39d1032c98d1bcf2c69dbcde0ea128a574c1d6eb92de8f8d8fb7",
+       "acc": "sha256:d741284dba4a2f2c0f798740a2ef4786af935bff4f7f949233bce55838f5e624",
+       "head": "sha256:8e7465c2c8cc462d23cf0d990241d1fc670226f9d55a98e7fc671d409580c7dc",
        "seq": 4
       }
      },
-     "sig": "jeZBhxXRFi_KIeWSGUcZmml1lbvxLnESueIvSi_IUZqsSE7PFlbEaflYTl0Qot18osF7oJx23Mm4Wf2O33DW5w"
+     "sig": "LwTxxCJqTwRUtgqi8uskAhexietDvdUn697mGP_qPd0fY57pRwReAq_3-hyHzkOVs91ahpSsDEC1q9YmTf5Clg"
     },
     "abandoned_heads": [
-     "sha256:4a7f315c433afc2e767a99b44724c5e28583183871ad706a4d668a890b849f3a"
+     "sha256:97c3a811b131d15419e49be8ec548bf44dd331bc561e78663c682a7e88123f5b"
     ],
     "acc_before": "sha256:44a9df442095f6d167e9c15033122ccf8038126cb5d676595dc7e3164256493e",
     "acc_from": "sha256:a3a6b067e85e9fae49be8c5b083944c66d11ff0c547bcfad5ec1d6092a53489e",
@@ -18459,33 +19086,33 @@
     },
     "event": {
      "abandoned": {
-      "head": "sha256:4a7f315c433afc2e767a99b44724c5e28583183871ad706a4d668a890b849f3a",
+      "head": "sha256:97c3a811b131d15419e49be8ec548bf44dd331bc561e78663c682a7e88123f5b",
       "seq": 4
      },
      "abandoned_decisions": [
-      "01J9ZK0000000000000000002G"
+      "01J9ZK0000000000000000002K"
      ],
      "actor": {
       "device": "d_c65032f21d43401cc223b05723c1e5b4",
       "id": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
       "kind": "person"
      },
-     "at": "2026-10-10T10:12:20Z",
+     "at": "2026-10-10T10:12:50Z",
      "auth": "passphrase",
      "based_on": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
      "from_seq": 3,
      "hash_v": 1,
      "head": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
-     "host_sig": "mwCDgRmey_uKzHa8UMnRpUQulGy20U6pNWvhdOyaMV4KrW7_ZqRPGIpfridKREnIxYxJWURZp__PspH_dHENkg",
-     "id": "01J9ZK0000000000000000002H",
+     "host_sig": "I1GEh7Xv91VVVIiat2kYdagiibyhRRvHdrFC92UijDag6uXAsqjO3e5RKqi_MAC3M9VsXW2_3Wxfnh6DbqhwvA",
+     "id": "01J9ZK0000000000000000002M",
      "prev": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
      "reason": "rollback",
      "revocations": [],
      "roster_v": 3,
      "seq": 4,
-     "sig": "UEiUs4dSnKhna0mfi2vY8fjce2_5npRNZRp2Ui22kdGBRgNI53jQ2Hrk5_d7i1LplbkLfP5Xzz_RfHDShBspmA",
+     "sig": "zla9kESztLwA7UKah4YhSZ8ITnjlp8V_wB7dANBkqWajStIqm4Nhf4qPIfqQ6FM2zyBmRorlQtitg2VfAxPqZw",
      "source": {
-      "hash": "sha256:69b7ec7dbabe1751fbec235e3d9d8194811a2754e48c9b0da15e5888052010a1",
+      "hash": "sha256:250df7d037b5ac1a6d5be43edee4ec6ebc44f04430b93d8593b093124ca8fd84",
       "n": 5
      },
      "type": "restore",
@@ -18502,13 +19129,13 @@
      "id": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
      "kind": "person"
     },
-    "at": "2026-10-10T10:12:10Z",
+    "at": "2026-10-10T10:12:40Z",
     "auth": "passphrase",
     "based_on": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
     "device": "d_a6dc67f56b74e07ca65b035348e03bc0",
     "hash_v": 1,
-    "host_sig": "VFisVMDdj5cg7hJ89nCEO2dEVELD9yGbvIAap1N_RRaqm1Vd1e95LWRl2t_pAIPNVZTKT1E5WO-zIjhUpSU5fA",
-    "id": "01J9ZK0000000000000000002G",
+    "host_sig": "A32O4XOfIY8tnOCNLVdwkQ67hH6LD0At8No1eSqsjq3zdnfwsWcy8lUbEPkz6C54wWlMBnk2L4XtDRUJoddgRw",
+    "id": "01J9ZK0000000000000000002K",
     "prev": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
     "reason": "lost",
     "revocation": {
@@ -18525,7 +19152,7 @@
     },
     "roster_v": 3,
     "seq": 4,
-    "sig": "OWlL9Q9STzlo_Sy1jXa42KzRBN62Mu6dAen3jx8T533VJqWD7ix-A859jOhkrgplvM9X-4MqiPlZs1PmSXB2vA",
+    "sig": "4qm3lQ4ZRR2G16eDUDxaYipdUqOv2Jelme6M8QxFh6J-pI1T5cozf0cBVAvIEw8Pg8WyfeOFOoNkbMDJyh1uZA",
     "type": "device.revoked",
     "v": 2
    }
@@ -21042,7 +21669,7 @@
      }
     }
    ],
-   "name": "ticket_restore_out_of_band_revocation_not_unpublished",
+   "name": "ticket_restore_out_of_band_revocation_carries_no_unpublished",
    "note": "revocation.unpublished is a workspace-restore signal: a ticket restore carries []",
    "now": "2026-10-10T12:00:00Z",
    "offered": {

@@ -948,7 +948,9 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
   (persisted) restore is learned, from any walk, committed or not, the receiver raises the alarm and persists it.
   Alarms about transitions of a walk that never committed are dropped, since nothing was accepted. `judge_offer`
   reports the alarm for the transition it judges (from `learned_later`; only `compromised` alarms); the runtime
-  implements the rest.
+  implements the rest. Retrying a failed walk can therefore turn a would-be alarm into a refusal: the compromise
+  evidence kept from the failed walk is held when the retried transition is judged (consistent with C3, and
+  fail-closed).
   **Chain-learned and out-of-band revocations at receivers** (orch-relay §19.8; decided by orch-52 after a Codex
   challenge, option (a) with amendments). Revocations are global per person (protocol §6.2), so a receiver can hold
   one that this workspace's host never saw. A receiver therefore holds revocations in two classes, which differ only
@@ -956,9 +958,16 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
   event or an accepted restore's `revocations` entry, authenticated against that workspace's accepted history; it
   refuses its device as a restore signer (C3), binds the evidence identity of listed entries, and a workspace restore
   must carry it, a `compromised` one as `compromised` (completeness, below). *Out of band*: every other verified
-  PK-signed revocation the receiver holds (another workspace, the relay's revocation feed, the owner directly, a
-  bundle whose judgment failed); it refuses its device as a restore signer (C3, any reason) and binds evidence
-  identity the same way, but it is never demanded as completeness evidence.
+  revocation the receiver holds (another workspace, the relay's revocation feed, the owner directly, a bundle whose
+  judgment failed), whether or not this workspace knows the device; it refuses its device as a restore signer (C3, any
+  reason) and binds evidence identity the same way, but it is never demanded as completeness evidence. *Verified*
+  means protocol §6.2 `verify_revocation` under the person key of the person named in the revocation, against a device
+  certificate of that same person (the evidence a restore entry carries). A device id's person binding, once known (a
+  known device or earlier evidence), is never replaced by contradicting evidence: a revocation that contradicts it is
+  not admitted, and is not an input to judgment. A held revocation refuses a restore signer only when it names the
+  signer's device and person (the restore certificate's person, the delegation owner): any person can certify another
+  person's device public key under their own key, so another person's "revocation" of the signer's device id never
+  refuses the owner's restore.
   Out-of-band classification means that this receiver has not established an accepted occurrence of this evidence in
   this workspace's history. It makes no assertion about whether the host possesses the revocation. Every held verified
   revocation remains effective locally, regardless of classification, and refuses its device as a restore signer under
@@ -998,7 +1007,9 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
   certificate and person-key evidence needed to validate it. The host validates and durably retains applicable
   evidence, and appends `device.revoked` only when permitted by F1 (§5.3), including a permitted compromised upgrade;
   duplicate or weaker evidence is not re-appended. Evidence for an unknown device remains pending unless an applicable
-  publication path is defined.
+  publication path is defined. The receiver runtime keeps unpublished evidence for a device unknown to this workspace
+  pending locally and does not forward it: forwarding would disclose the person's other devices to this workspace's
+  host.
   Delivery acknowledgments do not establish chain publication. Publication is established by an authenticated
   occurrence in accepted workspace history. Local enforcement remains effective throughout. In short: refuse a revoked
   signer or an omitted chain obligation; accept with the signal a non-signer's solely out-of-band omission; hold a
@@ -1012,8 +1023,11 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
   `ReceiverView.known_revocations` (chain-learned) and `ReceiverView.local_revocations` (out of band) are both
   required inputs; signer refusal and evidence identity use both, completeness and the `compromised` check use
   `known_revocations` only (a revocation given in both is chain-learned for completeness, its local reason still
-  counts for the signal), and an accepted workspace restore reports `Verdict.unpublished` (sorted `d_` device ids).
-  The receiver runtime (P3: relay and mobile) owns classification, durable provenance and its monotonicity, reason
+  counts for the signal), and an accepted workspace restore reports `Verdict.unpublished` (sorted, de-duplicated
+  device ids with the `d_` prefix, while `known_devices` keys are bare hex). The signer is matched by device and
+  person. `local_revocations` holds every verified revocation the receiver holds, whether or not this workspace knows
+  the device; it is never filtered. To reduce `revocation.unpublished` noise, filter the output, never this input. The
+  receiver runtime (P3: relay and mobile) owns classification, durable provenance and its monotonicity, reason
   tracking, the serialized snapshot, walk persistence and restart, failed-bundle evidence, cross-workspace isolation
   of provenance, and forwarding with retry. The host side (accepting a forwarded revocation, no re-append of duplicate
   or weaker evidence, unknown devices pending) belongs to the host (P3 bridge).
@@ -2356,6 +2370,7 @@ A1–A20 (PR body), HO (dashboard handover, input only), D58–D60, the adversar
 | 148 | Receiver checks stated one by one (orch-relay #41/#42 reviews) | The pinned (card / genesis) delegation, each owner-device check, the signed `source`, T's head at `from_seq + 1`, `ws_seq ≤ T`, the strict checkpoint shape and workspace id, known-person binding of listed evidence (§5.10); pinned by signed vectors that each keep every other signature valid. | Shared vectors must fail a receiver that skips any one check. |
 | 149 | Receiver revocations: chain-learned vs out-of-band (orch-relay §19.8 divergence, raised by the relay stream; draft orch-52, Codex challenge, adopted with amendments) | Option (a): `ReceiverView` splits chain-learned `known_revocations` (signer refusal, evidence identity, completeness) from out-of-band `local_revocations` (signer refusal and evidence identity only, both required). Provenance is per workspace, monotonic, with reasons tracked separately; judgments use serialized snapshots; a failed bundle gives only local evidence. An accepted workspace restore missing a held out-of-band revocation, or carrying it weaker, gives the non-blocking `revocation.unpublished`; publication is retried, acknowledgements are not publication, the host appends only when F1 permits. A hash-only withheld suffix can hide a committed revocation (documented limit). Option (a) gives up option (b)'s stronger carriage (§5.10). | A shared input stranded receivers behind honest hosts that never saw a revocation learned elsewhere (`chain.diverged`); C3 must still refuse every held revocation's signer. |
 | 150 | C3 alarms across failed walks (orch-relay re-pin review; decided by orch-52) | Compromise evidence verified during a walk stays local evidence when the walk fails or does not commit. An alarm concerns a committed transition: compromised evidence for the signer of an already committed restore, learned from any walk, raises and persists the alarm; alarms about transitions of a walk that never committed are dropped. Receiver runtime; `judge_offer` reports the alarm of the transition it judges (§5.10). | Nothing of an uncommitted walk was accepted, but its verified evidence is still true and must keep refusing the device. |
+| 151 | Out-of-band verification and signer matching (raised by the Opus review of #387; decided by orch-52) | An out-of-band revocation is verified by protocol §6.2 `verify_revocation` under the person key of the person it names, against a device certificate of that same person; a device id's known person binding is never replaced, and a contradicting revocation is not admitted. Receivers match a restore signer against held revocations by device and person. `local_revocations` is never filtered (only the `unpublished` output may be). (§5.10) | Any person can certify another's device public key; device-only matching let a stranger strand a receiver, and a filtered input would drop C3 for exactly the out-of-band devices. |
 Open after F1 (not settled here):
 
 - The P3 envelope for phone decisions (`evidence`); the `qid` mapping itself is settled (§5.6).

@@ -82,6 +82,9 @@ def _extension(old: Mapping[str, Any], new: Mapping[str, Any], heads: Any) -> bo
 _ZERO_ACC = "sha256:" + "0" * 64
 _PLACEHOLDER_SIG = crypto.b64u(bytes(crypto.SIG_LEN))
 SKEW_S = 300  # receivers refuse a checkpoint whose `at` is more than this ahead of their clock (§5.10)
+# Revocation reason strength, compromised > lost = retired (§5.10): one rule for completeness and for the
+# `revocation.unpublished` signal.
+_STRENGTH = {"compromised": 2, "lost": 1, "retired": 1}
 
 
 def _offer_ok(offered: object) -> bool:
@@ -108,13 +111,20 @@ class ReceiverView:
       event or an accepted restore's ``revocations`` entry) it authenticated against this workspace's accepted history.
       Any of them for the signer refuses (C3); a workspace restore must carry each of them, a ``compromised`` one as
       ``compromised`` (completeness), else ``chain.diverged``.
-    - ``local_revocations``: every other verified PK-signed revocation it holds when it judges (out of band: another
-      workspace, the relay's feed, the owner directly, or a bundle whose judgment failed). Any of them for the signer
-      refuses (C3, any reason); they are never demanded as completeness evidence. A revocation in both collections is
-      chain-learned for completeness; the strongest reason of each collection is the caller's, so a chain-learned
-      ``lost`` plus a local ``compromised`` of the same device gives both entries (the reasons are tracked
-      separately). An accepted workspace restore that lacks one, or carries a weaker reason, reports it in
-      :attr:`Verdict.unpublished`.
+    - ``local_revocations``: every other verified revocation it holds when it judges (out of band: another
+      workspace, the relay's feed, the owner directly, or a bundle whose judgment failed), whether or not this
+      workspace knows the device. Never filter this input: it is the only place an out-of-band revocation refuses its
+      signer; to reduce ``revocation.unpublished`` noise, filter the output. Verified means protocol §6.2
+      ``verify_revocation`` under the person key of the person the revocation names, against a device certificate of
+      that same person; a revocation contradicting a device's known person binding is never admitted, so it is not an
+      input. Any of them for the signer refuses (C3, any reason); they are never demanded as completeness evidence.
+    - Both collections: the signer matches a held revocation by device and person (the restore certificate's person,
+      the delegation owner), so another person's revocation of the signer's device id never refuses. A revocation in
+      both collections is chain-learned for completeness. Reasons are tracked per collection: the caller passes, for
+      each device, its strongest chain-learned reason in ``known_revocations`` and its strongest locally held reason in
+      ``local_revocations``; a chain-learned ``lost`` plus a local ``compromised`` of one device is two entries. An
+      accepted workspace restore that lacks a local one, or carries it with a weaker reason, reports it in
+      :attr:`Verdict.unpublished` (``d_``-prefixed ids, while ``known_devices`` keys are bare hex).
     - ``learned_later``: revocations first learned after this judgment (a higher-``n`` bundle of the walk). They never
       refuse; a ``compromised`` one of the signer of an accepted restore is reported in :attr:`Verdict.alarms`.
 
@@ -149,7 +159,8 @@ class Restore:
 class Verdict(NamedTuple):
     """``code`` is the judgment. For an accepted restore, ``restore_id`` is its event id, ``alarms`` the ``d_`` ids of
     a signer whose ``compromised`` revocation was learned later (C3), and ``unpublished`` (workspace restores only) the
-    sorted ``d_`` ids of the held out-of-band revocations it does not carry, or carries with a weaker reason
+    sorted, de-duplicated ``d_`` ids of the held out-of-band revocations it does not carry, or carries with a weaker
+    reason
     (``revocation.unpublished``: non-blocking; the receiver runtime forwards the evidence, F1 §5.10)."""
 
     code: str
@@ -223,21 +234,19 @@ def judge_offer(
             return Verdict("sync.incomplete")
     if not restored:
         return Verdict("ok")
-    _, restore_id, signer, unpublished = restored
+    _, restore_id, signer, signer_person, unpublished = restored
     alarms = tuple(
         sorted(
             {
                 "d_" + signer
                 for later in view.learned_later  # learned after the judgment: an alarm, never a refusal (C3)
                 if later["revocation"]["o"]["device_id"] == signer
+                and later["revocation"]["o"]["person_id"] == signer_person
                 and later["revocation"]["o"]["reason"] == "compromised"
             }
         )
     )
     return Verdict("ok", restore_id, alarms, unpublished)
-
-
-_STRENGTH = {"compromised": 2, "lost": 1, "retired": 1}  # compromised > lost = retired (§5.10)
 
 
 def _same_evidence(entry: Mapping[str, Any], person_id: str, pk_pub: str | None) -> bool:
@@ -253,8 +262,9 @@ def _judge_restore(
     o: Mapping[str, Any],
     restore: Restore,
     proofs: Mapping[str, Any],
-) -> tuple[str, tuple[str, str, str, tuple[str, ...]] | None]:
-    """The restore half of :func:`judge_offer`: ``("ok", (log, id, signer, unpublished))`` or ``(code, None)``."""
+) -> tuple[str, tuple[str, str, str, str, tuple[str, ...]] | None]:
+    """The restore half of :func:`judge_offer`: ``("ok", (log, id, signer, person, unpublished))`` or
+    ``(code, None)``."""
     from orch.identity import CryptoVerifier
     from orch.identity.certs import check_cert, check_delegation, person_scope_ok
     from orch.identity.errors import Refused
@@ -326,13 +336,19 @@ def _judge_restore(
             got = carried.get(device)
             if got is not None and not _same_evidence(got, person_id, pk_pub):
                 return diverged
-        if any(k["revocation"]["o"]["device_id"] == signer for k in held_revs):
-            return diverged  # held when judged, either collection: any reason, any host-chosen position (C3)
+        signer_person = cert["person_id"]  # the delegation owner (checked above)
+        if any(
+            k["revocation"]["o"]["device_id"] == signer and k["revocation"]["o"]["person_id"] == signer_person
+            for k in held_revs
+        ):
+            # held when judged, either collection: any reason, any host-chosen position (C3). Device and person: another
+            # person's "revocation" of this device id is not a revocation of this signing identity.
+            return diverged
         for known in view.known_revocations:  # completeness: chain-learned evidence only
             rev = known["revocation"]["o"]
             got = carried.get(rev["device_id"])
             if log == WORKSPACE and (
-                got is None or (rev["reason"] == "compromised" and got["revocation"]["o"]["reason"] != "compromised")
+                got is None or _STRENGTH[got["revocation"]["o"]["reason"]] < _STRENGTH[rev["reason"]]
             ):
                 return diverged
         acc = restore.get("acc_from")
@@ -382,7 +398,7 @@ def _judge_restore(
                 got = carried.get(rev["device_id"])
                 if got is None or _STRENGTH[rev["reason"]] > _STRENGTH[got["revocation"]["o"]["reason"]]:
                     unpublished.add("d_" + rev["device_id"])
-        return "ok", (log, ev["id"], signer, tuple(sorted(unpublished)))
+        return "ok", (log, ev["id"], signer, signer_person, tuple(sorted(unpublished)))
     except (KeyError, TypeError, ValueError, IndexError, Refused, schema.SchemaError, canon.HashError):
         return diverged
 

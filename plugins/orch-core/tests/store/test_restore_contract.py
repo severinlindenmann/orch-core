@@ -87,6 +87,7 @@ def test_durable_restore_contract(case, env, monkeypatch):
             env.owner.pk_pub, env.owner.pk_sign, device_id_hex=device[2:], revoked_ms=env.clock[0] * 1000, reason="lost"
         )
     if case.get("signer_revoked"):
+        # Self-contained host case: its own setup, the refusal and its assertions, then return; nothing below applies.
         # the owner's own device is revoked, then the revocation is given up: only durable evidence still holds it
         kept = len(env.read_events("workspace"))
         env.revoke_device(env.owner.device, reason=case["signer_revoked"])

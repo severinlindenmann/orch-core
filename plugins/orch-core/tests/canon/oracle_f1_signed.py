@@ -760,11 +760,13 @@ def checkpoint_vector() -> dict[str, Any]:
         "replaces workspace_n_held; every transition case gives `pinned_delegation` (the workspace's card / genesis "
         "delegation, whose `o` the carried, PK-verified one must equal), `known_devices` (device_id -> person_id and "
         "optional pk_pub the receiver knows for it, active or revoked), `known_revocations` (chain-learned: held when "
-        "judging and authenticated in this workspace's accepted history; signer refusal and completeness; entries "
+        "judging and authenticated in this workspace's accepted history; signer refusal, evidence identity and "
+        "completeness; entries "
         "may carry `pk_pub`), `local_revocations` (out of band: held when judging, not chain-learned; signer refusal "
-        "and evidence identity only, never completeness) and `learned_later_in_walk` (learned only from a higher-n "
+        "and evidence identity only, never completeness; never filtered) (a held revocation refuses the signer only "
+        "when it names the signer's device and person) and `learned_later_in_walk` (learned only from a higher-n "
         "bundle; never refuses; `alarm: true` when it must raise the C3 alarm, otherwise no alarm). `unpublished` is "
-        "the expected sorted d_ ids of revocation.unpublished for an accepted workspace restore ([] otherwise). "
+        "the expected sorted, de-duplicated d_ ids of revocation.unpublished for an accepted workspace restore ([] otherwise). "
         "Every refusing transition keeps all signatures valid except the one a case names as its defect.",
         "note": KEY_NOTE,
         "workspace_id": W,
@@ -1388,6 +1390,34 @@ def transition_vectors() -> list[dict[str, Any]]:
             {"revocation": ow.make_revocation("lena", "lena1", "lost"), "pk_pub": key("pk_mara").pub_b64u}
         ],
     )
+    # The signer is matched by device and person: another person's "revocation" of the signer's device id (a
+    # certificate any person can make for any public key) is not a revocation of the signing identity (F1 §5.10).
+    variant(
+        "cross_person_revocation_of_the_signer_device_not_refused",
+        "ok",
+        local_revocations=held_rev("mara", "sev1", "compromised"),
+        unpublished=[did("sev1")],
+        note="mara's PK signs a revocation of sev's device id: the runtime never admits evidence contradicting a "
+        "known person binding (F1), and judge_offer, given it anyway, does not refuse the owner's restore; like any "
+        "local revocation the restore does not carry, it is reported unpublished",
+    )
+    variant(
+        "same_person_revocation_of_the_signer_device_refused",
+        "chain.diverged",
+        local_revocations=held_rev("sev", "sev1", "compromised"),
+        note="the genuine counterpart of cross_person_revocation_of_the_signer_device_not_refused",
+    )
+    # `unpublished` is sorted and de-duplicated: inputs in descending device-id order, one device twice.
+    pairs = sorted([("lena", "lena1"), ("mara", "mara1")], key=lambda p: did(p[1]), reverse=True)
+    multi = [ow.make_revocation(person, dev, "lost") for person, dev in pairs]
+    multi.append(ow.make_revocation(*pairs[0], "retired"))
+    variant(
+        "out_of_band_several_missing_unpublished_sorted_unique",
+        "ok",
+        local_revocations=[{"revocation": r} for r in multi],
+        unpublished=sorted({did("lena1"), did("mara1")}),
+        note="local_revocations in descending device-id order, the first device twice (lost and retired)",
+    )
     # Hash-only withholding: C commits to a suffix holding device.revoked(lena1); the bundle proves the suffix with
     # its head only, never its body. Proofs establish ancestry, not disclosure: a receiver that never authenticated
     # that occurrence does not demand it (documented acceptance, F1 §5.10).
@@ -1586,7 +1616,7 @@ def transition_vectors() -> list[dict[str, Any]]:
             known_revocations=[{"revocation": ow.make_revocation("sev", "sev1", reason, revoked_ms=revoked_ms)}],
         )
     ticket_variant(
-        "ticket_restore_out_of_band_revocation_not_unpublished",
+        "ticket_restore_out_of_band_revocation_carries_no_unpublished",
         "ok",
         local_revocations=lena_lost,
         note="revocation.unpublished is a workspace-restore signal: a ticket restore carries []",
@@ -2109,13 +2139,16 @@ def restore_contract_vectors() -> dict[str, Any]:
                 "note": "the host refuses a restore listing its own signer before the append; replay of an existing "
                 "such line keeps pre-event authorization (scenarios owner_authorized_before_self_revocation*)",
             },
-            {
-                "name": "restore_signer_revoked_in_durable_evidence",
-                "signer_revoked": "lost",
-                "expect": "device.invalid",
-                "note": "the signer's revocation sits only in the given-up part: the kept chain authorizes the restore, "
-                "the host's durable revocation evidence refuses it before the append, whatever the reason (F1 5.10 "
-                "host rule, C3); a host-side append check, so it is not a model scenario",
-            },
+            *(
+                {
+                    "name": "restore_signer_revoked_in_durable_evidence_" + reason,
+                    "signer_revoked": reason,
+                    "expect": "device.invalid",
+                    "note": "the signer's revocation sits only in the given-up part: the kept chain authorizes the "
+                    "restore, the host's durable revocation evidence refuses it before the append, whatever the reason "
+                    "(F1 5.10 host rule, C3); a host-side append check, so it is not a model scenario",
+                }
+                for reason in ("lost", "retired", "compromised")
+            ),
         ],
     }

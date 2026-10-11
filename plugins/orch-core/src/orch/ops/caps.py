@@ -19,13 +19,14 @@ stdin are denied, and ``exec`` and ``git`` are denied outright rather than "rest
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 import stat
 import subprocess
 import sys
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -48,25 +49,86 @@ def open_tty(flags: int) -> int:
     return os.open("/dev/tty", flags | os.O_NOCTTY)
 
 
-@dataclass(frozen=True)
 class Files:
-    """Filesystem access. ``roots`` ``None`` is direct mode (any path); otherwise every path is resolved (symlinks
-    followed) and must lie under one root."""
+    """Filesystem access.
 
-    roots: tuple[Path, ...] | None = None
-    cwd_allowed: bool = True
-    stdin_allowed: bool = True
+    Direct mode (``roots`` ``None``): any path, the plain ``os``/``pathlib`` calls, as before.
 
-    def check(self, path: str | os.PathLike[str]) -> str:
-        """``path`` as a string, if allowed. Raises :class:`CapabilityDenied` outside the roots."""
+    Host mode: **one interpretation of a path, and the check is the open.** The root directories are opened once, as
+    directory file descriptors, when the capability is built. A path must be absolute and start with the same
+    components as a root (a plain comparison of components: no ``realpath``, no ``normpath``, no case folding). The
+    rest is walked component by component with ``dir_fd`` and ``O_NOFOLLOW``, so no symlink is followed, and ``..``,
+    ``.``, empty components, NUL bytes and relative paths are refused. There is no separate "validate, then open" step
+    for a swap to land in: a symlink swapped in at any moment is simply refused by the kernel. Stricter than the
+    D-P2-9 text: a path that reaches a root only through a symlink (``/var`` for ``/private/var``) is refused; the host
+    names its roots by their real paths. The one thing trusted is the root directories themselves, which the host owns.
+    """
+
+    def __init__(
+        self,
+        roots: tuple[Path, ...] | None = None,
+        cwd_allowed: bool = True,
+        stdin_allowed: bool = True,
+    ) -> None:
+        self.cwd_allowed = cwd_allowed
+        self.stdin_allowed = stdin_allowed
+        self.roots = roots
+        self._root_fds: list[tuple[tuple[str, ...], int]] = []
+        for r in roots or ():
+            rp = os.fspath(r)
+            if "\0" in rp or not os.path.isabs(rp):
+                raise ValueError(f"bad root: {rp!r}")
+            parts = tuple(c for c in rp.split("/") if c)
+            fd = os.open(rp, os.O_RDONLY | os.O_DIRECTORY)
+            self._root_fds.append((parts, fd))
+
+    # -- the one path interpretation (host mode)
+    def _split(self, path: str | os.PathLike[str]) -> tuple[int, tuple[str, ...]]:
+        """The root fd and the components below the root. Pure string work, no filesystem access."""
         p = os.fspath(path)
-        if self.roots is None:
-            return p
-        real = Path(os.path.realpath(p))
-        if not any(real == r or r in real.parents for r in self.roots):
-            raise CapabilityDenied(f"path outside the roots: {p!r}")
-        return p
+        if isinstance(p, bytes):  # pragma: no cover
+            raise CapabilityDenied("bytes path")
+        if "\0" in p:
+            raise CapabilityDenied("NUL in path")
+        if not p.startswith("/"):
+            raise CapabilityDenied(f"relative path: {p!r}")
+        parts = p.split("/")[1:]
+        if parts and parts[-1] == "":  # one trailing slash is the directory itself
+            parts = parts[:-1]
+        if any(c in ("", ".", "..") for c in parts):
+            raise CapabilityDenied(f"path with an empty, '.' or '..' component: {p!r}")
+        for root_parts, fd in self._root_fds:
+            n = len(root_parts)
+            if tuple(parts[:n]) == root_parts:
+                return fd, tuple(parts[n:])
+        raise CapabilityDenied(f"path outside the roots: {p!r}")
 
+    @contextlib.contextmanager
+    def _parent(self, path: str | os.PathLike[str], *, create: bool = False) -> Iterator[tuple[int, str | None]]:
+        """A directory fd for the parent of ``path`` (walked with ``O_NOFOLLOW``) and the final name (``None`` when
+        ``path`` is a root). ``create``: make missing intermediate directories."""
+        root_fd, rest = self._split(path)
+        opened: list[int] = []
+        try:
+            cur = root_fd
+            for comp in rest[:-1]:
+                if create:
+                    with contextlib.suppress(FileExistsError):
+                        os.mkdir(comp, 0o777, dir_fd=cur)
+                cur = os.open(comp, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=cur)
+                opened.append(cur)
+            yield cur, (rest[-1] if rest else None)
+        finally:
+            for fd in opened:
+                os.close(fd)
+
+    def _open(self, path: str | os.PathLike[str], flags: int, mode: int = 0o777) -> int:
+        if self.roots is None:
+            return os.open(os.fspath(path), flags, mode)
+        with self._parent(path) as (dfd, name):
+            return os.open(name if name is not None else ".", flags | os.O_NOFOLLOW, mode, dir_fd=dfd)
+
+    # -- the capability
     def getcwd(self) -> str:
         if not self.cwd_allowed:
             raise CapabilityDenied("working directory")
@@ -82,7 +144,7 @@ class Files:
     def read_regular(self, path: str, limit: int) -> tuple[bytes, int]:
         """Up to ``limit`` bytes of a regular file (opened ``O_NONBLOCK``, so a FIFO cannot hang the call) and the
         file's size. Raises ``OSError`` if it cannot be opened and :class:`NotARegularFile` if it is not one."""
-        fd = os.open(self.check(path), os.O_RDONLY | os.O_NONBLOCK)
+        fd = self._open(path, os.O_RDONLY | os.O_NONBLOCK)
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode):
             os.close(fd)
@@ -91,28 +153,62 @@ class Files:
             return f.read(limit), st.st_size
 
     def open_fd(self, path: str | os.PathLike[str], flags: int, mode: int = 0o777) -> int:
-        return os.open(self.check(path), flags, mode)
+        return self._open(path, flags, mode)
 
     def read_bytes(self, path: str | os.PathLike[str]) -> bytes:
-        return Path(self.check(path)).read_bytes()
+        if self.roots is None:
+            return Path(path).read_bytes()
+        with os.fdopen(self._open(path, os.O_RDONLY), "rb") as f:
+            return f.read()
 
     def read_text(self, path: str | os.PathLike[str]) -> str:
-        return Path(self.check(path)).read_text()
+        if self.roots is None:
+            return Path(path).read_text()
+        return self.read_bytes(path).decode()
 
     def write_text(self, path: str | os.PathLike[str], text: str) -> None:
-        Path(self.check(path)).write_text(text)
+        if self.roots is None:
+            Path(path).write_text(text)
+            return
+        with os.fdopen(self._open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o666), "w") as f:
+            f.write(text)
 
     def mkdir(self, path: str | os.PathLike[str], *, parents: bool = False, mode: int = 0o777) -> None:
-        Path(self.check(path)).mkdir(parents=parents, mode=mode, exist_ok=True)
+        if self.roots is None:
+            Path(path).mkdir(parents=parents, mode=mode, exist_ok=True)
+            return
+        with self._parent(path, create=parents) as (dfd, name):
+            if name is not None:
+                with contextlib.suppress(FileExistsError):
+                    os.mkdir(name, mode, dir_fd=dfd)
 
     def unlink(self, path: str | os.PathLike[str]) -> None:
-        os.unlink(self.check(path))
+        if self.roots is None:
+            os.unlink(path)
+            return
+        with self._parent(path) as (dfd, name):
+            if name is None:
+                raise CapabilityDenied("a root cannot be removed")
+            os.unlink(name, dir_fd=dfd)
 
     def rmtree(self, path: str | os.PathLike[str]) -> None:
-        shutil.rmtree(self.check(path), ignore_errors=True)
+        if self.roots is None:
+            shutil.rmtree(path, ignore_errors=True)
+            return
+        with self._parent(path) as (dfd, name):
+            if name is None:
+                raise CapabilityDenied("a root cannot be removed")
+            shutil.rmtree(name, ignore_errors=True, dir_fd=dfd)
 
     def lexists(self, path: str | os.PathLike[str]) -> bool:
-        return os.path.lexists(self.check(path))
+        if self.roots is None:
+            return os.path.lexists(path)
+        try:
+            with self._parent(path) as (dfd, name):
+                os.lstat(name if name is not None else ".", dir_fd=dfd)
+        except OSError:
+            return False
+        return True
 
 
 class NotARegularFile(OSError):
@@ -225,7 +321,7 @@ class Capabilities:
         default), never the client's."""
         return cls(
             env=dict(env or {}),
-            files=Files(roots=tuple(Path(os.path.realpath(r)) for r in roots), cwd_allowed=False, stdin_allowed=False),
+            files=Files(roots=tuple(Path(r) for r in roots), cwd_allowed=False, stdin_allowed=False),
             exec=Exec(enabled=False),
             git=Git(enabled=False),
             signer=Signer(enabled=False),

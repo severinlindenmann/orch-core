@@ -7,8 +7,8 @@ replay, chain-checked. The model raises ``KeyError`` on a malformed event rather
 from __future__ import annotations
 
 import copy
-import heapq
 import dataclasses
+import heapq
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType

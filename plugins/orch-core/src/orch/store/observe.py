@@ -37,8 +37,8 @@ def git_env(base: Mapping[str, str] | None = None) -> dict[str, str]:
 
 
 def git(path: Path, *args: str, strip: bool = True) -> str | None:
-    """``git -C path ...`` on a scrubbed environment; stdout stripped (unless ``strip`` is off), ``None`` if git fails or
-    is missing."""
+    """``git -C path ...`` on a scrubbed environment; stdout stripped (unless ``strip`` is off), ``None`` if git fails
+    or is missing."""
     try:
         done = subprocess.run(
             [

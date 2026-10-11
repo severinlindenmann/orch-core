@@ -1609,6 +1609,10 @@ DOC_NON_EVENTS = {
     "settings.repos", "ticket.acceptance", "ticket.addons", "ticket.json", "ticket.key", "ticket.links",
     "ticket.questions", "ticket.schema", "ticket.size", "ticket.tasks", "ticket.title", "ticket.type", "ticket.uid",
     "ticket.visibility",
+    # refusal codes of the §5.11 refusal order
+    "addon.field_unknown", "addon.value_invalid", "device.invalid", "device.scope", "gate.invalidated_mismatch",
+    "gate.not_applicable", "gate.not_eligible", "gate.status", "grant.invalid", "grant.scope", "member.unknown",
+    "role.denied", "ticket.exists", "ticket.not_visible", "ticket.unknown",
 }  # fmt: skip
 
 

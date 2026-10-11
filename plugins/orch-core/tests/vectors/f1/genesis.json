@@ -1137,8 +1137,8 @@
   },
   {
    "append": "chain.broken",
-   "check": 4,
-   "desc": "checks 3 and 4 both fail: host_sig is a line check (refusal order step 1), so chain.broken wins",
+   "check": 3,
+   "desc": "checks 3 and 4 both fail: the genesis checks name 3 (host_sig is also a line check, so the event is refused with chain.broken, refusal order step 1)",
    "event": {
     "actor": {
      "device": "d_c65032f21d43401cc223b05723c1e5b4",
@@ -1202,7 +1202,7 @@
     "wsk_pub": "BJy4pP7CRCCFIbgVcqF07OgGwnzyG5Mu6nAPOvYZl72rKNxeRWcBwNDpRGc1LBIdbPY6ZrGFuKL1INLjmAeu_Ro"
    },
    "head": "sha256:229c910933919cd76e4879c92671a413a6ebbebaf8081d22f984fc094ec307fd",
-   "name": "host_sig_check_before_delegation_check",
+   "name": "delegation_check_before_host_sig",
    "replay": "chain.broken",
    "shape": null
   },

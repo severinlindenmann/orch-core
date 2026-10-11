@@ -614,7 +614,10 @@ class Sim:
         old = self.t["addons"].get("estimate")
         if verb == "granted":
             pay: dict[str, Any] = {"name": "estimate", "version": "1.0.0", "package_sha256": g.digest(b"estimate package"),
-                                   "capabilities": ["serve_http"], "binds": binds}  # fmt: skip
+                                   "capabilities": ["serve_http"],
+                                   "fields": {"points": {"type": "integer", "min": 0, "max": 100, "set_by": ["owner", "agent"],
+                                                         "gate": ["plan"]}},
+                                   "sections": binds["sections"], "artifact_kinds": []}  # fmt: skip
         else:
             pay = {"name": "estimate"}
         e = self.w.ev("workspace", "addon." + verb, self._sev(), pay, note=note)

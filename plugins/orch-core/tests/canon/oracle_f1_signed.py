@@ -385,9 +385,10 @@ def genesis_vector() -> dict[str, Any]:
             device_cert=ow.make_cert("sev", "sev1", ["look", "decide"]),
         ),
         _genesis_case(
-            "host_sig_check_before_delegation_check",
-            4,
-            "checks 3 and 4 both fail: host_sig is a line check (refusal order step 1), so chain.broken wins",
+            "delegation_check_before_host_sig",
+            3,
+            "checks 3 and 4 both fail: the genesis checks name 3 (host_sig is also a line check, so the event is "
+            "refused with chain.broken, refusal order step 1)",
             delegation=ow.make_delegation("sev", workspace_id=OTHER_W),
             host_key="wsk_other",
         ),
@@ -398,7 +399,7 @@ def genesis_vector() -> dict[str, Any]:
     codes = {
         "host_sig_by_another_key": ("chain.broken", "chain.broken"),
         "host_sig_covers_the_event": ("chain.broken", "chain.broken"),
-        "host_sig_check_before_delegation_check": ("chain.broken", "chain.broken"),
+        "delegation_check_before_host_sig": ("chain.broken", "chain.broken"),
         "signature_by_another_device": ("sig.invalid", "chain.broken"),
         "signature_over_another_workspace": ("sig.invalid", "chain.broken"),
         "owner_check_before_signature_check": ("genesis.invalid", "chain.broken"),

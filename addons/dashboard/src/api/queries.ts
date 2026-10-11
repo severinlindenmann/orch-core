@@ -27,6 +27,9 @@ export const queries = {
   ticketsAll: (ws: string) => queryOptions({ queryKey: ['tickets', ws, 'all'], queryFn: () => api.listTickets(ws) }),
   /** The Tickets list for its server-side filters (see ticketsServerParams). */
   tickets: (ws: string, params: ListTicketsParams) => queryOptions({ queryKey: ['tickets', ws, params], queryFn: () => api.listTickets(ws, params) }),
+  /** Closed tickets (host v1.4 leaves them out unless asked): the Tickets list's Closed filter. */
+  ticketsClosed: (ws: string, params: ListTicketsParams) =>
+    queryOptions({ queryKey: ['tickets', ws, 'closed', params], queryFn: () => api.listTickets(ws, { ...params, status: ['closed'] }) }),
   /** One ticket, keyed by its workspace (the id a real host knows it by) and its key. */
   ticket: (ws: string, key: string) => queryOptions({ queryKey: ['ticket', ws, key], queryFn: () => api.getTicket(key, ws), retry: false }),
   connections: (ws: string) => queryOptions({ queryKey: ['connections', ws], queryFn: () => api.getConnections(ws) }),

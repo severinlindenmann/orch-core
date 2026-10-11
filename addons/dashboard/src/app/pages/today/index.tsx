@@ -21,7 +21,7 @@ import type { HumanAction } from '../ticket/shared'
 import { QueueGroup } from './groups'
 import { acceptOrder, buildGroups, foldLabel, pruneOrder, reconcile, toEntries, type Entry, type Row } from './queue'
 import { ReloginGroup } from './relogin'
-import { ApprovalRow, DecisionRow, FoldRow, NewItemContext, SigningContext, QuestionRow, VerdictRow } from './rows'
+import { ApprovalRow, DecisionRow, FoldRow, NewItemContext, NoticeRow, SigningContext, QuestionRow, VerdictRow } from './rows'
 import { AgentsBar, AgentsPanel, Glance, GLANCE_TILES, Recently } from './side'
 import { displayName, useSessionState, useTodayWide, type Directory } from './shared'
 import { queries } from '@/api/queries'
@@ -260,7 +260,8 @@ function TodayInbox({ items, decisions, readOnly, locked, canAddon, viewer, atte
     const props = { item: e.item, ticket: byKey[e.item.ticket], askedBy: askedBy ? displayName(dir, askedBy) : undefined, now, expanded: expanded === row.id, onToggle: () => toggle(row.id), sign, decider: readOnly ? deciderOf(e) : undefined, locked }
     if (e.item.kind === 'question') return <QuestionRow key={row.id} {...props} />
     if (e.item.kind === 'approval') return <ApprovalRow key={row.id} {...props} />
-    return <VerdictRow key={row.id} {...props} />
+    if (e.item.kind === 'verdict') return <VerdictRow key={row.id} {...props} />
+    return <NoticeRow key={row.id} item={e.item} now={now} />
   }
 
   const renderRow = (row: Row) => {

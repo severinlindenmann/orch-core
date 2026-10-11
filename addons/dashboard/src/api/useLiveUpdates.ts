@@ -53,14 +53,24 @@ export function invalidateLive(client: QueryClient, ws: string, event: string, i
         return next
       })
       void client.cancelQueries(ticket); client.removeQueries(ticket); close(uid)
+      // The feed on Today and the closed list name the ticket by key and title: purge them whole, then read as the new viewer.
+      const feeds = { predicate: (q: Q) => q.queryKey[1] === ws && (q.queryKey[0] === 'today' || (q.queryKey[0] === 'tickets' && q.queryKey.includes('closed'))) }
+      void client.cancelQueries(feeds); client.removeQueries(feeds)
       for (const name of ['tickets', 'board', 'today']) invalidate(name)
     } else if (item.type === 'needs.changed') {
       invalidate('today'); void client.invalidateQueries({ queryKey: ['workspaces'] })
     } else if (item.type?.startsWith('member.') || item.type === 'role.changed' || item.type?.startsWith('device.')) {
       void client.invalidateQueries(scoped); void client.invalidateQueries({ queryKey: ['me'] })
       void client.invalidateQueries({ queryKey: ['workspaces'] })
+    } else if (item.type === 'visibility.changed' || item.type === 'people.changed' || item.type === 'ticket.closed' || item.type === 'ticket.reopened') {
+      // Who may see a ticket (or whether it is listed) changed. Today's activity and a closed list carry titles and rows
+      // that were visible a moment ago: drop them, not only mark them stale, then read again as the new viewer.
+      const lists = { predicate: (q: Q) => q.queryKey[1] === ws && (q.queryKey[0] === 'today' || (q.queryKey[0] === 'tickets' && q.queryKey.includes('closed'))) }
+      void client.cancelQueries(lists); client.removeQueries(lists)
+      if (item.key) void client.invalidateQueries({ queryKey: ['ticket', ws, item.key] })
+      for (const name of ['tickets', 'board', 'today']) invalidate(name)
     } else if (item.key) {
-      void client.invalidateQueries({ queryKey: ['ticket', ws, item.key] }); invalidate('tickets'); invalidate('board')
+      void client.invalidateQueries({ queryKey: ['ticket', ws, item.key] }); invalidate('tickets'); invalidate('board'); invalidate('today')
     } else { void client.invalidateQueries(scoped) }
   }
 }

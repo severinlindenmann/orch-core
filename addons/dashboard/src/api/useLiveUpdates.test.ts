@@ -40,7 +40,7 @@ it('implements the invalidation table scoped by UUID', () => {
   const seed = () => keys.forEach((key) => client.setQueryData(key, {}))
   const invalid = () => keys.filter((key) => client.getQueryState(key)?.isInvalidated)
   seed(); invalidateLive(client, 'ws', 'items', [{ id: '1.e', key: 'DEMO-0001' }])
-  expect(invalid()).toEqual(keys.slice(0, 3))
+  expect(invalid()).toEqual(keys.slice(0, 4)) // Today's activity feed shows the event too
   seed(); invalidateLive(client, 'ws', 'items', [{ id: '1.n', type: 'needs.changed' }])
   expect(invalid()).toEqual([keys[3], keys[6]])
   for (const type of ['member.removed', 'role.changed', 'device.revoked']) {
@@ -67,6 +67,22 @@ it('gone cancels and purges details and rows, closes views; revoked purges works
   expect(client.getQueryData(['tickets', 'ws'])).toBeUndefined()
   expect(client.getQueryData(['ticket', 'other', 'DEMO-0001'])).toEqual({ uid: 'other-u' })
   expect(close).toHaveBeenCalledWith()
+})
+it('visibility changes and gone purge the activity feed and the closed list, not only mark them stale', () => {
+  const client = new QueryClient()
+  const seed = () => {
+    client.setQueryData(['today', 'ws'], { recent: [{ ticket: 'DEMO-0001', title: 'Secret title' }] })
+    client.setQueryData(['tickets', 'ws', 'closed', {}], [{ uid: 'ULID0001', key: 'DEMO-0001', title: 'Secret title' }])
+    client.setQueryData(['tickets', 'ws', 'all'], [{ uid: 'ULID0009', key: 'DEMO-0009', title: 'Other' }])
+    client.setQueryData(['today', 'other'], { recent: [] })
+  }
+  for (const item of [{ id: '1.e', key: 'DEMO-0001', type: 'visibility.changed' }, { id: '1.e', key: 'DEMO-0001', type: 'ticket.reopened' }, { id: '1.g', uid: 'ULID0001', gone: true }]) {
+    seed(); invalidateLive(client, 'ws', 'items', [item])
+    expect(client.getQueryData(['today', 'ws'])).toBeUndefined()
+    expect(client.getQueryData(['tickets', 'ws', 'closed', {}])).toBeUndefined()
+    expect(client.getQueryData(['tickets', 'ws', 'all'])).toBeDefined()
+    expect(client.getQueryData(['today', 'other'])).toEqual({ recent: [] })
+  }
 })
 it('any successful frame, including a heartbeat, resets the failure counter', async () => {
   vi.useFakeTimers()

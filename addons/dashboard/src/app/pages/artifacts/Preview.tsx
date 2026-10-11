@@ -100,7 +100,7 @@ export function ArtifactPane({ item, members, onClose }: { item: ArtifactItem; m
           <>
             <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-[12px] text-text-muted">
               <Pill>{a.kind}</Pill>
-              {a.bytes > 0 && <span>{fmtBytes(a.bytes)}</span>}
+              {!!a.bytes && <span>{fmtBytes(a.bytes)}</span>}
               <TicketLink a={item} className="min-w-0 flex-1" />
             </div>
             <ArtifactFacts a={a} by={byLabel(item.by, members)} />

@@ -47,8 +47,11 @@ interface ServerPage {
 }
 
 const ROLE_RANK: Record<Role, number> = { viewer: 0, member: 1, maintainer: 2, owner: 3 }
-/** Pages the board, Today and the Tickets list read at most (200 rows each): the host snapshot makes this consistent. */
-const MAX_PAGES = 5
+/**
+ * Pages the board, Today and the Tickets list read at most. A page may hold fewer rows than asked (rows drop out between
+ * pages, a scan budget ends a page early): only `next_page` says whether more follow, never the size of a page.
+ */
+const MAX_PAGES = 25
 
 async function call<T>(path: string, method: 'GET' | 'POST' = 'GET'): Promise<T> {
   const token = getToken()

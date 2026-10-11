@@ -106,6 +106,7 @@ export const STATUS_LABEL: Record<Status, string> = {
   waiting: 'Waiting',
   testing: 'Testing',
   done: 'Done',
+  closed: 'Closed',
 }
 
 const STATUS_TONE: Record<Status, string> = {
@@ -115,6 +116,7 @@ const STATUS_TONE: Record<Status, string> = {
   waiting: 'border-warning/40 bg-warning-soft text-warning',
   testing: 'border-text-muted/50 bg-surface-3 text-text',
   done: 'border-success/40 bg-success-soft text-success',
+  closed: 'border-border-strong bg-surface-3 text-text-muted',
 }
 
 /** A done ticket that is still landing (queued, checked or failed) is not shown as Done (core's `landing`). */

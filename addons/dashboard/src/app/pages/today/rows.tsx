@@ -3,7 +3,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import { Link } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, FileSearch, HelpCircle, Loader2, ShieldCheck } from 'lucide-react'
+import { ChevronDown, FileSearch, HelpCircle, Loader2, ShieldAlert, ShieldCheck } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/api/client'
 import { diffstat } from '@/api/gates'
@@ -98,6 +98,19 @@ export function RowShell({
   )
 }
 
+/** When the need arose; unknown (the host left `since` out) draws no age rather than "just now". */
+const ageOf = (item: NeedsYouItem, now: string) => (item.since ? ago(item.since, now) : undefined)
+
+/** Small facts about the item that are not the ask: a closed ticket, a text the host shortened. */
+function Flags({ item }: { item: NeedsYouItem }) {
+  return (
+    <>
+      {item.closed && <span className="text-text-faint"> · ticket closed</span>}
+      {item.cut && <span className="text-text-faint"> · text shortened, open the ticket for the full question</span>}
+    </>
+  )
+}
+
 function TicketLine({ ticket, title }: { ticket: string; title?: string }) {
   return (
     <>
@@ -149,10 +162,11 @@ export function QuestionRow({ item, ticket, now, expanded, onToggle, sign, asked
         <>
           <TicketLine ticket={item.ticket} title={item.title} />
           {askedBy && <span className="text-text-faint"> · Asked by {askedBy}</span>}
+          <Flags item={item} />
         </>
       }
       blocking={item.blocking}
-      age={ago(item.since, now)}
+      age={ageOf(item, now)}
       expanded={expanded}
       onToggle={readOnly ? undefined : onToggle}
       action={
@@ -226,7 +240,7 @@ export function ApprovalRow({ item, ticket, now, expanded, onToggle, sign, decid
       ask={item.text}
       sub={<TicketLine ticket={item.ticket} title={item.title} />}
       blocking={item.blocking}
-      age={ago(item.since, now)}
+      age={ageOf(item, now)}
       expanded={expanded}
       onToggle={readOnly ? undefined : onToggle}
       action={
@@ -251,6 +265,30 @@ export function ApprovalRow({ item, ticket, now, expanded, onToggle, sign, decid
   )
 }
 
+// ------------------------------------------------------------------ notices (no one can approve, invalid log, addon rule)
+
+/**
+ * Items that ask nothing of the viewer in this dashboard: a gate nobody can approve, an invalid event that freezes
+ * decisions, an addon's own rule. Core draws the host's words, with no action; who can fix it acts in the terminal.
+ */
+export function NoticeRow({ item, now }: { item: NeedsYouItem; now: string }) {
+  return (
+    <RowShell
+      testId={`card-${item.kind}:${item.ticket}:${item.ref ?? ''}`}
+      icon={<ShieldAlert className="size-4" aria-label={item.kind === 'addon' ? 'addon rule' : 'attention'} />}
+      ask={item.text}
+      sub={
+        <>
+          {item.ticket ? <TicketLine ticket={item.ticket} title={item.title} /> : <span>Workspace</span>}
+          <Flags item={item} />
+        </>
+      }
+      age={ageOf(item, now)}
+      action={<span className="text-xs text-text-muted">{item.kind === 'no_eligible' ? 'An owner fixes the policy' : item.kind === 'acknowledge' ? 'An owner acknowledges' : 'See the ticket'}</span>}
+    />
+  )
+}
+
 // ------------------------------------------------------------------ verdict
 
 export function VerdictRow({ item, ticket, now, expanded, onToggle, sign, decider, locked }: CoreRowProps) {
@@ -265,7 +303,7 @@ export function VerdictRow({ item, ticket, now, expanded, onToggle, sign, decide
       ask={item.text}
       sub={<TicketLine ticket={item.ticket} title={item.title} />}
       blocking={item.blocking}
-      age={ago(item.since, now)}
+      age={ageOf(item, now)}
       expanded={expanded}
       onToggle={readOnly ? undefined : onToggle}
       action={

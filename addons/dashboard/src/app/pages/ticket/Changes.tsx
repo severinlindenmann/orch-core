@@ -39,6 +39,8 @@ export function Changes({ ticket, viewer, jump }: TabProps) {
   const diff = changes.data
   const b = ticket.branch.head ? ticket.branch : diff && { ...ticket.branch, name: diff.branch, base: diff.base, head: diff.head, files: diff.files.length, additions: diff.additions, deletions: diff.deletions }
   const signed = ticket.verdict?.source_sha
+  // A verdict signs one commit per linked repo; with several there is no single head to compare with the first.
+  const outdated = ticket.verdict?.current === false
   // Demo control: only where a verdict stands, so a push has something to void.
   const canDemo = !isRealHost() && can(viewer.role, 'ticket.act') && ticket.gates.verify.state === 'approved'
 
@@ -64,7 +66,8 @@ export function Changes({ ticket, viewer, jump }: TabProps) {
         {b ? (
           <p className="text-[13px] text-text">
             Head <Mono>{b.head}</Mono> · {diffstat(b)} in {b.files} file{b.files === 1 ? '' : 's'}
-            {signed && (
+            {outdated && <span className="text-warning"> · the verdict is from before the latest change</span>}
+            {signed && !outdated && (
               <span className={signed === b.head ? 'text-success' : 'text-warning'}>
                 {' · '}
                 {signed === b.head ? 'the verdict signed this commit' : `the verdict signed ${signed}, not the head`}

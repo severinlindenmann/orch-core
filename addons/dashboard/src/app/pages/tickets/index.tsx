@@ -5,6 +5,7 @@ import { ChevronDown, Tag, Terminal, X } from 'lucide-react'
 import { addonActive } from '@/api/addons'
 import { api } from '@/api/client'
 import { can } from '@/api/permissions'
+import { hasFeature, isRealHost } from '@/api/features'
 import { ApiError, STATUSES, type Status, type TicketSummary } from '@/api/types'
 import { useAddons } from '@/addon-ui'
 import { Button } from '@/components/ui/button'
@@ -139,7 +140,13 @@ export function TicketsPage() {
   // Options for the selects come from the unfiltered list.
   const { data: everything = [] } = useQuery({ ...queries.ticketsAll(wsId!), enabled: !!wsId })
 
-  const rows = useMemo(() => (all ?? []).filter((t) => !search.status?.length || search.status.includes(t.status)), [all, search.status])
+  // Closed tickets are listed only on request (the host leaves them out by default): read them when the chip is on.
+  const closedAvailable = isRealHost() && hasFeature('read_ext', wsId)
+  const wantClosed = closedAvailable && !!search.status?.includes('closed')
+  const closedQ = useQuery({ ...queries.ticketsClosed(wsId!, serverParams), enabled: !!wsId && wantClosed })
+  const pool = useMemo(() => (wantClosed ? [...(all ?? []), ...(closedQ.data ?? [])] : all), [all, wantClosed, closedQ.data])
+
+  const rows = useMemo(() => (pool ?? []).filter((t) => !search.status?.length || search.status.includes(t.status)), [pool, search.status])
   const [grouping, setGrouping] = useTicketsGroup(me?.person)
   const dirty = hasFilters(search)
   const grouped = grouping.group === 'epic' && hasEpics(everything)
@@ -154,10 +161,10 @@ export function TicketsPage() {
     [groups, grouping.sections, rows, filtering],
   )
   const counts = useMemo(() => {
-    const c = Object.fromEntries(STATUSES.map((s) => [s, 0])) as Record<Status, number>
-    for (const t of all ?? []) c[t.status]++
+    const c = { ...Object.fromEntries(STATUSES.map((s) => [s, 0])), closed: 0 } as Record<Status, number>
+    for (const t of pool ?? []) c[t.status]++
     return c
-  }, [all])
+  }, [pool])
   const options = useMemo(
     () => ({
       types: [...new Set(everything.map((t) => t.type))].sort(),
@@ -308,6 +315,7 @@ export function TicketsPage() {
         onSearch={(p) => setSearch(p)}
         options={options}
         counts={counts}
+        closedAvailable={closedAvailable}
         qInput={qInput}
         onQInput={setQInput}
         searchRef={searchRef}

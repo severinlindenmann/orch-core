@@ -337,7 +337,7 @@ function Meta({ a, jump }: { a: Artifact; jump: (j: Jump) => void }) {
         </button>
       )}
       <Mono className="text-[11px] text-text-faint">{shortHash(a.sha256, 8)}</Mono>
-      {a.bytes > 0 && <span>{fmtBytes(a.bytes)}</span>}
+      {!!a.bytes && <span>{fmtBytes(a.bytes)}</span>}
     </div>
   )
 }
@@ -470,7 +470,7 @@ export function ArtifactDrawer({
                 <>
                   <SheetDescription className="flex flex-wrap items-center gap-x-1.5 text-[12px]">
                     <Pill>{open.kind}</Pill>
-                    {open.bytes > 0 && <span>{fmtBytes(open.bytes)}</span>}
+                    {!!open.bytes && <span>{fmtBytes(open.bytes)}</span>}
                     {context}
                   </SheetDescription>
                   <ArtifactFacts a={open} by={by} />

@@ -98,7 +98,7 @@ export function ArtifactList({ items, members, current, onPreview, addonPage, co
                 </TableCell>
                 {!compact && <TableCell className="truncate text-text-muted">{byLabel(a.by, members)}</TableCell>}
                 <TableCell className="whitespace-nowrap tabular-nums text-text-muted">{fmtTime(a.at)}</TableCell>
-                {!compact && <TableCell className="text-right tabular-nums text-text-muted">{a.bytes > 0 ? fmtBytes(a.bytes) : '–'}</TableCell>}
+                {!compact && <TableCell className="text-right tabular-nums text-text-muted">{a.bytes ? fmtBytes(a.bytes) : '–'}</TableCell>}
                 <TableCell className="whitespace-normal">
                   <ArtifactAction a={a} current={on} addonPage={addonPage} onPreview={() => onPreview(a)} />
                 </TableCell>
@@ -139,7 +139,7 @@ export function ArtifactGrid({ items, members, current, onPreview, addonPage }: 
             <TicketLink a={a} className="mt-1.5 text-[12px]" />
             <p className="mt-0.5 truncate text-[11px] text-text-faint">
               {byLabel(a.by, members)} · {fmtTime(a.at)}
-              {a.bytes > 0 && ` · ${fmtBytes(a.bytes)}`}
+              {!!a.bytes && ` · ${fmtBytes(a.bytes)}`}
             </p>
             <div className="mt-auto pt-2.5">
               <ArtifactAction a={a} current={on} addonPage={addonPage} onPreview={() => onPreview(a)} />

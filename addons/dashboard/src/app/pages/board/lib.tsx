@@ -11,6 +11,7 @@ export const STATUS_LABEL: Record<Status, string> = {
   waiting: 'Waiting',
   testing: 'Testing',
   done: 'Done',
+  closed: 'Closed',
 }
 
 /** Done lists its latest tickets only, until "Show all". */

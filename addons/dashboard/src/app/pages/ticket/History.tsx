@@ -173,7 +173,11 @@ function Timeline({ events, viewer }: { events: OrchEvent[]; viewer: Viewer }) {
                   <Mono className="text-[11px] text-text-faint">seq {e.seq}</Mono>
                   <SigStatus e={e} />
                 </div>
-                <p className="mt-0.5 whitespace-pre-wrap text-[13px] text-text-muted">{eventDetail(e, viewer)}</p>
+                <p className="mt-0.5 whitespace-pre-wrap text-[13px] text-text-muted">
+                  {eventDetail(e, viewer)}
+                  {/* A Snip is cut by the host at 1 KiB with nothing appended; the full text is not readable yet. */}
+                  {Array.isArray(e.truncated) && e.truncated.length > 0 && <span className="text-text-faint"> (shortened by the host)</span>}
+                </p>
               </li>
             )
           })}
@@ -245,7 +249,34 @@ export function WordDiff({ from, to }: { from: string; to: string }) {
   )
 }
 
-function Changes({ ticket }: { ticket: TicketDocument }) {
+/**
+ * Real host: who changed which section and when. The host keeps a hash of each version, not its text, so there is no
+ * diff to draw (and none can be added later): this lists what is known.
+ */
+function SectionEdits({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewer }) {
+  const edits = Object.entries(ticket.section_edits ?? {}).filter(([, revs]) => revs.length > 0)
+  if (edits.length === 0) return <p className="text-[13px] text-text-faint">No section has been edited since the ticket was created.</p>
+  return (
+    <div className="space-y-3">
+      <p className="text-[12px] text-text-faint">The host keeps a hash of every version, not its text, so older versions cannot be compared here.</p>
+      {edits.map(([id, revs]) => (
+        <section key={id} aria-label={`Edits of ${id}`} className="space-y-1">
+          <h3 className="text-[13px] font-semibold text-text">{sectionTitle(id as keyof BodySections, ticket.type)}</h3>
+          <ol className="space-y-0.5 text-[12px] text-text-muted">
+            {revs.map((r) => (
+              <li key={r.seq}>
+                {viewer.name(r.by)} · <span title={fmtExact(r.at)}>{ago(r.at)}</span> · {r.via === 'external' ? 'outside orch' : 'edit'} · {r.hash ? <Mono>{r.hash.replace('sha256:', '').slice(0, 12)}</Mono> : 'section removed'}
+              </li>
+            ))}
+          </ol>
+        </section>
+      ))}
+    </div>
+  )
+}
+
+function Changes({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewer }) {
+  if (ticket.section_edits && !ticket.section_history) return <SectionEdits ticket={ticket} viewer={viewer} />
   const history = ticket.section_history ?? {}
   const sections = (Object.keys(history) as (keyof BodySections)[]).filter((k) => (history[k]?.length ?? 0) > 0)
   const withChanges = sections.filter((k) => (history[k]?.length ?? 0) > 1)
@@ -313,7 +344,7 @@ export function History({ ticket, viewer }: TabProps) {
         </ToggleGroupItem>
       </ToggleGroup>
       {view === 'changes' ? (
-        <Changes ticket={ticket} />
+        <Changes ticket={ticket} viewer={viewer} />
       ) : isLoading ? (
         <div className="space-y-3">
           {[0, 1, 2, 3].map((i) => (

@@ -31,6 +31,7 @@ from . import frames
 from .custody import check_tree, check_workspace_files, ensure_private_dir, unsafe, write_private
 from .errors import HostError
 from .intents import Intent, IntentStore
+from .outcomes import CONTROL_WRITES, request_idem
 from .ownership import OwnershipLock
 from .registry import PERSON, Entry, group_name, validate_peers
 from .transport import Session
@@ -93,7 +94,7 @@ _SCHEMAS = {
 }
 _VALIDATORS = {op: Draft202012Validator(schema) for op, schema in _SCHEMAS.items()}
 CONTROL_OPS = {op: 1 for op in _SCHEMAS}
-WRITES = {"host.register", "host.unregister", "host.bootstrap"}
+WRITES = CONTROL_WRITES
 
 
 def _replay(record: dict[str, Any]) -> dict[str, Any]:
@@ -284,11 +285,15 @@ class ControlOps:
         return True
 
     def _registered(self, intent: Intent) -> Entry | None:
-        # TODO(H2b): the by_root fallback can credit a duplicate request with another request's workspace id;
-        # outcome records with planned ids (H2b) make this exact.
+        """The registry entry **this** intent made, or ``None``. ``run`` records the workspace id durably before it
+        adds the entry (and only after its busy checks found none), so an entry with that id and this root is this
+        intent's own. An intent with no recorded id never added one: a registration of the same root by another
+        request is never credited to it."""
         wid = intent.record.get("workspace_id")
         entry = self.host.registry.get(wid) if wid else None
-        return entry or self.host.registry.by_root(intent.args["root"])
+        if entry is not None and entry.root == intent.args["root"]:
+            return entry
+        return None
 
     def _refuse_host_paths(self, root: str) -> None:
         """A workspace root never lies in the host's own state or run directory (custody list, sockets)."""
@@ -454,6 +459,22 @@ class ControlOps:
             return False
 
     @staticmethod
+    def _foreign_config(root: str, workspace_id: str) -> bool:
+        """Is there a ``config.json`` in ``root`` that does not name ``workspace_id``? A direct ``orch init`` may have
+        run in the root after the host died: its files are not ours to delete. (An unreadable one counts as foreign.)"""
+        path = Path(root) / "config.json"
+        try:
+            raw = path.read_bytes()
+        except FileNotFoundError:
+            return False
+        except OSError:
+            return True
+        try:
+            return json.loads(raw)["workspace"]["id"] != workspace_id
+        except (ValueError, KeyError, TypeError):
+            return True
+
+    @staticmethod
     def _clean_root(root: str, *, remove_root: bool = False) -> None:
         """Remove what the store created in a new root; never anything else."""
         for name in _ROOT_FILES:
@@ -536,7 +557,8 @@ class ControlOps:
         # Validated but not landed: undo only what this bootstrap created, and never a registered workspace.
         registered = self.host.registry.get(workspace_id) is not None or self.host.registry.by_root(root) is not None
         if not registered:
-            self._clean_root(root, remove_root=True)
+            if not self._foreign_config(root, workspace_id):
+                self._clean_root(root, remove_root=True)
             pins = HostPins(self.state_dir, workspace_id)
             try:
                 pinned = (directory / "genesis").exists() or pins.genesis() is not None
@@ -583,11 +605,7 @@ class ControlGate:
             if errors:
                 where = ".".join(map(str, errors[0].absolute_path))
                 raise HostError("invalid.input", f"{op}: {where or 'args'} is not valid")
-            if opts.get("dry_run"):
-                raise HostError("invalid.input", f"dry_run is not supported by {op}")
-            idem = opts.get("idem")
-            if op in WRITES and idem is None:
-                raise HostError("idem.required", f"{op} needs opts.idem")
+            idem = request_idem(op, opts)  # dry_run is invalid.input on every control op; a write needs its idem
             if not session.state.start(request, "write" if op in WRITES else "read"):
                 return
             ops = self.host.control

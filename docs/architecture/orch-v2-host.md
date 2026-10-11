@@ -548,7 +548,7 @@ state**:
 | `register` | no registry entry | nothing to undo | `failed` | `{state:"failed", error:{code:"control.rolled_back", retryable:true}}`; the client retries with a **new** idem |
 | `unregister` | any | serving stops, entry removed | `committed` | `{state:"committed", result:{}}` |
 | `bootstrap` | the genesis is in the new log (its planned event id) | registration finished | `committed` | `{state:"committed", result:{workspace_id, seq:1}}` |
-| `bootstrap` | no genesis | the half-made root, its key directory and the workspace id are removed | `failed` | `{state:"failed", error:{code:"control.rolled_back", retryable:true}}` |
+| `bootstrap` | no genesis | the store's files in the root (the person's empty directory stays), its key directory and the workspace id are removed | `failed` | `{state:"failed", error:{code:"control.rolled_back", retryable:true}}` |
 
 - **A rolled-back bootstrap restarts from `host.wsk_create`.** The id and key are gone, and the genesis signs both
   `workspace_id` and `wsk_pub`, so the client gets a new id and key, signs a new genesis, and calls `host.bootstrap`
@@ -2225,6 +2225,17 @@ audit hook before it reads anything.
   2. `host.wsk_create` → `{workspace_id, wsk_pub}`;
   3. the client signs the delegation and `workspace.created` locally;
   4. `host.bootstrap` appends the genesis and registers the workspace.
+
+  `orch init --host` runs it (H3b3) until H7 makes host mode the default. The directory must be empty; the peers map
+  is the caller's UID as the genesis owner (agents and the worker are added later by `unregister` + `register`). The
+  device key is kept under `hosts/<ws>/person` as in direct mode. Once the genesis is in the log, a failure to finish
+  the bootstrap is answered `outcome.unknown`, never a refusal. The client treats `outcome.unknown`, `host.restarting`
+  and a lost connection as undecided and asks again with the same idem for up to 30 s. Any other refusal is checked
+  with `host.outcome`. Only no stored record (refused before any write) or a `failed` record drops the device key and
+  tells the person that nothing was created. `control.rolled_back` starts again from step 2 after one confirmation.
+  Without a definite answer the result is `host.unavailable`, which names the idem for `orch host outcome` and keeps the
+  device key. A rollback removes the store's files from the root but never the person's own directory. The root guard
+  and `by_root` compare directories by `(st_dev, st_ino)`, not by spelling (APFS case and normalisation variants).
 - **`import v1`** runs in direct mode only, on an unregistered workspace: `orch import v1`, then `orch host register`.
   A registered workspace answers `host.required` (`unregister`, import, `register`). The importer reads v1 files, which
   the host must never do for a client, and the plan signs a large batch under one unlock (F1 §14.2). Neither fits a
@@ -2702,10 +2713,17 @@ orch-relay's `docs/p3-relay-design.md` §9 defines what the host owes the relay 
   and the host never signs a different one for an epoch. Rules:
   - **One WK per epoch, ever.** The host never creates a second key for an epoch number. Epochs may skip, never fall. Epochs are u32 (1..2^32-1). The
     relay accepts a later list only with `prev <= epoch <= prev + 2^16`. The host alarms, and clamps: it never allocates
-    an epoch above `committed + 2^16`, whether through repeated burns or H7 jumps. If the next allocation (including H7's `EHW + 1`) would exceed that clamp, the host alarms, keeps
-    the rotation gate up and allocates nothing until the relay commits a list. A list that removes a member has a
+    an epoch above `committed + 2^16`, whether through repeated burns or H7 jumps. The rotation target is `min(EHW + 1, committed + 2^16)`: the clamp wins. When the clamp is at or
+    below `EHW` (every epoch up to it is already used or burned), the host cannot rotate without a second key for an
+    epoch, which it never creates: it alarms, keeps the rotation gate up and allocates nothing. The workspace's
+    membership is then frozen: no rotation and so no member removal. The only ways out are the relay committing a
+    body that is already out (which raises `committed`), or an operator action outside this protocol (P3 owner-run
+    recovery).
+    Liveness limit, accepted in v1.4: reaching it needs about 65,000 burns, or about 63 H7 jumps of 1024 with no
+    commit in between. A list that removes a member has a
     higher epoch than the previous list. A list at the same epoch carries the same `wk_commit`, else the relay answers
-    409 `wk_commit_changed`.
+    409 `wk_commit_changed` (the relay checks list rules before grants, so a same-epoch re-seal with a changed
+    `wk_commit` always gets this code; a divergence refusal under H4).
   - **First list.** The first publication for a workspace may use any epoch `1..2^16` and any `list_seq >= 1`. A refused
     first publication burns its epoch and `list_seq` like any other, and the retry uses (2,2) or higher.
   - **Allocation.** The host allocates `list_seq` and epoch from durable high-water marks (`LHW`, `EHW`). It never

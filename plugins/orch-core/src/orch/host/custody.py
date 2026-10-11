@@ -21,9 +21,40 @@ from orch.store.fsio import write_atomic
 from ._unix import UnsafePath, check_acl
 from .errors import HostError
 
-__all__ = ["check_tree", "check_workspace_files", "ensure_private_dir", "read_json", "unsafe", "write_private"]
+__all__ = [
+    "check_tree",
+    "check_workspace_files",
+    "ensure_private_dir",
+    "read_json",
+    "root_key",
+    "same_or_inside",
+    "unsafe",
+    "write_private",
+]
 
 _FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+
+
+def root_key(path: str | os.PathLike[str]) -> tuple[int, int] | str:
+    """What identifies a directory: ``(st_dev, st_ino)``, so case and Unicode-normalisation variants of one path on
+    a case-insensitive or normalising volume (APFS) are the same root. A path that does not exist is its string."""
+    try:
+        info = os.stat(path)
+    except OSError:
+        return os.fspath(path)
+    return (info.st_dev, info.st_ino)
+
+
+def same_or_inside(path: str | os.PathLike[str], base: str | os.PathLike[str]) -> bool:
+    """Is ``path`` the directory ``base`` or below it, compared by identity (each existing ancestor of ``path``)?"""
+    target = root_key(base)
+    if isinstance(target, str):
+        return False
+    current = Path(path)
+    for item in (current, *current.parents):
+        if root_key(item) == target:
+            return True
+    return False
 
 
 def unsafe(message: str) -> HostError:

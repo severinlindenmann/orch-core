@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .custody import ensure_private_dir, read_json, unsafe, write_private
+from .custody import ensure_private_dir, read_json, root_key, unsafe, write_private
 from .errors import HostError
 from .peer import Peer
 from .pins import AgentPins
@@ -226,8 +226,14 @@ class Registry:
             return self._entries.get(workspace_id)
 
     def by_root(self, root: str) -> Entry | None:
+        """The entry for ``root``: the same path, or the same directory under another spelling (case or Unicode
+        normalisation variants on APFS), compared by ``(st_dev, st_ino)``."""
+        key = root_key(root)
         with self._lock:
-            return next((e for e in self._entries.values() if e.root == root), None)
+            entries = list(self._entries.values())
+        return next(
+            (e for e in entries if e.root == root or (not isinstance(key, str) and root_key(e.root) == key)), None
+        )
 
     def entries(self) -> list[Entry]:
         with self._lock:

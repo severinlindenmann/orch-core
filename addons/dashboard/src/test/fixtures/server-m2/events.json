@@ -1,0 +1,148 @@
+[
+ {
+  "actor": {
+   "for": "p_user1",
+   "grant": "gr_1",
+   "id": "claude-code",
+   "kind": "agent",
+   "session": "s_1"
+  },
+  "at": "2026-09-21T14:13:20Z",
+  "id": "1",
+  "owner": "p_user1",
+  "seq": 1,
+  "summary": "",
+  "ticket_type": "feature",
+  "title": "Real P1 ticket",
+  "type": "ticket.created",
+  "v": 2
+ },
+ {
+  "actor": {
+   "for": "p_user1",
+   "grant": "gr_1",
+   "id": "claude-code",
+   "kind": "agent",
+   "session": "s_1"
+  },
+  "at": "2026-09-21T14:13:24Z",
+  "id": "2",
+  "paths": [
+   "ticket.acceptance"
+  ],
+  "sections": [
+   "context",
+   "out_of_scope",
+   "requirements"
+  ],
+  "seq": 2,
+  "summary": "AC1 added, section context, section out_of_scope, section requirements",
+  "type": "ticket.updated",
+  "v": 2
+ },
+ {
+  "actor": {
+   "for": "p_user1",
+   "grant": "gr_1",
+   "id": "claude-code",
+   "kind": "agent",
+   "session": "s_1"
+  },
+  "at": "2026-09-21T14:13:25Z",
+  "id": "3",
+  "paths": [
+   "ticket.labels",
+   "ticket.links",
+   "ticket.priority",
+   "ticket.tasks"
+  ],
+  "sections": [],
+  "seq": 3,
+  "summary": "labels, links, priority, T1 added, T2 added",
+  "type": "ticket.updated",
+  "v": 2
+ },
+ {
+  "actor": {
+   "for": "p_user1",
+   "grant": "gr_1",
+   "id": "claude-code",
+   "kind": "agent",
+   "session": "s_1"
+  },
+  "at": "2026-09-21T14:13:26Z",
+  "blocking": true,
+  "id": "4",
+  "question": "Q1",
+  "seq": 4,
+  "summary": "Q1",
+  "to": "ticket_owner",
+  "type": "question.asked",
+  "v": 2
+ },
+ {
+  "actor": {
+   "device": "d_1",
+   "id": "p_user1",
+   "kind": "person"
+  },
+  "at": "2026-09-21T14:13:27Z",
+  "id": "5",
+  "option": "csv",
+  "question": "Q1",
+  "seq": 5,
+  "summary": "answered Q1 option=csv",
+  "type": "question.answered",
+  "v": 2
+ },
+ {
+  "actor": {
+   "for": "p_user1",
+   "grant": "gr_1",
+   "id": "claude-code",
+   "kind": "agent",
+   "session": "s_1"
+  },
+  "at": "2026-09-21T14:13:28Z",
+  "blocking": false,
+  "id": "6",
+  "question": "Q2",
+  "seq": 6,
+  "summary": "Q2",
+  "to": "ticket_owner",
+  "type": "question.asked",
+  "v": 2
+ },
+ {
+  "actor": {
+   "id": "orch",
+   "kind": "host"
+  },
+  "at": "2026-09-21T14:13:28Z",
+  "id": "7",
+  "ref": "refs/heads/feat/one",
+  "repo_id": "local:code",
+  "repo_name": "code",
+  "seq": 7,
+  "sha": "sha1",
+  "summary": "",
+  "type": "branch.pushed",
+  "v": 2
+ },
+ {
+  "actor": {
+   "for": "p_user1",
+   "grant": "gr_1",
+   "id": "claude-code",
+   "kind": "agent",
+   "session": "s_1"
+  },
+  "at": "2026-09-21T14:13:29Z",
+  "id": "8",
+  "seq": 8,
+  "summary": "hello world",
+  "text": "hello\nworld",
+  "type": "log.added",
+  "v": 2
+ }
+]

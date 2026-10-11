@@ -4,8 +4,22 @@
 
 import type { TicketNeeds } from './connections'
 
-export type Status = 'backlog' | 'open' | 'in-progress' | 'waiting' | 'testing' | 'done'
+/**
+ * `closed` (host v1.4) is a state of its own: a ticket closed without finishing. It is never a board column, so it is not
+ * in STATUSES; the Tickets list reaches it through its own filter and a closed ticket's page draws it.
+ */
+export type Status = 'backlog' | 'open' | 'in-progress' | 'waiting' | 'testing' | 'done' | 'closed'
 export const STATUSES: Status[] = ['backlog', 'open', 'in-progress', 'waiting', 'testing', 'done']
+
+/** Why and when a ticket was closed. `duplicate_of` may name a ticket you cannot see: draw it as plain text, never a link. */
+export interface ClosedInfo {
+  resolution: 'wont_do' | 'duplicate' | 'obsolete' | 'other'
+  duplicate_of: string | null
+  at: string
+  by: string
+  /** The reason the closer wrote, cut by the host at 1 KiB (`text_cut`). Only the ticket read carries it. */
+  text?: string | null
+}
 
 export type TicketType = 'feature' | 'bug' | 'chore' | 'spike' | 'epic'
 export type Priority = 'low' | 'medium' | 'high' | 'urgent'
@@ -137,7 +151,7 @@ export interface TicketDefinition {
   key: string
   title: string
   type: TicketType
-  priority: Priority
+  priority: Priority | null
   size: Size | null
   labels: string[]
   parent: string | null
@@ -164,7 +178,7 @@ export type BodySections = Partial<
 export interface NewTicketRequest {
   type: TicketType
   title: string
-  priority: Priority
+  priority: Priority | null
   size: Size | null
   labels: string[]
   parent: string | null
@@ -190,6 +204,8 @@ export interface OrchEvent {
   at: string
   type: string
   actor: Actor
+  /** Real host only: the host's one-line text for this event (no payload fields are served with the log). */
+  summary?: string
   /** Event-specific payload, flattened as in the spec (task, gate, name, kind, ...). */
   [field: string]: unknown
 }
@@ -211,7 +227,8 @@ export interface AcceptanceStatus extends AcceptanceDef {
 }
 
 export interface QuestionStatus extends QuestionDef {
-  state: 'open' | 'answered'
+  /** `stale`: the question changed after it was answered, so the answer no longer counts. */
+  state: 'open' | 'answered' | 'stale'
   asked_at: string
   asked_by: string
   answer: { option?: string; text?: string; by: string; at: string; via?: Via; presence?: Presence } | null
@@ -236,7 +253,8 @@ export interface Artifact {
     | 'receipt'
     | 'feedback'
     | 'other'
-  bytes: number
+  /** null: not known (an addon artifact has no file). */
+  bytes: number | null
   sha256: string
   task?: string
   ac?: string
@@ -258,7 +276,10 @@ export interface Claim {
   for: string // p_sev
   grant: string
   since: string
+  /** '' on a real host: the claim lifetime is not readable yet. */
   expires: string
+  /** false: the claim has lapsed but was not released yet (no agent is working). null/absent: unknown. */
+  live?: boolean | null
 }
 
 export interface GateStatus {
@@ -269,6 +290,10 @@ export interface GateStatus {
   approvers: string
   /** Excluded group, e.g. "assignees". */
   not?: string
+  /** Real host: the gate waits for a person now / has no approver who can act. `eligible` lists only people who see the ticket. */
+  waiting?: boolean
+  blocked?: boolean
+  eligible?: string[]
   note?: string
   /** Hash of the gated content as it is now. */
   hash?: string
@@ -306,7 +331,10 @@ export interface TicketChanges {
   head: string
   additions: number
   deletions: number
-  files: { path: string; additions: number; deletions: number; lines: string }[]
+  files: { path: string; additions: number; deletions: number; lines: string; repo?: string | null; status?: string; binary?: boolean }[]
+  /** Real host only: one entry per linked repo (the fields above describe the first), and whether the diff was cut. */
+  sources?: { repo: string; branch: string; base: string; head: string }[]
+  truncated?: boolean
 }
 
 export interface SectionRevision {
@@ -338,7 +366,23 @@ export interface TicketDocument extends TicketDefinition {
   gates: Record<GateName, GateStatus>
   artifacts: Artifact[]
   /** `source_sha`: the commit the verdict signed. `via: 'factory_charter'`: auto-approved under a factory charter (no person reviewed it). */
-  verdict: { result: 'pass' | 'fail'; by: string; at: string; text?: string; source_sha?: string; via?: Via; charter?: string; charter_signed_by?: string } | null
+  verdict: {
+    result: 'pass' | 'fail'
+    by: string
+    at: string
+    text?: string
+    /** The host cut the text at 1 KiB; the full text is not readable yet (v1.5). */
+    text_cut?: boolean
+    /** One commit, when the verdict signed exactly one. A verdict signs one per linked repo: see `sources`. */
+    source_sha?: string
+    sources?: { repo: string; ref: string; sha: string }[]
+    /** Real host: false for a verdict from before a reopen or a new commit. */
+    current?: boolean
+    voided?: boolean
+    via?: Via
+    charter?: string
+    charter_signed_by?: string
+  } | null
   turn: Turn
   body: BodySections
   head: { seq: number; hash: string }
@@ -348,10 +392,26 @@ export interface TicketDocument extends TicketDefinition {
   children?: string[] // epic: child keys
   /** Revisions per body section (oldest first), derived from section.edited events. */
   section_history?: Partial<Record<keyof BodySections, SectionRevision[]>>
+  /** Real host: who edited which section and when. The host stores hashes, not old texts, so there is no diff to draw. */
+  section_edits?: Record<string, { seq: number; at: string; hash: string | null; by: string; via: 'edit' | 'external' | null }[]>
+  /** Real host: the commits the host observed per linked repo (what a verdict signs). */
+  sources?: { name: string; repo: string; ref: string; sha: string }[]
+  /** Real host: whether the host sends the v1.4 fields (`read_ext/1`). Without it they are unknown, not zero. */
+  read_ext?: boolean
+  /** Closed (and done) tickets read like any other; `closed` says why and when. */
+  closed?: ClosedInfo
+  settled?: boolean
   /** Skills, connections and env this ticket needs, with the connections' last check (core-computed; D55–D57). */
   needs?: TicketNeeds
-  /** The ticket's branch: head commit, commits and diffstat against its base (core-computed). */
+  /**
+   * The ticket's branch: head commit, commits and diffstat against its base (core-computed). A real host does not serve
+   * these with the ticket: `head` is then '' (see `unavailable`), and the Changes tab's diff (`TicketChanges`) has them.
+   */
   branch: TicketBranch
+  /** Real host only: what this document could not fill (the page says "not available", never a made-up value). */
+  unavailable?: string[]
+  /** Real host only: the log window of the document is incomplete (older or newer events exist). */
+  log_more?: boolean
   /**
    * Where the ticket is in landing (D53), read by core from the landing records in its own log (`land.*` events by the
    * landing addon), only while that addon is active. A done ticket that is queued, being checked or failed to land is
@@ -374,19 +434,24 @@ export interface TicketSummary {
   uid: string
   title: string
   type: TicketType
-  priority: Priority
+  priority: Priority | null
   size: Size | null
   status: Status
   labels: string[]
   parent: string | null
   owner: string | null
   assignees: string[]
-  claim: Pick<Claim, 'agent' | 'for' | 'session'> | null
+  /** On a real host `agent` and `for` are '' when the host does not say. */
+  claim: (Pick<Claim, 'agent' | 'for' | 'session'> & { live?: boolean | null }) | null
   turn: Turn
-  progress: { tasks_done: number; tasks_total: number; ac_proven: number; ac_total: number }
+  /** null: the host does not send counts (no `read_ext/1`): unknown, so no bar is drawn. */
+  progress: { tasks_done: number; tasks_total: number; ac_proven: number; ac_total: number } | null
   open_questions: number
-  blocking_questions: number
-  restricted: boolean
+  /** null: unknown (no `read_ext/1`). */
+  blocking_questions: number | null
+  /** null: unknown (no `read_ext/1`); never read as false. */
+  restricted: boolean | null
+  closed?: ClosedInfo
   /** The gate this ticket waits at right now (same rule as Today's approval items), or null. */
   awaiting_gate: GateName | null
   addons: Record<string, Record<string, unknown>>
@@ -502,7 +567,7 @@ export interface CoreLaunch {
 
 // ---------------------------------------------------------------- today
 
-export type NeedsYouKind = 'question' | 'verdict' | 'approval' | 'handoff' | 'expiring'
+export type NeedsYouKind = 'question' | 'verdict' | 'approval' | 'handoff' | 'expiring' | 'no_eligible' | 'acknowledge' | 'addon'
 
 export interface NeedsYouItem {
   kind: NeedsYouKind
@@ -513,7 +578,13 @@ export interface NeedsYouItem {
   ref?: string // Q2, gate name, ...
   /** Gate hash an approval item covers (approval items only). */
   hash?: string
+  /** Real host only. */
+  uid?: string | null
   blocking?: boolean
+  /** The host cut the text (a Snip, 1 KiB). */
+  cut?: boolean
+  /** The ticket is closed: an open question on it is still listed, but it is not actionable work. */
+  closed?: boolean
 }
 
 export interface TodayDocument {
@@ -525,7 +596,7 @@ export interface TodayDocument {
   /** Open items the viewer cannot act on: how many, and the people (ids) who can. */
   waiting_on_others: { count: number; people: string[] }
   working: TicketSummary[]
-  recent: (Pick<OrchEvent, 'seq' | 'at' | 'type' | 'actor'> & { ticket: string; title: string; summary: string })[]
+  recent: (Pick<OrchEvent, 'seq' | 'at' | 'type' | 'actor'> & { ticket: string; title: string; summary: string; id?: string })[]
   counts: Partial<Record<Status, number>>
 }
 

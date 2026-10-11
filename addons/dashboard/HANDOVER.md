@@ -658,3 +658,88 @@ Vitest cover lifecycle, reconnect, resync, visibility, gone, revocation and boun
 S3/S4, the real-browser layout guard and cross-browser network behavior remain acceptance
 work. Full ticket views/hand-off are later milestones; their future consumers must use
 UUID-keyed ticket factories and the live hook's close-view callback.
+
+## P2 server (M2 reads)
+
+Implemented 2026-10-11 on contract v1.3.1, then adapted to v1.4 (below), on top of the final M1 (#380). #305 reads only: nothing signs or mutates,
+and every control that would is not drawn (`/api/session` lists no `actions` feature until M3).
+
+**One app.** The production build now draws the mockup's own shell and pages (`src/production/Shell.tsx`
+mounts `createAppRouter`), not the M0 mini shell. `vite build` aliases `@/api/client` to
+`api/client.prod.ts`, so every page's `api` is `api/prodApi.ts` (the same object, behind the fetch
+transport); the module-graph check still fails the build if a mock module enters. The mock entry, tests
+and the layout guard keep the in-process mock (`api/features.ts` lists everything for them).
+`hasFeature(name, ws)` gates navigation, routes (`serves(...)` in `router.tsx`) and a few panels;
+`can(role, perm)` is also false for every role without the `actions` feature, so each action that was
+already behind a permission disappears. Today still lists what needs you (rows say "Answer in your
+terminal"); a viewer role still gets the read-only layout.
+
+**Routes** (closed list in `server/README.md`): `/today`, `/tickets`, `/board`, `/tickets/<key>`,
+`.../events`, `.../changes`, `.../artifacts/<name>`, each with a pydantic input model that forbids extras,
+one fixed host op behind it (`needs`+`ticket.query`, `ticket.query`, `ticket.get`, `ticket.get`, `diff`,
+`artifact.get`) and an adapter in `server/src/orch_dashboard/adapters/`. Queries are keyed by workspace
+UUID: `['ticket', ws, key]`, `['ticket-events', ws, key, seq]`, `['changes', ws, key, head]`;
+`queries.ticket(ws, key)` replaced `queries.ticket(key)`, and `api.getTicket/getEvents/getChanges` take
+the workspace as a last argument (the mock ignores it).
+
+**Adapters** unwrap `result.data`, spell `in_progress` as `in-progress`, and leave empty what the host does
+not serve; `TicketDocument.unavailable` names those fields and `OrchEvent.summary` carries the host's
+one-line event text (History shows it instead of guessing from payload fields). Golden JSON of the real
+adapters is written by pytest (`UPDATE_GOLDEN=1`) into `src/test/fixtures/server-m2/`, and the browser
+tests render the same files.
+
+**Host contract v1.4 (adapted 2026-10-11, same milestone).** The branch now targets §0 v1.4 (`read_ext/1`,
+`activity/1`). The server reads the caps from `welcome.caps` (`HostLink.has`) and lists `read_ext` and `activity` as
+per-workspace features. **A field a host without `read_ext/1` leaves out is unknown, never zero:** row `progress`,
+`restricted` and `blocking_questions` are `null` (no bar, no lock, no marker), the document says `read_ext: false` and
+names what it lacks in `unavailable`. What v1.4 now provides, and how the UI uses it:
+
+| v1.3.1 gap | v1.4 | In the UI |
+|---|---|---|
+| Row counts, `restricted`, blocking questions | `tasks`, `criteria`, `restricted`, `blocking_questions` | Cards: progress bar, lock, blocked marker (`skipped` has no slot) |
+| `needs` question text, `since` | `text` (Snip), `since` (absent = unknown), `status`, `payload` | Today rows with age only when `since` is known; question text from the need; "shortened" flag for a cut Snip |
+| `ticket.get` option labels, `asked_*`, answer | `Question.options/answer/asked_*/to_ref/why/recommended` | Questions tab; `stale` state; no invented "via dashboard / Touch ID" |
+| Task receipts and leases | `Task` (`leased_by`, `receipt`) | "doing" = `leased_by`; lease shows the session only |
+| Gate approvals and policy | `GateView.decisions/policy/eligible/waiting/blocked/count` | Approvals, presence from `auth` (passphrase, secure-enclave), policy text; `eligible` lists people who can see the ticket |
+| Verdict | `verdict{outcome, source_sha:[Source], current, voided}` | `result` from `outcome`; a list of commits; "from before the latest change" when not current |
+| Artifact manifest | `artifacts[]` (`digest` with `sha256:`, `by` Actor, `bytes` null for addon artifacts) | Prefix stripped, `by` as a name, unknown size drawn as "–" |
+| Claim agent/`for` | `ClaimFull` (`live`, `lapsed`) | Turn "claim has lapsed" when `live` is false; expiry still unknown |
+| Closed tickets | §0.8.4: plain read, `closed{…}`, `status:["closed"]` | The 409 `ticket.closed` is gone; the page draws a Closed notice (`duplicate_of` as plain text); Tickets has a Closed filter; Today flags needs of closed tickets |
+| `needs` kinds `no_eligible`, `acknowledge`, `addon` | `payload.cause` (`no_token` or `no_visible_person`), rule text | New notice row on Today (it used to be drawn as a verdict row) |
+| Workspace-wide recent activity | `activity.list` (`scope:"tickets"`), snapshot paging | Today's "Recently"; follows `next_page` across short pages, dedupes by `id`; `jpos`, `ws_seq`, `log` and `uid` are never a field in what the browser gets (`jpos` can still appear inside opaque ids and cursors, e.g. `<jpos>.e`) |
+| Event payloads | `LogItem.data` (nested, closed per type) | Flattened beside the core keys; `<field>_cut` becomes `truncated`, shown as "(shortened by the host)" |
+| Section history | `sections` (hashes only) | History › Changes lists who, when and the hash; no diff, ever |
+
+**Still not served (asks for v1.5, collected here):**
+
+| Gap | Effect in the UI today |
+|---|---|
+| Workspace policy and settings read (`grant_hours`, `claim_ttl_min`, `lease_ttl_min`, `repos`, default gate policy) | `Claim.expires` is empty; settings stay unavailable (M4) |
+| Full text of comments, change requests, verdicts and closing reasons (Snips stop at 1 KiB) | Shown cut with a flag; no "more" button because no op returns the rest |
+| Question hash and the full gate hash for the signed dialogs (only `hash12`) | M3 must get them from `human.prepare`; confirm it binds them |
+| `via: 'factory_charter'` approvals, grant `revoked.by`, grant session ids, answer `via`/presence | Not expressed; nothing is made up |
+| Branch commits (`TicketBranch.commits`, base, per-commit data); `diff` one head/base per repo | Not stored; the Changes tab shows the diff only |
+| Subscription items carry no actor, summary or data | The feed refetches its first page on an invalidation |
+| Search snippets (`TicketSummary.match`), artifact `url`/`preview` for link and inline artifacts, per-status counts, workspace artifact browser, agent activity and refusals | Empty or absent |
+
+**Stub boundaries (dev only):** the stub serves the v1.4 read shapes (`ORCH_DEV_READ_EXT=0` turns `read_ext/1` and `activity/1` off to test the unknown case); `ticket.query` and `activity.list` snapshots live in memory (32, 10 minutes, bound to the person and the arguments); the sort of
+`priority` puts `urgent` first for `desc`; `epic` is the parent when the parent is an epic; `diff` runs the
+scrubbed git helpers of core against the workspace's `settings.repos` and refuses unless the branch head
+equals the head the host observed. Nothing here is a real-host guarantee.
+
+Live updates: unchanged from M1, now mounted in the app shell. `ready` refetches the workspace's queries
+(this replaces gating the first fetch on `ready`: the refetch starts after the subscription, so no change
+falls in between). A `gone` ticket closes its open page (toast, back to the board) and removes the cached
+document, log and diff. Same-prefix workspaces are not told apart by the address yet (the M0 mini shell's
+`?ws=` suffix is gone with it); that belongs to the switcher milestone.
+
+**M2 fix round (review-M2).** The epic children and refusals queries are keyed by workspace
+(`['ticket-children', ws, key]`, `['ticket-refusals', ws, key, seq]`), so `gone`, `revoked` and `ready` reach them.
+`gone` closes only the open ticket page whose key was collected for that uid (`close(uid, keys)`). `parent` and
+`blocked_by` are plain text unless the key is a visible row in the cached tickets list or board (contract 0.5), and
+nothing preloads them. After a `revoked` the shell shows a persistent "Workspace access is no longer available."
+toast (the caches are purged as before). `artifact.get` is gated on `diff/1`, an empty non-final chunk is an error
+(bounded loop), and a null `priority` stays null (no marker, "-" in the rail). The build fails when sonner is bundled
+but its transform did not match exactly once. **Known, harmless:** Radix's scroll lock (`react-style-singleton`) and
+xterm's DOM renderer still create `<style>` elements; the CSP (`style-src 'self'`) blocks them, the console logs the
+violation, Radix dialogs do not lock body scroll and the terminal keeps its own styling. The CSP is not loosened.

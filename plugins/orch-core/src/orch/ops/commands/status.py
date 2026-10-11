@@ -11,12 +11,13 @@ from orch.ops.runtime import Call, flat
 def handle(ctx: Context, args: dict[str, Any]) -> Result:
     c = Call.of(ctx, "status")
     ws = c.store.state.workspace
-    person = c.person
+    person = c.viewer  # direct mode: the grant's person; host mode: the viewer (column P: the mapped person)
     grant = None
     name = "unattended"
     if person is not None:
-        g = ws.grants[c.grant_id]
-        grant = f"{c.grant_id} until {g.expires_at}"
+        g = ws.grants.get(c.grant_id) if c.grant_id and c.person is not None else None
+        if g is not None:
+            grant = f"{c.grant_id} until {g.expires_at}"
         m = ws.members.get(person)
         name = m.name if m else person
     mine = c.mine() if ctx.session else []
@@ -48,7 +49,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         lines.append("no claim")
     if not hints:
         hints = [views.claim_hint(c)]
-    if args.get("verbose"):
+    if args.get("verbose") and not ctx.hosted:  # host mode: no host path is ever returned
         data["state_dir"] = str(c.ws.state_dir)
         lines.append(f"state dir {c.ws.state_dir}")
     if c.ws.pin_created:

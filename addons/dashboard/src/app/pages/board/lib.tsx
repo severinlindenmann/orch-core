@@ -11,6 +11,7 @@ export const STATUS_LABEL: Record<Status, string> = {
   waiting: 'Waiting',
   testing: 'Testing',
   done: 'Done',
+  closed: 'Closed',
 }
 
 /** Done lists its latest tickets only, until "Show all". */
@@ -34,7 +35,8 @@ const PRIORITY: Record<Priority, { icon: LucideIcon; cls: string }> = {
 }
 export const PRIORITY_RANK: Record<Priority, number> = { low: 0, medium: 1, high: 2, urgent: 3 }
 
-export function PriorityMarker({ priority }: { priority: Priority }) {
+export function PriorityMarker({ priority }: { priority: Priority | null }) {
+  if (!priority) return null
   const { icon: Icon, cls } = PRIORITY[priority]
   return <Icon role="img" aria-label={`Priority ${priority}`} className={cn('size-3.5 shrink-0', cls)} />
 }

@@ -115,18 +115,33 @@ _STDLIB = (
 _THIRD_PARTY = ("cryptography", "jsonschema", "referencing", "jsonschema_specifications", "rpds")
 
 
+#: subpackages of third-party trees that are never imported by :func:`warm`: test suites and benchmarks
+_SKIP_PARTS = frozenset({"tests", "benchmarks"})
+
+
+def _skipped(module: str) -> bool:
+    return any(part in _SKIP_PARTS for part in module.split(".")[1:])
+
+
 def _import_tree(name: str) -> None:
     try:
         pkg = importlib.import_module(name)
     except ImportError:
         return
-    for info in pkgutil.walk_packages(getattr(pkg, "__path__", []), name + "."):
-        if info.name.endswith(".__main__"):  # a script: importing it would run it (jsonschema's parses sys.argv)
-            continue
-        try:
-            importlib.import_module(info.name)
-        except Exception:  # an optional backend that is not installed: nothing to preload
-            pass
+    # pkgutil.walk_packages would import every subpackage to recurse into it, test suites included; this walk never
+    # imports a skipped package (a package's own tests pull in pytest or hypothesis: H3a note c)
+    todo = [(getattr(pkg, "__path__", []), name + ".")]
+    while todo:
+        path, prefix = todo.pop()
+        for info in pkgutil.iter_modules(path, prefix):
+            if info.name.endswith(".__main__") or _skipped(info.name):  # __main__: importing a script runs it
+                continue
+            try:
+                module = importlib.import_module(info.name)
+            except Exception:  # an optional backend that is not installed: nothing to preload
+                continue
+            if info.ispkg:
+                todo.append((getattr(module, "__path__", []), info.name + "."))
 
 
 def warm() -> None:

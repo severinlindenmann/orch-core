@@ -9,14 +9,14 @@ import { canSpawnAgent } from '@/addon-ui/capabilities'
 import { precheckReason } from '@/addon-ui/SpawnConfirm'
 import { useWorkspace } from '@/app/workspace'
 import { workspaceOfTicket } from '@/api/workspaces'
-import type { TicketDocument } from '@/api/types'
+import type { ClosedInfo, TicketDocument } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { VIEWER_REASON } from '@/components/DisabledReason'
 import { CopyLinkButton } from '@/app/shell/CopyLinkButton'
 import { BlockedByConnection } from './Needs'
 import { availableActions, gateActionName, blockedApproval, primaryAction, primaryLabel } from './actions'
-import { agentName, fmtClock, Mono, Pill, StatusChip, type Jump, type HumanAction, type Viewer } from './shared'
+import { agentName, ago, fmtClock, KeyRef, Mono, Pill, StatusChip, useIsVisibleKey, type Jump, type HumanAction, type Viewer } from './shared'
 
 export function CopyButton({ text, label }: { text: string; label: string }) {
   const [done, setDone] = useState(false)
@@ -181,14 +181,46 @@ function PrimaryButton({ ticket, viewer, sign, jump, signing }: { ticket: Ticket
 
 const MAX_LABELS = 3
 
+const RESOLUTION: Record<ClosedInfo['resolution'], string> = {
+  wont_do: "Won't do",
+  duplicate: 'Duplicate',
+  obsolete: 'Obsolete',
+  other: 'Closed',
+}
+
+/**
+ * A closed ticket reads like any other (host v1.4): this says why and when. `duplicate_of` may name a ticket you cannot
+ * open (it would answer "not found"), so it is plain text, never a link and never a title.
+ */
+function ClosedNotice({ closed, name }: { closed: ClosedInfo; name: (id: string) => string }) {
+  return (
+    <section aria-label="Closed" data-testid="closed-notice" className="space-y-1 rounded-md border border-border bg-surface-2 px-3 py-2 text-[13px] text-text-muted">
+      <p>
+        <span className="font-medium text-text">Closed: {RESOLUTION[closed.resolution] ?? closed.resolution}</span>
+        {closed.duplicate_of && (
+          <>
+            {' · of '}
+            <span className="font-mono text-text">{closed.duplicate_of}</span>
+          </>
+        )}
+        {closed.by && ` · by ${name(closed.by)}`}
+        {closed.at && ` · ${ago(closed.at)}`}
+      </p>
+      {closed.text && <p className="whitespace-pre-wrap text-text">{closed.text}</p>}
+    </section>
+  )
+}
+
 export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; signing?: boolean }) {
+  const { workspaces } = useWorkspace()
+  // The ticket's own workspace: the rows come from it, so they are keyed by it too and its gone / revoked / ready
+  // purge reaches them (the live cache rules only see keys with the id).
+  const home = workspaceOfTicket(ticket.key, workspaces)?.id
+  const isVisible = useIsVisibleKey()
   const children = useQuery({
-    queryKey: ['ticket-children', ticket.key],
-    queryFn: async () => {
-      const ws = workspaceOfTicket(ticket.key, await api.getWorkspaces())
-      return ws ? api.listTickets(ws.id, { parent: ticket.key }) : []
-    },
-    enabled: ticket.type === 'epic',
+    queryKey: ['ticket-children', home, ticket.key],
+    queryFn: () => (home ? api.listTickets(home, { parent: ticket.key }) : []),
+    enabled: ticket.type === 'epic' && !!home,
   })
   const restricted = ticket.visibility !== 'workspace'
   const shown = ticket.labels.slice(0, MAX_LABELS)
@@ -203,9 +235,7 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
         {ticket.parent && (
           <span className="text-text-muted">
             in{' '}
-            <Link to="/ticket/$key" params={{ key: ticket.parent }} className="font-mono text-[12px] text-brand hover:underline">
-              {ticket.parent}
-            </Link>
+            <KeyRef k={ticket.parent} visible={isVisible(ticket.parent)} />
           </span>
         )}
         {restricted && (
@@ -235,6 +265,8 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
         ))}
         {more > 0 && <Pill>+{more}</Pill>}
       </div>
+
+      {ticket.closed && <ClosedNotice closed={ticket.closed} name={viewer.name} />}
 
       {restricted && typeof ticket.visibility === 'object' && (
         <p className="flex items-center gap-2 text-[12px] text-text-muted">

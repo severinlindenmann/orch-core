@@ -3,7 +3,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import { Link } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, FileSearch, HelpCircle, Loader2, ShieldCheck } from 'lucide-react'
+import { ChevronDown, FileSearch, HelpCircle, Loader2, ShieldAlert, ShieldCheck } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/api/client'
 import { diffstat } from '@/api/gates'
@@ -98,6 +98,19 @@ export function RowShell({
   )
 }
 
+/** When the need arose; unknown (the host left `since` out) draws no age rather than "just now". */
+const ageOf = (item: NeedsYouItem, now: string) => (item.since ? ago(item.since, now) : undefined)
+
+/** Small facts about the item that are not the ask: a closed ticket, a text the host shortened. */
+function Flags({ item }: { item: NeedsYouItem }) {
+  return (
+    <>
+      {item.closed && <span className="text-text-faint"> · ticket closed</span>}
+      {item.cut && <span className="text-text-faint"> · text shortened, open the ticket for the full question</span>}
+    </>
+  )
+}
+
 function TicketLine({ ticket, title }: { ticket: string; title?: string }) {
   return (
     <>
@@ -126,11 +139,16 @@ interface CoreRowProps {
   askedBy?: string
   /** Set for people who only read: the row has no buttons and names who decides. */
   decider?: string
+  /** The host serves no signing yet (read-only dashboard): the row says what is asked, with no button. */
+  locked?: boolean
 }
+
+/** The inline action of a row on a read-only dashboard: where to act instead. */
+const Locked = () => <span className="text-xs text-text-muted">Answer in your terminal</span>
 
 // ------------------------------------------------------------------ question
 
-export function QuestionRow({ item, ticket, now, expanded, onToggle, sign, askedBy, decider }: CoreRowProps) {
+export function QuestionRow({ item, ticket, now, expanded, onToggle, sign, askedBy, decider, locked }: CoreRowProps) {
   const q = ticket?.questions_state.find((x) => x.id === item.ref)
   const [choice, setChoice] = useState<string | null>(null)
   const id = `question:${item.ticket}:${item.ref}`
@@ -144,15 +162,18 @@ export function QuestionRow({ item, ticket, now, expanded, onToggle, sign, asked
         <>
           <TicketLine ticket={item.ticket} title={item.title} />
           {askedBy && <span className="text-text-faint"> · Asked by {askedBy}</span>}
+          <Flags item={item} />
         </>
       }
       blocking={item.blocking}
-      age={ago(item.since, now)}
+      age={ageOf(item, now)}
       expanded={expanded}
       onToggle={readOnly ? undefined : onToggle}
       action={
         readOnly ? (
           <Decides who={decider} />
+        ) : locked ? (
+          <Locked />
         ) : expanded ? null : (
           <Button size="sm" variant="outline" aria-expanded={expanded} onClick={onToggle}>
             Answer
@@ -161,7 +182,17 @@ export function QuestionRow({ item, ticket, now, expanded, onToggle, sign, asked
       }
     >
       {q?.why && <p className="text-[13px] leading-relaxed text-text-muted">{q.why}</p>}
-      {q?.options?.length ? (
+      {locked ? (
+        <ul aria-label={`Options for ${item.ref}`} className="space-y-1 text-[13px] text-text">
+          {q?.options?.map((o) => (
+            <li key={o.key}>
+              {o.label}
+              {o.cost && <span className="text-xs text-text-muted"> · {o.cost}</span>}
+              {q.recommended === o.key && <RecommendedTag />}
+            </li>
+          ))}
+        </ul>
+      ) : q?.options?.length ? (
         <div className="flex flex-wrap items-end gap-2">
           <div role="radiogroup" aria-label={`Answer to ${item.ref}`} className="flex flex-wrap gap-2">
             {q.options.map((o) => (
@@ -193,7 +224,7 @@ export function QuestionRow({ item, ticket, now, expanded, onToggle, sign, asked
 
 // ------------------------------------------------------------------ approval (requirements / plan)
 
-export function ApprovalRow({ item, ticket, now, expanded, onToggle, sign, decider }: CoreRowProps) {
+export function ApprovalRow({ item, ticket, now, expanded, onToggle, sign, decider, locked }: CoreRowProps) {
   const gate = item.ref as Exclude<GateName, 'verify'>
   const readOnly = decider !== undefined
   const covers =
@@ -209,12 +240,14 @@ export function ApprovalRow({ item, ticket, now, expanded, onToggle, sign, decid
       ask={item.text}
       sub={<TicketLine ticket={item.ticket} title={item.title} />}
       blocking={item.blocking}
-      age={ago(item.since, now)}
+      age={ageOf(item, now)}
       expanded={expanded}
       onToggle={readOnly ? undefined : onToggle}
       action={
         readOnly ? (
           <Decides who={decider} />
+        ) : locked ? (
+          <Locked />
         ) : (
           <Button size="sm" variant="outline" disabled={!ticket} onClick={() => sign(item.ticket, { kind: 'approve', gate })}>
             Review
@@ -223,16 +256,42 @@ export function ApprovalRow({ item, ticket, now, expanded, onToggle, sign, decid
       }
     >
       <p className="text-[13px] text-text-muted">{covers}</p>
-      <Button size="sm" variant="ghost" disabled={!ticket} onClick={() => sign(item.ticket, { kind: 'request_changes', gate })}>
-        Request changes…
-      </Button>
+      {!locked && (
+        <Button size="sm" variant="ghost" disabled={!ticket} onClick={() => sign(item.ticket, { kind: 'request_changes', gate })}>
+          Request changes…
+        </Button>
+      )}
     </RowShell>
+  )
+}
+
+// ------------------------------------------------------------------ notices (no one can approve, invalid log, addon rule)
+
+/**
+ * Items that ask nothing of the viewer in this dashboard: a gate nobody can approve, an invalid event that freezes
+ * decisions, an addon's own rule. Core draws the host's words, with no action; who can fix it acts in the terminal.
+ */
+export function NoticeRow({ item, now }: { item: NeedsYouItem; now: string }) {
+  return (
+    <RowShell
+      testId={`card-${item.kind}:${item.ticket}:${item.ref ?? ''}`}
+      icon={<ShieldAlert className="size-4" aria-label={item.kind === 'addon' ? 'addon rule' : 'attention'} />}
+      ask={item.text}
+      sub={
+        <>
+          {item.ticket ? <TicketLine ticket={item.ticket} title={item.title} /> : <span>Workspace</span>}
+          <Flags item={item} />
+        </>
+      }
+      age={ageOf(item, now)}
+      action={<span className="text-xs text-text-muted">{item.kind === 'no_eligible' ? 'An owner fixes the policy' : item.kind === 'acknowledge' ? 'An owner acknowledges' : 'See the ticket'}</span>}
+    />
   )
 }
 
 // ------------------------------------------------------------------ verdict
 
-export function VerdictRow({ item, ticket, now, expanded, onToggle, sign, decider }: CoreRowProps) {
+export function VerdictRow({ item, ticket, now, expanded, onToggle, sign, decider, locked }: CoreRowProps) {
   const readOnly = decider !== undefined
   const ac = ticket?.acceptance_state ?? []
   const proven = ac.filter((a) => a.state === 'proven').length
@@ -244,7 +303,7 @@ export function VerdictRow({ item, ticket, now, expanded, onToggle, sign, decide
       ask={item.text}
       sub={<TicketLine ticket={item.ticket} title={item.title} />}
       blocking={item.blocking}
-      age={ago(item.since, now)}
+      age={ageOf(item, now)}
       expanded={expanded}
       onToggle={readOnly ? undefined : onToggle}
       action={
@@ -257,9 +316,13 @@ export function VerdictRow({ item, ticket, now, expanded, onToggle, sign, decide
                 Evidence
               </Link>
             </Button>
-            <Button size="sm" variant="outline" disabled={!ticket} onClick={() => sign(item.ticket, { kind: 'verdict' })}>
-              Give verdict
-            </Button>
+            {locked ? (
+              <Locked />
+            ) : (
+              <Button size="sm" variant="outline" disabled={!ticket} onClick={() => sign(item.ticket, { kind: 'verdict' })}>
+                Give verdict
+              </Button>
+            )}
           </>
         )
       }

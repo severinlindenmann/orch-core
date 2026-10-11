@@ -6747,7 +6747,7 @@
        }
       },
       "hash_v": 1,
-      "host_sig": "KEl9p-KOwFjU3hngVjGMOSmwd4V1T1v8mKfV-X3lB4Iexm4vW_2gsHVbs0gB_aYs_BlO1PQJgj-s3kMruhNY5g",
+      "host_sig": "dyBM4AQxvFItvyelffX1QFwlTQQUsFNqN7vdfchExUQhbBKo2vHAcUBKGCDULsxmN--5uodIYdI-rOou9sDDsQ",
       "id": "01J9ZK00000000000000000009",
       "name": "estimate",
       "package_sha256": "sha256:063a5af989bb48cf38d2a500c5a982e427e9e08f44d1c807277a43f08c16fe73",
@@ -6758,6 +6758,7 @@
         "gate": [
          "plan"
         ],
+        "heading_key": "estimatenotes",
         "id": "estimate.notes",
         "types": [
          "feature",
@@ -6766,7 +6767,7 @@
        }
       ],
       "seq": 6,
-      "sig": "2Z3B7vF8dVgK_eAOMk62HnbU4-fcRh6Q4qZxFmJ-AEDZeze5vQx3znDPwQA0dEl2j0G7oLiz-ZkM-GPa-sCXJA",
+      "sig": "gARM2Zn08aWVyKywtUtv_w8fHpkfn3U698D0e2N4pv7rPxJB6Lq_3zdozacw8Wp4dwyFA92rXjUiuS7sHJlKdg",
       "type": "addon.granted",
       "v": 2,
       "version": "1.0.0"
@@ -6871,15 +6872,15 @@
       },
       "at": "2026-10-10T10:01:50Z",
       "auth": "passphrase",
-      "based_on": "sha256:1af37837c753de157cad63879abec24d05e75a528215c5cb61758e6cef45011d",
+      "based_on": "sha256:d9ba97b4e92e7102e1e3345a18a1c3a174860637aaeadbac8610cbe065feac76",
       "hash_v": 1,
-      "host_sig": "ghn1Sxvu_U7ZwzCsHlTVAF4mnGAABpkG-YcfttMvGGI-0dtIJ9dZn0tUOTbiDFRe3H2jVOwhRONqqkIgt0W78A",
+      "host_sig": "spQfrWnLoyIvA0CGe_a5cMNSKD8rPvWVgRMy77VuPjZvx99vSPlUN5T0iTGhFpR-Bmdbn7qHZi0VRIkiW8D3_Q",
       "id": "01J9ZK0000000000000000000B",
       "name": "estimate",
-      "prev": "sha256:1af37837c753de157cad63879abec24d05e75a528215c5cb61758e6cef45011d",
+      "prev": "sha256:d9ba97b4e92e7102e1e3345a18a1c3a174860637aaeadbac8610cbe065feac76",
       "roster_v": 3,
       "seq": 7,
-      "sig": "66bCsd1mApOq8yOgmsw8g13ZPc8wnWwTKull_B8kImyG_m7rr5TULUMAHb3yqY1gkG82OUDemKwtaM_6Vy472g",
+      "sig": "5hxn6vMCaOciYbMDe3d1Pd9XXCrz-qNPaAr7b8jB7W8A5FQBV3datzar37GCI4U4-Iq9KvxGXspqSpjGs-LKLA",
       "type": "addon.disabled",
       "v": 2
      },
@@ -6921,7 +6922,7 @@
       "artifact_kinds": [],
       "at": "2026-10-10T10:02:00Z",
       "auth": "passphrase",
-      "based_on": "sha256:7aa7b0c845403411d012c0b1312336dc08ecfd4a4bfe47936e1388d05140ab38",
+      "based_on": "sha256:d96e5824763a1190cda2ca0466ef0106cd8b5daf0cae95c0a7c416633c245c12",
       "capabilities": [
        "serve_http"
       ],
@@ -6940,17 +6941,18 @@
        }
       },
       "hash_v": 1,
-      "host_sig": "tnDU6_jSXDVOzRaQX8JfKyx6pKlG1Y4SScwSGtyQMpIkwzuScfDrRUQklZSoKXLlzIFYQ2fiElaQO5I8ceLo7A",
+      "host_sig": "9v8AdR3ZdMK0JhsQUM1CmP-1vk8l_gXmr49Pn7FaVdkQD4SulIe9CtbAqPz5gkZRmqjMMTUziRDvuBaZCbePWQ",
       "id": "01J9ZK0000000000000000000C",
       "name": "estimate",
       "package_sha256": "sha256:063a5af989bb48cf38d2a500c5a982e427e9e08f44d1c807277a43f08c16fe73",
-      "prev": "sha256:7aa7b0c845403411d012c0b1312336dc08ecfd4a4bfe47936e1388d05140ab38",
+      "prev": "sha256:d96e5824763a1190cda2ca0466ef0106cd8b5daf0cae95c0a7c416633c245c12",
       "roster_v": 3,
       "sections": [
        {
         "gate": [
          "plan"
         ],
+        "heading_key": "estimatenotes",
         "id": "estimate.notes",
         "types": [
          "feature",
@@ -6959,7 +6961,7 @@
        }
       ],
       "seq": 8,
-      "sig": "qUks32IGOGSGqKCP6RhTJMfCORbcT6Q0WoCSdTiKNZVcKEXaZWIDmz-vID-mrLcBpZeCgLXPxdJDuX1ULByJmw",
+      "sig": "VtGYLqHag3k8uJgeBnd3WPf7qXrBkw5Ld_LW1q7H4RLqTu3ssFBMhvkHYCddta7tAH4K4K3AErcP4vMvMiIM5g",
       "type": "addon.granted",
       "v": 2,
       "version": "1.0.0"
@@ -7002,15 +7004,15 @@
       },
       "at": "2026-10-10T10:02:10Z",
       "auth": "passphrase",
-      "based_on": "sha256:4657b9b1f9635fb1d6a9d26dbe7b20d92c4681167e55ac880e179969ba757171",
+      "based_on": "sha256:24ed6f3a4fe7d740697f223deebe8a4f4fab3a0218ea2d18ca12e2eba4beefc8",
       "hash_v": 1,
-      "host_sig": "8HIqZ0gUN8tZufdrkewSjqKmXgYewGx5sHIWsVJD8mq-L6cdCUbanUvUCI0sSz44egKUKB8_8WtOT6vhSHxY_Q",
+      "host_sig": "mMwILP9brslx0wsQvA6b8RUr_zMnLjCX6HSkMDrc3tJIUXQELCMOldOVfWzh5Qj6nhX2t3tElwnL6m3uaLEZzg",
       "id": "01J9ZK0000000000000000000D",
       "name": "estimate",
-      "prev": "sha256:4657b9b1f9635fb1d6a9d26dbe7b20d92c4681167e55ac880e179969ba757171",
+      "prev": "sha256:24ed6f3a4fe7d740697f223deebe8a4f4fab3a0218ea2d18ca12e2eba4beefc8",
       "roster_v": 3,
       "seq": 9,
-      "sig": "sujXsK3oxJK_g8Fup-rhmwoRp_UQJYuYBNI1ny3_tMrfk7fMSMARHjXQW3T8gqGHlxnU565RYMTB75BCy03vdA",
+      "sig": "gFtE90spyuq3fO2N76yEqfWbYMPgKaIizMIbIqQQeiiO93ZDVbxTRoESzOzY4yFOAABl1moR_WwzXNLA_fGOMg",
       "type": "addon.purged",
       "v": 2
      },

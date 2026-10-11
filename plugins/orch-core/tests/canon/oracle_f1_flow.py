@@ -617,7 +617,8 @@ class Sim:
                                    "capabilities": ["serve_http"],
                                    "fields": {"points": {"type": "integer", "min": 0, "max": 100, "set_by": ["owner", "agent"],
                                                          "gate": ["plan"]}},
-                                   "sections": binds["sections"], "artifact_kinds": []}  # fmt: skip
+                                   "sections": [dict(section, heading_key="estimatenotes") for section in binds["sections"]],
+                                   "artifact_kinds": []}  # fmt: skip
         else:
             pay = {"name": "estimate"}
         e = self.w.ev("workspace", "addon." + verb, self._sev(), pay, note=note)

@@ -43,7 +43,7 @@ describe('Settings › Skills', () => {
     const { user } = renderApp('/settings/skills')
     await user.click(await screen.findByRole('button', { name: 'Open skill tariff-feed' }, T))
     const drawer = await screen.findByRole('dialog', { name: /tariff-feed/ }, T)
-    await user.click(within(drawer).getByRole('button', { name: 'Grant TARIFF_WEBHOOK_SECRET…' }))
+    await user.click(within(drawer).getByRole('button', { name: 'Grant TARIFF_WEBHOOK_SECRET' }))
     const sign = await screen.findByRole('dialog', { name: 'Grant credentials to tariff-feed' }, T)
     // Plain about exposure (spec §4): a session-wide env value is readable by the agent.
     expect(sign).toHaveTextContent('TARIFF_WEBHOOK_SECRET: the agent session gets this value in its environment — the agent can read it (not in the secrets file yet)')

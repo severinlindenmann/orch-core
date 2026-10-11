@@ -223,7 +223,7 @@ describe('app shell', () => {
       const approve = within(group).queryAllByRole('option', { name: /^Give verdict/ })
       expect(approve.length).toBeGreaterThan(0)
       await user.click(approve[0])
-      expect(await screen.findByRole('dialog', { name: /Give a verdict/ })).toBeInTheDocument()
+      expect(await screen.findByRole('dialog', { name: /Verify/ })).toBeInTheDocument()
     })
 
     it('hides ticket actions on other pages and for a viewer', async () => {

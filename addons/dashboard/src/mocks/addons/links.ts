@@ -727,7 +727,7 @@ function page(state: Record<string, unknown>, c: Omit<AddonCtx, 'body' | 'state'
           },
           {
             id: 'log',
-            label: 'Log',
+            label: 'Activity',
             node: {
               type: 'stack',
               children: [

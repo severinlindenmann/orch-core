@@ -573,6 +573,8 @@ export function describeEvent(e: Pick<OrchEvent, 'type'> & Record<string, unknow
     // Full runs (owner decision 2026-10-10 evening, D61 option; provisional names).
     case 'factory.run_requested':
       return e.goes_up_to === 'Deliver' ? `started full run ${t(e.run, 'a run')}, all the way to Deliver: ${plain(t(e.deliver_means, 'a destination'))}` : `started full run ${t(e.run, 'a run')}, up to Preview`
+    case 'factory.redelivery_requested':
+      return `requested delivery again for full run ${t(e.run, 'a run')}: ${plain(t(e.deliver_means, 'a destination'))}, new hold ${t(e.hold_minutes, '0')} min (no work redone)`
     case 'factory.run_step':
       return `full run ${t(e.run, 'a run')} reached ${t(e.step, 'a step')} (no person reviewed this step)`
     case 'factory.deliver_held':

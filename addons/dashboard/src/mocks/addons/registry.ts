@@ -17,6 +17,8 @@ export interface AddonCtx {
    * open now, ticket visible, `body.option` is one of its options). The action only applies the answer.
    */
   decision?: AddonDecision
+  /** Bind state to the core event after a successful signed action. Never supplied by request args. */
+  onSigned?: (bind: (eventId: string) => void) => void
 }
 
 export interface SeedRecord {

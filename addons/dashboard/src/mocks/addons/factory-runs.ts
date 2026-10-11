@@ -30,8 +30,8 @@ import { canSeeTicket, conflict, refusal, type AddonCtx } from './registry'
 //    extends it: the mock deadline is re-derived from the wall clock when the two drift apart.
 
 export const RUN_STEP_MS = import.meta.env.MODE === 'test' ? 40 : 2_000
-export const HOLD_CHOICES = [15, 30, 60, 240] as const
-export const DEFAULT_HOLD = 30
+export const HOLD_CHOICES = [0, 15, 30, 60, 240, 1440] as const
+export const DEFAULT_HOLD = 15
 export const CHILD_STEPS = ['Requirements', 'Build and test', 'Validate', 'Evidence'] as const
 /** Children a run reserves against the charter's child budget when it is admitted. */
 export const RUN_CHILDREN = 3
@@ -79,6 +79,7 @@ export interface Run {
   holdWallUntil?: number
   /** While the factory is paused: what was left of the hold (ms), frozen; resume rebuilds both deadlines from it. */
   holdRemainingMs?: number
+  deliveryRevision?: number
   deliveredAt?: string
   stopped?: { at: string; by: string }
   notDelivered?: { at: string; reason: string }
@@ -95,7 +96,8 @@ export interface RunDraft {
 const ADDON = { kind: 'addon', id: 'factory' } as const
 const scriptId = (ws: string) => `factory:${ws}:runs`
 const iso = (ms: number) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z')
-const holdWord = (m: number) => (m >= 60 ? `${m / 60} h` : `${m} min`)
+const holdWord = (m: number) => (m === 0 ? 'No hold' : m >= 60 ? `${m / 60} h` : `${m} min`)
+export const holdId = (r: Run) => `factory.hold:${r.id}${r.deliveryRevision ? `:${r.deliveryRevision}` : ''}`
 export const runsOf = (state: Record<string, unknown>) => ((state.runs ??= []) as Run[])
 const usedRequests = (state: Record<string, unknown>) => ((state.usedRequests ??= []) as string[])
 const nameOf = (c: Ctx, person: string) => c.store.workspaces.find((w) => w.id === c.ws)?.members.find((m) => m.person === person)?.name ?? person
@@ -150,9 +152,9 @@ export function checkRequest(c: Ctx, f: Record<string, unknown>): RunDraft | Sto
   const means = typeof f.deliver_means === 'string' ? f.deliver_means.trim() : ''
   if (!means) return refusal(400, 'validation', 'Say what Deliver means: where it goes out (for example "Deploy to production" or "Send to finance@example.test").', 'Fill in What Deliver means.')
   if (means.length > MAX_MEANS) return refusal(400, 'validation', `What Deliver means is longer than ${MAX_MEANS} characters.`)
-  const hold = Number(f.hold_minutes ?? DEFAULT_HOLD)
-  if (!(HOLD_CHOICES as readonly number[]).includes(hold)) return refusal(400, 'validation', 'Choose a hold window: 15 min, 30 min, 1 h or 4 h.')
-  // Deliver sends something out of the workspace: an owner signs that request (open point 1 of the proposal).
+  const hold = f.hold_minutes === undefined ? DEFAULT_HOLD : f.hold_minutes
+  if (typeof hold !== 'number' || !Number.isInteger(hold) || hold < 0 || hold > 1440) return refusal(400, 'validation', 'Hold must be an integer from 0 to 1440 minutes.')
+  // Deliver sends something out of the workspace: owner-only (11 Oct); mandates remain non-signing preview.
   if (c.store.roleIn(c.ws, c.viewer) !== 'owner') return conflict('factory.deliver_owner_only', 'Only an owner can sign a full run that goes all the way to Deliver.', 'Choose Up to Preview, or ask an owner.')
   return { goal, goes_up_to: 'Deliver', deliver_means: means, hold_minutes: hold }
 }
@@ -243,6 +245,56 @@ export function startRun(store: MockStore, ws: string, state: Record<string, unk
   return run
 }
 
+/** A stopped delivery gets a fresh, single-use request; its completed children are never redone. */
+export interface RedeliveryDraft {
+  request: string
+  run: string
+  deliver_means: string
+  hold_minutes: number
+  revision: number
+}
+export const redeliveryOf = (state: Record<string, unknown>, viewer: string) =>
+  ((state.redeliveryDrafts ?? {}) as Record<string, RedeliveryDraft>)[viewer]
+
+export function prepareRedelivery(c: AddonCtx) {
+  const epic = visibleEpic(c, c.state)
+  if (typeof epic !== 'string') return epic
+  const f = (c.body.formData ?? {}) as Record<string, unknown>
+  const r = runsOf(c.state).find((r) => r.id === f.run)
+  if (!r || r.stage !== 'stopped') return conflict('factory.not_stopped', 'Only a stopped delivery can be requested again.')
+  const d = checkRequest(c, { goal: r.goal, goes_up_to: 'Deliver', deliver_means: r.deliverMeans, hold_minutes: f.hold_minutes })
+  if ('ok' in d) return d
+  const issued = issueRequest(c, c.state, d)
+  ;((c.state.redeliveryDrafts ??= {}) as Record<string, RedeliveryDraft>)[c.viewer] = {
+    request: issued.request!, run: r.id, deliver_means: r.deliverMeans!, hold_minutes: d.hold_minutes!, revision: r.deliveryRevision ?? 0,
+  }
+  return { ok: true as const, message: 'Review and sign the new delivery request.' }
+}
+
+export function redeliver(c: AddonCtx) {
+  const epic = visibleEpic(c, c.state)
+  if (typeof epic !== 'string') return epic
+  if (c.store.roleIn(c.ws, c.viewer) !== 'owner') return refusal(403, 'forbidden', 'Only owners may re-deliver.')
+  if (typeof c.body.request !== 'string' || usedRequests(c.state).includes(c.body.request)) return conflict('factory.request_used', 'This delivery request was already used.')
+  const d = redeliveryOf(c.state, c.viewer)
+  if (!d || Object.entries(d).some(([k, v]) => c.body[k] !== v)) return conflict('factory.stale', 'Review the delivery request again; the signed values changed.')
+  const r = runsOf(c.state).find((r) => r.id === d.run)
+  if (!r || r.stage !== 'stopped' || (r.deliveryRevision ?? 0) !== d.revision || r.deliverMeans !== d.deliver_means) return conflict('factory.not_stopped', 'This stopped delivery changed.')
+  if (runGate(c.state, c.store.now()) !== 'running') return conflict('factory.not_running', 'The factory must be running to deliver.')
+  usedRequests(c.state).push(d.request)
+  r.deliveryRevision = d.revision + 1
+  r.holdMinutes = d.hold_minutes
+  r.stage = 'holding'
+  r.holdUntil = iso(Date.parse(c.store.now()) + d.hold_minutes * MIN)
+  r.holdWallUntil = Date.now() + d.hold_minutes * MIN
+  delete r.holdRemainingMs
+  delete (c.state.redeliveryDrafts as Record<string, RedeliveryDraft>)[c.viewer]
+  c.store.append(epic, { type: 'factory.redelivery_requested', actor: ADDON, ...d })
+  settleRuns(c.store, c.state)
+  ensureChain(c.store, c.ws, c.state)
+  return { ok: true as const, changed: true, message: 'Delivery requested again; no work is redone.' }
+}
+
 // ------------------------------------------------------------------ progress and settlement
 
 /** Keeps a hold's mock deadline on its wall-clock deadline when the mock clock jumped (a reload restarts it). */
@@ -312,6 +364,11 @@ function stepRuns(store: MockStore, ws: string, state: Record<string, unknown>) 
       if (r.children.some((k, i) => k.done < CHILD_STEPS.length || blocked(k, i))) continue // waiting for code reviews
       r.stage = 'preview'
       store.append(epic, { type: 'factory.run_step', actor: ADDON, run: r.id, step: 'Preview' })
+      if (r.goesUpTo === 'Deliver' && r.holdMinutes === 0) {
+        r.stage = 'delivered'
+        r.deliveredAt = now
+        store.append(epic, { type: 'factory.delivered', actor: ADDON, run: r.id, deliver_means: r.deliverMeans })
+      }
       continue
     }
     if (r.stage === 'preview' && r.goesUpTo === 'Deliver') {
@@ -397,7 +454,7 @@ export function stepLabel(c: Ctx, r: Run) {
 export const minutesLeft = (r: Run, now: string) => Math.max(0, Math.ceil((Date.parse(r.holdUntil ?? now) - Date.parse(now)) / MIN))
 
 /** The run as core draws it: a heading line, the request, its state and the steps with their labels. Values via visible.tsx. */
-function runNode(c: Ctx, r: Run, now: string, gate: ReturnType<typeof runGate>) {
+function runNode(c: Ctx, r: Run, now: string, gate: ReturnType<typeof runGate>, delivery?: RedeliveryDraft) {
   const label = stepLabel(c, r)
   const goal = plain(r.goal)
   const means = plain(r.deliverMeans ?? '')
@@ -468,6 +525,15 @@ function runNode(c: Ctx, r: Run, now: string, gate: ReturnType<typeof runGate>) 
         ],
       },
       status,
+      ...(r.stage === 'stopped' && c.store.roleIn(c.ws, c.viewer) === 'owner' ? [
+        ...[true, false].map((now) => ({ type: 'popover', label: now ? 'Deliver now…' : 'Deliver with a new hold…', node: {
+          type: 'form', schema: { type: 'object', required: ['run', 'hold_minutes'], properties: {
+            run: { type: 'string', title: 'Run', enum: [r.id], default: r.id },
+            hold_minutes: { type: 'integer', title: 'New hold window', enum: now ? [0] : [...HOLD_CHOICES], default: now ? 0 : DEFAULT_HOLD },
+          } }, uiSchema: { hold_minutes: { 'ui:enumNames': now ? ['0 (no hold)'] : ['0 (no hold)', '15 min (default)', '30 min', '1 h', '4 h', '24 h'] } }, formData: { run: r.id, hold_minutes: now ? 0 : DEFAULT_HOLD }, action: 'prepare_redelivery', submitLabel: 'Review delivery',
+        } })),
+        ...(delivery?.run === r.id && delivery.revision === (r.deliveryRevision ?? 0) ? [{ type: 'button', label: 'Sign delivery', action: 'redeliver', args: { ...delivery }, variant: 'primary' }] : []),
+      ] : []),
       {
         type: 'table',
         columns: [
@@ -510,7 +576,7 @@ export function runsView(c: Ctx, state: Record<string, unknown>, opts: { epic: s
     },
     uiSchema: {
       goes_up_to: { 'ui:widget': 'radio', 'ui:enumNames': ['Up to Preview: made and checked, visible only in this workspace', `All the way to Deliver: it goes out after the hold window${opts.isOwner ? '' : ' (owners only)'}`] },
-      hold_minutes: { 'ui:enumNames': ['15 min', '30 min (default)', '1 h', '4 h'] },
+      hold_minutes: { 'ui:enumNames': ['0 (no hold)', '15 min (default)', '30 min', '1 h', '4 h', '24 h'] },
       deliver_means: { 'ui:placeholder': 'Deploy to production' },
     },
     formData: draft ? { goal: draft.goal, goes_up_to: draft.goes_up_to, ...(draft.deliver_means ? { deliver_means: draft.deliver_means } : {}), hold_minutes: draft.hold_minutes ?? DEFAULT_HOLD } : { goes_up_to: 'Preview', hold_minutes: DEFAULT_HOLD },
@@ -534,7 +600,7 @@ export function runsView(c: Ctx, state: Record<string, unknown>, opts: { epic: s
                   type: 'alert',
                   tone: 'info',
                   title: draft.goes_up_to === 'Deliver' ? `Ready to sign: ${plain(draft.goal)}, all the way to Deliver (${plain(draft.deliver_means ?? '')})` : `Ready to sign: ${plain(draft.goal)}, up to Preview`,
-                  text: `Request ${draft.request}: it starts one run, once. ${draft.goes_up_to === 'Deliver' ? `The signing prompt lists every value. After Preview it holds for ${holdWord(draft.hold_minutes ?? DEFAULT_HOLD)} with a notice and Stop, then goes out to exactly that destination; anything else is refused.` : 'The signing prompt lists every value. The run ends at Preview and waits for you.'}`,
+                  text: `Request ${draft.request}: it starts one run, once. ${draft.goes_up_to === 'Deliver' ? (draft.hold_minutes === 0 ? 'No hold: delivers as soon as its checks pass.' : `The signing prompt lists every value. After Preview it holds for ${holdWord(draft.hold_minutes ?? DEFAULT_HOLD)} with a notice and Stop, then goes out to exactly that destination; anything else is refused.`) : 'The signing prompt lists every value. The run ends at Preview and waits for you.'}`,
                 },
                 {
                   type: 'stack',
@@ -548,12 +614,13 @@ export function runsView(c: Ctx, state: Record<string, unknown>, opts: { epic: s
               ]
             : [{ type: 'button', label: 'Fill in a demo request', action: 'demo_run', variant: 'secondary' }]),
         ]
-  const list = runs.slice(0, MAX_RUNS_SHOWN).map((r) => runNode(c, r, now, gate))
+  const delivery = redeliveryOf(state, c.viewer)
+  const list = runs.slice(0, MAX_RUNS_SHOWN).map((r) => runNode(c, r, now, gate, delivery))
   const holdNotice =
     holding.length && opts.canAnswer
       ? holding.flatMap((r) => [
           { type: 'markdown', text: `**Full run ${r.id} · ${mdText(plain(r.goal))}: on hold before Deliver**` },
-          { type: 'decision', id: `factory.hold:${r.id}` },
+          { type: 'decision', id: holdId(r) },
           ...(opts.isOwner ? [{ type: 'button', label: 'Simulate: let the hold time pass (demo)', action: 'simulate_time', variant: 'ghost', args: { run: r.id } }] : []),
         ])
       : holding.map((r) => ({ type: 'alert', tone: 'info', title: `Delivering in ${minutesLeft(r, now)} min · ${plain(r.deliverMeans ?? '')}`, text: 'An owner or maintainer can stop it until then.' }))
@@ -582,7 +649,7 @@ export function holdDecisions(c: Ctx, state: Record<string, unknown>, epic: stri
     .filter((r) => r.stage === 'holding')
     .map((r) => ({
       kind: 'decision' as const,
-      id: `factory.hold:${r.id}`,
+      id: holdId(r),
       addon: 'factory',
       ticket: epic,
       title: 'AI Factory full run: delivery on hold',
@@ -591,7 +658,7 @@ export function holdDecisions(c: Ctx, state: Record<string, unknown>, epic: stri
       question: `Delivery at ${fmtDateTime(r.holdUntil!)}: ${plain(r.deliverMeans!)}`,
       detail: `Full run ${r.id} "${plain(r.goal)}" reached Preview and goes out at ${fmtDateTime(r.holdUntil!)} unless you stop it. Stop cancels the delivery; the run stays at Preview.`,
       options: [{ key: 'stop', label: 'Stop delivery', primary: true }],
-      terms: { run: r.id, deliver_means: r.deliverMeans!, hold_until: r.holdUntil! },
+      terms: { run: r.id, deliver_means: r.deliverMeans!, hold_until: r.holdUntil!, ...(r.deliveryRevision ? { revision: r.deliveryRevision } : {}) },
       hold: { until: r.holdUntil!, deliver_means: r.deliverMeans! },
       action: 'hold',
     }))

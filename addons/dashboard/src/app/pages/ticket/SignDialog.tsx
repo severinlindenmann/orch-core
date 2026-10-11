@@ -13,7 +13,7 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { commitCover, diffstat, gateSignedContent, sectionWritten, type SignedField, type SignedSection } from '@/api/gates'
 import { Inline, Prose, Raw, visible } from '@/components/sign/visible'
-import { GATE_LABEL, policyText } from './actions'
+import { gateActionName, policyText } from './actions'
 import type { HumanAction } from './shared'
 import { queries } from '@/api/queries'
 
@@ -27,8 +27,8 @@ function describe(ticket: TicketDocument, a: HumanAction): Described {
   }
   const gate: GateName = a.kind === 'verdict' ? 'verify' : a.gate
   const g = ticket.gates[gate]
-  const name = GATE_LABEL[gate].toLowerCase()
-  const title = a.kind === 'approve' ? `Approve ${name}` : a.kind === 'verdict' ? 'Give a verdict' : `Request changes on ${name}`
+  const name = gateActionName(gate)
+  const title = a.kind === 'approve' ? `Approve ${name}` : a.kind === 'verdict' ? 'Give verdict (Verify)' : `Request changes on ${name}`
   return { title, gate, hash: g.hash ?? '', covers: g.covers ?? [], policy: policyText(gate, g) }
 }
 

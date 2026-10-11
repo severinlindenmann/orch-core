@@ -11,6 +11,7 @@ describe('repo rules (settings.repos)', () => {
     'https://git.example.test/acme/a.git',
     'https://git.example.test:8443/acme/a',
     'ssh://git.example.test/acme/a.git',
+    'ssh://git@git.example.test/acme/a.git',
     'ssh://git.example.test:2222/acme/a.git',
     'git@git.example.test:acme/a.git',
   ])('accepts a credential-free remote: %s', (r) => expect(remoteProblem(r)).toBeNull())
@@ -23,7 +24,12 @@ describe('repo rules (settings.repos)', () => {
     ['https://us%65r:p%40ss@git.example.test/a.git', /credentials/],
     ['https://git.example.test%40evil.test/a.git', null],
     ['ssh://user:pass@git.example.test/a.git', /credentials/],
-    ['ssh://git@git.example.test/a.git', /credentials/],
+    ['ssh://deploy@git.example.test/a.git', /credentials/],
+    ['ssh://git:pass@git.example.test/a.git', /credentials/],
+    ['ssh://git:@git.example.test/a.git', /credentials/],
+    ['ssh://%67it@git.example.test/a.git', /credentials/],
+    ['ssh://git@-host/a.git', null],
+    ['ssh://git@git.example.test/-a.git', null],
     ['git@-oProxyCommand=x:a.git', null],
     ['deploy@git.example.test:a.git', null],
     ['git:token@git.example.test:a.git', null],
@@ -71,6 +77,7 @@ describe('repo rules (settings.repos)', () => {
     const id = remoteIdentity('https://git.example.test/acme/a.git')
     expect(remoteIdentity('git@GIT.example.test:acme/a')).toBe(id)
     expect(remoteIdentity('ssh://git.example.test:22/acme/a.git/')).toBe(id)
+    expect(remoteIdentity('ssh://git@git.example.test:22/acme/a.git')).toBe(id)
     expect(remoteIdentity('https://git.example.test:443/acme/a')).toBe(id)
     expect(remoteIdentity('https://git.example.test/acme/b.git')).not.toBe(id)
   })

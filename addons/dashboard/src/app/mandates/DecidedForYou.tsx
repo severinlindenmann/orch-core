@@ -20,6 +20,7 @@ import { DecisionLine, PreviewNote, RevokeDialog, shownMandate, useCanMandate, u
 export const DIGEST_ROWS = 3
 
 const ASK: Record<PreviewMandate['decisions'][number]['kind'], string> = {
+  land_main: 'Landed on main',
   requirements: 'Approve requirements',
   plan: 'Approve plan',
   verdict: 'Give the verdict',
@@ -63,7 +64,7 @@ export function DecidedForYou({ ws, now }: { ws: string; now: string }) {
         </button>
         <Pill className="shrink-0">Preview</Pill>
         <Button size="xs" variant="ghost" className="shrink-0" onClick={() => setRevoking(true)}>
-          Revoke mandate and void…
+          Revoke mandate and void
         </Button>
       </h2>
       {open && (

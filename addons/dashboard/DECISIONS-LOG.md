@@ -1173,3 +1173,56 @@ The owner answered the eight open questions of REVIEW.md. Items 1, 2, 5 and 6 ch
 - **Decision:** The mock no longer writes or seeds `agent.refused` ticket events (fixtures, the busy generator, derive/describe, the Activity addon's groups). A refusal is a CLI error envelope (code + hint, format section 10 / core section 3 `errors`) returned to the agent. The product value stays: each agent session row carries a `refusals` list (`at`, `ticket`, `code`, `message`, `hint`, `retryable`, `op`), read by the Agents page ("Recent refusals", the stop rule on the third same code) and by Ticket History through `GET /api/tickets/:key/refusals`. History draws them in a separate dashed block labelled "From the agent session — not part of the signed log", never in the event list, its counts or the Raw tab. The `agent` prefix is no longer a core event prefix; an addon actor can never make an event look core (test: an `agent.*` type with an addon actor renders as addon).
 - **Why:** The format doc (F1 gap table) says a refusal is not a log entry: the log is signed history of what happened to the ticket, and a refused request changed nothing.
 - **Revert:** Restore the `agent.refused` events in `fixtures/demo.json` and `busy/agents.ts`, the `agent.refused` cases in `derive.ts`, `History.tsx` and `addons/activity.ts`, `'agent'` in `CORE_PREFIXES`, and read refusals in `store.agentActivity` from events again; drop `SessionRefusal`, `ticketRefusals`, the `/refusals` route and the `SessionRefusals` block.
+
+## 2026-10-11 U8 — owner answers
+
+- **Decision:** Mandates preview explicitly permits code review, main, first peer send, public publish and restore/purge;
+  weekly check-in pauses after 3 overdue days, no total renewal ceiling. Factory hold is 0–24 h (15 min default);
+  stopped deliveries get a fresh owner-signed, single-use request without redoing work. Phone Stop is orch-mobile's
+  push + Face ID flow. Reserved children finish at the budget limit. Repos accepts literal SSH git user, has no primary
+  flag, and remote/default_branch are proposed for the format amendment (owner agreed 11 Oct). Core gate is Verify,
+  addon logs Activity, confirmation-only triggers have no ellipsis, factory permits fold into a reserved row. Core gives each addon form unique field IDs so the new delivery form and the full-run form have distinct labels and focus targets.
+- **Why:** Owner answers of 11 Oct morning, brief U8. Preserve core signing, exact covers, role enforcement and
+  the non-functional mandate preview while making the owner's decisions reviewable.
+- **Revert:** Revert the U8 commit; factory v5 state migrates v4 unchanged (new delivery drafts/revisions are optional).
+  Reverting loses the new re-delivery draft UI and weekly check-in preview; no real mandate authority exists.
+
+## 2026-10-11 U8 fix round 1 — review corrections
+
+- **Decision:** D33 stays closed for every lander, including mandates, until the owner lifts it; the preview seeds a
+  refused main landing. A paused mandate needs Still OK before renewal. Permit attention shows at most five cards,
+  links to Today's complete core list, uses singular/plural and disappears at zero. Preparing re-delivery is an
+  owner-only normal action. Core's notes map owns conditional signing consequences, drawn separately above addon
+  values; zero-hold re-delivery says “Delivers as soon as you sign”. Verify remains capitalised; its verdict prompt
+  says “Give verdict (Verify)”. This corrects the preceding U8 entry's main allowance and persistent empty fold.
+- **Why:** U8 review's eight Minor findings and three Nits, with the controller's explicit rulings. A mandate cannot
+  exceed its owner's authority, addon node limits must hold at any permit count, and core owns signing prose.
+- **Revert:** Revert this fix-round commit; doing so restores the reviewed inconsistencies and permit overflow.
+
+## Owner decision 2026-10-11 — owners may land on main (D33)
+
+**Decision:** Owners may allow and land on `main`, with a core signature covering ticket, canonical target
+and commit. Maintainers, members and agents cannot enqueue or confirm main landings. The worker rechecks
+the owner's signed authorization at merge time; the real worker must do so at push time. Mandates may
+land on main within their owner's authority (still preview only). This supersedes earlier D33 refusal
+entries, including N9's universal main refusal and the seeded mandate refusal. Other targets retain their roles.
+
+**Why:** The owner clarified “the owner merges develop → main”: main is an owner boundary, not a universal ban.
+
+**Revert:** Restore the normalised main refusal in settings, enqueue and worker, remove the main signing
+action, and restore the refused mandate example and corresponding documentation/tests.
+
+
+## 2026-10-11 U8 D33 fix round — canonical refs and entry-bound authority
+
+**Decision:** Use one repeated canonicalisation/validation rule for landing targets. Offer explicit allowed
+target choices and default to the first non-main target. Bind each main entry to its exact core signature
+and unique queued event, consume it once, and require current ownership of the ticket workspace plus its
+declaration of the queue's repository. Main mandate authority must likewise be current at merge time.
+
+**Why:** The D33 security review found nested/DWIM aliases bypassing the main boundary, signatures that
+could match older entries, ambiguous authority over shared remotes, and target ordering that blocked members.
+The real worker must compare fully resolved protected refs at push time. Mandate copy now says ten decisions.
+
+**Revert:** Revert this round (including land state v2); this restores the reviewed security defects and
+first-target behavior, so main must be disabled before reverting.

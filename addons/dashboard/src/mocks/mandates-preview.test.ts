@@ -1,5 +1,5 @@
 // Mandates, PREVIEW ONLY: the mock's own endpoint. It never writes a workspace or ticket log.
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createMockStore } from './store'
 
 const setup = () => {
@@ -42,7 +42,7 @@ describe('mandates preview endpoint (mock)', () => {
     const m = r.ok ? r.state.mandate! : null
     expect(m).toMatchObject({ days: 30, revision: 1 })
     // The log is a mix across the workspace, not one epic.
-    expect(new Set(m!.decisions.map((d) => d.kind))).toEqual(new Set(['requirements', 'plan', 'verdict', 'unblock', 'code_review', 'factory_enabled', 'permit', 'factory_run', 'grant']))
+    expect(new Set(m!.decisions.map((d) => d.kind))).toEqual(new Set(['requirements', 'plan', 'verdict', 'unblock', 'code_review', 'land_main', 'factory_enabled', 'permit', 'factory_run', 'grant']))
     expect(m!.refused.map((x) => x.reason)).toEqual(['protected_path', 'veto', 'always_human', 'chain'])
     expect(s.mandatesPreview.request(ws, { op: 'renew', days: 0 })).toMatchObject({ ok: false, status: 400 })
     const n = s.mandatesPreview.request(ws, { op: 'renew', days: 14 })
@@ -68,4 +68,22 @@ describe('mandates preview endpoint (mock)', () => {
     s.reset()
     expect(s.mandatesPreview.state(ws)).toMatchObject({ on: false, mandate: null })
   })
+})
+
+
+it('weekly confirmation pauses after 3 unconfirmed days, never revokes or signs', () => {
+  const { s, ws } = setup()
+  s.mandatesPreview.request(ws, { op: 'enable', seed: true })
+  const due = s.mandatesPreview.state(ws).mandate!.check_in_due!
+  const logs = s.wsEventsOf(ws).length
+  const now = vi.spyOn(s, 'now').mockReturnValue(new Date(Date.parse(due) + 3 * 86_400_000 - 1).toISOString())
+  expect(s.mandatesPreview.state(ws).mandate!.state).toBe('active')
+  now.mockReturnValue(new Date(Date.parse(due) + 3 * 86_400_000).toISOString())
+  expect(s.mandatesPreview.state(ws).mandate).toMatchObject({ state: 'paused' })
+  expect(s.mandatesPreview.request(ws, { op: 'renew', days: 7 })).toMatchObject({ ok: false, status: 409 })
+  const result = s.mandatesPreview.request(ws, { op: 'check_in' })
+  expect(result.ok && result.state.mandate).toMatchObject({ state: 'active' })
+  expect(s.mandatesPreview.request(ws, { op: 'renew', days: 7 }).ok).toBe(true)
+  expect(s.wsEventsOf(ws)).toHaveLength(logs)
+  now.mockRestore()
 })

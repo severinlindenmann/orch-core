@@ -102,19 +102,7 @@ def repo_identity(path: Path, name: str) -> str:
     canonical, else ``local:<name>``. Credentials in the remote (``https://user:token@host/...``) are stripped before
     the URL is looked at and never stored, printed or put on a command line; a remote that is not canonical after
     that is ``local:<name>``, never the raw URL."""
-    url = git(path, "remote", "get-url", "origin") or ""
-    url = re.sub(r"^(https?://)[^/@]*@", r"\1", url)  # userinfo (a user:token pair) is dropped before anything else
-    m = re.fullmatch(r"(?:ssh://)?git@([^:/]+)[:/](.+)", url)
-    if m:
-        url = f"https://{m.group(1)}/{m.group(2)}"
-    url = re.sub(r"\.git$", "", url, flags=re.I).rstrip("/")
-    host, sep, rest = url.removeprefix("https://").partition("/")
-    if url.startswith("https://") and sep:
-        url = f"https://{host.lower()}/{rest}"
-    try:
-        return canon.check_repo_identity(url)
-    except canon.HashError:
-        return f"local:{name}"
+    return canon.canonical_repo_identity(git(path, "config", "--get", "remote.origin.url") or "", name)
 
 
 def observe(store: Any, ref: str, problems: list[str] | None = None) -> list[dict[str, Any]]:

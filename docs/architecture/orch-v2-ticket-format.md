@@ -583,7 +583,7 @@ their fields and sections join one of these (`binds`). In `binds`, a section is 
 | `approvers` | list of approver tokens, at least one | who may approve |
 | `count` | int ≥ 1 | how many distinct persons must approve at the current hash and generation |
 | `not` | list of approver tokens, may be empty | excluded, even when also in `approvers` |
-| `applies` | `"all"`, `"off"` or a list of ticket types | the workspace default is `"all"`, for `code` `"off"` (D59) |
+| `applies` | `"all"`, `"off"` or a non-empty list of ticket types | the workspace default is `"all"`, for `code` `"off"` (D59) |
 | `independent` | bool | default `false`; `true` adds the independence rule below. Always `true` for `code`. |
 
 - **Approver tokens:** the workspace roles `owner`, `maintainer`, `member`, and the ticket roles `ticket_owner`,
@@ -687,8 +687,8 @@ carry `source_sha: []`; a ticket that links a repo must have a non-empty list.
   refused with `gate.stale`), and again at landing.
 - **Repo identity.** From the raw `remote.origin.url`, without `insteadOf` rewriting: `https://` and
   `ssh://`/scp-like forms map to `https://host[:port]/path`, keeping every port except 443 (https) and 22 (ssh),
-  userinfo (`user:token@`) always removed, host lower-case and nothing else changed, one trailing `.git` and `/`
-  removed. Anything else (no remote, `file://`,
+  userinfo (`user:token@`) always removed, host lower-case and nothing else changed, one trailing `/` removed first, then one
+  trailing `.git` (so `x.git/` becomes `x`). Anything else (no remote, `file://`,
   a path) is `local:<repo name>`. The result must match the canonical form exactly, and anything that doesn't is
   **refused, never converted**: host labels `[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?` joined by single dots (at most 253
   characters, no trailing dot; punycode `xn--` allowed; Unicode hosts and IPv6 refused; an all-numeric last label only
@@ -1611,7 +1611,7 @@ Every string in `ticket.json`, `body.md` and events:
 | approver token (policies) | `owner`, `maintainer`, `member`, `ticket_owner`, `assignees`, `reviewers`, `watchers` |
 | question `to` role | `ticket_owner`, `assignees`, `reviewers`, `watchers` |
 | gate | `requirements`, `plan`, `verify`, `code` |
-| gate `applies` | `all`, `off`, or a list of ticket types |
+| gate `applies` | `all`, `off`, or a non-empty list of ticket types |
 | verdict outcome | `pass`, `fail` |
 | close resolution | `wont_do`, `duplicate`, `obsolete`, `other` |
 | claim release reason | `released`, `handoff`, `expired`, `grant_ended`, `member_removed`, `ticket_done`, `ticket_closed` |

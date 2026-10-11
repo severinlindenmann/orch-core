@@ -295,6 +295,9 @@ def apply_event(
             lc.acked.add(e["invalid_seq"])
         elif e["type"] == "restore":
             lc.acked |= {i.seq for i in lc.invalid}
+            # §5.10 / O5: a decision of the abandoned part is single-use by its id across the restore; the id stays
+            # taken on the new chain, so the same signed event appended again is a duplicate (admit and replay alike)
+            lc.ids |= set(e["abandoned_decisions"])
     else:
         lc.invalid.append(
             InvalidEvent(

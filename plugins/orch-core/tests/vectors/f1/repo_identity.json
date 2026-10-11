@@ -20,6 +20,12 @@
   },
   {
    "canonical": "https://github.com/acme/x",
+   "name": "https_dot_git_trailing_slash",
+   "raw": "https://github.com/acme/x.git/",
+   "repo_name": "x"
+  },
+  {
+   "canonical": "https://github.com/acme/x",
    "name": "https_user_token",
    "raw": "https://user:s3cr3t-token@github.com/acme/x.git",
    "repo_name": "x"

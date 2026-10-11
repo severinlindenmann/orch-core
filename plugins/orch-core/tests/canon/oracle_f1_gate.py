@@ -211,8 +211,8 @@ def refs_of(text: str) -> list[str]:
 
 def repo_identity(raw: str, name: str) -> str:
     """From the raw ``remote.origin.url``: https and ssh/scp-like forms become ``https://host[:port]/path`` (userinfo
-    removed, host lower-case, port kept except 443 for https and 22 for ssh, one trailing ``.git`` and ``/`` removed);
-    anything else is ``local:<name>``."""
+    removed, host lower-case, port kept except 443 for https and 22 for ssh, one trailing ``/`` removed first, then
+    one ``.git``); anything else is ``local:<name>``."""
     m = re.fullmatch(r"(https|ssh)://(?:[^/@]*@)?([^/:@]+)(?::([0-9]+))?/(.+)", raw)
     if m:
         scheme, host, port, path = m.groups()

@@ -65,28 +65,10 @@ def test_signer_refs_that_differ_from_the_regex_are_refused(env):
 
 RM = load("repo_identity.json")["mapping"]
 
-# deviations of orch.store.observe.repo_identity from ticket-format §5.7 found by these vectors (reported in the PR):
-# ssh:// URLs without `git@` or with a port, scp-like forms with another user or none, and the https default port
-# are all turned into `local:<name>` (or a wrong path) instead of the canonical URL.
-KNOWN_GAPS = {
-    "https_default_port_dropped",
-    "ssh_url_no_user",
-    "ssh_url_password",
-    "ssh_default_port_dropped",
-    "ssh_other_port_kept",
-    "scp_like_other_user",
-    "scp_like_no_user",
-}
-
 
 @pytest.mark.parametrize(
     "c",
-    [
-        pytest.param(c, marks=pytest.mark.xfail(strict=True, reason="repo_identity deviates from F1 5.7"))
-        if c["name"] in KNOWN_GAPS
-        else c
-        for c in RM
-    ],
+    RM,
     ids=[c["name"] for c in RM],
 )
 def test_repo_identity_from_a_raw_remote(tmp_path, c):
@@ -103,3 +85,21 @@ def test_repo_identity_from_a_raw_remote(tmp_path, c):
 def test_a_token_in_the_remote_is_not_in_the_result_or_the_canonical_form():
     for c in RM:
         assert "s3cr3t" not in c["canonical"] and "ghp_" not in c["canonical"]
+
+
+@pytest.mark.parametrize("c", RM, ids=[c["name"] for c in RM])
+def test_the_shared_canonicaliser_agrees_with_every_mapping_case(c):
+    got = canon.canonical_repo_identity(c["raw"], c["repo_name"])
+    assert got == c["canonical"] and canon.check_repo_identity(got) == got
+    if got.startswith("https://"):  # a canonical https form is a fixed point
+        assert canon.canonical_repo_identity(got, c["repo_name"]) == got
+
+
+def test_a_remote_that_is_not_canonical_after_mapping_is_local():
+    for raw in (
+        "https://github.com/a%2Fb",
+        "ssh://git@github.com/acme//x",
+        "https://github.com/acme/../x",
+        "ssh://[::1]/x",
+    ):
+        assert canon.canonical_repo_identity(raw, "x") == "local:x"

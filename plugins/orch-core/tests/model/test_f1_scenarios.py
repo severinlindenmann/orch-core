@@ -18,15 +18,8 @@ FILES = {
 SCENARIOS = [(f, s) for f, pick in FILES.items() for s in pick(load(f))]
 
 
-# Gaps in orch.model that the vectors expose (ticket-format 5.10 is clear, the model does not enforce it yet):
-# ``restore`` lists ``abandoned_decisions`` but nothing refuses the same signed event on the new chain.
-KNOWN_GAPS = {"questions.json:question_replayed_decision_after_restore": "abandoned_decisions is not enforced"}
-
-
 def _param(f, s):
-    key = f"{f}:{s['name']}"
-    marks = [pytest.mark.xfail(strict=True, reason=KNOWN_GAPS[key])] if key in KNOWN_GAPS else []
-    return pytest.param(f, s, id=key, marks=marks)
+    return pytest.param(f, s, id=f"{f}:{s['name']}")
 
 
 @pytest.mark.parametrize("f,sc", [_param(f, s) for f, s in SCENARIOS])

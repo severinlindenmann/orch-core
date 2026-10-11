@@ -419,6 +419,7 @@ def repo_identity_vectors() -> dict[str, Any]:
         ("https_plain", "https://github.com/acme/x", "x"),
         ("https_dot_git", "https://github.com/acme/x.git", "x"),
         ("https_trailing_slash", "https://github.com/acme/x/", "x"),
+        ("https_dot_git_trailing_slash", "https://github.com/acme/x.git/", "x"),
         ("https_user_token", "https://user:s3cr3t-token@github.com/acme/x.git", "x"),
         ("https_token_only", "https://ghp_abc123@github.com/acme/x", "x"),
         ("https_host_lowercased_path_kept", "https://GitHub.COM/Acme/X", "x"),

@@ -28,6 +28,7 @@ GROUPS = {
         "artifact_digest",
         "canonical_policy",
         "check_hash_v",
+        "canonical_repo_identity",
         "check_repo_identity",
         "cj_checked",
         "format_hash",

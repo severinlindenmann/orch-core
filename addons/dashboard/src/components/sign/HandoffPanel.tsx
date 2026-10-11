@@ -5,7 +5,7 @@ import { Check, Copy, Terminal } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { signCommand, type HandoffMaterial, type HandoffRequest } from '@/api/handoff'
 import { Button } from '@/components/ui/button'
-import { Inline, Prose, Raw, RawValue } from './visible'
+import { Prose, Raw, RawValue, plain } from './visible'
 
 /** Core's words for what an event is, shown above its exact values. */
 const EVENT_WORDS: Record<string, string> = {
@@ -23,13 +23,11 @@ const EVENT_WORDS: Record<string, string> = {
 /** The tail of the ticket's log id, shown by the dashboard and by the signer so the two reviews read alike. */
 export const uidFragment = (uid: string): string => uid.slice(-8)
 
-const MAX_DEPTH = 8
-
 /** Any JSON value, exactly: text as the person reads it, numbers and booleans bare, nothing cut. */
 function Value({ value, depth = 0 }: { value: unknown; depth?: number }): ReactNode {
-  if (typeof value === 'string') return value.includes('\n') ? <Prose className="text-text">{value}</Prose> : <Inline className="text-text">{value}</Inline>
+  // A single-line string is quoted and a number or boolean is bare, so "1" and 1 never read alike (visibleValue).
+  if (typeof value === 'string') return value.includes('\n') ? <Prose className="text-text">{value}</Prose> : <RawValue value={value} />
   if (value === null || typeof value !== 'object') return <RawValue value={value} />
-  if (depth >= MAX_DEPTH) return <span className="text-text-muted">(nested deeper than shown; your terminal shows all of it)</span>
   if (Array.isArray(value)) {
     if (!value.length) return <span className="text-text-muted">none</span>
     return (
@@ -70,18 +68,21 @@ function Block({ title, children }: { title: ReactNode; children: ReactNode }) {
 }
 
 /** The preview: the host's `material` and nothing else. It says it is a preview and that the terminal shows what is signed. */
-export function MaterialPreview({ material }: { material: HandoffMaterial }) {
+export function MaterialPreview({ material, events = [] }: { material: HandoffMaterial; events?: HandoffRequest['events'] }) {
   const total = material.review.length
   return (
     <div data-handoff-preview className="max-h-[38vh] space-y-3 overflow-auto rounded-md border border-border bg-bg p-3">
       <p className="text-[12px] text-text-muted">Preview. Your terminal shows what you sign.</p>
       {material.ticket?.key && (
         <Block title="Ticket (key stated by the host)">
-          <Raw>{material.ticket.key}</Raw> <span className="text-text-muted">id ending</span> <Raw>{uidFragment(material.ticket.uid)}</Raw>
+          <Raw>{material.ticket.key}</Raw>
+          <p className="text-[12px] text-text-muted">
+            Ticket id <Raw>{material.ticket.uid}</Raw> (your terminal shows its last 8 characters, <Raw>{uidFragment(material.ticket.uid)}</Raw>)
+          </p>
         </Block>
       )}
       {material.kind === 'gate' && (
-        <Block title={`Gate: ${material.gate ?? ''} (your terminal recomputes the content hash from this)`}>
+        <Block title={`Gate: ${plain(material.gate ?? '')} (your terminal recomputes the content hash from this)`}>
           <Value value={material.input ?? {}} />
         </Block>
       )}
@@ -101,9 +102,15 @@ export function MaterialPreview({ material }: { material: HandoffMaterial }) {
             Event type <Raw>{r.type}</Raw>
           </p>
           <Value value={r.payload} />
+          {events[n] && (
+            <div className="mt-2">
+              <p className="text-[11px] text-text-faint">Signed with the event</p>
+              <Value value={Object.fromEntries((['based_on', 'gate_gen', 'roster_v'] as const).filter((k) => events[n][k] !== undefined).map((k) => [k, events[n][k]]))} />
+            </div>
+          )}
           {Object.keys(r.derived).length > 0 && (
             <div className="mt-2">
-              <p className="text-[11px] text-text-faint">Worked out by the signer from the event</p>
+              <p className="text-[11px] text-text-faint">Stated by the host; your terminal works these out again</p>
               <Value value={r.derived} />
             </div>
           )}
@@ -201,7 +208,7 @@ export function HandoffPanel({ request }: { request: HandoffRequest }) {
           </span>
         </dd>
       </dl>
-      <MaterialPreview material={request.material} />
+      <MaterialPreview material={request.material} events={request.events} />
       <p className="text-[12px] text-text-muted">Only sign a code you created yourself. This page follows the request and shows when it is signed.</p>
     </div>
   )

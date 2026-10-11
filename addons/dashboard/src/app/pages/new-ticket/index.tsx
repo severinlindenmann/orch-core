@@ -28,31 +28,25 @@ const TYPES: TicketType[] = ['feature', 'bug', 'chore', 'spike', 'epic']
 const PRIORITIES = (Object.keys(PRIORITY_RANK) as Priority[]).sort((a, b) => PRIORITY_RANK[b] - PRIORITY_RANK[a])
 const SIZES: Size[] = ['xs', 's', 'm', 'l', 'xl']
 /**
- * A new ticket through the terminal hand-off is one signed event: the title, the type, and the fields the host's `new`
- * takes. What it does not carry yet is said instead of dropped: restricted visibility (contract R4), people, a due date
- * and acceptance criteria are set after creation, and the description is the first written section.
+ * A new ticket through the terminal hand-off is one signed event with the title and type (host: key, type, title,
+ * owner). Priority, size and labels follow as a second hand-off ("Complete details"). What neither carries yet is said
+ * instead of dropped: restricted visibility, people, a due date, acceptance criteria, a parent and the sections.
  */
-export function handoffNewTicket(d: Draft): { action: HandoffAction } | { problem: string } {
-  const texts = (Object.entries(d.sections) as [SectionName, string | undefined][]).filter(([n, t]) => SECTIONS_BY_TYPE[d.type][n] !== 'absent' && t?.trim())
+export function handoffNewTicket(d: Draft): { action: HandoffAction; details: Extract<HandoffAction, { action: 'details' }> | null } | { problem: string } {
+  const written = (Object.entries(d.sections) as [SectionName, string | undefined][]).filter(([n, t]) => SECTIONS_BY_TYPE[d.type][n] !== 'absent' && t?.trim())
   const later = [
     d.visibility !== 'workspace' && 'restricted visibility',
     (d.people.owner || d.people.assignees.length || d.people.reviewers.length) && 'people',
     d.due && 'a due date',
     d.acceptance.length > 0 && 'acceptance criteria',
-    texts.length > 1 && 'more than one section',
+    d.parent && 'a parent epic',
+    written.length > 0 && 'the written sections',
   ].filter(Boolean)
   if (later.length) return { problem: `A signed new ticket does not carry ${later.join(', ')} yet. Create it first, then add these.` }
+  const fields = { ...(d.priority !== 'medium' ? { priority: d.priority } : {}), ...(d.size ? { size: d.size } : {}), ...(d.labels.length ? { labels: d.labels } : {}) }
   return {
-    action: {
-      action: 'new',
-      title: d.title.trim(),
-      type: d.type,
-      ...(d.priority !== 'medium' ? { priority: d.priority } : {}),
-      ...(d.size ? { size: d.size } : {}),
-      ...(d.labels.length ? { labels: d.labels } : {}),
-      ...(d.parent ? { parent: d.parent } : {}),
-      ...(texts.length ? { message: texts[0][1]!.trim() } : {}),
-    },
+    action: { action: 'new', title: d.title.trim(), type: d.type },
+    details: Object.keys(fields).length ? { action: 'details', key: '', ...fields } : null,
   }
 }
 
@@ -291,7 +285,8 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
   // The page guards its own route; the overlay's sheet guards for the overlay (it also counts the quick ticket line).
   const blocker = useBlocker({ shouldBlockFn: () => !overlay && dirty && !leaving.current, withResolver: true, enableBeforeUnload: () => !overlay && dirty && !leaving.current })
 
-  const [handoffNew, setHandoffNew] = useState<{ action: HandoffAction; another: boolean } | null>(null)
+  const [handoffNew, setHandoffNew] = useState<{ action: HandoffAction; details: Extract<HandoffAction, { action: 'details' }> | null; another: boolean } | null>(null)
+  const [followUp, setFollowUp] = useState<{ action: Extract<HandoffAction, { action: 'details' }>; another: boolean } | null>(null)
   const handoffOn = handoffMode(workspace.id)
 
   const create = useMutation({
@@ -313,7 +308,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
       // On a real host the ticket is created by a signed event: prepare it and sign in the terminal (design 4.5).
       const made = handoffNewTicket(draft)
       if ('problem' in made) return setServerError(made.problem)
-      return setHandoffNew({ action: made.action, another })
+      return setHandoffNew({ action: made.action, details: made.details, another })
     }
     submitting.current = true
     const needs = SECTIONS_BY_TYPE[draft.type]
@@ -357,11 +352,19 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
   }
 
   /** The signer's event is in the log: the ticket exists. */
-  const handoffDone = (another: boolean, ticketKey: string | null) => {
+  const handoffDone = (another: boolean, ticketKey: string | null, details: Extract<HandoffAction, { action: 'details' }> | null = null) => {
     void qc.invalidateQueries()
     writeDraft(key, null)
     setShowRestored(false)
     setHandoffNew(null)
+    if (details && ticketKey) {
+      // The new ticket exists; its priority, size and labels are a second signature, offered not forced.
+      setFollowUp({ action: { ...details, key: ticketKey }, another })
+      return
+    }
+    afterCreate(another, ticketKey)
+  }
+  const afterCreate = (another: boolean, ticketKey: string | null) => {
     if (another) {
       setDraft({ ...EMPTY, type: draft.type, priority: draft.priority })
       setAttempted(false)
@@ -523,8 +526,26 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
           action={handoffNew.action}
           autoStart
           onClose={() => setHandoffNew(null)}
-          onSettled={(phase, state) => phase === 'done' && handoffDone(handoffNew.another, state?.key ?? null)}
+          onSettled={(phase, state) => phase === 'done' && handoffDone(handoffNew.another, state?.key ?? null, handoffNew.details)}
         />
+      )}
+
+      {followUp && (
+        <HandoffDialog
+          title="Complete details"
+          ws={workspace.id}
+          action={followUp.action}
+          confirmLabel="Prepare details"
+          onClose={() => {
+            const f = followUp
+            setFollowUp(null)
+            afterCreate(f.another, f.action.key)
+          }}
+        >
+          <p className="text-[13px] text-text-muted">
+            {followUp.action.key} is created. Its priority, size and labels are one more signature. Skip it to leave them as they are.
+          </p>
+        </HandoffDialog>
       )}
 
       <Dialog open={blocker.status === 'blocked'} onOpenChange={(o) => !o && blocker.reset?.()}>

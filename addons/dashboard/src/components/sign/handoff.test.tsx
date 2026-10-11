@@ -180,6 +180,56 @@ describe('the hand-off dialog (real host)', () => {
   })
 })
 
+describe('the preview shows values exactly', () => {
+  it('tells "1" from 1, does not cut deep values, shows the full ticket id and the envelope', async () => {
+    const deep = { a: { b: { c: { d: { e: { f: { g: { h: { i: 'DEEPEST-VALUE' } } } } } } } } }
+    const base = fakeRequest()
+    const request = fakeRequest({ material: { input: { n: 1, s: '1', t: true, ts: 'true', deep } } })
+    void base
+    s.prepare.mockResolvedValue(request)
+    s.get.mockResolvedValue(state(request))
+    await mount(PLAN)
+    const dialog = await screen.findByRole('dialog', {}, T)
+    await within(dialog).findByTestId('handoff-command', {}, T)
+    const text = dialog.textContent ?? ''
+    expect(text).toContain('"1"')
+    expect(text).toContain('"true"')
+    expect(text).toContain('DEEPEST-VALUE')
+    expect(text).not.toMatch(/nested deeper/)
+    expect(text).toContain('01J9ZP0000000000000000000A')
+    expect(text).toContain('key stated by the host')
+    expect(text).toContain('Stated by the host; your terminal works these out again')
+    expect(text).toContain('based_on')
+  })
+})
+
+describe('requests stay with their workspace and their tab', () => {
+  it('closing while preparing cancels the request once it arrives', async () => {
+    const request = fakeRequest()
+    let release!: (r: typeof request) => void
+    s.prepare.mockReturnValue(new Promise((r) => (release = r)))
+    const { unmount } = await mount(PLAN)
+    await waitFor(() => expect(s.prepare).toHaveBeenCalled())
+    unmount()
+    release(request)
+    await waitFor(() => expect(s.cancel).toHaveBeenCalledWith(expect.any(String), request.id))
+  })
+
+  it('a bad expires_at is not shown', async () => {
+    s.prepare.mockResolvedValue({ ...fakeRequest(), expires_at: 'whenever' })
+    await mount(PLAN)
+    expect(await screen.findByText('Not shown', {}, T)).toBeInTheDocument()
+  })
+
+  it('shows the catalog text when the host reports why the submit failed', async () => {
+    const request = fakeRequest({ id: 'hr_' + '0'.repeat(25) + '7' })
+    s.prepare.mockResolvedValue(request)
+    s.get.mockResolvedValue(state(request, { state: 'submitted', error: { code: 'gate.stale' } }))
+    await mount(PLAN)
+    expect(await screen.findByText(/The ticket changed before it was signed/, {}, { timeout: 9000 })).toBeInTheDocument()
+  }, 15000)
+})
+
 describe('forms keep core words and prepare only on the verb', () => {
   it('request changes needs the reason, then prepares with it', async () => {
     const request = fakeRequest()

@@ -195,7 +195,7 @@ const empty = {
  */
 const handoff = {
   prepareHandoff: (ws: string, action: HandoffAction, idem: string) => call<HandoffRequest>(`${w(ws)}/handoff`, 'POST', { ...action, idem }),
-  getHandoff: (ws: string, id: string, full = false) => call<HandoffState>(`${w(ws)}/handoff/${encodeURIComponent(id)}${full ? '?full=1' : ''}`),
+  getHandoff: (ws: string, id: string) => call<HandoffState>(`${w(ws)}/handoff/${encodeURIComponent(id)}`),
   cancelHandoff: (ws: string, id: string) => call<{ id: string; state: string }>(`${w(ws)}/handoff/${encodeURIComponent(id)}`, 'DELETE'),
 }
 

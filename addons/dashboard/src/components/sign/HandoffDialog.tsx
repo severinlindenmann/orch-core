@@ -30,7 +30,7 @@ function words(phase: HandoffPhase, title: string, error: string | null): Words 
     case 'changed':
       return { title: 'Changed since you started', body: 'The ticket changed. The page now shows the current state. Prepare again to sign what is there now.', tone: 'warn' }
     case 'unknown':
-      return { title: 'Unknown outcome', body: 'The dashboard lost track of this request. The page now shows the current state. Prepare again only if the change is not there.', tone: 'warn' }
+      return { title: 'Unknown outcome', body: 'The dashboard lost track of this request. An earlier attempt may still be open; it expires by itself within 10 minutes, and preparing again cancels it. The page now shows the current state. Prepare again only if the change is not there.', tone: 'warn' }
     case 'invalid':
       return { title: 'Not shown', body: 'The host sent a request whose fingerprint does not match its content, so it is not shown and was cancelled. Nothing was signed.', tone: 'warn' }
     case 'error':

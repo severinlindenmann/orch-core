@@ -751,8 +751,8 @@ Signed actions through the terminal hand-off (#305). **The dashboard never signs
 
 | Route | Host op | Notes |
 | --- | --- | --- |
-| `POST /api/w/<uuid>/handoff` | `human.prepare {op, args, handoff:true}` | body: `idem` (`a_` + 26 Crockford chars, client-made, one per click) and a typed action (`approve`, `request_changes`, `verdict`, `answer`, `comment` -> `log`, `label` -> `set labels=`, `close`, `reopen`, `new`). `extra=forbid`. `move`, `ask`, settings: 400. Same idem = the recorded answer; same action while open = the open request is reused; 8 open requests per session (`quota.host`) |
-| `GET /api/w/<uuid>/handoff/<request_id>[?full=1]` | `human.pending {request_id}` (+ `human.get` with `full` while open) | `{state, event_ids, seq}` |
+| `POST /api/w/<uuid>/handoff` | `human.prepare {op, args, handoff:true}` | body: `idem` (`a_` + 26 Crockford chars, client-made, one per click) and a typed action (`approve`, `request_changes`, `verdict`, `answer`, `comment` -> `log`, `label` -> `set labels=`, `close`, `reopen`, `new`). `extra=forbid`; `new` carries title and type only, `details` (priority, size, labels) is the follow-up. `move`, `ask`, settings: 400. Requests belong to the session token that prepared them (other token: 404). The same idem from the same token = the recorded answer; two tabs = two requests; 8 open per session (`quota.host`). After a lost prepare answer the retry first cancels the person's open request for that action created since the lost call |
+| `GET /api/w/<uuid>/handoff/<request_id>` | `human.pending {request_id}` | `{state, event_ids, seq, error?}`; owner only |
 | `DELETE /api/w/<uuid>/handoff/<request_id>` | `human.cancel` | idempotent; logout cancels the session's open requests |
 
 The answer is a `HandoffRequest {id, code, expires_at, state, op, key, fingerprint, review_digest, gate_hash, material, events}`.
@@ -767,3 +767,9 @@ Both are dev only, never shipped, and excluded from the wheel (tested). Stub lim
 (P1 `ticket.created` has no other fields), no `observe` of git for code gates, requests are in memory.
 Known gaps: the fingerprint will also cover the op once H5a lands (the client check then needs that formula); the uid
 fragment is the last 8 characters of the log id in both the panel and the stub signer (confirm with stream A).
+
+M3 fix round 1: the server checks the host's answer is the op and ticket asked for, `state` is `prepared`, `expires_at` is
+well-formed and within 15 minutes, and each `material.review` block equals its event minus the envelope (the browser checks
+the same). Stub signer checks left out (no data in the stub): `material.policy` vs `policy_hash`, git state for a code
+gate, the op in the fingerprint. `human.prepare` ignoring `opts.idem` means there is no `outcome.get` for it (design 4.3
+corrected): the server keeps its own record per (token, workspace, idem).

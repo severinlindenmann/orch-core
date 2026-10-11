@@ -18,16 +18,9 @@ export type HandoffAction =
   | { action: 'label'; key: string; label: string }
   | { action: 'close'; key: string; resolution?: 'wont_do' | 'duplicate' | 'obsolete' | 'other'; duplicate_of?: string; message?: string }
   | { action: 'reopen'; key: string; message?: string }
-  | {
-      action: 'new'
-      title: string
-      type?: 'feature' | 'bug' | 'chore' | 'spike' | 'epic'
-      priority?: 'low' | 'medium' | 'high' | 'urgent'
-      size?: 'xs' | 's' | 'm' | 'l' | 'xl'
-      labels?: string[]
-      parent?: string
-      message?: string
-    }
+  /** A person's `new` carries the title and type only. Everything else is a follow-up `details` hand-off. */
+  | { action: 'new'; title: string; type?: 'feature' | 'bug' | 'chore' | 'spike' | 'epic' }
+  | { action: 'details'; key: string; priority?: 'low' | 'medium' | 'high' | 'urgent'; size?: 'xs' | 's' | 'm' | 'l' | 'xl'; labels?: string[] }
 
 export type HandoffStateName = 'prepared' | 'bound' | 'submitted' | 'cancelled' | 'expired'
 
@@ -84,7 +77,8 @@ export interface HandoffState {
   expires_at: string
   event_ids: string[]
   seq: number | null
-  request?: HandoffRequest
+  /** Host v1.5, optional: why a signer's submit failed (a catalog code). */
+  error?: { code: string } | null
 }
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json }
@@ -121,11 +115,34 @@ function stripped(event: HandoffEvent): unknown {
 export const fingerprintOf = (digest: string, events: HandoffEvent[]): string =>
   sha256Hex(cj({ review_digest: digest, events: events.map(stripped) })).slice(0, 12)
 
-/** True only when the digest and the fingerprint the server sent are what this browser computes from the same bytes. */
+const ENVELOPE = new Set(['v', 'id', 'type', 'actor', 'auth', 'hash_v', 'roster_v', 'based_on', 'gate_gen', 'sig'])
+
+/** Each review block describes exactly its event: same id and type, and the payload is the event minus the envelope. */
+function reviewMatches(material: HandoffMaterial, events: HandoffEvent[]): boolean {
+  if (!Array.isArray(material.review) || material.review.length !== events.length) return false
+  return material.review.every((block, i) => {
+    const event = events[i]
+    const payload = Object.fromEntries(Object.entries(event).filter(([k]) => !ENVELOPE.has(k)))
+    return block.event_id === event.id && block.type === event.type && cj(block.payload) === cj(payload)
+  })
+}
+
+/** A request lives ten minutes on the host. A bad or far-off `expires_at` is not a request of this host. */
+export function expiryMs(expiresAt: string, now = Date.now()): number | null {
+  const at = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(expiresAt) ? Date.parse(expiresAt) : NaN
+  return Number.isFinite(at) && at > now - 60_000 && at < now + 15 * 60_000 ? at : null
+}
+
+/** True only when the digest, the fingerprint, the review and the expiry the server sent are what this browser computes. */
 export function requestIsConsistent(request: HandoffRequest): boolean {
   try {
     const digest = reviewDigestOf(request.material)
-    return digest === request.review_digest && fingerprintOf(digest, request.events) === request.fingerprint
+    return (
+      digest === request.review_digest &&
+      fingerprintOf(digest, request.events) === request.fingerprint &&
+      reviewMatches(request.material, request.events) &&
+      expiryMs(request.expires_at) !== null
+    )
   } catch {
     return false
   }

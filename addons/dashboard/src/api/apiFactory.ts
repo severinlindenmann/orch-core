@@ -121,7 +121,7 @@ export function createApi(transport: Transport) {
      * sign request; the person signs in a terminal. Nothing here signs.
      */
     prepareHandoff: (ws: string, action: HandoffAction, idem: string) => call<HandoffRequest>('POST', `/api/w/${ws}/handoff`, { ...action, idem }),
-    getHandoff: (ws: string, id: string, full = false) => call<HandoffState>('GET', `/api/w/${ws}/handoff/${id}${full ? '?full=1' : ''}`),
+    getHandoff: (ws: string, id: string) => call<HandoffState>('GET', `/api/w/${ws}/handoff/${id}`),
     cancelHandoff: (ws: string, id: string) => call<{ id: string; state: string }>('DELETE', `/api/w/${ws}/handoff/${id}`),
     /** Dry run of a code review policy: the tickets it would move back to testing or to done (owners). */
     previewCodeReview: (ws: string, req: { count: number; applies: CodeReviewApplies }) =>

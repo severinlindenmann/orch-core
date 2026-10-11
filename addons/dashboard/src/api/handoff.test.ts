@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { IDEM, cj, fingerprintOf, newIdem, requestIsConsistent, reviewDigestOf, signCommand, type HandoffEvent, type HandoffRequest } from './handoff'
+import { IDEM, cj, expiryMs, fingerprintOf, newIdem, requestIsConsistent, reviewDigestOf, signCommand, type HandoffEvent, type HandoffRequest } from './handoff'
 import vector from '@/test/fixtures/handoff/vector.json'
 
 const events = vector.events as unknown as HandoffEvent[]
@@ -24,7 +24,7 @@ describe('the fingerprint is the one `orch sign` computes (host contract v1.4 se
   })
 
   it('a request is consistent only when both hashes recompute from its own bytes', () => {
-    const request = { material: vector.material, events, review_digest: vector.review_digest, fingerprint: vector.fingerprint } as unknown as HandoffRequest
+    const request = { material: vector.material, events, review_digest: vector.review_digest, fingerprint: vector.fingerprint, expires_at: new Date(Date.now() + 600_000).toISOString().replace(/\.\d+Z$/, 'Z') } as unknown as HandoffRequest
     expect(requestIsConsistent(request)).toBe(true)
     expect(requestIsConsistent({ ...request, fingerprint: '0'.repeat(12) })).toBe(false)
     expect(requestIsConsistent({ ...request, review_digest: 'sha256:' + '0'.repeat(64) })).toBe(false)
@@ -46,5 +46,27 @@ describe('idempotency keys and the command', () => {
 
   it('the command is exactly orch sign CODE', () => {
     expect(signCommand('7F3K-Q2MA')).toBe('orch sign 7F3K-Q2MA')
+  })
+})
+
+describe('a request must be what it says it is', () => {
+  const base = () => ({ material: structuredClone(vector.material), events, review_digest: vector.review_digest, fingerprint: vector.fingerprint, expires_at: new Date(Date.now() + 600_000).toISOString().replace(/\.\d+Z$/, 'Z') }) as unknown as HandoffRequest
+  const rehash = (r: HandoffRequest): HandoffRequest => {
+    const digest = reviewDigestOf(r.material)
+    return { ...r, review_digest: digest, fingerprint: fingerprintOf(digest, r.events) }
+  }
+  it('accepts the vector, refuses a review that does not describe its event even with matching hashes', () => {
+    expect(requestIsConsistent(base())).toBe(true)
+    const wrong = base()
+    wrong.material.review[0].payload.gate = 'requirements'
+    expect(requestIsConsistent(rehash(wrong))).toBe(false)
+    const type = base()
+    type.material.review[0].type = 'ticket.closed'
+    expect(requestIsConsistent(rehash(type))).toBe(false)
+  })
+  it('refuses an expires_at that is malformed or far away', () => {
+    expect(requestIsConsistent({ ...base(), expires_at: 'soon' })).toBe(false)
+    expect(requestIsConsistent({ ...base(), expires_at: '2099-01-01T00:00:00Z' })).toBe(false)
+    expect(expiryMs('2020-01-01T00:00:00Z')).toBeNull()
   })
 })

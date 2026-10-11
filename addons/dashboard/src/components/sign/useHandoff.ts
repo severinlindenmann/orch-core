@@ -4,7 +4,7 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '@/api/client'
-import { ALREADY_DONE, CHANGED, newIdem, requestIsConsistent, type HandoffAction, type HandoffRequest, type HandoffState } from '@/api/handoff'
+import { ALREADY_DONE, CHANGED, expiryMs, newIdem, requestIsConsistent, type HandoffAction, type HandoffRequest, type HandoffState } from '@/api/handoff'
 import { ApiError } from '@/api/types'
 
 export type HandoffPhase =
@@ -25,6 +25,13 @@ export type HandoffPhase =
   /** The host's answer does not recompute to its own fingerprint: never shown as valid. */
   | 'invalid'
   | 'error'
+
+/** What a failed submit's catalog code means to the person; an unknown code is shown as it is. */
+export function failedSubmit(code: string): string {
+  if (code === 'gate.stale' || code === 'question.stale' || code === 'members.stale') return 'The ticket changed before it was signed, so the host refused the signature. Prepare again to sign what is there now.'
+  if (code === 'human.request_expired') return 'The request ran out of time before the signature reached the host.'
+  return `The host refused the signature (${code}). Nothing was signed.`
+}
 
 export const POLL_MS = 2000
 /** The poll gives up this long after the request would have expired on the host (clock skew, a slow host). */
@@ -50,8 +57,9 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
   const [request, setRequest] = useState<HandoffRequest | null>(null)
   const [state, setState] = useState<HandoffState | null>(null)
   const [error, setError] = useState<ApiError | null>(null)
-  const live = useRef({ phase: 'idle' as HandoffPhase, request: null as HandoffRequest | null, ws })
-  live.current.ws = ws
+  // The request is pinned to the workspace it was prepared in: poll, cancel and unmount use that one, whatever `ws` is now.
+  const live = useRef({ phase: 'idle' as HandoffPhase, request: null as HandoffRequest | null, ws: undefined as string | undefined })
+  const [pinned, setPinned] = useState<string | undefined>(undefined)
   const attempt = useRef<{ sig: string; idem: string } | null>(null)
   const busy = useRef(false)
   const mounted = useRef(true)
@@ -79,7 +87,10 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
       try {
         const got = await api.prepareHandoff(ws, action, idem)
         attempt.current = null
-        if (!mounted.current) return
+        if (!mounted.current) {
+          void api.cancelHandoff(ws, got.id).catch(() => {}) // closed while preparing: nobody will see this code
+          return
+        }
         if (!requestIsConsistent(got)) {
           // The host's own hashes do not recompute here: do not show it, and ask the host to drop it.
           void api.cancelHandoff(ws, got.id).catch(() => {})
@@ -87,6 +98,8 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
           return
         }
         live.current.request = got
+        live.current.ws = ws
+        setPinned(ws)
         setRequest(got)
         setPhase('waiting')
       } catch (e) {
@@ -131,8 +144,9 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
   // Follow an open request: poll every 2 s (bounded by its expiry), and check at once when the live stream updates the
   // ticket. The poll only reads; it never prepares and never submits.
   useEffect(() => {
-    if (phase !== 'waiting' || !request || !ws) return
-    const deadline = Date.parse(request.expires_at) + GRACE_MS
+    if (phase !== 'waiting' || !request || !pinned) return
+    const ws = pinned
+    const deadline = (expiryMs(request.expires_at) ?? Date.now() + 600_000) + GRACE_MS
     let failed = 0
     let stopped = false
     let inflight = false
@@ -144,7 +158,11 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
         failed = 0
         if (stopped) return
         // A terminal answer ends the watch before finish() refetches: that refetch is itself a query update.
-        if (got.state === 'submitted' || got.state === 'cancelled' || got.state === 'expired') {
+        if (got.error?.code && got.state === 'submitted') {
+          stopped = true
+          setError(new ApiError(409, { code: got.error.code, message: failedSubmit(got.error.code), retryable: false }))
+          finish('error', got)
+        } else if (got.state === 'submitted' || got.state === 'cancelled' || got.state === 'expired') {
           stopped = true
           finish(got.state === 'submitted' ? 'done' : got.state, got)
         } else setState(got)
@@ -176,10 +194,11 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
       clearInterval(timer)
       unsubscribe()
     }
-  }, [phase, request, ws, qc, finish])
+  }, [phase, request, pinned, qc, finish])
 
   const cancel = useCallback(async () => {
     const open = live.current.request
+    const ws = live.current.ws
     if (!ws || !open || (live.current.phase !== 'waiting' && live.current.phase !== 'invalid')) return
     try {
       await api.cancelHandoff(ws, open.id)
@@ -187,7 +206,7 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
       /* the host expires it anyway */
     }
     if (mounted.current) setPhase('cancelled')
-  }, [ws, setPhase])
+  }, [setPhase])
 
   const reset = useCallback(() => {
     live.current.request = null

@@ -217,8 +217,7 @@ The host owns the request (v1 §0.6): bound to `(workspace, mapped person, signe
 10 minutes, submit and cancel serialized, a tombstone with the result after completion, at most 20 pending per
 person. The dashboard adds:
 
-- **One pending request per (workspace UUID, ticket, action).** Reopening the panel reuses an unexpired request
-  instead of preparing a new one. A double click or a retry reuses `opts.idem`; a lost response is recovered with
+- **A request belongs to the session that prepared it.** A double click or a retry reuses `opts.idem`; a lost response is recovered with
   `outcome.get {idem}` (never a second prepare).
 - **Cancel.** Closing the panel, logout, session expiry, a ticket that goes `gone` (§6), or switching workspace while
   the panel is open calls `human.cancel`. An in-flight socket request is stopped with a `cancel` frame.

@@ -39,14 +39,14 @@ export function fakeRequest(over: { material?: Partial<HandoffMaterial>; events?
     gate: 'plan',
     input: { tasks: [{ id: 'T1', text: 'HOST-MATERIAL task text' }], fields: { ticket_type: 'feature', acceptance: [{ id: 'AC1', text: 'From the host ‮ only' }] } },
     ticket: { key, uid: '01J9ZP0000000000000000000A' },
-    review: [{ event_id: events[0].id as string, type: events[0].type, payload: { gate: 'plan', hash: events[0].hash }, derived: { ticket_key: key } }],
+    review: [{ event_id: events[0].id as string, type: events[0].type, payload: { gate: 'plan', hash: events[0].hash, policy_hash: events[0].policy_hash }, derived: { ticket_key: key } }],
     ...over.material,
   }
   const digest = reviewDigestOf(material)
   return {
     id: over.id ?? 'hr_' + '0'.repeat(25) + '1',
     code: over.code === undefined ? CODE : over.code,
-    expires_at: new Date(Date.now() + (over.expiresInMs ?? 600_000)).toISOString(),
+    expires_at: new Date(Date.now() + (over.expiresInMs ?? 600_000)).toISOString().replace(/\.\d+Z$/, 'Z'),
     state: 'prepared',
     op: 'approve',
     key,

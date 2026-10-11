@@ -1,4 +1,4 @@
-"""Strict v1.3.1 frames; serialized requests (one in flight) with interleaved events.
+"""Strict v1.3.x frames (v1.3.2 fatal conn.overloaded is a retryable HostError); one request in flight.
 
 The socket is authenticated against a local registry pin before hello. No automatic
 write retries: callers must keep their original idem for outcome recovery.

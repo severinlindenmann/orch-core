@@ -1,0 +1,80 @@
+"""Request-scoped host errors (§0.6) with their exit code, retryability and the stored-answer shape.
+
+Wire-fatal errors stay :class:`orch.host.frames.FrameError`. A :class:`HostError` always answers one request and
+leaves the connection open ("stays"); ``host.restarting`` keeps the connection only until the drain ends.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+__all__ = ["HOST_CODES", "HostError", "disposition"]
+
+#: §0.6 codes the host adds, as (exit, retryable). ``lock.busy`` is exit 9 on the socket (§0.6), unlike P1's exit 4.
+HOST_CODES: dict[str, tuple[int, bool]] = {
+    "host.restarting": (9, True),
+    "workspace.unavailable": (1, False),
+    "workspace.degraded": (3, False),
+    "host.busy": (4, False),
+    "host.required": (3, False),
+    "lock.busy": (9, True),
+    "control.rolled_back": (9, True),
+    "outcome.unknown": (9, True),
+    "outcome.unknown_idem": (2, False),
+    "idem.required": (5, False),
+    "idem.conflict": (5, False),
+    "idem.expired": (2, False),
+    "store.busy": (9, True),  # the store lock is held: a retry can succeed (the CLI maps it to retry.later)
+    "blob.invalid": (5, False),
+    "worker.lease": (3, False),
+    "custody.unsafe_mode": (3, False),
+    "trust.genesis_mismatch": (3, False),
+    "op.not_allowed": (3, False),
+    "op.unsupported": (1, False),
+    "unknown_command": (2, False),
+    "req.invalid": (6, False),
+    "invalid.input": (5, False),
+    "not_found": (2, False),
+    "internal": (1, False),
+    "human_only": (3, False),
+    "grant.required": (3, False),
+    "grant.expired": (3, False),
+    "rate.limited": (9, True),
+    "quota.host": (9, True),
+}
+
+
+def disposition(code: str) -> tuple[int, bool]:
+    """(exit, retryable): the host table, then the P1 catalog, then a model refusal (exit 5, not retryable)."""
+    if code in HOST_CODES:
+        return HOST_CODES[code]
+    from orch.ops.errors import ERRORS
+
+    spec = ERRORS.get(code)
+    return (spec.exit, spec.retryable) if spec is not None else (5, False)
+
+
+class HostError(Exception):
+    """One request's refusal: ``response(request_id)`` is its ``res`` frame, ``error()`` its stored ``Error``."""
+
+    def __init__(self, code: str, message: str | None = None, *, retry_after_ms: int | None = None) -> None:
+        self.code = code
+        self.message = (message or code)[:400]
+        self.exit, self.retryable = disposition(code)
+        self.retry_after_ms = retry_after_ms
+        super().__init__(f"{code}: {self.message}")
+
+    def error(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"code": self.code, "message": self.message, "retryable": self.retryable}
+        if self.retry_after_ms is not None:
+            out["retry_after_ms"] = self.retry_after_ms
+        return out
+
+    def response(self, request_id: str) -> dict[str, Any]:
+        return {"t": "res", "id": request_id, "ok": False, "exit": self.exit, "error": self.error()}
+
+    @classmethod
+    def stored(cls, error: dict[str, Any]) -> HostError:
+        e = cls(error["code"], error.get("message"), retry_after_ms=error.get("retry_after_ms"))
+        e.retryable = bool(error.get("retryable", e.retryable))
+        return e

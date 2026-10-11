@@ -318,7 +318,7 @@ _SEPARATORS = frozenset(
 
 def has_forbidden_branch_character(text: str) -> bool:
     """F1 branch exclusions, using bundled Unicode 16.0 categories and the display look-alikes."""
-    return bool(suspicious(text)) or any(
+    return any(suspicious(component) for component in text.split("/")) or any(
         ord(c) < 0x20
         or 0x7F <= ord(c) <= 0x9F
         or _in_ranges(_CF_STARTS, _CF, ord(c))

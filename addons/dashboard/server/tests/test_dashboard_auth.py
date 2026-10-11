@@ -255,20 +255,122 @@ def test_runtime_redirect_and_stale_sweep(tmp_path, monkeypatch):
     assert not stale.exists() and fresh.exists() and symlink.is_symlink()
     runtime.chmod(0o755)
     assert redirect_directory(fallback) == fallback
+    # Never create a missing runtime directory or its parents.
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "missing/deep"))
+    assert redirect_directory(fallback) == fallback
+    assert not (tmp_path / "missing").exists()
+
+
+def test_launcher_uses_server_redirect_directory(tmp_path, monkeypatch):
+    from orch_dashboard import __main__ as launcher
+
+    server = tmp_path / "server-redirects"
+    server.mkdir(mode=0o700)
+    monkeypatch.setenv("ORCH_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "other"))
+    opened = []
+    monkeypatch.setattr(
+        launcher, "control", lambda *_: {"port": PORT, "code": "demo-not-a-real-code", "redirect": str(server)}
+    )
+    monkeypatch.setattr(launcher, "verify_probe", lambda _: None)
+    monkeypatch.setattr(launcher.webbrowser, "open", opened.append)
+    launcher.open_dashboard()
+    assert len(list(server.glob("launch-*.html"))) == 1 and opened[0].startswith(server.as_uri())
 
 
 def test_print_url_terminal_only(tmp_path, monkeypatch, capsys):
     from orch_dashboard import __main__ as launcher
 
     monkeypatch.setenv("ORCH_STATE_DIR", str(tmp_path))
-    monkeypatch.setattr(launcher, "control", lambda *_: {"port": PORT, "code": "demo-not-a-real-code"})
+
+    def started(*_):
+        pytest.fail("nothing may start or be minted without a terminal")
+
+    monkeypatch.setattr(launcher, "control", started)
+    monkeypatch.setattr(launcher.subprocess, "Popen", started)
     monkeypatch.setattr(launcher, "verify_probe", lambda _: None)
     monkeypatch.setattr(launcher.sys.stdout, "isatty", lambda: False)
     with pytest.raises(RuntimeError, match="terminal"):
         launcher.open_dashboard(print_url=True)
     assert not capsys.readouterr().out
     monkeypatch.setattr(launcher.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(launcher, "control", lambda *_: {"port": PORT, "code": "demo-not-a-real-code"})
     monkeypatch.setattr(launcher.webbrowser, "open", lambda _: pytest.fail("must print only"))
     launcher.open_dashboard(print_url=True)
     printed = capsys.readouterr().out
     assert "Single-use" in printed and "30 s" in printed and "#launch=" in printed
+
+
+@pytest.mark.parametrize(
+    "named", ["elsewhere/arbitrary.txt", "elsewhere/launch-{h}.html", "orch-dashboard/arbitrary.txt"]
+)
+def test_launcher_refuses_an_unexpected_redirect_file(tmp_path, monkeypatch, named):
+    """A reply naming any other file must not get the code written anywhere."""
+    import hashlib
+
+    from orch_dashboard import __main__ as launcher
+
+    code = "demo-not-a-real-code"
+    for name in ("elsewhere", "orch-dashboard"):
+        (tmp_path / name).mkdir(mode=0o700)
+    target = tmp_path / named.format(h=hashlib.sha256(code.encode()).hexdigest())
+    monkeypatch.setenv("ORCH_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(launcher, "control", lambda *_: {"port": PORT, "code": code, "redirect_file": str(target)})
+    monkeypatch.setattr(launcher, "verify_probe", lambda _: None)
+    monkeypatch.setattr(launcher.webbrowser, "open", lambda _: pytest.fail("must not open"))
+    with pytest.raises(SystemExit, match="unexpected launch file"):
+        launcher.open_dashboard()
+    assert not target.exists() and not any(code in p.read_text() for p in tmp_path.rglob("*") if p.is_file())
+
+
+@pytest.mark.parametrize("xdg", ["valid", "unset", "invalid"])
+def test_exchange_and_timer_delete_the_exact_handed_out_file(tmp_path, monkeypatch, xdg):
+    """The server deletes the file it recorded for the code, whatever directory the launcher's env would resolve to."""
+    from orch_dashboard import __main__ as launcher
+
+    runtime = tmp_path / "runtime"
+    runtime.mkdir(mode=0o700)
+    fallback = tmp_path / "state" / "dashboard"
+    fallback.mkdir(parents=True, mode=0o700)
+    if xdg == "valid":
+        monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime))
+    elif xdg == "invalid":
+        runtime.chmod(0o755)
+        monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime))
+    else:
+        monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    server_dir = launcher.redirect_directory(fallback)
+    assert (server_dir == runtime / "orch-dashboard") == (xdg == "valid")
+    timers = []
+
+    class Timer:
+        def __init__(self, delay, fn):
+            self.fn = fn
+            timers.append(self)
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr("orch_dashboard.auth.threading.Timer", Timer)
+    auth = Auth(directory=server_dir)
+    monkeypatch.setattr(launcher, "state_dir", lambda: tmp_path / "state")
+    monkeypatch.setattr(launcher, "verify_probe", lambda _: None)
+    monkeypatch.setattr(launcher.webbrowser, "open", lambda url: True)
+    created = []
+    for mode in ("exchange", "timer"):
+        issued = auth.launch(PORT)
+        # The launcher's own environment resolves to a different directory than the server's (and the server's
+        # "redirect" hint is absent): only the recorded file path may decide.
+        monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "launcher-sees-something-else"))
+        monkeypatch.setattr(launcher, "control", lambda *_, issued=issued: {k: v for k, v in issued.items()})
+        launcher.open_dashboard()
+        redirect = auth.files[issued["code"]]
+        assert redirect.parent == server_dir and redirect.is_file()
+        created.append(redirect)
+        if mode == "exchange":
+            assert auth.exchange(issued["code"])[1] == 200
+        else:
+            timers[-1].fn()
+        assert not redirect.exists()
+    assert not auth.files
+    assert not list(server_dir.glob("launch-*.html"))

@@ -402,14 +402,18 @@ on main, take it off the queue and sign again. Other targets keep their existing
 Use a disposable P1 workspace that already contains a workspace-visible ticket, prepared
 with the existing dev-kit or P1 CLI. All terminals use the same marked state and workspace.
 Build once from this checkout; the Vite mock remains independent and does not use SSE.
-The following example uses short real paths, not symlink aliases:
+The following example uses short real paths, not symlink aliases. On macOS `/tmp` is a symlink to
+`/private/tmp`, so the example spells out `/private/tmp` (on Linux `/tmp/orch-m1` is already real; `~/.orch-dev-run`
+also works if it is a real directory and the socket path stays under 100 bytes). Never point these at `~/.config/orch`.
+A workspace that was not created by `orch init` also needs its workspace signing key (WSK) under
+`$ORCH_STATE_DIR/hosts/<workspace-id>/keys`; without it `orch log` is read-only and cannot append.
 
 ```sh
 # Set these in every terminal; substitute your disposable workspace and person id.
 export ORCH_DEV=1
-export ORCH_WORKSPACE=/tmp/orch-m1/workspace
-export ORCH_STATE_DIR=/tmp/orch-m1/state
-export ORCH_RUN_DIR=/tmp/orch-m1/state/run
+export ORCH_WORKSPACE=/private/tmp/orch-m1/workspace
+export ORCH_STATE_DIR=/private/tmp/orch-m1/state
+export ORCH_RUN_DIR=/private/tmp/orch-m1/state/run
 mkdir -p "$ORCH_STATE_DIR"
 chmod 700 "$ORCH_STATE_DIR"
 touch "$ORCH_STATE_DIR/.orch-dev" "$ORCH_WORKSPACE/.orch-dev"

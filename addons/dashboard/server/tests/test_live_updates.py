@@ -50,6 +50,10 @@ def test_snapshot_reset_and_reopen():
             "sub.open",
         ]
         assert calls[2][1]["after"] == "snapshot"
+        for _ in range(100):  # the resync frame is queued by the worker thread, slightly after the second sub.open
+            if tab.queue.qsize() >= 2:
+                break
+            await asyncio.sleep(0.01)
         assert [tab.queue.get_nowait()[0] for _ in range(tab.queue.qsize())] == ["ready", "resync"]
         await live.close()
 
@@ -88,20 +92,41 @@ def test_resume_cap_slow_drop_and_logout():
     asyncio.run(run())
 
 
+class FakeLink:
+    """Counts host calls. `visible` is the set of ticket keys this person may read."""
+
+    def __init__(self, visible=("KNOWN-0001",), fail_with=None):
+        self.visible, self.fail_with, self.calls = set(visible), fail_with, []
+        self.welcome = {"peer": {"person": "p"}}
+        self.uids = {}
+
+    def call(self, op, args=None):
+        self.calls.append(op)
+        if self.fail_with:
+            raise self.fail_with
+        if op == "ticket.get":
+            if args["ref"] not in self.visible:
+                raise fail("not_found", exit=2)
+            return {"doc": {"uid": self.uids.get(args["ref"], "u")}}
+        return {
+            "member.list": {"members": [{"person": "p"}]},
+            "addon.list": {"addons": []},
+            "ticket.query": {"rows": [], "next_page": None},
+        }[op]
+
+
+def fake_live(link):
+    gateway = Mock()
+    gateway.enabled.side_effect = lambda ws: (gateway.resolved.append(ws), link)[1]
+    gateway.resolved = []
+    auth, token = authenticated()
+    return Live(gateway, auth), gateway, auth, token
+
+
 def test_visibility_at_drain_and_gone():
     async def run():
-        auth, token = authenticated()
-        gateway = Mock()
-
-        def call(ws, op, args=None):
-            return {
-                "whoami": {"person": "p"},
-                "member.list": {"members": [{"person": "p"}]},
-                "ticket.query": {"rows": [], "next_page": None},
-            }[op]
-
-        gateway.call.side_effect = call
-        live = Live(gateway, auth)
+        link = FakeLink()
+        live, gateway, auth, token = fake_live(link)
         w = WorkspaceLive(live, "ws")
         tab = Tab(token)
         w.tabs.add(tab)
@@ -111,13 +136,197 @@ def test_visibility_at_drain_and_gone():
         stream = live.stream(w, tab)
         result = await anext(stream)
         assert "SECRET" not in result and '"gone":true' in result
-        gateway.call.side_effect = fail("peer.denied")
-        w.emit("items", [{"id": "2.e", "key": "SECRET-0002"}])
+        link.fail_with = fail("peer.denied")
+        live.invalidate("ws")
+        w.emit("items", [{"id": "2.e", "uid": "x", "key": "SECRET-0002"}])
         assert "event: revoked" in await anext(stream)
         with pytest.raises(StopAsyncIteration):
             await anext(stream)
 
     asyncio.run(run())
+
+
+def test_no_empty_items_event():
+    async def run():
+        live, gateway, auth, token = fake_live(FakeLink())
+        w = WorkspaceLive(live, "ws")
+        tab = Tab(token)
+        w.tabs.add(tab)
+        w.emit("items", [{"id": "1.e", "uid": "hidden", "key": "SECRET-0001"}])
+        w.emit("items", [{"id": "2.e", "uid": "u", "key": "KNOWN-0001"}])
+        frame = await anext(live.stream(w, tab))
+        assert "KNOWN-0001" in frame and "id: " in frame and '"SECRET' not in frame
+        assert "[]" not in frame
+
+    asyncio.run(run())
+
+
+def test_host_calls_do_not_grow_with_tabs():
+    async def drain(tabs):
+        link = FakeLink()
+        live, gateway, auth, token = fake_live(link)
+        w = WorkspaceLive(live, "ws")
+        streams = []
+        for _ in range(tabs):
+            tab = Tab(token)
+            w.tabs.add(tab)
+            streams.append(live.stream(w, tab))
+        w.emit("items", [{"id": "1.e", "uid": "u", "key": "KNOWN-0001"}, {"id": "1.n", "type": "needs.changed"}])
+        frames = await asyncio.gather(*(anext(s) for s in streams))
+        assert all("KNOWN-0001" in f for f in frames)
+        return list(link.calls), gateway.resolved
+
+    one = asyncio.run(drain(1))
+    many = asyncio.run(drain(8))
+    assert one == many
+    calls, resolved = many
+    assert calls.count("ticket.get") == 1 and "ticket.query" not in calls  # only the batch's tickets
+    assert len(resolved) == 1  # host link resolved once per check
+
+
+def test_membership_change_invalidates_shared_cache():
+    live, gateway, auth, token = fake_live(FakeLink())
+    live.checked("ws", [{"id": "1", "uid": "u", "key": "KNOWN-0001"}])
+    first = len(gateway.resolved)
+    live.checked("ws", [{"id": "2", "uid": "u", "key": "KNOWN-0001"}])
+    assert len(gateway.resolved) == first
+    w = WorkspaceLive(live, "ws")
+    w.partial = False
+    w.admit([{"id": "3", "type": "member.removed"}])
+    live.checked("ws", [{"id": "4", "uid": "u", "key": "KNOWN-0001"}])
+    assert len(gateway.resolved) == first + 1
+
+
+def test_every_host_gone_is_forwarded():
+    live, *_ = fake_live(FakeLink())
+    w = WorkspaceLive(live, "ws")
+    w.partial = False
+    w.visible = {"seen"}
+    # A ticket never checked (e.g. the check failed with host.unavailable) must still be removed on the client.
+    out = w.admit([{"id": "1.g", "uid": "seen", "gone": True}, {"id": "2.g", "uid": "unseen", "gone": True}])
+    assert [i["uid"] for i in out] == ["seen", "unseen"] and not w.visible
+
+
+def test_ticket_get_must_answer_for_the_same_uid():
+    link = FakeLink()
+    link.uids["KNOWN-0001"] = "other-uid"
+    live, *_ = fake_live(link)
+    assert live.checked("ws", [{"id": "1", "uid": "u", "key": "KNOWN-0001"}]) == []
+
+
+def test_cache_dropped_on_host_error_and_reopen():
+    link = FakeLink()
+    live, gateway, auth, token = fake_live(link)
+    live.checked("ws", [{"id": "1", "uid": "u", "key": "KNOWN-0001"}])
+    assert "ws" in live.cache
+    link.fail_with = fail("host.unavailable")
+    live.cache["ws"]["at"] = 0  # stale entry forces a host call, which fails
+    with pytest.raises(HostError):
+        live.checked("ws", [{"id": "2", "uid": "u", "key": "KNOWN-0001"}])
+    assert "ws" not in live.cache
+    link.fail_with = None
+    live.checked("ws", [{"id": "3", "uid": "u", "key": "KNOWN-0001"}])
+    assert "ws" in live.cache
+    live.checked("ws", [{"id": "4", "uid": "u", "key": "KNOWN-0001"}])
+    assert "ws" in live.cache
+    w = WorkspaceLive(live, "ws")
+    gateway.enabled.side_effect = None
+    gateway.enabled.return_value = Mock(
+        call=Mock(side_effect=lambda op, args=None: {"rows": [], "next_page": None, "sub_cursor": "c", "sub": "s"})
+    )
+    w.snapshot_open()
+    assert "ws" not in live.cache
+
+
+def test_host_outage_is_resync_not_revoked(monkeypatch):
+    """Heartbeat path: unavailable host retries with backoff; the tab stays alive."""
+    import orch_dashboard.live as module
+
+    monkeypatch.setattr(module, "HEARTBEAT", 0.0)
+    monkeypatch.setattr(module, "BACKOFF", (0.01,))
+
+    async def run():
+        link = FakeLink()
+        link.call = Mock(
+            side_effect=lambda op, args=None: {
+                "sub_cursor": "c",
+                "sub": "s",
+                "rows": [],
+                "next_page": None,
+                "items": [],
+            }
+        )
+        live, gateway, auth, token = fake_live(link)
+        down = {"on": False}
+
+        def check(ws, items):
+            if down["on"]:
+                raise fail("host.unavailable")
+            return items
+
+        live.checked = check
+        link.next_event = lambda: None
+        w, tab = live.attach("ws", token)
+        for _ in range(50):
+            if tab.queue.qsize():
+                break
+            await asyncio.sleep(0.01)
+        assert tab.queue.get_nowait()[0] == "ready"
+        down["on"] = True
+        await asyncio.sleep(0.2)
+        down["on"] = False
+        await asyncio.sleep(0.2)
+        events = []
+        while not tab.queue.empty():
+            events.append(tab.queue.get_nowait()[0])
+        assert "revoked" not in events and events.count("resync") >= 2 and not w.task.done()
+        await live.close()
+
+    asyncio.run(run())
+
+
+def test_live_timing_with_stub(stub, p1, gateway):
+    """An append reaches six streams fast, with host calls independent of the stream count."""
+    import time
+
+    from orch_dashboard.hostlink import HostLink
+
+    async def run(count):
+        auth, token = authenticated()
+        live = Live(gateway, auth)
+        uid = p1.new_ticket(f"Timing {count}")
+        streams = []
+        for _ in range(count):
+            w, tab = live.attach(stub.ws, token)
+            streams.append(live.stream(w, tab))
+        for stream in streams:
+            assert "event: ready" in await asyncio.wait_for(anext(stream), 5)
+        counted = []
+        original = HostLink.call
+        HostLink.call = lambda self, op, args=None, **kw: (counted.append(op), original(self, op, args, **kw))[1]
+        try:
+            p1.tick()
+            start = time.monotonic()
+            p1.log(uid, "hello")
+            frames = await asyncio.wait_for(asyncio.gather(*(next_items(s) for s in streams)), 10)
+            elapsed = time.monotonic() - start
+        finally:
+            HostLink.call = original
+        assert all("items" in f for f in frames)
+        await live.close()
+        return elapsed, counted
+
+    async def next_items(stream):
+        while True:
+            frame = await anext(stream)
+            if "event: items" in frame:
+                return frame
+
+    t1, c1 = asyncio.run(run(1))
+    t6, c6 = asyncio.run(run(6))
+    print(f"timing 1 stream {t1:.2f}s 6 streams {t6:.2f}s")
+    assert t6 < 2.0, (t1, t6, c1, c6)
+    assert c6.count("ticket.get") <= 2 and "ticket.query" not in c6 and len(c6) <= len(c1) + 2
 
 
 def test_one_subscription_per_workspace_and_item_identity():
@@ -259,5 +468,28 @@ def test_cancel_during_open_closes_late_subscription():
         with suppress(asyncio.CancelledError):
             await w.task
         link.call.assert_any_call("sub.close", {"sub": "sub_late"})
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [
+        ("peer.denied", "revoked"),
+        ("addon.disabled", "revoked"),
+        ("not_found", "revoked"),
+        ("host.unavailable", "resync"),
+        ("timeout", "resync"),
+        ("conn.overloaded", "resync"),
+    ],
+)
+def test_only_real_revocation_is_revoked(code, expected):
+    async def run():
+        live, gateway, auth, token = fake_live(FakeLink(fail_with=fail(code)))
+        w = WorkspaceLive(live, "ws")
+        tab = Tab(token)
+        w.tabs.add(tab)
+        w.emit("items", [{"id": "1.e", "uid": "u", "key": "KNOWN-0001"}])
+        assert f"event: {expected}" in await anext(live.stream(w, tab))
 
     asyncio.run(run())

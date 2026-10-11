@@ -1296,6 +1296,10 @@ def refusal_order_scenarios() -> list[dict[str, Any]]:
                 "\u0903branch",  # Mc with combining class zero is still a leading mark
                 "\u20ddbranch",  # Me
                 "\U00010d69branch",  # Unicode 16.0 mark
+                "feat/\u0301branch",  # Mn at a later component
+                "feat/\u0903branch",  # Mc
+                "feat/part/\u20ddbranch",  # Me at the third component
+                "feat/\U00010d69branch",  # Unicode 16.0 mark
             )
         ],
     ]:
@@ -1339,6 +1343,7 @@ def refusal_order_scenarios() -> list[dict[str, Any]]:
         {"c": {"path": "../same"}, "d": {"path": "../other/../same/./"}},
         {"c": {"path": "../Same"}, "d": {"path": "../same"}},
         {"c": {"path": "../Street"}, "d": {"path": "../STREET"}},
+        {"c": {"path": "../K"}, "d": {"path": "../k"}},  # normalized Kelvin sign; repo_paths.json pins NFC
         {"c": {"path": "//same"}, "d": {"path": "/same"}},
         {"c": {"path": "../c"}, "C": {"path": "../d"}},
         {"c": {"path": "../B/./"}},

@@ -10,6 +10,7 @@ from pathlib import Path
 
 from orch import ops
 from orch.ops import Context, Result
+from orch.ops.caps import Files
 from orch.ops.errors import OrchError
 from orch.ops.runtime import Call, Workspace
 from orch.ops.views import verified
@@ -22,6 +23,39 @@ from .reserved import OPS
 
 # Registry reads that do not accept filesystem paths or need a P1 agent grant.
 READS = ("addon.list", "list")
+
+
+class HostWorkspace(Workspace):
+    """The stub plays the host, so it opens the store without the direct-mode guard (D-P2-18).
+
+    Core's `Workspace` guards every store with `DirectGuard`, which answers `host.required` once the workspace is in
+    `<state>/host/workspaces.json`. The dev registry pin lives in that same file, so the stub must be the host here.
+    """
+
+    def _open(self, root):
+        from orch.custody import FileBackend
+        from orch.ops.runtime import _config, state_dir
+        from orch.store import BackendSigner, Store
+
+        cfg = _config(root, self.files) or {}
+        wid = cfg["workspace"]["id"]
+        sd = state_dir(self.env, self.files)
+        host = None
+        keys = sd / "hosts" / wid / "keys"
+        if keys.is_dir():
+            backend = FileBackend(keys)
+            if backend.exists("wsk"):
+                host = BackendSigner(backend, "wsk")
+        self.pin_created = not (sd / "hosts" / wid / "genesis").exists()
+        return Store.open(
+            root,
+            expected_workspace_id=wid,
+            host=host,
+            host_state_dir=sd,
+            clock=self.now,
+            workspace_name=cfg["workspace"].get("name"),
+            load="lazy",
+        )
 
 
 class StubHost:
@@ -142,7 +176,8 @@ class StubHost:
 
     def call(self, op, args):
         with self.lock:
-            runtime = Workspace(self.env)
+            # Direct-mode files (core #375): a same-user dev process. Files.host belongs to the real host.
+            runtime = HostWorkspace(self.env, files=Files.direct())
             try:
                 store = runtime.store
                 store.load_all()

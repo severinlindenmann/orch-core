@@ -30,8 +30,8 @@ from .hostlink import check_uid, encode, receive
 
 
 @contextmanager
-def private_directory(path):
-    path.mkdir(parents=True, mode=0o700, exist_ok=True)
+def private_directory(path, parents=True):
+    path.mkdir(parents=parents, mode=0o700, exist_ok=True)
     fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         s = os.fstat(fd)
@@ -85,12 +85,18 @@ def stale_socket(path):
 
 
 def redirect_directory(fallback):
+    """The one place that picks the redirect directory; the server decides and tells the launcher.
+
+    XDG_RUNTIME_DIR is used only if it already exists as a real directory owned by this user, mode 0700.
+    It is never created. Only the `orch-dashboard` leaf is created. Otherwise use the private fallback.
+    """
     runtime = os.environ.get("XDG_RUNTIME_DIR", "")
     if runtime.startswith("/"):
         try:
-            with private_directory(Path(runtime)):
+            st = Path(runtime).lstat()
+            if stat.S_ISDIR(st.st_mode) and st.st_uid == os.getuid() and stat.S_IMODE(st.st_mode) == 0o700:
                 target = Path(runtime) / "orch-dashboard"
-                with private_directory(target):
+                with private_directory(target, parents=False):
                     return target
         except (OSError, RuntimeError):
             pass
@@ -155,7 +161,7 @@ def _serve(directory, lock_fd=None):
                     check_uid(conn, os.getuid())
                     req = receive(conn)
                     if req == {"command": "launch"}:
-                        conn.sendall(encode(auth.launch(port)))
+                        conn.sendall(encode({**auth.launch(port), "redirect": str(redirects)}))
                     elif req == {"command": "stop"}:
                         conn.sendall(encode({"ok": True}))
                         server.should_exit = True
@@ -205,6 +211,8 @@ def verify_probe(launch, fetch=None):
 
 def open_dashboard(path="/", print_url=False):
     path = safe_path(path)
+    if print_url and not sys.stdout.isatty():
+        raise RuntimeError("--print-url requires a terminal")  # before anything is started or minted
     directory = state_dir() / "dashboard"
     with private_directory(directory) as fd, locked(fd):
         try:
@@ -242,14 +250,23 @@ def open_dashboard(path="/", print_url=False):
     fragment = urllib.parse.urlencode({"launch": launch["code"], "to": path})
     url = f"http://127.0.0.1:{launch['port']}/#{fragment}"
     if print_url:
-        if not sys.stdout.isatty():
-            raise RuntimeError("--print-url requires a terminal")
         print("Single-use dashboard link; expires in 30 s.")
         print(url)
         return
-    directory = redirect_directory(directory)
-    redirect = Auth(directory=directory).redirect_path(launch["code"])
-    with private_directory(directory) as directory_fd:
+    # Write exactly the file the server recorded for this code, so its exchange and timer delete that same path.
+    if launch.get("redirect_file"):
+        redirect = Path(launch["redirect_file"])
+        # Only the server's own hashed name, in the private dashboard directory or an `orch-dashboard` runtime
+        # directory (the server's XDG_RUNTIME_DIR may differ from ours); private_directory() below also requires
+        # it to be ours, 0700 and not a symlink. Anything else would put the code where nothing deletes it.
+        expected = Auth(directory=redirect.parent).redirect_path(launch["code"]).name
+        if not (redirect.parent == directory or redirect.parent.name == "orch-dashboard") or redirect.name != expected:
+            raise SystemExit("orch-dashboard: the server named an unexpected launch file; not writing the code")
+        directory = redirect.parent
+    else:
+        directory = Path(launch["redirect"]) if launch.get("redirect") else redirect_directory(directory)
+        redirect = Auth(directory=directory).redirect_path(launch["code"])
+    with private_directory(directory, parents=False) as directory_fd:
         fd = os.open(redirect.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory_fd)
         try:
             os.fchmod(fd, 0o600)

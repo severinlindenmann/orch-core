@@ -7,6 +7,7 @@ OPS = (
     "host.status",
     "member.list",
     "ticket.query",
+    "ticket.get",
     "needs",
     "ticket.get",
     "diff",

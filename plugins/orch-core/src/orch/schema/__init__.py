@@ -135,6 +135,17 @@ def _raw(name: str) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def preload() -> None:
+    """Read every schema file and build every validator now. The host calls this before its audit hook, which refuses
+    the package data (it lies outside the roots)."""
+    for n in names():
+        _raw(n)
+    _registry()
+    for n in names():
+        if n not in _DEFINITIONS:
+            _validator(n)
+
+
 def load(name: str) -> dict[str, Any]:
     """Return a copy of the named schema."""
     return json.loads(json.dumps(_raw(name)))

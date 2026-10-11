@@ -22,7 +22,6 @@ from orch.ops.errors import OrchError
 from orch.ops.runtime import Call, Projection, short
 from orch.ops.views import fence
 from orch.schema import SECTIONS_BY_TYPE
-from orch.store import observe
 from orch.store.render import section_entry, thaw
 
 ARTIFACT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
@@ -70,7 +69,7 @@ def run(
     c = Call.of(ctx, op)
     problems: list[str] = []
     if observe_repos:  # git is read before the lock is taken: only the append of what it found holds a writer up
-        observe.observe(c.store, c.resolve(args.get(ref_key), live_only=live_only).uid, problems)
+        c.ctx.caps.git.observe(c.store, c.resolve(args.get(ref_key), live_only=live_only).uid, problems)
         if problems and not ctx.dry_run:  # what is submitted must be what was looked at
             raise OrchError(
                 "observe.unavailable",

@@ -19,7 +19,7 @@ def _repo_for(c: Call, view: Any) -> tuple[str | None, Path | None]:
     paths = c.store.state.workspace.repos
     root = c.ws.require_root()
     resolved = {n: p for n in linked if (p := observe.repo_path(root, paths, n)) is not None}
-    here = Path(os.getcwd()).resolve()
+    here = Path(c.ctx.caps.files.getcwd()).resolve()
     for name, path in resolved.items():
         if here == path or path in here.parents:
             return name, path
@@ -31,10 +31,16 @@ def _repo_for(c: Call, view: Any) -> tuple[str | None, Path | None]:
 
 def _run(c: Call, view: Any, cmd: str) -> runner.Ran:
     repo, path = _repo_for(c, view)
-    env = {**os.environ, **c.ctx.env}
+    env = c.ctx.caps.exec.child_env(c.ctx.env)
     secret = (c.ctx.grant or "").partition(".")[2]
     return runner.run_verify(
-        cmd, repo=repo, path=path, cwd=path if path is not None else c.ws.require_root(), env=env, grant_secret=secret
+        cmd,
+        repo=repo,
+        path=path,
+        cwd=path if path is not None else c.ws.require_root(),
+        env=env,
+        caps=c.ctx.caps,
+        grant_secret=secret,
     )
 
 

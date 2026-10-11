@@ -232,9 +232,7 @@ def _checkpoints(s: InspectStore, host_here: bool) -> list[Finding]:
     if missing:
         keys = ", ".join(s.state.tickets[u].key for u in missing[:5])
         out.append(
-            Finding(
-                lvl, "checkpoints", "checkpoint.missing", f"{len(missing)} tickets have no checkpoint ({keys}...)"
-            )
+            Finding(lvl, "checkpoints", "checkpoint.missing", f"{len(missing)} tickets have no checkpoint ({keys}...)")
         )
     wsk = s._wsk_pub()
     cdir = s.state_dir / "checkpoints"

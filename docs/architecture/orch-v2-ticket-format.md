@@ -1420,6 +1420,11 @@ these codes; they are the stable `error.code` strings of §10.4 for these refusa
 | `answer.not_allowed` | §5.4.1 the signer is not the addressee, an owner or a maintainer |
 | `answer.bad_option` | §5.4.1 neither option nor text, or an option key that doesn't exist |
 
+Next to these, the key custody has its own refusals (exit 3, not retryable, not model codes): `custody.no_prompt`,
+`custody.no_key` and `custody.wrong_passphrase` (§10.8), and `custody.no_batch`: `orch import v1` signs its reviewed
+batch under one unlock (§14.2), and a key backend that can only ask per signature cannot do that, so the import is
+refused before anything is signed (declared by `import.v1`).
+
 ### 10.5 Example: a whole task loop, as the agent sees it
 
 ```

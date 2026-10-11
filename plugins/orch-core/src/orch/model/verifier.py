@@ -43,4 +43,7 @@ class Verifier(Protocol):
         ``pk_pub`` that the *model* vouches for (the genesis owner key, the key in ``member.added``, or the member's
         key from the replayed member list): a key can't be recovered from ``device.added``/``device.revoked`` alone.
         ``device_cert`` is required for ``device.revoked``: the revoked device's certificate from the replayed roster.
+        For a restore entry the model passes ``type: restore.revocation`` with ``revocation``, ``device_cert``
+        and ``pk_pub``; verify both signatures and key bindings, without expiry or person-scope authorization.
+        This evidence establishes a tombstone, never membership.
         ``False`` for an event that carries none or an unknown type."""

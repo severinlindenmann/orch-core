@@ -111,6 +111,8 @@ def inspect(
         for log, seq, code, detail in s.chain_errors():
             out.append(Finding("error", f"{_label(s, log)}#{seq}", code, detail))
         for log, d in sorted(s.diverged.items()):
+            if any(broken_log == log for broken_log, *_ in s.chain_errors()):
+                continue
             out.append(Finding("error", f"{_label(s, log)}#{d.seq}", d.code, d.detail))
         core = s.state._core
         for log, lc in sorted(core.logs.items()):
@@ -119,7 +121,6 @@ def inspect(
                     out.append(
                         Finding("error", f"{_label(s, log)}#{i.seq}", "auth.invalid_event", f"{i.type}: {i.code}")
                     )
-        out += _reappends(s, state_dir, wid)
         out += _projections(s)
         out += _checkpoints(s, _has_host_key(state_dir, wid))
         if not fast:
@@ -133,30 +134,6 @@ def inspect(
         s.close()
         raise
     return out, s
-
-
-def _reappends(s: InspectStore, state_dir: Path, wid: str) -> list[Finding]:
-    """A workspace ``restore`` whose ``device.revoked`` re-appends (§5.10) are missing: the cause when a host open or
-    append keeps failing (the host refuses ticket appends until they are written)."""
-    try:
-        recs = HostPins(state_dir, wid).revocations()
-    except StoreError:
-        return []
-    restore_at = getattr(s, "_ws_restore_at", "")
-    out = []
-    for rec in recs:
-        dev = s.state.workspace.devices.get(rec.get("device"))
-        if restore_at and dev is not None and not dev.revoked and rec.get("at", "") <= restore_at:
-            out.append(
-                Finding(
-                    "error",
-                    "workspace",
-                    "restore.reappend_missing",
-                    f"the restore did not re-append the revocation of {rec.get('device')}; the host refuses ticket "
-                    "appends until it does (an owner must fix the cause, e.g. the person key)",
-                )
-            )
-    return out
 
 
 def _projections(s: InspectStore) -> list[Finding]:
@@ -291,10 +268,10 @@ def _checkpoints(s: InspectStore, host_here: bool) -> list[Finding]:
 def _pins(s: InspectStore, state_dir: Path, wid: str) -> list[Finding]:
     out: list[Finding] = []
     pins = HostPins(state_dir, wid)
-    devices = s.state.workspace.devices
+    accepted = s.state.revocation_evidence()
     for r in pins.revocations():
-        d = devices.get(r.get("device"))
-        if d is None or not d.revoked:
+        entry = accepted.get(r.get("device"))
+        if entry is None or entry["revocation"] != r["revocation"]:
             out.append(
                 Finding(
                     "error",

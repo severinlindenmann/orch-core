@@ -1,4 +1,4 @@
-"""Checkpoints (§5.10): written, signed, verified on open; divergence refuses events; restore re-appends revocations."""
+"""Checkpoints (§5.10): written, signed, verified on open; divergence refuses events; restore carries revocations."""
 
 from __future__ import annotations
 
@@ -32,7 +32,11 @@ def test_checkpoints_have_the_protocol_shape_and_a_valid_wsk_signature(env):
     assert checkpoints.verify_object(env.wsk_pub, t)
     w = load(env, "workspace.json")
     schema.validate("checkpoint", w)
-    assert w["o"]["workspace_log"] == {"seq": 2, "head": canon.event_head(env.read_events("workspace")[-1])}
+    assert w["o"]["workspace_log"] == {
+        "seq": 2,
+        "head": canon.event_head(env.read_events("workspace")[-1]),
+        "acc": s._logs["workspace"].acc,
+    }
     assert w["o"]["genesis"] == s.genesis and w["o"]["n"] >= 1
     assert checkpoints.verify_object(env.wsk_pub, w)
     forged = {**t, "o": {**t["o"], "seq": 9}}
@@ -116,8 +120,14 @@ def test_the_checkpoint_writer_never_moves_a_checkpoint_to_another_head_or_backw
     uid = env.new_ticket()
     env.log(uid)
     cps = checkpoints.Checkpoints(env.root / ".state" / "checkpoints", WS)
-    assert cps.write_ticket(env.signer.sign, uid, 2, "sha256:" + "0" * 64, "2026-10-10T10:00:00Z") == "diverged"
-    assert cps.write_ticket(env.signer.sign, uid, 1, "sha256:" + "1" * 64, "2026-10-10T10:00:00Z") == "diverged"
+    assert (
+        cps.write_ticket(env.signer.sign, uid, 2, "sha256:" + "0" * 64, "2026-10-10T10:00:00Z", "sha256:" + "0" * 64)
+        == "diverged"
+    )
+    assert (
+        cps.write_ticket(env.signer.sign, uid, 1, "sha256:" + "1" * 64, "2026-10-10T10:00:00Z", "sha256:" + "0" * 64)
+        == "diverged"
+    )
     assert s.diverged == {}
 
 
@@ -174,11 +184,11 @@ def test_restore_after_a_rollback_abandons_the_checkpoint_and_new_chain_continue
     with pytest.raises(StoreError) as e:  # anything but a restore is refused
         env.log(uid)
     assert e.value.code == "chain.diverged"
-    bad = env.person_event(env.owner, uid, "restore", **{**facts, "abandoned": None, "reason": "rolled back"})
+    bad = env.person_event(env.owner, uid, "restore", **{**facts, "abandoned": None, "reason": "rollback"})
     with pytest.raises(StoreError) as e:
         s.append(bad, log=uid)
     assert e.value.code == "validation.restore"
-    ok = env.person_event(env.owner, uid, "restore", **facts, reason="rolled back")
+    ok = env.person_event(env.owner, uid, "restore", **facts, reason="rollback")
     r = s.append(ok, log=uid)
     assert r.event["seq"] == 3 and r.event["prev"] == facts["head"]
     assert s.diverged == {}
@@ -216,7 +226,7 @@ def test_restore_of_a_forked_tail_uses_abandon_tail_and_keeps_the_cut_lines(env)
         "seq": 3,
         "head": load(env, f"ticket-{uid}.json")["o"]["head"],
     }
-    s.append(env.person_event(env.owner, uid, "restore", **facts, reason="fork"), log=uid)
+    s.append(env.person_event(env.owner, uid, "restore", **facts, reason="diverged"), log=uid)
     assert s.diverged == {}
     assert env.log(uid, "continues").event["seq"] == 4
 
@@ -236,17 +246,17 @@ def test_workspace_restore_puts_back_every_person_signed_revocation(env, tmp_pat
     assert WS and "workspace" in s.diverged
     assert s.state.workspace.devices[d2].revoked is None
     facts = s.restore_facts("workspace")
-    r = s.append(env.person_event(env.owner, "workspace", "restore", **facts, reason="rolled back"), log="workspace")
+    r = s.append(env.person_event(env.owner, "workspace", "restore", **facts, reason="rollback"), log="workspace")
     evs = env.read_events("workspace")
-    assert [e["type"] for e in evs[-2:]] == ["restore", "device.revoked"]
-    assert evs[-1]["actor"] == {"kind": "host"} and evs[-1]["device"] == d2 and evs[-1]["seq"] == r.event["seq"] + 1
+    assert evs[-1]["type"] == "restore" and evs[-1]["seq"] == r.event["seq"]
+    assert evs[-1]["revocations"][0]["revocation"]["o"]["device_id"] == d2[2:]
     assert s.state.workspace.devices[d2].revoked == "compromised"
     s.close()
     again = env.open()
     assert again.diverged == {} and again.chain_errors() == [] and not again.state.workspace.invalid
 
 
-def test_a_revocation_for_a_device_the_restored_chain_never_had_is_skipped(env, tmp_path):
+def test_a_revocation_for_a_device_the_restored_chain_never_had_is_a_tombstone(env, tmp_path):
     s = env.bootstrap()
     s.close()
     backup = tmp_path / "backup"
@@ -258,8 +268,9 @@ def test_a_revocation_for_a_device_the_restored_chain_never_had_is_skipped(env, 
     rollback(env, backup)
     s = env.open()
     facts = s.restore_facts("workspace")
-    s.append(env.person_event(env.owner, "workspace", "restore", **facts, reason="x"), log="workspace")
-    assert env.read_events("workspace")[-1]["type"] == "restore"  # nothing to revoke: the device was never added
+    s.append(env.person_event(env.owner, "workspace", "restore", **facts, reason="other"), log="workspace")
+    assert env.read_events("workspace")[-1]["type"] == "restore"
+    assert d2 in s.state.revocation_evidence()
 
 
 @pytest.mark.parametrize("host", [True, False])
@@ -333,3 +344,36 @@ def test_rollback_with_deleted_checkpoint_cannot_be_laundered_by_append(env, loa
     store.ticket(uid)
     assert not store.repairable_checkpoint(uid)
     assert any(f.code == "checkpoint.missing" for f in _checkpoints(store, host_here=True))
+
+
+def test_checkpoint_cache_is_bound_to_content_and_key(env):
+    from orch.store.checkpoints import verify_object
+
+    store = env.bootstrap()
+    checkpoint = store._checkpoints.workspace()
+    assert verify_object(env.wsk_pub, checkpoint)
+    checkpoint["o"]["n"] += 1
+    assert not verify_object(env.wsk_pub, checkpoint)
+    original = store._checkpoints.workspace()
+    assert original["o"]["n"] != checkpoint["o"]["n"]
+    assert verify_object(env.wsk_pub, original)
+    assert not verify_object(bytes(len(env.wsk_pub)), original)
+    store._checkpoints._write(store._checkpoints._workspace_path, checkpoint)
+    assert not verify_object(env.wsk_pub, store._checkpoints.workspace())
+
+
+def test_repeated_checkpoint_reads_and_verification_validate_once(env, monkeypatch):
+    store = env.bootstrap()
+    checkpoints._validated.cache_clear()
+    checkpoints._verified.cache_clear()
+    calls = []
+    validate = schema.validate
+
+    def counted(name, obj, **kw):
+        calls.append(name)
+        return validate(name, obj, **kw)
+
+    monkeypatch.setattr(schema, "validate", counted)
+    for _ in range(5):
+        assert checkpoints.verify_object(env.wsk_pub, store._checkpoints.workspace())
+    assert calls == ["checkpoint"]

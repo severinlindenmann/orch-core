@@ -685,6 +685,11 @@ def _ev_branch_pushed(obj: dict[str, Any], actor: dict[str, Any]) -> None:
 
 
 def _ev_restore(obj: dict[str, Any], actor: dict[str, Any]) -> None:
+    ids = [r["revocation"]["o"]["device_id"] for r in obj["revocations"]]
+    if ids != sorted(set(ids)) or ("ws_seq" in obj and ids):
+        raise SchemaError("event", "/revocations", "sorted unique devices; ticket restores require []")
+    if len(obj.get("note", "").encode("utf-8")) > 280:
+        raise SchemaError("event", "/note", "note exceeds 280 UTF-8 bytes")
     if obj["seq"] != obj["from_seq"] + 1:
         raise SchemaError("event", "/seq", "a restore is appended as from_seq + 1")
     if obj["prev"] != obj["head"]:

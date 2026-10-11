@@ -151,7 +151,7 @@ class Settled:
     voided: tuple[str, ...]  # gates that lost a counting approval (``edit.external`` ``voided_gates``)
 
 
-def settle(ws: WsCore, t: TCore, before: dict[str, Snap]) -> Settled:
+def settle(ws: WsCore, t: TCore, before: dict[str, Snap], *, raise_gates: bool = True) -> Settled:
     """Apply the raise table once for the event that just mutated ``t``."""
 
     def app(g: str) -> bool:
@@ -165,6 +165,8 @@ def settle(ws: WsCore, t: TCore, before: dict[str, Snap]) -> Settled:
     if triggers:
         first = min(triggers)
         raised |= {g for i, g in enumerate(GATES) if i > first and app(g)}
+    if not raise_gates:  # restore already raised every applicable gate before its compromised voids
+        raised.clear()
     for g in GATES:
         if g in raised:
             t.gates[g].gen += 1

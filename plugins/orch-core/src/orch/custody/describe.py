@@ -48,7 +48,7 @@ EVENT_FIELDS: dict[str, tuple[str, ...]] = {
     "gate.changes_requested": (*_GATE, "text"),
     "verdict.given": ("outcome", "gate_gen", "hash", "policy_hash", "source_sha", "text"),
     # both logs
-    "restore": ("from_seq", "head", "abandoned", "abandoned_decisions", "reason"),
+    "restore": ("from_seq", "head", "abandoned", "abandoned_decisions", "source", "revocations", "reason", "note"),
     "invalid.acknowledged": ("invalid_seq", "invalid_head", "reason"),
     # workspace log
     "workspace.created": ("workspace_id", "prefix", "host_id", "wsk_pub", "owner", "delegation", "device_cert"),
@@ -146,7 +146,7 @@ def _flatten(name: str, value: Any, out: list[tuple[str, str]], depth: int = 0) 
         for i, item in enumerate(value, 1):
             _flatten(f"{name}[{i}]", item, out, depth + 1)
     else:
-        out.append((name, _scalar(value)))
+        out.append((name, canon.dumps(value).decode("utf-8") if name == "note" else _scalar(value)))
 
 
 def _object_lines(prefix: str, kind: str, signed: Any, out: list[tuple[str, str]]) -> None:

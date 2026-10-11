@@ -2,8 +2,10 @@
 
 * ``genesis``: the head of ``workspace.created`` (the trust root pin), one line. Written once; a different value is
   ``trust.genesis_mismatch``.
-* ``revocations.jsonl``: every person-key-signed device revocation the host appended (``device.revoked`` payload as
-  ``cj``), so that a workspace ``restore`` can put them back (§5.10 "Restore never drops revocations").
+* ``revocations.jsonl``: effective PK-signed revocations and verification evidence, retained across restores.
+* ``checkpoint.json``: last accepted workspace checkpoint.
+* ``heads.sqlite``: durable ancestry, indexed by head.
+* ``pending-transitions/``: recovery work; ``transitions/``: completed publication records.
 
 P1 limit (§12 O7): these are files the same OS user owns, like the workspace itself.
 """
@@ -11,13 +13,16 @@ P1 limit (§12 O7): these are files the same OS user owns, like the workspace it
 from __future__ import annotations
 
 import os
+import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 from orch import canon
 
 from .errors import StoreError
-from .fsio import append_durable, loads, read_or_none, write_atomic
+from .fsio import loads, read_or_none, write_atomic
 
 __all__ = ["HostPins"]
 
@@ -25,6 +30,7 @@ __all__ = ["HostPins"]
 class HostPins:
     def __init__(self, state_dir: str | os.PathLike[str], workspace_id: str) -> None:
         self.dir = Path(state_dir) / "hosts" / workspace_id
+        self._db: sqlite3.Connection | None = None
 
     @property
     def _genesis(self) -> Path:
@@ -59,18 +65,89 @@ class HostPins:
         raw = read_or_none(self._revocations)
         if not raw:
             return []
-        out = []
+        out = {}
         for line in raw.splitlines():
             try:
-                out.append(loads(line))
+                rec = loads(line)
             except ValueError:
-                continue
-        return out
+                raise StoreError("store.torn_write", "unreadable revocation evidence") from None
+            old = out.get(rec["device"])
+            if old is None or (old["reason"] != "compromised" and rec["reason"] == "compromised"):
+                out[rec["device"]] = rec
+        return [out[k] for k in sorted(out)]
 
-    def note_revocation(self, device: str, reason: str, revocation: dict[str, Any], at: str) -> None:
-        """Remember a revocation (``at``: when the host appended it). Once noted it is never dropped or changed."""
-        if any(r.get("device") == device for r in self.revocations()):
+    def note_revocation(
+        self, device: str, reason: str, revocation: dict[str, Any], at: str, device_cert: dict[str, Any], pk_pub: str
+    ) -> None:
+        """Durably retain the earliest evidence of the highest reason, including upgrades."""
+        old = next((r for r in self.revocations() if r["device"] == device), None)
+        if old and (old["reason"] == "compromised" or reason != "compromised"):
             return
         self.dir.mkdir(parents=True, exist_ok=True)
-        line = canon.cj_checked({"at": at, "device": device, "reason": reason, "revocation": revocation}) + b"\n"
-        append_durable(self._revocations, line)
+        records = self.revocations()
+        records.append(
+            {
+                "at": at,
+                "device": device,
+                "reason": reason,
+                "revocation": revocation,
+                "device_cert": device_cert,
+                "pk_pub": pk_pub,
+            }
+        )
+        write_atomic(self._revocations, b"".join(canon.cj_checked(r) + b"\n" for r in records), mode=0o600)
+
+    def held(self) -> dict[str, Any] | None:
+        raw = read_or_none(self.dir / "checkpoint.json")
+        return loads(raw) if raw else None
+
+    def accept_checkpoint(self, cp: dict[str, Any]) -> None:
+        write_atomic(self.dir / "checkpoint.json", canon.cj_checked(cp) + b"\n", mode=0o600)
+
+    @contextmanager
+    def _heads(self) -> Iterator[sqlite3.Connection]:
+        if self._db is None:
+            self.dir.mkdir(parents=True, exist_ok=True)
+            self._db = sqlite3.connect(self.dir / "heads.sqlite")
+            self._db.execute("PRAGMA synchronous=FULL")  # ancestry survives a crash; unlike the derived index
+            self._db.execute("CREATE TABLE IF NOT EXISTS heads (head TEXT PRIMARY KEY, seq INTEGER, prev TEXT)")
+        with self._db:
+            yield self._db
+
+    def close(self) -> None:
+        if self._db is not None:
+            self._db.close()
+            self._db = None
+
+    def note_head(self, seq: int, head: str, prev: str | None) -> None:
+        with self._heads() as db:
+            db.execute("INSERT OR IGNORE INTO heads VALUES (?, ?, ?)", (head, seq, prev))
+
+    def note_heads(self, heads: list[str], verified: int) -> None:
+        """A single high-water lookup skips an already recorded branch on reload."""
+        if not verified:
+            return
+        with self._heads() as db:
+            if db.execute("SELECT 1 FROM heads WHERE head = ?", (heads[verified - 1],)).fetchone():
+                return
+            db.executemany(
+                "INSERT OR IGNORE INTO heads VALUES (?, ?, ?)",
+                ((heads[i], i + 1, heads[i - 1] if i else None) for i in range(verified)),
+            )
+
+    def branch(self, head: str, stop: int = 0) -> list[str] | None:
+        heads = []
+        last_seq = None
+        with self._heads() as db:
+            while head:
+                row = db.execute("SELECT seq, prev FROM heads WHERE head = ?", (head,)).fetchone()
+                if row is None:
+                    return None
+                seq, prev = row
+                if last_seq is not None and seq != last_seq - 1:
+                    return None
+                if seq <= stop:
+                    break
+                heads.append(head)
+                last_seq, head = seq, prev
+        return list(reversed(heads))

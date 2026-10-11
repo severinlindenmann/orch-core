@@ -1,4 +1,4 @@
-"""Recovery follows replay, including restore windows and accumulated voids."""
+"""Recovery follows replay, including atomic restores and accumulated voids."""
 
 from datetime import datetime
 
@@ -11,12 +11,10 @@ from orch.store.render import thaw
 from tests.model.f1_runner import load
 
 
-def test_recovery_uses_the_restore_window_prescan(tmp_path, monkeypatch):
+def test_recovery_uses_post_restore_revocations(tmp_path, monkeypatch):
     from orch.model import state
 
-    sc = next(
-        s for s in load("restore.json")["scenarios"] if s["name"] == "ticket_event_may_not_name_the_restore_window"
-    )
+    sc = next(s for s in load("restore.json")["scenarios"] if s["name"] == "restore_carries_revocations_at_its_ws_seq")
     uid = next(s["log"] for s in sc["steps"] if s["log"] != "workspace")
     for step in sc["steps"][:-1]:
         path = tmp_path / ("events/workspace.jsonl" if step["log"] == "workspace" else f"tickets/{uid}/events.jsonl")
@@ -42,7 +40,7 @@ def test_recovery_uses_the_restore_window_prescan(tmp_path, monkeypatch):
     monkeypatch.setattr(state, "apply_event", apply)
     try:
         assert pending_causes(store, uid) == {}
-        assert "chain.bad_ws_seq" in refused
+        assert "device.invalid" in refused
     finally:
         store.close()
 
@@ -63,11 +61,8 @@ def test_recovery_records_workspace_and_restore_causes(env, cause):
             env.owner,
             uid,
             "restore",
-            from_seq=env.read_events(uid)[-1]["seq"],
-            head=store.log_head(uid),
-            abandoned=None,
-            abandoned_decisions=[],
-            reason="recover",
+            **store.restore_facts(uid),
+            reason="rollback",
         )
         store.append(event, log=uid)
     store.close()

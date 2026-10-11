@@ -63,6 +63,7 @@ class InvalidEvent:
 
 @dataclass
 class LogCore:
+    acc: str = "sha256:" + "0" * 64
     seq: int = 0
     head: str | None = None
     heads: dict[str, int] = field(default_factory=dict)
@@ -145,6 +146,7 @@ class WsCore:
     former: dict[str, Member] = field(default_factory=dict)
     roster_v: int = 0
     devices: dict[str, Device] = field(default_factory=dict)
+    revocations: dict[str, dict[str, Any]] = field(default_factory=dict)
     grants: dict[str, Grant] = field(default_factory=dict)
     policies: dict[str, dict[str, Any]] = field(default_factory=default_policies)
     settings: dict[str, Any] = field(default_factory=lambda: dict(DEFAULT_SETTINGS))
@@ -269,10 +271,6 @@ class Core:
     logs: dict[str, LogCore] = field(
         default_factory=dict
     )  # "workspace" and every ticket uid: chain place, invalid events
-    # workspace seqs a ticket event's ``ws_seq`` may not name (§5.10): a ``restore`` and the host's ``device.revoked``
-    # re-appends right after it, except the last of them; ``rwin_last`` is the last of the window being read
-    rwin_forbidden: set[int] = field(default_factory=set)
-    rwin_last: int | None = None
 
 
 def position(e: dict[str, Any], log: str) -> tuple[int, int, str, int]:

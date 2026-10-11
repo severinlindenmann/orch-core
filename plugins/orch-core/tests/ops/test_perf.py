@@ -42,6 +42,7 @@ def timed(cli, *argv, budget, cpu=True):
         r = cli(*argv)
         best = min(best, clock() - t)
         assert r.code == 0, (argv, r.err)
+    print(f"PERF {' '.join(argv)}: {best * 1000:.1f} ms {'CPU' if cpu else 'wall'}")
     assert best < budget * SLACK, f"{' '.join(argv)} took {best:.2f} s best of {RUNS} (budget {budget} s)"
     return r
 

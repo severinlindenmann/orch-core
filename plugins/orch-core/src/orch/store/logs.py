@@ -38,6 +38,16 @@ class LogInfo:
     seen_times: tuple[int, int] = (0, 0)  # (mtime_ns, ctime_ns) of the file when it was read: part of its signature
     starts: list[int] = field(default_factory=list)  # starts[i] is the byte offset of the line of seq i + 1
 
+    accs: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        for head in self.heads[len(self.accs) :]:
+            self.accs.append(canon.log_acc(self.acc, head))
+
+    @property
+    def acc(self) -> str:
+        return self.accs[-1] if self.accs else "sha256:" + "0" * 64
+
     @property
     def head(self) -> str | None:
         return self.heads[-1] if self.heads else None
@@ -89,6 +99,7 @@ def read_new_lines(info: LogInfo, *, validate: bool = True) -> list[dict[str, An
                 break
             out.append(e)
             info.starts.append(info.offset)
+            info.accs.append(canon.log_acc(info.acc, head))
             info.heads.append(head)
             info.seq = seq
             info.offset += len(line)

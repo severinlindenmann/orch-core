@@ -523,6 +523,36 @@ fragment, non-ASCII character or a part starting with `-`.
 Links: a repo row is `/w/DEMO/addon/repos/repos?tab.repos=structure&row=web-portal` (core opens the row whose key is
 `row`, on any addon page); the ticket list by repo is `/w/DEMO/tickets?repo=web-portal`.
 
+## P2 server (M0)
+
+Implemented 2026-10-11. The addon-local Python package lives in `server/` (including pyproject
+and uv.lock), launched with `uv run orch-dashboard open` or `python -m orch_dashboard open`.
+See [server/README.md](server/README.md) for the complete dev stub + server + Vite instructions,
+auth rules, route table and provisional stream A integration assumptions.
+
+Production builds use `src/main.prod.tsx` and `src/production/Shell.tsx`: dark sidebar,
+UUID workspace switcher, person identity, minimal Today/needs and paged tickets. Navigation
+comes from `/api/session` per-workspace features. All other mock pages/actions are absent.
+The mock app stays the default Vite/test/layout entry; its singleton moved to `api/mockApi.ts`
+behind the compatibility `api/client.ts`. Fetch transport has no runtime mock dependency.
+The build rejects mock modules and copies assets into the wheel's package tree.
+
+M0 HTTP reads map to fixed host calls: workspaces → `host.list`, `addon.list`, `workspace.show`,
+`member.list`, `needs`; identity/me → `whoami`, roster and host status; today → `needs`;
+tickets → `ticket.query`. Browser input cannot choose operations, paths or principals.
+Adapters use existing UI type projections with missing fields explicitly unavailable.
+No signing, factor handling, mutation endpoint or browser subscription is present.
+
+The server checks UID and workspace/person pins from the private host registry, not config.json.
+`serve_http` is a server-side addon policy check, not a host security boundary. Control discovery
+and registry container shapes need stream A confirmation (R11). Reserved P1 read wrappers are
+listed in `devhost/reserved.py`, excluded from the wheel, gated by ORCH_DEV and `.orch-dev`.
+The polling stub invalidates subscriptions on change; real journal replay and browser live
+updates remain M1. Op/version capability checks hide unavailable features.
+
+CI now runs dashboard Node checks and Python 3.11/3.14 checks in `.github/workflows/dashboard.yml`.
+No core files or core CI were changed. Real-port/browser/layout and real-host S1/S2 verification
+remain acceptance work in the dev-kit; none of #304–#306 is closed by these stub tests.
 ## Owner answers applied — 11 Oct morning (U8)
 
 These decisions supersede earlier open questions and defaults in this handover.

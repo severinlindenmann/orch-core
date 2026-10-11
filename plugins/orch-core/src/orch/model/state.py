@@ -51,6 +51,16 @@ class State:
     _core: Core = field(repr=False, compare=False)
     _ctx: Ctx = field(repr=False, compare=False)
 
+    def revocation_evidence(self) -> dict[str, dict[str, Any]]:
+        """Effective revocations, including permanent tombstones; detached from replay state."""
+        return copy.deepcopy(self._core.ws.revocations)
+
+    def device_evidence(self, device: str) -> dict[str, Any]:
+        ws = self._core.ws
+        dev = ws.devices[device]
+        person = ws.members.get(dev.person) or ws.former[dev.person]
+        return {"device_cert": copy.deepcopy(dev.cert), "pk_pub": person.pk_pub}
+
     def visible_to(self, person: str) -> Mapping[str, TicketView]:
         """The tickets ``person`` may see (§9): what a reader, the CLI or the relay may show them."""
         core = self._core
@@ -101,10 +111,6 @@ def replay(
     ctx = Ctx(verifier, expected_workspace_id, expected_genesis, verb_events=verb_events)
     core = Core()
     workspace_events = list(workspace_events)
-    scan = Core()  # §5.10: which workspace seqs a ticket event may not name, known before the tickets are walked
-    for e in workspace_events:
-        engine.note_restore_window(scan, e)
-    core.rwin_forbidden = scan.rwin_forbidden
     # Each log's lines are walked in file order, never sorted (§5.5 Reading); the logs are merged by the key below.
     # ``heapq.merge`` only picks the smallest head, so a line out of place in its log stays out of place and breaks it.
     streams = [
@@ -156,8 +162,6 @@ def _fork(core: Core) -> Core:
         created_at=core.created_at,
         last_pos=core.last_pos,
         logs=dict(core.logs),
-        rwin_forbidden=set(core.rwin_forbidden),
-        rwin_last=core.rwin_last,
     )
 
 

@@ -15,6 +15,9 @@ SCRIPT = textwrap.dedent(
     import orch.ops.base as base
     from orch.cli.main import main
     audit.warm()
+    import orch.host.ownership as own
+    # direct-mode machinery (reads the agent pins outside the roots); the host has no use for it
+    own.DirectGuard = lambda *a, **k: None
     host = Capabilities.host((spec["root"], spec["state"]))
     base.Capabilities.direct = classmethod(lambda cls, env=None, clock=time.time: host)  # H4 does this for real
     audit.install([spec["root"], spec["state"]])

@@ -172,6 +172,7 @@ def test_source_and_accumulator_transitions(case):
     if "host_scenario" in case:
         run_scenario(case["host_scenario"])
     assert cps.verify_object(WSK, case["offered"])
+    alarms: list[str] = []
     got = cps.judge_offer(
         case["held"]["o"] if case["held"] else None,
         case["offered"]["o"],
@@ -184,8 +185,12 @@ def test_source_and_accumulator_transitions(case):
         applied=case["applied"],
         known_revocations=case.get("known_revocations", []),
         pinned_delegation=case["pinned_delegation"],
+        known_devices=case.get("known_devices"),
+        learned_later=case.get("learned_later_in_walk", []),
+        alarms=alarms,
     )
     assert got == (case["expect"], case["recorded"])
+    assert bool(alarms) == case.get("alarm", False)
     if "learned_later_in_walk" in case:  # only the receiver's order separates this case from a refusal
         again = cps.judge_offer(
             case["held"]["o"],

@@ -98,6 +98,9 @@ def judge_offer(
     wsk_pub: bytes | None = None,
     known_revocations: Collection[Mapping[str, Any]] = (),
     pinned_delegation: Mapping[str, Any] | None = None,
+    known_devices: Mapping[str, Mapping[str, Any]] | None = None,
+    learned_later: Collection[Mapping[str, Any]] = (),
+    alarms: list[str] | None = None,
 ) -> tuple[str, str | None]:
     """Judge an authenticated workspace checkpoint ``o`` against the held one; ancestry is mandatory for growth (§5.10).
 
@@ -110,6 +113,12 @@ def judge_offer(
     additionally replay authorization; this log-free receiver uses the delegation-owner policy. A missing or
     non-folding proof returns ``sync.incomplete``.
 
+    ``known_devices`` maps every device id the receiver knows (active or revoked) to ``{"person_id", "pk_pub"?}``:
+    listed revocation evidence for such a device must be of that person and key.
+    ``learned_later`` are revocations first learned after this judgment (a higher-``n`` bundle of the walk): they never
+    refuse; a ``compromised`` one of the signer of an accepted restore appends its device id to ``alarms``.
+    This function judges one transition against a caller-supplied snapshot; the walk, its serialization and the
+    persistence of judgments belong to the receiver runtime.
     ``known_revocations`` are the revocations the receiver holds when it judges this transition, in its own order:
     learned before the sync or from lower-``n`` bundles already judged in the walk. Any of them for the signer
     refuses (C3); one first learned from a higher-``n`` bundle must not be passed (a compromised one only alarms).
@@ -139,7 +148,18 @@ def judge_offer(
     restored = None
     if restore is not None:
         verdict = _judge_restore(
-            held, offered, h, o, restore, proofs, pinned_genesis, applied, wsk_pub, known_revocations, pinned_delegation
+            held,
+            offered,
+            h,
+            o,
+            restore,
+            proofs,
+            pinned_genesis,
+            applied,
+            wsk_pub,
+            known_revocations,
+            pinned_delegation,
+            known_devices or {},
         )
         if verdict[0] != "ok":
             return verdict
@@ -154,6 +174,12 @@ def judge_offer(
             return "chain.diverged", None
         if not _extension(old, entry, proofs.get(log, [])):
             return "sync.incomplete", None
+    if restored and alarms is not None:
+        signer = restore["event"]["actor"]["device"][2:]  # type: ignore[index]
+        for later in learned_later:  # learned after the judgment: an alarm, never a refusal (C3)
+            rev = later["revocation"]["o"]
+            if rev["device_id"] == signer and rev["reason"] == "compromised":
+                alarms.append("d_" + signer)
     return "ok", restored[1] if restored else None
 
 
@@ -169,6 +195,7 @@ def _judge_restore(
     wsk_pub: bytes | None,
     known_revocations: Collection[Mapping[str, Any]],
     pinned_delegation: Mapping[str, Any] | None,
+    known_devices: Mapping[str, Mapping[str, Any]],
 ) -> tuple[str, Any]:
     """The restore half of :func:`judge_offer`: ``("ok", (log, id))`` or a refusal ``(code, None)``."""
     from orch.identity import CryptoVerifier
@@ -231,6 +258,13 @@ def _judge_restore(
         signer = ev["actor"]["device"][2:]
         if signer in carried:
             return diverged  # the bundle revokes its own signer: a log-free receiver cannot place the revocation
+        for device, got in carried.items():
+            mine = known_devices.get(device)
+            if mine is not None and (
+                got["revocation"]["o"]["person_id"] != mine["person_id"]
+                or ("pk_pub" in mine and got["pk_pub"] != mine["pk_pub"])
+            ):
+                return diverged  # evidence of another person or key for a device the receiver knows (active or revoked)
         for known in known_revocations:
             rev = known["revocation"]["o"]
             got = carried.get(rev["device_id"])
@@ -403,6 +437,7 @@ class Checkpoints:
         at: str,
         logs: Mapping[str, LogInfo],
         baseline: Mapping[str, Any] | None = None,
+        floor_n: int = 0,
     ) -> str | None:
         ws = logs[WORKSPACE]
         old = baseline or self.workspace()
@@ -425,7 +460,7 @@ class Checkpoints:
             "kind": "workspace_checkpoint",
             "workspace_id": self.workspace_id,
             "genesis": genesis,
-            "n": max(self.highest_n(), old["o"]["n"] if old and "o" in old else 0) + 1,
+            "n": max(self.highest_n(), old["o"]["n"] if old and "o" in old else 0, floor_n) + 1,
             "at": max(at, old["o"]["at"]) if old and "o" in old else at,
             "workspace_log": {"seq": ws.seq, "head": ws.head, "acc": ws.acc},
             "tickets": dict(sorted(tickets.items())),

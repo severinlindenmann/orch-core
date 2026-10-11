@@ -353,8 +353,8 @@ def test_transition_keeps_only_the_abandoned_suffix(env):
             wsk_pub=env.wsk_pub,
             pinned_genesis=store.state.workspace.genesis,
             workspace_id=store.workspace_id,
-            now="2100-01-01T00:00:00Z",
-            pinned_delegation=transition["delegation"],
+            now=transition["T"]["o"]["at"],  # the test clock stamped T
+            pinned_delegation=store._genesis_event["delegation"],  # the pin, never the bundle's own delegation
         )[0]
         == "ok"
     )
@@ -381,7 +381,32 @@ def test_null_source_refused_when_workspace_checkpoint_files_are_lost(env, evide
     before = env.read_events("workspace")
     with pytest.raises(StoreError) as exc:
         store.append(candidate, log="workspace")
-    assert exc.value.code == "chain.diverged" and env.read_events("workspace") == before
+    assert exc.value.code in ("chain.diverged", "checkpoint.missing") and env.read_events("workspace") == before
+
+
+def test_an_ordinary_append_does_not_rebaseline_after_lost_checkpoints(env):
+    """Opus #377 finding 2: with both checkpoint files gone, an ordinary append must not write a fresh n=1 checkpoint
+    that a restore could then name as its source."""
+    store = env.bootstrap()
+    high = store._pins.held()["o"]["n"]
+    (store._pins.dir / "checkpoint.json").unlink()
+    store._checkpoints._workspace_path.unlink()
+    before = env.read_events("workspace")
+    with pytest.raises(StoreError) as exc:
+        store.append(env.grant_event(), log="workspace")
+    assert exc.value.code == "checkpoint.missing" and env.read_events("workspace") == before
+    assert store._pins.held() is None and store._checkpoints.workspace() is None
+    with pytest.raises(StoreError):
+        store.restore_facts("workspace")
+    assert store._pins.high_n() == high
+
+
+def test_checkpoint_n_never_restarts_below_the_durable_high_water(env):
+    store = env.bootstrap()
+    high = store._pins.held()["o"]["n"]
+    store._checkpoints._workspace_path.unlink()  # .state lost, the host pin survives
+    store.append(env.grant_event(), log="workspace")
+    assert store._checkpoints.workspace()["o"]["n"] == high + 1 == store._pins.held()["o"]["n"]
 
 
 def _facts_with_null_source(store):

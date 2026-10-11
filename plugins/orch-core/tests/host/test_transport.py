@@ -109,9 +109,11 @@ def handler(session, frame, request):
 
 @pytest.fixture
 def secure_tree():
-    # /tmp is sticky: §2 correctly forbids a user-owned direct child. Use a short
-    # directory under this checked-out repository, whose ancestors are trusted.
+    # /tmp is sticky: §2 correctly forbids a user-owned direct child. Use a short directory under a trusted
+    # ancestor: the checkout root when the socket path fits (100 bytes), else the home directory.
     root = Path(__file__).resolve().parents[4]
+    if len(str(root).encode()) > 40:
+        root = Path.home().resolve()
     while True:
         path = root / (".h" + secrets.token_hex(2))
         try:

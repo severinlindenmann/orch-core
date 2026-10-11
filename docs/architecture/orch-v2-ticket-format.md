@@ -937,7 +937,10 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
   alarm, a `lost` or `retired` one changes nothing. Judgment is a serialized receiver operation using a defined
   revocation snapshot. Persist the judgment and its position in the walk atomically with transition state; recovery
   preserves that order. (A malicious relay can still make two receivers decide differently by the order it delivers
-  evidence in: this is local knowledge, not global agreement.) A restore whose own `revocations` list revokes its
+  evidence in: this is local knowledge, not global agreement.) orch-core's `judge_offer` judges one transition
+  against a caller-supplied snapshot (held H, known devices and revocations, clock) and reports the C3 alarm for a
+  `compromised` revocation learned later; the walk, its serialization and the persistence of judgments belong to the
+  receiver runtime. A restore whose own `revocations` list revokes its
   signer is refused for every reason, with or without local knowledge.
   **Recovery from a refused transition.** Refusal preserves H and revocation evidence. Recovery requires an
   explicit owner-authenticated pairing/baseline procedure, including a documented person-key recovery path when no
@@ -949,8 +952,8 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
   the blocked transition is skipped only because the owner-authenticated baseline lies past it, never because a
   relay reports no transition, an empty log or a missing checkpoint; every revocation and tombstone the receiver
   holds carries over and still refuses later transitions by those devices.
-  For a device the receiver already knows to be revoked, a listed entry's person and `pk_pub` must be the known
-  ones. Revocation completeness applies to workspace restores only; a ticket restore carries `[]`.
+  For a device the receiver already knows (active or revoked), a listed entry's `person_id` and `pk_pub` must be the
+  ones it knows for that device. Revocation completeness applies to workspace restores only; a ticket restore carries `[]`.
   `source` must equal `{n: C.o.n, hash: h_checkpoint(C.o)}` of a schema-valid, WSK-signed workspace checkpoint of the
   pinned workspace/genesis, and must equal the receiver's held H atomically. Null is allowed only without H.
   Both log kinds bind the same workspace checkpoint. `abandoned` names the highest known checkpoint entry above
@@ -968,7 +971,11 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
   transitions, and drops one whose log slot (`line.seq`) holds another head or whose T the held checkpoint has
   passed (a higher `n`). P1/P2 use the last locally accepted workspace checkpoint as source, null only before any
   exists: a workspace log at seq ≥ 1 counts as checkpoint evidence, so a host that lost every checkpoint file
-  refuses a null source (`chain.diverged`) instead of starting a new baseline.
+  refuses a null source (`chain.diverged`) instead of starting a new baseline. Nor does an ordinary append start
+  one: with no workspace checkpoint held (host pin nor `.state`) once the log has grown past the genesis, the host
+  writes no checkpoint and refuses appends (`checkpoint.missing`). A crash keeps the previous checkpoint, so this is
+  never a crash state and the crash-repair rule does not cover it; an owner repairs it. Checkpoint `n` never
+  restarts below the durable high-water mark the host keeps in its state dir.
   Pairing `approved` carries that exact held reference, retained and retrievable, never downgraded; relay-reported
   emptiness cannot override it. P3 publishes these locally persisted transitions.
 - **Restore** (§12 O5). After a rollback (a restored backup, a git force-push of the workspace repo) an owner signs

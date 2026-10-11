@@ -758,7 +758,9 @@ def checkpoint_vector() -> dict[str, Any]:
         "checkpoint.future); a workspace_n_offers case with a `held` key (null: an uninitialized receiver) replaces "
         "workspace_n_held; every transition case gives `pinned_delegation`, the workspace's pinned (card / genesis) "
         "delegation whose `o` the carried, PK-verified one must equal; learned_later_in_walk lists revocations the "
-        "receiver learns only from a higher-n bundle (never passed as known); known_revocations entries may carry `pk_pub`. "
+        "receiver learns only from a higher-n bundle (never passed as known; `alarm: true` when it must raise the C3 "
+        "alarm); `known_devices` maps device_id to the person_id and pk_pub the receiver knows for it (active or "
+        "revoked); known_revocations entries may carry `pk_pub`. "
         "Every refusing transition keeps all signatures valid except the one a case names as its defect.",
         "note": KEY_NOTE,
         "workspace_id": W,
@@ -1199,6 +1201,25 @@ def transition_vectors() -> list[dict[str, Any]]:
         over={"revocations": [rev_entry("mara", "lena1", "compromised")]},
         known_revocations=[{"revocation": ow.make_revocation("lena", "lena1", "lost")}],
     )
+    # The same binding for a device the receiver knows as active (known_devices), with no revocation of it known.
+    lena_device = {
+        ow.device_id(key("dk_lena1").pub): {
+            "person_id": ow.person_id(key("pk_lena").pub),
+            "pk_pub": key("pk_lena").pub_b64u,
+        }
+    }
+    variant(
+        "foreign_evidence_for_a_known_active_device",
+        "chain.diverged",
+        over={"revocations": [rev_entry("mara", "lena1", "compromised")]},
+        known_devices=lena_device,
+    )
+    variant(
+        "own_evidence_for_a_known_active_device",
+        "ok",
+        over={"revocations": [rev_entry("lena", "lena1", "lost")]},
+        known_devices=lena_device,
+    )
     # A bundle that revokes its own signer, with no local revocation knowledge: refused for every reason.
     for reason in ("lost", "retired", "compromised"):
         variant(
@@ -1349,6 +1370,7 @@ def transition_vectors() -> list[dict[str, Any]]:
         "walk_compromised_learned_from_higher_n_bundle_alarm_only",
         "ok",
         learned_later_in_walk=sev_compromised,
+        alarm=True,
         note="learned_later_in_walk comes from a higher-n bundle judged after this one: it is not known_revocations "
         "here; the receiver commits this transition and raises an alarm",
     )

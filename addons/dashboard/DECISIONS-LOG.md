@@ -1174,6 +1174,39 @@ The owner answered the eight open questions of REVIEW.md. Items 1, 2, 5 and 6 ch
 - **Why:** The format doc (F1 gap table) says a refusal is not a log entry: the log is signed history of what happened to the ticket, and a refused request changed nothing.
 - **Revert:** Restore the `agent.refused` events in `fixtures/demo.json` and `busy/agents.ts`, the `agent.refused` cases in `derive.ts`, `History.tsx` and `addons/activity.ts`, `'agent'` in `CORE_PREFIXES`, and read refusals in `store.agentActivity` from events again; drop `SessionRefusal`, `ticketRefusals`, the `/refusals` route and the `SessionRefusals` block.
 
+## 2026-10-11 P2 M0: private local server and read-only shell
+
+- **Decision:** Add `server/` with pinned FastAPI/uvicorn, strict Host/Origin/body checks,
+  fragment launch exchange, memory-only bearer sessions, UID-checked private IPC and HMAC
+  port ownership. Use v1 frames with trusted registry pins and fixed typed HTTP routes.
+  Build a production-only read shell, with feature-gated navigation and nullable projections
+  of existing UI types; keep the complete mock app as the Vite/test/layout default. Package
+  frontend assets in the wheel; core and the dev-only P1 stub never ship in it. Place pyproject
+  and uv.lock under server per the M0 brief (the design tree sketched them one directory up).
+- **Why:** M0 must exercise real host-shaped reads without shipping simulated state or opening
+  signing paths. The existing mock types contain data v1 does not provide; filling those gaps
+  with mock conventions would make the read shell misleading. P1's model remains authoritative
+  in the dev-marked stub. Isolate provisional host.list/control/registry shapes until stream A
+  confirms them. Polling stub invalidation is conservative; durable replay is real-host work.
+- **Revert:** Revert the M0 server/production-entry commits and dashboard CI workflow. The
+  mock app remains reachable throughout; restore its former client/transport singleton wiring
+  and Vite production entry if removing the package. No core migration or persisted session
+  data needs reversing.
+
+## 2026-10-11 P2 M0 fix round 1
+
+- **Decision:** Open a private redirect file instead of a credential-bearing browser argument;
+  expire launch codes after 30 seconds and delete redirects on exchange or after 60 seconds.
+  Throttle failed exchanges only. Require explicitly marked, isolated dev state and contain
+  sockets there; clean them on SIGTERM/SIGINT. Scope cross-tab logout to the failed token,
+  retry tab discovery once after two seconds, and wait for session capabilities before
+  rendering availability. Use a root favicon, pinned CI actions without persisted credentials,
+  bounded CI jobs, validated welcome shapes, and retrying layout startup with Chrome cleanup.
+- **Why:** Apply all eleven review findings without changing core or starting port listeners.
+  Valid launches must survive bogus attempts; stale tabs must not clear newer sessions;
+  malformed workspace hosts must fail as one row rather than the whole list.
+- **Revert:** Revert this fix-round commit. That restores the reviewed M0 behavior and its
+  known security and reliability defects; no data migration is involved.
 ## 2026-10-11 U8 — owner answers
 
 - **Decision:** Mandates preview explicitly permits code review, main, first peer send, public publish and restore/purge;

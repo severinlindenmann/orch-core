@@ -861,19 +861,26 @@ export interface ActionResult {
 
 export interface ApiErrorBody {
   ok: false
-  error: { code: string; message: string; hint?: string; retryable: boolean }
+  exit?: number
+  error: { code: string; message: string; hint?: string; retryable: boolean; retry_after_ms?: number }
 }
 
 export class ApiError extends Error {
   readonly status: number
   readonly code: string
   readonly hint?: string
-  constructor(status: number, body: ApiErrorBody['error']) {
+  readonly retryable: boolean
+  readonly retry_after_ms?: number
+  readonly exit?: number
+  constructor(status: number, body: ApiErrorBody['error'], exit?: number) {
     super(body.message)
     this.name = 'ApiError'
     this.status = status
     this.code = body.code
     this.hint = body.hint
+    this.retryable = body.retryable
+    this.retry_after_ms = body.retry_after_ms
+    this.exit = exit
   }
 }
 

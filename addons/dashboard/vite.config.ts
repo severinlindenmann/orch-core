@@ -3,10 +3,23 @@ import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vitest/config'
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   // Absolute asset paths: the app owns real paths (/w/DEMO/settings/addon/x), so a reload there must still find /assets.
   base: '/',
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), {
+    name: 'production-entry',
+    transformIndexHtml: { order: 'pre', handler(html) {
+      if (command !== 'build') return html
+      return html.replace('/src/main.tsx', '/src/main.prod.tsx')
+        .replace(/    <link rel="preconnect"[^>]*>\n/g, '')
+        .replace(/    <link\s+href="https:\/\/fonts\.googleapis\.com[\s\S]*?\/>\n/g, '')
+    } },
+    generateBundle() {
+      for (const id of this.getModuleIds()) {
+        if (id.includes('/src/mocks/') || id.includes('/api/mockApi.')) throw new Error(`Mock module in production: ${id}`)
+      }
+    },
+  }],
   resolve: { alias: { '@': path.resolve(import.meta.dirname, './src') } },
   build: {
     rolldownOptions: {
@@ -30,4 +43,4 @@ export default defineConfig({
     // Headroom for loaded machines: jsdom renders are CPU-bound, and with several runs/CPU-starved workers even 300 ms tests passed 5 s.
     testTimeout: 10000,
   },
-})
+}))

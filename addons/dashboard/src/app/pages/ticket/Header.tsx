@@ -212,16 +212,15 @@ function ClosedNotice({ closed, name }: { closed: ClosedInfo; name: (id: string)
 }
 
 export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; signing?: boolean }) {
-  const ws = useWorkspace().workspace?.id
+  const { workspaces } = useWorkspace()
+  // The ticket's own workspace: the rows come from it, so they are keyed by it too and its gone / revoked / ready
+  // purge reaches them (the live cache rules only see keys with the id).
+  const home = workspaceOfTicket(ticket.key, workspaces)?.id
   const isVisible = useIsVisibleKey()
   const children = useQuery({
-    // Keyed by workspace so a gone / revoked / ready purge reaches it (the live cache rules only see keys with the id).
-    queryKey: ['ticket-children', ws, ticket.key],
-    queryFn: async () => {
-      const home = workspaceOfTicket(ticket.key, await api.getWorkspaces())
-      return home ? api.listTickets(home.id, { parent: ticket.key }) : []
-    },
-    enabled: ticket.type === 'epic' && !!ws,
+    queryKey: ['ticket-children', home, ticket.key],
+    queryFn: () => (home ? api.listTickets(home, { parent: ticket.key }) : []),
+    enabled: ticket.type === 'epic' && !!home,
   })
   const restricted = ticket.visibility !== 'workspace'
   const shown = ticket.labels.slice(0, MAX_LABELS)

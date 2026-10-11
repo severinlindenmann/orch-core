@@ -10,7 +10,8 @@ from tests.ops.helpers import OTHER, Cli
 
 
 @pytest.mark.parametrize("mode", [[], ["--log"], ["--diff"]])
-def test_show_reads_the_event_tail_once(ws, cli, monkeypatch, mode):
+@pytest.mark.parametrize("change,detail", [("add", "AC2 added"), ("edit", "AC1 edited"), ("remove", "AC1 removed")])
+def test_show_reads_the_event_tail_once(ws, cli, monkeypatch, mode, change, detail):
     from orch.ops.commands import show
     from orch.store import Store
 
@@ -18,8 +19,12 @@ def test_show_reads_the_event_tail_once(ws, cli, monkeypatch, mode):
     cli("claim", "1")
     cli("ac", "add", "first")
     after = ws.events("1")[-1]["seq"]
-    cli("ac", "add", "second")
-    cli("ac", "add", "third")
+    values = [] if change == "remove" else [{"id": "AC1", "text": "edited" if change == "edit" else "first"}]
+    if change == "add":
+        values.append({"id": "AC2", "text": "second"})
+    ws.store = ws.other()
+    ws.update(ws.uid("1"), {"ticket.acceptance": values})
+    ws.store.close()
     reads = []
     real = Store.events
 
@@ -41,8 +46,8 @@ def test_show_reads_the_event_tail_once(ws, cli, monkeypatch, mode):
         finally:
             store.close()
     assert reads == [(after, None)]
-    assert "acceptance set (AC1, AC2)" in out
-    assert "AC3 added" in out
+    assert detail in out
+    assert "acceptance set" not in out
 
 
 def seed(cli):
@@ -322,3 +327,13 @@ def test_list_prints_and_counts_only_what_the_actor_can_see(ws, cli, anon):
     d = anon.j("list", "--limit", "1")
     assert [t["key"] for t in d.data["tickets"]] == ["DEMO-0006"] and "Ticket 0" not in d.out
     assert "+4 more" in cli("list", "--limit", "2").out  # the owner's agent sees all six
+
+
+def test_claim_hint_does_not_count_hidden_tickets(ws, cli, anon):
+    restricted(ws, cli)
+    ws.sign("2", "visibility.changed", visibility={"restricted": [ws.owner.ref]})
+    hint = anon("status").out.splitlines()[-1]
+    assert hint == 'next: orch new "TITLE"'
+    cli("new", "another secret")
+    ws.sign("3", "visibility.changed", visibility={"restricted": [ws.owner.ref]})
+    assert anon("status").out.splitlines()[-1] == hint

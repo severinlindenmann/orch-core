@@ -215,3 +215,25 @@ def test_the_claim_hint_looks_at_a_capped_number_of_tickets(ws, cli, monkeypatch
     assert last(cli("next")) == "next: orch claim DEMO-0004"
     monkeypatch.setattr(views, "CLAIM_HINT_SCAN", 3)
     assert last(cli("status")) == "next: orch claim --next"
+
+
+def test_claim_hint_stops_dependency_loading_at_its_budget(ws, cli, monkeypatch):
+    from orch.ops import views
+    from orch.store import Store
+
+    for i in range(8):
+        cli("new", f"T{i}")
+    for i in range(1, 8):
+        assert cli("set", str(i), f"blocked_by=DEMO-{i + 1:04d}").code == 0
+    monkeypatch.setattr(views, "CLAIM_HINT_SCAN", 1)
+    monkeypatch.setattr(views, "CLAIM_HINT_WORK", 3)
+    reads = []
+    real = Store._spend_load
+
+    def spend(store):
+        real(store)
+        reads.append(1)
+
+    monkeypatch.setattr(Store, "_spend_load", spend)
+    assert last(cli("status")) == "next: orch next"
+    assert len(reads) <= 3

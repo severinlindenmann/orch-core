@@ -11,6 +11,7 @@ from orch.cli import render
 from orch.model.claims import in_family
 from orch.ops import decisions
 from orch.ops.runtime import short
+from orch.store.store import LoadBudgetExceeded
 
 
 def short_gate_hash(h: str | None) -> str:
@@ -69,14 +70,19 @@ def fill_hint(view: Any, gate: str) -> str | None:
     return None
 
 
-CLAIM_HINT_SCAN = 40  # open tickets a hint looks at (one load): a hint must stay cheap on every claimless status
+CLAIM_HINT_SCAN = 40  # open candidates
+CLAIM_HINT_WORK = 120  # ticket reads and key ownership checks, including dependencies
 
 
 def claim_hint(c: Any) -> str:
     """What to do when there is no claim: claim a ticket that is free, else create one (never a command that fails).
     It looks at the best :data:`CLAIM_HINT_SCAN` open tickets only; when none of them is free and there are more, it
     says ``orch next``, which looks at all of them."""
-    view, complete = _free_ticket(c, CLAIM_HINT_SCAN)
+    try:
+        with c.store.load_budget(CLAIM_HINT_WORK):
+            view, complete = _free_ticket(c, CLAIM_HINT_SCAN)
+    except LoadBudgetExceeded:
+        return "orch next"
     if view is not None:
         return "orch claim --next"
     return 'orch new "TITLE"' if complete else "orch next"
@@ -184,9 +190,11 @@ def event_line(e: dict[str, Any], state: dict[str, dict[str, Any]] | None = None
     return f"#{e['seq']} {t} {who}" + (f": {detail}" if detail else "")
 
 
-def event_lines(all_events: list[dict[str, Any]], after: int) -> list[str]:
+def event_lines(
+    all_events: list[dict[str, Any]], after: int, state: dict[str, dict[str, Any]] | None = None
+) -> list[str]:
     """The lines of the events after ``after``; the earlier ones are read only to know what an update changed."""
-    state: dict[str, dict[str, Any]] = {"acceptance": {}, "tasks": {}} if after == 0 else {}
+    state = {"acceptance": {}, "tasks": {}} if state is None else state
     out = []
     for e in all_events:
         if e["seq"] > after:
@@ -199,7 +207,9 @@ def event_lines(all_events: list[dict[str, Any]], after: int) -> list[str]:
 def log_lines(store: Any, uid: str, after: int) -> tuple[list[str], list[dict[str, Any]]]:
     """Read and render only the requested tail, once."""
     tail = store.events(uid, after=after)
-    return event_lines(tail, after), tail
+    names = {name for name in ("acceptance", "tasks") if any(f"ticket.{name}" in e.get("set", {}) for e in tail)}
+    state = store.event_fields_before(uid, after, names) if after and names else None
+    return event_lines(tail, after, state), tail
 
 
 def verified(c: Any, uids: Any, chunk: int = 40) -> Any:

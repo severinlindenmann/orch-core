@@ -170,6 +170,10 @@ class _Hint:
     created_at: str | None
 
 
+class LoadBudgetExceeded(Exception):
+    """A best-effort read used its dependency budget."""
+
+
 class Store:
     """A workspace directory. Use :meth:`open`; ``append`` is the only way to add an event.
 
@@ -207,6 +211,7 @@ class Store:
         self.reports: list[Report] = []
         self._logs: dict[str, LogInfo] = {}
         self._loaded: set[str] = set()
+        self._load_budget: int | None = None
         self._state: State | None = None
         self._read_errors: dict[str, str] = {}
         self._diverged: dict[str, Divergence] = {}
@@ -344,6 +349,22 @@ class Store:
                 return []
             last = info.seq if limit is None else min(info.seq, after + limit)
             return self._read_events(uid, max(after, 0) + 1, last)
+
+    def event_fields_before(self, uid: str, seq: int, names: set[str]) -> dict[str, dict[str, Any]]:
+        """Find the last criteria and tasks before a tail, without replaying the log."""
+        state: dict[str, dict[str, Any]] = {}
+        with self._locked():
+            self._ensure({uid})
+            seq = min(seq, self._logs[uid].seq)
+            while seq > 0 and names - state.keys():
+                first = max(1, seq - 31)
+                for event in reversed(self._read_events(uid, first, seq)):
+                    if event["type"] == "ticket.updated":
+                        for name in names:
+                            if name not in state and f"ticket.{name}" in event.get("set", {}):
+                                state[name] = {x["id"]: x for x in event["set"][f"ticket.{name}"]}
+                seq = first - 1
+        return {"acceptance": {}, "tasks": {}, **state}
 
     @property
     def can_write(self) -> bool:
@@ -572,6 +593,7 @@ class Store:
         limit = int(self._clock()) + FUTURE_SLACK
         best: tuple[int, int, str, int] | None = None
         for uid, h in self._hints.items():
+            self._spend_load()
             hit = self._last_ok.get(uid)
             if hit is None or hit[0] != h.sig:
                 pos = None
@@ -629,6 +651,7 @@ class Store:
             uid = todo.pop()
             if uid in tickets:
                 continue
+            self._spend_load()
             info = LogInfo(uid, safe_join(self.root, f"tickets/{uid}/events.jsonl"))
             tickets[uid] = read_new_lines(info)
             self._logs[uid] = info
@@ -726,6 +749,25 @@ class Store:
             self._loaded |= need
             self._load()
             self._enforce_revocations()
+
+    @contextlib.contextmanager
+    def load_budget(self, limit: int) -> Iterator[None]:
+        """Bound ticket reads and creation checks for an optional hint; restore state on exhaustion."""
+        saved = {**self.__dict__, "_loaded": set(self._loaded)}
+        self._load_budget = limit
+        try:
+            yield
+        except LoadBudgetExceeded:
+            self.__dict__.update(saved)
+            raise
+        finally:
+            self._load_budget = saved["_load_budget"]
+
+    def _spend_load(self) -> None:
+        if self._load_budget is not None:
+            if self._load_budget <= 0:
+                raise LoadBudgetExceeded
+            self._load_budget -= 1
 
     def load(self, uids: Iterable[str]) -> None:
         """Replay and check these tickets in one go (one at a time each load replays everything loaded again)."""
@@ -1013,6 +1055,7 @@ class Store:
             self._unverified = set(self._hints)
             return out
         for uid, h in self._hints.items():
+            self._spend_load()
             hit = self._created_ok.get(uid)
             if hit is None or hit[0] != h.sig:
                 hit = None

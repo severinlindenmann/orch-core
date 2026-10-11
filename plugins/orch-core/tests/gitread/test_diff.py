@@ -1,0 +1,178 @@
+"""``diff`` equals ``git diff --no-ext-diff --no-textconv --no-renames`` on fixtures (H3b1), and base/head follow
+section 0.8: head is the branch tip, base the merge base with the default branch (``main``, then ``master``), else
+the head's first parent, else ``observe.unavailable``."""
+
+from __future__ import annotations
+
+import base64
+import os
+
+import pytest
+
+from orch.gitread import local
+from orch.gitread.errors import Unavailable
+
+from .conftest import Repo
+
+GIT_DIFF = ("diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--no-color")
+
+
+def patch_of(result: dict) -> bytes:
+    return base64.b64decode(result["patch"])
+
+
+def build_fixture(r: Repo) -> tuple[str, str]:
+    """A ``main`` base and a ``feat`` head covering every kind of change. Returns (base, head)."""
+    body = "".join(f"line {i}\n" for i in range(60))
+    r.write("text.txt", body)
+    r.write("func.c", "int a;\n\nint main(void)\n{\n" + "".join(f"    x({i});\n" for i in range(40)) + "}\n")
+    r.write("bin.dat", b"\x00\x01\x02binary\x00" * 50)
+    r.write("bin_gone.dat", b"\x00gone")
+    r.write("mode.sh", "echo hi\n")
+    r.write("mode_and_text.sh", "a\nb\n")
+    r.write("empty_stays.txt", "")
+    r.write("becomes_empty.txt", "something\n")
+    r.write("from_empty.txt", "")
+    r.write("empty_deleted.txt", "")
+    r.write("deleted.txt", "bye\nbye\n")
+    r.write("noeol.txt", "no newline")
+    r.write("to_link", "was a file\n")
+    r.write("file_to_dir", "x\n")
+    r.write("with space.txt", "s\n")
+    r.write("café.txt", "accent\n")
+    r.write('q"uote.txt', "quoted\n")
+    r.write("dir/a.txt", "a\n")
+    r.write("dir/sub/b.txt", "b\n")
+    r.write("moved_from.txt", "".join(f"moved {i}\n" for i in range(20)))
+    os.symlink("text.txt", r.path / "link")
+    base = r.commit("base")
+    r.git("checkout", "-q", "-b", "feat")
+    r.write("text.txt", body.replace("line 5\n", "line five\n").replace("line 40\n", "") + "tail\n")
+    r.write("func.c", "int a;\n\nint main(void)\n{\n" + "".join(f"    x({i});\n" for i in range(40) if i != 30) + "}\n")
+    r.write("bin.dat", b"\x00\x01\x02binary\x00" * 51)
+    (r.path / "bin_gone.dat").unlink()
+    r.write("new_bin.png", b"\x89PNG\r\n\x1a\n\x00\x00")
+    (r.path / "mode.sh").chmod(0o755)
+    r.write("mode_and_text.sh", "a\nB\n", mode=0o755)
+    r.write("becomes_empty.txt", "")
+    r.write("from_empty.txt", "now text\n")
+    (r.path / "empty_deleted.txt").unlink()
+    r.write("new_empty.txt", "")
+    (r.path / "deleted.txt").unlink()
+    r.write("noeol.txt", "no newline, changed")
+    (r.path / "to_link").unlink()
+    os.symlink("text.txt", r.path / "to_link")
+    (r.path / "file_to_dir").unlink()
+    r.write("file_to_dir/inner.txt", "inner\n")
+    r.write("with space.txt", "s2\n")
+    r.write("café.txt", "accent 2\n")
+    r.write('q"uote.txt', "quoted 2\n")
+    r.write("dir/sub/b.txt", "b2\n")
+    r.write("dir/new/c.txt", "c\n")
+    (r.path / "link").unlink()
+    os.symlink("func.c", r.path / "link")
+    os.rename(r.path / "moved_from.txt", r.path / "moved_to.txt")  # renames off: a deletion and an addition
+    r.commit("feat")
+    sub = r.sha("HEAD~1")  # a gitlink entry pointing at some commit
+    r.git("update-index", "--add", "--cacheinfo", f"160000,{sub},vendor/sub")
+    r.git("commit", "-q", "-m", "gitlink")
+    head = r.sha("HEAD")
+    return base, head
+
+
+@pytest.mark.parametrize("fmt", ["sha1", "sha256"])
+@pytest.mark.parametrize("packed", [False, True])
+def test_diff_equals_git_on_the_fixture(make_repo, fmt, packed):
+    r = make_repo(object_format=fmt)
+    base, head = build_fixture(r)
+    if packed:
+        r.git("repack", "-adf", "-q", "--depth=10", "--window=50")
+        r.git("pack-refs", "--all")
+    for ctx in (3, 0, 1, 10):
+        want = r.git(*GIT_DIFF, f"-U{ctx}", base, head, raw=True)
+        got = local.diff(r.path, branch="feat", default_branch=None, context=ctx, max_bytes=1048576)
+        assert (got["base_sha"], got["head_sha"]) == (base, head)
+        assert patch_of(got) == want, ctx
+        assert got["truncated"] is False
+    statuses = {f["path"]: f["status"] for f in got["files"]}
+    assert statuses["to_link"] == "T" and statuses["link"] == "M" and statuses["deleted.txt"] == "D"
+    assert statuses["new_bin.png"] == "A" and statuses["moved_to.txt"] == "A" and statuses["moved_from.txt"] == "D"
+    assert statuses["vendor/sub"] == "A"
+    numstat = r.git("diff", "--numstat", "--no-renames", base, head).splitlines()
+    by_path = {f["path"]: f for f in got["files"]}
+    for line in numstat:
+        add, dele, path = line.split("\t", 2)
+        if path.startswith('"'):
+            continue  # a quoted name; checked through the patch text
+        f = by_path[path]
+        if add == "-":
+            assert f["binary"] and (f["add"], f["del"]) == (0, 0)
+        else:
+            assert (f["add"], f["del"]) == (int(add), int(dele)), path
+
+
+def test_base_is_the_merge_base_with_main_not_its_tip(make_repo):
+    r = make_repo()
+    r.write("a.txt", "1\n")
+    r.commit()
+    r.git("checkout", "-q", "-b", "feat")
+    r.write("a.txt", "1\nfeat\n")
+    head = r.commit()
+    r.git("checkout", "-q", "main")
+    r.write("b.txt", "main moved on\n")
+    r.commit()
+    got = local.diff(r.path, branch="feat", default_branch=None)
+    assert got["base_sha"] == r.sha("main~1") and got["head_sha"] == head
+    assert patch_of(got) == r.git(*GIT_DIFF, "main...feat", raw=True)
+
+
+def test_master_is_the_fallback_and_a_declared_default_wins(make_repo):
+    r = make_repo(branch="master")
+    r.write("a.txt", "1\n")
+    first = r.commit()
+    r.git("checkout", "-q", "-b", "trunk")
+    r.write("a.txt", "2\n")
+    trunk = r.commit()
+    r.git("checkout", "-q", "-b", "feat")
+    r.write("a.txt", "3\n")
+    r.commit()
+    assert local.diff(r.path, branch="feat", default_branch=None)["base_sha"] == first  # no main: master
+    assert local.diff(r.path, branch="feat", default_branch="trunk")["base_sha"] == trunk
+
+
+def test_no_merge_base_takes_the_first_parent_and_a_root_commit_is_unavailable(make_repo):
+    r = make_repo()
+    r.write("a.txt", "1\n")
+    r.commit()
+    r.git("checkout", "-q", "--orphan", "lonely")
+    r.write("a.txt", "x\n")
+    root = r.commit("root")
+    with pytest.raises(Unavailable, match="no parent"):
+        local.diff(r.path, branch="lonely", default_branch=None)
+    r.write("a.txt", "y\n")
+    head = r.commit("second")
+    got = local.diff(r.path, branch="lonely", default_branch=None)
+    assert (got["base_sha"], got["head_sha"]) == (root, head)
+    assert patch_of(got) == r.git(*GIT_DIFF, root, head, raw=True)
+
+
+def test_a_missing_branch_is_unavailable(make_repo):
+    r = make_repo()
+    r.write("a.txt", "1\n")
+    r.commit()
+    with pytest.raises(Unavailable, match="does not exist"):
+        local.diff(r.path, branch="nope", default_branch=None)
+
+
+def test_max_bytes_cuts_on_a_line_boundary(make_repo):
+    r = make_repo()
+    r.write("a.txt", "".join(f"{i}\n" for i in range(2000)))
+    r.commit()
+    r.git("checkout", "-q", "-b", "feat")
+    r.write("a.txt", "".join(f"{i} changed\n" for i in range(2000)))
+    r.commit()
+    full = r.git(*GIT_DIFF, "main", "feat", raw=True)
+    got = local.diff(r.path, branch="feat", default_branch=None, max_bytes=1024)
+    cut = patch_of(got)
+    assert got["truncated"] is True and len(cut) <= 1024 and cut.endswith(b"\n") and full.startswith(cut)
+    assert got["files"][0]["add"] == 2000  # the counts are of the whole diff

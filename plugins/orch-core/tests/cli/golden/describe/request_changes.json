@@ -7,7 +7,7 @@
     "cli": "orch request-changes",
     "summary": "Request changes on a gate, with a reason.",
     "who": "human",
-    "usage": "orch request-changes requirements|plan|code --message TEXT [--ref REF] [--dry-run]",
+    "usage": "orch request-changes [REF] requirements|plan|code --message TEXT [--dry-run]",
     "pre": [
       "ticket_exists",
       "gate_current",
@@ -40,12 +40,13 @@
         },
         "ref": {
           "type": "string",
-          "description": "ticket REF (flag)",
+          "description": "ticket REF (DEMO-0043, 43); default: your claim",
           "pattern": "^(?:(?:[A-Z][A-Z0-9]{0,15}-)?[0-9]+(?:/T[1-9][0-9]*)?|T[1-9][0-9]*)$",
           "x-metavar": "REF"
         }
       },
       "x-positional": [
+        "ref",
         "gate"
       ],
       "required": [

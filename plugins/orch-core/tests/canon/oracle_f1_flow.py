@@ -96,21 +96,24 @@ class Sim:
     def applies(self, gate: str) -> bool:
         return g.applies_to(self.pol()[gate], self.t["type"])
 
+    # The semantic layer below is written from the F1 text alone (§5.7 "Generations", "Who may approve", "Removal,
+    # role changes, revoked devices", §5.9 "done rule"); see the PR #361 fix round.
+
     def counting(self, gate: str) -> list[dict[str, Any]]:
-        out, seen = [], set()
+        """§5.7: the approvals of ``gate`` that count, in ``seq`` order. An approval is a ``gate.approved`` or a
+        ``pass`` verdict; it counts while its ``gate_gen`` is the gate's generation and nothing voided it; a person
+        counts once (their first such approval, §5.9 "A duplicate approval by one person counts once")."""
+        persons: dict[str, dict[str, Any]] = {}
         for d in self.dec[gate]:
-            if (
-                d["kind"] in ("approve", "pass")
-                and d["gen"] == self.gen[gate]
-                and not d["voided"]
-                and d["person"] not in seen
-            ):
-                seen.add(d["person"])
-                out.append(d)
-        return out
+            live = d["kind"] in ("approve", "pass") and d["gen"] == self.gen[gate] and not d["voided"]
+            if live:
+                persons.setdefault(d["person"], d)
+        return list(persons.values())  # dicts keep insertion order: first approval of each person, by seq
 
     def first(self, gate: str) -> list[str]:
-        return sorted(d["id"] for d in self.counting(gate)[: self.pol()[gate]["count"]])
+        """``prior.approvals``: the ids of the first ``count`` counting approvals by seq, sorted."""
+        want = self.pol()[gate]["count"]
+        return sorted(d["id"] for d in self.counting(gate)[:want])
 
     def reached(self, gate: str) -> bool:
         return len(self.counting(gate)) >= self.pol()[gate]["count"]
@@ -119,27 +122,32 @@ class Sim:
         return self.applies(gate) and self.reached(gate)
 
     def done_rule(self) -> bool:
-        needed = [x for x in ("verify", "code") if self.applies(x)]
-        return bool(needed) and all(self.reached(x) for x in needed)
+        """§5.9: ``verify`` has its count of pass verdicts, and ``code`` has its count where it applies."""
+        if not self.applies("verify") and not self.applies("code"):
+            return False
+        return all(self.reached(x) for x in ("verify", "code") if self.applies(x))
 
     def snap(self) -> dict[str, Any]:
-        return {x: {"applies": self.applies(x), "first": self.first(x)} for x in GATES}
+        """What a raise depends on, taken before an event is applied."""
+        return {x: (self.applies(x), self.first(x)) for x in GATES}
 
     def settle(self, before: dict[str, Any], marks: set[str]) -> list[str]:
-        def app(x: str) -> bool:
-            return before[x]["applies"] or self.applies(x)
-
-        direct = {x for x in marks if app(x)}
-        changed = {x for x in GATES if self.first(x) != before[x]["first"]}
-        triggers = [GATES.index(x) for x in direct | changed]
-        raised = set(direct)
-        if triggers:
-            m = min(triggers)
-            raised |= {x for i, x in enumerate(GATES) if i > m and app(x)}
-        for x in raised:
+        """Apply the §5.7 raises of one event. ``marks`` are the gates the event's own table rows name. Walking the
+        gates in order, a gate goes up by exactly one when it applies (before or after the event) and either a row
+        names it or an earlier gate went up or changed its first-``count`` counting approvals."""
+        cascade = False
+        went_up: list[str] = []
+        for x in GATES:
+            was_applying, first_before = before[x]
+            applies = was_applying or self.applies(x)
+            up = applies and (x in marks or cascade)
+            if up:
+                went_up.append(x)
+            cascade = cascade or up or self.first(x) != first_before
+        for x in went_up:
             self.gen[x] += 1
-        self.last_raised = [x for x in GATES if x in raised]
-        return self.last_raised
+        self.last_raised = went_up
+        return went_up
 
     def bound(self, gate: str) -> set[str]:
         paths = set(BOUND[gate])
@@ -161,8 +169,9 @@ class Sim:
         return g.gate_hash_of(self.G(gate))
 
     def phash(self, gate: str) -> str:
-        p = self.pol()[gate]
-        return g.policy_hash(gate, p if p["approvers"] else {**p, "approvers": ["owner"]})
+        """The policy hash of the effective policy. A blocked gate (no approver token) has no canonical policy, so F1
+        defines no policy hash for it: this raises ``PolicyRefused`` (see the F1 gaps in PR #361)."""
+        return g.policy_hash(gate, self.pol()[gate])
 
     def source(self) -> list[dict[str, str]]:
         return g.source_list(self.t)
@@ -258,8 +267,10 @@ class Sim:
                gen: int | None = None, text: str | None = None, stale: dict[str, Any] | None = None, **kw: Any) -> dict[str, Any]:  # fmt: skip
         """``kind``: approve | changes | pass | fail. The signed hash, policy hash, generation and source list are the
         current ones, unless ``gen`` or ``stale`` override them."""
-        pay: dict[str, Any] = {"gate_gen": self.gen[gate] if gen is None else gen, "hash": self.hash(gate),
-                               "policy_hash": self.phash(gate)}  # fmt: skip
+        stale = stale or {}
+        pay: dict[str, Any] = {"gate_gen": self.gen[gate] if gen is None else gen,
+                               "hash": stale["hash"] if "hash" in stale else self.hash(gate),
+                               "policy_hash": stale["policy_hash"] if "policy_hash" in stale else self.phash(gate)}  # fmt: skip
         if kind == "pass" or kind == "fail":
             typ = "verdict.given"
             pay["outcome"] = kind
@@ -274,7 +285,7 @@ class Sim:
                 pay["source_sha"] = self.source()
         if kind == "fail":
             pay["text"] = text or "does not work"
-        pay |= stale or {}
+        pay |= stale
         before = self.snap()
         e = self._t(typ, self.w.actor(who), pay, expect, note=note, **kw)
         if expect == "ok":
@@ -505,24 +516,34 @@ class Sim:
         e = self.w.ev("workspace", "device.revoked", self._sev(), pay, note=note)
         marks: set[str] = set()
         if reason == "compromised":
-            marks = self.void(lambda d: d["device"] == did(dev))
+            marks = self.void(lambda d: d["device"] == did(dev), compromised=True)
         self.settle(before, marks)
         self._fin("ok")
         return e
 
-    def void(self, match: Any) -> set[str]:
-        """§5.7: approvals of a removed person or compromised device are voided only on gates that have not reached
-        ``count``, and not on a done or closed ticket."""
-        marks: set[str] = set()
-        if self.status in ("done", "closed"):
-            return marks
+    def void(self, match: Any, *, compromised: bool = False) -> set[str]:
+        """§5.7 "Removal, role changes, revoked devices", as written:
+
+        - ``member.removed`` / ``role.changed`` void the person's approvals "only on gates that haven't yet reached
+          ``count``"; the text gives no exemption for done tickets and does not ask whether the new role is still
+          eligible, so neither is applied (both listed as F1 gaps);
+        - ``device.revoked`` ``compromised`` voids "the decisions that device signed on tickets that are not yet
+          ``done``", whether or not the gate reached ``count``.
+
+        Returns the gates that lost a counting approval (the raise row "that voids a counting decision of g")."""
+        hit: set[str] = set()
+        if compromised and self.status == "done":
+            return hit
         for x in GATES:
+            if not compromised and self.reached(x):
+                continue
             mine = [d for d in self.counting(x) if match(d)]
-            if mine and not self.reached(x):
-                for d in mine:
+            for d in self.dec[x]:  # every decision of that signer/device on this gate is retired, counting or not
+                if match(d) and d["kind"] in ("approve", "pass"):
                     d["voided"] = True
-                marks.add(x)
-        return marks
+            if mine:
+                hit.add(x)
+        return hit
 
     def invalidated(
         self, gate: str, cause: str, voided: list[str], *, expect: str = "ok", note: str | None = None
@@ -1082,11 +1103,23 @@ def effective_policy_scenarios() -> list[dict[str, Any]]:
         expect="gate.no_eligible",
         note="an override that leaves no approver token is refused",
     )
-    s.override({R: policy(["owner"], 1)}, note="an override with a lower count: the effective count stays 2")
+    s.override(
+        {R: policy(["owner"], 1)},
+        note="an override with a lower count replaces the earlier override: the effective count is max(1, 1) = 1",
+    )
+    seen = {"hash": s.hash(R), "policy_hash": s.phash(R)}
     s.ws_policy(
         {R: policy(["maintainer"], 3)}, note="a later workspace change empties the intersection: blocked, count 3"
     )
-    s.decide("approve", R, expect="gate.no_eligible", note="a blocked gate takes no decisions")
+    s.decide(
+        "approve",
+        R,
+        stale=seen,
+        expect="refused",
+        note="a blocked gate takes no decisions. F1 defines no policy hash for a policy without approvers, so the "
+        "signer can only carry the hashes it saw before the block: the step breaks gate.no_eligible and gate.stale at "
+        "once, and no single code is pinned (F1 states no precedence)",
+    )
     s.ws_policy(
         {R: policy(["owner", "maintainer"], 1)},
         note="the workspace fixes its policy: the override's tightening is still there",
@@ -1215,4 +1248,120 @@ def question_scenarios() -> list[dict[str, Any]]:
                 note="a fresh answer with a new id and signature",
             )
         out.append({**s.scenario(), "qid": qid, "hash": qh, "abandoned_answer": gone})
+    return out
+
+
+def approval_scenarios() -> list[dict[str, Any]]:
+    """§5.7 "Who may approve", §5.2/§5.12 host events, and the decision preconditions (completeness, applies, source
+    list). Every refused step is built to break one rule only, except where noted (``"refused"``: F1 gives no
+    precedence between the two rules the step breaks)."""
+    R, P, V, C = "requirements", "plan", "verify", "code"
+    out = []
+
+    s = _new("who_may_approve_tokens_not_and_viewers", "an approval counts only from a member with an eligible token "
+             "that `not` does not exclude; a viewer never approves")  # fmt: skip
+    s.ws_policy(
+        {R: policy(["maintainer", "owner"], 1, ["reviewers"])}, note="requirements: owner or maintainer, not reviewers"
+    )
+    s.ready()
+    s.decide("approve", R, "lena", expect="gate.not_eligible", note="lena is a member: no approver token")
+    s.people("reviewers", ["mara"], note="mara becomes a reviewer (a role named in `not`)")
+    s.decide(
+        "approve", R, "mara", expect="gate.not_eligible", note="mara holds `maintainer` but `not` excludes reviewers"
+    )
+    s.w.member("vic", "viewer", note="vic joins as a viewer")
+    s.ws_policy({R: policy(["owner", "watchers"], 1)}, note="requirements: owner or watchers")
+    s.people("watchers", ["vic"], note="vic watches the ticket")
+    s.decide("approve", R, "vic", expect="refused", note="a viewer never approves (5.7), and a viewer can't write (5.11): "
+             "gate.not_eligible or role.denied, F1 states no precedence")  # fmt: skip
+    s.decide("approve", R, "sev", note="the workspace owner approves")
+    out.append(s.scenario())
+
+    s = _new("independent_gate_refuses_workers", "with `independent` on, a worker never approves: anyone who was an "
+             "assignee, held a claim or was the `for` person of an agent event since the last reopen; the set only "
+             "grows, and a reopen starts it afresh")  # fmt: skip
+    s.ws_policy({R: policy(["maintainer", "owner"], 1, [], "all", True)}, note="requirements is independent")
+    s.ready()
+    s.claim(note="sev's agent claims the ticket: sev is a worker")
+    s.decide("approve", R, "sev", expect="gate.not_eligible", note="sev's own agent worked on the ticket")
+    s.people("assignees", ["mara"], note="mara is assigned: a worker")
+    s.decide("approve", R, "mara", expect="gate.not_eligible", note="an assignee is a worker")
+    s.people("assignees", [], ["mara"], note="mara is unassigned")
+    s.decide("approve", R, "mara", expect="gate.not_eligible", note="the worker set only grows: mara was an assignee")
+    s.release(note="the agent releases its claim")
+    s.close(note="closed")
+    s.reopen(note="reopened: the worker set starts afresh")
+    s.decide("approve", R, "mara", note="mara has not worked on the ticket since the reopen")
+    out.append(s.scenario())
+
+    s = _new("code_gate_refuses_workers", "the code gate is always independent: the person whose agent did the work "
+             "may give the verify verdict (verify is not independent by default) but never the code approval")  # fmt: skip
+    s.ws_policy({C: CODE_ON}, note="the code gate applies")
+    s.ready()
+    s.people("reviewers", ["sev"], note="sev reviews")
+    s.decide("approve", R)
+    s.decide("approve", P)
+    s.claim(note="sev's agent works on the ticket")
+    s.link_repo("feat/x")
+    s.pushed(SHA_A)
+    s.artifact("proof.log", b"proof", ac="AC1")
+    s.task("done")
+    s.submit()
+    s.decide("pass", V, "sev", note="sev verifies the work of their own agent: allowed with independent off")
+    s.decide(
+        "approve", C, "sev", expect="gate.not_eligible", note="the code gate: sev is a worker (the `for` of the agent)"
+    )
+    s.decide("approve", C, "mara", note="mara, a maintainer who did not work on it, approves: done")
+    out.append(s.scenario())
+
+    s = _new("decision_preconditions", "a decision is refused when the gate is incomplete (also on replay), when the "
+             "gate does not apply to the ticket type, or when its source list is not the projection")  # fmt: skip
+    s.decide("approve", R, expect="gate.incomplete", note="requirements: context, requirements, out_of_scope and an "
+             "acceptance criterion are missing")  # fmt: skip
+    s.ready()
+    s.decide("approve", R)
+    s.ws_policy({P: policy(["owner"], 1, (), ["bug"])}, note="plan applies to bugs only")
+    s.decide("approve", P, expect="gate.not_applicable", note="plan does not apply to a feature")
+    s.ws_policy({P: policy(["owner"], 1)}, note="plan applies again")
+    s.decide("approve", P)
+    s.people("reviewers", ["sev"])
+    s.claim()
+    s.link_repo("feat/x")
+    s.pushed(SHA_A)
+    s.artifact("proof.log", b"proof", ac="AC1")
+    s.task("done")
+    s.submit()
+    s.pushed(SHA_B, note="a new commit after submit")
+    stale_src = [{"repo": g.repo_identity(REMOTE, REPO), "ref": "refs/heads/feat/x", "sha": SHA_A}]
+    s.decide("pass", V, stale={"source_sha": stale_src}, expect="gate.stale",
+             note="a verdict whose source_sha is the old commit (gate_gen, hash and policy hash are current)")  # fmt: skip
+    s.decide("pass", V, note="the verdict on the current source list")
+    out.append(s.scenario())
+
+    s = _new("host_events_never_approve", "types marked H are the host's only, and the host never appends a P or A "
+             "type in its own name: a host-actor approval, answer, member or agent event is refused (event.bad_actor)")  # fmt: skip
+    s.ready()
+    host = s.w.HOST
+    s._t("gate.approved", host, {"gate": R, "gate_gen": s.gen[R], "hash": s.hash(R), "policy_hash": s.phash(R)},
+         expect="event.bad_actor", note="a host-actor gate.approved", schema_refused=True)  # fmt: skip
+    s._t(
+        "log.added",
+        host,
+        {"text": "a note in the host's name"},
+        expect="event.bad_actor",
+        note="an A type from H",
+        schema_refused=True,
+    )
+    s.w.ev("workspace", "member.added", host, {"person": pid("eve"), "name": "Eve", "role": "owner",
+           "pk_pub": ow.key("pk_eve").pub_b64u, "device_cert": ow.make_cert("eve", "eve1")},
+           expect="event.bad_actor", note="a host-actor member.added", schema_refused=True)  # fmt: skip
+    text = "Which tariff export is the source of truth?"
+    opts = [{"key": "csv", "label": "Monthly CSV"}]
+    qid, qh = question_ids(TICKET, "Q1", text, opts)
+    s._t("question.asked", s.agent, {"question": {"id": "Q1", "to": "ticket_owner", "text": text, "options": opts,
+         "blocking": True}, "qid": qid, "hash": qh}, note="the agent asks Q1")  # fmt: skip
+    s._t("question.answered", host, {"question": "Q1", "hash": qh, "option": "csv"}, expect="event.bad_actor",
+         note="a host-actor answer", schema_refused=True)  # fmt: skip
+    s.decide("approve", R, note="and the owner's signed approval is accepted")
+    out.append(s.scenario())
     return out

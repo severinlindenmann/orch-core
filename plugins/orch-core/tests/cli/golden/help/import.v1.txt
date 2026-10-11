@@ -1,5 +1,5 @@
-Import a v1 workspace: tickets, history as imported events, artifacts.
+Import a v1 workspace: its tickets, with the v1 history and files; asks for your passphrase once.
 usage: orch import v1 PATH [--dry-run]
-  PATH  the v1 workspace
+  PATH  the v1 workspace (the project folder or its orchestrator folder)
   --dry-run  say what would happen, append nothing
 more: orch describe import.v1

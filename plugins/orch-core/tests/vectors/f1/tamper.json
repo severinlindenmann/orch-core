@@ -1,7 +1,7 @@
 {
  "cases": [
   {
-   "check_chain_breaks_at": 3,
+   "chain_broken_at": 2,
    "events": [
     {
      "actor": {
@@ -92,13 +92,11 @@
     }
    ],
    "log": "01J9ZK4Q7M3R8T2V6X0B5N1C9D",
-   "mutation": "seq 2: text 'second' -> 'sec0nd', nothing re-signed",
-   "name": "payload_changed_not_resigned",
-   "replay_chain_broken_at": 2,
-   "replay_invalid_seqs": []
+   "mutation": "seq 2: text 'second' -> 'sec0nd', nothing re-signed: host_sig fails",
+   "name": "payload_changed_not_resigned"
   },
   {
-   "check_chain_breaks_at": 3,
+   "chain_broken_at": 2,
    "events": [
     {
      "actor": {
@@ -189,18 +187,11 @@
     }
    ],
    "log": "01J9ZK4Q7M3R8T2V6X0B5N1C9D",
-   "mutation": "seq 2: text changed and host_sig re-made (an attacker holding the workspace key); the person signature no longer verifies",
-   "name": "payload_changed_host_resigned",
-   "replay_chain_broken_at": 3,
-   "replay_invalid_seqs": [
-    [
-     2,
-     "sig.invalid"
-    ]
-   ]
+   "mutation": "seq 2: text changed and host_sig re-made (an attacker holding the workspace key); the person signature no longer verifies, which breaks the chain at that line",
+   "name": "payload_changed_host_resigned"
   },
   {
-   "check_chain_breaks_at": 2,
+   "chain_broken_at": 2,
    "events": [
     {
      "actor": {
@@ -270,13 +261,11 @@
     }
    ],
    "log": "01J9ZK4Q7M3R8T2V6X0B5N1C9D",
-   "mutation": "seq 2 removed",
-   "name": "event_deleted",
-   "replay_chain_broken_at": 2,
-   "replay_invalid_seqs": []
+   "mutation": "seq 2 removed: the line at position 2 carries seq 3",
+   "name": "event_deleted"
   },
   {
-   "check_chain_breaks_at": 3,
+   "chain_broken_at": 3,
    "events": [
     {
      "actor": {
@@ -367,13 +356,11 @@
     }
    ],
    "log": "01J9ZK4Q7M3R8T2V6X0B5N1C9D",
-   "mutation": "seq 3 and 4 swapped",
-   "name": "events_swapped",
-   "replay_chain_broken_at": null,
-   "replay_invalid_seqs": []
+   "mutation": "seq 3 and 4 swapped: lines are checked in file order and never sorted, so the line at position 3 (carrying seq 4) breaks the chain",
+   "name": "events_swapped"
   },
   {
-   "check_chain_breaks_at": 3,
+   "chain_broken_at": 3,
    "events": [
     {
      "actor": {
@@ -465,12 +452,10 @@
    ],
    "log": "01J9ZK4Q7M3R8T2V6X0B5N1C9D",
    "mutation": "seq 3: prev set to the head of seq 1",
-   "name": "prev_rewritten",
-   "replay_chain_broken_at": 3,
-   "replay_invalid_seqs": []
+   "name": "prev_rewritten"
   },
   {
-   "check_chain_breaks_at": 3,
+   "chain_broken_at": 3,
    "events": [
     {
      "actor": {
@@ -562,12 +547,10 @@
    ],
    "log": "01J9ZK4Q7M3R8T2V6X0B5N1C9D",
    "mutation": "seq 3: seq set to 5",
-   "name": "seq_rewritten",
-   "replay_chain_broken_at": 3,
-   "replay_invalid_seqs": []
+   "name": "seq_rewritten"
   },
   {
-   "check_chain_breaks_at": 3,
+   "chain_broken_at": 2,
    "events": [
     {
      "actor": {
@@ -659,12 +642,10 @@
    ],
    "log": "01J9ZK4Q7M3R8T2V6X0B5N1C9D",
    "mutation": "seq 2 carries the host_sig of seq 3",
-   "name": "host_sig_swapped",
-   "replay_chain_broken_at": 2,
-   "replay_invalid_seqs": []
+   "name": "host_sig_swapped"
   },
   {
-   "check_chain_breaks_at": null,
+   "chain_broken_at": null,
    "events": [
     {
      "actor": {
@@ -735,12 +716,10 @@
    ],
    "log": "01J9ZK4Q7M3R8T2V6X0B5N1C9D",
    "mutation": "seq 4 removed: the chain is intact, only a checkpoint can see it",
-   "name": "tail_truncated",
-   "replay_chain_broken_at": null,
-   "replay_invalid_seqs": []
+   "name": "tail_truncated"
   },
   {
-   "check_chain_breaks_at": 2,
+   "chain_broken_at": 1,
    "events": [
     {
      "actor": {
@@ -918,11 +897,12 @@
    "log": "workspace",
    "mutation": "workspace seq 1: prefix DEMO -> EVIL",
    "name": "genesis_payload_changed",
-   "replay_chain_broken_at": 1,
-   "replay_invalid_seqs": []
+   "ticket_events_stopped_from": {
+    "01J9ZK4Q7M3R8T2V6X0B5N1C9D": 1
+   }
   },
   {
-   "check_chain_breaks_at": 4,
+   "chain_broken_at": 3,
    "events": [
     {
      "actor": {
@@ -1100,11 +1080,12 @@
    "log": "workspace",
    "mutation": "workspace seq 3: lena member -> maintainer",
    "name": "member_role_raised_not_resigned",
-   "replay_chain_broken_at": 3,
-   "replay_invalid_seqs": []
+   "ticket_events_stopped_from": {
+    "01J9ZK4Q7M3R8T2V6X0B5N1C9D": 1
+   }
   },
   {
-   "check_chain_breaks_at": 4,
+   "chain_broken_at": 3,
    "events": [
     {
      "actor": {
@@ -1280,18 +1261,14 @@
     }
    ],
    "log": "workspace",
-   "mutation": "workspace seq 3: lena member -> maintainer, host_sig re-made",
+   "mutation": "workspace seq 3: lena member -> maintainer, host_sig re-made; the person signature no longer verifies, so the chain breaks at 3 and every ticket event with ws_seq >= 3 stops",
    "name": "member_role_raised_host_resigned",
-   "replay_chain_broken_at": 4,
-   "replay_invalid_seqs": [
-    [
-     3,
-     "sig.invalid"
-    ]
-   ]
+   "ticket_events_stopped_from": {
+    "01J9ZK4Q7M3R8T2V6X0B5N1C9D": 1
+   }
   },
   {
-   "check_chain_breaks_at": 2,
+   "chain_broken_at": 2,
    "events": [
     {
      "actor": {
@@ -1425,8 +1402,9 @@
    "log": "workspace",
    "mutation": "workspace seq 2 removed",
    "name": "workspace_event_deleted",
-   "replay_chain_broken_at": 2,
-   "replay_invalid_seqs": []
+   "ticket_events_stopped_from": {
+    "01J9ZK4Q7M3R8T2V6X0B5N1C9D": 1
+   }
   }
  ],
  "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
@@ -1445,7 +1423,7 @@
   ]
  },
  "now": "2026-10-10T10:02:20Z",
- "pins": "tampered chain lines: the stated mutation of a signed log, the seq where canon.check_chain stops (prev/seq links only) and where a reader (signatures included) reports chain.broken; full lines of both logs with real signatures",
+ "pins": "tampered chain lines (5.5 Reading): the stated mutation of a signed log and the one F1 outcome, the line position where a reader reports chain.broken (lines checked in file order, a bad host_sig or person sig breaks the chain at that line); for a workspace-log break at seq n, the first seq of each ticket log whose events stop counting (ws_seq >= n); full lines of both logs with real signatures",
  "ticket_events": {
   "01J9ZK4Q7M3R8T2V6X0B5N1C9D": [
    {

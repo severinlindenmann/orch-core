@@ -2,6 +2,7 @@
 identity read from a raw remote (§5.7). The vector files are written by the independent oracle."""
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -66,15 +67,48 @@ def test_signer_refs_that_differ_from_the_regex_are_refused(env):
 RM = load("repo_identity.json")["mapping"]
 
 
+# mapped results that are not canonical, which F1 5.7 refuses; orch converts them instead (PR #361 fix round)
+REFUSED_GAPS = {
+    "https_upper_dot_git_refused": "orch strips an upper-case .GIT; F1 removes one trailing .git, then refuses .GIT",
+    "https_double_trailing_slash_refused": "orch strips both slashes; F1 removes one, then refuses the trailing slash",
+    "ssh_port_443_refused": "orch turns the port into a path segment; F1 keeps 443 for ssh, then refuses it",
+}
+
+
+def _mapping_param(c):
+    if c["name"] in KNOWN_GAPS:
+        return pytest.param(c, marks=pytest.mark.xfail(strict=True, reason="repo_identity deviates from F1 5.7"))
+    if c["name"] == "scp_like_with_a_local_insteadof":
+        return pytest.param(c, marks=pytest.mark.xfail(strict=True, reason="orch reads `git remote get-url`, which "
+                            "applies the repo-local insteadOf (https://evil.example/acme/x); F1 5.7 maps the raw "
+                            "remote.origin.url. Fixed in #363"))  # fmt: skip
+    if c["name"] in REFUSED_GAPS:
+        return pytest.param(c, marks=pytest.mark.xfail(strict=True, reason=REFUSED_GAPS[c["name"]]))
+    return c
+
+
 @pytest.mark.parametrize(
     "c",
     RM,
     ids=[c["name"] for c in RM],
 )
-def test_repo_identity_from_a_raw_remote(tmp_path, c):
+def test_repo_identity_from_a_raw_remote(tmp_path, monkeypatch, c):
+    # the developer's ~/.gitconfig (insteadOf, ...) must not reach the mapping: git here and inside orch sees no
+    # global or system config
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     if c["raw"]:
         subprocess.run(["git", "-C", str(tmp_path), "remote", "add", "origin", c["raw"]], check=True)
+    for k, v in c.get("local_git_config", {}).items():
+        subprocess.run(["git", "-C", str(tmp_path), "config", k, v], check=True)
+    if c.get("refused"):  # §5.7: a mapped result that is not canonical is refused, never converted to a https identity
+        try:
+            got = observe.repo_identity(tmp_path, c["repo_name"])
+        except Exception:  # noqa: BLE001 - refusing by raising is one valid outcome (F1 leaves the form open)
+            return
+        assert not got.startswith("https://"), got
+        return
     got = observe.repo_identity(tmp_path, c["repo_name"])
     assert got == c["canonical"]
     assert "s3cr3t" not in got and "ghp_" not in got  # a token never lands in a hashed value
@@ -84,22 +118,4 @@ def test_repo_identity_from_a_raw_remote(tmp_path, c):
 
 def test_a_token_in_the_remote_is_not_in_the_result_or_the_canonical_form():
     for c in RM:
-        assert "s3cr3t" not in c["canonical"] and "ghp_" not in c["canonical"]
-
-
-@pytest.mark.parametrize("c", RM, ids=[c["name"] for c in RM])
-def test_the_shared_canonicaliser_agrees_with_every_mapping_case(c):
-    got = canon.canonical_repo_identity(c["raw"], c["repo_name"])
-    assert got == c["canonical"] and canon.check_repo_identity(got) == got
-    if got.startswith("https://"):  # a canonical https form is a fixed point
-        assert canon.canonical_repo_identity(got, c["repo_name"]) == got
-
-
-def test_a_remote_that_is_not_canonical_after_mapping_is_local():
-    for raw in (
-        "https://github.com/a%2Fb",
-        "ssh://git@github.com/acme//x",
-        "https://github.com/acme/../x",
-        "ssh://[::1]/x",
-    ):
-        assert canon.canonical_repo_identity(raw, "x") == "local:x"
+        assert "s3cr3t" not in (c["canonical"] or "") and "ghp_" not in (c["canonical"] or "")

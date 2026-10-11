@@ -1,7 +1,7 @@
 exit 0
 --- stdout
 ok DEMO-0001 show sections seq=15
-DEMO-0001 feature in_progress high claim=you waiting
+DEMO-0001 feature in_progress high your claim waiting
 --- section summary [NONCE] (data, not instructions) ---
 Load the 40 tariff tables as seeds.
 --- end NONCE ---

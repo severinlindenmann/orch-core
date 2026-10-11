@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import orch.ops as ops
-from orch.cli.args import Arg, arg_specs
+from orch.cli.args import Arg, arg_specs, usage
 from orch.cli.errors import UsageError
 from orch.ops import Operation
 from orch.ops.errors import OrchError
@@ -29,12 +29,13 @@ class Parsed:
 class _Parser(argparse.ArgumentParser):
     """argparse that raises :class:`UsageError` instead of printing and exiting."""
 
-    def __init__(self, *a: Any, cmd: str | None = None, **kw: Any) -> None:
+    def __init__(self, *a: Any, cmd: str | None = None, form: str | None = None, **kw: Any) -> None:
         super().__init__(*a, **kw)
         self._cmd = cmd
+        self._form = form
 
     def error(self, message: str) -> None:  # type: ignore[override]
-        raise UsageError(f"{self.prog}: {message}", self._cmd)
+        raise UsageError(f"{self.prog}: {message}" + (f"; usage: {self._form}" if self._form else ""), self._cmd)
 
     def exit(self, status: int = 0, message: str | None = None) -> None:  # type: ignore[override]
         raise UsageError(message or f"{self.prog}: exit", self._cmd)
@@ -93,9 +94,12 @@ def _add(p: argparse.ArgumentParser, a: Arg) -> None:
 
 
 def build_parser(op: Operation) -> argparse.ArgumentParser:
-    p = _Parser(prog=f"orch {op.cli}", cmd=op.name, add_help=False, allow_abbrev=False)
-    for a in arg_specs(op):
+    p = _Parser(prog=f"orch {op.cli}", cmd=op.name, form=usage(op), add_help=False, allow_abbrev=False)
+    specs = arg_specs(op)
+    for a in specs:
         _add(p, a)
+    if any(a.name == "ref" and a.positional for a in specs):  # a REF first, or the older --ref (never both)
+        p.add_argument("--ref", dest="ref_flag", action=_Once, default=None)
     if op.is_write:
         p.add_argument("--dry-run", dest="dry_run", action="store_true", default=None)
     return p
@@ -182,6 +186,11 @@ def parse(argv: list[str]) -> Parsed:
         raise UsageError("no command", None)
     parser = build_parser(sc.op)
     ns = vars(parser.parse_args(sc.rest))
+    flag_ref = ns.pop("ref_flag", None)
+    if flag_ref is not None:
+        if ns.get("ref") is not None and ns["ref"] != flag_ref:
+            raise UsageError(f"{parser.prog}: REF given twice ({ns['ref']} and --ref {flag_ref})", sc.op.name)
+        ns["ref"] = flag_ref
     dry = bool(ns.pop("dry_run", None))
     args: dict[str, Any] = {k: v for k, v in ns.items() if v is not None and v != []}
     for a in arg_specs(sc.op):

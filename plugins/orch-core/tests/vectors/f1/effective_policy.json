@@ -1259,7 +1259,7 @@
      },
      "expect": "ok",
      "log": "01J9ZK4Q7M3R8T2V6X0B5N1C9D",
-     "note": "an override with a lower count: the effective count stays 2"
+     "note": "an override with a lower count replaces the earlier override: the effective count is max(1, 1) = 1"
     },
     {
      "after": {
@@ -1377,22 +1377,22 @@
       "based_on": "sha256:b7672393f7b9bc88f3a4ec6ad412d52a1a14de436421d48636e74e560a902ee2",
       "gate": "requirements",
       "gate_gen": 5,
-      "hash": "sha256:124bfa5b066b6d93f1704e8419379b982c81ab3a89e03254e9d2804994378c92",
+      "hash": "sha256:53246d04e816156745e82b09dba4caf35bc415372d114b6e9155f11e165bcca0",
       "hash_v": 1,
-      "host_sig": "--88nYx59Xf8B1Pj2Fr9eRFBblJubakDgmd0Dl87C2DefPBHGHnAIS-b6qqFjX_jp-4ZXE_Sq1lAoNI3YXAf9g",
+      "host_sig": "dkgXSlu_MLgG0sK3BFSxiGZcglNGdb-rwJ4kSZLBc0lrMs1qkZD2aPKx6d6bHaZQg6e_9fs9MZqaH2m3k6aEIw",
       "id": "01J9ZK0000000000000000000D",
-      "policy_hash": "sha256:6e362333e57834137a2c0067ab32d5d569951cf49bdc2211da08d7ff733a89b4",
+      "policy_hash": "sha256:75636825033eb1bba249144cbe360196337f2a6fc5d55643ccbe32e5ee625d1e",
       "prev": "sha256:b7672393f7b9bc88f3a4ec6ad412d52a1a14de436421d48636e74e560a902ee2",
       "roster_v": 3,
       "seq": 5,
-      "sig": "GL_2UMlHVpibXxt6oHDY4bk2ZjWhs2mxc7Lihgxx3UlCBOLttbkAGkvlfisxYh1yxRAKZfq1e3Bns8Bj3-homg",
+      "sig": "_EUQ75sSYa9AKyr9UwPSvuHI1hei2F1sIbVHpFbIhzNEUOAfq0EFnwEy_IZ8D58B_ndMisUzqWIWyZFkwUHmPA",
       "type": "gate.approved",
       "v": 2,
       "ws_seq": 7
      },
-     "expect": "gate.no_eligible",
+     "expect": "refused",
      "log": "01J9ZK4Q7M3R8T2V6X0B5N1C9D",
-     "note": "a blocked gate takes no decisions"
+     "note": "a blocked gate takes no decisions. F1 defines no policy hash for a policy without approvers, so the signer can only carry the hashes it saw before the block: the step breaks gate.no_eligible and gate.stale at once, and no single code is pinned (F1 states no precedence)"
     },
     {
      "after": {

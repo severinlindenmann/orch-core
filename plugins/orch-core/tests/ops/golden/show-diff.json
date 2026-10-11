@@ -7,9 +7,9 @@
       "key": "DEMO-0001",
       "since": 12,
       "events": [
-        "#13 log.added a Seeds are in; the join is next.",
-        "#14 question.asked a Q1",
-        "#15 artifact.added a evidence.log"
+        "#13 log.added agent: Seeds are in; the join is next.",
+        "#14 question.asked agent: Q1",
+        "#15 artifact.added agent: evidence.log"
       ]
     }
   },

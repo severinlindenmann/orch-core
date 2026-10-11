@@ -8,7 +8,7 @@ import json
 import orch.ops as ops
 from orch.model import emits
 
-DIGEST_V1 = "f9d0697ce185a381c789a7bd3ad40fbf1ccc7c1b16b880fe6d15e0bd6f58bfca"
+DIGEST_V1 = "dc086fd5ad0dee3afff93646a3d4f9a0369d1be6037ef969e2d74b36131bfe8a"
 
 
 def digest(table):
@@ -33,3 +33,16 @@ def test_the_live_registry_matches_the_current_table():
 def test_the_model_reads_the_frozen_table_not_the_registry(monkeypatch):
     monkeypatch.setattr(ops, "registry_emits", lambda: {})
     assert ops.verb_events() == dict(emits.EMITS_V1)
+
+
+def test_an_operation_a_person_runs_is_never_covered_by_a_grant():
+    """F1 10.1 as a model rule: a verb naming a human operation grants nothing, whatever a ``grant.issued`` says."""
+    from orch.model.authz import verb_covers
+
+    human = {op.name for op in ops.all() if op.who == "human"}
+    assert emits.HUMAN_ONLY == human
+    table = dict(emits.CURRENT)
+    assert verb_covers("ticket.created", ["new"], table) and verb_covers("log.added", ["log"], table)
+    for verb, typ in (("import.v1", "ticket.updated"), ("import.v1", "ticket.created"), ("approve", "gate.approved")):
+        assert not verb_covers(typ, [verb], table)
+    assert verb_covers("log.added", ["import.v1", "log"], table)  # the agent verb next to it still counts

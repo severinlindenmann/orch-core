@@ -1,3 +1,4 @@
-Check that the ticket files match their events and the instructions are current (for a commit hook).
-usage: orch check
+Check that the ticket files match their events and the instructions are current (for a commit hook or CI); --staged also checks what is about to be committed.
+usage: orch check [--staged]
+  --staged  also check the staged files: hand edits, forged log lines, .state, secrets
 more: orch describe check

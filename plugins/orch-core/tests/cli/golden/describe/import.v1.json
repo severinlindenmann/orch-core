@@ -5,25 +5,31 @@
     "target": "import.v1",
     "name": "import.v1",
     "cli": "orch import v1",
-    "summary": "Import a v1 workspace: tickets, history as imported events, artifacts.",
+    "summary": "Import a v1 workspace: its tickets, with the v1 history and files; asks for your passphrase once.",
     "who": "human",
     "usage": "orch import v1 PATH [--dry-run]",
     "pre": [
       "workspace_exists",
       "v1_workspace",
-      "user_presence"
+      "user_presence",
+      "text_clean"
     ],
     "emits": [
+      "artifact.added",
+      "log.added",
+      "question.asked",
+      "status.changed",
+      "ticket.closed",
       "ticket.created",
-      "log.added"
+      "ticket.updated"
     ],
     "input": {
       "type": "object",
-      "description": "Import a v1 workspace: tickets, history as imported events, artifacts.",
+      "description": "Import a v1 workspace: its tickets, with the v1 history and files; asks for your passphrase once.",
       "properties": {
         "path": {
           "type": "string",
-          "description": "the v1 workspace",
+          "description": "the v1 workspace (the project folder or its orchestrator folder)",
           "x-metavar": "PATH"
         }
       },
@@ -36,7 +42,7 @@
       "additionalProperties": false
     },
     "output": {
-      "text": "ok import.v1 {count} tickets\nnext: {next}",
+      "text": "ok import.v1 {count} tickets ({events} events)\nnext: {next}",
       "json": {
         "type": "object",
         "properties": {
@@ -44,14 +50,29 @@
             "type": "integer",
             "minimum": 0
           },
+          "already": {
+            "type": "integer",
+            "minimum": 0
+          },
           "skipped": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "events": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "partial": {
             "type": "integer",
             "minimum": 0
           }
         },
         "required": [
           "count",
-          "skipped"
+          "already",
+          "skipped",
+          "events",
+          "partial"
         ],
         "additionalProperties": false
       }
@@ -119,7 +140,7 @@
         ]
       },
       {
-        "code": "parse.json",
+        "code": "parse.text",
         "exit": 6,
         "retryable": false,
         "hint": "orch describe import.v1",

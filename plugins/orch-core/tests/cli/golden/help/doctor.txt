@@ -1,3 +1,4 @@
-Check the logs, chains, projections and keys; reports, never changes.
-usage: orch doctor
+Verify the logs, signatures, checkpoints, pins and files; reports and changes nothing unless --repair, which only does the safe repairs through the store.
+usage: orch doctor [--repair]
+  --repair  do the safe repairs: answer external edits, rebuild the index, drop dead init keys
 more: orch describe doctor

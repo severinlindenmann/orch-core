@@ -7,7 +7,7 @@
     "cli": "orch approve",
     "summary": "Approve a gate (requirements, plan or code) with your signature.",
     "who": "human",
-    "usage": "orch approve requirements|plan|code [--ref REF] [--dry-run]",
+    "usage": "orch approve [REF] requirements|plan|code [--dry-run]",
     "pre": [
       "ticket_exists",
       "gate_current",
@@ -33,12 +33,13 @@
         },
         "ref": {
           "type": "string",
-          "description": "ticket REF (flag)",
+          "description": "ticket REF (DEMO-0043, 43); default: your claim",
           "pattern": "^(?:(?:[A-Z][A-Z0-9]{0,15}-)?[0-9]+(?:/T[1-9][0-9]*)?|T[1-9][0-9]*)$",
           "x-metavar": "REF"
         }
       },
       "x-positional": [
+        "ref",
         "gate"
       ],
       "required": [

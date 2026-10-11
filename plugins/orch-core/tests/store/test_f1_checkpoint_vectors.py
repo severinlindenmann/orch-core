@@ -94,6 +94,19 @@ def test_workspace_checkpoint_offers(tmp_path, offer):
         assert r == "diverged" and stored == C["workspace_checkpoint"]["signed"]
 
 
+@pytest.mark.parametrize("o", C["workspace_n_offers"], ids=lambda o: o["name"])
+def test_n_offers_are_signed_and_the_p1_host_never_writes_a_lower_n(tmp_path, o):
+    """Receivers (relay, devices from P3) refuse a lower ``n``; the P1 host only writes its own checkpoints, so here the
+    offers are checked for their signatures and the host is checked never to go below the ``n`` it holds."""
+    assert cps.verify_object(WSK, o["checkpoint"]) and cps.verify_object(WSK, C["workspace_n_held"])
+    held, offered = C["workspace_n_held"]["o"]["n"], o["checkpoint"]["o"]["n"]
+    assert (offered >= held) == (o["expect"] == "ok")
+    cp = cps.Checkpoints(tmp_path, W)
+    cp._write(cp._workspace_path, C["workspace_n_held"])
+    r = cp.write_workspace(sign, C["genesis"], "2026-10-10T10:06:00Z", _logs(C["workspace_log"]["heads"]))
+    assert r is None and cp.workspace()["o"]["n"] == held + 1
+
+
 @pytest.mark.parametrize("d", C["divergence"], ids=lambda d: d["name"])
 def test_a_log_that_disagrees_with_a_checkpoint_is_diverged(tmp_path, d):
     cp = _store(tmp_path)
@@ -116,6 +129,8 @@ R = json.loads((DIR / "restore.json").read_text(encoding="utf-8"))["scenarios"]
 
 @pytest.mark.parametrize("sc", R, ids=lambda s: s["name"])
 def test_restore_vectors_through_the_model(sc):
+    # ``reader_cannot_see_a_dropped_revocation`` is accepted by a log-only reader (the model) but must be refused by
+    # the host (``host_expect``); the host side is test_the_store_re_appends_the_revocation_as_the_vector_says.
     ws, _ = run_scenario(sc)
     assert len(ws) == (6 if sc["reappends"] else 5)
     assert ws[4]["type"] == "restore" and ws[4]["prev"] == canon.event_head(ws[3])

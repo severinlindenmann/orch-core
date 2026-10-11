@@ -142,6 +142,12 @@ def test_policy_hash(v):
     assert canon.policy_hash(v["gate"], v["policy"]) == v["hash"]
 
 
+@pytest.mark.parametrize("v", H["policy_hash_refused"], ids=lambda v: v["why"])
+def test_policy_hash_refuses_a_policy_without_canonical_form(v):
+    with pytest.raises(canon.HashError):
+        canon.policy_hash(v["gate"], v["policy"])
+
+
 @pytest.mark.parametrize("v", H["people_hash"], ids=range(len(H["people_hash"])))
 def test_people_hash(v):
     assert canon.people_hash(v["people"]) == v["hash"]

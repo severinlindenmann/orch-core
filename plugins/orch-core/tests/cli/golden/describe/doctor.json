@@ -5,17 +5,22 @@
     "target": "doctor",
     "name": "doctor",
     "cli": "orch doctor",
-    "summary": "Check the logs, chains, projections and keys; reports, never changes.",
+    "summary": "Verify the logs, signatures, checkpoints, pins and files; reports and changes nothing unless --repair, which only does the safe repairs through the store.",
     "who": "read",
-    "usage": "orch doctor",
+    "usage": "orch doctor [--repair]",
     "pre": [
       "workspace_exists"
     ],
     "emits": [],
     "input": {
       "type": "object",
-      "description": "Check the logs, chains, projections and keys; reports, never changes.",
-      "properties": {},
+      "description": "Verify the logs, signatures, checkpoints, pins and files; reports and changes nothing unless --repair, which only does the safe repairs through the store.",
+      "properties": {
+        "repair": {
+          "type": "boolean",
+          "description": "do the safe repairs: answer external edits, rebuild the index, drop dead init keys"
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
@@ -38,11 +43,15 @@
                 },
                 "what": {
                   "type": "string"
+                },
+                "level": {
+                  "type": "string"
                 }
               },
               "required": [
                 "where",
-                "what"
+                "what",
+                "level"
               ],
               "additionalProperties": false
             }
@@ -55,7 +64,19 @@
         "additionalProperties": false
       }
     },
-    "errors": []
+    "errors": [
+      {
+        "code": "not_found",
+        "exit": 2,
+        "retryable": false,
+        "hint": "run orch init in a workspace",
+        "fix": [
+          "orch",
+          "describe",
+          "init"
+        ]
+      }
+    ]
   },
   "key": null,
   "seq": 0,

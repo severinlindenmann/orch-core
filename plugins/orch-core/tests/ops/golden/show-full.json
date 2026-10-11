@@ -78,10 +78,10 @@
       ],
       "current_state": "",
       "events": [
-        "#12 task.done a T1",
-        "#13 log.added a Seeds are in; the join is next.",
-        "#14 question.asked a Q1",
-        "#15 artifact.added a evidence.log"
+        "#12 task.done agent: T1",
+        "#13 log.added agent: Seeds are in; the join is next.",
+        "#14 question.asked agent: Q1",
+        "#15 artifact.added agent: evidence.log"
       ],
       "sections": {
         "summary": "Load the 40 tariff tables as seeds.",

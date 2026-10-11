@@ -1582,7 +1582,7 @@ def test_event_types_match_doc_tables():
 
 # Names in the doc that look like event types but are not: error codes, ticket.json paths, config paths.
 DOC_NON_EVENTS = {
-    "artifact.mismatch", "claim.held", "claim.not_live", "grant.verb",
+    "artifact.mismatch", "claim.held", "claim.not_live", "device.unknown", "grant.verb",
     "gate.already_approved", "gate.incomplete", "gate.no_eligible", "gate.stale", "gate.suspicious_text",
     "settings.repos", "ticket.acceptance", "ticket.addons", "ticket.json", "ticket.key", "ticket.links",
     "ticket.questions", "ticket.schema", "ticket.size", "ticket.tasks", "ticket.title", "ticket.type", "ticket.uid",
@@ -2129,19 +2129,36 @@ def test_repeated_patterns_are_references_not_copies():
 
 @pytest.mark.slow
 def test_validation_speed_of_an_event_stays_cheap():
-    """Measured about 0.26 ms per event on a laptop (is_valid fast path, envelope and definitions inlined);
-    the bound is loose so a slow CI machine passes, but a return to $ref chains (about 1.5 ms) would not."""
+    """Measured about 0.26 ms per event on a laptop (is_valid fast path, envelope and definitions inlined). The
+    bound is relative to a calibration loop on the same machine (a slow CI box scales both), and the best of 5
+    runs counts, so a return to $ref chains (about 6x slower: over 200x the calibration, today about 40x)
+    fails and load noise does not."""
     import time
 
     events = [(e["type"], e) for e in ex.EVENTS.values()]
     for _t, e in events:
         V("event", e)
-    t0 = time.perf_counter()
-    for _ in range(20):
-        for _t, e in events:
-            V("event", e)
-    per_event = (time.perf_counter() - t0) / (20 * len(events))
-    assert per_event < 0.001, f"{per_event * 1000:.2f} ms per event"
+
+    def calibration() -> float:  # a JSON round trip of the same events: pure-Python work, per event
+        import json
+
+        t0 = time.process_time()
+        for _ in range(200):
+            for _t, e in events:
+                json.loads(json.dumps(e))
+        return (time.process_time() - t0) / (200 * len(events))
+
+    def validation() -> float:
+        t0 = time.process_time()
+        for _ in range(20):
+            for _t, e in events:
+                V("event", e)
+        return (time.process_time() - t0) / (20 * len(events))
+
+    cal = min(calibration() for _ in range(5))
+    per_event = min(validation() for _ in range(5))
+    print(f"validation {per_event * 1000:.3f} ms per event, calibration {cal * 1e6:.2f} us")
+    assert per_event < 100 * cal, f"{per_event * 1000:.2f} ms per event, calibration {cal * 1e6:.2f} us"
 
 
 def test_event_schemas_repeat_the_envelope_of_event_json():

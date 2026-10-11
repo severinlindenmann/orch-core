@@ -63,46 +63,77 @@ DEFAULT_POLICIES: dict[str, dict[str, Any]] = {  # the §2 config.json example
 }
 
 
+APPROVER_TOKENS = ("owner", "maintainer", "member", "ticket_owner", "assignees", "reviewers", "watchers")
+TICKET_TYPES = ("feature", "bug", "chore", "spike", "epic")
+
+
+class PolicyRefused(ValueError):
+    """A policy that has no canonical form (§5.7): there is no policy hash for it."""
+
+
 def canonical_policy(p: dict[str, Any]) -> dict[str, Any]:
+    """§5.7 canonical form: all five keys; ``approvers`` (at least one) and ``not`` sorted and de-duplicated;
+    ``count`` an int >= 1; ``applies`` ``"all"``, ``"off"`` or a non-empty sorted list of ticket types."""
+    if set(p) != {"approvers", "count", "not", "applies", "independent"}:
+        raise PolicyRefused("keys")
+    approvers, excluded = set(p["approvers"]), set(p["not"])
+    if not approvers or not (approvers | excluded) <= set(APPROVER_TOKENS):
+        raise PolicyRefused("approvers")
+    if type(p["count"]) is not int or p["count"] < 1:
+        raise PolicyRefused("count")
+    if type(p["independent"]) is not bool:
+        raise PolicyRefused("independent")
     applies = p["applies"]
-    return {
-        "approvers": sorted(set(p["approvers"])),
-        "count": p["count"],
-        "not": sorted(set(p["not"])),
-        "applies": applies if applies in ("all", "off") else sorted(set(applies)),
-        "independent": p["independent"],
-    }
+    if isinstance(applies, list):
+        if not applies or not set(applies) <= set(TICKET_TYPES):
+            raise PolicyRefused("applies")
+        applies = sorted(set(applies))
+    elif applies not in ("all", "off"):
+        raise PolicyRefused("applies")
+    return {"approvers": sorted(approvers), "count": p["count"], "not": sorted(excluded), "applies": applies,
+            "independent": p["independent"]}  # fmt: skip
 
 
-def _applies_union(a: Any, b: Any) -> Any:
-    if a == "all" or b == "all":
-        return "all"
-    if a == "off" and b == "off":
-        return "off"
-    return sorted({t for x in (a, b) if isinstance(x, list) for t in x})
+def _types(applies: Any) -> set[str]:
+    """The ticket types an ``applies`` value covers."""
+    if applies == "all":
+        return set(TICKET_TYPES)
+    if applies == "off":
+        return set()
+    return set(applies)
 
 
 def effective_policy(ws: dict[str, Any], override: dict[str, Any] | None) -> dict[str, Any]:
-    """§5.7: approvers = workspace intersect override, count = the larger, not = the union, independent = either,
-    applies = the union (``all`` if either is, ``off`` only if both are, else the sorted de-duplicated list)."""
-    if override is None:
-        return canonical_policy(ws)
+    """The effective policy of one gate, read off the §5.7 bullet "The effective policy is an intersection". The
+    result may have no ``approvers`` (a blocked gate, ``gate.no_eligible``): it is then not a canonical policy and has
+    no policy hash."""
+    sides = [ws] if override is None else [ws, override]
+    tokens = set(APPROVER_TOKENS)
+    for side in sides:
+        tokens &= set(side["approvers"])
+    values = [side["applies"] for side in sides]
+    if "all" in values:
+        applies: Any = "all"
+    elif all(v == "off" for v in values):
+        applies = "off"
+    else:  # a list, kept as a list even when it covers every type
+        applies = sorted(set().union(*(_types(v) for v in values)))
     return {
-        "approvers": sorted(set(ws["approvers"]) & set(override["approvers"])),
-        "count": max(ws["count"], override["count"]),
-        "not": sorted(set(ws["not"]) | set(override["not"])),
-        "applies": _applies_union(ws["applies"], override["applies"]),
-        "independent": bool(ws["independent"] or override["independent"]),
+        "approvers": sorted(tokens),
+        "count": max(side["count"] for side in sides),
+        "not": sorted(set().union(*(set(side["not"]) for side in sides))),
+        "applies": applies,
+        "independent": any(side["independent"] for side in sides),
     }
+
+
+def applies_to(policy: dict[str, Any], ticket_type: str) -> bool:
+    """§5.7: a gate whose ``applies`` does not cover the ticket's type is not needed."""
+    return ticket_type in _types(policy["applies"])
 
 
 def policy_hash(gate: str, policy: dict[str, Any]) -> str:
     return hl("policy", cj({"gate": gate, "policy": canonical_policy(policy)}))
-
-
-def applies_to(policy: dict[str, Any], ticket_type: str) -> bool:
-    a = policy["applies"]
-    return a == "all" or (a != "off" and ticket_type in a)
 
 
 def named_ticket_roles(policy: dict[str, Any]) -> list[str]:
@@ -146,55 +177,52 @@ SECTIONS_OF_TYPE = {
     "spike": _ALL | {"plan", "findings"},
     "epic": _ALL | {"out_of_scope"},
 }
-_FENCE = re.compile(r"^(`{3,}|~{3,})")
 
 
 class BodyRefused(ValueError):
     """The §4 refusal reason of a ``body.md`` (kept as a short stable token in ``args[0]``)."""
 
 
+def _fence_run(line: str) -> str:
+    """The run of backticks or tildes a line starts with at column 0 (``""`` when it is shorter than three)."""
+    if not line or line[0] not in "`~":
+        return ""
+    n = len(line) - len(line.lstrip(line[0]))
+    return line[:n] if n >= 3 else ""
+
+
 def parse_body(text: str, ticket_type: str) -> dict[str, str]:
-    """§4: a section starts with ``## `` at column 0 outside a code fence; a fence opens at column 0 with three or more
-    backticks or tildes and closes at column 0 with the same character, at least as long, followed by spaces only. The
-    text of a section is what lies between its heading and the next one, leading and trailing LF removed."""
-    by_heading = {h: s for s, h in HEADINGS.items()}
-    out: dict[str, str] = {}
-    cur: str | None = None
-    buf: list[str] = []
-    fence: str | None = None
+    """``body.md`` -> {section id: section text}, read off §4 "Headings and section text" and "Code fence (exact)".
 
-    def close() -> None:
-        if cur is not None:
-            out[cur] = "\n".join(buf).strip("\n")
-
-    for line in text.split("\n"):
-        m = _FENCE.match(line)
-        if fence is None:
-            if line.startswith("## "):
-                close()
-                sid = by_heading.get(line[3:])
-                if sid is None:
-                    raise BodyRefused("body.unknown_section")
-                if sid not in SECTIONS_OF_TYPE[ticket_type]:
-                    raise BodyRefused("body.unknown_section")
-                if sid in out:
-                    raise BodyRefused("body.duplicate_section")
-                cur, buf = sid, []
-                continue
-            if m:
-                fence = m.group(1)
-        elif (
-            m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence) and not line[len(m.group(1)) :].strip(" ")
-        ):
-            fence = None
-        if cur is None:
-            if line:
-                raise BodyRefused("body.text_before_heading")
-            continue
-        buf.append(line)
-    if fence is not None:
+    Two passes: first mark which lines are headings (a ``## `` line at column 0 that is not inside a fence), then cut
+    the text between consecutive headings and drop leading and trailing LF characters from each piece."""
+    lines = text.split("\n")
+    headings: list[int] = []
+    opener = ""  # the fence run that is open, "" outside a fence
+    for i, line in enumerate(lines):
+        run = _fence_run(line)
+        if opener:
+            if run[:1] == opener[:1] and len(run) >= len(opener) and line[len(run) :].strip(" ") == "":
+                opener = ""
+        elif line.startswith("## "):
+            headings.append(i)
+        elif run:
+            opener = run
+    if opener:
         raise BodyRefused("body.open_fence")
-    close()
+    first = headings[0] if headings else len(lines)
+    if any(line != "" for line in lines[:first]):
+        raise BodyRefused("body.text_before_heading")
+    ids = {heading: sid for sid, heading in HEADINGS.items()}
+    out: dict[str, str] = {}
+    for k, i in enumerate(headings):
+        sid = ids.get(lines[i][3:])
+        if sid is None or sid not in SECTIONS_OF_TYPE[ticket_type]:
+            raise BodyRefused("body.unknown_section")
+        if sid in out:
+            raise BodyRefused("body.duplicate_section")
+        stop = headings[k + 1] if k + 1 < len(headings) else len(lines)
+        out[sid] = "\n".join(lines[i + 1 : stop]).strip("\n")
     return out
 
 
@@ -414,3 +442,45 @@ def sample_ticket() -> dict[str, Any]:
     }
     observe(t, "acme-energy-dbt", sha, "feat/DEMO-0043")
     return t
+
+
+# --- the canonical repo identity (§5.7 "The result must match the canonical form exactly") ---------------------------
+
+_LABEL_RE = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?")
+_SEGMENT_RE = re.compile(r"[A-Za-z0-9._~-]+")
+_REPO_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
+
+
+def _canonical_host(host: str) -> bool:
+    labels = host.split(".")
+    if len(host) > 253 or not all(_LABEL_RE.fullmatch(x) for x in labels):
+        return False
+    if labels[-1].isdigit():  # an all-numeric last label only as a plain dotted quad without leading zeros
+        return len(labels) == 4 and all(x.isdigit() and str(int(x)) == x and int(x) <= 255 for x in labels)
+    return True
+
+
+def is_canonical_identity(identity: str) -> bool:
+    """§5.7 canonical form, checked part by part. "No ``.git`` suffix in any case" is read as a suffix of the whole
+    path (like "no trailing slash"), so a ``.git`` that ends a middle segment is allowed (listed as an F1 gap)."""
+    if identity.startswith("local:"):
+        return bool(_REPO_NAME_RE.fullmatch(identity[len("local:") :]))
+    m = re.fullmatch(r"https://([^/:]+)(?::([^/]*))?/(.*)", identity)
+    if not m or not identity.isascii():
+        return False
+    host, port, path = m.groups()
+    if not _canonical_host(host):
+        return False
+    if port is not None and not (re.fullmatch(r"[1-9][0-9]{0,4}", port) and int(port) <= 65535 and port != "443"):
+        return False
+    segments = path.split("/")
+    if not all(_SEGMENT_RE.fullmatch(x) and x not in (".", "..") for x in segments):
+        return False
+    return not path.lower().endswith(".git")
+
+
+def mapped_identity(raw: str, name: str) -> str | None:
+    """The identity a raw remote maps to, or ``None`` when the mapped result is not canonical: refused, never
+    converted (§5.7). What a refusal means for the host (no identity, ``source.missing``, ``local:``) is an F1 gap."""
+    out = repo_identity(raw, name)
+    return out if is_canonical_identity(out) else None

@@ -224,39 +224,53 @@ def tamper_vector() -> dict[str, Any]:
 
     cases: list[dict[str, Any]] = []
 
-    def add(name: str, mutation: str, log: str, events: list[dict[str, Any]], canon_at: int | None,
-            chain_at: int | None, invalid: list[list[Any]] | None = None) -> None:  # fmt: skip
-        cases.append({"name": name, "mutation": mutation, "log": log, "events": events,
-                      "check_chain_breaks_at": canon_at, "replay_chain_broken_at": chain_at,
-                      "replay_invalid_seqs": invalid or []})  # fmt: skip
+    def add(name: str, mutation: str, log: str, events: list[dict[str, Any]], broken_at: int | None) -> None:
+        """One F1 outcome per case (§5.5 "Reading"): the reader checks each log's lines in file order and reports
+        ``chain.broken`` at the first line that fails cj, field set, seq, prev, ws_seq, host_sig or the person sig,
+        naming the line's position (the seq it should carry). A break at workspace seq n also stops every ticket
+        event with ws_seq >= n."""
+        case: dict[str, Any] = {"name": name, "mutation": mutation, "log": log, "events": events,
+                                "chain_broken_at": broken_at}  # fmt: skip
+        if log == "workspace":
+            stopped = {}
+            if broken_at is not None:
+                for uid, evs in w.logs.items():
+                    if uid != "workspace":
+                        hit = [e["seq"] for e in evs if e["ws_seq"] >= broken_at]
+                        if hit:
+                            stopped[uid] = hit[0]
+            case["ticket_events_stopped_from"] = stopped
+        cases.append(case)
 
     e1, e2, e3, e4 = ticket
-    add("payload_changed_not_resigned", "seq 2: text 'second' -> 'sec0nd', nothing re-signed", TICKET,
-        [e1, setp(e2, text="sec0nd"), e3, e4], 3, 2)  # fmt: skip
+    add("payload_changed_not_resigned", "seq 2: text 'second' -> 'sec0nd', nothing re-signed: host_sig fails", TICKET,
+        [e1, setp(e2, text="sec0nd"), e3, e4], 2)  # fmt: skip
     add("payload_changed_host_resigned", "seq 2: text changed and host_sig re-made (an attacker holding the workspace "
-        "key); the person signature no longer verifies", TICKET,
-        [e1, resign_host(setp(e2, text="sec0nd"), TICKET), e3, e4], 3, 3, [[2, "sig.invalid"]])  # fmt: skip
-    add("event_deleted", "seq 2 removed", TICKET, [e1, e3, e4], 2, 2)
-    add("events_swapped", "seq 3 and 4 swapped", TICKET, [e1, e2, e4, e3], 3, None)
-    add("prev_rewritten", "seq 3: prev set to the head of seq 1", TICKET,
-        [e1, e2, setp(e3, prev=head(e1)), e4], 3, 3)  # fmt: skip
-    add("seq_rewritten", "seq 3: seq set to 5", TICKET, [e1, e2, setp(e3, seq=5), e4], 3, 3)
+        "key); the person signature no longer verifies, which breaks the chain at that line", TICKET,
+        [e1, resign_host(setp(e2, text="sec0nd"), TICKET), e3, e4], 2)  # fmt: skip
+    add("event_deleted", "seq 2 removed: the line at position 2 carries seq 3", TICKET, [e1, e3, e4], 2)
+    add("events_swapped", "seq 3 and 4 swapped: lines are checked in file order and never sorted, so the line at "
+        "position 3 (carrying seq 4) breaks the chain", TICKET, [e1, e2, e4, e3], 3)  # fmt: skip
+    add("prev_rewritten", "seq 3: prev set to the head of seq 1", TICKET, [e1, e2, setp(e3, prev=head(e1)), e4], 3)
+    add("seq_rewritten", "seq 3: seq set to 5", TICKET, [e1, e2, setp(e3, seq=5), e4], 3)
     add("host_sig_swapped", "seq 2 carries the host_sig of seq 3", TICKET,
-        [e1, setp(e2, host_sig=e3["host_sig"]), e3, e4], 3, 2)  # fmt: skip
-    add("tail_truncated", "seq 4 removed: the chain is intact, only a checkpoint can see it", TICKET,
-        [e1, e2, e3], None, None)  # fmt: skip
+        [e1, setp(e2, host_sig=e3["host_sig"]), e3, e4], 2)  # fmt: skip
+    add(
+        "tail_truncated", "seq 4 removed: the chain is intact, only a checkpoint can see it", TICKET, [e1, e2, e3], None
+    )
     add("genesis_payload_changed", "workspace seq 1: prefix DEMO -> EVIL", "workspace",
-        [setp(wsl[0], prefix="EVIL"), *wsl[1:]], 2, 1)  # fmt: skip
+        [setp(wsl[0], prefix="EVIL"), *wsl[1:]], 1)  # fmt: skip
     add("member_role_raised_not_resigned", "workspace seq 3: lena member -> maintainer", "workspace",
-        [wsl[0], wsl[1], setp(wsl[2], role="maintainer"), wsl[3]], 4, 3)  # fmt: skip
-    add("member_role_raised_host_resigned", "workspace seq 3: lena member -> maintainer, host_sig re-made", "workspace",
-        [wsl[0], wsl[1], resign_host(setp(wsl[2], role="maintainer"), "workspace"), wsl[3]], 4, 4,
-        [[3, "sig.invalid"]])  # fmt: skip
-    add("workspace_event_deleted", "workspace seq 2 removed", "workspace", [wsl[0], wsl[2], wsl[3]], 2, 2)
+        [wsl[0], wsl[1], setp(wsl[2], role="maintainer"), wsl[3]], 3)  # fmt: skip
+    add("member_role_raised_host_resigned", "workspace seq 3: lena member -> maintainer, host_sig re-made; the "
+        "person signature no longer verifies, so the chain breaks at 3 and every ticket event with ws_seq >= 3 stops",
+        "workspace", [wsl[0], wsl[1], resign_host(setp(wsl[2], role="maintainer"), "workspace"), wsl[3]], 3)  # fmt: skip
+    add("workspace_event_deleted", "workspace seq 2 removed", "workspace", [wsl[0], wsl[2], wsl[3]], 2)
     return {
-        "pins": "tampered chain lines: the stated mutation of a signed log, the seq where canon.check_chain stops "
-        "(prev/seq links only) and where a reader (signatures included) reports chain.broken; "
-        "full lines of both logs with real signatures",
+        "pins": "tampered chain lines (5.5 Reading): the stated mutation of a signed log and the one F1 outcome, the "
+        "line position where a reader reports chain.broken (lines checked in file order, a bad host_sig or person sig "
+        "breaks the chain at that line); for a workspace-log break at seq n, the first seq of each ticket log whose "
+        "events stop counting (ws_seq >= n); full lines of both logs with real signatures",
         "workspace_id": W,
         "genesis": w.genesis,
         "now": ow.stamp(w.clock + 60),
@@ -543,6 +557,16 @@ def checkpoint_vector() -> dict[str, Any]:
         {"name": "lower_height", "log_seq": len(wl) - 1, "head": heads_w[-2], "expect": "chain.diverged"},
         {"name": "same_height_same_head", "log_seq": len(wl), "head": heads_w[-1], "expect": "ok", "n": 2},
     ]
+    # signed workspace checkpoints offered to a reader that already holds n = 2 (relay, devices from P3; the P1 host
+    # only writes its own and computes n itself): a lower n is refused even when everything else is the same
+    held = wcp(2, len(wl), heads_w[-1], {TICKET: {"seq": len(tl), "head": heads_t[-1]}})
+    n_offers = [
+        {"name": "lower_n_same_heads", "checkpoint": _checkpoint({**held, "n": 1}), "expect": "chain.diverged"},
+        {"name": "same_n_same_content", "checkpoint": _checkpoint(held), "expect": "ok"},
+        {"name": "higher_n_same_heads", "checkpoint": _checkpoint({**held, "n": 3}), "expect": "ok"},
+        {"name": "lower_n_lower_height", "checkpoint": _checkpoint(wcp(1, len(wl) - 1, heads_w[-2], {})),
+         "expect": "chain.diverged"},
+    ]  # fmt: skip
     # logs as they are on disk when a checkpoint is checked (heads by seq, 0-based list)
     divergences = [
         {"name": "log_agrees", "ticket_heads": heads_t, "expect": []},
@@ -576,6 +600,8 @@ def checkpoint_vector() -> dict[str, Any]:
         "workspace_log": {"heads": heads_w},
         "ticket_offers": ticket_offers,
         "workspace_offers": ws_offers,
+        "workspace_n_held": _checkpoint(held),
+        "workspace_n_offers": n_offers,
         "divergence": divergences,
     }
 
@@ -593,9 +619,15 @@ def restore_scenarios() -> list[dict[str, Any]]:
     old_revoked = old.ev("workspace", "device.revoked", old.actor("sev"),
                          {"device": did("lena1"), "reason": "lost", "revocation": rev})  # fmt: skip
     out = []
-    for name, reappend in (("restore_reappends_the_revocation", True), ("restore_without_the_revocation", False)):
-        w = World(name, "a workspace restore after a rollback: the host re-appends every PK-signed revocation it has "
-                  "seen as device.revoked with actor H, the embedded revocation verbatim")  # fmt: skip
+    for name, reappend in (
+        ("restore_reappends_the_revocation", True),
+        ("reader_cannot_see_a_dropped_revocation", False),
+    ):
+        pins = ("a workspace restore after a rollback: the host re-appends every PK-signed revocation it has seen as "
+                "device.revoked with actor H, the embedded revocation verbatim" if reappend else
+                "the same restore without the re-append: the abandoned tail held lena1's revocation, which the new "
+                "chain no longer shows")  # fmt: skip
+        w = World(name, pins)
         prefix(w)
         h4 = head(w.logs["workspace"][-1])
         payload = {"from_seq": 4, "head": h4, "abandoned": {"seq": 5, "head": head(old_revoked)},
@@ -611,5 +643,15 @@ def restore_scenarios() -> list[dict[str, Any]]:
             w.ev("workspace", "device.revoked", w.HOST, {"device": did("lena1"), "reason": "lost", "revocation": rev},
                  note="the host puts the revocation back at once",
                  after={"workspace": {"devices_revoked": [did("lena1")]}})  # fmt: skip
-        out.append(w.scenario(reappends=reappend))
+        extra: dict[str, Any] = {"reappends": reappend}
+        if not reappend:
+            extra["note"] = (
+                "NOT a valid restore. A log-only reader cannot see the dropped revocation (it is only in the abandoned "
+                "tail and in host state), so it accepts these lines; the host must refuse this restore, because 5.10 "
+                "accepts a workspace restore only if the host re-appends every PK-signed revocation it has seen at once. "
+                "Consumers must not read this scenario as 'restore without re-append is ok'."
+            )
+            extra["host_expect"] = "refused"
+            extra["host_knows_revocations"] = [rev]
+        out.append(w.scenario(**extra))
     return out

@@ -14,6 +14,7 @@ from typing import Any
 
 from . import visibility
 from .codes import Code, Refusal
+from .emits import HUMAN_ONLY
 from .types import WORKSPACE, Core, Device, TCore, WsCore, ts
 from .verifier import SigContext, Verifier
 
@@ -167,6 +168,7 @@ def verb_covers(typ: str, verbs: Any, verb_events: Mapping[str, Collection[str]]
     model test) the names are read as event types."""
     if verbs == "agent":
         return True
+    verbs = [v for v in verbs if v not in HUMAN_ONLY]  # a person's own operation is never in a grant (F1 10.1)
     if verb_events is None:
         return typ in verbs
     return any(typ in verb_events.get(v, ()) for v in verbs)

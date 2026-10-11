@@ -14,6 +14,7 @@ FILES = {
     "status.json": lambda d: d["scenarios"],
     "effective_policy.json": lambda d: d["scenarios"],
     "questions.json": lambda d: d["scenarios"],
+    "approvals.json": lambda d: d["scenarios"],
 }
 SCENARIOS = [(f, s) for f, pick in FILES.items() for s in pick(load(f))]
 

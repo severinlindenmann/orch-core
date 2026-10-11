@@ -544,13 +544,14 @@ def _check_receipts(receipts: object, gate: str) -> None:
         _int(r["exit"], "receipt exit")
 
 
-_RAW_URL = re.compile(r"(https|ssh)://(?:[^/@]*@)?([^/:@]+)(?::([0-9]+))?/(.+)")
-_RAW_SCP = re.compile(r"(?:[^/@:]+@)?([^/:@]+):([^/].*)")
+_RAW_URL = re.compile(r"(https|ssh)://(?:git@)?([^/:@]+)(?::([0-9]+))?/(.+)")
+_RAW_SCP = re.compile(r"(?:git@)?([^/:@]+):([^/].*)")
 
 
 def canonical_repo_identity(raw: str, name: str) -> str:
     """The identity of a repo from its raw ``remote.origin.url`` (§5.7 "Repo identity"): ``https://`` and
-    ``ssh://``/scp-like forms become ``https://host[:port]/path`` (userinfo removed, host lower-case, every port kept
+    ``ssh://``/scp-like forms become ``https://host[:port]/path`` (only literal git userinfo allowed
+    and removed, host lower-case, every port kept
     except 443 for https and 22 for ssh, then one trailing ``/`` and one ``.git`` removed, in that order); anything
     else, and anything that is not canonical after that, is ``local:<name>``. The one canonicaliser every runtime
     uses; the result passes :func:`check_repo_identity`."""

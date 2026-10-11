@@ -437,6 +437,10 @@ def repo_identity_vectors() -> dict[str, Any]:
         ("https_default_port_dropped", "https://github.com:443/acme/x", "x"),
         ("https_other_port_kept", "https://git.example.com:8443/a/b", "x"),
         ("https_port_22_kept", "https://git.example.com:22/a/b", "x"),
+        ("ssh_git", "ssh://git@host/a/b", "x"),
+        ("ssh_alice", "ssh://alice@host/a/b", "x"),
+        ("ssh_git_password", "ssh://git:pw@host/a/b", "x"),
+        ("scp_alice", "alice@host:a/b", "x"),
         ("ssh_url", "ssh://git@github.com/acme/x.git", "x"),
         ("ssh_url_no_user", "ssh://github.com/acme/x", "x"),
         ("ssh_url_password", "ssh://git:pw@github.com/acme/x", "x"),
@@ -489,7 +493,8 @@ def repo_identity_vectors() -> dict[str, Any]:
         "refused": refused,
         "same": [["https://github.com/Acme/X", "https://github.com/acme/x"]],
         "mapping": mapping,
-        "mapping_note": "userinfo (user:token@) is removed before anything else and never appears in a result; one "
+        "mapping_note": "only absent userinfo or literal git is allowed; other users and passwords "
+        "map to local:<repo name>; one "
         "trailing / and then one trailing (lower-case) .git are removed from the end of the path; the https default "
         "port 443 and the ssh default port 22 are dropped, every other port is kept (so ssh on 443 keeps it); anything "
         "that is not https, ssh or scp-like is local:<repo name>. A mapped result that is not in the canonical form "

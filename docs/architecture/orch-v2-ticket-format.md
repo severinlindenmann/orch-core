@@ -79,8 +79,10 @@ orchestrator/
 
 - `config.json` mirrors what the signed events in `events/workspace.jsonl` say (§5.4.2).
 - `settings.repos` maps the repo names used in `links` to a working copy (absolute, or relative to the workspace
-  directory). It is owner-signed, so an agent can't point a ticket at another repository. The repo's identity is
-  read from git (§5.7).
+  directory), with a required `path` and optional `remote` and `default_branch` fields; there is no primary flag.
+  All fields are owner-signed in the same `settings.changed` event. `remote` must already be a canonical repo
+  identity (§5.7): refuse a non-canonical value, never convert it. `default_branch` follows the same git branch
+  name rules as `links.branches`. The repo's observed identity is read from git (§5.7).
 - When the two disagree, the events win, and the host rewrites the file and logs `projection.repaired`.
 - `keys.jsonl` has one line per key: `{"key": "DEMO-0043", "uid": "01J9ZK…", "at": "2026-10-09T09:00:00Z"}`, written
   as `cj` plus LF, nothing else. It is a projection of the `ticket.created` events and the key allocator. The next
@@ -97,10 +99,10 @@ compares bytes and a second implementation must produce the same ones.
   questions, options, pull requests) in the order of the §3 example, every other object with sorted keys; two-space
   indent, `ensure_ascii` off, a single final LF. It is rebuilt from the replayed events and compared byte for byte.
 - `config.json`: the §2 shape, `members` in member-list order, `gates` in the order requirements, plan, verify, code,
-  each policy as `approvers, count, not, applies, independent`, `settings.repos` and `addons` sorted by name. Same
-  indent rules. The workspace name and `agents.run_for` are in no signed event: P1 keeps them as the file has them (the
-  creator's value, or the default `owner, maintainer, member`) and **nothing decides anything from them** (a guard test
-  checks it). Owner question: if `run_for` is ever honoured it must come from a signed event.
+  each policy as `approvers, count, not, applies, independent`, `settings.repos` and `addons` sorted by name, each repo
+  entry's fields sorted by name. Same indent rules. The workspace name and `agents.run_for` are in no signed event:
+  P1 keeps them as the file has them (the creator's value, or the default `owner, maintainer, member`) and **nothing
+  decides anything from them** (a guard test checks it). Owner question: if `run_for` is ever honoured it must come from a signed event.
 - `body.md`: `## <heading>` (the bare heading, `Out of scope`), a blank line, the text, a blank line, per section in table
   order; an empty section is the heading and a blank line; one LF ends the file after the last non-empty text; no
   section at all is a zero-byte file. Reading accepts every other layout (§4 rules) and normalises (CRLF, NFC).
@@ -478,7 +480,7 @@ agent; **D** an addon; **H** the host only. Types marked D58–D60 are new with 
 | `device.removed` | P | `device`; `reason?`: str | Removes the device from **this** workspace only (protocol §6.3). By the device's person or an owner. |
 | `device.revoked` | P, H | `device`; `reason`: `compromised`, `lost` or `retired`; `revocation`: signed object | The global revocation (protocol §6.2), signed by the person key, verbatim; its authority (§5.3). `reason` must equal `revocation.o.reason`, otherwise refused. Every workspace refuses the device from then on. `compromised` has the effects in §5.7. |
 | `policy.changed` | P | `gates`: {gate: policy} | The workspace defaults. |
-| `settings.changed` | P | `set`: {`grant_hours?`: int 1–24, `claim_ttl_min?`: int 15–1440, `lease_ttl_min?`: int 5–1440, `repos?`: {repo name: {`path`: str} or null}} | **D60** (`grant_hours`). Existing grants keep their end time. `null` removes a repo. Refused when two repos resolve to the same path. |
+| `settings.changed` | P | `set`: {`grant_hours?`: int 1–24, `claim_ttl_min?`: int 15–1440, `lease_ttl_min?`: int 5–1440, `repos?`: {repo name: {`path`: str, `remote?`: canonical repo identity, `default_branch?`: branch name} or null}} | **D60** (`grant_hours`). Existing grants keep their end time. `null` removes a repo. Refused when two repos resolve to the same path. |
 | `grant.issued` | P | `grant`: grant id; `scope`: `all` or `workable`; `verbs`: `"agent"` or [operation name]; `issued_at`: timestamp; `hours`: int; `expires_at`: timestamp; `secret_hash`: hash; `label?`: str | **D60** terms in §10.1 A3. Always for the signer. Readers check `\|at − issued_at\| ≤ 300 s`, `expires_at == issued_at + 3600·hours` (seconds, no leap seconds) and the role terms at the event's position. |
 | `grant.revoked` | P | `grant`; `reason?`: str | **D60.** |
 | `addon.granted` | P | `name`: addon name; `version`: str; `package_sha256`: hash; `capabilities`: [token]; `fields`: {field: {`type`, its limits, `set_by`, `gate`?}}; `sections`: [{`id`, `types`, `gate`?}]; `artifact_kinds`: [kind] | Owner only. Also enables the addon. The host derives `fields`, `sections` and `artifact_kinds` from the package's manifest (§8.1); replay never reads the manifest and checks every later addon write against these three (§8.1). The bindings of §5.7 are the entries that have `gate`. |
@@ -696,10 +698,10 @@ carry `source_sha: []`; a ticket that links a repo must have a non-empty list.
   refused with `gate.stale`), and again at landing.
 - **Repo identity.** From the raw `remote.origin.url`, without `insteadOf` rewriting: `https://` and
   `ssh://`/scp-like forms map to `https://host[:port]/path`, keeping every port except 443 (https) and 22 (ssh),
-  userinfo (`user:token@`) always removed, host lower-case and nothing else changed, one trailing `/` removed first, then one
-  trailing `.git` (so `x.git/` becomes `x`). Anything else (no remote, `file://`,
-  a path) is `local:<repo name>`; so is a remote that is not canonical after this mapping, and a `remote.origin.url`
-  with more than one value (git fetches from the first and pushes to all, so no single identity names the repo; read
+  only absent userinfo or the literal user `git` allowed (no password); `git@` removed, host lower-case and nothing
+  else changed, one trailing `/` removed first, then one trailing `.git` (so `x.git/` becomes `x`). Anything else
+  (no remote, `file://`, a path, or userinfo other than literal `git`, including any password) is `local:<repo name>`;
+  so is a remote that is not canonical after this mapping, and a `remote.origin.url` with more than one value (git fetches from the first and pushes to all, so no single identity names the repo; read
   `git config --get-all`). Nothing is repaired or partly cleaned. The mapped result must match the canonical form
   exactly (a stored identity that doesn't is **refused, never converted**): host labels `[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?` joined by single dots (at most 253
   characters, no trailing dot; punycode `xn--` allowed; Unicode hosts and IPv6 refused; an all-numeric last label only
@@ -1914,7 +1916,7 @@ owner's confirmation.
 | N7 | Verify gate, verdicts and stale decisions | A verdict **is** the verify decision (`pass`/`fail`). Every gate has a **generation**, raised in every status by the table in §5.7 (at most 1 per event); decisions sign `gate_gen` and `based_on`; a stale generation is refused and never counts; `gate.invalidated` raises nothing; later gates bind the earlier gates' generations and approvals (`prior`). | agreed with Codex, modified (generation barriers) |
 | N8 | Host events | Not "only take away": `edit.external` **installs** prose. §5.12 lists the exact effect of each host event and states that a host event never approves, answers, grants, adds a member or creates a ticket. | Codex was right; changed |
 | N9 | Unattended writes | Keep A3 (`ask`, `log`, `artifact add`) and change the harness plan's H2. Unattended writes only on tickets with `visibility: workspace`; quotas per session (30 events, 20 MiB per hour) and per workspace (120 events, 100 MiB per rolling hour); `question.asked` only for new ids; artifacts without `ac`/`task`, never evidence (O6). An unattended `artifact.added` can void a pending verify approval; accepted and visible. | agreed with Codex, modified; tightened with the Opus reviewer |
-| N10 | The code gate (D59) | `not` always includes `assignees` and `independent` is always `true`, enforced by the host. Only a person's signature approves it; no `via` field in P1. In P1 turning it on moves no ticket back. | agreed with Codex |
+| N10 | The code gate (D59) | `not` always includes `assignees` and `independent` is always `true`, enforced by the host. Only a person's signature approves it; no `via` field in P1. In P1 turning it on moves no ticket back. In P1 only a person's signature approves it; D62 mandates may sign it from P2 (spec PR #352). | agreed with Codex |
 | N11 | Addon writes | Addons hold no key; the host appends their events. `set_by` is a list of actor alternatives checked per write (`agent`, `addon`, human tokens = a signed person event). Only leaf paths can be set, so replacing `ticket.addons.<addon>` can't bypass `set_by`. Addon events never carry core authority. | agreed with Codex, modified |
 | N12 | Independence of approvers | The policy option `independent`, **off by default** for `requirements`, `plan` and `verify`, so a sole owner can approve their own agents' work; always on for `code` (D59). See O4 for what `not: assignees` covers. | new from the Codex review |
 | N13 | Trust root | The head of `workspace.created` is the genesis, checked in six ordered steps (§5.11); remembered by the host outside the workspace, in every workspace checkpoint, shown at pairing (the person's custody key file records it from P3 pairing on; `orch init` does not, see §10.7). Readers replay authorization, not only signatures. **P1 limit:** see O7. | new from the Codex review; tightened with the Opus reviewer |

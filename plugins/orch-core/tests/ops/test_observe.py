@@ -100,7 +100,7 @@ def test_credentials_in_a_remote_are_never_stored_printed_or_passed_on(ws, cli, 
     r = cli("show")
     assert r.code == 0 and secret not in r.out + r.err
     ev = [e for e in ws.events("1") if e["type"] == "branch.pushed"]
-    assert ev[0]["repo_id"] == "https://github.com/acme/Repo"  # userinfo and .git dropped, the host lower-cased
+    assert ev[0]["repo_id"] == "local:proj"  # non-git userinfo is not a repo identity
     for p in ws.root.rglob("*"):
         if p.is_file() and ".venv" not in str(p):
             assert secret.encode() not in p.read_bytes(), p

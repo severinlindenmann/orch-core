@@ -243,7 +243,10 @@ class Session:
             data, done = await self.queue.get()
             self.writing = True
             try:
-                await asyncio.wait_for(loop.sock_sendall(self.sock, data), WRITE_TIMEOUT_SECONDS)
+                # 3.11 wait_for can swallow cancellation when its send task has
+                # just finished, leaving this writer parked on queue.get().
+                async with asyncio.timeout(WRITE_TIMEOUT_SECONDS):
+                    await loop.sock_sendall(self.sock, data)
             except TimeoutError as exc:
                 raise frames.FrameError("conn.overloaded", "Slow reader write deadline exceeded") from exc
             self.writing = False
@@ -386,21 +389,29 @@ class Session:
             reader.cancel()
             writer.cancel()
             timer.cancel()
-            await asyncio.gather(reader, writer, timer, return_exceptions=True)
-            if error is not None:
-                # A timed-out write may have sent a partial frame. Sending a fatal
-                # after it would corrupt framing: close directly in that case.
-                if not self.writing:
-                    await _fatal(self.sock, error)
-            for task in list(self.tasks.values()):
-                task.cancel()
-            await asyncio.gather(*list(self.tasks.values()), return_exceptions=True)
-            self.sock.close()
+            try:
+                await asyncio.gather(reader, writer, timer, return_exceptions=True)
+                if error is not None:
+                    # A timed-out write may have sent a partial frame. Sending a fatal
+                    # after it would corrupt framing: close directly in that case.
+                    if not self.writing:
+                        await _fatal(self.sock, error)
+            finally:
+                # End the connection even if cancellation interrupts the fatal
+                # send, and before waiting for request handlers to finish.
+                with contextlib.suppress(OSError):
+                    self.sock.shutdown(socket.SHUT_RDWR)
+                self.sock.close()
+                tasks = list(self.tasks.values())
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
 
 
 async def _fatal(sock: socket.socket, error: frames.FrameError) -> None:
     with contextlib.suppress(OSError, TimeoutError):
-        await asyncio.wait_for(asyncio.get_running_loop().sock_sendall(sock, frames.encode(error.response())), 0.2)
+        async with asyncio.timeout(0.2):
+            await asyncio.get_running_loop().sock_sendall(sock, frames.encode(error.response()))
 
 
 class Server:

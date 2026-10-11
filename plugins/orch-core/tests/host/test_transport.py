@@ -652,13 +652,62 @@ def test_handshake_failures(listener, first, code):
 
 def test_request_before_welcome_is_fatal(listener):
     async def scenario():
-        async with running(server_for(listener)) as (client, _):
+        server = server_for(listener)
+        async with running(server) as (client, _):
             await asyncio.get_running_loop().sock_sendall(client, frames.encode(HELLO) + frames.encode(req()))
             reply = await read_frame(client)
             if reply["t"] == "welcome":
                 reply = await read_frame(client)
             assert reply["error"]["code"] == "handshake.invalid"
             assert await read_frame(client) is None
+            await asyncio.wait_for(asyncio.gather(*server.tasks), 1)
+            assert not server.sessions
+            assert not server.tasks
+            assert not server.limits.connections
+
+    asyncio.run(scenario())
+
+
+def test_fatal_during_completed_write_finishes_session(monkeypatch):
+    async def scenario():
+        sent, closed = [], []
+        sock = SimpleNamespace(shutdown=lambda how: closed.append(how), close=lambda: closed.append("close"))
+        server = server_for(SimpleNamespace())
+        peer = Peer(UID, "agent")
+        session = Session(sock, peer, Credentials(UID, GID, 1), server)
+
+        async def read():
+            # A read queues a reply and then fails in the same turn, as with
+            # coalesced hello/request or requests overflowing the write queue.
+            session.send(result())
+            raise frames.FrameError("handshake.invalid")
+
+        async def sendall(sock, data):
+            # Immediate completion races with the supervisor cancelling the
+            # writer inside wait_for on Python 3.11.
+            sent.append(data)
+
+        monkeypatch.setattr(session, "_read", read)
+        monkeypatch.setattr(asyncio.get_running_loop(), "sock_sendall", sendall)
+        server.limits.acquire(peer)
+        server.sessions.add(session)
+        task = asyncio.create_task(session.run())
+        server.tasks.add(task)
+        task.add_done_callback(lambda task: server._session_done(session, task))
+        try:
+            done, _ = await asyncio.wait({task}, timeout=1)
+            assert task in done, "Fatal disposition left the session running"
+            task.result()
+            assert frames.Decoder().feed(sent[-1])[0]["t"] == "fatal"
+            assert closed[:2] == [socket.SHUT_RDWR, "close"]
+            assert not server.sessions
+            assert not server.tasks
+            assert not server.limits.connections
+            assert not session.tasks
+            assert not (asyncio.all_tasks() - {asyncio.current_task()})
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
     asyncio.run(scenario())
 

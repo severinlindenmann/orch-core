@@ -13,7 +13,7 @@ from orch.store.render import section_entry
 
 def handle(ctx: Context, args: dict[str, Any]) -> Result:
     c = Call.of(ctx, "new")
-    actor = c.actor()
+    actor = c.actor() if ctx.prepare is None else None
     title = c.text(args["title"], one_line=True, what="title")
     if not 1 <= len(title) <= 200:
         raise OrchError("invalid.input", "title is 1 to 200 characters")
@@ -32,6 +32,8 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         sets["ticket.parent"] = pv.key
     text = c.read_text_source(args, ("message", "file"))
     summary = c.text(text, limit=65536, what="description").strip("\n") if text is not None else ""
+    if ctx.prepare is not None:
+        return _prepare(ctx, c, title, kind, bool(sets or summary))
     if ctx.dry_run:
         view_key = c.store.peek_key()
         return Result(
@@ -78,6 +80,25 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
             view = c.store.ticket(key)
         c.shown(view, fields=views.ALL_FIELDS, sections=tuple(SECTIONS_BY_TYPE[view.type]))
     return c.result(view, {"title": title, "ticket_type": kind}, seq=seq, hints=[f"orch claim {key}"])
+
+
+def _prepare(ctx: Context, c: Call, title: str, kind: str, more: bool) -> Result:
+    """``human.prepare`` of a person's ``new``: one ``ticket.created`` (``EMITS_V1["new"]``), with the key the store
+    would allocate now. A key taken before the submit is refused there (``ticket.exists``): keys are never reused."""
+    from orch.ops.prepare import Captured, judge
+    from orch.ops.runtime import canon_ulid
+
+    if more:
+        raise OrchError(
+            "invalid.input",
+            "a person's new takes a title and a type (it emits ticket.created only); set the rest after",
+        )
+    capture = ctx.prepare
+    key, uid = c.store.peek_key(), canon_ulid()
+    event = {"type": "ticket.created", "key": key, "ticket_type": kind, "title": title, "owner": capture.person}
+    judge(c.store, uid, event, capture)
+    capture.add(Captured(uid, event))
+    return Result(data={"title": title, "ticket_type": kind}, key=key, seq=0, hints=[f"orch show {key}"])
 
 
 OP = operation(

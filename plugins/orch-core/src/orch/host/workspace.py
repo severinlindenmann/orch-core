@@ -45,6 +45,7 @@ from .custody import check_tree, check_workspace_files
 from .errors import HostError
 from .outcomes import OutcomeStore, StoreReconciler
 from .registry import Entry
+from .requests import RequestStore
 from .transport import Peer, Session
 
 if TYPE_CHECKING:
@@ -117,6 +118,9 @@ class WorkspaceService:
         self.caps: Any = None
         #: set while ``unregister`` drains this workspace: new requests answer ``workspace.unavailable``
         self.closing = False
+        #: human requests (§0.8.1, H5a): ``<state>/hosts/<ws>/requests/``
+        self.requests: RequestStore | None = RequestStore(self.state_dir, entry.workspace_id, host_uid, clock=clock)
+        self.outcomes.roll_forward = self._roll_forward
 
     @property
     def workspace_id(self) -> str:
@@ -172,10 +176,20 @@ class WorkspaceService:
         if self.state != "unavailable":
             try:
                 self.outcomes.open()
+                if self.requests is not None:
+                    from .human import recover
+
+                    self.requests.open()
+                    recover(self)  # a crash between two appends of a human submission rolls forward (§0.8.1)
                 self.outcomes.reconcile_all()  # a crash between an append and its record (§0.7)
                 self.outcomes.sweep()
             except (HostError, OSError, ValueError) as exc:
                 self._unavailable(f"{getattr(exc, 'code', type(exc).__name__)}: {exc}")
+
+    def _roll_forward(self, record: dict[str, Any]) -> dict[str, Any] | str:
+        from .human import outcome_fields
+
+        return outcome_fields(self, record)
 
     def _judge(self) -> None:
         ws = self.store.state.workspace

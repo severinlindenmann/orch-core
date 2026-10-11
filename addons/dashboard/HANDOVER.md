@@ -322,13 +322,13 @@ factory addon's (`src/mocks/addons/factory-runs.ts`); the hold is meant to be **
 - **Reloads:** the hold's deadline is held on the host's real clock. The mock keeps a wall-clock deadline next to the
   mock one (`holdWallUntil`) and re-derives the mock deadline from it when the mock clock restarts on a reload, so a
   reload never extends a hold. Seeded factory state is saved as soon as it is seeded (`MockAddon.saveOnSeed`), so the
-  busy day's hold is not seeded again on a reload. Factory state version 4; versions 2 and 3 are migrated
+  busy day's hold is not seeded again on a reload. Factory state version 5; version 4 migrates unchanged (new fields are optional); versions 2 and 3 are migrated
   (`MockAddon.migrate`): runs, holds and counters kept; a hold saved without a wall deadline gets its full window again
   from the reload (conservative: never shorter than what was left).
 - Disable / update / uninstall initialise and settle the factory state before the hold check, so a seeded hold nobody
   looked at still blocks them.
-- **No operation shortens a Deliver hold.** During the hold the only human act is a signed Stop; there is no
-  "deliver now". The mock's "Simulate: let the hold time pass (demo)" is a simulator control of the demo data (owner
+- **No operation shortens an active Deliver hold.** During the hold the only human act is a signed Stop.
+  “Deliver now…” exists only for a stopped run, under a fresh owner signature. The mock's "Simulate: let the hold time pass (demo)" is a simulator control of the demo data (owner
   only, refused outside the demo datasets), not a host operation: a host implements nothing for it.
 - **Demo only:** "Fill in a demo request" (`demo_run`, prefills the form; still signed); the busy day seeds run R-1 on
   hold (28 min left); its 3 children are reserved in the budget (23 of 25 used), a valid charter state.
@@ -345,7 +345,8 @@ factory addon's (`src/mocks/addons/factory-runs.ts`); the hold is meant to be **
 - **D53 (landing).** The land addon binds approval, checks and merge to one candidate SHA; a clean rebase keeps the
   approval (re-checked), a conflict resolution voids it — through core (`store.landingResolved`: core checks the
   failed attempt and the resolution records and writes the reason), never by the addon. `main` is refused as a target
-  (D33, normalised names). Decided (10 Oct): the verdict signs the branch head (`source_sha`), the land worker uses
+  (D33, normalised names) for everyone, including mandates, until the owner lifts D33. A mandate can never do
+  more than its owner. Decided (10 Oct): the verdict signs the branch head (`source_sha`), the land worker uses
   that commit, new commits void the verdict, and the opt-in `code` gate (when on) signs the same commit.
 - **Third-party HTML (security review #1).** Addon frame nodes, agent HTML artifacts and one-off widget pages are
   drawn **inert**: core's sanitizer (`addon-ui/frameSanitize.ts`) first removes everything that could navigate the
@@ -524,13 +525,17 @@ Links: a repo row is `/w/DEMO/addon/repos/repos?tab.repos=structure&row=web-port
 ## Owner answers applied — 11 Oct morning (U8)
 
 These decisions supersede earlier open questions and defaults in this handover.
-Mandates remain non-signing preview only: code-review approval, land on main, first linked-workspace send,
-public publish and restore/purge are allowed. Another mandate, protected paths, settings, addons, members/roles,
+Mandates remain non-signing preview only: code-review approval, first linked-workspace send,
+public publish and restore/purge are allowed. Landing on main is refused for everyone by D33 until the owner lifts it;
+a mandate can never do more than its owner. Another mandate, protected paths, settings, addons, members/roles,
 devices, relay pairing and secrets/connections stay human. No total renewal ceiling. “Weekly check-in due <day>”
 and “Still OK” preview confirmation; after 3 unconfirmed days the mandate pauses, not revokes.
+A paused mandate can be renewed only after “Still OK” checks it in. The mock seeds the due date and pauses
+on read; a real host must pause on a timer, independently of reads. Provisional events:
+`mandate.paused {reason: check_in_overdue}` and `mandate.check_in {check_in_due}`.
 
 Factory holds: integer 0–1440 minutes, default 15; form 0 / 15 / 30 / 60 / 240 / 1440.
-Zero signs “No hold: delivers as soon as its checks pass”. Only owners (and future eligible mandates) sign Deliver.
+A new run with zero hold signs “No hold: delivers as soon as its checks pass”; re-delivery signs “Delivers as soon as you sign”. Only owners (and future eligible mandates) sign Deliver.
 Children reserved at admission may finish at the child budget limit; new children cannot enter.
 Phone Stop is a push notice + Face ID Stop, implemented by orch-mobile (dashboard has no mobile implementation).
 

@@ -60,7 +60,7 @@ export interface MandateDecision {
   voided?: boolean
 }
 
-export type MandateRefusalReason = 'protected_path' | 'veto' | 'limit' | 'always_human' | 'chain'
+export type MandateRefusalReason = 'protected_path' | 'veto' | 'limit' | 'always_human' | 'chain' | 'd33'
 
 export const REFUSAL_LABEL: Record<MandateRefusalReason, string> = {
   protected_path: 'Protected path',
@@ -68,6 +68,7 @@ export const REFUSAL_LABEL: Record<MandateRefusalReason, string> = {
   limit: 'Limit reached',
   always_human: 'Always yours',
   chain: 'No mandate chains',
+  d33: 'D33: main is closed',
 }
 
 /** Something the mandate refused or skipped: it goes to a person, as a normal "needs you" item. */

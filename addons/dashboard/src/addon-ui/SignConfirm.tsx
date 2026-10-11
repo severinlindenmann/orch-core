@@ -1,6 +1,7 @@
 import { ARG_KEY } from '@/api/addons'
 import { SignPrompt } from '@/components/sign/SignPrompt'
 import { plain, Prose, Raw, RawValue } from '@/components/sign/visible'
+import { coreNote } from './coreNotes'
 import { AddonBadge } from './AddonBadge'
 
 export { Raw } from '@/components/sign/visible'
@@ -82,6 +83,7 @@ export function SignConfirm({
 }) {
   // Every arg the host receives is a cover line; anything core could not show exactly blocks the signature.
   const problem = signArgsProblem(args)
+  const note = problem ? undefined : coreNote(addon, action, args)
   return (
     <SignPrompt
       title={signTitle(action, addonTitle, addon)}
@@ -89,9 +91,9 @@ export function SignConfirm({
         <>
           Runs "{plain(words(action))}" (<Raw>{action}</Raw>) of the addon {addonTitle === addon ? <Raw>{addon}</Raw> : <>{plain(addonTitle)} (<Raw>{addon}</Raw>)</>}
         </>,
+        ...(note ? [<p data-testid="core-note" className="mb-2 border-b border-border pb-2 font-medium">{note}</p>] : []),
         // The values below are the addon's, bound by core: a core lead line says so before them.
         ...(problem || !Object.keys(args ?? {}).length ? [] : [ARGS_LEAD, ...argLines(args)]),
-        ...(addon === 'factory' && ['start_run', 'redeliver'].includes(action) && args?.hold_minutes === 0 ? ['No hold: delivers as soon as its checks pass'] : []),
         ...(ticket ? [`About ${plain(ticket)}`] : []),
         `In workspace ${workspace.name} (${workspace.prefix})`,
       ]}

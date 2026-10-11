@@ -97,7 +97,8 @@ const CASES: Case[] = [
       await user.click(await screen.findByRole('tab', { name: /^Full runs/ }, T))
       await user.click(await screen.findByRole('button', { name: 'Sign delivery' }, T))
       const dialog = await dialogNamed(/^Sign: Redeliver/)
-      if (!hold) expect(dialog).toHaveTextContent('No hold: delivers as soon as its checks pass')
+      if (!hold) expect(dialog).toHaveTextContent('Delivers as soon as you sign')
+      else expect(dialog).not.toHaveTextContent('Delivers as soon as you sign')
       return dialog
     },
     confirm: press('Sign and run'), method: 'runAddonAction', arg: 3,
@@ -187,7 +188,7 @@ const CASES: Case[] = [
     path: '/ticket/DEMO-0041',
     open: async (user) => {
       const dialog = await ticketAction(user, /Give verdict/)
-      expect(dialog).toHaveAccessibleName('Verify')
+      expect(dialog).toHaveAccessibleName('Give verdict (Verify)')
       await user.click(within(dialog).getByRole('radio', { name: /^Pass on .*: the evidence is enough$/ }))
       return dialog
     },
@@ -372,19 +373,25 @@ const CASES: Case[] = [
     args: true,
     expectArgs: ['id', 'peer'],
   },
-  {
+  ...([0, 60] as const).map((hold): Case => ({
     // Owner decision 2026-10-10 evening (D61 option): one signature covers the goal, how far the factory goes, what
     // Deliver means (the exact destination the host will deliver to), the hold window and the size cap.
-    name: 'factory full run (confirm: sign)',
+    name: `factory full run with hold ${hold}`,
     path: '/addon/factory/factory',
     setup: (s) => {
       installAndGrant(s, wsOf(s), 'factory')
-      s.addonState(wsOf(s), 'factory').nav = { p_sev: { runDraft: { ...DEMO_REQUEST, request: 'rq-DEMO-0a1b2c3d-7' } } }
+      s.addonState(wsOf(s), 'factory').nav = { p_sev: { runDraft: { ...DEMO_REQUEST, hold_minutes: hold, request: 'rq-DEMO-0a1b2c3d-7' } } }
     },
     open: async (user) => {
       await user.click(await screen.findByRole('tab', { name: /^Full runs/ }, T))
       await user.click(await screen.findByRole('button', { name: 'Sign and start' }, T))
-      return dialogNamed(/^Sign: .* · AI Factory \(factory\)$/)
+      const dialog = await dialogNamed(/^Sign: .* · AI Factory \(factory\)$/)
+      const note = within(dialog).queryByTestId('core-note')
+      if (hold === 0) {
+        expect(note).toHaveTextContent('No hold: delivers as soon as its checks pass')
+        expect(note!.compareDocumentPosition(dialog.querySelector('[data-arg-key]')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+      } else expect(note).toBeNull()
+      return dialog
     },
     confirm: press('Sign and run'),
     method: 'runAddonAction',
@@ -393,7 +400,7 @@ const CASES: Case[] = [
     skip: ['confirmed'],
     args: true,
     expectArgs: ['request', 'goal', 'goes_up_to', 'deliver_means', 'hold_minutes', 'largest_child'],
-  },
+  })),
   {
     name: 'start agent (grant + start)',
     path: '/ticket/DEMO-0044',

@@ -26,7 +26,7 @@ describe('mandates preview endpoint (mock)', () => {
     s.mandatesPreview.request(ws, { op: 'enable' })
     const r = s.mandatesPreview.request(ws, { op: 'issue', orchestrator: orch, days: 7 })
     expect(r.ok && r.state.mandate).toMatchObject({ id: 'md_3', state: 'active', scope: 'workspace', days: 7 })
-    expect(r.ok && r.state.mandate!.decisions).toHaveLength(10)
+    expect(r.ok && r.state.mandate!.decisions).toHaveLength(9)
     expect(s.mandatesPreview.request(ws, { op: 'issue', orchestrator: orch, days: 7 })).toMatchObject({ ok: false, status: 409 })
   })
   it('the wide scope: what it may do, what stays yours (no chains), a length up to 30 days, renewable', () => {
@@ -42,8 +42,8 @@ describe('mandates preview endpoint (mock)', () => {
     const m = r.ok ? r.state.mandate! : null
     expect(m).toMatchObject({ days: 30, revision: 1 })
     // The log is a mix across the workspace, not one epic.
-    expect(new Set(m!.decisions.map((d) => d.kind))).toEqual(new Set(['requirements', 'plan', 'verdict', 'unblock', 'land_main', 'code_review', 'factory_enabled', 'permit', 'factory_run', 'grant']))
-    expect(m!.refused.map((x) => x.reason)).toEqual(['protected_path', 'veto', 'always_human', 'chain'])
+    expect(new Set(m!.decisions.map((d) => d.kind))).toEqual(new Set(['requirements', 'plan', 'verdict', 'unblock', 'code_review', 'factory_enabled', 'permit', 'factory_run', 'grant']))
+    expect(m!.refused.map((x) => x.reason)).toEqual(['protected_path', 'veto', 'always_human', 'chain', 'd33'])
     expect(s.mandatesPreview.request(ws, { op: 'renew', days: 0 })).toMatchObject({ ok: false, status: 400 })
     const n = s.mandatesPreview.request(ws, { op: 'renew', days: 14 })
     const renewed = n.ok ? n.state.mandate! : null
@@ -80,8 +80,10 @@ it('weekly confirmation pauses after 3 unconfirmed days, never revokes or signs'
   expect(s.mandatesPreview.state(ws).mandate!.state).toBe('active')
   now.mockReturnValue(new Date(Date.parse(due) + 3 * 86_400_000).toISOString())
   expect(s.mandatesPreview.state(ws).mandate).toMatchObject({ state: 'paused' })
+  expect(s.mandatesPreview.request(ws, { op: 'renew', days: 7 })).toMatchObject({ ok: false, status: 409 })
   const result = s.mandatesPreview.request(ws, { op: 'check_in' })
   expect(result.ok && result.state.mandate).toMatchObject({ state: 'active' })
+  expect(s.mandatesPreview.request(ws, { op: 'renew', days: 7 }).ok).toBe(true)
   expect(s.wsEventsOf(ws)).toHaveLength(logs)
   now.mockRestore()
 })

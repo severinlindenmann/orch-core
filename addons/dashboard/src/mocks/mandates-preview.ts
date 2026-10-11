@@ -56,7 +56,8 @@ export const MAY: string[] = [
   'Approve agents that wait for an approval: requirements, plan, verdicts and the code review gate.',
   'Answer agents\u2019 questions (typed choices only).',
   'Unblock tickets.',
-  'Land on main, make a first send to a linked workspace, publish publicly, restore and purge.',
+  'Land on main — only if you allow it for owners (D33 refuses it today).',
+  'Make a first send to a linked workspace, publish publicly, restore and purge.',
   'Answer addon decisions and factory permits.',
   'Enable factories and start factory runs, including Deliver (after the hold window).',
   'Issue grants that start agents (they stay inside this mandate).',
@@ -227,12 +228,12 @@ export class MandatesPreviewHost {
     const now = Date.parse(this.store.now())
     const issued = now - 3 * DAY
     const kid = (i: number) => kids[i % kids.length]
-    // Ten decisions in the order they happened: gate approvals, verdicts (two on work that landed), a code review, an
+    // Nine decisions in the order they happened: gate approvals, a verdict on work that landed, a code review, an
     // unblocked ticket, a factory permit, a factory enabled, a full run started and a grant that started an agent.
     const plan: { k?: number; kind: MandateDecisionKind; landed?: boolean; target?: string }[] = [
       { k: 0, kind: 'requirements' }, { k: 0, kind: 'plan' }, { k: 0, kind: 'verdict', landed: true },
       { k: 4, kind: 'unblock' },
-      { k: 2, kind: 'land_main', landed: true, target: 'main' }, { k: 2, kind: 'code_review' },
+      { k: 2, kind: 'code_review' },
       { kind: 'factory_enabled', target: `AI Factory in ${prefix}` },
       { k: 1, kind: 'permit', target: 'uv run pytest tests/billing -q' },
       { kind: 'factory_run', target: 'full run R-3 “Tariff page copy”, up to Preview' },
@@ -245,7 +246,7 @@ export class MandatesPreviewHost {
     const decisions: MandateDecision[] = plan.map((p, i) => {
       const t = p.k === undefined ? undefined : kid(p.k)
       return {
-        seq: FIRST_SEQ + i,
+        seq: FIRST_SEQ + i + (i >= 4 ? 1 : 0), // leave the refused main landing out of the decision log
         id: `${md}.d${i + 1}`,
         ...(t ? { ticket: t.key, title: t.title } : {}),
         ...(p.target ? { target: p.target } : {}),
@@ -254,8 +255,8 @@ export class MandatesPreviewHost {
         at: iso(issued + (i + 1) * 6 * 3_600_000),
         checker: { identity: checker, result: 'passed' as const },
         landed: !!p.landed,
-        // Looked at on earlier days: the first five. The rest is new since your last look.
-        ...(i < 5 ? { review: 'looks_right' as const } : {}),
+        // Looked at on earlier days: the first four. The rest is new since your last look.
+        ...(i < 4 ? { review: 'looks_right' as const } : {}),
       }
     })
     const refused: MandateRefusal[] = [
@@ -278,6 +279,10 @@ export class MandatesPreviewHost {
         id: `${md}.r4`, asked: 'Issue a mandate to a second orchestrator', reason: 'chain',
         detail: 'Refused (mandate.chain_refused): a mandate never issues another mandate. Grants that start agents are allowed.',
         at: iso(now - 2 * 3_600_000),
+      },
+      {
+        id: `${md}.r5`, ticket: kid(2).key, title: kid(2).title, kind: 'land_main', reason: 'd33',
+        detail: 'D33: main is closed', at: iso(now - 3_600_000),
       },
     ]
     return {
@@ -344,7 +349,7 @@ export class MandatesPreviewHost {
       }
       case 'renew': {
         // Renewing is one new signature on the Mac: a new revision with a new length from now (at most 30 days).
-        if (!m || m.state !== 'active') return fail(409, 'conflict', 'No mandate in force to renew.', 'A stopped or revoked mandate is not renewed: issue a new one.')
+        if (!m || m.state !== 'active') return fail(409, 'conflict', 'No mandate in force to renew.', 'A paused mandate needs Still OK before renewal. For a stopped or revoked mandate, issue a new one.')
         if (!Number.isInteger(body.days) || body.days < 1 || body.days > MAX_MANDATE_DAYS) return fail(400, 'validation', `Pick a length from 1 to ${MAX_MANDATE_DAYS} days.`)
         const now = this.store.now()
         m.revision += 1

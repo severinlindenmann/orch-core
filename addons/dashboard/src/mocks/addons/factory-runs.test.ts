@@ -2,6 +2,7 @@
 // their labels, the hold before Deliver, Stop during the hold and the delivery after it.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { decisionBody, decisionChanged } from '@/addon-ui/DecisionSignPrompt'
+import { nodeSchema } from '@/addon-ui/nodes'
 import { offered } from '@/test/offered'
 import { describeEvent } from '@/mocks/derive'
 import { createMockStore } from '@/mocks/store'
@@ -576,6 +577,27 @@ describe('owner answers 11 Oct: hold range, re-delivery and budget', () => {
     return s
   }
   const delivery = (s: S) => (s.store.addonState(s.ws, 'factory').redeliveryDrafts as Record<string, Record<string, unknown>>).p_sev
+  it.each([1440.5, -1, '15', '0', NaN])('refuses invalid re-delivery hold %s', hold => {
+    const s = stopped()
+    expect(s.run('prepare_redelivery', { formData: { run: 'R-1', hold_minutes: hold } })).toMatchObject({ ok: false, code: 'validation' })
+    expect(s.store.addonState(s.ws, 'factory').redeliveryDrafts).toBeUndefined()
+  })
+  it('refuses the second owner after another delivery revision has been stopped', () => {
+    const s = stopped()
+    s.store.appendWs(s.ws, { type: 'member.added', person: 'p_ann', name: 'Ann', role: 'owner' })
+    s.run('prepare_redelivery', { formData: { run: 'R-1', hold_minutes: 15 } })
+    const a = { ...delivery(s), confirmed: true }
+    s.store.setViewer('p_ann')
+    s.run('prepare_redelivery', { formData: { run: 'R-1', hold_minutes: 15 } })
+    const drafts = s.store.addonState(s.ws, 'factory').redeliveryDrafts as Record<string, Record<string, unknown>>
+    const b = { ...drafts.p_ann, confirmed: true }
+    s.store.setViewer('p_sev')
+    expect(s.run('redeliver', a)).toMatchObject({ ok: true })
+    const d = s.store.addonDecisions(s.ws).find(d => d.hold)!
+    expect(s.run('hold', { id: d.id, option: 'stop', ticket: d.ticket, terms: d.terms, confirmed: true })).toMatchObject({ ok: true })
+    s.store.setViewer('p_ann')
+    expect(s.run('redeliver', b)).toMatchObject({ ok: false, code: 'factory.not_stopped' })
+  })
   it.each([0, 1440])('re-delivers stopped work once with a new hold of %s, without redoing work', hold => {
     const s = stopped()
     const children = structuredClone(s.runs()[0].children)
@@ -624,4 +646,22 @@ describe('owner answers 11 Oct: hold range, re-delivery and budget', () => {
     s.run('prepare_run', { formData: DELIVER })
     expect(s.run('start_run', { ...runArgs(draftOf(s)), confirmed: true })).toMatchObject({ ok: false, code: 'factory.budget' })
   })
+})
+
+// The overflow list is Today, whose core rows are not a bounded addon stack.
+it.each([0, 1, 5, 51, 501])('caps the permit fold with %s open permits', count => {
+  const s = setup()
+  const st = s.store.addonState(s.ws, 'factory')
+  const seed = (st.permits as Record<string, unknown>[]).find(p => p.state === 'open')!
+  st.permits = Array.from({ length: count }, (_, i) => ({ ...seed, id: `P-test-${i}` }))
+  const tree = s.view().attentionNode as { children: { type: string; label: string; node: { children: { type: string; text?: string }[] } }[] }
+  const fold = tree.children.find(n => n.type === 'fold')
+  if (!count) expect(fold).toBeUndefined()
+  else {
+    expect(fold!.label).toBe(`${count} permit${count === 1 ? '' : 's'} waiting · Review`)
+    expect(nodeSchema.safeParse(fold!.node).success).toBe(true)
+    expect(fold!.node.children.filter(n => n.type === 'decision')).toHaveLength(Math.min(count, 5))
+    if (count > 5) expect(JSON.stringify(fold)).toContain(`[Show all ${count}](/w/DEMO)`)
+    expect(s.store.addonDecisions(s.ws).filter(d => d.id.startsWith('factory.permit:'))).toHaveLength(count)
+  }
 })

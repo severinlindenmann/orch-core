@@ -607,7 +607,7 @@
       "prepare_run": { "minRole": "maintainer", "label": "Review a full-run request" },
       "clear_run": { "minRole": "maintainer", "label": "Discard the full-run request" },
       "demo_run": { "minRole": "maintainer", "label": "Fill in a demo full-run request" },
-      "prepare_redelivery": { "minRole": "owner", "kind": "navigation" },
+      "prepare_redelivery": { "minRole": "owner" },
       "redeliver": { "minRole": "owner", "confirm": "sign", "label": "Deliver a stopped factory run" },
       "start_run": { "minRole": "maintainer", "confirm": "sign", "label": "Start a factory full run" },
       "hold": { "minRole": "maintainer", "decision": true },

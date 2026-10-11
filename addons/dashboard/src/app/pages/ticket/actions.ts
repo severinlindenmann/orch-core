@@ -98,3 +98,6 @@ export const GATE_LABEL: Record<GateName, string> = { requirements: 'Requirement
 export function policyText(gate: GateName, g: Pick<GateStatus, 'approvers' | 'needed' | 'not'>): string {
   return policySentence(GATE_LABEL[gate], { approvers: g.approvers, count: g.needed, not: g.not })
 }
+
+/** Gate names inside action sentences; Verify is a proper name. */
+export const gateActionName = (gate: GateName) => gate === 'verify' ? GATE_LABEL[gate] : GATE_LABEL[gate].toLowerCase()

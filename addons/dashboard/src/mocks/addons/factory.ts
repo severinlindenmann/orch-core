@@ -376,7 +376,13 @@ registerAddon({
         type: 'stack',
         children: [
           ...(runs.holding ? [runs.holdNode] : []),
-          { type: 'fold', label: `${open} permits waiting · Review`, node: { type: 'stack', children: canAnswer ? permits.filter((p) => p.state === 'open').map((p) => ({ type: 'decision', id: `factory.permit:${p.id}` })) : [{ type: 'markdown', text: 'Permits wait for an owner or maintainer.' }] } },
+          ...(open ? [canAnswer ? {
+            type: 'fold', label: `${open} permit${open === 1 ? '' : 's'} waiting · Review`,
+            node: { type: 'stack', children: [
+              ...permits.filter(p => p.state === 'open').slice(0, MAX_PERMITS_SHOWN).map(p => ({ type: 'decision', id: `factory.permit:${p.id}` })),
+              ...(open > MAX_PERMITS_SHOWN ? [{ type: 'markdown', text: `[Show all ${open}](/w/${encodeURIComponent(c.store.workspaces.find(w => w.id === c.ws)!.prefix)}) on Today.` }] : []),
+            ] },
+          } : { type: 'markdown', text: `${open} permit${open === 1 ? '' : 's'} waiting for an owner or maintainer.` }] : []),
         ],
       },
       runCount: runs.runCount,

@@ -68,7 +68,7 @@ describe('AI Factory page', () => {
     const { user } = renderApp('/addon/factory/factory', { viewer: 'p_sev', setup: on })
     expect(screen.queryByText(/Answer on Today/)).not.toBeInTheDocument()
     // What waits for a person is above the tabs: no tab click needed, and it says how many.
-    const fold = await screen.findByRole('button', { name: '1 permits waiting · Review' }, T)
+    const fold = await screen.findByRole('button', { name: '1 permit waiting · Review' }, T)
     expect(fold).toHaveAttribute('aria-expanded', 'false')
     expect(screen.queryByRole('button', { name: 'Grant once' })).not.toBeInTheDocument()
     await user.click(fold)
@@ -97,7 +97,7 @@ describe('AI Factory page', () => {
 describe('permits on the page', () => {
   it('the Permits tab keeps the history and the open request is not drawn twice', async () => {
     const { user } = renderApp('/addon/factory/factory', { viewer: 'p_sev', setup: on })
-    await user.click(await screen.findByRole('button', { name: '1 permits waiting · Review' }, T))
+    await user.click(await screen.findByRole('button', { name: '1 permit waiting · Review' }, T))
     await screen.findByRole('button', { name: 'Grant once' }, T)
     await user.click(await screen.findByRole('tab', { name: /^Permits\s*\d+/ }, T))
     expect(await screen.findByRole('columnheader', { name: 'Command' }, T)).toBeInTheDocument()

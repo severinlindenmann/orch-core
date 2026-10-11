@@ -23,7 +23,7 @@ One form, one signature:
 | Goal | What the factory should make, in your words. |
 | How far may the factory go on its own? | **Up to Preview** (default) or **All the way to Deliver**. |
 | What Deliver means | Required for Deliver. The concrete destination: "Deploy to production", "Publish campaign to the newsletter list", "Send to finance@example.test (boss)". |
-| Hold window | **0 (no hold), 15 min (default), 30 min, 1 h, 4 h, 24 h**: how long Deliver waits, with a notice and Stop, before it goes out. |
+| Hold window | **0 (no hold), 15 min (default), 30 min, 1 h, 4 h, 24 h**: how long Deliver waits with a notice and Stop (0: no hold, no Stop; it delivers when Preview passes). |
 | Size cap | As the charter: children of size m or smaller; larger ones wait for you. |
 | Request id | Issued by the host when you review the request (`rq-DEMO-3f9a2c1d-7`: workspace, a nonce, a number); signed with the rest and **single use**. |
 
@@ -117,7 +117,7 @@ signed request. The run is labelled "via mandate md_3, for Severin — no person
   immediately, with no hold decision. Default is 15 minutes.
 - Stop from the phone: push notice with Face ID Stop; **orch-mobile implements this**, not the dashboard.
 - A stopped run offers **Deliver now…** and **Deliver with a new hold…**. Choose the run and hold, then sign in
-  core's prompt. Covers name the run, destination, new hold, request id and delivery revision. The host checks
+  core's prompt. At zero, core says **“Delivers as soon as you sign”**: the checks already passed. Covers name the run, destination, new hold, request id and delivery revision. The host checks
   owner role, stopped state, exact values and the charter, consumes the request once and retains completed work.
   Nothing is rebuilt. A second Stop needs a fresh request; an old signature cannot be replayed.
 - Children reserved at admission may finish when the child budget reaches 25. New children are refused; time

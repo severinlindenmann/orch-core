@@ -1186,3 +1186,15 @@ The owner answered the eight open questions of REVIEW.md. Items 1, 2, 5 and 6 ch
   the non-functional mandate preview while making the owner's decisions reviewable.
 - **Revert:** Revert the U8 commit; factory v5 state migrates v4 unchanged (new delivery drafts/revisions are optional).
   Reverting loses the new re-delivery draft UI and weekly check-in preview; no real mandate authority exists.
+
+## 2026-10-11 U8 fix round 1 — review corrections
+
+- **Decision:** D33 stays closed for every lander, including mandates, until the owner lifts it; the preview seeds a
+  refused main landing. A paused mandate needs Still OK before renewal. Permit attention shows at most five cards,
+  links to Today's complete core list, uses singular/plural and disappears at zero. Preparing re-delivery is an
+  owner-only normal action. Core's notes map owns conditional signing consequences, drawn separately above addon
+  values; zero-hold re-delivery says “Delivers as soon as you sign”. Verify remains capitalised; its verdict prompt
+  says “Give verdict (Verify)”. This corrects the preceding U8 entry's main allowance and persistent empty fold.
+- **Why:** U8 review's eight Minor findings and three Nits, with the controller's explicit rulings. A mandate cannot
+  exceed its owner's authority, addon node limits must hold at any permit count, and core owns signing prose.
+- **Revert:** Revert this fix-round commit; doing so restores the reviewed inconsistencies and permit overflow.

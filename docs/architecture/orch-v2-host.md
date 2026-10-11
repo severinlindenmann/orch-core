@@ -2247,12 +2247,14 @@ orch-relay's `docs/p3-relay-design.md` §9 defines what the host owes the relay 
     an epoch above `committed + 2^16`, whether through repeated burns or H7 jumps. The rotation target is `min(EHW + 1, committed + 2^16)`: the clamp wins. When the clamp is at or
     below `EHW` (every epoch up to it is already used or burned), the host cannot rotate without a second key for an
     epoch, which it never creates: it alarms, keeps the rotation gate up and allocates nothing. The workspace's
-    membership is then frozen until an operator intervenes (or the relay commits a list, which raises `committed`).
+    membership is then frozen: no rotation and so no member removal. The only ways out are the relay committing a
+    body that is already out (which raises `committed`), or an operator action outside this protocol (P3 owner-run
+    recovery).
     Liveness limit, accepted in v1.4: reaching it needs about 65,000 burns, or about 63 H7 jumps of 1024 with no
-    commit in between. On a same-epoch re-seal the relay checks list rules before grants, so a changed `wk_commit`
-    is answered `wk_commit_changed` (a divergence refusal under H4). A list that removes a member has a
+    commit in between. A list that removes a member has a
     higher epoch than the previous list. A list at the same epoch carries the same `wk_commit`, else the relay answers
-    409 `wk_commit_changed`.
+    409 `wk_commit_changed` (the relay checks list rules before grants, so a same-epoch re-seal with a changed
+    `wk_commit` always gets this code; a divergence refusal under H4).
   - **First list.** The first publication for a workspace may use any epoch `1..2^16` and any `list_seq >= 1`. A refused
     first publication burns its epoch and `list_seq` like any other, and the retry uses (2,2) or higher.
   - **Allocation.** The host allocates `list_seq` and epoch from durable high-water marks (`LHW`, `EHW`). It never

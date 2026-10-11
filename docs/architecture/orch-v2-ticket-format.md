@@ -972,10 +972,12 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
   passed (a higher `n`). P1/P2 use the last locally accepted workspace checkpoint as source, null only before any
   exists: a workspace log at seq ≥ 1 counts as checkpoint evidence, so a host that lost every checkpoint file
   refuses a null source (`chain.diverged`) instead of starting a new baseline. Nor does an ordinary append start
-  one: with no workspace checkpoint held (host pin nor `.state`) once the log has grown past the genesis, the host
-  writes no checkpoint and refuses appends (`checkpoint.missing`). A crash keeps the previous checkpoint, so this is
-  never a crash state and the crash-repair rule does not cover it; an owner repairs it. Checkpoint `n` never
-  restarts below the durable high-water mark the host keeps in its state dir.
+  one on a host whose state dir shows checkpoints existed (its `n` high-water mark, ancestry recorded by an earlier
+  run, or a published transition): with no workspace checkpoint held (host pin nor `.state`) once the log has grown
+  past the genesis, it writes no checkpoint, refuses appends and `checkpoint` (`checkpoint.missing`), and `health`
+  says so; an owner must sign a restore. A crash keeps the previous checkpoint, so this is never a crash state.
+  A host without such evidence starts a baseline (below, "What P1 can't detect"). Checkpoint `n` never restarts
+  below the durable high-water mark the host keeps in its state dir.
   Pairing `approved` carries that exact held reference, retained and retrievable, never downgraded; relay-reported
   emptiness cannot override it. P3 publishes these locally persisted transitions.
 - **Restore** (§12 O5). After a rollback (a restored backup, a git force-push of the workspace repo) an owner signs
@@ -1025,7 +1027,9 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
   A restore is an event line capped at 524,288 bytes (`schema.MAX_EVENT_LINE_BYTES`, LF included). Measure the full
   signed line before append; oversize is refused atomically, never truncated or split.
 - **What P1 can't detect:** if both the history and the local checkpoints in `.state/` are replaced, the rollback
-  is invisible. From P3, checkpoints on the relay and on member devices catch it.
+  is invisible. Likewise a host with no checkpoint evidence in its state dir (a fresh clone on a new machine, or a
+  lost host state dir) starts a new baseline automatically at its next append (`health` names this), so a rollback
+  before that baseline does not show. From P3, checkpoints on the relay and on member devices catch it.
 
 ### 5.11 Trust root and authorization replay
 

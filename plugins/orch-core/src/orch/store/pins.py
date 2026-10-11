@@ -31,6 +31,28 @@ class HostPins:
     def __init__(self, state_dir: str | os.PathLike[str], workspace_id: str) -> None:
         self.dir = Path(state_dir) / "hosts" / workspace_id
         self._db: sqlite3.Connection | None = None
+        self._mark: int | None = None  # cached checkpoint high-water mark (monotonic, one writer under the lock)
+        self._prior_heads = self._had_heads()  # recorded ancestry from an earlier run, before this one adds rows
+
+    def _had_heads(self) -> bool:
+        path = self.dir / "heads.sqlite"
+        if not path.is_file():
+            return False
+        try:
+            db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+            try:
+                return db.execute("SELECT 1 FROM heads LIMIT 1").fetchone() is not None
+            finally:
+                db.close()
+        except sqlite3.Error:
+            return True  # unreadable ancestry is still evidence that this host kept state
+
+    def checkpoint_evidence(self) -> bool:
+        """Whether this host state dir shows that checkpoints existed: a high-water mark, ancestry recorded by an
+        earlier run, or a published transition. Without any, a missing checkpoint is a new host (§5.10)."""
+        return (
+            (self.dir / "checkpoint-n").is_file() or self._prior_heads or any((self.dir / "transitions").glob("*.json"))
+        )
 
     @property
     def _genesis(self) -> Path:
@@ -102,19 +124,26 @@ class HostPins:
         return loads(raw) if raw else None
 
     def accept_checkpoint(self, cp: dict[str, Any]) -> None:
-        if cp["o"]["n"] > self.high_n():  # the durable high-water mark: n never restarts below it
-            write_atomic(self.dir / "checkpoint-n", str(cp["o"]["n"]).encode() + b"\n", mode=0o600)
+        n = cp["o"]["n"]
+        if n > self.high_n():  # the durable high-water mark: n never restarts below it
+            write_atomic(self.dir / "checkpoint-n", str(n).encode() + b"\n", mode=0o600)
+            self._mark = n
         write_atomic(self.dir / "checkpoint.json", canon.cj_checked(cp) + b"\n", mode=0o600)
 
     def high_n(self) -> int:
-        """The highest workspace checkpoint ``n`` this host ever accepted (0 if none)."""
-        raw = read_or_none(self.dir / "checkpoint-n")
-        held = self.held()
-        try:
-            mark = int(raw) if raw else 0
-        except ValueError:
-            raise StoreError("store.torn_write", "unreadable checkpoint high-water mark") from None
-        return max(mark, held["o"]["n"] if held and "o" in held else 0)
+        """The highest workspace checkpoint ``n`` this host ever accepted (0 if none). Read from ``checkpoint-n`` once
+        and cached; a host that predates the file falls back to its held checkpoint, once."""
+        if self._mark is None:
+            raw = read_or_none(self.dir / "checkpoint-n")
+            try:
+                mark = int(raw) if raw else 0
+            except ValueError:
+                raise StoreError("store.torn_write", "unreadable checkpoint high-water mark") from None
+            if not raw:
+                held = self.held()
+                mark = held["o"]["n"] if held and "o" in held else 0
+            self._mark = mark
+        return self._mark
 
     @contextmanager
     def _heads(self) -> Iterator[sqlite3.Connection]:

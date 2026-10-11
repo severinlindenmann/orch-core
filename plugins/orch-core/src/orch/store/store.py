@@ -1268,13 +1268,18 @@ class Store:
             raise StoreError("chain.diverged", f"{d.log}: {d.detail} (an owner-signed restore is needed)")
 
     def _workspace_checkpoint_missing(self) -> bool:
-        """No workspace checkpoint (host pin nor ``.state``) although the log grew past the genesis. Every append
-        writes one and a crash keeps the previous one, so this is never a crash state: no append and no new baseline
-        until an owner repairs it (§5.10, §14.3)."""
+        """No workspace checkpoint (host pin nor ``.state``) although the log grew past the genesis, on a host whose
+        state dir shows checkpoints existed. Every append writes one and a crash keeps the previous one, so this is
+        never a crash state: no append and no new baseline; an owner restores (§5.10). A host without such evidence (a
+        fresh clone, a lost state dir) starts a baseline instead: F1 "What P1 can't detect".
+
+        ``seq < 2``: the genesis append itself writes the first checkpoint after it is committed, so a log of only the
+        genesis may lack one after a crash. (``restore_facts`` uses ``seq >= 1``: any restore needs a source once a
+        genesis exists, because a restore always comes after it.)"""
         ws = self._logs.get(WORKSPACE)
-        if ws is None or ws.seq < 2:
+        if ws is None or ws.seq < 2 or self._pins is None or not self._pins.checkpoint_evidence():
             return False
-        return (self._pins.held() if self._pins is not None else None) is None and self._checkpoints.workspace() is None
+        return self._pins.held() is None and self._checkpoints.workspace() is None
 
     def _missing_checkpoint(self, log: str) -> bool:
         info = self._logs.get(log)
@@ -1858,8 +1863,14 @@ class Store:
         self._checkpoints.write_ticket(self._host.sign, uid, info.seq, info.head or "", self._now(), info.acc)
 
     def checkpoint(self) -> None:
-        """Write the workspace checkpoint and finish crash-repairable ticket checkpoints."""
+        """Write the workspace checkpoint and finish crash-repairable ticket checkpoints. Raises
+        ``checkpoint.missing`` when the host must not start a new baseline (§5.10)."""
         with self._locked():
+            if self._workspace_checkpoint_missing():
+                raise StoreError(
+                    "checkpoint.missing",
+                    "workspace: this host's state shows checkpoints existed but none is held; an owner must restore",
+                )
             self._checkpoint_all()
 
     def _checkpoint_all(self) -> None:
@@ -2255,7 +2266,8 @@ class Store:
                 abandoned = {"seq": seq, "head": head}
         held = self._held_checkpoint()
         if held is None and self._logs[WORKSPACE].seq >= 1:
-            # Every append writes a workspace checkpoint, so a workspace log is evidence that one existed: a null
+            # seq >= 1 (not the append guard's >= 2): a restore always follows the genesis, whose append wrote the
+            # first checkpoint. Every append writes a workspace checkpoint, so a workspace log is evidence: a null
             # source would start a new baseline after every checkpoint file was deleted (§5.10).
             raise StoreError("chain.diverged", "workspace checkpoint source is missing but the workspace log exists")
         if held:

@@ -122,7 +122,7 @@ def inspect(
                         Finding("error", f"{_label(s, log)}#{i.seq}", "auth.invalid_event", f"{i.type}: {i.code}")
                     )
         out += _projections(s)
-        out += _checkpoints(s, _has_host_key(state_dir, wid))
+        out += _checkpoints(s, _has_host_key(state_dir, wid), HostPins(state_dir, wid))
         if not fast:
             out += _pins(s, state_dir, wid)
             out += _index(s)
@@ -218,7 +218,7 @@ def _has_host_key(state_dir: Path, wid: str) -> bool:
         return True
 
 
-def _checkpoints(s: InspectStore, host_here: bool) -> list[Finding]:
+def _checkpoints(s: InspectStore, host_here: bool, pins: HostPins | None = None) -> list[Finding]:
     """A missing checkpoint can hide a rollback or follow a crash: an error on the host, a warning on clones."""
     out: list[Finding] = []
     cps = s._checkpoints
@@ -226,9 +226,17 @@ def _checkpoints(s: InspectStore, host_here: bool) -> list[Finding]:
         return out
     lvl = "error" if host_here else "warn"
     if cps.workspace() is None:
-        out.append(
-            Finding(lvl, "checkpoints", "checkpoint.missing", "no workspace checkpoint: a rollback would not show")
-        )
+        if host_here and pins is not None and pins.held() is None and pins.checkpoint_evidence():
+            msg = (
+                "no workspace checkpoint, but this host's state shows checkpoints existed: appends are refused; "
+                "an owner must restore (orch restore)"
+            )
+        else:
+            msg = (
+                "no workspace checkpoint: a rollback would not show; on a host without checkpoint evidence the next "
+                "append starts a new baseline automatically"
+            )
+        out.append(Finding(lvl, "checkpoints", "checkpoint.missing", msg))
     have = set(cps.ticket_uids())
     missing = sorted(u for u in s.state.tickets if u not in have)
     for repairable in (False, True):

@@ -3,8 +3,8 @@
 This module is an independent implementation, written from the Myers 1986 paper (see :mod:`orch.gitread.myers`)
 and from the output format documented in ``git help diff`` ("Generating patch text with -p"): the ``diff --git``
 header, the extended headers (``new file mode``, ``deleted file mode``, ``old mode``/``new mode``, ``index``),
-``Binary files ... differ``, and the quoting of unusual path names. It is released under the project's Apache-2.0
-licence. It is not derived from any other diff implementation.
+``Binary files ... differ``, and the quoting of unusual path names. It is released under the project's licence
+(see LICENSE). It is not derived from any other diff implementation.
 
 ``diff_trees`` walks two trees in path order, without renames (a rename is a deletion and an addition, so a status
 is ``A``, ``D``, ``M`` or ``T`` and ``old_path`` is ``None``). ``render`` produces the patch bytes and the per-file

@@ -2,8 +2,8 @@
 
 This module is an independent implementation, written from Eugene W. Myers, "An O(ND) Difference Algorithm and
 Its Variations" (Algorithmica 1, 1986), including the linear-space "middle snake" refinement of the same paper, and
-from the unified format as documented in the GNU diffutils manual. It is released under the project's Apache-2.0
-licence. It is not derived from any other diff implementation.
+from the unified format as documented in the GNU diffutils manual. It is released under the project's licence
+(see LICENSE). It is not derived from any other diff implementation.
 
 * :func:`split_lines` cuts bytes into records (each with its ``\\n``; a last line without one is a record too).
 * :func:`diff_flags` finds a shortest edit script (greedy forward/backward search, middle snake, divide and

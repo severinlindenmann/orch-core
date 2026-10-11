@@ -94,7 +94,9 @@ orchestrator/
   `default_branch` follows the same git branch name rules as `links.branches`. Identity comes from the observed
   `remote.origin.url` (§5.7). Where `remote` is declared, the observed canonical identity must equal it ignoring
   ASCII case; otherwise report `repo.remote_mismatch`, consider the repo observe.unavailable and append no
-  observation for it. Without a declaration, label the identity "from the working copy (agent-writable)";
+  observation for it. A match pins the identity label to the owner's declaration and catches mistakes; it proves
+  nothing about where the commits came from, because the agent can write the origin URL. Without a declaration,
+  label the identity "from the working copy (agent-writable)";
   `doctor` should recommend declaring it. `default_branch` makes no decision in P1.
 - When the two disagree, the events win, and the host rewrites the file and logs `projection.repaired`.
 - `keys.jsonl` has one line per key: `{"key": "DEMO-0043", "uid": "01J9ZK…", "at": "2026-10-09T09:00:00Z"}`, written
@@ -1658,7 +1660,8 @@ Where this chapter was silent, `orch.ops` does the following. Each is a rule the
   linked repositories by its working directory, and a ticket with no linked repository gives `repo: null`, which counts as
   evidence; `verify.cmd = "sh -c '...'"` runs a shell, orch adds none). The control is that `verify.cmd` sits in the plan a
   person approves. In P2 the client still runs it and sends the receipt; the host checks `cmd` against the
-  approved `verify.cmd` and records `attested_by: "agent"`. This proves an authenticated agent claimed a result,
+  approved `verify.cmd`. H3b2 (client receipts) adds `attested_by: "agent"`; the current `task.done` receipt
+  has no such field. This proves an authenticated agent claimed a result,
   not that the command ran, its exit code, output or commit. The host never executes workspace-controlled code. `task done --run` runs the ticket's `verify.cmd` split into arguments, in
   its own process group with a hard timeout (a process that leaves the group with `setsid` survives: without a separate
   user or job object nothing stops it), stdin closed, 1 MiB of output kept and the rest dropped, an **allow-list**
@@ -1866,10 +1869,11 @@ operation).
 - **D58/D59 binding.** `verdict` and `approve code` read git (`orch.store.observe`, which appends any owed
   `branch.pushed`) right before the prompt and bind the commits it finds as `source_sha`. Each linked working copy must be
   on the bound branch (`refs/heads/<branch>`), at the bound commit, with nothing uncommitted; otherwise
-  observe.unavailable. The decision binds a commit, so the files a person ran or read must be that commit (F1 was silent;
-  a detached HEAD elsewhere and another branch are refused). In P2 the clean-tree check runs before the prompt in the worker's reader (at `human.prepare`, and again
+  observe.unavailable. The signature binds the commit; a detached HEAD elsewhere and another branch are refused. In P2
+  the clean-tree check runs before the prompt in the worker's reader (at `human.prepare`, and again
   at `human.get` when binding a device for a hand-off). The signer shows `checks` as "attested by the worker,
-  best effort"; those checks are not signed material. No worker means observe.unavailable.
+  best effort"; those checks are not signed material and are only as trustworthy as the worker account, which also
+  runs addons. The tree can change between the worker's check and the append. No worker means observe.unavailable.
   `precommit` rechecks only the symbolic branch and bound commit under the workspace lock after signing,
   never the clean tree (host design D-P2-19): a source that moved meanwhile is
   gate.stale and nothing is appended. A linked repository that cannot be observed is observe.unavailable, a missing ref

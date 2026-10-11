@@ -1,0 +1,234 @@
+"""Private IPC launch, one random loopback listener, and port-ownership proof."""
+
+import argparse
+import errno
+import fcntl
+import hashlib
+import hmac
+import os
+import secrets
+import socket
+import stat
+import subprocess
+import sys
+import threading
+import time
+import urllib.parse
+import urllib.request
+import webbrowser
+from contextlib import contextmanager
+
+import uvicorn
+
+from .app import create_app
+from .auth import Auth
+from .gateway import state_dir
+from .hostlink import check_uid, encode, receive
+
+
+@contextmanager
+def private_directory(path):
+    path.mkdir(parents=True, mode=0o700, exist_ok=True)
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        s = os.fstat(fd)
+        if s.st_uid != os.getuid() or stat.S_IMODE(s.st_mode) != 0o700:
+            raise RuntimeError("dashboard state directory must be owned by you, mode 0700")
+        yield fd
+    finally:
+        os.close(fd)
+
+
+@contextmanager
+def locked(directory_fd):
+    fd = os.open("lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600, dir_fd=directory_fd)
+    try:
+        s = os.fstat(fd)
+        if not stat.S_ISREG(s.st_mode) or s.st_uid != os.getuid() or s.st_mode & 0o077:
+            raise RuntimeError("unsafe dashboard lock")
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield fd
+    finally:
+        os.close(fd)
+
+
+def control(path, command):
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        sock.settimeout(2)
+        sock.connect(str(path))
+        check_uid(sock, os.getuid())
+        sock.sendall(encode({"command": command}))
+        return receive(sock)
+
+
+def stale_socket(path):
+    """Call only while holding the startup lock. Never unlink a responding or foreign socket."""
+    try:
+        st = path.lstat()
+    except FileNotFoundError:
+        return
+    if not stat.S_ISSOCK(st.st_mode) or st.st_uid != os.getuid():
+        raise RuntimeError("unsafe control socket")
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        sock.settimeout(2)
+        try:
+            sock.connect(str(path))
+        except OSError as exc:
+            if exc.errno != errno.ECONNREFUSED:
+                raise
+        else:
+            raise RuntimeError("dashboard already running")
+    path.unlink()
+
+
+def serve(lock_held=False):
+    directory = state_dir() / "dashboard"
+    with private_directory(directory) as fd:
+        if not lock_held:
+            with locked(fd) as lock_fd:
+                return _serve(directory, lock_fd=lock_fd)
+        return _serve(directory)
+
+
+def _serve(directory, lock_fd=None):
+    # For a child, its launcher holds the startup lock until ctl.sock answers.
+    ctl_path = directory / "ctl.sock"
+    stale_socket(ctl_path)
+    auth = Auth()
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(128)
+    port = listener.getsockname()[1]
+    config = uvicorn.Config(create_app(port, auth=auth), proxy_headers=False, access_log=False, log_level="warning")
+    server = uvicorn.Server(config)
+    ctl = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    old = os.umask(0o177)
+    try:
+        ctl.bind(str(ctl_path))
+    finally:
+        os.umask(old)
+    os.chmod(ctl_path, 0o600)
+    ctl.listen(8)
+    ctl.settimeout(0.5)
+    if lock_fd is not None:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+
+    def ipc():
+        while not server.should_exit:
+            try:
+                conn, _ = ctl.accept()
+            except TimeoutError:
+                continue
+            except OSError:
+                break
+            with conn:
+                try:
+                    conn.settimeout(2)
+                    check_uid(conn, os.getuid())
+                    req = receive(conn)
+                    if req == {"command": "launch"}:
+                        conn.sendall(encode(auth.launch(port)))
+                    elif req == {"command": "stop"}:
+                        conn.sendall(encode({"ok": True}))
+                        server.should_exit = True
+                except Exception:
+                    pass  # never log the launch payload
+
+    thread = threading.Thread(target=ipc, daemon=True)
+    thread.start()
+    try:
+        server.run(sockets=[listener])
+    finally:
+        server.should_exit = True
+        ctl.close()
+        thread.join(timeout=3)
+        listener.close()
+        ctl_path.unlink(missing_ok=True)
+
+
+def safe_path(value):
+    parsed = urllib.parse.urlsplit(value)
+    path = parsed.path or "/"
+    if not path.startswith("/") or path.startswith("//") or "\\" in path or any(ord(c) < 32 for c in value):
+        raise ValueError("expected a dashboard path or URL")
+    return path + ("?" + parsed.query if parsed.query else "")
+
+
+def verify_probe(launch, fetch=None):
+    nonce = secrets.token_urlsafe(32)
+    url = f"http://127.0.0.1:{launch['port']}/auth/probe?n={nonce}"
+    expected = hmac.new(
+        bytes.fromhex(launch["probe_key"]), (nonce + launch["instance"]).encode(), hashlib.sha256
+    ).hexdigest()
+    if fetch is None:
+        # Never send the probe through environment proxies or follow redirects.
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, *args, **kwargs):
+                return None
+
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+        with opener.open(url, timeout=2) as reply:
+            actual = reply.read(129).decode("ascii")
+    else:
+        actual = fetch(url)
+    if not hmac.compare_digest(actual, expected):
+        raise RuntimeError("dashboard port ownership proof failed; browser was not opened")
+
+
+def open_dashboard(path="/"):
+    path = safe_path(path)
+    directory = state_dir() / "dashboard"
+    with private_directory(directory) as fd, locked(fd):
+        try:
+            launch = control(directory / "ctl.sock", "launch")
+        except OSError as exc:
+            if exc.errno not in (errno.ENOENT, errno.ECONNREFUSED):
+                raise
+            stale_socket(directory / "ctl.sock")
+            child = subprocess.Popen(
+                [sys.executable, "-m", "orch_dashboard", "serve", "--launcher-lock"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            for _ in range(100):
+                if child.poll() is not None:
+                    raise RuntimeError("dashboard could not start")
+                try:
+                    launch = control(directory / "ctl.sock", "launch")
+                    break
+                except (FileNotFoundError, ConnectionRefusedError):
+                    time.sleep(0.05)
+            else:
+                raise RuntimeError("dashboard did not become ready")
+    # Control can become ready just before the HTTP accept loop.
+    for attempt in range(20):
+        try:
+            verify_probe(launch)
+            break
+        except (urllib.error.URLError, TimeoutError):
+            if attempt == 19:
+                raise
+            time.sleep(0.05)
+    fragment = urllib.parse.urlencode({"launch": launch["code"], "to": path})
+    webbrowser.open(f"http://127.0.0.1:{launch['port']}/#{fragment}")
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("command", nargs="?", choices=["open", "launch", "serve", "stop"], default="open")
+    parser.add_argument("path", nargs="?", default="/")
+    parser.add_argument("--stop", action="store_true")
+    parser.add_argument("--launcher-lock", action="store_true", help=argparse.SUPPRESS)
+    args = parser.parse_args()
+    if args.stop or args.command == "stop":
+        control(state_dir() / "dashboard/ctl.sock", "stop")
+    elif args.command == "serve":
+        serve(args.launcher_lock)
+    else:
+        open_dashboard(args.path)
+
+
+if __name__ == "__main__":
+    main()

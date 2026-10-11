@@ -16,7 +16,7 @@ import { VIEWER_REASON } from '@/components/DisabledReason'
 import { CopyLinkButton } from '@/app/shell/CopyLinkButton'
 import { BlockedByConnection } from './Needs'
 import { availableActions, gateActionName, blockedApproval, primaryAction, primaryLabel } from './actions'
-import { agentName, ago, fmtClock, Mono, Pill, StatusChip, type Jump, type HumanAction, type Viewer } from './shared'
+import { agentName, ago, fmtClock, KeyRef, Mono, Pill, StatusChip, useIsVisibleKey, type Jump, type HumanAction, type Viewer } from './shared'
 
 export function CopyButton({ text, label }: { text: string; label: string }) {
   const [done, setDone] = useState(false)
@@ -212,13 +212,16 @@ function ClosedNotice({ closed, name }: { closed: ClosedInfo; name: (id: string)
 }
 
 export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; signing?: boolean }) {
+  const ws = useWorkspace().workspace?.id
+  const isVisible = useIsVisibleKey()
   const children = useQuery({
-    queryKey: ['ticket-children', ticket.key],
+    // Keyed by workspace so a gone / revoked / ready purge reaches it (the live cache rules only see keys with the id).
+    queryKey: ['ticket-children', ws, ticket.key],
     queryFn: async () => {
-      const ws = workspaceOfTicket(ticket.key, await api.getWorkspaces())
-      return ws ? api.listTickets(ws.id, { parent: ticket.key }) : []
+      const home = workspaceOfTicket(ticket.key, await api.getWorkspaces())
+      return home ? api.listTickets(home.id, { parent: ticket.key }) : []
     },
-    enabled: ticket.type === 'epic',
+    enabled: ticket.type === 'epic' && !!ws,
   })
   const restricted = ticket.visibility !== 'workspace'
   const shown = ticket.labels.slice(0, MAX_LABELS)
@@ -233,9 +236,7 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
         {ticket.parent && (
           <span className="text-text-muted">
             in{' '}
-            <Link to="/ticket/$key" params={{ key: ticket.parent }} className="font-mono text-[12px] text-brand hover:underline">
-              {ticket.parent}
-            </Link>
+            <KeyRef k={ticket.parent} visible={isVisible(ticket.parent)} />
           </span>
         )}
         {restricted && (

@@ -4,7 +4,7 @@ import { clearSession, getToken } from './bootstrap'
 import { readSSE } from './sse'
 
 export type LiveItem = { id: string; uid?: string; key?: string | null; type?: string; gone?: boolean }
-type CloseView = (uid?: string) => void
+type CloseView = (uid?: string, keys?: string[]) => void
 
 /** Fail closed: anything we cannot prove unrelated is treated as related. */
 const mentions = (value: unknown, needles: string[]) => {
@@ -52,7 +52,7 @@ export function invalidateLive(client: QueryClient, ws: string, event: string, i
           next[field] = (data[field] as { uid?: string }[]).filter((row) => row?.uid !== uid)
         return next
       })
-      void client.cancelQueries(ticket); client.removeQueries(ticket); close(uid)
+      void client.cancelQueries(ticket); client.removeQueries(ticket); close(uid, needles)
       // The feed on Today and the closed list name the ticket by key and title: purge them whole, then read as the new viewer.
       const feeds = { predicate: (q: Q) => q.queryKey[1] === ws && (q.queryKey[0] === 'today' || (q.queryKey[0] === 'tickets' && q.queryKey.includes('closed'))) }
       void client.cancelQueries(feeds); client.removeQueries(feeds)

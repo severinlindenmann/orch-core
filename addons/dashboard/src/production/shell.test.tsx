@@ -129,3 +129,40 @@ it('a ticket that is no longer visible closes the open ticket view and drops its
   expect(queryClient.getQueryData(['ticket', ws, 'DEMO-0001'])).toBeUndefined()
   expect(screen.getByText('DEMO-0001 is no longer visible to you')).toBeInTheDocument()
 })
+
+it('parent and blocked_by are plain text unless the key is a cached visible row; unknown keys cause no read', async () => {
+  ticketDoc = { ...(ticket as object), parent: 'DEMO-0099', blocked_by: ['DEMO-0098', 'DEMO-0097'] }
+  window.innerWidth = 1400
+  show('/w/DEMO/ticket/DEMO-0001')
+  expect(await screen.findByText('Real P1 ticket')).toBeInTheDocument()
+  await screen.findByRole('complementary', { name: 'Ticket details' })
+  for (const k of ['DEMO-0099', 'DEMO-0098', 'DEMO-0097']) {
+    expect(screen.getAllByText(k).length).toBeGreaterThan(0)
+    expect(screen.queryByRole('link', { name: k })).not.toBeInTheDocument()
+  }
+  expect(vi.mocked(fetch).mock.calls.some((c) => String(c[0]).includes('DEMO-009'))).toBe(false)
+  act(() => queryClient.setQueryData(['tickets', ws, 'all'], [{ uid: 'u9', key: 'DEMO-0099', title: 'Visible parent' }]))
+  expect(await screen.findByRole('link', { name: 'DEMO-0099' })).toBeInTheDocument()
+  expect(screen.queryByRole('link', { name: 'DEMO-0098' })).not.toBeInTheDocument()
+})
+
+it('after a revoke the notice says the workspace access is no longer available', async () => {
+  vi.mocked(useLiveUpdates).mockReturnValue({ ready: false, revoked: true })
+  try {
+    show('/w/DEMO/board')
+    expect(await screen.findByText('Workspace access is no longer available.')).toBeInTheDocument()
+  } finally {
+    vi.mocked(useLiveUpdates).mockReturnValue({ ready: true, revoked: false })
+  }
+})
+
+it('a gone for another ticket leaves the open ticket page in place', async () => {
+  show('/w/DEMO/ticket/DEMO-0001')
+  expect(await screen.findByText('Real P1 ticket')).toBeInTheDocument()
+  await waitFor(() => expect(vi.mocked(useLiveUpdates).mock.calls.at(-1)?.[0]).toBe(ws))
+  const close = vi.mocked(useLiveUpdates).mock.calls.at(-1)![1]!
+  act(() => invalidateLive(queryClient, ws, 'items', [{ id: '9.g', uid: 'ULID-OTHER', gone: true }], close))
+  await new Promise((r) => setTimeout(r, 50))
+  expect(location.pathname).toBe('/w/DEMO/ticket/DEMO-0001')
+  expect(screen.queryByText(/no longer visible to you/)).not.toBeInTheDocument()
+})

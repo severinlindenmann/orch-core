@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import { Link } from '@tanstack/react-router'
 import { Bot, Cpu, User } from 'lucide-react'
 import { type ReactNode } from 'react'
 import { roleOf } from '@/api/permissions'
@@ -8,6 +9,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
 import { usePageWidth } from '../../pageWidth'
 import { queries } from '@/api/queries'
+import { useWorkspace } from '@/app/workspace'
 
 // ------------------------------------------------------------------ viewer + people
 
@@ -216,3 +218,29 @@ export type HumanAction =
   | { kind: 'request_changes'; gate: 'requirements' | 'plan' | 'verify' | 'code' }
   | { kind: 'verdict' }
   | { kind: 'answer'; question: string; option?: string; text?: string }
+
+/**
+ * Host contract 0.5: a visible ticket may name a ticket the viewer cannot see (parent, blocked_by). Such a key is plain
+ * text; it becomes a link only when it is a visible row this workspace already cached (tickets list or board). The
+ * subscriptions are passive (`enabled: false`): they never fetch, so an unknown key causes no read at all.
+ */
+export function useIsVisibleKey(): (key: string) => boolean {
+  const ws = useWorkspace().workspace?.id ?? ''
+  const all = useQuery({ ...queries.ticketsAll(ws), enabled: false })
+  const board = useQuery({ ...queries.board(ws), enabled: false })
+  if (!ws) return () => false
+  const keys = new Set<string>()
+  for (const rows of [all.data, board.data]) if (Array.isArray(rows)) for (const r of rows) if (typeof r?.key === 'string') keys.add(r.key)
+  return (key) => keys.has(key)
+}
+
+/** A key that links only when the viewer is known to see it (see useIsVisibleKey), else plain text and no preload. */
+export function KeyRef({ k, visible }: { k: string; visible: boolean }) {
+  return visible ? (
+    <Link to="/ticket/$key" params={{ key: k }} className="font-mono text-[12px] text-brand hover:underline">
+      {k}
+    </Link>
+  ) : (
+    <span className="font-mono text-[12px] text-text-muted" data-testid="plain-key">{k}</span>
+  )
+}

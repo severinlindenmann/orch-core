@@ -332,7 +332,7 @@ export function History({ ticket, viewer }: TabProps) {
   const [view, setView] = useState<'timeline' | 'changes'>('timeline')
   const ws = useWorkspace().workspace?.id
   const { data, isLoading, error } = useQuery({ queryKey: ['ticket-events', ws, ticket.key, ticket.head.seq], queryFn: () => api.getEvents(ticket.key, 0, ws), enabled: !!ws })
-  const refusals = useQuery({ queryKey: ['ticket-refusals', ticket.key, ticket.head.seq], queryFn: () => api.getTicketRefusals(ticket.key) })
+  const refusals = useQuery({ queryKey: ['ticket-refusals', ws, ticket.key, ticket.head.seq], queryFn: () => api.getTicketRefusals(ticket.key), enabled: !!ws })
   return (
     <div className="space-y-4">
       <ToggleGroup type="single" value={view} onValueChange={(v) => v && setView(v as typeof view)} variant="outline" size="sm" aria-label="History view">

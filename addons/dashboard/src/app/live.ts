@@ -58,7 +58,13 @@ export function useCloseTicketView() {
 function useStreamUpdates() {
   const ws = useWorkspace().workspace?.id
   const close = useCloseTicketView()
-  useStream(ws, close)
+  const { revoked } = useStream(ws, close)
+  // The caches are already purged; say why the pages are empty instead of leaving host errors to explain it.
+  useEffect(() => {
+    if (!revoked) return
+    toast.error('Workspace access is no longer available.', { id: 'workspace-revoked', duration: Infinity })
+    return () => { toast.dismiss('workspace-revoked') }
+  }, [revoked])
 }
 
 // The host kind never changes while the app runs, so the same hook runs on every render.

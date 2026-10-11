@@ -1,0 +1,5 @@
+{"seq": 1, "at": "2026-09-01T09:00:00Z", "ticket": "DEMO-0001", "kind": "ticket.created", "actor": "human:you", "via": "cli", "data": {"title": "Ingest smart-meter readings"}}
+{"seq": 2, "at": "2026-09-03T09:00:00Z", "ticket": "DEMO-0003", "kind": "ticket.created", "actor": "human:you", "via": "cli", "data": {"title": "Cost view"}}
+{"seq": 3, "at": "2026-09-03T09:05:00Z", "ticket": "DEMO-0003", "kind": "claim.taken", "actor": "agent:claude-code:7f3c", "via": "cli", "data": {}}
+{"seq": 4, "at": "2026-09-03T12:00:00Z", "ticket": "DEMO-0003", "kind": "gate.approved", "actor": "human:you", "via": "cli", "data": {"gate": "requirements"}}
+{"seq": 5, "at": "2026-09-08T09:00:00Z", "ticket": "DEMO-0008", "kind": "question.asked", "actor": "agent:claude-code:aa", "via": "cli", "data": {"question": "Q1"}}

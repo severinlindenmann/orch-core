@@ -217,8 +217,10 @@ The host owns the request (v1 §0.6): bound to `(workspace, mapped person, signe
 10 minutes, submit and cancel serialized, a tombstone with the result after completion, at most 20 pending per
 person. The dashboard adds:
 
-- **A request belongs to the session that prepared it.** A double click or a retry reuses `opts.idem`; a lost response is recovered with
-  `outcome.get {idem}` (never a second prepare).
+- **A request belongs to the session that prepared it.** A double click or a retry reuses the click's idem and is answered from
+  the server's own record. `human.prepare` keeps no idem record on the host (§0.7), so there is no `outcome.get` for it:
+  after a lost answer the retry first cancels the person's open request for that action created since the lost call,
+  then prepares. Two tabs are two requests.
 - **Cancel.** Closing the panel, logout, session expiry, a ticket that goes `gone` (§6), or switching workspace while
   the panel is open calls `human.cancel`. An in-flight socket request is stopped with a `cancel` frame.
 - **Ambiguous completion.** On return after a drop, the server checks `human.pending` and the ticket. Event present:

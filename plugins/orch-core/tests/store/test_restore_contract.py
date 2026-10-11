@@ -27,6 +27,8 @@ def test_restore_structure_precedes_signature_and_is_atomic(case, env):
     unsigned = {k: v for k, v in event.items() if k != "host_sig"}
     assert admit(state, unsigned, log=case["log"]).code.value == case["expect"]
     logs = {} if kind == "workspace" else {case["log"]: [event]}
+    if kind == "ticket" and "ws_seq" not in event:
+        return  # replay takes schema-valid lines (its merge key needs ws_seq); the store's read refuses this one
     result = replay(
         [genesis, event] if kind == "workspace" else [genesis],
         logs,
@@ -36,11 +38,12 @@ def test_restore_structure_precedes_signature_and_is_atomic(case, env):
     )
     assert result.chain_errors[0].code == case["replay"]
 
+    caller_fields = ("reason", "note", "revocations", "abandoned_decisions")
+    if not set(case["mutated"]) <= set(caller_fields) or case["name"].startswith("signature_"):
+        return  # host-stamped or signer-made fields: the model and replay checks above are the boundary
     store = env.bootstrap()
     before = env.read_events("workspace")
-    fields = {
-        k: copy.deepcopy(event[k]) for k in ("reason", "note", "revocations", "abandoned_decisions") if k in event
-    }
+    fields = {k: copy.deepcopy(event[k]) for k in caller_fields if k in event}
     if kind == "ticket":
         uid = env.new_ticket()
     else:

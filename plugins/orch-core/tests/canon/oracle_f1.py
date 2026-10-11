@@ -708,7 +708,8 @@ INDEX: dict[str, str] = {
     "checkpoint.json": "checkpoint objects, signed bytes, refusals, divergence (5.10); receiver checks with valid "
     "signatures: pinned delegation, owner-device policy, signed source, line binding, abandoned, T head, position "
     "time, clock ceiling, revoked signers, ticket restores, trust root and strict shape",
-    "restore.json": "workspace restore carries effective revocations atomically (5.10)",
+    "restore.json": "workspace restore carries effective revocations atomically (5.10); re-signed structural "
+    "refusals; host self-revocation",
     "refusal_order.json": "model scenarios: an event breaking two rules gets the code of the earlier step of the "
     "refusal order (5.11)",
     "generation.json": "the 5.7 raise table row by row, delayed approval, reverted edit, voided approvals",

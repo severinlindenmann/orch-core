@@ -1484,6 +1484,13 @@ def restore_scenarios() -> list[dict[str, Any]]:
     restore(w, [evidence("sev", "sev1")])
     w.ev(TICKET, "log.added", w.actor("sev"), {"text": "after self revocation"}, expect="device.invalid")
     out.append(w.scenario())
+    # Host replay authorizes against the pre-event state, so a fresh self-revocation is valid for every reason; the
+    # log-free receivers refuse the same bundle (checkpoint.json bundle_revokes_its_own_signer_*).
+    for reason in ("retired", "compromised"):
+        w = setup("owner_authorized_before_self_revocation_" + reason)
+        restore(w, [evidence("sev", "sev1", reason)])
+        w.ev(TICKET, "log.added", w.actor("sev"), {"text": "after self revocation"}, expect="device.invalid")
+        out.append(w.scenario())
 
     w = setup("workspace_restore_blocks_abandoned_decision")
     gone = w.member("zed", "member")
@@ -1692,11 +1699,21 @@ def restore_contract_vectors() -> dict[str, Any]:
     }
     cases = []
 
-    def add(name, updates, log="workspace"):
+    def add(name, updates, log="workspace", sig=None, mutated=None):
         e = {**copy.deepcopy(event), **updates}
-        e["sig"] = b64u(ow.sign("dk_sev1", ow.person_bytes(W, log, e)))
+        e["sig"] = sig or b64u(ow.sign("dk_sev1", ow.person_bytes(W, log, e)))
         e["host_sig"] = b64u(ow.sign("wsk", ow.host_bytes(W, log, e)))
-        cases.append({"name": name, "log": log, "event": e, "expect": "validation.event", "replay": "chain.broken"})
+        mutated = mutated or sorted(k for k in e if k not in ("sig", "host_sig") and e[k] != event.get(k, object()))
+        cases.append(
+            {
+                "name": name,
+                "log": log,
+                "event": e,
+                "mutated": mutated,
+                "expect": "validation.event",
+                "replay": "chain.broken",
+            }
+        )
 
     add("closed_reason", {"reason": "backup restored"})
     add("note_byte_limit", {"note": "\u00e9" * 141})
@@ -1714,6 +1731,22 @@ def restore_contract_vectors() -> dict[str, Any]:
     add("ticket_requires_empty_revocations", {"revocations": [entry], "ws_seq": 1}, TICKET)
     add("malformed_wins_over_signature", {"reason": "bad", "sig": b64u(bytes(64))})
     cases[-1]["event"]["sig"] = b64u(bytes(64))
+    # Re-signed (person sig and host_sig both verify over the changed bytes): the structure alone refuses them.
+    add("envelope_version", {"v": 3})
+    add("hash_version", {"hash_v": 2})
+    add("actor_shape_extra_field", {"actor": {**event["actor"], "name": "sev"}})
+    add("actor_shape_host_kind", {"actor": {"kind": "host"}})
+    add("timestamp_impossible_date", {"at": "2026-02-30T10:00:00Z"})
+    add("timestamp_offset_form", {"at": "2026-10-10T10:00:10+00:00"})
+    add("counter_seq_not_from_seq_plus_one", {"seq": 3})
+    add("counter_roster_v_negative", {"roster_v": -1})
+    add("custody_token_unknown", {"auth": "fingerprint"})
+    add("abandoned_decision_not_an_id", {"abandoned_decisions": ["not-a-ulid"]})
+    add("abandoned_decision_repeated", {"abandoned_decisions": [ow.ulid(900), ow.ulid(900)]})
+    add("ticket_ws_seq_not_positive", {"ws_seq": 0}, TICKET)
+    add("ticket_ws_seq_missing", {}, TICKET, mutated=["ws_seq"])
+    add("signature_encoding_short", {}, sig=event["sig"][:-2])
+    add("signature_encoding_padded", {}, sig=event["sig"] + "==")
     add("oversized_restore_is_one_atomic_event", {"abandoned_decisions": [ow.ulid(100_000 + i) for i in range(18100)]})
     assert len(ow.cj(cases[-1]["event"])) + 1 > 524288
     return {

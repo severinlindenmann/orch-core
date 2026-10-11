@@ -58,8 +58,9 @@ The schemas below use a compact notation:
     grant?:str, unattended?:bool}`: the F1 §5.2 actor of an event, without `sig` and `host_sig`. `id` is `null` for the host;
     `for`, `session` and `grant` are present for an agent with a grant, `device` and `auth` for a person, `unattended: true`
     for an unattended agent. The grant id is public (F1 §10.7).
-  - `Snip` = `str`: the first 1 024 UTF-8 bytes of a stored text, cut on a scalar-value boundary, with U+2026 appended when
-    it was cut. The full text is in `ticket.get`.
+  - `Snip` = `str`: the first 1 024 UTF-8 bytes of a stored text, cut on a scalar-value boundary. A field of type `Snip`
+    comes with a sibling `<field>_cut:bool` that is present and `true` only when it was cut; no character is appended. The
+    full text is not in this contract's reads (§9, v1.5).
   - `Source` = `{repo:str, ref:str, sha:str}`: one entry of the F1 §5.7 source list (`repo` is the repo identity)
 - **Error codes** are listed per op. Every op may also return the universal codes of §0.6, in the precedence given
   there.
@@ -287,9 +288,11 @@ which answer `human_only`. `host.status` gives class N only `version` and `tier`
 - `diff {repo}` accepts only a repo named in the ticket's `links.repos`.
 - `artifact.get {name}` resolves `name` (F1 §6 name rule) through the ticket's replayed manifest and reads by digest.
   It never joins a client string to a path.
-- A visible row may name an invisible parent's or epic's key (`Row.parent`, `Row.epic`), and a visible closed ticket may
-  name the key of its duplicate target (`closed.duplicate_of`). Nothing else about the named ticket is returned (N5;
-  restricted is not secret, F13).
+- A visible ticket may name the key of a ticket the viewer cannot see: `Row.parent`, `Row.epic`, `closed.duplicate_of`, and
+  `duplicate_of` in the `data` of a `ticket.closed` log or feed item. Nothing else about the named ticket is returned: no
+  title, status or `restricted` flag, and every op given that key answers `not_found` as for a key that does not exist
+  (N5; restricted is not secret, F13). A client shows such a key as plain text; it may offer a link only after a read of
+  that key succeeded.
 
 **Derived fields (v1.4).** Every field that v1.4 adds follows the rules above. In addition:
 
@@ -584,11 +587,17 @@ Closed = {resolution:"wont_do"|"duplicate"|"obsolete"|"other", duplicate_of:Key 
     receipt of `exit` 0 on the current source commit), and `total` is all criteria. A ticket with none has `total: 0`.
   - `blocking_questions` is the number of questions in state `open` with `blocking: true`.
   - `closed` is present exactly when `status` is `"closed"`: `resolution` and `duplicate_of` come from the latest
-    `ticket.closed` since the last `ticket.reopened`, `at` is its time and `by` its signer.
+    `ticket.closed` since the last `ticket.reopened`, `at` is its time and `by` its signer. `duplicate_of` may name a ticket the viewer cannot see (§0.5).
 - The first page fixes a **snapshot**: its `sub_cursor` and `as_of`. Later pages carry the snapshot and the last row's
   sort key and uid, and they read the state **at that snapshot's journal position**. Only the paging position changes,
   so a row neither repeats nor goes missing across pages.
-- Page tokens expire after 10 min (`page.expired`).
+- **Page tokens** (`next_page`, here and in `activity.list`) are opaque and authenticated by the host (a MAC under a
+  host-only key, or a host-side record). A token binds the workspace, the principal hash, the history epoch, the snapshot
+  position, the paging position and a digest of the first page's other arguments. A token that fails the check, or was
+  issued to another principal, is `page.expired`; a token used with other arguments is `invalid.input`. Tokens expire
+  after 10 min (`page.expired`). **Every page is filtered for the viewer of its own request** (§0.5, rechecked per
+  request, so a revoked grant or a removed person changes the viewer at once), and a row is returned only when its
+  ticket is visible to that viewer both at the snapshot and now.
 - `total` counts visible matching rows in the snapshot.
 
 Errors: `invalid.input`, `page.expired`, `not_found` (`parent` or `epic`).
@@ -607,8 +616,8 @@ Errors: `invalid.input`, `page.expired`, `not_found` (`parent` or `epic`).
  tasks?:[Task], verdict?:Verdict | null,
  artifacts?:[Artifact]{0..1000}, artifacts_more?:bool,
  claim?:ClaimFull | null,
- source?:[{name:str, repo:str, ref:str, sha:str}], pushes?:[Push]{0..50},
- sections?:{str: [SectionRev]{0..20}}}
+ source?:[{name:str, repo:str, ref:str, sha:str}], pushes?:[Push]{0..50}, pushes_more?:bool,
+ sections?:{str: [SectionRev]{0..20}}, sections_more?:{str:bool}}
 
 LogItem  = {seq:int, type:str, at:Time, actor:Actor, summary:str{0..200}, data?:LogData}
 Question = {id:str, state:"open"|"answered"|"stale", to:[Person], blocking:bool, answered_by:Person | null, answered_seq:int | null,
@@ -619,7 +628,7 @@ Criterion = {id:str, text:str, evidence:[{artifact:str, digest:Hash, kind:str, a
              covered?:bool, tasks?:[{id:str, evidence:bool}]}
 GateView  = {state:"open"|"approved"|"n/a", gen:int, hash12:str/[0-9a-f]{12}/ | null,
              applies?:bool, waiting?:bool, blocked?:bool, count?:int, approved_by?:[Person], eligible?:[Person],
-             policy?:Policy, missing?:[str], decisions?:[Decision]{0..100}, revoked_decisions?:[ULID]}
+             policy?:Policy, missing?:[str], decisions?:[Decision]{0..100}, decisions_more?:bool, revoked_decisions?:[ULID]}
 Decision  = {id:ULID, kind:"approved"|"changes_requested"|"pass"|"fail", person:Person, at:Time, seq:int, gen:int,
              counting:bool, voided:bool, auth?:str, text?:Snip, source_sha?:[Source]}
 Task      = {id:str, text:str, state:"open"|"done"|"skipped"|"blocked", proves:[str], leased_by:str | null,
@@ -631,12 +640,12 @@ Verdict   = {outcome:"pass"|"fail", person:Person, at:Time, seq:int, gen:int, te
 Artifact  = {name:str, kind:str, digest:Hash | null, bytes:int | null, ac:str | null, task:str | null, label:str | null,
              addon?:str, ref?:str, evidence:bool, by:Actor, at:Time, seq:int, replaced:int}
 ClaimFull = {session:str, agent:str, for:Person, grant:str, since:Time, last_at:Time, live:bool, lapsed:str | null,
-             takeovers:[{at:Time, session:str, from_session:str, reason:str}]{0..20}}
+             takeovers:[{at:Time, session:str, from_session:str, reason:str}]{0..20}, takeovers_more?:bool}
 Push      = {seq:int, at:Time, repo_name:str, repo_id:str, ref:str, sha:str, before:{repo_id:str, ref:str, sha:str} | null}
 SectionRev = {seq:int, at:Time, hash:Hash | null, actor:Actor, via:"edit"|"external", refs:[str]}
 ```
 
-- `TicketDoc` is the F1 §7 ticket document.
+- `TicketDoc` is the F1 §7 ticket document
 - `summary` is host text, escaped as in F1 §10.4 item 11. The content itself is fetched with `show --log`.
 - **Closed and done tickets** are returned like any other (§0.8.4): `status` is `"done"` or `"closed"`, `settled` is `true` for
   both, and `closed` (present only when `status` is `"closed"`) is `Closed` of `ticket.query` plus the `text` of the
@@ -676,6 +685,8 @@ SectionRev = {seq:int, at:Time, hash:Hash | null, actor:Actor, via:"edit"|"exter
   | `restore` | `{from_seq, reason}` |
   | `invalid.acknowledged` | `{invalid_seq}` |
 
+- Text in `data` (`text`, `reason`, `label`, `title`) is the actor's stored content, not host text: it is not escaped like
+  `summary`, and a client renders it as untrusted text attributed to `actor`. A `Snip` field `f` has its `f_cut` sibling.
 - **`questions`.**
   - `text`, `why`, `options` (each `{key, label, cost?}`) and `recommended` are the question as the last `question.asked`
     for its id defines it (F1 §5.4.1). `to_ref` is the stored `to` (a person id or a ticket role), while `to` stays the
@@ -695,7 +706,7 @@ SectionRev = {seq:int, at:Time, hash:Hash | null, actor:Actor, via:"edit"|"exter
   - `applies`, `blocked` (no eligible approver token, `gate.no_eligible`), `waiting` (the gate waits for a person's
     decision now), `count` (the quorum needed) and `policy` (the effective policy in canonical form, F1 §5.7) come from
     the model. `approved_by` lists the persons whose approvals count now, so `approved_by` has fewer than `count`
-    entries while the gate is open. `eligible` is the persons who may decide now. `missing` is what an approval of
+    entries while the gate is open. `eligible` is the persons who may decide now and can see the ticket (§0.8, `needs`). `missing` is what an approval of
     `requirements` or `plan` still lacks (section ids, `acceptance`, `tasks`), and is empty otherwise.
   - `decisions` is every decision event on the gate (`gate.approved`, `gate.changes_requested`, `verdict.given`), oldest
     first, at most the newest 100. `counting` is true when the decision counts now; `voided` when F1 §5.7 retired it.
@@ -722,6 +733,9 @@ SectionRev = {seq:int, at:Time, hash:Hash | null, actor:Actor, via:"edit"|"exter
   hash after the edit, who made it, whether it was an `edit` (`ticket.updated`/`section.set`) or an `edit.external`, and the
   artifact names the section refers to. The hash is `null` when the edit removed the section. **F1 stores only hashes, not old
   texts**, so a previous text cannot be shown; the current text is in `doc`.
+- **Cut lists.** `decisions_more`, `pushes_more`, `sections_more` (present for the section ids that were cut) and
+  `takeovers_more` are `true` when older entries were left out; they are absent otherwise. Together with `log_more` and
+  `artifacts_more` no list is cut silently.
 - `log_more`, `log_since` and `log_limit` are unchanged. If the whole result would pass the frame limit the host answers
   `result.too_large` and the hint names `log_limit`.
 
@@ -763,8 +777,13 @@ NeedPayload = {question:str, blocking:bool, to:str, options:[{key:str, label:str
   `at` is not trusted) and for any need whose beginning the host cannot derive. A client treats absent as unknown.
 - **`status`** is the ticket's status, so a client can mark an item whose ticket is `closed` (§0.8.4). It is absent for a
   workspace-level item.
-- **Visibility.** Items of tickets the viewer cannot see are dropped before anything is returned (§0.5), and `text`, `since`
-  and `payload` exist only on items that survived. A workspace-level `acknowledge` is returned only to a viewer in its `who`.
+- **Visibility.** The items are those of `person` (or of the viewer when `person` is absent), filtered for the **caller's**
+  viewer (§0.5): an item is returned only when its ticket is visible to the caller and, with `person`, also to that person.
+  `text`, `since` and `payload` exist only on items that survived. A workspace-level `acknowledge` is returned only to a
+  viewer in its `who`. An owner who is not on a restricted ticket's list therefore gets none of another person's items on it.
+- **`who` and `eligible` list only persons who can see the ticket (F1 §9)**, for every kind. When that leaves a gate with
+  nobody who may decide it, the item is `no_eligible`; a `question` whose addressees are all filtered out falls back to
+  the owners and maintainers who can see the ticket.
 
 Errors: `op.not_allowed` (another person's needs, §0.5).
 
@@ -794,25 +813,52 @@ ActivityItem = {id:ItemId, jpos:int, log:Uid | "workspace", key:Key | null, uid:
   `person` keeps events whose actor is that person or an agent acting `for` that person. `since` is inclusive and `until`
   exclusive, both on `at`.
 - **Visibility, per item, before it is counted or returned (§0.5).**
-  - A ticket-log event is returned only when its ticket is visible to the viewer **at the snapshot** (the first page's position; so a ticket that was restricted
-    when the event happened but is `workspace` at the snapshot shows its whole history, as `ticket.get` does, and the reverse hides
-    it). `title`, `key`, `summary` and `data` of an event on a ticket the viewer cannot see are never computed.
+  - A ticket-log event is returned only when its ticket is visible to the viewer at the snapshot **and** at the time of the
+    request. A ticket that was restricted when the event happened but is `workspace` at both shows its whole history, as
+    `ticket.get` does. A ticket that becomes invisible between pages contributes nothing to later pages, and one that
+    becomes visible between pages adds nothing to the snapshot. Visibility is the ticket's visibility **now** (at the
+    snapshot and at the request), never its visibility when the event was appended: F1 stores none per event. A viewer who
+    may see a ticket now gets its whole history, including any period when it was restricted, exactly as `ticket.get` and
+    `show --log` give it; a ticket the viewer may not see now contributes nothing, whatever it was before. `title`, `key`, `summary` and `data` of an event on a
+    ticket the viewer cannot see are never computed.
   - A workspace-log event is returned only to a viewer with a person (P, or G for the grant's person), never to
-    `no-person`, and only by type: member and role events (`workspace.created`, `member.added`, `member.removed`,
-    `role.changed`), device events (`device.added`, `device.removed`, `device.revoked`), `policy.changed`,
-    `settings.changed`, `addon.granted`, `addon.disabled`, `addon.purged`, `restore` and `invalid.acknowledged` to every
-    such viewer; `grant.issued` and `grant.revoked` only to a person-class owner and to the grant's own person (the
-    `grant.list` rule). Their `data` carries the type's key facts and no values that `workspace.show`, `member.list`
-    and `grant.list` would not show: `settings.changed` has `{keys:[str]}` (the names in `set`, never the repo paths or
-    remotes), `policy.changed` has `{gates:[Gate]}`, `grant.*` has `{grant, person, scope?}`, and none has `secret_hash`.
-    Another workspace-log type has `data: {}`.
-  - **No `total`.** `next_page` is `null` only when no further visible item exists, and a page is full (`limit` items)
-    whenever `next_page` is not `null`: invisible events are skipped, never returned as holes. `jpos` gaps still reveal
-    that invisible events happened, which is the accepted metadata of F13.
-- **Paging.** As in `ticket.query`: the first page fixes a snapshot (`sub_cursor`, `as_of`), later pages read the state at
-  that snapshot's position and the visibility as of it, and tokens expire after 10 min (`page.expired`). A `page` token is
-  bound to the first page's other arguments; any other combination is `invalid.input`. With `order:"asc"` the first page
-  starts at the oldest event that matches.
+    `no-person`, and only by type:
+    - to every such viewer, whatever the person's member role (a `viewer` gets the same items as a `member`: each carries
+      no more than `member.list`, `workspace.show` and `ticket.get` already give that person, per the table below): the
+      member and role events (`workspace.created`, `member.added`, `member.removed`, `role.changed`), the device events
+      (`device.added`, `device.removed`, `device.revoked`), `policy.changed`, `settings.changed`, `addon.granted`,
+      `addon.disabled`, `addon.purged`, `restore` and `invalid.acknowledged`;
+    - `grant.issued` and `grant.revoked`, whatever the role, only to a person-class owner and to the grant's own person
+      (the `grant.list` rule).
+
+    Their `data` is closed per type, as in `LogItem.data`; a type not in this table, including any future one, has
+    `data: {}`:
+
+    | Event type | `data` |
+    |---|---|
+    | `workspace.created` | `{owner:Person}` |
+    | `member.added` | `{person, role}` |
+    | `member.removed` | `{person}` |
+    | `role.changed` | `{person, role}` |
+    | `device.added`, `device.removed` | `{person, device}` |
+    | `device.revoked` | `{person, device}` (no `reason`, no `revocation`) |
+    | `policy.changed` | `{gates:[Gate]}` |
+    | `settings.changed` | `{keys:[str]}` (the names in `set`, never repo paths or remotes) |
+    | `grant.issued` | `{grant, person, scope, expires_at}` |
+    | `grant.revoked` | `{grant, person}` |
+    | `addon.granted`, `addon.disabled`, `addon.purged` | `{name}` (`addon.granted` adds `version`) |
+    | `restore` | `{from_seq}` |
+    | `invalid.acknowledged` | `{invalid_seq}` |
+
+    None carries a public or private key, a certificate, a signed object, `secret_hash`, a free-text `reason` or `label`.
+  - **No `total`.** `next_page` is `null` only when no further visible item exists. A page holds `limit` items, or fewer
+    when the host's scan budget for one request (at least 10 000 events) ran out, and then `next_page` continues from where
+    the scan stopped. Invisible events are skipped, never returned as holes. `jpos` gaps still reveal that invisible
+    events happened, which is the accepted metadata of F13.
+- **Paging.** As in `ticket.query` (§0.8, page tokens): the first page fixes a snapshot (`sub_cursor`, `as_of`) and later
+  pages read the logs up to that position. A `page` token is authenticated by the host and bound to the principal, epoch,
+  snapshot, paging position and the first page's other arguments, and **every page is filtered for the viewer of its own
+  request**, with the visibility rule above. With `order:"asc"` the first page starts at the oldest event that matches.
 - **Live tail.** `sub.open {topics:["tickets","workspace"], after:<sub_cursor>}` delivers the events after the snapshot,
   with the same ids, so a client dedupes by `id` (§0.9).
 
@@ -1244,6 +1290,8 @@ SubId     = str/sub_[0-9a-z]{1,16}/
 - **Accepted metadata (F13).** `jpos` and `ws_seq` are global, so their gaps show that invisible tickets changed, and
   `needs.changed` fires for every change to `needs`. Visibility in §0 is a display rule, not secrecy (F1 §9):
   workspace files are group-readable in tier B.
+  `jpos` is also contained in `ItemId` (`"<jpos>.e"`) and may be encoded in `Cursor` and page tokens. A client that hides
+  `jpos` from a further consumer maps `id`, `sub_cursor` and `next_page` to its own values as well.
 - **End.** `evt {end}` closes the subscription:
   - `reset`: a cursor that is too old (outside the 10 000-entry journal), of another scope or epoch, or a journal
     rebuild (D-P2-12). `sub.open` with such a cursor answers `sub.reset` instead.
@@ -1500,9 +1548,18 @@ Every change is an optional key or a new op, so no existing op changes its versi
    `status`, `settled` and `closed`; `ticket.query` leaves closed tickets out unless `status` lists `closed`. Closed
    rows may name a duplicate target's key (N5 extended).
 5. **New op `activity.list`** (cap `activity/1`): a paged, filtered workspace feed over the verified logs, with
-   per-item visibility, no `total`, and the live tail through `sub.open`.
+   per-item visibility, no `total`, and the live tail through `sub.open`. Design choice: feed visibility is current
+   visibility (at the snapshot and at the request), as in `ticket.get`, never visibility when the event was appended.
 6. **Visibility** (§0.5): a block of rules for derived fields (computed after the filter, `restricted` only on visible rows,
    nothing beyond what F1 stores, no secrets).
+8. **Review round (Opus security review of #378, and the dashboard stream's visibility questions).** Page tokens are
+   host-authenticated and bound to principal, epoch, snapshot, position and arguments, every page is filtered for its own
+   request's viewer, and a feed or query item must be visible at the snapshot and now (also for `ticket.query`);
+   workspace-log `data` is a closed table, and a `viewer` gets the same workspace-log items as a member (nothing beyond
+   `member.list`); `needs {person}` is filtered for the caller and the person; `duplicate_of` follows the `parent`/`epic`
+   rule (key shown, `not_found` on any op, plain text in clients); `jpos` inside ids, cursors and tokens is accepted
+   metadata; `_more` and `_cut` flags; a scan budget for the feed; `who` and `eligible` limited to persons who can see the
+   ticket; accepted risks recorded in §7.
 7. **Capabilities** (§0.4): `read_ext/1` marks a host that sends all the new optional fields; `activity/1` for the new op.
    Error table: `activity.list` added; no new error code is needed.
 
@@ -1906,6 +1963,14 @@ UID. P2 adds no keychain.**
   - **Accepted:** jobs under the worker UID can signal each other. Nothing they return is trusted without
     `check_proposal` (and the D53 re-check for landing).
 - Without a worker, addons do not run (`addon.runner_unavailable`).
+- **Accepted in v1.4 (Opus review R8).**
+  - `claim.live:false` and `lapsed:"grant_ended"` tell a viewer who may see the ticket that another person's grant ended,
+    which `grant.list` hides from them; the `claim.released` event in the log shows the same shortly after.
+  - `Actor.session` and `claim.session` show other persons' agent session ids to anyone who may see the ticket, while
+    `session.list` gives a viewer their own only. This was already so for `Row.claim.session` in v1.3. A session is a
+    label, not authentication (§0.5).
+  - The response time of `activity.list` grows with the number of invisible events skipped (bounded by the scan budget).
+    The `jpos` gaps reveal more than that already (F13).
 
 ## 8. Implementation groups
 
@@ -1930,7 +1995,7 @@ dispatch is turned on.
 | **H5a Human contract** | `human.prepare`/`get`/`submit`/`cancel`, multi-event requests, material, signer recomputation and header, CLI composites, person versions of agent ops, `opts.dry_run` | mismatch, expiry, single use, tombstone; stale between prepare and submit; prompt fields equal `describe_payload`; a grant prepared with a non-null `secret_hash` is refused, and the preparer cannot obtain the secret (F1); `human.get` returns every invariant byte (§0.8.1) identical to `human.prepare`'s, and differs only in `actor.device` and `auth` after binding (F5); `verdict pass` and `verdict fail` on one gate have different fingerprints (N2); a prepared request with an event type outside `EMITS_V1[op]`, a second `log`, another `based_on` or a foreign `actor.id` is refused by the signer before any prompt (N4); `secret_hash` is set aside only on `grant.issued`; replay precedence (identical signed events give the stored result, other events give `human.request_state`); every state transition of the table; the `Review` (payload and derived) recomputed by the signer for every person event type; an unknown payload key is shown (L2); a section text whose `section_hash` differs from the event is refused; a `settings.set` `before` key outside `set` is refused; a crash between two appends of a multi-event submit is rolled forward at start and ends `committed`; human `submit` replay precedence against missing, conflicting, expired and fresh idems, with the fresh idem getting its own record; submit from another workspace's socket gives `not_found`; a multi-event request is all or nothing | Opus |
 | **H5b Hand-off** | codes, `human.pending` (by code and by request id), device binding in `human.get`, `orch sign CODE` | a successful hand-off sign end to end; `orch sign` shows the workspace from its own registry, the op header and the fingerprint before content; binding to a second device is refused; failed lookups on one connection do not lock out another (F5); the `pending` states `prepared`, `submitted`, `cancelled` and `expired` (R6) | Opus |
 | **H6a Live updates** | journal, `jpos`, `sub.*`, revalidation, cursors, end reasons, `wait` on the bus, foreign-append rebuild | a revoked grant and a removed person stop delivery, queued items included; resume with no gap after a host restart; overflow, then snapshot, then cursor; a write's `res` before its `evt`; the journal is rebuilt after a foreign append (F11); one `jpos` yielding an event, `gone` and `needs.changed` gives three distinct ids in one `evt`; a fully filtered `jpos` still advances the cursor; `gone` is sent only to a viewer who saw the ticket | Opus |
-| **H6b Dashboard reads** | `ticket.query`, `ticket.get`, `needs`, `activity.list`, `workspace.show`, `member.list`, `session.list`, `grant.list`, `move`, `policy.set`, `settings.set` | paging stays consistent under appends (no repeat, no gap); restricted rows hidden; `needs` equals `model.needs`; `ticket.get` evidence digests match the manifest; `grant.list` hides `secret_hash`; `move` allowed and refused per its rules; **v1.4:** `restricted`, the task and criteria counts, `blocking_questions`, `claim` and `closed` on rows are absent or never counted for a restricted ticket the viewer cannot see (`total` unchanged by it); `restricted` is `true` exactly for non-`workspace` rows the viewer may see; the new `needs` fields for `question`, `approve`, `no_eligible`, `acknowledge` and `addon` equal `model.needs` and the question or rule text, and `since` follows the table in §0.8; every new `ticket.get` field equals the model view (a question's options and answer, a receipt's `evidence`, gate `approved_by` and `decisions`, `verdict.current`, the manifest against `artifact.get` digests, `claim.live`, `source` against the latest `branch.pushed`), and `LogItem.data` holds only the fields in its type table (no `sig`, `host_sig`, secret or text beyond `Snip`); `sections` holds hashes only; a closed ticket: `ticket.get`, `diff`, `artifact.get` and `sub.open {ticket}` succeed for a viewer who may see it and give `not_found` for one who may not, `ticket.query` leaves it out without a `status` and returns it with `["closed"]`, `needs` has no `approve` for it, and a reopened ticket loses `closed`; `activity.list`: every item filtered on its own (an agent grant or `no-person` never gets a restricted ticket's events or any workspace-log event, a non-owner gets only their own `grant.*` events and none of another person's), `next_page` and page fullness without holes, no `total`, a token with other arguments is `invalid.input`, an expired token is `page.expired`, a ticket that becomes restricted or visible between pages does not change what the snapshot returns, the first page's `sub_cursor` joined to `sub.open` loses and repeats nothing, `settings.changed` shows key names only; `read_ext/1` and `activity/1` listed in `welcome.caps` | Codex, Opus (visibility of the new fields) |
+| **H6b Dashboard reads** | `ticket.query`, `ticket.get`, `needs`, `activity.list`, `workspace.show`, `member.list`, `session.list`, `grant.list`, `move`, `policy.set`, `settings.set` | paging stays consistent under appends (no repeat, no gap); restricted rows hidden; `needs` equals `model.needs`; `ticket.get` evidence digests match the manifest; `grant.list` hides `secret_hash`; `move` allowed and refused per its rules; **v1.4:** `restricted`, the task and criteria counts, `blocking_questions`, `claim` and `closed` on rows are absent or never counted for a restricted ticket the viewer cannot see (`total` unchanged by it); `restricted` is `true` exactly for non-`workspace` rows the viewer may see; the new `needs` fields for `question`, `approve`, `no_eligible`, `acknowledge` and `addon` equal `model.needs` (with `who` limited as above) and the question or rule text, and `since` follows the table in §0.8; every new `ticket.get` field equals the model view (a question's options and answer, a receipt's `evidence`, gate `approved_by` and `decisions`, `verdict.current`, the manifest against `artifact.get` digests, `claim.live`, `source` against the latest `branch.pushed`), and `LogItem.data` holds only the fields in its type table (no `sig`, `host_sig`, secret or text beyond `Snip`); `sections` holds hashes only; a closed ticket: `ticket.get`, `diff`, `artifact.get` and `sub.open {ticket}` succeed for a viewer who may see it and give `not_found` for one who may not, `ticket.query` leaves it out without a `status` and returns it with `["closed"]`, `needs` has no `approve` for it, and a reopened ticket loses `closed`; `activity.list`: every item filtered on its own (an agent grant or `no-person` never gets a restricted ticket's events or any workspace-log event, a non-owner gets only their own `grant.*` events and none of another person's), `next_page` and page fullness without holes, no `total`, a token with other arguments is `invalid.input`, an expired token is `page.expired`, a ticket that becomes visible between pages adds nothing to the snapshot, and one that becomes invisible is dropped from later pages; a revoked grant or a removed person on page 2 is filtered as the new viewer; a forged, altered or other-principal `page` token (also for `ticket.query`) is `page.expired`, and a token with other arguments is `invalid.input`; workspace-log `data` holds only the fields of its table; a `viewer`-role person gets member, role, device, policy and settings items with the table's fields only, and no `grant.*` item; `needs {person: X}` by an owner who is not on a restricted ticket's list returns none of X's items on it; `who` and `eligible` never name a person who cannot see the ticket, and a gate left with nobody is `no_eligible`; `duplicate_of` naming a ticket the viewer cannot see is returned as the key only, in `closed`, `LogItem.data` and the feed, and `ticket.get` on it is `not_found`; the `_more` flags and `_cut` siblings are set exactly when something was cut, the first page's `sub_cursor` joined to `sub.open` loses and repeats nothing, `settings.changed` shows key names only; `read_ext/1` and `activity/1` listed in `welcome.caps` | Codex, Opus (visibility of the new fields) |
 | **H7 Turn host mode on** | the default for registered workspaces; full parity; cross-version fixtures (an older client against a newer host) | full golden parity including human ops and `wait`; T2 in both modes. Needs H10 for `verdict` and `approve code` parity (clean-tree check). | Opus |
 | **H9 Touch ID signer** (D-P2-22) | Swift helper, `secure-enclave` backend, native header and review, dashboard integration | recomputes hashes; refuses non-person labels; F1 vector interop; cancellation (window closed or Touch ID refused) submits nothing and leaves the request `prepared`; same fingerprint as the dashboard | Opus |
 | **H10 Worker and jobs** | `orch worker`, `job.*`, leases, containment, addon runner, `tree.check` | the addon cannot read the WSK; a double-forked escapee dies within 30 s while a sibling job completes; a reparented child in a live job's group survives the sweep (F14); a repo with `filter.*.clean`, `core.fsmonitor` or `core.hooksPath` spawns no process in `tree.check` (F2); a second process under the worker UID is refused while the worker is connected, and a `job.done` with another connection's lease is refused (F3); lease expiry and retry at most twice; cancellation through heartbeat; a job that kills the worker and connects as worker class during the restart throttle is refused, and the restarted worker gets the role (N1); `job.done` replayed after a worker reconnect and after a host restart answers `{}` when lease and canonical digest match the stored completion, and `worker.lease` otherwise (including a different error message); a `void` lease is refused; a worker-UID connection to a workspace socket is refused; jobs of two workspaces are served round-robin over the one worker connection; a FIFO at a tracked path counts as changed without blocking, and a symlink is compared by its target (N3); a tree dirtied between prepare and `human.get` is refused at `human.get` (N3) | Opus |
@@ -1973,6 +2038,21 @@ dispatch is turned on.
    host can read it, otherwise the root-owned pid file written by the setup helper's wrapper (N1).
 7. **H5a settles** that a multi-event submit is judged and appended under one held store lock, with no other append in
    between. The roll-forward recovery of §0.8.1 relies on it, and `Projection` already does this in P1.
+8. **v1.5 (from the dashboard stream's M2 gap table and its comment on #378; not in v1.4).**
+   - A **settings and policy read op** (or fields on `workspace.show` under `read_ext`): `grant_hours`, `claim_ttl_min`,
+     `lease_ttl_min`, `repos`, and the workspace default gate policy, for M4's read-only settings and for a claim's expiry.
+   - **Full texts** beyond the `Snip`: comment, change-request and verdict texts (for example `ticket.get {item}` or a
+     `log.item` op).
+   - **Which hashes `human.prepare` binds** and the dashboard may show: the full question hash, the gate hash and
+     `source_sha` (today only `hash12`).
+   - **Not expressed yet:** `via: factory_charter` on approvals (D62, P2); `revoked.by` on grants; grant `sessions` as ids
+     rather than a count; agent refusals as session data (F1 stores no event for them); a workspace-wide artifact listing.
+   - **The live-tail payload:** subscription items carry no actor, summary or data, so a feed refetches instead of merging.
+     Security pointer (Low): §0.9 filters items by ticket visibility only, not by workspace-log type, so
+     `sub.open {topics:["workspace"]}` would deliver `grant.*` items (type and actor only) to any viewer, `no-person`
+     included. The v1.5 live-tail work must apply the per-type rule of `activity.list` (the `grant.list` rule for `grant.*`,
+     nothing from the workspace log for `no-person`).
+   - `diff` with several heads or bases per repo, and commits (F1 stores only `branch.pushed`).
 
 ## 10. Decisions record
 

@@ -3,13 +3,14 @@
 Status: Decided 11 Oct 2026 (draft by orch-52, Codex challenge, Opus tie-break on two points), revised the same day
 after the Opus security review (F1–F15), the Codex clarity review (14 points) and the dashboard stream's requests
 (R1–R11), and again after the security re-review (N1–N5), the Codex clarity re-review (12 points) and orch-relay's P3
-host interface (§11). The socket API contract §0 is **v1.2 (provisional)**: changes go through the coordination log.
+host interface (§11), and finally after the Opus diff check (M1, L1–L3) and the Codex re-check (8 points). The socket
+API contract §0 is **v1.3 (provisional)**: changes go through the coordination log.
 
 Built on `origin/develop` 908f2511. Decisions are numbered **D-P2-n**, each with a one-line reason.
 
 ---
 
-## 0. Socket API contract v1.2 (provisional)
+## 0. Socket API contract v1.3 (provisional)
 
 §0 is complete on its own. Streams B (dashboard), C (mobile, from P3) and D (relay bridge) build on it without reading
 the rest. Everything in §0 is normative: a host or client that differs from it is wrong.
@@ -142,6 +143,9 @@ OpName  = str/[a-z][a-z_]*(\.[a-z_]+)*/      ReqId = str/[A-Za-z0-9_-]{1,32}/
 - **`{digest}`** is accepted only on a **retry**: a write whose `(principal, idem)` already has an outcome record
   (§0.7). It names the file by the digest the record holds, because the blob may already be consumed. Without a
   record, `{digest}` answers `blob.invalid`.
+- **A `{digest}` is never resolved to bytes (M1).** It is only ever compared with the record's binding, never looked up
+  in blobs, artifacts or anything else. If the op has to run again (no stored result, for example after
+  reconciliation removed a `pending` record), a `{digest}` file answers `blob.invalid` and the client uploads again.
 
 ### 0.4 Capabilities and versioning
 
@@ -212,7 +216,7 @@ may no longer run agents.
 | Class | `auth.grant` | Person mapping (§0.8.3, rechecked per request) | Column | Viewer | Writes |
 |---|---|---|---|---|---|
 | person | absent | valid | **P** | the mapped person | as column P |
-| person | absent | invalid (not a member, or no valid `decide` device) | **N** | `no-person` | as column N; `human.*` answers `op.not_allowed` |
+| person | absent | invalid (not a member, or no valid `decide` device) | **N** for reads | `no-person` | **every write answers `op.not_allowed`** (L1: a removed member's UID keeps no unattended writes); `human.*` answers `op.not_allowed` |
 | person | verified | either | **G** | the grant's person | as column G; `human.*` answers `human_only` |
 | person | unverified | either | **N** for reads | `no-person` | every write answers `grant.required` (malformed) or `grant.expired` (unknown, expired, revoked, wrong secret), unattended writes included (F1 §10.4 item 12); `human.*` answers `human_only` |
 | agent | absent | — | **N** | `no-person` | as column N |
@@ -318,7 +322,8 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 | `human.request_state` | 3 | no | stays | the request is cancelled, already bound to another device, or already submitted by another call | — |
 | `host.required` | 3 | no | stays | a direct-mode CLI on a registered workspace (D-P2-18) | — |
 | `lock.busy` | 9 | yes | stays | register waited 60 s for the ownership lock (existing code) | yes |
-| `worker.lease` | 3 | no | stays | `job.*` with a lease that is unknown, expired or of another connection | — |
+| `worker.lease` | 3 | no | stays | `job.*` with a lease that is unknown, expired or of another connection, or a `job.done` that differs from the stored completion (§0.8.2) | — |
+| `control.rolled_back` | 9 | yes | stays | a stored answer only: a control intent rolled back at host start (§0.7); retry with a new idem | — |
 | `repo.remote_mismatch` | 3 | no | stays | the observed identity differs from the declared `remote` (H0) | — |
 
 `host.unavailable` (exit 9, retryable) is raised **only by the client**, when it cannot connect or the connection
@@ -340,12 +345,15 @@ drops. The host never sends it.
 2. the envelope (`req.invalid`);
 3. the op: `unknown_command`, then `op.unsupported`;
 4. drain (`host.restarting`);
-5. the column (§0.5): `op.not_allowed` or `human_only`;
-6. `grant.secret_in_args`, then the grant on writes (`grant.required`, `grant.expired`);
+5. `grant.secret_in_args`; then, for a request whose `auth.grant` is present but **unverified**, a write that column G
+   would allow answers `grant.required` (malformed) or `grant.expired` (otherwise). This is the effective-column rule
+   of §0.5, and it wins over the column check;
+6. the column (§0.5): `op.not_allowed` or `human_only`;
 7. `rate.limited`, `quota.host`;
 8. `args` against the schema (`invalid.input`), then `files` (`blob.invalid`), then `dry_run` support
    (`invalid.input`);
-9. idempotency: `idem.required`, then a replay of a stored result, `idem.conflict` or `idem.expired`;
+9. idempotency (not for `dry_run:true`, §0.7): `idem.required`, then a replay of a stored result, `idem.conflict` or
+   `idem.expired`;
 10. the workspace state: `workspace.unavailable`, then `workspace.degraded` for writes;
 11. the op's own errors (its list in §0.8, in the order its handler meets them);
 12. `timeout`, `cancelled` and `outcome.unknown` can end a request at any point after step 11 started; `internal`
@@ -362,7 +370,7 @@ drops. The host never sends it.
 | `needs` | none (another person's needs is `op.not_allowed`) |
 | `diff` | `not_found`, `observe.unavailable`, `repo.remote_mismatch` |
 | `artifact.get` | `not_found` |
-| `outcome.get`, `host.outcome` | `outcome.unknown_idem` (also for another principal's record) |
+| `outcome.get`, `host.outcome` | `outcome.unknown_idem` (no record, or another principal's), `idem.expired` (only a tombstone is left) |
 | `human.prepare` | `device.unknown`, `device.invalid`, `device.scope`, `observe.unavailable`, the inner op's declared errors |
 | `human.get` | `not_found`, `human.request_expired`, `human.request_state`, `device.unknown`, `device.invalid`, `device.scope`, `observe.unavailable` (N3 re-check) |
 | `human.submit` | `not_found`, `human.request_expired`, `human.request_state`, `human.request_mismatch`, `sig.invalid`, `gate.stale`, `members.stale`, `question.stale`, `observe.unavailable`, the inner op's model codes |
@@ -389,15 +397,18 @@ lost response; "Lookup" says how a client asks for a result it never received.
 |---|---|---|---|---|
 | **log writes** | registry ops whose `who` is not `read`; `human.submit` | required | an outcome record, reconciled from the log by its planned event ids (below) | `outcome.get` (workspace socket) |
 | **control writes** | `host.register`, `host.unregister`, `host.bootstrap` | required | an intent record in `<state>/host/intents/<idem>` (0600), fsynced before the change and completed after it; replayed at host start | `host.outcome` (control socket) |
-| **job completion** | `job.done` | not used | idempotent by job id: a repeated `job.done` for a completed job with the same `outcome` and result digest answers `{}`, anything else answers `worker.lease` | none needed (the repeat is the lookup) |
+| **job completion** | `job.done` | not used | a persisted completion record per job (§0.8.2); a repeat is compared with it canonically | none needed (the repeat is the lookup) |
 | **non-idempotent create** | `host.wsk_create` | not used | none: a retry creates a new key, and a key with no genesis after 1 h is deleted | none |
 | **reads and side-effect-free ops** | reads; `human.prepare`, `human.get`, `human.pending`, `human.cancel`; `blob.put` (idempotent by offset and `upload_key`, §0.10), `blob.drop`; `sub.*`; `outcome.get`, `host.outcome`; `job.next`, `job.heartbeat`; `host.list`, `host.status`, `host.restart` | ignored | none needed | none |
 
-**Dry run.** `opts.dry_run:true` is accepted only by the log-write registry ops and by `human.prepare`. The op is
-judged with `model.preview`. Nothing is appended, consumed or created, and no outcome record is written. The result is
-the op's normal result with `seq: 0` (for `human.prepare`, `request: null`). Every other op called with
-`dry_run:true` answers `invalid.input` ("dry_run is not supported by <op>"). That includes reads, `human.submit`,
-control, job, blob and sub ops.
+**Dry run.** `opts.dry_run:true` is accepted only by the log-write registry ops and by `human.prepare`.
+
+- The op is judged with `model.preview`. Nothing is appended, consumed or created, and no outcome record is written.
+- The result is the op's normal result with `seq: 0` (for `human.prepare`, `request: null`).
+- **`opts.idem` is ignored on a dry run:** it is not required, not looked up and not stored. A dry run never replays a
+  stored result, even when a record exists for the same key, and never answers `idem.*`.
+- Every other op called with `dry_run:true` answers `invalid.input` ("dry_run is not supported by <op>"). That
+  includes reads, `human.submit`, control, job, blob and sub ops.
 
 **Binding** (log and control writes). A record is keyed by `(namespace, principal, idem)` and bound to:
 
@@ -418,7 +429,7 @@ sha256(cj({op, args_normalised, files:{arg: Hash}, session}))
 | `pending` | written (fsync) before `Store.append`. It holds the planned event ids. | waits for the first call to finish, then gets its result |
 | `committed` | holds the `result`, redacted | gets it, with `duplicate:true` |
 | `failed` | a non-retryable refusal; holds the `error` | gets the same error |
-| `partial` | a multi-event call whose first events landed; lists their `seq`s | the stored `error`: `invalid.input` "an earlier attempt … was interrupted after N event(s)", exactly as P1's `apply` refuses (F1 §10.7) |
+| `partial` | a multi-event **registry** call (`apply`, `handoff`, `task.done`) whose first events landed; lists their `seq`s. Never used for `human.submit`, which rolls forward (§0.8.1). | the stored `error`: `invalid.input` "an earlier attempt … was interrupted after N event(s)", exactly as P1's `apply` refuses (F1 §10.7) |
 
 - **Re-enveloping.** A record stores `result` or `error` and `exit`, never a frame. A replay is sent in a fresh `res`
   carrying the **current** request id.
@@ -436,15 +447,25 @@ reconciles every `pending` record at start and at its next lookup, under the sto
 The planned event ids are the store's idempotency ids (F1 §2.1), so this check is exact.
 
 **Control intents.** Before `host.register`, `host.unregister` or `host.bootstrap` changes anything, the host writes
-`{idem, binding, op, args_normalised, step:"started"}`. After the change it sets `step:"done"` with the result. At
-start, a `started` intent is finished or rolled back:
+`{idem, binding, op, args_normalised, step:"started"}` (fsync). After the change it records the terminal state with
+its result. At start, a `started` intent is finished or rolled back, and **either way it ends in a durable terminal
+state**:
 
-- `register`: finished if the registry entry was written, else removed;
-- `unregister`: finished (serving stops, the entry is removed);
-- `bootstrap`: if the genesis is in the new workspace's log (its planned event id), the registration is finished;
-  otherwise the half-made root is removed, and so are its key directory and workspace id.
+| Op | Found at start | Done | Terminal state | `host.outcome {idem}` and a same-key retry answer |
+|---|---|---|---|---|
+| `register` | registry entry written | serving starts | `committed` | `{state:"committed", result:{workspace_id}}` |
+| `register` | no registry entry | nothing to undo | `failed` | `{state:"failed", error:{code:"control.rolled_back", retryable:true}}`; the client retries with a **new** idem |
+| `unregister` | any | serving stops, entry removed | `committed` | `{state:"committed", result:{}}` |
+| `bootstrap` | the genesis is in the new log (its planned event id) | registration finished | `committed` | `{state:"committed", result:{workspace_id, seq:1}}` |
+| `bootstrap` | no genesis | the half-made root, its key directory and the workspace id are removed | `failed` | `{state:"failed", error:{code:"control.rolled_back", retryable:true}}` |
 
-A retry with the same key then gets the stored result. `host.outcome {idem}` returns it as `outcome.get` does.
+- **A rolled-back bootstrap restarts from `host.wsk_create`.** The id and key are gone, and the genesis signs both
+  `workspace_id` and `wsk_pub`, so the client gets a new id and key, signs a new genesis, and calls `host.bootstrap`
+  with a new idem. The CLI's `init` composite does this by itself after one confirmation on the person's terminal,
+  because the device key signs again.
+- `control.rolled_back` (exit 9, retryable, connection stays) is only ever a stored answer. A same-key retry gets it
+  again; it never runs the op a second time.
+- A same-key retry of a `committed` intent gets the stored result with `duplicate:true`.
 
 **Retention.** Outcome records live in host-owned `<state>/hosts/<ws>/outcomes/`, and control intents in
 `<state>/host/intents/`. Each is kept 24 h, then becomes a tombstone `{key, binding, state}` for 7 days. A tombstone
@@ -661,35 +682,47 @@ human.pending  {code?:Code, request_id?:ReqHr}                                  
                 state:State, event_ids:[ULID], seq:int | null}]}                  (R6; seq of the last event once submitted)
 human.cancel   {request_id:ReqHr} → {state:"cancelled"|"submitted"}
 Prepared = {request:{id:ReqHr, code:Code | null, expires_at:Time, state:State} | null,      // null only for dry_run
-            workspace_id:WsId, log:Uid | "workspace", events:[Event]{1..16}, material:Material,
+            op:OpName, workspace_id:WsId, log:Uid | "workspace", events:[Event]{1..16}, material:Material,
             review_digest:Hash, fingerprint:str/[0-9a-f]{12}/,
             origin:{uid:int, pid:int, client:str{1..64}, created_at:Time},
             checks?:[{repo:str, clean:true, attested_by:"worker", at:Time}]}               // not signed, not in material
 State    = "prepared"|"bound"|"submitted"|"cancelled"|"expired"
 ReqHr    = str/hr_[0-7][0-9A-HJKMNP-TV-Z]{25}/          Code = str/[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}/
 Signer   = {device:Device, auth:"passphrase"|"secure-enclave"}
-Material = {kind:"gate", gate:Gate, input:<orch.model.gates.gate_input>, review:[Review]{1..16}}
+Material = {kind:"gate", gate:Gate, input:<orch.model.gates.gate_input>, ticket:{key:Key, uid:Uid}, review:[Review]{1..16}}
          | {kind:"question", ticket:{key:Key, uid:Uid}, question:<the question object>, review:[Review]{1..16}}
-         | {kind:"payload", ticket:{key:Key, uid:Uid} | null, op:OpName, review:[Review]{1..16},
+         | {kind:"payload", ticket:{key:Key, uid:Uid} | null, review:[Review]{1..16},
+            texts?:{str: str},                          // section id → full text, for every section the events reference
             before?:{str: any}}                         // prior values of the paths a set/section.set/settings.set changes
-Review   = {event_id:ULID, type:str, fields:{str: any}}
+Review   = {event_id:ULID, type:str, payload:object, derived:{str: any}}
 ```
 
-**The canonical review payload.** `Review.fields` of an event is `orch.host.review.fields(event)`. This is a frozen
-table (H5a) mapping each person-appendable event type to the payload keys a person must see, taken **verbatim from the
-event**:
+**The canonical review payload (exact).** For every event, `Review` is computed by `orch.host.review.of(event,
+material)` and recomputed by the signer, which refuses any difference:
 
-| Event type | Fields |
+- **`payload`** = the event **minus** the envelope keys `v`, `id`, `type`, `actor`, `auth`, `hash_v`, `roster_v`,
+  `based_on`, `gate_gen` and `sig`, verbatim and complete. Every payload key is shown, including keys a future F1
+  version adds (L2). Nothing can be signed without being shown.
+- **`derived`** holds values the signer computes itself from the event and `material`. It is never taken from the
+  host. The per-type table is frozen in H5a:
+
+| Event type | `derived` |
 |---|---|
-| `grant.issued` | `scope`, `verbs`, `hours`, `issued_at`, `expires_at`, `label` |
-| `member.added` | `person`, `name`, `role`, `pk_pub`, the `device_cert` device id |
-| decisions | ticket key, `gate`, `outcome`/`option`/`text`, `hash`, `gate_gen`, `source_sha` |
-| `ticket.updated` | every `set` path with its value, and every section with its text |
-| `log.added`, `question.asked` | their texts |
-| every other type | its full payload |
+| `grant.issued` | `{}`; the review shows `secret_hash` as "drawn by this signer" |
+| `member.added`, `workspace.created` | `{cert_device, cert_person, cert_scopes_max, cert_expires}` from the embedded `device_cert` (L2) |
+| `device.added` | the same, from `cert` |
+| decisions (`gate.approved`, `gate.changes_requested`, `verdict.given`) and `question.answered` | `{ticket_key}` from `material.ticket` |
+| `ticket.updated`, `ticket.created`, `question.asked` | `{sections:{id: {text, hash}}}`: each section the event references by hash, with its text from `material.texts`. The signer checks `section_hash(text) == hash` (F1 §5.6) and refuses a mismatch. |
+| every other type | `{}` |
 
-- The signer recomputes `fields` from the event and refuses any difference.
-- For `before`, the signer checks each prior value against the event's `base_rev` hash.
+- **Order.** Events are reviewed in event order, one block each. Inside a block the payload keys are shown in
+  canonical (JCS) order, after a one-line summary the signer builds from `type` and `derived`.
+- **`before`.**
+  - For `set` and `section.set`, each prior value is checked against the event's `base_rev` hash (F1 §5.8).
+  - For `settings.set`, `settings.changed` has no `base_rev`. Its values are absolute, and the signed `set` is the
+    whole effect. So `before` is shown labelled **"current values according to the host, not signed"**, and the signer
+    verifies only that each `before` key is a key of `set`.
+  - A `before` key the signer cannot check by either rule is refused.
 - `review_digest = sha256(cj(material))`.
 
 **Fingerprint (N2).** The first 12 hex digits of:
@@ -736,8 +769,15 @@ It covers the op, its outcome and every payload field, so `verdict pass` and `ve
 - **Event ids are host-prepared**, drawn from a CSPRNG (H0 amends F1 §5.1). A signer changes no field except the
   three above.
 - **Multi-event ops** (for example a person's `artifact.add` with evidence) prepare all their events in one request.
-  They share one `based_on` (the log head at prepare; F1 allows any earlier head). They are signed one by one and
-  appended all-or-nothing, like `Projection` (F1 §10.7).
+  They share one `based_on` (the log head at prepare; F1 allows any earlier head), and they are signed one by one.
+  - **Judged together.** At submit, all events are judged together with `model.preview` under one store lock, then
+    appended one by one under that same lock.
+  - **Crash recovery rolls forward.** Every signature already exists, so a crash between two appends is completed at
+    host start, before anything is served: the remaining signed events, which are stored with the request, are judged
+    and appended. The request then becomes `submitted`, and its outcome `committed`.
+  - **When rolling forward fails.** If a remaining event is refused at that point (only possible in tier A, after a
+    foreign append), the request ends `submitted` with outcome `failed`. The stored error names the `seq`s that landed
+    and the refusal code. A human submission is therefore never `partial`.
 - **`dry_run`** (§0.7): `request: null`, nothing stored, no code, no `tree.check` job.
 - **Device binding (R7).**
   - Without `handoff`, `signer` is required.
@@ -782,10 +822,24 @@ It covers the op, its outcome and every payload field, so `verdict pass` and `ve
   - Verifies every signature, runs the prepared `precommit` (the D58 branch check under the lock, D-P2-19), and
     re-judges with the model. Anything stale gets `gate.stale`, `members.stale` or `question.stale`.
   - Submit and cancel are serialized per request.
-  - **Replay precedence:** `not_found`, then a `submitted` request whose stored signed events equal the submitted ones
-    (canonical, signatures included). That case gets the stored result with `duplicate:true`, whatever the `idem`.
-    Then `human.request_state` (submitted with other events, cancelled, unbound), then `human.request_expired`, then
-    the checks above.
+  - **Replay precedence.** The generic idempotency step (§0.6 step 9) comes **first**:
+    1. no `opts.idem`: `idem.required`;
+    2. a record for `(principal, idem)` with the same binding: its stored answer (`duplicate:true` on success);
+    3. a record with another binding: `idem.conflict`;
+    4. only a tombstone: `idem.expired`;
+    5. a **fresh** idem: the request-level rules below.
+
+    The request-level rules, in order:
+    - `not_found`;
+    - a `submitted` request whose stored signed events equal the submitted ones (canonical, signatures included): the
+      request's stored result with `duplicate:true`. **A fresh outcome record is written for this idem**, `committed`
+      with that result, so a later retry with the same idem replays at step 2;
+    - `human.request_state` (submitted with other events, cancelled, unbound);
+    - `human.request_expired`;
+    - the checks above.
+
+    Every answer from the request-level rules is stored under the fresh idem as usual: `committed`, or `failed` for a
+    non-retryable refusal.
   - Blobs used by the inner op are held with the request.
 - **No separate `expect` argument is needed.** The events carry the gate hash, `gate_gen`, `source_sha` and the
   question hash, each recomputed by the signer from the material it displays. **The dashboard renders its preview from
@@ -823,7 +877,20 @@ Pin = {path:str{1..1024}, dev:int, ino:int}
 - **Retries.** A job is retried at most twice, under the same job id with a new lease.
 - **Disconnect.** When the worker connection drops, every outstanding lease is void (F3), and the host waits for the
   service manager's restarted worker (N1).
-- **`job.done`** is idempotent by job id (§0.7).
+- **Completion records.** The host persists one record per job in `<state>/host/jobs/<id>` (0600) when the job is
+  handed out: `{id, workspace_id, kind, lease, state:"leased"|"done"|"void", completion?:{outcome, digest}}`. Here
+  `digest = sha256(cj({outcome, result}))` for `ok`, or `sha256(cj({outcome, error:{code, message}}))` for `error`.
+  Records are kept 24 h after completion.
+- **`job.done` precedence:**
+  1. Unknown job id: `worker.lease`.
+  2. A `done` record: if the request's `lease` equals the record's lease and its canonical digest equals the stored
+     one, the answer is `{}` (a replay). This holds **from any worker connection and across a host restart**, because
+     it compares with the persisted record. Any other combination is `worker.lease`.
+  3. A `leased` record: the lease must be the record's and be bound to **this** connection. Then the completion is
+     stored (fsync) before the answer `{}`.
+  4. A `void` record (the lease died with its connection; the job was requeued under a new lease): `worker.lease`.
+- When a connection drops, its `leased` records become `void`, and their jobs are queued again under new leases
+  (retries count, at most twice).
 - **`tree.check`** paths come from the agent's worktree. Every shown path is escaped and rendered with F1 §11.3's rules
   (N3).
 
@@ -1113,6 +1180,28 @@ The dashboard sees `seq` 20 through its subscription, or polls `human.pending {r
    as the one item exempt from the visibility filter, sent only to viewers who saw the ticket.
 9. **Blobs** (§0.10): `upload_key` for recovering the allocation, `received`, zero-byte blobs, and an idempotent
    final chunk.
+
+**v1.2 → v1.3.**
+
+1. **`{digest}` is never resolved to bytes** (M1). A retry that must run again answers `blob.invalid`.
+2. **A person-class UID with an invalid mapping gets no writes** (L1). Dispatcher step 5 now puts the unverified-grant
+   refusal before the column check, matching the effective-column table.
+3. **Human ops:**
+   - `Prepared.op` is always present, and gate material carries the ticket;
+   - `Review` is exact: the whole event payload verbatim (L2) plus signer-computed `derived` values per type,
+     certificate scopes and expiry included;
+   - section texts are checked against the event's `section_hash` (`material.texts`);
+   - a `before` rule covers `settings.set` (shown as unsigned host values, keys must lie in `set`);
+   - submit replay is ordered: the generic idem step first, then request-level replay with a fresh outcome record;
+   - multi-event submissions roll forward after a crash and are never `partial`.
+4. **Control intents end in durable terminal states.** A rollback stores `control.rolled_back`, which is also what
+   `host.outcome` answers, and a rolled-back bootstrap restarts from `host.wsk_create`.
+5. **Job completion records** are persisted, with canonical digests over result or error. `job.done` replays work
+   across a reconnect and a restart, and a `void` lease is refused.
+6. **Dry runs ignore `opts.idem`:** never required, never looked up, never replayed.
+7. **`idem.expired`** is in the `outcome.get` and `host.outcome` error lists.
+8. New code `control.rolled_back`.
+
 
 ---
 
@@ -1516,8 +1605,8 @@ dispatch is turned on.
 | **H0 F1 amendment** | see the list below | text, plus vectors for `ticket.moved` | Codex, Opus |
 | **H1a Frame codec** | pure codec, §0.2 rules, envelope schemas (§0.3), `fatal`, the cancel state machine. T0 `tests/host/test_frames.py` | partial and coalesced reads; `n=0`; bad UTF-8; lone surrogate; duplicate keys; float; depth 33; id reuse; body deadline; unknown envelope key → `req.invalid` | Codex |
 | **H1b Unix transport** | bind through a checked fd, ancestor and ACL checks, both-way peer credentials, pins, control socket | a real UID refused before any byte; the control socket refuses an agent UID; planted socket; ancestor replaced mid-run; path longer than 100 bytes; `/Users/Shared/orch` owned by another user refused by the helper and the host (F12) | Opus |
-| **H2a Lifecycle** | registry, states, ownership lock, control ops (`list`, `register`, `unregister`, `wsk_create`, `restart`), units, release install, drain | second host gets `host.busy`; direct CLI gets `host.required` after adoption; `register` gives up after 60 s with `lock.busy`; `unregister` restores direct mode; `degraded` refuses writes, `unavailable` refuses all; drain finishes a write in flight and ends `wait` with `host.restarting`; `wsk_create` never replaces a key; `register` refuses a pinned agent UID as person; a removed member's UID reads as no-person (F8); `host.list` shows the caller's mapping (R11); kill -9 during `register`, `unregister` and `bootstrap`, then the intent is finished or rolled back at start and `host.outcome` returns the stored result; the effective-column table (§0.5) row by row, including an unverified grant from person class and an invalid person mapping | Codex, Opus (control ops) |
-| **H2b Outcomes** | idempotency store, classification, reconciliation, tombstones, `outcome.get`, cancel after commit | two-process kill -9 between append and record, then the retry is a duplicate rebuilt from the log; concurrent duplicates get one append; `idem.conflict`; `idem.expired`; a retryable failure is re-run; `outcome.get` with another person's grant id and a wrong secret gives `outcome.unknown_idem` (F4); a replay is re-enveloped with the retry's request id; a retry after the blob was consumed binds through `files.<arg>: {digest}`; `{digest}` without a record is `blob.invalid`; `dry_run` on a read, `human.submit`, control, job, blob or sub op is `invalid.input`; `job.done` repeated for a completed job answers `{}` | Opus |
+| **H2a Lifecycle** | registry, states, ownership lock, control ops (`list`, `register`, `unregister`, `wsk_create`, `restart`), units, release install, drain | second host gets `host.busy`; direct CLI gets `host.required` after adoption; `register` gives up after 60 s with `lock.busy`; `unregister` restores direct mode; `degraded` refuses writes, `unavailable` refuses all; drain finishes a write in flight and ends `wait` with `host.restarting`; `wsk_create` never replaces a key; `register` refuses a pinned agent UID as person; a removed member's UID reads as no-person (F8); `host.list` shows the caller's mapping (R11); kill -9 during `register`, `unregister` and `bootstrap`, then the intent is finished or rolled back at start and `host.outcome` returns the stored result; the effective-column table (§0.5) row by row (a person-class UID with an invalid mapping gets `op.not_allowed` for every write, L1; an unverified grant on an agent op gives `grant.expired`, not `op.not_allowed`); a `register` and a `bootstrap` rolled back at start answer `control.rolled_back` from `host.outcome` and from a same-key retry; `init` restarts from `wsk_create` after a rolled-back bootstrap, including an unverified grant from person class and an invalid person mapping | Codex, Opus (control ops) |
+| **H2b Outcomes** | idempotency store, classification, reconciliation, tombstones, `outcome.get`, cancel after commit | two-process kill -9 between append and record, then the retry is a duplicate rebuilt from the log; concurrent duplicates get one append; `idem.conflict`; `idem.expired`; a retryable failure is re-run; `outcome.get` with another person's grant id and a wrong secret gives `outcome.unknown_idem` (F4); a `{digest}` retry that has to run again answers `blob.invalid`, even when a blob or artifact with that digest exists (M1); `outcome.get` on a tombstone answers `idem.expired`; a dry run with an idem that has a record neither replays nor answers `idem.*`; a replay is re-enveloped with the retry's request id; a retry after the blob was consumed binds through `files.<arg>: {digest}`; `{digest}` without a record is `blob.invalid`; `dry_run` on a read, `human.submit`, control, job, blob or sub op is `invalid.input`; `job.done` repeated for a completed job answers `{}` | Opus |
 | **H3a Handler capabilities** | `Context` capabilities; handlers lose env, path and exec access; direct mode unchanged | goldens unchanged; with the audit hook in host mode, no open outside the roots and no spawn except the launcher | Codex |
 | **H3b1 git reader and `diff`** | `orch.gitread`, the launcher, pins, refs, extensions, identity, `diff` | a malicious `.git/config` runs nothing; a `.git` file or symlinked `objects/` pointing elsewhere is refused; a 1 GB zlib bomb is refused within the limits; reftable is unavailable; the `gitdir` profile cannot open a worktree file and the `worktree` profile cannot open outside its three pins (audit hook); diff equals `git diff --no-ext-diff --no-textconv` on fixtures; the F7 cases (changed `origin` against a declared `remote`, a `.git` file planted before the repo is added, a swapped `commondir`, loose/packed disagreement, case-colliding refs, `worktreeConfig`); at most 4 children under a burst of 100 `diff` calls (F10) | Opus |
 | **H3b2 Client receipts** | `task.done` contract 2, client-side `verify.cmd`, `attested_by` | `run:true` refused by the host; a receipt with a `cmd` other than `verify.cmd` refused; the output file goes through `files`; the receipt is labelled | Codex |
@@ -1526,13 +1615,13 @@ dispatch is turned on.
 | **H4a1 Dispatcher** | policy matrix, principals, auth and the reads rule, `whoami`, `host.status`, error catalog and disposition | closed list (registry × column of §0.5); no key material in any response (property test); grant in args refused; invalid grant on a read gives workspace tickets; another person's grant id with a wrong secret cannot reach outcomes, blobs or notes (F4); the F6 visibility cases (`total`, `next_page`, `needs {person}` from an agent, `session.list` claims, `diff` on an unlinked repo, `artifact.get` with `../x`, `sub.open ticket:<restricted>` gives `not_found`) | Opus |
 | **H4a2 Files and blobs** | `files`, `blob.*`, `artifact.get`, quotas | chunk retry with the same bytes accepted, with different bytes refused; a wrong final digest refused; use across principals and workspaces gives `blob.invalid`; the per-UID quota and the person reserve (F9); consumed on commit, kept after a refusal or dry run, expired after 10 min; `x-file` without `files` refused; a lost first-chunk response is recovered with the same `upload_key`; a zero-byte blob; a repeated final chunk returns the same result | Opus |
 | **H4b Thin CLI** | `orch.hostclient`, mode by registration, rendering from `result` | goldens byte-identical in both modes for all non-human ops except `wait` | Codex |
-| **H5a Human contract** | `human.prepare`/`get`/`submit`/`cancel`, multi-event requests, material, signer recomputation and header, CLI composites, person versions of agent ops, `opts.dry_run` | mismatch, expiry, single use, tombstone; stale between prepare and submit; prompt fields equal `describe_payload`; a grant prepared with a non-null `secret_hash` is refused, and the preparer cannot obtain the secret (F1); `human.get` returns every invariant byte (§0.8.1) identical to `human.prepare`'s, and differs only in `actor.device` and `auth` after binding (F5); `verdict pass` and `verdict fail` on one gate have different fingerprints (N2); a prepared request with an event type outside `EMITS_V1[op]`, a second `log`, another `based_on` or a foreign `actor.id` is refused by the signer before any prompt (N4); `secret_hash` is set aside only on `grant.issued`; replay precedence (identical signed events give the stored result, other events give `human.request_state`); every state transition of the table; the `Review.fields` table recomputed by the signer for every person event type; submit from another workspace's socket gives `not_found`; a multi-event request is all or nothing | Opus |
+| **H5a Human contract** | `human.prepare`/`get`/`submit`/`cancel`, multi-event requests, material, signer recomputation and header, CLI composites, person versions of agent ops, `opts.dry_run` | mismatch, expiry, single use, tombstone; stale between prepare and submit; prompt fields equal `describe_payload`; a grant prepared with a non-null `secret_hash` is refused, and the preparer cannot obtain the secret (F1); `human.get` returns every invariant byte (§0.8.1) identical to `human.prepare`'s, and differs only in `actor.device` and `auth` after binding (F5); `verdict pass` and `verdict fail` on one gate have different fingerprints (N2); a prepared request with an event type outside `EMITS_V1[op]`, a second `log`, another `based_on` or a foreign `actor.id` is refused by the signer before any prompt (N4); `secret_hash` is set aside only on `grant.issued`; replay precedence (identical signed events give the stored result, other events give `human.request_state`); every state transition of the table; the `Review` (payload and derived) recomputed by the signer for every person event type; an unknown payload key is shown (L2); a section text whose `section_hash` differs from the event is refused; a `settings.set` `before` key outside `set` is refused; a crash between two appends of a multi-event submit is rolled forward at start and ends `committed`; human `submit` replay precedence against missing, conflicting, expired and fresh idems, with the fresh idem getting its own record; submit from another workspace's socket gives `not_found`; a multi-event request is all or nothing | Opus |
 | **H5b Hand-off** | codes, `human.pending` (by code and by request id), device binding in `human.get`, `orch sign CODE` | a successful hand-off sign end to end; `orch sign` shows the workspace from its own registry, the op header and the fingerprint before content; binding to a second device is refused; failed lookups on one connection do not lock out another (F5); the `pending` states `prepared`, `submitted`, `cancelled` and `expired` (R6) | Opus |
 | **H6a Live updates** | journal, `jpos`, `sub.*`, revalidation, cursors, end reasons, `wait` on the bus, foreign-append rebuild | a revoked grant and a removed person stop delivery, queued items included; resume with no gap after a host restart; overflow, then snapshot, then cursor; a write's `res` before its `evt`; the journal is rebuilt after a foreign append (F11); one `jpos` yielding an event, `gone` and `needs.changed` gives three distinct ids in one `evt`; a fully filtered `jpos` still advances the cursor; `gone` is sent only to a viewer who saw the ticket | Opus |
 | **H6b Dashboard reads** | `ticket.query`, `ticket.get`, `needs`, `workspace.show`, `member.list`, `session.list`, `grant.list`, `move`, `policy.set`, `settings.set` | paging stays consistent under appends (no repeat, no gap); restricted rows hidden; `needs` equals `model.needs`; `ticket.get` evidence digests match the manifest; `grant.list` hides `secret_hash`; `move` allowed and refused per its rules | Codex |
 | **H7 Turn host mode on** | the default for registered workspaces; full parity; cross-version fixtures (an older client against a newer host) | full golden parity including human ops and `wait`; T2 in both modes. Needs H10 for `verdict` and `approve code` parity (clean-tree check). | Opus |
 | **H9 Touch ID signer** (D-P2-22) | Swift helper, `secure-enclave` backend, native header and review, dashboard integration | recomputes hashes; refuses non-person labels; F1 vector interop; cancellation (window closed or Touch ID refused) submits nothing and leaves the request `prepared`; same fingerprint as the dashboard | Opus |
-| **H10 Worker and jobs** | `orch worker`, `job.*`, leases, containment, addon runner, `tree.check` | the addon cannot read the WSK; a double-forked escapee dies within 30 s while a sibling job completes; a reparented child in a live job's group survives the sweep (F14); a repo with `filter.*.clean`, `core.fsmonitor` or `core.hooksPath` spawns no process in `tree.check` (F2); a second process under the worker UID is refused while the worker is connected, and a `job.done` with another connection's lease is refused (F3); lease expiry and retry at most twice; cancellation through heartbeat; a job that kills the worker and connects as worker class during the restart throttle is refused, and the restarted worker gets the role (N1); a worker-UID connection to a workspace socket is refused; jobs of two workspaces are served round-robin over the one worker connection; a FIFO at a tracked path counts as changed without blocking, and a symlink is compared by its target (N3); a tree dirtied between prepare and `human.get` is refused at `human.get` (N3) | Opus |
+| **H10 Worker and jobs** | `orch worker`, `job.*`, leases, containment, addon runner, `tree.check` | the addon cannot read the WSK; a double-forked escapee dies within 30 s while a sibling job completes; a reparented child in a live job's group survives the sweep (F14); a repo with `filter.*.clean`, `core.fsmonitor` or `core.hooksPath` spawns no process in `tree.check` (F2); a second process under the worker UID is refused while the worker is connected, and a `job.done` with another connection's lease is refused (F3); lease expiry and retry at most twice; cancellation through heartbeat; a job that kills the worker and connects as worker class during the restart throttle is refused, and the restarted worker gets the role (N1); `job.done` replayed after a worker reconnect and after a host restart answers `{}` when lease and canonical digest match the stored completion, and `worker.lease` otherwise (including a different error message); a `void` lease is refused; a worker-UID connection to a workspace socket is refused; jobs of two workspaces are served round-robin over the one worker connection; a FIFO at a tracked path counts as changed without blocking, and a symlink is compared by its target (N3); a tree dirtied between prepare and `human.get` is refused at `human.get` (N3) | Opus |
 
 - **Order:** H0, then H1a → H1b → H2a → H2b → H3a → H3b1 → H3b2 → H3b3 → H3c → H4a1 → H4a2 → H4b → H5a → H5b ∥
   H6a → H6b → H7. H9 follows H5b. H10 runs in parallel from H4a1.
@@ -1568,6 +1657,10 @@ dispatch is turned on.
 4. **An issuer-chosen UID restriction on grants.** Not in P2; it could come later as an optional `grant.issued` field.
 5. **To confirm during H3b1/H10:** that macOS has no subreaper and reparents to launchd, and how reftable shows up in
    config.
+6. **H10 settles** the macOS source of the worker's main PID: `launchctl print system/io.orch.worker` if a non-root
+   host can read it, otherwise the root-owned pid file written by the setup helper's wrapper (N1).
+7. **H5a settles** that a multi-event submit is judged and appended under one held store lock, with no other append in
+   between. The roll-forward recovery of §0.8.1 relies on it, and `Projection` already does this in P1.
 
 ## 10. Decisions record
 
@@ -1607,6 +1700,17 @@ was adopted, and none is disputed. Two choices were made where the reviews left 
   existing F1 events, so no format change waits on them.
 - **Worker routing** uses a dedicated worker socket, instead of letting the worker connect to every workspace socket,
   so "one worker connection per UID" stays literally true.
+
+**5. Final round of 11 Oct (Opus diff check M1, L1–L3; Codex re-check 1–8).** Every point was adopted, and none is
+disputed. Two choices were made where the reviews left room:
+
+- **Human multi-event submissions roll forward** after a crash, using the signatures already stored, instead of
+  ending `partial`. A person never has to sign the rest again.
+- **`settings.set`'s `before`** is shown as unsigned host values. `settings.changed` carries absolute values and no
+  `base_rev`, so the signed `set` is the whole effect.
+
+Two items wait for their groups (§9 Q6: H10, Q7: H5a).
+
 
 ## 11. P3: the host↔relay bridge (input from orch-relay §9)
 
@@ -1664,4 +1768,8 @@ orch-relay's `docs/p3-relay-design.md` §9 defines what the host owes the relay 
     through the same dispatcher (D-P2-9) as `human.*`-style signed events, never as a person-class peer.
 - **Agents never see relay tokens** (§5.5): the bridge's session tokens live in host-private state, outside every
   agent-readable path.
+- **In-host or out-of-process: a deliberate P3 choice (L3).** Running the bridge inside the host means parsing relay
+  responses in the process that holds the WSK. D-P2-7 kept FastAPI out of that process for the same reason. P3 chooses
+  on purpose between the in-host bridge and the reserved out-of-process `bridge` class, and records why.
+
 

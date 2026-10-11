@@ -256,6 +256,12 @@ def open_dashboard(path="/", print_url=False):
     # Write exactly the file the server recorded for this code, so its exchange and timer delete that same path.
     if launch.get("redirect_file"):
         redirect = Path(launch["redirect_file"])
+        # Only the server's own hashed name, in the private dashboard directory or an `orch-dashboard` runtime
+        # directory (the server's XDG_RUNTIME_DIR may differ from ours); private_directory() below also requires
+        # it to be ours, 0700 and not a symlink. Anything else would put the code where nothing deletes it.
+        expected = Auth(directory=redirect.parent).redirect_path(launch["code"]).name
+        if not (redirect.parent == directory or redirect.parent.name == "orch-dashboard") or redirect.name != expected:
+            raise SystemExit("orch-dashboard: the server named an unexpected launch file; not writing the code")
         directory = redirect.parent
     else:
         directory = Path(launch["redirect"]) if launch.get("redirect") else redirect_directory(directory)

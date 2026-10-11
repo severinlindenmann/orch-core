@@ -301,6 +301,28 @@ def test_print_url_terminal_only(tmp_path, monkeypatch, capsys):
     assert "Single-use" in printed and "30 s" in printed and "#launch=" in printed
 
 
+@pytest.mark.parametrize(
+    "named", ["elsewhere/arbitrary.txt", "elsewhere/launch-{h}.html", "orch-dashboard/arbitrary.txt"]
+)
+def test_launcher_refuses_an_unexpected_redirect_file(tmp_path, monkeypatch, named):
+    """A reply naming any other file must not get the code written anywhere."""
+    import hashlib
+
+    from orch_dashboard import __main__ as launcher
+
+    code = "demo-not-a-real-code"
+    for name in ("elsewhere", "orch-dashboard"):
+        (tmp_path / name).mkdir(mode=0o700)
+    target = tmp_path / named.format(h=hashlib.sha256(code.encode()).hexdigest())
+    monkeypatch.setenv("ORCH_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr(launcher, "control", lambda *_: {"port": PORT, "code": code, "redirect_file": str(target)})
+    monkeypatch.setattr(launcher, "verify_probe", lambda _: None)
+    monkeypatch.setattr(launcher.webbrowser, "open", lambda _: pytest.fail("must not open"))
+    with pytest.raises(SystemExit, match="unexpected launch file"):
+        launcher.open_dashboard()
+    assert not target.exists() and not any(code in p.read_text() for p in tmp_path.rglob("*") if p.is_file())
+
+
 @pytest.mark.parametrize("xdg", ["valid", "unset", "invalid"])
 def test_exchange_and_timer_delete_the_exact_handed_out_file(tmp_path, monkeypatch, xdg):
     """The server deletes the file it recorded for the code, whatever directory the launcher's env would resolve to."""

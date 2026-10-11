@@ -190,7 +190,8 @@ suite and the same vectors. A single suite is used across all components, never 
 - **On a new epoch**, the host:
   1. generates `WK_E` at the next unused epoch (epochs may skip, never fall);
   2. seals it to each remaining device and publishes the sealed blobs in one `PUT membership` with the signed list;
-  3. starts sealing new content under `WK_E`, once the relay has committed it.
+  3. starts sealing new content under `WK_E` once the relay has accepted that list (2xx). After a revocation or
+     removal, the rotation gate is up from the decision on, and nothing new is sealed under the old epoch in between.
 - Old content keeps its epoch tag. Devices that still hold old epochs can read old content. This is the honest limit,
   and the UI states it.
 - A phone logging itself out (D7) deregisters and wipes. That does not rotate.

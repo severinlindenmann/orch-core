@@ -9,6 +9,7 @@ from orch import canon
 from orch.canon import jcs
 
 from . import oracle_f1 as oracle
+from . import oracle_f1_gate as oracle_gate
 
 DIR = Path(__file__).parent.parent / "vectors" / "f1"
 PROTOCOL_LABELS = json.loads((DIR.parent / "vectors_v2.json").read_text(encoding="utf-8"))["labels"]
@@ -258,7 +259,8 @@ def test_same_repo_identity_ignores_ascii_case_only():
         assert canon.same_repo_identity(a, b)
     assert not canon.same_repo_identity("https://github.com/a/x", "https://github.com/a/y")
     # the hashed value keeps the raw form: two case variants hash differently and the source list refuses both
-    g = oracle.gate_inputs()["verify"]
+    t = oracle_gate.sample_ticket()
+    g = oracle_gate.derive_G(t, "verify")
     g["source_sha"] = [dict(g["source_sha"][0], repo=a) for a in R["same"][0]]
     with pytest.raises(canon.HashError):
         canon.gate_hash(g)

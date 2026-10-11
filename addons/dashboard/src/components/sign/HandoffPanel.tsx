@@ -20,6 +20,9 @@ const EVENT_WORDS: Record<string, string> = {
   'ticket.created': 'New ticket',
 }
 
+/** The tail of the ticket's log id, shown by the dashboard and by the signer so the two reviews read alike. */
+export const uidFragment = (uid: string): string => uid.slice(-8)
+
 const MAX_DEPTH = 8
 
 /** Any JSON value, exactly: text as the person reads it, numbers and booleans bare, nothing cut. */
@@ -73,8 +76,8 @@ export function MaterialPreview({ material }: { material: HandoffMaterial }) {
     <div data-handoff-preview className="max-h-[38vh] space-y-3 overflow-auto rounded-md border border-border bg-bg p-3">
       <p className="text-[12px] text-text-muted">Preview. Your terminal shows what you sign.</p>
       {material.ticket?.key && (
-        <Block title="Ticket">
-          <Raw>{material.ticket.key}</Raw>
+        <Block title="Ticket (key stated by the host)">
+          <Raw>{material.ticket.key}</Raw> <span className="text-text-muted">id ending</span> <Raw>{uidFragment(material.ticket.uid)}</Raw>
         </Block>
       )}
       {material.kind === 'gate' && (

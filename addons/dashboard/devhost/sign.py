@@ -103,7 +103,12 @@ def render(prepared: dict[str, Any], *, workspace: dict[str, Any], person: str) 
     origin = prepared.get("origin") or {}
     out = [
         f"workspace: {clean(workspace['name'])} ({clean(workspace['prefix'])})  [from your own registry]",
-        f"operation: {clean(prepared['op'])}" + (f" on {clean(ticket['key'])}" if ticket.get("key") else ""),
+        f"operation: {clean(prepared['op'])}"
+        + (
+            f" on {clean(ticket['key'])} (key stated by the host, id ending {clean(ticket['uid'][-8:])})"
+            if ticket.get("key")
+            else ""
+        ),
         f"fingerprint: {prepared['fingerprint']}  (the dashboard shows the same)",
         f"origin: uid {clean(origin.get('uid'))} pid {clean(origin.get('pid'))} client {clean(origin.get('client'))}"
         " (kernel facts, and a name the client chose itself: unverified)",

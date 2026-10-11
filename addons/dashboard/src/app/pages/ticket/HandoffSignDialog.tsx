@@ -96,7 +96,9 @@ export function HandoffSignDialog({
   const now = liveHash(ticket, action)
   const warning = (r: HandoffRequest) => {
     const bound = action.kind === 'answer' ? r.events[0]?.hash : r.gate_hash
-    return typeof bound === 'string' && now && bound !== now
+    // The page holds the short form of a hash (12 hex); the request the full `sha256:` form.
+    const bare = (h: string) => h.replace(/^sha256:/, '')
+    return typeof bound === 'string' && now && !bare(bound).startsWith(bare(now)) && !bare(now).startsWith(bare(bound))
       ? 'This ticket changed after the request was prepared. Your terminal refuses what no longer matches. Cancel and prepare again to sign what is there now.'
       : null
   }

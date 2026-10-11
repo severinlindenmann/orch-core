@@ -759,9 +759,12 @@ def checkpoint_vector() -> dict[str, Any]:
         "retryable checkpoint.future); a workspace_n_offers case with a `held` key (null: an uninitialized receiver) "
         "replaces workspace_n_held; every transition case gives `pinned_delegation` (the workspace's card / genesis "
         "delegation, whose `o` the carried, PK-verified one must equal), `known_devices` (device_id -> person_id and "
-        "optional pk_pub the receiver knows for it, active or revoked), `known_revocations` (held when judging; entries "
-        "may carry `pk_pub`) and `learned_later_in_walk` (learned only from a higher-n bundle; never refuses; "
-        "`alarm: true` when it must raise the C3 alarm, otherwise no alarm). "
+        "optional pk_pub the receiver knows for it, active or revoked), `known_revocations` (chain-learned: held when "
+        "judging and authenticated in this workspace's accepted history; signer refusal and completeness; entries "
+        "may carry `pk_pub`), `local_revocations` (out of band: held when judging, not chain-learned; signer refusal "
+        "and evidence identity only, never completeness) and `learned_later_in_walk` (learned only from a higher-n "
+        "bundle; never refuses; `alarm: true` when it must raise the C3 alarm, otherwise no alarm). `unpublished` is "
+        "the expected sorted d_ ids of revocation.unpublished for an accepted workspace restore ([] otherwise). "
         "Every refusing transition keeps all signatures valid except the one a case names as its defect.",
         "note": KEY_NOTE,
         "workspace_id": W,
@@ -1281,6 +1284,178 @@ def transition_vectors() -> list[dict[str, Any]]:
     )
     variant("target_at_clock_ceiling_minus_one", "ok", ev_kw={"at": "2026-10-10T11:00:00Z"}, now="2026-10-10T10:55:01Z")
 
+    # --- chain-learned vs out-of-band revocations (F1 §5.10 "Revoked signers at receivers", relay §19.8) ---------
+    # known_revocations: chain-learned (signer refusal and completeness); local_revocations: out of band (signer
+    # refusal and evidence identity only). `unpublished`: the d_ ids an accepted workspace restore does not carry at
+    # the locally held strength (revocation.unpublished, non-blocking).
+    lena = did("lena1")
+
+    def held_rev(person, dev, reason, **kw):
+        return [{"revocation": ow.make_revocation(person, dev, reason, **kw)}]
+
+    variant(
+        "out_of_band_non_signer_missing_accepted_unpublished",
+        "ok",
+        local_revocations=held_rev("lena", "lena1", "lost"),
+        unpublished=[lena],
+        note="learned out of band (another workspace, the relay's feed, the owner): never demanded as completeness "
+        "evidence; the receiver keeps enforcing it and forwards it for publication",
+    )
+    variant(
+        "chain_learned_non_signer_missing_diverged",
+        "chain.diverged",
+        known_revocations=held_rev("lena", "lena1", "lost"),
+        note="the same revocation, authenticated in this workspace's accepted history: completeness demands it",
+    )
+    for reason in ("lost", "retired", "compromised"):
+        variant(
+            "out_of_band_revocation_of_the_signer_refused_" + reason,
+            "chain.diverged",
+            local_revocations=held_rev("sev", "sev1", reason),
+            note="C3 applies to every held revocation, whatever its class or reason",
+        )
+    variant(
+        "revocation_in_both_sets_missing_is_chain_learned",
+        "chain.diverged",
+        known_revocations=held_rev("lena", "lena1", "lost"),
+        local_revocations=held_rev("lena", "lena1", "lost"),
+    )
+    variant(
+        "revocation_in_both_sets_carried_accepted",
+        "ok",
+        over={"revocations": [rev_entry("lena", "lena1", "lost")]},
+        known_revocations=held_rev("lena", "lena1", "lost"),
+        local_revocations=held_rev("lena", "lena1", "lost"),
+    )
+    variant(
+        "chain_lost_local_compromised_carried_lost_accepted_unpublished",
+        "ok",
+        over={"revocations": [rev_entry("lena", "lena1", "lost")]},
+        known_revocations=held_rev("lena", "lena1", "lost"),
+        local_revocations=held_rev("lena", "lena1", "compromised"),
+        unpublished=[lena],
+        note="reasons are tracked separately: the chain-learned lost is carried (complete); the out-of-band "
+        "compromised upgrade is not, which is the signal, not a refusal",
+    )
+    variant(
+        "chain_lost_local_compromised_carried_compromised_accepted",
+        "ok",
+        over={"revocations": [rev_entry("lena", "lena1", "compromised")]},
+        known_revocations=held_rev("lena", "lena1", "lost"),
+        local_revocations=held_rev("lena", "lena1", "compromised"),
+    )
+    variant(
+        "chain_lost_local_compromised_missing_diverged",
+        "chain.diverged",
+        known_revocations=held_rev("lena", "lena1", "lost"),
+        local_revocations=held_rev("lena", "lena1", "compromised"),
+    )
+    variant(
+        "out_of_band_retired_carried_lost_accepted",
+        "ok",
+        over={"revocations": [rev_entry("lena", "lena1", "lost")]},
+        local_revocations=held_rev("lena", "lena1", "retired"),
+        note="lost and retired are equally strong: not weaker, so not unpublished",
+    )
+    variant(
+        "out_of_band_compromised_carried_lost_accepted_unpublished",
+        "ok",
+        over={"revocations": [rev_entry("lena", "lena1", "lost")]},
+        local_revocations=held_rev("lena", "lena1", "compromised"),
+        unpublished=[lena],
+    )
+    # Evidence identity uses both sets: a listed entry for a device known through an out-of-band revocation must be
+    # of that revocation's person (and key, where known).
+    variant(
+        "out_of_band_foreign_evidence_for_a_revoked_device",
+        "chain.diverged",
+        over={"revocations": [rev_entry("mara", "lena1", "compromised")]},
+        local_revocations=[
+            {"revocation": ow.make_revocation("lena", "lena1", "lost"), "pk_pub": key("pk_lena").pub_b64u}
+        ],
+    )
+    variant(
+        "out_of_band_foreign_evidence_for_a_revoked_device_person_only",
+        "chain.diverged",
+        over={"revocations": [rev_entry("mara", "lena1", "compromised")]},
+        local_revocations=held_rev("lena", "lena1", "lost"),
+    )
+    variant(
+        "out_of_band_evidence_under_another_stored_key",
+        "chain.diverged",
+        over={"revocations": [rev_entry("lena", "lena1", "compromised")]},
+        local_revocations=[
+            {"revocation": ow.make_revocation("lena", "lena1", "lost"), "pk_pub": key("pk_mara").pub_b64u}
+        ],
+    )
+    # Hash-only withholding: C commits to a suffix holding device.revoked(lena1); the bundle proves the suffix with
+    # its head only, never its body. Proofs establish ancestry, not disclosure: a receiver that never authenticated
+    # that occurrence does not demand it (documented acceptance, F1 §5.10).
+    w.logs["workspace"] = list(original)
+    w.roster_v = 3
+    withheld = w.ev(
+        "workspace",
+        "device.revoked",
+        w.actor("sev"),
+        {"device": lena, "reason": "lost", "revocation": ow.make_revocation("lena", "lena1", "lost")},
+    )
+    suffix_c = cp(5, [*heads, head(withheld)])
+    w.logs["workspace"] = list(original)
+    hidden = w.ev(
+        "workspace",
+        "restore",
+        w.actor("sev"),
+        {
+            "from_seq": 3,
+            "head": heads[-1],
+            "abandoned": {"seq": 4, "head": head(withheld)},
+            "abandoned_decisions": [withheld["id"]],
+            "source": checkpoint_ref(suffix_c),
+            "revocations": [],
+            "reason": "rollback",
+        },
+    )
+    hidden_t = _checkpoint({**cp(6, [*heads, head(hidden)])["o"], "at": hidden["at"]})
+    for name, expect, extra in [
+        ("hash_only_withheld_revocation_not_demanded", "ok", {}),
+        (
+            "hash_only_withheld_revocation_held_out_of_band",
+            "ok",
+            {"local_revocations": held_rev("lena", "lena1", "lost"), "unpublished": [lena]},
+        ),
+        (
+            "hash_only_withheld_revocation_chain_learned_diverged",
+            "chain.diverged",
+            {"known_revocations": held_rev("lena", "lena1", "lost")},
+        ),
+    ]:
+        cases.append(
+            {
+                "name": name,
+                "held": suffix_c,
+                "offered": hidden_t,
+                "restore": copy.deepcopy(
+                    {
+                        **transition,
+                        "C": suffix_c,
+                        "T": hidden_t,
+                        "event": hidden,
+                        "retained_heads": heads,
+                        "abandoned_heads": [*heads, head(withheld)],
+                    }
+                ),
+                "proofs": {"workspace": [head(hidden)]},
+                "applied": [],
+                "expect": expect,
+                "recorded": hidden["id"] if expect == "ok" else None,
+                "withheld_event": copy.deepcopy(withheld),
+                "note": "the relay delivers only the head of withheld_event (abandoned_heads); the receiver never "
+                "inspected its body, so the revocation is not chain-learned (known limit: the policy preserves only "
+                "revocations the receiver established in accepted history)",
+                **copy.deepcopy(extra),
+            }
+        )
+
     # --- ticket-log restores: the same workspace checkpoint, ws_seq <= T's workspace seq, revocations [] -------
     tw = World("ticket_transition", "ticket-log restore at a receiver")
     tgen = tw.genesis_event()
@@ -1319,10 +1494,12 @@ def transition_vectors() -> list[dict[str, Any]]:
         "reason": "rollback",
     }
 
-    def ticket_variant(name, expect, *, over=None, ev_kw=None, **extra):
+    def ticket_variant(name, expect, *, over=None, ev_kw=None, t_ws=None, proof=None, **extra):
         tw.logs[TICKET] = t_events[:1]
         r = tw.ev(TICKET, "restore", tw.actor("sev"), {**t_payload, **(over or {})}, **(ev_kw or {}))
         t_o = tcp_(3, [t_heads[0], head(r)], r["at"])
+        if t_ws is not None:  # T's workspace entry replaced (re-signed by the WSK)
+            t_o = _checkpoint({**t_o["o"], "workspace_log": t_ws})
         cases.append(
             {
                 "name": name,
@@ -1339,7 +1516,7 @@ def transition_vectors() -> list[dict[str, Any]]:
                     "retained_heads": t_heads[:1],
                     "abandoned_heads": t_heads,
                 },
-                "proofs": {TICKET: [head(r)], "workspace": []},
+                "proofs": proof if proof is not None else {TICKET: [head(r)], "workspace": []},
                 "applied": [],
                 "expect": expect,
                 "recorded": r["id"] if expect == "ok" else None,
@@ -1408,12 +1585,47 @@ def transition_vectors() -> list[dict[str, Any]]:
             "chain.diverged",
             known_revocations=[{"revocation": ow.make_revocation("sev", "sev1", reason, revoked_ms=revoked_ms)}],
         )
+    ticket_variant(
+        "ticket_restore_out_of_band_revocation_not_unpublished",
+        "ok",
+        local_revocations=lena_lost,
+        note="revocation.unpublished is a workspace-restore signal: a ticket restore carries []",
+    )
+    ticket_variant("ticket_restore_signer_out_of_band_compromised", "chain.diverged", local_revocations=sev_compromised)
+    # C3 alarm filter: only a compromised revocation learned later alarms; a lost (or retired) one changes nothing.
+    ticket_variant(
+        "walk_lost_learned_from_higher_n_bundle_no_alarm",
+        "ok",
+        learned_later_in_walk=[{"revocation": ow.make_revocation("sev", "sev1", "lost")}],
+        note="learned_later_in_walk holds a lost revocation of the signer: no alarm (only compromised alarms)",
+    )
+    # Check order: the restore's own tail proof is checked before the other logs' growth. T also conflicts on the
+    # workspace head (same seq, another head); with the restore tail missing the verdict is sync.incomplete.
+    ws_conflict = {
+        "seq": len(ws_heads),
+        "head": "sha256:" + "ab" * 32,
+        "acc": acc_fold([*ws_heads[:-1], "sha256:" + "ab" * 32]),
+    }
+    ticket_variant(
+        "restore_tail_missing_and_other_log_conflict",
+        "sync.incomplete",
+        t_ws=ws_conflict,
+        proof={"workspace": []},
+        note="two defects: the restore's tail proof is removed and T's workspace entry conflicts with the held one; "
+        "the restore tail is checked first",
+    )
+    ticket_variant(
+        "other_log_conflict_with_restore_tail_present",
+        "chain.diverged",
+        t_ws=ws_conflict,
+        note="the control of restore_tail_missing_and_other_log_conflict: the same T with the tail proof present",
+    )
     for case_ in cases:
         case_.setdefault("pinned_delegation", genesis["delegation"])
         case_.setdefault("now", RECEIVER_NOW)
         for field in ("known_devices",):
             case_.setdefault(field, {})
-        for field in ("known_revocations", "learned_later_in_walk"):
+        for field in ("known_revocations", "local_revocations", "learned_later_in_walk", "unpublished"):
             case_.setdefault(field, [])
         tr = case_["restore"]
         if "retained_heads" not in tr:
@@ -1896,6 +2108,14 @@ def restore_contract_vectors() -> dict[str, Any]:
                 "expect": "validation.restore",
                 "note": "the host refuses a restore listing its own signer before the append; replay of an existing "
                 "such line keeps pre-event authorization (scenarios owner_authorized_before_self_revocation*)",
+            },
+            {
+                "name": "restore_signer_revoked_in_durable_evidence",
+                "signer_revoked": "lost",
+                "expect": "device.invalid",
+                "note": "the signer's revocation sits only in the given-up part: the kept chain authorizes the restore, "
+                "the host's durable revocation evidence refuses it before the append, whatever the reason (F1 5.10 "
+                "host rule, C3); a host-side append check, so it is not a model scenario",
             },
         ],
     }

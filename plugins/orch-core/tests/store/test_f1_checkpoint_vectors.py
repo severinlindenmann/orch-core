@@ -69,6 +69,7 @@ def view(held, now):
         held=held["o"] if held else None,
         known_devices={},
         known_revocations=(),
+        local_revocations=(),
         learned_later=(),
     )
 
@@ -135,12 +136,16 @@ def test_a_receiver_accepts_the_first_checkpoint_only_under_the_pinned_genesis()
     assert cps.judge_offer(replace(v, workspace_id="f" * 32), o).code == "chain.diverged"
 
 
-def test_the_receiver_view_has_no_defaults():
-    """Every view field is required (Opus #377 B1): forgetting known_devices must fail loudly, not open."""
+@pytest.mark.parametrize("missing", ["known_devices", "known_revocations", "local_revocations", "learned_later"])
+def test_the_receiver_view_has_no_defaults(missing):
+    """Every view field is required (Opus #377 B1): forgetting known_devices or the out-of-band revocations must fail
+    loudly, not open."""
+    fields = {"known_devices": {}, "known_revocations": (), "local_revocations": (), "learned_later": ()}
+    del fields[missing]
     with pytest.raises(TypeError):
         cps.ReceiverView(  # type: ignore[call-arg]
             workspace_id=W, pinned_genesis=C["genesis"], wsk_pub=WSK, pinned_delegation={}, now="2026-10-10T12:00:00Z",
-            held=None, known_revocations=(), learned_later=(),
+            held=None, **fields,
         )  # fmt: skip
 
 
@@ -184,10 +189,11 @@ def test_source_and_accumulator_transitions(case):
     assert cps.verify_object(WSK, case["offered"])
     got = cps.judge_offer(case_view(case), case["offered"]["o"], restore=bundle(case))
     expected_alarms = (case["restore"]["event"]["actor"]["device"],) if case.get("alarm") else ()
-    assert got == cps.Verdict(case["expect"], case["recorded"], expected_alarms)
+    assert got == cps.Verdict(case["expect"], case["recorded"], expected_alarms, tuple(case["unpublished"]))
     if case["learned_later_in_walk"]:  # only the receiver's order separates this case from a refusal
-        earlier = replace(case_view(case), known_revocations=case["learned_later_in_walk"], learned_later=())
-        assert cps.judge_offer(earlier, case["offered"]["o"], restore=bundle(case)) == cps.Verdict("chain.diverged")
+        for field in ("known_revocations", "local_revocations"):  # held when judging, in either collection
+            earlier = replace(case_view(case), **{field: case["learned_later_in_walk"]}, learned_later=())
+            assert cps.judge_offer(earlier, case["offered"]["o"], restore=bundle(case)) == cps.Verdict("chain.diverged")
 
 
 def case_view(case):
@@ -200,6 +206,7 @@ def case_view(case):
         held=case["held"]["o"] if case["held"] else None,
         known_devices=case["known_devices"],
         known_revocations=case["known_revocations"],
+        local_revocations=case["local_revocations"],
         learned_later=case["learned_later_in_walk"],
     )
 

@@ -86,6 +86,20 @@ def test_durable_restore_contract(case, env, monkeypatch):
         revocation = certs.make_revocation(
             env.owner.pk_pub, env.owner.pk_sign, device_id_hex=device[2:], revoked_ms=env.clock[0] * 1000, reason="lost"
         )
+    if case.get("signer_revoked"):
+        # the owner's own device is revoked, then the revocation is given up: only durable evidence still holds it
+        kept = len(env.read_events("workspace"))
+        env.revoke_device(env.owner.device, reason=case["signer_revoked"])
+        store.abandon_tail("workspace", kept)
+        facts = store.restore_facts("workspace")
+        candidate = env.person_event(env.owner, "workspace", "restore", **facts, reason="rollback")
+        before, held = env.read_events("workspace"), store._pins.held()
+        with pytest.raises(StoreError) as exc:
+            store.append(candidate, log="workspace")
+        assert exc.value.code == case["expect"]
+        assert env.read_events("workspace") == before and store._pins.held() == held
+        assert not list((store._pins.dir / "transitions").glob("*.json"))
+        return
     if case.get("missing") == "abandoned" or "fault" in case:
         store.abandon_tail("workspace", before_rev)
     facts = store.restore_facts("workspace")
@@ -361,6 +375,7 @@ def test_transition_keeps_only_the_abandoned_suffix(env):
         held=transition["C"]["o"],
         known_devices={},
         known_revocations=(),
+        local_revocations=(),
         learned_later=(),
     )
     bundle = Restore(transition=transition, proofs=transition["proofs"], applied=())

@@ -60,7 +60,7 @@ function AgentStatus({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewe
 
 const START_AGENT = 'start-agent'
 
-/** "Start agent…" in the Actions menu (the start-agent addon, when active here). Core checks the claim before any dialog. */
+/** "Start agent" in the Actions menu (the start-agent addon, when active here). Core checks the claim before any dialog. */
 function StartAgentItem({ ticket, viewer, r }: { ticket: TicketDocument; viewer: Viewer; r: RunAddonAction }) {
   const { workspace } = useWorkspace()
   const { data: addons } = useAddons()
@@ -76,7 +76,7 @@ function StartAgentItem({ ticket, viewer, r }: { ticket: TicketDocument; viewer:
         <Bot className="mt-0.5" />
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-2">
-            Start agent…
+            Start agent
             <AddonBadge name={START_AGENT} title={pkg?.title} className="ml-auto" />
           </span>
           {reason && <span className="mt-0.5 block text-[12px] text-text-muted">{reason}</span>}

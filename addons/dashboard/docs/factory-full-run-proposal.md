@@ -1,6 +1,6 @@
 # Proposal: factory full run (D61 option)
 
-Status: **proposal, owner decision 10 Oct 2026 (evening)** — an extra option on the AI Factory (D61). Shown in the
+Status: **proposal, owner decisions 10 Oct evening and 11 Oct morning** — an extra option on the AI Factory (D61). Shown in the
 mockup (AI Factory → Full runs). Event names and fields are provisional.
 
 > "I put a ticket in (request), sign it, and the factory does plan, requirements, test, validate, evidence and even
@@ -23,12 +23,12 @@ One form, one signature:
 | Goal | What the factory should make, in your words. |
 | How far may the factory go on its own? | **Up to Preview** (default) or **All the way to Deliver**. |
 | What Deliver means | Required for Deliver. The concrete destination: "Deploy to production", "Publish campaign to the newsletter list", "Send to finance@example.test (boss)". |
-| Hold window | 15 min, **30 min** (default), 1 h or 4 h: how long Deliver waits, with a notice and Stop, before it goes out. |
+| Hold window | **0 (no hold), 15 min (default), 30 min, 1 h, 4 h, 24 h**: how long Deliver waits, with a notice and Stop, before it goes out. |
 | Size cap | As the charter: children of size m or smaller; larger ones wait for you. |
 | Request id | Issued by the host when you review the request (`rq-DEMO-3f9a2c1d-7`: workspace, a nonce, a number); signed with the rest and **single use**. |
 
 Core's signing prompt names every value in core lines ("Request (request): rq-DEMO-3f9a2c1d-7", "Goal (goal): …", "Goes up to (goes_up_to): Deliver",
-"Deliver means (deliver_means): …", "Hold minutes (hold_minutes): 30", "Largest child (largest_child): m"), with each
+"Deliver means (deliver_means): …", "Hold minutes (hold_minutes): 15", "Largest child (largest_child): m"), with each
 value shown exactly (invisible characters made visible). The host records the signature (`addon.action_signed`).
 The host consumes the request id together with creating the run, in one step; a replayed signature is refused
 (409 `factory.request_used`), and reviewing again issues a new id. Admission also reserves the run's children against
@@ -42,7 +42,7 @@ the charter's child budget (refused, 409 `factory.budget`, when they do not fit)
    **Code review** — when the workspace's code review policy applies (Settings → Gates), each child waits here for
    **people**, under the same rule as a ticket's code gate (D59): the policy's approver group, the number of distinct
    approvals it asks for, never the run's requester or the child's author. Each approval signs the child's commit; a
-   new commit voids it. The factory never signs it, and neither does a mandate.
+   new commit voids it. The factory charter never signs it. An eligible mandate may (owner agreed 11 Oct); mandates are only a non-signing preview in this mock.
 4. **Validate** — the verdict on each child (on the signed commit, D53).
 5. **Evidence** — collects what proves each acceptance criterion.
 6. **Preview** — made and checked, visible inside the workspace. A run that stops at Preview ends here and waits for
@@ -94,7 +94,7 @@ hold with Stop. A run that goes "Up to Preview" behaves like today's charter plu
 - The host executes Deliver itself; agents never hold the production, publishing or mail credential (concept-mandates
   §2.2).
 - Stop during the hold cancels; after `factory.delivered` there is nothing to stop.
-- **No operation shortens a hold.** There is no "deliver now": during the window the only human act is a signed Stop.
+- **No operation shortens an active hold.** During the window the only human act is a signed Stop. A stopped run can be re-delivered under a fresh signature (below).
   (The mockup's "Simulate: let the hold time pass (demo)" is a demo-data simulator control, not an operation.)
 - A paused factory holds every run where it is; the hold clock does not run while paused. A stopped charter ends a
   hold not delivered.
@@ -106,13 +106,26 @@ hold with Stop. A run that goes "Up to Preview" behaves like today's charter plu
 ## Mandates (owner decision, 10 Oct evening)
 
 A mandate may start a full run with a Deliver target. Then a production deploy, publish or send can happen with no
-person signing anything; the hold notice with Stop is the only human checkpoint, and the destination is fixed in the
+person signing anything; a positive hold notice with Stop is the human checkpoint (zero has none), and the destination is fixed in the
 signed request. The run is labelled "via mandate md_3, for Severin — no person reviewed this step".
+
+## Owner answers, 11 Oct morning
+
+- Only owners (and eligible mandates) may sign a request with Deliver. Maintainers may request Preview.
+- Host validation: an integer **0 ≤ hold_minutes ≤ 1440** (every integer in range, not just the form choices).
+  At zero, the core signing cover says **“No hold: delivers as soon as its checks pass”**. Preview passing delivers
+  immediately, with no hold decision. Default is 15 minutes.
+- Stop from the phone: push notice with Face ID Stop; **orch-mobile implements this**, not the dashboard.
+- A stopped run offers **Deliver now…** and **Deliver with a new hold…**. Choose the run and hold, then sign in
+  core's prompt. Covers name the run, destination, new hold, request id and delivery revision. The host checks
+  owner role, stopped state, exact values and the charter, consumes the request once and retains completed work.
+  Nothing is rebuilt. A second Stop needs a fresh request; an old signature cannot be replayed.
+- Children reserved at admission may finish when the child budget reaches 25. New children are refused; time
+  expiry and over-commit still stop the charter.
+
+Provisional event: `factory.redelivery_requested {request, run, deliver_means, hold_minutes, revision}`,
+actor `addon:factory`; core records the signature as `addon.action_signed`.
 
 ## Open points for the owner
 
-1. Who may request a run that goes to Deliver: owners only (the mockup's choice) or maintainers too?
-2. Hold window choices (15 min / 30 min / 1 h / 4 h, default 30 min): right? A minimum the host enforces?
-3. Should Stop also be possible from the phone (D49 allows stop and veto)? Recommended: yes.
-4. Should a run that reached Preview but was stopped be re-deliverable with one new signature, or always a new request?
-5. Should Deliver also wait while you are known to be away (no device online), or always go after the window?
+Should Deliver also wait while you are known to be away (no device online), or always go after the window?

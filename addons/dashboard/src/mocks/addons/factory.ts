@@ -6,7 +6,7 @@ import type { Rng } from '../busy/rng'
 import { canSeeTicket, conflict, notFound, refusal, registerAddon, withinCharterSize, type AddonCtx } from './registry'
 import { plain } from '@/components/sign/visible'
 import { fmtDateTime, fmtWhen } from '@/lib/time'
-import { approveReview, checkRequest, visibleEpic, DEMO_DATASETS, DEMO_REQUEST, ensureChain, holdBlocksOff, holdDecisions, hoursUsed, issueRequest, migrateState, MAX_CHILDREN, RUN_CHILDREN, requestNonce, MAX_HOURS, runsOf, runsView, seedRuns, settleRuns, staleRunKeys, startRun, type RunDraft } from './factory-runs'
+import { holdId, prepareRedelivery, redeliver, approveReview, checkRequest, visibleEpic, DEMO_DATASETS, DEMO_REQUEST, ensureChain, holdBlocksOff, holdDecisions, hoursUsed, issueRequest, migrateState, MAX_CHILDREN, RUN_CHILDREN, requestNonce, MAX_HOURS, runsOf, runsView, seedRuns, settleRuns, staleRunKeys, startRun, type RunDraft } from './factory-runs'
 
 // factory (AI Factory, Phase 2 preview; v1 docs/factory.md): one factory epic, DEMO-0050 "Monthly billing v2".
 //  - The charter (25 children or 72 hours, children of size m or smaller) was signed when the epic started. The
@@ -275,7 +275,7 @@ function seedBase(ws: string, store: MockStore) {
 
 registerAddon({
   name: 'factory',
-  stateVersion: 4, // full runs: request ids with a nonce, code review approvals per commit, holds on the wall clock
+  stateVersion: 5, // v4 preserved; optional re-delivery drafts and per-run delivery revisions
   migrate: migrateState,
   saveOnSeed: true,
   seed: seedBase,
@@ -376,17 +376,13 @@ registerAddon({
         type: 'stack',
         children: [
           ...(runs.holding ? [runs.holdNode] : []),
-          ...(open > 0 && canAnswer
-            ? [
-                { type: 'markdown', text: `**${open === 1 ? '1 permission request needs' : `${open} permission requests need`} your decision**` },
-                ...permits.filter((p) => p.state === 'open').slice(0, MAX_PERMITS_SHOWN).map((p) => ({ type: 'decision', id: `factory.permit:${p.id}` })),
-              ]
-            : []),
+          { type: 'fold', label: `${open} permits waiting · Review`, node: { type: 'stack', children: canAnswer ? permits.filter((p) => p.state === 'open').map((p) => ({ type: 'decision', id: `factory.permit:${p.id}` })) : [{ type: 'markdown', text: 'Permits wait for an owner or maintainer.' }] } },
         ],
       },
       runCount: runs.runCount,
       runsNode: runs.runsNode,
       runs: undefined,
+      redeliveryDrafts: undefined,
       runSeq: undefined,
       permitCount: permits.length,
       demoAlert,
@@ -495,7 +491,9 @@ registerAddon({
       setNav(c.state, c.viewer, { ...navOf(c.state, c.viewer), runDraft: issueRequest(c, c.state, d) })
       return { ok: true, message: 'Demo request filled in: review and sign it.' }
     },
-    // Signed in core's prompt (`confirm: 'sign'`): the covers list the goal, how far it goes, what Deliver means and the hold.
+    prepare_redelivery: prepareRedelivery,
+    redeliver,
+    // Signed in core's prompt (`confirm: 'sign'`): goal, target, destination and hold.
     start_run(c) {
       const { state, store, ws, viewer, body } = c
       const epic = visibleEpic(c, state)
@@ -521,7 +519,7 @@ registerAddon({
       const epic = visibleEpic(ctx, state)
       if (typeof epic !== 'string') return epic
       settleRuns(store, state)
-      const run = ctx.decision && runsOf(state).find((r) => `factory.hold:${r.id}` === ctx.decision!.id)
+      const run = ctx.decision && runsOf(state).find((r) => holdId(r) === ctx.decision!.id)
       if (!run || run.stage !== 'holding') return conflict('decision.closed', 'That delivery is no longer on hold.')
       if (body.option !== 'stop') return conflict('decision.closed', 'That decision is closed.')
       run.stage = 'stopped'

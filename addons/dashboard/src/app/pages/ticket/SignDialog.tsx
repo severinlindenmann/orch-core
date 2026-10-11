@@ -27,8 +27,8 @@ function describe(ticket: TicketDocument, a: HumanAction): Described {
   }
   const gate: GateName = a.kind === 'verdict' ? 'verify' : a.gate
   const g = ticket.gates[gate]
-  const name = GATE_LABEL[gate].toLowerCase()
-  const title = a.kind === 'approve' ? `Approve ${name}` : a.kind === 'verdict' ? 'Give a verdict' : `Request changes on ${name}`
+  const name = gate === 'verify' ? 'Verify' : GATE_LABEL[gate].toLowerCase()
+  const title = a.kind === 'approve' ? `Approve ${name}` : a.kind === 'verdict' ? 'Verify' : `Request changes on ${name}`
   return { title, gate, hash: g.hash ?? '', covers: g.covers ?? [], policy: policyText(gate, g) }
 }
 

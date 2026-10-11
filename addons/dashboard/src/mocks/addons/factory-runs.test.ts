@@ -46,7 +46,7 @@ describe('factory full run: the request', () => {
     expect(s.run('prepare_run', { formData: { goal: 'X', goes_up_to: 'Deliver', hold_minutes: 30 } })).toMatchObject({ ok: false, status: 400, code: 'validation', message: expect.stringMatching(/^Say what Deliver means/) })
     expect(s.run('prepare_run', { formData: { goal: 'X', goes_up_to: 'Deliver', deliver_means: '   ', hold_minutes: 30 } })).toMatchObject({ ok: false, code: 'validation' })
     expect(s.run('prepare_run', { formData: { goal: '', goes_up_to: 'Preview' } })).toMatchObject({ ok: false, code: 'validation' })
-    expect(s.run('prepare_run', { formData: { goal: 'X', goes_up_to: 'Deliver', deliver_means: 'Publish', hold_minutes: 7 } })).toMatchObject({ ok: false, code: 'validation' })
+    expect(s.run('prepare_run', { formData: { goal: 'X', goes_up_to: 'Deliver', deliver_means: 'Publish', hold_minutes: -1 } })).toMatchObject({ ok: false, code: 'validation' })
     expect(s.run('prepare_run', { formData: { goal: 'Draft a campaign', goes_up_to: 'Preview' } })).toMatchObject({ ok: true })
   })
   it('only an owner signs a run that goes to Deliver; a maintainer may request Preview', () => {
@@ -202,6 +202,7 @@ describe('factory full run: steps, hold, Stop, delivery', () => {
     expect(JSON.stringify(v.runsNode)).toContain('Delivering in 28 min · Publish campaign to the newsletter list')
     expect(store.addonState(ws, 'factory').used).toBe(23) // 20 children + the run's 3 reserved
     expect(v.mode).toBe('running')
+    expect(JSON.stringify(v.attentionNode)).toContain('5 permits waiting · Review')
     expect(store.addonDecisions(ws).some((d) => d.id === 'factory.hold:R-1' && d.hold)).toBe(true)
   })
 })
@@ -542,5 +543,85 @@ describe('fix round 2', () => {
     b.addonStateView(ws, 'factory')
     expect(leftOf(b, ws)).toBeGreaterThan(29.9)
     b.sim.stopAll()
+  })
+})
+
+
+describe('owner answers 11 Oct: hold range, re-delivery and budget', () => {
+  it.each([0, 7, 15, 30, 60, 240, 1440])('accepts integer hold %s', hold => {
+    const s = setup()
+    expect(s.run('prepare_run', { formData: { ...DELIVER, hold_minutes: hold } })).toMatchObject({ ok: true })
+  })
+  it.each([-1, 1441, 1.5, '15', true, null, NaN, Infinity])('refuses invalid hold %s', hold => {
+    const s = setup()
+    expect(s.run('prepare_run', { formData: { ...DELIVER, hold_minutes: hold } })).toMatchObject({ ok: false, code: 'validation' })
+  })
+  it('defaults to 15; zero delivers as soon as Preview passes, with no hold decision', () => {
+    const s = setup()
+    s.run('prepare_run', { formData: { ...DELIVER, hold_minutes: undefined } })
+    expect(draftOf(s).hold_minutes).toBe(15)
+    startDeliverRun(s, { ...DELIVER, hold_minutes: 0 })
+    toHold()
+    expect(s.runs()[0].stage).toBe('delivered')
+    expect(s.events('factory.deliver_held')).toHaveLength(0)
+    expect(s.events('factory.delivered')).toHaveLength(1)
+    expect(s.store.addonDecisions(s.ws).some(d => d.hold)).toBe(false)
+  })
+  const stopped = () => {
+    const s = setup()
+    startDeliverRun(s)
+    toHold()
+    const d = s.store.addonDecisions(s.ws).find(d => d.hold)!
+    s.run('hold', { id: d.id, option: 'stop', ticket: d.ticket, terms: d.terms, confirmed: true })
+    return s
+  }
+  const delivery = (s: S) => (s.store.addonState(s.ws, 'factory').redeliveryDrafts as Record<string, Record<string, unknown>>).p_sev
+  it.each([0, 1440])('re-delivers stopped work once with a new hold of %s, without redoing work', hold => {
+    const s = stopped()
+    const children = structuredClone(s.runs()[0].children)
+    const used = s.store.addonState(s.ws, 'factory').used
+    expect(s.run('prepare_redelivery', { formData: { run: 'R-1', hold_minutes: hold } })).toMatchObject({ ok: true })
+    const args = { ...delivery(s) }
+    expect(s.run('redeliver', args)).toMatchObject({ ok: false, code: 'confirm.required' })
+    for (const change of [{ run: 'R-2' }, { deliver_means: 'Other' }, { hold_minutes: 10 }, { revision: 99 }])
+      expect(s.run('redeliver', { ...args, ...change, confirmed: true })).toMatchObject({ ok: false, code: 'factory.stale' })
+    expect(s.run('redeliver', { ...args, confirmed: true })).toMatchObject({ ok: true })
+    expect(s.runs()[0].stage).toBe(hold ? 'holding' : 'delivered')
+    expect(s.runs()[0].children).toEqual(children)
+    expect(s.store.addonState(s.ws, 'factory').used).toBe(used)
+    expect(s.events('factory.run_requested')).toHaveLength(1)
+    expect(s.run('redeliver', { ...args, confirmed: true })).toMatchObject({ ok: false, code: 'factory.request_used' })
+    if (hold) {
+      const d = s.store.addonDecisions(s.ws).find(d => d.hold)!
+      expect(d.id).toBe('factory.hold:R-1:1')
+      expect(s.run('hold', { id: 'factory.hold:R-1', option: 'stop', ticket: d.ticket, terms: d.terms, confirmed: true })).toMatchObject({ ok: false, code: 'decision.closed' })
+      s.run('hold', { id: d.id, option: 'stop', ticket: d.ticket, terms: d.terms, confirmed: true })
+      expect(s.run('redeliver', { ...args, confirmed: true })).toMatchObject({ ok: false, code: 'factory.request_used' })
+    }
+  })
+  it('re-delivery refuses maintainers, active holds, and paused charters', () => {
+    const s = stopped()
+    s.run('prepare_redelivery', { formData: { run: 'R-1', hold_minutes: 15 } })
+    const args = { ...delivery(s), confirmed: true }
+    s.store.setViewer('p_mara')
+    expect(s.run('prepare_redelivery', { formData: { run: 'R-1', hold_minutes: 0 } })).toMatchObject({ ok: false })
+    expect(s.run('redeliver', args)).toMatchObject({ ok: false })
+    s.store.setViewer('p_sev')
+    s.run('pause', { confirmed: true })
+    expect(s.run('redeliver', args)).toMatchObject({ ok: false, code: 'factory.not_running' })
+    s.run('resume', { confirmed: true })
+    expect(s.run('redeliver', args)).toMatchObject({ ok: true })
+    expect(s.run('prepare_redelivery', { formData: { run: 'R-1', hold_minutes: 0 } })).toMatchObject({ ok: false, code: 'factory.not_stopped' })
+  })
+  it('children reserved at admission may finish when the child budget reaches 25', () => {
+    const s = setup()
+    s.store.addonState(s.ws, 'factory').used = 22
+    startDeliverRun(s, { ...DELIVER, hold_minutes: 0 })
+    expect(s.store.addonState(s.ws, 'factory').used).toBe(25)
+    expect(s.view().mode).toBe('stopped') // no new children
+    toHold()
+    expect(s.runs()[0].stage).toBe('delivered')
+    s.run('prepare_run', { formData: DELIVER })
+    expect(s.run('start_run', { ...runArgs(draftOf(s)), confirmed: true })).toMatchObject({ ok: false, code: 'factory.budget' })
   })
 })

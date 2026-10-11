@@ -19,9 +19,10 @@ export interface MandatePreflightCheck {
 }
 
 /** What a mandate decided for the owner (the seeded log shows a mix). */
-export type MandateDecisionKind = 'requirements' | 'plan' | 'verdict' | 'code_review' | 'unblock' | 'permit' | 'factory_enabled' | 'factory_run' | 'grant'
+export type MandateDecisionKind = 'requirements' | 'plan' | 'verdict' | 'code_review' | 'unblock' | 'permit' | 'factory_enabled' | 'factory_run' | 'grant' | 'land_main'
 
 export const DECISION_KIND_LABEL: Record<MandateDecisionKind, string> = {
+  land_main: 'Landed on main',
   requirements: 'Requirements approved',
   plan: 'Plan approved',
   verdict: 'Verdict',
@@ -51,7 +52,7 @@ export interface MandateDecision {
   commit?: string
   at: string
   checker: { identity: string; result: 'passed' }
-  /** Work the decision covers already landed (by a person): listed for review on Revoke and void, never voided. */
+  /** Work the decision covers already landed (by a person or via mandate): listed for review on Revoke and void, never voided. */
   landed: boolean
   /** The owner's look in the digest: unseen until then. */
   review?: 'looks_right' | 'veto'
@@ -100,7 +101,8 @@ export interface PreviewMandate {
   days: number
   issued_at: string
   expires: string
-  state: 'active' | 'stopping' | 'stopped' | 'revoked'
+  check_in_due?: string
+  state: 'active' | 'paused' | 'stopping' | 'stopped' | 'revoked'
   stop?: { requested_at: string; stop_agents: boolean; boundary_seq?: number }
   revoked_at?: string
   limits: { decisions: MandateLimit; grants: MandateLimit }
@@ -130,6 +132,7 @@ export type MandatesPreviewRequest =
   | { op: 'disable' }
   | { op: 'issue'; orchestrator: string; days: number }
   | { op: 'renew'; days: number }
+  | { op: 'check_in' }
   | { op: 'stop'; stop_agents: boolean }
   | { op: 'review'; decision: string; review: 'looks_right' | 'veto' }
   | { op: 'revoke' }

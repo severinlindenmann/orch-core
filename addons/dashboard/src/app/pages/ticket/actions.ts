@@ -92,7 +92,7 @@ export function primaryLabel(p: Primary): string {
   return p.gate === 'requirements' ? 'Approve requirements' : p.gate === 'code' ? 'Approve code review' : 'Approve plan'
 }
 
-export const GATE_LABEL: Record<GateName, string> = { requirements: 'Requirements', plan: 'Plan', verify: 'Verification', code: 'Code review' }
+export const GATE_LABEL: Record<GateName, string> = { requirements: 'Requirements', plan: 'Plan', verify: 'Verify', code: 'Code review' }
 
 /** The gate's policy in the same words as Settings: "Plan needs 1 approval from owners or maintainers." */
 export function policyText(gate: GateName, g: Pick<GateStatus, 'approvers' | 'needed' | 'not'>): string {

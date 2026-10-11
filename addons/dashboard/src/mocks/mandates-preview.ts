@@ -56,6 +56,7 @@ export const MAY: string[] = [
   'Approve agents that wait for an approval: requirements, plan, verdicts and the code review gate.',
   'Answer agents\u2019 questions (typed choices only).',
   'Unblock tickets.',
+  'Land on main, make a first send to a linked workspace, publish publicly, restore and purge.',
   'Answer addon decisions and factory permits.',
   'Enable factories and start factory runs, including Deliver (after the hold window).',
   'Issue grants that start agents (they stay inside this mandate).',
@@ -192,6 +193,13 @@ export class MandatesPreviewHost {
     const s = this.sim(ws)
     // The host acknowledges a Stop a moment later (mock clock): "Stopping…" becomes "Stopped at #1842".
     const m = s.mandate
+    if (m && (m.state === 'active' || m.state === 'paused')) {
+      m.check_in_due ??= iso(Date.parse(m.issued_at) + 7 * DAY)
+      if (m.state === 'active' && Date.parse(this.store.now()) >= Date.parse(m.check_in_due) + 3 * DAY) {
+        m.state = 'paused'
+        this.save()
+      }
+    }
     if (m?.state === 'stopping' && m.stop && Date.parse(this.store.now()) - Date.parse(m.stop.requested_at) >= STOP_ACK_MS) {
       m.state = 'stopped'
       m.stop.boundary_seq = BOUNDARY_SEQ
@@ -224,7 +232,7 @@ export class MandatesPreviewHost {
     const plan: { k?: number; kind: MandateDecisionKind; landed?: boolean; target?: string }[] = [
       { k: 0, kind: 'requirements' }, { k: 0, kind: 'plan' }, { k: 0, kind: 'verdict', landed: true },
       { k: 4, kind: 'unblock' },
-      { k: 2, kind: 'verdict', landed: true }, { k: 2, kind: 'code_review' },
+      { k: 2, kind: 'land_main', landed: true, target: 'main' }, { k: 2, kind: 'code_review' },
       { kind: 'factory_enabled', target: `AI Factory in ${prefix}` },
       { k: 1, kind: 'permit', target: 'uv run pytest tests/billing -q' },
       { kind: 'factory_run', target: 'full run R-3 “Tariff page copy”, up to Preview' },
@@ -282,6 +290,7 @@ export class MandatesPreviewHost {
       days,
       issued_at: iso(issued),
       expires: iso(issued + days * DAY),
+      check_in_due: iso(issued + 7 * DAY),
       state: 'active',
       limits: {
         decisions: { used: decisions.length, max: 200 },
@@ -327,6 +336,12 @@ export class MandatesPreviewHost {
         s.mandate = seeded
         break
       }
+      case 'check_in': {
+        if (!m || !['active', 'paused'].includes(m.state)) return fail(409, 'conflict', 'No mandate to check in on.')
+        m.check_in_due = iso(Date.parse(this.store.now()) + 7 * DAY)
+        m.state = 'active'
+        break
+      }
       case 'renew': {
         // Renewing is one new signature on the Mac: a new revision with a new length from now (at most 30 days).
         if (!m || m.state !== 'active') return fail(409, 'conflict', 'No mandate in force to renew.', 'A stopped or revoked mandate is not renewed: issue a new one.')
@@ -339,7 +354,7 @@ export class MandatesPreviewHost {
         break
       }
       case 'stop':
-        if (!m || m.state !== 'active') return fail(409, 'conflict', 'No mandate in force to stop.')
+        if (!m || !['active', 'paused'].includes(m.state)) return fail(409, 'conflict', 'No mandate in force to stop.')
         m.state = 'stopping'
         m.stop = { requested_at: this.store.now(), stop_agents: !!body.stop_agents }
         break

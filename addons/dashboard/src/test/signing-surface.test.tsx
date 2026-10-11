@@ -10,7 +10,7 @@ import { wordsAndId } from '@/addon-ui/SignConfirm'
 import { api } from '@/api/client'
 import { approversText } from '@/api/gates'
 import { getAddon } from '@/mocks/addons'
-import { DEMO_REQUEST } from '@/mocks/addons/factory-runs'
+import { seedRuns, DEMO_REQUEST } from '@/mocks/addons/factory-runs'
 import type { MockStore } from '@/mocks/store'
 import { installAndGrant } from '@/test/installAddon'
 import { renderApp } from '@/test/renderApp'
@@ -81,6 +81,29 @@ const addonOpShown = (name: string): Record<string, Shown> => ({
 const LINE = 'Routing picked this model for you, LINE-MARK'
 
 const CASES: Case[] = [
+  ...([0, 60] as const).map((hold): Case => ({
+    name: `factory re-delivery with hold ${hold}`, path: '/addon/factory/factory',
+    setup: s => {
+      const ws = wsOf(s)
+      installAndGrant(s, ws, 'factory')
+      const st = s.addonState(ws, 'factory')
+      Object.assign(st, seedRuns(s, 'p_sev', ws))
+      const runs = st.runs as import('@/mocks/addons/factory-runs').Run[]
+      runs[0].stage = 'stopped'
+      runs[0].stopped = { at: s.now(), by: 'p_sev' }
+      s.runAddon(ws, 'factory', 'prepare_redelivery', { formData: { run: 'R-1', hold_minutes: hold } })
+    },
+    open: async user => {
+      await user.click(await screen.findByRole('tab', { name: /^Full runs/ }, T))
+      await user.click(await screen.findByRole('button', { name: 'Sign delivery' }, T))
+      const dialog = await dialogNamed(/^Sign: Redeliver/)
+      if (!hold) expect(dialog).toHaveTextContent('No hold: delivers as soon as its checks pass')
+      return dialog
+    },
+    confirm: press('Sign and run'), method: 'runAddonAction', arg: 3,
+    skip: ['confirmed'], args: true,
+    expectArgs: ['request', 'run', 'deliver_means', 'hold_minutes', 'revision'],
+  })),
   {
     name: 'repos clone attention decision', path: '/',
     open: async user => {
@@ -164,6 +187,7 @@ const CASES: Case[] = [
     path: '/ticket/DEMO-0041',
     open: async (user) => {
       const dialog = await ticketAction(user, /Give verdict/)
+      expect(dialog).toHaveAccessibleName('Verify')
       await user.click(within(dialog).getByRole('radio', { name: /^Pass on .*: the evidence is enough$/ }))
       return dialog
     },
@@ -443,7 +467,7 @@ const CASES: Case[] = [
     open: async (user) => {
       await user.click(await screen.findByRole('button', { name: 'Open skill tariff-feed' }, T))
       const drawer = await dialogNamed(/tariff-feed/)
-      await user.click(within(drawer).getByRole('button', { name: 'Grant TARIFF_WEBHOOK_SECRET…' }))
+      await user.click(within(drawer).getByRole('button', { name: 'Grant TARIFF_WEBHOOK_SECRET' }))
       return dialogNamed('Grant credentials to tariff-feed')
     },
     confirm: press('Sign grant'),

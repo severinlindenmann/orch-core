@@ -21,9 +21,9 @@ describe('Landing page', () => {
     expect(screen.getByText('1 from another workspace on this machine')).toBeInTheDocument()
   })
 
-  it('History lists land.attempt records with source, target and candidate (core tabs)', async () => {
+  it('Activity lists land.attempt records with source, target and candidate (core tabs)', async () => {
     const { user } = renderApp('/addon/land/landing', { viewer: 'p_sev' })
-    await user.click(await screen.findByRole('tab', { name: /History/ }, T))
+    await user.click(await screen.findByRole('tab', { name: /Activity/ }, T))
     expect(await screen.findByRole('columnheader', { name: 'Candidate' }, T)).toBeInTheDocument()
     const rows = screen.getAllByRole('row')
     expect(rows.some((r) => /DEMO-0053.*failed: conflict/.test(r.textContent ?? ''))).toBe(true)

@@ -374,7 +374,7 @@ function FoldView({ node, depth }: { node: NodeOf<'fold'>; depth: number }) {
   const id = useId()
   return (
     <div>
-      <button type="button" aria-expanded={open} aria-controls={id} onClick={() => setOpen((o) => !o)} className="inline-flex items-center gap-1.5 text-[13px] text-text-muted hover:text-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring">
+      <button type="button" aria-expanded={open} aria-controls={id} onClick={() => setOpen((o) => !o)} className="inline-flex min-h-9 items-center gap-1.5 text-[13px] text-text-muted hover:text-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring">
         <ChevronRight aria-hidden className={cn('size-3.5 transition-transform', open && 'rotate-90')} />
         {node.label}
         {node.count !== null && node.count !== undefined && <span className="font-mono text-[11px] tabular-nums text-text-faint">{node.count}</span>}
@@ -575,8 +575,8 @@ function ButtonNode({ node }: { node: NodeOf<'button'> }) {
  * Focus the first field with an error. rjsf's own focus does `field.length ? field[0]`, and a native select has a
  * `length` (its options), so it focuses an option and nothing happens: look the element up by id here.
  */
-function focusField(error: RJSFValidationError) {
-  const id = `root_${(error.property ?? '').replace(/^\./, '').replace(/\./g, '_')}`
+function focusField(error: RJSFValidationError, prefix: string) {
+  const id = `${prefix}_${(error.property ?? '').replace(/^\./, '').replace(/\./g, '_')}`
   document.getElementById(id)?.focus()
 }
 
@@ -736,6 +736,7 @@ function FormNode({ node }: { node: NodeOf<'form'> }) {
       <Suspense fallback={<Skeleton className="h-24 w-full" />}>
         <div ref={box}>
         <ThemedForm
+          idPrefix={`addon-form-${me}`}
           id={formControl?.id}
           disabled={readOnly}
           // A live form keeps its fields mounted (typing goes on while results update); others start over with new data.
@@ -745,7 +746,7 @@ function FormNode({ node }: { node: NodeOf<'form'> }) {
           formData={(guarded && draft) || node.formData || undefined}
           noHtml5Validate
           showErrorList={false}
-          focusOnFirstError={focusField}
+          focusOnFirstError={(error) => focusField(error, `addon-form-${me}`)}
           transformErrors={(errors) => formErrors(errors, node.schema)}
           onChange={guarded ? ({ formData }) => { setDraft(formData as Record<string, unknown>); setEdited(stableJson(formData ?? {}) !== initial) } : live ? ({ formData }) => onLive(formData as Record<string, unknown> | undefined) : undefined}
           onSubmit={({ formData }) => run(node.action, { formData })}

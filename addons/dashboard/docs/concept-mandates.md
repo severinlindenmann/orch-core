@@ -1,7 +1,7 @@
 # Concept: Mandates (delegated signing and an autonomous workspace)
 
 Status: **owner decision 10 Oct 2026 (evening): the wide mandate** — it replaces the earlier "Step 1 only (the
-pilot)" approval of the same morning (D62 in the draft spec PR #340). Revision 3. Revision 2 followed an adversarial
+pilot)" approval of the same morning (D62 in the draft spec PR #340). Revision 4; owner answers 11 Oct morning apply below. Revision 2 followed an adversarial
 review by Codex (its findings are cited below as Critical/High/Medium #n). No code changes in core yet. Origin: owner
 feedback item J (10 Oct 2026).
 
@@ -15,10 +15,10 @@ feedback item J (10 Oct 2026).
 > and approve them, enable factories etc."
 >
 > - **What a mandate may do:** steer the whole workspace in your name. Approve agents that wait for an approval and
->   every gate (requirements, plan, verdict, and the code review gate: you did not keep it human), answer agents'
+>   every gate (requirements, plan, verdict, and the code review gate: explicitly allowed on 11 Oct), answer agents'
 >   questions, unblock tickets, answer addon decisions and factory permits, enable factories and start factory runs
->   **including full runs that end in Deliver** (D61; the hold window with Stop is the only human checkpoint there),
->   and issue grants that start agents.
+>   **including full runs that end in Deliver** (D61; a positive hold gives a Stop checkpoint, zero does not),
+>   and issue grants that start agents, land on main, make a first send to a linked workspace, publish publicly, restore and purge.
 > - **What stays human, always, whatever the mandate says:** settings, addons (install, update, capabilities),
 >   members and roles, devices, relay pairing, secrets and connections, and any change to **protected paths** (CI,
 >   build and test tooling, deploy config, dependency manifests, orch config, skills and hooks, security code). A
@@ -26,7 +26,7 @@ feedback item J (10 Oct 2026).
 > - **No chains:** a mandate may issue grants (start agents), but **never another mandate**. The host refuses
 >   mandate → mandate (`mandate.chain_refused`). Owner decision, §2.15.
 > - **Duration:** time-boxed and renewable. You pick the length, up to 30 days. Renewing is one new signature on the
->   Mac (a new revision, §2.11).
+>   Mac (a new revision, §2.11). No total ceiling across renewals; weekly check-in, with a pause after 3 unconfirmed days (not revocation).
 > - **Unchanged:** the four prerequisites (P2 custody first) are mandatory; the host refuses every mandate until they
 >   pass (§2.12). The execution boundary (§2.2) and protected paths now carry far more weight, because far more is
 >   delegated.
@@ -55,7 +55,8 @@ orchestrator *will* approve what it is told to, and with the wide scope those li
 the list above. The damage is not limited to "bad code on `develop`". Code the mandate approves runs in tests, agent
 sessions, CI and any deploy that follows, with whatever credentials and network those places have. And because a
 mandate may start a factory full run with a Deliver target, **a mandate can cause a production deploy, a publish or
-a send with no person signing anything**: the only safeguard there is the hold notice with Stop (default 30 min), and
+a send with no person signing anything**. A positive hold provides a notice with Stop; zero delivers immediately
+(default 15 min; range 0–24 h), and
 the host refuses a Deliver to anything but the destination fixed in the signed request. It may also sign the code
 review gate. **That execution boundary is the real blast radius**, so this concept limits it directly (§2.2) rather
 than trusting the model; with the wide scope, §2.2 and the protected paths are what still stands between an injected
@@ -103,14 +104,14 @@ mandate {
   effects:      { "gate.approve:requirements": {...}, "gate.approve:plan": {...}, "verdict.pass": {...} },
   addon_pins:   { factory: "sha256:…" },        // package + manifest + effect schema hashes (§2.4)
   limits:       { see §2.8 },
-  not_before, expires, max_until?,             // max_until: OPTIONAL, pending the owner (§6 point 3); fixed once set
+  not_before, expires, check_in_due,           // weekly; 3 days overdue pauses; no total renewal ceiling
   policy_hash, people_hash, list_seq, checkpoint,
   delegation_pub
 }
 ```
 
 You sign it on the Mac with Touch ID (D41), under context `orch/v2/mandate|<workspace_id>`. The Touch ID prompt names
-the effects, the scope and `expires`, and `max_until` only when one is set (optional, pending §6 point 3). **Issuer:**
+the effects, the scope, `expires` and the weekly check-in rule (no total renewal ceiling). **Issuer:**
 owners only, for themselves. **Issue, renew or widen:** Mac only. Under D49 the phone signs whenever it is unlocked, so it may only **acknowledge, suspend, stop and veto**,
 and none of these widen anything.
 
@@ -166,13 +167,14 @@ and what it can change. Core validates every request against it. Anything not li
 | Effect | Wide mandate (10 Oct evening) | Always human |
 |---|---|---|
 | `gate.approve` requirements / plan, `verdict.pass` on `source_sha` | yes (with checker on verdicts) | when the diff touches protected paths |
-| `gate.approve:code` (code review gate) | yes: the owner did not keep it human (open point 1) | when the diff touches protected paths; inside a factory run (D61) |
+| `gate.approve:code` (code review gate) | yes: owner agreed 11 Oct, including full-run reviews | when the diff touches protected paths |
 | `gate.request_changes` | yes, at most 3 cycles per ticket | |
 | `question.answer` | yes, typed `choice` with options fixed by the asker; never free text that grants a permit, credential or D55 approval | |
 | unblock a ticket (approve what blocks it) | yes | a block on secrets/connections (D55) |
 | `addon.decide` (incl. factory permits) | only effects an addon declares in its **pinned** manifest as core effect types; an addon update unpins it until you re-sign | anything that maps to an always-human effect |
 | enable a factory, start a factory run (Preview or Deliver, D61) | yes; a Deliver still waits out the hold window with Stop (§2.16) | |
-| `land.enqueue` | yes, with checker, to `develop` and listed targets | `main`: refused until the owner decides (§6 point 2) |
+| `land.enqueue` | yes, with checker, including `main` (owner agreed 11 Oct) | protected paths |
+| restore / purge, first send to a linked workspace, public publish | yes (owner agreed 11 Oct), typed and pinned effects | protected paths and always-human effects |
 | `ticket.create` / `close` / `reopen` | yes | dismissing open findings, questions or vetoes |
 | `grant.issue` (start agents) | yes, within the mandate's own limits | |
 | `mandate.issue` / `extend` | **no** (§2.15) | always |
@@ -244,10 +246,10 @@ it on the Mac.
   keeps the lifetime counters and pins the current policy and addon semantics. If anything widens, the Touch ID prompt
   shows the difference. The phone cannot renew (D49: it acknowledges, stops and vetoes only).
 - Each renewal again runs the preflight (§2.12); a failed check means the mandate ends at `expires`.
-- **`max_until` is optional and pending** (§6 point 3). When the owner keeps a ceiling, it is set at issuance, shown
-  in every issue and renew prompt, never moved by a renewal (a renewal past it is refused), and covered by the
-  signature. Without one, each renewal is bounded only by its own 30 days. Revision 2 had a 180-day ceiling and a
-  weekly acknowledgement; the owner's decision does not include them, so both are open points, not rules.
+- **No total ceiling across renewals** (owner agreed 11 Oct); each renewal is still at most 30 days.
+- **Weekly check-in:** “Weekly check-in due <day>”, with “Still OK”. If unconfirmed for 3 days,
+  the mandate **pauses**, not revokes. Confirmation starts the next weekly interval and resumes a check-in pause.
+  The dashboard action is a labelled preview: nothing signs and no real authority is granted.
 
 ### 2.12 Custody prerequisites, enforced (High #5)
 
@@ -282,7 +284,7 @@ click past.
 - **Code review gate:** revision 2 kept it never delegable. Under the wide mandate the owner did not keep it human, so
   a mandate may sign it (open point 1 in §6 recommends keeping it human). The factory never signs it (D61).
 - **D53:** unchanged. The verdict signs `source_sha`, new commits void it, and the land worker uses the signed
-  commit and re-checks the mandate right before merging (§2.13). `main` is never a target until the owner decides (§6 point 2): the host refuses it (D33), mandate or not.
+  commit and re-checks the mandate right before merging (§2.13). `main` is allowed under the mandate (owner agreed 11 Oct); protected paths still require a person.
 - **D41:** every *human* signature still needs Touch ID. A mandate signature is a third kind (`presence: "none"`,
   `via: "mandate"`). Its human moments, issuance and extension, use Touch ID. **D49:** the phone acknowledges, stops
   and vetoes. Phone batch taps (a second key for later steps) show the **exact effect and the immutable item digest**
@@ -302,14 +304,13 @@ A mandate may start a factory full run (D61, `docs/factory-full-run-proposal.md`
 a production deploy, a publish or a send can happen with no person signing anything. The safeguards are:
 - the request names the exact Deliver destination; the request signature (here the mandate's) covers it, and the host
   refuses a Deliver to anything else;
-- the **hold window** (default 30 min, set in the request): a calm "Delivering in 28 min · Stop" notice on Today, on the
+- the **hold window** (default 15 min; range 0–24 h, set in the request): a calm "Delivering in 28 min · Stop" notice on Today, on the
   factory page and in the shell; you can Stop it until the window ends;
 - the run is labelled "via mandate md_3, for Severin — no person reviewed this", step by step;
-- protected paths and the code-gate rules of the factory still apply: in a full run, when the code review policy
-  applies, each child waits at a Code review step for a **person** (D61 "never the code gate"); a mandate does not
-  satisfy that step, even though it may sign the code gate elsewhere (§2.4, open point 1);
-- a stopped charter (time or budget) stops the run and ends a hold "not delivered".
-Said plainly: the hold notice is the only human checkpoint, and it only helps if someone looks.
+- protected paths still require a person; a mandate may sign the code-review gate, including a full-run review.
+  The factory charter alone still cannot sign it; the dashboard mandate remains a non-functional preview;
+- time expiry or an over-committed budget stops the run and ends a hold "not delivered"; reserved children may finish at the child budget limit.
+Said plainly: a positive hold notice is the human checkpoint; zero means no hold and no chance to Stop before delivery.
 
 ## 3. How it shows in the dashboard
 
@@ -357,13 +358,9 @@ of old Step 3 are now part of the build order above.
 Decided on 10 Oct evening: the wide scope, the always-human list, up to 30 days and renewable, full runs to Deliver
 allowed, no mandate → mandate chains. Still open:
 
-1. **Code review gate:** you did not keep it human, so a mandate may sign it. Recommended: keep it human (it marks
-   exactly where you said you want to look). Your call.
-2. **Old "never" items you did not name either way:** `restore`, purge, a first send to a peer, public publish, landing
-   on `main`. This revision treats restore and purge as settings (always human), a first send to a peer and public
-   publish as delegable, and keeps **landing on `main` refused** (D33) until you decide. Confirm, or say otherwise?
-3. A ceiling across renewals (`max_until`, optional in the schema until you decide; revision 2 had 180 days) and a
-   weekly acknowledgement: keep either?
+Decided 11 Oct: code review, landing on main, restore/purge, first linked-workspace send and public publish
+are allowed. There is no total renewal ceiling; the weekly check-in pauses after 3 unconfirmed days.
+
 4. Owners only as issuers (recommended), or maintainers too?
 5. Is the default protected-path list right (CI, build/test, deploy, manifests and lockfiles, orch config, skills,
    hooks, security-classed code)?
@@ -410,7 +407,7 @@ All 15 findings were adopted. Where an adoption is only partial, the row says wh
 | 5 | Custody prerequisites | `mandate.preflight` refuses issuance on unsupported configs (§2.12). |
 | 6 | Replay / cross-log | Canonical payload, one digest for all signatures, durable decision ids, atomic reservation (§2.6). |
 | 7 | Stop leaves work running | Acknowledged boundary, queued effects cancelled, execution-time recheck, relay lease (§2.13). |
-| 8 | Renewal extends authority | Revisions bound to the root, lifetime counters, a renewal is a new Mac signature; `max_until` (immutable when set) and the weekly acknowledgement are now optional, pending the owner (§2.11, §6 point 3). |
+| 8 | Renewal extends authority | Revisions bound to the root, lifetime counters, a renewal is a new Mac signature; no total renewal ceiling; weekly check-in, pause after 3 unconfirmed days (§2.11). |
 | 9 | Veto persistence | Persistent `veto` flag, cleared only by a person, rechecked at execution (§2.7). |
 | 10 | Budgets bound signatures | Aggregate limits, reservation, retries and descendants counted, caps through execution grants. Money is not shown until enforced (§2.8). |
 | 11 | Rates are detection | Stated as detection only, with rolling aggregates, provenance-aware freshness and rework caps (§2.9). |

@@ -303,7 +303,7 @@
                 },
                 {
                   "id": "history",
-                  "label": "History",
+                  "label": "Activity",
                   "count": {
                     "$ref": "addon.historyCount"
                   },
@@ -607,6 +607,8 @@
       "prepare_run": { "minRole": "maintainer", "label": "Review a full-run request" },
       "clear_run": { "minRole": "maintainer", "label": "Discard the full-run request" },
       "demo_run": { "minRole": "maintainer", "label": "Fill in a demo full-run request" },
+      "prepare_redelivery": { "minRole": "owner", "kind": "navigation" },
+      "redeliver": { "minRole": "owner", "confirm": "sign", "label": "Deliver a stopped factory run" },
       "start_run": { "minRole": "maintainer", "confirm": "sign", "label": "Start a factory full run" },
       "hold": { "minRole": "maintainer", "decision": true },
       "code_review": { "minRole": "member", "decision": true, "deciders": "eligible" },

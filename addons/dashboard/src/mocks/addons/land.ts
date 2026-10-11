@@ -365,7 +365,7 @@ function view(state0: Record<string, unknown>, c: Ctx & { ticket?: string }): Re
     tabs: [
       { id: 'queues', label: 'Queues', count: queues.reduce((n, q) => n + q.entries.filter((e) => canSeeTicket(c, e.ticket)).length, 0), node: queuesNode },
       { id: 'needs', label: 'Needs', count: needs.length, node: needsNode },
-      { id: 'history', label: 'History', count: history.length, node: historyNode },
+      { id: 'history', label: 'Activity', count: history.length, node: historyNode },
     ],
   }
   return { ...hide, settings, cards, workerAlert: workerAlert(c, state), controls, body, needsCount: needs.length }

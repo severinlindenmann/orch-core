@@ -1173,3 +1173,16 @@ The owner answered the eight open questions of REVIEW.md. Items 1, 2, 5 and 6 ch
 - **Decision:** The mock no longer writes or seeds `agent.refused` ticket events (fixtures, the busy generator, derive/describe, the Activity addon's groups). A refusal is a CLI error envelope (code + hint, format section 10 / core section 3 `errors`) returned to the agent. The product value stays: each agent session row carries a `refusals` list (`at`, `ticket`, `code`, `message`, `hint`, `retryable`, `op`), read by the Agents page ("Recent refusals", the stop rule on the third same code) and by Ticket History through `GET /api/tickets/:key/refusals`. History draws them in a separate dashed block labelled "From the agent session — not part of the signed log", never in the event list, its counts or the Raw tab. The `agent` prefix is no longer a core event prefix; an addon actor can never make an event look core (test: an `agent.*` type with an addon actor renders as addon).
 - **Why:** The format doc (F1 gap table) says a refusal is not a log entry: the log is signed history of what happened to the ticket, and a refused request changed nothing.
 - **Revert:** Restore the `agent.refused` events in `fixtures/demo.json` and `busy/agents.ts`, the `agent.refused` cases in `derive.ts`, `History.tsx` and `addons/activity.ts`, `'agent'` in `CORE_PREFIXES`, and read refusals in `store.agentActivity` from events again; drop `SessionRefusal`, `ticketRefusals`, the `/refusals` route and the `SessionRefusals` block.
+
+## 2026-10-11 U8 — owner answers
+
+- **Decision:** Mandates preview explicitly permits code review, main, first peer send, public publish and restore/purge;
+  weekly check-in pauses after 3 overdue days, no total renewal ceiling. Factory hold is 0–24 h (15 min default);
+  stopped deliveries get a fresh owner-signed, single-use request without redoing work. Phone Stop is orch-mobile's
+  push + Face ID flow. Reserved children finish at the budget limit. Repos accepts literal SSH git user, has no primary
+  flag, and remote/default_branch are proposed for the format amendment (owner agreed 11 Oct). Core gate is Verify,
+  addon logs Activity, confirmation-only triggers have no ellipsis, factory permits fold into a reserved row. Core gives each addon form unique field IDs so the new delivery form and the full-run form have distinct labels and focus targets.
+- **Why:** Owner answers of 11 Oct morning, brief U8. Preserve core signing, exact covers, role enforcement and
+  the non-functional mandate preview while making the owner's decisions reviewable.
+- **Revert:** Revert the U8 commit; factory v5 state migrates v4 unchanged (new delivery drafts/revisions are optional).
+  Reverting loses the new re-delivery draft UI and weekly check-in preview; no real mandate authority exists.

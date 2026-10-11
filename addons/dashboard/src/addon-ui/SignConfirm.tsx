@@ -91,6 +91,7 @@ export function SignConfirm({
         </>,
         // The values below are the addon's, bound by core: a core lead line says so before them.
         ...(problem || !Object.keys(args ?? {}).length ? [] : [ARGS_LEAD, ...argLines(args)]),
+        ...(addon === 'factory' && ['start_run', 'redeliver'].includes(action) && args?.hold_minutes === 0 ? ['No hold: delivers as soon as its checks pass'] : []),
         ...(ticket ? [`About ${plain(ticket)}`] : []),
         `In workspace ${workspace.name} (${workspace.prefix})`,
       ]}

@@ -282,8 +282,7 @@ factory addon's (`src/mocks/addons/factory-runs.ts`); the hold is meant to be **
 
 - **Request** (signed, `start_run`, `confirm: 'sign'`, maintainer+; a Deliver target owner-only in the mock): the
   signed args are exactly `request` (a single-use id the host issued at review: `rq-<PREFIX>-<nonce>-<n>`, the nonce new for every seeding of the state, so a reset never reissues an id), `goal` (≤ 200 chars), `goes_up_to` (`Preview` | `Deliver`), and for Deliver
-  `deliver_means` (the concrete destination, ≤ 160 chars, required) and `hold_minutes` (15 | 30 | 60 | 240, default
-  30), plus `largest_child: 'm'`. Core records them in `addon.action_signed {args}`. The form (`prepare_run`) stores a
+  `deliver_means` (the concrete destination, ≤ 160 chars, required) and `hold_minutes` (integer 0–1440, default 15), plus `largest_child: 'm'`. Core records them in `addon.action_signed {args}`. The form (`prepare_run`) stores a
   per-viewer draft; the host refuses a signature whose values differ from the reviewed draft (409 `factory.stale`),
   a Deliver without a destination (400 `validation`), a run while the factory is paused or stopped (409
   `factory.not_running`), a reused request id (409 `factory.request_used`; the id is consumed with the run's creation in
@@ -300,7 +299,7 @@ factory addon's (`src/mocks/addons/factory-runs.ts`); the hold is meant to be **
   reviewers), one approval per person, and the policy's `count` of distinct people. The decision is offered only to
   people who are eligible. Each approval signs the child's commit; a new commit (`factory.child_pushed {run, child,
   commit}`) voids the approvals and sends the child back to wait before Validate (D58/D59). Validate and Preview wait
-  for every review; neither the factory nor a mandate satisfies it.
+  for every review; the factory charter cannot satisfy it. An eligible mandate may (owner agreed 11 Oct), but the dashboard mandate is non-signing preview only.
 - **Events** on the factory epic, by the addon: `factory.run_requested {run, request, goal, goes_up_to, children,
   deliver_means?, hold_minutes?}`, `factory.code_reviewed {run, child}`, `factory.deliver_cancelled {run, reason}`, `factory.run_step {run, step: 'Plan' | 'Preview'}`, `factory.deliver_held {run, deliver_means,
   until}`, `factory.deliver_stopped {run}`, `factory.delivered {run, deliver_means}`. Children's steps
@@ -310,7 +309,7 @@ factory addon's (`src/mocks/addons/factory-runs.ts`); the hold is meant to be **
 - **Hold/Stop contract.** At Deliver the host opens a core decision `factory.hold:<run>` with **one option, `stop`**,
   `terms {run, deliver_means, hold_until}` and `hold {until, deliver_means}` (new optional `AddonDecision.hold`).
   Core shows it on Today, in place on the page (`decision` node) and as a calm shell line (`DeliveryHoldBanner`:
-  "Delivering in 28 min · <deliver_means> · at 14:32 · AI Factory (factory) · Stop…"). Stop is signed in core's
+  "Delivering in 28 min · <deliver_means> · at 14:32 · AI Factory (factory) · Stop"). Stop is signed in core's
   decision prompt (`addon.decided`, presence Touch ID) and cancels: no `factory.delivered`, the run stays at
   Preview. When `until` passes with no Stop the host delivers to exactly `deliver_means` (it refuses any other
   destination, `factory.deliver_mismatch`) and writes `factory.delivered`. While the factory is paused nothing is
@@ -521,3 +520,33 @@ fragment, non-ASCII character or a part starting with `-`.
 
 Links: a repo row is `/w/DEMO/addon/repos/repos?tab.repos=structure&row=web-portal` (core opens the row whose key is
 `row`, on any addon page); the ticket list by repo is `/w/DEMO/tickets?repo=web-portal`.
+
+## Owner answers applied — 11 Oct morning (U8)
+
+These decisions supersede earlier open questions and defaults in this handover.
+Mandates remain non-signing preview only: code-review approval, land on main, first linked-workspace send,
+public publish and restore/purge are allowed. Another mandate, protected paths, settings, addons, members/roles,
+devices, relay pairing and secrets/connections stay human. No total renewal ceiling. “Weekly check-in due <day>”
+and “Still OK” preview confirmation; after 3 unconfirmed days the mandate pauses, not revokes.
+
+Factory holds: integer 0–1440 minutes, default 15; form 0 / 15 / 30 / 60 / 240 / 1440.
+Zero signs “No hold: delivers as soon as its checks pass”. Only owners (and future eligible mandates) sign Deliver.
+Children reserved at admission may finish at the child budget limit; new children cannot enter.
+Phone Stop is a push notice + Face ID Stop, implemented by orch-mobile (dashboard has no mobile implementation).
+
+| Endpoint / action | Operation and enforcement |
+|---|---|
+| Preview mandates, `check_in` | Owner-only unsigned preview; advance due date a week and resume a check-in pause; never a signing endpoint. |
+| Factory `prepare_redelivery` | Owner chooses a stopped run and new hold; host issues an unsigned single-use request. |
+| Factory `redeliver` | Core signs run, destination, hold, request and delivery revision; host checks owner, stopped state, exact draft, single use and charter. Reuses all completed work. |
+
+Provisional addon event `factory.redelivery_requested {request, run, deliver_means, hold_minutes, revision}`,
+actor `addon:factory`. Core owns `addon.action_signed`; zero delivers immediately, positive starts a new hold.
+Each new hold uses `factory.hold:<run>:<revision>` (initial hold keeps `factory.hold:<run>`); the revision is a signed term, so an old Stop cannot answer a later hold.
+An active hold cannot be shortened; Stop first, then a fresh delivery signature.
+
+Repos allows literal `ssh://git@host/path`, never another user/password or leading-dash host/path.
+No primary flag. `remote` + `default_branch`: **proposed for the format amendment (owner agreed 11 Oct)**.
+Last gate: **Verify** (core-owned; the ticket body section remains Verification). Addon log tabs: **Activity**;
+ticket History stays History. Ellipsis marks a dialog asking for input, never a plain confirmation or signing prompt.
+Factory permits sit in a reserved folded “n permits waiting · Review” row; Today retains the needs-you decisions.

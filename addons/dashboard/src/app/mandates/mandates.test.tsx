@@ -40,7 +40,7 @@ afterEach(() => {
 })
 
 describe('Agents → Mandates (preview)', () => {
-  it('both Stop buttons announce a dialog', async () => {
+  it('both Stop buttons announce a dialog that asks whether to stop agents', async () => {
     renderApp('/agents?tab=mandates', { setup: seeded })
     await screen.findByTestId('mandates-tab', {}, T)
     expect(screen.getAllByRole('button', { name: 'Stop…' })).toHaveLength(2)
@@ -132,7 +132,7 @@ describe('Agents → Mandates (preview)', () => {
 
   it('Revoke and void lists exactly the decisions on work not landed, and the landed ones for review', async () => {
     const { user } = renderApp('/agents?tab=mandates', { setup: seeded })
-    await user.click(await screen.findByRole('button', { name: 'Revoke and void…' }, T))
+    await user.click(await screen.findByRole('button', { name: 'Revoke and void' }, T))
     const dialog = await screen.findByRole('alertdialog', {}, T)
     expect(dialog).toHaveTextContent('Revoke mandate md_3 and void its decisions?')
     const voids = within(within(dialog).getByTestId('revoke-voids')).getAllByRole('listitem').map((li) => li.textContent!.slice(0, 14))
@@ -229,7 +229,7 @@ describe('Today: Decided for you (preview)', () => {
     expect(refused).toHaveTextContent('Issue a mandate to a second orchestrator')
     // Core's reason in full.
     expect(refused).toHaveTextContent('Protected path:Verdict refused: the diff touches package-lock.json (a dependency lockfile, protected). A person approves this.')
-    await user.click(within(digest).getByRole('button', { name: 'Revoke mandate and void…' }))
+    await user.click(within(digest).getByRole('button', { name: 'Revoke mandate and void' }))
     const dialog = await screen.findByRole('alertdialog', {}, T)
     expect(within(within(dialog).getByTestId('revoke-voids')).getAllByRole('listitem')).toHaveLength(8)
     await user.click(within(dialog).getByRole('button', { name: 'Revoke and void (preview — nothing is signed)' }))
@@ -251,7 +251,7 @@ describe('values through visible.tsx (preview dialogs)', () => {
     const digest = await openDigest(user)
     expect(digest.textContent).toContain('for Sev\\u{202e}rin — no person reviewed this')
     expect(digest.textContent).not.toContain('\u202E')
-    await user.click(within(digest).getByRole('button', { name: 'Revoke mandate and void…' }))
+    await user.click(within(digest).getByRole('button', { name: 'Revoke mandate and void' }))
     const dialog = await screen.findByRole('alertdialog', {}, T)
     expect(dialog.textContent).toContain('Sev\\u{202e}rin')
     expect(dialog.textContent).not.toContain('\u202E')
@@ -306,7 +306,7 @@ describe('the preview never signs', () => {
     await user.click(within(screen.getByTestId('mandate-banner')).getByRole('button', { name: 'Stop…' }))
     await user.click(within(await screen.findByRole('dialog', { name: /Stop mandate/ }, T)).getByRole('button', { name: /Stop mandate/ }))
     await waitFor(() => expect(screen.getByTestId('mandate-banner')).toHaveTextContent('Stopped at #1842'), T)
-    await user.click(screen.getByRole('button', { name: 'Revoke and void…' }))
+    await user.click(screen.getByRole('button', { name: 'Revoke and void' }))
     await user.click(within(await screen.findByRole('alertdialog', {}, T)).getByRole('button', { name: /Revoke and void/ }))
     await waitFor(() => expect(banner()).toBeNull())
     expect(spy.signing()).toEqual([])
@@ -327,4 +327,16 @@ describe('the preview never signs', () => {
     expect(spy.signing()).toEqual([])
     expect(spy.writes()).toEqual(['postMandatesPreview'])
   })
+})
+
+
+it('Still OK advances the weekly check-in through the preview only', async () => {
+  const spies = spyAll()
+  const { user } = renderApp('/agents?tab=mandates', { setup: seeded })
+  const due = await screen.findByText(/^Weekly check-in due /, {}, T)
+  const before = due.textContent
+  await user.click(screen.getByRole('button', { name: 'Still OK' }))
+  await waitFor(() => expect(due.textContent).not.toBe(before), T)
+  expect(spies.signing()).toEqual([])
+  expect(spies.writes()).toEqual(['postMandatesPreview'])
 })

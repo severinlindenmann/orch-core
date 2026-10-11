@@ -133,6 +133,12 @@ class _Write:
     body_copy: str | None = None  # uid whose .state/body copy follows this body.md
 
 
+def _drop(path: Path) -> None:
+    """Remove a stale pending transition durably (§5.10: crash recovery keeps only live ones)."""
+    path.unlink(missing_ok=True)
+    fsync_dir(path.parent)
+
+
 def _epoch(stamp: str) -> int:
     return calendar.timegm(time.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ"))
 
@@ -1373,6 +1379,11 @@ class Store:
         facts = self.restore_facts(log)
         if e.get("source") != facts["source"]:
             raise StoreError("chain.diverged", "restore source is not the held workspace checkpoint")
+        signer = e["actor"]["device"]
+        if self._pins and any(r["device"] == signer for r in self._pins.revocations()):
+            # Replay authorizes against the kept chain, which lacks a revocation from the given-up part; the host's
+            # durable evidence still has it, and every receiver refuses a revoked signer (§5.10, C3).
+            raise StoreError("device.invalid", f"{signer} is revoked in the host's durable revocation evidence")
         if log == WORKSPACE:
             supplied = {"d_" + r["revocation"]["o"]["device_id"]: r for r in e.get("revocations", [])}
             for entry in facts["revocations"]:
@@ -2217,6 +2228,10 @@ class Store:
             if seq > info.seq:
                 abandoned = {"seq": seq, "head": head}
         held = self._held_checkpoint()
+        if held is None and self._logs[WORKSPACE].seq >= 1:
+            # Every append writes a workspace checkpoint, so a workspace log is evidence that one existed: a null
+            # source would start a new baseline after every checkpoint file was deleted (§5.10).
+            raise StoreError("chain.diverged", "workspace checkpoint source is missing but the workspace log exists")
         if held:
             entry = held["o"]["workspace_log"] if log == WORKSPACE else held["o"]["tickets"].get(log)
             if entry and entry["seq"] > info.seq:
@@ -2399,12 +2414,16 @@ class Store:
             ):
                 raise StoreError("chain.diverged", "invalid pending transition checkpoint")
             info = self._logs.get(log)
-            if info is None or info.seq < ev["seq"] or info.heads[ev["seq"] - 1] != canon.event_head(ev):
+            if info is None or info.seq < ev["seq"]:
+                continue  # not appended (yet): the restore may still be committed by a retry
+            if info.heads[ev["seq"] - 1] != canon.event_head(ev):
+                _drop(path)  # its slot holds another head: this restore can never commit
                 continue
             if any(i.id == ev["id"] for i in self._state._core.logs[log].invalid):
                 continue
             held = self._held_checkpoint()
             if held and held["o"]["n"] > target["o"]["n"]:
+                _drop(path)  # the held checkpoint moved past T: the transition is stale
                 continue
             if held != transition["C"] and held != target:
                 raise StoreError("chain.diverged", "pending restore source differs from held checkpoint")

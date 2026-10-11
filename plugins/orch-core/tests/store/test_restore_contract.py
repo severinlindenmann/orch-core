@@ -295,10 +295,12 @@ def test_transition_keeps_only_the_abandoned_suffix(env):
     )
 
 
-@pytest.mark.parametrize("evidence", ["ticket", "transition"])
+@pytest.mark.parametrize("evidence", ["ticket", "transition", "workspace_log"])
 def test_null_source_refused_when_workspace_checkpoint_files_are_lost(env, evidence):
     store = env.bootstrap()
-    if evidence == "ticket":
+    if evidence == "workspace_log":
+        pass  # no ticket, no transition: the workspace log alone is the evidence
+    elif evidence == "ticket":
         env.new_ticket()
     else:
         store.append(
@@ -307,8 +309,89 @@ def test_null_source_refused_when_workspace_checkpoint_files_are_lost(env, evide
         )
     (store._pins.dir / "checkpoint.json").unlink()
     store._checkpoints._workspace_path.unlink()
-    with pytest.raises(StoreError, match="checkpoint evidence exists"):
+    with pytest.raises(StoreError) as exc:
         store.restore_facts("workspace")
+    assert exc.value.code == "chain.diverged"
+    candidate = env.person_event(env.owner, "workspace", "restore", **_facts_with_null_source(store), reason="other")
+    before = env.read_events("workspace")
+    with pytest.raises(StoreError) as exc:
+        store.append(candidate, log="workspace")
+    assert exc.value.code == "chain.diverged" and env.read_events("workspace") == before
+
+
+def _facts_with_null_source(store):
+    info = store._logs["workspace"]
+    return {
+        "from_seq": info.seq,
+        "head": info.head,
+        "abandoned": None,
+        "abandoned_decisions": [],
+        "source": None,
+        "revocations": [],
+    }
+
+
+def test_host_refuses_a_restore_signed_by_a_device_it_holds_revoked(env, tmp_path):
+    """A WSK holder with a revoked device key rolls the log back past the revocation and signs a restore with that
+    device: the kept chain authorizes it, the host's durable evidence does not (§5.10, C3)."""
+    import shutil
+
+    from tests.store.test_checkpoints import rollback
+
+    store = env.bootstrap()
+    store.close()
+    backup = tmp_path / "backup"
+    shutil.copytree(env.root, backup)
+    store = env.open()
+    env.revoke_device(env.owner.device, reason="compromised")
+    store.close()
+    rollback(env, backup)
+    store = env.open()
+    facts = store.restore_facts("workspace")
+    assert [r["revocation"]["o"]["device_id"] for r in facts["revocations"]] == [env.owner.device[2:]]
+    candidate = env.person_event(env.owner, "workspace", "restore", **facts, reason="rollback")
+    before = env.read_events("workspace")
+    with pytest.raises(StoreError) as exc:
+        store.append(candidate, log="workspace")
+    assert exc.value.code == "device.invalid"
+    assert env.read_events("workspace") == before
+    assert not list((store._pins.dir / "transitions").glob("*.json"))
+
+
+def _committed_transition(env):
+    store = env.bootstrap()
+    store.append(
+        env.person_event(env.owner, "workspace", "restore", **store.restore_facts("workspace"), reason="other"),
+        log="workspace",
+    )
+    (done,) = (store._pins.dir / "transitions").glob("*.json")
+    return store, json.loads(done.read_text())
+
+
+def test_a_pending_transition_whose_slot_holds_another_head_is_dropped(env):
+    store, transition = _committed_transition(env)
+    transition["committed"] = False
+    transition["event"]["reason"] = "rollback"  # same seq, another head: this restore can never commit
+    pending = store._pins.dir / "pending-transitions" / (transition["event"]["id"] + ".json")
+    pending.parent.mkdir(parents=True, exist_ok=True)
+    pending.write_bytes(canon.cj_checked(transition) + b"\n")
+    held = store._pins.held()
+    store._recover_transitions()
+    assert not pending.exists() and store._pins.held() == held
+    env.log(env.new_ticket())  # appends go on
+
+
+def test_a_pending_transition_the_held_checkpoint_passed_is_dropped(env):
+    store, transition = _committed_transition(env)
+    store.append(env.grant_event(), log="workspace")  # the held checkpoint moves past T
+    assert store._pins.held()["o"]["n"] > transition["T"]["o"]["n"]
+    transition["committed"] = False
+    pending = store._pins.dir / "pending-transitions" / (transition["event"]["id"] + ".json")
+    pending.parent.mkdir(parents=True, exist_ok=True)
+    pending.write_bytes(canon.cj_checked(transition) + b"\n")
+    held = store._pins.held()
+    store._recover_transitions()
+    assert not pending.exists() and store._pins.held() == held
 
 
 def test_reload_skips_already_recorded_ancestry(env, monkeypatch):

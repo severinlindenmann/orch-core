@@ -430,6 +430,14 @@ class Projection:
         self._seq, self._prev = stamp["seq"] - 1, stamp["prev"]
         self._at, self._ws_seq = stamp["at"], stamp["ws_seq"]
         self._state = store.state
+        self.capture = call.ctx.prepare  # human.prepare (H5a): judged as the person, recorded, never appended
+        if self.capture is not None:
+            import dataclasses
+
+            from orch.ops.human import _AcceptAll
+
+            st = self._state  # the signature does not exist yet: everything else is judged as the store will
+            self._state = dataclasses.replace(st, _ctx=dataclasses.replace(st._ctx, verifier=_AcceptAll(), admit=True))
         self._noted = call.notes.get(self.uid)["base"]  # read once for the whole plan
         self.planned: list[Planned] = []
         self._probes: list[dict[str, Any]] = []
@@ -442,6 +450,15 @@ class Projection:
         the session never read it or it changed since."""
         if path in self.bases:
             return self.bases[path]
+        if self.capture is not None:  # a person edits what they are shown: the current value, sent as `before`
+            current = path_hash(self.view, path)
+            if path.startswith("body."):
+                self.capture.before[path] = self.call.store.body_sections(self.uid).get(path[5:], "")
+            else:
+                from orch.store.render import thaw
+
+                self.capture.before[path] = thaw(self.view.fields[path[len("ticket.") :]])
+            return current
         noted = self._noted.get(path)
         code = "conflict.section" if path.startswith("body.") else "conflict.field"
         what = path[5:] if path.startswith("body.") else path[len("ticket.") :]
@@ -462,7 +479,7 @@ class Projection:
         from orch.model import Refusal, preview
         from orch.store import StoreError
 
-        ev = {**event, "actor": self.call.actor()}
+        ev = {**event, "actor": self.capture.actor if self.capture is not None else self.call.actor()}
         # a ticket the builder just loaded (a parent, a blocker) can move the merged order: stamp again, never earlier
         stamp = self.call.store.peek_stamp(self.uid)
         self._at = max(self._at, stamp["at"])
@@ -477,6 +494,8 @@ class Projection:
             "at": self._at,
             "ws_seq": self._ws_seq,
         }
+        if self.capture is not None:
+            probe.update(auth=self.capture.probe_auth, roster_v=self._state.workspace.roster_v, sig="x")
         r = preview(self._state, probe, log=self.uid)
         if isinstance(r, Refusal):
             raise StoreError.from_refusal(r)
@@ -495,6 +514,12 @@ class Projection:
         from orch.store import StoreError
 
         state = self.call.store.state
+        if self.capture is not None:
+            import dataclasses
+
+            from orch.ops.human import _AcceptAll
+
+            state = dataclasses.replace(state, _ctx=dataclasses.replace(state._ctx, verifier=_AcceptAll(), admit=True))
         for probe in self._probes:
             r = preview(state, probe, log=self.uid)
             if isinstance(r, Refusal):
@@ -513,6 +538,13 @@ class Projection:
         ``ctx.plan`` before the first append (§0.7)."""
         c = self.call
         if c.ctx.dry_run or not self.planned:
+            return []
+        if self.capture is not None:
+            from orch.ops.prepare import Captured
+
+            for p in self.planned:
+                payload = {k: v for k, v in p.event.items() if k != "actor"}
+                self.capture.add(Captured(self.uid, payload, dict(p.body) if p.body else None, p.artifacts))
             return []
         if c.ctx.plan is not None:
             for i, p in enumerate(self.planned):

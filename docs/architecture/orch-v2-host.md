@@ -1193,6 +1193,27 @@ It covers the op, its outcome and every payload field, so `verdict pass` and `ve
   - **In tier A any process of the person's UID can create a request**, so `orch sign` says "only sign a code you
     created yourself" every time it runs.
 
+**As built in H5a** (resolutions of points the text above leaves open; the wire schemas are unchanged):
+
+- `human.cancel` on an `expired` request answers `{state:"cancelled"}`; the stored state stays `expired`.
+- A prepared `grant.issued` keeps `"secret_hash": null` in every answer (the host's redaction drops a secret-named key
+  only when its value is not `null`).
+- A person's `new` emits `ticket.created` only (`EMITS_V1["new"]`): it takes `title` and `type`; the other arguments
+  answer `invalid.input` (set them after with a person `set` or `section.set`). The key is the one the store would
+  allocate at prepare; a key taken before the submit answers `ticket.exists`.
+- `material.before` keys are the `base_rev` paths (`ticket.<field>`, `body.<section>`) for `set` and `section.set`, and
+  the keys of `set` for `settings.changed`.
+- "One `log`": the events carry no log of their own, so the signer checks that the request's `log` is the ticket of
+  `material.ticket` (or `workspace` with no ticket).
+- Number and order of events: one for a `who: human` op, one `ticket.created` for `new`, 1 to 16 events of the op's
+  `EMITS_V1` types otherwise.
+- Confirmation word for the ops the list above does not name: the addon name for addon ops (as P1), the ticket key for
+  any other ticket op, else the op name in capitals.
+- `human.prepare` takes inner-op files as `{b64}` only until H4a2's blobs land. A prepared grant's `issued_at` is the
+  prepare time, so F1's 300 s skew between `issued_at` and `at` refuses a grant submitted more than 5 minutes later.
+- `human.pending`, hand-off codes and `orch sign CODE` are H5b; a hand-off request has `code: null` until then, and
+  `human.get` with `signer` binds it.
+
 #### 0.8.2 Job ops (worker socket, H10)
 
 ```

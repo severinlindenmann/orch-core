@@ -121,8 +121,11 @@ def served_ops() -> dict[str, int]:
     """Every op the workspace socket serves, with its contract version (``welcome.ops``)."""
     import orch.ops as ops
 
+    from .human import HUMAN_OPS
+
     out = {op.name: 1 for op in ops.all() if op.name not in NOT_SERVED}
     out.update(HOST_OPS)
+    out.update(HUMAN_OPS)
     return out
 
 
@@ -130,8 +133,12 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
     """(matrix category, phase) of a served op, ``None`` for an op that is not served."""
     import orch.ops as ops
 
+    from .human import HUMAN_OPS, PHASES
+
     if name in HOST_OPS:
         return ("read", "read")
+    if name in HUMAN_OPS:
+        return ("human_api", PHASES[name])  # type: ignore[return-value]
     if name in NOT_SERVED:
         return None
     try:
@@ -253,8 +260,11 @@ class RegistryBackend:
 
     def __init__(self, started: Callable[[], float] | None = None) -> None:
         self.started = started
+        from .human import HumanOps
+
         self.ops = served_ops()
         self._kinds = {op: op_kind(op) for op in self.ops}
+        self.human = HumanOps(self)
         register_builders()
 
     def kind(self, op: str) -> tuple[OpKind, Phase] | None:
@@ -284,7 +294,12 @@ class RegistryBackend:
             if store is not None and store.append_check is None:
                 store.append_check = deny_append  # outside a write's apply no caller event may land (§0.7)
             op = call.frame["op"]
-            result = self._host_op(call) if op in HOST_OPS else self._registry(call, redactor)
+            if op in HOST_OPS:
+                result = self._host_op(call)
+            elif op in self.human.ops:
+                result = self.human.serve(call, redactor)
+            else:
+                result = self._registry(call, redactor)
             return redactor.obj(result)
         except HostError as exc:
             raise redactor.error(exc) from None
@@ -461,7 +476,9 @@ class RegistryBackend:
                 out["ref"] = uid + sep + tail
         return out
 
-    def _context(self, call: Call, session: str | None, dry_run: bool, files: dict[str, bytes]) -> Any:
+    def _context(
+        self, call: Call, session: str | None, dry_run: bool, files: dict[str, bytes], *, prepare: Any = None
+    ) -> Any:
         from orch.ops import Context
         from orch.ops.runtime import Workspace
 
@@ -484,6 +501,7 @@ class RegistryBackend:
             viewer=call.viewer,
             principal=call.principal,
             unserved=frozenset(NOT_SERVED),
+            prepare=prepare,
         )
 
     def _run(self, operation: Operation, args: dict[str, Any], ctx: Any, call: Call) -> dict[str, Any]:

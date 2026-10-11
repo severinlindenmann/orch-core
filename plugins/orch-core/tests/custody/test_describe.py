@@ -127,6 +127,30 @@ CASES: dict[str, tuple[str, dict]] = {
     ),
     "addon.disabled": ("workspace", {"name": "dash"}),
     "addon.purged": ("workspace", {"name": "dash"}),
+    # A types a person signs through human.prepare (H5a: person versions of agent ops, and move)
+    "ticket.moved": (TICKET, {"from": "in_progress", "to": "backlog", "reason": "parked"}),
+    "ticket.created": (TICKET, {"key": "DEMO-0042", "ticket_type": "feature", "title": "Login", "owner": PERSON}),
+    "ticket.updated": (
+        TICKET,
+        {
+            "base_rev": {"body.summary": H2, "ticket.title": H1},
+            "set": {"ticket.title": "Login v2"},
+            "sections": {"summary": {"hash": H1, "refs": []}},
+        },
+    ),
+    "log.added": (TICKET, {"text": "looked at it"}),
+    "question.asked": (
+        TICKET,
+        {"question": {"id": "Q1", "to": "ticket_owner", "text": "ok?", "blocking": True}, "qid": "a" * 32, "hash": H1},
+    ),
+    "artifact.added": (
+        TICKET,
+        {"name": "shot.png", "kind": "other", "sha256": H1, "bytes": 12, "ac": "AC1", "task": "T1", "label": "x"},
+    ),
+    "artifact.replaced": (
+        TICKET,
+        {"name": "shot.png", "kind": "other", "sha256": H1, "bytes": 12, "replaces": H2},
+    ),
 }
 
 
@@ -170,7 +194,7 @@ def test_every_person_event_type_has_a_case_and_the_table_is_complete():
     assert set(CASES) == set(EVENT_FIELDS)
     for etype, (_, fields) in CASES.items():
         assert set(fields) <= set(EVENT_FIELDS[etype]), etype
-    assert not set(EVENT_FIELDS) & {"task.done", "claim.taken", "artifact.added", "edit.external", "branch.pushed"}
+    assert not set(EVENT_FIELDS) & {"task.done", "claim.taken", "edit.external", "branch.pushed", "status.changed"}
 
 
 @pytest.mark.parametrize("etype", sorted(CASES))
@@ -246,10 +270,9 @@ def test_grant_issue_shows_scope_hours_verbs_and_expiry():
 
 def test_unhandled_or_unknown_event_types_refuse():
     for etype in (
-        "ticket.updated",
         "task.done",
         "claim.taken",
-        "artifact.added",
+        "status.changed",
         "edit.external",
         "branch.pushed",
         "nonsense.event",

@@ -713,6 +713,21 @@ class OutcomeStore(IntentStore):
                         if record is not None and record.get("step") in self.TERMINAL:
                             self._tombstone(name, record, now)
 
+    def settle(self, key: str, outcome: Mapping[str, Any]) -> None:
+        """Start-up recovery of a ``human.submit`` rolled forward (§0.8.1): its ``pending`` record gets the request's
+        terminal outcome (``committed`` with the result, or ``failed`` with the error), never ``partial``."""
+        with self._lock:
+            if key in self._running:
+                return
+            record = self.read(key)
+            if record is None or record.get("step") != self.START:
+                return
+            fields: dict[str, Any] = {"step": outcome["state"], "exit": outcome["exit"], "done_at": int(self.clock())}
+            for name in ("result", "error"):
+                if name in outcome:
+                    fields[name] = outcome[name]
+            self._write(key, {**record, **fields})
+
     # -- outcome.get
     def lookup(self, principal: str, idem: str) -> dict[str, Any]:
         """``outcome.get`` for ``principal``: ``{state, result?, error?, exit}``, never a frame. No record of this

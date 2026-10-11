@@ -72,6 +72,14 @@ def person_ok(workspace: Any, person: str, now: float) -> bool:
     return False
 
 
+def deny_append(log: str, event: dict[str, Any]) -> None:
+    """The store's append check outside a write's ``apply`` (reads, dry runs, person reads): no caller event may land
+    without an outcome record listing it (§0.7). The host's own healing events are exempt in the store."""
+    from orch.store import StoreError
+
+    raise StoreError("internal", f"{event.get('type')}: an append outside a write")
+
+
 def ok_result(data: Any, *, seq: int = 0, duplicate: bool = False) -> dict[str, Any]:
     return {
         "data": data,
@@ -233,8 +241,9 @@ class WorkspaceService:
         if self.caps is None:
             from orch.ops.caps import Capabilities
 
-            env = {"ORCH_STATE_DIR": str(self.state_dir), "ORCH_WORKSPACE": self.entry.root}
-            self.caps = Capabilities.host((self.entry.root, self.state_dir), env=env, clock=self.clock)
+            # The workspace root only: the host's state directory (keys, pins, outcome records) is never a handler's
+            # file root, and no ORCH_STATE_DIR or ORCH_WORKSPACE reaches a handler (the store is injected).
+            self.caps = Capabilities.host((self.entry.root,), env={}, clock=self.clock)
         return self.caps
 
     def close(self) -> None:

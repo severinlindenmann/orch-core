@@ -524,6 +524,7 @@ class OutcomeStore(IntentStore):
         session: str | None = None,
         digest_args: frozenset[str] = frozenset(),
         before: Callable[[], None] | None = None,
+        redactor: Any = None,
     ) -> dict[str, Any]:
         """``begin``, ``apply`` (which appends the planned events and returns the result) and the end of the record.
 
@@ -536,6 +537,9 @@ class OutcomeStore(IntentStore):
         ``planned`` ``None`` is a deferred plan (:meth:`begin`): ``apply`` calls :meth:`plan` before each append.
         ``before`` runs after a new record is made and before ``apply`` (the workspace-state checks of §0.6 step 10,
         which come after the replay of step 9); if it raises, the record is removed and nothing ran.
+
+        ``redactor`` (``obj(value)`` and ``error(HostError)``, D-P2-10): every error and every result rebuilt from the
+        log passes through it **before** the record stores it.
         """
         from orch.store import StoreError
 
@@ -558,18 +562,19 @@ class OutcomeStore(IntentStore):
             except BaseException:
                 self.abandon(begun)
                 raise
+        clean = redactor.error if redactor is not None else (lambda e: e)
         try:
             result = apply(begun)
         except HostError as exc:
-            return self._refused(begun, exc)
+            return self._refused(begun, clean(exc), redactor)
         except StoreError as exc:  # the model's refusal (or store.busy): its disposition comes from the host table
-            return self._refused(begun, HostError(exc.code, exc.detail or exc.code))
+            return self._refused(begun, clean(HostError(exc.code, exc.detail or exc.code)), redactor)
         except BaseException:
             self.release(begun)
             raise
         return self.commit(begun, result)["result"]
 
-    def _refused(self, intent: Intent, error: HostError) -> dict[str, Any]:
+    def _refused(self, intent: Intent, error: HostError, redactor: Any = None) -> dict[str, Any]:
         """``apply`` raised ``error``: ask the log what landed, then end the record accordingly (raise or return)."""
         try:
             with self.reconciler.locked() if self.reconciler is not None else contextlib.nullcontext():
@@ -585,6 +590,8 @@ class OutcomeStore(IntentStore):
             self.release(intent)
             raise error
         assert isinstance(fields, dict)
+        if redactor is not None:
+            fields = {**fields, **{k: redactor.obj(fields[k]) for k in ("result", "error") if k in fields}}
         record = self._finish(intent, fields)
         if record["step"] == "committed":
             return record["result"]

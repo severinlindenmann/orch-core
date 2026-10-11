@@ -49,13 +49,10 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
-import hashlib
 import logging
-import re
 import time
 import traceback
-from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -65,7 +62,8 @@ from .auth import Redactor
 from .columns import OpKind
 from .errors import HostError
 from .outcomes import BUILDERS, Planned, request_idem
-from .workspace import ok_result
+from .visibility import Viewer
+from .workspace import deny_append, ok_result
 
 if TYPE_CHECKING:
     from orch.ops import Operation, Result
@@ -95,6 +93,12 @@ NOT_SERVED: dict[str, str] = {
     "wait": "served on the bus from H6a",
 }
 PERSON_READS = frozenset({"doctor", "instructions.sync", "instructions.hook"})
+#: arguments the host refuses (``op.not_allowed``) on an op it otherwise serves
+HOST_REFUSED_ARGS: dict[str, dict[str, str]] = {
+    "doctor": {
+        "repair": "doctor --repair is a control action of the host's owner, not a workspace op (a control op later)"
+    },
+}
 HOST_OPS: dict[str, int] = {"whoami": 1, "host.status": 1, "outcome.get": 1}
 DEFAULT_TIMEOUT_MS = 30_000
 LOG = logging.getLogger(__name__)
@@ -163,7 +167,7 @@ def rebuild(record: dict[str, Any], events: list[dict[str, Any]]) -> dict[str, A
         data = {"title": created.get("title"), "ticket_type": created.get("ticket_type")}
     out = ok_result(data, seq=max(int(e["seq"]) for e in events))
     out["key"] = record.get("key") or (created or {}).get("key")
-    return out
+    return Redactor().obj(out)  # logged text reaches the record: never a grant shape or key material
 
 
 def register_builders() -> None:
@@ -187,6 +191,25 @@ def host_error(e: OrchError, op: Operation | None) -> HostError:
     return out
 
 
+class PlanGuard:
+    """One write's plan: ``plan`` adds an announced batch to the outcome record (fsynced) before it is appended, and
+    ``check`` (the store's append check during ``apply``) refuses any event the record does not list."""
+
+    def __init__(self, outcomes: Any, intent: Any) -> None:
+        self.outcomes, self.intent = outcomes, intent
+        self.listed = {(p.get("log"), p.get("id")) for p in intent.record.get("planned") or []}
+
+    def plan(self, events: list[tuple[str, str, str, dict[str, Any]]], key: str | None = None) -> None:
+        self.outcomes.plan(self.intent, [Planned(log, eid, typ, actor) for log, eid, typ, actor in events], key)
+        self.listed |= {(log, eid) for log, eid, _typ, _actor in events}
+
+    def check(self, log: str, event: dict[str, Any]) -> None:
+        from orch.store import StoreError
+
+        if (log, event.get("id")) not in self.listed:
+            raise StoreError("internal", f"{event.get('type')}: an append its outcome record does not list")
+
+
 class ScopedRecords:
     """Session records (stop rule, retry dedup) keyed by (principal, session) instead of the session label alone
     (§0.5, F4): a session id is public, so another principal naming it reaches none of these records."""
@@ -195,7 +218,9 @@ class ScopedRecords:
         self.inner, self.principal = inner, principal
 
     def _key(self, session: str) -> str:
-        return "h_" + hashlib.sha256(f"{self.principal}\0{session}".encode()).hexdigest()[:40]
+        from orch.ops.runtime import scoped_key
+
+        return scoped_key(self.principal, session)
 
     def refused(self, session: str, *a: Any, **k: Any) -> int:
         return self.inner.refused(self._key(session), *a, **k)
@@ -214,105 +239,6 @@ class ScopedRecords:
 
     def remember(self, session: str, *a: Any, **k: Any) -> None:
         self.inner.remember(self._key(session), *a, **k)
-
-
-# --- visibility (§0.5, F6) ----------------------------------------------------------------------------------------
-
-_ARTIFACT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")  # the F1 §6 name rule
-
-
-@dataclass(frozen=True)
-class Viewer:
-    """The viewer of one read (§0.5): P the mapped person, G the grant's person, N ``no-person`` (``person`` None),
-    which sees ``workspace`` tickets only. Every row, count, item and subscription item is filtered with
-    :meth:`sees` **before** it is counted or returned, and a ref the viewer may not see is ``not_found`` exactly as a
-    ref that does not exist."""
-
-    column: str
-    person: str | None
-    #: a person-class owner (column P): may name another person in ``needs`` and sees every session and grant
-    owner: bool = False
-
-    @classmethod
-    def of(cls, call: Call) -> Viewer:
-        auth = call.service.auth
-        owner = call.column.name == "P" and auth is not None and auth.owner(call.viewer)
-        return cls(call.column.name, call.viewer, owner)
-
-    def sees(self, view: Any) -> bool:
-        vis = view.visibility
-        if vis == "workspace":
-            return True
-        return self.person is not None and isinstance(vis, Mapping) and self.person in vis.get("restricted", ())
-
-    def visible(self, views: Iterable[Any]) -> list[Any]:
-        """The views this viewer may see, in order: filter first, count after (``total``, ``next_page``)."""
-        return [v for v in views if self.sees(v)]
-
-    def ticket(self, store: Any, ref: str) -> Any:
-        """The ticket ``ref`` names, or ``not_found`` (also for a ticket the viewer may not see: N5, F6)."""
-
-        head = ref.partition("/")[0] if isinstance(ref, str) else ""
-        try:
-            view = store.ticket(store.normalise_ref(head)) if head else None
-        except Exception:  # noqa: BLE001 - a malformed ref is a ref that does not exist
-            view = None
-        if view is None or not self.sees(view):
-            raise HostError("not_found", f"no ticket {' '.join(str(ref).split())[:60]}")
-        return view
-
-    def needs_person(self, requested: str | None) -> str | None:
-        """``needs {person}``: G always its grant's person; P its own person, or another one only as an owner; N only
-        ``workspace`` items (``None``). Naming another person otherwise is ``op.not_allowed``."""
-        if self.column == "G":
-            if requested is not None and requested != self.person:
-                raise HostError("op.not_allowed", "a grant reads only its own person's needs")
-            return self.person
-        if self.column == "P":
-            if requested is None or requested == self.person:
-                return self.person
-            if self.owner:
-                return requested
-            raise HostError("op.not_allowed", "only an owner reads another person's needs")
-        if requested is not None:
-            raise HostError("op.not_allowed", "no-person reads workspace items only")
-        return None
-
-    def session_visible(self, entry_person: str | None) -> bool:
-        """``session.list`` and ``grant.list``: an owner (P) sees every entry, any other P its own, G its own
-        person's; N is outside the matrix (``op.not_allowed``, the gate's)."""
-        if self.column == "P" and self.owner:
-            return True
-        return self.column in {"P", "G"} and entry_person is not None and entry_person == self.person
-
-    def claims(self, store: Any, keys: Iterable[str]) -> list[str]:
-        """A session's claims with every ticket the viewer may not see left out."""
-        out = []
-        for key in keys:
-            view = store.ticket(key)
-            if view is not None and self.sees(view):
-                out.append(key)
-        return out
-
-    @staticmethod
-    def linked_repo(view: Any, repo: str | None) -> None:
-        """``diff {repo}``: only a repo named in the ticket's ``links.repos``; any other is ``not_found``."""
-        if repo is None:
-            return
-        repos = ((view.fields.get("links") or {}).get("repos")) or []
-        if repo not in repos:
-            raise HostError("not_found", "no such repo on this ticket")
-
-    @staticmethod
-    def artifact(view: Any, name: str) -> Any:
-        """``artifact.get {name}``: the F1 §6 name rule, then the ticket's replayed manifest (read by digest after);
-        a client string is never joined to a path, so ``../x`` is simply a name that does not exist."""
-        if not isinstance(name, str) or not _ARTIFACT_NAME.fullmatch(name):
-            raise HostError("not_found", "no such artifact on this ticket")
-        for artifact in view.artifacts:
-            if artifact.name == name:
-                return artifact
-        raise HostError("not_found", "no such artifact on this ticket")
 
 
 # --- the backend ------------------------------------------------------------------------------------------------------
@@ -354,6 +280,9 @@ class RegistryBackend:
         redactor = Redactor((call.frame.get("auth") or {}).get("grant"))
         try:
             call.authorize()  # the authoritative column, from the refreshed store, before anything else (F8)
+            store = call.service.store
+            if store is not None and store.append_check is None:
+                store.append_check = deny_append  # outside a write's apply no caller event may land (§0.7)
             op = call.frame["op"]
             result = self._host_op(call) if op in HOST_OPS else self._registry(call, redactor)
             return redactor.obj(result)
@@ -415,63 +344,79 @@ class RegistryBackend:
 
     # -- registry ops
     def _registry(self, call: Call, redactor: Redactor) -> dict[str, Any]:
+        """§0.6 steps 8 to 11 of a registry op: a read (or dry run) runs directly, a write through the outcome store."""
         import orch.ops as ops
+
+        operation = ops.get(call.frame["op"])
+        args, session, specs = self._step8(call, operation, redactor)
+        opts = call.frame.get("opts") or {}
+        dry_run = bool(opts.get("dry_run"))
+        idem_given = opts.get("idem") if operation.is_write and not dry_run else None
+        digests, digest_args = call.service.outcomes.bind_files(call.principal, idem_given, specs)
+        idem = request_idem(operation.name, opts)  # step 9 starts: idem.required (dry_run support was checked first)
+        ctx = self._context(call, session, dry_run, self._file_bytes(specs, args))
+        if idem is None:  # a read or a dry run: no outcome record, and the store's deny-all append check stays
+            self._state(call.service, False)
+            return self._run(operation, args, ctx, call)
+        return self._write(call, operation, args, ctx, idem, digests, digest_args, redactor)
+
+    def _step8(self, call: Call, operation: Operation, redactor: Redactor) -> tuple[dict[str, Any], Any, dict]:
+        """Step 8: the args against the schema, the host's own refusals, the session label, the ``files``."""
         from orch.cli.main import _SESSION, _check_input
         from orch.ops.errors import OrchError
 
-        op, frame, service = call.frame["op"], call.frame, call.service
-        operation = ops.get(op)
-        args = dict(frame["args"])
-        opts = frame.get("opts") or {}
-        session = (frame.get("auth") or {}).get("session")
-        # step 8: the args, the files, dry_run support
+        args = dict(call.frame["args"])
         try:
             _check_input(operation, args, redactor.secrets)
         except OrchError as e:
             raise host_error(e, operation) from None
+        for arg, why in HOST_REFUSED_ARGS.get(operation.name, {}).items():
+            if args.get(arg):
+                raise HostError("op.not_allowed", why)
+        session = (call.frame.get("auth") or {}).get("session")
         if session is not None and not _SESSION.search(session):
             raise HostError("invalid.input", "auth.session is not a session id (s_<ULID>, then at most three .n)")
-        write, dry_run = operation.is_write, bool(opts.get("dry_run"))
-        specs = self._file_specs(operation, frame, args)
-        idem_given = opts.get("idem") if write and not dry_run else None
-        digests, digest_args = service.outcomes.bind_files(call.principal, idem_given, specs)
-        # step 9 starts here: idem.required (after dry_run support, which request_idem checks first)
-        idem = request_idem(op, opts)
-        ctx = self._context(call, session, dry_run, self._file_bytes(specs, args))
-        if idem is None:  # a read or a dry run: no outcome record
-            self._state(service, False)
-            return self._run(operation, args, ctx, call)
-        normalised = self._normalise(operation, args, service.store)
+        return args, session, self._file_specs(operation, call.frame, args)
+
+    def _write(
+        self,
+        call: Call,
+        operation: Operation,
+        args: dict[str, Any],
+        ctx: Any,
+        idem: str,
+        digests: dict[str, str],
+        digest_args: frozenset[str],
+        redactor: Redactor,
+    ) -> dict[str, Any]:
+        """Steps 9 to 11 of a write: the outcome record (replay, conflict, expiry), the workspace state, the op. The
+        handler announces its events (``ctx.plan``) and only those may be appended (:class:`PlanGuard`). The result,
+        a refusal and a result rebuilt from the log are all redacted before the record stores them."""
+        service = call.service
 
         def apply(intent: Any) -> dict[str, Any]:
-            from orch.store import StoreError
-
-            def plan(events: list[tuple[str, str, str, dict[str, Any]]], key: str | None = None) -> None:
-                service.outcomes.plan(intent, [Planned(*e) for e in events], key)
-
-            def check(log: str, event: dict[str, Any]) -> None:
-                listed = {(p.get("log"), p.get("id")) for p in intent.record.get("planned") or []}
-                if (log, event.get("id")) not in listed:
-                    raise StoreError("internal", f"{event.get('type')}: an append its outcome record does not list")
-
-            ctx.plan = plan
-            service.store.append_check = check
+            guard = PlanGuard(service.outcomes, intent)
+            ctx.plan = guard.plan
+            service.store.append_check = guard.check
             try:
                 return redactor.obj(self._run(operation, args, ctx, call))
+            except HostError as exc:
+                raise redactor.error(exc) from None
             finally:
-                service.store.append_check = None
+                service.store.append_check = deny_append
 
         return service.outcomes.execute(
             call.principal,
             idem,
-            op,
-            normalised,
+            operation.name,
+            self._normalise(operation, args, service.store),
             apply,
             planned=None,
             files=digests,
-            session=session,
+            session=(call.frame.get("auth") or {}).get("session"),
             digest_args=digest_args,
             before=lambda: self._state(service, True),
+            redactor=redactor,
         )
 
     @staticmethod
@@ -538,6 +483,7 @@ class RegistryBackend:
             hosted=True,
             viewer=call.viewer,
             principal=call.principal,
+            unserved=frozenset(NOT_SERVED),
         )
 
     def _run(self, operation: Operation, args: dict[str, Any], ctx: Any, call: Call) -> dict[str, Any]:

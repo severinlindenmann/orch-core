@@ -196,6 +196,17 @@ def hash_vectors() -> dict[str, Any]:
             {"value": 'a\nb\t"q" \\ \u2028', "hash": h("value", cj('a\nb\t"q" \\ \u2028'))},
             {"value": {'k\\"': ["\t\n"]}, "hash": h("value", cj({'k\\"': ["\t\n"]}))},
         ],
+        "policy_hash_refused": [
+            {"gate": "requirements", "policy": {**policy_obj(), "applies": []}, "why": "applies is an empty list"},
+            {"gate": "requirements", "policy": {**policy_obj(), "approvers": []}, "why": "no approver token"},
+            {"gate": "requirements", "policy": {**policy_obj(), "count": 0}, "why": "count below 1"},
+            {
+                "gate": "requirements",
+                "policy": {**policy_obj(), "approvers": ["owner", "admin"]},
+                "why": "unknown approver token",
+            },
+            {"gate": "requirements", "policy": {**policy_obj(), "not": ["viewer"]}, "why": "unknown token in not"},
+        ],
         "policy_hash": [
             {
                 "gate": "requirements",
@@ -439,17 +450,30 @@ def repo_identity_vectors() -> dict[str, Any]:
         ("relative_path", "../x", "x"),
         ("no_remote", "", "x"),
         ("http_not_https", "http://github.com/acme/x", "x"),
+        ("https_upper_dot_git_refused", "https://github.com/acme/x.GIT", "x"),
+        ("https_double_trailing_slash_refused", "https://github.com/acme/x//", "x"),
+        ("ssh_port_443_refused", "ssh://git@git.example.com:443/a/b", "x"),
+        ("https_dot_git_in_a_middle_segment", "https://github.com/acme.git/x", "x"),
     ]
-    mapping = [{"name": n, "raw": r, "repo_name": nm, "canonical": g.repo_identity(r, nm)} for n, r, nm in raw]
+    mapping = []
+    for n, r, nm in raw:
+        out = g.mapped_identity(r, nm)
+        case: dict[str, Any] = {"name": n, "raw": r, "repo_name": nm, "canonical": out}
+        if out is None:
+            case["refused"] = True
+        mapping.append(case)
+    assert all(g.is_canonical_identity(v) for v in ok) and not any(g.is_canonical_identity(v) for v in refused)
     return {
         "ok": ok,
         "refused": refused,
         "same": [["https://github.com/Acme/X", "https://github.com/acme/x"]],
         "mapping": mapping,
-        "mapping_note": "userinfo (user:token@) is removed before anything else and never appears in a result; a "
-        "trailing .git is removed only from the last path segment's end; the https default port 443 and the ssh "
-        "default port 22 are dropped, every other port is kept; anything that is not https, ssh or scp-like is "
-        "local:<repo name>.",
+        "mapping_note": "userinfo (user:token@) is removed before anything else and never appears in a result; one "
+        "trailing / and one trailing (lower-case) .git are removed from the end of the path; the https default port "
+        "443 and the ssh default port 22 are dropped, every other port is kept (so ssh on 443 keeps it); anything that "
+        "is not https, ssh or scp-like is local:<repo name>. A mapped result that is not in the canonical form is "
+        "refused, never converted: `canonical` is null and `refused` is true (x.GIT, x//, ssh port 443). A .git that "
+        "ends a middle segment is not a .git suffix of the path and is kept.",
     }
 
 
@@ -572,6 +596,11 @@ def _vectors() -> dict[str, dict[str, Any]]:
             "cases": fl.effective_policy_cases(),
             "scenarios": fl.effective_policy_scenarios(),
         },
+        "approvals.json": {
+            "pins": "who may approve (token, not, viewer, workers on independent and code gates), host events never "
+            "approve, incomplete and non-applying gates, a stale source list",
+            "scenarios": fl.approval_scenarios(),
+        },
         "labels.json": {"labels": LABELS},
         "section_text.json": section_text_vectors(),
         "artifact_refs.json": artifact_refs_vectors(),
@@ -588,8 +617,8 @@ INDEX: dict[str, str] = {
     "canon.json": "[shared, unchanged] strict parse depth 16/17 and -0 -> 0 (ticket-format 11.2)",
     "labels.json": "[shared, unchanged] the F1 domain labels (5.6), prefix-free with the protocol's",
     "text.json": "[shared, unchanged] CRLF/CR -> LF, NFC (Unicode 16.0), refused controls, bidi and unassigned (11.3)",
-    "hashes.json": "[shared, unchanged] known answers: artifact, section, value, policy, people, question id and hash, "
-    "grant secret; refused non-NFC inputs (5.6)",
+    "hashes.json": "[shared, CHANGED] known answers: artifact, section, value, policy, people, question id and hash, "
+    "grant secret; refused non-NFC inputs (5.6); refused non-canonical policies (5.7)",
     "chain.json": "[shared, unchanged] three chained events: heads, prev, canonical lines, signing bytes; the sig and "
     "host_sig values in it are PLACEHOLDERS, real signatures are pinned in signatures.json, tamper.json and the "
     "scenarios",
@@ -611,6 +640,8 @@ INDEX: dict[str, str] = {
     "generation.json": "the 5.7 raise table row by row, delayed approval, reverted edit, voided approvals",
     "status.json": "the 5.9 status table, done is sticky, reopen",
     "effective_policy.json": "the 5.7 intersection, a later workspace change, gate.no_eligible",
+    "approvals.json": "model scenarios: who may approve (5.7), host events (5.2, 5.12), gate.incomplete, "
+    "gate.not_applicable, a stale source_sha",
     "questions.json": "question id and hash, answers, a decision for the same qid after a restore",
     "index.json": "this list",
 }

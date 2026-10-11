@@ -71,19 +71,58 @@ def test_the_untouched_logs_replay_clean_and_the_lines_are_cj():
         assert canon.parse_event_line(bytes.fromhex(hex_line)) == e
 
 
+# orch-only: where ``canon.check_chain`` (prev/seq links only, no signatures) stops. The vector states the one F1
+# outcome (``chain_broken_at``); this layer split is orch's and is kept out of the shared file.
+CHECK_CHAIN_STOPS_AT = {
+    "payload_changed_not_resigned": 3,
+    "payload_changed_host_resigned": 3,
+    "event_deleted": 2,
+    "events_swapped": 3,
+    "prev_rewritten": 3,
+    "seq_rewritten": 3,
+    "host_sig_swapped": 3,
+    "tail_truncated": None,
+    "genesis_payload_changed": 2,
+    "member_role_raised_not_resigned": 4,
+    "member_role_raised_host_resigned": 4,
+    "workspace_event_deleted": 2,
+}
+
+# Where orch.model disagrees with F1 §5.5 as amended in PR #361 (code fix in PR #363's next round):
+REPLAY_GAPS = {
+    "payload_changed_host_resigned": "a bad person sig is recorded as auth.invalid_event, F1 5.5 breaks the chain",
+    "member_role_raised_host_resigned": "a bad person sig is recorded as auth.invalid_event, F1 5.5 breaks the chain "
+    "there and stops every ticket event with ws_seq >= 3",
+    "events_swapped": "replay sorts a log's lines by (ws_seq, at, uid, seq); F1 5.5 checks them in file order",
+}
+
+
 @pytest.mark.parametrize("c", T["cases"], ids=lambda c: c["name"])
-def test_a_tampered_line_breaks_the_chain_where_the_vector_says(c):
-    if c["check_chain_breaks_at"] is None:
+def test_check_chain_stops_at_the_first_broken_link(c):
+    at = CHECK_CHAIN_STOPS_AT[c["name"]]
+    if at is None:
         canon.check_chain(c["events"])
     else:
         with pytest.raises(canon.ChainError) as ei:
             canon.check_chain(c["events"])
-        assert ei.value.seq == c["check_chain_breaks_at"], c["mutation"]
+        assert ei.value.seq == at, c["mutation"]
+
+
+def _case(c):
+    marks = [pytest.mark.xfail(strict=True, reason=REPLAY_GAPS[c["name"]])] if c["name"] in REPLAY_GAPS else []
+    return pytest.param(c, id=c["name"], marks=marks)
+
+
+@pytest.mark.parametrize("c", [_case(c) for c in T["cases"]])
+def test_a_tampered_line_breaks_the_chain_where_the_vector_says(c):
     st = _replay_with(c)
     broken = [x.seq for x in st.chain_errors if x.log == c["log"]]
-    assert broken == ([c["replay_chain_broken_at"]] if c["replay_chain_broken_at"] else []), c["mutation"]
-    if c["log"] == "workspace":
-        invalid = [[i.seq, i.code] for i in st.workspace.invalid]
-    else:
-        invalid = [[i.seq, i.code] for i in st._core.logs[c["log"]].invalid if i.freezes]
-    assert invalid == c["replay_invalid_seqs"], c["mutation"]
+    assert broken == ([c["chain_broken_at"]] if c["chain_broken_at"] else []), c["mutation"]
+    stopped = c.get("ticket_events_stopped_from", {})
+    for uid in T["ticket_events"]:
+        got = [x.seq for x in st.chain_errors if x.log == uid]
+        assert got == ([stopped[uid]] if uid in stopped else ([] if uid != c["log"] else got)), (uid, c["mutation"])
+        if stopped.get(uid) == 1:
+            assert uid not in st.tickets
+    assert not st.workspace.invalid, c["mutation"]
+    assert not [i for log in st._core.logs.values() for i in log.invalid if i.freezes], c["mutation"]

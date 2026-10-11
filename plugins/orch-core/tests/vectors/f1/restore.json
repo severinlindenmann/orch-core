@@ -376,9 +376,25 @@
   },
   {
    "genesis": "sha256:d24af6280335a5f01ef006cd5ca4b2f302fa464ba9740b0c2f56bf80e18f52b5",
-   "name": "restore_without_the_revocation",
+   "host_expect": "refused",
+   "host_knows_revocations": [
+    {
+     "o": {
+      "device_id": "a6dc67f56b74e07ca65b035348e03bc0",
+      "kind": "revocation",
+      "person_id": "6ce6085b169e8ee5111456b91dc4ae3c",
+      "reason": "lost",
+      "revoked_ms": 1790000100000,
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "9hA3XWy2ZF_xS6Etgsmqu58g84EONyLW4ICmJ5nZB2YysJgcMYvwwOCh19fzuzqMyqdhKvycsT_JJeoNdKroOQ"
+    }
+   ],
+   "name": "reader_cannot_see_a_dropped_revocation",
+   "note": "NOT a valid restore. A log-only reader cannot see the dropped revocation (it is only in the abandoned tail and in host state), so it accepts these lines; the host must refuse this restore, because 5.10 accepts a workspace restore only if the host re-appends every PK-signed revocation it has seen at once. Consumers must not read this scenario as 'restore without re-append is ok'.",
    "now": "2026-10-10T10:02:20Z",
-   "pins": "a workspace restore after a rollback: the host re-appends every PK-signed revocation it has seen as device.revoked with actor H, the embedded revocation verbatim",
+   "pins": "the same restore without the re-append: the abandoned tail held lena1's revocation, which the new chain no longer shows",
    "reappends": false,
    "steps": [
     {

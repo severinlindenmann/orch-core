@@ -14,13 +14,19 @@ FILES = {
     "status.json": lambda d: d["scenarios"],
     "effective_policy.json": lambda d: d["scenarios"],
     "questions.json": lambda d: d["scenarios"],
+    "approvals.json": lambda d: d["scenarios"],
 }
 SCENARIOS = [(f, s) for f, pick in FILES.items() for s in pick(load(f))]
 
 
 # Gaps in orch.model that the vectors expose (ticket-format 5.10 is clear, the model does not enforce it yet):
 # ``restore`` lists ``abandoned_decisions`` but nothing refuses the same signed event on the new chain.
-KNOWN_GAPS = {"questions.json:question_replayed_decision_after_restore": "abandoned_decisions is not enforced"}
+# ``replay``: §5.5 "Reading" says a line whose person ``sig`` does not verify breaks the chain at that line; orch.model
+# records it as an authorization failure (``invalid``) and keeps reading. Code fix in PR #363's next round.
+KNOWN_GAPS = {
+    "questions.json:question_replayed_decision_after_restore": "abandoned_decisions is not enforced",
+    "replay.json:replay": "a bad person sig is replayed as auth.invalid_event, F1 5.5 makes it chain.broken",
+}
 
 
 def _param(f, s):

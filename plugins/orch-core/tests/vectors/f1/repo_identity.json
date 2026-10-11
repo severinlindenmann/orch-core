@@ -137,9 +137,36 @@
    "name": "http_not_https",
    "raw": "http://github.com/acme/x",
    "repo_name": "x"
+  },
+  {
+   "canonical": null,
+   "name": "https_upper_dot_git_refused",
+   "raw": "https://github.com/acme/x.GIT",
+   "refused": true,
+   "repo_name": "x"
+  },
+  {
+   "canonical": null,
+   "name": "https_double_trailing_slash_refused",
+   "raw": "https://github.com/acme/x//",
+   "refused": true,
+   "repo_name": "x"
+  },
+  {
+   "canonical": null,
+   "name": "ssh_port_443_refused",
+   "raw": "ssh://git@git.example.com:443/a/b",
+   "refused": true,
+   "repo_name": "x"
+  },
+  {
+   "canonical": "https://github.com/acme.git/x",
+   "name": "https_dot_git_in_a_middle_segment",
+   "raw": "https://github.com/acme.git/x",
+   "repo_name": "x"
   }
  ],
- "mapping_note": "userinfo (user:token@) is removed before anything else and never appears in a result; a trailing .git is removed only from the last path segment's end; the https default port 443 and the ssh default port 22 are dropped, every other port is kept; anything that is not https, ssh or scp-like is local:<repo name>.",
+ "mapping_note": "userinfo (user:token@) is removed before anything else and never appears in a result; one trailing / and one trailing (lower-case) .git are removed from the end of the path; the https default port 443 and the ssh default port 22 are dropped, every other port is kept (so ssh on 443 keeps it); anything that is not https, ssh or scp-like is local:<repo name>. A mapped result that is not in the canonical form is refused, never converted: `canonical` is null and `refused` is true (x.GIT, x//, ssh port 443). A .git that ends a middle segment is not a .git suffix of the path and is kept.",
  "ok": [
   "https://github.com/acme/x",
   "https://github.com/Acme/X.y_z~1",

@@ -16,6 +16,7 @@ import { toPublicPath } from '@/app/urls'
 import { AcceptanceTasks } from './AcceptanceTasks'
 import { Artifacts } from './Artifacts'
 import { Changes, HAS_CHANGES } from './Changes'
+import { hasFeature, isRealHost } from '@/api/features'
 import { diffstat } from '@/api/gates'
 import { GatesStrip } from './Gates'
 import { TicketHeader } from './Header'
@@ -82,7 +83,7 @@ function NotFound({ ticketKey, message, retry }: { ticketKey: string; message: s
  * A ticket lives in one workspace. Opened from another one (a link, palette Recent), the page makes the ticket's
  * home the current workspace first (no "leaving" redirect), so every slot, addon state and action uses it.
  */
-function useHomeWorkspace(ticketKey: string): { ready: boolean } {
+function useHomeWorkspace(ticketKey: string): { ready: boolean; workspaceId: string } {
   const { workspace, workspaces, setWorkspaceId } = useWorkspace()
   const home = workspaceOfTicket(ticketKey, workspaces)
   useEffect(() => {
@@ -92,7 +93,8 @@ function useHomeWorkspace(ticketKey: string): { ready: boolean } {
     }
     // Only when the ticket (or its home) changes: a later switch away is the user's, and leaves the page.
   }, [ticketKey, home?.id])
-  return { ready: !home || home.id === workspace?.id }
+  // The ticket is read in its own workspace, whichever one is current.
+  return { ready: !home || home.id === workspace?.id, workspaceId: (home ?? workspace)?.id ?? '' }
 }
 
 const questionOf = (hash: string) => (/^question-[A-Za-z0-9_-]+$/.test(hash) ? hash : undefined)
@@ -100,8 +102,9 @@ const questionOf = (hash: string) => (/^question-[A-Za-z0-9_-]+$/.test(hash) ? h
 export function TicketPage({ ticketKey }: { ticketKey: string }) {
   const hash = useRouterState({ select: s => s.location.hash })
   const home = useHomeWorkspace(ticketKey)
+  const ticketWs = home.workspaceId
   const viewer = useViewer(ticketKey)
-  const q = useQuery(queries.ticket(ticketKey))
+  const q = useQuery({ ...queries.ticket(home.workspaceId, ticketKey), enabled: !!home.workspaceId })
   // The tab is in the address (`?tab=history`, Overview when absent). A `#question-Q2` link (Today's Agents panel)
   // opens the Questions tab on that question from the first paint.
   // Read through the route's validator again: a parent match passes the raw params on.
@@ -186,6 +189,8 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
   const ticket = q.data
   if (!ticket) return <TicketSkeleton />
 
+  // The mock shows Changes once work started; a real host serves the diff of any ticket with a linked branch.
+  const showChanges = HAS_CHANGES.has(ticket.status) || (isRealHost() && hasFeature('changes', ticketWs) && Object.keys(ticket.links.branches).length > 0)
   const props: TabProps = { ticket, viewer, jump, sign: setSigning }
   const openQuestions = ticket.questions_state.filter((x) => x.state === 'open').length
   const provenCount = ticket.acceptance_state.filter((a) => a.state === 'proven').length
@@ -200,7 +205,7 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
       <div className={wide ? 'grid min-w-0 grid-cols-[minmax(0,1fr)_320px] items-start gap-6' : 'min-w-0'}>
         <Tabs
           // `?tab=changes` on a ticket without changes (yet): Overview.
-          value={tab === 'changes' && !HAS_CHANGES.has(ticket.status) ? 'overview' : tab}
+          value={tab === 'changes' && !showChanges ? 'overview' : tab}
           onValueChange={(v) => {
             setTab(v as TabId)
             setFocus(undefined)
@@ -215,10 +220,10 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
                 {provenCount}/{ticket.acceptance_state.length}
               </span>
             </TabsTrigger>
-            {HAS_CHANGES.has(ticket.status) && (
+            {showChanges && (
               <TabsTrigger value="changes">
                 Changes
-                <span className="font-mono text-[11px] text-text-faint">{diffstat(ticket.branch)}</span>
+                {ticket.branch.head && <span className="font-mono text-[11px] text-text-faint">{diffstat(ticket.branch)}</span>}
               </TabsTrigger>
             )}
             <TabsTrigger value="questions">
@@ -238,7 +243,7 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
           <TabsContent value="acceptance">
             <AcceptanceTasks {...props} />
           </TabsContent>
-          {HAS_CHANGES.has(ticket.status) && (
+          {showChanges && (
             <TabsContent value="changes">
               <Changes {...props} />
             </TabsContent>

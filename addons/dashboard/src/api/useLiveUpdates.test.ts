@@ -40,7 +40,7 @@ it('implements the invalidation table scoped by UUID', () => {
   const seed = () => keys.forEach((key) => client.setQueryData(key, {}))
   const invalid = () => keys.filter((key) => client.getQueryState(key)?.isInvalidated)
   seed(); invalidateLive(client, 'ws', 'items', [{ id: '1.e', key: 'DEMO-0001' }])
-  expect(invalid()).toEqual(keys.slice(0, 3))
+  expect(invalid()).toEqual(keys.slice(0, 4)) // Today's activity feed shows the event too
   seed(); invalidateLive(client, 'ws', 'items', [{ id: '1.n', type: 'needs.changed' }])
   expect(invalid()).toEqual([keys[3], keys[6]])
   for (const type of ['member.removed', 'role.changed', 'device.revoked']) {
@@ -62,11 +62,27 @@ it('gone cancels and purges details and rows, closes views; revoked purges works
   expect(client.getQueryData(['ticket', 'ws', 'DEMO-0001'])).toBeUndefined()
   expect(client.getQueryData(['ticket', 'ws', 'DEMO-0001', 'log'])).toBeUndefined()
   expect(client.getQueryData(['tickets', 'ws'])).toEqual({ rows: [] })
-  expect(cancel).toHaveBeenCalled(); expect(close).toHaveBeenCalledWith('u')
+  expect(cancel).toHaveBeenCalled(); expect(close).toHaveBeenCalledWith('u', expect.arrayContaining(['u', 'DEMO-0001']))
   invalidateLive(client, 'ws', 'revoked', [], close)
   expect(client.getQueryData(['tickets', 'ws'])).toBeUndefined()
   expect(client.getQueryData(['ticket', 'other', 'DEMO-0001'])).toEqual({ uid: 'other-u' })
   expect(close).toHaveBeenCalledWith()
+})
+it('visibility changes and gone purge the activity feed and the closed list, not only mark them stale', () => {
+  const client = new QueryClient()
+  const seed = () => {
+    client.setQueryData(['today', 'ws'], { recent: [{ ticket: 'DEMO-0001', title: 'Secret title' }] })
+    client.setQueryData(['tickets', 'ws', 'closed', {}], [{ uid: 'ULID0001', key: 'DEMO-0001', title: 'Secret title' }])
+    client.setQueryData(['tickets', 'ws', 'all'], [{ uid: 'ULID0009', key: 'DEMO-0009', title: 'Other' }])
+    client.setQueryData(['today', 'other'], { recent: [] })
+  }
+  for (const item of [{ id: '1.e', key: 'DEMO-0001', type: 'visibility.changed' }, { id: '1.e', key: 'DEMO-0001', type: 'ticket.reopened' }, { id: '1.g', uid: 'ULID0001', gone: true }]) {
+    seed(); invalidateLive(client, 'ws', 'items', [item])
+    expect(client.getQueryData(['today', 'ws'])).toBeUndefined()
+    expect(client.getQueryData(['tickets', 'ws', 'closed', {}])).toBeUndefined()
+    expect(client.getQueryData(['tickets', 'ws', 'all'])).toBeDefined()
+    expect(client.getQueryData(['today', 'other'])).toEqual({ recent: [] })
+  }
 })
 it('any successful frame, including a heartbeat, resets the failure counter', async () => {
   vi.useFakeTimers()
@@ -132,4 +148,24 @@ it('a 403/404 on the stream is revocation, not an outage', async () => {
     await new Promise((r) => setTimeout(r, 10))
     expect(receive).toHaveBeenCalledWith('revoked', []); expect(fetcher).toHaveBeenCalledTimes(1); stop()
   }
+})
+
+it('a child that becomes invisible disappears from the epic page cache; revoked purges the children and refusals caches', () => {
+  const client = new QueryClient()
+  client.setQueryData(['ticket-children', 'ws', 'DEMO-0040'], [{ uid: 'c1', key: 'DEMO-0043', title: 'Secret child' }, { uid: 'c2', key: 'DEMO-0044', title: 'Other' }])
+  client.setQueryData(['tickets', 'ws'], { rows: [{ uid: 'c1', key: 'DEMO-0043' }] })
+  invalidateLive(client, 'ws', 'items', [{ id: '1.g', uid: 'c1', gone: true }])
+  expect(client.getQueryData(['ticket-children', 'ws', 'DEMO-0040'])).toBeUndefined()
+  client.setQueryData(['ticket-children', 'ws', 'DEMO-0040'], [{ uid: 'c2', key: 'DEMO-0044' }])
+  client.setQueryData(['ticket-refusals', 'ws', 'DEMO-0040', 3], [{ text: 'x' }])
+  invalidateLive(client, 'ws', 'revoked', [])
+  expect(client.getQueryData(['ticket-children', 'ws', 'DEMO-0040'])).toBeUndefined()
+  expect(client.getQueryData(['ticket-refusals', 'ws', 'DEMO-0040', 3])).toBeUndefined()
+})
+it('gone passes the collected keys to close, so only the matching open ticket is closed', () => {
+  const client = new QueryClient(), close = vi.fn()
+  client.setQueryData(['tickets', 'ws'], { rows: [{ uid: 'u', key: 'DEMO-0001' }] })
+  invalidateLive(client, 'ws', 'items', [{ id: '1.g', uid: 'u', gone: true }], close)
+  expect(close).toHaveBeenCalledWith('u', expect.arrayContaining(['u', 'DEMO-0001']))
+  expect(close.mock.calls[0][1]).not.toContain('DEMO-0002')
 })

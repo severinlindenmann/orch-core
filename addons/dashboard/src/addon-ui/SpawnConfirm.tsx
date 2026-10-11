@@ -106,7 +106,7 @@ export function SpawnConfirm({ addon, ticketKey, onStart, onClose }: { addon: st
     retry: false,
   })
   // The ticket as core reads it (the same query as the ticket page): the claim precheck and the gate warning.
-  const doc = useQuery({ ...queries.ticket(request?.ticket as string), enabled: !!request })
+  const doc = useQuery({ ...queries.ticket(ws as string, request?.ticket as string), enabled: !!request && !!ws })
   const allowed = canSpawnAgent(addons?.find((a) => a.name === addon), workspace?.addons[addon])
 
   const plain = (title: string, text: string) => (

@@ -1,6 +1,7 @@
 import json
 import os
 import socket
+import subprocess
 import threading
 from pathlib import Path
 
@@ -105,3 +106,97 @@ def token(client, auth):
     res = client.post("/auth/session", json={"code": launch["code"]}, headers={"Origin": ORIGIN})
     assert res.status_code == 200
     return res.json()["token"]
+
+
+def git(path, *args):
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@example.test", "-C", str(path), *args],
+        check=True,
+        capture_output=True,
+    )
+
+
+@pytest.fixture
+def rich(p1, stub):
+    """A workspace with filled tickets, a question, evidence and a ticket branch in a real repository."""
+    env = p1
+    repo = env.tmp / "code"
+    repo.mkdir()
+    git(repo, "init", "-b", "main")
+    (repo / "a.txt").write_text("one\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-m", "base")
+    git(repo, "checkout", "-b", "feat/one")
+    (repo / "a.txt").write_text("one\ntwo\n")
+    (repo / "b.txt").write_text("new\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-m", "work")
+    s = env.store
+    s.append(
+        env.person_event(
+            env.owner,
+            "workspace",
+            "settings.changed",
+            set={"repos": {"code": {"path": str(repo), "default_branch": "main"}}},
+        ),
+        log="workspace",
+    )
+    ids = {}
+    for title, kind in [("Second", "bug"), ("Epic one", "epic"), ("Third", "feature")]:
+        env.tick()
+        ids[title] = env.new_ticket(title, kind)
+    first = next(t.uid for t in s.state.tickets.values() if t.key == "DEMO-0001")
+    ids["First"] = first
+    env.tick()
+    env.fill(first)
+    env.tick()
+    env.update(
+        first,
+        {
+            "ticket.links": {"repos": ["code"], "branches": {"code": "feat/one"}, "prs": [], "external": []},
+            "ticket.labels": ["api", "ui"],
+            "ticket.priority": "high",
+            "ticket.tasks": [
+                {"id": "T1", "text": "Write the export", "verify": None, "proves": ["AC1"]},
+                {"id": "T2", "text": "Document it", "verify": None, "proves": []},
+            ],
+        },
+    )
+    from orch.canon import hashing
+
+    from tests.store.helpers import WS
+
+    options = [{"key": "csv", "label": "Monthly CSV"}, {"key": "api", "label": "Tariff API"}]
+    for n, (text, blocking) in enumerate([("Which export is the source?", True), ("Any naming rule?", False)], 1):
+        qid = hashing.question_id(WS, first, f"Q{n}")
+        question = {"id": f"Q{n}", "to": "ticket_owner", "text": text, "options": options, "blocking": blocking}
+        env.tick()
+        s.append(
+            {
+                "type": "question.asked",
+                "actor": env.agent,
+                "question": question,
+                "qid": qid,
+                "hash": hashing.question_hash(qid, first, text, options),
+            },
+            log=first,
+        )
+        if n == 1:
+            env.tick()
+            s.append(
+                env.person_event(
+                    env.owner,
+                    first,
+                    "question.answered",
+                    question="Q1",
+                    hash=hashing.question_hash(qid, first, text, options),
+                    option="csv",
+                ),
+                log=first,
+            )
+    from orch.store import observe
+
+    observe.observe(s, first)
+    env.tick()
+    env.log(first, "hello\nworld")
+    return env, ids

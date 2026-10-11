@@ -104,7 +104,7 @@ it('waits two seconds, retries once, and accepts a delayed tab reply', async () 
 })
 
 it('a late API 401 broadcasts its request token and preserves a newer session', async () => {
-  const { realApi } = await import('./realApi')
+  const { api } = await import('./prodApi')
   const postMessage = vi.fn()
   vi.stubGlobal('BroadcastChannel', class { postMessage = postMessage; close() {} })
   sessionStorage.setItem('orch-session', 'demo-not-a-real-old')
@@ -114,7 +114,7 @@ it('a late API 401 broadcasts its request token and preserves a newer session', 
     expect(init.headers.Authorization).toBe('Bearer demo-not-a-real-old')
     return new Promise<Response>((resolve) => { respond = resolve })
   }))
-  const request = realApi.workspaces()
+  const request = api.getWorkspaces()
   const rejected = expect(request).rejects.toThrow('Run orch dashboard')
   sessionStorage.setItem('orch-session', 'demo-not-a-real-new')
   await bootstrap()

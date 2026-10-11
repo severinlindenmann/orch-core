@@ -2,17 +2,17 @@ import asyncio
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated
 
 from fastapi import Depends, FastAPI, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import adapters
+from . import adapters, reads
 from .auth import Auth
 from .errors import HostError, fail, host_response, response
-from .gateway import WORKSPACE_ID, Gateway
+from .gateway import Gateway
 from .live import Live, SessionStream
 from .security import Security
 
@@ -22,17 +22,11 @@ class LaunchCode(BaseModel):
     code: str = Field(min_length=43, max_length=43, pattern=r"^[A-Za-z0-9_-]+$")
 
 
-class TicketQuery(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    limit: int = Field(default=50, ge=1, le=200)
-    page: str | None = Field(default=None, max_length=256, pattern=r"^[A-Za-z0-9_.=-]+$")
-    sort: Literal["updated", "priority", "key"] = "updated"
-
-
-def workspace(ws: str):
-    if not WORKSPACE_ID.fullmatch(ws):
-        raise fail("invalid.input", exit=5)
-    return ws
+# The browser app's own addresses (permanent URLs, G2): served index.html so a reload or pasted link opens the page.
+SPA_PATH = re.compile(
+    r"w/[A-Za-z0-9_-]+(?:/(?:today|board|tickets|identity)|/ticket/[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9})?"
+    r"|ticket/[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9}"
+)
 
 
 def create_app(port: int, gateway=None, auth=None, static=None):
@@ -77,7 +71,7 @@ def create_app(port: int, gateway=None, auth=None, static=None):
         return {"ok": True}
 
     @app.get("/api/events")
-    async def events(request: Request, ws: str = Depends(workspace)):
+    async def events(request: Request, ws: str = Depends(reads.workspace)):
         await asyncio.to_thread(gateway.enabled, ws)
         last = request.headers.get("last-event-id")
         if last and len(last) > 256:
@@ -86,7 +80,7 @@ def create_app(port: int, gateway=None, auth=None, static=None):
         return SessionStream(live.stream(w, tab), auth, request.state.token)
 
     @app.get("/api/w/{ws}/head")
-    def head(ws: str = Depends(workspace)):
+    def head(ws: str = Depends(reads.workspace)):
         return {"sub_cursor": gateway.call(ws, "ticket.query", {"limit": 1})["sub_cursor"]}
 
     @app.get("/api/session")
@@ -110,7 +104,7 @@ def create_app(port: int, gateway=None, auth=None, static=None):
         ]
 
     @app.get("/api/w/{ws}/identity")
-    def identity(ws: str = Depends(workspace)):
+    def identity(ws: str = Depends(reads.workspace)):
         show, status = gateway.call(ws, "workspace.show"), gateway.call(ws, "host.status")
         who = adapters.me(gateway.call(ws, "whoami"), gateway.call(ws, "member.list"), ws)
         return {
@@ -124,19 +118,7 @@ def create_app(port: int, gateway=None, auth=None, static=None):
             "me": who,
         }
 
-    @app.get("/api/w/{ws}/today")
-    def today(ws: str = Depends(workspace)):
-        return adapters.today(gateway.call(ws, "needs"), ws)
-
-    @app.get("/api/w/{ws}/tickets")
-    def tickets(query: Annotated[TicketQuery, Query()], ws: str = Depends(workspace)):
-        data = gateway.call(ws, "ticket.query", query.model_dump(exclude_none=True))
-        return {
-            "rows": [adapters.ticket(row) for row in data["rows"]],
-            "next_page": data["next_page"],
-            "total": data["total"],
-            "sub_cursor": data.get("sub_cursor"),
-        }
+    reads.register(app, gateway)
 
     @app.get("/{path:path}")
     def spa(path: str):
@@ -145,7 +127,7 @@ def create_app(port: int, gateway=None, auth=None, static=None):
             candidate = (static / path).resolve()
             if candidate.is_relative_to((static / "assets").resolve()) and candidate.is_file():
                 return FileResponse(candidate, headers={"Cache-Control": "public, max-age=31536000, immutable"})
-        elif path in ("", "favicon.svg") or re.fullmatch(r"w/[A-Za-z0-9_-]+/(today|tickets|identity)", path):
+        elif path in ("", "favicon.svg") or SPA_PATH.fullmatch(path):
             candidate = static / ("favicon.svg" if path == "favicon.svg" else "index.html")
             if candidate.is_file():
                 return FileResponse(candidate, headers={"Cache-Control": "no-store"})

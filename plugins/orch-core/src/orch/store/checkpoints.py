@@ -41,10 +41,30 @@ class Divergence:
     code: str = "chain.diverged"
 
 
-def _heights(o: Mapping[str, Any]) -> dict[str, tuple[int, str]]:
-    out = {WORKSPACE: (o["workspace_log"]["seq"], o["workspace_log"]["head"])}
-    out.update({uid: (t["seq"], t["head"]) for uid, t in o["tickets"].items()})
-    return out
+def reference(cp: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    return {"n": cp["o"]["n"], "hash": canon.checkpoint_hash(cp["o"])} if cp else None
+
+
+def _entries(o: Mapping[str, Any]) -> dict[str, Any]:
+    return {WORKSPACE: o["workspace_log"], **o["tickets"]}
+
+
+def _fold(start: str, heads: list[str]) -> str:
+    for head in heads:
+        start = canon.log_acc(start, head)
+    return start
+
+
+def _extension(old: Mapping[str, Any], new: Mapping[str, Any], heads: Any) -> bool:
+    try:
+        return (
+            isinstance(heads, list)
+            and len(heads) == new["seq"] - old["seq"]
+            and (heads[-1] == new["head"] if heads else old["head"] == new["head"])
+            and _fold(old["acc"], heads) == new["acc"]
+        )
+    except (canon.HashError, KeyError, TypeError):
+        return False
 
 
 def judge_offer(
@@ -54,60 +74,139 @@ def judge_offer(
     pinned_genesis: str,
     restore: Mapping[str, Any] | None = None,
     applied: Collection[str] = (),
+    proofs: Mapping[str, list[str]] | None = None,
+    wsk_pub: bytes | None = None,
+    known_revocations: Collection[Mapping[str, Any]] = (),
 ) -> tuple[str, str | None]:
-    """How a receiver (the host, the relay, a device) treats a workspace checkpoint ``offered`` to it when it already
-    holds ``held`` (§5.10 "Receivers"; both are the ``o`` objects, signatures already verified). Returns
-    ``(verdict, restore_id)``: the verdict is ``"ok"`` (accept and replace the held one), ``"ignored"`` (a stale
-    delivery, no alarm), ``"chain.diverged"`` (stop) or ``"trust.genesis_mismatch"``; ``restore_id`` is the id the
-    receiver must record as applied when a restore made the offer acceptable, else ``None``. No P1 caller yet: the
-    host, relay and devices that receive offers come later; this is pinned by checkpoint.json.
+    """Judge authenticated checkpoint objects; ancestry is mandatory for growth (§5.10).
 
-    The first checkpoint is accepted when its genesis is the pin. After that: a higher ``n`` with no lower ``seq`` is
-    accepted (gaps in ``n`` are normal); a lower ``n`` with no higher ``seq`` is ignored; anything else (the same ``n``
-    with another ``o``, a shared ``seq`` with another ``head``, a higher ``n`` with a lower ``seq`` or a missing
-    ticket, a lower ``n`` with a higher ``seq``) is ``chain.diverged``.
-
-    ``restore`` is the owner-signed ``restore`` event that comes with the offer (verified by the caller), as
-    ``{"id", "log": "workspace" | <uid>, "from_seq", "abandoned": {"seq", "head"} | None}``; ``applied`` holds the ids
-    of restores this receiver has already used. A restore is looked at only for a higher ``n`` and only when its log
-    really drops below H or reaches H's ``seq`` again with another head; otherwise it is ignored and the normal rules
-    decide. When it applies: its id is not in ``applied``, ``from_seq < H.seq <= abandoned.seq`` (the restore gives up
-    a checkpoint at least as high as H's entry, which may lag; with the same ``head`` when the seqs are equal), the
-    offered ``seq`` of that log is at least ``from_seq + 1``, and no other log drops or changes a head at a shared
-    ``seq``. Then the offer is ``ok`` and the id is returned.
-
-    Limits (a receiver holding only checkpoints): a fork grown past H, and a forged H whose ``n`` and ``seq`` are both
-    inflated, are not detected (height-only comparison); a receiver holding the logs checks H's heads against them."""
+    ``restore`` carries the full transition and owner-device evidence. Hosts additionally replay authorization;
+    this log-free receiver uses the delegation-owner policy. Missing proof returns ``sync.incomplete``.
+    """
     if offered["genesis"] != pinned_genesis:
         return "trust.genesis_mismatch", None
-    if held is None:
-        return "ok", None
-    h, o = _heights(held), _heights(offered)
-    if restore is not None and offered["n"] > held["n"]:
-        log = restore["log"]
-        if log in h and log in o and (o[log][0] < h[log][0] or (o[log][0] == h[log][0] and o[log][1] != h[log][1])):
-            ab = restore.get("abandoned")
-            if restore["id"] in applied or not ab:
+    if held and offered["workspace_id"] != held["workspace_id"]:
+        return "chain.diverged", None
+    h = _entries(held) if held else {}
+    o = _entries(offered)
+    proofs = {} if proofs is None else proofs
+    if held and offered["n"] == held["n"]:
+        return ("ok" if offered == held else "chain.diverged"), None
+    if held and offered["n"] < held["n"]:
+        bad = any(k not in h or v["seq"] > h[k]["seq"] or (v["seq"] == h[k]["seq"] and v != h[k]) for k, v in o.items())
+        return ("chain.diverged" if bad else "ignored"), None
+    if held and (offered["at"] < held["at"] or h.keys() - o.keys()):
+        return "chain.diverged", None
+    if not isinstance(proofs, Mapping):
+        return "sync.incomplete", None
+    restored = None
+    if restore is not None:
+        from orch.identity import CryptoVerifier
+        from orch.identity.certs import check_cert, check_delegation, person_scope_ok
+        from orch.identity.errors import Refused
+        from orch.model.types import ts
+        from orch.model.verifier import SigContext
+
+        try:
+            ev, log, c = restore["event"], restore["log"], restore["C"]
+            target = restore["T"]
+            if target["o"] != offered or wsk_pub is None or not verify_object(wsk_pub, target):
                 return "chain.diverged", None
-            if not (restore["from_seq"] < h[log][0] <= ab["seq"]) or (
-                ab["seq"] == h[log][0] and ab["head"] != h[log][1]
+            schema.validate("event", ev, log="workspace" if log == WORKSPACE else "ticket")
+            if ev["type"] != "restore" or ev["id"] in applied or ev["source"] != reference(c):
+                return "chain.diverged", None
+            if (held is None) != (c is None) or (held is not None and c["o"] != held):
+                return "chain.diverged", None
+            if c and (wsk_pub is None or not verify_object(wsk_pub, c)):
+                return "chain.diverged", None
+            pk = crypto.unb64u(restore["pk_pub"], crypto.PUB_LEN)
+            cert = check_cert(restore["device_cert"], pk)
+            delegation = check_delegation(restore["delegation"], pk)
+            if (
+                delegation["workspace_id"] != offered["workspace_id"]
+                or crypto.unb64u(delegation["wsk_pub"], crypto.PUB_LEN) != wsk_pub
+                or ev["actor"]["id"] != "p_" + cert["person_id"]
+                or not person_scope_ok(cert, needs_operate=True)
+                or cert["created_ms"] > ts(ev["at"]) * 1000 + 300000
+                or (cert["expires_ms"] is not None and cert["expires_ms"] <= ts(ev["at"]) * 1000)
             ):
                 return "chain.diverged", None
-            if o[log][0] < restore["from_seq"] + 1:
+            verifier = CryptoVerifier()
+            if not verifier.verify_person(ev, SigContext(offered["workspace_id"], log, restore["device_cert"])):
                 return "chain.diverged", None
-            for k in h.keys() - {log}:
-                if k not in o or o[k][0] < h[k][0] or (o[k][0] == h[k][0] and o[k][1] != h[k][1]):
+            if not verifier.verify_host(ev, log=log, wsk_pub=wsk_pub, workspace_id=offered["workspace_id"]):
+                return "chain.diverged", None
+            if len(canon.event_line(ev)) > schema.MAX_EVENT_LINE_BYTES or (held and ev["at"] < held["at"]):
+                return "chain.diverged", None
+            for entry in ev["revocations"]:
+                if not verifier.verify_embedded({"type": "restore.revocation", **entry}, pk_pub=entry["pk_pub"]):
                     return "chain.diverged", None
-            return "ok", restore["id"]
-    if offered["n"] == held["n"]:
-        return ("ok" if offered == held else "chain.diverged"), None
-    if any(o[k][0] == h[k][0] and o[k][1] != h[k][1] for k in h.keys() & o.keys()):
-        return "chain.diverged", None
-    lower = any(k not in o or o[k][0] < h[k][0] for k in h)
-    higher = any(k not in h or o[k][0] > h[k][0] for k in o)
-    if offered["n"] > held["n"]:
-        return ("chain.diverged" if lower else "ok"), None
-    return ("chain.diverged" if higher else "ignored"), None
+            listed = {
+                entry["revocation"]["o"]["device_id"]: entry["revocation"]["o"]["reason"] for entry in ev["revocations"]
+            }
+            for known in known_revocations:
+                rev = known["revocation"]["o"]
+                if (
+                    log == WORKSPACE
+                    and (
+                        rev["device_id"] not in listed
+                        or (listed[rev["device_id"]] != rev["reason"] and listed[rev["device_id"]] != "compromised")
+                    )
+                ) or ev["actor"]["device"] == "d_" + rev["device_id"]:
+                    return "chain.diverged", None
+            prefix = restore.get("retained_heads")
+            if not isinstance(prefix, list) or len(prefix) != ev["from_seq"] or prefix[-1] != ev["head"]:
+                return "sync.incomplete", None
+            try:
+                acc = _fold("sha256:" + "0" * 64, prefix)
+            except (canon.HashError, TypeError):
+                return "sync.incomplete", None
+            if log == WORKSPACE and prefix[0] != pinned_genesis:
+                return "sync.incomplete", None
+            if log in h:
+                baseline = h[log]
+                if ev["from_seq"] >= baseline["seq"]:
+                    if (
+                        prefix[baseline["seq"] - 1] != baseline["head"]
+                        or _fold("sha256:" + "0" * 64, prefix[: baseline["seq"]]) != baseline["acc"]
+                    ):
+                        return "sync.incomplete", None
+                else:
+                    abandoned = restore.get("abandoned_heads")
+                    if not isinstance(abandoned, list) or abandoned[: len(prefix)] != prefix:
+                        return "sync.incomplete", None
+                    if not _extension({"seq": 0, "head": None, "acc": "sha256:" + "0" * 64}, baseline, abandoned):
+                        return "sync.incomplete", None
+                    ab = ev["abandoned"]
+                    if (
+                        not ab
+                        or ab["seq"] < baseline["seq"]
+                        or (ab["seq"] == baseline["seq"] and ab["head"] != baseline["head"])
+                    ):
+                        return "chain.diverged", None
+            tail = proofs.get(log)
+            if (
+                not isinstance(tail, list)
+                or not tail
+                or tail[0] != canon.event_head(ev)
+                or log not in o
+                or not _extension({"seq": ev["from_seq"], "head": ev["head"], "acc": acc}, o[log], tail)
+            ):
+                return "sync.incomplete", None
+            restored = (log, ev["id"])
+        except (KeyError, TypeError, ValueError, IndexError, Refused, schema.SchemaError, canon.HashError):
+            return "chain.diverged", None
+    if held is None and restore is None:
+        return "ok", None
+    for log, entry in o.items():
+        if restored and log == restored[0]:
+            continue
+        old = h.get(log, {"seq": 0, "head": None, "acc": "sha256:" + "0" * 64})
+        if entry["seq"] < old["seq"] or (entry["seq"] == old["seq"] and entry != old):
+            return "chain.diverged", None
+        if not _extension(old, entry, proofs.get(log, [])):
+            return "sync.incomplete", None
+    return "ok", restored[1] if restored else None
 
 
 def sign_object(sign: Callable[[bytes], bytes], o: dict[str, Any]) -> dict[str, Any]:
@@ -116,9 +215,10 @@ def sign_object(sign: Callable[[bytes], bytes], o: dict[str, Any]) -> dict[str, 
 
 def verify_object(wsk_pub: bytes, cp: Mapping[str, Any]) -> bool:
     try:
+        schema.validate("checkpoint", cp)
         sig = crypto.unb64u(cp["sig"], crypto.SIG_LEN)
         return crypto.verify(wsk_pub, sig, LABEL + canon.cj_checked(cp["o"]))
-    except (crypto.EncodingError, crypto.CryptoError, canon.HashError, KeyError, TypeError):
+    except (schema.SchemaError, crypto.EncodingError, crypto.CryptoError, canon.HashError, KeyError, TypeError):
         return False
 
 
@@ -168,12 +268,16 @@ class Checkpoints:
         return best
 
     # -- writing
-    def write_ticket(self, sign: Callable[[bytes], bytes], uid: str, seq: int, head: str, at: str) -> str | None:
+    def write_ticket(
+        self, sign: Callable[[bytes], bytes], uid: str, seq: int, head: str, at: str, acc: str
+    ) -> str | None:
         """Sign and store the ticket checkpoint. Returns ``"diverged"`` and writes nothing when an existing checkpoint
         has the same ``seq`` and another head, or a higher ``seq`` (never move a checkpoint backwards)."""
         old = self.ticket(uid)
         if old and "o" in old:
-            if old["o"]["seq"] > seq or (old["o"]["seq"] == seq and old["o"]["head"] != head):
+            if old["o"]["seq"] > seq or (
+                old["o"]["seq"] == seq and (old["o"]["head"] != head or old["o"]["acc"] != acc)
+            ):
                 return "diverged"
             if old["o"]["seq"] == seq:
                 return None
@@ -185,7 +289,8 @@ class Checkpoints:
             "uid": uid,
             "seq": seq,
             "head": head,
-            "at": at,
+            "acc": acc,
+            "at": max(at, old["o"]["at"]) if old and "o" in old else at,
         }
         self._write(self._ticket_path(uid), sign_object(sign, o))
         return None
@@ -196,29 +301,32 @@ class Checkpoints:
         genesis: str,
         at: str,
         logs: Mapping[str, LogInfo],
+        baseline: Mapping[str, Any] | None = None,
     ) -> str | None:
         ws = logs[WORKSPACE]
-        old = self.workspace()
+        old = baseline or self.workspace()
         if old and "o" in old:
             lo = old["o"]["workspace_log"]
-            if lo["seq"] > ws.seq or (lo["seq"] == ws.seq and lo["head"] != ws.head):
+            if lo["seq"] > ws.seq or (lo["seq"] == ws.seq and (lo["head"] != ws.head or lo["acc"] != ws.acc)):
                 return "diverged"
         # unloaded tickets keep their entry from the previous checkpoint (lazy replay: their heads are not known now)
         tickets = dict(old["o"]["tickets"]) if old and "o" in old else {}
         for u, i in logs.items():
             if u != WORKSPACE and i.seq:
                 prev = tickets.get(u)
+                if prev and prev["seq"] == i.seq and (prev["head"] != i.head or prev["acc"] != i.acc):
+                    return "diverged"
                 if prev is None or prev["seq"] <= i.seq:
-                    tickets[u] = {"seq": i.seq, "head": i.head}
+                    tickets[u] = {"seq": i.seq, "head": i.head, "acc": i.acc}
         o = {
             "v": 2,
             "suite": 2,
             "kind": "workspace_checkpoint",
             "workspace_id": self.workspace_id,
             "genesis": genesis,
-            "n": self.highest_n() + 1,
-            "at": at,
-            "workspace_log": {"seq": ws.seq, "head": ws.head},
+            "n": max(self.highest_n(), old["o"]["n"] if old and "o" in old else 0) + 1,
+            "at": max(at, old["o"]["at"]) if old and "o" in old else at,
+            "workspace_log": {"seq": ws.seq, "head": ws.head, "acc": ws.acc},
             "tickets": dict(sorted(tickets.items())),
         }
         self._write(self._workspace_path, sign_object(sign, o))
@@ -258,6 +366,7 @@ def find_divergence(
     genesis: str | None,
     logs: Mapping[str, LogInfo],
     exists: set[str] | None = None,
+    held: Mapping[str, Any] | None = None,
 ) -> list[Divergence]:
     """Every way the logs disagree with the signed checkpoints. A checkpoint whose signature does not verify counts as
     a problem of its log too (someone wrote it who does not hold the workspace key).
@@ -269,7 +378,7 @@ def find_divergence(
     if wsk_pub is None:
         return out
 
-    def check(log: str, seq: int, head: str) -> None:
+    def check(log: str, seq: int, head: str, acc: str) -> None:
         info = logs.get(log)
         if info is None or info.seq == 0:
             if log == WORKSPACE or (exists is not None and log not in exists) or log in logs:
@@ -277,20 +386,27 @@ def find_divergence(
             return  # not loaded: compared when it is
         if info.seq < seq:
             out.append(Divergence(log, seq, f"the log ends at seq {info.seq}, before the checkpoint at seq {seq}"))
-        elif info.heads[seq - 1] != head:
+        elif info.heads[seq - 1] != head or info.accs[seq - 1] != acc:
             out.append(Divergence(log, seq, f"the head at seq {seq} differs from the checkpoint"))
 
-    cp = checkpoints.workspace()
-    if cp is not None:
-        if "o" not in cp or not verify_object(wsk_pub, cp) or cp["o"]["workspace_id"] != checkpoints.workspace_id:
-            out.append(Divergence(WORKSPACE, 0, "the workspace checkpoint is unreadable or not signed by the host key"))
-        else:
-            o = cp["o"]
-            if genesis is not None and o["genesis"] != genesis:
-                out.append(Divergence(WORKSPACE, 1, "the checkpoint names another genesis", "trust.genesis_mismatch"))
-            check(WORKSPACE, o["workspace_log"]["seq"], o["workspace_log"]["head"])
-            for uid, t in o["tickets"].items():
-                check(uid, t["seq"], t["head"])
+    candidates = [checkpoints.workspace()]
+    if held is not None and held != candidates[0]:
+        candidates.append(held)
+    for cp in candidates:
+        if cp is not None:
+            if "o" not in cp or not verify_object(wsk_pub, cp) or cp["o"]["workspace_id"] != checkpoints.workspace_id:
+                out.append(
+                    Divergence(WORKSPACE, 0, "the workspace checkpoint is unreadable or not signed by the host key")
+                )
+            else:
+                o = cp["o"]
+                if genesis is not None and o["genesis"] != genesis:
+                    out.append(
+                        Divergence(WORKSPACE, 1, "the checkpoint names another genesis", "trust.genesis_mismatch")
+                    )
+                check(WORKSPACE, o["workspace_log"]["seq"], o["workspace_log"]["head"], o["workspace_log"]["acc"])
+                for uid, t in o["tickets"].items():
+                    check(uid, t["seq"], t["head"], t["acc"])
     for uid in checkpoints.ticket_uids():
         if exists is not None and uid not in exists:
             out.append(Divergence(uid, 0, "the log is missing or empty; a ticket checkpoint exists"))
@@ -305,7 +421,7 @@ def find_divergence(
         elif cp["o"]["uid"] != uid:
             out.append(Divergence(uid, 0, "the ticket checkpoint names another ticket"))
         else:
-            check(uid, cp["o"]["seq"], cp["o"]["head"])
+            check(uid, cp["o"]["seq"], cp["o"]["head"], cp["o"]["acc"])
     seen: set[tuple[str, str]] = set()
     uniq = []
     for d in out:  # a ticket named by both kinds of checkpoint is reported once per problem

@@ -236,8 +236,6 @@ class Store:
         self._grant_hashes: dict[str, str] = {}
         self._index_ok = False
         self._exists: set[str] = set()
-        self._pending_revs: list[dict[str, Any]] = []
-        self._ws_restore_at = ""
         self._created_ok: dict[
             str, tuple[tuple[int, int, int, int], str]
         ] = {}  # uid -> (log signature, key) of a verified first line
@@ -308,6 +306,7 @@ class Store:
                 raise StoreError("trust.genesis_mismatch", "config.json belongs to another workspace")
         with self._lock:
             check_state_dirs(self.root)
+            self._load_transition_logs()
             pend = self._recover_pending()
             self._scan_dirs()
             if eager:
@@ -710,17 +709,28 @@ class Store:
         self._diverged = {}
         wsk = self._wsk_pub()
         if wsk is not None:
-            for d in find_divergence(self._checkpoints, wsk, ws.genesis, self._logs, self._exists):
+            for d in find_divergence(
+                self._checkpoints, wsk, ws.genesis, self._logs, self._exists, self._held_checkpoint()
+            ):
                 if d.code == "trust.genesis_mismatch":
                     raise StoreError(d.code, d.detail)
                 self._diverged[d.log] = d
         self._index_ok = ws.genesis is not None and self._index.is_current(
             self._sizes_now(), self.workspace_id, ws.genesis
         )
-        self._ws_restore_at = max(
-            (e["at"] for e in ws_events if e["type"] == "restore" and e["id"] not in invalid), default=""
-        )
-        self._pending_revs = self._revocation_plan()
+        if self._pins is not None and self._host is not None:
+            for dev, evidence in self._state.revocation_evidence().items():
+                rev = evidence["revocation"]
+                self._pins.note_revocation(
+                    dev, rev["o"]["reason"], rev, self._now(), evidence["device_cert"], evidence["pk_pub"]
+                )
+        self._recover_transitions()
+        self._enforce_revocations()
+        if self._pins is not None and self._host is not None:
+            for log, info in self._logs.items():
+                verified = self._state._core.logs.get(log)
+                for i, head in enumerate(info.heads[: verified.seq if verified else 0]):
+                    self._pins.note_head(log, i + 1, head, info.heads[i - 1] if i else None, info.accs[i])
 
     def _sizes_now(self) -> dict[str, int]:
         sizes = dict(self._sizes)
@@ -839,6 +849,7 @@ class Store:
     def _locked(self) -> Iterator[None]:
         with self._lock:
             check_state_dirs(self.root)
+            self._load_transition_logs()
             pend = self._recover_pending()
             self._loaded |= {m["log"] for _, m in pend if m["log"] != WORKSPACE}
             reloaded = bool(pend) or self._needs_reload or not self._fresh()
@@ -848,6 +859,17 @@ class Store:
             if reloaded:
                 self._enforce_revocations()
             yield
+
+    def _load_transition_logs(self) -> None:
+        """A committed restore must finish its checkpoint before any other append, including on a lazy open."""
+        if self._pins is None:
+            return
+        for path in (self._pins.dir / "transitions").glob("*.json"):
+            transition = loads(read_or_none(path, None))
+            log = transition["log"]
+            if not transition.get("committed") and log != WORKSPACE and log not in self._loaded:
+                self._loaded.add(check_uid(log))
+                self._needs_reload = True
 
     def _recover_pending(self) -> list[tuple[Path, dict[str, Any]]]:
         """Phase 1 of crash recovery (no state needed): a pending directory without a manifest that describes its own
@@ -1225,13 +1247,11 @@ class Store:
             raise StoreError("chain.broken", f"{log}: {self._read_errors[log]}")
         if WORKSPACE in self._read_errors:
             raise StoreError("chain.broken", f"workspace: {self._read_errors[WORKSPACE]}")
-        # NOTE: despite the name this also *writes*: it finishes a restore's pending device.revoked re-appends first
-        if log != WORKSPACE and self._pending_revs:  # §5.10: no ticket event may name the restore's window
-            self._enforce_revocations()
-            if self._pending_revs:
-                raise StoreError("store.torn_write", "a restore's device.revoked re-appends are not all written yet")
         if typ != "restore" and self._missing_checkpoint(log):
             raise StoreError("checkpoint.missing", f"{log}: missing checkpoint is not explained by the last append")
+        for failure in self._state.chain_errors if self._state else ():
+            if failure.log in (WORKSPACE, log) and failure.code == "chain.broken":
+                raise StoreError(failure.code, failure.detail)
         d = self._diverged.get(log) or (self._diverged.get(WORKSPACE) if log != WORKSPACE else None)
         if d is not None and not (typ == "restore" and d.log == log):
             raise StoreError("chain.diverged", f"{d.log}: {d.detail} (an owner-signed restore is needed)")
@@ -1282,6 +1302,26 @@ class Store:
         force: tuple[str, ...] = (),
     ) -> Appended:
         typ = e.get("type", "")
+        if typ == "restore" and self._pins and e.get("id"):
+            path = self._pins.dir / "transitions" / (check_uid(e["id"]) + ".json")
+            raw = read_or_none(path, None)
+            if raw:
+                prior = loads(raw)
+                previous = prior["event"]
+                if (
+                    prior.get("committed")
+                    and prior["log"] == log
+                    and previous["sig"] == e.get("sig")
+                    and canon.person_signing_bytes(self.workspace_id, log, previous)
+                    == canon.person_signing_bytes(self.workspace_id, log, e)
+                ):
+                    info = self._logs.get(log)
+                    if (
+                        info
+                        and info.seq >= previous["seq"]
+                        and info.heads[previous["seq"] - 1] == canon.event_head(previous)
+                    ):
+                        return Appended(previous, self._state, True)
         self._check_writable(log, typ)
         actor = e.get("actor")
         host_event = isinstance(actor, dict) and actor.get("kind") == "host"
@@ -1299,8 +1339,6 @@ class Store:
                 "store.torn_write", f"{log}: {self._bad_projection[log]} (restore the files or ask an owner)"
             )
         e = self._envelope(e, log)
-        if typ == "restore":
-            self._check_restore(log, e)
         new_texts = self._section_texts(e, log, body, texts)
         files = self._file_artifacts(e, artifacts)
         if idem is not None:
@@ -1331,7 +1369,20 @@ class Store:
         self._enforce_revocations()
 
     def _check_restore(self, log: str, e: dict[str, Any]) -> None:
-        want = self.restore_facts(log)["abandoned"]
+        facts = self.restore_facts(log)
+        if e.get("source") != facts["source"]:
+            raise StoreError("chain.diverged", "restore source is not the held workspace checkpoint")
+        if log == WORKSPACE:
+            supplied = {"d_" + r["revocation"]["o"]["device_id"]: r for r in e.get("revocations", [])}
+            for entry in facts["revocations"]:
+                rev = entry["revocation"]
+                got = supplied.get("d_" + rev["o"]["device_id"])
+                if got is None or (
+                    got["revocation"] != rev
+                    and (rev["o"]["reason"] == "compromised" or got["revocation"]["o"]["reason"] != "compromised")
+                ):
+                    raise StoreError("validation.restore", "restore omits or weakens held revocation evidence")
+        want = facts["abandoned"]
         if e.get("abandoned") != want:
             raise StoreError("validation.restore", f"abandoned must name the highest checkpoint above from_seq: {want}")
 
@@ -1367,6 +1418,8 @@ class Store:
                     continue  # the store's own ordering: stamp again, once
                 raise StoreError.from_refusal(r)
             break
+        if ev["type"] == "restore":
+            self._check_restore(log, ev)
         if not genesis:
             self._host_sign(ev, log)
         wsk = None if genesis else self._wsk_pub()
@@ -1389,6 +1442,8 @@ class Store:
             self._needs_reload = True
             raise StoreError("chain.broken", f"{log}: the log changed on disk while the store held the lock")
         try:
+            if ev["type"] == "restore":
+                self._stage_transition(ev, log, old_state)
             manifest = self._write_pending(ev, log, line, writes)
             append_durable(path, line, commit=True)  # the commit
             self._finish(manifest, ev, log, line)
@@ -1396,7 +1451,11 @@ class Store:
             self._needs_reload = True  # whatever got half done, the next lock recovers from disk
             raise
         self._state = new_state
-        self._after_commit(old_state, new_state, ev, log)
+        try:
+            self._after_commit(old_state, new_state, ev, log)
+        except BaseException:
+            self._needs_reload = True  # finish a committed transition before the next call, even without reopening
+            raise
         return Appended(ev, new_state)
 
     def _host_sign(self, ev: dict[str, Any], log: str) -> None:
@@ -1416,10 +1475,10 @@ class Store:
             last_pos = floor if last_pos is None or floor > last_pos else last_pos
             last_at = max(last_at, floor[1])
         t = max(int(self._clock()), last_at)
-        if (
-            ev["type"] == "restore" and log == WORKSPACE and self._pins is not None
-        ):  # after every revocation it re-appends
-            t = max([t, *(_epoch(r["at"]) for r in self._pins.revocations() if r.get("at"))])
+        if ev["type"] == "restore":
+            cp = self._held_checkpoint()
+            if cp:
+                t = max(t, _epoch(cp["o"]["at"]))
         if log != WORKSPACE:
             wsh = self._logs[WORKSPACE].seq if WORKSPACE in self._logs else 0
             ev["ws_seq"] = wsh
@@ -1623,6 +1682,7 @@ class Store:
         info.offset += len(line)
         info.seen_size = info.offset
         info.seq = ev["seq"]
+        info.accs.append(canon.log_acc(info.acc, canon.event_head(ev)))
         info.heads.append(canon.event_head(ev))
         sig = stat_sig(info.path)
         info.ino = sig[1] if sig else None
@@ -1654,12 +1714,18 @@ class Store:
                 self._pins.pin_genesis(new.workspace.genesis)
         if typ == "grant.issued":
             self._grant_hashes.setdefault(ev["grant"], ev["secret_hash"])
-        if typ == "device.revoked" and self._pins is not None:
-            self._pins.note_revocation(ev["device"], ev["reason"], ev["revocation"], ev["at"])
+        if self._pins is not None:
+            info = self._logs[log]
+            self._pins.note_head(log, info.seq, info.head, ev["prev"], info.acc)
+            for device, entry in new.revocation_evidence().items() if typ in ("restore", "device.revoked") else []:
+                rev = entry["revocation"]
+                self._pins.note_revocation(
+                    device, rev["o"]["reason"], rev, ev["at"], entry["device_cert"], entry["pk_pub"]
+                )
         if typ == "restore":
-            self._checkpoints.abandon_above(log, ev["from_seq"])
-            self._diverged.pop(log, None)
-        self._write_checkpoints(log, ev, new)
+            self._recover_transitions()
+        else:
+            self._write_checkpoints(log, ev, new)
         changed = {u for u, v in new.tickets.items() if old.tickets.get(u) is not v}
         self._maybe_index(new)
         if new.workspace.genesis is not None and self._index_ok:
@@ -1668,10 +1734,6 @@ class Store:
             except Exception:  # noqa: BLE001 - derived data: never fail an append for it
                 self._index.drop()
                 self._index_ok = False
-        if typ == "restore" and log == WORKSPACE:
-            self._ws_restore_at = max(self._ws_restore_at, ev["at"])
-            self._pending_revs = self._revocation_plan()
-            self._enforce_revocations()
 
     def _write_checkpoints(self, log: str, ev: dict[str, Any], new: State) -> None:
         assert self._host is not None
@@ -1679,7 +1741,7 @@ class Store:
         info = self._logs[log]
         if log != WORKSPACE:
             self._ticket_appends_since_cp += 1
-            if self._checkpoints.write_ticket(sign, log, info.seq, info.head or "", ev["at"]) == "diverged":
+            if self._checkpoints.write_ticket(sign, log, info.seq, info.head or "", ev["at"], info.acc) == "diverged":
                 self._diverged[log] = Divergence(log, info.seq, "a checkpoint at this height has another head")
         if log == WORKSPACE or self._ticket_appends_since_cp >= WORKSPACE_EVERY:
             self._write_workspace_checkpoint(ev["at"], new)
@@ -1689,11 +1751,25 @@ class Store:
         if state.workspace.genesis is None or self._logs[WORKSPACE].seq == 0:
             return
         # Do not certify a rolled-back head just because its ticket checkpoint was deleted.
-        logs = {uid: info for uid, info in self._logs.items() if not self._missing_checkpoint(uid)}
-        if self._checkpoints.write_workspace(self._host.sign, state.workspace.genesis, at_, logs) == "diverged":
+        broken = {failure.log for failure in state.chain_errors} | set(self._read_errors) | set(self._diverged)
+        if WORKSPACE in broken:
+            return
+        logs = {
+            uid: info for uid, info in self._logs.items() if uid not in broken and not self._missing_checkpoint(uid)
+        }
+        if (
+            self._checkpoints.write_workspace(
+                self._host.sign, state.workspace.genesis, at_, logs, self._held_checkpoint()
+            )
+            == "diverged"
+        ):
             self._diverged[WORKSPACE] = Divergence(
                 WORKSPACE, self._logs[WORKSPACE].seq, "a checkpoint at this height has another head"
             )
+            return
+        cp = self._checkpoints.workspace()
+        if self._pins is not None and cp and "o" in cp:
+            self._pins.accept_checkpoint(cp)
         self._ticket_appends_since_cp = 0
 
     def repairable_checkpoint(self, uid: str) -> bool:
@@ -1736,7 +1812,7 @@ class Store:
         if view is None or view.frozen or not self.repairable_checkpoint(uid):
             return
         info = self._logs[uid]
-        self._checkpoints.write_ticket(self._host.sign, uid, info.seq, info.head or "", self._now())
+        self._checkpoints.write_ticket(self._host.sign, uid, info.seq, info.head or "", self._now(), info.acc)
 
     def checkpoint(self) -> None:
         """Write the workspace checkpoint and finish crash-repairable ticket checkpoints."""
@@ -1757,7 +1833,7 @@ class Store:
                 continue
             cp = self._checkpoints.ticket(uid)
             if (cp is None or "o" not in cp or cp["o"]["seq"] != info.seq) and self.repairable_checkpoint(uid):
-                self._checkpoints.write_ticket(self._host.sign, uid, info.seq, info.head or "", at_)
+                self._checkpoints.write_ticket(self._host.sign, uid, info.seq, info.head or "", at_, info.acc)
         self._write_workspace_checkpoint(at_, self._state)
 
     # ------------------------------------------------------------------ idempotent appends
@@ -2134,6 +2210,15 @@ class Store:
             )
             if seq > info.seq:
                 abandoned = {"seq": seq, "head": head}
+        held = self._held_checkpoint()
+        if held:
+            entry = held["o"]["workspace_log"] if log == WORKSPACE else held["o"]["tickets"].get(log)
+            if entry and entry["seq"] > info.seq:
+                candidate = {"seq": entry["seq"], "head": entry["head"]}
+                if abandoned and candidate["seq"] == abandoned["seq"] and candidate != abandoned:
+                    raise StoreError("chain.diverged", "equal-height conflicting abandoned checkpoints")
+                if abandoned is None or candidate["seq"] > abandoned["seq"]:
+                    abandoned = candidate
         decisions: list[str] = []
         for p in (
             sorted((self.state_dir / "abandoned").glob(f"{log}-*.jsonl"))
@@ -2149,7 +2234,13 @@ class Store:
             "from_seq": info.seq,
             "head": info.head,
             "abandoned": abandoned,
-            "abandoned_decisions": sorted(decisions),
+            "abandoned_decisions": sorted(set(decisions)),
+            "source": {"n": held["o"]["n"], "hash": canon.checkpoint_hash(held["o"])} if held else None,
+            "revocations": [
+                {k: r[k] for k in ("revocation", "device_cert", "pk_pub")} for r in self._pins.revocations()
+            ]
+            if log == WORKSPACE and self._pins
+            else [],
         }
 
     def abandon_tail(self, log: str, from_seq: int) -> int:
@@ -2176,51 +2267,141 @@ class Store:
             self._load()
             return len(lines) - from_seq
 
-    def _revocation_plan(self) -> list[dict[str, Any]]:
-        """Revocations the host noted (PK-signed, §5.10) that the workspace log does not show: those a workspace
-        ``restore`` post-dates are to be re-appended (a restore without them is incomplete, so this runs on every load
-        and finishes a re-append that a crash interrupted); any other is a rollback of a revocation, and the workspace
-        log is marked diverged (appends refused until an owner ``restore``)."""
-        assert self._state is not None
-        ws = self._state.workspace
-        out: list[dict[str, Any]] = []
-        if self._pins is None or ws.genesis is None or WORKSPACE not in self._logs:
-            return out
+    def _enforce_revocations(self) -> None:
+        if self._pins is None or self._state is None:
+            return
+        accepted = self._state.revocation_evidence()
         for rec in self._pins.revocations():
-            dev = ws.devices.get(rec.get("device"))
-            if dev is None or dev.revoked:
-                continue
-            if self._ws_restore_at and rec.get("at", "") <= self._ws_restore_at:
-                out.append(rec)
-            else:
+            entry = accepted.get(rec["device"])
+            if entry is None or entry["revocation"] != rec["revocation"]:
                 self._diverged.setdefault(
                     WORKSPACE,
                     Divergence(
                         WORKSPACE,
                         self._logs[WORKSPACE].seq,
-                        f"the host noted a revocation of {rec.get('device')} that the log lacks (rolled back?)",
+                        f"the host noted a revocation of {rec['device']} that accepted history lacks",
                     ),
                 )
-        return out
 
-    def _enforce_revocations(self) -> None:
-        """Re-append the revocations of :meth:`_revocation_plan` (host actor, allowed by the embedded revocation, §5.3).
-        A read-only store cannot: it marks the workspace diverged instead."""
-        if not self._pending_revs or self._healing:
+    def _held_checkpoint(self) -> dict[str, Any] | None:
+        cp = self._pins.held() if self._pins else self._checkpoints.workspace()
+        if cp is None:
+            return None
+        from .checkpoints import verify_object
+
+        if (
+            not verify_object(self._wsk_pub(), cp)
+            or cp["o"]["kind"] != "workspace_checkpoint"
+            or cp["o"]["workspace_id"] != self.workspace_id
+            or cp["o"]["genesis"] != self._pin
+        ):
+            raise StoreError("chain.diverged", "invalid held workspace checkpoint")
+        return cp
+
+    def _stage_transition(self, ev: dict[str, Any], log: str, state: State) -> None:
+        from .checkpoints import sign_object
+
+        assert self._pins is not None and self._host is not None
+        cp = self._held_checkpoint()
+        info = self._logs[log]
+        entry = {"seq": ev["seq"], "head": canon.event_head(ev), "acc": canon.log_acc(info.acc, canon.event_head(ev))}
+        tickets = dict(cp["o"]["tickets"]) if cp else {}
+        broken = {failure.log for failure in state.chain_errors} | set(self._read_errors) | set(self._diverged)
+        for uid, item in self._logs.items():
+            if uid != WORKSPACE and item.seq and uid not in broken:
+                tickets[uid] = {"seq": item.seq, "head": item.head, "acc": item.acc}
+        ws = self._logs[WORKSPACE]
+        workspace_entry = {"seq": ws.seq, "head": ws.head, "acc": ws.acc}
+        if log == WORKSPACE:
+            workspace_entry = entry
+        else:
+            tickets[log] = entry
+        target = sign_object(
+            self._host.sign,
+            {
+                "v": 2,
+                "suite": 2,
+                "kind": "workspace_checkpoint",
+                "workspace_id": self.workspace_id,
+                "genesis": self._pin,
+                "n": max(self._checkpoints.highest_n(), cp["o"]["n"] if cp else 0) + 1,
+                "at": ev["at"],
+                "workspace_log": workspace_entry,
+                "tickets": dict(sorted(tickets.items())),
+            },
+        )
+        baseline = (cp["o"]["workspace_log"] if log == WORKSPACE else cp["o"]["tickets"].get(log)) if cp else None
+        abandoned = self._pins.branch(baseline["head"]) if baseline else []
+        if baseline and abandoned is not None:
+            from .checkpoints import _fold
+
+            if (
+                len(abandoned) != baseline["seq"]
+                or abandoned[-1] != baseline["head"]
+                or _fold("sha256:" + "0" * 64, abandoned) != baseline["acc"]
+                or abandoned[: min(len(info.heads), len(abandoned))]
+                != info.heads[: min(len(info.heads), len(abandoned))]
+            ):
+                abandoned = None
+        evidence = state.device_evidence(ev["actor"]["device"])
+        proofs = {log: [entry["head"]]}
+        if cp:
+            for uid, item in self._logs.items():
+                if uid == log:
+                    continue
+                prior = cp["o"]["workspace_log"] if uid == WORKSPACE else cp["o"]["tickets"].get(uid)
+                proofs[uid] = item.heads[prior["seq"] if prior else 0 :]
+        transition = {
+            "committed": False,
+            "C": cp,
+            "T": target,
+            "log": log,
+            "event": ev,
+            **evidence,
+            "delegation": self._genesis_event["delegation"],
+            "proofs": proofs,
+            "retained_heads": info.heads,
+            "abandoned_heads": abandoned,
+            "publication_complete": abandoned is not None,
+        }
+        directory = self._pins.dir / "transitions"
+        directory.mkdir(parents=True, exist_ok=True)
+        write_atomic(directory / (ev["id"] + ".json"), canon.cj_checked(transition) + b"\n", mode=0o600)
+
+    def _recover_transitions(self) -> None:
+        if self._pins is None or self._host is None or self._state is None:
             return
-        if self._host is None:
-            self._diverged.setdefault(
-                WORKSPACE, Divergence(WORKSPACE, self._logs[WORKSPACE].seq, "a restore lacks noted revocations")
-            )
-            return
-        for rec in list(self._pending_revs):  # kept until each is written: a failure leaves the rest pending
-            dev = self._state.workspace.devices.get(rec["device"]) if self._state else None
-            if dev is None or dev.revoked:
-                self._pending_revs.remove(rec)
+        for path in sorted((self._pins.dir / "transitions").glob("*.json")):
+            transition = loads(read_or_none(path, None))
+            if transition.get("committed"):
                 continue
-            self._host_append(
-                "device.revoked",
-                WORKSPACE,
-                {"device": rec["device"], "reason": rec["reason"], "revocation": rec["revocation"]},
-            )
-            self._pending_revs.remove(rec)
+            ev, log, target = transition["event"], transition["log"], transition["T"]
+            from .checkpoints import verify_object
+
+            if (
+                not verify_object(self._wsk_pub(), target)
+                or target["o"]["workspace_id"] != self.workspace_id
+                or target["o"]["genesis"] != self._pin
+            ):
+                raise StoreError("chain.diverged", "invalid pending transition checkpoint")
+            info = self._logs.get(log)
+            if info is None or info.seq < ev["seq"] or info.heads[ev["seq"] - 1] != canon.event_head(ev):
+                continue
+            if any(i.id == ev["id"] for i in self._state._core.logs[log].invalid):
+                continue
+            held = self._pins.held()
+            if held and held["o"]["n"] > target["o"]["n"]:
+                continue
+            if held != transition["C"] and held != target:
+                raise StoreError("chain.diverged", "pending restore source differs from held checkpoint")
+            self._checkpoints.abandon_above(log, ev["from_seq"])
+            self._checkpoints._write(self._checkpoints._workspace_path, target)
+            if log != WORKSPACE:
+                entry = target["o"]["tickets"][log]
+                self._checkpoints.write_ticket(
+                    self._host.sign, log, entry["seq"], entry["head"], target["o"]["at"], entry["acc"]
+                )
+            self._pins.accept_checkpoint(target)
+            transition["committed"] = True
+            write_atomic(path, canon.cj_checked(transition) + b"\n", mode=0o600)
+            self._diverged.pop(log, None)

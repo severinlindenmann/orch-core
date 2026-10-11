@@ -2,8 +2,9 @@
 
 * ``genesis``: the head of ``workspace.created`` (the trust root pin), one line. Written once; a different value is
   ``trust.genesis_mismatch``.
-* ``revocations.jsonl``: every person-key-signed device revocation the host appended (``device.revoked`` payload as
-  ``cj``), so that a workspace ``restore`` can put them back (§5.10 "Restore never drops revocations").
+* ``revocations.jsonl``: effective PK-signed revocations and verification evidence, retained across restores.
+* ``checkpoint.json``: last accepted workspace checkpoint.
+* ``heads/`` and ``transitions/``: durable ancestry and source-bound restore transitions for later publication.
 
 P1 limit (§12 O7): these are files the same OS user owns, like the workspace itself.
 """
@@ -17,7 +18,7 @@ from typing import Any
 from orch import canon
 
 from .errors import StoreError
-from .fsio import append_durable, loads, read_or_none, write_atomic
+from .fsio import loads, read_or_none, write_atomic
 
 __all__ = ["HostPins"]
 
@@ -59,18 +60,74 @@ class HostPins:
         raw = read_or_none(self._revocations)
         if not raw:
             return []
-        out = []
+        out = {}
         for line in raw.splitlines():
             try:
-                out.append(loads(line))
+                rec = loads(line)
             except ValueError:
-                continue
-        return out
+                raise StoreError("store.torn_write", "unreadable revocation evidence") from None
+            old = out.get(rec["device"])
+            if old is None or (old["reason"] != "compromised" and rec["reason"] == "compromised"):
+                out[rec["device"]] = rec
+        return [out[k] for k in sorted(out)]
 
-    def note_revocation(self, device: str, reason: str, revocation: dict[str, Any], at: str) -> None:
-        """Remember a revocation (``at``: when the host appended it). Once noted it is never dropped or changed."""
-        if any(r.get("device") == device for r in self.revocations()):
+    def note_revocation(
+        self, device: str, reason: str, revocation: dict[str, Any], at: str, device_cert: dict[str, Any], pk_pub: str
+    ) -> None:
+        """Durably retain the earliest evidence of the highest reason, including upgrades."""
+        old = next((r for r in self.revocations() if r["device"] == device), None)
+        if old and (old["reason"] == "compromised" or reason != "compromised"):
             return
         self.dir.mkdir(parents=True, exist_ok=True)
-        line = canon.cj_checked({"at": at, "device": device, "reason": reason, "revocation": revocation}) + b"\n"
-        append_durable(self._revocations, line)
+        records = self.revocations()
+        records.append(
+            {
+                "at": at,
+                "device": device,
+                "reason": reason,
+                "revocation": revocation,
+                "device_cert": device_cert,
+                "pk_pub": pk_pub,
+            }
+        )
+        write_atomic(self._revocations, b"".join(canon.cj_checked(r) + b"\n" for r in records), mode=0o600)
+
+    def held(self) -> dict[str, Any] | None:
+        raw = read_or_none(self.dir / "checkpoint.json")
+        return loads(raw) if raw else None
+
+    def accept_checkpoint(self, cp: dict[str, Any]) -> None:
+        write_atomic(self.dir / "checkpoint.json", canon.cj_checked(cp) + b"\n", mode=0o600)
+
+    def note_head(self, log: str, seq: int, head: str, prev: str | None, acc: str) -> None:
+        path = self.dir / "heads" / head[7:]
+        if path.exists():
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        write_atomic(
+            path, canon.cj_checked({"log": log, "seq": seq, "head": head, "prev": prev, "acc": acc}), mode=0o600
+        )
+
+    def branch(self, head: str, stop: int = 0) -> list[str] | None:
+        heads = []
+        last_seq = None
+        while head:
+            try:
+                canon.parse_hash(head)
+            except canon.HashError:
+                return None
+            raw = read_or_none(self.dir / "heads" / head[7:])
+            if raw is None:
+                return None
+            try:
+                node = loads(raw)
+                if node["head"] != head or (last_seq is not None and node["seq"] != last_seq - 1):
+                    return None
+                last_seq = node["seq"]
+                if node["seq"] <= stop:
+                    break
+                heads.append(node["head"])
+                head = node["prev"]
+            except (ValueError, KeyError, TypeError):
+                return None
+        return list(reversed(heads))

@@ -166,7 +166,7 @@ def test_checkpoint_and_restore_time_never_go_behind_source(env):
     env.clock[0] += 1000
     store.checkpoint()
     source = store._pins.held()
-    env.clock[0] -= 2000
+    env.clock[0] -= 300
     store.checkpoint()
     assert store._pins.held()["o"]["at"] == source["o"]["at"]
     event = env.person_event(env.owner, "workspace", "restore", **store.restore_facts("workspace"), reason="other")
@@ -187,3 +187,54 @@ def test_unloaded_accumulator_is_copied_forward_and_checked_on_load(env):
     assert store._pins.held()["o"]["tickets"][uid] == entry
     store.ticket(uid)
     assert store._logs[uid].acc == entry["acc"] and store.diverged == {}
+
+
+def test_missing_checkpoint_pin_uses_stored_checkpoint(env):
+    store = env.bootstrap()
+    env.add_device()
+    held = store._pins.held()
+    (store._pins.dir / "checkpoint.json").unlink()
+    facts = store.restore_facts("workspace")
+    assert facts["source"] == {"n": held["o"]["n"], "hash": canon.checkpoint_hash(held["o"])}
+    candidate = env.person_event(env.owner, "workspace", "restore", **{**facts, "source": None}, reason="other")
+    with pytest.raises(StoreError, match="source"):
+        store.append(candidate, log="workspace")
+    candidate = env.person_event(env.owner, "workspace", "restore", **facts, reason="other")
+    store.append(candidate, log="workspace")
+
+
+def test_restore_refuses_checkpoint_more_than_300_seconds_ahead(env):
+    store = env.bootstrap()
+    env.clock[0] += 301
+    store.checkpoint()
+    env.clock[0] -= 301
+    before = env.read_events("workspace")
+    held = store._pins.held()
+    candidate = env.person_event(env.owner, "workspace", "restore", **store.restore_facts("workspace"), reason="other")
+    with pytest.raises(StoreError, match="300 seconds ahead") as exc:
+        store.append(candidate, log="workspace")
+    assert exc.value.code == "validation.restore"
+    assert env.read_events("workspace") == before and store._pins.held() == held
+
+
+@pytest.mark.parametrize("evidence", ["ticket", "transition"])
+def test_null_source_refused_when_workspace_checkpoint_files_are_lost(env, evidence):
+    store = env.bootstrap()
+    if evidence == "ticket":
+        env.new_ticket()
+    else:
+        store.append(
+            env.person_event(env.owner, "workspace", "restore", **store.restore_facts("workspace"), reason="other"),
+            log="workspace",
+        )
+    (store._pins.dir / "checkpoint.json").unlink()
+    store._checkpoints._workspace_path.unlink()
+    with pytest.raises(StoreError, match="checkpoint evidence exists"):
+        store.restore_facts("workspace")
+
+
+def test_malformed_checkpoint_pin_is_not_treated_as_missing(env):
+    store = env.bootstrap()
+    (store._pins.dir / "checkpoint.json").write_bytes(b"{}")
+    with pytest.raises(StoreError, match="invalid held workspace checkpoint"):
+        store.restore_facts("workspace")

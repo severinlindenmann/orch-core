@@ -1478,7 +1478,12 @@ class Store:
         if ev["type"] == "restore":
             cp = self._held_checkpoint()
             if cp:
-                t = max(t, _epoch(cp["o"]["at"]))
+                checkpoint_at = _epoch(cp["o"]["at"])
+                if checkpoint_at > int(self._clock()) + 300:
+                    raise StoreError(
+                        "validation.restore", "held checkpoint is more than 300 seconds ahead of the clock"
+                    )
+                t = max(t, checkpoint_at)
         if log != WORKSPACE:
             wsh = self._logs[WORKSPACE].seq if WORKSPACE in self._logs else 0
             ev["ws_seq"] = wsh
@@ -2284,8 +2289,18 @@ class Store:
                 )
 
     def _held_checkpoint(self) -> dict[str, Any] | None:
-        cp = self._pins.held() if self._pins else self._checkpoints.workspace()
+        cp = self._pins.held() if self._pins else None
         if cp is None:
+            cp = self._checkpoints.workspace()
+        if cp is None:
+            if (
+                self._checkpoints.ticket_uids()
+                or any((self._checkpoints.dir / "abandoned").glob("workspace-*.json"))
+                or (self._pins and any((self._pins.dir / "transitions").glob("*.json")))
+            ):
+                raise StoreError(
+                    "chain.diverged", "workspace checkpoint source is missing but checkpoint evidence exists"
+                )
             return None
         from .checkpoints import verify_object
 
@@ -2389,7 +2404,7 @@ class Store:
                 continue
             if any(i.id == ev["id"] for i in self._state._core.logs[log].invalid):
                 continue
-            held = self._pins.held()
+            held = self._held_checkpoint()
             if held and held["o"]["n"] > target["o"]["n"]:
                 continue
             if held != transition["C"] and held != target:

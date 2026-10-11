@@ -201,7 +201,9 @@ def test_policy_changed_raises_the_named_gate_and_later_ones(env):
 
 def test_addon_events_raise_gates_their_binds_name(env):
     w, uid, a = env
-    binds = {"fields": {"points": ["plan"]}, "sections": []}
+    decl = dict(
+        fields={"points": {"type": "integer", "set_by": ["owner"], "gate": ["plan"]}}, sections=[], artifact_kinds=[]
+    )
     granted = lambda: w.wev(
         "addon.granted",
         "sev",
@@ -209,7 +211,7 @@ def test_addon_events_raise_gates_their_binds_name(env):
         version="1.0.0",
         package_sha256=digest("pkg"),
         capabilities=[],
-        binds=binds,
+        **decl,
     )
     assert delta(w, uid, granted)[0] == FROM_PLAN
     assert w.view(uid).gates["plan"].input["addon_packages"] == {"estimate": digest("pkg")}

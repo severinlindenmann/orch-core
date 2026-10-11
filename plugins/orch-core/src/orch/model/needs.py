@@ -10,7 +10,7 @@ from .types import GATES, TCore, WsCore
 
 @dataclass(frozen=True)
 class Need:
-    kind: str  # question | approve | no_eligible | acknowledge
+    kind: str  # question | approve | no_eligible | acknowledge | addon (ref is <addon>.<rule id>, §8.1)
     ticket: str | None  # uid; None for the workspace
     who: tuple[str, ...]  # persons who can act
     ref: str | None = None  # question id or gate

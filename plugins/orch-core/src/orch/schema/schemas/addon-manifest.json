@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.orch.dev/v2/addon-manifest",
   "title": "Addon manifest (orch-addon.json)",
-  "description": "Format doc section 8, minimal P1 manifest. Unknown keys are refused; needs, cli, skills and agents_md (deferred to C9) are accepted only empty. Custom addon events are refused in P1, so there are no event keys. Unique section ids and artifact kinds are checked in validate().",
+  "description": "Format doc section 8 and 8.1. Unknown keys are refused; cli and skills (reserved for P2) are accepted only empty. needs and agents_md are checked further in validate(). Custom addon events are refused in P1, so there are no event keys. Unique section, artifact kind and rule ids are checked in validate().",
   "type": "object",
   "properties": {
     "schema": {
@@ -474,22 +474,56 @@
     },
     "needs": {
       "type": "array",
-      "maxItems": 0,
-      "description": "deferred to C9: accepted only empty"
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/token"
+          },
+          "when": {
+            "description": "an expression of the needs language (8.1); checked by validate()"
+          },
+          "who": {
+            "type": "array",
+            "items": {
+              "$ref": "https://schemas.orch.dev/v2/common#/$defs/approverToken"
+            },
+            "uniqueItems": true,
+            "minItems": 1
+          },
+          "text": {
+            "allOf": [
+              {
+                "$ref": "https://schemas.orch.dev/v2/common#/$defs/line"
+              }
+            ],
+            "maxLength": 120
+          }
+        },
+        "required": [
+          "id",
+          "when",
+          "who",
+          "text"
+        ],
+        "additionalProperties": false
+      }
     },
     "cli": {
       "type": "object",
       "maxProperties": 0,
-      "description": "deferred to C9: accepted only empty"
+      "description": "reserved for P2: accepted only empty"
     },
     "skills": {
       "type": "array",
       "maxItems": 0,
-      "description": "deferred to C9: accepted only empty"
+      "description": "reserved for P2: accepted only empty"
     },
     "agents_md": {
-      "const": "",
-      "description": "deferred to C9: accepted only empty"
+      "type": "string",
+      "maxLength": 200,
+      "description": "empty, or one line (8.1); the first-character rule is checked by validate()"
     }
   },
   "additionalProperties": false,

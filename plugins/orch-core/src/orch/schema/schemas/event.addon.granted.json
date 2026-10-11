@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.orch.dev/v2/event.addon.granted",
   "title": "addon.granted event",
-  "description": "5.4.2, 8. Owner only. Replay uses only binds.",
+  "description": "5.4.2, 8, 8.1. Owner only. Replay checks every later addon write against fields, sections and artifact_kinds; it never reads the manifest.",
   "type": "object",
   "properties": {
     "v": {
@@ -233,32 +233,41 @@
       },
       "uniqueItems": true
     },
-    "binds": {
+    "fields": {
       "type": "object",
-      "properties": {
-        "fields": {
-          "type": "object",
-          "propertyNames": {
-            "$ref": "https://schemas.orch.dev/v2/common#/$defs/token"
-          },
-          "additionalProperties": {
-            "type": "array",
-            "items": {
-              "$ref": "https://schemas.orch.dev/v2/common#/$defs/gateName"
-            },
-            "uniqueItems": true,
-            "minItems": 1
-          }
-        },
-        "sections": {
-          "type": "array",
-          "items": {
+      "propertyNames": {
+        "$ref": "https://schemas.orch.dev/v2/common#/$defs/token"
+      },
+      "additionalProperties": {
+        "oneOf": [
+          {
             "type": "object",
             "properties": {
-              "id": {
-                "type": "string",
-                "pattern": "^(?:[a-z][a-z0-9-]{0,39}\\.[a-z][a-z0-9_]*)(?![\\s\\S])",
-                "description": "always <addon>.<token> with the prefix equal to name (validate())"
+              "type": {
+                "const": "string"
+              },
+              "max_len": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 200
+              },
+              "set_by": {
+                "type": "array",
+                "items": {
+                  "anyOf": [
+                    {
+                      "$ref": "https://schemas.orch.dev/v2/common#/$defs/approverToken"
+                    },
+                    {
+                      "enum": [
+                        "agent",
+                        "addon"
+                      ]
+                    }
+                  ]
+                },
+                "uniqueItems": true,
+                "minItems": 1
               },
               "gate": {
                 "type": "array",
@@ -267,30 +276,326 @@
                 },
                 "uniqueItems": true,
                 "minItems": 1
+              }
+            },
+            "required": [
+              "type",
+              "set_by"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "const": "text"
               },
-              "types": {
+              "max_len": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 4096
+              },
+              "set_by": {
                 "type": "array",
                 "items": {
-                  "$ref": "https://schemas.orch.dev/v2/common#/$defs/ticketType"
+                  "anyOf": [
+                    {
+                      "$ref": "https://schemas.orch.dev/v2/common#/$defs/approverToken"
+                    },
+                    {
+                      "enum": [
+                        "agent",
+                        "addon"
+                      ]
+                    }
+                  ]
+                },
+                "uniqueItems": true,
+                "minItems": 1
+              },
+              "gate": {
+                "type": "array",
+                "items": {
+                  "$ref": "https://schemas.orch.dev/v2/common#/$defs/gateName"
                 },
                 "uniqueItems": true,
                 "minItems": 1
               }
             },
-            "additionalProperties": false,
             "required": [
-              "id",
-              "gate",
-              "types"
-            ]
+              "type",
+              "set_by"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "const": "integer"
+              },
+              "min": {
+                "$ref": "https://schemas.orch.dev/v2/common#/$defs/safeInt"
+              },
+              "max": {
+                "$ref": "https://schemas.orch.dev/v2/common#/$defs/safeInt"
+              },
+              "set_by": {
+                "type": "array",
+                "items": {
+                  "anyOf": [
+                    {
+                      "$ref": "https://schemas.orch.dev/v2/common#/$defs/approverToken"
+                    },
+                    {
+                      "enum": [
+                        "agent",
+                        "addon"
+                      ]
+                    }
+                  ]
+                },
+                "uniqueItems": true,
+                "minItems": 1
+              },
+              "gate": {
+                "type": "array",
+                "items": {
+                  "$ref": "https://schemas.orch.dev/v2/common#/$defs/gateName"
+                },
+                "uniqueItems": true,
+                "minItems": 1
+              }
+            },
+            "required": [
+              "type",
+              "set_by"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "const": "boolean"
+              },
+              "set_by": {
+                "type": "array",
+                "items": {
+                  "anyOf": [
+                    {
+                      "$ref": "https://schemas.orch.dev/v2/common#/$defs/approverToken"
+                    },
+                    {
+                      "enum": [
+                        "agent",
+                        "addon"
+                      ]
+                    }
+                  ]
+                },
+                "uniqueItems": true,
+                "minItems": 1
+              },
+              "gate": {
+                "type": "array",
+                "items": {
+                  "$ref": "https://schemas.orch.dev/v2/common#/$defs/gateName"
+                },
+                "uniqueItems": true,
+                "minItems": 1
+              }
+            },
+            "required": [
+              "type",
+              "set_by"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "const": "enum"
+              },
+              "values": {
+                "type": "array",
+                "items": {
+                  "$ref": "https://schemas.orch.dev/v2/common#/$defs/token"
+                },
+                "uniqueItems": true,
+                "minItems": 1
+              },
+              "set_by": {
+                "type": "array",
+                "items": {
+                  "anyOf": [
+                    {
+                      "$ref": "https://schemas.orch.dev/v2/common#/$defs/approverToken"
+                    },
+                    {
+                      "enum": [
+                        "agent",
+                        "addon"
+                      ]
+                    }
+                  ]
+                },
+                "uniqueItems": true,
+                "minItems": 1
+              },
+              "gate": {
+                "type": "array",
+                "items": {
+                  "$ref": "https://schemas.orch.dev/v2/common#/$defs/gateName"
+                },
+                "uniqueItems": true,
+                "minItems": 1
+              }
+            },
+            "required": [
+              "type",
+              "set_by",
+              "values"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "const": "string_list"
+              },
+              "max_items": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000
+              },
+              "set_by": {
+                "type": "array",
+                "items": {
+                  "anyOf": [
+                    {
+                      "$ref": "https://schemas.orch.dev/v2/common#/$defs/approverToken"
+                    },
+                    {
+                      "enum": [
+                        "agent",
+                        "addon"
+                      ]
+                    }
+                  ]
+                },
+                "uniqueItems": true,
+                "minItems": 1
+              },
+              "gate": {
+                "type": "array",
+                "items": {
+                  "$ref": "https://schemas.orch.dev/v2/common#/$defs/gateName"
+                },
+                "uniqueItems": true,
+                "minItems": 1
+              }
+            },
+            "required": [
+              "type",
+              "set_by"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "const": "person"
+              },
+              "set_by": {
+                "type": "array",
+                "items": {
+                  "anyOf": [
+                    {
+                      "$ref": "https://schemas.orch.dev/v2/common#/$defs/approverToken"
+                    },
+                    {
+                      "enum": [
+                        "agent",
+                        "addon"
+                      ]
+                    }
+                  ]
+                },
+                "uniqueItems": true,
+                "minItems": 1
+              },
+              "gate": {
+                "type": "array",
+                "items": {
+                  "$ref": "https://schemas.orch.dev/v2/common#/$defs/gateName"
+                },
+                "uniqueItems": true,
+                "minItems": 1
+              }
+            },
+            "required": [
+              "type",
+              "set_by"
+            ],
+            "additionalProperties": false
           }
-        }
+        ]
       },
-      "additionalProperties": false,
-      "required": [
-        "fields",
-        "sections"
-      ]
+      "description": "the declared fields: type, limits, set_by and the optional gate; no show or filter (display hints grant nothing)"
+    },
+    "sections": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^(?:[a-z][a-z0-9-]{0,39}\\.[a-z][a-z0-9_]*)(?![\\s\\S])",
+            "description": "always <addon>.<token> with the prefix equal to name (validate())"
+          },
+          "types": {
+            "type": "array",
+            "items": {
+              "$ref": "https://schemas.orch.dev/v2/common#/$defs/ticketType"
+            },
+            "uniqueItems": true,
+            "minItems": 1
+          },
+          "gate": {
+            "type": "array",
+            "items": {
+              "$ref": "https://schemas.orch.dev/v2/common#/$defs/gateName"
+            },
+            "uniqueItems": true,
+            "minItems": 1
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "types"
+        ]
+      }
+    },
+    "artifact_kinds": {
+      "type": "array",
+      "items": {
+        "allOf": [
+          {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/token"
+          },
+          {
+            "not": {
+              "$ref": "https://schemas.orch.dev/v2/common#/$defs/coreArtifactKind"
+            }
+          }
+        ]
+      },
+      "uniqueItems": true
     }
   },
   "required": [
@@ -308,7 +613,9 @@
     "version",
     "package_sha256",
     "capabilities",
-    "binds"
+    "fields",
+    "sections",
+    "artifact_kinds"
   ],
   "additionalProperties": false,
   "allOf": [

@@ -112,9 +112,23 @@ class Addon:
     version: str
     package_sha256: str
     capabilities: list[str]
-    binds: dict[str, Any]
+    fields: dict[str, Any]  # name -> {type, limits, set_by, gate?}: what the grant declared (§8.1)
+    sections: list[dict[str, Any]]  # [{id: <addon>.<token>, types, gate?}]
+    artifact_kinds: list[str]
     enabled: bool = True
     purged: bool = False
+
+    @property
+    def binds(self) -> dict[str, Any]:
+        """The bindings of §5.7: the declared fields and sections that have a ``gate``."""
+        return {
+            "fields": {f: list(d["gate"]) for f, d in self.fields.items() if d.get("gate")},
+            "sections": [
+                {"id": s["id"], "gate": list(s["gate"]), "types": list(s["types"])}
+                for s in self.sections
+                if s.get("gate")
+            ],
+        }
 
 
 @dataclass

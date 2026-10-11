@@ -61,7 +61,7 @@ EVENT_FIELDS: dict[str, tuple[str, ...]] = {
     "settings.changed": ("set",),
     "grant.issued": ("grant", "scope", "verbs", "issued_at", "hours", "expires_at", "secret_hash", "label"),
     "grant.revoked": ("grant", "reason"),
-    "addon.granted": ("name", "version", "package_sha256", "capabilities", "binds"),
+    "addon.granted": ("name", "version", "package_sha256", "capabilities", "fields", "sections", "artifact_kinds"),
     "addon.disabled": ("name",),
     "addon.purged": ("name",),
 }

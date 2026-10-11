@@ -48,6 +48,8 @@ class Code(StrEnum):
     UNATTENDED_DENIED = "unattended.denied"
     SETTINGS_INVALID = "settings.invalid"
     ADDON_UNKNOWN = "addon.unknown"
+    ADDON_FIELD_UNKNOWN = "addon.field_unknown"
+    ADDON_VALUE_INVALID = "addon.value_invalid"
     # --- tickets
     TICKET_UNKNOWN = "ticket.unknown"
     TICKET_EXISTS = "ticket.exists"

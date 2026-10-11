@@ -201,7 +201,6 @@ def device_revoked(core: Core, e: dict[str, Any], v: Verifier) -> Refusal | None
 
     def change() -> None:
         if dev is not None:
-            dev.revocation = copy.deepcopy(e["revocation"])
             dev.revoked = e["reason"]
         ws.revocations[device] = {
             "revocation": copy.deepcopy(e["revocation"]),
@@ -362,6 +361,20 @@ def restore(core: Core, lc: LogCore, e: dict[str, Any], v: Verifier) -> Refusal 
         if not v.verify_embedded({"type": "restore.revocation", **entry}, pk_pub=entry["pk_pub"]):
             return Refusal(Code.DEVICE_CERT, "restore revocation evidence does not verify")
         old = ws.revocations.get(dev_id)
+        dev = ws.devices.get(dev_id)
+        if dev is not None:
+            holder = ws.members.get(dev.person) or ws.former.get(dev.person)
+            person, pk_pub = dev.person, holder.pk_pub if holder else None
+        elif old is not None:
+            person, pk_pub = "p_" + old["revocation"]["o"]["person_id"], old["pk_pub"]
+        else:
+            continue
+        if "p_" + rev["o"]["person_id"] != person or entry["pk_pub"] != pk_pub:
+            return Refusal(Code.DEVICE_CERT, "the revocation is not for the device's known person key")
+    for entry in e["revocations"]:
+        rev = entry["revocation"]
+        dev_id = "d_" + rev["o"]["device_id"]
+        old = ws.revocations.get(dev_id)
         if old is not None:
             previous = old["revocation"]
             if previous == rev:
@@ -376,10 +389,11 @@ def restore(core: Core, lc: LogCore, e: dict[str, Any], v: Verifier) -> Refusal 
         dev = ws.devices.get(dev_id)
         if dev is not None:
             dev.revoked = reason
-            dev.revocation = copy.deepcopy(entry["revocation"])
         if reason == "compromised":
             for grant in ws.grants.values():
                 grant.revoked = grant.revoked or grant.device == dev_id
             for ticket in core.tickets.values():
+                before = generations.snapshot(ws, ticket)
                 generations.void_device(ws, ticket, dev_id)
+                generations.settle(ws, ticket, before, raise_gates=False)
     return None

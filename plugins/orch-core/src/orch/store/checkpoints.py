@@ -126,6 +126,7 @@ def judge_offer(
                 delegation["workspace_id"] != offered["workspace_id"]
                 or crypto.unb64u(delegation["wsk_pub"], crypto.PUB_LEN) != wsk_pub
                 or ev["actor"]["id"] != "p_" + cert["person_id"]
+                or ev["actor"]["device"] != "d_" + cert["device_id"]
                 or not person_scope_ok(cert, needs_operate=True)
                 or cert["created_ms"] > ts(ev["at"]) * 1000 + 300000
                 or (cert["expires_ms"] is not None and cert["expires_ms"] <= ts(ev["at"]) * 1000)
@@ -150,7 +151,7 @@ def judge_offer(
                     log == WORKSPACE
                     and (
                         rev["device_id"] not in listed
-                        or (listed[rev["device_id"]] != rev["reason"] and listed[rev["device_id"]] != "compromised")
+                        or (rev["reason"] == "compromised" and listed[rev["device_id"]] != "compromised")
                     )
                 ) or ev["actor"]["device"] == "d_" + rev["device_id"]:
                     return "chain.diverged", None

@@ -1,6 +1,6 @@
 """The F1 checkpoint vectors (ticket-format §5.10) against ``orch.store.checkpoints``: the §2.4 shape and the signed
 bytes, forged variants, a lower seq (or n) and the same seq with another head refused (``chain.diverged``), a log
-that disagrees with a checkpoint is diverged, and a workspace restore re-appends the PK-signed revocations."""
+that disagrees with a checkpoint is diverged, and a workspace restore atomically embeds the PK-signed revocations."""
 
 import json
 from pathlib import Path
@@ -144,7 +144,7 @@ def test_a_checkpoint_of_another_genesis_is_refused(tmp_path):
     assert [x.code for x in found] == ["trust.genesis_mismatch"]
 
 
-# --- restore re-appends every PK-signed revocation (§5.10) --------------------------------------------------
+# --- restore atomically embeds every PK-signed revocation (§5.10) --------------------------------------------------
 
 R = json.loads((DIR / "restore.json").read_text(encoding="utf-8"))["scenarios"]
 
@@ -156,6 +156,8 @@ def test_restore_vectors_through_the_model(sc):
 
 @pytest.mark.parametrize("case", C["transition_cases"], ids=lambda c: c["name"])
 def test_source_and_accumulator_transitions(case):
+    if "host_scenario" in case:
+        run_scenario(case["host_scenario"])
     assert cps.verify_object(WSK, case["offered"])
     got = cps.judge_offer(
         case["held"]["o"] if case["held"] else None,

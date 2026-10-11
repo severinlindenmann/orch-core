@@ -890,7 +890,10 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
   plus branch/proof material. A four-field descriptor is insufficient. Verify the full person and host signatures,
   `line.seq = from_seq + 1`, `line.prev = head`, §5.5 order and §5.11 authorization against the pre-event state.
   Hosts verify owner membership, role, device, scopes and revocation at `from_seq` by F1 replay. Relays and devices
-  may apply the narrower owner-device policy (P3-D24). A member list need not be persisted as transition evidence.
+  apply the relay/device owner-device policy (P3-D24): delegation plus a certificate with `operate`, no `drop:`
+  scope, and matching `actor.device`. This is broader than the host's owner-at-`from_seq` check: a later-demoted or
+  removed delegation owner still passes. This is an accepted P3 gap until the P8 owner-signed roster.
+  A member list need not be persisted as transition evidence.
   `source` must equal `{n: C.o.n, hash: h_checkpoint(C.o)}` of a schema-valid, WSK-signed workspace checkpoint of the
   pinned workspace/genesis, and must equal the receiver's held H atomically. Null is allowed only without H.
   Both log kinds bind the same workspace checkpoint. `abandoned` names the highest known checkpoint entry above
@@ -922,14 +925,15 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
   `revocation.o.device_id`, unique per device, all evidence verbatim. A ticket restore requires `[]`.
   Structure, sorting, uniqueness and ticket emptiness are checked at step 0. At step 7 verify every PK signature,
   certificate signature and binding: PK derives person_id; certificate key derives device_id. Failures give
-  `device.cert`; earlier §5.11 failures win. Expiry, removal or missing scope never blocks recording revocation.
+  `device.cert`; earlier §5.11 failures win. For a device known before the event (including a tombstone),
+  the revocation person and `pk_pub` must match its known person and key, otherwise `device.cert`. Expiry, removal or missing scope never blocks recording revocation.
   Evidence proves revocation only, never membership or authority. Validate every entry before any effects.
   The effective revocation is the earliest accepted one with the highest reason. An entry already in the retained
   chain with the same reason must be byte-identical under canonical JSON and has no effect (no void or extra raise).
   Compromised over lost/retired is an upgrade. Weaker entries, equal-strength different reasons, or same-reason
   entries with different bytes give `device.exists` at step 7.
   Authorize the restore against pre-event state, apply and settle its gate raises first, then apply revocations in
-  list order against the post-raise state (grant termination and §5.7 compromised effects). Each gate rises at most
+  list order against the post-raise state (grant termination and §5.7 compromised effects). Settle the post-raise voids in the same event, including gates that did not apply. Each gate rises at most
   once per restore. Unknown devices get permanent device-ID tombstones, checked by every introduction path.
   Under the append lock the host checks completeness against its durable evidence, including already present
   revocations; log-only readers validate the list but cannot check completeness. A relay checks every revocation
@@ -1012,8 +1016,9 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
      hash; `source_sha` present on a change request or a non-verify gate, or missing on a verdict or code approval),
      `source.missing`, `gate.stale` (source list, gate hash), `gate.incomplete`. For addon writes: `addon.field_unknown`,
      `addon.value_invalid` and the other §8.1 codes. For other types the order is not pinned, and a vector must not
-     break two step-7 rules at once. For restores, verify the revocation evidence (`device.cert`) and the B1
-     effective-revocation rule (`device.exists`) before applying any effects (§5.10).
+     break two step-7 rules at once. For restores, check all entries' evidence and known-person binding first (`device.cert`), then
+     compare all entries under the B1 effective-revocation rule (`device.exists`), before any effects (§5.10).
+     Thus `device.cert` wins even when an earlier entry fails B1.
   8. Derived fields: `auth.invalid_event`, `gate.invalidated_mismatch`.
 
   On replay, an `actor.device` with no certificate, or a person `sig` that doesn't verify, breaks the chain (§5.5),

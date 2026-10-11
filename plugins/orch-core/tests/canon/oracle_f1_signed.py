@@ -834,7 +834,7 @@ def transition_vectors() -> list[dict[str, Any]]:
     forged["sig"] = b64u(bytes(64))
     case("source_signature_required", "chain.diverged", tr={**transition, "C": forged})
     # The source may precede the retained prefix: prove the intervening growth, too.
-    w.logs["workspace"] = original
+    w.logs["workspace"] = list(original)
     w.roster_v = 3
     forward_c = cp(1, heads[:1])
     forward = w.ev(
@@ -882,6 +882,76 @@ def transition_vectors() -> list[dict[str, Any]]:
             "recorded": None,
         }
     )
+    # P3-D24 authenticates delegation devices; it does not replay owner membership.
+    w.logs["workspace"] = list(original)
+    w.roster_v = 3
+    w.steps = w.steps[:3]
+    w.ev("workspace", "role.changed", w.actor("sev"), {"person": pid("mara"), "role": "owner"})
+    w.ev("workspace", "role.changed", w.actor("sev"), {"person": pid("sev"), "role": "member"})
+    branch = [head(ev) for ev in w.logs["workspace"]]
+    demoted_c = cp(5, branch)
+    demoted = w.ev(
+        "workspace",
+        "restore",
+        w.actor("sev"),
+        {
+            **payload,
+            "from_seq": len(branch),
+            "head": branch[-1],
+            "abandoned": None,
+            "abandoned_decisions": [],
+            "source": checkpoint_ref(demoted_c),
+        },
+        expect="role.denied",
+    )
+    demoted_t = _checkpoint({**cp(6, [*branch, head(demoted)])["o"], "at": demoted["at"]})
+    cases.append(
+        {
+            "name": "demoted_delegation_owner_receiver_accepts_host_refuses",
+            "held": demoted_c,
+            "offered": demoted_t,
+            "restore": {
+                **transition,
+                "C": demoted_c,
+                "T": demoted_t,
+                "event": demoted,
+                "retained_heads": branch,
+                "abandoned_heads": branch,
+            },
+            "proofs": {"workspace": [head(demoted)]},
+            "applied": [],
+            "expect": "ok",
+            "recorded": demoted["id"],
+            "host_scenario": copy.deepcopy(w.scenario()),
+        }
+    )
+    for held_reason, listed_reason, expect in [
+        ("retired", "lost", "ok"),
+        ("lost", "retired", "ok"),
+        ("compromised", "lost", "chain.diverged"),
+    ]:
+        w.logs["workspace"] = original[:1]
+        w.roster_v = 1
+        entry = {
+            "revocation": ow.make_revocation("lena", "lena1", listed_reason),
+            "device_cert": ow.make_cert("lena", "lena1"),
+            "pk_pub": key("pk_lena").pub_b64u,
+        }
+        rev_event = w.ev("workspace", "restore", w.actor("sev"), {**payload, "revocations": [entry]})
+        rev_target = _checkpoint({**cp(4, [heads[0], head(rev_event)])["o"], "at": rev_event["at"]})
+        cases.append(
+            {
+                "name": "receiver_" + held_reason + "_to_" + listed_reason,
+                "held": c,
+                "offered": rev_target,
+                "restore": {**transition, "event": rev_event, "T": rev_target},
+                "proofs": {"workspace": [head(rev_event)]},
+                "applied": [],
+                "expect": expect,
+                "recorded": rev_event["id"] if expect == "ok" else None,
+                "known_revocations": [{"revocation": ow.make_revocation("lena", "lena1", held_reason)}],
+            }
+        )
     return cases
 
 
@@ -938,6 +1008,25 @@ def restore_scenarios() -> list[dict[str, Any]]:
             w, [entry], expect=expect, after={"tickets": {TICKET: {"gens": [1, 1, 1, 0]}}} if expect == "ok" else None
         )
         out.append(w.scenario())
+
+    for tombstone in (False, True):
+        w = setup("foreign_person_evidence_" + ("tombstone" if tombstone else "known_device"))
+        dev = "zed1" if tombstone else "lena1"
+        if tombstone:
+            restore(w, [evidence("zed", dev)])
+        restore(w, [evidence("mara", dev, "compromised")], expect="device.cert")
+        out.append(w.scenario())
+
+    w = setup("all_evidence_precedes_any_B1_comparison")
+    entries = sorted([evidence(), evidence("mara", "mara1")], key=lambda x: x["revocation"]["o"]["device_id"])
+    restore(w, [entries[0]])
+    entries[0] = copy.deepcopy(entries[0])
+    entries[0]["revocation"]["o"]["reason"] = "retired"
+    person = "lena" if entries[0]["revocation"]["o"]["device_id"] == did("lena1")[2:] else "mara"
+    entries[0] = evidence(person, person + "1", "retired")
+    entries[1]["revocation"]["sig"] = b64u(bytes(64))
+    restore(w, entries, expect="device.cert")
+    out.append(w.scenario())
 
     w = setup("fresh_host_revocation_and_plain_upgrade")
     for reason, expect in [

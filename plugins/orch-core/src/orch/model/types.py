@@ -94,7 +94,6 @@ class Device:
     cert: dict[str, Any]
     removed: bool = False
     revoked: str | None = None
-    revocation: dict[str, Any] | None = None
 
 
 @dataclass

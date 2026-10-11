@@ -98,7 +98,7 @@ def member_added(core: Core, e: dict[str, Any], v: Verifier) -> Refusal | None:
         return Refusal(Code.MEMBER_EXISTS, p)
     cert = e["device_cert"]
     dev = "d_" + cert["o"]["device_id"]
-    if dev in ws.devices:
+    if dev in ws.devices or dev in ws.revocations:
         return Refusal(Code.DEVICE_EXISTS, dev)
     if (r := authz.device_valid(None, cert, ts(e["at"]), False)) is not None:
         return r
@@ -156,7 +156,7 @@ def role_changed(core: Core, e: dict[str, Any]) -> Refusal | None:
 
 def device_added(core: Core, e: dict[str, Any], v: Verifier) -> Refusal | None:
     ws, a, dev = core.ws, e["actor"], e["device"]
-    if dev in ws.devices:
+    if dev in ws.devices or dev in ws.revocations:
         return Refusal(Code.DEVICE_EXISTS, dev)
     if (r := authz.device_valid(None, e["cert"], ts(e["at"]), False)) is not None:
         return r
@@ -178,23 +178,42 @@ def device_removed(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
 
 def device_revoked(core: Core, e: dict[str, Any], v: Verifier) -> Refusal | None:
     ws = core.ws
-    dev = ws.devices.get(e["device"])
-    if dev is None:
-        return Refusal(Code.DEVICE_UNKNOWN, e["device"])
-    holder = ws.members.get(dev.person) or ws.former.get(dev.person)
-    if holder is None or "p_" + e["revocation"]["o"]["person_id"] != dev.person:
+    device = e["device"]
+    dev = ws.devices.get(device)
+    known = ws.revocations.get(device)
+    if dev is None and known is None:
+        return Refusal(Code.DEVICE_UNKNOWN, device)
+    if dev is not None:
+        holder = ws.members.get(dev.person) or ws.former.get(dev.person)
+        if holder is None:
+            return Refusal(Code.DEVICE_CERT, "the device has no person key")
+        cert, pk_pub, person, previous = dev.cert, holder.pk_pub, dev.person, dev.revoked
+    else:
+        # A restore's tombstone supplies verification evidence, never membership or actor authority.
+        cert, pk_pub = known["device_cert"], known["pk_pub"]
+        person, previous = "p_" + cert["o"]["person_id"], known["revocation"]["o"]["reason"]
+    if "p_" + e["revocation"]["o"]["person_id"] != person:
         return Refusal(Code.DEVICE_CERT, "the revocation is not for a device of this person")
-    if not v.verify_embedded(e, pk_pub=holder.pk_pub, device_cert=dev.cert):
+    if not v.verify_embedded(e, pk_pub=pk_pub, device_cert=cert):
         return Refusal(Code.DEVICE_CERT, "the revocation is not signed by the person key")
+    if previous and not (previous != "compromised" and e["reason"] == "compromised"):
+        return Refusal(Code.DEVICE_EXISTS, device)
 
     def change() -> None:
-        dev.revoked = e["reason"]
-        if e["reason"] == "compromised":  # also ends every grant that device signed (§5.7)
-            for g in ws.grants.values():
-                g.revoked = g.revoked or g.device == dev.id
+        if dev is not None:
+            dev.revocation = copy.deepcopy(e["revocation"])
+            dev.revoked = e["reason"]
+        ws.revocations[device] = {
+            "revocation": copy.deepcopy(e["revocation"]),
+            "device_cert": copy.deepcopy(cert),
+            "pk_pub": pk_pub,
+        }
+        if e["reason"] == "compromised":
+            for grant in ws.grants.values():
+                grant.revoked = grant.revoked or grant.device == device
 
     if e["reason"] == "compromised":
-        cross(core, change, lambda t: generations.void_device(ws, t, dev.id))
+        cross(core, change, lambda ticket: generations.void_device(ws, ticket, device))
     else:
         change()
     return None
@@ -330,11 +349,37 @@ def addon_event(core: Core, e: dict[str, Any]) -> Refusal | None:
     return None
 
 
-def restore(core: Core, lc: LogCore, e: dict[str, Any]) -> Refusal | None:
+def restore(core: Core, lc: LogCore, e: dict[str, Any], v: Verifier) -> Refusal | None:
     ws = core.ws
     if (r := _owner_only(ws, e)) is not None:
         return r
     if e["head"] != lc.head or e["from_seq"] != lc.seq:
         return Refusal(Code.RESTORE_BAD_HEAD, "from_seq/head must name the last event on disk")
+    changes = []
+    for entry in e["revocations"]:
+        rev = entry["revocation"]
+        dev_id = "d_" + rev["o"]["device_id"]
+        if not v.verify_embedded({"type": "restore.revocation", **entry}, pk_pub=entry["pk_pub"]):
+            return Refusal(Code.DEVICE_CERT, "restore revocation evidence does not verify")
+        old = ws.revocations.get(dev_id)
+        if old is not None:
+            previous = old["revocation"]
+            if previous == rev:
+                continue
+            if previous["o"]["reason"] == "compromised" or rev["o"]["reason"] != "compromised":
+                return Refusal(Code.DEVICE_EXISTS, dev_id)
+        changes.append((dev_id, entry))
     cross(core, lambda: None, lambda t: generations.mark(t, *GATES))
+    for dev_id, entry in changes:
+        ws.revocations[dev_id] = copy.deepcopy(entry)
+        reason = entry["revocation"]["o"]["reason"]
+        dev = ws.devices.get(dev_id)
+        if dev is not None:
+            dev.revoked = reason
+            dev.revocation = copy.deepcopy(entry["revocation"])
+        if reason == "compromised":
+            for grant in ws.grants.values():
+                grant.revoked = grant.revoked or grant.device == dev_id
+            for ticket in core.tickets.values():
+                generations.void_device(ws, ticket, dev_id)
     return None

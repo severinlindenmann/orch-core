@@ -16,15 +16,15 @@ import copy
 from dataclasses import dataclass
 from typing import Any
 
-from orch.canon import HashError, event_head
-from orch.schema import LOG_TYPES
+from orch.canon import HashError, event_head, log_acc
+from orch.schema import LOG_TYPES, SchemaError, validate, validate_settings
 
 from . import authz, claims, edits, gates, generations, lifecycle, questions, source, tasks, visibility, workspace
 from .codes import Code, Refusal
 from .types import WORKSPACE, Core, InvalidEvent, LogCore, TCore, WsCore, position, ts
-from .verifier import Verifier
+from .verifier import SigContext, Verifier
 
-CHAIN_CODES = frozenset({Code.CHAIN_BROKEN, Code.CHAIN_BAD_WS_SEQ, Code.EVENT_UNKNOWN_TYPE})
+CHAIN_CODES = frozenset({Code.CHAIN_BROKEN, Code.CHAIN_BAD_WS_SEQ})
 # Workspace events that change every ticket: those get a copy of all tickets.
 CROSS_TICKETS = frozenset(
     {
@@ -60,14 +60,37 @@ def _log_of(core: Core, log: str) -> LogCore:
     return core.logs.get(log) or LogCore()
 
 
+def _person_sig_check(core: Core, log: str, e: dict[str, Any], ctx: Ctx, genesis: bool) -> Refusal | None:
+    """§5.5 Reading: on replay a person ``sig`` that does not verify under the certificate of ``actor.device`` (or
+    an ``actor.device`` with no certificate) breaks the chain at that line, before any authorization is looked at. A
+    device of another person is left to authorization (``device.unknown``); a ``device.added`` of the actor's own
+    device is checked under the ``cert`` inside the event."""
+    a, ws = e["actor"], core.ws
+    if genesis:  # §5.11 check 6: under the certificate inside the event
+        ok = "sig" in e and ctx.verifier.verify_person(e, SigContext(e["workspace_id"], log, e["device_cert"]))
+        return None if ok else Refusal(Code.CHAIN_BROKEN, "the genesis signature does not verify")
+    dev = ws.devices.get(a["device"])
+    if dev is None:
+        if not (e["type"] == "device.added" and e.get("device") == a["device"]):
+            return Refusal(Code.CHAIN_BROKEN, "the actor's device has no certificate")
+        cert = e["cert"]
+    elif dev.person != a["id"]:
+        return None
+    else:
+        cert = dev.cert
+    if "sig" not in e or not ctx.verifier.verify_person(e, SigContext(ws.workspace_id, log, cert)):
+        return Refusal(Code.CHAIN_BROKEN, "the person signature does not verify")
+    return None
+
+
 def _chain_check(core: Core, log: str, lc: LogCore, e: dict[str, Any], ctx: Ctx) -> Refusal | None:
     kind = "workspace" if log == WORKSPACE else "ticket"
     if lc.broken is not None:
         return Refusal(Code.CHAIN_BROKEN, f"the log is broken ({lc.broken})")
-    if e["type"] not in LOG_TYPES[kind]:
-        return Refusal(Code.EVENT_UNKNOWN_TYPE, f"{e['type']} is not an event of the {kind} log")
     if e["seq"] != lc.seq + 1 or e["prev"] != lc.head:
         return Refusal(Code.CHAIN_BROKEN, "seq/prev do not continue the log")
+    if e["actor"]["kind"] != "person" and any(field in e for field in ("sig", "auth", "roster_v")):
+        return Refusal(Code.CHAIN_BROKEN, "sig, auth and roster_v appear only on person events")
     # a second one, or one that is not seq 1, is checked like any event (and never trusted with wsk_pub=None)
     genesis = e["type"] == "workspace.created" and not core.ws.created and e["seq"] == 1
     if genesis:  # refuse a foreign genesis before it is trusted with wsk_pub=None
@@ -75,6 +98,9 @@ def _chain_check(core: Core, log: str, lc: LogCore, e: dict[str, Any], ctx: Ctx)
             return Refusal(Code.TRUST_GENESIS_MISMATCH, "the genesis is for another workspace id")
         if not ctx.admit and ctx.expected_genesis is not None and _head(e) != ctx.expected_genesis:
             return Refusal(Code.TRUST_GENESIS_MISMATCH, "the genesis differs from the pinned one")
+    if genesis and ctx.admit and "host_sig" in e:  # the genesis is admitted signed: check 4 (§5.11), chain.broken
+        if not ctx.verifier.verify_host(e, log=log, wsk_pub=None, workspace_id=ctx.expected_workspace_id):
+            return Refusal(Code.CHAIN_BROKEN, "host_sig does not verify")
     if not ctx.admit:
         if "host_sig" not in e:
             return Refusal(Code.CHAIN_BROKEN, "event has no host_sig")
@@ -84,10 +110,14 @@ def _chain_check(core: Core, log: str, lc: LogCore, e: dict[str, Any], ctx: Ctx)
         wid = ctx.expected_workspace_id if genesis else core.ws.workspace_id
         if not ctx.verifier.verify_host(e, log=log, wsk_pub=wsk, workspace_id=wid):
             return Refusal(Code.CHAIN_BROKEN, "host_sig does not verify")
+        if e["actor"]["kind"] == "person" and (r := _person_sig_check(core, log, e, ctx, genesis)) is not None:
+            return r
     if kind == "ticket":
         wsh = core.logs[WORKSPACE].seq if WORKSPACE in core.logs else 0
         if e["ws_seq"] < lc.last_ws_seq or e["ws_seq"] > wsh or (ctx.admit and e["ws_seq"] != wsh):
             return Refusal(Code.CHAIN_BAD_WS_SEQ, f"ws_seq {e['ws_seq']} (workspace head {wsh})")
+        if e["ws_seq"] == lc.last_ws_seq and ts(e["at"]) < lc.last_at:
+            return Refusal(Code.CHAIN_BAD_WS_SEQ, "`at` goes back within the same ws_seq")
         if ctx.admit and core.last_pos is not None and position(e, log) <= core.last_pos:
             # replay walks events by (ws_seq, at, uid, seq); appending out of that order would make replay see
             # cross-ticket state in another order than admit did, so the host must pick a later `at`
@@ -131,6 +161,7 @@ def _ticket_handler(core: Core, t: TCore, lc: LogCore, e: dict[str, Any]) -> Ref
         "ticket.submitted": lambda: lifecycle.submitted(ws, t, e),
         "ticket.closed": lambda: lifecycle.closed(core, t, e),
         "ticket.reopened": lambda: lifecycle.reopened(ws, t, e),
+        "ticket.moved": lambda: lifecycle.moved(ws, t, e),
         "visibility.changed": lambda: visibility.changed(ws, t, e),
         "people.changed": lambda: lifecycle.people_changed(ws, t, e),
         "policy.changed": lambda: lifecycle.policy_changed(ws, t, e),
@@ -182,7 +213,7 @@ def _workspace_handler(core: Core, lc: LogCore, e: dict[str, Any], ctx: Ctx) -> 
         "addon.granted": lambda: workspace.addon_event(core, e),
         "addon.disabled": lambda: workspace.addon_event(core, e),
         "addon.purged": lambda: workspace.addon_event(core, e),
-        "restore": lambda: workspace.restore(core, lc, e),
+        "restore": lambda: workspace.restore(core, lc, e, v),
         "invalid.acknowledged": lambda: _ack(ws, lc, e),
         "projection.repaired": lambda: None,
     }
@@ -220,6 +251,9 @@ def _apply(core: Core, log: str, lc: LogCore, e: dict[str, Any], ctx: Ctx) -> Re
         return Refusal(Code.TICKET_UNKNOWN, log)
     if not is_ws and typ == "ticket.created" and t is not None:
         return Refusal(Code.TICKET_EXISTS, log)
+    kind = "workspace" if is_ws else "ticket"
+    if typ not in LOG_TYPES[kind]:  # §5.11 refusal order, step 4: after the envelope and the log, before the signer
+        return Refusal(Code.EVENT_UNKNOWN_TYPE, f"{typ} is not an event of the {kind} log")
     if (r := _authorize(core, log, t, e, ctx)) is not None:
         return r
     if is_ws:
@@ -230,8 +264,10 @@ def _apply(core: Core, log: str, lc: LogCore, e: dict[str, Any], ctx: Ctx) -> Re
         return lifecycle.created(core, log, e)
     assert t is not None
     before = generations.snapshot(ws, t)
+    status_before = t.status
     if (r := _ticket_handler(core, t, lc, e)) is not None:
         return r
+    generations.on_unsettle(ws, t, status_before)
     settled = generations.settle(ws, t, before)
     if typ == "edit.external" and sorted(e["voided_gates"]) != sorted(settled.voided):
         return Refusal(Code.AUTH_INVALID_EVENT, f"voided_gates should be {sorted(settled.voided)}")
@@ -260,8 +296,11 @@ def _place(lc: LogCore, e: dict[str, Any]) -> None:
     lc.head = head
     if head is not None:
         lc.heads[head] = e["seq"]
+        lc.acc = log_acc(lc.acc, head)
     lc.ids.add(e["id"])
     lc.last_ws_seq = e.get("ws_seq", lc.last_ws_seq)
+    if "ws_seq" in e:
+        lc.last_at = ts(e["at"])
 
 
 def apply_event(
@@ -272,9 +311,21 @@ def apply_event(
     lc = _log_of(core, log)
     if cow:  # the caller shares logs with an earlier State: never mutate those
         lc = copy.deepcopy(lc)
+    if e["type"] in ("settings.changed", "restore"):
+        try:
+            if e["type"] == "restore":
+                validate("event", {"host_sig": "AA" * 43, **e}, log="workspace" if log == WORKSPACE else "ticket")
+            else:
+                validate_settings(e["set"], repos=core.ws.repos)
+        except SchemaError as exc:
+            if commit and not ctx.admit and lc.broken is None:
+                lc.broken = str(exc)
+                core.logs[log] = lc
+            return Refusal(Code.VALIDATION_EVENT if ctx.admit else Code.CHAIN_BROKEN, str(exc))
     if (r := _chain_check(core, log, lc, e, ctx)) is not None:
         if commit and lc.broken is None:
             lc.broken = r.detail
+            lc.broken_code = r.code.value
             core.logs[log] = lc
         return r
     r = _envelope_check(lc, e)
@@ -295,6 +346,9 @@ def apply_event(
             lc.acked.add(e["invalid_seq"])
         elif e["type"] == "restore":
             lc.acked |= {i.seq for i in lc.invalid}
+            # §5.10 / O5: a decision of the abandoned part is single-use by its id across the restore; the id stays
+            # taken on the new chain, so the same signed event appended again is a duplicate (admit and replay alike)
+            lc.ids |= set(e["abandoned_decisions"])
     else:
         lc.invalid.append(
             InvalidEvent(

@@ -248,7 +248,9 @@ def test_reopen_and_restore_raise_every_gate(env):
                 head=canon.event_head(head),
                 abandoned=None,
                 abandoned_decisions=[],
-                reason="r",
+                reason="rollback",
+                source=None,
+                revocations=[],
                 based_on_override=canon.event_head(head),
             ),
         )[0]
@@ -397,3 +399,27 @@ def test_external_edit_voids_is_what_replay_will_demand(env):
     got = external_edit_voids(st, uid, {"context": new2})
     w.tev(uid, "edit.external", w.HOST, sections={"context": new2}, voided_gates=got, normalised=False)
     assert w.view(uid).gates["requirements"].gen > 0
+
+
+def test_restore_settles_compromised_voids_on_an_inapplicable_gate(env, monkeypatch):
+    from orch.model import workspace
+
+    w, uid, _ = env
+    approval = w.decide(uid, "sev", "requirements")
+    core = w.state()._core
+    ticket = core.tickets[uid]
+    core.ws.policies["requirements"]["applies"] = "off"
+    device = core.ws.devices[w.dev["sev"]]
+    entry = {
+        "revocation": {"o": {"person_id": device.person[2:], "device_id": device.id[2:], "reason": "compromised"}},
+        "device_cert": device.cert,
+        "pk_pub": core.ws.members[device.person].pk_pub,
+    }
+    log = core.logs["workspace"]
+    event = {"actor": w.actor("sev"), "type": "restore", "from_seq": log.seq, "head": log.head, "revocations": [entry]}
+    before = {g: ticket.gates[g].gen for g in ALL}
+    monkeypatch.setattr(type(w.verifier), "verify_embedded", lambda *a, **kw: True)
+    assert workspace.restore(core, log, event, w.verifier) is None
+    assert not ticket.marks
+    assert all(ticket.gates[g].gen - before[g] == (0 if g == "requirements" else 1) for g in ALL)
+    assert approval["id"] in ticket.gates["requirements"].pending_void

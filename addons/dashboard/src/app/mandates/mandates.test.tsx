@@ -40,7 +40,7 @@ afterEach(() => {
 })
 
 describe('Agents → Mandates (preview)', () => {
-  it('both Stop buttons announce a dialog', async () => {
+  it('both Stop buttons announce a dialog that asks whether to stop agents', async () => {
     renderApp('/agents?tab=mandates', { setup: seeded })
     await screen.findByTestId('mandates-tab', {}, T)
     expect(screen.getAllByRole('button', { name: 'Stop…' })).toHaveLength(2)
@@ -120,6 +120,7 @@ describe('Agents → Mandates (preview)', () => {
     expect(within(limits).getByRole('progressbar', { name: 'Days left' })).toHaveAttribute('aria-valuemax', '7')
     expect(within(limits).getByRole('progressbar', { name: 'Grants issued' })).toHaveAttribute('aria-valuenow', '1')
     const refused = screen.getByTestId('mandate-refused')
+    expect(log).toHaveTextContent('Landed on main: via mandate md_3, for Severin')
     expect(refused).toHaveTextContent('Protected path')
     expect(refused).toHaveTextContent('Your veto')
     expect(refused).toHaveTextContent('Always yours')
@@ -132,16 +133,16 @@ describe('Agents → Mandates (preview)', () => {
 
   it('Revoke and void lists exactly the decisions on work not landed, and the landed ones for review', async () => {
     const { user } = renderApp('/agents?tab=mandates', { setup: seeded })
-    await user.click(await screen.findByRole('button', { name: 'Revoke and void…' }, T))
+    await user.click(await screen.findByRole('button', { name: 'Revoke and void' }, T))
     const dialog = await screen.findByRole('alertdialog', {}, T)
     expect(dialog).toHaveTextContent('Revoke mandate md_3 and void its decisions?')
     const voids = within(within(dialog).getByTestId('revoke-voids')).getAllByRole('listitem').map((li) => li.textContent!.slice(0, 14))
-    // Seeded: #1831–#1840, the verdicts #1833 and #1835 landed; workspace-level decisions read "workspace".
-    expect(voids.map((v) => v.slice(0, 5))).toEqual(['#1831', '#1832', '#1834', '#1836', '#1837', '#1838', '#1839', '#1840'])
+    // Seeded: #1831–#1840, the verdict #1833 and main landing #1836 landed; workspace-level decisions read "workspace".
+    expect(voids.map((v) => v.slice(0, 5))).toEqual(['#1831', '#1832', '#1834', '#1835', '#1837', '#1838', '#1839', '#1840'])
     expect(voids[0]).toBe('#1831DEMO-0051')
     expect(voids[4]).toBe('#1837workspace')
     const landed = within(within(dialog).getByTestId('revoke-landed')).getAllByRole('listitem').map((li) => li.textContent!.slice(0, 5))
-    expect(landed).toEqual(['#1833', '#1835'])
+    expect(landed).toEqual(['#1833', '#1836'])
     expect(within(dialog).getByTestId('preview-covers')).toHaveTextContent('Voids 8 decisions on work that has not landed')
     await user.click(within(dialog).getByRole('button', { name: 'Revoke and void (preview — nothing is signed)' }))
     expect(await screen.findByText(/Revoked .*: 8 decisions voided, 2 on landed work listed for your review/, {}, T)).toBeInTheDocument()
@@ -210,7 +211,7 @@ describe('Today: Decided for you (preview)', () => {
     for (const g of groups) expect(g.compareDocumentPosition(digest) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     const toggle = within(digest).getByRole('button', { name: /^Decided for you/ })
     expect(toggle).toHaveAttribute('aria-expanded', 'false')
-    expect(toggle).toHaveTextContent(/Decided for you · 5 since you last looked · 4 refused or skipped · Review/)
+    expect(toggle).toHaveTextContent(/Decided for you · 6 since you last looked · 4 refused or skipped · Review/)
     expect(within(digest).queryAllByTestId(/^mandate-decision:/)).toHaveLength(0)
     await user.click(toggle)
     expect(digest).toHaveTextContent(PREVIEW_LINE)
@@ -219,17 +220,17 @@ describe('Today: Decided for you (preview)', () => {
     expect(rows()[0]).toHaveTextContent(/^workspaceGrant issued \(agent started\): via mandate md_3, for Severin — no person reviewed this/)
     // No per-row revoke: one mandate-wide button in the header.
     expect(within(rows()[0]).queryByRole('button', { name: /Revoke/ })).toBeNull()
-    expect(within(digest).getByRole('link', { name: /Show all \(2 more\) on Agents → Mandates/ }).getAttribute('href')).toMatch(/\/agents\?tab=mandates$/)
+    expect(within(digest).getByRole('link', { name: /Show all \(3 more\) on Agents → Mandates/ }).getAttribute('href')).toMatch(/\/agents\?tab=mandates$/)
     await user.click(within(rows()[0]).getByRole('button', { name: 'Looks right: workspace grant issued (agent started)' }))
-    await waitFor(() => expect(toggle).toHaveTextContent('4 since you last looked'))
+    await waitFor(() => expect(toggle).toHaveTextContent('5 since you last looked'))
     await user.click(within(rows()[0]).getByRole('button', { name: /^Veto: / }))
-    await waitFor(() => expect(toggle).toHaveTextContent('3 since you last looked'))
+    await waitFor(() => expect(toggle).toHaveTextContent('4 since you last looked'))
     const refused = screen.getByTestId('mandate-refused-today')
     expect(within(refused).getAllByTestId(/^mandate-refused:/)).toHaveLength(4)
     expect(refused).toHaveTextContent('Issue a mandate to a second orchestrator')
     // Core's reason in full.
     expect(refused).toHaveTextContent('Protected path:Verdict refused: the diff touches package-lock.json (a dependency lockfile, protected). A person approves this.')
-    await user.click(within(digest).getByRole('button', { name: 'Revoke mandate and void…' }))
+    await user.click(within(digest).getByRole('button', { name: 'Revoke mandate and void' }))
     const dialog = await screen.findByRole('alertdialog', {}, T)
     expect(within(within(dialog).getByTestId('revoke-voids')).getAllByRole('listitem')).toHaveLength(8)
     await user.click(within(dialog).getByRole('button', { name: 'Revoke and void (preview — nothing is signed)' }))
@@ -251,7 +252,7 @@ describe('values through visible.tsx (preview dialogs)', () => {
     const digest = await openDigest(user)
     expect(digest.textContent).toContain('for Sev\\u{202e}rin — no person reviewed this')
     expect(digest.textContent).not.toContain('\u202E')
-    await user.click(within(digest).getByRole('button', { name: 'Revoke mandate and void…' }))
+    await user.click(within(digest).getByRole('button', { name: 'Revoke mandate and void' }))
     const dialog = await screen.findByRole('alertdialog', {}, T)
     expect(dialog.textContent).toContain('Sev\\u{202e}rin')
     expect(dialog.textContent).not.toContain('\u202E')
@@ -306,7 +307,7 @@ describe('the preview never signs', () => {
     await user.click(within(screen.getByTestId('mandate-banner')).getByRole('button', { name: 'Stop…' }))
     await user.click(within(await screen.findByRole('dialog', { name: /Stop mandate/ }, T)).getByRole('button', { name: /Stop mandate/ }))
     await waitFor(() => expect(screen.getByTestId('mandate-banner')).toHaveTextContent('Stopped at #1842'), T)
-    await user.click(screen.getByRole('button', { name: 'Revoke and void…' }))
+    await user.click(screen.getByRole('button', { name: 'Revoke and void' }))
     await user.click(within(await screen.findByRole('alertdialog', {}, T)).getByRole('button', { name: /Revoke and void/ }))
     await waitFor(() => expect(banner()).toBeNull())
     expect(spy.signing()).toEqual([])
@@ -321,10 +322,22 @@ describe('the preview never signs', () => {
     const toggle = within(digest).getByRole('button', { name: /^Decided for you/ })
     const first = () => within(digest).getAllByTestId(/^mandate-decision:/)[0]
     await user.click(within(first()).getByRole('button', { name: /^Looks right/ }))
-    await waitFor(() => expect(toggle).toHaveTextContent('4 since'))
+    await waitFor(() => expect(toggle).toHaveTextContent('5 since'))
     await user.click(within(first()).getByRole('button', { name: /^Veto/ }))
-    await waitFor(() => expect(toggle).toHaveTextContent('3 since'))
+    await waitFor(() => expect(toggle).toHaveTextContent('4 since'))
     expect(spy.signing()).toEqual([])
     expect(spy.writes()).toEqual(['postMandatesPreview'])
   })
+})
+
+
+it('Still OK advances the weekly check-in through the preview only', async () => {
+  const spies = spyAll()
+  const { user } = renderApp('/agents?tab=mandates', { setup: seeded })
+  const due = await screen.findByText(/^Weekly check-in due /, {}, T)
+  const before = due.textContent
+  await user.click(screen.getByRole('button', { name: 'Still OK' }))
+  await waitFor(() => expect(due.textContent).not.toBe(before), T)
+  expect(spies.signing()).toEqual([])
+  expect(spies.writes()).toEqual(['postMandatesPreview'])
 })

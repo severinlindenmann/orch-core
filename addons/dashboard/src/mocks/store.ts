@@ -1256,7 +1256,8 @@ export class MockStore {
       if (typeof body.digest !== 'string') return refuse(409, 'decision.digest_required', 'A decision is answered with the digest of what core showed.', 'Answer it in orch\'s own signing prompt.')
       if (body.digest !== decisionDigest(decision)) return refuse(409, 'decision.closed', 'This decision changed since you opened it.', 'Reopen it and check it again.')
     }
-    const raw = action({ store: this, ws, viewer: this.viewer, ticket, body, state: this.addonState(ws, name), decision })
+    const signatureBindings: ((eventId: string) => void)[] = []
+    const raw = action({ store: this, ws, viewer: this.viewer, ticket, body, state: this.addonState(ws, name), decision, onSigned: (bind) => signatureBindings.push(bind) })
     // A refusal changes nothing others need to see: no record, no refresh for other clients, nothing saved.
     if (!raw.ok) return raw
     const res = this.checkedResult(ws, raw)
@@ -1266,7 +1267,8 @@ export class MockStore {
     // body that was signed (every arg, uncut; only core's `confirmed` flag left out), whether or not the addon changed anything.
     if (meta?.confirm === 'sign') {
       const { confirmed: _confirmed, ...args } = body
-      this.appendWs(ws, { type: 'addon.action_signed', name, action: id, args, changed: !!res.changed, presence: 'touchid' })
+      const event = this.appendWs(ws, { type: 'addon.action_signed', name, action: id, args, changed: !!res.changed, presence: 'touchid' })
+      for (const bind of signatureBindings) bind(event.id)
     }
     // Addon actions change state without events; let live pages refresh. Navigation is one viewer's own: no refresh for others.
     if (meta?.kind !== 'navigation') this.bump(ws)

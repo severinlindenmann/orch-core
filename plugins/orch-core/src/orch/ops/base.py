@@ -7,6 +7,8 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from orch.ops.caps import Capabilities
+
 __all__ = ["Context", "Handler", "NotImplementedYet", "Operation", "Result", "WHO", "cli_words"]
 
 WHO = ("agent", "unattended", "human", "read")
@@ -38,6 +40,21 @@ class Context:
     workspace: Any = field(default=None, repr=False)
     #: Standard input read once (``--file -``), so the dedup key and the handler see the same bytes.
     files: dict[str, bytes] = field(default_factory=dict, repr=False)
+    #: One line of progress for a long-running operation (``import v1`` while it signs), written to stderr by the CLI;
+    #: never part of the result. ``None``: no progress is shown.
+    progress: Callable[[str], None] | None = field(default=None, repr=False)
+    #: What the handler may do (D-P2-9): environment, files, exec, git, signer, clock. ``None``: direct mode, built from
+    #: ``env`` and ``now`` (today's CLI powers). The host passes :meth:`Capabilities.host`. Handlers use this, never
+    #: ``os.environ``, ``open`` or ``subprocess``.
+    caps: Capabilities = field(default=None, repr=False)  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.caps is None:
+            self.caps = Capabilities.direct(self.env, self.now)
+        else:
+            self.env = self.caps.env
+            if self.now is time.time:  # the host's clock, unless the caller chose one
+                self.now = self.caps.clock
 
 
 @dataclass

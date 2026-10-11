@@ -257,7 +257,8 @@
     "root_folder": "~/work/acme",
     "repos": {
       "acme-energy-dbt": {
-        "path": "acme-energy-dbt"
+        "path": "acme-energy-dbt",
+        "remote": "https://github.com/acme-energy/energy-dbt.git"
       },
       "billing-api": {
         "path": "billing-api",

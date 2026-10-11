@@ -4,7 +4,7 @@ What the receipt is: "this command exited 0 in the agent's environment, in this 
 **attested by the agent's environment**, not independent verification: the agent controls ``PATH`` (a fake ``pytest``
 exits 0), may choose among the linked repositories by its working directory, and a ``verify.cmd`` such as
 ``sh -c '...'`` runs a shell (orch adds none). The control is that ``verify.cmd`` sits in the plan a person approves,
-and that the host runs it itself from P2. What orch does guarantee:
+and P2 uses client-run receipts checked by the host against that command (§10.7). What orch does guarantee:
 
 * the command is the ticket's ``verify.cmd`` split into arguments (``shlex``), never anything the agent passes;
 * it runs in its own process group with a hard timeout (the group is killed; a process that leaves it with ``setsid``
@@ -23,7 +23,6 @@ and that the host runs it itself from P2. What orch does guarantee:
 from __future__ import annotations
 
 import contextlib
-import os
 import shlex
 import signal
 import subprocess
@@ -35,8 +34,8 @@ from typing import Any
 
 from orch.canon.text import clean_line
 from orch.cli import render
+from orch.ops.caps import Capabilities, Proc
 from orch.ops.errors import OrchError
-from orch.store import observe
 
 __all__ = ["OUTPUT_LIMIT", "RUN_TIMEOUT", "TRUNCATED", "Ran", "allowed_env", "run_verify"]
 
@@ -71,13 +70,20 @@ def _pump(stream: Any, limit: int, sink: bytearray) -> None:
         sink += TRUNCATED
 
 
-def _kill_group(proc: subprocess.Popen[bytes]) -> None:
+def _kill_group(proc: Proc[bytes], caps: Capabilities) -> None:
     with contextlib.suppress(ProcessLookupError, PermissionError):
-        os.killpg(proc.pid, signal.SIGKILL)
+        caps.exec.killpg(proc.pid, signal.SIGKILL)
 
 
 def run_verify(
-    cmd: str, *, repo: str | None, path: Path | None, cwd: Path, env: Mapping[str, str], grant_secret: str = ""
+    cmd: str,
+    *,
+    repo: str | None,
+    path: Path | None,
+    cwd: Path,
+    env: Mapping[str, str],
+    caps: Capabilities,
+    grant_secret: str = "",
 ) -> Ran:
     """Run ``cmd`` (a ticket's ``verify.cmd``) and return the receipt. A non-zero exit, a timeout, a command that cannot
     start or a repository whose commit moved is ``verify.failed`` and nothing is recorded."""
@@ -87,11 +93,11 @@ def run_verify(
         raise OrchError("verify.failed", "the verify command cannot be split into arguments") from None
     if not argv:
         raise OrchError("verify.failed", "the verify command is empty")
-    before = (observe.head(path), observe.dirty(path)) if path is not None else (None, "")
+    before = (caps.git.head(path), caps.git.dirty(path)) if path is not None else (None, "")
     start = time.monotonic()
     sink = bytearray()
     try:
-        proc = subprocess.Popen(
+        proc = caps.exec.popen(
             argv,
             cwd=cwd,
             env=allowed_env(env),
@@ -111,7 +117,7 @@ def run_verify(
     except subprocess.TimeoutExpired:
         timed_out, code = True, -1
     finally:
-        _kill_group(proc)  # the command, and what it left running in its group
+        _kill_group(proc, caps)  # the command, and what it left running in its group
         proc.wait()
     reader.join(5)
     ms = int((time.monotonic() - start) * 1000)
@@ -123,7 +129,7 @@ def run_verify(
     notes: list[str] = []
     commit = None
     if path is not None:
-        after = (observe.head(path), observe.dirty(path))
+        after = (caps.git.head(path), caps.git.dirty(path))
         if after[0] != before[0]:
             raise OrchError("verify.failed", "the repository's commit changed while the command ran; run it again")
         if before[1] or after[1] or before[1] is None or after[1] is None:

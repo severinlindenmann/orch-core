@@ -14,9 +14,11 @@
   "index.json": "this list",
   "labels.json": "[shared, unchanged] the F1 domain labels (5.6), prefix-free with the protocol's",
   "questions.json": "question id and hash, answers, a decision for the same qid after a restore",
+  "refusal_order.json": "model scenarios: an event breaking two rules gets the code of the earlier step of the refusal order (5.11)",
   "replay.json": "model scenario: replayed or re-contexted signed events are refused with the real verifier (5.3, 5.11)",
   "repo_identity.json": "[shared, extended] canonical identities, refused forms, and `mapping`: raw remote -> canonical (5.7)",
-  "restore.json": "workspace restore re-appends every PK-signed revocation (5.10)",
+  "repo_paths.json": "repo paths: NFC before ASCII-only collision comparison; owner-signed paths may leave the workspace (1, 11.3)",
+  "restore.json": "workspace restore carries effective revocations atomically (5.10)",
   "revocation.json": "device.revoked: embedded revocation as authority, reason mismatch, recovery (5.3)",
   "section_text.json": "body.md heading and fence rules, LF trimming, what is hashed (4, 5.6)",
   "signatures.json": "real P-256 signatures of events and host_sig, what they cover, replay refusals (5.3, 5.5)",
@@ -24,5 +26,5 @@
   "tamper.json": "tampered chain lines of the ticket and workspace log, the seq where the chain breaks (5.5)",
   "text.json": "[shared, unchanged] CRLF/CR -> LF, NFC (Unicode 16.0), refused controls, bidi and unassigned (11.3)"
  },
- "note": "files tagged [shared] are copied verbatim into orch-relay; the others are core-only"
+ "note": "files tagged [shared] are copied verbatim into orch-relay; the others are core-only. Step keys: replay_only accepts historical replay but admit refuses chain.bad_ws_seq; schema_refused means schema validation refuses before the model; append_code pins the store append refusal (F1 \u00a75.11 step 0), while expect keeps the model outcome; replay_expect pins a distinct replay outcome."
 }

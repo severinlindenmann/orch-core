@@ -270,3 +270,24 @@ def test_same_repo_identity_ignores_ascii_case_only():
     g["source_sha"] = [dict(g["source_sha"][0], repo=a) for a in R["same"][0]]
     with pytest.raises(canon.HashError):
         canon.gate_hash(g)
+
+
+def test_repo_userinfo_decision_defers_to_the_operative_rule():
+    spec = DIR.parents[4] / "docs" / "architecture" / "orch-v2-ticket-format.md"
+    row = next(line for line in spec.read_text(encoding="utf-8").splitlines() if line.startswith("| 116 |"))
+    assert "Only ssh/scp `git@` userinfo is allowed and removed" in row
+    assert "all https userinfo" in row and "`local:<name>`" in row and "§5.7" in row
+
+
+@pytest.mark.parametrize("v", load("repo_paths.json")["cases"], ids=lambda v: v["name"])
+def test_repo_paths_after_input_normalization(v):
+    from orch.schema import SchemaError, validate_settings
+
+    paths = [canon.normalize_text(path) for path in v["input"]]
+    assert paths == v["normalized"]
+    settings = {"repos": {f"repo{i}": {"path": path} for i, path in enumerate(paths)}}
+    if v["collision"]:
+        with pytest.raises(SchemaError, match="two repos resolve to the same path"):
+            validate_settings(settings)
+    else:
+        validate_settings(settings)

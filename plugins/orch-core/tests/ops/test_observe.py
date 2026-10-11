@@ -100,7 +100,7 @@ def test_credentials_in_a_remote_are_never_stored_printed_or_passed_on(ws, cli, 
     r = cli("show")
     assert r.code == 0 and secret not in r.out + r.err
     ev = [e for e in ws.events("1") if e["type"] == "branch.pushed"]
-    assert ev[0]["repo_id"] == "https://github.com/acme/Repo"  # userinfo and .git dropped, the host lower-cased
+    assert ev[0]["repo_id"] == "local:proj"  # non-git userinfo is not a repo identity
     for p in ws.root.rglob("*"):
         if p.is_file() and ".venv" not in str(p):
             assert secret.encode() not in p.read_bytes(), p
@@ -118,7 +118,8 @@ def test_git_runs_with_an_allow_listed_environment(monkeypatch):
         monkeypatch.setenv(k, "x")
     monkeypatch.setenv("LC_ALL", "C")
     env = observe.git_env()
-    assert set(env) <= {"PATH", "HOME", "LANG", "TMPDIR", "TERM", "LC_ALL"} and env["LC_ALL"] == "C"
+    assert all(k in {"PATH", "HOME", "LANG", "TMPDIR", "TERM"} or k.startswith("LC_") for k in env)
+    assert env["LC_ALL"] == "C"
 
 
 def test_git_runs_without_a_controlling_terminal(ws, tmp_path):
@@ -143,3 +144,80 @@ def test_git_runs_without_a_controlling_terminal(ws, tmp_path):
     (repo / "impl.txt").write_text("broken\n")  # same content, new mtime: git runs the filter to compare
     observe.dirty(repo)
     assert marker.read_text() == "no tty"
+
+
+def test_observe_refuses_remote_mismatch_and_accepts_ascii_case_match(ws, cli):
+    path = ws.repo()
+    ws.git("remote", "add", "origin", "ssh://git@host/observed.git")
+    ws.store.append(
+        ws.person_event(
+            ws.owner,
+            "workspace",
+            "settings.changed",
+            set={"repos": {"proj": {"path": str(path), "remote": "https://host/declared", "default_branch": "absent"}}},
+        ),
+        log="workspace",
+    )
+    claimed(cli)
+    assert cli("set", "1", LINKS).code == 0
+    assert cli("show", "1").code == 0
+    assert "branch.pushed" not in types(ws)
+    from orch.store import observe
+
+    problems = []
+    store = ws.other()
+    try:
+        assert observe.observe(store, "1", problems) == []
+    finally:
+        store.close()
+    assert len(problems) == 1 and "repo.remote_mismatch" in problems[0]
+    result = cli("submit")
+    assert result.code != 0 and "observe.unavailable" in result.out + result.err
+    ws.git("remote", "set-url", "origin", "ssh://git@HOST/DECLARED.git")
+    assert cli("show", "1").code == 0
+    event = next(e for e in ws.events("1") if e["type"] == "branch.pushed")
+    assert event["repo_id"] == "https://host/declared"
+    assert event["ref"] == "refs/heads/feat/x"
+
+    # Even an unchanged commit must not bypass a later identity mismatch.
+    ws.git("remote", "set-url", "origin", "https://host/other.git")
+    problems = []
+    store = ws.other()
+    try:
+        assert observe.observe(store, "1", problems) == []
+    finally:
+        store.close()
+    assert len(problems) == 1 and "repo.remote_mismatch" in problems[0]
+    assert len([e for e in ws.events("1") if e["type"] == "branch.pushed"]) == 1
+
+
+def test_observe_records_new_push_after_remote_case_change(ws, cli):
+    path = ws.repo()
+    ws.git("remote", "add", "origin", "https://host/Declared.git")
+    claimed(cli)
+    assert cli("set", "1", LINKS).code == 0
+    assert cli("show", "1").code == 0
+    first = next(e for e in ws.events("1") if e["type"] == "branch.pushed")
+    # Pin the same identity after its first observation, retaining the original entry's case.
+    ws.store.append(
+        ws.person_event(
+            ws.owner,
+            "workspace",
+            "settings.changed",
+            set={"repos": {"proj": {"path": str(path), "remote": "https://host/declared"}}},
+        ),
+        log="workspace",
+    )
+    ws.git("remote", "set-url", "origin", "https://HOST/DECLARED.git")
+    (path / "impl.txt").write_text("changed\n")
+    ws.git("commit", "-qam", "two")
+    head = ws.git("rev-parse", "HEAD")
+    assert cli("show", "1").code == 0
+    events = [e for e in ws.events("1") if e["type"] == "branch.pushed"]
+    assert len(events) == 2
+    assert events[-1]["before"] == {"repo_id": first["repo_id"], "ref": first["ref"], "sha": first["sha"]}
+    assert events[-1]["repo_id"] == "https://host/declared"
+    assert events[-1]["sha"] == head
+    assert ws.view("1").source_list[0]["sha"] == head
+    assert cli("show", "1").code == 0
+    assert len([e for e in ws.events("1") if e["type"] == "branch.pushed"]) == 2

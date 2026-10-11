@@ -72,6 +72,8 @@ def _parse_ranges(blob: str, n: int) -> list[tuple[int, ...]]:
 
 _ASSIGNED = _parse_ranges(_u.ASSIGNED_RANGES, 2)
 _ASSIGNED_STARTS = [r[0] for r in _ASSIGNED]
+_MARKS = _parse_ranges(_u.MARK_RANGES, 2)
+_MARK_STARTS = [r[0] for r in _MARKS]
 _CF = _parse_ranges(_u.CF_RANGES, 2)
 _CF_STARTS = [r[0] for r in _CF]
 _CCC = _parse_ranges(_u.CCC_RANGES, 3)
@@ -173,10 +175,24 @@ def nfc(text: str) -> str:
 _ASCII_BAD = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 
 # Non-Cf characters F1 §5.7/§11.3 also show: U+034F, U+115F, U+1160, U+2028, U+2029, U+3164, U+FFA0,
-# U+FE00..FE0F and U+E0100..E01EF. Together with every Cf character they are "invisible"; the decision (an
+# U+FE00..FE0F, U+E0100..E01EF, U+17B4..17B5, U+180B..180F and U+2800. Together with Cf, Co and
+# a leading M* mark they are "invisible"; the decision (an
 # explicit list, not Default_Ignorable_Code_Point) is F1's.
 _EXTRA_INVISIBLE = frozenset(
-    [0x034F, 0x115F, 0x1160, 0x2028, 0x2029, 0x3164, 0xFFA0, *range(0xFE00, 0xFE10), *range(0xE0100, 0xE01F0)]
+    [
+        0x034F,
+        0x115F,
+        0x1160,
+        0x2028,
+        0x2029,
+        0x2800,
+        0x3164,
+        0xFFA0,
+        *range(0x17B4, 0x17B6),
+        *range(0x180B, 0x1810),
+        *range(0xFE00, 0xFE10),
+        *range(0xE0100, 0xE01F0),
+    ]
 )
 
 
@@ -260,14 +276,19 @@ class Suspect:
     kind: Literal["bidi", "invisible"]
 
 
+def _private_use(cp: int) -> bool:
+    return 0xE000 <= cp <= 0xF8FF or 0xF0000 <= cp <= 0xFFFFD or 0x100000 <= cp <= 0x10FFFD
+
+
 def suspicious(text: str) -> list[Suspect]:
     """Characters of already-valid text that an approval prompt must refuse or show (ticket-format §5.7, §11.3).
 
     ``kind`` is ``"bidi"`` (the approval is refused, ``gate.suspicious_text``; bidi controls cannot enter the store,
     so this is defence in depth) or ``"invisible"``: every General_Category Cf character (U+200B..200D, U+2060,
     U+FEFF, tag characters, soft hyphen, ...) and F1's named non-Cf look-alikes (U+034F, U+115F, U+1160, U+2028,
-    U+2029, U+3164, U+FFA0, U+FE00..FE0F, U+E0100..E01EF). Other characters are kept and not flagged (private use,
-    other spaces). Returns an empty list when there is nothing to flag.
+    U+2029, U+3164, U+FFA0, U+FE00..FE0F, U+E0100..E01EF).
+    Also flagged: U+17B4..17B5, U+180B..180F, U+2800, private-use characters and a leading mark (M*).
+    Other characters are kept and not flagged. Returns an empty list when there is nothing to flag.
     """
     if not isinstance(text, str):
         raise TextError(f"text must be str, not {type(text).__name__}")
@@ -276,12 +297,35 @@ def suspicious(text: str) -> list[Suspect]:
         cp = ord(ch)
         if cp in BIDI_CONTROLS:
             out.append(Suspect(i, cp, "bidi"))
-        elif cp in _EXTRA_INVISIBLE or _in_ranges(_CF_STARTS, _CF, cp):
+        elif (
+            cp in _EXTRA_INVISIBLE
+            or _in_ranges(_CF_STARTS, _CF, cp)
+            or _private_use(cp)
+            or (i == 0 and _in_ranges(_MARK_STARTS, _MARKS, cp))
+        ):
             out.append(Suspect(i, cp, "invisible"))
     return out
 
 
 _LANGLE = "\u27e8"
+
+
+# Unicode 16.0 General_Category Zs, Zl and Zp (all separators).
+_SEPARATORS = frozenset(
+    " \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000"
+)
+
+
+def has_forbidden_branch_character(text: str) -> bool:
+    """F1 branch exclusions, using bundled Unicode 16.0 categories and the display look-alikes."""
+    return any(suspicious(component) for component in text.split("/")) or any(
+        ord(c) < 0x20
+        or 0x7F <= ord(c) <= 0x9F
+        or _in_ranges(_CF_STARTS, _CF, ord(c))
+        or c in _SEPARATORS
+        or not _assigned(ord(c))
+        for c in text
+    )
 
 
 def show_invisible(text: str) -> str:

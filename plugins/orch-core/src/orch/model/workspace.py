@@ -2,17 +2,16 @@
 policies, settings, addons, restore.
 
 Events that change what tickets mean (members leaving, role changes, compromised devices, policies, addon binds,
-restore) are applied to every ticket in the same step, with one ``settle`` each, so generations follow §5.7.
+restore) are applied to every ticket in the same step, raising each gate at most once (§5.7).
 """
 
 from __future__ import annotations
 
 import copy
-import posixpath
 from collections.abc import Callable
 from typing import Any
 
-from orch.canon import HashError, event_head
+from orch.canon import HashError, check_repo_identity, event_head, same_repo_identity
 
 from . import addon_rules, authz, generations, policies
 from .codes import Code, Refusal
@@ -61,9 +60,17 @@ def genesis(core: Core, e: dict[str, Any], v: Verifier, expected: str | None) ->
     if expected is not None and head is not None and head != expected:
         return Refusal(Code.TRUST_GENESIS_MISMATCH, "the genesis differs from the pinned one")
     cert = e["device_cert"]
-    if (r := authz.device_valid(None, cert, ts(e["at"]), False)) is not None:
-        return r
+    # check 5 (§5.11): the certificate is valid at this `at` with `operate` (the genesis installs members, policies and
+    # settings), whatever device_valid says about it; every failure of checks 1, 2, 3 and 5 is genesis.invalid
+    if authz.device_valid(None, cert, ts(e["at"]), True) is not None or a["device"] != "d_" + cert["o"]["device_id"]:
+        return Refusal(
+            Code.GENESIS_INVALID, "the genesis device certificate is expired, lacks `operate` or has a drop: scope"
+        )
     if not v.verify_embedded(e, pk_pub=e["owner"]["pk_pub"]):
+        # the verifier reports the first failing check: checks 1, 2, 3 and 5 are genesis.invalid, check 6 sig.invalid
+        why = v.genesis_failure(e)
+        if why == "genesis.bad_sig":
+            return Refusal(Code.SIG_INVALID, "genesis signature does not verify")
         return Refusal(Code.GENESIS_INVALID, "delegation or device certificate does not verify")
     if "sig" not in e or not v.verify_person(e, SigContext(e["workspace_id"], WORKSPACE, cert)):
         return Refusal(Code.SIG_INVALID, "genesis signature does not verify")
@@ -91,7 +98,7 @@ def member_added(core: Core, e: dict[str, Any], v: Verifier) -> Refusal | None:
         return Refusal(Code.MEMBER_EXISTS, p)
     cert = e["device_cert"]
     dev = "d_" + cert["o"]["device_id"]
-    if dev in ws.devices:
+    if dev in ws.devices or dev in ws.revocations:
         return Refusal(Code.DEVICE_EXISTS, dev)
     if (r := authz.device_valid(None, cert, ts(e["at"]), False)) is not None:
         return r
@@ -149,7 +156,7 @@ def role_changed(core: Core, e: dict[str, Any]) -> Refusal | None:
 
 def device_added(core: Core, e: dict[str, Any], v: Verifier) -> Refusal | None:
     ws, a, dev = core.ws, e["actor"], e["device"]
-    if dev in ws.devices:
+    if dev in ws.devices or dev in ws.revocations:
         return Refusal(Code.DEVICE_EXISTS, dev)
     if (r := authz.device_valid(None, e["cert"], ts(e["at"]), False)) is not None:
         return r
@@ -171,23 +178,41 @@ def device_removed(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
 
 def device_revoked(core: Core, e: dict[str, Any], v: Verifier) -> Refusal | None:
     ws = core.ws
-    dev = ws.devices.get(e["device"])
-    if dev is None:
-        return Refusal(Code.DEVICE_UNKNOWN, e["device"])
-    holder = ws.members.get(dev.person) or ws.former.get(dev.person)
-    if holder is None or "p_" + e["revocation"]["o"]["person_id"] != dev.person:
+    device = e["device"]
+    dev = ws.devices.get(device)
+    known = ws.revocations.get(device)
+    if dev is None and known is None:
+        return Refusal(Code.DEVICE_UNKNOWN, device)
+    if dev is not None:
+        holder = ws.members.get(dev.person) or ws.former.get(dev.person)
+        if holder is None:
+            return Refusal(Code.DEVICE_CERT, "the device has no person key")
+        cert, pk_pub, person, previous = dev.cert, holder.pk_pub, dev.person, dev.revoked
+    else:
+        # A restore's tombstone supplies verification evidence, never membership or actor authority.
+        cert, pk_pub = known["device_cert"], known["pk_pub"]
+        person, previous = "p_" + cert["o"]["person_id"], known["revocation"]["o"]["reason"]
+    if "p_" + e["revocation"]["o"]["person_id"] != person:
         return Refusal(Code.DEVICE_CERT, "the revocation is not for a device of this person")
-    if not v.verify_embedded(e, pk_pub=holder.pk_pub, device_cert=dev.cert):
+    if not v.verify_embedded(e, pk_pub=pk_pub, device_cert=cert):
         return Refusal(Code.DEVICE_CERT, "the revocation is not signed by the person key")
+    if previous and not (previous != "compromised" and e["reason"] == "compromised"):
+        return Refusal(Code.DEVICE_EXISTS, device)
 
     def change() -> None:
-        dev.revoked = e["reason"]
-        if e["reason"] == "compromised":  # also ends every grant that device signed (§5.7)
-            for g in ws.grants.values():
-                g.revoked = g.revoked or g.device == dev.id
+        if dev is not None:
+            dev.revoked = e["reason"]
+        ws.revocations[device] = {
+            "revocation": copy.deepcopy(e["revocation"]),
+            "device_cert": copy.deepcopy(cert),
+            "pk_pub": pk_pub,
+        }
+        if e["reason"] == "compromised":
+            for grant in ws.grants.values():
+                grant.revoked = grant.revoked or grant.device == device
 
     if e["reason"] == "compromised":
-        cross(core, change, lambda t: generations.void_device(ws, t, dev.id))
+        cross(core, change, lambda ticket: generations.void_device(ws, ticket, device))
     else:
         change()
     return None
@@ -213,10 +238,17 @@ def settings_changed(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
         if v is None:
             repos.pop(name, None)
         else:
-            repos[name] = v["path"]
-    paths = [posixpath.normpath(p) for p in repos.values()]
-    if len(set(paths)) != len(paths):
-        return Refusal(Code.SETTINGS_INVALID, "two repos resolve to the same path")
+            if "remote" in v:
+                try:
+                    check_repo_identity(v["remote"])
+                except HashError as exc:
+                    return Refusal(Code.SETTINGS_INVALID, str(exc))
+                if v["remote"].startswith("local:") and v["remote"] != f"local:{name}":
+                    return Refusal(Code.SETTINGS_INVALID, "local remote must name its own repo")
+            repos[name] = copy.deepcopy(v)
+    remotes = [p["remote"] for p in repos.values() if "remote" in p]
+    if any(same_repo_identity(a, b) for i, a in enumerate(remotes) for b in remotes[i + 1 :]):
+        return Refusal(Code.SETTINGS_INVALID, "two repos declare the same identity")
     ws.repos = repos
     for k in ("grant_hours", "claim_ttl_min", "lease_ttl_min"):
         if k in s:
@@ -270,6 +302,8 @@ def addon_event(core: Core, e: dict[str, Any]) -> Refusal | None:
         return Refusal(Code.ADDON_UNKNOWN, name)
     named = generations.addon_binds_gates(old.binds if old else None)  # the gates it named before
     if typ == "addon.granted":
+        if (r := addon_rules.check_headings(name, e["sections"], ws.addons)) is not None:
+            return r
         new = Addon(
             name,
             e["version"],
@@ -314,11 +348,52 @@ def addon_event(core: Core, e: dict[str, Any]) -> Refusal | None:
     return None
 
 
-def restore(core: Core, lc: LogCore, e: dict[str, Any]) -> Refusal | None:
+def restore(core: Core, lc: LogCore, e: dict[str, Any], v: Verifier) -> Refusal | None:
     ws = core.ws
     if (r := _owner_only(ws, e)) is not None:
         return r
     if e["head"] != lc.head or e["from_seq"] != lc.seq:
         return Refusal(Code.RESTORE_BAD_HEAD, "from_seq/head must name the last event on disk")
+    changes = []
+    for entry in e["revocations"]:
+        rev = entry["revocation"]
+        dev_id = "d_" + rev["o"]["device_id"]
+        if not v.verify_embedded({"type": "restore.revocation", **entry}, pk_pub=entry["pk_pub"]):
+            return Refusal(Code.DEVICE_CERT, "restore revocation evidence does not verify")
+        old = ws.revocations.get(dev_id)
+        dev = ws.devices.get(dev_id)
+        if dev is not None:
+            holder = ws.members.get(dev.person) or ws.former.get(dev.person)
+            person, pk_pub = dev.person, holder.pk_pub if holder else None
+        elif old is not None:
+            person, pk_pub = "p_" + old["revocation"]["o"]["person_id"], old["pk_pub"]
+        else:
+            continue
+        if "p_" + rev["o"]["person_id"] != person or entry["pk_pub"] != pk_pub:
+            return Refusal(Code.DEVICE_CERT, "the revocation is not for the device's known person key")
+    for entry in e["revocations"]:
+        rev = entry["revocation"]
+        dev_id = "d_" + rev["o"]["device_id"]
+        old = ws.revocations.get(dev_id)
+        if old is not None:
+            previous = old["revocation"]
+            if previous == rev:
+                continue
+            if previous["o"]["reason"] == "compromised" or rev["o"]["reason"] != "compromised":
+                return Refusal(Code.DEVICE_EXISTS, dev_id)
+        changes.append((dev_id, entry))
     cross(core, lambda: None, lambda t: generations.mark(t, *GATES))
+    for dev_id, entry in changes:
+        ws.revocations[dev_id] = copy.deepcopy(entry)
+        reason = entry["revocation"]["o"]["reason"]
+        dev = ws.devices.get(dev_id)
+        if dev is not None:
+            dev.revoked = reason
+        if reason == "compromised":
+            for grant in ws.grants.values():
+                grant.revoked = grant.revoked or grant.device == dev_id
+            for ticket in core.tickets.values():
+                before = generations.snapshot(ws, ticket)
+                generations.void_device(ws, ticket, dev_id)
+                generations.settle(ws, ticket, before, raise_gates=False)
     return None

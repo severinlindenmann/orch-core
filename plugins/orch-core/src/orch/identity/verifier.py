@@ -45,11 +45,12 @@ from typing import Any
 from orch import canon, crypto
 
 from . import members
+from .certs import check_cert, verify_revocation
 from .errors import Refused
 
 __all__ = ["CryptoVerifier"]
 
-_KNOWN = ("workspace.created", "member.added", "device.added", "device.revoked")
+_KNOWN = ("workspace.created", "member.added", "device.added", "device.revoked", "restore.revocation")
 
 
 def _cert_o(cert: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -96,6 +97,17 @@ class CryptoVerifier:
         except (crypto.EncodingError, crypto.CryptoError, canon.HashError, KeyError, TypeError, AttributeError):
             return False
 
+    def genesis_failure(self, event: Mapping[str, Any]) -> str | None:
+        """The code of the first failing check of §5.11 for a ``workspace.created`` (``genesis.owner_mismatch``, ...,
+        ``genesis.bad_sig``), or ``None`` when all hold. Lets the model give check 6 its own refusal code."""
+        try:
+            members.check_genesis(event)
+        except Refused as e:
+            return e.code
+        except (crypto.EncodingError, crypto.CryptoError, KeyError, TypeError, AttributeError):
+            return "genesis.shape"
+        return None
+
     def verify_embedded(
         self,
         event: Mapping[str, Any],
@@ -117,6 +129,10 @@ class CryptoVerifier:
                 return given is None or given == introduced
             if given is None:
                 return False
+            if etype == "restore.revocation":
+                cert = check_cert(event["device_cert"], given)
+                verify_revocation(event["revocation"], given, cert)
+                return True
             if etype == "device.added":
                 members.check_device_added(event, given)
             else:

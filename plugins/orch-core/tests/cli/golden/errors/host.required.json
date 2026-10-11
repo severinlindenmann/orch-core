@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "host.required",
+    "message": "this workspace is served by the orch host",
+    "hint": "the host owns this workspace now; start its service instead of using direct mode",
+    "fix": {
+      "argv": [
+        "orch",
+        "host",
+        "list"
+      ]
+    },
+    "retryable": false
+  }
+}

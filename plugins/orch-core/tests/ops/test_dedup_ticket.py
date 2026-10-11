@@ -35,6 +35,22 @@ def test_a_ref_less_retry_on_the_same_ticket_is_still_a_duplicate(ws, cli):
     assert len(ws.events("1")) == n + 1
 
 
+def test_a_ref_less_write_keeps_the_verified_claim_uid(ws, cli, monkeypatch):
+    from orch.store import Store
+
+    _two_tickets(cli)
+    assert cli("claim", "1").code == 0
+
+    def no_global_lookup(self):
+        raise AssertionError("the claim was already resolved to a verified uid")
+
+    monkeypatch.setattr(Store, "_verified_keys", no_global_lookup)
+    first = cli("log", "same note")
+    again = cli("log", "same note")
+    assert first.code == again.code == 0
+    assert "duplicate" not in first.out and again.first.endswith(" duplicate")
+
+
 def test_the_stop_rule_counts_per_resolved_ticket(ws, cli):
     _two_tickets(cli)
     cli("claim", "1")

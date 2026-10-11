@@ -325,3 +325,46 @@ def test_no_secret_is_written_anywhere_but_the_host_key_file(env):
 def next_key(s):
     s.refresh()
     return s._next_key()
+
+
+def test_repo_settings_survive_replay_and_config_rendering(env):
+    s = env.bootstrap()
+    entry = {"remote": "https://host/a/b", "path": "../repo", "default_branch": "main"}
+    e = env.person_event(env.owner, "workspace", "settings.changed", set={"repos": {"repo": entry}})
+    s.append(e, log="workspace")
+    assert dict(replayed(env).workspace.repos["repo"]) == entry
+    stored = json.loads((env.root / "config.json").read_bytes())["settings"]["repos"]["repo"]
+    assert stored == entry
+    assert list(stored) == sorted(entry)
+    for field in ("remote", "default_branch"):
+        changed = {**e, "set": {"repos": {"repo": {k: v for k, v in entry.items() if k != field}}}}
+        assert canon.event_head(changed) != canon.event_head(e)
+        assert canon.person_signing_bytes(WS, "workspace", changed) != canon.person_signing_bytes(WS, "workspace", e)
+    reordered = {**e, "set": {"repos": {"repo": dict(reversed(list(entry.items())))}}}
+    assert canon.event_head(reordered) == canon.event_head(e)
+    s.append(
+        env.person_event(env.owner, "workspace", "settings.changed", set={"repos": {"repo": None}}), log="workspace"
+    )
+    assert not replayed(env).workspace.repos
+
+
+def test_repo_remote_is_refused_at_write_without_conversion(env):
+    s = env.bootstrap()
+    before = snapshot(env.root)
+    e = env.person_event(
+        env.owner,
+        "workspace",
+        "settings.changed",
+        set={
+            "repos": {
+                "repo": {
+                    "path": "../repo",
+                    "remote": "ssh://git@host/a/b",
+                }
+            }
+        },
+    )
+    with pytest.raises(StoreError) as exc:
+        s.append(e, log="workspace")
+    assert exc.value.code == "validation.event"
+    assert snapshot(env.root) == before

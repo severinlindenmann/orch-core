@@ -54,7 +54,7 @@ class GateView:
     eligible: tuple[str, ...]
     decisions: tuple[DecisionView, ...]
     waiting: bool
-    revoked_device_flag: tuple[str, ...]  # decision ids "approved by a revoked device" (done tickets)
+    revoked_decisions: tuple[str, ...]  # a settled ticket: ids of a revoked device's decisions still counting here
     missing: tuple[
         str, ...
     ] = ()  # what an approval of requirements or plan still lacks: section ids, acceptance, tasks
@@ -150,6 +150,7 @@ class DeviceView:
     removed: bool
     revoked: str | None
     scopes: tuple[str, ...]
+    expires_ms: int | None = None  # the certificate's expiry (None: never)
 
 
 @dataclass(frozen=True)
@@ -186,7 +187,7 @@ class WorkspaceView:
     grants: Mapping[str, GrantView]
     policies: Mapping[str, Mapping[str, Any]]
     settings: Mapping[str, Any]
-    repos: Mapping[str, str]
+    repos: Mapping[str, Mapping[str, str]]
     addons: Mapping[str, Mapping[str, Any]]
     invalid: tuple[InvalidView, ...]
     frozen: bool
@@ -231,7 +232,7 @@ def _gate_view(ws: WsCore, t: TCore, g: str) -> GateView:
             for d in gc.decisions
         ),
         needs.gate_waiting(ws, t, g),
-        tuple(sorted(gc.revoked_flag)),
+        tuple(sorted(gc.revoked_flag & {d.id for d in generations.counting(t, g)})),
         tuple(gates.missing_for_gate(ws, t, g)),
     )
 
@@ -318,7 +319,9 @@ def workspace_view(core: Core, now: int) -> WorkspaceView:
         MappingProxyType({p: MemberView(p, m.name, m.role) for p, m in ws.former.items()}),
         MappingProxyType(
             {
-                i: DeviceView(i, d.person, d.removed, d.revoked, tuple(d.cert["o"]["scopes_max"]))
+                i: DeviceView(
+                    i, d.person, d.removed, d.revoked, tuple(d.cert["o"]["scopes_max"]), d.cert["o"].get("expires_ms")
+                )
                 for i, d in ws.devices.items()
             }
         ),

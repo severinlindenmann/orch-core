@@ -14,7 +14,10 @@ FIELDS = {
     "boss": {"type": "string", "set_by": ["ticket_owner"]},
     "auto": {"type": "string", "set_by": ["addon"]},
 }
-SECTIONS = [{"id": "echo.notes", "types": ["feature"], "gate": ["plan"]}, {"id": "echo.free", "types": ["bug"]}]
+SECTIONS = [
+    {"id": "echo.notes", "heading_key": "echonotes", "types": ["feature"], "gate": ["plan"]},
+    {"id": "echo.free", "heading_key": "echofree", "types": ["bug"]},
+]
 
 
 def grant(w, fields=None, sections=None, kinds=("chart",), pkg="pkg"):
@@ -149,7 +152,7 @@ def test_a_regrant_drops_stored_values_the_new_grant_does_not_allow(env):
         "mood": {"type": "integer", "set_by": ["owner"]},
         "points": {"type": "integer", "min": 0, "max": 10, "set_by": ["owner"]},
     }
-    grant(w, fields=new, sections=[{"id": "echo.notes", "types": ["bug"]}], pkg="pkg2")
+    grant(w, fields=new, sections=[{"id": "echo.notes", "heading_key": "echonotes", "types": ["bug"]}], pkg="pkg2")
     v = w.view(uid)
     assert "echo" not in v.fields["addons"] and "echo.notes" not in v.sections
 
@@ -167,3 +170,28 @@ def test_the_grant_not_a_later_manifest_is_the_authority(env):
     assert set_(w, uid, "mara", "mood", "good") == "role.denied"
     grant(w, fields={**FIELDS, "mood": {**FIELDS["mood"], "set_by": ["owner", "maintainer"]}}, pkg="pkg2")
     assert set_(w, uid, "mara", "mood", "good") is None
+
+
+@pytest.mark.parametrize("status", ["enabled", "disabled", "purged"])
+def test_replay_reserves_heading_keys_until_purge(status):
+    w = World().bootstrap()
+    grant(w)
+    grant(w, pkg="replacement")  # its own headings can be re-granted
+    if status != "enabled":
+        w.wev("addon." + status, "sev", name="echo")
+    payload = dict(
+        name="other",
+        version="1.0.0",
+        package_sha256=digest("other"),
+        capabilities=[],
+        fields={},
+        sections=[{"id": "other.notes", "types": ["bug"], "heading_key": "echonotes"}],
+        artifact_kinds=[],
+    )
+    expected = None if status == "purged" else "addon.value_invalid"
+    assert refused(w, "workspace", "addon.granted", "sev", **payload) == expected
+    w.wev("addon.granted", "sev", **payload)
+    state = w.state()
+    assert ("other" in state.workspace.addons) == (status == "purged")
+    if expected:
+        assert state.workspace.invalid[-1].code == expected

@@ -40,9 +40,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     previous = install.as_addons(view).get(name)
     caps = ",".join(event["capabilities"]) or "none"
     review = install.review_lines(manifest, package, event, previous)
-    done = h.run(
-        event, "workspace", f"grant addon {name} {manifest.version} capabilities {caps}", review=review, expect=name
-    )
+    done = h.run(event, "workspace", f"grant addon {name} {manifest.version} capabilities {caps}", review=review)
     lines = [
         f"version {manifest.version}",
         f"package {package.digest}",

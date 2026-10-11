@@ -226,8 +226,8 @@ def tamper_vector() -> dict[str, Any]:
 
     def add(name: str, mutation: str, log: str, events: list[dict[str, Any]], broken_at: int | None) -> None:
         """One F1 outcome per case (§5.5 "Reading"): the reader checks each log's lines in file order and reports
-        ``chain.broken`` at the first line that fails cj, field set, seq, prev, ws_seq, host_sig or the person sig,
-        naming the line's position (the seq it should carry). A break at workspace seq n also stops every ticket
+        ``chain.broken`` at the first line that fails cj, field set, seq, prev, host_sig or the person sig
+        (``chain.bad_ws_seq`` for workspace-position/order checks), naming the line's position (the seq it should carry). A break at workspace seq n also stops every ticket
         event with ws_seq >= n."""
         case: dict[str, Any] = {"name": name, "mutation": mutation, "log": log, "events": events,
                                 "chain_broken_at": broken_at}  # fmt: skip
@@ -255,6 +255,19 @@ def tamper_vector() -> dict[str, Any]:
     add("seq_rewritten", "seq 3: seq set to 5", TICKET, [e1, e2, setp(e3, seq=5), e4], 3)
     add("host_sig_swapped", "seq 2 carries the host_sig of seq 3", TICKET,
         [e1, setp(e2, host_sig=e3["host_sig"]), e3, e4], 2)  # fmt: skip
+    add("at_goes_back_host_resigned", "seq 4: `at` set before seq 3's and host_sig re-made (an attacker holding the "
+        "workspace key; `at` is not signed by the person): (ws_seq, at) never goes back along a log, so the line "
+        "breaks the chain", TICKET, [e1, e2, e3, resign_host(setp(e4, at=e1["at"]), TICKET)], 4)  # fmt: skip
+    add("ws_seq_goes_back_host_resigned", "seq 4: ws_seq lowered from 3 to 2, at unchanged, host_sig re-made; "
+        "seq/prev and person signature remain valid. Replay keeps this single ticket log in file order: "
+        "the workspace head is 3 when this line is read, so only the per-log ws_seq decrease fails. "
+        "The cross-ticket merged-order guard is append-only; this history is append-unreachable", TICKET,
+        [e1, e2, e3, resign_host(setp(e4, ws_seq=e3["ws_seq"] - 1), TICKET)], 4)  # fmt: skip
+    cases[-1].update(replay_only=True, replay_expect="chain.bad_ws_seq")
+    add("bad_person_sig_and_ws_seq", "seq 4: bad person signature and backwards ws_seq, valid host signature; "
+        "step 1 checks the person signature first and reports chain.broken", TICKET,
+        [e1, e2, e3, resign_host(setp(e4, sig="A" * 86, ws_seq=e3["ws_seq"] - 1), TICKET)], 4)  # fmt: skip
+    cases[-1]["replay_expect"] = "chain.broken"
     add(
         "tail_truncated", "seq 4 removed: the chain is intact, only a checkpoint can see it", TICKET, [e1, e2, e3], None
     )
@@ -266,11 +279,53 @@ def tamper_vector() -> dict[str, Any]:
         "person signature no longer verifies, so the chain breaks at 3 and every ticket event with ws_seq >= 3 stops",
         "workspace", [wsl[0], wsl[1], resign_host(setp(wsl[2], role="maintainer"), "workspace"), wsl[3]], 3)  # fmt: skip
     add("workspace_event_deleted", "workspace seq 2 removed", "workspace", [wsl[0], wsl[2], wsl[3]], 2)
+    # §5.2's field set is independent of the signature: sign each malformed host event correctly.
+    repaired = w.ev(
+        TICKET,
+        "projection.repaired",
+        w.HOST,
+        {"path": "ticket.json", "cause": "projection_mismatch"},
+        at=ow.stamp(w.clock),
+    )
+    ticket.pop()  # keep the shared base logs (also used by checkpoint.json) unchanged
+    add(
+        "host_field_set_valid",
+        "a host projection.repaired without person-only fields",
+        TICKET,
+        [*ticket, repaired],
+        None,
+    )
+    for field, value in (("sig", e4["sig"]), ("auth", "passphrase"), ("roster_v", w.roster_v)):
+        add(
+            f"host_field_set_{field}",
+            f"5.2: {field} appears on person events and on no others; host_sig verifies",
+            TICKET,
+            [*ticket, resign_host(setp(repaired, **{field: value}), TICKET)],
+            repaired["seq"],
+        )
+    agent_event = w.ev(
+        TICKET,
+        "log.added",
+        {"kind": "agent", "id": "claude-code", "session": "field-set", "unattended": True},
+        {"text": "agent note"},
+        at=ow.stamp(w.clock),
+    )
+    ticket.pop()  # keep the shared base logs unchanged
+    add("agent_field_set_valid", "an agent event without person-only fields", TICKET, [*ticket, agent_event], None)
+    add(
+        "agent_field_set_sig",
+        "5.2: sig appears on person events and on no others; agent event host_sig verifies",
+        TICKET,
+        [*ticket, resign_host(setp(agent_event, sig=e4["sig"]), TICKET)],
+        agent_event["seq"],
+    )
     return {
         "pins": "tampered chain lines (5.5 Reading): the stated mutation of a signed log and the one F1 outcome, the "
         "line position where a reader reports chain.broken (lines checked in file order, a bad host_sig or person sig "
         "breaks the chain at that line); for a workspace-log break at seq n, the first seq of each ticket log whose "
         "events stop counting (ws_seq >= n); full lines of both logs with real signatures",
+        "note": "Case keys: replay_only marks an append-unreachable tampered log, checked directly on replay; "
+        "replay_expect pins its refusal code in addition to chain_broken_at.",
         "workspace_id": W,
         "genesis": w.genesis,
         "now": ow.stamp(w.clock + 60),
@@ -379,18 +434,40 @@ def genesis_vector() -> dict[str, Any]:
             signer="dk_mara1",
         ),
         _genesis_case(
+            "certificate_with_decide_only",
+            5,
+            "scopes_max ['look', 'decide']: the genesis installs members, policies and settings, which need `operate`",
+            device_cert=ow.make_cert("sev", "sev1", ["look", "decide"]),
+        ),
+        _genesis_case(
             "delegation_check_before_host_sig",
             3,
-            "checks 3 and 4 both fail: 3 is reported",
+            "checks 3 and 4 both fail: the genesis checks name 3 (host_sig is also a line check, so the event is "
+            "refused with chain.broken, refusal order step 1)",
             delegation=ow.make_delegation("sev", workspace_id=OTHER_W),
             host_key="wsk_other",
         ),
         _genesis_case("roster_v_is_not_zero", None, "the genesis has roster_v 0", shape="genesis.shape", roster_v=1),
     ]
+    # (append, replay): checks 1, 2, 3 and 5 are genesis.invalid, check 4 is chain.broken, check 6 is sig.invalid at append
+    # and chain.broken on replay; on replay a failing host_sig or person sig breaks the chain before any other check
+    codes = {
+        "host_sig_by_another_key": ("chain.broken", "chain.broken"),
+        "host_sig_covers_the_event": ("chain.broken", "chain.broken"),
+        "delegation_check_before_host_sig": ("chain.broken", "chain.broken"),
+        "signature_by_another_device": ("sig.invalid", "chain.broken"),
+        "signature_over_another_workspace": ("sig.invalid", "chain.broken"),
+        "owner_check_before_signature_check": ("genesis.invalid", "chain.broken"),
+        "actor_device_is_not_the_certificates": ("genesis.invalid", "chain.broken"),
+    }
+    for c in refused:
+        c["append"], c["replay"] = codes.get(c["name"], ("genesis.invalid", "genesis.invalid"))
     return {
-        "pins": "the genesis checks of F1 5.11 in their stated order (1 owner ids, 2 delegation signature and field "
-        "set, 3 delegation binds workspace and wsk, 4 host_sig under wsk_pub, 5 device_cert and actor.device, 6 sig "
-        "under the certificate's key); genesis = the head of workspace.created",
+        "pins": "the genesis checks of F1 5.11 (1 owner ids, 2 delegation signature and field "
+        "set, 3 delegation binds workspace and wsk, 4 host_sig under wsk_pub, 5 device_cert (valid at `at`, with operate) "
+        "and actor.device, 6 sig under the certificate's key; 4 and 6 are line checks and are reported first when they fail together with another); genesis = the head of workspace.created. Each refused "
+        "case carries `append` (the code at append: checks 1, 2, 3, 5 genesis.invalid, check 4 chain.broken, check 6 "
+        "sig.invalid) and `replay` (chain.broken where a line check fails first, else genesis.invalid)",
         "note": KEY_NOTE,
         "workspace_id": W,
         "valid": good,
@@ -509,6 +586,26 @@ def _checkpoint(o: dict[str, Any], signer: str = "wsk", label: str = "checkpoint
     return {"o": o, "sig": b64u(ow.sign(signer, ow.LABEL[label].encode() + ow.cj(o)))}
 
 
+def acc_fold(heads: list[str], start: str = "sha256:" + "0" * 64) -> str:
+    import hashlib
+
+    acc = bytes.fromhex(start[7:])
+    for h in heads:
+        raw = bytes.fromhex(h[7:])
+        assert len(acc) == len(raw) == 32
+        acc = hashlib.sha256(b"orch/v2/log-acc|" + acc + raw).digest()
+    return "sha256:" + acc.hex()
+
+
+def checkpoint_ref(cp: dict[str, Any]) -> dict[str, Any]:
+    import hashlib
+
+    return {
+        "n": cp["o"]["n"],
+        "hash": "sha256:" + hashlib.sha256(b"orch/v2/checkpoint-hash|" + ow.cj(cp["o"])).hexdigest(),
+    }
+
+
 def checkpoint_vector() -> dict[str, Any]:
     t = tamper_vector()
     tl, wl = t["ticket_events"][TICKET], t["workspace_events"]
@@ -516,11 +613,24 @@ def checkpoint_vector() -> dict[str, Any]:
 
     def tcp(seq: int, hd: str, at: str = "2026-10-10T10:03:00Z") -> dict[str, Any]:
         return {"v": 2, "suite": 2, "kind": "ticket_checkpoint", "workspace_id": W, "uid": TICKET, "seq": seq,
-                "head": hd, "at": at}  # fmt: skip
+                "head": hd, "acc": acc_fold([*heads_t[:seq-1], hd]), "at": at}  # fmt: skip
 
     def wcp(n: int, ws_seq: int, hd: str, tickets: dict[str, Any]) -> dict[str, Any]:
-        return {"v": 2, "suite": 2, "kind": "workspace_checkpoint", "workspace_id": W, "genesis": t["genesis"], "n": n,
-                "at": "2026-10-10T10:03:30Z", "workspace_log": {"seq": ws_seq, "head": hd}, "tickets": tickets}  # fmt: skip
+        tickets = {
+            uid: {**entry, "acc": acc_fold([*heads_t[: entry["seq"] - 1], entry["head"]])}
+            for uid, entry in tickets.items()
+        }
+        return {
+            "v": 2,
+            "suite": 2,
+            "kind": "workspace_checkpoint",
+            "workspace_id": W,
+            "genesis": t["genesis"],
+            "n": n,
+            "at": "2026-10-10T10:03:30Z",
+            "workspace_log": {"seq": ws_seq, "head": hd, "acc": acc_fold([*heads_w[: ws_seq - 1], hd])},
+            "tickets": tickets,
+        }
 
     ticket_o = tcp(len(tl), heads_t[-1])
     ws_o = wcp(1, len(wl), heads_w[-1], {TICKET: {"seq": len(tl), "head": heads_t[-1]}})
@@ -557,16 +667,37 @@ def checkpoint_vector() -> dict[str, Any]:
         {"name": "lower_height", "log_seq": len(wl) - 1, "head": heads_w[-2], "expect": "chain.diverged"},
         {"name": "same_height_same_head", "log_seq": len(wl), "head": heads_w[-1], "expect": "ok", "n": 2},
     ]
-    # signed workspace checkpoints offered to a reader that already holds n = 2 (relay, devices from P3; the P1 host
-    # only writes its own and computes n itself): a lower n is refused even when everything else is the same
     held = wcp(2, len(wl), heads_w[-1], {TICKET: {"seq": len(tl), "head": heads_t[-1]}})
-    n_offers = [
-        {"name": "lower_n_same_heads", "checkpoint": _checkpoint({**held, "n": 1}), "expect": "chain.diverged"},
-        {"name": "same_n_same_content", "checkpoint": _checkpoint(held), "expect": "ok"},
-        {"name": "higher_n_same_heads", "checkpoint": _checkpoint({**held, "n": 3}), "expect": "ok"},
-        {"name": "lower_n_lower_height", "checkpoint": _checkpoint(wcp(1, len(wl) - 1, heads_w[-2], {})),
-         "expect": "chain.diverged"},
-    ]  # fmt: skip
+    grown = copy.deepcopy(held)
+    grown["n"] = 3
+    next_head = "sha256:" + "66" * 32
+    grown["tickets"][TICKET] = {
+        "seq": len(tl) + 1,
+        "head": next_head,
+        "acc": acc_fold([next_head], held["tickets"][TICKET]["acc"]),
+    }
+    n_offers = []
+
+    def offer(name, o, expect, **kw):
+        n_offers.append({"name": name, "checkpoint": _checkpoint(o), "expect": expect, **kw})
+
+    offer("lower_n_same_heads", {**held, "n": 1}, "ignored")
+    offer("same_n_same_content", held, "ok")
+    offer("same_n_other_content", {**held, "at": "2026-10-10T10:04:00Z"}, "chain.diverged")
+    offer("higher_n_same_heads", {**held, "n": 3}, "ok")
+    offer("higher_n_lower_at", {**held, "n": 3, "at": "2026-10-10T10:00:00Z"}, "chain.diverged")
+    offer("verified_accumulator_growth", grown, "ok", proofs={TICKET: [next_head]})
+    offer("missing_growth_proof_is_incomplete", grown, "sync.incomplete")
+    offer("spliced_growth_proof_is_incomplete", grown, "sync.incomplete", proofs={TICKET: [heads_t[0]]})
+    offer("too_many_heads_is_incomplete", grown, "sync.incomplete", proofs={TICKET: [heads_t[0], next_head]})
+    wrong = copy.deepcopy(held)
+    wrong["n"] = 3
+    wrong["tickets"][TICKET]["acc"] = "sha256:" + "ff" * 32
+    offer("equal_height_acc_conflict", wrong, "chain.diverged")
+    offer("higher_n_missing_ticket", {**held, "n": 3, "tickets": {}}, "chain.diverged")
+    offer("lower_n_higher_height", {**grown, "n": 1}, "chain.diverged")
+    for x in ticket_offers:
+        x["acc"] = acc_fold([*heads_t[: x["seq"] - 1], x["head"]])
     # logs as they are on disk when a checkpoint is checked (heads by seq, 0-based list)
     divergences = [
         {"name": "log_agrees", "ticket_heads": heads_t, "expect": []},
@@ -582,7 +713,8 @@ def checkpoint_vector() -> dict[str, Any]:
         "pins": "protocol 2.4 checkpoint objects of F1 5.10: the exact shape of `o`, the signed bytes "
         "('orch/v2/sig/checkpoint|' + cj(o)), real signatures; forged variants fail; a lower seq or n, or the same "
         "seq with another head, is refused (chain.diverged); a log that disagrees with a checkpoint is diverged; "
-        "restore (see restore.json)",
+        "restore (see restore.json); receivers judge workspace checkpoints by n and seq (workspace_n_offers: ok, ignored, "
+        "chain.diverged)",
         "note": KEY_NOTE,
         "workspace_id": W,
         "wsk_pub": key("wsk").pub_b64u,
@@ -600,58 +732,726 @@ def checkpoint_vector() -> dict[str, Any]:
         "workspace_log": {"heads": heads_w},
         "ticket_offers": ticket_offers,
         "workspace_offers": ws_offers,
+        "transition_cases": transition_vectors(),
         "workspace_n_held": _checkpoint(held),
         "workspace_n_offers": n_offers,
         "divergence": divergences,
     }
 
 
+def transition_vectors() -> list[dict[str, Any]]:
+    """Full signed source-bound transitions and accumulator proofs, from F1 §5.10."""
+    w = World("transition", "source and accumulator")
+    genesis = w.genesis_event()
+    w.member("mara", "maintainer")
+    w.member("lena", "member")
+    original = list(w.logs["workspace"])
+    heads = [head(e) for e in original]
+
+    def cp(n, branch):
+        return _checkpoint(
+            {
+                "v": 2,
+                "suite": 2,
+                "kind": "workspace_checkpoint",
+                "workspace_id": W,
+                "genesis": w.genesis,
+                "n": n,
+                "at": "2026-10-10T10:00:30Z",
+                "workspace_log": {"seq": len(branch), "head": branch[-1], "acc": acc_fold(branch)},
+                "tickets": {},
+            }
+        )
+
+    c = cp(3, heads)
+    w.logs["workspace"] = original[:1]
+    w.roster_v = 1
+    payload = {
+        "from_seq": 1,
+        "head": heads[0],
+        "abandoned": {"seq": 3, "head": heads[-1]},
+        "abandoned_decisions": [e["id"] for e in original[1:]],
+        "source": checkpoint_ref(c),
+        "revocations": [],
+        "reason": "rollback",
+    }
+    e = w.ev("workspace", "restore", w.actor("sev"), payload)
+    target = cp(4, [heads[0], head(e)])
+    target["o"]["at"] = e["at"]
+    target = _checkpoint(target["o"])
+    transition = {
+        "C": c,
+        "T": target,
+        "log": "workspace",
+        "event": e,
+        "device_cert": genesis["device_cert"],
+        "pk_pub": genesis["owner"]["pk_pub"],
+        "delegation": genesis["delegation"],
+        "retained_heads": heads[:1],
+        "abandoned_heads": heads,
+    }
+    proofs = {"workspace": [head(e)]}
+    cases = []
+
+    def case(name, expect, tr=None, held=c, proof=proofs, offered=target, applied=()):
+        cases.append(
+            {
+                "name": name,
+                "held": held,
+                "offered": offered,
+                "restore": copy.deepcopy(tr or transition),
+                "proofs": proof,
+                "applied": list(applied),
+                "expect": expect,
+                "recorded": e["id"] if expect == "ok" else None,
+            }
+        )
+
+    case("restore_accumulator_fold", "ok")
+    case("relay_requires_every_held_revocation", "chain.diverged")
+    cases[-1]["known_revocations"] = [{"revocation": ow.make_revocation("lena", "lena1", "lost")}]
+    case("relay_refuses_a_known_revoked_owner_device", "chain.diverged")
+    cases[-1]["known_revocations"] = [{"revocation": ow.make_revocation("sev", "sev1", "compromised")}]
+    case("source_must_equal_held", "chain.diverged", held=cp(2, heads[:2]))
+    case("initialized_receiver_refuses_null_source", "chain.diverged", tr={**transition, "C": None})
+    case("uninitialized_receiver_refuses_nonnull_source", "chain.diverged", held=None)
+    case("malformed_retained_proof_is_incomplete", "sync.incomplete", tr={**transition, "retained_heads": ["bad"]})
+    case("malformed_tail_proof_is_incomplete", "sync.incomplete", proof={"workspace": {"0": head(e)}})
+    case("transition_target_is_bound", "chain.diverged", tr={**transition, "T": c})
+    case("missing_abandoned_proof", "sync.incomplete", tr={**transition, "abandoned_heads": None})
+    case("spliced_abandoned_prefix", "sync.incomplete", tr={**transition, "abandoned_heads": list(reversed(heads))})
+    case("restore_not_in_target_proof", "sync.incomplete", proof={"workspace": [heads[-1]]})
+    case("restore_single_use", "chain.diverged", applied=[e["id"]])
+    bad = copy.deepcopy(transition)
+    bad["event"]["reason"] = "other"
+    case("full_restore_signature_required", "chain.diverged", tr=bad)
+    case(
+        "descriptor_is_insufficient",
+        "chain.diverged",
+        tr={"id": e["id"], "log": "workspace", "from_seq": 1, "abandoned": payload["abandoned"]},
+    )
+    forged = copy.deepcopy(c)
+    forged["sig"] = b64u(bytes(64))
+    case("source_signature_required", "chain.diverged", tr={**transition, "C": forged})
+    # The source may precede the retained prefix: prove the intervening growth, too.
+    w.logs["workspace"] = list(original)
+    w.roster_v = 3
+    forward_c = cp(1, heads[:1])
+    forward = w.ev(
+        "workspace",
+        "restore",
+        w.actor("sev"),
+        {
+            "from_seq": 3,
+            "head": heads[-1],
+            "abandoned": None,
+            "abandoned_decisions": [],
+            "source": checkpoint_ref(forward_c),
+            "revocations": [],
+            "reason": "other",
+        },
+    )
+    forward_t = cp(2, [*heads, head(forward)])
+    forward_t = _checkpoint({**forward_t["o"], "at": forward["at"]})
+    forward_tr = {
+        **transition,
+        "C": forward_c,
+        "T": forward_t,
+        "event": forward,
+        "retained_heads": heads,
+        "abandoned_heads": heads[:1],
+    }
+    cases.append(
+        {
+            "name": "source_precedes_retained_prefix",
+            "held": forward_c,
+            "offered": forward_t,
+            "restore": forward_tr,
+            "proofs": {"workspace": [head(forward)]},
+            "applied": [],
+            "expect": "ok",
+            "recorded": forward["id"],
+        }
+    )
+    cases.append(
+        {
+            **copy.deepcopy(cases[-1]),
+            "name": "forward_proof_cannot_replace_committed_prefix",
+            "restore": {**forward_tr, "retained_heads": ["sha256:" + "ef" * 32, *heads[1:]]},
+            "expect": "sync.incomplete",
+            "recorded": None,
+        }
+    )
+    # P3-D24 authenticates delegation devices; it does not replay owner membership.
+    w.logs["workspace"] = list(original)
+    w.roster_v = 3
+    w.steps = w.steps[:3]
+    w.ev("workspace", "role.changed", w.actor("sev"), {"person": pid("mara"), "role": "owner"})
+    w.ev("workspace", "role.changed", w.actor("sev"), {"person": pid("sev"), "role": "member"})
+    branch = [head(ev) for ev in w.logs["workspace"]]
+    demoted_c = cp(5, branch)
+    demoted = w.ev(
+        "workspace",
+        "restore",
+        w.actor("sev"),
+        {
+            **payload,
+            "from_seq": len(branch),
+            "head": branch[-1],
+            "abandoned": None,
+            "abandoned_decisions": [],
+            "source": checkpoint_ref(demoted_c),
+        },
+        expect="role.denied",
+    )
+    demoted_t = _checkpoint({**cp(6, [*branch, head(demoted)])["o"], "at": demoted["at"]})
+    cases.append(
+        {
+            "name": "demoted_delegation_owner_receiver_accepts_host_refuses",
+            "held": demoted_c,
+            "offered": demoted_t,
+            "restore": {
+                **transition,
+                "C": demoted_c,
+                "T": demoted_t,
+                "event": demoted,
+                "retained_heads": branch,
+                "abandoned_heads": branch,
+            },
+            "proofs": {"workspace": [head(demoted)]},
+            "applied": [],
+            "expect": "ok",
+            "recorded": demoted["id"],
+            "host_scenario": copy.deepcopy(w.scenario()),
+        }
+    )
+    for held_reason, listed_reason, expect in [
+        ("retired", "lost", "ok"),
+        ("lost", "retired", "ok"),
+        ("compromised", "lost", "chain.diverged"),
+    ]:
+        w.logs["workspace"] = original[:1]
+        w.roster_v = 1
+        entry = {
+            "revocation": ow.make_revocation("lena", "lena1", listed_reason),
+            "device_cert": ow.make_cert("lena", "lena1"),
+            "pk_pub": key("pk_lena").pub_b64u,
+        }
+        rev_event = w.ev("workspace", "restore", w.actor("sev"), {**payload, "revocations": [entry]})
+        rev_target = _checkpoint({**cp(4, [heads[0], head(rev_event)])["o"], "at": rev_event["at"]})
+        cases.append(
+            {
+                "name": "receiver_" + held_reason + "_to_" + listed_reason,
+                "held": c,
+                "offered": rev_target,
+                "restore": {**transition, "event": rev_event, "T": rev_target},
+                "proofs": {"workspace": [head(rev_event)]},
+                "applied": [],
+                "expect": expect,
+                "recorded": rev_event["id"] if expect == "ok" else None,
+                "known_revocations": [{"revocation": ow.make_revocation("lena", "lena1", held_reason)}],
+            }
+        )
+    w.logs["workspace"] = original[:2]
+    w.roster_v = 2
+    wrong_head = "sha256:" + "ef" * 32
+    substituted = w.ev(
+        "workspace",
+        "restore",
+        w.actor("sev"),
+        {
+            **payload,
+            "from_seq": 2,
+            "head": wrong_head,
+            "prev": wrong_head,
+            "based_on": wrong_head,
+        },
+        expect="restore.bad_head",
+    )
+    substituted_t = _checkpoint({**cp(4, [*heads[:2], head(substituted)])["o"], "at": substituted["at"]})
+    cases.append(
+        {
+            "name": "rollback_accumulator_must_bind_retained_head",
+            "held": c,
+            "offered": substituted_t,
+            "restore": {**transition, "T": substituted_t, "event": substituted, "retained_heads": heads[:2]},
+            "proofs": {"workspace": [head(substituted)]},
+            "applied": [],
+            "expect": "sync.incomplete",
+            "recorded": None,
+        }
+    )
+    # Without C, the forward proof starts at the pinned genesis, not an arbitrary branch.
+    w.logs["workspace"] = list(original)
+    w.roster_v = 3
+    initial = w.ev(
+        "workspace",
+        "restore",
+        w.actor("sev"),
+        {
+            **payload,
+            "from_seq": 3,
+            "head": heads[-1],
+            "abandoned": None,
+            "abandoned_decisions": [],
+            "source": None,
+        },
+    )
+    for name, prefix, expect in [
+        ("null_source_with_pinned_genesis", heads, "ok"),
+        ("null_source_cannot_substitute_genesis", ["sha256:" + "ef" * 32, *heads[1:]], "sync.incomplete"),
+    ]:
+        initial_t = _checkpoint({**cp(1, [*prefix, head(initial)])["o"], "at": initial["at"]})
+        cases.append(
+            {
+                "name": name,
+                "held": None,
+                "offered": initial_t,
+                "restore": {
+                    **transition,
+                    "C": None,
+                    "T": initial_t,
+                    "event": initial,
+                    "retained_heads": prefix,
+                    "abandoned_heads": [],
+                },
+                "proofs": {"workspace": [head(initial)]},
+                "applied": [],
+                "expect": expect,
+                "recorded": initial["id"] if expect == "ok" else None,
+            }
+        )
+    for case_ in cases:
+        tr = case_["restore"]
+        if "retained_heads" not in tr:
+            continue
+        prefix = tr.pop("retained_heads")
+        c_entry = tr["C"]["o"]["workspace_log"] if tr.get("C") else None
+        valid = all(isinstance(h, str) and len(h) == 71 for h in prefix)
+        tr["acc_from"] = acc_fold(prefix) if valid else "bad"
+        tr["acc_before"] = acc_fold(prefix[:-1]) if valid else "bad"
+        tr["forward_heads"] = prefix[c_entry["seq"] if c_entry else 0 :]
+        abandoned = tr.get("abandoned_heads")
+        if isinstance(abandoned, list):
+            tr["abandoned_heads"] = abandoned[len(prefix) :]
+    return cases
+
+
 def restore_scenarios() -> list[dict[str, Any]]:
-    def prefix(w: World) -> None:
+    """F1 §5.10 B1, §5.3 recovery, §5.11 precedence. Expected outcomes follow the text only."""
+
+    def evidence(person="lena", dev="lena1", reason="lost", **kwargs):
+        return {
+            "revocation": ow.make_revocation(person, dev, reason, **kwargs),
+            "device_cert": ow.make_cert(person, dev),
+            "pk_pub": key("pk_" + person).pub_b64u,
+        }
+
+    def setup(name):
+        w = World(name, "F1 §5.10: owner-signed atomic revocations, retained-prefix authorization")
         w.genesis_event()
         w.member("mara", "maintainer")
         w.member("lena", "member")
-        w.ev("workspace", "settings.changed", w.actor("sev"), {"set": {"grant_hours": 4}})
+        w.ticket()
+        return w
 
-    rev = ow.make_revocation("lena", "lena1", "lost")
-    old = World("old", "x")
-    prefix(old)
-    old_revoked = old.ev("workspace", "device.revoked", old.actor("sev"),
-                         {"device": did("lena1"), "reason": "lost", "revocation": rev})  # fmt: skip
+    def restore(w, entries, **kw):
+        payload = {
+            "from_seq": w.ws_len(),
+            "head": head(w.logs["workspace"][-1]),
+            "abandoned": None,
+            "abandoned_decisions": [],
+            "reason": "rollback",
+            "source": None,
+            "revocations": sorted(entries, key=lambda x: x["revocation"]["o"]["device_id"]),
+        }
+        payload.update(kw.pop("payload", {}))
+        return w.ev("workspace", "restore", kw.pop("actor", w.actor("sev")), payload, **kw)
+
     out = []
-    for name, reappend in (
-        ("restore_reappends_the_revocation", True),
-        ("reader_cannot_see_a_dropped_revocation", False),
-    ):
-        pins = ("a workspace restore after a rollback: the host re-appends every PK-signed revocation it has seen as "
-                "device.revoked with actor H, the embedded revocation verbatim" if reappend else
-                "the same restore without the re-append: the abandoned tail held lena1's revocation, which the new "
-                "chain no longer shows")  # fmt: skip
-        w = World(name, pins)
-        prefix(w)
-        h4 = head(w.logs["workspace"][-1])
-        payload = {"from_seq": 4, "head": h4, "abandoned": {"seq": 5, "head": head(old_revoked)},
-                   "abandoned_decisions": [], "reason": "restored a backup"}  # fmt: skip
-        w.ev("workspace", "restore", w.actor("mara"), {**payload}, expect="role.denied", note="owners only")
-        w.ev("workspace", "restore", w.actor("sev"), {**payload, "from_seq": 3}, expect="restore.bad_head",
-             note="from_seq and head must name the last event on disk", schema_refused=True)  # fmt: skip
-        w.ev("workspace", "restore", w.actor("sev"), {**payload, "head": head(old_revoked)},
-             expect="restore.bad_head", note="head is not the last event's", schema_refused=True)  # fmt: skip
-        w.ev("workspace", "restore", w.actor("sev"), payload, note="the owner's restore, seq 5, prev = from_seq's head",
-             after={"workspace": {"devices_revoked": []}})  # fmt: skip
-        if reappend:
-            w.ev("workspace", "device.revoked", w.HOST, {"device": did("lena1"), "reason": "lost", "revocation": rev},
-                 note="the host puts the revocation back at once",
-                 after={"workspace": {"devices_revoked": [did("lena1")]}})  # fmt: skip
-        extra: dict[str, Any] = {"reappends": reappend}
-        if not reappend:
-            extra["note"] = (
-                "NOT a valid restore. A log-only reader cannot see the dropped revocation (it is only in the abandoned "
-                "tail and in host state), so it accepts these lines; the host must refuse this restore, because 5.10 "
-                "accepts a workspace restore only if the host re-appends every PK-signed revocation it has seen at once. "
-                "Consumers must not read this scenario as 'restore without re-append is ok'."
-            )
-            extra["host_expect"] = "refused"
-            extra["host_knows_revocations"] = [rev]
-        out.append(w.scenario(**extra))
+    w = setup("restore_carries_revocations_at_its_ws_seq")
+    restore(w, [evidence()], after={"workspace": {"devices_revoked": [did("lena1")]}})
+    w.ev(TICKET, "log.added", w.actor("lena"), {"text": "revoked now"}, expect="device.invalid")
+    w.ev(TICKET, "log.added", w.actor("mara"), {"text": "eligible at restore seq"})
+    out.append(w.scenario())
+
+    for name, old_reason, entry, expect in [
+        ("identical_present_revocation_has_no_effect", "lost", evidence(), "ok"),
+        ("identical_compromised_revocation_has_no_effect", "compromised", evidence(reason="compromised"), "ok"),
+        ("same_reason_other_bytes_refused", "lost", evidence(revoked_ms=1_790_000_100_001), "device.exists"),
+        ("lost_upgrades_to_compromised", "lost", evidence(reason="compromised"), "ok"),
+        ("lost_cannot_replace_compromised", "compromised", evidence(), "device.exists"),
+        ("retired_cannot_replace_lost", "lost", evidence(reason="retired"), "device.exists"),
+    ]:
+        w = setup(name)
+        r = evidence(reason=old_reason)["revocation"]
+        w.ev("workspace", "device.revoked", w.HOST, {"device": did("lena1"), "reason": old_reason, "revocation": r})
+        restore(
+            w, [entry], expect=expect, after={"tickets": {TICKET: {"gens": [1, 1, 1, 0]}}} if expect == "ok" else None
+        )
+        out.append(w.scenario())
+
+    for tombstone in (False, True):
+        w = setup("foreign_person_evidence_" + ("tombstone" if tombstone else "known_device"))
+        dev = "zed1" if tombstone else "lena1"
+        if tombstone:
+            restore(w, [evidence("zed", dev)])
+        restore(w, [evidence("mara", dev, "compromised")], expect="device.cert")
+        out.append(w.scenario())
+
+    w = setup("all_evidence_precedes_any_B1_comparison")
+    entries = sorted([evidence(), evidence("mara", "mara1")], key=lambda x: x["revocation"]["o"]["device_id"])
+    restore(w, [entries[0]])
+    entries[0] = copy.deepcopy(entries[0])
+    entries[0]["revocation"]["o"]["reason"] = "retired"
+    person = "lena" if entries[0]["revocation"]["o"]["device_id"] == did("lena1")[2:] else "mara"
+    entries[0] = evidence(person, person + "1", "retired")
+    entries[1]["revocation"]["sig"] = b64u(bytes(64))
+    restore(w, entries, expect="device.cert")
+    out.append(w.scenario())
+
+    w = setup("fresh_host_revocation_and_plain_upgrade")
+    for reason, expect in [
+        ("lost", "ok"),
+        ("lost", "device.exists"),
+        ("compromised", "ok"),
+        ("retired", "device.exists"),
+    ]:
+        w.ev(
+            "workspace",
+            "device.revoked",
+            w.HOST,
+            {"device": did("lena1"), "reason": reason, "revocation": evidence(reason=reason)["revocation"]},
+            expect=expect,
+        )
+    out.append(w.scenario())
+
+    w = setup("abandoned_only_person_gets_tombstone")
+    restore(w, [evidence("zed", "zed1")])
+    w.member("zed", "member", expect="device.exists")
+    out.append(w.scenario())
+
+    w = setup("plain_revocation_upgrades_an_abandoned_only_tombstone")
+    restore(w, [evidence("zed", "zed1")])
+    for reason, expect in [("lost", "device.exists"), ("compromised", "ok"), ("retired", "device.exists")]:
+        w.ev(
+            "workspace",
+            "device.revoked",
+            w.HOST,
+            {"device": did("zed1"), "reason": reason, "revocation": evidence("zed", "zed1", reason)["revocation"]},
+            expect=expect,
+        )
+    w.member("zed", "member", expect="device.exists")
+    out.append(w.scenario())
+
+    w = setup("abandoned_only_device_cannot_be_added")
+    restore(w, [evidence("lena", "lena2")])
+    w.ev(
+        "workspace",
+        "device.added",
+        w.actor("lena"),
+        {"device": did("lena2"), "cert": ow.make_cert("lena", "lena2")},
+        expect="device.exists",
+    )
+    out.append(w.scenario())
+
+    w = setup("recovery_checks_tombstones")
+    restore(w, [evidence(), evidence("lena", "lena2")])
+    w.ev(
+        "workspace",
+        "device.added",
+        w.actor("lena", "lena2"),
+        {"device": did("lena2"), "cert": ow.make_cert("lena", "lena2")},
+        expect="device.exists",
+    )
+    out.append(w.scenario())
+
+    w = World("sole_owner_recovery_after_host_revocation", "§5.3: fresh H delivery and PK-vouched recovery")
+    w.genesis_event()
+    w.ev(
+        "workspace",
+        "device.revoked",
+        w.HOST,
+        {"device": did("sev1"), "reason": "lost", "revocation": evidence("sev", "sev1")["revocation"]},
+    )
+    w.ev(
+        "workspace",
+        "device.added",
+        w.actor("sev", "sev2"),
+        {"device": did("sev2"), "cert": ow.make_cert("sev", "sev2")},
+    )
+    out.append(w.scenario())
+
+    w = setup("expired_and_look_only_evidence_records_revocation")
+    entry = evidence("zed", "zed1")
+    entry["device_cert"] = ow.make_cert("zed", "zed1", ["look"], expires_ms=1_790_000_001_000)
+    restore(w, [entry])
+    out.append(w.scenario())
+
+    w = setup("all_entries_validated_before_effects_and_signature_precedence")
+    entries = sorted([evidence(), evidence("mara", "mara1")], key=lambda x: x["revocation"]["o"]["device_id"])
+    entries[-1]["revocation"]["sig"] = b64u(bytes(64))
+    restore(w, entries, expect="device.cert", after=None)
+    restore(w, entries, expect="role.denied", actor=w.actor("mara"))
+    restore(w, entries, expect="sig.invalid", signer="dk_evil")
+    w.ev(TICKET, "log.added", w.actor("lena"), {"text": "invalid last entry had no effects"})
+    w.ev(TICKET, "log.added", w.actor("mara"), {"text": "both devices remain valid"})
+    out.append(w.scenario())
+
+    w = setup("owner_authorized_before_self_revocation")
+    restore(w, [evidence("sev", "sev1")])
+    w.ev(TICKET, "log.added", w.actor("sev"), {"text": "after self revocation"}, expect="device.invalid")
+    out.append(w.scenario())
+
+    w = setup("workspace_restore_blocks_abandoned_decision")
+    gone = w.member("zed", "member")
+    w.logs["workspace"].pop()
+    w.steps.pop()
+    w.roster_v -= 1
+    restore(w, [], payload={"abandoned_decisions": [gone["id"]]})
+    w.raw("workspace", gone, expect="event.duplicate_id")
+    out.append(w.scenario())
+    from .oracle_f1_flow import Sim
+
+    sim = Sim("restore_raises_then_compromised_effects_once", "F1 §5.10: post-raise voids and grant termination")
+    sim.ready()
+    approval = sim.decide("approve", "requirements")
+    sim.decide("approve", "plan")
+    sim.ws_restore(revocations=[evidence("sev", "sev1", "compromised")])
+    sim.row(["requirements", "plan", "verify"])
+    sim.invalidated("requirements", "restored", [approval["id"]])
+    sim.w.ev(TICKET, "log.added", sim.agent, {"text": "compromised grant"}, expect="grant.invalid")
+    sim.w.ev(TICKET, "log.added", sim.w.actor("mara"), {"text": "eligible at restore position"})
+    out.append(sim.scenario())
     return out
+
+
+def refusal_order_scenarios() -> list[dict[str, Any]]:
+    """§5.11 "Refusal order": events that break two rules at once get the code of the earlier step."""
+    w = base_world("refusal_order_type_step", "an event of the other log's type is refused at the type step, after the envelope and the log "
+                   "(on replay a bad signature breaks the chain first, so no vector mixes the two)")  # fmt: skip
+    mara = w.actor("mara")
+    w.ev(TICKET, "settings.changed", mara, {"set": {"grant_hours": 4}}, expect="event.unknown_type",
+         note="a workspace event in a ticket log; the signature is fine", schema_refused=True)  # fmt: skip
+    w.ev("workspace", "log.added", mara, {"text": "x"}, expect="event.unknown_type",
+         note="a ticket event in the workspace log", schema_refused=True)  # fmt: skip
+    w.ev("01J9ZK4QXXXXXXXXXXXXXXXXXX", "settings.changed", mara, {"set": {"grant_hours": 4}}, expect="ticket.unknown",
+         note="the log step (ticket.unknown) comes before the type step", schema_refused=True)  # fmt: skip
+    w.ev(TICKET, "log.added", mara, {"text": "ok"}, note="an honest event is accepted")
+    out = [w.scenario()]
+    w = base_world(
+        "settings_repo_refusals",
+        "F1 step 0: malformed repo fields refuse append and break replay at the line; decision 94 aliases refuse settings",
+    )
+    for field, value in [
+        ("remote", "https://HOST/a"),
+        ("remote", "https://git@host/a"),
+        *[
+            ("default_branch", b)
+            for b in (
+                "bad..branch",
+                "-x",
+                "HEAD",
+                "@",
+                "refs/heads/main",
+                "a\u202eb",
+                "a\u0085b",
+                "a\u200db",
+                "a\u00a0b",
+                "a\u1680b",
+                "a\u2000b",
+                "a\u2028b",
+                "a\u2029b",
+                "a\u202fb",
+                "a\u205fb",
+                "a\u3000b",
+                "a\u0378b",
+                "a\U0001e6c0b",
+                *[
+                    "a" + chr(cp) + "b"
+                    for cp in (
+                        0xFE00,
+                        0xFE0F,
+                        0xE0100,
+                        0xE01EF,
+                        0x034F,
+                        0x115F,
+                        0x1160,
+                        0x3164,
+                        0xFFA0,
+                        0x180B,
+                        0x180C,
+                        0x180D,
+                        0x180E,
+                        0x180F,
+                        0x17B4,
+                        0x17B5,
+                        0x2800,
+                        0xE000,
+                        0xF0000,
+                        0x100000,
+                    )
+                ],
+                "\u0301branch",
+                "\u0903branch",  # Mc with combining class zero is still a leading mark
+                "\u20ddbranch",  # Me
+                "\U00010d69branch",  # Unicode 16.0 mark
+                "feat/\u0301branch",  # Mn at a later component
+                "feat/\u0903branch",  # Mc
+                "feat/part/\u20ddbranch",  # Me at the third component
+                "feat/\U00010d69branch",  # Unicode 16.0 mark
+            )
+        ],
+    ]:
+        w.ev(
+            "workspace",
+            "settings.changed",
+            w.actor("sev"),
+            {"set": {"repos": {"a": {"path": "../a", field: value}}}},
+            expect="validation.event",
+            schema_refused=True,
+        )
+        w.steps[-1]["replay_expect"] = "chain.broken"
+    w.ev(
+        "workspace",
+        "settings.changed",
+        w.actor("sev"),
+        {"set": {"repos": {"a": {"path": "../a", "remote": "local:b"}}}},
+        expect="settings.invalid",
+    )
+    w.ev(
+        "workspace",
+        "settings.changed",
+        w.actor("sev"),
+        {"set": {"repos": {"a": {"path": "../a", "remote": "https://h/x"}}}},
+    )
+    w.ev(
+        "workspace",
+        "settings.changed",
+        w.actor("sev"),
+        {"set": {"repos": {"b": {"path": "../b", "remote": "https://h/X"}}}},
+        expect="settings.invalid",
+    )
+    w.ev(
+        "workspace",
+        "settings.changed",
+        w.actor("sev"),
+        {"set": {"repos": {"a": None, "b": {"path": "../b", "remote": "https://h/X"}}}},
+    )
+    for repos in (
+        {"c": {"path": "../same"}, "d": {"path": "../same"}},
+        {"c": {"path": "../same"}, "d": {"path": "../other/../same/./"}},
+        {"c": {"path": "../Same"}, "d": {"path": "../same"}},
+        {"c": {"path": "../Street"}, "d": {"path": "../STREET"}},
+        {"c": {"path": "../K"}, "d": {"path": "../k"}},  # normalized Kelvin sign; repo_paths.json pins NFC
+        {"c": {"path": "//same"}, "d": {"path": "/same"}},
+        {"c": {"path": "../c"}, "C": {"path": "../d"}},
+        {"c": {"path": "../B/./"}},
+        {"B": {"path": "../other"}},
+    ):
+        w.ev(
+            "workspace",
+            "settings.changed",
+            w.actor("sev"),
+            {"set": {"repos": repos}},
+            expect="validation.event",
+            schema_refused=len(repos) == 2,
+            note="decision 94: duplicate normalized paths or case-insensitive names, including unchanged repos",
+        )
+        w.steps[-1]["replay_expect"] = "chain.broken"
+    w.ev(
+        "workspace",
+        "settings.changed",
+        w.actor("sev"),
+        {"set": {"repos": {"b": None, "B": {"path": "../b"}}}},
+        note="removing the old entry allows its name and path to be reused",
+    )
+    w.ev(
+        "workspace",
+        "settings.changed",
+        w.actor("sev"),
+        {
+            "set": {
+                "repos": {
+                    "c": {"path": "../Stra\u00dfe"},
+                    "d": {"path": "../STRASSE"},
+                    "e": {"path": "../\ua7cb"},
+                    "f": {"path": "../\u0264"},
+                }
+            }
+        },
+        note="only ASCII case folds: non-ASCII case pairs remain distinct on every runtime",
+    )
+    out.append(w.scenario())
+    return out
+
+
+def restore_contract_vectors() -> dict[str, Any]:
+    w = World("restore_structure", "F1 §5.10 step 0 and atomic line limit")
+    w.genesis_event()
+    event = w.ev(
+        "workspace",
+        "restore",
+        w.actor("sev"),
+        {
+            "from_seq": 1,
+            "head": w.genesis,
+            "abandoned": None,
+            "abandoned_decisions": [],
+            "reason": "rollback",
+            "source": None,
+            "revocations": [],
+        },
+    )
+    entry = {
+        "revocation": ow.make_revocation("lena", "lena1", "lost"),
+        "device_cert": ow.make_cert("lena", "lena1"),
+        "pk_pub": key("pk_lena").pub_b64u,
+    }
+    cases = []
+
+    def add(name, updates, log="workspace"):
+        e = {**copy.deepcopy(event), **updates}
+        e["sig"] = b64u(ow.sign("dk_sev1", ow.person_bytes(W, log, e)))
+        e["host_sig"] = b64u(ow.sign("wsk", ow.host_bytes(W, log, e)))
+        cases.append({"name": name, "log": log, "event": e, "expect": "validation.event", "replay": "chain.broken"})
+
+    add("closed_reason", {"reason": "backup restored"})
+    add("note_byte_limit", {"note": "\u00e9" * 141})
+    add("note_single_line", {"note": "first\nsecond"})
+    add("duplicate_device", {"revocations": [entry, entry]})
+    second = {
+        "revocation": ow.make_revocation("mara", "mara1", "lost"),
+        "device_cert": ow.make_cert("mara", "mara1"),
+        "pk_pub": key("pk_mara").pub_b64u,
+    }
+    add(
+        "unsorted_devices",
+        {"revocations": sorted([entry, second], key=lambda x: x["revocation"]["o"]["device_id"], reverse=True)},
+    )
+    add("ticket_requires_empty_revocations", {"revocations": [entry], "ws_seq": 1}, TICKET)
+    add("malformed_wins_over_signature", {"reason": "bad", "sig": b64u(bytes(64))})
+    cases[-1]["event"]["sig"] = b64u(bytes(64))
+    add("oversized_restore_is_one_atomic_event", {"abandoned_decisions": [ow.ulid(100_000 + i) for i in range(18100)]})
+    assert len(ow.cj(cases[-1]["event"])) + 1 > 524288
+    return {
+        "schema_cases": cases,
+        "host_cases": [
+            {"name": "omitting_present_revocation", "missing": "present", "expect": "validation.restore"},
+            {"name": "omitting_abandoned_revocation", "missing": "abandoned", "expect": "validation.restore"},
+            {
+                "name": "crash_after_restore_commit",
+                "fault": "after_commit",
+                "expect": "revocation_and_transition_retained",
+            },
+            {
+                "name": "crash_preserves_new_restore_evidence",
+                "fault": "after_commit",
+                "learned": True,
+                "expect": "revocation_and_transition_retained",
+            },
+            {"name": "crash_before_restore_commit", "fault": "before_commit", "expect": "no_accepted_restore"},
+            {"name": "exact_restore_retry", "expect": "prior_result"},
+            {"name": "stale_source", "expect": "chain.diverged"},
+        ],
+    }

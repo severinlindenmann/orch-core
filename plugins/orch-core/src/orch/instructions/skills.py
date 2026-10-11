@@ -113,5 +113,13 @@ def _load(name: str) -> Skill:
     return Skill(name, text, sidecar)
 
 
+_BUILTIN: list[Skill] | None = None
+
+
 def builtin_skills() -> list[Skill]:
-    return [_load(n) for n in SKILL_NAMES]
+    """The built-in skills, read from the package once (``Skill`` is frozen, so the cache is shared safely). The host
+    calls this before its audit hook is installed: the package data lies outside its roots."""
+    global _BUILTIN
+    if _BUILTIN is None:
+        _BUILTIN = [_load(n) for n in SKILL_NAMES]
+    return list(_BUILTIN)

@@ -32,6 +32,6 @@ OP = operation(
     ),
     text="ok import.v1 {count} tickets ({events} events)\nnext: {next}",
     data=obj({"count": INT, "already": INT, "skipped": INT, "events": INT, "partial": INT}),
-    errors=(err("not_found"), err("parse.text")),
+    errors=(err("not_found"), err("parse.text"), err("custody.no_batch")),
     handler=handle,
 )

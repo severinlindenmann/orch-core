@@ -145,6 +145,16 @@ _SPECS = [
         "The passphrase did not unlock the device key; nothing was signed and nothing was written.",
     ),
     _e(
+        "custody.no_batch",
+        3,
+        False,
+        "this key backend cannot sign a reviewed batch",
+        "use a passphrase device key (orch init sets one up)",
+        ["orch", "help"],
+        "orch import v1 signs a reviewed batch under one unlock; a key backend that asks per signature cannot, so "
+        "nothing is signed (F1 10.4a, 14.2).",
+    ),
+    _e(
         "grant.required",
         3,
         False,
@@ -252,6 +262,15 @@ _SPECS = [
         "retry in a moment",
         ["orch", "status"],
         "Another writer holds the file lock.",
+    ),
+    _e(
+        "host.required",
+        3,
+        False,
+        "this workspace is served by the orch host",
+        "the host owns this workspace now; start its service instead of using direct mode",
+        ["orch", "host", "list"],
+        "A direct-mode call on a workspace the host has adopted (D-P2-18): there is no silent fallback.",
     ),
     # 5 validation
     _e(
@@ -419,6 +438,7 @@ GLOBAL_ERRORS = (
     "not_implemented",
     "stop",
     "retry.later",
+    "host.required",
 )
 
 

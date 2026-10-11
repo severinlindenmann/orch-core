@@ -85,14 +85,16 @@ def rolled_back(env, tmp_path):
 def test_a_rolled_back_revocation_is_detected_even_without_checkpoints(env, tmp_path):
     ref = rolled_back(env, tmp_path)
     s = env.open()
-    assert "revocation" in s.diverged["workspace"].detail
+    assert s.diverged["workspace"].code == "chain.diverged"
+    assert ref not in s.state.revocation_evidence() and s._pins.revocations()
     with pytest.raises(StoreError) as e:
         env.add_device()
     assert e.value.code == "chain.diverged"
     facts = s.restore_facts("workspace")
     s.append(env.person_event(env.owner, "workspace", "restore", **facts, reason="rollback"), log="workspace")
     evs = env.read_events("workspace")
-    assert [x["type"] for x in evs[-2:]] == ["restore", "device.revoked"] and evs[-1]["device"] == ref
+    assert evs[-1]["type"] == "restore"
+    assert evs[-1]["revocations"][0]["revocation"]["o"]["device_id"] == ref[2:]
     assert s.state.workspace.devices[ref].revoked and s.diverged == {}
 
 
@@ -100,16 +102,24 @@ def test_a_restore_that_lost_its_revocations_to_a_crash_is_finished_on_the_next_
     ref = rolled_back(env, tmp_path)
     s = env.open()
     facts = s.restore_facts("workspace")
-    monkeypatch.setattr(Store, "_enforce_revocations", lambda self: None)  # the crash right after the restore
-    s.append(env.person_event(env.owner, "workspace", "restore", **facts, reason="rollback"), log="workspace")
-    monkeypatch.undo()
+    real = Store._after_commit
+
+    def crash(*args, **kwargs):
+        raise RuntimeError("crash after event commit")
+
+    monkeypatch.setattr(Store, "_after_commit", crash)
+    with pytest.raises(RuntimeError):
+        s.append(env.person_event(env.owner, "workspace", "restore", **facts, reason="rollback"), log="workspace")
+    monkeypatch.setattr(Store, "_after_commit", real)
     assert env.read_events("workspace")[-1]["type"] == "restore"
     s.close()
     again = env.open()
-    assert env.read_events("workspace")[-1]["type"] == "device.revoked"
+    assert env.read_events("workspace")[-1]["type"] == "restore"
     assert again.state.workspace.devices[ref].revoked and again.diverged == {}
     again.close()
-    assert [e["type"] for e in env.read_events("workspace")].count("device.revoked") == 1  # and only once
+    assert [e["type"] for e in env.read_events("workspace")].count(
+        "device.revoked"
+    ) == 0  # restore is the atomic revocation
 
 
 def test_a_read_only_store_marks_the_workspace_diverged_for_a_missing_revocation(env, tmp_path):
@@ -352,7 +362,7 @@ def test_a_forged_grant_issued_does_not_provide_a_secret_hash(env):
     with open(env.root / "events" / "workspace.jsonl", "ab") as f:
         f.write(canon.event_line(e))
     s = env.open()
-    assert s.state.workspace.invalid and s.grant_secret_hash(other_grant) is None  # refused by replay: no hash
+    assert s.state.chain_errors and s.grant_secret_hash(other_grant) is None  # a bad sig breaks the chain: no hash
     assert s.grant_secret_hash(env.grant_id) == canon.grant_secret_hash(GRANT_SECRET)
 
 

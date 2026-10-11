@@ -35,6 +35,7 @@ from orch.custody import Backend, NoPrompt, get_backend
 from orch.identity import device_ref, new_ulid, sign_person_event
 from orch.ops import views
 from orch.ops.base import Context
+from orch.ops.caps import open_tty
 from orch.ops.errors import OrchError
 from orch.ops.runtime import Call, short
 from orch.store.render import thaw
@@ -63,7 +64,7 @@ def show_secret(text: str) -> None:
     if os.name == "nt":  # pragma: no cover
         raise NoPrompt("no terminal to show the secret on")
     try:
-        fd = os.open("/dev/tty", os.O_WRONLY | os.O_NOCTTY)
+        fd = open_tty(os.O_WRONLY)
     except OSError:
         raise NoPrompt("no controlling terminal to show the secret on") from None
     try:
@@ -87,6 +88,9 @@ class _AcceptAll:
     def verify_embedded(self, event: Any, **kw: Any) -> bool:
         return True
 
+    def genesis_failure(self, event: Any) -> str | None:
+        return None
+
 
 def review_prompt(text: str, expect: str) -> bool:
     """Show ``text`` on the person's own terminal and go on only if the person types ``expect`` (the ticket key) and
@@ -96,7 +100,7 @@ def review_prompt(text: str, expect: str) -> bool:
     if os.name == "nt":  # pragma: no cover
         raise NoPrompt("no terminal to show the review on")
     try:
-        fd = os.open("/dev/tty", os.O_RDWR | os.O_NOCTTY)
+        fd = open_tty(os.O_RDWR)
     except OSError:
         raise NoPrompt("no controlling terminal to show the review on") from None
     try:
@@ -134,6 +138,7 @@ class Human:
     def __init__(self, ctx: Context, op: str) -> None:
         if ctx.grant is not None or not ctx.human_presence:
             raise OrchError("human_only", "a person's own terminal is needed; an agent never gets this")
+        ctx.caps.signer.require()
         self.ctx = ctx
         self.call = Call.of(ctx, op)
         self.op = op
@@ -214,14 +219,15 @@ class Human:
                 out.append(f"{name}: no working copy in settings.repos")
                 continue
             ref = f"refs/heads/{branch}"
-            head = observe.head(path)
-            on = observe.git(path, "symbolic-ref", "-q", "HEAD")
-            entry = next((e for e in signed if e["repo"] == observe.repo_identity(path, name)), None)
+            git = self.ctx.caps.git
+            head = git.head(path)
+            on = git.run(path, "symbolic-ref", "-q", "HEAD")
+            entry = next((e for e in signed if e["repo"] == git.identity(path, name)), None)
             if head is None or entry is None or entry["ref"] != ref or entry["sha"] != head:
                 out.append(f"{name}: {ref} is not recorded at the commit checked out; look again with orch show")
             elif on != ref:
                 out.append(f"{name}: the working tree is on {on or 'a detached commit'}, the decision binds {ref}")
-            dirty = observe.dirty(path)
+            dirty = git.dirty(path)
             if dirty is None:
                 out.append(f"{name}: git cannot be asked about the working tree")
             elif dirty:
@@ -232,11 +238,9 @@ class Human:
         """D58: read git now and append the ``branch.pushed`` the ticket is owed (never under ``--dry-run``, which
         writes nothing), then refuse (``observe.unavailable``) unless each linked working copy is on the bound branch at
         the bound commit and clean. Returns the fresh view."""
-        from orch.store import observe
-
         problems: list[str] = []
         if not self.ctx.dry_run:
-            observe.observe(self.store, view.uid, problems)
+            self.ctx.caps.git.observe(self.store, view.uid, problems)
             view = self.store.ticket(view.uid) or view
         problems += self._tree_problems(view, source_sha(view))
         if problems:
@@ -256,7 +260,7 @@ class Human:
             try:
                 if p.is_symlink():
                     raise OSError("symlink")
-                data = p.read_bytes()
+                data = self.ctx.caps.files.read_bytes(p)
             except OSError:
                 raise OrchError("artifact.mismatch", f"{short(name, 60)}: the file cannot be read") from None
             if canon.artifact_digest(data) != a["digest"]:
@@ -386,16 +390,17 @@ class Human:
         *,
         precommit: Callable[[], None] | None = None,
         review: list[str] | None = None,
-        expect: str | None = None,
     ) -> Any:
         """``precheck``, then (unless ``--dry-run``) show ``review`` on the terminal and ask the person to confirm, sign
-        and append; ``None`` for a dry run."""
+        and append; ``None`` for a dry run. The word the person types comes from what is signed: the verified key of
+        the ticket log, or the ``name`` of a workspace event (``addon.granted``); no such word is a refusal."""
         self.precheck(event, log)
         if self.ctx.dry_run:
             return None
         if review is not None:
-            if log == "workspace":  # a workspace event has no ticket key: the caller names what the person types
-                word = expect
+            if log == "workspace":  # no ticket key: the name the event itself carries, never a word the caller picks
+                name = event.get("name")
+                word = name if isinstance(name, str) and name else None
             else:
                 view = self.store.ticket(log)  # the key the person types is the verified key of the log being signed
                 word = view.key if view is not None else None

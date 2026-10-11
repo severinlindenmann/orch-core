@@ -66,7 +66,7 @@ def _hooks(get_store: Callable[[], Any | None]) -> Hooks:
         if get_store() is None:
             return None
         try:
-            return str(Call.of(ctx, op.name).resolve(None).key)  # the session's single claim, as the handler sees it
+            return str(Call.of(ctx, op.name).resolve(None).uid)  # keep the verified uid: no global key lookup
         except OrchError:
             return None  # none or several claims: the handler refuses (or the REF is named)
 

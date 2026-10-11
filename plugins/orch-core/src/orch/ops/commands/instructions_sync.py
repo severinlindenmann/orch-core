@@ -11,7 +11,7 @@ from orch.ops.runtime import Workspace
 def handle(ctx: Context, args: dict[str, Any]) -> Result:
     from orch.instructions import INSTRUCTIONS_REV, UnsafePath, write_workspace_files
 
-    ws = ctx.workspace or Workspace(ctx.env, ctx.now)
+    ws = ctx.workspace or Workspace(ctx.env, ctx.now, files=ctx.caps.files)
     root = ws.require_root()
     dry = bool(ctx.dry_run or args.get("dry_run"))
     try:

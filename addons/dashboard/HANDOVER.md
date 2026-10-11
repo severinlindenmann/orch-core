@@ -282,8 +282,7 @@ factory addon's (`src/mocks/addons/factory-runs.ts`); the hold is meant to be **
 
 - **Request** (signed, `start_run`, `confirm: 'sign'`, maintainer+; a Deliver target owner-only in the mock): the
   signed args are exactly `request` (a single-use id the host issued at review: `rq-<PREFIX>-<nonce>-<n>`, the nonce new for every seeding of the state, so a reset never reissues an id), `goal` (≤ 200 chars), `goes_up_to` (`Preview` | `Deliver`), and for Deliver
-  `deliver_means` (the concrete destination, ≤ 160 chars, required) and `hold_minutes` (15 | 30 | 60 | 240, default
-  30), plus `largest_child: 'm'`. Core records them in `addon.action_signed {args}`. The form (`prepare_run`) stores a
+  `deliver_means` (the concrete destination, ≤ 160 chars, required) and `hold_minutes` (integer 0–1440, default 15), plus `largest_child: 'm'`. Core records them in `addon.action_signed {args}`. The form (`prepare_run`) stores a
   per-viewer draft; the host refuses a signature whose values differ from the reviewed draft (409 `factory.stale`),
   a Deliver without a destination (400 `validation`), a run while the factory is paused or stopped (409
   `factory.not_running`), a reused request id (409 `factory.request_used`; the id is consumed with the run's creation in
@@ -300,7 +299,7 @@ factory addon's (`src/mocks/addons/factory-runs.ts`); the hold is meant to be **
   reviewers), one approval per person, and the policy's `count` of distinct people. The decision is offered only to
   people who are eligible. Each approval signs the child's commit; a new commit (`factory.child_pushed {run, child,
   commit}`) voids the approvals and sends the child back to wait before Validate (D58/D59). Validate and Preview wait
-  for every review; neither the factory nor a mandate satisfies it.
+  for every review; the factory charter cannot satisfy it. An eligible mandate may (owner agreed 11 Oct), but the dashboard mandate is non-signing preview only.
 - **Events** on the factory epic, by the addon: `factory.run_requested {run, request, goal, goes_up_to, children,
   deliver_means?, hold_minutes?}`, `factory.code_reviewed {run, child}`, `factory.deliver_cancelled {run, reason}`, `factory.run_step {run, step: 'Plan' | 'Preview'}`, `factory.deliver_held {run, deliver_means,
   until}`, `factory.deliver_stopped {run}`, `factory.delivered {run, deliver_means}`. Children's steps
@@ -310,7 +309,7 @@ factory addon's (`src/mocks/addons/factory-runs.ts`); the hold is meant to be **
 - **Hold/Stop contract.** At Deliver the host opens a core decision `factory.hold:<run>` with **one option, `stop`**,
   `terms {run, deliver_means, hold_until}` and `hold {until, deliver_means}` (new optional `AddonDecision.hold`).
   Core shows it on Today, in place on the page (`decision` node) and as a calm shell line (`DeliveryHoldBanner`:
-  "Delivering in 28 min · <deliver_means> · at 14:32 · AI Factory (factory) · Stop…"). Stop is signed in core's
+  "Delivering in 28 min · <deliver_means> · at 14:32 · AI Factory (factory) · Stop"). Stop is signed in core's
   decision prompt (`addon.decided`, presence Touch ID) and cancels: no `factory.delivered`, the run stays at
   Preview. When `until` passes with no Stop the host delivers to exactly `deliver_means` (it refuses any other
   destination, `factory.deliver_mismatch`) and writes `factory.delivered`. While the factory is paused nothing is
@@ -323,13 +322,13 @@ factory addon's (`src/mocks/addons/factory-runs.ts`); the hold is meant to be **
 - **Reloads:** the hold's deadline is held on the host's real clock. The mock keeps a wall-clock deadline next to the
   mock one (`holdWallUntil`) and re-derives the mock deadline from it when the mock clock restarts on a reload, so a
   reload never extends a hold. Seeded factory state is saved as soon as it is seeded (`MockAddon.saveOnSeed`), so the
-  busy day's hold is not seeded again on a reload. Factory state version 4; versions 2 and 3 are migrated
+  busy day's hold is not seeded again on a reload. Factory state version 5; version 4 migrates unchanged (new fields are optional); versions 2 and 3 are migrated
   (`MockAddon.migrate`): runs, holds and counters kept; a hold saved without a wall deadline gets its full window again
   from the reload (conservative: never shorter than what was left).
 - Disable / update / uninstall initialise and settle the factory state before the hold check, so a seeded hold nobody
   looked at still blocks them.
-- **No operation shortens a Deliver hold.** During the hold the only human act is a signed Stop; there is no
-  "deliver now". The mock's "Simulate: let the hold time pass (demo)" is a simulator control of the demo data (owner
+- **No operation shortens an active Deliver hold.** During the hold the only human act is a signed Stop.
+  “Deliver now…” exists only for a stopped run, under a fresh owner signature. The mock's "Simulate: let the hold time pass (demo)" is a simulator control of the demo data (owner
   only, refused outside the demo datasets), not a host operation: a host implements nothing for it.
 - **Demo only:** "Fill in a demo request" (`demo_run`, prefills the form; still signed); the busy day seeds run R-1 on
   hold (28 min left); its 3 children are reserved in the budget (23 of 25 used), a valid charter state.
@@ -345,8 +344,9 @@ factory addon's (`src/mocks/addons/factory-runs.ts`); the hold is meant to be **
   iPhone with its scopes, and the Today re-login row marks phone prompts "P4 · Preview". Nothing contradicts D49.
 - **D53 (landing).** The land addon binds approval, checks and merge to one candidate SHA; a clean rebase keeps the
   approval (re-checked), a conflict resolution voids it — through core (`store.landingResolved`: core checks the
-  failed attempt and the resolution records and writes the reason), never by the addon. `main` is refused as a target
-  (D33, normalised names). Decided (10 Oct): the verdict signs the branch head (`source_sha`), the land worker uses
+  failed attempt and the resolution records and writes the reason), never by the addon. `main` is allowed for owners (D33, owner decision 11 Oct), with aliases normalised.
+  Core signs `enqueue_main` covering ticket, target `main` and commit; other roles receive 403. A mandate can never do
+  more than its owner. Decided (10 Oct): the verdict signs the branch head (`source_sha`), the land worker uses
   that commit, new commits void the verdict, and the opt-in `code` gate (when on) signs the same commit.
 - **Third-party HTML (security review #1).** Addon frame nodes, agent HTML artifacts and one-off widget pages are
   drawn **inert**: core's sanitizer (`addon-ui/frameSanitize.ts`) first removes everything that could navigate the
@@ -464,8 +464,9 @@ for G2+ builds. `build-preview.py` still runs, but its output does not load; it 
 - `confirmed` (core's confirm flag on spawn/sign/decision actions) is a plain boolean in the mock. A real host needs
   a server-issued, single-use confirmation bound to the person, the action and the arguments.
 - The start dialog's facts come from core's `agents/launch` preview; a real host renders them from its own resolver.
-- The land worker's real push is a fast-forward with a lease on the target SHA, and `main` must be refused at push
-  time too (see DECISIONS-LOG "N9 review fixes").
+- The land worker's real push is a fast-forward with a lease on the target SHA, and at push
+  time the real worker must verify the core signature binds the ticket, target `main` and commit,
+  and that its signer was an owner and still has owner authority (D33, 11 Oct; supersedes N9 refusal).
 - Addon settings drawer: a save by someone else while you edit resets your edits (needs an "Updated elsewhere" design).
 - The simulated Claude welcome box clips in a very narrow terminal (allowed: terminal content).
 - **Mandates are a preview only (M1), not part of the contract.** Agents → Mandates, the shell's mandate banner,
@@ -521,3 +522,110 @@ fragment, non-ASCII character or a part starting with `-`.
 
 Links: a repo row is `/w/DEMO/addon/repos/repos?tab.repos=structure&row=web-portal` (core opens the row whose key is
 `row`, on any addon page); the ticket list by repo is `/w/DEMO/tickets?repo=web-portal`.
+
+## P2 server (M0)
+
+Implemented 2026-10-11. The addon-local Python package lives in `server/` (including pyproject
+and uv.lock), launched with `uv run orch-dashboard open` or `python -m orch_dashboard open`.
+See [server/README.md](server/README.md) for the complete dev stub + server + Vite instructions,
+auth rules, route table and provisional stream A integration assumptions.
+
+Production builds use `src/main.prod.tsx` and `src/production/Shell.tsx`: dark sidebar,
+UUID workspace switcher, person identity, minimal Today/needs and paged tickets. Navigation
+comes from `/api/session` per-workspace features. All other mock pages/actions are absent.
+The mock app stays the default Vite/test/layout entry; its singleton moved to `api/mockApi.ts`
+behind the compatibility `api/client.ts`. Fetch transport has no runtime mock dependency.
+The build rejects mock modules and copies assets into the wheel's package tree.
+
+M0 HTTP reads map to fixed host calls: workspaces → `host.list`, `addon.list`, `workspace.show`,
+`member.list`, `needs`; identity/me → `whoami`, roster and host status; today → `needs`;
+tickets → `ticket.query`. Browser input cannot choose operations, paths or principals.
+Adapters use existing UI type projections with missing fields explicitly unavailable.
+No signing, factor handling, mutation endpoint or browser subscription is present.
+
+The server checks UID and workspace/person pins from the private host registry, not config.json.
+`serve_http` is a server-side addon policy check, not a host security boundary. Control discovery
+and registry container shapes need stream A confirmation (R11). Reserved P1 read wrappers are
+listed in `devhost/reserved.py`, excluded from the wheel, gated by ORCH_DEV and `.orch-dev`.
+The polling stub invalidates subscriptions on change; real journal replay and browser live
+updates remain M1. Op/version capability checks hide unavailable features.
+
+CI now runs dashboard Node checks and Python 3.11/3.14 checks in `.github/workflows/dashboard.yml`.
+No core files or core CI were changed. Real-port/browser/layout and real-host S1/S2 verification
+remain acceptance work in the dev-kit; none of #304–#306 is closed by these stub tests.
+## Owner answers applied — 11 Oct morning (U8)
+
+These decisions supersede earlier open questions and defaults in this handover.
+Mandates remain non-signing preview only: code-review approval, first linked-workspace send,
+public publish and restore/purge are allowed. Landing on main is allowed for owners and their mandates (D33, 11 Oct);
+a mandate can never do more than its owner. Another mandate, protected paths, settings, addons, members/roles,
+devices, relay pairing and secrets/connections stay human. No total renewal ceiling. “Weekly check-in due <day>”
+and “Still OK” preview confirmation; after 3 unconfirmed days the mandate pauses, not revokes.
+A paused mandate can be renewed only after “Still OK” checks it in. The mock seeds the due date and pauses
+on read; a real host must pause on a timer, independently of reads. Provisional events:
+`mandate.paused {reason: check_in_overdue}` and `mandate.check_in {check_in_due}`.
+
+Factory holds: integer 0–1440 minutes, default 15; form 0 / 15 / 30 / 60 / 240 / 1440.
+A new run with zero hold signs “No hold: delivers as soon as its checks pass”; re-delivery signs “Delivers as soon as you sign”. Only owners (and future eligible mandates) sign Deliver.
+Children reserved at admission may finish at the child budget limit; new children cannot enter.
+Phone Stop is a push notice + Face ID Stop, implemented by orch-mobile (dashboard has no mobile implementation).
+
+| Endpoint / action | Operation and enforcement |
+|---|---|
+| Preview mandates, `check_in` | Owner-only unsigned preview; advance due date a week and resume a check-in pause; never a signing endpoint. |
+| Factory `prepare_redelivery` | Owner chooses a stopped run and new hold; host issues an unsigned single-use request. |
+| Factory `redeliver` | Core signs run, destination, hold, request and delivery revision; host checks owner, stopped state, exact draft, single use and charter. Reuses all completed work. |
+
+Provisional addon event `factory.redelivery_requested {request, run, deliver_means, hold_minutes, revision}`,
+actor `addon:factory`. Core owns `addon.action_signed`; zero delivers immediately, positive starts a new hold.
+Each new hold uses `factory.hold:<run>:<revision>` (initial hold keeps `factory.hold:<run>`); the revision is a signed term, so an old Stop cannot answer a later hold.
+An active hold cannot be shortened; Stop first, then a fresh delivery signature.
+
+Repos allows literal `ssh://git@host/path`, never another user/password or leading-dash host/path.
+No primary flag. `remote` + `default_branch`: **proposed for the format amendment (owner agreed 11 Oct)**.
+Last gate: **Verify** (core-owned; the ticket body section remains Verification). Addon log tabs: **Activity**;
+ticket History stays History. Ellipsis marks a dialog asking for input, never a plain confirmation or signing prompt.
+Factory permits sit in a reserved folded “n permits waiting · Review” row; Today retains the needs-you decisions.
+
+### D33 follow-up — owner landing on main (11 Oct)
+
+Owners can add `main` to Allowed targets. `refs/heads/main`, `origin/main`, remote refs and case variants
+resolve to `main`. Enqueue explicitly names an allowed target; the default is the first non-main target
+(or main when it is the only target). The ticket panel offers each allowed target, preserving other roles. `enqueue_main` is an owner-only
+core `confirm: 'sign'` action; Covers show the ticket, target and approved commit. The ordinary `enqueue`
+refuses main without that signed path. Stale target/commit confirmation returns 409 `land.changed`.
+The simulated worker reads core's `addon.action_signed` record and rechecks owner authority at merge
+time; missing signature or lost authority fails the attempt without advancing the target head.
+For a red-check retry on main, take it off the queue and sign a new landing; the ordinary rerun decision
+cannot bypass signing. The real worker must enforce the same signature and owner checks at push time.
+Mandates remain a non-functional preview: an owner's mandate may land on main but can never exceed
+its owner, and protected paths still need a person.
+
+
+### D33 fix round — ref and signature boundaries (11 Oct)
+
+Host, UI and worker share `src/api/land.ts`: repeatedly strip local and remote ref prefixes and configured
+remote names, case-fold, then refuse residual ref namespaces and invalid git branch names. The mock's
+`settings.remote_names` represents configured git remote names (origin/upstream are always recognised);
+the real host must obtain these names from git configuration, not from request arguments. Whitespace,
+control characters and Unicode lookalikes are refused; comma-separated settings permit delimiter spaces.
+At push time the real worker must fully resolve the remote target to `refs/heads/<name>` and compare that
+resolved ref against the remote's protected/default branch before applying the owner rule. A spelling-only
+check is insufficient. Recheck authority and the bound commit immediately before that push.
+
+Each enqueue_main entry stores the exact core `addon.action_signed` event ID, bound to its unique
+`land.queued` event ID. The worker checks that exact record and binding and consumes it on merge;
+a new entry requires a new signature even for the same ticket and commit. Rebuilding a candidate after
+target movement keeps the same entry. A real host must consume the signed confirmation once atomically
+with entry creation and persist the entry binding and merge consumption across crashes. Land state is v2;
+old mock state reseeds, so old unbound entries cannot gain authority.
+
+For queues shared across workspaces, the signer must still be an owner of the **ticket's workspace**,
+and that workspace must declare in `settings.repos` the repository whose canonical remote the queue uses.
+An owner of a different workspace sharing the same remote has no authority over this ticket's landing.
+Both conditions are enforced at enqueue and rechecked at merge/push time. The demo repository declarations
+and landing remotes agree; no authority is inferred solely from sharing a remote.
+
+When mandates become functional, a `via: mandate` signature for main is valid only if its issuer is still
+an owner of the ticket's workspace at merge time, with the same declared-repository requirement.
+The current mock accepts only person signatures.

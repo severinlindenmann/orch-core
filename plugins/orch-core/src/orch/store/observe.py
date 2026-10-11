@@ -36,8 +36,9 @@ def git_env(base: Mapping[str, str] | None = None) -> dict[str, str]:
     }
 
 
-def git(path: Path, *args: str) -> str | None:
-    """``git -C path ...`` on a scrubbed environment; stdout stripped, ``None`` if git fails or is missing."""
+def git(path: Path, *args: str, strip: bool = True) -> str | None:
+    """``git -C path ...`` on a scrubbed environment; stdout stripped (unless ``strip`` is off), ``None`` if git fails
+    or is missing."""
     try:
         done = subprocess.run(
             [
@@ -61,7 +62,9 @@ def git(path: Path, *args: str) -> str | None:
         )
     except (OSError, subprocess.SubprocessError):
         return None
-    return done.stdout.strip() if done.returncode == 0 else None
+    if done.returncode != 0:
+        return None
+    return done.stdout.strip() if strip else done.stdout
 
 
 def head(path: Path) -> str | None:
@@ -91,30 +94,19 @@ def dirty(path: Path) -> str | None:
     return status + ("\n" if status and hidden else "") + "\n".join(f"hidden change flag: {h}" for h in hidden)
 
 
-def repo_path(root: Path, repos: Mapping[str, str], name: str) -> Path | None:
+def repo_path(root: Path, repos: Mapping[str, Mapping[str, str]], name: str) -> Path | None:
     """The working copy of repo ``name`` (``settings.repos``, absolute or relative to the workspace directory)."""
     p = repos.get(name)
-    return (root / p).resolve() if p else None
+    return (root / p["path"]).resolve() if p else None
 
 
 def repo_identity(path: Path, name: str) -> str:
-    """The canonical identity of the repository (F1 5.7): its ``origin`` remote as an ``https://`` URL when that is
-    canonical, else ``local:<name>``. Credentials in the remote (``https://user:token@host/...``) are stripped before
-    the URL is looked at and never stored, printed or put on a command line; a remote that is not canonical after
-    that is ``local:<name>``, never the raw URL."""
-    url = git(path, "remote", "get-url", "origin") or ""
-    url = re.sub(r"^(https?://)[^/@]*@", r"\1", url)  # userinfo (a user:token pair) is dropped before anything else
-    m = re.fullmatch(r"(?:ssh://)?git@([^:/]+)[:/](.+)", url)
-    if m:
-        url = f"https://{m.group(1)}/{m.group(2)}"
-    url = re.sub(r"\.git$", "", url, flags=re.I).rstrip("/")
-    host, sep, rest = url.removeprefix("https://").partition("/")
-    if url.startswith("https://") and sep:
-        url = f"https://{host.lower()}/{rest}"
-    try:
-        return canon.check_repo_identity(url)
-    except canon.HashError:
-        return f"local:{name}"
+    """The identity of the repository (F1 5.7) from the raw ``remote.origin.url`` (no ``insteadOf``, unstripped): the
+    canonical ``https://`` URL it maps to, else ``local:<name>``; more than one value is ``local:<name>`` (git fetches
+    from the first and pushes to all)."""
+    out = git(path, "config", "--null", "--get-all", "remote.origin.url", strip=False)
+    values = [v for v in (out or "").split("\0") if v]
+    return canon.canonical_repo_identity(values[0] if len(values) == 1 else "", name)
 
 
 def observe(store: Any, ref: str, problems: list[str] | None = None) -> list[dict[str, Any]]:
@@ -157,11 +149,17 @@ def observe(store: Any, ref: str, problems: list[str] | None = None) -> list[dic
             if problems is not None:
                 problems.append(f"{name}: {ref_name} names no commit object; nothing was recorded")
             continue
-        wanted.append((name, ref_name, sha, repo_identity(path, name)))
+        rid = repo_identity(path, name)
+        declared = store.state.workspace.repos[name].get("remote")
+        if declared is not None and not canon.same_repo_identity(declared, rid):
+            if problems is not None:
+                problems.append(f"{name}: repo.remote_mismatch; its code cannot be observed")
+            continue
+        wanted.append((name, ref_name, sha, declared if declared is not None else rid))
     out = []
     for name, ref_name, sha, rid in wanted:
         view = store.ticket(ref) or view
-        cur = next((dict(e) for e in view.source_list if e["repo"] == rid), None)
+        cur = next((dict(e) for e in view.source_list if canon.same_repo_identity(e["repo"], rid)), None)
         if cur is not None and cur["ref"] == ref_name and cur["sha"] == sha:
             continue
         before = {"repo_id": cur["repo"], "ref": cur["ref"], "sha": cur["sha"]} if cur else None

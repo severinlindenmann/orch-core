@@ -203,6 +203,17 @@ def _is_refusal(e: OrchError) -> bool:
     return bool(cat) and e.code not in _NOT_COUNTED and cat.exit in (2, 3, 4, 5, 6) and not cat.retryable
 
 
+def _progress(line: str, err: TextIO) -> None:
+    """A progress line on stderr (stdout carries only the result, F1 10.4 item 1)."""
+    from orch.canon import clean_line
+
+    try:
+        err.write(clean_line(line)[:200] + "\n")
+        err.flush()
+    except (OSError, ValueError):
+        pass
+
+
 def main(
     argv: list[str] | None = None,
     *,
@@ -217,10 +228,15 @@ def main(
     env = os.environ if env is None else env
     out = sys.stdout if stdout is None else stdout
     err = sys.stderr if stderr is None else stderr
+    if args[:1] == ["host"]:  # the host service and its control socket (orch.host.cli), not a registry op
+        from orch.host.cli import main as host_main
+
+        return host_main(args[1:], env=env, out=out)
+    from orch.ops.caps import Files
     from orch.ops.runtime import Workspace  # the workspace is found and opened only when something asks for it
 
     render.new_nonce()
-    workspace = Workspace(env, now)
+    workspace = Workspace(env, now, files=Files.direct())
     if hooks is None or records is None:
         from orch.cli.store_hooks import workspace_hooks, workspace_records
     hooks = hooks or workspace_hooks(workspace)
@@ -276,6 +292,7 @@ def main(
             now=now,
             env={k: v for k, v in env.items() if k != "ORCH_GRANT"},
             workspace=workspace,
+            progress=lambda line: _progress(line, err),
         )
         res = run(parsed, ctx, records, hooks)
         if not (isinstance(res.data, dict) and res.data.get("silent") is True):  # a hook outside a workspace is silent

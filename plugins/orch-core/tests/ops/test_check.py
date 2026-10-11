@@ -6,6 +6,7 @@ import subprocess
 
 import pytest
 
+from orch.ops.caps import Capabilities
 from tests.ops.helpers import Cli
 from tests.store.helpers import snapshot
 
@@ -137,3 +138,54 @@ def test_a_failing_check_does_not_start_with_ok(repo):
     (repo.root / "AGENTS.orch.md").unlink()
     r = Cli(repo, grant=False, session=None)("check")
     assert r.code == 5 and r.first.startswith("check: ") and not r.out.startswith("ok")
+
+
+def test_unknown_files_and_a_deleted_artifact_cannot_be_committed(repo, cli):
+    uid = repo.uid("DEMO-0001")
+    (repo.root / "events" / "other.jsonl").write_text("{}\n")
+    (repo.root / "tickets" / uid / "notes.txt").write_text("x")
+    (repo.root / "tickets" / "README").write_text("x")
+    r = staged(repo, "events/other.jsonl", f"tickets/{uid}/notes.txt", "tickets/README")
+    assert r.code == 5 and codes(r) == ["commit.unknown"] * 3
+    repo.git("reset", "-q")
+    for p in ("events/other.jsonl", f"tickets/{uid}/notes.txt", "tickets/README"):
+        (repo.root / p).unlink()
+    src = repo.root.parent / "a.txt"
+    src.write_text("artifact")
+    assert cli("claim", "DEMO-0001").code == 0
+    assert cli("artifact", "add", str(src)).code == 0, "artifact add"
+    repo.git("add", "-f", "tickets", "events", "config.json", "keys.jsonl")
+    assert check(repo, "--staged").code == 0
+    repo.git("commit", "-qm", "base")
+    repo.git("rm", "--cached", "-q", f"tickets/{uid}/artifacts/a.txt")
+    r = check(repo, "--staged")
+    assert r.code == 5 and codes(r) == ["commit.deleted"]
+
+
+@pytest.mark.parametrize("status", ["A", "D"])
+@pytest.mark.parametrize(
+    "rel",
+    [
+        "Tickets/{uid}/events.jsonl",
+        "EVENTS/workspace.jsonl",
+        ".State/keys/x",
+        "tickets/{uid}/EVENTS.jsonl",
+        "events/WORKSPACE.jsonl",
+        "tickets/{uid}/artifacts/café.txt",
+        "EVENTS/café.jsonl",
+        ".STATE/kéys/x",
+    ],
+)
+def test_staged_paths_are_guarded_without_case_or_ascii_aliases(ws, cli, monkeypatch, status, rel):
+    from orch.ops import health
+
+    cli("new", "one")
+    rel = rel.format(uid=ws.uid("1"))
+    raw = f":100644 100644 {'0' * 40} {'1' * 40} {status}\0{rel}\0".encode()
+    monkeypatch.setattr(health, "_git", lambda root, *args, **kw: raw if args[0] == "diff" else b"innocent")
+    store = ws.other()
+    try:
+        findings = health.check_staged(store, ws.root, Capabilities.direct())
+        assert len(findings) == 1 and findings[0].code in ("commit.unknown", "commit.state")
+    finally:
+        store.close()

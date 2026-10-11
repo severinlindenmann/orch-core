@@ -18,16 +18,18 @@ def _handle(ctx: Context, args: dict[str, Any]) -> Result:
     from orch.instructions import stale_findings
     from orch.ops import health
 
-    ws = ctx.workspace or Workspace(ctx.env, ctx.now)
+    ws = ctx.workspace or Workspace(ctx.env, ctx.now, files=ctx.caps.files)
     root = ws.require_root()
-    cfg = _config(root)
+    cfg = _config(root, ctx.caps.files)
     if cfg is None:
         raise OrchError("not_found", "config.json of the workspace is missing or unreadable", hint="orch init")
     wid = cfg["workspace"]["id"]
-    findings, store = health.inspect(root, wid, ws.state_dir, fast=True, instructions=stale_findings(root))
+    findings, store = health.inspect(
+        root, wid, ws.state_dir, fast=True, instructions=stale_findings(root), caps=ctx.caps
+    )
     try:
         if args.get("staged") and store is not None:
-            findings += health.check_staged(store, root)
+            findings += health.check_staged(store, root, ctx.caps)
     finally:
         if store is not None:
             store.close()

@@ -285,6 +285,8 @@ class World:
         if person:
             e["auth"] = "passphrase"
             e["roster_v"] = (0 if typ == "workspace.created" else self.roster_v) if roster_v is None else roster_v
+        if typ == "restore":
+            e.update({"source": None, "revocations": []})
         e.update(copy.deepcopy(payload or {}))
         if person:
             who = signer or "dk_" + _dev_name(actor["device"])
@@ -305,7 +307,10 @@ class World:
         if after:
             step["after"] = after
         if schema_refused:
-            step["schema_refused"] = True  # orch.schema refuses the event before the model sees it
+            step["schema_refused"] = True
+            # F1 §5.11 step 0: an event that fails strict parse/field rules is refused at append
+            # before model authorization; expect still records the model-only refusal.
+            step["append_code"] = "validation.event"
         self.steps.append(step)
         if expect == "ok":
             events.append(e)

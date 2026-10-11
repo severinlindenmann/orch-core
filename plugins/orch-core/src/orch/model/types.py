@@ -63,12 +63,15 @@ class InvalidEvent:
 
 @dataclass
 class LogCore:
+    acc: str = "sha256:" + "0" * 64
     seq: int = 0
     head: str | None = None
     heads: dict[str, int] = field(default_factory=dict)
     ids: set[str] = field(default_factory=set)
     last_ws_seq: int = 0
+    last_at: int = 0  # the previous line's `at` in this log (§5.5: (ws_seq, at) never goes back along a log)
     broken: str | None = None
+    broken_code: str = "chain.broken"
     invalid: list[InvalidEvent] = field(default_factory=list)
     acked: set[int] = field(default_factory=set)
 
@@ -143,10 +146,11 @@ class WsCore:
     former: dict[str, Member] = field(default_factory=dict)
     roster_v: int = 0
     devices: dict[str, Device] = field(default_factory=dict)
+    revocations: dict[str, dict[str, Any]] = field(default_factory=dict)
     grants: dict[str, Grant] = field(default_factory=dict)
     policies: dict[str, dict[str, Any]] = field(default_factory=default_policies)
     settings: dict[str, Any] = field(default_factory=lambda: dict(DEFAULT_SETTINGS))
-    repos: dict[str, str] = field(default_factory=dict)
+    repos: dict[str, dict[str, str]] = field(default_factory=dict)
     addons: dict[str, Addon] = field(default_factory=dict)
     unattended: list[tuple[int, str, int]] = field(default_factory=list)  # (at seconds, session, artifact bytes)
 
@@ -171,7 +175,7 @@ class GateCore:
     gen: int = 0
     decisions: list[Decision] = field(default_factory=list)
     pending_void: set[str] = field(default_factory=set)
-    revoked_flag: set[str] = field(default_factory=set)  # decision ids of a done ticket signed by a revoked device
+    revoked_flag: set[str] = field(default_factory=set)  # counting decision ids of a revoked device on a settled ticket
 
 
 @dataclass
@@ -247,6 +251,9 @@ class TCore:
     handoff: str | None = None
     marks: set[str] = field(default_factory=set)  # gates the current event raises directly (generations.py)
     workers: set[str] = field(default_factory=set)  # §5.7 "workers": assignees, claim holders, agents' `for` persons
+    # voids a settled (done or closed) ticket was exempt from, applied when it becomes unsettled other than by a reopen
+    exempt_persons: set[str] = field(default_factory=set)  # removed or role-changed while settled
+    exempt_devices: set[str] = field(default_factory=set)  # revoked ``compromised`` while settled
     last_at: int = 0
 
     @property

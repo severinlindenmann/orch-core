@@ -11,6 +11,7 @@ from orch.cli import render
 from orch.model.claims import in_family
 from orch.ops import decisions
 from orch.ops.runtime import short
+from orch.store.store import LoadBudgetExceeded
 
 
 def short_gate_hash(h: str | None) -> str:
@@ -69,9 +70,22 @@ def fill_hint(view: Any, gate: str) -> str | None:
     return None
 
 
+CLAIM_HINT_SCAN = 40  # visible open candidates
+CLAIM_HINT_WORK = 120  # ticket reads and key ownership checks, including dependencies
+
+
 def claim_hint(c: Any) -> str:
-    """What to do when there is no claim: claim a ticket that is free, else create one (never a command that fails)."""
-    return "orch claim --next" if next_ticket(c, mine_first=False) is not None else 'orch new "TITLE"'
+    """What to do when there is no claim: claim a ticket that is free, else create one (never a command that fails).
+    It looks at the best :data:`CLAIM_HINT_SCAN` visible open tickets only; when none is free and there are more,
+    it says ``orch next``, which looks at all of them."""
+    try:
+        with c.store.load_budget(CLAIM_HINT_WORK):
+            view, complete = _free_ticket(c, CLAIM_HINT_SCAN)
+    except LoadBudgetExceeded:
+        return "orch next"
+    if view is not None:
+        return "orch claim --next"
+    return 'orch new "TITLE"' if complete else "orch next"
 
 
 def next_hint(view: Any, session: str | None = None) -> str:
@@ -132,7 +146,12 @@ def _update_detail(e: dict[str, Any], state: dict[str, dict[str, Any]]) -> str:
     for path, val in e.get("set", {}).items():
         name = path.removeprefix("ticket.")
         if name in ("acceptance", "tasks") and isinstance(val, list):
-            old, new = state.setdefault(name, {}), _items(val)
+            new = _items(val)
+            if name not in state:
+                parts.append(f"{name} set ({', '.join(new) or 'empty'})")
+                state[name] = new
+                continue
+            old = state[name]
             parts += [f"{i} added" for i in new if i not in old]
             parts += [f"{i} edited" for i in new if i in old and new[i] != old[i]]
             parts += [f"{i} removed" for i in old if i not in new]
@@ -171,9 +190,11 @@ def event_line(e: dict[str, Any], state: dict[str, dict[str, Any]] | None = None
     return f"#{e['seq']} {t} {who}" + (f": {detail}" if detail else "")
 
 
-def event_lines(all_events: list[dict[str, Any]], after: int) -> list[str]:
+def event_lines(
+    all_events: list[dict[str, Any]], after: int, state: dict[str, dict[str, Any]] | None = None
+) -> list[str]:
     """The lines of the events after ``after``; the earlier ones are read only to know what an update changed."""
-    state: dict[str, dict[str, Any]] = {}
+    state = {"acceptance": {}, "tasks": {}} if state is None else state
     out = []
     for e in all_events:
         if e["seq"] > after:
@@ -181,6 +202,14 @@ def event_lines(all_events: list[dict[str, Any]], after: int) -> list[str]:
         elif e["type"] == "ticket.updated":
             _update_detail(e, state)
     return out
+
+
+def log_lines(store: Any, uid: str, after: int) -> tuple[list[str], list[dict[str, Any]]]:
+    """Read and render only the requested tail, once."""
+    tail = store.events(uid, after=after)
+    names = {name for name in ("acceptance", "tasks") if any(f"ticket.{name}" in e.get("set", {}) for e in tail)}
+    state = store.event_fields_before(uid, after, names) if after and names else None
+    return event_lines(tail, after, state), tail
 
 
 def verified(c: Any, uids: Any, chunk: int = 40) -> Any:
@@ -210,12 +239,27 @@ def next_ticket(c: Any, *, mine_first: bool = True) -> Any | None:
         mine = c.mine()
         if mine:
             return mine[0]
-    rows = c.store.index.query("SELECT uid, key, priority FROM tickets WHERE status = 'open'")
+    return _free_ticket(c)[0]
+
+
+def _free_ticket(c: Any, limit: int | None = None) -> tuple[Any | None, bool]:
+    """The best free ticket among the first ``limit`` visible open candidates (all without a limit), and whether every
+    candidate was looked at."""
+    # Hidden rows must not consume the scan cap or the verification budget. The index is only a hint;
+    # verified() still checks the selected logs and their visibility before using them.
+    rows = c.store.index.query(
+        "SELECT uid, key, priority FROM tickets WHERE status = 'open' AND "
+        "(json_extract(visibility, '$') = 'workspace' OR EXISTS "
+        "(SELECT 1 FROM json_each(visibility, '$.restricted') WHERE value = ?))",
+        (c.person,),
+    )
     rows.sort(key=lambda r: (PRIORITY.get(r[2], 2), key_number(r[1])))
-    for _uid, v in verified(c, (r[0] for r in rows)):
+    complete = limit is None or len(rows) <= limit
+    uids = [r[0] for r in (rows if limit is None else rows[:limit])]
+    for _uid, v in verified(c, uids, chunk=len(uids) if limit is not None else 40):
         if v.status != "open" or (v.claim is not None and v.claim.live):
             continue
         blockers = [c.store.ticket(k) for k in v.fields["blocked_by"]]
         if all(b is None or b.status in ("done", "closed") for b in blockers):
-            return v
-    return None
+            return v, True
+    return None, complete

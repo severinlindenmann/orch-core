@@ -183,7 +183,7 @@ def test_the_verify_environment_is_an_allow_list(ws, cli, monkeypatch):
         "--verify",
         py(
             "import os; ok = ('PATH', 'HOME', 'LANG', 'LC_ALL', 'TMPDIR', 'TERM', '__CF_USER_TEXT_ENCODING'); "
-            "print(sorted(k for k in os.environ if k not in ok))"
+            "print(sorted(k for k in os.environ if k not in ok and not k.startswith('LC_')))"
         ),
     )
     r = cli("task", "done", "T1", "--run", ORCH_STATE_DIR=str(ws.host_state))

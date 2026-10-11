@@ -79,8 +79,25 @@ orchestrator/
 
 - `config.json` mirrors what the signed events in `events/workspace.jsonl` say (§5.4.2).
 - `settings.repos` maps the repo names used in `links` to a working copy (absolute, or relative to the workspace
-  directory). It is owner-signed, so an agent can't point a ticket at another repository. The repo's identity is
-  read from git (§5.7).
+  directory), with a required `path` and optional `remote` and `default_branch` fields; there is no primary flag.
+  Repo names must be unique ignoring ASCII case. Paths must be unique after POSIX lexical normalisation
+  (`.` and `..` components and redundant slashes, including leading `//`), then ASCII-only case folding (A–Z → a–z).
+  Non-ASCII characters compare exactly after Unicode 16.0 NFC. Check the resulting settings,
+  including unchanged repos; collisions give `validation.*` at append and `chain.broken` on replay (step 0).
+  All fields are owner-signed in the same `settings.changed` event. `remote` must already be a canonical repo
+  identity (§5.7): refuse a non-canonical value, never convert it. Under §5.11 step 0, malformed
+  repo fields give `validation.*` at append and `chain.broken` at that line on replay, stopping the log.
+  **P1 limit:** relative versus absolute paths, `~`, trailing dots or spaces in path components, backslashes and
+  symlinks are not normalised. Settings are owner-signed; this collision check guards against mistakes.
+  **P1/P2 limit:** `..` paths that leave the workspace are not refused; owner-signed settings may deliberately
+  name working copies outside it. This lexical collision check is not workspace containment.
+  `default_branch` follows the same git branch name rules as `links.branches`. Identity comes from the observed
+  `remote.origin.url` (§5.7). Where `remote` is declared, the observed canonical identity must equal it ignoring
+  ASCII case; otherwise report `repo.remote_mismatch`, consider the repo observe.unavailable and append no
+  observation for it. A match pins the identity label to the owner's declaration and catches mistakes; it proves
+  nothing about where the commits came from, because the agent can write the origin URL. Without a declaration,
+  label the identity "from the working copy (agent-writable)";
+  `doctor` should recommend declaring it. `default_branch` makes no decision in P1.
 - When the two disagree, the events win, and the host rewrites the file and logs `projection.repaired`.
 - `keys.jsonl` has one line per key: `{"key": "DEMO-0043", "uid": "01J9ZK…", "at": "2026-10-09T09:00:00Z"}`, written
   as `cj` plus LF, nothing else. It is a projection of the `ticket.created` events and the key allocator. The next
@@ -97,10 +114,10 @@ compares bytes and a second implementation must produce the same ones.
   questions, options, pull requests) in the order of the §3 example, every other object with sorted keys; two-space
   indent, `ensure_ascii` off, a single final LF. It is rebuilt from the replayed events and compared byte for byte.
 - `config.json`: the §2 shape, `members` in member-list order, `gates` in the order requirements, plan, verify, code,
-  each policy as `approvers, count, not, applies, independent`, `settings.repos` and `addons` sorted by name. Same
-  indent rules. The workspace name and `agents.run_for` are in no signed event: P1 keeps them as the file has them (the
-  creator's value, or the default `owner, maintainer, member`) and **nothing decides anything from them** (a guard test
-  checks it). Owner question: if `run_for` is ever honoured it must come from a signed event.
+  each policy as `approvers, count, not, applies, independent`, `settings.repos` and `addons` sorted by name, each repo
+  entry's fields sorted by name. Same indent rules. The workspace name and `agents.run_for` are in no signed event:
+  P1 keeps them as the file has them (the creator's value, or the default `owner, maintainer, member`) and **nothing
+  decides anything from them** (a guard test checks it). Owner question: if `run_for` is ever honoured it must come from a signed event.
 - `body.md`: `## <heading>` (the bare heading, `Out of scope`), a blank line, the text, a blank line, per section in table
   order; an empty section is the heading and a blank line; one LF ends the file after the last non-empty text; no
   section at all is a zero-byte file. Reading accepts every other layout (§4 rules) and normalises (CRLF, NFC).
@@ -112,7 +129,9 @@ installed event, a record), `pending/<event id>/` (files and `manifest.json`), `
 only when its section hashes match the log), `checkpoints/` (§5.10), `intents/` (idempotency), `sessions/` (CLI records),
 `abandoned/` (cut log tails, never overwritten), `rejected/` (a `body.md` that was not a body, kept before it is reverted),
 `index.sqlite`. A symlink in place of `.state` or any of its fixed directories, or of `events` or `tickets`, is refused.
-The host state directory (pin, noted revocations) is mandatory for a store that can write.
+The host state directory (pin, noted revocations) is mandatory for a store that can write. It also retains the last
+accepted signed workspace checkpoint, restore transitions and durable head ancestry for publication (§5.10). A pending
+transition advances the checkpoint only after its full restore is verified in the committed log, including on a lazy open.
 
 **Write order and recovery** (§5.5, as built). Under the lock: stamp, validate, admit, sign, write the pending files, then the
 manifest (last), append the event line and flush it (the commit), rename the files into place, copy the body, write
@@ -148,7 +167,7 @@ second; loading and verifying everything takes seconds.
 
 **Checkpoints.** A ticket checkpoint after every append to that log; a workspace checkpoint after every workspace append,
 after every 50 ticket appends and when the store is opened with everything loaded; entries of tickets that are not loaded
-carry over from the previous one. Verification: signature, genesis, and the log head at the checkpointed height; a ticket
+carry over from the previous one. Verification: signature, genesis, and the log head and accumulator at the checkpointed height; a ticket
 is compared when it is loaded, a missing log at once.
 
 **Genesis pin and keys.** The genesis must be `seq` 1 (checked by the model, not only by the schema). `expected_genesis`
@@ -161,10 +180,10 @@ actor, payload; for a signed event its own id and base). A record that names any
 never reached the log gives its event id to the retry for an event nobody signs; a signed event keeps its signed id. The CLI
 pins an attempt id per call across a crash (`Context.idem`).
 
-**Revocations.** The host notes every person-key-signed device revocation it appends (with its time) in the host state
-directory. On every load: a noted revocation the log lacks, that a later workspace `restore` post-dates, is re-appended
-(host actor), which also finishes a re-append a crash interrupted; any other is a rolled-back revocation and the workspace
-log is marked diverged until an owner `restore`. A `restore` is stamped no earlier than the revocations it must re-append.
+**Revocations.** The host durably retains each accepted PK-signed revocation with its device certificate and
+person public key, including evidence learned from restores and evidence for devices or persons absent from the
+retained chain. Crash recovery preserves this evidence. On load, any recorded effective revocation absent from
+accepted history marks divergence, regardless of restore timestamps. There is no re-append plan or ticket window.
 
 **Lock.** One exclusive lock file per workspace, re-entrant within a process, `flock` (Windows: `msvcrt`); a call waits at
 most ten seconds, then `store.busy` (retryable).
@@ -257,7 +276,13 @@ on. Defaults for a new ticket:
 | `addons` | object, `<addon name>` → object | `{}` | validated against the addon's manifest (§8) |
 
 The `spike` type covers the format's "spike / investigation" column; there is no separate `investigation` type.
-A repo name in `links` matches `^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$`; a branch name is a valid git ref name.
+A repo name in `links` matches `^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$`; a branch name is a valid git ref name,
+with no leading `-`, no `refs/` prefix, not exactly `HEAD` or `@`, and no Unicode category Cc, Cf, Co, Zs, Zl, Zp or Cn character
+(controls, format characters, private use, separators or unassigned code points, using the bundled Unicode 16.0 data).
+This shared rule applies to `links.branches` and `default_branch`. Branch names also refuse
+U+FE00–FE0F, U+E0100–E01EF, U+034F, U+115F, U+1160, U+3164, U+FFA0, U+180B–180F,
+U+17B4–17B5, U+2800 and a combining mark (any M* category) at the start of **every `/`-separated
+component**, not just the whole name. All categories use Unicode 16.0.
 
 ## 4. `body.md`
 
@@ -320,7 +345,7 @@ treated like a line with a bad `host_sig` (§5.5).
 | Field | Type | Rule |
 |---|---|---|
 | `v` | int | the envelope version, always `2` |
-| `id` | ULID | chosen by whoever builds the event (the signer for person events). A repeated `id` in the same log is refused. |
+| `id` | ULID | chosen by whoever builds the event. In P1 the signer makes a person event id when signing. In P2 the host prepares it; the signer never chooses or changes it. It is covered by `sig` but never checked against `at` or any clock, and no rule orders, accepts or refuses events by it. A repeated `id` in the same log is refused. |
 | `seq` | int | `1` for the first event of a log, then +1, no gaps |
 | `at` | timestamp | the host's clock when it appends |
 | `type` | string | a type from §5.4; from P2 also `<addon>.<verb>` |
@@ -396,8 +421,9 @@ field is refused. Payload fields never reuse an envelope name.
   is signed by the person key and has `decide`, so the person key still vouches for it.
 - **Revoking a device.** The authority of `device.revoked` is the embedded revocation (protocol §6.2), verified
   under the person's `pk_pub` for a device certificate of that person, not the sender. Any member's device may
-  append it (actor P), and so may the host (actor H), for example after a `restore` or when a person has no device
-  left.
+  append it (actor P), and so may the host (actor H), when a freshly received revocation arrives or a person has no device left. A plain revocation of an already
+  revoked device accepts only a lost/retired → compromised upgrade; same or weaker reasons give `device.exists`.
+  Permanent revocation tombstones are checked by every device introduction, including recovery and member addition.
 - **Signed bytes (signed-event contract 1):** `"orch/v2/sig/ticket-event|" || cj({"contract": 1, "suite": 2,
   "workspace_id": W, "log": <uid>, "event": E})` for the ticket log, and `"orch/v2/sig/ws-event|" ||
   cj({"contract": 1, "suite": 2, "workspace_id": W, "log": "workspace", "event": E})` for the workspace log.
@@ -410,8 +436,8 @@ field is refused. Payload fields never reuse an envelope name.
   `passphrase`, `secure-enclave` (Mac, user presence per signature, D41), `secure-enclave-unlocked` (iPhone, D49),
   `webauthn`, `tpm`, `windows-hello`. It is covered by the signature, so nobody else can change it, but the format
   can't prove the factor: the device certificate (protocol §6.1) has no backend field, and F1 adds none. The factor
-  is recorded in the event's `auth`, not in the certificate; D64's wording ("recorded in the person's device
-  certificate") needs amending. A workspace policy may later refuse named factors for named verbs (D66); the
+  is recorded in the event's `auth`, not in the certificate (D64). WebAuthn needs a new signature contract
+  and is deferred past P2. A workspace policy may later refuse named factors for named verbs (D66); the
   default accepts any. The weaker guarantees stay as stated where they were decided: `secure-enclave-unlocked`
   signs whenever the phone is unlocked (D49), and `passphrase` does not protect a passphrase typed into a terminal
   an agent can read (D65, orch-v2-portable-custody.md §3).
@@ -439,6 +465,7 @@ agent; **D** an addon; **H** the host only. Types marked D58–D60 are new with 
 | `status.changed` | A | `from`: status; `to`: `backlog` or `open`; `reason?`: str | Manual moves only (§5.9). |
 | `ticket.submitted` | A | (none) | §5.9. |
 | `ticket.closed` | P | `resolution`: `wont_do`, `duplicate`, `obsolete` or `other`; `duplicate_of?`: key; `text?`: str | `duplicate_of` only with `duplicate`. |
+| `ticket.moved` | P | `from`: status; `to`: `backlog` or `open`; `reason?`: str, 1–500 characters | Workspace owner or maintainer only. `from` must equal the current status; §5.9. |
 | `ticket.reopened` | P | `text?`: str | Raises every gate's generation. |
 | `visibility.changed` | P | `visibility`: as in `ticket.json` | Also rewrites `ticket.json`. |
 | `people.changed` | P | `role`: `owner`, `assignees`, `reviewers` or `watchers`; `add`: [person id]; `remove`: [person id] | For `owner`, `add` has exactly one id and the old owner is removed. On `done`/`closed` refused for roles a gate policy names. |
@@ -457,13 +484,13 @@ agent; **D** an addon; **H** the host only. Types marked D58–D60 are new with 
 | `gate.approved` | P | `gate`: `requirements`, `plan` or `code`; `gate_gen`: int; `hash`: gate hash; `policy_hash`; `source_sha?`: source list | `source_sha` only and always on `code` (D59). |
 | `gate.changes_requested` | P | `gate`: `requirements`, `plan` or `code`; `gate_gen`; `hash`; `policy_hash`; `text`: str | |
 | `verdict.given` | P | `outcome`: `pass` or `fail`; `gate_gen`; `hash`: verify gate hash; `policy_hash`; `source_sha`: source list; `text?`: str | The verify gate's decision. `text` is required on `fail`. `source_sha` is D58. |
-| `gate.invalidated` | H | `gate`: gate; `cause`: `new_commits`, `content_changed`, `policy_changed`, `member_changed`, `device_compromised` or `conflict_resolved`; `voided`: [event id] | **D58.** A record only: it raises no generation and changes no status. `voided` is derived (§5.11). `conflict_resolved` is D53 (P2). |
+| `gate.invalidated` | H | `gate`: gate; `cause`: `new_commits`, `content_changed`, `policy_changed`, `member_changed`, `device_compromised`, `restored` or `conflict_resolved`; `voided`: [event id] | **D58.** A record only: it raises no generation and changes no status. `voided` is derived (§5.11). `restored` records approvals voided by a ticket or workspace `restore`. `conflict_resolved` is D53 (P2). |
 | `branch.pushed` | H | `repo_name`: repo name; `repo_id`: repo identity; `ref`: str; `sha`: git commit id; `before`: {`repo_id`, `ref`, `sha`} or null | **D58.** Appended whenever any of (`repo_id`, `ref`, `sha`) of a linked repo differs from the source-list projection, including the first observation (`before: null`). Never taken from an agent. |
 | `artifact.added` | A, U | file: `name`, `kind`, `sha256`: hash, `bytes`: int; or addon: `name`, `kind`, `addon`, `ref`: str; both: `task?`, `ac?`, `label?`: str | `kind` `feedback` only from a person. Unattended: no `ac`, `task`. Refused on `done`/`closed`. |
 | `artifact.replaced` | A | as `artifact.added`, plus `replaces`: hash | Same `name`; `replaces` is the old digest. |
 | `edit.external` | H | `sections`: sections; `voided_gates`: [gate]; `normalised`: bool | A `body.md` change the host didn't write (§5.8). `voided_gates` and `normalised` are derived. Not followed by `gate.invalidated`. |
 | `projection.repaired` | H | `path`: str; `cause`: `external_edit`, `projection_mismatch` or `keys_mismatch`; `fields?`: [path] | Both logs. |
-| `restore` | P | `from_seq`: int; `head`: hash; `abandoned`: {`seq`: int, `head`: hash} or null; `abandoned_decisions`: [event id]; `reason`: str | Both logs. Owner only (§5.10). |
+| `restore` | P | `from_seq`: int; `head`: hash; `abandoned`: {`seq`: int, `head`: hash} or null; `abandoned_decisions`: [event id]; `revocations`: [{revocation, device_cert, pk_pub}]; `source`: {n, hash} or null; `reason`: rollback, diverged, broken or other; `note?`: one-line str, ≤ 280 UTF-8 bytes | Both logs. Owner only (§5.10). |
 | `invalid.acknowledged` | P | `invalid_seq`: int; `invalid_head`: hash; `reason?`: str | Both logs. Owner only. Names an event that failed authorization (§5.11); lifts the decision freeze, keeps the event absent. |
 
 #### 5.4.2 Workspace log
@@ -476,9 +503,9 @@ agent; **D** an addon; **H** the host only. Types marked D58–D60 are new with 
 | `role.changed` | P | `person`; `role`: member role | |
 | `device.added` | P | `device`: device id; `cert`: signed object | Protocol §6.1 certificate, verbatim. Signed by an existing device of the same person, or by the new device when none is left (§5.3). |
 | `device.removed` | P | `device`; `reason?`: str | Removes the device from **this** workspace only (protocol §6.3). By the device's person or an owner. |
-| `device.revoked` | P, H | `device`; `reason`: `compromised`, `lost` or `retired`; `revocation`: signed object | The global revocation (protocol §6.2), signed by the person key, verbatim; its authority (§5.3). `reason` must equal `revocation.o.reason`, otherwise refused. Every workspace refuses the device from then on. `compromised` has the effects in §5.7. |
+| `device.revoked` | P, H | `device`; `reason`: `compromised`, `lost` or `retired`; `revocation`: signed object | The global revocation (protocol §6.2), signed by the person key, verbatim; its authority (§5.3). `reason` must equal `revocation.o.reason`, otherwise refused. Every workspace refuses the device from then on. For an already revoked device, only lost/retired → compromised is accepted; same or weaker reasons give `device.exists`. `compromised` has the effects in §5.7. H may append a freshly received revocation independently of any restore. |
 | `policy.changed` | P | `gates`: {gate: policy} | The workspace defaults. |
-| `settings.changed` | P | `set`: {`grant_hours?`: int 1–24, `claim_ttl_min?`: int 15–1440, `lease_ttl_min?`: int 5–1440, `repos?`: {repo name: {`path`: str} or null}} | **D60** (`grant_hours`). Existing grants keep their end time. `null` removes a repo. Refused when two repos resolve to the same path. |
+| `settings.changed` | P | `set`: {`grant_hours?`: int 1–24, `claim_ttl_min?`: int 15–1440, `lease_ttl_min?`: int 5–1440, `repos?`: {repo name: {`path`: str, `remote?`: canonical repo identity, `default_branch?`: branch name} or null}} | **D60** (`grant_hours`). Existing grants keep their end time. `null` removes a repo. Refused when two repos resolve to the same path or declare the same identity (ignoring ASCII case), or a `local:` remote names another repo. |
 | `grant.issued` | P | `grant`: grant id; `scope`: `all` or `workable`; `verbs`: `"agent"` or [operation name]; `issued_at`: timestamp; `hours`: int; `expires_at`: timestamp; `secret_hash`: hash; `label?`: str | **D60** terms in §10.1 A3. Always for the signer. Readers check `\|at − issued_at\| ≤ 300 s`, `expires_at == issued_at + 3600·hours` (seconds, no leap seconds) and the role terms at the event's position. |
 | `grant.revoked` | P | `grant`; `reason?`: str | **D60.** |
 | `addon.granted` | P | `name`: addon name; `version`: str; `package_sha256`: hash; `capabilities`: [token]; `fields`: {field: {`type`, its limits, `set_by`, `gate`?}}; `sections`: [{`id`, `types`, `gate`?}]; `artifact_kinds`: [kind] | Owner only. Also enables the addon. The host derives `fields`, `sections` and `artifact_kinds` from the package's manifest (§8.1); replay never reads the manifest and checks every later addon write against these three (§8.1). The bindings of §5.7 are the entries that have `gate`. |
@@ -497,6 +524,7 @@ with an old role.
 |---|---|
 | `gate.*`, `verdict.given` | eligible approvers of that gate (§5.7) |
 | `ticket.closed`, `ticket.reopened`, `people.changed`, `visibility.changed`, ticket `policy.changed` | the ticket owner, workspace owners and maintainers |
+| `ticket.moved` | workspace owners and maintainers (ticket ownership alone does not suffice) |
 | `member.added`, `member.removed` | owners; maintainers for the roles member and viewer |
 | `role.changed`, workspace `policy.changed`, `settings.changed`, `addon.*`, `restore`, `invalid.acknowledged`, `workspace.created` | owners |
 | `device.added` | the device's own person, from an existing device, or the new device when none is left |
@@ -522,14 +550,15 @@ Workspace views, agent starts, relay links, epochs and terminal events are defin
   included, computed from the strictly parsed object, never from the raw line.
 - **Chain:** `prev` of event `n` is `head` of event `n−1`; `prev` of `seq` 1 is `null`. The **log head** is the head
   of the last event. An empty log has no head.
-- **Merged order.** `ws_seq` is non-decreasing along a ticket log and at most the workspace log's last `seq`;
+- **Merged order.** `ws_seq` is non-decreasing along a ticket log, `at` does not go back within one `ws_seq`, and `ws_seq` is at most the workspace log's last `seq`;
   otherwise the line fails like a bad `host_sig`. The merged order of all logs is by `ws_seq`, the workspace log
   first, then ticket events ordered by `(at, uid, seq)` (§5.11): an event with `ws_seq = k` is evaluated against the
   workspace state after workspace event `k`. The host holds the workspace-log lock (shared) while it appends a ticket event. `ws_seq` and
   `at` are chosen by the host and not signed by the person (§12 N4).
-- **Reading** a log: strictly parse each line, check that it is `cj`, check the field set, `seq`, `prev`, `ws_seq`
-  and `host_sig`, then `sig` against the device certificate, then replay authorization (§5.11). A line that fails
-  these checks breaks the chain: every read and `orch doctor` report `chain.broken` with its `seq`, and nothing
+- **Reading** a log: strictly parse each line, check that it is `cj`, check the field set, `seq`, `prev`,
+  `host_sig`, then `sig` against the device certificate, then `ws_seq`, then replay authorization (§5.11). A line that fails
+  these checks breaks the chain: every read and `orch doctor` report `chain.bad_ws_seq` for a failing `ws_seq`
+  or ordering check, otherwise `chain.broken`, with its `seq`, and nothing
   after it counts until an owner-signed `restore`. An event that passes them but fails authorization is handled as
   §5.11 says. `sig` is checked under `dk_sig_pub` of the certificate for `actor.device` (if there is none, or the
   signature doesn't verify, the line breaks the chain). A `device.added` whose `actor.device` is the device it adds
@@ -562,11 +591,13 @@ the field it belongs to; no code looks a hash up by value alone.
 | section hash | `H("orch/v2/section\|" \|\| UTF-8(section text))`; a missing section has the hash of `""` | edit events, `base_rev`, gate `sections` |
 | value hash | `H("orch/v2/value\|" \|\| cj(value))` | `base_rev` for `ticket.json` paths |
 | gate hash | `H("orch/v2/gate\|" \|\| cj(G))`, `G` in §5.7 | `gate.*`, `verdict.given` |
-| policy hash | `H("orch/v2/policy\|" \|\| cj({"gate": gate, "policy": P}))`, `P` the effective policy in canonical form (§5.7) | `gate.*`, `verdict.given`, gate hash |
+| policy hash | `H("orch/v2/policy\|" \|\| cj({"gate": gate, "policy": P}))`, `P` the effective policy in canonical form (§5.7). Undefined for a blocked gate (§5.7): nothing is hashed and no prompt is built | `gate.*`, `verdict.given`, gate hash |
 | people hash | `H("orch/v2/people\|" \|\| cj({role: value}))` over only the ticket roles the gate's effective policy names in `approvers` or `not`, plus `assignees` when `independent` is on; lists sorted, `owner` as `ticket_owner`, a person id or null | gate hash |
 | question id (`qid`) | the first 16 bytes, in 32 hex, of `H("orch/v2/question-id\|" \|\| cj({"workspace_id": W, "ticket": uid, "question": "Q1"}))` | `question.asked`; the protocol §13 `question_id` |
 | question hash | `H("orch/v2/question\|" \|\| cj({"question_id": qid, "ticket": uid, "text", "options"}))` (protocol §13's shape; `options` `[]` when none) | `question.*` |
 | event head | `H("orch/v2/event\|" \|\| cj(event))` | `prev`, `based_on`, checkpoints |
+| checkpoint hash (`h_checkpoint`) | `H("orch/v2/checkpoint-hash\|" \|\| cj(C.o))` | restore source |
+| log accumulator (`h_log_acc`) | `acc_0 = 32 zero bytes`; `acc_k = H("orch/v2/log-acc\|" \|\| acc_{k-1} \|\| raw32(head_k))`, both inputs exactly 32 decoded bytes, no seq | checkpoint entries |
 | genesis | the event head of `workspace.created` | the trust root (§5.11) |
 | grant secret hash | `H("orch/v2/grant-secret\|" \|\| secret bytes)` | `grant.issued` |
 
@@ -575,7 +606,7 @@ the field it belongs to; no code looks a hash up by value alone.
 - **Refuse, don't normalise.** Every hash function refuses an input string that breaks the text rules (§11.3)
   instead of normalising it. Normalising happens once, when text enters the store.
 - New labels (`orch/v2/gate|`, `section|`, `value|`, `policy|`, `people|`, `question-id|`, `event|`,
-  `grant-secret|`, `sig/ticket-event|`, `sig/ws-event|`, `sig/host-event|`, `sig/checkpoint|`) go into the
+  `grant-secret|`, `checkpoint-hash|`, `log-acc|`, `sig/ticket-event|`, `sig/ws-event|`, `sig/host-event|`, `sig/checkpoint|`) go into the
   orch-relay `vectors_v2.json` label list; the table stays prefix-free.
 
 ### 5.7 Gates
@@ -590,7 +621,7 @@ their fields and sections join one of these (the `gate` of a field or section in
 | `approvers` | list of approver tokens, at least one | who may approve |
 | `count` | int ≥ 1 | how many distinct persons must approve at the current hash and generation |
 | `not` | list of approver tokens, may be empty | excluded, even when also in `approvers` |
-| `applies` | `"all"`, `"off"` or a list of ticket types | the workspace default is `"all"`, for `code` `"off"` (D59) |
+| `applies` | `"all"`, `"off"` or a non-empty list of ticket types | the workspace default is `"all"`, for `code` `"off"` (D59) |
 | `independent` | bool | default `false`; `true` adds the independence rule below. Always `true` for `code`. |
 
 - **Approver tokens:** the workspace roles `owner`, `maintainer`, `member`, and the ticket roles `ticket_owner`,
@@ -601,7 +632,9 @@ their fields and sections join one of these (the `gate` of a field or section in
   either side is `"all"`; `"off"` only if both are `"off"`; otherwise the sorted, de-duplicated list (kept as a list
   even when it names every type). An override can never end up looser, even after a later workspace change.
   "No eligible approver" is judged on tokens, not persons: an override that leaves no token is refused; if a later
-  workspace change empties the set, the gate is blocked (`gate.no_eligible`) until someone fixes the policy.
+  workspace change empties the set, the gate is blocked (`gate.no_eligible`) until someone fixes the policy. A blocked gate
+  has no policy hash and no gate hash, so it has no counting approvals. An approval prompt for it, and every decision on
+  it, is refused with `gate.no_eligible`; their `hash` and `policy_hash` are never compared.
 - **Canonical form** for hashing: all five keys, `approvers` and `not` sorted and de-duplicated, `applies` `"all"`, `"off"` or a non-empty sorted list. Policies and people lists are stored in events and files **in this canonical form** (people lists sorted and de-duplicated too); a non-canonical one is refused at append. Hashing applies the canonical form as well, as a safeguard; every other list this document calls "sorted" (for example `source_sha`, `prior.approvals`) must already be sorted and is refused otherwise. "Sorted" always means by Unicode code point (equal to UTF-8 byte order).
 - For `code`, `not` always includes `assignees` and `independent` is `true`; the host refuses a policy without them
   (D59).
@@ -619,7 +652,7 @@ Not bound by any gate, so never presented as approved: `title`, `priority`, `lab
 `visibility`, questions (also `why` and `recommended`), Current state, and addon fields without a binding.
 
 **Generations.** Each gate `g` of a ticket has a generation, starting at 0. The events in this table raise it **in
-every status**. **An event raises a gate by at most 1, however many rows match** (when `g` applies):
+every status**. **An event raises a gate by at most 1, however many rows match.** A row raises `g` only if `g` applies to the ticket before or after the event, so an event that turns a gate on or off (a `policy.changed` of `applies`, a change of `ticket.type`) raises it. "Every later gate" uses the same test.
 
 | Event | Raises |
 |---|---|
@@ -638,7 +671,9 @@ every status**. **An event raises a gate by at most 1, however many rows match**
 
 `gate.invalidated` raises nothing. Edits of bound content are refused on `done` and `closed` tickets, so there the
 only raises are people and policy changes, `ticket.reopened`, `restore` and `branch.pushed`. "Done is sticky" is a
-separate status rule (below): it decides when a ticket leaves `done`, not whether a generation goes up. After a
+separate status rule (below): it decides when a ticket leaves `done`, not whether a generation goes up.
+A restore settles its own raises before applying its embedded revocations in list order; those revocations see the
+post-raise state and cannot raise a gate a second time (§5.10). After a
 reopen, the old verdict and code approvals therefore no longer count. The generation is derived by replaying both logs in the merged order, so it
 needs only events. A decision (`gate.approved`, `gate.changes_requested`, `verdict.given`) carries the `gate_gen`
 its signer saw, inside the signed bytes. **A decision whose `gate_gen` is not current is refused at append and never
@@ -694,16 +729,24 @@ carry `source_sha: []`; a ticket that links a repo must have a non-empty list.
   refused with `gate.stale`), and again at landing.
 - **Repo identity.** From the raw `remote.origin.url`, without `insteadOf` rewriting: `https://` and
   `ssh://`/scp-like forms map to `https://host[:port]/path`, keeping every port except 443 (https) and 22 (ssh),
-  userinfo (`user:token@`) always removed, host lower-case and nothing else changed, one trailing `.git` and `/`
-  removed. Anything else (no remote, `file://`,
-  a path) is `local:<repo name>`. The result must match the canonical form exactly, and anything that doesn't is
-  **refused, never converted**: host labels `[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?` joined by single dots (at most 253
+  only ssh (including scp-like forms) may carry userinfo, and only the literal user `git` (no password).
+  `git@` is removed, host lower-case and nothing else changed, one trailing `/` removed first, then one trailing
+  `.git` (so `x.git/` becomes `x`). Anything else (no remote, `file://`, a path, any https userinfo, or ssh userinfo
+  other than literal `git`, including any password) is `local:<repo name>`; so is any non-ASCII raw remote
+  (checked before lower-casing), a remote that is not canonical after this mapping, and a `remote.origin.url`
+  with more than one value (git fetches from the first and pushes to all, so no single identity names the repo;
+  read `git config --get-all`). Nothing is repaired or partly cleaned. The mapped result must match the canonical form
+  exactly (a stored identity that doesn't is **refused, never converted**): host labels `[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?` joined by single dots (at most 253
   characters, no trailing dot; punycode `xn--` allowed; Unicode hosts and IPv6 refused; an all-numeric last label only
   as a plain dotted quad without leading zeros); port `[1-9][0-9]{0,4}` up to 65535, never 443; path segments
-  `[A-Za-z0-9._~-]+` joined by single slashes, no empty, `.` or `..` segment, no trailing slash, no `.git` suffix in
-  any case; ASCII only, no `%`, `?`, `#`, `@` or whitespace. A prompt is refused when two linked repos share an
+  `[A-Za-z0-9._~-]+` joined by single slashes, no empty, `.` or `..` segment, no trailing slash, and the last segment does not end in
+  `.git` in any ASCII case (after the one lower-case `.git` is removed; an inner segment such as `acme.git` is
+  allowed, a segment that is exactly `.git` is not); ASCII only, no `%`, `?`, `#`, `@` or whitespace. A prompt is refused when two linked repos share an
   identity, compared **ignoring ASCII case** (hosts like GitHub treat `Acme/X` and `acme/x` as one repo); the hashed
   value keeps the raw form.
+- Working copies cloned with token URLs (`https://user:token@…`) get a `local:` identity.
+- Consequences: scp `host:x` (relative to the ssh home) and `ssh://host/x` both map to `https://host/x`; scp
+  `host:/abs/path` is `local:<name>` while `ssh://host/abs/path` maps to `https://host/abs/path`.
 - **P1 limit:** the identity is read from a working copy the agent can write, so it protects against mistakes and
   aliasing, not against the agent.
 
@@ -722,11 +765,19 @@ carry `source_sha: []`; a ticket that links a repo must have a non-empty list.
 their own agents**: with it off, a person may verify work their own agent did, even under `not: assignees`
 (§12 O4). It is always on for `code`.
 
-**Removal, role changes, revoked devices** (§12 O3). Eligibility is evaluated at the decision's position. A later
-`member.removed` or `role.changed` voids that person's approvals only on gates that haven't yet reached `count`.
-`people` lists are not changed by a removal: removed persons stay listed and become ineligible. A `device.revoked`
-with reason `compromised` voids the decisions that device signed on tickets that are not yet `done`; a `done` ticket
-it approved keeps its state and shows the flag "approved by a revoked device". It also ends every grant that device signed. `member.removed` ends every grant of the removed person and every
+**Removal, role changes, revoked devices** (§12 O3). Eligibility is evaluated at the decision's position. A ticket that
+is `done` or `closed` is **settled**. A later `member.removed` or `role.changed` (to any role, even one that leaves the
+person eligible) voids that person's counting approvals on the gates of every unsettled ticket that haven't yet reached
+`count`; it raises those gates, and so (the table below) retires everyone's approvals on them. On a settled ticket it
+voids nothing and raises nothing. `people` lists are not changed by a removal: removed persons stay listed and become
+ineligible. A `device.revoked` with reason `compromised` voids the decisions that device signed on every unsettled
+ticket, whether or not the gate reached `count`. A settled ticket keeps its state. Its view lists, per gate, the ids of
+that device's decisions that were counting at the revocation (`revoked_decisions`); the list is shown while those
+decisions still count and is dropped when they stop counting. When a settled ticket becomes unsettled other than by
+`ticket.reopened` (`branch.pushed` after `done`, the D59 rule), the voids it was exempt from apply at that event:
+decisions signed by a device revoked `compromised` are voided, and approvals of a person removed or role-changed while
+it was settled are voided on gates that haven't reached `count`; each gate that loses a counting approval is raised.
+A reopen raises every gate anyway. It also ends every grant that device signed. `member.removed` ends every grant of the removed person and every
 device of that person in this workspace: a later `member.added` starts with new devices and grants only.
 
 A gate is approved when `count` distinct persons have counting approvals. A gate that doesn't apply to the ticket's
@@ -745,7 +796,7 @@ later gate, so all their earlier approvals stop counting.
 
 **Text in approved content.** The approval is refused (`gate.suspicious_text`) when gated text contains a bidi
 control (U+202A–202E, U+2066–2069, U+200E, U+200F, U+061C). Other invisible characters (U+200B–200D, U+2060,
-U+FEFF, tag characters, other `Cf`, and these non-`Cf` look-alikes: U+034F, U+115F, U+1160, U+2028, U+2029, U+3164, U+FFA0, U+FE00–U+FE0F, U+E0100–U+E01EF) are shown as `⟨U+200B⟩` in every approval prompt and in `orch show`
+U+FEFF, tag characters, other `Cf`, and these non-`Cf` look-alikes: U+034F, U+115F, U+1160, U+2028, U+2029, U+3164, U+FFA0, U+FE00–U+FE0F, U+E0100–U+E01EF, U+180B–180F, U+17B4–17B5, U+2800, private-use `Co`, and a leading `M*` mark) are shown as `⟨U+200B⟩` in every approval prompt and in `orch show`
 (§12 N5).
 
 **The verdict binds to the commit (D58).** The verify gate hash includes the source list, and the prompt shows the
@@ -815,6 +866,13 @@ stays unchanged).
 | D59 code-gate rule (P2) | `done` with an open landing | `testing` |
 | `ticket.closed` | any but `closed` | `closed` |
 | `ticket.reopened` | `done`, `closed` | `open` |
+| `ticket.moved` | `backlog`, `open`, or `in_progress` with no live claim at the event's `at` | `backlog` or `open` |
+
+For `ticket.moved`, `from` must equal the current status. A destination outside `backlog`/`open` is a schema refusal. A disallowed source or a live claim in
+`in_progress` is `status.transition`; a non-owner/non-maintainer person is `role.denied`. Same-status moves are
+allowed. A move out of `in_progress` ends the claim and releases its task leases, as `claim.released` does;
+raising the TTL or re-adding a removed member cannot revive it. Gate generations and workers stay unchanged;
+claim liveness uses §5.9 expiry and grant rules, not the replay clock. Agents and the host are refused (`event.bad_actor`).
 
 Verdicts and `code` approvals and change requests are accepted only in `testing`. The **done rule**: `verify` has its count of `pass` verdicts, and `code` has its count where it applies, all at the
 current generations. A duplicate approval by one person counts once. `gate.invalidated` changes no status. "Waiting" (a blocking question is open, or a gate waits
@@ -829,37 +887,104 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
 
 | Kind | `o` |
 |---|---|
-| `ticket_checkpoint` | `{"v": 2, "suite": 2, "kind": "ticket_checkpoint", "workspace_id", "uid", "seq", "head", "at"}` |
-| `workspace_checkpoint` | `{"v": 2, "suite": 2, "kind": "workspace_checkpoint", "workspace_id", "genesis", "n", "at", "workspace_log": {"seq", "head"}, "tickets": {uid: {"seq", "head"}}}` |
+| `ticket_checkpoint` | `{"v": 2, "suite": 2, "kind": "ticket_checkpoint", "workspace_id", "uid", "seq", "head", "acc", "at"}` |
+| `workspace_checkpoint` | `{"v": 2, "suite": 2, "kind": "workspace_checkpoint", "workspace_id", "genesis", "n", "at", "workspace_log": {"seq", "head", "acc"}, "tickets": {uid: {"seq", "head", "acc"}}}` |
 
 - `sig = Sign(WSK, "orch/v2/sig/checkpoint|" || cj(o))`. `n` counts the workspace checkpoints from 1.
-- Refused: a checkpoint with a lower `seq` (or `n`) than one already seen, and **one with the same `seq` but a
-  different `head`** (`chain.diverged`). A log whose head at a checkpointed `seq` differs from the checkpoint is
-  diverged too: reads report it and no new events are appended until a `restore`.
+- The host writer sets `at = max(clock, last checkpoint at)`. Accumulators are hash strings (§5.6),
+  maintained incrementally on append and replay; unloaded entries are copied forward unchanged and validated on load.
+- **Receivers** keep the last accepted workspace checkpoint H, verifying schema, WSK signature, workspace and pinned
+  genesis. Equal `n` requires the identical object; a higher `n` and a lower `at` is refused (`chain.diverged`). A stale
+  lower `n` is ignored only if it has no higher entries or conflicting entries at equal heights. Every existing entry
+  is kept. Equal `seq` requires identical `head` and `acc`; growth from s to t requires exactly t−s heads, the last
+  matching the offered head, folding from the held accumulator to the offered accumulator. Proof pages are bound to
+  an immutable checkpoint identity; H advances only after complete verification. Missing or malformed proof means
+  sync is incomplete, not proof of equivocation. This cannot conceal abandonment of the receiver's committed prefix
+  (honest host, withholding relay); it does not prove event validity, latestness, or disclosure of every restore.
+- **Restore transitions** carry C, T, the full signed restore line, its log, signer certificate and delegation evidence,
+  plus branch/proof material. A four-field descriptor is insufficient. Verify the full person and host signatures,
+  `line.seq = from_seq + 1`, `line.prev = head`, §5.5 order and §5.11 authorization against the pre-event state.
+  Hosts verify owner membership, role, device, scopes and revocation at `from_seq` by F1 replay. Relays and devices
+  apply the relay/device owner-device policy (P3-D24): delegation plus a certificate with `operate`, no `drop:`
+  scope, and matching `actor.device`. This is broader than the host's owner-at-`from_seq` check: a later-demoted or
+  removed delegation owner still passes. This is an accepted P3 gap until the P8 owner-signed roster.
+  A member list need not be persisted as transition evidence.
+  `source` must equal `{n: C.o.n, hash: h_checkpoint(C.o)}` of a schema-valid, WSK-signed workspace checkpoint of the
+  pinned workspace/genesis, and must equal the receiver's held H atomically. Null is allowed only without H.
+  Both log kinds bind the same workspace checkpoint. `abandoned` names the highest known checkpoint entry above
+  `from_seq`, including C's entry; equal-height conflicting heads are refused. Source is the transition baseline,
+  not necessarily the highest per-log entry. A ticket restore keeps all existing ticket entries present.
+  Derive `acc_from` from the verified retained prefix. C's abandoned suffix must come from durable branch history or
+  authenticated retrieval verified against C; when `from_seq ≥ C.seq`, require a forward proof from C to `from_seq`.
+  Persist `acc_from` and only the abandoned suffix from `from_seq` to C's seq (or the forward heads from C to
+  `from_seq`); the full retained prefix is not transition evidence. Verify that suffix by folding from `acc_from`
+  to C's accumulator. For rollback proofs also carry the predecessor accumulator `acc_before` and require
+  `log_acc(acc_before, head) = acc_from`, binding the retained head without storing its prefix. Fold the restore head
+  and subsequent heads from `acc_from` to T. Unaffected entries follow ordinary growth rules.
+  Missing evidence leaves publication incomplete. Applied restore ids are single-use; an exact retry returns the
+  prior result. Compare, validate, persist the transition and advance H atomically; crash recovery keeps pending
+  transitions. P1/P2 use the last locally accepted workspace checkpoint as source, null only before any exists.
+  Pairing `approved` carries that exact held reference, retained and retrievable, never downgraded; relay-reported
+  emptiness cannot override it. P3 publishes these locally persisted transitions.
 - **Restore** (§12 O5). After a rollback (a restored backup, a git force-push of the workspace repo) an owner signs
-  `restore {from_seq, head, abandoned, abandoned_decisions, reason}`: `from_seq` and `head` name the last event on
+  `restore {from_seq, head, abandoned, abandoned_decisions, revocations, source, reason, note?}`: `from_seq` and `head` name the last event on
   disk that stays valid; `abandoned` gives up every checkpoint above `from_seq` and names the highest (`null` if
-  none); `abandoned_decisions` lists the ids of the signed decisions in the given-up part that the host still knows
-  of. The host appends it as `from_seq + 1` with `prev = head` and accepts checkpoints of the new chain from then on.
-  It raises every gate's generation, so no decision from the abandoned part counts again; a workspace-log `restore`
-  does so on every ticket.
-- **Restore never drops revocations.** The host keeps every PK-signed revocation it has seen in host state. A
-  workspace `restore` is accepted only if the host re-appends each of them to the new chain at once, as
-  `device.revoked` with actor H (allowed by the embedded revocation, §5.3).
+  none); `abandoned_decisions` lists the `id` of every person-signed event (actor P) in the given-up part that the
+  host still knows of. A later event in the same log with one of these ids is an authorization failure (§5.11,
+  `event.duplicate_id`): readers add them to the log's seen ids. Ids the host no longer knows can be replayed (P1
+  limit; follow-up: the host keeps the ids of every person-signed event it admits in `.state`). A workspace-log
+  `restore` lists the person-signed workspace events of its given-up part (`member.added`, `role.changed`,
+  `device.added`, `policy.changed`, ...): an abandoned one appended again would otherwise match (`based_on` is still on
+  the kept chain, `roster_v` fits again) and generations don't cover membership. The host appends the restore as `from_seq + 1`
+  with `prev = head` and accepts checkpoints of the new chain from then on. It raises every gate's generation, so no
+  decision from the abandoned part counts again; a workspace-log `restore` does so on every ticket.
+- **Restore never drops revocations.** A workspace restore carries one `{revocation, device_cert, pk_pub}` per
+  device for every revocation the host holds for any device ever seen in the workspace, including abandoned-only
+  devices and persons. Carry the strongest reason (`compromised > lost = retired`), sorted by
+  `revocation.o.device_id`, unique per device, all evidence verbatim. A ticket restore requires `[]`.
+  Structure, sorting, uniqueness and ticket emptiness are checked at step 0. At step 7 verify every PK signature,
+  certificate signature and binding: PK derives person_id; certificate key derives device_id. Failures give
+  `device.cert`; earlier §5.11 failures win. For a device known before the event (including a tombstone),
+  the revocation person and `pk_pub` must match its known person and key, otherwise `device.cert`. Expiry, removal or missing scope never blocks recording revocation.
+  Evidence proves revocation only, never membership or authority. Validate every entry before any effects.
+  The effective revocation is the earliest accepted one with the highest reason. An entry already in the retained
+  chain with the same reason must be byte-identical under canonical JSON and has no effect (no void or extra raise).
+  Compromised over lost/retired is an upgrade. Weaker entries, equal-strength different reasons, or same-reason
+  entries with different bytes give `device.exists` at step 7.
+  Authorize the restore against pre-event state, apply and settle its gate raises first, then apply revocations in
+  list order against the post-raise state (grant termination and §5.7 compromised effects). Settle the post-raise voids in the same event, including gates that did not apply. Each gate rises at most
+  once per restore. Unknown devices get permanent device-ID tombstones, checked by every introduction path.
+  Under the append lock the host checks completeness against its durable evidence, including already present
+  revocations; log-only readers validate the list but cannot check completeness. A relay checks every revocation
+  it holds for a device seen in the workspace is listed with the same or stronger reason. A ticket may name the
+  restore's workspace seq: revoked devices and compromised grants are already refused there; eligible actors count.
+  No restore-specific `device.revoked` re-appends, pending plan, `store.torn_write` guard or ws_seq window exists.
+- `reason` is closed: `rollback`, `diverged`, `broken`, `other`. Optional `note` is one line, at most 280 UTF-8 bytes,
+  displayed only as quoted owner text, never acted on. Restore append sets `at = max(clock, C.o.at, last at)`.
+  A restore is an event line capped at 524,288 bytes (`schema.MAX_EVENT_LINE_BYTES`, LF included). Measure the full
+  signed line before append; oversize is refused atomically, never truncated or split.
 - **What P1 can't detect:** if both the history and the local checkpoints in `.state/` are replaced, the rollback
   is invisible. From P3, checkpoints on the relay and on member devices catch it.
 
 ### 5.11 Trust root and authorization replay
 
-- **Genesis.** The trust root of a workspace is the head of its `workspace.created` event. Readers check it in this
-  order:
+- **Genesis.** The trust root of a workspace is the head of its `workspace.created` event. Checks 4 and 6 are line
+  checks (§5.5): when one of them fails together with another check, it is the one reported (on replay both; at
+  append check 4, and check 6 is reported last). Checks 1, 2, 3 and 5 are then made in no pinned order:
   1. `person_id(owner.pk_pub) == delegation.o.owner_person_id == device_cert.o.person_id`, and
      `owner.person == "p_" +` that id;
   2. the delegation's signature under `owner.pk_pub` (label `sig/ws-delegation|`) and its exact field set;
   3. `delegation.o.workspace_id == workspace_id` and `delegation.o.wsk_pub == wsk_pub`;
   4. this event's `host_sig` under `wsk_pub`;
-  5. `device_cert` under `owner.pk_pub`, and `actor.device == "d_" + device_cert.o.device_id`;
+  5. `device_cert` under `owner.pk_pub` and valid at this event's `at`: not expired, `scopes_max` a level list that
+     contains `operate` (the genesis installs members, policies and settings; levels are prefixes, so `operate`
+     implies `decide`), no `drop:` scope; and `actor.device == "d_" + device_cert.o.device_id`;
   6. `sig` under `device_cert.o.dk_sig_pub`.
+
+  A failure of check 1, 2, 3 or 5 is `genesis.invalid`. Check 4 fails as
+  `chain.broken`. Check 6 fails as `sig.invalid` at append and as `chain.broken` on replay. A genesis for another
+  workspace id, or one that differs from the pin, is `trust.genesis_mismatch` (step 1 below). Limit: no workspace is
+  created by a decide-only device.
 - **Pinning.** The host remembers the genesis outside the workspace (`<host state dir>/hosts/<workspace_id>/genesis`)
   and puts it in every workspace checkpoint. The person's client records it in its custody key file when it joins,
   and a human-only verb refuses to sign for a workspace whose genesis differs (`trust.genesis_mismatch`). Devices
@@ -886,6 +1011,37 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
     merged order.
   - `replay` requires the expected workspace id and refuses a genesis that doesn't match the pin
     (`trust.genesis_mismatch`).
+- A missing ticket checkpoint may be repaired only when the last `.state/applied` record matches the current
+  ticket head and it is not below the workspace checkpoint. Otherwise normal ticket appends refuse
+  `checkpoint.missing`, and new workspace checkpoints do not record that ticket’s current head (any previously
+  checkpointed head is retained).
+- **Refusal order.** An event is refused with the first failing step:
+  0. Strict parse and field set: `validation.*` from the store at append; `chain.broken` on replay.
+  1. Line (§5.5): `chain.broken` (log already broken, `seq`/`prev`), `trust.genesis_mismatch`, `chain.broken`
+     (`host_sig`, then on replay the person `sig`), `chain.bad_ws_seq` (`ws_seq` and ordering). This is the
+     order within step 1: on replay a bad person signature wins over a bad `ws_seq` (`chain.broken`). A malformed
+     `ws_seq` rejected by the field schema is step 0 (`chain.broken`); step 1 handles its range and ordering.
+  2. Envelope: `event.duplicate_id`, `event.bad_base`.
+  3. Log: `ticket.unknown`, `ticket.exists`.
+  4. Type: `event.unknown_type` (a type of the other log included), `event.bad_actor`; `genesis.invalid` (a second
+     genesis, an event before it, then the genesis checks above).
+  5. Signer. For a person: `member.unknown` (for a `device.added` in recovery, §5.3, the embedded `cert` stands in for
+     the registered one), `device.unknown`, `device.invalid`, `device.scope`, `role.denied` (viewer), `members.stale`,
+     `sig.invalid`. For an agent: `grant.invalid`, `grant.verb`, `grant.scope`. For an unattended agent:
+     `unattended.denied`, `quota.unattended`.
+  6. `freeze.active`, then `ticket.not_visible`.
+  7. The type's own rules. For decisions: `gate.not_applicable`, `gate.no_eligible`, `gate.status`,
+     `gate.not_eligible` (token, `not`, and independence on an approval or `pass`), `gate.stale` (generation, policy
+     hash; `source_sha` present on a change request or a non-verify gate, or missing on a verdict or code approval),
+     `source.missing`, `gate.stale` (source list, gate hash), `gate.incomplete`. For addon writes: `addon.field_unknown`,
+     `addon.value_invalid` and the other §8.1 codes. For other types the order is not pinned, and a vector must not
+     break two step-7 rules at once. For restores, check all entries' evidence and known-person binding first (`device.cert`), then
+     compare all entries under the B1 effective-revocation rule (`device.exists`), before any effects (§5.10).
+     Thus `device.cert` wins even when an earlier entry fails B1.
+  8. Derived fields: `auth.invalid_event`, `gate.invalidated_mismatch`.
+
+  On replay, an `actor.device` with no certificate, or a person `sig` that doesn't verify, breaks the chain (§5.5),
+  whatever step 5 says. A certificate of another person is `device.unknown`, an authorization failure.
 - **Verifier interface.** Signature checks are injected into replay:
 
   | Method | Arguments |
@@ -914,7 +1070,7 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
 | Host event | Exact effect |
 |---|---|
 | `branch.pushed` | sets the source-list entry of one repo; raises `verify` and `code` (also on a `done` ticket, which goes to `testing`; there only for a new `sha` on an existing ref) |
-| `device.revoked` | appends a revocation that a person key signed (after a `restore`, or for a person with no device left); never one the host made up |
+| `device.revoked` | appends a revocation that a person key signed (fresh delivery, including for a person with no device left); never one the host made up |
 | `gate.invalidated` | records approvals that its cause already voided; raises nothing, changes no status |
 | `edit.external` | **installs** the new `body.md` prose as the current text and records its section hashes and references; raises generations per §5.7 (on `done`/`closed`, bound sections are reverted instead) |
 | `projection.repaired` | rewrites a projection (`config.json`, `ticket.json`, `keys.jsonl`, a bound section of a `done` ticket) back to what the events say; changes no state |
@@ -1046,16 +1202,19 @@ executable, so `entry.cmd[0]` is a program found on `PATH` or an absolute path, 
 **Grant.** `orch addon grant NAME` (a person, owner only, user presence) builds the `addon.granted` event from the
 package bytes it read. `version` and `capabilities` are the manifest's (the owner grants exactly what the manifest
 declares, sorted, never a subset). `fields` are the manifest's fields without `show` and `filter` (type, limits,
-`set_by`, `gate`), `sections` are all its sections named `<name>.<id>` with their `types` (and `gate` when it has
-one), `artifact_kinds` its kinds, all sorted. `package_sha256` is the digest above. Replay uses only the event, never
-a manifest. A new version, a changed byte or a changed capability is a new grant.
+`set_by`, `gate`), `sections` are all its sections named `<name>.<id>` with their `types`, `heading_key` (the
+heading with ASCII A–Z folded to a–z, letters and digits only), and `gate` when it has one; `artifact_kinds` its kinds, all sorted.
+`package_sha256` is the digest above. Replay uses only the event, never a manifest. A new version, a changed byte
+or a changed capability is a new grant.
 
 Before the passphrase the owner reads, on the terminal, and types the addon's name to go on: the version, the full
 package digest, `entry.cmd`, the capabilities, the `agents_md` line as an agent would see it, the `needs` rules'
 `for` and `text`, every field with its type, `set_by` and bindings, the sections and kinds, and on a re-grant the
 previous version and digest and what changed in capabilities, fields, sections and kinds (a new digest with nothing
 else changed is said to be the package bytes only). Text from the package is shown as escaped printable ASCII.
-`orch addon grant` refuses a section heading whose key (below) equals the key of a heading of another granted addon.
+The host and replay refuse a section heading whose key equals one of another granted, unpurged addon, including
+a disabled addon. A re-grant replaces its own heading keys. Replay checks the signed `heading_key` declarations
+without reading packages; a collision is refused as an invalid addon value (§10.4a).
 
 **Replay checks every addon write against the grant.** An event that sets `ticket.addons.<a>.<f>` is refused unless
 `a` is granted, enabled and not purged (an unknown addon), `f` is declared in the grant's `fields` (an unknown field),
@@ -1064,7 +1223,9 @@ matches `set_by` at the event's position: an agent needs `agent` and a grant, an
 as `actor.id` (an addon actor is refused in P1), a person needs to hold one of the tokens on that ticket (§5.9; the
 tokens `agent` and `addon` are never held by a person), and the host writes no addon field. An addon section is
 refused unless the grant declares it for the ticket's type, and an addon artifact unless its `kind` is in
-`artifact_kinds`. The codes are in §10.4a. The host calls the same function before it appends. The gate hash binds
+`artifact_kinds`. Addon sections have no `set_by`: whoever may write the core sections of a ticket may write an
+addon section the grant declares for its type, as with core sections. The codes are in §10.4a. The host calls the
+same function before it appends. The gate hash binds
 only the declarations that have a `gate` (§5.7).
 
 **Disable, purge, re-grant.** `orch addon disable` and `orch addon purge` name an addon that was granted, and
@@ -1083,7 +1244,7 @@ and is never counted (no total, filter or "waiting"). Data of an addon that was 
 **Registration.** From a granted, enabled addon whose package digest still equals the granted one: the fields, sections
 and artifact kinds come from the **grant**; the section headings and places, the `needs` rules and `agents_md` come
 from the manifest (checked against the digest). A section heading is ASCII, at most 40 characters, `^[A-Za-z0-9](?:[A-Za-z0-9,&/'-]| (?! ))*$`.
-Its key, the heading casefolded with every character other than a letter or digit removed, must differ from the key of
+Its key, the heading with ASCII A–Z folded to a–z with every character other than a letter or digit removed, must differ from the key of
 every core heading and of every other heading of the manifest, and `orch addon grant` refuses a key equal to one of
 another granted addon (the body parser needs headings that differ). An addon artifact always carries its `addon`, so
 kinds never collide. A write is checked as above; ids are prefixed by the addon name, so two addons never share a
@@ -1161,7 +1322,10 @@ What the runner does not do, and what P2 must have before it calls the runner:
   code calls the runner before it exists.
 - **No key in reach.** "No addon holds a key" (core §4) holds only once addons run under a UID that cannot read the
   host's key store. In the same UID as the host it is false, whatever the environment says.
-- Capabilities are recorded and shown in P1; `serve_http`, `network`, `pty`, `spawn_agent` and `git_push` are
+- **`serve_http` is a launcher policy switch, not a runner capability.** In P2 an addon whose granted manifest
+  includes it may be launched as a long-running local HTTP service under the person's UID (the dashboard;
+  host design D-P2-7). It confers no capability on a per-call runner.
+- Capabilities are recorded and shown in P1; `network`, `pty`, `spawn_agent` and `git_push` are
   enforced by the P2 host (agent UID and sandbox, §4). The runner's process limits (CPU time, file size, no core
   files, set by a small exec trampoline before the command starts) and its closed environment are defence in depth
   and not a sandbox: until P2 an addon is trusted to the degree the owner trusts its package. `pty` is never granted
@@ -1371,7 +1535,8 @@ these codes; they are the stable `error.code` strings of §10.4 for these refusa
 | `grant.unknown` | §10.1 `grant.revoked` names no grant |
 | `quota.unattended` | §5.2 the unattended quota is exceeded |
 | `unattended.denied` | §5.2 an unattended event outside what unattended agents may do |
-| `settings.invalid` | §5.4.2 two repos resolve to the same path |
+| `validation.event` | §5.11 step 0 malformed event payload, including duplicate repo names or normalised repo paths (§5.4.2); replay breaks the chain at that line |
+| `settings.invalid` | §5.4.2 duplicate declared identities, or a `local:` remote naming another repo |
 | `addon.unknown` | §5.4.2 the addon is not granted or not enabled |
 | `addon.field_unknown` | §8.1 the field is not declared in the addon's grant |
 | `addon.value_invalid` | §8.1 the value is not valid for the declared field type and limits |
@@ -1419,6 +1584,11 @@ these codes; they are the stable `error.code` strings of §10.4 for these refusa
 | `question.reask` | §5.2 an unattended session re-asks an existing id |
 | `answer.not_allowed` | §5.4.1 the signer is not the addressee, an owner or a maintainer |
 | `answer.bad_option` | §5.4.1 neither option nor text, or an option key that doesn't exist |
+
+Next to these, the key custody has its own refusals (exit 3, not retryable, not model codes): `custody.no_prompt`,
+`custody.no_key` and `custody.wrong_passphrase` (§10.8), and `custody.no_batch`: `orch import v1` signs its reviewed
+batch under one unlock (§14.2), and a key backend that can only ask per signature cannot do that, so the import is
+refused before anything is signed (declared by `import.v1`).
 
 ### 10.5 Example: a whole task loop, as the agent sees it
 
@@ -1489,7 +1659,10 @@ Where this chapter was silent, `orch.ops` does the following. Each is a rule the
   is **attested by the agent's environment**, not independent verification (the agent controls `PATH`, may pick among the
   linked repositories by its working directory, and a ticket with no linked repository gives `repo: null`, which counts as
   evidence; `verify.cmd = "sh -c '...'"` runs a shell, orch adds none). The control is that `verify.cmd` sits in the plan a
-  person approves; the P2 host runs it itself. `task done --run` runs the ticket's `verify.cmd` split into arguments, in
+  person approves. In P2 the client still runs it and sends the receipt; the host checks `cmd` against the
+  approved `verify.cmd`. H3b2 (client receipts) adds `attested_by: "agent"`; the current `task.done` receipt
+  has no such field. This proves an authenticated agent claimed a result,
+  not that the command ran, its exit code, output or commit. The host never executes workspace-controlled code. `task done --run` runs the ticket's `verify.cmd` split into arguments, in
   its own process group with a hard timeout (a process that leaves the group with `setsid` survives: without a separate
   user or job object nothing stops it), stdin closed, 1 MiB of output kept and the rest dropped, an **allow-list**
   environment (`PATH`, `HOME`, `LANG`, `LC_*`, `TMPDIR`, `TERM`, plus the names the ticket's skills declare, D56, none yet),
@@ -1616,6 +1789,31 @@ Where this chapter was silent, `orch.ops` does the following. Each is a rule the
 - **Skill sidecar.** `orch.skill.json` is validated in plain Python (D55): exactly `schema_version` (1), `skill_version`
   (`x.y.z`), `scope` (`builtin`, `workspace` or `org`), `connections` and `env` (lists of names).
 
+**P2 host person ops (H6b; not P1 CLI registry operations).** Only a person-class caller with a valid
+person mapping and no grant may use these through `human.prepare`; agents, unattended callers, workers and
+control callers cannot. The signing person must have the role stated below (host §0.5).
+
+```
+move         {ref:Ref, to:"backlog"|"open", reason?:str{1..500}}
+             → ticket.moved {from:<current status>, to, reason?}  // workspace owner or maintainer
+policy.set   {ref?:Ref, gates:{Gate: Policy}{1..4}}
+             → policy.changed {gates}  // owner only; ticket log with ref, else workspace log
+settings.set {set:{grant_hours?:int 1..24, claim_ttl_min?:int 15..1440, lease_ttl_min?:int 5..1440,
+                   repos?:{str/[a-z0-9][a-z0-9._-]{0,63}/: {path:str{1..1024}, remote?:str{1..512},
+                                                           default_branch?:str{1..255}} | null}{1..32}}}
+             → settings.changed {set}  // owner only, workspace log
+Policy = {approvers:[str{1..32}]{1..8}, count:int 1..9, not:[str{1..32}]{0..8},
+          applies:"all"|"off"|[str{1..32}]{1..16}, independent:bool}
+```
+
+`Gate` is one of the four gates. Policies also obey §5.7 (code: `not` includes `assignees`,
+`independent:true`); settings obey §1. These host ops do not extend the version-1 CLI registry/`EMITS_V1`
+or agent grant verbs. The existing ticket `policy.changed` event authorization remains §5.4.2;
+the owner-only restriction here is on the host op.
+
+**Reserved, not served:** `comment`, `ticket.discard`, `artifact.search`, `view.*` (including `view.save`
+and `view.delete`). Saved views are the dashboard addon's own data.
+
 ### 10.8 Decisions of C7 (the human operations as built)
 
 Where §5.3, §5.7, §10.1 and §10.3 were silent, `orch.ops.human` and the eleven human operations (`approve`,
@@ -1671,9 +1869,13 @@ operation).
 - **D58/D59 binding.** `verdict` and `approve code` read git (`orch.store.observe`, which appends any owed
   `branch.pushed`) right before the prompt and bind the commits it finds as `source_sha`. Each linked working copy must be
   on the bound branch (`refs/heads/<branch>`), at the bound commit, with nothing uncommitted; otherwise
-  observe.unavailable. The decision binds a commit, so the files a person ran or read must be that commit (F1 was silent;
-  a detached HEAD elsewhere and another branch are refused). The same check runs again inside `Store.append` with the
-  workspace lock held (a `precommit` callback, read-only), after the passphrase: a source that moved meanwhile is
+  observe.unavailable. The signature binds the commit; a detached HEAD elsewhere and another branch are refused. In P2
+  the clean-tree check runs before the prompt in the worker's reader (at `human.prepare`, and again
+  at `human.get` when binding a device for a hand-off). The signer shows `checks` as "attested by the worker,
+  best effort"; those checks are not signed material and are only as trustworthy as the worker account, which also
+  runs addons. The tree can change between the worker's check and the append. No worker means observe.unavailable.
+  `precommit` rechecks only the symbolic branch and bound commit under the workspace lock after signing,
+  never the clean tree (host design D-P2-19): a source that moved meanwhile is
   gate.stale and nothing is appended. A linked repository that cannot be observed is observe.unavailable, a missing ref
   source.missing (§5.7). A ticket that links no repository signs `source_sha: []`.
 - **`--dry-run` writes nothing:** it does not observe (no `branch.pushed`), does not prompt and does not sign; it judges
@@ -1774,11 +1976,12 @@ Every string in `ticket.json`, `body.md` and events:
 | approver token (policies) | `owner`, `maintainer`, `member`, `ticket_owner`, `assignees`, `reviewers`, `watchers` |
 | question `to` role | `ticket_owner`, `assignees`, `reviewers`, `watchers` |
 | gate | `requirements`, `plan`, `verify`, `code` |
-| gate `applies` | `all`, `off`, or a list of ticket types |
+| gate `applies` | `all`, `off`, or a non-empty list of ticket types |
 | verdict outcome | `pass`, `fail` |
 | close resolution | `wont_do`, `duplicate`, `obsolete`, `other` |
 | claim release reason | `released`, `handoff`, `expired`, `grant_ended`, `member_removed`, `ticket_done`, `ticket_closed` |
-| `gate.invalidated` cause | `new_commits` (D58), `content_changed`, `policy_changed`, `member_changed`, `device_compromised`, `conflict_resolved` (D53, P2) |
+| `gate.invalidated` cause | `new_commits` (D58), `content_changed`, `policy_changed`, `member_changed`, `device_compromised`, `restored`, `conflict_resolved` (D53, P2) |
+| `restore` reason | `rollback`, `diverged`, `broken`, `other`; optional `note` is one line, ≤ 280 UTF-8 bytes, display only |
 | `device.revoked` reason | `compromised`, `lost`, `retired` |
 | device scope levels needed | `decide` for every person event; also `operate` for member, policy, settings, grant, addon and `restore` events; `drop:` certificates never |
 | `projection.repaired` cause | `external_edit`, `projection_mismatch`, `keys_mismatch` |
@@ -1814,7 +2017,7 @@ Vectors to add to orch-relay `vectors_v2.json` and to the core tests, before C1 
 | `artifact_refs` | the reference regex, including inside code fences; an unknown reference refused; signer `refs` that differ from the regex refused |
 | `source_list` | projection from `branch.pushed`, first observation, ref and identity changes |
 | `question_id` | `qid` derivation and the question hash with it |
-| `checkpoint` | the §2.4 shape; lower `seq` refused, equal `seq` with another head refused, a restore that re-appends revocations |
+| `checkpoint` | the §2.4 shape; lower `seq` refused, equal `seq` with another head refused, source-bound restores carrying revocations, accumulator ancestry and atomic oversize refusal |
 | `repo_identity` | https, ssh with and without a port, scp-like forms mapped to one canonical URL; an https URL with `user:token@` loses it; `file://` → `local:` |
 
 ## 12. Needs owner
@@ -1834,16 +2037,16 @@ owner's confirmation.
 | N7 | Verify gate, verdicts and stale decisions | A verdict **is** the verify decision (`pass`/`fail`). Every gate has a **generation**, raised in every status by the table in §5.7 (at most 1 per event); decisions sign `gate_gen` and `based_on`; a stale generation is refused and never counts; `gate.invalidated` raises nothing; later gates bind the earlier gates' generations and approvals (`prior`). | agreed with Codex, modified (generation barriers) |
 | N8 | Host events | Not "only take away": `edit.external` **installs** prose. §5.12 lists the exact effect of each host event and states that a host event never approves, answers, grants, adds a member or creates a ticket. | Codex was right; changed |
 | N9 | Unattended writes | Keep A3 (`ask`, `log`, `artifact add`) and change the harness plan's H2. Unattended writes only on tickets with `visibility: workspace`; quotas per session (30 events, 20 MiB per hour) and per workspace (120 events, 100 MiB per rolling hour); `question.asked` only for new ids; artifacts without `ac`/`task`, never evidence (O6). An unattended `artifact.added` can void a pending verify approval; accepted and visible. | agreed with Codex, modified; tightened with the Opus reviewer |
-| N10 | The code gate (D59) | `not` always includes `assignees` and `independent` is always `true`, enforced by the host. Only a person's signature approves it; no `via` field in P1. In P1 turning it on moves no ticket back. | agreed with Codex |
+| N10 | The code gate (D59) | `not` always includes `assignees` and `independent` is always `true`, enforced by the host. No `via` field in P1. In P1 turning it on moves no ticket back. In P1 only a person's signature approves it; D62 mandates may sign it from P2 (spec PR #352). | agreed with Codex |
 | N11 | Addon writes | Addons hold no key; the host appends their events. `set_by` is a list of actor alternatives checked per write (`agent`, `addon`, human tokens = a signed person event). Only leaf paths can be set, so replacing `ticket.addons.<addon>` can't bypass `set_by`. Addon events never carry core authority. | agreed with Codex, modified |
 | N12 | Independence of approvers | The policy option `independent`, **off by default** for `requirements`, `plan` and `verify`, so a sole owner can approve their own agents' work; always on for `code` (D59). See O4 for what `not: assignees` covers. | new from the Codex review |
 | N13 | Trust root | The head of `workspace.created` is the genesis, checked in six ordered steps (§5.11); remembered by the host outside the workspace, in every workspace checkpoint, shown at pairing (the person's custody key file records it from P3 pairing on; `orch init` does not, see §10.7). Readers replay authorization, not only signatures. **P1 limit:** see O7. | new from the Codex review; tightened with the Opus reviewer |
-| N14 | Rollback and trust in P1 | Equal-height divergent heads are refused and `restore` is defined, but **P1 can't detect a rollback when both the history and the local checkpoints are replaced**, and the genesis pin lives in files the same OS user owns (O7). Relay checkpoints (P3) and host-held keys (P2) fix it. | new from the Codex review |
-| O1 | Where the factor is recorded | In the event's `auth` only, not in the device certificate. **D64's wording ("recorded in the person's device certificate") needs amending**; F1 doesn't edit D64. | agreed with Opus reviewer |
+| N14 | Rollback and trust in P1 | Equal-height divergent heads are refused and `restore` is defined, but **P1 can't detect a rollback when both the history and the local checkpoints are replaced**, and the genesis pin lives in files the same OS user owns (O7). The workspace’s `.state/applied` crash marker is unsigned: anyone who can write `.state` can make a rollback look like a repairable crash. Relay checkpoints (P3) and host-held keys (P2) address these limits. | new from the Codex review |
+| O1 | Where the factor is recorded | In the event's `auth` only, not in the device certificate. D64 records custody in event `auth`; WebAuthn is deferred past P2 because it needs a new signature contract. | agreed with Opus reviewer |
 | O2 | Custody of `dk_sig` in P1 | `dk_sig` is held by the backend named in `auth`; in P1 it is passphrase-encrypted like the person key, decrypted for one signature on a TTY, never cached; a key that signs without its factor is `file`-tier and never signs person events (§5.3). | agreed with Opus reviewer |
-| O3 | Done is sticky; compromised devices | A `done` ticket leaves `done` only by `ticket.reopened`, `branch.pushed` of a source ref (D58) or the D59 code-gate rule; bound edits are refused from every actor. A `device.revoked` with `compromised` voids that device's decisions on tickets not yet `done`; `done` tickets it approved show "approved by a revoked device", with no state change (§5.7). | agreed with Opus reviewer |
+| O3 | Done is sticky; compromised devices | A `done` ticket leaves `done` only by `ticket.reopened`, `branch.pushed` of a source ref (D58) or the D59 code-gate rule; bound edits are refused from every actor. A `device.revoked` with `compromised` voids that device's decisions on unsettled tickets; settled (`done` or `closed`) tickets list them (`revoked_decisions`) with no state change until the ticket becomes unsettled (§5.7). A void raises the gate for everyone: a `role.changed` is a cheap way for an owner to reset a gate, which is accepted because owners can already edit bound content. | agreed with Opus reviewer |
 | O4 | Self-approval | With `independent` on, `not: assignees` also excludes the `for` person of agent events that touched a bound path in the gate's current generation. With it off (the single-owner default), a person may approve their own agent's work, and the doc says so (§5.7). | agreed with Opus reviewer |
-| O5 | `restore` power | Owner only; never drops revocations (the host re-appends every PK-signed revocation it has seen); records the abandoned signed decisions in `abandoned_decisions` (§5.10). | agreed with Opus reviewer |
+| O5 | `restore` power | Owner only; never drops revocations (the signed restore carries every effective PK-signed revocation the host holds for a device ever seen); records the abandoned signed decisions in `abandoned_decisions` (§5.10). | agreed with Opus reviewer |
 | O6 | Unattended evidence | Unattended artifacts carry no `ac`/`task` and are never evidence (§6). | agreed with Opus reviewer |
 | O7 | P1 trust root | The genesis pin is in the host state dir (P1; the person's custody key file gets it at pairing), owned by the same OS user as the agents in P1, so an agent can replace them together; stated plainly next to N14. | agreed with Opus reviewer |
 | R3 | Device recovery and who appends revocations | `device.revoked` may be appended by any member's device or by the host; its authority is the embedded PK-signed revocation (protocol §6.2). A device vouched for by the person key (with `decide`) may add itself when its person has no valid device left (the D50 recovery path); otherwise losing the owner's only device would leave the workspace without owner signatures. | agreed with Opus reviewer |
@@ -1949,9 +2152,9 @@ A1–A20 (PR body), HO (dashboard handover, input only), D58–D60, the adversar
 | 91 | Status from-states (Opus S6) | A from→to table for every event (§5.9). | Replay can check transitions. |
 | 92 | Torn writes vs external edits (Opus S7) | `.state/applied`; recovery only when the last event isn't applied; a torn write ends in `edit.external`. | An ordinary external edit isn't misreported, and `base_rev` keeps working. |
 | 93 | Effective policy canonical form (Opus S8) | Every policy has all five keys; `applies` union rules; tokens, not persons, for "no eligible approver". | A partial override can't switch `code` on by accident. |
-| 94 | Repo identity incomplete (Opus S9) | Raw `remote.origin.url`, port rules, scp-like forms, `local:` otherwise; duplicate paths and identities refused; P1 limit stated. | One canonical identity across runtimes. |
+| 94 | Repo identity incomplete (Opus S9) | Raw `remote.origin.url`, port rules, scp-like forms, `local:` otherwise; duplicate names ignoring ASCII case and paths after POSIX lexical normalisation and ASCII-only case folding refused at step 0 (including unchanged repos); duplicate identities refused; a declared `local:` remote must be exactly `local:<own repo name>`, and declared remote identities must be unique ignoring ASCII case across the resulting settings (including unchanged repos); P1 limit stated. | One canonical identity across runtimes. |
 | 95 | Receipts (Opus S10) | `receipt.cmd` = `verify.cmd`; latest `task.done` of a done task; evidence only at the current source `sha`; prompt rechecks file digests. | Stale or substituted evidence doesn't count. |
-| 96 | Restore drops revocations (Opus S11) | Revocations re-appended at once; `abandoned` gives up every checkpoint above `from_seq`; workspace restore raises every ticket's gates. | A rollback can't resurrect a revoked device. |
+| 96 | Restore drops revocations (Opus S11) | Superseded by B1: revocations carried atomically in the restore; `abandoned` gives up every checkpoint above `from_seq`; workspace restore raises every ticket's gates. | A rollback can't resurrect a revoked device. |
 | 97 | Question id frozen wrongly; `evidence` half-defined (Opus S12) | Derived `qid` (32 hex, `orch/v2/question-id\|`) used in the question hash; `evidence` refused in P1, defined in P3 with a new contract. | Protocol §13 needs hex ids; no person event without `sig`. |
 | 98 | `based_on` unchecked (Opus S13) | Must name an earlier event of the same log (`event.bad_base`); staleness via `gate_gen`, `hash`, `base_rev`. | A meaningless `based_on` can't be signed. |
 | 99 | Genesis pin agent-writable (Opus S14) | Pinned in the host state dir (the custody key file only from pairing, P1 deviation in §10.7); human-only verbs refuse a different genesis; P1 limit in O7. | The human signer checks the root, not only the host. |
@@ -1963,7 +2166,7 @@ A1–A20 (PR body), HO (dashboard handover, input only), D58–D60, the adversar
 | 105 | Claims across persons (Opus note) | Takeover by any covering grant and release by ticket owner/owners/maintainers, stated as accepted for P1. | Written down instead of implied. |
 | 106 | Completeness on replay (Opus note) | An approval of an incomplete gate doesn't count on replay either. | Same result at append and replay. |
 | 107 | `suite` wording (Opus note) | "the deployment suite (2, D46)". | Not a constant per format. |
-| 108 | D64 wording (Opus O1) | Listed for amendment; not edited here. | D64 says the backend is in the certificate; it isn't. |
+| 108 | D64 wording (Opus O1) | Amended by H0: custody is in event `auth`. | WebAuthn needs a new signature contract and is deferred past P2. |
 | 109 | Custom addon events in P1 | Refused until C9/P2 define them (A5). | Nothing unvalidated enters the logs. |
 | 110 | Compromised devices (Opus O3) | Void decisions on tickets not yet `done`; flag on `done` tickets. | Sticky `done` with visible risk. |
 | 111 | Raises suspended on `done` vs reopen/restore/push (re-review R1) | Generations are raised in every status; done is sticky is a separate status rule; reopen after `done` voids the old verdict. | One reading for every implementation. |
@@ -1971,7 +2174,7 @@ A1–A20 (PR body), HO (dashboard handover, input only), D58–D60, the adversar
 | 113 | Host can't re-append revocations; lockout after losing every device (re-review R3) | `device.revoked` P or H, authorised by the embedded revocation; recovery `device.added` by a PK-vouched new device when none is left. | Protocol §6.2: the PK signature is the authority; D50 recovery. |
 | 114 | Several matching raise rows (re-review S-a) | An event raises a gate by at most 1. | +1 vs +2 would split `gate_gen`. |
 | 115 | Branch deletion after landing (re-review S-b) | A missing ref is not a change; on `done` only a new `sha` on an existing ref counts; pending `branch.pushed` appended before a prompt. | Landed tickets don't bounce. |
-| 116 | Credentials in the repo identity (re-review S-c) | Userinfo always removed. | No secrets in hashed, signed data. |
+| 116 | Credentials in the repo identity (re-review S-c) | Only ssh/scp `git@` userinfo is allowed and removed; any other userinfo, including all https userinfo, maps to `local:<name>` (§5.7). | No secrets in hashed, signed data. |
 | 117 | Revocation reason mismatch (re-review S-d) | Payload `reason` must equal `revocation.o.reason`. | The compromised effects can't be dodged. |
 | 118 | `.state/body` copy agent-writable (re-review S-e) | Used only when its section hashes match the log; otherwise `store.torn_write`. | A tampered copy can't become the reverted text. |
 | 119 | Signer-computed `refs` (re-review S-f) | Refused when they differ from the regex (`body.bad_refs`). | Bindings come from the text, not the signer's claim. |
@@ -1999,14 +2202,14 @@ A1–A20 (PR body), HO (dashboard handover, input only), D58–D60, the adversar
 | 141 | `needs` language (C9) | JSON expressions, closed variable list, total and deterministic, no effect on core state (§8.1). | No code execution and no parser; waiting lists never change a gate. |
 | 142 | `cli`, `skills` and `agents_md` (C9) | `cli` and `skills` stay empty-only until P2; `agents_md` is one line of printable ASCII, rendered by the host with the addon's name, shown at grant (§8.1). | Nothing is invented for features that do not run in P1; an addon must not give hidden or structured instructions to agents that hold capabilities it lacks. |
 | 143 | Runner (C9) | One process per call, JSON-RPC over stdio, bound to the grant (manifest from the granted bytes), private package copy, clean environment, caps and deadline, workspace-visible tickets only, proposals only; process tracking and a separate UID are P2 requirements (§8.1). | An addon can propose values and nothing else, and the wording does not promise more than the code. |
-| 144 | Section headings (C9) | ASCII, with a key (casefold, letters and digits only) that differs from every core heading and every other granted addon's (§8.1). | Look-alike headings must not make `body.md` ambiguous or misleading. |
+| 144 | Section headings (C9) | ASCII, with a key (ASCII case folding, letters and digits only) that differs from every core heading and every other granted addon's (§8.1). | Look-alike headings must not make `body.md` ambiguous or misleading. |
 Open after F1 (not settled here):
 
 - The P3 envelope for phone decisions (`evidence`); the `qid` mapping itself is settled (§5.6).
 - orch-relay `vectors_v2.json` needs the vectors of §11.5. That is an orch-relay change.
 - Bundled Unicode 16.0 tables for Python 3.11–3.13 (C1).
 - Addon event payloads (P2: only the `propose` result of §8.1 exists). (Imported v1 history is settled by §14.)
-- D63–D66 are still drafts; `auth` (N2) depends on them, and D64's wording needs amending (O1).
+- D63–D66 are still drafts; `auth` (N2) depends on them, D64 records the backend in event `auth` (O1), with WebAuthn deferred past P2.
 
 ## 14. Amendment C10: importing v1, `doctor` and `check`
 
@@ -2105,10 +2308,11 @@ replay gives:
 
 | Check | Code |
 |---|---|
-| a line that is not the canonical bytes, a bad `prev`, `seq`, `ws_seq`, `host_sig`, or a person signature | `chain.broken` (log, `seq`, cause) |
+| an out-of-range or backwards `ws_seq`, or a failing merged-order check (§5.11 step 1) | `chain.bad_ws_seq` (log, `seq`, cause) |
+| a line that is not the canonical bytes, a malformed field (including `ws_seq`), a bad `prev`, `seq`, `host_sig`, or a person signature | `chain.broken` (log, `seq`, cause) |
 | a log shorter than, or with another head than, a signed checkpoint | `chain.diverged` |
 | a checkpoint that is unreadable or not signed by the host key | `checkpoint.bad` |
-| a missing workspace or ticket checkpoint: an **error** where this machine holds the workspace key (it writes one after every append, so someone deleted it), a warning on a clone | `checkpoint.missing` |
+| a missing workspace or ticket checkpoint: an **error** where this machine holds the workspace key (it writes one after every append; deletion or a crash can leave one missing), a warning on a clone | `checkpoint.missing`; `doctor --repair` can write a missing ticket checkpoint where the host holds the key and the log verifies |
 | a ticket folder with no event log; a file in `artifacts/` the log does not name | `ticket.nolog`, `artifact.unlisted` (warning) |
 | the genesis pin missing (warning), or different | `pin.missing`, `trust.genesis_mismatch` |
 | a device revocation the host noted that the log does not hold | `revocation.missing` |
@@ -2127,6 +2331,8 @@ chain, a signature or a checkpoint: an owner-signed `restore` is the only repair
 
 `orch check` is the fast subset (chain, projections, checkpoints missing where the host key is, store reports, instructions) and exits 5 on any finding, with the first line `check: N problems`; it does not heal.
 `orch check --staged` is the commit check for a git pre-commit hook (`orch check --staged || exit 1`): it also refuses
-staged files under `.state/`, key files, files holding a grant secret, a symlink or submodule where the workspace keeps a file, a deleted log or projection, a staged `ticket.json`, `body.md`, artifact,
-`config.json` or `keys.jsonl` that is not what the log says, and a staged log that is not a prefix of the verified one
-(`commit.state`, `commit.secret`, `commit.edited`, `commit.forged`, `commit.link`, `commit.deleted`). The hook installer stays with C28 (P2).
+staged files under `.state/`, key files, files holding a grant secret, a symlink or submodule where the workspace keeps a file, a deleted log, projection or artifact, a staged `ticket.json`, `body.md`, artifact,
+`config.json` or `keys.jsonl` that is not what the log says, a staged log that is not a prefix of the verified one,
+and any other file under `tickets/` or `events/` (for example `events/other.jsonl`, or a file in a ticket folder that
+is not `ticket.json`, `body.md`, `events.jsonl` or under `artifacts/`)
+(`commit.state`, `commit.secret`, `commit.edited`, `commit.forged`, `commit.link`, `commit.deleted`, `commit.unknown`). The hook installer stays with C28 (P2).

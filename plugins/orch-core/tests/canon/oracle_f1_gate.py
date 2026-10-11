@@ -237,16 +237,19 @@ def refs_of(text: str) -> list[str]:
 # --- repo identity (§5.7) -------------------------------------------------------------------------
 
 
-def repo_identity(raw: str, name: str) -> str:
-    """From the raw ``remote.origin.url``: https and ssh/scp-like forms become ``https://host[:port]/path`` (userinfo
-    removed, host lower-case, port kept except 443 for https and 22 for ssh, one trailing ``.git`` and ``/`` removed);
-    anything else is ``local:<name>``."""
-    m = re.fullmatch(r"(https|ssh)://(?:[^/@]*@)?([^/:@]+)(?::([0-9]+))?/(.+)", raw)
+def _map_remote(raw: str, name: str) -> str:
+    """From the raw ``remote.origin.url``: https and ssh/scp-like forms become ``https://host[:port]/path`` (only
+    literal git userinfo allowed for ssh and removed, host lower-case, port kept except 443 for https and 22 for ssh,
+    one trailing ``/`` removed first, then one ``.git``); anything else is ``local:<name>``."""
+    # F1: reject non-ASCII before case folding; https never carries userinfo.
+    if not raw.isascii() or (raw.startswith("https://") and "@" in raw):
+        return f"local:{name}"
+    m = re.fullmatch(r"(https|ssh)://(?:git@)?([^/:@]+)(?::([0-9]+))?/(.+)", raw)
     if m:
         scheme, host, port, path = m.groups()
         keep = port is not None and port != ("443" if scheme == "https" else "22")
     else:
-        s = re.fullmatch(r"(?:[^/@:]+@)?([^/:@]+):([^/].*)", raw)  # scp-like: [user@]host:path, no slash before ':'
+        s = re.fullmatch(r"(?:git@)?([^/:@]+):([^/].*)", raw)  # scp-like: [user@]host:path, no slash before ':'
         if not s or "://" in raw:
             return f"local:{name}"
         host, path = s.groups()
@@ -254,6 +257,15 @@ def repo_identity(raw: str, name: str) -> str:
     path = path.removesuffix("/")
     path = path.removesuffix(".git")
     return f"https://{host.lower()}{':' + port if keep else ''}/{path}"
+
+
+def repo_identity(raw: str | list[str], name: str) -> str:
+    """The identity of a repo from its ``remote.origin.url`` values (§5.7): the mapped form when it is canonical, else
+    ``local:<name>``. More than one configured value is ``local:<name>`` as well."""
+    if not isinstance(raw, str):
+        return f"local:{name}" if len(raw) != 1 else repo_identity(raw[0], name)
+    out = _map_remote(raw, name)
+    return out if is_canonical_identity(out) else f"local:{name}"
 
 
 # --- the ticket and G (§5.7) ----------------------------------------------------------------------
@@ -477,10 +489,3 @@ def is_canonical_identity(identity: str) -> bool:
     if not all(_SEGMENT_RE.fullmatch(x) and x not in (".", "..") for x in segments):
         return False
     return not path.lower().endswith(".git")
-
-
-def mapped_identity(raw: str, name: str) -> str | None:
-    """The identity a raw remote maps to, or ``None`` when the mapped result is not canonical: refused, never
-    converted (§5.7). What a refusal means for the host (no identity, ``source.missing``, ``local:``) is an F1 gap."""
-    out = repo_identity(raw, name)
-    return out if is_canonical_identity(out) else None

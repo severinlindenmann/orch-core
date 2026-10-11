@@ -138,7 +138,7 @@ def render_config(view: Any, *, host_id: str, wsk_pub: str, name: str, run_for: 
             "grant_hours": view.settings["grant_hours"],
             "claim_ttl_min": view.settings["claim_ttl_min"],
             "lease_ttl_min": view.settings["lease_ttl_min"],
-            "repos": {r: {"path": p} for r, p in sorted(view.repos.items())},
+            "repos": {r: dict(sorted(p.items())) for r, p in sorted(view.repos.items())},
         },
         "agents": {"run_for": run_for},
         "addons": {n: {"enabled": bool(a["enabled"])} for n, a in sorted(view.addons.items())},

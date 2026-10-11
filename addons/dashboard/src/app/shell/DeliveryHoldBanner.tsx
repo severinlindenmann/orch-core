@@ -1,6 +1,6 @@
 // The shell notice while a delivery waits out its hold window (factory full run, owner decision 2026-10-10 evening;
 // docs/factory-full-run-proposal.md). Core's own words, calm (never orange, never a warning colour), one line that
-// truncates, like the mandate banner. "Stop…" opens core's decision prompt for that hold (the one option `stop`); the
+// truncates, like the mandate banner. "Stop" opens core's decision prompt for that hold (the one option `stop`); the
 // person signs it there. Shown to the people who may answer it (core's decisions list is per caller). The line wraps:
 // the destination is never truncated.
 import { useQuery } from '@tanstack/react-query'
@@ -54,7 +54,7 @@ function HoldLine({ d, more, now }: { d: AddonDecision & { hold: NonNullable<Add
         {text}
       </span>
       <Button size="xs" variant="outline" className="shrink-0" disabled={busy} onClick={() => choose(d.options[0])}>
-        Stop…
+        Stop
       </Button>
       {page && (
         <Link to="/addon/$name/$page" params={{ name: d.addon, page }} className="shrink-0 rounded px-1 text-[12px] text-text-muted underline-offset-2 outline-none hover:text-text hover:underline focus-visible:ring-2 focus-visible:ring-ring">

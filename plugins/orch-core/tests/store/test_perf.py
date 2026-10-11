@@ -41,7 +41,6 @@ def best_median(samples: list[float], batches: int = 5) -> float:
 def test_append_latency_at_1000_tickets(env, monkeypatch, capsys):
     s, uids = build(env, 1000)
     mara = Person()
-    from orch.identity import certs
 
     s.append(
         env.person_event(
@@ -50,7 +49,6 @@ def test_append_latency_at_1000_tickets(env, monkeypatch, capsys):
         ),
         log="workspace",
     )  # fmt: skip
-    assert certs
     monkeypatch.setattr(os, "fsync", lambda fd: None)  # the target excludes fsync
     from orch.store import fsio
 

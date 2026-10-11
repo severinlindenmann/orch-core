@@ -1,21 +1,26 @@
 """Runs an F1 scenario vector (``tests/vectors/f1/*.json`` ``scenarios``) through ``orch.model`` with the real
-``CryptoVerifier``: every step is offered to ``admit`` on the state of the accepted prefix, a refused event is also
-replayed as the next line of the log, and the optional ``after`` checks read the state after an accepted step."""
+``CryptoVerifier``: every step is offered to ``admit`` on the accepted prefix. ``replay_only`` steps must refuse
+append with ``chain.bad_ws_seq`` but replay successfully. Other refused events are also replayed as the next line
+of the log; optional ``after`` checks read the state after an accepted step. ``schema_refused`` steps also check
+``append_code`` at the store append validation boundary, independently of the model outcome in ``expect``."""
 
 from __future__ import annotations
 
 import copy
 import json
+from contextlib import closing
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 import pytest
 
-from orch import schema
+from orch import crypto, schema
 from orch.identity import CryptoVerifier
 from orch.model import WORKSPACE, admit, replay
 from orch.model.codes import Code
 from orch.model.engine import CHAIN_CODES
+from orch.store import Store, StoreError
 
 DIR = Path(__file__).parent.parent / "vectors" / "f1"
 
@@ -77,6 +82,9 @@ def check_after(st: Any, after: dict[str, Any]) -> None:
         if "counting" in exp:
             for g in t.gates:
                 assert sorted(t.gates[g].counting) == sorted(exp["counting"].get(g, [])), (uid, g)
+        if "gens" in exp:  # 5.7: a settled ticket lists a revoked device's decisions that still count, per gate
+            for g in t.gates:
+                assert sorted(t.gates[g].revoked_decisions) == exp.get("revoked_decisions", {}).get(g, []), (uid, g)
         if "source_list" not in exp and "gens" in exp:
             assert not t.source_list, uid
         if "policy" in exp:
@@ -88,6 +96,37 @@ def check_after(st: Any, after: dict[str, Any]) -> None:
 def _gens(st: Any, uid: str) -> list[int]:
     t = st.tickets.get(uid)
     return [t.gates[g].gen for g in ("requirements", "plan", "verify", "code")] if t else [0, 0, 0, 0]
+
+
+class VectorSigner:
+    def __init__(self) -> None:
+        key = load("signatures.json")["keys"]["wsk"]["scalar_hex"]
+        self.key = crypto.private_key_from_scalar(int(key, 16))
+        self.public_key = crypto.public_bytes(self.key)
+
+    def sign(self, payload: bytes) -> bytes:
+        return crypto.sign(self.key, payload)
+
+
+def check_append_code(sc: dict[str, Any], st: Any, step: dict[str, Any], where: str) -> None:
+    # Exercise the store's append validation boundary with the vector's exact stamped envelope.
+    # Projection healing and wall-clock stamping are not part of these log-only scenarios.
+    event = copy.deepcopy(step["event"])
+    with TemporaryDirectory() as tmp, pytest.MonkeyPatch.context() as patch:
+        root = Path(tmp)
+        with closing(
+            Store.open(
+                root / "workspace",
+                expected_workspace_id=sc["workspace_id"],
+                host=VectorSigner(),
+                host_state_dir=root / "host",
+            )
+        ) as store:
+            store._state = st
+            patch.setattr(store, "_stamp", lambda *args, **kwargs: None)
+            with pytest.raises(StoreError) as exc:
+                store._commit(event, step["log"], None, {}, ())
+            assert exc.value.code == step["append_code"], where
 
 
 def run_scenario(sc: dict[str, Any], *, validate: bool = True) -> tuple[list, dict[str, list]]:
@@ -105,6 +144,19 @@ def run_scenario(sc: dict[str, Any], *, validate: bool = True) -> tuple[list, di
             else:
                 schema.validate("event." + event["type"], event, log=kind)
         st = state_of(sc, ws, tl)
+        if step.get("schema_refused"):
+            check_append_code(sc, st, step, where)
+        if step.get("replay_only"):
+            assert expect == "ok", where
+            unsigned = {k: v for k, v in event.items() if k != "host_sig"}
+            assert admit(st, unsigned, log=log).code == Code.CHAIN_BAD_WS_SEQ, where
+            (ws if log == WORKSPACE else tl.setdefault(log, [])).append(event)
+            now = state_of(sc, ws, tl)
+            assert not now.chain_errors, (where, now.chain_errors)
+            assert not now._core.logs[log].invalid, (where, now._core.logs[log].invalid)
+            if "after" in step:
+                check_after(now, step["after"])
+            continue
         genesis = event["type"] == "workspace.created"  # checks its own host_sig (§5.11 step 4): admitted signed
         r = admit(st, event if genesis else {k: v for k, v in event.items() if k != "host_sig"}, log=log)
         got = "ok" if not hasattr(r, "code") else r.code.value
@@ -131,7 +183,9 @@ def run_scenario(sc: dict[str, Any], *, validate: bool = True) -> tuple[list, di
         ws2, tl2 = list(ws), {u: list(v) for u, v in tl.items()}
         (ws2 if log == WORKSPACE else tl2.setdefault(log, [])).append(copy.deepcopy(event))
         st2 = state_of(sc, ws2, tl2)
-        if Code(expect) in CHAIN_CODES or expect in F1_CHAIN_BREAKS:
+        if step.get("replay_expect") == "chain.broken":
+            assert [(c.log, c.seq, c.code) for c in st2.chain_errors] == [(log, event["seq"], "chain.broken")], where
+        elif Code(expect) in CHAIN_CODES or expect in F1_CHAIN_BREAKS:
             assert any(c.log == log for c in st2.chain_errors), where
         elif log == WORKSPACE:
             bad = [x for x in st2.workspace.invalid if x.seq == event["seq"]]

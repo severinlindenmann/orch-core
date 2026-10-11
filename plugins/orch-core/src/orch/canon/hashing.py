@@ -54,6 +54,7 @@ __all__ = [
     "HashError",
     "artifact_digest",
     "canonical_policy",
+    "canonical_repo_identity",
     "check_chain",
     "check_repo_identity",
     "cj_checked",
@@ -84,6 +85,8 @@ SUITE = 2  # deployment suite (§5.3, D46)
 PREFIX = "sha256:"
 
 LABELS: dict[str, str] = {
+    "h_checkpoint": "orch/v2/checkpoint-hash|",
+    "h_log_acc": "orch/v2/log-acc|",
     "gate": "orch/v2/gate|",
     "section": "orch/v2/section|",
     "value": "orch/v2/value|",
@@ -543,6 +546,36 @@ def _check_receipts(receipts: object, gate: str) -> None:
         _int(r["exit"], "receipt exit")
 
 
+_RAW_URL = re.compile(r"(https|ssh)://(?:git@)?([^/:@]+)(?::([0-9]+))?/(.+)")
+_RAW_SCP = re.compile(r"(?:git@)?([^/:@]+):([^/].*)")
+
+
+def canonical_repo_identity(raw: str, name: str) -> str:
+    """The identity of a repo from its raw ``remote.origin.url`` (§5.7 "Repo identity"): ``https://`` and
+    ``ssh://``/scp-like forms become ``https://host[:port]/path`` (only ssh literal git userinfo allowed
+    and removed, host lower-case, every port kept
+    except 443 for https and 22 for ssh, then one trailing ``/`` and one ``.git`` removed, in that order); anything
+    else, and anything that is not canonical after that, is ``local:<name>``. The one canonicaliser every runtime
+    uses; the result passes :func:`check_repo_identity`."""
+    if not raw.isascii() or (raw.startswith("https://") and "@" in raw):
+        return f"local:{name}"
+    m = _RAW_URL.fullmatch(raw)
+    if m:
+        scheme, host, port, path = m.groups()
+        keep = port is not None and port != ("443" if scheme == "https" else "22")
+    else:
+        s = _RAW_SCP.fullmatch(raw)
+        if not s or "://" in raw:
+            return f"local:{name}"
+        host, path = s.groups()
+        port, keep = None, False
+    path = path.removesuffix("/").removesuffix(".git")
+    try:
+        return check_repo_identity(f"https://{host.lower()}{':' + port if keep else ''}/{path}")
+    except HashError:
+        return f"local:{name}"
+
+
 def check_repo_identity(value: object) -> str:
     """Return ``value`` if it is a canonical repo identity (§5.7 "Repo identity"), else raise :class:`HashError`.
 
@@ -778,3 +811,11 @@ def host_signing_bytes(workspace_id: str, log: str, event: Mapping[str, Any]) ->
         if k not in e:
             raise HashError(f"event has no {k!r}: the host signs the full event")
     return signed_context("sig_host_event", workspace_id, log, e)
+
+
+def checkpoint_hash(o: Mapping[str, Any]) -> str:
+    return format_hash(hashlib.sha256(LABELS["h_checkpoint"].encode() + cj_checked(o)).hexdigest())
+
+
+def log_acc(acc: str, head: str) -> str:
+    return format_hash(hashlib.sha256(LABELS["h_log_acc"].encode() + parse_hash(acc) + parse_hash(head)).hexdigest())

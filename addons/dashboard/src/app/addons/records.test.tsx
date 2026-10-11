@@ -66,13 +66,13 @@ describe('records page', () => {
     await waitFor(() => expect(screen.queryByText('Push rejected · pull first')).not.toBeInTheDocument(), T)
     expect(await screen.findByText('Everything is recorded · 1 commit waiting to push', {}, T)).toBeInTheDocument()
   })
-  it('has Pending and History tabs: pending first, history behind', async () => {
+  it('has Pending and Activity tabs: pending first, history behind', async () => {
     const { user } = renderApp('/addon/records/records', { viewer: 'p_sev', setup })
     expect(await screen.findByRole('tab', { name: /^Pending\s*\d+/ }, T)).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('columnheader', { name: 'Events' })).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Record changes' }))
     await waitFor(() => expect(screen.getByRole('tab', { name: /^Pending\s*0/ })).toBeInTheDocument(), T)
-    await user.click(screen.getByRole('tab', { name: /^History\s*\d+/ }))
+    await user.click(screen.getByRole('tab', { name: /^Activity\s*\d+/ }))
     expect((await screen.findAllByText(/ ago by /, {}, T)).length).toBeGreaterThan(0)
     expect(screen.queryByRole('columnheader', { name: 'Events' })).not.toBeInTheDocument()
   })

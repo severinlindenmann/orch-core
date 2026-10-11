@@ -14,23 +14,25 @@ def _handle(ctx: Context, args: dict[str, Any]) -> Result:
     from orch.instructions import stale_findings
     from orch.ops import health
 
-    ws = ctx.workspace or Workspace(ctx.env, ctx.now)
+    ws = ctx.workspace or Workspace(ctx.env, ctx.now, files=ctx.caps.files)
     root = ws.require_root()
-    cfg = _config(root)
+    cfg = _config(root, ctx.caps.files)
     if cfg is None:
         raise OrchError("not_found", "config.json of the workspace is missing or unreadable", hint="orch init")
     wid = cfg["workspace"]["id"]
     lines: list[str] = []
 
     def run() -> list[health.Finding]:
-        found, store = health.inspect(root, wid, ws.state_dir, fast=False, instructions=stale_findings(root))
+        found, store = health.inspect(
+            root, wid, ws.state_dir, fast=False, instructions=stale_findings(root), caps=ctx.caps
+        )
         if store is not None:
             store.close()
         return found
 
     findings = run()
     if args.get("repair") and not ctx.dry_run:
-        did = health.repair(root, wid, ctx.env, findings, ctx.now)
+        did = health.repair(root, wid, ctx.env, findings, ctx.now, ctx.caps)
         lines += [f"repaired: {d}" for d in did]
         findings = run()
     errors = [f for f in findings if f.level == "error"]

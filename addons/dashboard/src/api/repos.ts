@@ -1,5 +1,5 @@
 // The workspace's declared repos (`settings.repos`, ticket format §2) — pure rules the host enforces and the UI reuses.
-// Part of the API contract. A remote is never a secret: one that carries credentials (any userinfo) is refused.
+// Part of the API contract. A remote is never a secret: one that carries credentials (SSH permits only the literal git user) is refused.
 
 /** A repo name as `links.repos` and `settings.repos` spell it (ticket format §10). */
 export const REPO_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/
@@ -10,7 +10,7 @@ const HOST = /^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,252})$/
 /** `git@host:path`, the scp-like SSH spelling: the literal `git` user only, a host that cannot read as an ssh option. */
 const SCP = /^git@([A-Za-z0-9][A-Za-z0-9.-]{0,252}):([A-Za-z0-9_][A-Za-z0-9_./-]{0,500})$/
 
-/** Why a remote URL is refused, or null. HTTPS, `ssh://host/path` or `git@host:path`; never userinfo, query or fragment. */
+/** Why a remote URL is refused, or null. HTTPS, `ssh://host/path` or `git@host:path`; only literal git SSH userinfo, never passwords, query or fragment. */
 export function remoteProblem(value: unknown): string | null {
   if (typeof value !== 'string' || value.length === 0 || value.length > 1000) return 'Write a remote URL (at most 1000 characters).'
   if (!PLAIN.test(value) || value.includes('\\')) return 'Write the remote URL in plain ASCII, without spaces or hidden characters.'
@@ -18,16 +18,16 @@ export function remoteProblem(value: unknown): string | null {
   if (/(^|[/:@])-/.test(value.replace(/^[a-z]+:\/\//, ''))) return 'No part of the remote may start with a dash.'
   if (value.startsWith('git@')) return SCP.test(value) ? null : 'Write an SSH remote as git@host:path (no other user, no password).'
   if (!/^(https|ssh):\/\/[^/]/.test(value)) return 'Use an HTTPS remote, git@host:path, or ssh://host/path.'
-  // Any userinfo, even an empty or percent-encoded one, is refused: credentials never enter a declaration or a signature.
+  // Only literal git@ on SSH is allowed; passwords, empty and encoded userinfo are refused.
   const authority = value.replace(/^[a-z]+:\/\//, '').split('/')[0]
-  if (authority.includes('@')) return 'Embedded credentials or userinfo are not allowed. Use a credential-free remote URL; orch never stores git credentials.'
+  if (authority.includes('@') && !(value.startsWith('ssh://') && authority.startsWith('git@') && authority.indexOf('@') === authority.lastIndexOf('@'))) return 'Embedded credentials or userinfo are not allowed. Use a credential-free remote URL; orch never stores git credentials.'
   let u: URL
   try {
     u = new URL(value)
   } catch {
     return 'Use an HTTPS remote, git@host:path, or ssh://host/path.'
   }
-  if (u.username || u.password) return 'Embedded credentials or userinfo are not allowed.'
+  if ((u.username && !(u.protocol === 'ssh:' && u.username === 'git')) || u.password) return 'Embedded credentials or userinfo are not allowed.'
   if (!HOST.test(u.hostname) && !/^\[[0-9a-f:]+\]$/i.test(u.hostname)) return 'Write a plain host name.'
   if (u.pathname === '/' || u.pathname === '' || u.search || u.hash || value.includes('?') || value.includes('#')) return 'The remote needs a repository path and no query or fragment.'
   return null

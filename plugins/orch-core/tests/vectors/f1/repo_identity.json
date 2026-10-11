@@ -1,6 +1,18 @@
 {
  "mapping": [
   {
+   "canonical": "local:x",
+   "name": "unicode_kelvin_host",
+   "raw": "ssh://git@\u212aost/a",
+   "repo_name": "x"
+  },
+  {
+   "canonical": "local:x",
+   "name": "https_git_user",
+   "raw": "https://git@host/a/b",
+   "repo_name": "x"
+  },
+  {
    "canonical": "https://github.com/acme/x",
    "name": "https_plain",
    "raw": "https://github.com/acme/x",

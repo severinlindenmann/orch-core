@@ -698,11 +698,13 @@ carry `source_sha: []`; a ticket that links a repo must have a non-empty list.
   refused with `gate.stale`), and again at landing.
 - **Repo identity.** From the raw `remote.origin.url`, without `insteadOf` rewriting: `https://` and
   `ssh://`/scp-like forms map to `https://host[:port]/path`, keeping every port except 443 (https) and 22 (ssh),
-  only absent userinfo or the literal user `git` allowed (no password); `git@` removed, host lower-case and nothing
-  else changed, one trailing `/` removed first, then one trailing `.git` (so `x.git/` becomes `x`). Anything else
-  (no remote, `file://`, a path, or userinfo other than literal `git`, including any password) is `local:<repo name>`;
-  so is a remote that is not canonical after this mapping, and a `remote.origin.url` with more than one value (git fetches from the first and pushes to all, so no single identity names the repo; read
-  `git config --get-all`). Nothing is repaired or partly cleaned. The mapped result must match the canonical form
+  only ssh (including scp-like forms) may carry userinfo, and only the literal user `git` (no password).
+  `git@` is removed, host lower-case and nothing else changed, one trailing `/` removed first, then one trailing
+  `.git` (so `x.git/` becomes `x`). Anything else (no remote, `file://`, a path, any https userinfo, or ssh userinfo
+  other than literal `git`, including any password) is `local:<repo name>`; so is any non-ASCII raw remote
+  (checked before lower-casing), a remote that is not canonical after this mapping, and a `remote.origin.url`
+  with more than one value (git fetches from the first and pushes to all, so no single identity names the repo;
+  read `git config --get-all`). Nothing is repaired or partly cleaned. The mapped result must match the canonical form
   exactly (a stored identity that doesn't is **refused, never converted**): host labels `[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?` joined by single dots (at most 253
   characters, no trailing dot; punycode `xn--` allowed; Unicode hosts and IPv6 refused; an all-numeric last label only
   as a plain dotted quad without leading zeros); port `[1-9][0-9]{0,4}` up to 65535, never 443; path segments
@@ -711,6 +713,7 @@ carry `source_sha: []`; a ticket that links a repo must have a non-empty list.
   allowed, a segment that is exactly `.git` is not); ASCII only, no `%`, `?`, `#`, `@` or whitespace. A prompt is refused when two linked repos share an
   identity, compared **ignoring ASCII case** (hosts like GitHub treat `Acme/X` and `acme/x` as one repo); the hashed
   value keeps the raw form.
+- Working copies cloned with token URLs (`https://user:token@…`) get a `local:` identity.
 - Consequences: scp `host:x` (relative to the ssh home) and `ssh://host/x` both map to `https://host/x`; scp
   `host:/abs/path` is `local:<name>` while `ssh://host/abs/path` maps to `https://host/abs/path`.
 - **P1 limit:** the identity is read from a working copy the agent can write, so it protects against mistakes and

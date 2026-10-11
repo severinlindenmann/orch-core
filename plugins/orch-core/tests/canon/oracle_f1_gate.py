@@ -239,8 +239,11 @@ def refs_of(text: str) -> list[str]:
 
 def _map_remote(raw: str, name: str) -> str:
     """From the raw ``remote.origin.url``: https and ssh/scp-like forms become ``https://host[:port]/path`` (only
-    literal git userinfo allowed and removed, host lower-case, port kept except 443 for https and 22 for ssh,
+    literal git userinfo allowed for ssh and removed, host lower-case, port kept except 443 for https and 22 for ssh,
     one trailing ``/`` removed first, then one ``.git``); anything else is ``local:<name>``."""
+    # F1: reject non-ASCII before case folding; https never carries userinfo.
+    if not raw.isascii() or (raw.startswith("https://") and "@" in raw):
+        return f"local:{name}"
     m = re.fullmatch(r"(https|ssh)://(?:git@)?([^/:@]+)(?::([0-9]+))?/(.+)", raw)
     if m:
         scheme, host, port, path = m.groups()

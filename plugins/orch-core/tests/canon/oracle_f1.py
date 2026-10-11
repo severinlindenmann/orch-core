@@ -427,6 +427,8 @@ def repo_identity_vectors() -> dict[str, Any]:
         "local:", "local:a b", "local:a/b", "",
     ]  # fmt: skip
     raw = [  # (name, raw remote.origin.url, repo name): the canonical identity is derived by 5.7, independently
+        ("unicode_kelvin_host", "ssh://git@\u212aost/a", "x"),
+        ("https_git_user", "https://git@host/a/b", "x"),
         ("https_plain", "https://github.com/acme/x", "x"),
         ("https_dot_git", "https://github.com/acme/x.git", "x"),
         ("https_trailing_slash", "https://github.com/acme/x/", "x"),

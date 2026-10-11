@@ -95,12 +95,28 @@ def test_workspace_checkpoint_offers(tmp_path, offer):
 
 
 @pytest.mark.parametrize("o", C["workspace_n_offers"], ids=lambda o: o["name"])
-def test_n_offers_are_signed_and_the_p1_host_never_writes_a_lower_n(tmp_path, o):
-    """Receivers (relay, devices from P3) refuse a lower ``n``; the P1 host only writes its own checkpoints, so here the
-    offers are checked for their signatures and the host is checked never to go below the ``n`` it holds."""
+def test_n_offers_are_signed_and_judged_by_a_receiver(o):
+    """Receivers (the host, the relay, devices) judge a workspace checkpoint against the highest one they hold (§5.10):
+    a higher n without a lower seq is accepted, a lower n without a higher seq is ignored, the rest is diverged."""
     assert cps.verify_object(WSK, o["checkpoint"]) and cps.verify_object(WSK, C["workspace_n_held"])
-    held, offered = C["workspace_n_held"]["o"]["n"], o["checkpoint"]["o"]["n"]
-    assert (offered >= held) == (o["expect"] == "ok")
+    got = cps.judge_offer(
+        C["workspace_n_held"]["o"],
+        o["checkpoint"]["o"],
+        pinned_genesis=C["genesis"],
+        restore=o.get("restore"),
+        applied=o.get("applied", []),
+    )
+    assert got == (o["expect"], o.get("recorded"))
+
+
+def test_a_receiver_accepts_the_first_checkpoint_only_under_the_pinned_genesis():
+    o = C["workspace_n_held"]["o"]
+    assert cps.judge_offer(None, o, pinned_genesis=C["genesis"]) == ("ok", None)
+    assert cps.judge_offer(None, o, pinned_genesis="sha256:" + "00" * 32) == ("trust.genesis_mismatch", None)
+
+
+def test_the_p1_host_never_writes_a_lower_n(tmp_path):
+    held = C["workspace_n_held"]["o"]["n"]
     cp = cps.Checkpoints(tmp_path, W)
     cp._write(cp._workspace_path, C["workspace_n_held"])
     r = cp.write_workspace(sign, C["genesis"], "2026-10-10T10:06:00Z", _logs(C["workspace_log"]["heads"]))
@@ -132,7 +148,8 @@ def test_restore_vectors_through_the_model(sc):
     # ``reader_cannot_see_a_dropped_revocation`` is accepted by a log-only reader (the model) but must be refused by
     # the host (``host_expect``); the host side is test_the_store_re_appends_the_revocation_as_the_vector_says.
     ws, _ = run_scenario(sc)
-    assert len(ws) == (6 if sc["reappends"] else 5)
+    # Scenarios may continue past the restore and its immediate re-appends.
+    assert len(ws) >= (6 if sc["reappends"] else 5)
     assert ws[4]["type"] == "restore" and ws[4]["prev"] == canon.event_head(ws[3])
     assert ws[4]["from_seq"] == 4 and ws[4]["head"] == canon.event_head(ws[3])
     if sc["reappends"]:

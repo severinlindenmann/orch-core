@@ -170,6 +170,10 @@ class _Hint:
     created_at: str | None
 
 
+class LoadBudgetExceeded(Exception):
+    """A best-effort read used its dependency budget."""
+
+
 class Store:
     """A workspace directory. Use :meth:`open`; ``append`` is the only way to add an event.
 
@@ -207,6 +211,7 @@ class Store:
         self.reports: list[Report] = []
         self._logs: dict[str, LogInfo] = {}
         self._loaded: set[str] = set()
+        self._load_budget: int | None = None
         self._state: State | None = None
         self._read_errors: dict[str, str] = {}
         self._diverged: dict[str, Divergence] = {}
@@ -310,6 +315,7 @@ class Store:
             self._loaded |= {m["log"] for _, m in pend if m["log"] != WORKSPACE}
             self._load()
             self._finish_pending(pend)
+            self._finish_applied_checkpoint()
             self._enforce_revocations()
             if self._host is not None:
                 self._after_open_heal(eager)
@@ -343,7 +349,23 @@ class Store:
             if info is None or uid in self._read_errors:
                 return []
             last = info.seq if limit is None else min(info.seq, after + limit)
-            return [self._read_event(uid, n) for n in range(max(after, 0) + 1, last + 1)]
+            return self._read_events(uid, max(after, 0) + 1, last)
+
+    def event_fields_before(self, uid: str, seq: int, names: set[str]) -> dict[str, dict[str, Any]]:
+        """Find the last criteria and tasks before a tail, without replaying the log."""
+        state: dict[str, dict[str, Any]] = {}
+        with self._locked():
+            self._ensure({uid})
+            seq = min(seq, self._logs[uid].seq)
+            while seq > 0 and names - state.keys():
+                first = max(1, seq - 31)
+                for event in reversed(self._read_events(uid, first, seq)):
+                    if event["type"] == "ticket.updated":
+                        for name in names:
+                            if name not in state and f"ticket.{name}" in event.get("set", {}):
+                                state[name] = {x["id"]: x for x in event["set"][f"ticket.{name}"]}
+                seq = first - 1
+        return {"acceptance": {}, "tasks": {}, **state}
 
     @property
     def can_write(self) -> bool:
@@ -360,8 +382,9 @@ class Store:
             if uid is None:
                 raise StoreError("ticket.unknown", ref)
             self._ensure({uid})
-            out = [self._host_append(typ, uid, dict(payload))]
-            return out + self._flush(uid)
+            out = self._flush(uid)
+            out.append(self._host_append(typ, uid, dict(payload)))
+            return out + self._flush(uid, cause="new_commits")
 
     def flush_invalidations(self, ref: str) -> list[dict[str, Any]]:
         """Append a host ``gate.invalidated`` for every gate that still has approvals the model voided without a record
@@ -374,15 +397,38 @@ class Store:
             self._ensure({uid})
             return self._flush(uid)
 
-    def _flush(self, uid: str) -> list[dict[str, Any]]:
+    def replay_invalidations(self, uid: str, note: Callable[[str, str], None]) -> None:
+        """Observe invalidation transitions from the verified logs through the model's replay."""
+        with self._locked():
+            self._ensure({uid})
+            replay(
+                self._read_events(WORKSPACE, 1, self._logs[WORKSPACE].seq),
+                {u: self._read_events(u, 1, self._logs[u].seq) for u in sorted(self._loaded)},
+                verifier=self._verifier,
+                now=self.state.now,
+                expected_workspace_id=self.workspace_id,
+                expected_genesis=self._pin,
+                verb_events=_verb_events(),
+                invalidations=(uid, note),
+            )
+
+    def _flush(self, uid: str, *, cause: str | None = None) -> list[dict[str, Any]]:
         assert self._state is not None
+        from .invalidations import pending_causes
+
+        t = self._state._core.tickets.get(uid)
+        if t is None or not any(g.pending_void for g in t.gates.values()):
+            return []
+        causes = pending_causes(self, uid) if cause is None else dict.fromkeys(t.gates, cause)
         out = []
         for g in ("requirements", "plan", "verify", "code"):
             t = self._state._core.tickets.get(uid)
             ids = sorted(t.gates[g].pending_void) if t is not None else []
             if ids:
-                cause = "new_commits" if g in ("verify", "code") else "content_changed"
-                out.append(self._host_append("gate.invalidated", uid, {"gate": g, "cause": cause, "voided": ids}))
+                reason = causes.get(g)
+                if reason is None:
+                    raise StoreError("store.torn_write", f"cannot recover the invalidation cause for {uid} {g}")
+                out.append(self._host_append("gate.invalidated", uid, {"gate": g, "cause": reason, "voided": ids}))
         return out
 
     def attempt_logged(self, ref: str, idem: str) -> bool:
@@ -548,6 +594,7 @@ class Store:
         limit = int(self._clock()) + FUTURE_SLACK
         best: tuple[int, int, str, int] | None = None
         for uid, h in self._hints.items():
+            self._spend_load()
             hit = self._last_ok.get(uid)
             if hit is None or hit[0] != h.sig:
                 pos = None
@@ -605,6 +652,7 @@ class Store:
             uid = todo.pop()
             if uid in tickets:
                 continue
+            self._spend_load()
             info = LogInfo(uid, safe_join(self.root, f"tickets/{uid}/events.jsonl"))
             tickets[uid] = read_new_lines(info)
             self._logs[uid] = info
@@ -702,6 +750,25 @@ class Store:
             self._loaded |= need
             self._load()
             self._enforce_revocations()
+
+    @contextlib.contextmanager
+    def load_budget(self, limit: int) -> Iterator[None]:
+        """Bound ticket reads and creation checks for an optional hint; restore state on exhaustion."""
+        saved = {**self.__dict__, "_loaded": set(self._loaded)}
+        self._load_budget = limit
+        try:
+            yield
+        except LoadBudgetExceeded:
+            self.__dict__.update(saved)
+            raise
+        finally:
+            self._load_budget = saved["_load_budget"]
+
+    def _spend_load(self) -> None:
+        if self._load_budget is not None:
+            if self._load_budget <= 0:
+                raise LoadBudgetExceeded
+            self._load_budget -= 1
 
     def load(self, uids: Iterable[str]) -> None:
         """Replay and check these tickets in one go (one at a time each load replays everything loaded again)."""
@@ -860,6 +927,7 @@ class Store:
                 self._report("store.torn_write", f"event {m['id']} is not in the verified part of {log}", log)
                 shutil.rmtree(d, ignore_errors=True)
                 continue
+            self._finish_applied_checkpoint()
             torn = self._install(m, d, check=self._expected_bytes)
             for rel in torn:
                 self._torn.add(rel)
@@ -989,6 +1057,7 @@ class Store:
             self._unverified = set(self._hints)
             return out
         for uid, h in self._hints.items():
+            self._spend_load()
             hit = self._created_ok.get(uid)
             if hit is None or hit[0] != h.sig:
                 hit = None
@@ -1151,13 +1220,31 @@ class Store:
             check_uid(log)
         if self._host is None:
             raise StoreError("store.read_only", "no workspace key signer: this store can only read")
+        self._finish_applied_checkpoint()
         if log in self._read_errors:
             raise StoreError("chain.broken", f"{log}: {self._read_errors[log]}")
         if WORKSPACE in self._read_errors:
             raise StoreError("chain.broken", f"workspace: {self._read_errors[WORKSPACE]}")
+        # NOTE: despite the name this also *writes*: it finishes a restore's pending device.revoked re-appends first
+        if log != WORKSPACE and self._pending_revs:  # §5.10: no ticket event may name the restore's window
+            self._enforce_revocations()
+            if self._pending_revs:
+                raise StoreError("store.torn_write", "a restore's device.revoked re-appends are not all written yet")
+        if typ != "restore" and self._missing_checkpoint(log):
+            raise StoreError("checkpoint.missing", f"{log}: missing checkpoint is not explained by the last append")
         d = self._diverged.get(log) or (self._diverged.get(WORKSPACE) if log != WORKSPACE else None)
         if d is not None and not (typ == "restore" and d.log == log):
             raise StoreError("chain.diverged", f"{d.log}: {d.detail} (an owner-signed restore is needed)")
+
+    def _missing_checkpoint(self, log: str) -> bool:
+        info = self._logs.get(log)
+        return bool(
+            log != WORKSPACE
+            and info is not None
+            and info.seq
+            and self._checkpoints.ticket(log) is None
+            and not self.repairable_checkpoint(log)
+        )
 
     def _envelope(self, event: dict[str, Any], log: str) -> dict[str, Any]:
         bad = [k for k in _HOST_FIELDS if k in event]
@@ -1200,6 +1287,8 @@ class Store:
         host_event = isinstance(actor, dict) and actor.get("kind") == "host"
         if not self._healing:
             self._ensure_for(e, log)
+        if typ != "restore" and self._missing_checkpoint(log):
+            raise StoreError("checkpoint.missing", f"{log}: missing checkpoint is not explained by the last append")
         if idem is not None:
             dup = self._idem_hit(idem, log, e)
             if dup is not None:
@@ -1599,26 +1688,75 @@ class Store:
         assert self._host is not None
         if state.workspace.genesis is None or self._logs[WORKSPACE].seq == 0:
             return
-        if self._checkpoints.write_workspace(self._host.sign, state.workspace.genesis, at_, self._logs) == "diverged":
+        # Do not certify a rolled-back head just because its ticket checkpoint was deleted.
+        logs = {uid: info for uid, info in self._logs.items() if not self._missing_checkpoint(uid)}
+        if self._checkpoints.write_workspace(self._host.sign, state.workspace.genesis, at_, logs) == "diverged":
             self._diverged[WORKSPACE] = Divergence(
                 WORKSPACE, self._logs[WORKSPACE].seq, "a checkpoint at this height has another head"
             )
         self._ticket_appends_since_cp = 0
 
+    def repairable_checkpoint(self, uid: str) -> bool:
+        """Only the last recorded append can have crashed before its checkpoint write."""
+        info = self._logs.get(uid)
+        applied = self._read_applied()
+        cp = self._checkpoints.workspace()
+        if info is None or not info.seq or cp is None:
+            return False
+        floor = cp.get("o", {}).get("tickets", {}).get(uid, {}).get("seq", 0)
+        return (
+            applied.get("log") == uid
+            and applied.get("seq") == info.seq
+            and info.seq >= floor
+            and applied.get("id") == self._read_event(uid, info.seq)["id"]
+        )
+
+    def repair_checkpoints(self) -> None:
+        """Fill only a missing checkpoint explained by the last recorded append."""
+        with self._locked():
+            self._finish_applied_checkpoint()
+
+    def _finish_applied_checkpoint(self) -> None:
+        """Finish the last append's missing ticket checkpoint before its crash evidence moves on."""
+        if self._host is None:
+            return
+        uid = self._read_applied().get("log")
+        if not isinstance(uid, str) or not _ULID.fullmatch(uid) or self._checkpoints.ticket(uid) is not None:
+            return
+        if uid not in self._exists:
+            self._scan_dirs()  # another writer may have created the ticket since this store opened
+        if uid not in self._exists:
+            return
+        if uid not in self._loaded:
+            self._loaded.add(uid)
+            self._load()  # no healing or revocation appends until this checkpoint is finished
+        if self._state is None or self._diverged or self.chain_errors() or self._state.workspace.invalid:
+            return
+        view = self._state.tickets.get(uid)
+        if view is None or view.frozen or not self.repairable_checkpoint(uid):
+            return
+        info = self._logs[uid]
+        self._checkpoints.write_ticket(self._host.sign, uid, info.seq, info.head or "", self._now())
+
     def checkpoint(self) -> None:
-        """Write the workspace checkpoint now (and a ticket checkpoint for every log that has none yet)."""
+        """Write the workspace checkpoint and finish crash-repairable ticket checkpoints."""
         with self._locked():
             self._checkpoint_all()
 
     def _checkpoint_all(self) -> None:
         if self._host is None or self._state is None or self._state.workspace.genesis is None or self._diverged:
             return
+        if self.chain_errors() or self._state.workspace.invalid:
+            return
         at_ = self._now()
         for uid, info in self._logs.items():
             if uid == WORKSPACE or not info.seq or info.error:
                 continue
+            view = self._state.tickets.get(uid)
+            if view is None or view.frozen:
+                continue
             cp = self._checkpoints.ticket(uid)
-            if cp is None or "o" not in cp or cp["o"]["seq"] != info.seq:
+            if (cp is None or "o" not in cp or cp["o"]["seq"] != info.seq) and self.repairable_checkpoint(uid):
                 self._checkpoints.write_ticket(self._host.sign, uid, info.seq, info.head or "", at_)
         self._write_workspace_checkpoint(at_, self._state)
 
@@ -1705,11 +1843,21 @@ class Store:
         return None
 
     def _read_event(self, log: str, seq: int) -> dict[str, Any]:
+        return self._read_events(log, seq, seq)[0]
+
+    def _read_events(self, log: str, first: int, last: int) -> list[dict[str, Any]]:
+        """The events ``first`` to ``last`` of ``log``, with one open: each line is read at its verified offset (seek,
+        do not scan the log)."""
+        if first > last:
+            return []
         info = self._logs[log]
         fd = open_nofollow(self._path_of(log), os.O_RDONLY)
-        with os.fdopen(fd, "rb") as f:  # the line offsets come from the verified read: seek, do not scan the log
-            f.seek(info.starts[seq - 1])
-            return canon.parse_event_line(f.readline(MAX_LINE + 1))
+        out = []
+        with os.fdopen(fd, "rb") as f:
+            for seq in range(first, last + 1):
+                f.seek(info.starts[seq - 1])
+                out.append(canon.parse_event_line(f.readline(MAX_LINE + 1)))
+        return out
 
     def _idem_intent(self, idem: str, log: str, event_id: str) -> None:
         write_atomic(self._intent_path(idem), json.dumps({"log": log, "id": event_id}).encode("utf-8"), mode=0o600)
@@ -1971,8 +2119,8 @@ class Store:
 
     def restore_facts(self, log: str) -> dict[str, Any]:
         """What an owner needs to sign ``restore`` for ``log``: the last event on disk (``from_seq``, ``head``), the
-        highest checkpoint above it (``abandoned``, or None) and the signed decisions the host still knows of in the
-        part it archived with :meth:`abandon_tail` (``abandoned_decisions``)."""
+        highest checkpoint above it (``abandoned``, or None) and the ids of every person-signed event (actor P) the host
+        still knows of in the part it archived with :meth:`abandon_tail` (``abandoned_decisions``)."""
         info = self._logs.get(log)
         if info is None:
             raise StoreError("validation.log", f"unknown log {log}")
@@ -1995,7 +2143,7 @@ class Store:
             for line in p.read_bytes().splitlines():
                 with contextlib.suppress(canon.HashError, KeyError):
                     e = canon.parse_event_line(line + b"\n")
-                    if e["type"] in ("gate.approved", "gate.changes_requested", "verdict.given", "question.answered"):
+                    if e["actor"]["kind"] == "person":  # §5.10: every person-signed event of the given-up part
                         decisions.append(e["id"])
         return {
             "from_seq": info.seq,
@@ -2058,20 +2206,21 @@ class Store:
     def _enforce_revocations(self) -> None:
         """Re-append the revocations of :meth:`_revocation_plan` (host actor, allowed by the embedded revocation, §5.3).
         A read-only store cannot: it marks the workspace diverged instead."""
-        todo, self._pending_revs = self._pending_revs, []
-        if not todo or self._healing:
+        if not self._pending_revs or self._healing:
             return
         if self._host is None:
             self._diverged.setdefault(
                 WORKSPACE, Divergence(WORKSPACE, self._logs[WORKSPACE].seq, "a restore lacks noted revocations")
             )
             return
-        for rec in todo:
+        for rec in list(self._pending_revs):  # kept until each is written: a failure leaves the rest pending
             dev = self._state.workspace.devices.get(rec["device"]) if self._state else None
             if dev is None or dev.revoked:
+                self._pending_revs.remove(rec)
                 continue
             self._host_append(
                 "device.revoked",
                 WORKSPACE,
                 {"device": rec["device"], "reason": rec["reason"], "revocation": rec["revocation"]},
             )
+            self._pending_revs.remove(rec)

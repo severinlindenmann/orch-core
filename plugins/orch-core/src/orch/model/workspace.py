@@ -8,11 +8,10 @@ restore) are applied to every ticket in the same step, with one ``settle`` each,
 from __future__ import annotations
 
 import copy
-import posixpath
 from collections.abc import Callable
 from typing import Any
 
-from orch.canon import HashError, event_head
+from orch.canon import HashError, check_repo_identity, event_head, same_repo_identity
 
 from . import addon_rules, authz, generations, policies
 from .codes import Code, Refusal
@@ -61,9 +60,17 @@ def genesis(core: Core, e: dict[str, Any], v: Verifier, expected: str | None) ->
     if expected is not None and head is not None and head != expected:
         return Refusal(Code.TRUST_GENESIS_MISMATCH, "the genesis differs from the pinned one")
     cert = e["device_cert"]
-    if (r := authz.device_valid(None, cert, ts(e["at"]), False)) is not None:
-        return r
+    # check 5 (§5.11): the certificate is valid at this `at` with `operate` (the genesis installs members, policies and
+    # settings), whatever device_valid says about it; every failure of checks 1, 2, 3 and 5 is genesis.invalid
+    if authz.device_valid(None, cert, ts(e["at"]), True) is not None or a["device"] != "d_" + cert["o"]["device_id"]:
+        return Refusal(
+            Code.GENESIS_INVALID, "the genesis device certificate is expired, lacks `operate` or has a drop: scope"
+        )
     if not v.verify_embedded(e, pk_pub=e["owner"]["pk_pub"]):
+        # the verifier reports the first failing check: checks 1, 2, 3 and 5 are genesis.invalid, check 6 sig.invalid
+        why = v.genesis_failure(e)
+        if why == "genesis.bad_sig":
+            return Refusal(Code.SIG_INVALID, "genesis signature does not verify")
         return Refusal(Code.GENESIS_INVALID, "delegation or device certificate does not verify")
     if "sig" not in e or not v.verify_person(e, SigContext(e["workspace_id"], WORKSPACE, cert)):
         return Refusal(Code.SIG_INVALID, "genesis signature does not verify")
@@ -213,10 +220,17 @@ def settings_changed(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
         if v is None:
             repos.pop(name, None)
         else:
-            repos[name] = v["path"]
-    paths = [posixpath.normpath(p) for p in repos.values()]
-    if len(set(paths)) != len(paths):
-        return Refusal(Code.SETTINGS_INVALID, "two repos resolve to the same path")
+            if "remote" in v:
+                try:
+                    check_repo_identity(v["remote"])
+                except HashError as exc:
+                    return Refusal(Code.SETTINGS_INVALID, str(exc))
+                if v["remote"].startswith("local:") and v["remote"] != f"local:{name}":
+                    return Refusal(Code.SETTINGS_INVALID, "local remote must name its own repo")
+            repos[name] = copy.deepcopy(v)
+    remotes = [p["remote"] for p in repos.values() if "remote" in p]
+    if any(same_repo_identity(a, b) for i, a in enumerate(remotes) for b in remotes[i + 1 :]):
+        return Refusal(Code.SETTINGS_INVALID, "two repos declare the same identity")
     ws.repos = repos
     for k in ("grant_hours", "claim_ttl_min", "lease_ttl_min"):
         if k in s:
@@ -270,6 +284,8 @@ def addon_event(core: Core, e: dict[str, Any]) -> Refusal | None:
         return Refusal(Code.ADDON_UNKNOWN, name)
     named = generations.addon_binds_gates(old.binds if old else None)  # the gates it named before
     if typ == "addon.granted":
+        if (r := addon_rules.check_headings(name, e["sections"], ws.addons)) is not None:
+            return r
         new = Addon(
             name,
             e["version"],

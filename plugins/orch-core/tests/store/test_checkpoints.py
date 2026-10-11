@@ -260,3 +260,76 @@ def test_a_revocation_for_a_device_the_restored_chain_never_had_is_skipped(env, 
     facts = s.restore_facts("workspace")
     s.append(env.person_event(env.owner, "workspace", "restore", **facts, reason="x"), log="workspace")
     assert env.read_events("workspace")[-1]["type"] == "restore"  # nothing to revoke: the device was never added
+
+
+@pytest.mark.parametrize("host", [True, False])
+def test_missing_checkpoint_repair_requires_the_host_and_a_verified_log(env, host):
+    store = env.bootstrap()
+    uid = env.new_ticket()
+    env.log(uid, "original")
+    store.close()
+    path = env.root / ".state" / "checkpoints" / f"ticket-{uid}.json"
+    path.unlink()
+    if host:
+        log = env.path(uid, "events.jsonl")
+        log.write_bytes(log.read_bytes().replace(b"original", b"tampered"))
+    store = env.open(host=env.signer if host else None)
+    store.repair_checkpoints()
+    assert not path.exists()
+
+
+@pytest.mark.parametrize("load", ["all", "lazy"])
+@pytest.mark.parametrize("rollback", [False, True])
+def test_checkpoint_only_finishes_the_recorded_append(env, load, rollback):
+    from orch.ops.health import _checkpoints
+
+    store = env.bootstrap()
+    uid = env.new_ticket()
+    env.log(uid, "last append")
+    store.close()
+    path = env.root / ".state" / "checkpoints" / f"ticket-{uid}.json"
+    path.unlink()
+    if rollback:
+        log = env.path(uid, "events.jsonl")
+        log.write_bytes(b"".join(log.read_bytes().splitlines(keepends=True)[:-1]))
+    store = env.open(load=load)
+    if load == "lazy":
+        store.ticket(uid)
+        store.checkpoint()
+    assert path.exists() is not rollback
+    findings = _checkpoints(store, host_here=True)
+    assert any(f.code == "checkpoint.missing" for f in findings) is rollback
+
+
+@pytest.mark.parametrize("load", ["all", "lazy"])
+@pytest.mark.parametrize("applied_elsewhere", [False, True])
+def test_rollback_with_deleted_checkpoint_cannot_be_laundered_by_append(env, load, applied_elsewhere):
+    from orch.ops.health import _checkpoints
+
+    store = env.bootstrap()
+    uid = env.new_ticket()
+    env.log(uid, "last append")
+    if applied_elsewhere:
+        env.new_ticket()
+    store.close()
+    checkpoint = env.root / ".state" / "checkpoints" / f"ticket-{uid}.json"
+    checkpoint.unlink()
+    log = env.path(uid, "events.jsonl")
+    rolled_back = b"".join(log.read_bytes().splitlines(keepends=True)[:-1])
+    log.write_bytes(rolled_back)
+    store = env.open(load=load)
+    store.ticket(uid)
+    assert not store.repairable_checkpoint(uid)
+    store.checkpoint()
+    assert uid not in json.loads((env.root / ".state/checkpoints/workspace.json").read_bytes())["o"]["tickets"]
+    with pytest.raises(StoreError) as exc:
+        env.log(uid, "must not hide the rollback")
+    assert exc.value.code == "checkpoint.missing"
+    assert log.read_bytes() == rolled_back
+    assert not checkpoint.exists()
+    assert any(f.code == "checkpoint.missing" for f in _checkpoints(store, host_here=True))
+    store.close()
+    store = env.open(load=load)
+    store.ticket(uid)
+    assert not store.repairable_checkpoint(uid)
+    assert any(f.code == "checkpoint.missing" for f in _checkpoints(store, host_here=True))

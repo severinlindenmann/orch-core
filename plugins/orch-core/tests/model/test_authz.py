@@ -534,7 +534,7 @@ def test_events_without_signatures_are_refused_not_skipped():
     nosig = {k: v for k, v in e.items() if k != "sig"}
     w.tl[uid][-1] = nosig
     s = w.state()
-    assert [i.code for i in s._core.logs[uid].invalid] == ["sig.invalid"]
+    assert [(c.log, c.code) for c in s.chain_errors] == [(uid, "chain.broken")]  # §5.5: breaks the chain on replay
     w2 = World(validate=False).bootstrap()
     nohost = {k: v for k, v in w2.ws[0].items() if k != "host_sig"}
     w2.ws[0] = nohost
@@ -571,7 +571,7 @@ def test_replay_and_admit_verify_the_same_person_signature(w):
     assert admit(w.state(), e, log=uid).code == Code.SIG_INVALID
     e["host_sig"] = "x"
     w.tl[uid].append(e)
-    assert [i.code for i in w.state()._core.logs[uid].invalid] == ["sig.invalid"]
+    assert [(c.log, c.code) for c in w.state().chain_errors] == [(uid, "chain.broken")]  # §5.5: not an authz failure
 
 
 def test_status_transitions_are_person_gated_and_workers_do_not_change_them(w):
@@ -623,3 +623,19 @@ def test_grant_verbs_by_operation_can_only_narrow():
     for human_only in ("gate.approved", "verdict.given", "ticket.closed", "grant.issued", "question.answered"):
         assert check_actor_kind({"type": human_only, "actor": agent}) is not None  # ... and never a person's action
     assert verb_covers("log.added", ["log.added"], None)  # without a table (a model test) names are event types
+
+
+def test_replay_refuses_noncanonical_stored_remote(w):
+    e = w.settings(repos={"repo": {"path": "../repo", "remote": "https://host/a/b"}})
+    e["set"]["repos"]["repo"]["remote"] = "https://HOST/a/b"
+    w.settings(grant_hours=4)
+    state = w.state()
+    assert [(i.seq, i.code) for i in state.chain_errors] == [(e["seq"], "chain.broken")]
+    assert not state.workspace.invalid
+    assert state.workspace.settings["grant_hours"] == 8
+    assert not state.workspace.repos
+
+
+def test_repo_metadata_still_requires_the_owner(w):
+    entry = {"path": "../repo", "remote": "https://host/a/b", "default_branch": "main"}
+    assert refused(w, "workspace", "settings.changed", "mara", set={"repos": {"repo": entry}}) == Code.ROLE_DENIED

@@ -272,7 +272,8 @@
         "policy_changed",
         "member_changed",
         "device_compromised",
-        "conflict_resolved"
+        "conflict_resolved",
+        "restored"
       ]
     },
     "revokeReason": {
@@ -351,7 +352,8 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 250,
-      "description": "a git ref name (checked by validate())"
+      "description": "a git branch name: no leading -, HEAD, @, refs/ prefix or Unicode 16.0 Cc/Cf/Co/Zs/Zl/Zp/Cn characters, leading M* mark, variation selectors or named invisible look-alikes (F1 §2) (checked by validate())",
+      "pattern": "^(?!-|refs/|(?:HEAD|@)(?![\\s\\S]))[\\s\\S]*(?![\\s\\S])"
     },
     "httpsUrl": {
       "type": "string",

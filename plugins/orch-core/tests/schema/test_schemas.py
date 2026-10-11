@@ -908,6 +908,7 @@ def test_host_events():
         "member_changed",
         "device_compromised",
         "conflict_resolved",
+        "restored",
     ):
         V("event", ev("gate.invalidated", cause=c), log="ticket")
     bad("event", ev("gate.invalidated", gate="deploy"), "/gate")
@@ -1609,6 +1610,10 @@ DOC_NON_EVENTS = {
     "settings.repos", "ticket.acceptance", "ticket.addons", "ticket.json", "ticket.key", "ticket.links",
     "ticket.questions", "ticket.schema", "ticket.size", "ticket.tasks", "ticket.title", "ticket.type", "ticket.uid",
     "ticket.visibility",
+    # refusal codes of the §5.11 refusal order
+    "addon.field_unknown", "addon.value_invalid", "device.invalid", "device.scope", "gate.invalidated_mismatch",
+    "gate.not_applicable", "gate.not_eligible", "gate.status", "grant.invalid", "grant.scope", "member.unknown",
+    "role.denied", "ticket.exists", "ticket.not_visible", "ticket.unknown",
 }  # fmt: skip
 
 
@@ -1824,7 +1829,7 @@ def test_addon_sections_are_named_in_full_with_the_addons_prefix():
     V("event", mut(A, lambda e: e["sections"][0].update(id="estimate.more_notes")))
     bad(
         "event",
-        mut(A, lambda e: e["sections"].append({"id": "x.y", "types": ["bug"]})),
+        mut(A, lambda e: e["sections"].append({"id": "x.y", "types": ["bug"], "heading_key": "xy"})),
         "/sections/1/id",
     )
 
@@ -2198,3 +2203,148 @@ def test_event_schemas_repeat_the_envelope_of_event_json():
         assert set(env["required"]) <= set(s["required"]), t
         assert s["allOf"][: len(env["allOf"])] == env["allOf"], t
         assert s["additionalProperties"] is False, t
+
+
+@pytest.mark.parametrize("remote", ["https://host/a/b", "https://host:8443/Acme/X", "local:repo"])
+def test_repo_settings_optional_fields(remote):
+    entry = {"path": "../repo", "remote": remote, "default_branch": "release/next"}
+    V("event", ev("settings.changed", set={"repos": {"repo": entry}}), log="workspace")
+    V("workspace", mut(ex.WORKSPACE, lambda o: o["settings"].update(repos={"repo": entry})))
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("remote", "https://HOST/a/b"),
+        ("remote", "https://host/a/b.git"),
+        ("remote", "https://host:443/a/b"),
+        ("remote", "https://host/a/../b"),
+        ("remote", "ssh://git@host/a/b"),
+        ("remote", "ssh://alice@host/a/b"),
+        ("remote", "ssh://git:pw@host/a/b"),
+        ("remote", "alice@host:a/b"),
+        ("remote", "https://git@host/a/b"),
+        ("remote", "https://alice@host/a/b"),
+        ("remote", "https://git:pw@host/a/b"),
+        ("default_branch", "bad..branch"),
+        ("default_branch", "branch.lock"),
+        ("default_branch", "has space"),
+        ("default_branch", ""),
+    ],
+)
+def test_repo_settings_refuse_invalid_fields(field, value):
+    entry = {"path": "../repo", field: value}
+    bad("event", ev("settings.changed", set={"repos": {"repo": entry}}), f"/set/repos/repo/{field}")
+    bad(
+        "workspace",
+        mut(ex.WORKSPACE, lambda o: o["settings"].update(repos={"repo": entry})),
+        f"/settings/repos/repo/{field}",
+    )
+
+
+@pytest.mark.parametrize("key", ["", "EchoNotes", "echo-notes", "echo notes", "plan", "x" * 41])
+def test_addon_heading_keys_are_canonical_and_not_core(key):
+    bad(
+        "event",
+        mut(ex.EVENTS["addon.granted"], lambda e: e["sections"][0].update(heading_key=key)),
+        "/sections/0/heading_key",
+    )
+
+
+def test_addon_heading_keys_are_required_and_unique():
+    event = ex.EVENTS["addon.granted"]
+    bad("event", mut(event, lambda e: e["sections"][0].pop("heading_key")), "/sections/0", "heading_key")
+    bad(
+        "event",
+        mut(event, lambda e: e["sections"].append({**e["sections"][0], "id": "estimate.other"})),
+        "/sections/1/heading_key",
+        "taken",
+    )
+
+
+@pytest.mark.parametrize(
+    "branch",
+    [
+        "-x",
+        "HEAD",
+        "@",
+        "refs/heads/main",
+        "a\u202eb",
+        "a\u0085b",
+        "a\u200db",
+        "a\U00013439b",
+        *[
+            f"a{c}b"
+            for c in (
+                " \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006"
+                "\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000"
+            )
+        ],
+        "a\u0378b",
+        "a\U0001e6c0b",
+        *[
+            "a" + chr(cp) + "b"
+            for cp in (
+                0x034F,
+                0x115F,
+                0x1160,
+                0x3164,
+                0xFFA0,
+                0x2800,
+                *range(0xFE00, 0xFE10),
+                *range(0xE0100, 0xE01F0),
+                *range(0x180B, 0x1810),
+                *range(0x17B4, 0x17B6),
+                0xE000,
+                0xF8FF,
+                0xF0000,
+                0xFFFFD,
+                0x100000,
+                0x10FFFD,
+            )
+        ],
+        *[chr(cp) + "branch" for cp in (0x0301, 0x0903, 0x20DD, 0x10D69)],
+    ],
+)
+def test_shared_branch_rule(branch):
+    bad(
+        "event",
+        ev("settings.changed", set={"repos": {"repo": {"path": "../repo", "default_branch": branch}}}),
+        "/set/repos/repo/default_branch",
+    )
+    bad("ticket", mut(ex.TICKET, lambda o: o["links"]["branches"].update(repo=branch)), "/links/branches/repo")
+    bad("event", mut(ex.EVENTS["branch.pushed"], lambda e: e.update(ref="refs/heads/" + branch)), "/ref")
+
+
+def test_branch_assignment_uses_unicode_16():
+    # U+1C89 was assigned in 16.0; older runtime Unicode tables must not refuse it.
+    branch = "a\u1c89b"
+    V("ticket", mut(ex.TICKET, lambda o: o["links"]["branches"].update(repo=branch)))
+    V("event", ev("settings.changed", set={"repos": {"repo": {"path": "../repo", "default_branch": branch}}}))
+
+
+@pytest.mark.parametrize("left,right", [("Stra\u00dfe", "STRASSE"), ("\ua7cb", "\u0264"), ("\u1c89", "\u1c8a")])
+def test_repo_paths_fold_only_ascii(left, right):
+    schema.validate_settings({"repos": {"a": {"path": "../" + left}, "b": {"path": "../" + right}}})
+
+
+def test_repo_paths_collapse_leading_double_slash():
+    with pytest.raises(SchemaError, match="same path"):
+        schema.validate_settings({"repos": {"a": {"path": "//repo"}, "b": {"path": "/repo"}}})
+
+
+def test_settings_validate_the_resulting_repos_once(monkeypatch):
+    calls = []
+    original = schema._check_repos
+
+    def check(name, path, repos):
+        calls.append(repos)
+        original(name, path, repos)
+
+    monkeypatch.setattr(schema, "_check_repos", check)
+    schema.validate_settings({"repos": {"a": None, "A": {"path": "../a"}}}, repos={"a": {"path": "../a"}})
+    assert calls == [{"a": None, "A": {"path": "../a"}}]
+
+
+def test_heading_keys_fold_only_ascii():
+    assert schema.heading_key("Stra\u00dfe") != schema.heading_key("STRASSE")

@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import copy
 import dataclasses
-from collections.abc import Iterable, Mapping
+import heapq
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any
 
 from . import engine, visibility
-from .codes import OK, Code, Ok, Refusal
+from .codes import OK, Ok, Refusal
 from .engine import Ctx, apply_event
 from .types import WORKSPACE, Core, ts
 from .verifier import Verifier
@@ -64,9 +65,7 @@ class State:
 
 def _errors(core: Core) -> tuple[ChainError, ...]:
     return tuple(
-        ChainError(log, lc.seq + 1, Code.CHAIN_BROKEN.value, lc.broken)
-        for log, lc in sorted(core.logs.items())
-        if lc.broken
+        ChainError(log, lc.seq + 1, lc.broken_code, lc.broken) for log, lc in sorted(core.logs.items()) if lc.broken
     )
 
 
@@ -85,6 +84,7 @@ def replay(
     expected_workspace_id: str,
     expected_genesis: str | None = None,
     verb_events: Mapping[str, Iterable[str]] | None = None,
+    invalidations: tuple[str, Callable[[str, str], None]] | None = None,
 ) -> State:
     """Derive the state from the parsed events of the workspace log and the ticket logs (schema-valid).
 
@@ -94,19 +94,37 @@ def replay(
     this order is the append order. ``expected_workspace_id`` and ``expected_genesis`` are the store's pins (from
     ``config.json`` and the host state dir); a genesis that does not match is refused before it is trusted.
     ``now`` is a timestamp string (the model reads no clock); it decides what is live in the views.
+    ``invalidations`` optionally observes only new pending voids for one ticket as ``(gate, event type)``.
     Events that fail authorization are absent for state and reported (``workspace.invalid``,
     the tickets' ``frozen``); a broken chain stops that log (``chain_errors``).
     """
     ctx = Ctx(verifier, expected_workspace_id, expected_genesis, verb_events=verb_events)
     core = Core()
-    merged: list[tuple[tuple[int, int, int, str, int], str, dict[str, Any]]] = [
-        ((e["seq"], 0, 0, "", e["seq"]), WORKSPACE, e) for e in workspace_events
+    workspace_events = list(workspace_events)
+    scan = Core()  # §5.10: which workspace seqs a ticket event may not name, known before the tickets are walked
+    for e in workspace_events:
+        engine.note_restore_window(scan, e)
+    core.rwin_forbidden = scan.rwin_forbidden
+    # Each log's lines are walked in file order, never sorted (§5.5 Reading); the logs are merged by the key below.
+    # ``heapq.merge`` only picks the smallest head, so a line out of place in its log stays out of place and breaks it.
+    streams = [
+        [((e["seq"], 0, 0, "", e["seq"]), WORKSPACE, e) for e in workspace_events],
+        *(
+            [((e["ws_seq"], 1, ts(e["at"]), uid, e["seq"]), uid, e) for e in events]
+            for uid, events in ticket_logs.items()
+        ),
     ]
-    for uid, events in ticket_logs.items():
-        merged += [((e["ws_seq"], 1, ts(e["at"]), uid, e["seq"]), uid, e) for e in events]
-    merged.sort(key=lambda x: x[0])
-    for _, log, e in merged:
+    pending: dict[str, set[str]] = {}
+    for _, log, e in heapq.merge(*streams, key=lambda x: x[0]):
         apply_event(core, log, e, ctx, commit=True)
+        if invalidations is not None:
+            uid, note = invalidations
+            ticket = core.tickets.get(uid)
+            if ticket is not None:
+                for gate, value in ticket.gates.items():
+                    if value.pending_void - pending.get(gate, set()):
+                        note(gate, e["type"])
+                    pending[gate] = set(value.pending_void)
     return _build(core, ctx, now)
 
 
@@ -138,6 +156,8 @@ def _fork(core: Core) -> Core:
         created_at=core.created_at,
         last_pos=core.last_pos,
         logs=dict(core.logs),
+        rwin_forbidden=set(core.rwin_forbidden),
+        rwin_last=core.rwin_last,
     )
 
 

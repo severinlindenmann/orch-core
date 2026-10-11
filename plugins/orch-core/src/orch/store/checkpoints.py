@@ -16,7 +16,7 @@ missing ticket log). The store then refuses new events on that log until a ``res
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -27,7 +27,7 @@ from .fsio import loads, read_or_none, write_atomic
 from .logs import WORKSPACE, LogInfo
 from .paths import ULID, check_uid
 
-__all__ = ["Checkpoints", "Divergence", "find_divergence", "verify_object"]
+__all__ = ["Checkpoints", "Divergence", "find_divergence", "judge_offer", "verify_object"]
 
 LABEL = canon.LABELS["sig_checkpoint"].encode("ascii")
 WORKSPACE_EVERY = 50  # ticket appends between workspace checkpoints
@@ -39,6 +39,75 @@ class Divergence:
     seq: int
     detail: str
     code: str = "chain.diverged"
+
+
+def _heights(o: Mapping[str, Any]) -> dict[str, tuple[int, str]]:
+    out = {WORKSPACE: (o["workspace_log"]["seq"], o["workspace_log"]["head"])}
+    out.update({uid: (t["seq"], t["head"]) for uid, t in o["tickets"].items()})
+    return out
+
+
+def judge_offer(
+    held: Mapping[str, Any] | None,
+    offered: Mapping[str, Any],
+    *,
+    pinned_genesis: str,
+    restore: Mapping[str, Any] | None = None,
+    applied: Collection[str] = (),
+) -> tuple[str, str | None]:
+    """How a receiver (the host, the relay, a device) treats a workspace checkpoint ``offered`` to it when it already
+    holds ``held`` (§5.10 "Receivers"; both are the ``o`` objects, signatures already verified). Returns
+    ``(verdict, restore_id)``: the verdict is ``"ok"`` (accept and replace the held one), ``"ignored"`` (a stale
+    delivery, no alarm), ``"chain.diverged"`` (stop) or ``"trust.genesis_mismatch"``; ``restore_id`` is the id the
+    receiver must record as applied when a restore made the offer acceptable, else ``None``. No P1 caller yet: the
+    host, relay and devices that receive offers come later; this is pinned by checkpoint.json.
+
+    The first checkpoint is accepted when its genesis is the pin. After that: a higher ``n`` with no lower ``seq`` is
+    accepted (gaps in ``n`` are normal); a lower ``n`` with no higher ``seq`` is ignored; anything else (the same ``n``
+    with another ``o``, a shared ``seq`` with another ``head``, a higher ``n`` with a lower ``seq`` or a missing
+    ticket, a lower ``n`` with a higher ``seq``) is ``chain.diverged``.
+
+    ``restore`` is the owner-signed ``restore`` event that comes with the offer (verified by the caller), as
+    ``{"id", "log": "workspace" | <uid>, "from_seq", "abandoned": {"seq", "head"} | None}``; ``applied`` holds the ids
+    of restores this receiver has already used. A restore is looked at only for a higher ``n`` and only when its log
+    really drops below H or reaches H's ``seq`` again with another head; otherwise it is ignored and the normal rules
+    decide. When it applies: its id is not in ``applied``, ``from_seq < H.seq <= abandoned.seq`` (the restore gives up
+    a checkpoint at least as high as H's entry, which may lag; with the same ``head`` when the seqs are equal), the
+    offered ``seq`` of that log is at least ``from_seq + 1``, and no other log drops or changes a head at a shared
+    ``seq``. Then the offer is ``ok`` and the id is returned.
+
+    Limits (a receiver holding only checkpoints): a fork grown past H, and a forged H whose ``n`` and ``seq`` are both
+    inflated, are not detected (height-only comparison); a receiver holding the logs checks H's heads against them."""
+    if offered["genesis"] != pinned_genesis:
+        return "trust.genesis_mismatch", None
+    if held is None:
+        return "ok", None
+    h, o = _heights(held), _heights(offered)
+    if restore is not None and offered["n"] > held["n"]:
+        log = restore["log"]
+        if log in h and log in o and (o[log][0] < h[log][0] or (o[log][0] == h[log][0] and o[log][1] != h[log][1])):
+            ab = restore.get("abandoned")
+            if restore["id"] in applied or not ab:
+                return "chain.diverged", None
+            if not (restore["from_seq"] < h[log][0] <= ab["seq"]) or (
+                ab["seq"] == h[log][0] and ab["head"] != h[log][1]
+            ):
+                return "chain.diverged", None
+            if o[log][0] < restore["from_seq"] + 1:
+                return "chain.diverged", None
+            for k in h.keys() - {log}:
+                if k not in o or o[k][0] < h[k][0] or (o[k][0] == h[k][0] and o[k][1] != h[k][1]):
+                    return "chain.diverged", None
+            return "ok", restore["id"]
+    if offered["n"] == held["n"]:
+        return ("ok" if offered == held else "chain.diverged"), None
+    if any(o[k][0] == h[k][0] and o[k][1] != h[k][1] for k in h.keys() & o.keys()):
+        return "chain.diverged", None
+    lower = any(k not in o or o[k][0] < h[k][0] for k in h)
+    higher = any(k not in h or o[k][0] > h[k][0] for k in o)
+    if offered["n"] > held["n"]:
+        return ("chain.diverged" if lower else "ok"), None
+    return ("chain.diverged" if higher else "ignored"), None
 
 
 def sign_object(sign: Callable[[bytes], bytes], o: dict[str, Any]) -> dict[str, Any]:

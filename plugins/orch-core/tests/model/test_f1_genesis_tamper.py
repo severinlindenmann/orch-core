@@ -41,9 +41,11 @@ def test_a_pinned_genesis_or_workspace_id_that_differs_is_refused():
 def test_a_genesis_that_fails_a_check_creates_no_workspace(c):
     st = rp([c["event"]])
     assert st.workspace.genesis is None and not st.workspace.members
-    assert st.chain_errors or st.workspace.invalid  # reported either way
-    r = admit(rp([]), c["event"], log="workspace")
-    assert hasattr(r, "code")
+    if c["replay"] == "chain.broken":
+        assert [e.code for e in st.chain_errors] == ["chain.broken"] and not st.workspace.invalid
+    else:
+        assert [i.code for i in st.workspace.invalid] == [c["replay"]] and not st.chain_errors
+    assert getattr(admit(rp([]), c["event"], log="workspace"), "code", None).value == c["append"]
 
 
 T = load("tamper.json")
@@ -78,6 +80,9 @@ CHECK_CHAIN_STOPS_AT = {
     "payload_changed_host_resigned": 3,
     "event_deleted": 2,
     "events_swapped": 3,
+    "at_goes_back_host_resigned": None,  # check_chain sees links only, not `at`
+    "ws_seq_goes_back_host_resigned": None,  # valid links; replay must check per-log workspace positions
+    "bad_person_sig_and_ws_seq": None,  # signatures and ws_seq are outside check_chain
     "prev_rewritten": 3,
     "seq_rewritten": 3,
     "host_sig_swapped": 3,
@@ -86,14 +91,12 @@ CHECK_CHAIN_STOPS_AT = {
     "member_role_raised_not_resigned": 4,
     "member_role_raised_host_resigned": 4,
     "workspace_event_deleted": 2,
-}
-
-# Where orch.model disagrees with F1 §5.5 as amended in PR #361 (code fix in PR #363's next round):
-REPLAY_GAPS = {
-    "payload_changed_host_resigned": "a bad person sig is recorded as auth.invalid_event, F1 5.5 breaks the chain",
-    "member_role_raised_host_resigned": "a bad person sig is recorded as auth.invalid_event, F1 5.5 breaks the chain "
-    "there and stops every ticket event with ws_seq >= 3",
-    "events_swapped": "replay sorts a log's lines by (ws_seq, at, uid, seq); F1 5.5 checks them in file order",
+    "host_field_set_valid": None,
+    "host_field_set_sig": None,
+    "host_field_set_auth": None,
+    "host_field_set_roster_v": None,
+    "agent_field_set_valid": None,
+    "agent_field_set_sig": None,
 }
 
 
@@ -108,20 +111,25 @@ def test_check_chain_stops_at_the_first_broken_link(c):
         assert ei.value.seq == at, c["mutation"]
 
 
-def _case(c):
-    marks = [pytest.mark.xfail(strict=True, reason=REPLAY_GAPS[c["name"]])] if c["name"] in REPLAY_GAPS else []
-    return pytest.param(c, id=c["name"], marks=marks)
-
-
-@pytest.mark.parametrize("c", [_case(c) for c in T["cases"]])
+@pytest.mark.parametrize("c", T["cases"], ids=lambda c: c["name"])
 def test_a_tampered_line_breaks_the_chain_where_the_vector_says(c):
     st = _replay_with(c)
     broken = [x.seq for x in st.chain_errors if x.log == c["log"]]
     assert broken == ([c["chain_broken_at"]] if c["chain_broken_at"] else []), c["mutation"]
+    if "replay_expect" in c:
+        assert [x.code for x in st.chain_errors if x.log == c["log"]] == [c["replay_expect"]], c["mutation"]
+    if c.get("replay_only"):
+        prefix = {**c, "events": c["events"][: c["chain_broken_at"] - 1]}
+        before = _replay_with(prefix)
+        assert not before.chain_errors
+        event = c["events"][c["chain_broken_at"] - 1]
+        assert admit(before, event, log=c["log"]).code == "chain.bad_ws_seq"
     stopped = c.get("ticket_events_stopped_from", {})
     for uid in T["ticket_events"]:
+        if uid == c["log"]:
+            continue  # the directly tampered log was checked above
         got = [x.seq for x in st.chain_errors if x.log == uid]
-        assert got == ([stopped[uid]] if uid in stopped else ([] if uid != c["log"] else got)), (uid, c["mutation"])
+        assert got == ([stopped[uid]] if uid in stopped else []), (uid, c["mutation"])
         if stopped.get(uid) == 1:
             assert uid not in st.tickets
     assert not st.workspace.invalid, c["mutation"]

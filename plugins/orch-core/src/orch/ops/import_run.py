@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import dataclasses
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -37,6 +38,7 @@ from orch.store.render import thaw
 __all__ = ["run_import"]
 
 _SHOWN = 12  # tickets listed in the review and the report before "+N more"
+PROGRESS_EVERY = 25  # while signing, one progress line on stderr per this many tickets
 
 
 @dataclass
@@ -110,11 +112,13 @@ def _core(ev: dict[str, Any]) -> dict[str, Any]:
 
 class BoundSigner:
     """The only thing that holds the batch key (ticket-format 14.2): it signs one person event of the reviewed plan, or
-    refuses. The event must be of a type ``import.v1`` emits, in a ticket log of the plan, by the importer on its
-    device, and equal to a planned step (the plan's digest is what the person saw). ``raw(payload)`` is the key."""
+        refuses. The event must be of a type ``import.v1`` emits, in a ticket log of the plan, by the importer on its
+        device, and equal to a planned step (the plan's digest is what the person saw). Each planned step is signed at
+    most once: signing consumes it. ``raw(payload)`` is the key."""
 
     def __init__(self, raw: Any, workspace_id: str, person: str, device: str, plan: dict[str, list[dict[str, Any]]]):
-        self._raw, self._wid, self._person, self._device, self._plan = raw, workspace_id, person, device, plan
+        self._raw, self._wid, self._person, self._device = raw, workspace_id, person, device
+        self._plan = {uid: list(steps) for uid, steps in plan.items()}  # its own copy: consumed as steps are signed
 
     def __call__(self, uid: str, event: dict[str, Any]) -> str:
         from orch.model.emits import EMITS_V1
@@ -127,7 +131,9 @@ class BoundSigner:
             or _core(event) not in self._plan[uid]
         ):
             raise OrchError("internal", "the batch key refuses to sign an event that is not in the reviewed plan")
-        return crypto.b64u(self._raw(canon.person_signing_bytes(self._wid, uid, event)))
+        sig = crypto.b64u(self._raw(canon.person_signing_bytes(self._wid, uid, event)))
+        self._plan[uid].remove(_core(event))  # once: a second event equal to this step is not in the plan any more
+        return sig
 
 
 class _AcceptSignatures:
@@ -141,6 +147,9 @@ class _AcceptSignatures:
 
     def verify_embedded(self, event: Any, **kw: Any) -> bool:
         return True
+
+    def genesis_failure(self, event: Any) -> str | None:
+        return None
 
 
 class Importer:
@@ -286,12 +295,18 @@ class Importer:
         return ev
 
     # -- doing
-    def execute(self, plan: Plan, sign: Any) -> tuple[int, int, list[tuple[str, str]]]:
+    def execute(
+        self, plan: Plan, sign: Any, progress: Callable[[str], None] | None = None
+    ) -> tuple[int, int, list[tuple[str, str]]]:
         """Append every step of every planned ticket. ``sign(payload) -> signature``. Returns (tickets finished,
-        events appended, tickets left partial with the reason)."""
+        events appended, tickets left partial with the reason). ``progress`` gets one line per
+        :data:`PROGRESS_EVERY` tickets."""
         done_tickets, events = 0, 0
         partial: list[tuple[str, str]] = []
-        for w in plan.work:
+        total = len(plan.work)
+        for i, w in enumerate(plan.work, 1):
+            if progress is not None and i > 1 and (i - 1) % PROGRESS_EVERY == 0:
+                progress(f"import.v1: {i - 1}/{total} tickets, {events} events signed")
             uid = w.plan.uid
             try:
                 for s in w.todo:
@@ -389,24 +404,22 @@ def run_import(ctx: Context, args: dict[str, Any]) -> Result:
         return _result(plan, count, plan.events, [], lines, "orch list")
     if not plan.work:
         return _result(plan, 0, 0, [], lines, "orch list")
+    backend = h.backend
+    unlock = getattr(backend, "unlocked", None)
+    if unlock is None:
+        raise OrchError("custody.no_batch", f"the {backend.name} key backend cannot sign a reviewed batch")
     review = _review(plan, v1, imp)
     if not human.review_prompt("\n".join(review), f"IMPORT {count}"):
         raise OrchError("invalid.input", "not confirmed: nothing was signed")
-    backend = h.backend
     digest = plan.digest().split(":")[1][:32]
     fields = (
         ("signatures", f"{plan.events} events of {count} tickets, all person events of import v1"),
         ("workspace", v1.prefix),
         ("importer", imp.person),
     )
-    unlock = getattr(backend, "unlocked", None)
-    if (
-        unlock is None
-    ):  # a person's per-signature prompt cannot show an import's events: refuse before anything is signed
-        raise OrchError("invalid.input", f"the {backend.name} key backend cannot sign a reviewed batch")
     labels = (canon.LABELS["sig_ticket_event"].encode("ascii"),)
     with unlock(KEY_ID, action="import v1", digest=digest, fields=fields, labels=labels) as raw:
-        ok, events, partial = imp.execute(plan, imp.signer(raw))
+        ok, events, partial = imp.execute(plan, imp.signer(raw), ctx.progress)
     if partial:
         lines += [f"partial {k}: {why}" for k, why in partial[:_SHOWN]]
     return _result(plan, ok, events, partial, lines, "run the same command again to finish" if partial else "orch list")

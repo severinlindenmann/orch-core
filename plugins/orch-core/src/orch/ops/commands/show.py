@@ -34,8 +34,8 @@ def _questions(view: Any) -> list[dict[str, Any]]:
 
 
 def _recent(c: Call, view: Any, after: int) -> list[str]:
-    """The event lines after ``after``; the log before them is read to know what each update changed."""
-    return views.event_lines(c.store.events(view.uid, after=0), after)
+    """The event lines after ``after`` (the tail of the log; see :func:`views.log_lines`)."""
+    return views.log_lines(c.store, view.uid, after)[0]
 
 
 def _document(view: Any, texts: dict[str, str], events: list[str], sections: tuple[str, ...]) -> dict[str, Any]:
@@ -163,8 +163,7 @@ def _events(c: Call, view: Any, head: int, args: dict[str, Any], *, diff: bool) 
     if since is None:
         cur = c.cursor(view.uid)
         since = cur if diff and cur else max(0, head - LOG_DEFAULT)
-    events = c.store.events(view.uid, after=since)
-    rows = views.event_lines(c.store.events(view.uid, after=0), since)
+    rows, events = views.log_lines(c.store, view.uid, since)
     last = events[-1]["seq"] if events else since
     c.shown(view, seq=last)
     lines = [_header(c, view)]

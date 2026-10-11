@@ -910,9 +910,9 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
   `line.seq = from_seq + 1`, `line.prev = head`, §5.5 order and §5.11 authorization against the pre-event state.
   Hosts verify owner membership, role, device, scopes and revocation at `from_seq` by F1 replay. Relays and devices
   apply the relay/device owner-device policy (P3-D24): delegation plus a certificate with `operate`, no `drop:`
-  scope, and matching `actor.device`. The carried delegation must be byte-identical under canonical JSON to the
-  delegation pinned for the workspace (the card's, equal to the genesis event's); a delegation any other person signs
-  for the same workspace and WSK is refused. Each check stands on its own: the delegation's PK signature and exact field
+  scope, and matching `actor.device`. The carried delegation, once its PK signature verifies, must have the same `o` as
+  the delegation pinned for the workspace (the card's, equal to the genesis event's); a delegation any other person
+  signs for the same workspace and WSK, or the owner's own with other content, is refused. Each check stands on its own: the delegation's PK signature and exact field
   set, its `workspace_id` and `wsk_pub`, the certificate under the same PK, not expired at `line.at` and not
   created more than 300 s after it, `actor.id == "p_" + delegation.o.owner_person_id`, and
   `actor.device == "d_" + device_cert.o.device_id`, each besides the person `sig` and the `host_sig`.
@@ -923,8 +923,9 @@ devices from P3. A checkpoint is a protocol §2.4 signed object `{"o": …, "sig
   null source only `line.at ≤ T.o.at`). The host stamps the restore no earlier than `C.o.at` and checkpoints never go
   backwards, so an honest transition always passes.
   T must commit to this restore: T's entry for the log, proven from `acc_from`, has `head(line)` at
-  `from_seq + 1`. A proof that does not fold to T is incomplete; a proof that folds to T with another head at
-  `from_seq + 1` is `chain.diverged`. A ticket restore needs `line.ws_seq ≤ T.o.workspace_log.seq`.
+  `from_seq + 1`. A missing or malformed proof, or one that does not fold to T, is `sync.incomplete`; a WSK-signed T with
+  a consistent proof whose head at `from_seq + 1` is another head is `chain.diverged` (provable divergence, not
+  missing data; decided by orch-52). A ticket restore needs `line.ws_seq ≤ T.o.workspace_log.seq`.
   **Revoked signers at receivers** (format decision C3). "Earlier" and "later" are the receiver's own order, never
   `line.at`, `revoked_ms` or a log position (all host-chosen or unverifiable for a log-free receiver). Any
   revocation of the signer the receiver holds when it judges the transition refuses it, whatever the reason: one

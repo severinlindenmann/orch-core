@@ -706,7 +706,28 @@ def checkpoint_vector() -> dict[str, Any]:
     offer("signed_offer_impossible_date", {**held, "n": 3, "at": "2026-02-30T10:00:00Z"}, "chain.diverged")
     offer("signed_offer_out_of_range_time", {**held, "n": 3, "at": "2026-99-99T99:99:99Z"}, "chain.diverged")
     offer("signed_offer_ticket_checkpoint_kind", ticket_o, "chain.diverged")
-    # The receiver ceiling: at most 300 s ahead of the receiver's clock (C2).
+    for name, o in [
+        ("signed_offer_n_true", {**held, "n": True}),
+        ("signed_offer_n_string", {**held, "n": "1"}),
+        ("signed_offer_version_3", {**held, "n": 3, "v": 3}),
+        ("signed_offer_extra_key", {**held, "n": 3, "note": "x"}),
+        ("signed_offer_missing_tickets", {k: v for k, v in {**held, "n": 3}.items() if k != "tickets"}),
+    ]:
+        offer(name, o, "chain.diverged")
+    # Growth entries that disagree with their proof.
+    skip = copy.deepcopy(grown)
+    skip["tickets"][TICKET]["seq"] += 1
+    offer("growth_seq_skip_is_incomplete", skip, "sync.incomplete", proofs={TICKET: [next_head]})
+    wrong_last = copy.deepcopy(grown)
+    wrong_last["tickets"][TICKET]["head"] = "sha256:" + "67" * 32
+    offer("growth_wrong_last_head_is_incomplete", wrong_last, "sync.incomplete", proofs={TICKET: [next_head]})
+    # The receiver ceiling: at most 300 s ahead of the receiver's clock `now` (C2): 299 and 300 accepted, 301 refused.
+    offer(
+        "offer_at_clock_ceiling_minus_one",
+        {**held, "n": 3, "at": "2026-10-10T10:10:00Z"},
+        "ok",
+        now="2026-10-10T10:05:01Z",
+    )
     offer("offer_at_clock_ceiling", {**held, "n": 3, "at": "2026-10-10T10:10:00Z"}, "ok", now="2026-10-10T10:05:00Z")
     offer(
         "offer_beyond_clock_ceiling",
@@ -736,7 +757,8 @@ def checkpoint_vector() -> dict[str, Any]:
         "and transition case gives the receiver clock `now` (a WSK-signed `at` more than 300 s after it is "
         "checkpoint.future); a workspace_n_offers case with a `held` key (null: an uninitialized receiver) replaces "
         "workspace_n_held; every transition case gives `pinned_delegation`, the workspace's pinned (card / genesis) "
-        "delegation that the carried one must equal byte for byte; known_revocations entries may carry `pk_pub`. "
+        "delegation whose `o` the carried, PK-verified one must equal; learned_later_in_walk lists revocations the "
+        "receiver learns only from a higher-n bundle (never passed as known); known_revocations entries may carry `pk_pub`. "
         "Every refusing transition keeps all signatures valid except the one a case names as its defect.",
         "note": KEY_NOTE,
         "workspace_id": W,
@@ -1205,6 +1227,38 @@ def transition_vectors() -> list[dict[str, Any]]:
         ("signature_encoding_malformed", {"ev_kw": {"tamper": lambda e: e.update(sig=e["sig"][:-2])}}),
     ]:
         variant("restore_shape_" + name, "chain.diverged", **kw)
+    # The card pin compares the verified `o`: the owner's own, validly signed delegation with other content is refused.
+    variant(
+        "delegation_other_content_than_the_card",
+        "chain.diverged",
+        tr_over={"delegation": ow.make_delegation("sev", extra={"issued_ms": 1_790_000_000_001})},
+    )
+    variant("owner_policy_bundle_pk_not_the_delegations", "chain.diverged", tr_over={"pk_pub": key("pk_mara").pub_b64u})
+    variant(
+        "signed_source_other_n_higher_same_hash",
+        "chain.diverged",
+        over={"source": {**checkpoint_ref(c), "n": c["o"]["n"] + 1}},
+    )
+    # Completeness binds a known person's stored key, too.
+    variant(
+        "evidence_under_another_stored_key",
+        "chain.diverged",
+        over={"revocations": [rev_entry("lena", "lena1", "compromised")]},
+        known_revocations=[
+            {"revocation": ow.make_revocation("lena", "lena1", "lost"), "pk_pub": key("pk_mara").pub_b64u}
+        ],
+    )
+    # Known and listed: the known-signer and bundle-signer rules both apply (each alone: ticket_restore_signer_known_*,
+    # bundle_revokes_its_own_signer_*).
+    cases[:] = [x for x in cases if x["name"] != "relay_refuses_a_known_revoked_owner_device"]
+    variant(
+        "relay_refuses_a_known_revoked_owner_device",
+        "chain.diverged",
+        over={"revocations": [rev_entry("sev", "sev1", "compromised")]},
+        known_revocations=[{"revocation": ow.make_revocation("sev", "sev1", "compromised")}],
+    )
+    variant("target_at_clock_ceiling_minus_one", "ok", ev_kw={"at": "2026-10-10T11:00:00Z"}, now="2026-10-10T10:55:01Z")
+
     # --- ticket-log restores: the same workspace checkpoint, ws_seq <= T's workspace seq, revocations [] -------
     tw = World("ticket_transition", "ticket-log restore at a receiver")
     tgen = tw.genesis_event()
@@ -1347,6 +1401,15 @@ def transition_vectors() -> list[dict[str, Any]]:
         abandoned = tr.get("abandoned_heads")
         if isinstance(abandoned, list):
             tr["abandoned_heads"] = abandoned[len(prefix) :]
+    # A forward proof bound to a swapped acc_from: the retained prefix no longer folds (C source and null source).
+    for name, src in [
+        ("forward_proof_acc_from_swapped", "source_precedes_retained_prefix"),
+        ("null_source_acc_from_swapped", "null_source_with_pinned_genesis"),
+    ]:
+        x = copy.deepcopy(next(y for y in cases if y["name"] == src))
+        x.update(name=name, expect="sync.incomplete", recorded=None)
+        x["restore"]["acc_from"] = acc_fold(["sha256:" + "ef" * 32])
+        cases.append(x)
     return cases
 
 

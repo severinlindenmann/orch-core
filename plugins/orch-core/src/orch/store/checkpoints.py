@@ -188,8 +188,11 @@ def _judge_restore(
             return diverged
         if c and not verify_object(wsk_pub, c):
             return diverged
-        # The delegation must be the one pinned for this workspace (the card's), not any person's own.
-        if pinned_delegation is None or canon.cj_checked(restore["delegation"]) != canon.cj_checked(pinned_delegation):
+        # The delegation must be the card's (pinned for this workspace), not any person's own: its verified `o`
+        # equals the card's `o` (an owner re-signing the same content is the same delegation).
+        if not isinstance(pinned_delegation, Mapping) or not isinstance(restore["delegation"], Mapping):
+            return diverged
+        if restore["delegation"].get("o") != pinned_delegation.get("o"):
             return diverged
         pk = crypto.unb64u(restore["pk_pub"], crypto.PUB_LEN)
         cert = check_cert(restore["device_cert"], pk)

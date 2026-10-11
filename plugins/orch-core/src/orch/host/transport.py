@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import errno
+import logging
+import resource
 import socket
 from collections import deque
 from collections.abc import Awaitable, Callable
@@ -34,6 +37,8 @@ WRITE_TIMEOUT_SECONDS = 10
 WRITE_QUEUE_BYTES = 4 * 1024 * 1024
 WRITE_QUEUE_FRAMES = 64
 BYTES_PER_MINUTE = 64 * 1024 * 1024
+TRANSIENT_ACCEPT_ERRORS = {errno.EMFILE, errno.ENFILE, errno.ECONNABORTED, errno.EINTR, errno.ENOBUFS, errno.ENOMEM}
+LOG = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -73,25 +78,39 @@ class Bucket:
 class HostLimits:
     """Host-wide UID quotas. Keep this object across listener and worker restarts.
 
-    §0 specifies 32 live connections, not an attempt rate. An optional attempt
-    bucket is available for deployments, without inventing a normative default.
+    Connection attempts default to 20/s with a burst of 40 per kernel UID.
     """
 
-    def __init__(self, *, clock: Callable[[], float] = monotonic, connection_rate: tuple[float, int] | None = None):
+    def __init__(
+        self,
+        *,
+        clock: Callable[[], float] = monotonic,
+        connection_rate: tuple[float, int] | None = (20, 40),
+        max_connections: int = 128,
+    ):
         self.clock, self.connection_rate = clock, connection_rate
+        soft, _ = resource.getrlimit(resource.RLIMIT_NOFILE)
+        ceiling = 128 if soft == resource.RLIM_INFINITY else max(1, soft // 4)
+        if max_connections < 1:
+            raise ValueError("Host connection cap must be positive")
+        self.max_connections = min(max_connections, ceiling)
         self.connections: dict[int, int] = {}
         self.workers: set[int] = set()
         self.agents: dict[int, Bucket] = {}
         self.attempts: dict[int, Bucket] = {}
 
-    def acquire(self, peer: Peer) -> None:
-        if peer.kind == "worker" and peer.uid in self.workers:
-            raise frames.FrameError("peer.denied")
+    def attempt(self, uid: int) -> None:
         if self.connection_rate is not None:
-            bucket = self.attempts.setdefault(peer.uid, Bucket(*self.connection_rate, self.clock))
+            bucket = self.attempts.setdefault(uid, Bucket(*self.connection_rate, self.clock))
             if not bucket.take():
                 raise frames.FrameError("quota.host")
-        if self.connections.get(peer.uid, 0) >= 32:
+
+    def acquire(self, peer: Peer, *, count_attempt: bool = True) -> None:
+        if count_attempt:
+            self.attempt(peer.uid)
+        if peer.kind == "worker" and peer.uid in self.workers:
+            raise frames.FrameError("peer.denied")
+        if self.connections.get(peer.uid, 0) >= 32 or sum(self.connections.values()) >= self.max_connections:
             raise frames.FrameError("quota.host")
         self.connections[peer.uid] = self.connections.get(peer.uid, 0) + 1
         if peer.kind == "worker":
@@ -445,15 +464,23 @@ class Server:
         loop = asyncio.get_running_loop()
         assert self.listener.sock is not None
         while True:
-            sock, _ = await loop.sock_accept(self.listener.sock)
+            try:
+                sock, _ = await loop.sock_accept(self.listener.sock)
+            except OSError as exc:
+                if exc.errno not in TRANSIENT_ACCEPT_ERRORS:
+                    raise
+                LOG.warning("Transient Unix accept failure: %s", exc)
+                await asyncio.sleep(0.1)
+                continue
             accepted_at = self.clock()
             sock.setblocking(False)
             acquired = None
             handed_off = False
             try:
                 credentials = peer_credentials(sock)
+                self.limits.attempt(credentials.uid)
                 peer = self.classify(credentials)
-                self.limits.acquire(peer)
+                self.limits.acquire(peer, count_attempt=False)
                 acquired = peer
                 session = Session(sock, peer, credentials, self, accepted_at=accepted_at)
                 self.sessions.add(session)
@@ -474,7 +501,12 @@ class Server:
     async def _monitor(self) -> None:
         while True:
             await asyncio.sleep(RECHECK_SECONDS)
-            self.listener.recheck()
+            try:
+                self.listener.recheck()
+            except OSError as exc:
+                if exc.errno in {errno.ENOENT, errno.ENOTDIR, errno.ELOOP, errno.EACCES, errno.EPERM}:
+                    raise
+                LOG.warning("Unix listener recheck deferred: %s", exc)
 
     async def serve(self) -> None:
         accept, monitor = asyncio.create_task(self._accept()), asyncio.create_task(self._monitor())

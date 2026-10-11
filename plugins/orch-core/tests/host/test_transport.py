@@ -1220,3 +1220,77 @@ def test_unexpected_receive_exception_is_fatal_internal():
             assert await read_frame(client) is None
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("code", sorted(transport.TRANSIENT_ACCEPT_ERRORS))
+def test_accept_retries_transient_errors(monkeypatch, code):
+    async def scenario():
+        server = server_for(SimpleNamespace(sock=object()))
+        attempts = 0
+        recovered = asyncio.Event()
+
+        async def accept(sock):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise OSError(code, "transient")
+            recovered.set()
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr(asyncio.get_running_loop(), "sock_accept", accept)
+        task = asyncio.create_task(server._accept())
+        try:
+            await asyncio.wait_for(recovered.wait(), 1)
+            assert not task.done()
+            assert attempts == 2
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
+def test_recheck_retries_exhaustion_but_stops_on_violation(monkeypatch):
+    monkeypatch.setattr(transport, "RECHECK_SECONDS", 0.001)
+    calls = []
+
+    def recheck():
+        calls.append(True)
+        if len(calls) == 1:
+            raise OSError(errno.EMFILE, "No descriptors")
+        raise UnsafePath("ancestor replaced")
+
+    async def scenario():
+        server = server_for(SimpleNamespace(recheck=recheck))
+        with pytest.raises(UnsafePath, match="replaced"):
+            await asyncio.wait_for(server._monitor(), 1)
+        assert len(calls) == 2
+
+    asyncio.run(scenario())
+
+
+def test_host_cap_reserves_fd_headroom_across_uids(monkeypatch):
+    monkeypatch.setattr(transport.resource, "getrlimit", lambda limit: (64, 256))
+    limits = HostLimits()
+    assert limits.max_connections == 16
+    for uid in range(16):
+        limits.acquire(Peer(uid, "agent"))
+    with pytest.raises(frames.FrameError) as exc:
+        limits.acquire(Peer(99, "person"))
+    assert exc.value.code == "quota.host"
+    limits.release(Peer(0, "agent"))
+    limits.acquire(Peer(99, "person"))
+
+
+def test_default_attempt_bucket_refills_per_uid():
+    clock = Clock()
+    limits = HostLimits(clock=clock)
+    peer = Peer(123, "agent")
+    for _ in range(40):
+        limits.acquire(peer)
+        limits.release(peer)
+    with pytest.raises(frames.FrameError):
+        limits.acquire(peer)
+    limits.acquire(Peer(456, "agent"))
+    clock.now += 0.05
+    limits.acquire(peer)

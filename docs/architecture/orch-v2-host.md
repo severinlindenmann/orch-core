@@ -1029,7 +1029,8 @@ BlobId = str/b_[A-Z2-7]{26}/
 |---|---|
 | frame | 2 MiB; the body within 10 s of its length prefix |
 | bytes per connection | 64 MiB/min in each direction |
-| connections | 32 per UID |
+| connections | 32 per UID; host-wide configurable cap, default min(128, soft fd limit / 4) |
+| connection attempts | configurable token bucket, default 20/s with burst 40 per kernel UID, before registry lookup |
 | requests in flight | 8 per connection |
 | subscriptions | 8 per connection, 64 per UID |
 | pending human requests | 20 per person |
@@ -1274,6 +1275,7 @@ peer check runs. With mode 0711, agents can reach their own workspace directory 
     The helper refuses, and names the owner, when one of these exists with another owner, other modes or an ACL (F12).
   - No ACL entry may grant write, `add_subdirectory` or `delete_child` to anyone else (macOS: `acl_get_link_np`).
   - The host checks this at start and every 60 s, and refuses to start (or stops serving) on a violation.
+    Transient resource errors defer the recheck; transient accept errors back off and retry without stopping the listener.
 - **Binding.**
   1. Open each component with `O_NOFOLLOW|O_DIRECTORY` and `fstat` it.
   2. Take `<run>/<ws>/lock`.

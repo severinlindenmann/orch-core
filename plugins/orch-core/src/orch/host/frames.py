@@ -1,6 +1,6 @@
 """Socket contract v1.3: framing, envelope validation and connection bookkeeping.
 
-No I/O or clocks live here. Decoder.feed yields objects or terminal FrameErrors in
+No I/O lives here. Decoder.feed returns objects or terminal FrameErrors in
 wire order; validate_envelope checks their shape, and Connection receives client
 frames. The transport sends error.response() (hosts only) and honours error.fate.
 """
@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterator
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
+from time import monotonic
 from typing import Any, Literal
 
 from jsonschema import Draft202012Validator, FormatChecker
@@ -151,17 +152,28 @@ def encode(frame: dict[str, Any]) -> bytes:
 class Decoder:
     """Incremental, bounded buffering; a framing failure permanently stops decoding.
 
-    body_started becomes true as soon as all four prefix bytes arrive, even when
-    no body byte has arrived. body_number changes for every prefix, so a transport
-    can restart its deadline when a read finishes one body and starts another.
-    Iteration must be exhausted before supplying another read.
+    pending includes partial length prefixes. body_number changes at the first
+    byte of each frame, and the deadline includes that byte and the whole prefix.
+    The transport calls check_deadline while idle; feed also checks before reads.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, clock: Callable[[], float] = monotonic) -> None:
         self._buffer = bytearray()
+        self._clock = clock
+        self._deadline: float | None = None
         self.body_length: int | None = None
         self.body_number = 0
         self.failed = False
+
+    @property
+    def pending(self) -> bool:
+        return self._deadline is not None
+
+    def check_deadline(self) -> None:
+        """Reject an unfinished frame after ten seconds, even without new bytes."""
+        if not self.failed and self._deadline is not None and self._clock() >= self._deadline:
+            self.failed = True
+            raise FrameError(message="Frame body deadline exceeded")
 
     @property
     def body_started(self) -> bool:
@@ -171,9 +183,17 @@ class Decoder:
     def body_received(self) -> int:
         return len(self._buffer) if self.body_started else 0
 
-    def feed(self, data: bytes) -> Iterator[dict[str, Any] | FrameError]:
+    def feed(self, data: bytes) -> list[dict[str, Any] | FrameError]:
+        frames: list[dict[str, Any] | FrameError] = []
+        try:
+            self.check_deadline()
+        except FrameError as exc:
+            return [exc]
         offset = 0
         while offset < len(data) and not self.failed:
+            if not self.pending:
+                self.body_number += 1
+                self._deadline = self._clock() + BODY_TIMEOUT_SECONDS
             target = self.body_length if self.body_started else 4
             count = min(target - len(self._buffer), len(data) - offset)
             self._buffer.extend(data[offset : offset + count])
@@ -185,19 +205,20 @@ class Decoder:
                 self._buffer.clear()
                 if length == 0 or length > MAX_FRAME:
                     self.failed = True
-                    yield FrameError("frame.too_large" if length > MAX_FRAME else "frame.invalid")
-                    return
+                    frames.append(FrameError("frame.too_large" if length > MAX_FRAME else "frame.invalid"))
+                    return frames
                 self.body_length = length
-                self.body_number += 1
             else:
                 body = bytes(self._buffer)
                 self._buffer.clear()
                 self.body_length = None
+                self._deadline = None
                 try:
-                    yield decode(body)
+                    frames.append(decode(body))
                 except FrameError as exc:
                     self.failed = True
-                    yield exc
+                    frames.append(exc)
+        return frames
 
     def finish(self) -> None:
         """Reject EOF in a partial prefix or body. Clean EOF is not a frame."""

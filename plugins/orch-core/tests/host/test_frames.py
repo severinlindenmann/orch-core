@@ -655,3 +655,72 @@ def test_error_default_messages_are_specific():
     messages = [str(FrameError(code, request_id="r1")) for code in codes]
     assert len(set(messages)) == len(codes)
     assert all(messages)
+
+
+class Clock:
+    def __init__(self):
+        self.now = 0
+
+    def __call__(self):
+        return self.now
+
+
+@pytest.mark.parametrize("prefix_bytes", [1, 2, 3, 4])
+def test_deadline_without_body_bytes(prefix_bytes):
+    clock = Clock()
+    decoder = Decoder(clock=clock)
+    clock.now = 100
+    decoder.check_deadline()  # An idle connection has no frame deadline.
+    assert decoder.feed(encode(REQ)[:prefix_bytes]) == []
+    assert decoder.pending and decoder.body_number == 1
+    assert decoder.body_received == 0
+    clock.now = 109
+    decoder.check_deadline()
+    clock.now = 110
+    assert_error("frame.invalid", decoder.check_deadline)
+    assert decoder.failed and decoder.feed(encode(REQ)) == []
+
+
+def test_trickled_prefix_and_body_do_not_extend_deadline():
+    clock = Clock()
+    decoder = Decoder(clock=clock)
+    data = encode(REQ)
+    assert decoder.feed(data[:1]) == []
+    for i in range(1, 10):
+        clock.now = i
+        assert decoder.feed(data[i : i + 1]) == []
+    clock.now = 10
+    frames = decoder.feed(data[10:])
+    assert len(frames) == 1 and frames[0].code == "frame.invalid"
+    assert decoder.failed
+
+
+def test_deadline_rolls_over_at_first_byte_of_next_frame():
+    clock = Clock()
+    decoder = Decoder(clock=clock)
+    data = encode(REQ)
+    decoder.feed(data[:1])
+    clock.now = 9
+    assert decoder.feed(data[1:] + data[:1]) == [REQ]
+    assert decoder.pending and not decoder.body_started and decoder.body_number == 2
+    clock.now = 10
+    decoder.check_deadline()
+    clock.now = 18
+    assert decoder.feed(data[1:]) == [REQ]
+    assert not decoder.pending
+    clock.now = 100
+    decoder.check_deadline()
+    assert decoder.feed(data[:1]) == []
+    clock.now = 110
+    assert_error("frame.invalid", decoder.check_deadline)
+
+
+def test_feed_is_eager_even_when_result_is_not_consumed():
+    decoder = Decoder()
+    result = decoder.feed(encode(REQ)[:2])
+    assert isinstance(result, list) and result == []
+    assert decoder.pending
+    result = decoder.feed(encode(REQ)[2:] + wire(b"[]") + encode(REQ))
+    assert isinstance(result, list) and len(result) == 2
+    assert result[0] == REQ and result[1].code == "frame.invalid"
+    assert decoder.failed

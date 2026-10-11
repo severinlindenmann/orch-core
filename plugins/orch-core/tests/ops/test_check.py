@@ -137,3 +137,25 @@ def test_a_failing_check_does_not_start_with_ok(repo):
     (repo.root / "AGENTS.orch.md").unlink()
     r = Cli(repo, grant=False, session=None)("check")
     assert r.code == 5 and r.first.startswith("check: ") and not r.out.startswith("ok")
+
+
+def test_unknown_files_and_a_deleted_artifact_cannot_be_committed(repo, cli):
+    uid = repo.uid("DEMO-0001")
+    (repo.root / "events" / "other.jsonl").write_text("{}\n")
+    (repo.root / "tickets" / uid / "notes.txt").write_text("x")
+    (repo.root / "tickets" / "README").write_text("x")
+    r = staged(repo, "events/other.jsonl", f"tickets/{uid}/notes.txt", "tickets/README")
+    assert r.code == 5 and codes(r) == ["commit.unknown"] * 3
+    repo.git("reset", "-q")
+    for p in ("events/other.jsonl", f"tickets/{uid}/notes.txt", "tickets/README"):
+        (repo.root / p).unlink()
+    src = repo.root.parent / "a.txt"
+    src.write_text("artifact")
+    assert cli("claim", "DEMO-0001").code == 0
+    assert cli("artifact", "add", str(src)).code == 0, "artifact add"
+    repo.git("add", "-f", "tickets", "events", "config.json", "keys.jsonl")
+    assert check(repo, "--staged").code == 0
+    repo.git("commit", "-qm", "base")
+    repo.git("rm", "--cached", "-q", f"tickets/{uid}/artifacts/a.txt")
+    r = check(repo, "--staged")
+    assert r.code == 5 and codes(r) == ["commit.deleted"]

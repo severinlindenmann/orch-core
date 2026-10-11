@@ -263,3 +263,24 @@ def test_a_failing_doctor_does_not_start_with_ok(two):
     p.write_text(p.read_text().replace('"medium"', '"urgent"'))
     r = Cli(two, grant=False, session=None)("doctor")
     assert r.code == 5 and r.first.startswith("doctor: 1 errors") and not r.out.startswith("ok")
+
+
+def test_a_deleted_ticket_checkpoint_is_an_error_where_the_host_key_is(two):
+    ws = two
+    cp = ws.root / ".state" / "checkpoints" / f"ticket-{ws.uid('DEMO-0002')}.json"
+    assert cp.is_file()
+    cp.unlink()
+    r = doctor(ws)
+    assert r.code == 5 and "checkpoint.missing" in codes(r)
+    assert [f["level"] for f in r.data["findings"] if f["what"].startswith("checkpoint.missing")] == ["error"]
+
+
+def test_a_host_key_that_cannot_be_looked_up_is_judged_strictly(two, monkeypatch):
+    from orch.custody import files
+    from orch.ops import health
+
+    def boom(*a, **k):
+        raise OSError("unreadable")
+
+    monkeypatch.setattr(files, "key_path", boom)
+    assert health._has_host_key(two.host_state, "x") is True

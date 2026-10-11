@@ -211,8 +211,8 @@ def _has_host_key(state_dir: Path, wid: str) -> bool:
 
     try:
         return key_path(state_dir / "hosts" / wid / "keys", "wsk", FILE_SUFFIX).is_file()
-    except Exception:  # noqa: BLE001
-        return False
+    except Exception:  # noqa: BLE001 - when it cannot be told, judge at the strict level (a missing checkpoint is an error)
+        return True
 
 
 def _checkpoints(s: InspectStore, host_here: bool) -> list[Finding]:
@@ -233,7 +233,7 @@ def _checkpoints(s: InspectStore, host_here: bool) -> list[Finding]:
         keys = ", ".join(s.state.tickets[u].key for u in missing[:5])
         out.append(
             Finding(
-                "warn", "checkpoints", "checkpoint.missing", f"{len(missing)} tickets have no checkpoint ({keys}...)"
+                lvl, "checkpoints", "checkpoint.missing", f"{len(missing)} tickets have no checkpoint ({keys}...)"
             )
         )
     wsk = s._wsk_pub()
@@ -365,6 +365,9 @@ def _git(root: Path, *args: str) -> bytes | None:
     return done.stdout if done.returncode == 0 else None
 
 
+_TICKET_FILE = re.compile(r"tickets/([0-7][0-9A-HJKMNP-TV-Z]{25})/(ticket\.json|body\.md|events\.jsonl|artifacts/.+)")
+
+
 def check_staged(s: InspectStore, root: Path) -> list[Finding]:
     """What a pre-commit hook refuses: staged files that are not what the log says, a staged log that is not a prefix
     of the verified one, deleted logs, links, anything of ``.state``, key material and grant secrets."""
@@ -386,6 +389,8 @@ def check_staged(s: InspectStore, root: Path) -> list[Finding]:
                 out.append(
                     Finding("error", rel, "commit.deleted", "a log or a projection may not be deleted from history")
                 )
+            elif _TICKET_FILE.fullmatch(rel):
+                out.append(Finding("error", rel, "commit.deleted", "an artifact may not be deleted from history"))
             continue
         if mode in ("120000", "160000") and guarded.search(rel):
             out.append(Finding("error", rel, "commit.link", "a symlink or submodule where the workspace keeps a file"))
@@ -405,9 +410,7 @@ def check_staged(s: InspectStore, root: Path) -> list[Finding]:
         if _GRANT.search(blob.decode("utf-8", "replace")) or b"ORCH_GRANT=" in blob:
             out.append(Finding("error", rel, "commit.secret", "the file holds a grant secret"))
             continue
-        m = re.fullmatch(
-            r"tickets/([0-7][0-9A-HJKMNP-TV-Z]{25})/(ticket\.json|body\.md|events\.jsonl|artifacts/.+)", rel
-        )
+        m = _TICKET_FILE.fullmatch(rel)
         if rel == "config.json":
             if blob != s._config_bytes(st):
                 out.append(Finding("error", rel, "commit.edited", "config.json is not what the log says (hand edit)"))
@@ -416,6 +419,8 @@ def check_staged(s: InspectStore, root: Path) -> list[Finding]:
                 out.append(Finding("error", rel, "commit.edited", "keys.jsonl is not what the log says (hand edit)"))
         elif rel == "events/workspace.jsonl":
             out += _prefix(rel, blob, root / rel, "workspace")
+        elif rel.startswith(("tickets/", "events/")) and not m:
+            out.append(Finding("error", rel, "commit.unknown", "a file the workspace does not keep there"))
         elif m:
             uid, what = m.groups()
             view = st.tickets.get(uid)

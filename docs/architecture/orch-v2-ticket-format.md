@@ -2127,6 +2127,8 @@ chain, a signature or a checkpoint: an owner-signed `restore` is the only repair
 
 `orch check` is the fast subset (chain, projections, checkpoints missing where the host key is, store reports, instructions) and exits 5 on any finding, with the first line `check: N problems`; it does not heal.
 `orch check --staged` is the commit check for a git pre-commit hook (`orch check --staged || exit 1`): it also refuses
-staged files under `.state/`, key files, files holding a grant secret, a symlink or submodule where the workspace keeps a file, a deleted log or projection, a staged `ticket.json`, `body.md`, artifact,
-`config.json` or `keys.jsonl` that is not what the log says, and a staged log that is not a prefix of the verified one
-(`commit.state`, `commit.secret`, `commit.edited`, `commit.forged`, `commit.link`, `commit.deleted`). The hook installer stays with C28 (P2).
+staged files under `.state/`, key files, files holding a grant secret, a symlink or submodule where the workspace keeps a file, a deleted log, projection or artifact, a staged `ticket.json`, `body.md`, artifact,
+`config.json` or `keys.jsonl` that is not what the log says, a staged log that is not a prefix of the verified one,
+and any other file under `tickets/` or `events/` (for example `events/other.jsonl`, or a file in a ticket folder that
+is not `ticket.json`, `body.md`, `events.jsonl` or under `artifacts/`)
+(`commit.state`, `commit.secret`, `commit.edited`, `commit.forged`, `commit.link`, `commit.deleted`, `commit.unknown`). The hook installer stays with C28 (P2).

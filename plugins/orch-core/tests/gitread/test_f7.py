@@ -65,7 +65,7 @@ def test_a_malicious_config_runs_nothing_and_includes_are_not_followed(make_repo
     assert got["origin_urls"] == ["git@github.com:acme/widget.git"]  # the include was not read
     d = host.diff(r.path, branch="feat", default_branch=None)
     assert b"+2" in base64.b64decode(d["patch"])  # no textconv, no filter
-    caps = Capabilities.host((str(tmp_path.resolve()),), git=host)
+    caps = Capabilities.host((str(tmp_path.resolve()),), git=host).with_principal("agent-1")
     assert caps.git.identity(r.path, "w") == "https://github.com/acme/widget"
     assert not marker.exists()
 
@@ -79,11 +79,11 @@ def test_a_git_file_pointing_outside_the_declared_repos_is_refused(make_repo, tm
     victim = tmp_path.resolve() / "declared"
     victim.mkdir()
     (victim / ".git").write_text(f"gitdir: {outside.gitdir}\n")
-    with pytest.raises(Unavailable, match="outside every declared repo"):
+    with pytest.raises(Unavailable, match="must name <repo>/.git/worktrees/<id>"):
         pin_repo(str(victim), [str(victim)])
-    # it is accepted once the other path is declared too (a linked worktree of a declared repo)
-    pins = pin_repo(str(victim), [str(victim), str(outside.path)])
-    assert pins.gitdir.path == str(outside.gitdir)
+    # declaring the other repo too does not help: a .git file naming another repo's .git itself is not git's layout
+    with pytest.raises(Unavailable, match="must name <repo>/.git/worktrees/<id>"):
+        pin_repo(str(victim), [str(victim), str(outside.path)])
 
 
 def test_a_symlinked_objects_dir_is_refused(make_repo):
@@ -203,7 +203,7 @@ def test_a_changed_origin_against_a_declared_remote_is_a_mismatch(make_repo, tmp
         caps.git.diff(r.path, remote="https://github.com/acme/widget", **kw)
     host = HostGitReader(ReaderPool(), PinStore())
     host.sync([r.path])
-    hcaps = Capabilities.host((str(tmp_path.resolve()),), git=host)
+    hcaps = Capabilities.host((str(tmp_path.resolve()),), git=host).with_principal("agent-1")
     with pytest.raises(RemoteMismatch):
         hcaps.git.diff(r.path, remote="https://github.com/acme/widget", **kw)
     r.git("config", "--add", "remote.origin.url", "https://github.com/acme/widget.git")  # two values: local:<name>
@@ -227,7 +227,7 @@ def test_a_linked_worktree_reads_through_its_commondir(make_repo, tmp_path):
     assert pins.commondir.path == str(main.gitdir) and pins.gitdir.path.startswith(str(main.gitdir / "worktrees"))
     with Repo(pins) as rp:
         assert rp.head_ref() == "refs/heads/side" and rp.refs.resolve("refs/heads/feat") == main.sha("feat")
-    with pytest.raises(Unavailable, match="commondir lies outside"):  # main's path not declared
+    with pytest.raises(Unavailable, match="outside every declared repo"):  # main's path not declared
         pin_repo(str(wt), [str(wt), str(main.gitdir / "worktrees")])
 
 
@@ -264,7 +264,7 @@ def test_a_git_file_planted_before_the_repo_is_added(make_repo, tmp_path):
     (planted / ".git").write_text(f"gitdir: {attacker.gitdir}\n")
     host = HostGitReader(ReaderPool(), PinStore())
     res = host.sync([planted, real.path])
-    assert "outside every declared repo" in res[str(planted)]
+    assert "must name <repo>/.git/worktrees/<id>" in res[str(planted)]
     with pytest.raises(Unavailable, match="not pinned"):
         host.observe(planted)
     # a pinned repo whose .git is replaced by a file afterwards keeps its pin (only settings.changed re-pins)
@@ -355,25 +355,26 @@ def test_alternates_grafts_and_replace_refs_are_ignored(make_repo):
 
 
 def test_a_component_swapped_for_a_symlink_after_the_check_is_refused_at_pin_time(make_repo, tmp_path, monkeypatch):
-    """The gitdir of a linked worktree is checked (under a declared repo) and then opened: a parent directory
-    swapped for a symlink to an attacker's tree in between must not be followed."""
+    """A linked worktree's commondir is opened, then ``worktrees`` below it is swapped for a symlink to an attacker's
+    tree before the worktree's gitdir is opened: the fd-relative O_NOFOLLOW open must not follow it."""
     main, wt = linked(make_repo, tmp_path)
     evil = make_repo("evil")
     two_commits(evil)
-    real_under = pinning.under
+    real_pin_dir = pinning._pin_dir
     swapped = []
 
-    def swap_then_check(path, root):
-        if not swapped and path.startswith(str(main.gitdir / "worktrees")):
+    def pin_then_swap(path):
+        got = real_pin_dir(path)
+        if not swapped and path == str(main.gitdir):
             wts = main.gitdir / "worktrees"
             os.rename(wts, main.gitdir / "worktrees-real")
             (evil.gitdir / "worktrees").mkdir(exist_ok=True)
             shutil.copytree(main.gitdir / "worktrees-real" / "wt", evil.gitdir / "worktrees" / "wt", symlinks=True)
             os.symlink(evil.gitdir / "worktrees", wts)
             swapped.append(1)
-        return real_under(path, root)
+        return got
 
-    monkeypatch.setattr(pinning, "under", swap_then_check)
+    monkeypatch.setattr(pinning, "_pin_dir", pin_then_swap)
     with pytest.raises(Unavailable, match="symlink"):
         pin_repo(str(wt), [str(wt), str(main.path)])
     assert swapped
@@ -536,3 +537,93 @@ def test_path_files_are_read_byte_for_byte():
     for bad in (b"/x/../y", b"/x//y", b"/x/y/", b"/x/./y", b"../a/../b", b"a/./b", b"../../../../../../.."):
         with pytest.raises(Unavailable):
             resolve_named("/a/b", bad)
+
+
+# ---------------------------------------------------------------- review finding 1: no borrowed object store
+
+
+def borrowed(make_repo):
+    """Opus's repro: A is empty; B holds a secret on ``feat``."""
+    a, b = make_repo("A"), make_repo("B")
+    a.write("x", "x\n")
+    a.commit()
+    b.write("secret.txt", "s1\n")
+    b.commit()
+    b.git("checkout", "-q", "-b", "feat")
+    b.write("secret.txt", "s2 SECRET\n")
+    b.commit()
+    return a, b
+
+
+def test_a_commondir_file_in_a_real_git_dir_is_refused_in_both_modes(make_repo):
+    a, b = borrowed(make_repo)
+    (a.gitdir / "commondir").write_text(f"{b.gitdir}\n")
+    with pytest.raises(Unavailable, match="commondir file"):
+        local.diff(a.path, branch="feat", default_branch="main", roots=[str(a.path), str(b.path)])
+    with pytest.raises(Unavailable, match="commondir file"):
+        local.diff(a.path, branch="feat", default_branch="main")  # direct mode, no roots
+    for order in ([a.path, b.path], [b.path, a.path]):
+        host = HostGitReader(ReaderPool(), PinStore())
+        res = host.sync(order)
+        assert "commondir file" in res[str(a.path)] and res[str(b.path)] is None
+        assert host.observe(b.path, ["refs/heads/feat"])["refs"]["refs/heads/feat"] == b.sha("feat")
+
+
+@pytest.mark.parametrize("target", ["git", "worktree"])
+def test_a_git_file_borrowing_another_repo_is_refused_in_both_orders(make_repo, target):
+    a, b = borrowed(make_repo)
+    if target == "worktree":  # a real worktree of B whose back-pointer names somewhere else
+        b.git("worktree", "add", "-q", str(b.path.parent / "bwt"), "-b", "side")
+        named = b.gitdir / "worktrees" / "bwt"
+    else:
+        named = b.gitdir
+    shutil.move(a.gitdir, a.path / "old-git")
+    (a.path / ".git").write_text(f"gitdir: {named}\n")
+    with pytest.raises(Unavailable):
+        local.diff(a.path, branch="feat", default_branch="main", roots=[str(a.path), str(b.path)])
+    for order in ([a.path, b.path], [b.path, a.path]):
+        host = HostGitReader(ReaderPool(), PinStore())
+        res = host.sync(order)
+        assert res[str(a.path)] is not None and res[str(b.path)] is None  # A refused; B keeps its own pin
+        assert host.observe(b.path)["head_ref"] == "refs/heads/feat"
+
+
+def test_a_real_linked_worktree_still_pins_next_to_its_main_repo(make_repo, tmp_path):
+    main, wt = linked(make_repo, tmp_path)
+    host = HostGitReader(ReaderPool(), PinStore())
+    assert host.sync([main.path, wt]) == {str(main.path): None, str(wt): None}
+    assert host.observe(wt)["head_ref"] == "refs/heads/side"
+
+
+def test_commondir_dedup_refuses_a_borrowed_store(tmp_path):
+    from orch.gitread.client import _clash
+    from orch.gitread.fs import DirPin, RepoPins
+
+    def pins(wt, gd, cd):
+        return RepoPins(DirPin(f"/w{wt}", 1, wt), DirPin(f"/g{gd}", 1, gd), DirPin(f"/c{cd}", 1, cd))
+
+    main = pins(1, 10, 10)
+    assert not _clash(pins(2, 20, 10), main)  # a linked worktree of main
+    assert not _clash(pins(2, 20, 10), pins(3, 30, 10))  # two worktrees of one main
+    assert not _clash(pins(2, 20, 20), pins(3, 30, 20))  # main and its worktree, the other way round
+    assert _clash(pins(2, 20, 10), pins(3, 30, 20))  # worktree of 10, and a worktree whose commondir is its gitdir
+    assert _clash(pins(2, 20, 10), pins(3, 10, 30))  # a worktree whose commondir is another linked gitdir
+    assert _clash(pins(2, 10, 10), main)  # one gitdir, two working copies
+
+
+# ---------------------------------------------------------------- declare the real path (Sonnet 3)
+
+
+def test_a_symlinked_workspace_root_says_declare_the_real_path(make_repo, tmp_path):
+    from orch.ops.caps import Capabilities
+
+    r = make_repo("real/repo")
+    two_commits(r)
+    link = tmp_path.resolve() / "ws-link"
+    os.symlink(tmp_path.resolve() / "real", link)  # like /var -> /private/var on macOS
+    host = HostGitReader(ReaderPool(), PinStore())
+    caps = Capabilities.host((str(tmp_path.resolve()),), git=host).with_principal("agent-1")
+    path = caps.git.repo_path(link, {"repo": {"path": "repo"}}, "repo")
+    assert str(path) == str(link / "repo")  # joined lexically, never resolved
+    res = host.sync([path])
+    assert "declare the real path" in res[str(path)]

@@ -4,12 +4,11 @@ and inode.
 * Every directory is opened by walking its real path from ``/`` with ``O_NOFOLLOW`` on each component (or relative
   to an fd already opened that way), and the pin is the ``fstat`` of that fd: a component swapped for a symlink
   between the check and the open is refused, never followed.
-* The declared ``path`` must be a directory whose ``.git`` is a real directory (the gitdir), or a regular ``.git``
-  file ``gitdir: <path>`` (a linked worktree). A ``.git`` symlink, or anything else, is refused.
-* The gitdir and the ``commondir`` (from the gitdir's ``commondir`` file, else the gitdir itself) must lie under the
-  repo's declared ``path`` or under the ``path`` of another repo declared in ``settings.repos`` (the main checkout of
-  a linked worktree). Anything else is refused: a ``.git`` file planted to point at a directory the agent controls
-  elsewhere never becomes a pin.
+* The declared ``path`` must be a directory whose ``.git`` is a real directory with no ``commondir`` file (a main
+  repository), or a regular ``.git`` file naming ``<C>/worktrees/<id>`` of another declared repo's ``.git`` ``<C>``,
+  with that worktree's ``commondir`` naming ``<C>`` and its ``gitdir`` back-pointer naming this ``.git`` (git's
+  layout, exactly; see :func:`pin_repo`). Anything else is refused: a ``.git`` file or ``commondir`` file planted to
+  borrow another repo's refs and objects never becomes a pin.
 
 This runs in the child under the ``pin`` profile, whose audit hook allows opens only under the declared paths.
 """
@@ -42,58 +41,78 @@ def _pin_fd(d: Dir) -> DirPin:
     return DirPin(d.path, st.st_dev, st.st_ino)
 
 
-def pin_repo(path: str, roots: list[str]) -> RepoPins:
+REAL_PATH_HINT = "declare the real path of the repo (its realpath, no symlinked component) in settings.repos"
+
+
+def pin_repo(path: str, roots: list[str] | None) -> RepoPins:
     """Pins for the working copy at ``path``. ``roots``: the paths of every repo declared in ``settings.repos``
-    (``path``'s own included), as the host computed them once from the owner-signed settings.
+    (``path``'s own included), as the host computed them once from the owner-signed settings. ``None`` (direct mode
+    only: no registration, the CLI's own environment) skips the containment checks but keeps the layout checks.
 
     **One interpretation of a path:** every path here is taken byte for byte and must be clean (absolute, no ``.``,
     ``..``, empty component or trailing slash); it is never resolved, case-folded or Unicode-normalised. It is opened
     by the ``O_NOFOLLOW`` walk, so a path with a symlinked component (``/var`` on macOS, or one an agent planted) is
-    refused: declare repos by their real paths. The pin is the ``fstat`` of the fd that walk produced."""
+    refused: declare repos by their real paths. The pin is the ``fstat`` of the fd that walk produced.
+
+    **git's layout, exactly (review finding 1):**
+
+    * a ``.git`` **directory** is a main repository: it must have no ``commondir`` file (only
+      ``<common>/worktrees/<id>`` has one), so its commondir is itself;
+    * a ``.git`` **file** is a linked worktree: it must name ``<C>/worktrees/<id>`` where ``<C>`` is the ``.git``
+      directory of another declared repo, that gitdir's ``commondir`` must name exactly ``<C>``, and its back-pointer
+      ``gitdir`` file must name this working copy's ``.git``, byte for byte. Anything else (a submodule's
+      ``.git/modules/<name>``, a ``.git`` file naming another repo's ``.git`` itself) is refused."""
     real = path
     abs_parts(real)
-    for r in roots:
+    for r in roots or ():
         abs_parts(r)
-    if real not in roots:
+    if roots is not None and real not in roots:
         raise Unavailable("the working copy is not one of the declared repos")
-    wt, wt_pin = _pin_dir(real)
+    try:
+        wt, wt_pin = _pin_dir(real)
+    except Unavailable as e:
+        raise Unavailable(f"{e.reason}; {REAL_PATH_HINT}") from None
     opened = [wt]
     try:
         kind = wt.kind(".git")
-        gd: Dir | None = None
         if kind == "dir":
             gd = wt.sub(".git")  # relative to the working copy's fd, O_NOFOLLOW: a swapped .git is refused
             opened.append(gd)
-            gitdir_path = gd.path
-        elif kind == "file":
-            data = wt.read(".git", limits.SMALL_FILE_MAX)
-            if not data.startswith(b"gitdir: "):
-                raise Unavailable("the .git file is not 'gitdir: <path>'")
-            gitdir_path = resolve_named(real, data[len(b"gitdir: ") :])
-        elif kind is None:
-            raise Unavailable("the working copy has no .git")
-        else:
-            raise Unavailable("the working copy's .git is a symlink or a special file")
-        if not any(under(gitdir_path, r) for r in roots):
-            raise Unavailable("the gitdir lies outside every declared repo")
-        if gd is None:
-            gd, gd_pin = _pin_dir(gitdir_path)
-            opened.append(gd)
-        else:
+            if gd.kind("commondir") is not None:
+                raise Unavailable("a .git directory with a commondir file (only a linked worktree's gitdir has one)")
+            if gd.kind("HEAD") != "file":
+                raise Unavailable("the gitdir has no HEAD")
             gd_pin = _pin_fd(gd)
+            return RepoPins(wt_pin, gd_pin, gd_pin)
+        if kind is None:
+            raise Unavailable("the working copy has no .git")
+        if kind != "file":
+            raise Unavailable("the working copy's .git is a symlink or a special file")
+        data = wt.read(".git", limits.SMALL_FILE_MAX)
+        if not data.startswith(b"gitdir: "):
+            raise Unavailable("the .git file is not 'gitdir: <path>'")
+        gitdir_path = resolve_named(real, data[len(b"gitdir: ") :])
+        parts = abs_parts(gitdir_path)
+        if len(parts) < 3 or parts[-2] != "worktrees":
+            raise Unavailable("a .git file must name <repo>/.git/worktrees/<id>")
+        common_path = "/" + "/".join(parts[:-2])
+        if roots is not None and not any(common_path == r.rstrip("/") + "/.git" for r in roots if r != real):
+            raise Unavailable("the .git file names a worktree of no other declared repo (outside every declared repo)")
+        cd, cd_pin = _pin_dir(common_path)
+        opened.append(cd)
+        if cd.kind("commondir") is not None or cd.kind("HEAD") != "file":
+            raise Unavailable("the commondir is not a main repository's .git")
+        gd = cd.sub("worktrees/" + parts[-1])  # relative to the pinned commondir fd
+        opened.append(gd)
+        gd_pin = _pin_fd(gd)  # its path is <C>/worktrees/<id>, the path the .git file names
         if gd.kind("HEAD") != "file":
             raise Unavailable("the gitdir has no HEAD")
         named = gd.read_optional("commondir", limits.SMALL_FILE_MAX)
-        if named is None:
-            cd_pin = gd_pin
-        else:
-            cd_path = resolve_named(gitdir_path, named)
-            if not any(under(cd_path, r) for r in roots):
-                raise Unavailable("the commondir lies outside every declared repo")
-            cd, cd_pin = _pin_dir(cd_path)
-            opened.append(cd)
-            if cd_pin == gd_pin:
-                raise Unavailable("a commondir file naming the gitdir itself")
+        if named is None or resolve_named(gitdir_path, named) != common_path:
+            raise Unavailable("the worktree's commondir does not name its <repo>/.git")
+        back = gd.read_optional("gitdir", limits.SMALL_FILE_MAX)
+        if back is None or back.rstrip(b"\n") != (real.rstrip("/") + "/.git").encode():
+            raise Unavailable("the worktree's gitdir back-pointer does not name this working copy")
         return RepoPins(wt_pin, gd_pin, cd_pin)
     finally:
         for d in opened:

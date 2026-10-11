@@ -16,9 +16,13 @@ from .repo import Repo
 __all__ = ["diff", "observe"]
 
 
-def _roots(path: str | os.PathLike[str], roots: list[str] | None) -> tuple[str, list[str]]:
+def _roots(path: str | os.PathLike[str], roots: list[str] | None) -> tuple[str, list[str] | None]:
+    """Direct mode resolves the CLI's own path (P1's ``repo_path`` does too). ``roots`` ``None``: no containment
+    check (no registration in direct mode); git's layout is still checked."""
     real = os.path.realpath(os.fspath(path))
-    rs = [os.path.realpath(r) for r in (roots or [])]
+    if roots is None:
+        return real, None
+    rs = [os.path.realpath(r) for r in roots]
     return real, rs if real in rs else [real, *rs]
 
 

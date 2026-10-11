@@ -220,3 +220,13 @@ def test_the_bomb_helper_is_a_real_1gib_stream():
     bomb = zlib_bomb(b"", 4 << 20)
     assert zlib.decompress(bomb) == b"\0" * (4 << 20)
     assert oid("blob", b"") == "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+
+
+def test_the_request_line_budget_marks_later_files_too_large(repo, monkeypatch):
+    repo.git("checkout", "-q", "-b", "feat")
+    for i in range(3):
+        repo.write(f"f{i}", "".join(f"{j}\n" for j in range(40)))
+    repo.commit()
+    monkeypatch.setattr(limits, "REQUEST_LINES_MAX", 90)
+    got = local.diff(repo.path, branch="feat", default_branch=None)
+    assert [f["too_large"] for f in got["files"]] == [False, False, True]  # 41 + 41 lines fit, the third does not

@@ -128,6 +128,11 @@ def test_limits_are_set_before_any_repository_byte_is_read(make_repo, tmp_path):
 
 @pytest.mark.slow
 def test_at_most_four_children_under_a_burst_of_100_diffs(make_repo, tmp_path):
+    """100 ``diff`` calls through ``Capabilities`` (25 principals): never more than 4 children, one per principal at
+    a time; what does not fit the bounded queue is answered ``quota.host`` (Busy), never queued without bound."""
+    from orch.gitread.errors import Busy
+    from orch.ops.caps import Capabilities
+
     r = make_repo()
     r.write("a.txt", "1\n")
     r.commit()
@@ -137,6 +142,7 @@ def test_at_most_four_children_under_a_burst_of_100_diffs(make_repo, tmp_path):
     pool = ReaderPool()
     reader = HostGitReader(pool, PinStore())
     reader.sync([r.path])
+    caps = Capabilities.host((str(tmp_path.resolve()),), git=reader)
     live: list = []
     live_peak = [0]
     mu = threading.Lock()
@@ -144,19 +150,25 @@ def test_at_most_four_children_under_a_burst_of_100_diffs(make_repo, tmp_path):
 
     def counting_spawn():
         p = real_spawn()
-        with mu:  # every child started so far that has not exited yet (poll() through its own Popen)
+        with mu:  # every child started so far that has not exited yet
             live.append(p)
             live[:] = [q for q in live if q.poll() is None]
             live_peak[0] = max(live_peak[0], len(live))
         return p
 
     pool._spawn = counting_spawn
+    ok: list[int] = []
+    busy: list[int] = []
     errors: list[BaseException] = []
 
     def one(i: int) -> None:
+        mine = caps.with_principal(f"agent-{i % 25}")
         try:
-            got = reader.diff(r.path, branch="feat", default_branch=None, principal=f"agent-{i % 10}")
+            got = mine.git.diff(r.path, name="r", branch="feat", default_branch=None, remote=None)
             assert got["files"][0]["path"] == "a.txt"
+            ok.append(i)
+        except Busy:
+            busy.append(i)
         except BaseException as e:  # noqa: BLE001
             errors.append(e)
 
@@ -166,31 +178,165 @@ def test_at_most_four_children_under_a_burst_of_100_diffs(make_repo, tmp_path):
     for t in threads:
         t.join()
     assert not errors, errors[:3]
-    assert pool.started == 101 and pool.active == 0  # 100 diffs and the pin at sync
+    assert len(ok) + len(busy) == 100 and len(ok) >= 64
+    assert pool.active == 0 and pool.waiting == 0
     assert pool.peak == 4  # the burst filled the pool, and never more
     assert live_peak[0] <= 4
 
 
+class _GatedPool(ReaderPool):
+    """A pool whose "children" wait for a gate, so overlap is decided by the test, never by a sleep."""
+
+    def __init__(self, **kw):
+        super().__init__(spawn=lambda: None, **kw)
+        self.gate = threading.Event()
+        self.events: list[tuple[str, str]] = []
+        self.started_ev = threading.Event()
+
+    def _run(self, hello, req, deadline=None):
+        with self._mu:
+            self.events.append((req["who"], "start"))
+        self.started_ev.set()
+        self.gate.wait(10)
+        with self._mu:
+            self.events.append((req["who"], "end"))
+        return {"ok": {}}
+
+
 def test_one_child_per_principal_at_a_time():
     """Two requests of one principal never overlap; another principal's do."""
-    events: list[tuple[str, str, float]] = []
-    mu = threading.Lock()
-
-    class FakePool(ReaderPool):
-        def _run(self, hello, req):
-            with mu:
-                events.append((req["who"], "start", time.monotonic()))
-            time.sleep(0.2)
-            with mu:
-                events.append((req["who"], "end", time.monotonic()))
-            return {"ok": {}}
-
-    pool = FakePool(spawn=lambda: None)
+    pool = _GatedPool()
     ts = [threading.Thread(target=pool.call, args=(who, {}, {"who": who})) for who in ("a", "a", "b")]
     for t in ts:
         t.start()
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:  # both principals have a child running, the second "a" waits
+        with pool._mu:
+            if pool.active == 2 and pool.waiting == 1:
+                break
+        time.sleep(0.01)
+    assert (pool.active, pool.waiting) == (2, 1)
+    pool.gate.set()
     for t in ts:
         t.join()
-    a = sorted((t, kind) for who, kind, t in events if who == "a")
-    assert [k for _, k in a] == ["start", "end", "start", "end"]  # serialised
+    a = [k for who, k in pool.events if who == "a"]
+    assert a == ["start", "end", "start", "end"]  # serialised
     assert pool.peak == 2
+
+
+def test_the_queue_is_bounded_per_principal_and_host_wide():
+    from orch.gitread.errors import Busy
+
+    pool = _GatedPool(queue_per_principal=2, queue_max=3)
+    results: list[str] = []
+
+    def call(who):
+        try:
+            pool.call(who, {}, {"who": who})
+            results.append("ok")
+        except Busy:
+            results.append("busy")
+
+    first = threading.Thread(target=call, args=("a",))
+    first.start()
+    pool.started_ev.wait(10)
+    second = threading.Thread(target=call, args=("a",))  # a's second: queued (1 running + 1 waiting = 2)
+    second.start()
+    deadline = time.monotonic() + 10
+    while pool.waiting < 1 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    with pytest.raises(Busy):  # a's third: over its bound of 2
+        pool.call("a", {}, {"who": "a"})
+    pool.gate.set()
+    for t in (first, second):
+        t.join()
+    assert results == ["ok", "ok"]
+
+
+def test_the_deadline_starts_when_the_request_is_queued():
+    """A request that waited for a slot gets only what is left of its 30 s, not a fresh 30 s."""
+    from orch.gitread.errors import Busy
+
+    pool = _GatedPool(max_children=1, wall=0.5)
+    holder = threading.Thread(target=pool.call, args=("a", {}, {"who": "a"}))
+    holder.start()
+    pool.started_ev.wait(10)
+    t = time.monotonic()
+    with pytest.raises(Busy, match="within"):
+        pool.call("b", {}, {"who": "b"})  # never gets the one slot before its deadline
+    assert time.monotonic() - t < 2
+    pool.gate.set()
+    holder.join()
+
+
+def test_a_principal_is_required_through_capabilities(make_repo, tmp_path):
+    from orch.ops.caps import Capabilities, CapabilityDenied
+
+    r = make_repo()
+    r.write("a.txt", "1\n")
+    r.commit()
+    reader = HostGitReader(ReaderPool(), PinStore())
+    reader.sync([r.path])
+    caps = Capabilities.host((str(tmp_path.resolve()),), git=reader)
+    with pytest.raises(CapabilityDenied, match="principal"):
+        caps.git.head(r.path)
+    seen = []
+    real = reader.pool.call
+    reader.pool.call = lambda principal, *a: (seen.append(principal), real(principal, *a))[1]
+    assert caps.with_principal("person:ada").git.head(r.path) == r.sha("HEAD")
+    assert seen == ["person:ada"]
+
+
+def test_a_child_over_its_memory_limit_is_killed():
+    """The host watches each child's resident memory (macOS has no RLIMIT_AS) and kills its group above the limit."""
+    import sys as _sys
+
+    if _sys.platform not in ("darwin", "linux"):
+        pytest.skip("no RSS probe on this platform")
+
+    def spawn():
+        code = "import time\nx = []\nfor _ in range(40):\n"
+        code += '    x.append(bytearray(b"x" * (8 << 20)))  # touched pages: resident\n    time.sleep(0.05)\n'
+        code += "time.sleep(30)\n"
+        return subprocess.Popen(
+            [sys.executable, "-c", code], stdin=subprocess.PIPE, stdout=subprocess.PIPE, start_new_session=True
+        )
+
+    pool = ReaderPool(spawn=spawn, rss_max=96 << 20, wall=20)
+    t = time.monotonic()
+    with pytest.raises(Unavailable, match="memory limit"):
+        pool.call("p", {}, {})
+    assert time.monotonic() - t < 10
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"head_sha": "zz" * 20},
+        {"refs": {"refs/heads/main": "ab" * 32}},  # a sha256-length id in a sha1 answer
+        {"refs": {"refs/heads/other": None}},  # not the ref asked for
+        {"head_ref": "refs/tags/v1"},
+        {"origin_urls": "x"},
+        {"object_format": "md5"},
+    ],
+)
+def test_a_malformed_child_answer_never_reaches_the_caller(bad):
+    good = {
+        "head_ref": "refs/heads/main",
+        "head_sha": "ab" * 20,
+        "head_error": None,
+        "refs": {"refs/heads/main": "cd" * 20},
+        "origin_urls": [],
+        "object_format": "sha1",
+    }
+
+    class Fake(ReaderPool):
+        def call(self, principal, hello, req):
+            return {**good, **bad}
+
+    reader = HostGitReader(Fake(spawn=lambda: None), PinStore())
+    reader._pins = lambda path: type("P", (), {"to_json": lambda self: {}})()
+    with pytest.raises(Unavailable):
+        reader.observe("/x", ["refs/heads/main"])
+    Fake.call = lambda self, principal, hello, req: good
+    assert reader.observe("/x", ["refs/heads/main"])["head_sha"] == "ab" * 20

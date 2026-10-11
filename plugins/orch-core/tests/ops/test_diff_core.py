@@ -29,7 +29,7 @@ def linked(ws, cli):
 
 def both_caps(ws):
     host = HostGitReader(ReaderPool(), PinStore())
-    return Capabilities.direct({}), Capabilities.host((str(ws.root),), git=host)
+    return Capabilities.direct({}), Capabilities.host((str(ws.root),), git=host).with_principal("agent-1")
 
 
 def test_diff_core_in_both_modes_equals_git(ws, linked):
@@ -48,11 +48,12 @@ def test_diff_core_in_both_modes_equals_git(ws, linked):
             assert got["unified"] == want and got["truncated"] is False
             assert got["sources"] == [
                 {"repo": "proj", "branch": "feat/x", "base_sha": ws.git("rev-parse", "main"),
-                 "head_sha": ws.git("rev-parse", "feat/x")}
+                 "head_sha": ws.git("rev-parse", "feat/x"), "base_source": "local_ref", "base_moved": 0,
+                 "commits": [{"sha": ws.git("rev-parse", "feat/x"), "subject": "fix"}], "commits_more": 0}
             ]  # fmt: skip
             assert got["files"] == [
                 {"repo": "proj", "path": "impl.txt", "old_path": None, "status": "M", "add": 1, "del": 1,
-                 "binary": False}
+                 "binary": False, "too_large": False}
             ]  # fmt: skip
         with pytest.raises(OrchError) as e:
             diff_result(direct, s, view, repo="other")

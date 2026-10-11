@@ -206,7 +206,6 @@ class Human:
         """Read-only: for each linked repository with a branch, is the working copy **on the bound branch, at the bound
         commit, with nothing uncommitted**? The decision binds a commit; a person who ran or read the files must have
         had exactly that commit in front of them (D58, security review R2). ``signed`` is the source list bound."""
-
         out: list[str] = []
         links = view.fields["links"]
         for name in links["repos"]:

@@ -235,3 +235,70 @@ def test_max_bytes_cuts_on_a_line_boundary(make_repo):
     cut = patch_of(got)
     assert got["truncated"] is True and len(cut) <= 1024 and cut.endswith(b"\n") and full.startswith(cut)
     assert got["files"][0]["add"] == 2000  # the counts are of the whole diff
+
+
+def test_opus_16mib_newline_blob_is_too_large_to_diff_and_cheap(make_repo):
+    """73 KB on disk, 16 Mi lines: reported "too large to diff" before any line split (it cost 2.2 GiB before)."""
+    import resource
+    import time
+
+    r = make_repo()
+    r.write("small.txt", "1\n")
+    r.commit()
+    r.git("checkout", "-q", "-b", "feat")
+    r.write("nl.txt", b"\n" * (16 << 20))
+    r.write("lines.txt", b"\n" * 300_000)  # under 8 MiB, over the line cap
+    r.write("small.txt", "2\n")
+    r.commit()
+    before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    t = time.monotonic()
+    got = local.diff(r.path, branch="feat", default_branch=None)
+    assert time.monotonic() - t < 5
+    grown = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss - before
+    unit = 1 if os.uname().sysname == "Darwin" else 1024  # bytes on macOS, KiB on Linux
+    assert grown * unit < 400 << 20
+    by = {f["path"]: f for f in got["files"]}
+    assert by["nl.txt"]["too_large"] is True and by["nl.txt"]["binary"] is True
+    assert by["small.txt"]["too_large"] is False and by["small.txt"]["add"] == 1
+    text = patch_of(got)
+    assert b"diff --git a/nl.txt b/nl.txt\nToo large to diff: a side is over 8 MiB\n" in text
+    assert b"diff --git a/lines.txt b/lines.txt\nToo large to diff: a side has over 200000 lines\n" in text
+    assert by["lines.txt"]["too_large"] is True
+    assert b"+2\n" in text
+
+
+def test_base_labels_and_the_commit_list(make_repo):
+    r = make_repo()
+    r.write("a.txt", "1\n")
+    base = r.commit()
+    r.git("checkout", "-q", "-b", "feat")
+    shas = []
+    for i, subject in enumerate(["one", "two \x1b[2J‮evil", "three"]):
+        r.write("a.txt", f"{i}\n")
+        r.git("add", "-A")
+        r.git("commit", "-q", "-m", subject)
+        shas.append(r.sha("HEAD"))
+    got = local.diff(r.path, branch="feat", default_branch=None)
+    assert (got["base_sha"], got["base_source"], got["base_moved"]) == (base, "local_ref", 0)
+    assert [c["sha"] for c in got["commits"]] == shas[::-1] and got["commits_more"] == 0
+    assert got["commits"][1]["subject"] == "two [2Jevil"  # ESC and the RTL override removed
+    # a declared default branch that does not exist: never a silent one-commit diff
+    with pytest.raises(Unavailable, match="declared default branch"):
+        local.diff(r.path, branch="feat", default_branch="trunk")
+    # main deleted, no master: first parent, labelled
+    r.git("branch", "-D", "main")
+    got = local.diff(r.path, branch="feat", default_branch=None)
+    assert (got["base_sha"], got["base_source"]) == (shas[1], "first_parent")
+    assert [c["sha"] for c in got["commits"]] == [shas[2]]
+
+
+def test_the_commit_list_is_capped_at_50(make_repo):
+    r = make_repo()
+    r.write("a.txt", "0\n")
+    r.commit()
+    r.git("checkout", "-q", "-b", "feat")
+    for i in range(53):
+        r.git("commit", "-q", "--allow-empty", "-m", f"c{i}")
+    got = local.diff(r.path, branch="feat", default_branch=None)
+    assert len(got["commits"]) == 50 and got["commits_more"] == 3
+    assert got["commits"][0]["subject"] == "c52"

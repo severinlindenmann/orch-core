@@ -3,7 +3,7 @@ from the declared ``remote`` (``repo.remote_mismatch``, F7)."""
 
 from __future__ import annotations
 
-__all__ = ["RemoteMismatch", "Unavailable"]
+__all__ = ["Busy", "RemoteMismatch", "Unavailable"]
 
 
 class Unavailable(Exception):
@@ -18,3 +18,9 @@ class Unavailable(Exception):
 
 class RemoteMismatch(Unavailable):
     code = "repo.remote_mismatch"
+
+
+class Busy(Unavailable):
+    """Too many reads waiting for a reader child (section 0.11: queue bounds); retryable."""
+
+    code = "quota.host"

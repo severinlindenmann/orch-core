@@ -39,13 +39,14 @@ def canon_mode(mode: int) -> int:
 
 
 class Commit:
-    __slots__ = ("oid", "tree", "parents", "time")
+    __slots__ = ("oid", "tree", "parents", "time", "subject")
 
-    def __init__(self, oid: str, tree: str, parents: list[str], time: int) -> None:
+    def __init__(self, oid: str, tree: str, parents: list[str], time: int, subject: bytes = b"") -> None:
         self.oid = oid
         self.tree = tree
         self.parents = parents
         self.time = time
+        self.subject = subject  # the message's first line, raw (display only; clean before showing)
 
 
 class TreeEntry:
@@ -144,7 +145,7 @@ class Repo:
         if len(self._commits) >= limits.COMMITS_MAX:
             raise Unavailable("too many commits to walk")
         _, data = self.objects.read(oid, "commit")
-        head, _, _ = data.partition(b"\n\n")
+        head, _, message = data.partition(b"\n\n")
         lines = head.split(b"\n")
         if not lines or not lines[0].startswith(b"tree "):
             raise Unavailable(f"commit {oid} has no tree")
@@ -161,7 +162,7 @@ class Repo:
         for h in (tree, *parents):
             if len(h) != self.hexlen or not all(ch in "0123456789abcdef" for ch in h):
                 raise Unavailable(f"commit {oid} is malformed")
-        c = Commit(oid, tree, parents, time)
+        c = Commit(oid, tree, parents, time, message.split(b"\n", 1)[0][:1000])
         self._commits[oid] = c
         return c
 
@@ -219,6 +220,25 @@ class Repo:
         best = [c for c in common if c not in below]
         best.sort(key=lambda c: (-self.commit(c).time, c))
         return best[0]
+
+    def range_commits(self, base: str, head: str) -> list[Commit]:
+        """``base..head``: the commits reachable from head and not from base, newest committer time first."""
+        below = self._ancestors([base])
+        seen = {head}
+        todo = [head]
+        out: list[Commit] = []
+        while todo:
+            cur = todo.pop()
+            if cur in below:
+                continue
+            c = self.commit(cur)
+            out.append(c)
+            for p in c.parents:
+                if p not in seen:
+                    seen.add(p)
+                    todo.append(p)
+        out.sort(key=lambda c: (-c.time, c.oid))
+        return out
 
     def _ancestors(self, starts: list[str]) -> set[str]:
         seen = set(starts)

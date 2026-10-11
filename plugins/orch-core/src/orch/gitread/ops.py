@@ -18,7 +18,7 @@ from typing import Any
 from . import limits
 from .errors import Unavailable
 from .fs import RepoPins
-from .patchtext import diff_trees, render
+from .patchtext import Change, diff_trees, quote_path, render
 from .pinning import pin_repo
 from .repo import Repo
 
@@ -70,7 +70,46 @@ def observe(repo: Repo, refs: list[str]) -> dict[str, Any]:
         "head_error": head_error,
         "refs": resolved,
         "origin_urls": repo.config.origin_urls,
+        "object_format": repo.algo,
     }
+
+
+_BIDI = {0x061C, 0x200E, 0x200F, *range(0x202A, 0x202F), *range(0x2066, 0x206A)}
+
+
+def clean_line(raw: bytes, limit: int = 200) -> str:
+    """Display text from agent-written bytes: UTF-8 (U+FFFD for bad bytes), with C0/C1 controls, DEL and bidi
+    controls removed, cut at ``limit`` characters."""
+    text = raw.decode("utf-8", errors="replace")
+    out = "".join(ch for ch in text if not (ord(ch) < 0x20 or 0x7F <= ord(ch) < 0xA0 or ord(ch) in _BIDI))
+    return out[:limit]
+
+
+def _too_large(repo: Repo, ch: Change, used: int) -> tuple[str | None, int]:
+    """Why a change is too large to diff as text, checked from its blobs **before** the diff code splits anything
+    (review finding 2: a 73 KB blob of 16 MiB of newlines cost 2.2 GiB in the line diff). Returns ``(why, lines)``:
+    ``why`` is ``None`` when it fits; ``used`` is the lines this request has already diffed."""
+    lines = 0
+    for side in (ch.old, ch.new):
+        if side is None or side[0] & 0o170000 == 0o160000:
+            continue
+        data = repo.blob(side[1])
+        if b"\0" in data[:8000]:
+            continue  # binary: never split into lines
+        if len(data) > limits.TEXT_BYTES_MAX:
+            return f"a side is over {limits.TEXT_BYTES_MAX >> 20} MiB", 0
+        n = data.count(b"\n") + 1
+        if n > limits.TEXT_LINES_MAX:
+            return f"a side has over {limits.TEXT_LINES_MAX} lines", 0
+        lines += n
+    if used + lines > limits.REQUEST_LINES_MAX:
+        return f"this request's budget of {limits.REQUEST_LINES_MAX} diffed lines is spent", 0
+    return None, lines
+
+
+def _marker(ch: Change, why: str) -> bytes:
+    a, b = quote_path(b"a/" + ch.path), quote_path(b"b/" + ch.path)
+    return b"diff --git " + a + b" " + b + b"\n" + b"Too large to diff: " + why.encode() + b"\n"
 
 
 def diff(repo: Repo, branch: str, default_branch: str | None, context: int, max_bytes: int) -> dict[str, Any]:
@@ -79,18 +118,57 @@ def diff(repo: Repo, branch: str, default_branch: str | None, context: int, max_
     if head is None:
         raise Unavailable(f"the branch {branch!r} does not exist")
     base = None
-    for name in [default_branch] if default_branch else ["main", "master"]:
-        tip = repo.resolve_commit(_branch_ref(name))
-        if tip is not None:
-            base = repo.merge_base(head, tip)
-            break
+    tip = None
+    if default_branch:
+        tip = repo.resolve_commit(_branch_ref(default_branch))
+        if tip is None:  # review finding 4, hole 3: never a silent one-commit diff
+            raise Unavailable(f"the declared default branch {default_branch!r} does not exist")
+    else:
+        for name in ("main", "master"):
+            tip = repo.resolve_commit(_branch_ref(name))
+            if tip is not None:
+                break
+    if tip is not None:
+        base = repo.merge_base(head, tip)
+    source = "local_ref"
     if base is None:
         parents = repo.commit(head).parents
         if not parents:
             raise Unavailable("no merge base with the default branch and no parent commit")
-        base = parents[0]
+        base, source = parents[0], "first_parent"
+    rng = repo.range_commits(base, head)
+    commits = [{"sha": c.oid, "subject": clean_line(c.subject)} for c in rng[: limits.COMMITS_SHOWN]]
     changes, files_cut = diff_trees(repo, repo.commit(base).tree, repo.commit(head).tree, limits.DIFF_FILES_MAX)
-    patch, files, text_cut = render(repo, changes, context, max_bytes)
+    parts: list[bytes] = []
+    files: list[dict[str, Any]] = []
+    size = 0
+    text_cut = False
+    used = 0
+    for ch in changes:
+        why, n = _too_large(repo, ch, used)
+        used += n
+        if why is None:
+            text, fl, cut_one = render(repo, [ch], context, max_bytes)
+            entry = {**fl[0], "too_large": False}
+        else:
+            text, cut_one = _marker(ch, why), False
+            entry = {
+                "path": ch.path.decode("utf-8", errors="replace"),
+                "old_path": None,
+                "status": ch.status,
+                "add": 0,
+                "del": 0,
+                "binary": True,
+                "too_large": True,
+            }
+        if size <= max_bytes:
+            parts.append(text)
+            size += len(text)
+        else:
+            text_cut = True
+        text_cut = text_cut or cut_one
+        files.append(entry)
+    patch = b"".join(parts)
     cut = patch
     if len(patch) > max_bytes:
         nl = patch.rfind(b"\n", 0, max_bytes)
@@ -98,11 +176,16 @@ def diff(repo: Repo, branch: str, default_branch: str | None, context: int, max_
     return {
         "branch": branch,
         "base_sha": base,
+        "base_source": source,
+        "base_moved": 0,
         "head_sha": head,
+        "commits": commits,
+        "commits_more": max(0, len(rng) - limits.COMMITS_SHOWN),
         "files": files,
         "patch": base64.b64encode(cut).decode("ascii"),
         "truncated": len(cut) < len(patch) or files_cut or text_cut,
         "origin_urls": repo.config.origin_urls,
+        "object_format": repo.algo,
     }
 
 

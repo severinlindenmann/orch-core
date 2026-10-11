@@ -406,14 +406,20 @@ class Git:
       ``python -I -m orch.gitread`` child under the repo's pins (D-P2-19). :meth:`dirty` answers ``None`` ("cannot be
       asked"): the clean-tree check is the worker's ``tree.check`` (H10), and without it ``verdict`` and ``approve
       code`` are ``observe.unavailable``. :meth:`run` (an arbitrary git command) is denied.
+    * **Principal** (host mode): every read runs under the caller's principal, so the pool's one-child-per-principal
+      rule (F10) is real. The dispatcher binds it per request with :meth:`Capabilities.with_principal`; a host-mode
+      read without one is refused.
     """
 
     enabled: bool
     reader: Any = field(default=None, repr=False)
+    principal: str | None = None
 
     def _need(self) -> None:
         if not self.enabled:
             raise CapabilityDenied("git")
+        if self.reader is not None and not self.principal:
+            raise CapabilityDenied("git", "git: a host-mode read needs the caller's principal")
 
     def repo_path(self, root: Path, repos: Any, name: str) -> Path | None:
         """Where repo ``name`` of ``settings.repos`` lives. Direct mode: P1's ``observe.repo_path`` (resolved).
@@ -432,7 +438,7 @@ class Git:
         from orch.gitread.errors import Unavailable
 
         try:
-            return self.reader.observe(path, refs)
+            return self.reader.observe(path, refs, principal=self.principal)
         except Unavailable:
             return None
 
@@ -493,6 +499,10 @@ class Git:
 
         if self.reader is None:
             return observe.observe(store, ref, problems)
+        if not self.principal:
+            if problems is not None:
+                problems.append("git: a host-mode read needs the caller's principal; nothing was observed")
+            return []
         repos = store.state.workspace.repos
         declared = [p for n in repos if (p := self.repo_path(store.root, repos, n)) is not None]
         self.reader.sync(declared)  # pins a repo that first appears; an existing pin is never replaced
@@ -508,7 +518,6 @@ class Git:
         remote: str | None,
         context: int = 3,
         max_bytes: int = 262144,
-        roots: list[str] | None = None,
     ) -> dict[str, Any]:
         """The ``diff`` core for one repo (section 0.8): ``{branch, base_sha, head_sha, files, patch (base64),
         truncated, origin_urls}``. Raises :class:`orch.gitread.errors.Unavailable`, or
@@ -520,14 +529,17 @@ class Git:
 
         if self.reader is not None:
             got = self.reader.diff(
-                path, branch=branch, default_branch=default_branch, context=context, max_bytes=max_bytes
+                path,
+                branch=branch,
+                default_branch=default_branch,
+                context=context,
+                max_bytes=max_bytes,
+                principal=self.principal,
             )
         else:
             from orch.gitread import local
 
-            got = local.diff(
-                path, branch=branch, default_branch=default_branch, context=context, max_bytes=max_bytes, roots=roots
-            )
+            got = local.diff(path, branch=branch, default_branch=default_branch, context=context, max_bytes=max_bytes)
         if remote is not None and not canon.same_repo_identity(remote, identity_of(got["origin_urls"], name)):
             raise RemoteMismatch("the observed origin differs from the declared remote")
         return got
@@ -539,11 +551,12 @@ class _ReaderBackend:
     def __init__(self, reader: Any, git: Git) -> None:
         self.reader = reader
         self.repo_path = git.repo_path
+        self.principal = git.principal
 
     def look(self, path: Path, name: str, ref_name: str) -> tuple[str | None, str]:
         from orch.gitread.client import identity_of
 
-        got = self.reader.observe(path, [ref_name])
+        got = self.reader.observe(path, [ref_name], principal=self.principal)
         return got["refs"].get(ref_name), identity_of(got["origin_urls"], name)
 
 
@@ -603,6 +616,13 @@ class Capabilities:
             signer=Signer(enabled=False),
             clock=clock,
         )
+
+    def with_principal(self, principal: str) -> Capabilities:
+        """The same capabilities for one request: git reads run under ``principal`` (F10 fairness). Shares the file
+        capability (its root fds); do not ``close()`` the copy."""
+        from dataclasses import replace
+
+        return replace(self, git=replace(self.git, principal=principal))
 
     def close(self) -> None:
         self.files.close()

@@ -125,7 +125,7 @@ HOST = textwrap.dedent(
     from orch.gitread.client import HostGitReader, PinStore, ReaderPool
     from orch.ops.caps import Capabilities
     reader = HostGitReader(ReaderPool(), PinStore(Path(args["state"]) / "git-pins.json"))
-    caps = Capabilities.host((args["root"], args["state"]), git=reader)
+    caps = Capabilities.host((args["root"], args["state"]), git=reader).with_principal("agent-1")
     audit.install([args["root"], args["state"]])
     out = {}
     try:

@@ -43,6 +43,9 @@ def binding_of(op: str, args_normalised: dict[str, Any], session: str | None = N
 class Intent:
     key: str
     record: dict[str, Any]
+    #: a ``started`` intent left by an earlier attempt that is no longer running (it died, or kept the intent on
+    #: purpose after a durable change): the caller finishes it the way recovery at start does
+    resumed: bool = False
 
     @property
     def op(self) -> str:
@@ -109,15 +112,26 @@ class IntentStore:
                         self._write(key, record)
                         self._running[key] = threading.Event()
                         return Intent(key, record)
+                    if record.get("step") == "started" and record.get("binding") == binding:
+                        self._running[key] = threading.Event()
+                        return Intent(key, record, resumed=True)
                     break
             running.wait()
         if record.get("binding") != binding:
             raise HostError("idem.conflict", "this idem was used for another request")
         if record["step"] == "tombstone":
             raise HostError("idem.expired", "this idem has expired")
-        if record["step"] == "started":  # only possible before recovery ran: never run the op twice
-            raise HostError("outcome.unknown", "an earlier attempt has not been reconciled yet")
         return record
+
+    def peek(self, namespace: str, principal: str, idem: str) -> dict[str, Any] | None:
+        """The record for this key, if any (no lock taken on the op: a hint for read-only pre-checks)."""
+        return self.read(self.key(namespace, principal, idem))
+
+    def release(self, intent: Intent) -> None:
+        """Stop running ``intent`` but keep it ``started`` (a durable change landed and must be finished later:
+        by a same-key retry, or at the next host start)."""
+        with self._lock:
+            self._release(intent.key)
 
     def update(self, intent: Intent, **fields: Any) -> None:
         """Durably add facts to a ``started`` intent (for example the workspace id it is about)."""

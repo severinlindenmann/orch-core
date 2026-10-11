@@ -10,9 +10,12 @@ def test_adapter_maps_real_data_only(stub):
     assert result["status"] == "in-progress"
     assert result["head_seq"] == row["head_seq"]
     assert "lines" not in result
-    # What the row does not carry stays empty: no progress, no restricted flag, no answers.
-    assert result["progress"] == {"tasks_done": 0, "tasks_total": 0, "ac_proven": 0, "ac_total": 0}
-    assert result["claim"] == {"agent": "claude-code", "for": "", "session": "s_1"}
+    # What the row does not carry is unknown (None), never zero or false: a host without read_ext/1 sends none of it.
+    for key in ("tasks", "criteria", "restricted", "blocking_questions"):
+        row.pop(key, None)
+    result = adapters.summary(row)
+    assert result["progress"] is None and result["restricted"] is None and result["blocking_questions"] is None
+    assert result["claim"] == {"agent": "claude-code", "for": "", "session": "s_1", "live": None}
     assert result["turn"]["who"] == "agent:claude-code"
 
 
@@ -41,7 +44,8 @@ def test_needs_kinds_map_to_the_ui(stub):
         "addon",
         "verdict",
     ]
-    assert all(n["title"] == "T" and n["since"] == "" for n in result["needs_you"])
+    assert all(n["title"] == "T" and n["since"] == "" for n in result["needs_you"])  # no `since`: unknown, ''
+    assert result["needs_you"][2]["text"] == "No one can approve the plan gate"
     assert result["counts"] == {"open": 1} and result["waiting_on_others"]["count"] == 0
     viewer = adapters.today(data, [], stub.ws, "2026-10-11T00:00:00Z", "p", "viewer")
     assert viewer["needs_you"] == [] and len(viewer["read_only_open"]) == 6

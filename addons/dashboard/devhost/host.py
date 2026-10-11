@@ -76,6 +76,10 @@ class StubHost:
         self.journal = deque(maxlen=10000)
         self.cursors = {self.cursor: 0}
         self.pages = reads.Pages()
+        # `read_ext/1` (v1.4): the optional fields. Off only to test a host that lacks them (ORCH_DEV_READ_EXT=0).
+        self.ext = os.environ.get("ORCH_DEV_READ_EXT", "1") != "0"
+        self.scan_budget = None  # activity.list scan budget per request (tests shorten it)
+        self.merged = []
         self.visible = {}
 
     def refresh(self, store, views):
@@ -92,6 +96,7 @@ class StubHost:
             )
         )
         history = [e["id"] for _, e in events]
+        self.merged = events
         if history == self.history:
             return
         if history[: len(self.history)] != self.history:
@@ -161,7 +166,7 @@ class StubHost:
             "host_uid": os.getuid(),
             "workspace": {"id": self.ws, "prefix": data["prefix"]},
             "peer": {"uid": os.getuid(), "class": "person", "person": self.person},
-            "caps": ["ops/1", "query/1", "sub/1", "diff/1"],
+            "caps": ["ops/1", "query/1", "sub/1", "diff/1", *(["read_ext/1", "activity/1"] if self.ext else [])],
             "ops": self.versions,
             "registry": "sha256:" + hashlib.sha256(json.dumps(self.versions, sort_keys=True).encode()).hexdigest(),
             "tier": "A",
@@ -266,11 +271,13 @@ class StubHost:
                         ]
                     }
                 elif op == "needs":
-                    data = reads.needs(self, views, ws, self.person, args)
+                    data = reads.needs(self, store, views, ws, self.person, args)
                 elif op == "ticket.query":
                     data = reads.query(self, store, views, args, self.person)
                 elif op == "ticket.get":
                     data = reads.get(self, store, views, args, self.person)
+                elif op == "activity.list":
+                    data = reads.activity(self, store, views, ws, self.person, args)
                 elif op == "diff":
                     data = reads.diff(store, views, args)
                 elif op == "artifact.get":

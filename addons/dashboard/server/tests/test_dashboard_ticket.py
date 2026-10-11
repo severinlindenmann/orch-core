@@ -54,10 +54,11 @@ def test_document_is_adapted_to_the_ui_type(client, token, stub, rich):
     assert (
         doc["links"]["branches"] == {"code": "feat/one"}
         and doc["branch"]["head"] == ""
+        and len(doc["sources"][0]["sha"]) == 40
         and doc["branch"]["name"] == "feat/one"
     )
     assert doc["restricted"] is False and doc["verdict"] is None
-    assert "verdict" in doc["unavailable"]  # named, not invented
+    assert doc["verdict"] is None and "branch commits" in doc["unavailable"]  # named, not invented
     assert doc["turn"]["who"] == stub.person
     assert doc["head"]["seq"] > 0 and doc["created_at"] and doc["updated_at"]
     check("ticket", doc)
@@ -129,7 +130,12 @@ def test_unknown_and_closed_tickets(client, token, stub, rich):
     env.tick()
     env.close(ids["Third"])
     res = client.get(url(stub, "DEMO-0004"), headers=headers(token))
-    assert res.status_code == 409 and res.json()["error"]["code"] == "ticket.closed"
+    assert res.status_code == 200  # a plain read of a closed ticket never errors (v1.4)
+    doc = res.json()
+    assert doc["status"] == "closed" and doc["settled"] is True and doc["closed"]["resolution"] == "other"
+    assert doc["closed"]["by"] and doc["closed"]["duplicate_of"] is None
+    closed = client.get(f"/api/w/{stub.ws}/tickets?status=closed", headers=headers(token)).json()
+    assert [r["key"] for r in closed["rows"]] == ["DEMO-0004"] and closed["rows"][0]["status"] == "closed"
     listed = client.get(f"/api/w/{stub.ws}/board", headers=headers(token)).json()
     assert "DEMO-0004" not in [r["key"] for r in listed["rows"]]
 
@@ -138,3 +144,15 @@ def test_ticket_routes_have_no_write_method(client, token, stub):
     for tail in ("DEMO-0001", "DEMO-0001/events", "DEMO-0001/changes"):
         res = client.post(url(stub, tail), json={}, headers={**headers(token), "Origin": ORIGIN})
         assert res.status_code == 405
+
+
+def test_without_read_ext_the_page_says_unknown(client, token, stub, rich):
+    stub.ext = False  # a host without read_ext/1: absent fields mean unknown, never zero
+    doc = client.get(url(stub, "DEMO-0001"), headers=headers(token)).json()
+    assert doc["read_ext"] is False and doc["verdict"] is None and "verdict" in doc["unavailable"]
+    assert doc["claim"] is None and "claim details" in doc["unavailable"]
+    board = client.get(f"/api/w/{stub.ws}/board", headers=headers(token)).json()
+    unknown = ("progress", "restricted", "blocking_questions")
+    assert all(r[k] is None for r in board["rows"] for k in unknown)
+    check("ticket-v13", doc)
+    check("board-page-v13", board)

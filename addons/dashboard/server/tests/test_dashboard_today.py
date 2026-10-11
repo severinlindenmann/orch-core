@@ -17,8 +17,11 @@ def test_today_lists_the_viewers_needs_with_ticket_titles(client, token, stub, r
     kinds = {(n["kind"], n["ticket"], n["ref"]) for n in data["needs_you"]}
     assert ("question", "DEMO-0001", "Q2") in kinds and ("approval", "DEMO-0001", "requirements") in kinds
     assert all(n["title"] == "Real P1 ticket" for n in data["needs_you"])
-    assert all(n["since"] == "" for n in data["needs_you"])  # not served: empty, never invented
-    assert data["counts"] == {"open": 4} and data["recent"] == [] and data["read_only_open"] == []
+    assert all(n["since"] for n in data["needs_you"])  # v1.4 dates them
+    assert data["counts"] == {"open": 4} and data["read_only_open"] == []
+    # The feed is tickets only and carries nothing of the host's journal: no jpos, ws_seq, log or uid.
+    assert data["recent"] and all(r["ticket"] for r in data["recent"])
+    assert not {"jpos", "ws_seq", "log", "uid"} & {k for r in data["recent"] for k in r}
     check("today", data)
 
 

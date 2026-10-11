@@ -21,9 +21,9 @@
    "priority": "high",
    "progress": {
     "ac_proven": 0,
-    "ac_total": 0,
+    "ac_total": 1,
     "tasks_done": 0,
-    "tasks_total": 0
+    "tasks_total": 2
    },
    "restricted": false,
    "size": null,

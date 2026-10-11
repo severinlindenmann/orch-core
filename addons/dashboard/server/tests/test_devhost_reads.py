@@ -88,10 +88,10 @@ def test_ticket_get_is_structured(rich, stub):
     assert got["doc"]["sections"]["requirements"] == "req"
     types = [e["type"] for e in got["log"]]
     assert types[0] == "ticket.created" and "log.added" in types and "branch.pushed" in types
-    assert all(set(e) == {"seq", "type", "at", "actor", "summary"} for e in got["log"])
-    assert set(got["log"][0]["actor"]) == {"kind", "id"} and len(got["log"][0]["summary"]) <= 200
+    assert all(set(e) == {"seq", "type", "at", "actor", "summary", "data"} for e in got["log"])
+    assert {"kind", "id"} <= set(got["log"][0]["actor"]) and len(got["log"][0]["summary"]) <= 200
     assert got["log_more"] is False and got["sub_cursor"]
-    assert set(got["gates"]["requirements"]) == {"state", "gen", "hash12"}
+    assert {"state", "gen", "hash12", "waiting", "eligible", "policy", "decisions"} <= set(got["gates"]["requirements"])
     assert got["gates"]["requirements"]["state"] == "open"
     assert [c["id"] for c in got["criteria"]] == ["AC1"]
     paged = stub.call("ticket.get", {"ref": "DEMO-0001", "log_limit": 2})["data"]
@@ -234,3 +234,143 @@ def test_restricted_ticket_is_invisible_to_every_read(rich, stub):
         stranger.call("ticket.query", {"parent": "DEMO-0002"})
     assert "Second" not in repr(stranger.call("needs", {})["data"])
     assert "Second" not in repr(got)
+
+
+def test_without_read_ext_the_optional_fields_are_absent(rich, stub):
+    stub.ext = False
+    assert "read_ext/1" not in stub.welcome()["caps"] and "activity/1" not in stub.welcome()["caps"]
+    row = rows(stub)["rows"][0]
+    assert not {"restricted", "tasks", "criteria", "blocking_questions"} & set(row)
+    got = stub.call("ticket.get", {"ref": "DEMO-0001"})["data"]
+    assert all(set(e) == {"seq", "type", "at", "actor", "summary"} for e in got["log"])
+    assert not {"status", "settled", "tasks", "verdict", "artifacts", "claim", "source", "pushes", "sections"} & set(
+        got
+    )
+    assert set(got["gates"]["requirements"]) == {"state", "gen", "hash12"}
+    item = stub.call("needs", {})["data"]["items"][0]
+    assert not {"since", "text", "status", "payload"} & set(item)
+
+
+def test_rows_and_ticket_carry_the_v14_fields(rich, stub):
+    row = next(r for r in rows(stub)["rows"] if r["key"] == "DEMO-0001")
+    assert row["restricted"] is False and row["tasks"] == {"done": 0, "skipped": 0, "total": 2}
+    assert row["criteria"] == {"done": 0, "total": 1} and row["blocking_questions"] == 0 and row["claim"] is None
+    got = stub.call("ticket.get", {"ref": "DEMO-0001"})["data"]
+    assert got["status"] == "open" and got["settled"] is False and "closed" not in got
+    assert [t["id"] for t in got["tasks"]] == ["T1", "T2"] and got["tasks"][0]["leased_by"] is None
+    assert got["verdict"] is None and got["source"][0]["name"] == "code" and len(got["pushes"]) == 1
+    q1, q2 = got["questions"]
+    assert q1["state"] == "answered" and q1["answer"]["option"] == "csv" and q1["asked_by"]["kind"] == "agent"
+    assert q2["text"] == "Any naming rule?" and q2["options"][0] == {"key": "csv", "label": "Monthly CSV"}
+    assert q2["to_ref"] == "ticket_owner" and q2["to"] == [stub.person]
+    created = got["log"][0]
+    assert created["type"] == "ticket.created" and created["data"]["title"] == "First" or created["data"]["title"]
+    assert got["log"][0]["actor"]["kind"] in ("agent", "person", "host")
+
+
+def test_needs_carry_text_payload_and_who_who_can_see(rich, stub):
+    items = stub.call("needs", {})["data"]["items"]
+    question = next(i for i in items if i["kind"] == "question" and i["ref"] == "Q1" or i["kind"] == "question")
+    assert question["status"] == "open" and question["since"] and question["text"].endswith("?")
+    assert question["payload"]["options"][0]["key"] == "csv" and question["payload"]["blocking"] in (True, False)
+    assert all(stub.person in i["who"] for i in items)
+
+
+def test_closed_tickets_read_plainly_and_list_only_on_request(rich, stub):
+    env, ids = rich
+    uid = ids["Second"]
+    env.tick()
+    env.store.append(
+        env.person_event(env.owner, uid, "ticket.closed", resolution="duplicate", duplicate_of="DEMO-0001", text="dup"),
+        log=uid,
+    )
+    assert "DEMO-0002" not in [r["key"] for r in rows(stub)["rows"]]  # not listed without a status filter
+    only = rows(stub, status=["closed"])["rows"]
+    assert [r["key"] for r in only] == ["DEMO-0002"]
+    assert only[0]["closed"]["resolution"] == "duplicate" and only[0]["closed"]["duplicate_of"] == "DEMO-0001"
+    got = stub.call("ticket.get", {"ref": "DEMO-0002"})["data"]  # a plain read never errors
+    assert got["status"] == "closed" and got["settled"] is True and got["closed"]["text"] == "dup"
+    assert got["log"][-1]["type"] == "ticket.closed" and got["log"][-1]["data"]["duplicate_of"] == "DEMO-0001"
+    assert stub.call("diff", {"ref": "DEMO-0002"})["data"]["files"] == []
+
+
+def test_snips_are_cut_without_an_ellipsis(rich, stub):
+    env, ids = rich
+    uid = ids["First"]
+    env.tick()
+    long = "x" * 2000
+    env.log(uid, long)
+    got = stub.call("ticket.get", {"ref": "DEMO-0001", "log_limit": 500})["data"]
+    item = next(e for e in got["log"] if e["type"] == "log.added" and len(e["data"].get("text", "")) > 900)
+    assert len(item["data"]["text"].encode()) == 1024 and item["data"]["text_cut"] is True
+    assert "…" not in item["data"]["text"]
+
+
+def activity(stub, **args):
+    return stub.call("activity.list", args)["data"]
+
+
+def test_activity_pages_follow_next_page_and_tolerate_short_pages(rich, stub):
+    stub.scan_budget = 4
+    seen, page, pages = [], None, 0
+    while True:
+        data = activity(stub, limit=3, scope="tickets", **({"page": page} if page else {}))
+        assert len(data["items"]) <= 3
+        seen += data["items"]
+        pages += 1
+        page = data["next_page"]
+        if not page:
+            break
+    assert pages > 2 and [i["jpos"] for i in seen] == sorted((i["jpos"] for i in seen), reverse=True)
+    assert len({i["id"] for i in seen}) == len(seen) and all(i["key"] for i in seen)
+    stub.scan_budget = None
+    everything = activity(stub, limit=200)["items"]
+    assert any(i["log"] == "workspace" and i["data"] for i in everything)
+    assert len(everything) > len(seen)
+
+
+def test_activity_tokens_are_principal_bound_and_arguments_bound(rich, stub):
+    env, ids = rich
+    first = activity(stub, limit=2)
+    with pytest.raises(HostError, match="invalid.input"):
+        activity(stub, limit=2, scope="tickets", page=first["next_page"])
+    with pytest.raises(HostError, match="page.expired"):
+        stub.pages.read(first["next_page"], repr(sorted({}.items())), "p_other")  # another principal's token
+
+
+def test_activity_hides_a_ticket_that_became_invisible_between_pages(rich, stub):
+    env, ids = rich
+    from orch import crypto
+
+    from tests.store.helpers import Person
+
+    other = Person()
+    env.store.append(
+        env.person_event(
+            env.owner,
+            "workspace",
+            "member.added",
+            person=other.ref,
+            name="Other",
+            role="member",
+            pk_pub=crypto.b64u(other.pk_pub),
+            device_cert=other.cert(created=1_790_000_000_000),
+        ),
+        log="workspace",
+    )
+    viewer = StubHost(env.root, env.host_state, other.ref)
+    first = viewer.call("activity.list", {"scope": "tickets", "limit": 3})["data"]
+    hidden = ids["Second"]
+    env.tick()
+    env.store.append(
+        env.person_event(env.owner, hidden, "visibility.changed", visibility={"restricted": [env.owner.ref]}),
+        log=hidden,
+    )
+    rest, page = [], first["next_page"]
+    while page:
+        data = viewer.call("activity.list", {"scope": "tickets", "limit": 3, "page": page})["data"]
+        rest += data["items"]
+        page = data["next_page"]
+    assert "DEMO-0002" not in [i["key"] for i in rest]
+    with pytest.raises(HostError, match="not_found"):
+        viewer.call("activity.list", {"ticket": "DEMO-0002"})

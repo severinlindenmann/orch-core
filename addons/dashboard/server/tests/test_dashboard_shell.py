@@ -36,7 +36,7 @@ def test_shell_p1_reads(client, token, stub):
     workspaces = client.get("/api/workspaces", headers=headers).json()
     assert workspaces[0]["id"] == stub.ws
     assert workspaces[0]["members"][0]["person"] == stub.person
-    every = ["identity", "today", "tickets", "board", "ticket", "changes", "evidence"]
+    every = ["identity", "today", "tickets", "board", "ticket", "changes", "evidence", "activity", "read_ext"]
     assert workspaces[0]["features"] == every
     assert client.get("/api/session", headers=headers).json()["features"] == sorted(every)
     assert client.get("/api/me", headers=headers).json()[0]["person"] == stub.person
@@ -83,7 +83,7 @@ def test_other_addresses_are_not_the_app(client, path):
 
 
 @pytest.mark.parametrize(
-    "query", ["limit=201", "limit=0", "sort=status", "file=/etc/passwd", "op=show", "page=../../x", "status=closed"]
+    "query", ["limit=201", "limit=0", "sort=status", "file=/etc/passwd", "op=show", "page=../../x", "status=nope"]
 )
 def test_typed_route_inputs(client, token, stub, query):
     r = client.get(f"/api/w/{stub.ws}/tickets?{query}", headers={"Authorization": f"Bearer {token}"})
@@ -94,6 +94,8 @@ def test_typed_route_inputs(client, token, stub, query):
 def test_caps_hide_unavailable(gateway, stub):
     link = gateway.link(stub.ws)
     link.welcome["caps"].remove("query/1")
+    assert gateway.features(stub.ws) == ["activity", "read_ext"]  # these two do not depend on query/1
+    link.welcome["caps"][:] = [c for c in link.welcome["caps"] if c not in ("read_ext/1", "activity/1")]
     assert gateway.features(stub.ws) == []
     link.welcome["ops"]["whoami"] = 2
     assert gateway.features(stub.ws) == []

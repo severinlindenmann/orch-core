@@ -10,6 +10,9 @@ ULID = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 PERSON = re.compile(r"^p_[0-9a-f]{32}$")
 SHA = re.compile(r"^[0-9a-f]{40}$")
 HASH12 = re.compile(r"^[0-9a-f]{12}$")
+GRANT = re.compile(r"^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")
+DEVICE = re.compile(r"^d_[0-9a-f]{32}$")
+SESSION = re.compile(r"^s_[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 
 
 def normalize(value, seen=None):
@@ -33,6 +36,12 @@ def normalize(value, seen=None):
     if isinstance(value, list):
         return [normalize(v, seen) for v in value]
     if isinstance(value, str):
+        if GRANT.match(value):
+            return name("gr_", value)
+        if DEVICE.match(value):
+            return name("d_", value)
+        if SESSION.match(value):
+            return name("s_", value)
         if ULID.match(value):
             return name("UID", value)
         if PERSON.match(value):

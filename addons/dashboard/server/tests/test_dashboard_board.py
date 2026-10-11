@@ -19,7 +19,7 @@ def test_lists_need_authentication(client, stub, route):
         "limit=0",
         "sort=status",
         "order=up",
-        "status=closed",
+        "status=nope",
         "status=waiting",
         "status=",
         "assignee=sev",
@@ -57,7 +57,7 @@ def test_rows_are_adapted_and_paged_from_one_snapshot(client, token, stub, rich)
     row = first["rows"][0]
     assert row["status"] == "open" and row["labels"] == ["api", "ui"] and row["awaiting_gate"] == "requirements"
     assert row["turn"]["who"] == stub.person and row["open_questions"] == 1
-    assert row["progress"]["tasks_total"] == 0 and row["restricted"] is False
+    assert row["progress"]["tasks_total"] == 2 and row["restricted"] is False and row["blocking_questions"] == 0
 
 
 def test_filters_reach_the_host(client, token, stub, rich):

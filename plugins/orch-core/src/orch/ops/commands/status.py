@@ -3,7 +3,7 @@
 from typing import Any
 
 from orch.ops import views
-from orch.ops._dsl import INT, KEY, STR, err, obj, operation
+from orch.ops._dsl import INT, KEY, STR, B, err, obj, operation
 from orch.ops.base import Context, Result
 from orch.ops.runtime import Call, flat
 
@@ -24,7 +24,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     if grant:
         data["grant"] = grant
     lines: list[str] = []
-    hints = ["orch claim --next"]
+    hints: list[str] = []
     view = None
     if len(mine) == 1:
         view = mine[0]
@@ -46,10 +46,14 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         hints = ["orch show REF"]
     else:
         lines.append("no claim")
-    data["state_dir"] = str(c.ws.state_dir)
-    lines.append(f"state dir {c.ws.state_dir}" + (" (genesis pin created by this call)" if c.ws.pin_created else ""))
+    if not hints:
+        hints = [views.claim_hint(c)]
+    if args.get("verbose"):
+        data["state_dir"] = str(c.ws.state_dir)
+        lines.append(f"state dir {c.ws.state_dir}")
     if c.ws.pin_created:
         data["pin"] = "created"
+        lines.append("genesis pin created by this call")
     return Result(data=data, key=view.key if view else None, cursor=data["cursor"], hints=hints, lines=lines)
 
 
@@ -58,11 +62,12 @@ OP = operation(
     "Context",
     "Who you are, your grant, your cursor, your claim and what needs you.",
     who="read",
+    props={"verbose": B("also show the state directory")},
     pre=("workspace_exists",),
-    text="ok status {person} cursor={cursor}[ grant={grant}][ claim={claim}]\nnext: {next}",
+    text="ok status person={person} cursor={cursor}[ grant={grant}][ claim={claim}]\nnext: {next}",
     data=obj(
         {"person": STR, "grant": STR, "claim": KEY, "cursor": INT, "new_events": INT, "state_dir": STR, "pin": STR},
-        optional=("grant", "claim", "new_events", "pin"),
+        optional=("grant", "claim", "new_events", "state_dir", "pin"),
     ),
     errors=(err("not_found", "run orch init in a workspace", ["orch", "describe", "init"]),),
     handler=handle,

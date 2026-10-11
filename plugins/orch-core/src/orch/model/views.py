@@ -55,6 +55,9 @@ class GateView:
     decisions: tuple[DecisionView, ...]
     waiting: bool
     revoked_device_flag: tuple[str, ...]  # decision ids "approved by a revoked device" (done tickets)
+    missing: tuple[
+        str, ...
+    ] = ()  # what an approval of requirements or plan still lacks: section ids, acceptance, tasks
 
 
 @dataclass(frozen=True)
@@ -229,6 +232,7 @@ def _gate_view(ws: WsCore, t: TCore, g: str) -> GateView:
         ),
         needs.gate_waiting(ws, t, g),
         tuple(sorted(gc.revoked_flag)),
+        tuple(gates.missing_for_gate(ws, t, g)),
     )
 
 

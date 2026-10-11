@@ -33,9 +33,12 @@ def _questions(view: Any) -> list[dict[str, Any]]:
     return out
 
 
-def _document(
-    view: Any, texts: dict[str, str], events: list[dict[str, Any]], sections: tuple[str, ...]
-) -> dict[str, Any]:
+def _recent(c: Call, view: Any, after: int) -> list[str]:
+    """The event lines after ``after``; the log before them is read to know what each update changed."""
+    return views.event_lines(c.store.events(view.uid, after=0), after)
+
+
+def _document(view: Any, texts: dict[str, str], events: list[str], sections: tuple[str, ...]) -> dict[str, Any]:
     """The ticket document of F1 section 7 for ``--json``: the fields and what is derived from the events."""
     doc: dict[str, Any] = {
         "key": view.key,
@@ -55,7 +58,7 @@ def _document(
         "tasks": [{"id": t.id, "text": t.text, "state": t.state, "proves": list(t.proves)} for t in view.tasks],
         "questions": _questions(view),
         "current_state": texts.get("current_state", ""),
-        "events": [views.event_line(e) for e in events],
+        "events": events,
     }
     if sections:
         doc["sections"] = {s: texts.get(s, "") for s in sections}
@@ -68,7 +71,7 @@ def _header(c: Call, view: Any) -> str:
         bits.append(f"size={view.fields['size']}")
     if view.claim is not None:
         mine = bool(c.ctx.session) and in_family(c.ctx.session, view.claim.session)
-        bits.append("claim=you" if mine else "claim=other")
+        bits.append("your claim" if mine else "claimed by another")
         if not view.claim.live:
             bits.append(f"lapsed={view.claim.lapsed}")
     if view.waiting:
@@ -80,7 +83,7 @@ def _header(c: Call, view: Any) -> str:
 
 def _default(c: Call, view: Any, head: int) -> tuple[list[str], dict[str, Any]]:
     texts = c.store.body_sections(view.uid)
-    events = c.store.events(view.uid, after=max(0, head - LAST))
+    events = _recent(c, view, max(0, head - LAST))
     pending = decisions.undelivered(c, view)
     body = [f"title: {views.short(view.title, 100)}"]
     if pending:
@@ -111,7 +114,7 @@ def _default(c: Call, view: Any, head: int) -> tuple[list[str], dict[str, Any]]:
     if len(view.tasks) > len(tasks):
         body.append(f"+{len(view.tasks) - len(tasks)} more tasks (orch task list)")
     if events:
-        body += [views.event_line(e) for e in events]
+        body += events
     lines = [_header(c, view), *fence("\n".join(body), f"ticket {view.key}")]
     c.shown(view, fields=views.FIELDS_SHOWN, sections=("current_state",), seq=head)
     return lines, _document(view, texts, events, ())
@@ -152,8 +155,7 @@ def _sections(
         sections=tuple(wanted),
         seq=head,
     )
-    events = c.store.events(view.uid, after=max(0, head - LAST))
-    return lines, _document(view, texts, events, wanted)
+    return lines, _document(view, texts, _recent(c, view, max(0, head - LAST)), wanted)
 
 
 def _events(c: Call, view: Any, head: int, args: dict[str, Any], *, diff: bool) -> tuple[list[str], dict[str, Any]]:
@@ -162,13 +164,7 @@ def _events(c: Call, view: Any, head: int, args: dict[str, Any], *, diff: bool) 
         cur = c.cursor(view.uid)
         since = cur if diff and cur else max(0, head - LOG_DEFAULT)
     events = c.store.events(view.uid, after=since)
-    rows = []
-    for e in events:
-        line = views.event_line(e)
-        if diff and e["type"] == "ticket.updated":
-            paths = [*e.get("set", {}), *("body." + s for s in e.get("sections", {}))]
-            line += " changed: " + ",".join(paths)
-        rows.append(line)
+    rows = views.event_lines(c.store.events(view.uid, after=0), since)
     last = events[-1]["seq"] if events else since
     c.shown(view, seq=last)
     lines = [_header(c, view)]

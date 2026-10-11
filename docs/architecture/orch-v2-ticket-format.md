@@ -943,7 +943,7 @@ For agents, `orch show <key>` prints a short text view by default (about 350 tok
 - Current state;
 - open questions;
 - acceptance-criteria and task summary;
-- the last 5 events.
+- the last 5 events, as text lines `#seq type actor: detail` (`events` is a list of strings; the actor is `agent`, `person <id prefix>` or `host`; the detail names the task, question, artifact or what changed).
 
 Other views: `--full`, `--section Plan,Context`, `--log --since <seq>`, `orch task next <key>`, and `--json`.
 
@@ -1098,7 +1098,7 @@ claim"**, if the session holds exactly one; otherwise `ambiguous_ref` comes back
 | Read | `show [REF] [--section A,B \| --full \| --log --since N \| --diff --since N]`, `list`, `search`, `next`, `inbox` |
 | Lifecycle | `new`, `claim [REF \| --next \| --takeover --reason]`, `release`, `handoff -m`, `submit`, `ask "…" --options a,b --rec a [--to p]`, `wait` |
 | Edit | `set REF key=value` (keys: title, priority, size, labels, due, links, parent, blocked_by; person-only fields have their own operations), `section set`, `ac add\|edit`, `task list\|next\|add\|start\|done\|skip\|block\|reopen`, `artifact add\|replace\|list`, `log`, `apply --file -` (an atomic batch) |
-| Human only | `approve`, `request-changes`, `verdict`, `answer`, `close`, `reopen`, `grant`, `member`. Agents get `human_only`, `retry:false`. |
+| Human only | `approve [REF] GATE`, `request-changes [REF] GATE`, `verdict [REF] pass\|fail` (the `REF` comes first, `--ref` still works), `answer`, `close`, `reopen`, `grant`, `member`. Agents get `human_only`, `retry:false`. |
 | Admin | `init`, `doctor`, `check`, `instructions sync`, `instructions hook`, `import v1`, `addon …` |
 
 Combined calls for the common loops:
@@ -1268,7 +1268,7 @@ T3 Join in fct_billing, add tests · proves AC2 · verify: dbt test --select fct
 $ orch task done T3 --run --artifact target/tests.log --ac AC2 -m "112 passed"
 ok DEMO-0043 task.done T3 receipt=exit0/41000ms artifact=tests.log seq=18
 next: T4 Document the refresh command (@p_mara) · or orch handoff
-$ orch approve plan
+$ orch approve DEMO-0043 plan
 err human_only approve: human only · retry:false · next: orch ask or orch wait
 ```
 

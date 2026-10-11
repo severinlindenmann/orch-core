@@ -218,7 +218,7 @@ def test_task_done_prints_the_next_task_fenced(ws, cli):
     assert [b[0].split(" [")[0] for b in frames(r.out)] == ["--- next task T2"] and "second thing" in r.out
     assert r.out.splitlines()[-1] == "next: orch task start T2"
     r = cli("task", "done", "T2")
-    assert r.out.splitlines()[-1] == 'next: orch ask "approve the requirements gate?"'  # a gate is still open
+    assert r.out.splitlines()[-1] == "next: orch section set context -m TEXT"  # the gate is open and has no text yet
 
 
 def test_a_dry_run_changes_nothing_and_does_not_run_the_command(ws, cli, tmp_path):

@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from orch.ops._dsl import MSG, REF_PATTERN, STR, E, S, err, obj, operation
+from orch.ops._dsl import MSG, REF, STR, E, err, obj, operation
 from orch.ops.base import Context, Result
 from orch.ops.human import Human, source_sha
 
@@ -44,10 +44,10 @@ OP = operation(
     props={
         "outcome": E("outcome", "pass", "fail", **{"x-metavar": "OUTCOME"}),
         "message": MSG,
-        "ref": S("ticket REF (flag)", pattern=REF_PATTERN, **{"x-metavar": "REF"}),
+        "ref": REF(),
     },
     required=("outcome",),
-    positional=("outcome",),
+    positional=("ref", "outcome"),
     pre=("ticket_exists", "ticket_in_testing", "gate_current", "approver_eligible", "user_presence", "text_clean"),
     emits=("verdict.given",),
     text="ok {key} verdict.given {outcome} seq={seq}\nnext: {next}",

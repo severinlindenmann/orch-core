@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from orch.ops._dsl import REF_PATTERN, STR, E, S, err, obj, operation
+from orch.ops._dsl import REF, STR, E, err, obj, operation
 from orch.ops.base import Context, Result
 from orch.ops.human import Human, source_sha
 
@@ -31,10 +31,10 @@ OP = operation(
     who="human",
     props={
         "gate": E("gate", "requirements", "plan", "code", **{"x-metavar": "GATE"}),
-        "ref": S("ticket REF (flag)", pattern=REF_PATTERN, **{"x-metavar": "REF"}),
+        "ref": REF(),
     },
     required=("gate",),
-    positional=("gate",),
+    positional=("ref", "gate"),
     pre=("ticket_exists", "gate_current", "approver_eligible", "user_presence"),
     emits=("gate.approved",),
     text="ok {key} gate.approved {gate} seq={seq}\nnext: {next}",

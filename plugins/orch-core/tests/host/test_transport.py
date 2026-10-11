@@ -6,7 +6,6 @@ import asyncio
 import contextlib
 import errno
 import os
-import secrets
 import shutil
 import socket
 import stat
@@ -109,16 +108,9 @@ def handler(session, frame, request):
 
 @pytest.fixture
 def secure_tree():
-    # /tmp is sticky: §2 correctly forbids a user-owned direct child. Use a short
-    # directory under this checked-out repository, whose ancestors are trusted.
-    root = Path(__file__).resolve().parents[4]
-    while True:
-        path = root / (".h" + secrets.token_hex(2))
-        try:
-            path.mkdir(mode=0o700)
-            break
-        except FileExistsError:
-            continue
+    from tests.host.lifecycle_helpers import short_dir
+
+    path = short_dir()
     try:
         yield path
     finally:

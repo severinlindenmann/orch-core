@@ -4,13 +4,13 @@ Status: Decided 11 Oct 2026 (draft by orch-52, Codex challenge, Opus tie-break o
 after the Opus security review (F1–F15), the Codex clarity review (14 points) and the dashboard stream's requests
 (R1–R11), and again after the security re-review (N1–N5), the Codex clarity re-review (12 points) and orch-relay's P3
 host interface (§11), and finally after the Opus diff check (M1, L1–L3) and the Codex re-check (8 points). The socket
-API contract §0 is **v1.3.1 (provisional)**: changes go through the coordination log.
+API contract §0 is **v1.3.2 (provisional)**: changes go through the coordination log.
 
 Built on `origin/develop` 908f2511. Decisions are numbered **D-P2-n**, each with a one-line reason.
 
 ---
 
-## 0. Socket API contract v1.3.1 (provisional)
+## 0. Socket API contract v1.3.2 (provisional)
 
 §0 is complete on its own. Streams B (dashboard), C (mobile, from P3) and D (relay bridge) build on it without reading
 the rest. Everything in §0 is normative: a host or client that differs from it is wrong.
@@ -289,13 +289,16 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 **Connection fate:**
 
 - **stays**: the connection remains usable;
-- **close**: sent as `fatal`, then the connection is closed;
+- **close**: sent as `fatal`, then the connection is closed; `conn.overloaded` has this disposition.
+  If a write has already partially sent a frame, close directly because appending a fatal would corrupt framing;
 - **drain**: the connection stays only until the drain ends.
 
 | Code | Exit | Retryable | Fate | When | `retry_after_ms` |
 |---|---|---|---|---|---|
 | `frame.invalid` | 6 | no | close | §0.2 framing rules; an unreadable `req` id; reuse of an open id | — |
 | `frame.too_large` | 6 | no | close | `n` > 2 MiB | — |
+| `conn.overloaded` | 9 | yes | close | slow reader write deadline (10 s), write queue over 64 frames or 4 MiB, or connection byte budget exhausted | — |
+| `internal` | 1 | no | stays for a request whose handler failed or ended without an answer; close (as `fatal`, no request id) when the session itself failed outside any request | an unexpected host error | — |
 | `handshake.invalid` | 6 | no | close | missing, late or second `hello` | — |
 | `peer.denied` | 3 | no | close | unmapped UID; second worker connection | — |
 | `host.version_mismatch` | 1 | no | close | no shared `proto` | — |
@@ -307,7 +310,7 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 | `cancelled` | 9 | yes | stays | §0.2 cancellation | — |
 | `outcome.unknown` | 9 | yes | stays | a write's fate cannot be reported now; recover with `outcome.get` | — |
 | `rate.limited` | 9 | yes | stays | token bucket empty | yes |
-| `quota.host` | 9 | yes | stays (close at connect for the connection limit) | connections, requests in flight, subscriptions, pending human requests, blobs, outcome records, git reader children over their limit (§0.11) | when a slot frees in time |
+| `quota.host` | 9 | yes | stays (close, as `fatal` with no request id, at connect for the connection limit and for connection-attempt throttling: 20 per second, burst 40, per UID) | connections, requests in flight, subscriptions, pending human requests, blobs, outcome records, git reader children over their limit (§0.11) | when a slot frees in time |
 | `result.too_large` | 1 | no | stays | the result would exceed the frame; the hint names the paging argument | — |
 | `host.restarting` | 9 | yes | drain | the host is draining (D-P2-4) | yes |
 | `workspace.unavailable` | 1 | no | stays | the workspace cannot be served; the message names the cause | — |
@@ -490,7 +493,8 @@ parsed CLI arguments), its handler and its `Result`. The changes from P1:
             repo:str{1..200} | null, output:"-"}
   ```
 
-  `output` comes through `files`, at most 1 MiB. The host stores the receipt with `attested_by: "agent"` (D-P2-19).
+  `output` comes through `files`, at most 1 MiB. H3b2 (client receipts) adds `attested_by: "agent"` to the stored
+  receipt (D-P2-19); the current receipt has no such field.
 - `import.v1` and `init` are not served (D-P2-9). `import.v1` runs in direct mode before registration. `init` is the
   `host.wsk_create` + `host.bootstrap` composite.
 - `help` and `describe` are answered by the client from its own registry. The host serves them too.
@@ -645,7 +649,7 @@ Class N gets only `version` and `tier`.
 when every event type the op emits passes `orch.ops.actors.allows("human", t)` (F1: an A type may be appended by a
 signed person). Other agent ops answer `op.not_allowed`.
 
-**`move` (provisional until H0 lands `ticket.moved`).**
+**`move` (F1 `ticket.moved`).**
 
 - A person op, owner or maintainer, through `human.prepare`: `{ref:Ref, to:"backlog"|"open", reason?:str{1..500}}`.
 - It emits `ticket.moved {from, to, reason?}`.
@@ -1029,7 +1033,8 @@ BlobId = str/b_[A-Z2-7]{26}/
 |---|---|
 | frame | 2 MiB; the body within 10 s of its length prefix |
 | bytes per connection | 64 MiB/min in each direction |
-| connections | 32 per UID |
+| connections | 32 per UID; host-wide configurable cap, default min(128, soft fd limit / 4) |
+| connection attempts | configurable token bucket, default 20/s with burst 40 per kernel UID, before registry lookup |
 | requests in flight | 8 per connection |
 | subscriptions | 8 per connection, 64 per UID |
 | pending human requests | 20 per person |
@@ -1208,6 +1213,10 @@ The dashboard sees `seq` 20 through its subscription, or polls `human.pending {r
 
 **v1.3 → v1.3.1.** Frames contain at most 65,536 JSON values; exceeding the cap is fatal `frame.invalid` (§0.2).
 
+**v1.3.1 → v1.3.2.** Add fatal `conn.overloaded` (exit 9, retryable) for connection-level backpressure;
+`quota.host` remains request-scoped except at connect. Bound host-wide connections and default per-UID connection
+attempts to 20/s, burst 40. Runtime binding uses per-thread cwd on macOS or `/proc/self/fd` on Linux (orch-52).
+
 
 ---
 
@@ -1274,12 +1283,17 @@ peer check runs. With mode 0711, agents can reach their own workspace directory 
     The helper refuses, and names the owner, when one of these exists with another owner, other modes or an ACL (F12).
   - No ACL entry may grant write, `add_subdirectory` or `delete_child` to anyone else (macOS: `acl_get_link_np`).
   - The host checks this at start and every 60 s, and refuses to start (or stops serving) on a violation.
+    Transient resource errors defer the recheck; transient accept errors back off and retry without stopping the listener.
 - **Binding.**
   1. Open each component with `O_NOFOLLOW|O_DIRECTORY` and `fstat` it.
   2. Take `<run>/<ws>/lock`.
-  3. `fchdir` into the checked directory and bind the **relative** name `host.sock` under umask 0o177. This happens
-     before the host starts any threads.
-  4. `chmod` 0660 and `chown :group`, then `listen`.
+  3. Bind through the checked directory fd without changing the process cwd or umask. On Linux use
+     `/proc/self/fd/<dirfd>/host.sock`. On macOS verify libSystem exports `pthread_fchdir_np`, then bind the
+     relative name `host.sock` in a dedicated thread with that per-thread cwd; restore it with
+     `pthread_fchdir_np(-1)` in a `finally` block. Refuse with a clear error if neither primitive is available.
+     This supports runtime `host.register` while workspace worker threads do relative-path file work (D-P2-1).
+  4. Verify the socket inode, `chmod` 0660 and `chown :group` without following symlinks, then `listen`.
+     The checked directory restricts access while the socket is being prepared; it is not yet listening.
 
   Stale sockets are removed only while the lock is held and only after a connect fails.
 - **Path length.** The UTF-8 encoded absolute path must stay at or under 100 bytes.
@@ -1308,7 +1322,8 @@ process under the human's UID. It serves `127.0.0.1:<random port>` and is person
 Required on the HTTP side (stream B; amended per R10):
 
 - **A bearer token in a header, no cookie.**
-  - The launch URL carries a one-time token in the fragment.
+  - The launch URL carries a one-time token in the fragment. The launch token must never appear in process arguments
+    (visible via `ps`) or in an environment readable by other users.
   - The page exchanges it, with an `Origin` check, for a session token held in page memory only.
   - Every API call sends `Authorization: Bearer <token>`.
   - With no ambient credential, a cross-site request carries nothing, so CSRF has nothing to ride on.
@@ -1561,7 +1576,7 @@ UID. P2 adds no keychain.**
   - The child runs the `worktree` profile.
   - Paths in `changed` are escaped and rendered with F1 §11.3's rules wherever they are shown.
 - **`task done --run`:** the client runs `verify.cmd` and sends the receipt (§0.8). The host checks that `cmd` equals
-  the approved `verify.cmd` and records `attested_by: "agent"`.
+  the approved `verify.cmd`; H3b2 (client receipts) adds `attested_by: "agent"`, absent from the current receipt.
   - This proves an authenticated agent **claimed** this result. It does not prove the command ran, its exit code, its
     output or its commit.
   - H0 amends F1 §10.7 ("the P2 host runs it itself") to say this. Independent verification needs a separate trusted
@@ -1610,14 +1625,14 @@ dispatch is turned on.
 |---|---|---|---|
 | **H0 F1 amendment** | see the list below | text, plus vectors for `ticket.moved` | Codex, Opus |
 | **H1a Frame codec** | pure codec, §0.2 rules, envelope schemas (§0.3), `fatal`, the cancel state machine. T0 `tests/host/test_frames.py` | partial and coalesced reads; `n=0`; bad UTF-8; lone surrogate; duplicate keys; float; depth 33; id reuse; body deadline; unknown envelope key → `req.invalid` | Codex |
-| **H1b Unix transport** | bind through a checked fd, ancestor and ACL checks, both-way peer credentials, pins, control socket | a real UID refused before any byte; the control socket refuses an agent UID; planted socket; ancestor replaced mid-run; path longer than 100 bytes; `/Users/Shared/orch` owned by another user refused by the helper and the host (F12) | Opus |
+| **H1b Unix transport** | bind through a checked fd, ancestor and ACL checks, both-way peer credentials, pins, control socket | a real UID refused before any byte; the control socket refuses an agent UID; planted socket; ancestor replaced mid-run; path longer than 100 bytes; `/Users/Shared/orch` owned by another user refused by the host here; helper-side refusal is covered in H3c (F12) | Opus |
 | **H2a Lifecycle** | registry, states, ownership lock, control ops (`list`, `register`, `unregister`, `wsk_create`, `restart`), units, release install, drain | second host gets `host.busy`; direct CLI gets `host.required` after adoption; `register` gives up after 60 s with `lock.busy`; `unregister` restores direct mode; `degraded` refuses writes, `unavailable` refuses all; drain finishes a write in flight and ends `wait` with `host.restarting`; `wsk_create` never replaces a key; `register` refuses a pinned agent UID as person; a removed member's UID reads as no-person (F8); `host.list` shows the caller's mapping (R11); kill -9 during `register`, `unregister` and `bootstrap`, then the intent is finished or rolled back at start and `host.outcome` returns the stored result; the effective-column table (§0.5) row by row (a person-class UID with an invalid mapping gets `op.not_allowed` for every write, L1; an unverified grant on an agent op gives `grant.expired`, not `op.not_allowed`); a `register` and a `bootstrap` rolled back at start answer `control.rolled_back` from `host.outcome` and from a same-key retry; `init` restarts from `wsk_create` after a rolled-back bootstrap, including an unverified grant from person class and an invalid person mapping | Codex, Opus (control ops) |
 | **H2b Outcomes** | idempotency store, classification, reconciliation, tombstones, `outcome.get`, cancel after commit | two-process kill -9 between append and record, then the retry is a duplicate rebuilt from the log; concurrent duplicates get one append; `idem.conflict`; `idem.expired`; a retryable failure is re-run; `outcome.get` with another person's grant id and a wrong secret gives `outcome.unknown_idem` (F4); a `{digest}` retry that has to run again answers `blob.invalid`, even when a blob or artifact with that digest exists (M1); `outcome.get` on a tombstone answers `idem.expired`; a dry run with an idem that has a record neither replays nor answers `idem.*`; a replay is re-enveloped with the retry's request id; a retry after the blob was consumed binds through `files.<arg>: {digest}`; `{digest}` without a record is `blob.invalid`; `dry_run` on a read, `human.submit`, control, job, blob or sub op is `invalid.input`; `job.done` repeated for a completed job answers `{}` | Opus |
 | **H3a Handler capabilities** | `Context` capabilities; handlers lose env, path and exec access; direct mode unchanged | goldens unchanged; with the audit hook in host mode, no open outside the roots and no spawn except the launcher | Codex |
 | **H3b1 git reader and `diff`** | `orch.gitread`, the launcher, pins, refs, extensions, identity, `diff` | a malicious `.git/config` runs nothing; a `.git` file or symlinked `objects/` pointing elsewhere is refused; a 1 GB zlib bomb is refused within the limits; reftable is unavailable; the `gitdir` profile cannot open a worktree file and the `worktree` profile cannot open outside its three pins (audit hook); diff equals `git diff --no-ext-diff --no-textconv` on fixtures; the F7 cases (changed `origin` against a declared `remote`, a `.git` file planted before the repo is added, a swapped `commondir`, loose/packed disagreement, case-colliding refs, `worktreeConfig`); at most 4 children under a burst of 100 `diff` calls (F10) | Opus |
 | **H3b2 Client receipts** | `task.done` contract 2, client-side `verify.cmd`, `attested_by` | `run:true` refused by the host; a receipt with a `cmd` other than `verify.cmd` refused; the output file goes through `files`; the receipt is labelled | Codex |
 | **H3b3 Bootstrap** | `host.bootstrap`, the `init` composite | `init` through the host yields the same genesis bytes as direct mode; `bootstrap` refuses a non-empty root, a foreign owner, or an id not from `wsk_create`; a second `bootstrap` for an id that has a genesis or a registration is `host.busy` (N5); a bootstrap killed after the append is finished at restart, and one killed before it leaves no root, key or id behind | Opus |
-| **H3c Agent and worker users (#287)** | the macOS and Linux setup helper: users outside `staff`, groups, root-owned `orch` directories, `<run>`, pins, workspace modes, the worker LaunchDaemon | e2e `keys-isolation` and `mac-agent-uid`: the agent cannot read `wsk` or `dk` but can call `status`; the helper refuses a pre-existing foreign `/Users/Shared/orch` | Opus |
+| **H3c Agent and worker users (#287)** | the macOS and Linux setup helper: users outside `staff`, groups, root-owned `orch` directories, `<run>`, pins, workspace modes, the worker LaunchDaemon | e2e `keys-isolation` and `mac-agent-uid`: the agent cannot read `wsk` or `dk` but can call `status`; the helper refuses a pre-existing foreign `/Users/Shared/orch` (`needs_os_users`, real foreign owner) | Opus |
 | **H4a1 Dispatcher** | policy matrix, principals, auth and the reads rule, `whoami`, `host.status`, error catalog and disposition | closed list (registry × column of §0.5); no key material in any response (property test); grant in args refused; invalid grant on a read gives workspace tickets; another person's grant id with a wrong secret cannot reach outcomes, blobs or notes (F4); the F6 visibility cases (`total`, `next_page`, `needs {person}` from an agent, `session.list` claims, `diff` on an unlinked repo, `artifact.get` with `../x`, `sub.open ticket:<restricted>` gives `not_found`) | Opus |
 | **H4a2 Files and blobs** | `files`, `blob.*`, `artifact.get`, quotas | chunk retry with the same bytes accepted, with different bytes refused; a wrong final digest refused; use across principals and workspaces gives `blob.invalid`; the per-UID quota and the person reserve (F9); consumed on commit, kept after a refusal or dry run, expired after 10 min; `x-file` without `files` refused; a lost first-chunk response is recovered with the same `upload_key`; a zero-byte blob; a repeated final chunk returns the same result | Opus |
 | **H4b Thin CLI** | `orch.hostclient`, mode by registration, rendering from `result` | goldens byte-identical in both modes for all non-human ops except `wait` | Codex |
@@ -1637,10 +1652,10 @@ dispatch is turned on.
 
 **H0: the F1 and spec amendments.**
 
-1. **§10.7 receipts:** client-run, recorded `attested_by: "agent"`, proving a claim, not execution. Replaces "the P2
-   host runs it itself".
+1. **§10.7 receipts:** client-run, proving a claim, not execution. H3b2 (client receipts) adds
+   `attested_by: "agent"`; H0 adds no receipt field. Replaces "the P2 host runs it itself".
 2. **§10.8 clean-tree check:** run once, before the prompt, by the worker's reader, and shown as best effort.
-   `precommit` re-checks only the branch.
+   `precommit` re-checks the branch and commit under the lock.
 3. **§5.1 event ids:** host-prepared in P2; the signer never chooses or changes them.
 4. **`ticket.moved`:** a person event (owner, maintainer) with `{from, to, reason?}` and the `move` rules (§0.8).
 5. **`policy.set` and `settings.set`:** record the two ops of §0.8 (argument schemas fixed there) for the existing `policy.changed` and

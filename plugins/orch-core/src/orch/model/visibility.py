@@ -13,6 +13,7 @@ from .types import TCore, WsCore
 MANAGEMENT = frozenset(
     {
         "visibility.changed",
+        "ticket.moved",
         "ticket.closed",
         "ticket.reopened",
         "people.changed",

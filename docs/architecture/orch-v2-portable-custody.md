@@ -21,7 +21,7 @@ a small interface.
 | # | Topic | Decision |
 |---|---|---|
 | D63 | Windows | Windows 10 and 11 are supported platforms for the CLI, the host and the dashboard, with Python 3.11+. The format, the protocol and the registry are identical on every OS. Mobile stays iPhone only. |
-| D64 | Custody backends | Human signing goes through one interface in `custody/`: `sign(domain, payload) -> signature` and `presence() -> level`. Backends: `passphrase` (all OSes, the P1 default), `secure-enclave` (macOS), `tpm`/`windows-hello` (Windows, later), `webauthn` (dashboard, P2), `file` (VPS, no human signing). A backend is chosen per person key and recorded in the person's device certificate. |
+| D64 | Custody backends | Human signing goes through one interface in `custody/`: `sign(domain, payload) -> signature` and `presence() -> level`. Backends: `passphrase` (all OSes, the P1 default), `secure-enclave` (macOS), `tpm`/`windows-hello` (Windows, later), `webauthn` (deferred past P2: requires a new signature contract), `file` (VPS, no human signing). A backend is chosen per person key and recorded in the event's `auth`, not the device certificate. |
 | D65 | Prototype human credential | The `passphrase` backend. The person key is stored encrypted under a passphrase (scrypt, parameters in the key file). Human-only verbs (`approve`, `request-changes`, `answer`, `verdict`, `close`, `grant`) ask for it on a real terminal and refuse to run without a TTY. Nothing caches the passphrase or a bearer token in a file or environment variable. The recovery code (D49–D51) can re-create the key. **P1 note (C8):** the person key is not stored by the passphrase backend at all; `orch init` derives it from the recovery code, uses it once and drops it, so the code is the only way back to it (a P1 deviation from D50 pending the owner's confirmation; revisit with the Secure Enclave / TPM backend). New passphrases need 14+ characters and pass a strength check (`orch.custody.strength`). |
 | D66 | Factor in the record | Every signed event carries `auth`: `passphrase`, `secure-enclave`, `webauthn`, … A workspace policy may require a stronger factor for named verbs (for example `verdict`); the default accepts any. The weaker factor of the prototype is therefore visible in the log and can be refused later. |
 
@@ -41,8 +41,12 @@ Rules that go with it:
   hold on every OS.
 - The grant (A3) is signed with the passphrase once and handed to agents as `ORCH_GRANT`. It is the only secret an
   agent holds, it expires, and it is revocable.
-- A bearer token for the human path is **not** used. If the dashboard later keeps a session after login, the token is
-  short-lived, held by the host as an HttpOnly cookie, and never written to a file an agent can read.
+- The P2 dashboard uses a bearer session token in the `Authorization: Bearer <token>` header, not an HttpOnly
+  cookie (host D-P2-7, R10). A one-time launch token in the URL fragment is exchanged with an `Origin` check;
+  the session token stays in page memory and expires on dashboard restart. Every non-GET request checks
+  `Origin`, GET has no side effects, and `Host` must be exactly `127.0.0.1:<port>` (no `localhost`).
+  SSE uses a single-use token in its query, exchanged on connect. The token never substitutes for a person
+  signature or the signer's review; there is no ambient cookie credential.
 - The prototype is declared a **dev tier** in `orch doctor` output. It must not be described as equal to hardware
   presence.
 
@@ -80,7 +84,7 @@ hardware), and for the **workspace key** only with options 1 or 2 or on a VPS. T
 |---|---|
 | P1 | `custody/` interface, `passphrase` backend, TTY enforcement, `auth` field in events and schema, `orch doctor` tier line, Windows in CI (the v1 README says CI already runs Ubuntu and Windows) |
 | P1b | `secure-enclave` backend on Apple-silicon Macs; the macOS separate-UID work (D37) becomes optional |
-| P2 | `HostTransport` with the named-pipe and Unix implementations, `webauthn` in the dashboard, the isolation recipes of section 5 |
+| P2 | `HostTransport` with the named-pipe and Unix implementations, the dashboard bearer session (section 3), the isolation recipes of section 5; WebAuthn deferred past P2 (D64) |
 | later | `tpm` / Windows Hello backend |
 
 Tests, per OS in CI: agent without TTY is refused for every human-only verb; wrong passphrase leaves no event; an

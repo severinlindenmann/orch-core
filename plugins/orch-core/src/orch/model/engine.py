@@ -161,6 +161,7 @@ def _ticket_handler(core: Core, t: TCore, lc: LogCore, e: dict[str, Any]) -> Ref
         "ticket.submitted": lambda: lifecycle.submitted(ws, t, e),
         "ticket.closed": lambda: lifecycle.closed(core, t, e),
         "ticket.reopened": lambda: lifecycle.reopened(ws, t, e),
+        "ticket.moved": lambda: lifecycle.moved(ws, t, e),
         "visibility.changed": lambda: visibility.changed(ws, t, e),
         "people.changed": lambda: lifecycle.people_changed(ws, t, e),
         "policy.changed": lambda: lifecycle.policy_changed(ws, t, e),

@@ -50,7 +50,12 @@
      "ticket_key": "DEMO-0043"
     }
    }
-  ]
+  ],
+  "policy": {
+   "approvers": "owner",
+   "count": 1
+  },
+  "texts": {}
  },
  "events": [
   {
@@ -72,10 +77,10 @@
    "policy_hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
   }
  ],
- "review_digest": "sha256:6bd0314472271f2f04d03d6b97a1229f68aaf57383ef219152082ace8ad81f3b",
- "fingerprint": "962ac323ad01",
- "fingerprint_bound": "962ac323ad01",
- "fingerprint_other_gate": "b2a1a9149916",
+ "review_digest": "sha256:ecf709afd7364be465a05cb06df7462f234e783b96d4d0996e10eb5c5d4c6c54",
+ "fingerprint": "b3afa319c3d3",
+ "fingerprint_bound": "b3afa319c3d3",
+ "fingerprint_other_gate": "cb066e677317",
  "cj_input": {
   "b": [
    1,
@@ -88,7 +93,7 @@
   "k": -5
  },
  "cj_output": "{\"a\":null,\"b\":[1,{\"a\":true,\"z\":\"  \\u0001\"}],\"k\":-5}",
- "fingerprint_other_op": "bce781ccbe94",
+ "fingerprint_other_op": "56cbde4adf06",
  "doc": {
   "op_log": "d8de03967462",
   "op_set": "37cf21ef169c"

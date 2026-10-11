@@ -129,6 +129,19 @@ function reviewMatches(material: HandoffMaterial, events: HandoffEvent[]): boole
   })
 }
 
+const MATERIAL_KEYS: Record<string, [string[], string[]]> = {
+  gate: [['kind', 'gate', 'input', 'policy', 'texts', 'ticket', 'review'], ['kind', 'gate', 'input', 'policy', 'texts', 'ticket', 'review']],
+  question: [['kind', 'ticket', 'question', 'review'], ['kind', 'ticket', 'question', 'review']],
+  payload: [['kind', 'ticket', 'review'], ['kind', 'ticket', 'review', 'texts', 'before']],
+}
+
+/** Fail closed on a top-level key outside the `Material` schema (host contract 0.8.1). */
+function materialKeysOk(material: HandoffMaterial): boolean {
+  const keys = MATERIAL_KEYS[material.kind]
+  const have = Object.keys(material)
+  return !!keys && keys[0].every((k) => have.includes(k)) && have.every((k) => keys[1].includes(k))
+}
+
 /** A request lives ten minutes on the host. A bad or far-off `expires_at` is not a request of this host. */
 export function expiryMs(expiresAt: string, now = Date.now()): number | null {
   const at = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(expiresAt) ? Date.parse(expiresAt) : NaN
@@ -142,6 +155,7 @@ export function requestIsConsistent(request: HandoffRequest): boolean {
     return (
       digest === request.review_digest &&
       fingerprintOf(digest, request.events, request.op) === request.fingerprint &&
+      materialKeysOk(request.material) &&
       reviewMatches(request.material, request.events) &&
       expiryMs(request.expires_at) !== null
     )

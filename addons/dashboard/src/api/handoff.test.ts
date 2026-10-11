@@ -74,6 +74,15 @@ describe('a request must be what it says it is', () => {
     type.material.review[0].type = 'ticket.closed'
     expect(requestIsConsistent(rehash(type))).toBe(false)
   })
+  it('refuses a top-level material key outside the schema, and a missing one', () => {
+    const extra = base()
+    ;(extra.material as unknown as Record<string, unknown>).note = 'hello'
+    expect(requestIsConsistent(rehash(extra))).toBe(false)
+    const missing = base()
+    delete (missing.material as unknown as Record<string, unknown>).policy
+    expect(requestIsConsistent(rehash(missing))).toBe(false)
+    expect(requestIsConsistent(rehash(base()))).toBe(true)
+  })
   it('refuses an expires_at that is malformed or far away', () => {
     expect(requestIsConsistent({ ...base(), expires_at: 'soon' })).toBe(false)
     expect(requestIsConsistent({ ...base(), expires_at: '2099-01-01T00:00:00Z' })).toBe(false)

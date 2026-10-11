@@ -86,3 +86,16 @@ def review_of(event: dict[str, Any], material: dict[str, Any]) -> dict[str, Any]
 
 def reviews_of(events: list[dict[str, Any]], material: dict[str, Any]) -> list[dict[str, Any]]:
     return [review_of(e, material) for e in events]
+
+
+#: kind -> (required keys, allowed keys) of `Material` (host contract 0.8.1): a signer refuses any other top-level key.
+MATERIAL_KEYS = {
+    "gate": ({"kind", "gate", "input", "policy", "texts", "ticket", "review"},) * 2,
+    "question": ({"kind", "ticket", "question", "review"},) * 2,
+    "payload": ({"kind", "ticket", "review"}, {"kind", "ticket", "review", "texts", "before"}),
+}
+
+
+def material_keys_ok(material: dict[str, Any]) -> bool:
+    keys = MATERIAL_KEYS.get(material.get("kind"))
+    return keys is not None and keys[0] <= set(material) <= keys[1]

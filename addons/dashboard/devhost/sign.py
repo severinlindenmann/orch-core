@@ -8,8 +8,7 @@ It plays `orch sign CODE` (H5b) against the dev stub host until the real command
 3. render its own review on the terminal from `material` and the events, ask for the confirmation word;
 4. sign with the dev workspace's P1 device custody (the passphrase backend, asked on /dev/tty) and `human.submit`.
 
-Not checked here (the stub has no data for them): `material.policy` against `policy_hash` (host v1.5), git state for a
-code gate, and the op in the fingerprint (H5a).
+Not checked here: git state for a code gate, and the op-specific `ticket.updated` limits of the real signer.
 
 This file lives under `devhost/`, which the wheel excludes. It is a dev aid, not a signing client to ship.
 """
@@ -117,6 +116,16 @@ def recompute(prepared: dict[str, Any], *, workspace_id: str, person: str, devic
         for sid, entry in (review.derived_of(e, material).get("sections") or {}).items():
             if entry["text"] is None or canon.section_hash(entry["text"]) != entry["hash"]:
                 raise Refused(f"section {clean(sid)} does not match its hash")
+    if not review.material_keys_ok(material):
+        raise Refused(f"material has keys outside the {clean(material.get('kind'))} schema")
+    if material.get("kind") == "gate":
+        gate = material["gate"]
+        for e in events:
+            if e.get("policy_hash") != canon.policy_hash(gate, material["policy"]):
+                raise Refused("the policy hash is not the hash of the policy shown")
+        for sid, h in (material["input"].get("sections") or {}).items():
+            if canon.section_hash(material["texts"].get(sid, "")) != h:
+                raise Refused(f"section {clean(sid)} does not match the hash the gate binds")
     if material.get("review") != review.reviews_of(events, material):
         raise Refused("the review of the host is not the review computed here")
     digest = review.digest_of(material)

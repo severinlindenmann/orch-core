@@ -436,6 +436,12 @@ class Builder:
             "kind": "gate",
             "gate": gate,
             "input": thaw(view.gates[gate].input or {}),
+            "policy": thaw(view.gates[gate].policy),
+            "texts": {
+                sid: text
+                for sid, text in self.store.body_sections(view.uid).items()
+                if sid in ((view.gates[gate].input or {}).get("sections") or {})
+            },
             "ticket": {"key": view.key, "uid": view.uid},
         }
         material["review"] = review.reviews_of(events, material)

@@ -363,7 +363,9 @@ def test_the_answer_must_be_the_action_that_was_asked_for(ready, monkeypatch):
     assert res.status_code == 500 and res.json()["error"]["code"] == "internal"
 
 
-@pytest.mark.parametrize("mutate", ["review_payload", "review_type", "expires_far", "expires_bad", "state"])
+@pytest.mark.parametrize(
+    "mutate", ["review_payload", "review_type", "expires_far", "expires_bad", "state", "material_key"]
+)
 def test_an_inconsistent_prepared_request_fails_closed(ready, monkeypatch, mutate):
     client, token, stub, rich, signing = ready
     from orch_dashboard import adapters
@@ -378,6 +380,8 @@ def test_an_inconsistent_prepared_request_fails_closed(ready, monkeypatch, mutat
             out["material"]["review"][0]["type"] = "ticket.closed"
         elif mutate == "expires_far":
             out["request"]["expires_at"] = "2099-01-01T00:00:00Z"
+        elif mutate == "material_key":
+            out["material"]["note"] = "hello"
         elif mutate == "expires_bad":
             out["request"]["expires_at"] = "soon"
         else:

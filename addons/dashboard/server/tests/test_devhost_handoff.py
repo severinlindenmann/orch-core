@@ -344,3 +344,49 @@ def test_a_refused_submit_leaves_the_request_bound_with_the_error_code(signing, 
     row = pending(link, request_id=got["request"]["id"])[0]
     assert row["state"] == "bound" and row["error"] == {"code": "gate.stale"} and row["event_ids"] == []
     assert pending(link)[0]["id"] == got["request"]["id"]  # no arguments: the caller's requests in any state
+
+
+def test_material_has_only_the_schema_keys_for_every_operation_and_the_signer_refuses_others(signing, rich):
+    import copy
+
+    link = signing.link()
+    cases = [
+        ("approve", {"ref": "DEMO-0001", "gate": "requirements"}),
+        ("answer", {"ref": "DEMO-0001", "question": "Q2", "option": "csv"}),
+        ("log", {"ref": "DEMO-0001", "message": "x"}),
+        ("set", {"ref": "DEMO-0001", "pairs": ["labels=zz"]}),
+        ("new", {"title": "T"}),
+    ]
+    device = signing.p1.owner.device
+    args = {"workspace_id": signing.ws, "person": signing.stub.person, "device": device, "auth": "passphrase"}
+    for op, op_args in cases:
+        got = prepare(link, op, op_args)
+        assert review.material_keys_ok(got["material"]), op
+        bound = link.call(
+            "human.get", {"request_id": got["request"]["id"], "signer": {"device": device, "auth": "passphrase"}}
+        )
+        stub_signer.check(bound, **args)
+        extra = copy.deepcopy(bound)
+        extra["material"]["note"] = "hello"
+        extra["material"]["review"] = review.reviews_of(extra["events"], extra["material"])
+        extra["review_digest"] = review.digest_of(extra["material"])
+        extra["fingerprint"] = review.fingerprint(extra["review_digest"], extra["events"], op)
+        with pytest.raises(stub_signer.Refused, match="outside"):
+            stub_signer.check(extra, **args)
+
+
+def test_our_review_maths_equals_the_cores_helpers(signing, rich):
+    """Read-only cross-check against the host's real helpers (orch.host.review, H5a)."""
+    from orch.host import review as core
+
+    link = signing.link()
+    for op, args in [
+        ("approve", {"ref": "DEMO-0001", "gate": "requirements"}),
+        ("log", {"ref": "DEMO-0001", "message": "x"}),
+    ]:
+        got = prepare(link, op, args)
+        assert core.review_digest(got["material"]) == got["review_digest"] == review.digest_of(got["material"])
+        assert core.fingerprint(got["review_digest"], got["events"], op) == got["fingerprint"]
+        for event, block in zip(got["events"], got["material"]["review"], strict=True):
+            assert core.of(event, got["material"]) == block
+    assert core.fingerprint("sha256:" + "ab" * 32, [DOC_EVENT], "log") == "d8de03967462"

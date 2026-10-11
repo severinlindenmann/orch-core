@@ -38,6 +38,8 @@ export function fakeRequest(over: { material?: Partial<HandoffMaterial>; events?
     kind: 'gate',
     gate: 'plan',
     input: { tasks: [{ id: 'T1', text: 'HOST-MATERIAL task text' }], fields: { ticket_type: 'feature', acceptance: [{ id: 'AC1', text: 'From the host ‮ only' }] } },
+    policy: { approvers: 'owner', count: 1 },
+    texts: {},
     ticket: { key, uid: '01J9ZP0000000000000000000A' },
     review: [{ event_id: events[0].id as string, type: events[0].type, payload: { gate: 'plan', hash: events[0].hash, policy_hash: events[0].policy_hash }, derived: { ticket_key: key } }],
     ...over.material,

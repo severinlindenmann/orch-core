@@ -21,6 +21,11 @@ STATES = ("prepared", "bound", "submitted", "cancelled", "expired")
 ENVELOPE = ("v", "id", "type", "actor", "auth", "hash_v", "roster_v", "based_on", "sig")
 TIME = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
 MAX_LIFE = 900  # the host lets a request live 10 minutes; anything much longer is not a request of this host
+MATERIAL_KEYS = {
+    "gate": ({"kind", "gate", "input", "policy", "texts", "ticket", "review"},) * 2,
+    "question": ({"kind", "ticket", "question", "review"},) * 2,
+    "payload": ({"kind", "ticket", "review"}, {"kind", "ticket", "review", "texts", "before"}),
+}
 GATE_EVENTS = ("gate.approved", "gate.changes_requested", "verdict.given")
 
 
@@ -60,6 +65,12 @@ def expires_ok(value) -> bool:
     return time.time() - 60 < end < time.time() + MAX_LIFE
 
 
+def material_keys_ok(material: dict) -> bool:
+    """Fail closed on a top-level key outside the `Material` schema (host contract 0.8.1)."""
+    keys = MATERIAL_KEYS.get(material.get("kind"))
+    return keys is not None and keys[0] <= set(material) <= keys[1]
+
+
 def review_matches(material: dict, events: list) -> bool:
     """Each review block describes exactly its event: same id and type, and payload = event minus envelope."""
     reviews = material.get("review")
@@ -91,6 +102,7 @@ def request(prepared: dict, ws: str, expect_op: str | None = None, expect_key: s
             or not isinstance(events, list)
             or not all(isinstance(e, dict) for e in events)
             or not isinstance(material, dict)
+            or not material_keys_ok(material)
             or not review_matches(material, events)
         ):
             raise inconsistent()

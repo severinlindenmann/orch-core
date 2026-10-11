@@ -386,8 +386,9 @@ def confirm_word(prepared: Mapping[str, Any]) -> str:
 
 
 def uid_fragment(log: str) -> str:
-    """The last four characters of the signed log's uid: what the person types next to the (host-attested) key."""
-    return log[-4:]
+    """The last eight characters of the signed log's uid (taken from the request's ``log``, which the signature
+    names, never from host text): what the person types next to the host-attested key."""
+    return log[-8:]
 
 
 def ticket_word(prepared: Mapping[str, Any]) -> str:
@@ -420,7 +421,7 @@ def header(prepared: Mapping[str, Any], workspace: Callable[[str], tuple[str, st
     if ticket is not None:
         lines.append(
             f"ticket: {_clean(ticket['key'])} (ticket key per host, not proven) uid {prepared['log']} "
-            f"(signed; you type its last four: {uid_fragment(prepared['log'])})"
+            f"(signed; you type its last eight: {uid_fragment(prepared['log'])})"
         )
     return [
         *lines,

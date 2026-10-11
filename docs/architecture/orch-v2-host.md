@@ -1077,7 +1077,8 @@ human.submit   {request_id:ReqHr, events:[SignedEvent]{1..16}}                  
   → the inner op's Result
 human.pending  {code?:Code, request_id?:ReqHr}                                     (at most one of the two)
   → {requests:[{id:ReqHr, code:Code | null, op:OpName, key:Key | null, created_at:Time, expires_at:Time,
-                state:State, event_ids:[ULID], seq:int | null}]}                  (R6; seq of the last event once submitted)
+                state:State, event_ids:[ULID], seq:int | null,                     (R6; seq of the last event once submitted)
+                error?:{code:str}}]}       // H5a: the catalog code of the last failed human.submit, never the message
 human.cancel   {request_id:ReqHr} → {state:"cancelled"|"submitted"}
 Prepared = {request:{id:ReqHr, code:Code | null, expires_at:Time, state:State} | null,      // null only for dry_run
             op:OpName, workspace_id:WsId, log:Uid | "workspace", events:[Event]{1..16}, material:Material,
@@ -1135,6 +1136,24 @@ sha256(cj({"op": op, "review_digest": review_digest, "events": [each event witho
            for grant.issued, secret_hash]}))
 ```
 
+**Exactly** (H5a): `fingerprint = hex(sha256(cj({"op": op, "review_digest": review_digest, "events": [V(e) for e in
+events]})))[:12]`, where `cj` is F1's canonical JSON (JCS) and `V(e)` is `e` without `sig` and `auth`, with
+`actor` without `device`, and, for `grant.issued` only, without `secret_hash`. Test vector
+(`tests/host/test_human_fixes.py::test_the_fingerprint_test_vector_of_the_doc`):
+
+```
+op            = "log"
+review_digest = "sha256:abab…ab" (64 hex: "ab" × 32)
+events        = [{"v":2, "id":"01J9ZP0000000000000000000B", "type":"log.added",
+                  "actor":{"kind":"person", "id":"p_1111…11" (32 × "1"), "device":"d_2222…22" (32 × "2")},
+                  "auth":"passphrase", "hash_v":1, "roster_v":1, "based_on":"sha256:cdcd…cd" ("cd" × 32),
+                  "text":"hello", "sig":"x"}]
+cj input      = {"events":[{"actor":{"id":"p_1111…11","kind":"person"},"based_on":"sha256:cdcd…cd","hash_v":1,
+                 "id":"01J9ZP0000000000000000000B","roster_v":1,"text":"hello","type":"log.added","v":2}],
+                 "op":"log","review_digest":"sha256:abab…ab"}
+fingerprint   = "d8de03967462"            (the same with op "set": "37cf21ef169c")
+```
+
 It covers the op, its outcome and every payload field, so `verdict pass` and `verdict fail` differ. The dashboard,
 `orch sign` and H9 show it, and each signer recomputes it from what it received (R8).
 
@@ -1147,6 +1166,8 @@ It covers the op, its outcome and every payload field, so `verdict pass` and `ve
 | `prepared` | `human.get` with `signer`: device checked, events completed, `tree.check` re-run (N3) | `bound` |
 | `bound` | `human.get` with the same `signer`: `tree.check` re-run | `bound` |
 | `bound` | `human.submit` committed | `submitted` |
+| `bound` | `human.submit` refused before any append (`gate.stale`, `members.stale`, `question.stale`, `sig.invalid`, `human.request_mismatch`…) | `bound` (not terminal; `human.pending` shows `error:{code}`; it expires as usual) |
+| `bound` | `human.submit` failed after an event landed (a roll-forward refused, tier A only) | `submitted`, outcome `failed` |
 | `prepared`, `bound` | `human.cancel` | `cancelled` |
 | `prepared`, `bound` | 10 minutes after prepare, or found expired at append | `expired` |
 
@@ -1291,10 +1312,11 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
 1. `human.cancel` on an `expired` request answers `{state:"cancelled"}`; the stored state stays `expired`.
 2. A prepared `grant.issued` keeps `"secret_hash": null` in every answer (the host's redaction drops a secret-named key
    only when its value is not `null`).
-3. A person's `new` emits `ticket.created` only (`EMITS_V1["new"]`): it takes `title` and `type`; the other arguments
-   answer `invalid.input`, so a person-created ticket has no description at birth (set it after with a person `set` or
-   `section.set`). The key is the one the store would allocate at prepare; a key taken before the submit answers
-   `ticket.exists`.
+3. A person's `new` emits `ticket.created` only (`EMITS_V1["new"]`; F1's `ticket.created` is closed): only the key,
+   `ticket_type`, `title` and the owner (the person) travel. `priority`, `size`, `label`, `parent` and `message`/`file`
+   (the description) answer `invalid.input` on `new`; they are never dropped silently. A client sets them in a separate
+   `set` or `section.set` request after the creation (a second hand-off). The key is the one the store would allocate
+   at prepare; a key taken before the submit answers `ticket.exists`.
 4. "One `log`": the events carry no log of their own, so the signer checks that the request's `log` is the ticket of
    `material.ticket` (or `workspace` with no ticket).
 5. `material.before` keys are the `base_rev` paths (`ticket.<field>`, `body.<section>`) for `set` and `section.set`, and
@@ -1303,16 +1325,33 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
    `EMITS_V1` types otherwise. **The op is bound:** it is in the fingerprint input, shown in the header, and the signer
    checks what each op's `ticket.updated` may touch (`ac.add`/`ac.edit`: `ticket.acceptance` only; `section.set`: one
    section and no `set`; `set`: the fields of `set` only).
-7. **The confirmation word.** A ticket op's word is `KEY/FRAG`: the key as the host gives it, and `FRAG`, the last four
-   characters of the uid of the log the signature names. The key is **not proven** in H5a: the header and the review
+7. **The confirmation word.** A ticket op's word is `KEY/FRAG`: the key as the host gives it, and `FRAG`, the **last
+   eight characters** of the ticket uid in the request's `log` (the log the signature names; the signer takes it from
+   there, never from host text). Example: `DEMO-0042/2W0KFDM3`. The header the signer prints, in this order:
+
+   ```
+   workspace: <name> (<prefix>) <workspace_id>              name and prefix from the signer's own registry
+   op: <op>: <op in plain words>                            e.g. "op: approve: approve the plan gate of DEMO-0042/2W0KFDM3"
+   ticket: <key> (ticket key per host, not proven) uid <uid> (signed; you type its last eight: <FRAG>)   ticket ops only
+   requested by uid <uid> pid <pid> at <created_at>; client <client> (self-declared, unverified)
+   fingerprint: <12 hex>
+   ```
+
+   The key is **not proven** in H5a: the header and the review
    label it "ticket key per host" and show the full uid. (Follow-up: prove it by carrying the key-defining events,
-   `ticket.created` and `ticket.moved`, in `material`.) `GRANT` for grants, the person id for member ops, the addon name
+   `ticket.created` and `ticket.moved`, in `material`: #394.) `GRANT` for grants, the person id for member ops, the addon name
    for addon ops, else the op name in capitals. Every identifier the signer shows or the person types (key, uid,
    person, device, section, addon, question id, `before` path, origin) is checked against its F1 format before
    rendering, every other host string is escaped (control and bidi characters become visible markers), and a review
    that would still carry a control character is refused.
-8. `human.pending`, hand-off codes and `orch sign CODE` are H5b; a hand-off request has `code: null` until then, and
-   `human.get` with `signer` binds it (device checks included).
+8. Hand-off codes and `orch sign CODE` are H5b; a hand-off request has `code: null` until then, and `human.get` with
+   `signer` binds it (device checks included). `human.pending` is served: without arguments it lists the caller's
+   requests (any state, within retention); `{request_id}` gives that one (or an empty list); `{code}` gives an empty
+   list until H5b issues codes. A failed submit shows `error:{code}` (the catalog code only).
+8a. **`human.prepare` ignores `opts.idem`** (§0.7: it is in the "reads and side-effect-free ops" row): every call creates
+   a new request, even with the same idem. A client that lost a prepare's answer finds its open requests with
+   `human.pending` (no arguments) and cancels the ones it will not use (`human.cancel`); unused requests expire after
+   10 minutes (a grant: 4), and at most 20 are pending per person (`quota.host` beyond).
 9. `human.prepare` takes inner-op files as `{b64}` only until H4a2's blobs land. The composite (`orch.host.signer.run`)
    compares each `artifact.*` event's `sha256` and `bytes` with the bytes it uploaded itself.
 10. **A grant request expires after 4 minutes**, not 10: its `issued_at` is the prepare time, and F1 refuses a

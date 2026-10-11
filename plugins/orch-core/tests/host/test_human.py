@@ -512,7 +512,7 @@ def test_the_composite_prompt_fields_equal_describe_payload_of_the_signed_bytes(
         assert res["key"] == key
         ((text, word),) = shown
         assert (
-            word == f"{key}/{s.lab.ws.uid(key)[-4:]}"
+            word == f"{key}/{s.lab.ws.uid(key)[-8:]}"
             and "workspace: Acme (DEMO)" in text
             and "self-declared, unverified" in text
         )

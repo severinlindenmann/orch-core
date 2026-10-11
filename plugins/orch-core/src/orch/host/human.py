@@ -44,8 +44,21 @@ if TYPE_CHECKING:
 
 __all__ = ["HUMAN_OPS", "HumanOps", "recover"]
 
-HUMAN_OPS: dict[str, int] = {"human.prepare": 1, "human.get": 1, "human.submit": 1, "human.cancel": 1}
-PHASES = {"human.prepare": "read", "human.get": "read", "human.submit": "write", "human.cancel": "read"}
+HUMAN_OPS: dict[str, int] = {
+    "human.prepare": 1,
+    "human.get": 1,
+    "human.submit": 1,
+    "human.cancel": 1,
+    "human.pending": 1,
+}
+PHASES = {
+    "human.prepare": "read",
+    "human.get": "read",
+    "human.submit": "write",
+    "human.cancel": "read",
+    "human.pending": "read",
+}
+_CODE = {"type": "string", "pattern": r"^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$"}
 
 _DEVICE = {"type": "string", "pattern": r"^d_[0-9a-f]{32}$"}
 _SIGNER = {
@@ -86,6 +99,12 @@ _SCHEMAS = {
         "type": "object",
         "properties": {"request_id": _REQ},
         "required": ["request_id"],
+        "additionalProperties": False,
+    },
+    "human.pending": {
+        "type": "object",
+        "properties": {"code": _CODE, "request_id": _REQ},
+        "maxProperties": 1,
         "additionalProperties": False,
     },
 }
@@ -187,6 +206,8 @@ class HumanOps:
         requests = self._requests(call.service)
         if op == "human.get":
             return ok_result(self.get(call, requests, args))
+        if op == "human.pending":
+            return ok_result(self.pending(call, requests, args))
         return ok_result(self.cancel(call, requests, args))
 
     @staticmethod
@@ -426,6 +447,49 @@ class HumanOps:
         requests.write(record)
         return self._view(record)
 
+    def pending(self, call: Call, requests: RequestStore, args: dict[str, Any]) -> dict[str, Any]:
+        """``human.pending`` (R6): this principal's requests, or the one named by ``request_id``. Codes are H5b: none
+        exists yet, so ``{code}`` answers an empty list (as for an unknown code). A failed submit carries
+        ``error: {code}``, the catalog code only, never the message."""
+        if "code" in args:
+            return {"requests": []}
+        if "request_id" in args:
+            try:
+                records = [requests.load(args["request_id"], call.principal)]
+            except HostError:
+                records = []  # an unknown request gives an empty list, like an unknown code
+        else:
+            records = []
+            for rid in requests.ids():
+                try:
+                    rec = requests.read(rid)
+                except HostError:
+                    continue
+                if rec is not None and rec.get("principal") == call.principal:
+                    records.append(requests.expire(rec))
+        return {"requests": [self._summary(r) for r in records]}
+
+    @staticmethod
+    def _summary(record: dict[str, Any]) -> dict[str, Any]:
+        prepared = record["prepared"]
+        ticket = prepared["material"].get("ticket")
+        outcome = record.get("outcome") or {}
+        out: dict[str, Any] = {
+            "id": record["id"],
+            "code": record.get("code"),
+            "op": record["op"],
+            "key": ticket["key"] if ticket else None,
+            "created_at": _iso(record["created"]),
+            "expires_at": _iso(record["expires"]),
+            "state": record["state"],
+            "event_ids": [e["id"] for e in prepared["events"]],
+            "seq": (outcome.get("result") or {}).get("seq") if outcome.get("state") == "committed" else None,
+        }
+        error = (outcome.get("error") or {}).get("code") or (record.get("error") or {}).get("code")
+        if error:
+            out["error"] = {"code": error}
+        return out
+
     def cancel(self, call: Call, requests: RequestStore, args: dict[str, Any]) -> dict[str, Any]:
         record = requests.load(args["request_id"], call.principal)
         if record.get("submit"):  # its signed events are being appended: it ends submitted, never cancelled
@@ -461,13 +525,24 @@ class HumanOps:
             # before anything landed, which refuse() stores only when it is not retryable
             outcomes.fail(begun, stored.error)
             raise stored.error from None
-        except HostError as exc:  # a refusal before any append
+        except HostError as exc:  # a refusal before any append: the request stays as it was (bound), until it expires
             outcomes.refuse(begun, redactor.error(exc))
+            self._note_refusal(call, args["request_id"], exc.code)
             raise redactor.error(exc) from None
         except BaseException:
             outcomes.release(begun)  # the log and the request say what landed; start-up recovery finishes it
             raise
         return outcomes.commit(begun, result)["result"]
+
+    def _note_refusal(self, call: Call, request_id: str, code: str) -> None:
+        """The last refused submit's catalog code, for ``human.pending`` (never the message)."""
+        requests = self._requests(call.service)
+        try:
+            record = requests.load(request_id, call.principal)
+        except HostError:
+            return
+        if record["state"] == "bound" and not record.get("submit"):
+            requests.write({**record, "error": {"code": code}})
 
     def _submit(self, call: Call, args: dict[str, Any], intent: Any) -> dict[str, Any]:
         service = call.service

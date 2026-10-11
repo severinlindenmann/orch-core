@@ -313,9 +313,9 @@ def test_the_header_comes_from_the_signers_own_registry_and_the_word_from_the_op
     head = signer.header(p, lambda w: ("Acme", "DEMO"))
     assert head[0].startswith("workspace: Acme (DEMO) " + served.wid)
     assert head[-1] == f"fingerprint: {p['fingerprint']}" and any("unverified" in line for line in head)
-    assert head[1] == f"op: log: log on {key}/{p['log'][-4:]}"
+    assert head[1] == f"op: log: log on {key}/{p['log'][-8:]}"
     assert head[2].startswith(f"ticket: {key} (ticket key per host, not proven) uid {p['log']}")
-    assert signer.confirm_word(p) == f"{key}/{p['log'][-4:]}"
+    assert signer.confirm_word(p) == f"{key}/{p['log'][-8:]}"
     g = human.prepare("grant", {"hours": 1})
     assert signer.confirm_word(g) == "GRANT"
     assert "secret_hash: drawn by this signer" in signer.render(g, lambda w: ("Acme", "DEMO"))

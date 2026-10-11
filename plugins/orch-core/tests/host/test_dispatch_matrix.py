@@ -67,14 +67,14 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
     welcome = served.client().welcome
     registry = {op.name for op in ops.all()}
     assert set(welcome["ops"]) == (registry - set(NOT_SERVED)) | set(HOST_OPS) | set(HUMAN_OPS)
-    assert set(HUMAN_OPS) == {"human.prepare", "human.get", "human.submit", "human.cancel"}  # pending: H5b
+    assert set(HUMAN_OPS) == {"human.prepare", "human.get", "human.submit", "human.cancel", "human.pending"}
     assert set(NOT_SERVED) == {"init", "import.v1", "task.done", "wait"}
     assert all(v == 1 for v in welcome["ops"].values())
     assert {"ops/1", "outcome/1"} <= set(welcome["caps"])
     assert welcome["peer"] == {"uid": UID, "class": "person", "person": served.lab.owner}
 
 
-@pytest.mark.parametrize("op", ["init", "task.done", "wait", "nope", "host.list", "job.next", "human.pending"])
+@pytest.mark.parametrize("op", ["init", "task.done", "wait", "nope", "host.list", "job.next", "human.sign"])
 def test_an_op_outside_the_list_is_unknown_command(served, op):
     assert err(served.client().req(op)) == "unknown_command"
 

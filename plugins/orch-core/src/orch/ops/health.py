@@ -17,13 +17,14 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from subprocess import SubprocessError
 from typing import Any
 
 from orch import canon
+from orch.ops.caps import Capabilities
 from orch.store import Store, StoreError
 from orch.store import render as store_render
 from orch.store.checkpoints import verify_object
@@ -97,10 +98,17 @@ def _label(s: InspectStore, log: str) -> str:
 
 
 def inspect(
-    root: Path, wid: str, state_dir: Path, *, fast: bool, instructions: list[dict[str, str]] | None = None
+    root: Path,
+    wid: str,
+    state_dir: Path,
+    *,
+    fast: bool,
+    instructions: list[dict[str, str]] | None = None,
+    caps: Capabilities | None = None,
 ) -> tuple[list[Finding], InspectStore | None]:
     """Every finding about the workspace at ``root``. ``fast`` leaves out the checks that only ``doctor`` makes
     (checkpoint presence, pins, index, repositories, orphan keys)."""
+    caps = caps or Capabilities.direct()  # the doctor and check handlers pass ctx.caps
     out: list[Finding] = []
     s = _open(root, wid, state_dir, out)
     if s is None:
@@ -126,8 +134,8 @@ def inspect(
         if not fast:
             out += _pins(s, state_dir, wid)
             out += _index(s)
-            out += _repos(s, root)
-            out += _orphans(state_dir, wid)
+            out += _repos(s, root, caps)
+            out += _orphans(state_dir, wid, caps)
         for f in instructions or []:
             out.append(Finding("warn", f["where"], "instructions.stale", f["what"], None))
     except Exception:
@@ -297,7 +305,7 @@ def _index(s: InspectStore) -> list[Finding]:
     ]
 
 
-def _repos(s: InspectStore, root: Path) -> list[Finding]:
+def _repos(s: InspectStore, root: Path, caps: Capabilities) -> list[Finding]:
     from orch.store import observe
 
     out: list[Finding] = []
@@ -305,12 +313,12 @@ def _repos(s: InspectStore, root: Path) -> list[Finding]:
         p = observe.repo_path(root, s.state.workspace.repos, name)
         if p is None or not p.is_dir():
             out.append(Finding("warn", f"repo {name}", "repo.unobservable", "the working copy does not exist"))
-        elif observe.head(p) is None:
+        elif caps.git.head(p) is None:
             out.append(Finding("warn", f"repo {name}", "repo.unobservable", "git cannot read HEAD there"))
     return out
 
 
-def _orphans(state_dir: Path, wid: str) -> list[Finding]:
+def _orphans(state_dir: Path, wid: str, caps: Capabilities) -> list[Finding]:
     """Key folders of an init that died: the ones ``--repair`` can remove (a marker of a process that is gone)."""
     from orch.ops.workspace_init import MARKER, _alive
 
@@ -323,7 +331,7 @@ def _orphans(state_dir: Path, wid: str) -> list[Finding]:
         try:
             if d.name == wid or d.is_symlink() or not marker.is_file() or (d / "genesis").exists():
                 continue
-            pid = int(marker.read_text().strip() or "0")
+            pid = int(caps.files.read_text(marker).strip() or "0")
         except (OSError, ValueError):
             continue
         if pid and not _alive(pid):
@@ -342,7 +350,9 @@ def _orphans(state_dir: Path, wid: str) -> list[Finding]:
 # ---------------------------------------------------------------------------------------------------- repair
 
 
-def repair(root: Path, wid: str, env: Mapping[str, str], findings: list[Finding], now: Any) -> list[str]:
+def repair(
+    root: Path, wid: str, env: Mapping[str, str], findings: list[Finding], now: Any, caps: Capabilities | None = None
+) -> list[str]:
     """The safe repairs for ``findings``, done through the normal store. Returns what was done."""
     from orch.ops.runtime import Workspace
 
@@ -350,7 +360,8 @@ def repair(root: Path, wid: str, env: Mapping[str, str], findings: list[Finding]
     wanted = {f.repair for f in findings if f.repair}
     if not wanted:
         return did
-    ws = Workspace(env, now)
+    caps = caps or Capabilities.direct(env)
+    ws = Workspace(env, now, files=caps.files)
     if "scan" in wanted:
         store = ws.store
         events = store.scan()
@@ -366,7 +377,7 @@ def repair(root: Path, wid: str, env: Mapping[str, str], findings: list[Finding]
     if "orphans" in wanted:
         from orch.ops.workspace_init import _sweep_orphans
 
-        _sweep_orphans(ws.state_dir)
+        _sweep_orphans(ws.state_dir, caps.files)
         did.append("removed the keys of dead inits")
     return did
 
@@ -374,12 +385,12 @@ def repair(root: Path, wid: str, env: Mapping[str, str], findings: list[Finding]
 # ---------------------------------------------------------------------------------------------------- commit check
 
 
-def _git(root: Path, *args: str) -> bytes | None:
+def _git(root: Path, *args: str, caps: Capabilities) -> bytes | None:
     try:
-        done = subprocess.run(
+        done = caps.exec.run(
             ["git", "-C", str(root), *args], capture_output=True, timeout=30, check=False, start_new_session=True
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, SubprocessError):
         return None
     return done.stdout if done.returncode == 0 else None
 
@@ -387,11 +398,12 @@ def _git(root: Path, *args: str) -> bytes | None:
 _TICKET_FILE = re.compile(r"tickets/([0-7][0-9A-HJKMNP-TV-Z]{25})/(ticket\.json|body\.md|events\.jsonl|artifacts/.+)")
 
 
-def check_staged(s: InspectStore, root: Path) -> list[Finding]:
+def check_staged(s: InspectStore, root: Path, caps: Capabilities | None = None) -> list[Finding]:
     """What a pre-commit hook refuses: staged files that are not what the log says, a staged log that is not a prefix
     of the verified one, deleted logs, links, anything of ``.state``, key material and grant secrets."""
+    caps = caps or Capabilities.direct()
     out: list[Finding] = []
-    raw = _git(root, "diff", "--cached", "--raw", "-z", "--no-renames", "--relative")
+    raw = _git(root, "diff", "--cached", "--raw", "-z", "--no-renames", "--relative", caps=caps)
     if raw is None:
         return [Finding("error", "git", "git.unavailable", "git cannot list the staged files here")]
     st = s.state
@@ -428,7 +440,7 @@ def check_staged(s: InspectStore, root: Path) -> list[Finding]:
         if mode in ("120000", "160000") and guarded.search(rel):
             out.append(Finding("error", rel, "commit.link", "a symlink or submodule where the workspace keeps a file"))
             continue
-        blob = _git(root, "show", f":{rel}")
+        blob = _git(root, "show", f":{rel}", caps=caps)
         if blob is None:
             out.append(Finding("error", rel, "git.unavailable", "git cannot read the staged file"))
             continue

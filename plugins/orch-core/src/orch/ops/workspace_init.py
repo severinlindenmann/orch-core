@@ -52,6 +52,7 @@ from orch.identity import (
 from orch.identity import certs as identity_certs
 from orch.instructions import UnsafePath, check_targets, write_workspace_files
 from orch.ops.base import Context, Result
+from orch.ops.caps import Files
 from orch.ops.errors import OrchError
 from orch.ops.runtime import find_workspace, state_dir
 
@@ -266,7 +267,7 @@ def _alive(pid: int) -> bool:
     return True
 
 
-def _sweep_orphans(sd: Path) -> None:
+def _sweep_orphans(sd: Path, files: Files | None = None) -> None:
     """Remove the key directories of an init that died (SIGKILL, power loss): marked by a process that is gone."""
     hosts = sd / "hosts"
     if not hosts.is_dir():
@@ -276,11 +277,11 @@ def _sweep_orphans(sd: Path) -> None:
         try:
             if d.is_symlink() or not marker.is_file() or (d / "genesis").exists():
                 continue  # a pinned genesis means a workspace exists for these keys: never swept
-            pid = int(marker.read_text().strip() or "0")
+            pid = int((files or Files()).read_text(marker).strip() or "0")
         except (OSError, ValueError):
             continue
         if pid and not _alive(pid):
-            shutil.rmtree(d, ignore_errors=True)
+            (files or Files()).rmtree(d)
 
 
 @contextlib.contextmanager

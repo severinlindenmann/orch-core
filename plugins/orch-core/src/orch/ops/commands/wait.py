@@ -9,7 +9,6 @@ from orch.ops.decisions import decision
 from orch.ops.errors import OrchError
 from orch.ops.runtime import Call
 from orch.ops.views import fence
-from orch.store import observe
 
 POLL = (0.1, 0.25, 0.5, 1.0)  # seconds between looks at the log, growing
 
@@ -31,7 +30,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     c = Call.of(ctx, "wait")
     view = c.resolve(args.get("ref"), live_only=False)  # a done ticket ended the claim, not the wait
     problems: list[str] = []
-    observe.observe(c.store, view.uid, problems)
+    c.ctx.caps.git.observe(c.store, view.uid, problems)
     notes_ = [f"observe: {x}" for x in problems]
     note = c.notes.get(view.uid)
     start = c.store.head_seq(view.uid)

@@ -32,8 +32,6 @@ import contextlib
 import json
 import os
 import re
-import stat
-import sys
 import time
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
@@ -43,6 +41,7 @@ from typing import Any
 from orch import canon
 from orch.canon.text import TextError, normalize_text
 from orch.ops.base import Context, Handler, Result
+from orch.ops.caps import Files, NotARegularFile
 from orch.ops.errors import GLOBAL_ERRORS, OrchError
 
 __all__ = [
@@ -78,13 +77,14 @@ def state_dir(env: Mapping[str, str]) -> Path:
     return Path(env.get("HOME") or os.path.expanduser("~")) / ".config" / "orch"
 
 
-def _config(path: Path) -> dict[str, Any] | None:
+def _config(path: Path, files: Files | None = None) -> dict[str, Any] | None:
     """``config.json`` of a workspace directory, or ``None`` if ``path`` is not one (a symlink is not read)."""
     cfg = path / "config.json"
     try:
         if cfg.is_symlink() or not cfg.is_file():
             return None
-        raw = cfg.read_bytes() if cfg.stat().st_size <= (1 << 20) else b""
+        fs = files or Files()
+        raw = fs.read_bytes(cfg) if cfg.stat().st_size <= (1 << 20) else b""
         doc = json.loads(raw)
     except (OSError, ValueError, RecursionError):
         return None
@@ -94,17 +94,19 @@ def _config(path: Path) -> dict[str, Any] | None:
     return doc
 
 
-def find_workspace(env: Mapping[str, str], cwd: str | os.PathLike[str] | None = None) -> Path | None:
+def find_workspace(
+    env: Mapping[str, str], cwd: str | os.PathLike[str] | None = None, files: Files | None = None
+) -> Path | None:
     """``ORCH_WORKSPACE`` if it names a workspace, else the nearest directory above ``cwd`` that is one or holds
     ``orchestrator/`` that is. ``None`` when there is none."""
     explicit = env.get("ORCH_WORKSPACE")
     if explicit:
         p = Path(explicit)
-        return p if _config(p) else None
-    here = Path(cwd or os.getcwd()).resolve()
+        return p if _config(p, files) else None
+    here = Path(cwd or (files or Files()).getcwd()).resolve()
     for d in (here, *here.parents):
         for cand in (d, d / "orchestrator"):
-            if _config(cand):
+            if _config(cand, files):
                 return cand
     return None
 
@@ -116,8 +118,15 @@ def records_dir(root: Path) -> Path:
 class Workspace:
     """One CLI call's view of the workspace: found and opened lazily, once."""
 
-    def __init__(self, env: Mapping[str, str], now: Callable[[], float] = time.time, cwd: str | None = None) -> None:
+    def __init__(
+        self,
+        env: Mapping[str, str],
+        now: Callable[[], float] = time.time,
+        cwd: str | None = None,
+        files: Files | None = None,
+    ) -> None:
         self.env = env
+        self.files = files or Files()
         self.now = now
         self._cwd = cwd
         self._root: Path | None = None
@@ -133,7 +142,7 @@ class Workspace:
     @property
     def root(self) -> Path | None:
         if not self._looked:
-            self._root, self._looked = find_workspace(self.env, self._cwd), True
+            self._root, self._looked = find_workspace(self.env, self._cwd, self.files), True
         return self._root
 
     def require_root(self) -> Path:
@@ -152,7 +161,7 @@ class Workspace:
         from orch.custody import FileBackend
         from orch.store import BackendSigner, Store
 
-        cfg = _config(root) or {}
+        cfg = _config(root, self.files) or {}
         wid = cfg["workspace"]["id"]
         sd = state_dir(self.env)
         host = None
@@ -214,8 +223,9 @@ class Notes:
     KEEP = 100
     KEEP_CLAIMS = 20
 
-    def __init__(self, directory: Path | None, session: str | None) -> None:
+    def __init__(self, directory: Path | None, session: str | None, files: Files | None = None) -> None:
         self.directory = directory
+        self.files = files or Files()
         self.session = session
         self._mem: dict[str, Any] = {"tickets": {}, "claims": []}
         self.damaged = False  # a value in the file was malformed and was treated as missing
@@ -245,7 +255,7 @@ class Notes:
         if p is None:
             return self._mem
         try:
-            doc = json.loads(p.read_bytes())
+            doc = json.loads(self.files.read_bytes(p))
         except FileNotFoundError:
             return {"tickets": {}, "claims": []}
         except (OSError, ValueError, RecursionError):
@@ -290,7 +300,7 @@ class Notes:
             return
         from orch.store.lock import FileLock
 
-        self.directory.mkdir(parents=True, exist_ok=True)
+        self.files.mkdir(self.directory, parents=True)
         with FileLock(self.directory / ".lock"):
             yield
 
@@ -491,7 +501,7 @@ class Call:
         self.ctx = ctx
         self.op = op
         self.declared = {e["code"] for e in ops.get(op).errors} | set(GLOBAL_ERRORS)
-        self.ws: Workspace = ctx.workspace or Workspace(ctx.env, ctx.now)
+        self.ws: Workspace = ctx.workspace or Workspace(ctx.env, ctx.now, files=ctx.caps.files)
         self._person: str | None | bool = False
         self._notes: Notes | None = None
 
@@ -530,7 +540,7 @@ class Call:
     def notes(self) -> Notes:
         if self._notes is None:
             root = self.ws.root
-            self._notes = Notes(records_dir(root) if root else None, self.ctx.session)
+            self._notes = Notes(records_dir(root) if root else None, self.ctx.session, self.ctx.caps.files)
         return self._notes
 
     def agent_id(self) -> str:
@@ -564,7 +574,7 @@ class Call:
         out: list[str] = []
         session = self.ctx.session or ""
         while session:
-            out += Notes(records_dir(self.ws.root) if self.ws.root else None, session).claims()
+            out += Notes(records_dir(self.ws.root) if self.ws.root else None, session, self.ctx.caps.files).claims()
             session = session.rpartition(".")[0]
         return list(dict.fromkeys(out))
 
@@ -695,14 +705,11 @@ class Call:
             data = read_stdin(self.ctx)
         else:
             try:
-                fd = os.open(source, os.O_RDONLY | os.O_NONBLOCK)
+                data, _ = self.ctx.caps.files.read_regular(source, FILE_LIMIT + 1)
+            except NotARegularFile:
+                raise OrchError("invalid.input", f"{flat(source)[:80]} is not a regular file") from None
             except OSError as e:
                 raise OrchError("invalid.input", f"cannot read {flat(source)[:80]}: {e.strerror}") from None
-            if not stat.S_ISREG(os.fstat(fd).st_mode):
-                os.close(fd)
-                raise OrchError("invalid.input", f"{flat(source)[:80]} is not a regular file")
-            with os.fdopen(fd, "rb") as f:
-                data = f.read(FILE_LIMIT + 1)
         if len(data) > FILE_LIMIT:
             raise OrchError("invalid.input", f"the text is longer than {FILE_LIMIT} bytes")
         return data
@@ -728,17 +735,12 @@ class Call:
     def read_artifact(self, path: str) -> bytes:
         """The bytes of an evidence file: a regular file, at most 64 MiB, free of grant secrets."""
         try:
-            fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+            data, size = self.ctx.caps.files.read_regular(path, ARTIFACT_LIMIT + 1)
+        except NotARegularFile:
+            raise OrchError("invalid.input", f"{flat(path)[:80]} is not a regular file") from None
         except OSError as e:
             raise OrchError("invalid.input", f"cannot read {flat(path)[:80]}: {e.strerror}") from None
-        st = os.fstat(fd)
-        if not stat.S_ISREG(st.st_mode) or st.st_size > ARTIFACT_LIMIT:
-            os.close(fd)
-            why = "is not a regular file" if not stat.S_ISREG(st.st_mode) else f"is larger than {ARTIFACT_LIMIT} bytes"
-            raise OrchError("invalid.input", f"{flat(path)[:80]} {why}")
-        with os.fdopen(fd, "rb") as f:
-            data = f.read(ARTIFACT_LIMIT + 1)
-        if len(data) > ARTIFACT_LIMIT:
+        if size > ARTIFACT_LIMIT or len(data) > ARTIFACT_LIMIT:
             raise OrchError("invalid.input", f"{flat(path)[:80]} is larger than {ARTIFACT_LIMIT} bytes")
         self.check_secret(data)
         return data
@@ -779,8 +781,7 @@ class Call:
 def read_stdin(ctx: Context) -> bytes:
     """Standard input, read once per call (the dedup key and the handler share it); more than 1 MiB is refused."""
     if "-" not in ctx.files:
-        stream = getattr(sys.stdin, "buffer", None)
-        ctx.files["-"] = stream.read(FILE_LIMIT + 1) if stream is not None else sys.stdin.read(FILE_LIMIT + 1).encode()
+        ctx.files["-"] = ctx.caps.files.read_stdin(FILE_LIMIT + 1)
     return ctx.files["-"]
 
 
@@ -792,18 +793,10 @@ def input_digest(ctx: Context, source: str) -> str | None:
     try:
         if source == "-":
             return hashlib.sha256(read_stdin(ctx)).hexdigest()
-        h = hashlib.sha256()
-        fd = os.open(source, os.O_RDONLY | os.O_NONBLOCK)
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
-            os.close(fd)
+        data, size = ctx.caps.files.read_regular(source, ARTIFACT_LIMIT + 1)
+        if size > ARTIFACT_LIMIT or len(data) > ARTIFACT_LIMIT:  # the handler refuses it; the key does not read it all
             return None
-        with os.fdopen(fd, "rb") as f:
-            total = 0
-            while chunk := f.read(1 << 20):
-                total += len(chunk)
-                if total > ARTIFACT_LIMIT:  # the handler refuses it; the key does not read it all
-                    return None
-                h.update(chunk)
+        h = hashlib.sha256(data)
         return h.hexdigest()
     except (OSError, ValueError):
         return None

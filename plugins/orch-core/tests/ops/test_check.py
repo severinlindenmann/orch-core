@@ -181,7 +181,7 @@ def test_staged_paths_are_guarded_without_case_or_ascii_aliases(ws, cli, monkeyp
     cli("new", "one")
     rel = rel.format(uid=ws.uid("1"))
     raw = f":100644 100644 {'0' * 40} {'1' * 40} {status}\0{rel}\0".encode()
-    monkeypatch.setattr(health, "_git", lambda root, *args: raw if args[0] == "diff" else b"innocent")
+    monkeypatch.setattr(health, "_git", lambda root, *args, **kw: raw if args[0] == "diff" else b"innocent")
     store = ws.other()
     try:
         findings = health.check_staged(store, ws.root)

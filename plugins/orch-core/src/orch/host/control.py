@@ -4,8 +4,8 @@
 * ``host.wsk_create``: a new workspace id and key, ``O_CREAT|O_EXCL`` in a fresh 0700 directory; never replaces a key.
 * ``host.register``: adopt a workspace (D-P2-18): ownership lock, registration, serving, unlock.
 * ``host.unregister``: stop serving and remove the registration, which restores direct mode.
-* ``host.bootstrap``: append a signed genesis with the new key as ``seq`` 1, then register (the ``init`` composite;
-  H3b3 owns its client side and the full genesis acceptance list).
+* ``host.bootstrap``: append a signed genesis with the new key as ``seq`` 1, then register (the ``init`` composite,
+  whose client side is :func:`orch.ops.workspace_init.create_workspace_hosted`).
 * ``host.outcome``: the stored outcome of a control write.
 * ``host.restart``: drain (D-P2-4).
 
@@ -258,6 +258,8 @@ class ControlOps:
             self._refuse_host_paths(root)
             if self.host.registry.by_root(root) is not None:
                 raise HostError("host.busy", f"{root} is already registered")
+            if self.host.bootstrapping_root(root):
+                raise HostError("host.busy", f"{root} is being bootstrapped")
             workspace_id, prefix, ws = self._inspect(root)
             if self.host.registry.get(workspace_id) is not None:
                 raise HostError("host.busy", f"workspace {workspace_id} is already registered")
@@ -329,7 +331,7 @@ class ControlOps:
         root = os.path.realpath(args["root"])
         normalised = {**args, "root": root}
         workspace_id = args["workspace_id"]
-        with self.host.bootstrap_guard(workspace_id):
+        with self.host.bootstrap_guard(workspace_id, root):
             if self.intents.peek(self.namespace, self.principal, idem) is None:
                 self._validate_bootstrap(normalised)  # read-only: a refusal here leaves no record and changes nothing
             begun = self._begin(idem, "host.bootstrap", normalised)

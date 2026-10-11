@@ -1785,6 +1785,12 @@ audit hook before it reads anything.
   2. `host.wsk_create` → `{workspace_id, wsk_pub}`;
   3. the client signs the delegation and `workspace.created` locally;
   4. `host.bootstrap` appends the genesis and registers the workspace.
+
+  `orch init --host` runs it (H3b3) until H7 makes host mode the default. The directory must be empty; the peers map
+  is the caller's UID as the genesis owner (agents and the worker are added later by `unregister` + `register`). The
+  device key is kept under `hosts/<ws>/person` as in direct mode. When the connection drops during `host.bootstrap`,
+  the client asks again with the same idem for up to 30 s; `control.rolled_back` starts again from step 2 after one
+  confirmation, and no answer is `host.unavailable` naming the idem for `orch host outcome`.
 - **`import v1`** runs in direct mode only, on an unregistered workspace: `orch import v1`, then `orch host register`.
   A registered workspace answers `host.required` (`unregister`, import, `register`). The importer reads v1 files, which
   the host must never do for a client, and the plan signs a large batch under one unlock (F1 §14.2). Neither fits a

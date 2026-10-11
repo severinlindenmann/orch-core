@@ -7,7 +7,7 @@
     "cli": "orch init",
     "summary": "Create a workspace here: the genesis event, the workspace key and the instructions.",
     "who": "human",
-    "usage": "orch init --prefix PREFIX [--name NAME] [--dry-run]",
+    "usage": "orch init --prefix PREFIX [--name NAME] [--host] [--dry-run]",
     "pre": [
       "no_workspace",
       "user_presence",
@@ -30,6 +30,10 @@
           "type": "string",
           "description": "your display name",
           "x-metavar": "NAME"
+        },
+        "host": {
+          "type": "boolean",
+          "description": "create it through the running orch host (host.wsk_create, then host.bootstrap): the host keeps the workspace key and serves the workspace; the directory must be empty"
         }
       },
       "required": [
@@ -78,6 +82,17 @@
         ]
       },
       {
+        "code": "custody.unsafe_mode",
+        "exit": 3,
+        "retryable": false,
+        "hint": "use a directory owned by you whose parents only you or root can change",
+        "fix": [
+          "orch",
+          "describe",
+          "init"
+        ]
+      },
+      {
         "code": "custody.wrong_passphrase",
         "exit": 3,
         "retryable": false,
@@ -99,6 +114,17 @@
         ]
       },
       {
+        "code": "host.busy",
+        "exit": 4,
+        "retryable": false,
+        "hint": "orch host list",
+        "fix": [
+          "orch",
+          "host",
+          "list"
+        ]
+      },
+      {
         "code": "lock.busy",
         "exit": 4,
         "retryable": true,
@@ -117,6 +143,17 @@
           "orch",
           "describe",
           "init"
+        ]
+      },
+      {
+        "code": "host.unavailable",
+        "exit": 9,
+        "retryable": true,
+        "hint": "start the host service, then retry",
+        "fix": [
+          "orch",
+          "host",
+          "list"
         ]
       },
       {

@@ -136,6 +136,16 @@ class Workspace:
         #: set by opening the store: was the genesis pin created by this call (trust on first use)?
         self.pin_created = False
 
+    @classmethod
+    def hosted(
+        cls, root: Path, store: Any, *, env: Mapping[str, str], now: Callable[[], float], files: Files
+    ) -> Workspace:
+        """The host's view (H4a1): the root and the store are the host's own, injected. Nothing is discovered (no cwd,
+        no ``ORCH_WORKSPACE``), no ``config.json`` is read and no second store is opened."""
+        ws = cls(env, now, files=files)
+        ws._root, ws._looked, ws._store = Path(root), True, store
+        return ws
+
     @property
     def state_dir(self) -> Path:
         return state_dir(self.env, self.files)
@@ -181,7 +191,9 @@ class Workspace:
             clock=self.now,
             workspace_name=cfg["workspace"].get("name"),
             load="lazy",
-            guard=DirectGuard(sd, wid),  # D-P2-18: a workspace the host has adopted answers host.required
+            # D-P2-18: in direct mode a workspace the host has adopted answers host.required. Host-mode files (roots
+            # set) never take the direct-mode guard: it reads the agent pins outside the roots (H3a note a).
+            guard=DirectGuard(sd, wid) if self.files.roots is None else None,
         )
 
 
@@ -226,16 +238,23 @@ class Notes:
     KEEP = 100
     KEEP_CLAIMS = 20
 
-    def __init__(self, directory: Path | None, session: str | None, files: Files) -> None:
+    def __init__(self, directory: Path | None, session: str | None, files: Files, principal: str | None = None) -> None:
         self.directory = directory
         self.files = files
         self.session = session
+        #: host mode: notes are keyed by (principal, session) (F4), so a session label alone reaches no one's notes
+        self.principal = principal
         self._mem: dict[str, Any] = {"tickets": {}, "claims": []}
         self.damaged = False  # a value in the file was malformed and was treated as missing
 
     def _path(self) -> Path | None:
         if self.directory is None or not self.session:
             return None
+        if self.principal is not None:
+            import hashlib
+
+            digest = hashlib.sha256(f"{self.principal}\0{self.session}".encode()).hexdigest()[:40]
+            return self.directory / f"h_{digest}.notes.json"
         return self.directory / (re.sub(r"[^A-Za-z0-9_-]", "_", self.session)[:120] + ".notes.json")
 
     @staticmethod
@@ -468,11 +487,19 @@ class Projection:
     def last_seq(self) -> int:
         return self._seq
 
-    def commit(self) -> list[Any]:
-        """Append what was planned (nothing under ``--dry-run``), then update the session's notes."""
+    def commit(self, ids: list[str] | None = None) -> list[Any]:
+        """Append what was planned (nothing under ``--dry-run``), then update the session's notes. In host mode every
+        event gets its id now (``ids``: ids the caller planned already) and the whole batch is announced to
+        ``ctx.plan`` before the first append (§0.7)."""
         c = self.call
         if c.ctx.dry_run or not self.planned:
             return []
+        if c.ctx.plan is not None:
+            for i, p in enumerate(self.planned):
+                p.event.setdefault("id", ids[i] if ids is not None and i < len(ids) else canon_ulid())
+            c.ctx.plan(
+                [(self.uid, p.event["id"], p.event["type"], p.event["actor"]) for p in self.planned], self.view.key
+            )
         out = []
         for i, p in enumerate(self.planned):
             idem = f"{c.ctx.idem}:{i}" if c.ctx.idem else None
@@ -540,10 +567,19 @@ class Call:
         return self._person  # type: ignore[return-value]
 
     @property
+    def viewer(self) -> str | None:
+        """Whom reads are filtered for: in host mode the viewer the dispatcher derived and verified for this request
+        (§0.5: the mapped person in column P, the grant's person in G, ``None`` for no-person), else the grant's
+        person as in P1."""
+        return self.ctx.viewer if self.ctx.hosted else self.person
+
+    @property
     def notes(self) -> Notes:
         if self._notes is None:
             root = self.ws.root
-            self._notes = Notes(records_dir(root) if root else None, self.ctx.session, self.ctx.caps.files)
+            self._notes = Notes(
+                records_dir(root) if root else None, self.ctx.session, self.ctx.caps.files, self.ctx.principal
+            )
         return self._notes
 
     def agent_id(self) -> str:
@@ -570,14 +606,16 @@ class Call:
     def sees(self, view: Any) -> bool:
         if view.visibility == "workspace":
             return True
-        return self.person is not None and self.person in view.visibility["restricted"]
+        viewer = self.viewer
+        return viewer is not None and viewer in view.visibility["restricted"]
 
     def claimed_uids(self) -> list[str]:
         """The uids this session (and the sessions it works under: ``s_X.1`` under ``s_X``) recorded as claimed."""
         out: list[str] = []
         session = self.ctx.session or ""
         while session:
-            out += Notes(records_dir(self.ws.root) if self.ws.root else None, session, self.ctx.caps.files).claims()
+            directory = records_dir(self.ws.root) if self.ws.root else None
+            out += Notes(directory, session, self.ctx.caps.files, self.ctx.principal).claims()
             session = session.rpartition(".")[0]
         return list(dict.fromkeys(out))
 

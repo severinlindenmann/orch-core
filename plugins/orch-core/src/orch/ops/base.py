@@ -47,6 +47,17 @@ class Context:
     #: ``env`` and ``now`` (today's CLI powers). The host passes :meth:`Capabilities.host`. Handlers use this, never
     #: ``os.environ``, ``open`` or ``subprocess``.
     caps: Capabilities = field(default=None, repr=False)  # type: ignore[assignment]
+    #: Host mode (H4a1): the dispatcher derived the viewer itself (§0.5): the mapped person (column P), the verified
+    #: grant's person (G) or ``None`` (no-person, N). Reads are filtered for it; direct mode leaves ``hosted`` False and
+    #: takes the person from the grant, as P1 does.
+    hosted: bool = False
+    viewer: str | None = None
+    #: Host mode: the principal (§0.5) that session notes are keyed by, together with the session label (F4).
+    #: ``None`` in direct mode (keyed by session, as in P1).
+    principal: str | None = field(default=None, repr=False)
+    #: Host mode: called with the events a write is about to append, as ``(log, event id, type, actor)`` tuples plus
+    #: the ticket key when known, **before** the first of them is appended, so the outcome record lists them (§0.7).
+    plan: Callable[..., None] | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if self.caps is None:

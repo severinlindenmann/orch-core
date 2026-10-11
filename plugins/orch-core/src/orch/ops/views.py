@@ -251,7 +251,7 @@ def _free_ticket(c: Any, limit: int | None = None) -> tuple[Any | None, bool]:
         "SELECT uid, key, priority FROM tickets WHERE status = 'open' AND "
         "(json_extract(visibility, '$') = 'workspace' OR EXISTS "
         "(SELECT 1 FROM json_each(visibility, '$.restricted') WHERE value = ?))",
-        (c.person,),
+        (c.viewer,),
     )
     rows.sort(key=lambda r: (PRIORITY.get(r[2], 2), key_number(r[1])))
     complete = limit is None or len(rows) <= limit

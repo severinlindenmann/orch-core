@@ -199,6 +199,10 @@ class Store:
     ) -> None:
         self.root = root
         self._guard = guard or contextlib.nullcontext
+        #: Host mode (H4a1): called as ``append_check(log, event)`` right before a caller's event (any actor but the
+        #: host) is committed, after its id is final; it raises :class:`StoreError` to refuse. The host uses it to make
+        #: sure no event lands that its outcome record does not list (§0.7). ``None``: no check (direct mode).
+        self.append_check: Callable[[str, dict[str, Any]], None] | None = None
         self.workspace_id = workspace_id
         self._expected_genesis = expected_genesis
         self._host = host
@@ -1362,6 +1366,8 @@ class Store:
         e = self._envelope(e, log)
         new_texts = self._section_texts(e, log, body, texts)
         files = self._file_artifacts(e, artifacts)
+        if self.append_check is not None and not host_event:
+            self.append_check(log, e)
         if idem is not None:
             self._idem_intent(idem, log, e["id"])
         result = self._commit(e, log, new_texts, files, force)

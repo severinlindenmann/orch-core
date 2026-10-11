@@ -3,7 +3,7 @@
 // host's `material` (never from a cached ticket) through visible.tsx, so every value is exact and nothing is hidden.
 import { Check, Copy, Terminal } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
-import { signCommand, type HandoffMaterial, type HandoffRequest } from '@/api/handoff'
+import { confirmWord, signCommand, type HandoffMaterial, type HandoffRequest } from '@/api/handoff'
 import { Button } from '@/components/ui/button'
 import { Prose, Raw, RawValue, plain } from './visible'
 
@@ -74,10 +74,13 @@ export function MaterialPreview({ material, events = [] }: { material: HandoffMa
     <div data-handoff-preview className="max-h-[38vh] space-y-3 overflow-auto rounded-md border border-border bg-bg p-3">
       <p className="text-[12px] text-text-muted">Preview. Your terminal shows what you sign.</p>
       {material.ticket?.key && (
-        <Block title="Ticket (key stated by the host)">
+        <Block title="Ticket (ticket key per host, not proven)">
           <Raw>{material.ticket.key}</Raw>
           <p className="text-[12px] text-text-muted">
-            Ticket id <Raw>{material.ticket.uid}</Raw> (your terminal shows its last 8 characters, <Raw>{uidFragment(material.ticket.uid)}</Raw>)
+            Ticket id <Raw>{material.ticket.uid}</Raw> (signed; its last 8 characters are <Raw>{uidFragment(material.ticket.uid)}</Raw>)
+          </p>
+          <p className="text-[12px] text-text-muted">
+            In your terminal you type <Raw>{confirmWord(material.ticket.key, material.ticket.uid)}</Raw> to continue.
           </p>
         </Block>
       )}
@@ -198,6 +201,18 @@ export function HandoffPanel({ request }: { request: HandoffRequest }) {
             <dt className="text-text-muted">Content hash</dt>
             <dd className="min-w-0">
               <Raw>{request.gate_hash}</Raw>
+            </dd>
+          </>
+        )}
+        <dt className="text-text-muted">Operation</dt>
+        <dd>
+          <Raw>{request.op}</Raw>
+        </dd>
+        {request.origin && (
+          <>
+            <dt className="text-text-muted">Requested by</dt>
+            <dd className="min-w-0 text-[12px]">
+              uid <Raw>{String(request.origin.uid)}</Raw> pid <Raw>{String(request.origin.pid)}</Raw> at <Raw>{request.origin.created_at}</Raw>; client <Raw>{request.origin.client}</Raw> (named by the client itself, unverified)
             </dd>
           </>
         )}

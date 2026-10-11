@@ -4,7 +4,7 @@
 // `material` (never the cached ticket) with a fingerprint, and the person signs in a terminal with `orch sign CODE`.
 // The fingerprint is computed here exactly as `orch sign` computes it, from what the server sent:
 //   review_digest = "sha256:" + sha256(cj(material))
-//   fingerprint   = first 12 hex of sha256(cj({review_digest, events: [event without sig, actor.device, auth]}))
+//   fingerprint   = first 12 hex of sha256(cj({op, review_digest, events: [event without sig, actor.device, auth]}))
 // where `cj` is canonical JSON (RFC 8785 on the restricted subset: integers, ASCII keys). A request whose hashes do not
 // recompute is never shown as valid.
 import { sha256Hex } from './sha256'
@@ -112,17 +112,19 @@ function stripped(event: HandoffEvent): unknown {
   return out
 }
 
-export const fingerprintOf = (digest: string, events: HandoffEvent[]): string =>
-  sha256Hex(cj({ review_digest: digest, events: events.map(stripped) })).slice(0, 12)
+export const fingerprintOf = (digest: string, events: HandoffEvent[], op: string): string =>
+  sha256Hex(cj({ op, review_digest: digest, events: events.map(stripped) })).slice(0, 12)
 
-const ENVELOPE = new Set(['v', 'id', 'type', 'actor', 'auth', 'hash_v', 'roster_v', 'based_on', 'gate_gen', 'sig'])
+const ENVELOPE = new Set(['v', 'id', 'type', 'actor', 'auth', 'hash_v', 'roster_v', 'based_on', 'sig'])
+/** `gate_gen` leaves the payload on the three decision types only; it is shown on its own line there. */
+const GATE_GEN_ENVELOPE = new Set(['gate.approved', 'gate.changes_requested', 'verdict.given'])
 
 /** Each review block describes exactly its event: same id and type, and the payload is the event minus the envelope. */
 function reviewMatches(material: HandoffMaterial, events: HandoffEvent[]): boolean {
   if (!Array.isArray(material.review) || material.review.length !== events.length) return false
   return material.review.every((block, i) => {
     const event = events[i]
-    const payload = Object.fromEntries(Object.entries(event).filter(([k]) => !ENVELOPE.has(k)))
+    const payload = Object.fromEntries(Object.entries(event).filter(([k]) => !ENVELOPE.has(k) && !(k === 'gate_gen' && GATE_GEN_ENVELOPE.has(event.type))))
     return block.event_id === event.id && block.type === event.type && cj(block.payload) === cj(payload)
   })
 }
@@ -139,7 +141,7 @@ export function requestIsConsistent(request: HandoffRequest): boolean {
     const digest = reviewDigestOf(request.material)
     return (
       digest === request.review_digest &&
-      fingerprintOf(digest, request.events) === request.fingerprint &&
+      fingerprintOf(digest, request.events, request.op) === request.fingerprint &&
       reviewMatches(request.material, request.events) &&
       expiryMs(request.expires_at) !== null
     )
@@ -147,6 +149,9 @@ export function requestIsConsistent(request: HandoffRequest): boolean {
     return false
   }
 }
+
+/** The word typed to confirm a ticket operation: the key as the host gives it, and the last 8 characters of the signed log's uid. */
+export const confirmWord = (key: string, uid: string): string => `${key}/${uid.slice(-8)}`
 
 /** The exact line the person runs. A code is 4+4 characters of the Crockford alphabet, so it is safe to put in a shell. */
 export const CODE = /^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/

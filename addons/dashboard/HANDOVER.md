@@ -773,3 +773,10 @@ well-formed and within 15 minutes, and each `material.review` block equals its e
 the same). Stub signer checks left out (no data in the stub): `material.policy` vs `policy_hash`, git state for a code
 gate, the op in the fingerprint. `human.prepare` ignoring `opts.idem` means there is no `outcome.get` for it (design 4.3
 corrected): the server keeps its own record per (token, workspace, idem).
+
+H5a answers (stream A, #391) applied: the fingerprint covers the op (`sha256(cj({op, review_digest, events:[V(e)]}))[:12]`;
+vectors `log` d8de03967462, `set` 37cf21ef169c are tests in the stub, server and browser); `gate_gen` leaves the review payload
+on the three decision types only; the confirmation word is `KEY/FRAG` (last 8 characters of the log's uid) and the panel and the
+stub signer print the same five header lines with the key labelled "ticket key per host, not proven"; a refused submit leaves the
+request `bound` with `error:{code}` in `human.pending`; after a lost prepare answer the server adopts or cancels the orphan.
+Not yet from H5a: gate `material.texts` is shown only if present; the signer's op-specific `ticket.updated` checks are not in the stub signer.

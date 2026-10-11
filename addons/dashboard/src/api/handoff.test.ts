@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { IDEM, cj, expiryMs, fingerprintOf, newIdem, requestIsConsistent, reviewDigestOf, signCommand, type HandoffEvent, type HandoffRequest } from './handoff'
+import { IDEM, cj, confirmWord, expiryMs, fingerprintOf, newIdem, requestIsConsistent, reviewDigestOf, signCommand, type HandoffEvent, type HandoffRequest } from './handoff'
 import vector from '@/test/fixtures/handoff/vector.json'
 
 const events = vector.events as unknown as HandoffEvent[]
@@ -13,18 +13,28 @@ describe('the fingerprint is the one `orch sign` computes (host contract v1.4 se
 
   it('review_digest and the 12-hex fingerprint equal the Python vectors', () => {
     expect(reviewDigestOf(vector.material)).toBe(vector.review_digest)
-    expect(fingerprintOf(vector.review_digest, events)).toBe(vector.fingerprint)
+    expect(fingerprintOf(vector.review_digest, events, 'approve')).toBe(vector.fingerprint)
   })
 
   it('binding the device and the factor does not change it; the decision does', () => {
     const bound = [{ ...events[0], actor: { ...events[0].actor, device: 'd_' + '1'.repeat(16) }, auth: 'passphrase', sig: 'x' }]
-    expect(fingerprintOf(vector.review_digest, bound as HandoffEvent[])).toBe(vector.fingerprint_bound)
-    expect(fingerprintOf(vector.review_digest, [{ ...events[0], gate: 'requirements' }])).toBe(vector.fingerprint_other_gate)
+    expect(fingerprintOf(vector.review_digest, bound as HandoffEvent[], 'approve')).toBe(vector.fingerprint_bound)
+    expect(fingerprintOf(vector.review_digest, [{ ...events[0], gate: 'requirements' }], 'approve')).toBe(vector.fingerprint_other_gate)
     expect(vector.fingerprint_other_gate).not.toBe(vector.fingerprint)
   })
 
+  it('the op is covered, and the documented vectors come out (host contract 0.8.1, H5a)', () => {
+    expect(fingerprintOf(vector.review_digest, events, 'request_changes')).toBe(vector.fingerprint_other_op)
+    expect(vector.fingerprint_other_op).not.toBe(vector.fingerprint)
+    const ev = { v: 2, id: '01J9ZP0000000000000000000B', type: 'log.added', actor: { kind: 'person', id: 'p_' + '1'.repeat(32), device: 'd_' + '2'.repeat(32) }, auth: 'passphrase', hash_v: 1, roster_v: 1, based_on: 'sha256:' + 'cd'.repeat(32), text: 'hello', sig: 'x' }
+    const digest = 'sha256:' + 'ab'.repeat(32)
+    expect(fingerprintOf(digest, [ev as unknown as HandoffEvent], 'log')).toBe(vector.doc.op_log)
+    expect(fingerprintOf(digest, [ev as unknown as HandoffEvent], 'set')).toBe(vector.doc.op_set)
+    expect(confirmWord('DEMO-0042', '01J9ZP0000000000002W0KFDM3')).toBe('DEMO-0042/2W0KFDM3')
+  })
+
   it('a request is consistent only when both hashes recompute from its own bytes', () => {
-    const request = { material: vector.material, events, review_digest: vector.review_digest, fingerprint: vector.fingerprint, expires_at: new Date(Date.now() + 600_000).toISOString().replace(/\.\d+Z$/, 'Z') } as unknown as HandoffRequest
+    const request = { op: 'approve', material: vector.material, events, review_digest: vector.review_digest, fingerprint: vector.fingerprint, expires_at: new Date(Date.now() + 600_000).toISOString().replace(/\.\d+Z$/, 'Z') } as unknown as HandoffRequest
     expect(requestIsConsistent(request)).toBe(true)
     expect(requestIsConsistent({ ...request, fingerprint: '0'.repeat(12) })).toBe(false)
     expect(requestIsConsistent({ ...request, review_digest: 'sha256:' + '0'.repeat(64) })).toBe(false)
@@ -53,7 +63,7 @@ describe('a request must be what it says it is', () => {
   const base = () => ({ material: structuredClone(vector.material), events, review_digest: vector.review_digest, fingerprint: vector.fingerprint, expires_at: new Date(Date.now() + 600_000).toISOString().replace(/\.\d+Z$/, 'Z') }) as unknown as HandoffRequest
   const rehash = (r: HandoffRequest): HandoffRequest => {
     const digest = reviewDigestOf(r.material)
-    return { ...r, review_digest: digest, fingerprint: fingerprintOf(digest, r.events) }
+    return { ...r, review_digest: digest, fingerprint: fingerprintOf(digest, r.events, r.op) }
   }
   it('accepts the vector, refuses a review that does not describe its event even with matching hashes', () => {
     expect(requestIsConsistent(base())).toBe(true)

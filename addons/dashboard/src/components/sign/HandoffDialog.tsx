@@ -8,7 +8,7 @@ import type { HandoffAction, HandoffRequest, HandoffState } from '@/api/handoff'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { HandoffPanel } from './HandoffPanel'
-import { useHandoff, type HandoffPhase } from './useHandoff'
+import { failedSubmit, useHandoff, type HandoffPhase } from './useHandoff'
 
 interface Words {
   title: string
@@ -132,6 +132,11 @@ export function HandoffDialog(p: HandoffDialogProps) {
             {p.warning?.(run.request) && (
               <p role="alert" className="rounded-md border border-warning/40 px-3 py-2 text-[13px] text-warning">
                 {p.warning(run.request)}
+              </p>
+            )}
+            {run.state?.error?.code && (
+              <p role="alert" className="rounded-md border border-warning/40 px-3 py-2 text-[13px] text-warning">
+                Refused: {failedSubmit(run.state.error.code)} The request stays open until {new Date(run.request.expires_at).toLocaleTimeString()}.
               </p>
             )}
             <HandoffPanel request={run.request} />

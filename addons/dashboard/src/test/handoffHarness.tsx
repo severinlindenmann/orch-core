@@ -50,7 +50,7 @@ export function fakeRequest(over: { material?: Partial<HandoffMaterial>; events?
     state: 'prepared',
     op: 'approve',
     key,
-    fingerprint: fingerprintOf(digest, events),
+    fingerprint: fingerprintOf(digest, events, 'approve'),
     review_digest: digest,
     gate_hash: over.gate_hash === undefined ? 'sha256:' + 'b'.repeat(64) : over.gate_hash,
     material,

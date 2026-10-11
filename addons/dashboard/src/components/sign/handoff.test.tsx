@@ -197,7 +197,8 @@ describe('the preview shows values exactly', () => {
     expect(text).toContain('DEEPEST-VALUE')
     expect(text).not.toMatch(/nested deeper/)
     expect(text).toContain('01J9ZP0000000000000000000A')
-    expect(text).toContain('key stated by the host')
+    expect(text).toContain('ticket key per host, not proven')
+    expect(text).toContain('DEMO-0044/')
     expect(text).toContain('Stated by the host; your terminal works these out again')
     expect(text).toContain('based_on')
   })
@@ -214,6 +215,15 @@ describe('requests stay with their workspace and their tab', () => {
     release(request)
     await waitFor(() => expect(s.cancel).toHaveBeenCalledWith(expect.any(String), request.id))
   })
+
+  it('shows a refusal before any append as still open, with the code text', async () => {
+    const request = fakeRequest({ id: 'hr_' + '0'.repeat(25) + '5' })
+    s.prepare.mockResolvedValue(request)
+    s.get.mockResolvedValue(state(request, { state: 'bound', error: { code: 'gate.stale' } }))
+    await mount(PLAN)
+    expect(await screen.findByText(/Refused: The ticket changed before it was signed/, {}, { timeout: 9000 })).toBeInTheDocument()
+    expect(screen.getByTestId('handoff-command')).toBeInTheDocument() // the request is still open
+  }, 15000)
 
   it('a bad expires_at is not shown', async () => {
     s.prepare.mockResolvedValue({ ...fakeRequest(), expires_at: 'whenever' })

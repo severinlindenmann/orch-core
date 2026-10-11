@@ -218,9 +218,15 @@ The host owns the request (v1 §0.6): bound to `(workspace, mapped person, signe
 person. The dashboard adds:
 
 - **A request belongs to the session that prepared it.** A double click or a retry reuses the click's idem and is answered from
-  the server's own record. `human.prepare` keeps no idem record on the host (§0.7), so there is no `outcome.get` for it:
-  after a lost answer the retry first cancels the person's open request for that action created since the lost call,
-  then prepares. Two tabs are two requests.
+  the server's own record. `human.prepare` ignores `opts.idem` (§0.7, "As built in H5a" 8a): every call creates a request, and
+  there is no `outcome.get` for it. After a lost answer (`outcome.unknown`) the retry lists the person's requests with
+  `human.pending` (no arguments), takes those for the same op and ticket created during the attempt that this session does
+  not know, adopts the newest and cancels the extras; it never leaves an orphan. Requests expire after 10 minutes (4 for
+  a grant); more than 20 pending per person is `quota.host`. Two tabs are two requests.
+- **A refused submit stays open.** A refusal before any append (`gate.stale`, `members.stale`, `question.stale`,
+  `sig.invalid`, `human.request_mismatch`) leaves the request `bound` until it expires, and `human.pending` shows
+  `error:{code}`; the panel says "Refused: <text>. The request stays open until <time>". A failure after an event
+  landed ends it `submitted` with a failed outcome.
 - **Cancel.** Closing the panel, logout, session expiry, a ticket that goes `gone` (§6), or switching workspace while
   the panel is open calls `human.cancel`. An in-flight socket request is stopped with a `cancel` frame.
 - **Ambiguous completion.** On return after a drop, the server checks `human.pending` and the ticket. Event present:

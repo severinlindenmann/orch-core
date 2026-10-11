@@ -21,7 +21,8 @@ Key file (JSON, one per key, mode 0600)::
   decrypts the scalar into a ``bytearray``, signs, overwrites the ``bytearray`` and drops every reference. The backend
   object holds no key, no passphrase and no derived key between calls (tested). Python cannot guarantee that no copy
   of the scalar survives in ``cryptography``'s or the interpreter's memory; this is best effort, stated in the doctor
-  tier line.
+  tier line. The one exception is :meth:`unlocked`: one passphrase, shown with a digest of the whole batch, for the
+  duration of one ``orch import v1`` (ticket-format section 14).
 * **Roles.** A key is ``device`` (dk_sig: person events, decisions, bridge requests) or ``person`` (PK: certificates,
   revocations, delegations, challenges) and signs only that role's labels (:data:`orch.custody.base.ROLE_LABELS`).
 * **The prompt** is written to ``/dev/tty`` and the passphrase is read from it with echo off, never through
@@ -37,10 +38,11 @@ Key file (JSON, one per key, mode 0600)::
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import secrets
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -376,6 +378,53 @@ class PassphraseBackend:
             if crypto.public_bytes(key) != crypto.unb64u(doc["pub"], crypto.PUB_LEN):
                 raise CustodyError("key file does not match its public key")
             return crypto.sign(key, payload)
+        finally:
+            _zeroise(derived)
+            _zeroise(scalar)
+            key = None  # noqa: F841
+
+    @contextlib.contextmanager
+    def unlocked(
+        self, key_id: str, *, action: str, digest: str, fields: tuple[tuple[str, str], ...] = ()
+    ) -> Iterator[Callable[[bytes], bytes]]:
+        """One passphrase for a batch of signatures (``orch import v1``, ticket-format 14): ask once, with ``action``,
+        the ``digest`` of what the batch will sign and ``fields`` describing it; hold the unlocked key in this process
+        for the ``with`` block only; yield ``sign(payload)``, which refuses every payload ``sign`` would refuse. The
+        scalar is zeroised when the block ends, however it ends. Per-signature prompts (D65) stay the rule everywhere
+        else: only a caller that shows the person the whole batch first may use this."""
+        check_key_id(key_id)
+        doc, header, params, salt, nonce, ct = self._read(key_id)
+        request = PassphraseRequest("unlock", key_id, action if isinstance(action, str) else "", digest, fields)
+        pw = _passphrase_bytes(self._provider(request))
+        if not pw:
+            raise WrongPassphrase("empty passphrase")
+        derived = bytearray(_derive(pw, salt, params))
+        scalar = bytearray()
+        key = None
+        try:
+            try:
+                scalar = bytearray(crypto.aes_gcm_open(bytes(derived), nonce, ct, self._aad(header)))
+            except InvalidTag:
+                raise WrongPassphrase("wrong passphrase") from None
+            key = crypto.private_key_from_scalar(int.from_bytes(scalar, "big"))
+            if crypto.public_bytes(key) != crypto.unb64u(doc["pub"], crypto.PUB_LEN):
+                raise CustodyError("key file does not match its public key")
+            allowed = ROLE_LABELS[doc["role"]]
+            live = [key]
+
+            def sign(payload: bytes) -> bytes:
+                if not live:
+                    raise CustodyError("the key is locked again")
+                if not label_allowed(payload, allowed):
+                    raise CustodyError(
+                        f"a {doc['role']} key does not sign this payload (unknown label or another role's label)"
+                    )
+                return crypto.sign(live[0], payload)
+
+            try:
+                yield sign
+            finally:
+                live.clear()
         finally:
             _zeroise(derived)
             _zeroise(scalar)

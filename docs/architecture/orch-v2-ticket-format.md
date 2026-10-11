@@ -1714,7 +1714,7 @@ A1–A20 (PR body), HO (dashboard handover, input only), D58–D60, the adversar
 | 19 | Checkpoint fields (#336 A18) | §5.10, with `suite`, `kind`, `workspace_id`, `at`, `genesis` (workspace kind) and a signature label. | Checkpoints can't be replayed across workspaces or kinds. |
 | 20 | `wait` result fields (#336 A18) | §10.4 item 7, with `invalidated`. | D58 needs the agent to learn about a voided verdict. |
 | 21 | Artifact kinds and names (#336 A19) | As implemented: core kinds, addon `addon` + `ref`, `feedback` only from a person, safe basenames (§6). | Already matched the doc. |
-| 22 | Imported v1 history (#336 A20) | Deferred to C10, which adds its event types by amendment. | Depends on what v1 history the importer keeps. |
+| 22 | Imported v1 history (#336 A20) | Settled by amendment C10 (§14): no new event type; the v1 ticket and its history travel as one hashed artifact. | Depends on what v1 history the importer keeps. |
 | 23 | Trailing whitespace, final newline, blank lines (#335 Q1, SR) | Not normalised; only a section's leading and trailing LFs are not part of its text (§4). | Exact text is safer; whitespace changes void gates (fail closed). |
 | 24 | Gate hash key set; `tasks`/`artifacts` placement (#335 Q2, CR 1, SR 1) | 15 top-level keys always present for every gate, with empty values where unused (§5.7). | Absent vs empty can't encode one approval twice; one recipe for every gate. |
 | 25 | Gate hash domain label (#335 Q2, SR 2) | `orch/v2/gate\|`. | Every protocol hash is labelled; a section can no longer collide with a gate hash. |
@@ -1836,5 +1836,111 @@ Open after F1 (not settled here):
 - The P3 envelope for phone decisions (`evidence`); the `qid` mapping itself is settled (§5.6).
 - orch-relay `vectors_v2.json` needs the vectors of §11.5. That is an orch-relay change.
 - Bundled Unicode 16.0 tables for Python 3.11–3.13 (C1).
-- Imported v1 events (C10), addon event payloads and the `needs` language (C9).
+- Addon event payloads and the `needs` language (C9). (Imported v1 history is settled by §14.)
 - D63–D66 are still drafts; `auth` (N2) depends on them, and D64's wording needs amending (O1).
+
+## 14. Amendment C10: importing v1, `doctor` and `check`
+
+Draft of 11 Oct 2026, to be challenged by a second reviewer before merge. It settles row 22 of the decisions log.
+
+### 14.1 What the import does, and does not
+
+`orch import v1 PATH` reads a v1 workspace (its `orchestrator/` folder) **read-only** and writes, for each v1 ticket, the
+signed events of a v2 ticket that keeps its key. It adds **no event type**. A new type would be code every reader must
+understand forever, and the question "does it count for gates?" would be a rule to get right; the existing person events
+already have exactly the meaning wanted (signed by the importer, counting for nothing they did not already count for).
+
+| v1 | v2 | Event |
+|---|---|---|
+| `id` `DEMO-0043` | the same key (the workspace prefix must equal v1's; a key already taken skips that ticket) | `ticket.created` |
+| `title`, `type` (`investigation` is `spike`) | `title`, `ticket_type` | `ticket.created` |
+| `priority` (`normal` is `medium`), `size` (`xl` does not exist in v1), `due`, `labels` | the same fields; labels are made into v2 tokens, plus the label `imported-v1` | `ticket.updated` |
+| `parent`, `blocked_by` | kept only for tickets that exist in v2 by then (parents and blockers are created first) | `ticket.updated` |
+| `repos`, `branches`, `prs` | only for repositories in `settings.repos`; `external` urls only when `https` | `ticket.updated` |
+| Ask, Context | `context` (the Ask first, labelled) | `ticket.updated` |
+| Summary, Requirements, Out of scope, Plan, Verification, Findings | the same section when the ticket's type has it | `ticket.updated` |
+| Acceptance criteria | `acceptance` `AC1..` in order (the checkbox state is dropped) | `ticket.updated` |
+| Tasks | `tasks` `T<n>` with text and `proves` from `ref: ac:N`; `verify` is `null`, state is dropped | `ticket.updated` |
+| Current state | a note (where it came from, the v1 status, the v1 task states) and then v1's text, at most 2 048 bytes | `ticket.updated` |
+| open questions | `question.asked` (`to: ticket_owner`); answered ones stay in the history | `question.asked` |
+| artifacts with a file | `artifact.added`, kind mapped (`receipt` becomes `log`, `feedback` becomes `other`), **no `ac`, no `task`**; the v1 links are in the `label` | `artifact.added` |
+| artifacts that are links or `static/` files, Log, sections v1 does not know, answered questions, follow-ups, sprints, the ledger | only in the history artifact | |
+| the whole v1 ticket file and its events (`.state/events.jsonl` lines of the ticket) | the history artifact `v1-import.json` (file kind `other`) | `artifact.added` |
+| status `backlog` | `backlog` | `status.changed` |
+| status `open`, `in-progress`, `waiting`, `testing` | `open`: a claim needs a grant and a session that no longer exist | |
+| status `done` | `closed` (`resolution`: completed becomes `other`, wont-do `wont_do`, superseded `obsolete`, duplicate `duplicate` with `duplicate_of` when that ticket was imported), with the text "Imported from v1: done" | `ticket.closed` |
+| the end of a ticket | `log.added` "import.v1: complete <digest of the history artifact>" | `log.added` |
+
+### 14.2 Decisions and why
+
+1. **Who signs.** The person at the terminal, a **human-only** operation: the same device key and the same presence as
+   `approve`. The importer is the owner of every ticket. An agent gets `human_only`. Before the passphrase, the
+   terminal shows what will be signed (counts, v1 status, the first tickets, a digest of the whole plan, what is *not*
+   carried) and asks to type `IMPORT <n>`.
+2. **One passphrase for the batch.** 8 tickets are about 40 signatures, a real workspace thousands. A prompt per
+   signature (§5.3) would make the import unusable, so `import v1` uses one unlock for the run
+   (`PassphraseBackend.unlocked`): the passphrase prompt carries the plan digest, the unlocked key lives in the process
+   until the command ends, then it is zeroised. This is the only place where §5.3 "decrypted only for one signature"
+   is relaxed, and only after the person has seen the whole batch. The plan is built before the prompt and signed as
+   built: files changed in v1 meanwhile change nothing (an artifact whose bytes differ from the planned digest makes
+   that ticket fail, not import).
+3. **No v1 decision becomes a v2 decision.** Approvals, verdicts, task states, claims, evidence links (`ac`, `task`),
+   receipts and the ledger are v1 facts, signed (if at all) with v1 keys by a v1 CLI that an agent could have
+   fooled by editing files. v2 gates bind a v2 hash and a device signature at a generation. So every gate starts
+   pending, a v1 `done` ticket is `closed` (reopen it and re-verify), and imported artifacts are never evidence.
+   Cost: one approval per gate again. Benefit: nothing an agent wrote into v1 can arrive as an approval.
+4. **No command is imported.** `verify` is `null`: `task done --run` would run it under the owner's signature.
+5. **v1 data is untrusted.** Frontmatter is parsed by a restricted YAML reader (no anchors, tags or block scalars);
+   every read walks the path with `O_NOFOLLOW` per component and caps sizes (ticket 1 MiB, artifact 64 MiB, event line
+   1 MiB), so a symlink or a device file is refused, not followed. Text goes through §11.3: controls, bidi controls,
+   unassigned code points and lone surrogates are replaced with U+FFFD and counted (the original stays in the history
+   artifact); grant-shaped secrets are redacted. A hard link to a file outside is a regular file to the kernel and
+   cannot be told apart: the person sees what is imported.
+6. **All or nothing per ticket, resumable.** The whole plan is judged with `orch.model.preview`, each step on top of the
+   ones before it, before anything is signed; a ticket the model refuses is skipped with the reason and does not
+   count. The order of a ticket's events is fixed: creation, history artifact, files, one `ticket.updated`, questions,
+   status or close, and the closing `log.added`. A ticket is **complete** only when that last event exists.
+7. **Idempotent.** The ticket uid is derived from the v1 workspace (a hash of customer and prefix) and the key, with the
+   v1 creation time as the ULID time, so the same v1 ticket always has the same uid. A second run: complete tickets
+   are left alone (even if v1 or v2 changed since: nothing is ever updated or overwritten), an interrupted ticket
+   is finished from what its log already holds, and a ticket whose history artifact has another digest than
+   today's v1 file is reported as "v1 changed since" and not touched. A key taken by another v2 ticket skips the
+   ticket.
+8. **Refused:** a different prefix (before any signature); a path without `orchestrator/config.json` (schema 1);
+   anything that is not a regular file below the v1 folder; a ticket the model refuses; a missing device key or
+   terminal (§10.8).
+9. **The emits table** (`model/emits.py`) lists the event types of `import.v1`. The entry changes with this amendment
+   (no v2 release exists yet, and a human-only operation is never in a grant, so no log written under the old entry can
+   differ in meaning).
+
+### 14.3 `doctor`
+
+`orch doctor` replays everything with the real verifier through a **read-only** store (no key to append with, no crash
+recovery, no index rebuild, no pin written) and reports `where: code: what` with the log, the `seq` and the cause the
+replay gives:
+
+| Check | Code |
+|---|---|
+| a line that is not the canonical bytes, a bad `prev`, `seq`, `ws_seq`, `host_sig`, or a person signature | `chain.broken` (log, `seq`, cause) |
+| a log shorter than, or with another head than, a signed checkpoint | `chain.diverged` |
+| a checkpoint that is unreadable or not signed by the host key; no checkpoint at all | `checkpoint.bad`, `checkpoint.missing` (warning) |
+| the genesis pin missing (warning), or different | `pin.missing`, `trust.genesis_mismatch` |
+| a device revocation the host noted that the log does not hold | `revocation.missing` |
+| an event that fails authorization and is not acknowledged | `auth.invalid_event` |
+| `ticket.json`, `body.md`, `config.json`, `keys.jsonl` or an artifact file that differs from the log | `projection.*`, `artifact.mismatch`, `artifact.missing` |
+| the derived index missing or stale | `index.stale` (warning) |
+| a repository in `settings.repos` that cannot be read | `repo.unobservable` (warning) |
+| key folders of an init that never finished | `keys.orphan` (warning) |
+| installed instructions that are stale (C8) | `instructions.stale` (warning) |
+
+Exit 0 when there is no error (warnings are listed), 5 otherwise. `--repair` does only these, through the store: answer
+external edits with `scan` (the host events of §5.8), rebuild the index, remove dead init keys. It never touches a
+chain, a signature or a checkpoint: an owner-signed `restore` is the only repair for those.
+
+### 14.4 `check`
+
+`orch check` is the fast subset (chain, projections, instructions) and exits 5 on any finding; it does not heal.
+`orch check --staged` is the commit check for a git pre-commit hook (`orch check --staged || exit 1`): it also refuses
+staged files under `.state/`, key files, files holding a grant secret, a staged `ticket.json`, `body.md`, artifact,
+`config.json` or `keys.jsonl` that is not what the log says, and a staged log that is not a prefix of the verified one
+(`commit.state`, `commit.secret`, `commit.edited`, `commit.forged`). The hook installer stays with C28 (P2).

@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "customer": "Globex Energy",
+  "id": {
+    "prefix": "DEMO",
+    "pad": 4
+  },
+  "git": {
+    "repos": {
+      "pipelines": {
+        "path": "pipelines"
+      }
+    }
+  }
+}

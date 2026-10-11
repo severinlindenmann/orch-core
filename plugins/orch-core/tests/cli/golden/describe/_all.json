@@ -317,14 +317,14 @@
         "cli": "doctor",
         "group": "Admin",
         "who": "read",
-        "summary": "Check the logs, chains, projections and keys; reports, never changes."
+        "summary": "Verify the logs, signatures, checkpoints, pins and files; reports and changes nothing unless --repair, which only does the safe repairs through the store."
       },
       {
         "name": "check",
         "cli": "check",
         "group": "Admin",
         "who": "read",
-        "summary": "Check that the ticket files match their events and the instructions are current (for a commit hook)."
+        "summary": "Check that the ticket files match their events and the instructions are current (for a commit hook or CI); --staged also checks what is about to be committed."
       },
       {
         "name": "instructions.sync",
@@ -345,7 +345,7 @@
         "cli": "import v1",
         "group": "Admin",
         "who": "human",
-        "summary": "Import a v1 workspace: tickets, history as imported events, artifacts."
+        "summary": "Import a v1 workspace: its tickets, with the v1 history and files; asks for your passphrase once."
       },
       {
         "name": "addon.list",

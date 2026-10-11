@@ -48,7 +48,17 @@ EMITS_V1: dict[str, frozenset[str]] = {
     "grant": frozenset({"grant.issued"}),
     "grant.revoke": frozenset({"grant.revoked"}),
     "handoff": frozenset({"claim.released", "handoff.written"}),
-    "import.v1": frozenset({"log.added", "ticket.created"}),
+    "import.v1": frozenset(
+        {
+            "artifact.added",
+            "log.added",
+            "question.asked",
+            "status.changed",
+            "ticket.closed",
+            "ticket.created",
+            "ticket.updated",
+        }
+    ),
     "init": frozenset({"workspace.created"}),
     "log": frozenset({"log.added"}),
     "member.add": frozenset({"member.added"}),

@@ -415,6 +415,19 @@ class Git:
         if not self.enabled:
             raise CapabilityDenied("git")
 
+    def repo_path(self, root: Path, repos: Any, name: str) -> Path | None:
+        """Where repo ``name`` of ``settings.repos`` lives. Direct mode: P1's ``observe.repo_path`` (resolved).
+        Host mode: joined and normalised **lexically**, never resolved: the components are agent-writable, and the
+        reader's pins are keyed by this path (a symlink planted there must not lead to another repo's pins)."""
+        from orch.store import observe
+
+        if self.reader is None:
+            return observe.repo_path(root, repos, name)
+        spec = repos.get(name)
+        if not spec:
+            return None
+        return Path(os.path.normpath(os.path.join(os.fspath(root), spec["path"])))
+
     def _look(self, path: Path, refs: list[str]) -> dict[str, Any] | None:
         from orch.gitread.errors import Unavailable
 
@@ -481,9 +494,9 @@ class Git:
         if self.reader is None:
             return observe.observe(store, ref, problems)
         repos = store.state.workspace.repos
-        declared = [p for n in repos if (p := observe.repo_path(store.root, repos, n)) is not None]
+        declared = [p for n in repos if (p := self.repo_path(store.root, repos, n)) is not None]
         self.reader.sync(declared)  # pins a repo that first appears; an existing pin is never replaced
-        return observe.observe(store, ref, problems, backend=_ReaderBackend(self.reader))
+        return observe.observe(store, ref, problems, backend=_ReaderBackend(self.reader, self))
 
     def diff(
         self,
@@ -523,8 +536,9 @@ class Git:
 class _ReaderBackend:
     """What ``orch.store.observe.observe`` asks of the host reader: one child per repo for the ref and identity."""
 
-    def __init__(self, reader: Any) -> None:
+    def __init__(self, reader: Any, git: Git) -> None:
         self.reader = reader
+        self.repo_path = git.repo_path
 
     def look(self, path: Path, name: str, ref_name: str) -> tuple[str | None, str]:
         from orch.gitread.client import identity_of

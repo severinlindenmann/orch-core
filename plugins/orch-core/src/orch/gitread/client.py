@@ -151,8 +151,8 @@ class ReaderPool:
 
 
 class PinStore:
-    """Pins by the real path of the declared working copy. ``path``: a JSON file in the host's state directory, or
-    ``None`` (memory only)."""
+    """Pins by the declared working copy's absolute path, normalised lexically (:func:`_key`). ``path``: a JSON
+    file in the host's state directory, or ``None`` (memory only)."""
 
     def __init__(self, path: Path | None = None) -> None:
         self.path = path
@@ -201,7 +201,7 @@ class HostGitReader:
         """Pin every declared working copy not pinned yet; drop pins of paths no longer declared. Returns
         ``{real path: None | why it could not be pinned}``. An existing pin is kept as it is (only a
         ``settings.changed`` that moves a repo, which gives it a new path, leads to a new pin)."""
-        reals = [os.path.realpath(os.fspath(p)) for p in declared]
+        reals = [_key(p) for p in declared]
         out: dict[str, str | None] = {}
         put: dict[str, RepoPins] = {}
         for real in reals:
@@ -221,7 +221,7 @@ class HostGitReader:
         return out
 
     def _pins(self, path: str | os.PathLike[str]) -> RepoPins:
-        pins = self.pins.get(os.path.realpath(os.fspath(path)))
+        pins = self.pins.get(_key(path))
         if pins is None:
             raise Unavailable("the repository was not pinned at registration")
         return pins
@@ -246,6 +246,17 @@ class HostGitReader:
     ) -> dict[str, Any]:
         args = {"branch": branch, "default_branch": default_branch, "context": context, "max_bytes": max_bytes}
         return self._call(path, "diff", args, principal)
+
+
+def _key(path: str | os.PathLike[str]) -> str:
+    """The pin store's key for a declared working copy: its absolute path, normalised **lexically**. Never
+    ``realpath``: after registration the path's components are agent-writable, and resolving them would let a
+    symlink planted at repo A's path select repo B's pins. A symlinked path simply finds no pin (or its own pin,
+    whose O_NOFOLLOW walk then refuses)."""
+    p = os.fspath(path)
+    if not os.path.isabs(p) or "\0" in p:
+        raise Unavailable("a working copy path must be absolute")
+    return os.path.normpath(p)
 
 
 def identity_of(urls: list[str], name: str) -> str:

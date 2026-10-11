@@ -135,7 +135,7 @@ def observe(store: Any, ref: str, problems: list[str] | None = None, backend: An
     wanted = []
     for name in links["repos"]:  # git, with no lock held
         branch = links["branches"].get(name)
-        path = repo_path(store.root, store.state.workspace.repos, name)
+        path = (backend.repo_path if backend is not None else repo_path)(store.root, store.state.workspace.repos, name)
         if not branch:
             continue  # the ticket names no branch yet: submit says so itself
         if path is None or not path.is_dir():

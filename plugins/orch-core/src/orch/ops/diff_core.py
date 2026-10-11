@@ -30,7 +30,6 @@ def diff_result(
 ) -> dict[str, Any]:
     from orch.gitread.errors import RemoteMismatch, Unavailable
     from orch.ops.caps import CapabilityDenied
-    from orch.store import observe
 
     if type(context) is not int or not 0 <= context <= 10:
         raise OrchError("invalid.input", "context must be 0..10")
@@ -43,14 +42,14 @@ def diff_result(
         if repo not in names:
             raise OrchError("not_found", f"{repo} is not linked to this ticket")
         names = [repo]
-    roots = [str(p) for n in repos if (p := observe.repo_path(store.root, repos, n)) is not None]
+    roots = [str(p) for n in repos if (p := caps.git.repo_path(store.root, repos, n)) is not None]
     sources: list[dict[str, Any]] = []
     files: list[dict[str, Any]] = []
     chunks: list[bytes] = []
     truncated = False
     for name in names:
         branch = links["branches"].get(name)
-        path = observe.repo_path(store.root, repos, name)
+        path = caps.git.repo_path(store.root, repos, name)
         if not branch:
             raise OrchError("observe.unavailable", f"{name}: the ticket names no branch")
         if path is None:

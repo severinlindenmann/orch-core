@@ -409,3 +409,83 @@ def test_a_parent_replaced_by_a_symlink_after_pinning_is_refused_at_use(make_rep
     os.symlink(base / "b", base / "a")
     with pytest.raises(Unavailable, match="symlink"):
         Repo(pins)
+
+
+# ---------------------------------------------------------------- after registration: nothing re-resolves a path
+
+
+def two_pinned(make_repo):
+    a, b = make_repo("a"), make_repo("b")
+    two_commits(a)
+    b.write("other.txt", "b\n")
+    b.commit()
+    host = HostGitReader(ReaderPool(), PinStore())
+    assert host.sync([a.path, b.path]) == {str(a.path): None, str(b.path): None}
+    return a, b, host
+
+
+def test_a_symlink_swapped_into_a_pinned_path_never_selects_another_repos_pins(make_repo):
+    """Repo A's path becomes a symlink to repo B after registration. Resolving it would find B's pins and read B for
+    A; the lexical key keeps A's pins, whose O_NOFOLLOW walk refuses the symlink."""
+    a, b, host = two_pinned(make_repo)
+    head_b = b.sha("HEAD")
+    os.rename(a.path, a.path.with_name("a-away"))
+    os.symlink(b.path, a.path)
+    with pytest.raises(Unavailable, match="symlink"):
+        host.observe(a.path)
+    assert host.observe(b.path)["head_sha"] == head_b  # the other pinned repo still reads
+    a.path.unlink()
+    os.rename(a.path.with_name("a-away"), a.path)
+    assert host.observe(a.path)["refs"] == {}  # A reads again once its own directory is back
+
+
+def test_a_gitdir_symlink_swapped_in_after_registration_is_refused(make_repo):
+    a, b, host = two_pinned(make_repo)
+    os.rename(a.gitdir, a.path / "git-away")
+    os.symlink(b.gitdir, a.gitdir)
+    with pytest.raises(Unavailable, match="symlink"):
+        host.observe(a.path)
+    assert host.observe(b.path)["head_ref"] == "refs/heads/main"
+    a.gitdir.unlink()
+    os.rename(a.path / "git-away", a.gitdir)
+    assert host.observe(a.path, ["refs/heads/feat"])["refs"]["refs/heads/feat"] == a.sha("feat")
+
+
+def test_a_git_file_redirect_planted_after_registration_is_refused(make_repo):
+    a, b, host = two_pinned(make_repo)
+    os.rename(a.gitdir, a.path / "git-away")
+    (a.path / ".git").write_text(f"gitdir: {b.gitdir}\n")
+    with pytest.raises(Unavailable, match="not a directory"):
+        host.observe(a.path)  # the pin is A's gitdir directory; the .git file is never read again
+    assert host.observe(b.path)["head_ref"] == "refs/heads/main"
+    host.sync([a.path, b.path])  # no re-pin from the planted file
+    (a.path / ".git").unlink()
+    os.rename(a.path / "git-away", a.gitdir)
+    assert host.observe(a.path, ["refs/heads/main"])["refs"]["refs/heads/main"] == a.sha("main")
+
+
+def test_a_commondir_file_naming_a_symlink_to_the_pinned_commondir_is_refused(make_repo, tmp_path):
+    """Compared lexically, never resolved: even a symlink that leads to the right directory fails closed."""
+    main, wt = linked(make_repo, tmp_path)
+    pins = pin_repo(str(wt), [str(wt), str(main.path)])
+    alias = tmp_path.resolve() / "alias-git"
+    os.symlink(main.gitdir, alias)
+    path = os.path.join(pins.gitdir.path, "commondir")
+    with open(path) as f:
+        original = f.read()
+    with open(path, "w") as f:
+        f.write(f"{alias}\n")
+    with pytest.raises(Unavailable, match="another commondir"):
+        Repo(pins)
+    with open(path, "w") as f:
+        f.write(original)
+    with Repo(pins) as rp:  # the pinned repo is readable again
+        assert rp.head_ref() == "refs/heads/side"
+
+
+def test_pin_keys_are_lexical(tmp_path):
+    from orch.gitread.client import _key
+
+    assert _key(tmp_path / "x" / ".." / "y") == str(tmp_path / "y")
+    with pytest.raises(Unavailable):
+        _key("relative/path")

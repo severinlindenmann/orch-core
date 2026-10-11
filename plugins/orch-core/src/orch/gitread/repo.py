@@ -234,7 +234,9 @@ class Repo:
 
 
 def resolve_named(base: str, named: bytes) -> str:
-    """A path written in a gitdir's ``commondir`` or a ``.git`` file, relative to ``base``, as a real path."""
+    """A path written in a gitdir's ``commondir`` or a ``.git`` file (agent-writable content), relative to ``base``,
+    normalised **lexically** (``os.path.normpath``): nothing on the file system is resolved or followed. The caller
+    then compares it with a pin, or opens it with the ``O_NOFOLLOW`` walk, which refuses a symlinked component."""
     text = named.decode("utf-8", errors="strict") if named.isascii() or _utf8(named) else None
     if text is None:
         raise Unavailable("a path that is not UTF-8")
@@ -242,7 +244,7 @@ def resolve_named(base: str, named: bytes) -> str:
     if not text or "\n" in text or "\0" in text:
         raise Unavailable("a malformed path file")
     path = text if text.startswith("/") else os.path.join(base, text)
-    return os.path.realpath(path)
+    return os.path.normpath(path)
 
 
 def _utf8(b: bytes) -> bool:

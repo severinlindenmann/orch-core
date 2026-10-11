@@ -705,12 +705,15 @@ INDEX: dict[str, str] = {
     "genesis.json": "the six genesis checks in order (5.11)",
     "devices.json": "device.added rules: drop: and scope refusals, self-signed, stale roster_v, recovery (5.3, 5.11)",
     "revocation.json": "device.revoked: embedded revocation as authority, reason mismatch, recovery (5.3)",
-    "checkpoint.json": "checkpoint objects, signed bytes, refusals, divergence (5.10)",
-    "restore.json": "workspace restore carries effective revocations atomically (5.10)",
+    "checkpoint.json": "checkpoint objects, signed bytes, refusals, divergence (5.10); receiver checks with valid "
+    "signatures: pinned delegation, owner-device policy, signed source, line binding, abandoned, T head, position "
+    "time, clock ceiling, revoked signers, ticket restores, trust root and strict shape",
+    "restore.json": "workspace restore carries effective revocations atomically (5.10); re-signed structural "
+    "refusals; host self-revocation",
     "refusal_order.json": "model scenarios: an event breaking two rules gets the code of the earlier step of the "
     "refusal order (5.11)",
     "generation.json": "the 5.7 raise table row by row, delayed approval, reverted edit, voided approvals",
-    "status.json": "the 5.9 status table, done is sticky, reopen",
+    "status.json": "the 5.9 status table, done is sticky, reopen, a new sha under a case-variant remote",
     "effective_policy.json": "the 5.7 intersection, a later workspace change, gate.no_eligible",
     "approvals.json": "model scenarios: who may approve (5.7), host events (5.2, 5.12), gate.incomplete, "
     "gate.not_applicable, a stale source_sha",

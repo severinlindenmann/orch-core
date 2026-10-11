@@ -16,6 +16,7 @@ from .oracle_f1_world import TICKET, TICKET2, World, b64u, did, head, key, pid
 
 W = ow.W
 OTHER_W = "f" * 32
+RECEIVER_NOW = "2026-10-10T12:00:00Z"  # the receiver's clock in checkpoint.json unless a case gives its own `now`
 KEY_NOTE = (
     "TEST KEYS ONLY. Every private scalar below is derived from the key name as sha256('orch-f1-test-key|' + name) "
     "mod (n-1) + 1 and is published on purpose; the signatures are RFC 6979 (deterministic), so consumers verify the "
@@ -679,7 +680,7 @@ def checkpoint_vector() -> dict[str, Any]:
     n_offers = []
 
     def offer(name, o, expect, **kw):
-        n_offers.append({"name": name, "checkpoint": _checkpoint(o), "expect": expect, **kw})
+        n_offers.append({"name": name, "checkpoint": _checkpoint(o), "expect": expect, "now": RECEIVER_NOW, **kw})
 
     offer("lower_n_same_heads", {**held, "n": 1}, "ignored")
     offer("same_n_same_content", held, "ok")
@@ -696,6 +697,44 @@ def checkpoint_vector() -> dict[str, Any]:
     offer("equal_height_acc_conflict", wrong, "chain.diverged")
     offer("higher_n_missing_ticket", {**held, "n": 3, "tickets": {}}, "chain.diverged")
     offer("lower_n_higher_height", {**grown, "n": 1}, "chain.diverged")
+    # The trust root and shape of a WSK-signed offer (§5.10, §5.11): every signature here verifies.
+    offer("signed_offer_other_genesis", {**held, "n": 3, "genesis": "sha256:" + "0e" * 32}, "trust.genesis_mismatch")
+    offer("signed_offer_other_workspace", {**held, "n": 3, "workspace_id": OTHER_W}, "chain.diverged")
+    offer("signed_first_offer_other_workspace", {**held, "workspace_id": OTHER_W}, "chain.diverged", held=None)
+    offer("signed_first_offer_n_zero", {**held, "n": 0}, "chain.diverged", held=None)
+    offer("signed_first_offer_accepted", held, "ok", held=None)
+    offer("signed_offer_impossible_date", {**held, "n": 3, "at": "2026-02-30T10:00:00Z"}, "chain.diverged")
+    offer("signed_offer_out_of_range_time", {**held, "n": 3, "at": "2026-99-99T99:99:99Z"}, "chain.diverged")
+    offer("signed_offer_ticket_checkpoint_kind", ticket_o, "chain.diverged")
+    for name, o in [
+        ("signed_offer_n_true", {**held, "n": True}),
+        ("signed_offer_n_string", {**held, "n": "1"}),
+        ("signed_offer_version_3", {**held, "n": 3, "v": 3}),
+        ("signed_offer_extra_key", {**held, "n": 3, "note": "x"}),
+        ("signed_offer_missing_tickets", {k: v for k, v in {**held, "n": 3}.items() if k != "tickets"}),
+    ]:
+        offer(name, o, "chain.diverged")
+    # Growth entries that disagree with their proof.
+    skip = copy.deepcopy(grown)
+    skip["tickets"][TICKET]["seq"] += 1
+    offer("growth_seq_skip_is_incomplete", skip, "sync.incomplete", proofs={TICKET: [next_head]})
+    wrong_last = copy.deepcopy(grown)
+    wrong_last["tickets"][TICKET]["head"] = "sha256:" + "67" * 32
+    offer("growth_wrong_last_head_is_incomplete", wrong_last, "sync.incomplete", proofs={TICKET: [next_head]})
+    # The receiver ceiling: at most 300 s ahead of the receiver's clock `now` (C2): 299 and 300 accepted, 301 refused.
+    offer(
+        "offer_at_clock_ceiling_minus_one",
+        {**held, "n": 3, "at": "2026-10-10T10:10:00Z"},
+        "ok",
+        now="2026-10-10T10:05:01Z",
+    )
+    offer("offer_at_clock_ceiling", {**held, "n": 3, "at": "2026-10-10T10:10:00Z"}, "ok", now="2026-10-10T10:05:00Z")
+    offer(
+        "offer_beyond_clock_ceiling",
+        {**held, "n": 3, "at": "2026-10-10T10:10:00Z"},
+        "checkpoint.future",
+        now="2026-10-10T10:04:59Z",
+    )
     for x in ticket_offers:
         x["acc"] = acc_fold([*heads_t[: x["seq"] - 1], x["head"]])
     # logs as they are on disk when a checkpoint is checked (heads by seq, 0-based list)
@@ -714,7 +753,16 @@ def checkpoint_vector() -> dict[str, Any]:
         "('orch/v2/sig/checkpoint|' + cj(o)), real signatures; forged variants fail; a lower seq or n, or the same "
         "seq with another head, is refused (chain.diverged); a log that disagrees with a checkpoint is diverged; "
         "restore (see restore.json); receivers judge workspace checkpoints by n and seq (workspace_n_offers: ok, ignored, "
-        "chain.diverged)",
+        "chain.diverged). Receiver inputs (a receiver view; every field is given explicitly, {} or [] meaning none): "
+        "the top-level workspace_id, genesis and wsk_pub are the receiver's pins; every offer and transition case gives "
+        "the receiver clock `now` (one sampled, trusted clock; a WSK-signed `at` more than 300 s after it is the "
+        "retryable checkpoint.future); a workspace_n_offers case with a `held` key (null: an uninitialized receiver) "
+        "replaces workspace_n_held; every transition case gives `pinned_delegation` (the workspace's card / genesis "
+        "delegation, whose `o` the carried, PK-verified one must equal), `known_devices` (device_id -> person_id and "
+        "optional pk_pub the receiver knows for it, active or revoked), `known_revocations` (held when judging; entries "
+        "may carry `pk_pub`) and `learned_later_in_walk` (learned only from a higher-n bundle; never refuses; "
+        "`alarm: true` when it must raise the C3 alarm, otherwise no alarm). "
+        "Every refusing transition keeps all signatures valid except the one a case names as its defect.",
         "note": KEY_NOTE,
         "workspace_id": W,
         "wsk_pub": key("wsk").pub_b64u,
@@ -1021,12 +1069,358 @@ def transition_vectors() -> list[dict[str, Any]]:
                 "recorded": initial["id"] if expect == "ok" else None,
             }
         )
+
+    # --- receiver checks, one defect per case; every other signature and binding stays valid (§5.10) ----------
+    def variant(name, expect, *, over=None, actor=None, ev_kw=None, tr_over=None, t_at=None, t_head=None,
+                proof=None, **extra):  # fmt: skip
+        w.logs["workspace"] = original[:1]
+        w.roster_v = 1
+        ev = w.ev("workspace", "restore", actor or w.actor("sev"), {**payload, **(over or {})}, **(ev_kw or {}))
+        hd = t_head or head(ev)
+        t_o = _checkpoint({**cp(4, [heads[0], hd])["o"], "at": t_at or ev["at"]})
+        tr = {**transition, "event": ev, "T": t_o, "retained_heads": heads[:1], "abandoned_heads": heads}
+        cases.append(
+            {
+                "name": name,
+                "held": c,
+                "offered": t_o,
+                "restore": copy.deepcopy({**tr, **(tr_over or {})}),
+                "proofs": proof or {"workspace": [hd]},
+                "applied": [],
+                "expect": expect,
+                "recorded": ev["id"] if expect == "ok" else None,
+                **extra,
+            }
+        )
+        return ev
+
+    # The delegation is the one pinned for the workspace (the card's / genesis event's), never the signer's own.
+    variant(
+        "restore_delegation_of_another_person",
+        "chain.diverged",
+        actor=w.actor("lena"),
+        tr_over={
+            "device_cert": ow.make_cert("lena", "lena1"),
+            "pk_pub": key("pk_lena").pub_b64u,
+            "delegation": ow.make_delegation("lena"),
+        },
+    )
+    # P3-D24 owner-device policy: one defect each.
+    variant("owner_policy_person_sig_by_another_device", "chain.diverged", ev_kw={"signer": "dk_sev2"})
+    variant("owner_policy_host_sig_by_another_key", "chain.diverged", ev_kw={"host_key": "wsk_other"})
+    for name, d in [
+        ("owner_policy_delegation_signed_by_another_key", ow.make_delegation("sev", signer="pk_mara")),
+        ("owner_policy_delegation_for_another_workspace", ow.make_delegation("sev", workspace_id=OTHER_W)),
+        ("owner_policy_delegation_for_another_wsk", ow.make_delegation("sev", wsk="wsk_other")),
+        ("owner_policy_delegation_extra_field", ow.make_delegation("sev", extra={"note": "x"})),
+    ]:
+        # the pin equals the carried delegation here, so only the delegation's own check can refuse it
+        variant(name, "chain.diverged", tr_over={"delegation": d}, pinned_delegation=d)
+    for name, cert in [
+        ("owner_policy_cert_not_signed_by_the_pk", ow.make_cert("sev", "sev1", signer="pk_mara")),
+        ("owner_policy_cert_without_operate", ow.make_cert("sev", "sev1", ["look", "decide"])),
+        (
+            "owner_policy_cert_with_drop_scope",
+            ow.make_cert("sev", "sev1", ["drop:" + "ab" * 16], expires_ms=1_900_000_000_000),
+        ),
+        ("owner_policy_cert_expired_at_line_at", ow.make_cert("sev", "sev1", expires_ms=1_791_000_000_000)),
+        ("owner_policy_cert_created_after_line_at", ow.make_cert("sev", "sev1", created_ms=1_800_000_000_000)),
+    ]:
+        variant(name, "chain.diverged", tr_over={"device_cert": cert})
+    variant(
+        "owner_policy_cert_valid_at_line_at",
+        "ok",
+        tr_over={"device_cert": ow.make_cert("sev", "sev1", expires_ms=1_800_000_000_000)},
+    )
+    variant(
+        "owner_policy_actor_id_not_the_delegation_owner",
+        "chain.diverged",
+        actor={"kind": "person", "id": pid("mara"), "device": did("sev1")},
+    )
+    variant(
+        "owner_policy_actor_device_not_the_cert",
+        "chain.diverged",
+        actor=w.actor("sev", "sev2"),
+        ev_kw={"signer": "dk_sev1"},
+    )
+    # C equals the held checkpoint, but the owner-signed source names something else.
+    variant(
+        "signed_source_names_another_checkpoint", "chain.diverged", over={"source": checkpoint_ref(cp(2, heads[:2]))}
+    )
+    variant(
+        "signed_source_other_n_same_hash",
+        "chain.diverged",
+        over={"source": {**checkpoint_ref(c), "n": c["o"]["n"] - 1}},
+    )
+    # The line is appended as from_seq + 1 onto the retained head (host-only fields, re-host-signed).
+    variant("line_seq_not_from_seq_plus_one", "chain.diverged", ev_kw={"tamper": lambda e: e.update(seq=3)})
+    variant("line_prev_not_the_retained_head", "chain.diverged", ev_kw={"tamper": lambda e: e.update(prev=heads[1])})
+    # `abandoned` names the highest known entry above from_seq, C's included.
+    variant("abandoned_null_below_source_entry", "chain.diverged", over={"abandoned": None})
+    variant("abandoned_below_source_entry", "chain.diverged", over={"abandoned": {"seq": 2, "head": heads[1]}})
+    variant(
+        "abandoned_conflicting_head_at_source_height",
+        "chain.diverged",
+        over={"abandoned": {"seq": 3, "head": "sha256:" + "cd" * 32}},
+    )
+    variant("abandoned_above_source_entry", "ok", over={"abandoned": {"seq": 5, "head": "sha256:" + "cd" * 32}})
+    # T commits to the restore head: a WSK-signed T over another head, with a proof consistent with that T.
+    variant("target_over_another_head", "chain.diverged", t_head="sha256:" + "ab" * 32)
+    # C.o.at <= line.at <= T.o.at, equality accepted (C1); the clock ceiling now + 300 s (C2).
+    variant("line_at_before_source_at", "chain.diverged", ev_kw={"at": "2026-10-10T10:00:20Z"}, t_at=c["o"]["at"])
+    variant("line_at_equals_source_at", "ok", ev_kw={"at": c["o"]["at"]})
+    variant(
+        "line_at_after_target_at", "chain.diverged", ev_kw={"at": "2026-10-10T11:00:00Z"}, t_at="2026-10-10T10:59:59Z"
+    )
+    variant("target_at_clock_ceiling", "ok", ev_kw={"at": "2026-10-10T11:00:00Z"}, now="2026-10-10T10:55:00Z")
+    variant(
+        "target_beyond_clock_ceiling",
+        "checkpoint.future",
+        ev_kw={"at": "2026-10-10T11:00:00Z"},
+        now="2026-10-10T10:54:59Z",
+    )
+
+    def rev_entry(person, dev, reason, **kw):
+        return {
+            "revocation": ow.make_revocation(person, dev, reason, **kw),
+            "device_cert": ow.make_cert(person, dev),
+            "pk_pub": key("pk_" + person).pub_b64u,
+        }
+
+    # Evidence for a device the receiver knows must be of that device's known person and key.
+    variant(
+        "foreign_evidence_for_a_known_revoked_device",
+        "chain.diverged",
+        over={"revocations": [rev_entry("mara", "lena1", "compromised")]},
+        known_revocations=[
+            {"revocation": ow.make_revocation("lena", "lena1", "lost"), "pk_pub": key("pk_lena").pub_b64u}
+        ],
+    )
+    variant(
+        "foreign_evidence_for_a_known_revoked_device_person_only",
+        "chain.diverged",
+        over={"revocations": [rev_entry("mara", "lena1", "compromised")]},
+        known_revocations=[{"revocation": ow.make_revocation("lena", "lena1", "lost")}],
+    )
+    # The same binding for a device the receiver knows as active (known_devices), with no revocation of it known.
+    lena_device = {
+        ow.device_id(key("dk_lena1").pub): {
+            "person_id": ow.person_id(key("pk_lena").pub),
+            "pk_pub": key("pk_lena").pub_b64u,
+        }
+    }
+    variant(
+        "foreign_evidence_for_a_known_active_device",
+        "chain.diverged",
+        over={"revocations": [rev_entry("mara", "lena1", "compromised")]},
+        known_devices=lena_device,
+    )
+    variant(
+        "own_evidence_for_a_known_active_device",
+        "ok",
+        over={"revocations": [rev_entry("lena", "lena1", "lost")]},
+        known_devices=lena_device,
+    )
+    # A bundle that revokes its own signer, with no local revocation knowledge: refused for every reason.
+    for reason in ("lost", "retired", "compromised"):
+        variant(
+            "bundle_revokes_its_own_signer_" + reason,
+            "chain.diverged",
+            over={"revocations": [rev_entry("sev", "sev1", reason)]},
+        )
+    # C3: a known compromised revocation of the signer refuses at any time, also one issued after line.at.
+    variant(
+        "signer_known_compromised_listed_issued_after_line_at",
+        "chain.diverged",
+        over={"revocations": [rev_entry("sev", "sev1", "compromised", revoked_ms=1_900_000_000_000)]},
+        known_revocations=[
+            {"revocation": ow.make_revocation("sev", "sev1", "compromised", revoked_ms=1_900_000_000_000)}
+        ],
+    )
+    # Re-signed restores that break one structural rule (§5.10 step 0); every signature verifies.
+    for name, kw in [
+        ("envelope_version", {"over": {"v": 3}}),
+        ("hash_version", {"over": {"hash_v": 2}}),
+        ("actor_extra_field", {"actor": {**w.actor("sev"), "name": "sev"}}),
+        ("timestamp_impossible_date", {"ev_kw": {"at": "2026-02-30T10:00:00Z"}, "t_at": "2026-10-10T11:00:00Z"}),
+        ("counter_roster_v_negative", {"ev_kw": {"roster_v": -1}}),
+        ("custody_token_unknown", {"over": {"auth": "fingerprint"}}),
+        ("abandoned_decision_not_an_id", {"over": {"abandoned_decisions": ["not-a-ulid"]}}),
+        ("signature_encoding_malformed", {"ev_kw": {"tamper": lambda e: e.update(sig=e["sig"][:-2])}}),
+    ]:
+        variant("restore_shape_" + name, "chain.diverged", **kw)
+    # The card pin compares the verified `o`: the owner's own, validly signed delegation with other content is refused.
+    variant(
+        "delegation_other_content_than_the_card",
+        "chain.diverged",
+        tr_over={"delegation": ow.make_delegation("sev", extra={"issued_ms": 1_790_000_000_001})},
+    )
+    variant("owner_policy_bundle_pk_not_the_delegations", "chain.diverged", tr_over={"pk_pub": key("pk_mara").pub_b64u})
+    variant(
+        "signed_source_other_n_higher_same_hash",
+        "chain.diverged",
+        over={"source": {**checkpoint_ref(c), "n": c["o"]["n"] + 1}},
+    )
+    # Completeness binds a known person's stored key, too.
+    variant(
+        "evidence_under_another_stored_key",
+        "chain.diverged",
+        over={"revocations": [rev_entry("lena", "lena1", "compromised")]},
+        known_revocations=[
+            {"revocation": ow.make_revocation("lena", "lena1", "lost"), "pk_pub": key("pk_mara").pub_b64u}
+        ],
+    )
+    # Known and listed: the known-signer and bundle-signer rules both apply (each alone: ticket_restore_signer_known_*,
+    # bundle_revokes_its_own_signer_*).
+    cases[:] = [x for x in cases if x["name"] != "relay_refuses_a_known_revoked_owner_device"]
+    variant(
+        "relay_refuses_a_known_revoked_owner_device",
+        "chain.diverged",
+        over={"revocations": [rev_entry("sev", "sev1", "compromised")]},
+        known_revocations=[{"revocation": ow.make_revocation("sev", "sev1", "compromised")}],
+    )
+    variant("target_at_clock_ceiling_minus_one", "ok", ev_kw={"at": "2026-10-10T11:00:00Z"}, now="2026-10-10T10:55:01Z")
+
+    # --- ticket-log restores: the same workspace checkpoint, ws_seq <= T's workspace seq, revocations [] -------
+    tw = World("ticket_transition", "ticket-log restore at a receiver")
+    tgen = tw.genesis_event()
+    tw.member("mara", "maintainer")
+    tw.member("lena", "member")
+    tw.ticket()
+    tw.ev(TICKET, "log.added", tw.actor("sev"), {"text": "one"})
+    tw.ev(TICKET, "log.added", tw.actor("sev"), {"text": "two"})
+    ws_heads = [head(x) for x in tw.logs["workspace"]]
+    t_events = list(tw.logs[TICKET])
+    t_heads = [head(x) for x in t_events]
+
+    def tcp_(n, t_branch, at):
+        return _checkpoint(
+            {
+                "v": 2,
+                "suite": 2,
+                "kind": "workspace_checkpoint",
+                "workspace_id": W,
+                "genesis": tw.genesis,
+                "n": n,
+                "at": at,
+                "workspace_log": {"seq": len(ws_heads), "head": ws_heads[-1], "acc": acc_fold(ws_heads)},
+                "tickets": {TICKET: {"seq": len(t_branch), "head": t_branch[-1], "acc": acc_fold(t_branch)}},
+            }
+        )
+
+    tc = tcp_(2, t_heads, ow.stamp(tw.clock))
+    t_payload = {
+        "from_seq": 1,
+        "head": t_heads[0],
+        "abandoned": {"seq": len(t_heads), "head": t_heads[-1]},
+        "abandoned_decisions": [x["id"] for x in t_events[1:]],
+        "source": checkpoint_ref(tc),
+        "revocations": [],
+        "reason": "rollback",
+    }
+
+    def ticket_variant(name, expect, *, over=None, ev_kw=None, **extra):
+        tw.logs[TICKET] = t_events[:1]
+        r = tw.ev(TICKET, "restore", tw.actor("sev"), {**t_payload, **(over or {})}, **(ev_kw or {}))
+        t_o = tcp_(3, [t_heads[0], head(r)], r["at"])
+        cases.append(
+            {
+                "name": name,
+                "held": tc,
+                "offered": t_o,
+                "restore": {
+                    "C": tc,
+                    "T": t_o,
+                    "log": TICKET,
+                    "event": r,
+                    "device_cert": tgen["device_cert"],
+                    "pk_pub": tgen["owner"]["pk_pub"],
+                    "delegation": tgen["delegation"],
+                    "retained_heads": t_heads[:1],
+                    "abandoned_heads": t_heads,
+                },
+                "proofs": {TICKET: [head(r)], "workspace": []},
+                "applied": [],
+                "expect": expect,
+                "recorded": r["id"] if expect == "ok" else None,
+                "pinned_delegation": tgen["delegation"],
+                **extra,
+            }
+        )
+
+    lena_lost = [{"revocation": ow.make_revocation("lena", "lena1", "lost")}]
+    # completeness is a workspace-restore rule: a receiver holding a revocation still accepts a ticket restore's []
+    ticket_variant("ticket_restore_accepted_with_held_revocations", "ok", known_revocations=lena_lost)
+    ticket_variant(
+        "ticket_restore_ws_seq_above_target",
+        "chain.diverged",
+        ev_kw={"tamper": lambda e: e.update(ws_seq=len(ws_heads) + 1)},
+    )
+    ticket_variant(
+        "ticket_restore_ws_seq_not_positive", "chain.diverged", ev_kw={"tamper": lambda e: e.update(ws_seq=0)}
+    )
+    ticket_variant(
+        "ticket_restore_with_revocations",
+        "chain.diverged",
+        over={"revocations": [rev_entry("lena", "lena1", "lost")]},
+        known_revocations=lena_lost,
+    )
+    # C3 in the receiver's own order: what it holds when it judges refuses; what it learns later only alarms.
+    sev_compromised = [{"revocation": ow.make_revocation("sev", "sev1", "compromised")}]
+    ticket_variant(
+        "walk_compromised_learned_from_higher_n_bundle_alarm_only",
+        "ok",
+        learned_later_in_walk=sev_compromised,
+        alarm=True,
+        note="learned_later_in_walk comes from a higher-n bundle judged after this one: it is not known_revocations "
+        "here; the receiver commits this transition and raises an alarm",
+    )
+    ticket_variant(
+        "walk_compromised_learned_from_lower_n_bundle_refuses",
+        "chain.diverged",
+        known_revocations=sev_compromised,
+        note="learned from a lower-n bundle of the same walk, so held when this one is judged",
+    )
+    ticket_variant(
+        "walk_retired_known_before_sync_stays_refused_until_repaired",
+        "chain.diverged",
+        known_revocations=[{"revocation": ow.make_revocation("sev", "sev1", "retired", revoked_ms=1_700_000_000_000)}],
+        note="liveness cost: a genuine older transition by a device the receiver already knows retired stays refused "
+        "until an owner pairs the receiver again",
+    )
+    ticket_variant(
+        "non_owner_revocation_held_ticket_restore_accepted",
+        "ok",
+        known_revocations=[
+            {"revocation": ow.make_revocation("lena", "lena1", "compromised"), "pk_pub": key("pk_lena").pub_b64u}
+        ],
+        note="a ticket restore carries [] and cannot deliver a revocation; a non-owner revocation the receiver holds "
+        "neither completes nor blocks it",
+    )
+    for reason, revoked_ms in [
+        ("compromised", 1_900_000_000_000),
+        ("compromised", 1_700_000_000_000),
+        ("retired", 1_700_000_000_000),
+    ]:
+        when = "after" if revoked_ms > 1_791_626_400_000 else "before"
+        ticket_variant(
+            f"ticket_restore_signer_known_{reason}_{when}_line_at",
+            "chain.diverged",
+            known_revocations=[{"revocation": ow.make_revocation("sev", "sev1", reason, revoked_ms=revoked_ms)}],
+        )
     for case_ in cases:
+        case_.setdefault("pinned_delegation", genesis["delegation"])
+        case_.setdefault("now", RECEIVER_NOW)
+        for field in ("known_devices",):
+            case_.setdefault(field, {})
+        for field in ("known_revocations", "learned_later_in_walk"):
+            case_.setdefault(field, [])
         tr = case_["restore"]
         if "retained_heads" not in tr:
             continue
         prefix = tr.pop("retained_heads")
-        c_entry = tr["C"]["o"]["workspace_log"] if tr.get("C") else None
+        c_o = tr["C"]["o"] if tr.get("C") else None
+        c_entry = (c_o["workspace_log"] if tr["log"] == "workspace" else c_o["tickets"].get(tr["log"])) if c_o else None
         valid = all(isinstance(h, str) and len(h) == 71 for h in prefix)
         tr["acc_from"] = acc_fold(prefix) if valid else "bad"
         tr["acc_before"] = acc_fold(prefix[:-1]) if valid else "bad"
@@ -1034,6 +1428,15 @@ def transition_vectors() -> list[dict[str, Any]]:
         abandoned = tr.get("abandoned_heads")
         if isinstance(abandoned, list):
             tr["abandoned_heads"] = abandoned[len(prefix) :]
+    # A forward proof bound to a swapped acc_from: the retained prefix no longer folds (C source and null source).
+    for name, src in [
+        ("forward_proof_acc_from_swapped", "source_precedes_retained_prefix"),
+        ("null_source_acc_from_swapped", "null_source_with_pinned_genesis"),
+    ]:
+        x = copy.deepcopy(next(y for y in cases if y["name"] == src))
+        x.update(name=name, expect="sync.incomplete", recorded=None)
+        x["restore"]["acc_from"] = acc_fold(["sha256:" + "ef" * 32])
+        cases.append(x)
     return cases
 
 
@@ -1202,6 +1605,14 @@ def restore_scenarios() -> list[dict[str, Any]]:
     restore(w, [evidence("sev", "sev1")])
     w.ev(TICKET, "log.added", w.actor("sev"), {"text": "after self revocation"}, expect="device.invalid")
     out.append(w.scenario())
+    # Replay of an existing line authorizes against the pre-event state, so a self-revocation stays valid on replay for
+    # every reason; the host refuses it before the append (host_cases self_revocation_refused_before_append) and
+    # receivers refuse the bundle (checkpoint.json bundle_revokes_its_own_signer_*).
+    for reason in ("retired", "compromised"):
+        w = setup("owner_authorized_before_self_revocation_" + reason)
+        restore(w, [evidence("sev", "sev1", reason)])
+        w.ev(TICKET, "log.added", w.actor("sev"), {"text": "after self revocation"}, expect="device.invalid")
+        out.append(w.scenario())
 
     w = setup("workspace_restore_blocks_abandoned_decision")
     gone = w.member("zed", "member")
@@ -1410,11 +1821,21 @@ def restore_contract_vectors() -> dict[str, Any]:
     }
     cases = []
 
-    def add(name, updates, log="workspace"):
+    def add(name, updates, log="workspace", sig=None, mutated=None):
         e = {**copy.deepcopy(event), **updates}
-        e["sig"] = b64u(ow.sign("dk_sev1", ow.person_bytes(W, log, e)))
+        e["sig"] = sig or b64u(ow.sign("dk_sev1", ow.person_bytes(W, log, e)))
         e["host_sig"] = b64u(ow.sign("wsk", ow.host_bytes(W, log, e)))
-        cases.append({"name": name, "log": log, "event": e, "expect": "validation.event", "replay": "chain.broken"})
+        mutated = mutated or sorted(k for k in e if k not in ("sig", "host_sig") and e[k] != event.get(k, object()))
+        cases.append(
+            {
+                "name": name,
+                "log": log,
+                "event": e,
+                "mutated": mutated,
+                "expect": "validation.event",
+                "replay": "chain.broken",
+            }
+        )
 
     add("closed_reason", {"reason": "backup restored"})
     add("note_byte_limit", {"note": "\u00e9" * 141})
@@ -1432,6 +1853,22 @@ def restore_contract_vectors() -> dict[str, Any]:
     add("ticket_requires_empty_revocations", {"revocations": [entry], "ws_seq": 1}, TICKET)
     add("malformed_wins_over_signature", {"reason": "bad", "sig": b64u(bytes(64))})
     cases[-1]["event"]["sig"] = b64u(bytes(64))
+    # Re-signed (person sig and host_sig both verify over the changed bytes): the structure alone refuses them.
+    add("envelope_version", {"v": 3})
+    add("hash_version", {"hash_v": 2})
+    add("actor_shape_extra_field", {"actor": {**event["actor"], "name": "sev"}})
+    add("actor_shape_host_kind", {"actor": {"kind": "host"}})
+    add("timestamp_impossible_date", {"at": "2026-02-30T10:00:00Z"})
+    add("timestamp_offset_form", {"at": "2026-10-10T10:00:10+00:00"})
+    add("counter_seq_not_from_seq_plus_one", {"seq": 3})
+    add("counter_roster_v_negative", {"roster_v": -1})
+    add("custody_token_unknown", {"auth": "fingerprint"})
+    add("abandoned_decision_not_an_id", {"abandoned_decisions": ["not-a-ulid"]})
+    add("abandoned_decision_repeated", {"abandoned_decisions": [ow.ulid(900), ow.ulid(900)]})
+    add("ticket_ws_seq_not_positive", {"ws_seq": 0}, TICKET)
+    add("ticket_ws_seq_missing", {}, TICKET, mutated=["ws_seq"])
+    add("signature_encoding_short", {}, sig=event["sig"][:-2])
+    add("signature_encoding_padded", {}, sig=event["sig"] + "==")
     add("oversized_restore_is_one_atomic_event", {"abandoned_decisions": [ow.ulid(100_000 + i) for i in range(18100)]})
     assert len(ow.cj(cases[-1]["event"])) + 1 > 524288
     return {
@@ -1453,5 +1890,12 @@ def restore_contract_vectors() -> dict[str, Any]:
             {"name": "crash_before_restore_commit", "fault": "before_commit", "expect": "no_accepted_restore"},
             {"name": "exact_restore_retry", "expect": "prior_result"},
             {"name": "stale_source", "expect": "chain.diverged"},
+            {
+                "name": "self_revocation_refused_before_append",
+                "self_revocation": True,
+                "expect": "validation.restore",
+                "note": "the host refuses a restore listing its own signer before the append; replay of an existing "
+                "such line keeps pre-event authorization (scenarios owner_authorized_before_self_revocation*)",
+            },
         ],
     }

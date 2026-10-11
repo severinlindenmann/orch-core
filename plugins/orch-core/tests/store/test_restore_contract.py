@@ -9,42 +9,60 @@ from orch import canon, schema
 from orch.identity import CryptoVerifier, certs
 from orch.model import admit, replay
 from orch.store import Store, StoreError
+from orch.store.store import _epoch
 from tests.model.f1_runner import load
 
 V = load("restore.json")
 C = load("checkpoint.json")
 
 
+CALLER_FIELDS = ("reason", "note", "revocations", "abandoned_decisions")
+
+
+def _genesis_scenario():
+    sc = V["scenarios"][0]
+    return sc, sc["steps"][0]["event"]
+
+
 @pytest.mark.parametrize("case", V["schema_cases"], ids=lambda c: c["name"])
-def test_restore_structure_precedes_signature_and_is_atomic(case, env):
+def test_restore_structure_is_refused_before_authorization(case):
+    """Step 0 at the schema and at admit, before any signature or authorization check."""
     event = case["event"]
     kind = "workspace" if case["log"] == "workspace" else "ticket"
     with pytest.raises(schema.SchemaError):
         schema.validate("event", event, log=kind)
-    sc = V["scenarios"][0]
-    genesis = sc["steps"][0]["event"]
+    sc, genesis = _genesis_scenario()
     state = replay([genesis], {}, verifier=CryptoVerifier(), now=sc["now"], expected_workspace_id=sc["workspace_id"])
     unsigned = {k: v for k, v in event.items() if k != "host_sig"}
     assert admit(state, unsigned, log=case["log"]).code.value == case["expect"]
-    logs = {} if kind == "workspace" else {case["log"]: [event]}
+
+
+@pytest.mark.parametrize("case", V["schema_cases"], ids=lambda c: c["name"])
+def test_restore_structure_breaks_the_chain_on_replay(case):
+    event = case["event"]
+    kind = "workspace" if case["log"] == "workspace" else "ticket"
+    if kind == "ticket" and "ws_seq" not in event:
+        pytest.skip("replay takes schema-valid lines (its merge key needs ws_seq); the store's read refuses this one")
+    sc, genesis = _genesis_scenario()
     result = replay(
         [genesis, event] if kind == "workspace" else [genesis],
-        logs,
+        {} if kind == "workspace" else {case["log"]: [event]},
         verifier=CryptoVerifier(),
         now=sc["now"],
         expected_workspace_id=sc["workspace_id"],
     )
     assert result.chain_errors[0].code == case["replay"]
 
+
+@pytest.mark.parametrize("case", V["schema_cases"], ids=lambda c: c["name"])
+def test_restore_structure_is_refused_atomically_by_the_store(case, env):
+    if not set(case["mutated"]) <= set(CALLER_FIELDS) or case["name"].startswith("signature_"):
+        pytest.skip("host-stamped or signer-made fields: a caller cannot set them; schema, admit and replay cover it")
+    event = case["event"]
     store = env.bootstrap()
     before = env.read_events("workspace")
-    fields = {
-        k: copy.deepcopy(event[k]) for k in ("reason", "note", "revocations", "abandoned_decisions") if k in event
-    }
-    if kind == "ticket":
-        uid = env.new_ticket()
-    else:
-        uid = "workspace"
+    fields = {k: copy.deepcopy(event[k]) for k in CALLER_FIELDS if k in event}
+    uid = "workspace" if case["log"] == "workspace" else env.new_ticket()
     fields = {**store.restore_facts(uid), **fields}
     candidate = env.person_event(env.owner, uid, "restore", **fields)
     held = store._pins.held()
@@ -75,8 +93,25 @@ def test_durable_restore_contract(case, env, monkeypatch):
         facts["revocations"] = [{"revocation": revocation, **store.state.device_evidence(device)}]
     if "missing" in case:
         facts["revocations"] = []
+    if case.get("self_revocation"):
+        rev = certs.make_revocation(
+            env.owner.pk_pub,
+            env.owner.pk_sign,
+            device_id_hex=env.owner.device[2:],
+            revoked_ms=env.clock[0] * 1000,
+            reason="retired",
+        )
+        own = {"revocation": rev, **store.state.device_evidence(env.owner.device)}
+        facts["revocations"] = sorted([*facts["revocations"], own], key=lambda r: r["revocation"]["o"]["device_id"])
     candidate = env.person_event(env.owner, "workspace", "restore", **facts, reason="rollback")
     held = store._pins.held()
+    if case.get("self_revocation"):
+        before = env.read_events("workspace")
+        with pytest.raises(StoreError) as exc:
+            store.append(candidate, log="workspace")
+        assert exc.value.code == case["expect"]
+        assert env.read_events("workspace") == before and store._pins.held() == held
+        return
     if case["name"] == "stale_source":
         store.checkpoint()
         with pytest.raises(StoreError) as exc:
@@ -211,10 +246,51 @@ def test_restore_refuses_checkpoint_more_than_300_seconds_ahead(env):
     before = env.read_events("workspace")
     held = store._pins.held()
     candidate = env.person_event(env.owner, "workspace", "restore", **store.restore_facts("workspace"), reason="other")
-    with pytest.raises(StoreError, match="300 seconds ahead") as exc:
+    with pytest.raises(StoreError, match="300 seconds ahead of the clock") as exc:
         store.append(candidate, log="workspace")
     assert exc.value.code == "validation.restore"
     assert env.read_events("workspace") == before and store._pins.held() == held
+
+
+def test_restore_refuses_a_computed_at_more_than_300_seconds_ahead(env):
+    """C2 at the host: the stamped restore `at` is max(clock, C.o.at, last at); a ticket event ahead of the clock moves
+    it past the ceiling although C itself is within it."""
+    store = env.bootstrap()
+    uid = env.new_ticket()
+    env.clock[0] += 400
+    env.log(uid)
+    env.clock[0] -= 400
+    held = store._pins.held()
+    assert _epoch(held["o"]["at"]) <= env.clock[0] + 300
+    before = env.read_events("workspace")
+    candidate = env.person_event(env.owner, "workspace", "restore", **store.restore_facts("workspace"), reason="other")
+    with pytest.raises(StoreError, match="computed at") as exc:
+        store.append(candidate, log="workspace")
+    assert exc.value.code == "validation.restore"
+    assert env.read_events("workspace") == before and store._pins.held() == held
+
+
+@pytest.mark.parametrize("reason", ["lost", "retired", "compromised"])
+def test_host_refuses_a_restore_that_revokes_its_own_signer(env, reason):
+    """Receivers refuse such a bundle, so the host refuses it before the append instead of committing an
+    unpublishable restore (§5.10); replay of an existing line keeps pre-event authorization (restore.json)."""
+    store = env.bootstrap()
+    facts = store.restore_facts("workspace")
+    rev = certs.make_revocation(
+        env.owner.pk_pub,
+        env.owner.pk_sign,
+        device_id_hex=env.owner.device[2:],
+        revoked_ms=env.clock[0] * 1000,
+        reason=reason,
+    )
+    facts["revocations"] = [{"revocation": rev, **store.state.device_evidence(env.owner.device)}]
+    candidate = env.person_event(env.owner, "workspace", "restore", **facts, reason="other")
+    before, held = env.read_events("workspace"), store._pins.held()
+    with pytest.raises(StoreError, match="revokes its own signer") as exc:
+        store.append(candidate, log="workspace")
+    assert exc.value.code == "validation.restore"
+    assert env.read_events("workspace") == before and store._pins.held() == held
+    assert not list((store._pins.dir / "transitions").glob("*.json"))
 
 
 def test_completed_restores_do_not_add_work_to_append(env, monkeypatch):
@@ -274,25 +350,29 @@ def test_transition_keeps_only_the_abandoned_suffix(env):
     assert transition["acc_from"] == acc_from
     assert transition["abandoned_heads"] == expected
     assert transition["forward_heads"] == []
-    from orch.store.checkpoints import judge_offer
+    from orch.store.checkpoints import ReceiverView, Restore, judge_offer
 
-    assert (
-        judge_offer(
-            transition["C"]["o"],
-            transition["T"]["o"],
-            proofs=transition["proofs"],
-            restore=transition,
-            wsk_pub=env.wsk_pub,
-            pinned_genesis=store.state.workspace.genesis,
-        )[0]
-        == "ok"
+    receiver = ReceiverView(
+        workspace_id=store.workspace_id,
+        pinned_genesis=store.state.workspace.genesis,
+        wsk_pub=env.wsk_pub,
+        pinned_delegation=store._genesis_event["delegation"],  # the pin, never the bundle's own delegation
+        now=transition["T"]["o"]["at"],  # the test clock stamped T
+        held=transition["C"]["o"],
+        known_devices={},
+        known_revocations=(),
+        learned_later=(),
     )
+    bundle = Restore(transition=transition, proofs=transition["proofs"], applied=())
+    assert judge_offer(receiver, transition["T"]["o"], restore=bundle).code == "ok"
 
 
-@pytest.mark.parametrize("evidence", ["ticket", "transition"])
+@pytest.mark.parametrize("evidence", ["ticket", "transition", "workspace_log"])
 def test_null_source_refused_when_workspace_checkpoint_files_are_lost(env, evidence):
     store = env.bootstrap()
-    if evidence == "ticket":
+    if evidence == "workspace_log":
+        pass  # no ticket, no transition: the workspace log alone is the evidence
+    elif evidence == "ticket":
         env.new_ticket()
     else:
         store.append(
@@ -301,8 +381,153 @@ def test_null_source_refused_when_workspace_checkpoint_files_are_lost(env, evide
         )
     (store._pins.dir / "checkpoint.json").unlink()
     store._checkpoints._workspace_path.unlink()
-    with pytest.raises(StoreError, match="checkpoint evidence exists"):
+    with pytest.raises(StoreError) as exc:
         store.restore_facts("workspace")
+    assert exc.value.code == "chain.diverged"
+    candidate = env.person_event(env.owner, "workspace", "restore", **_facts_with_null_source(store), reason="other")
+    before = env.read_events("workspace")
+    with pytest.raises(StoreError) as exc:
+        store.append(candidate, log="workspace")
+    assert exc.value.code == "checkpoint.missing" and env.read_events("workspace") == before
+
+
+def test_an_ordinary_append_does_not_rebaseline_after_lost_checkpoints(env):
+    """Opus #377 finding 2: with both checkpoint files gone, an ordinary append must not write a fresh n=1 checkpoint
+    that a restore could then name as its source."""
+    store = env.bootstrap()
+    high = store._pins.held()["o"]["n"]
+    (store._pins.dir / "checkpoint.json").unlink()
+    store._checkpoints._workspace_path.unlink()
+    before = env.read_events("workspace")
+    with pytest.raises(StoreError) as exc:
+        store.append(env.grant_event(), log="workspace")
+    assert exc.value.code == "checkpoint.missing" and env.read_events("workspace") == before
+    assert store._pins.held() is None and store._checkpoints.workspace() is None
+    with pytest.raises(StoreError):
+        store.restore_facts("workspace")
+    assert store._pins.high_n() == high
+
+
+def test_a_host_without_checkpoint_evidence_starts_a_baseline(env, tmp_path):
+    """A fresh clone or a lost host state dir: no checkpoint evidence, so the next append starts a baseline (F1 "What
+    P1 can't detect"), and checkpoint() works."""
+    import shutil
+
+    store = env.bootstrap()
+    store.close()
+    shutil.rmtree(env.root / ".state" / "checkpoints")
+    env.host_state = tmp_path / "new-host-state"  # the host's state dir is gone
+    store = env.open()
+    store.append(env.grant_event(), log="workspace")
+    cp = store._checkpoints.workspace()
+    assert cp == store._pins.held() and cp["o"]["workspace_log"]["seq"] == store._logs["workspace"].seq
+    assert cp["o"]["n"] <= 2  # a new baseline: n restarts on a host that never had one (opening wrote n=1)
+    store.checkpoint()
+
+
+@pytest.mark.parametrize("evidence", ["high_water", "ancestry_only"])
+def test_a_host_with_checkpoint_evidence_refuses_without_a_checkpoint(env, evidence):
+    store = env.bootstrap()
+    store.close()
+    pins = env.host_state / "hosts" / store.workspace_id
+    (pins / "checkpoint.json").unlink()
+    if evidence == "ancestry_only":
+        (pins / "checkpoint-n").unlink()  # heads.sqlite rows from the earlier run remain
+    (env.root / ".state" / "checkpoints" / "workspace.json").unlink()
+    store = env.open()
+    before = env.read_events("workspace")
+    with pytest.raises(StoreError) as exc:
+        store.append(env.grant_event(), log="workspace")
+    assert exc.value.code == "checkpoint.missing" and env.read_events("workspace") == before
+    with pytest.raises(StoreError) as exc:
+        store.checkpoint()
+    assert exc.value.code == "checkpoint.missing"
+    assert "no in-place repair" in exc.value.detail and "from a backup" in exc.value.detail
+    assert "Do not delete the host state dir" in exc.value.detail and "must restore" not in exc.value.detail
+    assert store._checkpoints.workspace() is None
+
+
+def test_checkpoint_n_never_restarts_below_the_durable_high_water(env):
+    store = env.bootstrap()
+    high = store._pins.held()["o"]["n"]
+    store._checkpoints._workspace_path.unlink()  # .state lost, the host pin survives
+    store.append(env.grant_event(), log="workspace")
+    assert store._checkpoints.workspace()["o"]["n"] == high + 1 == store._pins.held()["o"]["n"]
+
+
+def _facts_with_null_source(store):
+    info = store._logs["workspace"]
+    return {
+        "from_seq": info.seq,
+        "head": info.head,
+        "abandoned": None,
+        "abandoned_decisions": [],
+        "source": None,
+        "revocations": [],
+    }
+
+
+def test_host_refuses_a_restore_signed_by_a_device_it_holds_revoked(env, tmp_path):
+    """A WSK holder with a revoked device key rolls the log back past the revocation and signs a restore with that
+    device: the kept chain authorizes it, the host's durable evidence does not (§5.10, C3)."""
+    import shutil
+
+    from tests.store.test_checkpoints import rollback
+
+    store = env.bootstrap()
+    store.close()
+    backup = tmp_path / "backup"
+    shutil.copytree(env.root, backup)
+    store = env.open()
+    env.revoke_device(env.owner.device, reason="compromised")
+    store.close()
+    rollback(env, backup)
+    store = env.open()
+    facts = store.restore_facts("workspace")
+    assert [r["revocation"]["o"]["device_id"] for r in facts["revocations"]] == [env.owner.device[2:]]
+    candidate = env.person_event(env.owner, "workspace", "restore", **facts, reason="rollback")
+    before = env.read_events("workspace")
+    with pytest.raises(StoreError) as exc:
+        store.append(candidate, log="workspace")
+    assert exc.value.code == "device.invalid"
+    assert env.read_events("workspace") == before
+    assert not list((store._pins.dir / "transitions").glob("*.json"))
+
+
+def _committed_transition(env):
+    store = env.bootstrap()
+    store.append(
+        env.person_event(env.owner, "workspace", "restore", **store.restore_facts("workspace"), reason="other"),
+        log="workspace",
+    )
+    (done,) = (store._pins.dir / "transitions").glob("*.json")
+    return store, json.loads(done.read_text())
+
+
+def test_a_pending_transition_whose_slot_holds_another_head_is_dropped(env):
+    store, transition = _committed_transition(env)
+    transition["committed"] = False
+    transition["event"]["reason"] = "rollback"  # same seq, another head: this restore can never commit
+    pending = store._pins.dir / "pending-transitions" / (transition["event"]["id"] + ".json")
+    pending.parent.mkdir(parents=True, exist_ok=True)
+    pending.write_bytes(canon.cj_checked(transition) + b"\n")
+    held = store._pins.held()
+    store._recover_transitions()
+    assert not pending.exists() and store._pins.held() == held
+    env.log(env.new_ticket())  # appends go on
+
+
+def test_a_pending_transition_the_held_checkpoint_passed_is_dropped(env):
+    store, transition = _committed_transition(env)
+    store.append(env.grant_event(), log="workspace")  # the held checkpoint moves past T
+    assert store._pins.held()["o"]["n"] > transition["T"]["o"]["n"]
+    transition["committed"] = False
+    pending = store._pins.dir / "pending-transitions" / (transition["event"]["id"] + ".json")
+    pending.parent.mkdir(parents=True, exist_ok=True)
+    pending.write_bytes(canon.cj_checked(transition) + b"\n")
+    held = store._pins.held()
+    store._recover_transitions()
+    assert not pending.exists() and store._pins.held() == held
 
 
 def test_reload_skips_already_recorded_ancestry(env, monkeypatch):

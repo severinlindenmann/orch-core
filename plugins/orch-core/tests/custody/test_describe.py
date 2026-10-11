@@ -118,10 +118,9 @@ CASES: dict[str, tuple[str, dict]] = {
             "version": "1.2.3",
             "package_sha256": H1,
             "capabilities": ["serve_http", "network"],
-            "binds": {
-                "fields": {"risk": ["plan"]},
-                "sections": [{"id": "dash.notes", "gate": ["plan"], "types": ["feature"]}],
-            },
+            "fields": {"risk": {"type": "integer", "set_by": ["owner"], "gate": ["plan"]}},
+            "sections": [{"id": "dash.notes", "types": ["feature"], "gate": ["plan"]}],
+            "artifact_kinds": ["chart"],
         },
     ),
     "addon.disabled": ("workspace", {"name": "dash"}),

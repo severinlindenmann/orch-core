@@ -30,5 +30,5 @@ PRECONDITIONS: dict[str, str] = {
     "text_clean": "the text passes the text rules",
     "no_workspace": "no workspace exists yet at the target",
     "v1_workspace": "the path holds a v1 workspace",
-    "addon_exists": "the addon is installed",
+    "addon_exists": "the addon is installed or was granted",
 }

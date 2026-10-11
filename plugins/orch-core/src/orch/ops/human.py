@@ -386,6 +386,7 @@ class Human:
         *,
         precommit: Callable[[], None] | None = None,
         review: list[str] | None = None,
+        expect: str | None = None,
     ) -> Any:
         """``precheck``, then (unless ``--dry-run``) show ``review`` on the terminal and ask the person to confirm, sign
         and append; ``None`` for a dry run."""
@@ -393,8 +394,12 @@ class Human:
         if self.ctx.dry_run:
             return None
         if review is not None:
-            view = self.store.ticket(log)  # the key the person types is the verified key of the log being signed
-            if view is None or not review_prompt("\n".join(review), view.key):
+            if log == "workspace":  # a workspace event has no ticket key: the caller names what the person types
+                word = expect
+            else:
+                view = self.store.ticket(log)  # the key the person types is the verified key of the log being signed
+                word = view.key if view is not None else None
+            if word is None or not review_prompt("\n".join(review), word):
                 raise OrchError("invalid.input", "not confirmed: nothing was signed")
         return self._sign_and_append(event, log, action, precommit)
 

@@ -341,7 +341,19 @@ def workspace_view(core: Core, now: int) -> WorkspaceView:
         freeze(ws.repos),
         MappingProxyType(
             {
-                n: freeze({"version": a.version, "enabled": a.enabled and not a.purged, "binds": a.binds})
+                n: freeze(
+                    {
+                        "version": a.version,
+                        "enabled": a.enabled and not a.purged,
+                        "binds": a.binds,
+                        "fields": a.fields,
+                        "sections": a.sections,
+                        "artifact_kinds": a.artifact_kinds,
+                        "package_sha256": a.package_sha256,
+                        "capabilities": a.capabilities,
+                        "purged": a.purged,
+                    }
+                )
                 for n, a in ws.addons.items()
             }
         ),

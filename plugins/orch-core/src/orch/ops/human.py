@@ -218,6 +218,7 @@ class Human:
         had exactly that commit in front of them (D58, security review R2). ``signed`` is the source list bound."""
         out: list[str] = []
         links = view.fields["links"]
+        checked: set[str] = set()  # identities of the working copies looked at, each against the signed list
         for name in links["repos"]:
             branch = links["branches"].get(name)
             if not branch:
@@ -230,7 +231,9 @@ class Human:
             git = self.ctx.caps.git
             head = git.head(path)
             on = git.symbolic_head(path)
-            entry = next((e for e in signed if e["repo"] == git.identity(path, name)), None)
+            identity = git.identity(path, name)
+            checked.add(identity)
+            entry = next((e for e in signed if e["repo"] == identity), None)
             if head is None or entry is None or entry["ref"] != ref or entry["sha"] != head:
                 out.append(f"{name}: {ref} is not recorded at the commit checked out; look again with orch show")
             elif on != ref:
@@ -244,6 +247,9 @@ class Human:
                 from orch.gitread.treejob import check_entry
 
                 self.ctx.prepare.checks.append(check_entry(name, self.ctx.caps.clock()))
+        for e in signed:  # every repo the decision binds must have been checked, not only the linked ones
+            if e["repo"] not in checked:
+                out.append(f"{e['repo']}: in the source list but no working copy of it was checked")
         return out
 
     def observe(self, view: Any) -> Any:

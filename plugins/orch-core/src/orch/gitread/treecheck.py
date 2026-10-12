@@ -465,11 +465,17 @@ class _Check:
             and e.gid == st.st_gid & _U32
         )
 
-    def _racy(self, e: Entry) -> bool:
-        """git's racy-clean rule: an entry not older than the index file cannot be trusted by its stat data."""
+    def _racy(self, e: Entry, st: os.stat_result) -> bool:
+        """When the stat data cannot be trusted and the bytes are hashed. Stricter than git's racy-clean rule, at
+        **second** granularity whatever the nanoseconds say: the entry's mtime, or the file's own mtime or ctime, in
+        or after the second the index was written (a write in that second may keep size and mtime). An index whose
+        own mtime cannot be read trusts nothing."""
         if self.index_time is None:
             return True
-        return (e.mtime_s, e.mtime_ns) >= self.index_time
+        sec = self.index_time[0]
+        return (
+            e.mtime_s >= sec & _U32 or st.st_mtime_ns // 1_000_000_000 >= sec or st.st_ctime_ns // 1_000_000_000 >= sec
+        )
 
     def _hash_file(self, d: Dir, name: str, st: os.stat_result) -> str | None:
         """The blob id of a regular file's raw bytes; ``None`` when it changed while it was read."""
@@ -513,7 +519,7 @@ class _Check:
             if not stat.S_ISLNK(st.st_mode):
                 self.note(e.path, "type")
                 return
-            if self._stat_same(e, st) and not self._racy(e):
+            if self._stat_same(e, st) and not self._racy(e, st):
                 return
             try:
                 target = os.readlink(os.fsencode(name), dir_fd=d.fd)
@@ -529,7 +535,7 @@ class _Check:
         if canon_mode(st.st_mode) != mode:
             self.note(e.path, "modified")  # the executable bit (core.fileMode is config: not read)
             return
-        if self._stat_same(e, st) and not self._racy(e):
+        if self._stat_same(e, st) and not self._racy(e, st):
             return
         if self._hash_file(d, name, st) != e.oid:
             self.note(e.path, "modified")

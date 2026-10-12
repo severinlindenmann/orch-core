@@ -403,6 +403,7 @@ class HumanOps:
         prepared, extras = self._build(call, name, log, capture, store, now)
         if capture.checks:  # N3: the clean-tree checks of a decision that binds a commit (not signed)
             prepared["checks"] = capture.checks
+        require_checks(call, prepared)  # a decision that binds commits is never prepared without its checks
         result = result_dict(res)
         template = {"data": result["data"], "key": result["key"], "hints": result["hints"]}
         if dry_run:
@@ -837,6 +838,7 @@ def recheck_trees(call: Call, record: dict[str, Any]) -> dict[str, Any]:
 
     checks = record["prepared"].get("checks")
     if not checks:
+        require_checks(call, record["prepared"])  # nothing to re-run is only fine when nothing binds a commit
         return record
     service = call.service
     service.sync_git()
@@ -844,13 +846,13 @@ def recheck_trees(call: Call, record: dict[str, Any]) -> dict[str, Any]:
     store = service.store
     repos = store.state.workspace.repos
     fresh = []
-    for c in checks:
+    for c in checks:  # the current working tree, read again now (never the prepare's answer)
         name = c["repo"]
         path = git.repo_path(store.root, repos, name) if git.enabled and git.reader is not None else None
         got = git.tree_check(path, name) if path is not None else None
         if got is None:
             raise HostError("observe.unavailable", f"{name}: the working tree cannot be checked now; nothing was bound")
-        if got["changed"]:
+        if got["changed"] or got["more"]:
             first = got["changed"][0]
             raise HostError(
                 "observe.unavailable",
@@ -858,7 +860,32 @@ def recheck_trees(call: Call, record: dict[str, Any]) -> dict[str, Any]:
                 f"{name}: the working tree changed since prepare ({first['why']}: {first['path']})"[:300],
             )
         fresh.append(check_entry(name, service.clock()))
-    return {**record, "prepared": {**record["prepared"], "checks": fresh}}
+    out = {**record, "prepared": {**record["prepared"], "checks": fresh}}
+    require_checks(call, out["prepared"])
+    return out
+
+
+def require_checks(call: Call, prepared: dict[str, Any]) -> None:
+    """Every repository a prepared event binds (each ``source_sha`` entry, by identity) must have a clean-tree check
+    in ``checks``; otherwise ``observe.unavailable``. The checked repos' identities are read again through the
+    reader, so a check of one repo can never stand in for another."""
+    need = {e["repo"] for ev in prepared["events"] for e in ev.get("source_sha") or []}
+    if not need:
+        return
+    service = call.service
+    git = service.capabilities().with_principal(call.principal).git
+    store = service.store
+    repos = store.state.workspace.repos
+    have: set[str] = set()
+    for c in prepared.get("checks") or []:
+        path = git.repo_path(store.root, repos, c["repo"]) if git.enabled and git.reader is not None else None
+        if path is not None and c.get("clean") is True:
+            have.add(git.identity(path, c["repo"]))
+    missing = sorted(need - have)
+    if missing:
+        raise HostError(
+            "observe.unavailable", f"{missing[0]}: the working tree of a bound repository was not checked"[:300]
+        )
 
 
 def recheck_sources(git: Any, store: Any, view: Any, signed: list[dict[str, Any]]) -> None:

@@ -106,6 +106,8 @@ def result_of(raw: Any) -> dict[str, Any]:
     head = raw.get("head")
     if head is not None and (not isinstance(head, str) or len(head) not in (40, 64)):
         raise Unavailable("the tree check answered nonsense")
+    if raw["more"] and not raw["changed"]:
+        raise Unavailable("the tree check answered nonsense")  # "more" than nothing: never read as clean
     if len(raw["changed"]) > MAX_CHANGED:
         raise Unavailable("the tree check answered too many paths")
     changed = []

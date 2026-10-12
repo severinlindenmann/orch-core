@@ -222,6 +222,7 @@ def test_escape_path_rules():
         {"changed": [{"path_b64": "", "cut": False, "why": "modified"}], "more": False},
         {"changed": [{"path_b64": "eA==", "cut": False, "why": "modified", "x": 1}], "more": False},
         {"changed": [{"path_b64": "eA==", "cut": False, "why": "modified"}] * 201, "more": True},
+        {"changed": [], "more": True},
     ],
 )
 def test_a_malformed_child_answer_is_unknown(raw):
@@ -432,3 +433,142 @@ def test_index_extensions_written_by_fsmonitor_and_untracked_cache_are_ignored(m
     assert b"UNTR" in (r.gitdir / "index").read_bytes()
     r.write("u", "x\n")
     assert changed(r)[0] == {"u": "untracked"}  # the cache is never trusted
+
+
+# --- integrity: every way a dirty tree could pass for clean (scan review) ------------------------------------------
+
+
+def _forge_entry(r, rel: str, **fields) -> None:
+    """Rewrite one v2 index entry's stat fields (the index is agent-writable) and re-seal the checksum."""
+    import hashlib
+    import struct
+
+    idx = r.gitdir / "index"
+    data = bytearray(idx.read_bytes()[:-20])
+    assert data[:4] == b"DIRC" and struct.unpack_from(">I", data, 4)[0] == 2
+    i = 12
+    names = ("ctime_s", "ctime_ns", "mtime_s", "mtime_ns", "dev", "ino", "mode", "uid", "gid", "size")
+    while True:
+        (flags,) = struct.unpack_from(">H", data, i + 60)
+        nlen = flags & 0xFFF
+        name = bytes(data[i + 62 : i + 62 + nlen])
+        if name == rel.encode():
+            vals = list(struct.unpack_from(">10I", data, i))
+            for k, v in fields.items():
+                vals[names.index(k)] = v & 0xFFFFFFFF
+            struct.pack_into(">10I", data, i, *vals)
+            break
+        i += (62 + nlen + 8) & ~7
+    idx.write_bytes(bytes(data) + hashlib.sha1(bytes(data)).digest())
+
+
+def test_racy_git_a_same_second_same_size_rewrite_is_hashed_not_trusted(make_repo):
+    """The index's stat data match the file to the second (nanoseconds zero, as an index written without USE_NSEC
+    stores them), size equal, content changed in the second the index was written: hashed, so modified."""
+    r = base(make_repo)
+    p = r.path / "a.txt"
+    p.write_text("ONE\n")  # same size as "one\n"
+    os.utime(p, ns=(1_800_000_000 * 10**9, 1_800_000_000 * 10**9))
+    st = p.lstat()
+    _forge_entry(
+        r,
+        "a.txt",
+        mtime_s=st.st_mtime_ns // 10**9,
+        mtime_ns=0,
+        ctime_s=st.st_ctime_ns // 10**9,
+        ctime_ns=0,
+        size=st.st_size,
+        ino=st.st_ino,
+    )
+    # the index was written in the file's own second, later in it than the file: git's (s, ns) rule would trust it
+    os.utime(r.gitdir / "index", ns=(st.st_mtime_ns + 500_000_000, st.st_mtime_ns + 500_000_000))
+    assert changed(r)[0] == {"a.txt": "modified"}
+    p.write_text("one\n")  # the committed bytes again: hashing says clean
+    assert changed(r)[0] == {}
+
+
+def test_a_forged_stat_on_an_old_index_is_hashed_when_the_file_changed_after_it(make_repo):
+    """The file's own ctime is after the index was written: its stat data are not trusted, whatever the entry says."""
+    r = base(make_repo)
+    old = 1_700_000_000 * 10**9
+    os.utime(r.gitdir / "index", ns=(old, old))
+    p = r.path / "a.txt"
+    p.write_text("ONE\n")
+    st = p.lstat()
+    _forge_entry(r, "a.txt", mtime_s=st.st_mtime_ns // 10**9, mtime_ns=st.st_mtime_ns % 10**9,
+                 ctime_s=st.st_ctime_ns // 10**9, ctime_ns=st.st_ctime_ns % 10**9, ino=st.st_ino)  # fmt: skip
+    os.utime(r.gitdir / "index", ns=(old, old))
+    assert changed(r)[0] == {"a.txt": "modified"}
+
+
+def test_skip_worktree_and_assume_unchanged_cannot_hide_an_edit(make_repo):
+    r = base(make_repo)
+    r.git("update-index", "--skip-worktree", "a.txt")
+    r.git("update-index", "--assume-unchanged", "x.sh")
+    r.write("a.txt", "hidden edit\n")
+    r.write("x.sh", "#!/bin/sh\necho hidden\n", mode=0o755)
+    assert git_status(r) == set()  # git itself is fooled
+    got, _ = changed(r)
+    assert got == {"a.txt": "flag", "x.sh": "flag"}  # orch is not: dirty
+    from orch.gitread.treejob import render
+
+    assert render(local.tree_check(r.path))  # a non-empty answer is dirty for Git.dirty()
+
+
+def test_a_tracked_file_matching_an_ignore_pattern_is_still_compared(make_repo):
+    r = base(make_repo)
+    r.write("build/tracked.txt", "t\n")
+    r.write("traced.log", "t\n")
+    r.git("add", "-f", "build/tracked.txt", "traced.log")
+    r.commit()
+    assert changed(r)[0] == {}
+    r.write("build/tracked.txt", "edited\n")
+    r.write("traced.log", "edited\n")
+    r.write("build/untracked.txt", "ignored\n")
+    assert changed(r)[0] == {"build/tracked.txt": "modified", "traced.log": "modified"}
+
+
+def test_sparse_checkout_is_dirty_and_a_sparse_index_unknown(make_repo):
+    r = base(make_repo)
+    r.git("config", "core.sparseCheckout", "true")  # the old way: no extensions.worktreeConfig
+    (r.gitdir / "info").mkdir(exist_ok=True)
+    (r.gitdir / "info" / "sparse-checkout").write_text("/a.txt\n")
+    r.git("read-tree", "-mu", "HEAD")
+    assert not (r.path / "x.sh").exists()
+    got, _ = changed(r)
+    assert got and set(got.values()) == {"flag"}  # every entry outside it carries skip-worktree: dirty
+    r.git("sparse-checkout", "set", "--cone", "--sparse-index", "d")  # writes extensions.worktreeConfig and sdir
+    with pytest.raises(Unavailable):
+        local.tree_check(r.path)
+
+
+def test_a_case_only_rename_on_a_case_insensitive_fs_is_dirty(make_repo):
+    r = base(make_repo)
+    probe = r.path / "CaseProbe"
+    probe.write_text("x")
+    insensitive = (r.path / "caseprobe").exists()
+    probe.unlink()
+    if not insensitive:
+        pytest.skip("case-sensitive file system")
+    os.rename(r.path / "a.txt", r.path / "tmp-name")
+    os.rename(r.path / "tmp-name", r.path / "A.txt")
+    got, _ = changed(r)
+    assert got == {"A.txt": "untracked", "a.txt": "deleted"}
+
+
+def test_a_submodule_whose_directory_vanished_is_deleted_and_a_staged_gitlink_change_is_seen(make_repo):
+    sub = make_repo("sub")
+    sub.write("f", "x\n")
+    first = sub.commit()
+    r = base(make_repo)
+    (r.path / "mod").mkdir()
+    r.git("update-index", "--add", "--cacheinfo", f"160000,{first},mod")
+    r.git("commit", "-q", "-m", "gitlink")
+    assert changed(r)[0] == {}  # not checked out: clean, as git sees it
+    (r.path / "mod").rmdir()
+    assert changed(r)[0] == {"mod": "deleted"}
+    (r.path / "mod").mkdir()
+    sub.write("f", "y\n")
+    second = sub.commit()
+    r.git("update-index", "--cacheinfo", f"160000,{second},mod")
+    assert changed(r)[0] == {"mod": "modified"}

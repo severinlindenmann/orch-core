@@ -2677,6 +2677,13 @@ UID. P2 adds no keychain.**
     bounds (`INDEX_MAX`, `INDEX_ENTRIES`, `WALK_ENTRIES`) all answer `observe.unavailable`. `core.excludesFile` is
     config and is not read, so a file only it ignores counts as untracked. The `FSMN` and `UNTR` index extensions are
     skipped unread.
+  - Stat data are trusted only outside the racy window, at second granularity: an entry whose mtime, or a file whose
+    own mtime or ctime, falls in or after the second the index was written is hashed. `skip-worktree` and
+    `assume-unchanged` are dirty (`flag`), never trusted, and so is a sparse checkout (its entries carry
+    `skip-worktree`); `extensions.worktreeConfig` (written by `git sparse-checkout`) or a sparse index is unknown.
+  - Every repo a prepared event binds (each `source_sha` entry, by identity read again through the reader) must have
+    a clean check, at prepare and at binding; a missing one is `observe.unavailable`. The binding re-run reads the
+    tree again; the stored `checks` are never trusted.
   - `human.prepare` returns `checks` for each linked repo found clean; `human.get` with `signer` runs the check again
     at binding and at every later binding get, refuses a changed or unknown tree with `observe.unavailable` (nothing
     is bound) and refreshes `checks[].at`. `attested_by` stays `"worker"`: in tier A the host's reader child plays the

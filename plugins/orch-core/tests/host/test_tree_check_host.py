@@ -194,3 +194,29 @@ def test_a_booby_trapped_repo_runs_nothing_through_a_whole_decision(owner_world)
     bound = ok(h.c.req("human.get", {"request_id": prepared["request"]["id"], "signer": h.signer}))["data"]
     ok(h.submit_res(bound["request"]["id"], h.sign(bound).events))
     assert not [m.name for m in marks if m.exists()]
+
+
+@pytest.mark.parametrize("tamper", ["dropped", "other repo", "not clean"])
+def test_binding_requires_a_check_for_every_bound_repo_never_a_cached_one(world, tamper):
+    """The re-run at binding reads the working tree now and needs a clean check for every repo in the source list;
+    a request whose stored checks lost a repo or name another is refused, never bound; a stored "not clean" is not
+    trusted either way: the current tree decides."""
+    h = world.human
+    name, args = decision(world)
+    prepared = h.prepare(name, args, handoff=True)
+    rid = prepared["request"]["id"]
+    path = world.served.lab.state / "hosts" / world.served.wid / "requests" / rid
+    rec = json.loads(path.read_text())
+    if tamper == "dropped":
+        rec["prepared"]["checks"] = []
+    elif tamper == "other repo":
+        rec["prepared"]["checks"][0]["repo"] = "nope"
+    else:
+        rec["prepared"]["checks"][0]["clean"] = False
+    path.write_text(json.dumps(rec))
+    res = h.c.req("human.get", {"request_id": rid, "signer": h.signer})
+    if tamper == "not clean":  # the stored answer is never used: the tree is read now, found clean, and bound
+        assert ok(res)["data"]["checks"][0]["clean"] is True
+        return
+    assert error(res)["code"] == "observe.unavailable"
+    assert state(world, rid) == "prepared"

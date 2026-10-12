@@ -33,7 +33,7 @@ def team(p1):
 
 
 def handoff(world, body, n=1):
-    return world.post(f"/api/w/{world.stub.ws}/handoff", {**body, "idem": idem(n)})
+    return world.post(f"/api/w/{world.stub.ws}/handoff", {**body})
 
 
 # ---- reads ----------------------------------------------------------------------------------------------------------

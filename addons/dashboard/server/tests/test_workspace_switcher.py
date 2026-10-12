@@ -122,7 +122,7 @@ def test_a_handoff_belongs_to_the_workspace_it_was_prepared_in(two):
     client, headers, stubs, down, gateway = two
     a, b = stubs
     write = {**headers, "Origin": ORIGIN}
-    body = {"action": "comment", "key": "DEMO-0001", "message": "hello", "idem": "a_" + "0" * 25 + "1"}
+    body = {"action": "comment", "key": "DEMO-0001", "message": "hello"}
     made = client.post(f"/api/w/{a.ws}/handoff", json=body, headers=write)
     assert made.status_code == 200
     request_id = made.json()["id"]
@@ -166,7 +166,7 @@ def test_a_workspace_the_registry_does_not_pin_is_not_there(two):
     assert (
         client.post(
             f"/api/w/{unknown}/handoff",
-            json={"action": "comment", "key": "DEMO-0001", "message": "x", "idem": "a_" + "0" * 26},
+            json={"action": "comment", "key": "DEMO-0001", "message": "x"},
             headers={**headers, "Origin": ORIGIN},
         ).status_code
         == 404
@@ -178,7 +178,7 @@ def test_settings_are_per_workspace_too(two):
     reads = [client.get(f"/api/w/{s.ws}/members", headers=headers).json() for s in stubs]
     assert reads[0][0]["person"] != reads[1][0]["person"]  # each workspace has its own owner
     a, b = stubs
-    body = {"action": "settings_set", "grant_hours": 12, "idem": "a_" + "0" * 25 + "2"}
+    body = {"action": "settings_set", "grant_hours": 12}
     made = client.post(f"/api/w/{a.ws}/handoff", json=body, headers={**headers, "Origin": ORIGIN})
     assert made.status_code == 200 and made.json()["events"][0]["set"] == {"grant_hours": 12}
     assert len(a.requests.table) == 1 and b.requests.table == {}

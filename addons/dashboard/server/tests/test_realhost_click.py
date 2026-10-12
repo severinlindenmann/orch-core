@@ -37,10 +37,6 @@ RISK = "Convenience signing: agents running as you, or anything that takes over 
 ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
 
-def new_idem(n: int) -> str:
-    return "a_0" + f"{n:025d}".translate(str.maketrans("0123456789", "0123456789"))[-25:]
-
-
 def seeding(ws: Workspace) -> dict:
     keys = {}
     for name, title in (("one", "Export billing CSV"), ("two", "Retry failed webhooks"), ("three", "Audit log")):
@@ -129,9 +125,11 @@ class Click:
     def post(self, step, body):
         return self.w.client.post(self.url(step), json=body, headers=self.headers())
 
-    def prepare(self, body):
+    def prepare(self, body, fresh=True):
+        """`fresh`: an explicit "do it again" (a new retry counter), so tests that repeat an action stay independent.
+        `fresh=False` is the plain intent: the same action again is the same request."""
         self.n += 1
-        return self.post("prepare", {**body, "idem": new_idem(int(time.time() * 1000) % 10**9 + self.n)})
+        return self.post("prepare", {**body, "retry": self.n} if fresh else body)
 
     def workspace(self):
         res = self.w.client.get("/api/workspaces", headers=self.headers(False))
@@ -227,7 +225,7 @@ def test_cancel_cancels_on_the_host(world, click):
 
 
 def test_the_terminal_path_is_a_separate_handoff_request(world, click):
-    body = {**approve(world, "three"), "idem": "a_0" + "1" * 25}
+    body = approve(world, "three")
     res = world.client.post(f"/api/w/{world.ws.ws_id}/handoff", json=body, headers=click.headers())
     assert res.status_code == 200 and re.fullmatch(r"[0-9A-Z]{4}-[0-9A-Z]{4}", res.json()["code"])
     world.client.delete(f"/api/w/{world.ws.ws_id}/handoff/{res.json()['id']}", headers=click.headers())
@@ -275,7 +273,11 @@ def test_a_view_is_refused_when_the_hosts_record_is_not_what_was_asked_for(world
     app = world.client.app
     token = click.headers()["Authorization"].split()[1]
     op, body, epoch = app.state.clicks.ops[(token, got["request_id"])]
-    app.state.clicks.ops[(token, got["request_id"])] = (op, body.model_copy(update={"key": world.keys["two"], "gate": "plan"}), epoch)
+    app.state.clicks.ops[(token, got["request_id"])] = (
+        op,
+        body.model_copy(update={"key": world.keys["two"], "gate": "plan"}),
+        epoch,
+    )
     res = click.post("view", {"request_id": got["request_id"]})
     assert res.status_code == 409 and res.json()["error"]["reason"] == "check_failed"
     assert click.post("view", {"request_id": got["request_id"]}).status_code == 404  # cancelled and forgotten

@@ -5,11 +5,9 @@ from pydantic import TypeAdapter, ValidationError
 
 from orch_dashboard.handoff import Move, PrepareBody, expected, host_call
 
-IDEM = "a_" + "0" * 26
-
 
 def parse(body):
-    return TypeAdapter(PrepareBody).validate_python({"idem": IDEM, **body})
+    return TypeAdapter(PrepareBody).validate_python(body)
 
 
 def test_move_is_a_typed_action_with_a_closed_target():

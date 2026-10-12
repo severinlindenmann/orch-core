@@ -6,9 +6,9 @@ touches `~/.config/orch`: state, HOME and XDG_CONFIG_HOME are explicit and under
 `realhost_kit`). Skipped when the host cannot start (no pty, no unix sockets, ...). Run: `uv run pytest -m realhost`.
 """
 
+import itertools
 import json
 import os
-import secrets
 import shutil
 import time
 import uuid
@@ -28,10 +28,12 @@ pytestmark = [
 ]
 
 
-def new_idem() -> str:
-    """`a_` + 26 Crockford characters (the first 0-7): one per click."""
-    alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
-    return "a_" + secrets.choice("01234567") + "".join(secrets.choice(alphabet) for _ in range(25))
+_retries = itertools.count(1)
+
+
+def new_retry() -> int:
+    """The explicit "do it again" counter: a test that repeats an action it already did asks for a fresh intent."""
+    return next(_retries)
 
 
 @pytest.fixture(scope="module")
@@ -82,7 +84,7 @@ def api(world, token):
 
         def handoff(self, body, *, sign=True, timeout=60):
             """prepare -> `orch sign CODE` in a pty -> follow to the end. Returns (prepared, final)."""
-            body = {**body, "idem": new_idem()}
+            body = {**body, "retry": new_retry()}
             res = self.post("/handoff", body)
             assert res.status_code == 200, res.text + world.ws.log.read_text()[-3000:]
             prepared = res.json()
@@ -422,8 +424,8 @@ def test_move_is_offered_and_prepares_ticket_moved_on_the_real_host(world, api, 
     ]
     assert "move" in features and "do:move" in features
     key = world.keys["changes"]
-    # core #416 fixed RH-3: a prepare with the dashboard's idem works for move
-    res = api.post("/handoff", {"action": "move", "key": key, "to": "backlog", "idem": new_idem()})
+    # core #416 fixed RH-3: a prepare with the intent idem works for move
+    res = api.post("/handoff", {"action": "move", "key": key, "to": "backlog", "retry": new_retry()})
     assert res.status_code == 200, res.text
 
 

@@ -3,6 +3,7 @@ rules the section 0.8.6 item 7 puts on this process. The signer is faked here (a
 runs in test_realhost_click.py."""
 
 import logging
+import re
 import threading
 import time
 from pathlib import Path
@@ -44,6 +45,8 @@ class Script:
         self.refuse: dict[str, ClickError] = {}
         self.view = {"view": {"risk": RISK, "lines": [CANARY], "op": "approve"}, "view_digest": HASH}
         self.prepared = 0
+        self.intents: dict[str, dict] = {}  # the host's idem record: idem -> {binding, request id, state}
+        self.states: dict[str, str] = {}  # request id -> state at the (faked) host
         self.delay = 0.0
         self.started: list[dict] = []
         self.clients: list[Fake] = []
@@ -65,9 +68,25 @@ class Script:
             return {"core": "2.0.0.dev0", "contract": self.contract, "workspaces": [row]}
         if op == "prepare":
             time.sleep(self.delay)
+            binding = repr((args["op"], args["args"], args.get("files")))
+            known = self.intents.get(args["idem"])
+            if known is not None:  # the host honours opts.idem, and the signer forwards it
+                if known["binding"] != binding:
+                    raise ClickError("idem.conflict", "this idem was used for other arguments")
+                if self.states[known["rid"]] != "bound":
+                    raise ClickError("human.request_state", f"the request is {self.states[known['rid']]}")
+                return {
+                    "request_id": known["rid"],
+                    "expires_at": "2026-10-12T12:10:00Z",
+                    "op": args["op"],
+                    "confirm": "click",
+                }
             self.prepared += 1
+            rid = f"hr_{self.prepared:026d}"
+            self.intents[args["idem"]] = {"binding": binding, "rid": rid}
+            self.states[rid] = "bound"
             return {
-                "request_id": f"hr_{self.prepared:026d}",
+                "request_id": rid,
                 "expires_at": "2026-10-12T12:10:00Z",
                 "op": args["op"],
                 "confirm": "click",
@@ -75,8 +94,10 @@ class Script:
         if op == "view":
             return self.view
         if op == "sign":
+            self.states[args["request_id"]] = "submitted"
             return {"result": {"data": {"secret": "no"}, "key": "DEMO-0001", "seq": 7}, "duplicate": False}
         if op == "cancel":
+            self.states[args["request_id"]] = "cancelled"
             return {"state": "cancelled"}
         raise AssertionError(op)
 
@@ -144,7 +165,7 @@ def url(stub, step):
 
 
 def approve(n=1):
-    return {"action": "approve", "key": "DEMO-0001", "gate": "requirements", "idem": idem(n)}
+    return {"action": "approve", "key": "DEMO-0001", "gate": "requirements"}
 
 
 def prepare(client, token, stub, body=None):
@@ -193,20 +214,24 @@ def test_a_signer_of_another_contract_is_refused(client, token, stub, script):
     assert [c for c in script.clients[0].calls if c[0] == "prepare"] == []
 
 
-def test_prepare_chooses_the_op_here_and_binds_the_idem_to_the_session(client, token, stub, script, auth):
+def test_prepare_chooses_the_op_here_and_derives_the_idem_from_the_action(client, token, stub, script, auth):
     res = prepare(client, token, stub)
     assert res.status_code == 200, res.text
     assert res.json() == {"request_id": REQ, "expires_at": "2026-10-12T12:10:00Z", "op": "approve", "confirm": "click"}
     op, args = [c for c in script.clients[0].calls if c[0] == "prepare"][0]
     assert args["workspace_id"] == stub.ws and args["op"] == "approve"
     assert args["args"] == {"ref": "DEMO-0001", "gate": "requirements"}
-    assert args["idem"].startswith("a_") and len(args["idem"]) == 28 and args["idem"] != idem(1)
-    again = prepare(client, token, stub)  # the same click retried: the same key
-    assert [c for c in script.clients[0].calls if c[0] == "prepare"][1][1]["idem"] == args["idem"]
-    assert again.status_code == 200
+    assert re.fullmatch(r"a_[0-7][0-9A-HJKMNP-TV-Z]{25}", args["idem"])
+    # The same action again, from this tab or another session: the SAME key, so the host returns the SAME request.
     other = client.post("/auth/session", json={"code": auth.launch(43210)["code"]}, headers={"Origin": ORIGIN}).json()
-    prepare(client, other["token"], stub)
-    assert [c for c in script.clients[0].calls if c[0] == "prepare"][2][1]["idem"] != args["idem"]
+    for who in (token, other["token"]):
+        again = prepare(client, who, stub)
+        assert again.status_code == 200 and again.json()["request_id"] == REQ
+    keys = {c[1]["idem"] for c in script.clients[0].calls if c[0] == "prepare"}
+    assert keys == {args["idem"]} and script.prepared == 1
+    # An explicit "do it again" is another intent.
+    more = prepare(client, token, stub, {**approve(), "retry": 1})
+    assert more.json()["request_id"] != REQ and script.prepared == 2
 
 
 @pytest.mark.parametrize(
@@ -227,7 +252,7 @@ def test_the_browser_cannot_name_an_op_or_arguments(client, token, stub, script,
 
 def test_grant_is_not_an_action_and_stays_in_the_terminal(client, token, stub, script):
     for action in ("grant", "grant_issue", "apply"):
-        res = prepare(client, token, stub, {"action": action, "idem": idem(2)})
+        res = prepare(client, token, stub, {"action": action})
         assert res.status_code == 400
     assert [c for cl in script.clients for c in cl.calls if c[0] == "prepare"] == []
 
@@ -238,7 +263,7 @@ def test_a_member_add_sends_the_certificate_as_a_file(client, token, stub, scrip
 
     pk = base64.urlsafe_b64encode(b"\x04" + b"a" * 64).rstrip(b"=").decode()
     cert = json.dumps({"v": 1})
-    body = {"action": "member_add", "name": "Mara", "role": "member", "pk": pk, "cert": cert, "idem": idem(3)}
+    body = {"action": "member_add", "name": "Mara", "role": "member", "pk": pk, "cert": cert}
     res = prepare(client, token, stub, body)
     assert res.status_code == 200, res.text
     args = [c for c in script.clients[0].calls if c[0] == "prepare"][0][1]
@@ -286,21 +311,33 @@ def test_sign_bodies_are_checked(client, token, stub, script, body):
     assert [c for c in script.clients[0].calls if c[0] == "sign"] == []
 
 
-def test_a_request_of_another_session_looks_like_none(client, token, stub, script, auth):
+def test_a_request_belongs_to_the_person_so_any_session_of_theirs_can_use_it(client, token, stub, script, auth):
     prepare(client, token, stub)
     other = client.post("/auth/session", json={"code": auth.launch(43210)["code"]}, headers={"Origin": ORIGIN}).json()
+    res = client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(other["token"]))
+    assert res.status_code == 200
+    unknown = "hr_" + "0" * 25 + "2"
+    for step, body in (
+        ("view", {"request_id": unknown}),
+        ("sign", {"request_id": unknown, "view_digest": HASH}),
+        ("cancel", {"request_id": unknown}),
+    ):
+        # an id nobody here prepared looks like one that never existed, whoever asks
+        for who in (token, other["token"]):
+            assert client.post(url(stub, step), json=body, headers=hdr(who)).status_code == 404, step
+
+
+def test_a_different_person_never_reaches_the_request(client, token, stub, script, monkeypatch):
+    prepare(client, token, stub)
+    monkeypatch.setattr(client.app.state, "person_of", lambda ws: "p_" + "f" * 32)
     for step, body in (
         ("view", {"request_id": REQ}),
         ("sign", {"request_id": REQ, "view_digest": HASH}),
         ("cancel", {"request_id": REQ}),
+        ("state", {"request_id": REQ}),
     ):
-        res = client.post(url(stub, step), json=body, headers=hdr(other["token"]))
-        assert res.status_code == 404, step
+        assert client.post(url(stub, step), json=body, headers=hdr(token)).status_code == 404, step
     assert [c for c in script.clients[0].calls if c[0] in ("view", "sign", "cancel")] == []
-    assert (
-        client.post(url(stub, "view"), json={"request_id": "hr_" + "0" * 25 + "2"}, headers=hdr(token)).status_code
-        == 404
-    )
 
 
 def test_cancel_cancels_and_forgets(client, token, stub, script):
@@ -332,6 +369,8 @@ def test_logout_cancels_what_the_session_left_open(client, token, stub, script):
         (ClickError("human.click_refused", "short", reason="too_soon"), 409),
         (ClickError("human.click_refused", "short", reason="view_changed"), 409),
         (ClickError("human.click_refused", "no", reason="terminal_only"), 409),
+        (ClickError("human.click_refused", "signed", reason="already_signed"), 409),
+        (ClickError("human.click_refused", "corrupt", reason="record_unavailable"), 409),
     ],
 )
 def test_every_refusal_keeps_its_code_reason_and_wait(client, token, stub, script, error, http):
@@ -460,12 +499,12 @@ def test_the_status_route_is_the_card_only(client, token, stub, script):
 
 
 def comment(n):
-    return {"action": "comment", "key": "DEMO-0001", "message": "hello", "idem": idem(n)}
+    return {"action": "comment", "key": "DEMO-0001", "message": f"hello {n}"}
 
 
 def policy_body(n):
     policy = {"approvers": ["owner"], "count": 1, "not": [], "applies": "all", "independent": False}
-    return {"action": "policy_set", "gate": "requirements", "policy": policy, "idem": idem(n)}
+    return {"action": "policy_set", "gate": "requirements", "policy": policy}
 
 
 def families(stub):
@@ -508,8 +547,8 @@ def test_parity_the_same_refusals_before_anything_is_prepared(client, token, stu
     assert mutate(client, "post", f["prepare"], token, ok, **{"Sec-Fetch-Site": "cross-site"}).status_code == 403
     assert mutate(client, "post", f["prepare"], token, {**ok, "op": "grant"}).status_code == 400  # closed models
     assert mutate(client, "post", f["prepare"], token, {**ok, "key": "bad key"}).status_code == 400
-    assert mutate(client, "post", f["prepare"], token, {"action": "grant", "idem": idem(901)}).status_code == 400
-    assert mutate(client, "post", f["prepare"], token, {**ok, "idem": "not-an-idem"}).status_code == 400
+    assert mutate(client, "post", f["prepare"], token, {"action": "grant"}).status_code == 400
+    assert mutate(client, "post", f["prepare"], token, {**ok, "idem": "a_" + "0" * 26}).status_code == 400  # no key
     elsewhere = f["prepare"].replace(stub.ws, "f" * 32)
     assert mutate(client, "post", elsewhere, token, ok).status_code == 404  # an unpinned workspace
     served = mutate(client, "post", f["prepare"], token, policy_body(902))
@@ -538,31 +577,22 @@ def test_parity_a_workspace_without_the_addon_is_refused_everywhere(
         assert code(res) in ("addon.disabled", "not_found"), (name, method, res.text)
 
 
-def test_parity_other_sessions_requests_look_like_none(client, token, stub, script, family, auth):
+def test_parity_other_people_and_unknown_requests_look_like_none(client, token, stub, script, family, monkeypatch):
     name, f = family
     made = mutate(client, "post", f["prepare"], token, approve(904))
     assert made.status_code == 200, made.text
     rid = made.json().get("id") or made.json()["request_id"]
-    other = client.post("/auth/session", json={"code": auth.launch(43210)["code"]}, headers={"Origin": ORIGIN}).json()[
-        "token"
-    ]
-    for method, build in f["steps"]:
-        body = {"request_id": rid} if method == "post" else None
-        res = (
-            mutate(client, method, build(rid), other, body)
-            if method != "get"
-            else send(client, "get", build(rid), other)
-        )
-        assert res.status_code == 404, (name, method, res.text)
     unknown = "hr_" + "0" * 24 + "77"
+    monkeypatch.setattr(client.app.state, "person_of", lambda ws: "p_" + "f" * 32)  # not the person who prepared it
     for method, build in f["steps"]:
-        body = {"request_id": unknown} if method == "post" else None
-        res = (
-            mutate(client, method, build(unknown), token, body)
-            if method != "get"
-            else send(client, "get", build(unknown), token)
-        )
-        assert res.status_code == 404, (name, method, res.text)
+        for known in (rid, unknown):
+            body = {"request_id": known} if method == "post" else None
+            res = (
+                mutate(client, method, build(known), token, body)
+                if method != "get"
+                else send(client, "get", build(known), token)
+            )
+            assert res.status_code == 404, (name, method, res.text)
 
 
 def test_parity_the_per_session_quota(client, token, stub, script, family):
@@ -574,12 +604,14 @@ def test_parity_the_per_session_quota(client, token, stub, script, family):
     assert ninth.status_code == 503 and code(ninth) == "quota.host", (name, ninth.text)
 
 
-def test_parity_a_key_used_for_another_action_is_a_conflict(client, token, stub, script, family):
+def test_parity_the_same_action_is_the_same_request_and_another_is_another(client, token, stub, script, family):
     name, f = family
-    assert mutate(client, "post", f["prepare"], token, comment(940)).status_code == 200
-    other = mutate(client, "post", f["prepare"], token, {**comment(940), "message": "another"})
-    assert code(other) == "idem.conflict", (name, other.text)
-    assert mutate(client, "post", f["prepare"], token, comment(940)).status_code == 200  # the same click again
+    first = mutate(client, "post", f["prepare"], token, comment(940))
+    again = mutate(client, "post", f["prepare"], token, comment(940))  # the same click again, or another tab
+    assert first.status_code == again.status_code == 200 and first.json() == again.json()
+    other = mutate(client, "post", f["prepare"], token, comment(941))
+    rid = lambda r: r.json().get("id") or r.json()["request_id"]  # noqa: E731
+    assert other.status_code == 200 and rid(other) != rid(first)
 
 
 def test_a_view_for_another_op_than_the_one_asked_for_is_refused(client, token, stub, script):
@@ -647,9 +679,6 @@ def test_m1_a_lost_channel_during_sign_is_an_unknown_outcome_not_a_gone_helper(c
     assert client.post(url(stub, "state"), json={"request_id": REQ}, headers=hdr(token)).json()["state"] == "bound"
     host_check.pending[REQ] = "submitted"
     assert client.post(url(stub, "state"), json={"request_id": REQ}, headers=hdr(token)).json()["state"] == "submitted"
-    assert (
-        client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token)).status_code == 404
-    )  # settled: forgotten
 
 
 def test_m1_a_signer_that_really_exited_is_dropped_and_restarted(client, token, stub, script, gateway):
@@ -681,7 +710,7 @@ def test_m2_the_view_is_checked_against_the_hosts_own_record(client, token, stub
     # A settings change carries the exact event it must prepare.
     from orch_dashboard.handoff import SettingsSet
 
-    body = {"action": "settings_set", "grant_hours": 12, "idem": idem(5)}
+    body = {"action": "settings_set", "grant_hours": 12}
     assert SettingsSet(**body)
     script.view = {"view": {**script.view["view"], "op": "settings.set"}, "view_digest": HASH}
 
@@ -807,40 +836,34 @@ def other_session(client, auth):
     ]
 
 
-def test_n4_an_unsettled_action_cannot_be_prepared_again_by_click_or_handoff_and_names_the_request(
+def test_n4_after_an_uncertain_sign_the_same_action_from_any_tab_is_the_same_request(
     client, token, stub, script, auth, rich
 ):
+    """Nothing in this process blocks the repeat: the intent idem makes the host (here its faked record) answer with
+    the request that already exists, so there is never a second request to sign."""
     prepare(client, token, stub, comment(1))
     lose_sign(script)
     assert sign_lost(client, token, stub).json()["error"]["reason"] == "uncertain"
-    again = comment(2)  # the same action, a new click (new key)
     for who in (token, other_session(client, auth)):
-        res = client.post(url(stub, "prepare"), json=again, headers=hdr(who))
-        assert res.status_code == 409
-        assert res.json()["error"]["code"] == "click.unsettled" and res.json()["error"]["request_id"] == REQ
-        hand = client.post(f"/api/w/{stub.ws}/handoff", json=again, headers=hdr(who))
-        assert hand.json()["error"]["code"] == "click.unsettled" and hand.json()["error"]["request_id"] == REQ
-    # Another action is not blocked.
-    assert (
-        client.post(url(stub, "prepare"), json={**comment(3), "message": "other"}, headers=hdr(token)).status_code
-        == 200
-    )
+        res = client.post(url(stub, "prepare"), json=comment(1), headers=hdr(who))
+        assert res.status_code == 200 and res.json()["request_id"] == REQ
+    assert script.prepared == 1
+    # Another action is another request.
+    other = client.post(url(stub, "prepare"), json={**comment(3), "message": "other"}, headers=hdr(token))
+    assert other.status_code == 200 and other.json()["request_id"] != REQ
 
 
-def test_n4_the_other_session_follows_it_and_the_host_settling_lifts_the_block(
-    client, token, stub, script, auth, host_check, rich
-):
+def test_n4_the_other_session_follows_it_to_its_end(client, token, stub, script, auth, host_check, rich):
     prepare(client, token, stub, comment(1))
     lose_sign(script)
     sign_lost(client, token, stub)
     second = other_session(client, auth)
     host_check.pending[REQ] = "bound"
     got = client.post(url(stub, "state"), json={"request_id": REQ}, headers=hdr(second))
-    assert got.status_code == 200 and got.json()["state"] == "bound"  # re-attached: not `not_found`
-    assert client.post(url(stub, "prepare"), json=comment(9), headers=hdr(second)).status_code == 409
+    assert got.status_code == 200 and got.json()["state"] == "bound"  # the person's request, not another tab's
     host_check.pending[REQ] = "expired"
     assert client.post(url(stub, "state"), json={"request_id": REQ}, headers=hdr(second)).json()["state"] == "expired"
-    assert client.post(url(stub, "prepare"), json=comment(10), headers=hdr(second)).status_code == 200
+    assert not client.app.state.handoffs.any_unsettled()  # the host said so: nothing is unsettled any more
 
 
 def test_n4_logout_does_not_cancel_an_unsettled_request(client, token, stub, script, host_check, rich):
@@ -948,18 +971,10 @@ def test_n11_a_hung_signer_is_replaced_only_when_nothing_is_unsettled(script, st
     assert first.closed and len(script.started) == 2 and signer.restarts == 1
 
 
-def test_the_unsettled_error_status_is_a_409_with_the_request_id_only(client, token, stub, script, rich):
-    prepare(client, token, stub, comment(1))
-    lose_sign(script)
-    sign_lost(client, token, stub)
-    err = client.post(url(stub, "prepare"), json=comment(2), headers=hdr(token)).json()["error"]
-    assert set(err) == {"code", "message", "retryable", "request_id"}
-
-
 # -- Opus re-check 2 (N12-N17): two tabs, in-flight signs, adoption, quota, recently signed ----------------------------
 
 
-def test_n12_two_tabs_a_request_prepared_during_an_inflight_sign_cannot_be_signed_after_it_turns_unsettled(
+def test_n12_two_tabs_one_request_and_a_sign_in_flight_is_never_cancelled_or_replaced(
     client, token, stub, script, auth, rich, host_check
 ):
     prepare(client, token, stub, comment(1))
@@ -979,35 +994,22 @@ def test_n12_two_tabs_a_request_prepared_during_an_inflight_sign_cannot_be_signe
     ta = threading.Thread(target=lambda: out.__setitem__("a", sign_lost(client, token, stub)))
     ta.start()
     assert entered.wait(5)
-    # (a) the sign in flight already counts as unsettled: the same action cannot be prepared (click or hand-off)
-    during = client.post(url(stub, "prepare"), json=comment(2), headers=hdr(second))
-    assert during.status_code == 409 and during.json()["error"] == {
-        "code": "click.unsettled",
-        "message": during.json()["error"]["message"],
-        "retryable": False,
-        "request_id": REQ,
-    }
-    hand = client.post(f"/api/w/{stub.ws}/handoff", json=comment(3), headers=hdr(second))
-    assert hand.json()["error"]["code"] == "click.unsettled"
+    # The second tab prepares the same action during the sign: the same request (not a new one), and while the
+    # signature is in flight neither tab can cancel it from under the signer.
+    during = client.post(url(stub, "prepare"), json=comment(1), headers=hdr(second))
+    assert during.status_code == 200 and during.json()["request_id"] == REQ and script.prepared == 1
+    refused = client.post(url(stub, "cancel"), json={"request_id": REQ}, headers=hdr(second))
+    assert refused.status_code == 409 and refused.json()["error"]["reason"] == "check_failed"
     go.set()
     ta.join(10)
     assert out["a"].json()["error"]["reason"] == "uncertain"
-    # (b) a request of the same action prepared EARLIER (tab 2 raced ahead) can neither be viewed nor signed
-    rid_b = f"hr_{2:026d}"
-    script.clients[0].handler = script.handler
-    app = client.app
-    app.state.clicks.add(second, stub.ws, rid_b, "log", app.state.clicks.body_of(token, REQ), 0)
-    for step, body in (("view", {"request_id": rid_b}), ("sign", {"request_id": rid_b, "view_digest": HASH})):
-        res = client.post(url(stub, step), json=body, headers=hdr(second))
-        assert res.status_code == 409 and res.json()["error"]["code"] == "click.unsettled", step
-        assert res.json()["error"]["request_id"] == REQ  # the UI re-attaches to the first one
-    assert [c for c in script.clients[0].calls if c[0] == "sign" and c[1]["request_id"] == rid_b] == []
+    assert [c for c in script.clients[0].calls if c[0] == "cancel"] == [] and host_check.cancelled == []
 
 
-def test_n12_two_uncertain_signs_of_one_action_do_not_overwrite_each_other(client, token, stub, script, auth, rich):
+def test_n12_unsettled_requests_are_tracked_one_by_one(client, token, stub, script, auth, rich):
     handoffs = client.app.state.handoffs
-    handoffs.mark_unsettled(stub.ws, "b" * 64, "hr_a", handoffs.clock() + 100)
-    handoffs.mark_unsettled(stub.ws, "b" * 64, "hr_b", handoffs.clock() + 100)
+    handoffs.mark_unsettled(stub.ws, "hr_a", handoffs.clock() + 100)
+    handoffs.mark_unsettled(stub.ws, "hr_b", handoffs.clock() + 100)
     assert handoffs.is_unsettled("hr_a") == stub.ws and handoffs.is_unsettled("hr_b") == stub.ws
     handoffs.settled("hr_b")
     assert handoffs.is_unsettled("hr_a") == stub.ws and handoffs.is_unsettled("hr_b") is None
@@ -1024,20 +1026,19 @@ def test_n12_a_definite_refusal_clears_the_in_flight_mark_and_success_clears_it_
     assert not handoffs.any_unsettled()
 
 
-def test_n13_state_reads_a_tracked_request_but_grants_no_ownership(client, token, stub, script, auth, host_check, rich):
+def test_n13_a_second_session_of_the_person_may_view_sign_and_poll_the_same_request(
+    client, token, stub, script, auth, host_check, rich
+):
     prepare(client, token, stub, comment(1))
-    lose_sign(script)
-    sign_lost(client, token, stub)
+    script.view = {"view": {**script.view["view"], "op": "log"}, "view_digest": HASH}
     second = other_session(client, auth)
     host_check.pending[REQ] = "bound"
     assert client.post(url(stub, "state"), json={"request_id": REQ}, headers=hdr(second)).status_code == 200
-    for step, body in (
-        ("view", {"request_id": REQ}),
-        ("sign", {"request_id": REQ, "view_digest": HASH}),
-        ("cancel", {"request_id": REQ}),
-    ):
-        assert client.post(url(stub, step), json=body, headers=hdr(second)).status_code == 404, step
-    assert host_check.cancelled == [] and [c for c in script.clients[0].calls if c[0] == "cancel"] == []
+    assert client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(second)).status_code == 200
+    signed = client.post(url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH}, headers=hdr(second))
+    assert signed.status_code == 200 and signed.json()["state"] == "submitted"
+    # The first tab's sign of the very same request: one signature at the signer/host, never a second request.
+    assert script.prepared == 1
 
 
 def test_n14_another_session_settling_it_frees_the_preparing_sessions_slot(
@@ -1066,34 +1067,73 @@ def test_n14_another_session_settling_it_frees_the_preparing_sessions_slot(
     )
 
 
-def test_n15_after_a_successful_sign_a_re_prepare_of_the_same_action_re_attaches_and_reads_signed(
+def test_n15_after_a_landed_signature_the_same_action_is_already_done_and_only_an_explicit_click_repeats_it(
     client, token, stub, script, host_check, rich
 ):
     prepare(client, token, stub, comment(1))
     assert sign_lost(client, token, stub).status_code == 200
-    again = client.post(url(stub, "prepare"), json=comment(2), headers=hdr(token))
-    assert (
-        again.status_code == 409
-        and again.json()["error"]["code"] == "click.unsettled"
-        and again.json()["error"]["request_id"] == REQ
-    )
-    host_check.pending[REQ] = "submitted"
+    again = client.post(url(stub, "prepare"), json=comment(1), headers=hdr(token))
+    err = again.json()["error"]
+    assert again.status_code == 409 and err["code"] == "intent.done" and err["state"] == "submitted"
+    assert script.prepared == 1  # no second request was made
+    # "Do it again" is an explicit click and a new intent.
+    repeat = client.post(url(stub, "prepare"), json={**comment(1), "retry": 1}, headers=hdr(token))
+    assert repeat.status_code == 200 and repeat.json()["request_id"] != REQ and script.prepared == 2
+
+
+def test_n15_a_cancelled_or_expired_attempt_is_ended_and_start_again_is_explicit(client, token, stub, script, rich):
+    prepare(client, token, stub, comment(1))
+    assert client.post(url(stub, "cancel"), json={"request_id": REQ}, headers=hdr(token)).status_code == 200
+    again = client.post(url(stub, "prepare"), json=comment(1), headers=hdr(token))
+    err = again.json()["error"]
+    assert again.status_code == 409 and err["code"] == "intent.ended" and err["state"] == "cancelled"
+    fresh = client.post(url(stub, "prepare"), json={**comment(1), "retry": 1}, headers=hdr(token))
+    assert fresh.status_code == 200 and fresh.json()["request_id"] != REQ
+
+
+def test_n15_an_idem_conflict_from_the_signer_is_an_open_attempt_not_a_second_request(
+    client, token, stub, script, rich
+):
+    script.refuse["prepare"] = ClickError("idem.conflict", "bound to another session")
+    res = client.post(url(stub, "prepare"), json=comment(1), headers=hdr(token))
+    err = res.json()["error"]
+    assert res.status_code == 409 and err["code"] == "intent.open" and "already open" in err["message"]
+    assert len([c for c in script.clients[0].calls if c[0] == "prepare"]) == 1  # not retried under another key
+    assert script.prepared == 0
+
+
+def test_a_repeated_sign_with_the_same_view_is_the_recorded_result_not_a_new_signature(
+    client, token, stub, script, rich
+):
+    prepare(client, token, stub, comment(1))
+    first = sign_lost(client, token, stub)
+    assert first.status_code == 200 and first.json()["duplicate"] is False
+    orig = script.handler
+
+    def recorded(op, args):
+        if op == "sign":
+            return {"result": {"key": "DEMO-0001", "seq": 7}, "duplicate": True}
+        return orig(op, args)
+
+    script.clients[0].handler = recorded
+    again = sign_lost(client, token, stub)
+    assert again.status_code == 200 and again.json() == {
+        "state": "submitted",
+        "duplicate": True,
+        "key": "DEMO-0001",
+        "seq": 7,
+    }
+
+
+def test_already_signed_and_an_unreadable_record_never_cancel_or_forget_the_request(
+    client, token, stub, script, host_check, rich
+):
+    prepare(client, token, stub, comment(1))
+    for reason in ("already_signed", "record_unavailable"):
+        script.refuse["sign"] = ClickError("human.click_refused", "x", reason=reason)
+        res = sign_lost(client, token, stub)
+        assert res.status_code == 409 and res.json()["error"]["reason"] == reason
+    assert host_check.cancelled == [] and [c for c in script.clients[0].calls if c[0] == "cancel"] == []
+    script.refuse.clear()
+    host_check.pending[REQ] = "submitted"  # re-attach to its state
     assert client.post(url(stub, "state"), json={"request_id": REQ}, headers=hdr(token)).json()["state"] == "submitted"
-    # Read as Signed, the record is gone: the same action may be prepared again.
-    assert client.post(url(stub, "prepare"), json=comment(3), headers=hdr(token)).status_code == 200
-
-
-def test_n15_the_recently_signed_record_ends_by_itself(client, token, stub, script, rich):
-    prepare(client, token, stub, comment(1))
-    sign_lost(client, token, stub)
-    handoffs = client.app.state.handoffs
-    handoffs.clock = lambda c=handoffs.clock: c() + 400
-    assert client.post(url(stub, "prepare"), json=comment(2), headers=hdr(token)).status_code == 200
-
-
-def test_n17_the_handoff_names_the_unsettled_request_so_the_ui_re_attaches(client, token, stub, script, rich):
-    prepare(client, token, stub, comment(1))
-    lose_sign(script)
-    sign_lost(client, token, stub)
-    err = client.post(f"/api/w/{stub.ws}/handoff", json=comment(2), headers=hdr(token)).json()["error"]
-    assert err["code"] == "click.unsettled" and err["request_id"] == REQ

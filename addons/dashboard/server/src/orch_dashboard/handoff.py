@@ -5,16 +5,20 @@ trusted place (`orch sign CODE` in a terminal, later the Touch ID helper), which
 it. The dashboard only asks the host to prepare the request, shows the host's `material`, and follows the outcome.
 
 Every route has a typed model that forbids extras; the host op and its arguments are fixed per action. The browser
-never names an op, a path or a raw event. `opts.idem` comes from a client-generated key (one per click, reused on
-retry); a retry with the same key answers from this process's record instead of preparing a second request.
+never names an op, a path or a raw event.
+
+**One action intent -> at most one request.** `opts.idem` is derived here from the action itself (`intent.py`): the
+person, the workspace, the op and arguments exactly as sent to the host, and the state of the ticket the action is based
+on. The browser sends no key. Two tabs, a reopened dialog, a lost answer or a new login all send the same idem with the
+same arguments, and the host (contract 0.7, section 0.8.1) answers each with the SAME request, or its terminal state.
+This process remembers nothing that the invariant depends on.
 """
 
 import base64
-import hashlib
 import json
 import threading
 import time
-from collections import OrderedDict
+from dataclasses import dataclass
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, Request
@@ -24,10 +28,10 @@ from . import adapters
 from .errors import HostError, fail
 from .gateway import Gateway
 from .hostlink import _pairs, _valid
+from .intent import MAX_EPOCH, gate_base, intent_idem, ticket_revision
 from .reads import Key, workspace
 from .text import clean as no_hidden
 
-Idem = Annotated[str, StringConstraints(pattern=r"^a_[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
 RequestId = Annotated[str, StringConstraints(pattern=adapters.handoff.REQUEST_ID.pattern)]
 Text = Annotated[str, StringConstraints(min_length=1, max_length=4096)]
 Word = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")]
@@ -35,29 +39,17 @@ Label = Annotated[str, StringConstraints(pattern=r"^[a-z0-9][a-z0-9._-]{0,31}$")
 Question = Annotated[str, StringConstraints(pattern=r"^Q[1-9][0-9]{0,5}$")]
 Gate = Literal["requirements", "plan", "code"]
 
-CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
-
-
-def host_idem(token: str, ws: str, idem: str, kind: str = "idem") -> str:
-    """The key the host sees: the browser's key bound to this session and workspace, in the host's shape. Another
-    session sending the same key gets another request (it is never handed this session's), and a retry from this
-    session, with the same key, gets the same one back."""
-    digest = hashlib.sha256(f"orch-dashboard/{kind}\0{token}\0{ws}\0{idem}".encode()).digest()
-    n = int.from_bytes(digest[:17], "big")
-    chars = [CROCKFORD[(n >> (5 * i)) & 31] for i in range(26)]
-    chars[0] = CROCKFORD[(n >> 125) & 7]
-    return "a_" + "".join(chars)
-
-
 HUMAN_OPS = ("human.prepare", "human.get", "human.pending", "human.cancel")  # never human.submit
 PER_SESSION = 8  # design section 3: pending sign requests per session
 TTL = 600
-REMEMBERED = 256
 
 
 class Action(BaseModel):
+    """Every typed action. `retry` is the explicit "do it again" counter (0 normally): only a click on "Do it again" or
+    "Start again" advances it, and it is the only thing besides the action itself that changes its intent."""
+
     model_config = ConfigDict(extra="forbid", strict=True)
-    idem: Idem
+    retry: Annotated[int, Field(ge=0, le=9999)] = 0
 
 
 class Approve(Action):
@@ -447,129 +439,121 @@ def expected(action: Action):
     return None
 
 
+@dataclass(frozen=True)
+class Plan:
+    """What one action means to the host: the op and arguments (the only thing hashed), the files, and the intent."""
+
+    op: str
+    args: dict
+    files: dict | None
+    base: object
+    person: str
+
+    def idem(self, ws: str, retry: int = 0, epoch: int = 0) -> str:
+        return intent_idem(self.person, ws, self.op, self.args, self.base, self.files, retry, epoch)
+
+
+GATE_OF = {Approve: lambda a: a.gate, RequestChanges: lambda a: a.gate, Verdict: lambda a: "verify"}
+
+
+def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
+    """The op, arguments, files and base of an action, with the state it is based on read right now: the ticket
+    (`ticket.get`) for an action about one, the member's role for a role change; none for the rest."""
+    link = gateway.link(ws)
+    key = getattr(body, "key", None)
+    data = gateway.call(ws, "ticket.get", {"ref": key}) if key is not None else None
+    labels = list(data["doc"].get("labels", [])) if isinstance(body, AddLabel) and data else None
+    op, args = host_call(body, labels)  # the only place an op name is chosen
+    if op in WORKSPACE_OPS and link.welcome.get("ops", {}).get(op) != 1:
+        # policy.set and settings.set wait for F1 events on a real host (R5): never offered, never guessed.
+        raise fail("op.unsupported", f"This host does not serve {op} yet.", exit=1)
+    base = None
+    if data is not None:
+        gate = GATE_OF.get(type(body))
+        base = gate_base(data, gate(body)) if gate else ticket_revision(data)
+    elif isinstance(body, MemberRole | MemberRemove):
+        members = gateway.call(ws, "member.list").get("members", [])
+        base = next((m.get("role") for m in members if m.get("person") == body.person), None)
+    return Plan(op, args, host_files(body), base, link.welcome["peer"]["person"])
+
+
+def send_prepare(plan_: Plan, ws: str, retry: int, call):
+    """`call(idem)` with the intent's idem. The host forgets an idem after its retention (`idem.expired`): the intent is
+    then fresh, and the next epoch is as deterministic as the first, so every tab converges on the same new request.
+
+    `idem.conflict` is NOT retried with another idem: it means the host already holds an attempt for this intent that
+    is bound to something else (another path, the signer, or a session from before a restart), and a second request
+    is exactly what the invariant forbids. It is reported as `intent.open` and nothing is prepared."""
+    for epoch in range(MAX_EPOCH):
+        try:
+            return call(plan_.idem(ws, retry, epoch))
+        except HostError as exc:
+            code = exc.error.get("code")
+            if code == "idem.conflict":
+                raise HostError(
+                    {
+                        "code": "intent.open",
+                        "message": "An attempt for this action is already open (in the terminal, or from before this "
+                        "dashboard restarted). It settles or expires by itself; nothing new was prepared.",
+                        "retryable": False,
+                    },
+                    exit=5,
+                ) from None
+            if code != "idem.expired":
+                raise
+    raise fail("idem.expired", "The host no longer keeps earlier attempts of this action. Try again later.", exit=5)
+
+
 class Handoffs:
-    """What this process remembers, **per session token**: the requests it prepared (kept to their expiry so a late
-    poll still works), the ones still open (the quota), and the idem records of its own clicks. A lost prepare answer
-    needs no bookkeeping here: the host honours `opts.idem`, so the same click retried returns the same request (host
-    contract 0.7), never a second one."""
+    """What this process remembers. **None of it is what holds "one intent, one request"**: the host's idem record does
+    (`intent.py`). This is UI convenience and a quota:
+
+    - `owned`: the request ids this dashboard prepared for a (person, workspace), until they expire. Any session of that
+      person may view, poll and cancel them (they are the person's, not the tab's); an id nobody here prepared looks
+      like one that never existed. The host's principal check and the signer's own record are the real gates.
+    - `active` / `until` / `pending`: the per-session quota of open requests. A request two tabs share is one entry in
+      each session's set, so it is never counted twice by a session.
+    - `unsettled`: a signature whose outcome is unknown (or still in flight). Only so that nothing here cancels or
+      replaces the signer under it; a second signature is refused by the host/signer, not by this record.
+    """
 
     def __init__(self, clock=time.monotonic):
         self.clock = clock
         self.lock = threading.Lock()
-        self.owned: dict[str, dict[str, tuple[str, float]]] = {}  # token -> request id -> (workspace, deadline)
-        self.active: dict[str, set[str]] = {}  # open requests per session: hand-off AND click requests, one quota
+        self.owned: dict[tuple[str, str], dict[str, float]] = {}  # (person, workspace) -> request id -> deadline
+        self.active: dict[str, dict[str, tuple[str, str]]] = {}  # token -> open request id -> (workspace, kind)
         self.until: dict[tuple[str, str], float] = {}  # click requests in `active`: their own deadline
-        # A signature whose outcome is unknown: (workspace, action binding) -> request. Until the host says the request
-        # is terminal (or it has expired), nothing of this person may prepare the same action again, from any session.
-        self.unsettled: dict[tuple[str, str], dict[str, float]] = {}
-        self.recent: dict[tuple[str, str], tuple[str, float]] = {}
         self.pending: dict[str, int] = {}  # slots reserved by a prepare that has not answered yet
-        self.by_idem: OrderedDict[tuple[str, str, str], tuple[str, dict | None]] = OrderedDict()  # None: in flight
+        self.unsettled: dict[str, tuple[str, float]] = {}  # request id -> (workspace, until)
 
-    def binding(self, action: Action) -> str:
-        body = action.model_dump(exclude={"idem"}, exclude_none=True)
-        return hashlib.sha256(adapters.handoff.cj(body)).hexdigest()
+    # -- ownership: per person and workspace -----------------------------------------------------------
+    def own(self, person: str, ws: str, request_id: str, ttl: float) -> None:
+        with self.lock:
+            mine = self.owned.setdefault((person, ws), {})
+            mine[request_id] = self.clock() + ttl
+            for rid in [r for r, d in mine.items() if d <= self.clock()]:
+                del mine[rid]
 
-    def prune(self, token: str):  # under the lock
+    def owns(self, person: str, ws: str, request_id: str) -> bool:
+        with self.lock:
+            return self.owned.get((person, ws), {}).get(request_id, 0) > self.clock()
+
+    def disown(self, request_id: str) -> None:
+        with self.lock:
+            for mine in self.owned.values():
+                mine.pop(request_id, None)
+
+    # -- the quota: per session ------------------------------------------------------------------------
+    def prune(self, token: str) -> dict[str, tuple[str, str]]:  # under the lock
         now = self.clock()
-        mine = self.owned.setdefault(token, {})
-        for rid in [rid for rid, (_, deadline) in mine.items() if deadline <= now]:
-            del mine[rid]
-            self.active.get(token, set()).discard(rid)
-        for (tok, rid), deadline in list(self.until.items()):
-            if tok == token and deadline <= now:
-                del self.until[(tok, rid)]
-                self.active.get(token, set()).discard(rid)
-        return mine
-
-    # -- signatures whose outcome is unknown (or still in flight), and ones just signed ------------------------------
-    # Per (workspace, action binding): the set of request ids that may be mid-submit or unsettled (a set, so a second
-    # request never overwrites the first), and the request most recently signed (so a lost browser answer can be
-    # re-attached to "Signed" within RECENT seconds). Memory only: a dashboard restart loses it, the host's request
-    # state stays authoritative (HANDOVER "Click-to-sign").
-
-    def mark_unsettled(self, ws: str, binding: str, request_id: str, until: float) -> None:
-        with self.lock:
-            self.unsettled.setdefault((ws, binding), {})[request_id] = until
-
-    def _live(self, key, exclude: str | None = None) -> str | None:  # under the lock
-        now = self.clock()
-        live = {r: u for r, u in self.unsettled.get(key, {}).items() if u > now}
-        if live:
-            self.unsettled[key] = live
-        else:
-            self.unsettled.pop(key, None)
-        for rid in live:
-            if rid != exclude:
-                return rid
-        recent = self.recent.get(key)
-        if recent and recent[1] > now:
-            return recent[0] if recent[0] != exclude else None
-        self.recent.pop(key, None)
-        return None
-
-    def unsettled_for(self, ws: str, binding: str, exclude: str | None = None) -> str | None:
-        """Another request of this action that is in flight, unsettled or just signed (never `exclude` itself)."""
-        with self.lock:
-            return self._live((ws, binding), exclude)
-
-    def is_unsettled(self, request_id: str) -> str | None:
-        """The workspace of a tracked request (in flight, unsettled or just signed), else None."""
-        with self.lock:
-            now = self.clock()
-            for key in list(self.unsettled):
-                self._live(key)
-                if self.unsettled.get(key, {}).get(request_id, 0) > now:
-                    return key[0]
-            for key, (rid, until) in list(self.recent.items()):
-                if rid == request_id and until > now:
-                    return key[0]
-            return None
-
-    def any_unsettled(self) -> bool:
-        """Is a signature in flight or its outcome unknown? (Not: just signed.)"""
-        with self.lock:
-            now = self.clock()
-            return any(u > now for rids in self.unsettled.values() for u in rids.values())
-
-    def settled(self, request_id: str) -> None:
-        with self.lock:
-            for key, rids in list(self.unsettled.items()):
-                rids.pop(request_id, None)
-                if not rids:
-                    del self.unsettled[key]
-            for key, (rid, _) in list(self.recent.items()):
-                if rid == request_id:
-                    del self.recent[key]
-
-    def signed(self, ws: str, binding: str, request_id: str, until: float) -> None:
-        with self.lock:
-            self.recent[(ws, binding)] = (request_id, until)
-
-    def settle_all(self, request_id: str) -> None:
-        """The request ended: every session's quota slot for it is freed, not only the caller's."""
-        with self.lock:
-            for tok, active in self.active.items():
-                active.discard(request_id)
-            for key in [k for k in self.until if k[1] == request_id]:
-                del self.until[key]
-
-    def refuse_if_unsettled(self, ws: str, binding: str, exclude: str | None = None) -> None:
-        rid = self.unsettled_for(ws, binding, exclude)
-        if rid:
-            raise HostError(
-                {
-                    "code": "click.unsettled",
-                    "message": "The last signature of this action has not settled yet. It settles by itself.",
-                    "retryable": False,
-                    "request_id": rid,
-                },
-                exit=9,
-            )
+        open_ = self.active.setdefault(token, {})
+        for rid in [r for r in open_ if self.until.get((token, r), float("inf")) <= now]:
+            open_.pop(rid, None)
+            self.until.pop((token, rid), None)
+        return open_
 
     def reserve(self, token: str):  # under the lock: check AND take a slot in one step
-        self.prune(token)
-        if len(self.active.setdefault(token, set())) + self.pending.get(token, 0) >= PER_SESSION:
+        if len(self.prune(token)) + self.pending.get(token, 0) >= PER_SESSION:
             raise fail("quota.host", "Too many sign requests are open. Cancel one first.", exit=9)
         self.pending[token] = self.pending.get(token, 0) + 1
 
@@ -577,28 +561,59 @@ class Handoffs:
         with self.lock:
             self.pending[token] = max(0, self.pending.get(token, 0) - 1)
 
-    def commit(self, token: str, request_id: str, until: float | None = None):
-        """The reserved slot becomes the open request `request_id`. A click request carries its own deadline."""
+    def commit(self, token: str, ws: str, request_id: str, until: float | None = None, kind: str = "handoff"):
+        """The reserved slot becomes the open request `request_id` (one this session holds already adds no slot)."""
         with self.lock:
             self.pending[token] = max(0, self.pending.get(token, 0) - 1)
-            self.active.setdefault(token, set()).add(request_id)
+            self.active.setdefault(token, {})[request_id] = (ws, kind)
             if until is not None:
                 self.until[(token, request_id)] = until
 
-    def known_ids(self, token: str) -> set[str]:
-        with self.lock:
-            return set(self.prune(token))
-
-    def owner_of(self, token: str, request_id: str) -> str | None:
-        """The workspace a request was prepared in, if this session prepared it."""
-        with self.lock:
-            hit = self.prune(token).get(request_id)
-            return hit[0] if hit else None
-
     def settle(self, token: str, request_id: str):
         with self.lock:
-            self.active.get(token, set()).discard(request_id)
+            self.active.get(token, {}).pop(request_id, None)
             self.until.pop((token, request_id), None)
+
+    def settle_all(self, request_id: str) -> None:
+        """The request ended: every session's quota slot for it is freed, not only the caller's."""
+        with self.lock:
+            for open_ in self.active.values():
+                open_.pop(request_id, None)
+            for key in [k for k in self.until if k[1] == request_id]:
+                del self.until[key]
+
+    def held(self, token: str, kind: str) -> list[tuple[str, str]]:
+        """(request id, workspace) of the requests of one kind this session holds open."""
+        with self.lock:
+            return [(rid, ws) for rid, (ws, k) in self.prune(token).items() if k == kind]
+
+    def shared(self, token: str, request_id: str) -> bool:
+        """Does another session of the person hold this request open too? (Then this one's logout leaves it be.)"""
+        with self.lock:
+            return any(rid == request_id for tok, open_ in self.active.items() if tok != token for rid in open_)
+
+    # -- a signature whose outcome is unknown, or in flight ------------------------------------------
+    def mark_unsettled(self, ws: str, request_id: str, until: float) -> None:
+        with self.lock:
+            self.unsettled[request_id] = (ws, until)
+
+    def is_unsettled(self, request_id: str) -> str | None:
+        """The workspace of a request whose signature may be at the host, else None."""
+        with self.lock:
+            hit = self.unsettled.get(request_id)
+            if hit and hit[1] > self.clock():
+                return hit[0]
+            self.unsettled.pop(request_id, None)
+            return None
+
+    def any_unsettled(self) -> bool:
+        with self.lock:
+            now = self.clock()
+            return any(until > now for _, until in self.unsettled.values())
+
+    def settled(self, request_id: str) -> None:
+        with self.lock:
+            self.unsettled.pop(request_id, None)
 
 
 def register(app: FastAPI, gateway: Gateway):
@@ -614,90 +629,73 @@ def register(app: FastAPI, gateway: Gateway):
 
     app.state.human = human
 
+    def person_of(ws: str) -> str:
+        return gateway.link(ws).welcome["peer"]["person"]
+
+    app.state.person_of = person_of
+
     @app.post("/api/w/{ws}/handoff")
     def prepare(body: PrepareBody, request: Request, ws: str = Depends(workspace)):
-        token, binding = request.state.token, handoffs.binding(body)
-        handoffs.refuse_if_unsettled(ws, binding)  # an unknown outcome is never answered with a second request
-        slot = (token, ws, body.idem)
+        token = request.state.token
+        gateway.enabled(ws)
         with handoffs.lock:
-            known = handoffs.by_idem.get(slot)
-            if known:
-                if known[0] != binding:
-                    raise fail("idem.conflict", "This key was used for another action.", exit=5)
-                if known[1] is None:
-                    raise fail("lock.busy", "This request is still being prepared.", exit=9)
-                return known[1]
             handoffs.reserve(token)  # checks and takes a slot atomically: concurrent prepares cannot overshoot
-            handoffs.by_idem[slot] = (binding, None)  # reserved: a concurrent twin is refused, not prepared again
-            while len(handoffs.by_idem) > REMEMBERED:
-                handoffs.by_idem.popitem(last=False)
         try:
-            labels = (
-                list(gateway.call(ws, "ticket.get", {"ref": body.key})["doc"].get("labels", []))
-                if isinstance(body, AddLabel)
-                else None
-            )
-            op, args = host_call(body, labels)
-            key = getattr(body, "key", None)
-            if op in WORKSPACE_OPS and gateway.link(ws).welcome.get("ops", {}).get(op) != 1:
-                # policy.set and settings.set wait for F1 events on a real host (R5): never offered, never guessed.
-                raise fail("op.unsupported", f"This host does not serve {op} yet.", exit=1)
-            # The host honours `opts.idem` (contract 0.7): after a lost answer the same click, with the same key,
-            # returns the SAME request in its current state. It is provably ours: the host binds the key to the
-            # principal and the arguments. A key is used for one prepare only (the submit uses its own).
-            prepared = human(
-                ws,
-                "human.prepare",
-                {"op": op, "args": args, "handoff": True},
-                idem=host_idem(token, ws, body.idem),
-                files=host_files(body),
-            )
+            planned = plan(gateway, ws, body)
+            op = planned.op
+
+            def call(idem: str):
+                return human(
+                    ws,
+                    "human.prepare",
+                    {"op": op, "args": planned.args, "handoff": True},
+                    idem=idem,
+                    files=planned.files,
+                )
+
+            prepared = send_prepare(planned, ws, body.retry, call)
             response = adapters.handoff.request(
-                prepared, ws, expect_op=op, expect_key=key, expect_events=expected(body)
+                prepared, ws, expect_op=op, expect_key=getattr(body, "key", None), expect_events=expected(body)
             )
         except BaseException:
             handoffs.release(token)
-            with handoffs.lock:
-                handoffs.by_idem.pop(slot, None)  # a retry with the same key gets the same request back
             raise
-        with handoffs.lock:
-            handoffs.by_idem[slot] = (binding, response)
-            handoffs.prune(token)[response["id"]] = (ws, handoffs.clock() + TTL)
+        handoffs.own(planned.person, ws, response["id"], TTL)
         if response["state"] in ("prepared", "bound"):
-            handoffs.commit(token, response["id"])
+            handoffs.commit(token, ws, response["id"], until=handoffs.clock() + TTL)
         else:
             handoffs.release(token)
         return response
 
-    def owned_ws(request: Request, request_id: str, ws: str) -> str:
-        if handoffs.owner_of(request.state.token, request_id) != ws:
-            raise fail("not_found", exit=2)  # another session's request, or one that never existed, looks the same
+    def owned_ws(ws: str, request_id: str) -> str:
+        if not handoffs.owns(app.state.person_of(ws), ws, request_id):
+            raise fail("not_found", exit=2)  # a request nobody here prepared looks like one that never existed
         return ws
 
     @app.get("/api/w/{ws}/handoff/{request_id}")
     def state(request_id: RequestId, request: Request, ws: str = Depends(workspace)):
-        owned_ws(request, request_id, ws)
+        owned_ws(ws, request_id)
         rows = human(ws, "human.pending", {"request_id": request_id})["requests"]
         if len(rows) != 1 or rows[0]["id"] != request_id:
             raise fail("not_found", exit=2)
         if rows[0]["state"] not in ("prepared", "bound"):
-            handoffs.settle(request.state.token, request_id)  # it no longer counts against the session's open requests
+            handoffs.settle_all(request_id)  # it no longer counts against any session's open requests
         return adapters.handoff.state(rows[0])
 
     @app.delete("/api/w/{ws}/handoff/{request_id}")
     def cancel(request_id: RequestId, request: Request, ws: str = Depends(workspace)):
-        owned_ws(request, request_id, ws)
+        owned_ws(ws, request_id)
         done = human(ws, "human.cancel", {"request_id": request_id})
-        handoffs.settle(request.state.token, request_id)
+        handoffs.settle_all(request_id)
         return {"id": request_id, "state": done["state"]}
 
     def cancel_session(token: str):
-        """Logout: every request this session still holds open is cancelled, each on its own (best effort)."""
-        with handoffs.lock:
-            mine = [
-                (rid, ws) for rid, (ws, _) in handoffs.prune(token).items() if rid in handoffs.active.get(token, set())
-            ]
-        for rid, ws in mine:
+        """Logout: every request this session still holds open is cancelled, each on its own (best effort), except one
+        another session of the person holds too."""
+        for rid, ws in handoffs.held(token, "handoff"):
+            if handoffs.shared(token, rid):
+                handoffs.settle(token, rid)
+                continue
             try:
                 human(ws, "human.cancel", {"request_id": rid})
             except Exception:  # noqa: BLE001 - one failed cancel must not stop the rest, nor the logout

@@ -1,0 +1,67 @@
+"""The action intent: the one key that makes "one action -> at most one request -> at most one signature" hold.
+
+The host honours `opts.idem` on `human.prepare` (orch-v2-host section 0.7, 0.8.1): the same principal, the same idem
+and the same arguments return the SAME request, in its current state, and its terminal state for 24 hours after it was
+prepared. So the idem must be a function of what the person is doing, never of the browser tab, the session or the
+click:
+
+    idem = "a_" + crockford(sha256(cj({person, workspace_id, op, args, base})))   # 128 bits: 3 + 25 x 5
+
+`op` and `args` are exactly what this server sends to the host (built by the typed models' `host_call`; the browser's
+body is never hashed), `person` is the workspace's own person, and `base` is the state the action is based on: the
+gate's generation and hash for a gate action, the ticket's revision for another ticket action, the member's current
+role for a role change, else none. When the base moves, the action is a new one (legitimately another request).
+
+`retry` (an explicit click on "Do it again" or "Start again") and `epoch` (the host forgot an idem after its retention:
+`idem.expired`) are folded in only when they are not zero, so the common intent hashes exactly as above.
+
+This module has no state. Nothing here, nothing in this process's memory, is what holds the invariant: the host's idem
+record is.
+"""
+
+import hashlib
+
+from . import adapters
+
+CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+IDEM_SHAPE = r"^a_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+MAX_EPOCH = 8
+
+
+def intent_idem(
+    person: str,
+    ws: str,
+    op: str,
+    args: dict,
+    base,
+    files: dict | None = None,
+    retry: int = 0,
+    epoch: int = 0,
+) -> str:
+    """The host idem of one action intent: `a_` + one char [0-7] (3 bits) + 25 Crockford chars (5 bits each)."""
+    intent: dict = {"person": person, "workspace_id": ws, "op": op, "args": args, "base": base}
+    if files:
+        intent["files"] = files  # the bytes of a certificate are part of what is asked for
+    if retry:
+        intent["retry"] = retry
+    if epoch:
+        intent["epoch"] = epoch
+    n = int.from_bytes(hashlib.sha256(adapters.handoff.cj(intent)).digest()[:16], "big")  # 128 bits
+    first = CROCKFORD[n >> 125]
+    rest = "".join(CROCKFORD[(n >> (120 - 5 * i)) & 31] for i in range(25))
+    return "a_" + first + rest
+
+
+def ticket_revision(data: dict) -> str:
+    """The ticket's revision as `ticket.get` serves it: the host offers no head sequence there, so the revision is a
+    hash of the document (without the claim and waiting flags, which flap while agents work) and of every gate's
+    generation and hash. A write lands in one of these; an agent merely working does not move it."""
+    doc = {k: v for k, v in data.get("doc", {}).items() if k not in ("claim", "waiting")}
+    gates = {name: [g.get("gen"), g.get("hash")] for name, g in (data.get("gates") or {}).items()}
+    return hashlib.sha256(adapters.handoff.cj({"doc": doc, "status": data.get("status"), "gates": gates})).hexdigest()
+
+
+def gate_base(data: dict, gate: str) -> dict:
+    """The base of a gate decision: the gate's generation and hash (a stale decision is a different intent)."""
+    g = (data.get("gates") or {}).get(gate) or {}
+    return {"gate": gate, "gen": g.get("gen"), "hash": g.get("hash")}

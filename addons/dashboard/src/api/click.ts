@@ -99,6 +99,8 @@ const REFUSED: Record<string, ClickProblem> = {
   custody_changed: { title: 'The key moved', body: 'The custody of your device key changed since the review. Nothing was signed. Prepare the request again.', next: 'prepare' },
   busy: { title: 'Busy', body: 'Another signature is in progress. Wait a moment, then press Sign again.', next: 'retry' },
   check_failed: { title: 'A check failed', body: 'The signing helper refused what the host sent (it did not match). Nothing was signed. You can sign in the terminal instead.', next: 'terminal' },
+  already_signed: { title: 'Already signed from another window', body: 'This request was signed with a different review. Nothing more can be signed on it; this shows where it stands.', next: 'check' },
+  record_unavailable: { title: 'The signing record is unreadable', body: 'The signing helper cannot read its own record of what it signed, so it refuses to sign. Nothing was signed here. Use the terminal path instead: prepare a hand-off and run orch sign CODE.', next: 'terminal' },
   uncertain: { title: 'The outcome is not certain yet', body: 'The signature may or may not have reached the host. It settles by itself; do not sign again until this says it is settled.', next: 'check' },
 }
 

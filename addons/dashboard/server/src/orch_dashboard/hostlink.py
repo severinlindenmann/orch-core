@@ -18,7 +18,19 @@ from typing import Any
 from .errors import HostError, fail
 
 MAX_FRAME = 2_097_152
-CAPS = ["ops/1", "query/1", "sub/1", "human/1", "diff/1", "outcome/1", "control/1", "read_ext/1", "activity/1"]
+CAPS = [
+    "ops/1",
+    "query/1",
+    "sub/1",
+    "human/1",
+    "diff/1",
+    "outcome/1",
+    "control/1",
+    "read_ext/1",
+    "read_ext/2",
+    "settings/1",
+    "activity/1",
+]
 OPS = {
     name: 1
     for name in (
@@ -27,6 +39,7 @@ OPS = {
         "workspace.show",
         "host.status",
         "member.list",
+        "workspace.settings",
         "addon.list",
         "needs",
         "activity.list",
@@ -209,7 +222,14 @@ class HostLink:
         self.send({"t": "cancel", "id": request_id})
 
     def call(
-        self, op: str, args: dict | None = None, *, write=False, idem: str | None = None, dry_run: bool | None = None
+        self,
+        op: str,
+        args: dict | None = None,
+        *,
+        write=False,
+        idem: str | None = None,
+        dry_run: bool | None = None,
+        files: dict | None = None,
     ) -> Any:
         write = write or op == "human.submit" or op not in OPS
         if dry_run is not None and not (write or op == "human.prepare"):
@@ -218,6 +238,8 @@ class HostLink:
             not isinstance((args or {}).get("events"), list) or not 1 <= len(args["events"]) <= 16 or "event" in args
         ):
             raise ValueError("human.submit requires events (1..16)")
+        if files is not None and op != "human.prepare":
+            raise ValueError("files are only for human.prepare (the inner op's files, host contract R9)")
         if write and not dry_run and not idem:
             raise ValueError("every write requires its logical call's idem")
         cap = (
@@ -233,6 +255,8 @@ class HostLink:
             if op in {"diff", "artifact.get"}
             else "activity/1"
             if op == "activity.list"
+            else "settings/1"
+            if op == "workspace.settings"
             else "query/1"
             if op in QUERY_OPS
             else "ops/1"
@@ -243,6 +267,8 @@ class HostLink:
             self.serial += 1
             rid = f"d{self.serial}"
             req = {"t": "req", "id": rid, "op": op, "args": args or {}}
+            if files:
+                req["files"] = files
             if write and not dry_run:
                 req["opts"] = {"idem": idem}
             if dry_run is not None:

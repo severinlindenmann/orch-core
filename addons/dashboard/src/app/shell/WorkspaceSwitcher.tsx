@@ -1,9 +1,11 @@
 import { useId, useRef, useState, type KeyboardEvent, type MutableRefObject } from 'react'
-import { Check, ChevronsUpDown } from 'lucide-react'
+import { Check, ChevronsUpDown, ServerOff } from 'lucide-react'
 import { roleOf } from '@/api/permissions'
 import type { Workspace } from '@/api/types'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { sharesPrefix, uuid8 } from '@/api/workspaces'
+import { visible } from '@/components/sign/visible'
 import { cn } from '@/lib/utils'
 import { useAttention } from '../attention'
 import { useWorkspace } from '../workspace'
@@ -17,7 +19,7 @@ const ariaKeys = (keys: string) => keys.replace('⌘', 'Meta+').replace('Ctrl+',
  * than nothing (the sidebar badge's number). The shortcut shows on hover or focus; the role and the relay are in the
  * tooltip (and in the workspace's settings).
  */
-function WorkspaceRow({ w, index, current, viewer, onPick, quietFocus }: { w: Workspace; index: number; current: boolean; viewer: string | undefined; onPick: () => void; quietFocus: MutableRefObject<boolean> }) {
+function WorkspaceRow({ w, index, current, viewer, shared, onPick, quietFocus }: { w: Workspace; index: number; current: boolean; viewer: string | undefined; shared: boolean; onPick: () => void; quietFocus: MutableRefObject<boolean> }) {
   const needs = useAttention(w.id).needsYou.total
   const keys = SHORTCUTS.find((s) => s.id === `workspace.${index + 1}`)?.keys
   const relay = w.relay === 'on' ? 'Relay on (simulated)' : 'Relay not connected'
@@ -37,12 +39,19 @@ function WorkspaceRow({ w, index, current, viewer, onPick, quietFocus }: { w: Wo
               e.preventDefault() // Radix opens a tooltip on focus unless the event is prevented
             }}
             // `aria-current` says which one is current; the label carries the name and the count once.
-            aria-label={`${w.prefix} · ${w.name}${needs > 0 ? `, ${needs} need you` : ''}`}
+            aria-label={`${w.prefix} · ${visible(w.name)}${shared ? ` (${uuid8(w.id)})` : ''}${needs > 0 ? `, ${needs} need you` : ''}`}
             aria-keyshortcuts={keys ? ariaKeys(keys) : undefined}
             className="group flex w-full min-w-0 items-center gap-2 rounded-md px-1.5 py-1.5 text-left text-[13px] outline-none hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:ring-2 focus-visible:ring-brand"
           >
             <span className="rounded bg-surface-3 px-1 font-mono text-[10px] font-semibold text-text-muted">{w.prefix}</span>
-            <span className="min-w-0 flex-1 truncate">{w.name}</span>
+            <span className="min-w-0 flex-1 truncate">
+              <bdi>{visible(w.name)}</bdi>
+            </span>
+            {shared && (
+              <span data-ws-uuid className="font-mono text-[10px] text-text-faint">
+                {uuid8(w.id)}
+              </span>
+            )}
             {keys && (
               <kbd aria-hidden className="hidden rounded bg-surface-3 px-1 font-mono text-[10px] text-text-faint group-hover:inline group-focus-visible:inline">
                 {keys}
@@ -65,6 +74,36 @@ function WorkspaceRow({ w, index, current, viewer, onPick, quietFocus }: { w: Wo
   )
 }
 
+/** `PREFIX · name` with the name isolated and its invisible characters shown, then the short id in its own element. */
+function WorkspaceLine({ workspace, shared }: { workspace: Workspace; shared: boolean }) {
+  return (
+    <span>
+      {workspace.prefix} · <bdi>{visible(workspace.name)}</bdi>
+      {shared && (
+        <>
+          {' '}
+          <span className="font-mono" data-ws-id>
+            id {uuid8(workspace.id)}
+          </span>
+        </>
+      )}
+    </span>
+  )
+}
+
+/** A workspace whose host does not answer: named by its UUID only (nothing else is known), not selectable. */
+function StoppedRow({ w }: { w: Workspace }) {
+  return (
+    <li data-ws-stopped={w.id}>
+      <div className="flex w-full min-w-0 items-center gap-2 rounded-md px-1.5 py-1.5 text-[13px] text-text-faint" title={`Workspace ${w.id}: the host does not answer. Start it and reload.`}>
+        <ServerOff aria-hidden className="size-3.5 shrink-0" />
+        <span className="rounded bg-surface-3 px-1 font-mono text-[10px] font-semibold">{uuid8(w.id)}</span>
+        <span className="min-w-0 flex-1 truncate">Host not running</span>
+      </div>
+    </li>
+  )
+}
+
 /** Up/Down (and Home/End) move between the rows; Tab leaves the list as usual. */
 function onListKey(e: KeyboardEvent<HTMLUListElement>) {
   const rows = [...e.currentTarget.querySelectorAll<HTMLButtonElement>('[data-ws-row]')]
@@ -77,11 +116,12 @@ function onListKey(e: KeyboardEvent<HTMLUListElement>) {
 
 /** The workspace trigger and popover: one calm row per workspace. */
 export function WorkspaceSwitcher({ collapsed, viewer }: { collapsed: boolean; viewer: string | undefined }) {
-  const { workspace, workspaces, switchWorkspace } = useWorkspace()
+  const { workspace, workspaces, unavailable, switchWorkspace } = useWorkspace()
   const [open, setOpen] = useState(false)
   const list = useRef<HTMLUListElement>(null)
   const quietFocus = useRef(false)
   const headingId = useId()
+  const currentShared = !!workspace && workspaces.some((o) => o.id !== workspace.id && sharesPrefix(o, workspace))
   const trigger = (
     <button
       type="button"
@@ -93,6 +133,11 @@ export function WorkspaceSwitcher({ collapsed, viewer }: { collapsed: boolean; v
     >
       <span className="rounded bg-surface-3 px-1 font-mono text-[10px] font-semibold text-text-muted">{workspace?.prefix ?? '…'}</span>
       <span className={cn('min-w-0 flex-1 truncate', collapsed && 'hidden')}>{workspace?.name}</span>
+      {currentShared && workspace && (
+        <span data-ws-uuid-current className={cn('font-mono text-[10px] text-text-faint', collapsed && 'hidden')}>
+          {uuid8(workspace.id)}
+        </span>
+      )}
       <ChevronsUpDown className={cn('size-3.5 text-text-faint', collapsed && 'hidden')} />
     </button>
   )
@@ -103,10 +148,15 @@ export function WorkspaceSwitcher({ collapsed, viewer }: { collapsed: boolean; v
           <TooltipTrigger asChild>
             <PopoverTrigger asChild>{trigger}</PopoverTrigger>
           </TooltipTrigger>
-          <TooltipContent side="right">{workspace ? `${workspace.prefix} · ${workspace.name}` : 'Workspace'}</TooltipContent>
+          <TooltipContent side="right">{workspace ? <WorkspaceLine workspace={workspace} shared={currentShared} /> : 'Workspace'}</TooltipContent>
         </Tooltip>
       ) : (
-        <PopoverTrigger asChild>{trigger}</PopoverTrigger>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <PopoverTrigger asChild>{trigger}</PopoverTrigger>
+          </TooltipTrigger>
+          <TooltipContent side="right">{workspace ? <WorkspaceLine workspace={workspace} shared={currentShared} /> : 'Workspace'}</TooltipContent>
+        </Tooltip>
       )}
       <PopoverContent
         align="start"
@@ -129,6 +179,7 @@ export function WorkspaceSwitcher({ collapsed, viewer }: { collapsed: boolean; v
               w={w}
               viewer={viewer}
               index={i}
+              shared={workspaces.some((o) => o.id !== w.id && sharesPrefix(o, w))}
               current={w.id === workspace?.id}
               quietFocus={quietFocus}
               onPick={() => {
@@ -136,6 +187,9 @@ export function WorkspaceSwitcher({ collapsed, viewer }: { collapsed: boolean; v
                 switchWorkspace(w.id)
               }}
             />
+          ))}
+          {unavailable.map((w) => (
+            <StoppedRow key={w.id} w={w} />
           ))}
         </ul>
       </PopoverContent>

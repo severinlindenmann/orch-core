@@ -7,6 +7,7 @@ import { createFetchTransport } from './fetchTransport'
 import type { MandatesPreviewState } from './mandatesPreview'
 import type { Api, ListTicketsParams } from './apiFactory'
 import type { HandoffAction, HandoffRequest, HandoffState } from './handoff'
+import type { HostGrant, HostSettings, RosterMember } from './settings'
 import {
   ApiError,
   type ApiErrorBody,
@@ -134,10 +135,12 @@ function workspace(s: ServerWorkspace): Workspace {
     addons: {},
     counts: {},
     needs_you: s.needs_you ?? 0,
+    ...(s.host_state === 'ok' ? {} : { host_state: s.host_state }),
   }
 }
 
-const listWorkspaces = async () => (await call<ServerWorkspace[]>('/api/workspaces')).filter((x) => x.host_state === 'ok').map(workspace)
+/** Every workspace the server knows, running or not (the switcher shows the others as "host not running"). */
+const listWorkspaces = async () => (await call<ServerWorkspace[]>('/api/workspaces')).map(workspace)
 
 export async function logout() {
   const result = await createFetchTransport('', getToken).request('POST', '/auth/logout')
@@ -169,6 +172,10 @@ const reads = {
   getChanges: (key: string, ws?: string) =>
     ws ? call<TicketChanges>(`${w(ws)}/tickets/${encodeURIComponent(key)}/changes`) : unsupported('Changes without their workspace'),
   getIdentity: (ws: string) => call<WorkspaceIdentity>(`${w(ws)}/identity`),
+  // Reduced workspace settings (M4): what the host gives this person, nothing more.
+  getHostSettings: (ws: string) => call<HostSettings>(`${w(ws)}/settings`),
+  getRoster: (ws: string) => call<RosterMember[]>(`${w(ws)}/members`),
+  listHostGrants: (ws: string, active = true) => call<HostGrant[]>(`${w(ws)}/grants?active=${active}`),
 }
 
 /** Reads a page needs an answer to even when the host has nothing to say yet: an empty list, never a made-up one. */

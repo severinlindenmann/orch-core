@@ -3,7 +3,7 @@ import type { GateName, GateStatus, TicketDocument } from '@/api/types'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 import { availableActions, GATE_LABEL, policyText } from './actions'
-import { fmtDay, fmtExact, Mono, type Viewer } from './shared'
+import { fmtDay, fmtExact, Mono, presenceLabel, type Viewer } from './shared'
 
 /** The gates this ticket shows: the code review only where it applies (or once it was signed). */
 const gatesOf = (t: TicketDocument): GateName[] =>
@@ -13,7 +13,6 @@ const gatesOf = (t: TicketDocument): GateName[] =>
 export const CHARTER_VERDICT = 'Verdict: via the factory charter — no person reviewed this'
 
 const VIA: Record<string, string> = { cli: 'CLI', dashboard: 'dashboard', phone: 'phone', factory_charter: 'the factory charter' }
-const PRESENCE: Record<string, string> = { touchid: 'Touch ID', passkey: 'passkey', password: 'password' }
 
 type Tone = 'success' | 'warning' | 'danger' | 'neutral'
 const TONE: Record<Tone, string> = { success: 'text-success', warning: 'text-warning', danger: 'text-danger', neutral: 'text-text-muted' }
@@ -102,7 +101,7 @@ function Step({ name, ticket, viewer, mine }: { name: GateName; ticket: TicketDo
                   <dt className="inline text-text-faint">{viewer.name(a.by)} </dt>
                   <dd className="inline">
                     {fmtExact(a.at)} · via {a.via ? VIA[a.via] ?? a.via : 'unknown'}
-                    {a.via === 'factory_charter' ? '' : ` · presence ${a.presence ? PRESENCE[a.presence] ?? a.presence : 'unknown'}`}
+                    {a.via === 'factory_charter' ? '' : ` · presence ${a.presence ? presenceLabel(a.presence) : 'unknown'}`}
                   </dd>
                 </div>
               ))}

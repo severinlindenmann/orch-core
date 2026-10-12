@@ -9,22 +9,23 @@ never names an op, a path or a raw event. `opts.idem` comes from a client-genera
 retry); a retry with the same key answers from this process's record instead of preparing a second request.
 """
 
+import base64
 import hashlib
-import os
+import json
 import threading
 import time
 from collections import OrderedDict
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, Request
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from . import adapters
-from .errors import HostError, fail
+from .errors import fail
 from .gateway import Gateway
+from .hostlink import _pairs, _valid
 from .reads import Key, workspace
+from .text import clean as no_hidden
 
 Idem = Annotated[str, StringConstraints(pattern=r"^a_[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
 RequestId = Annotated[str, StringConstraints(pattern=adapters.handoff.REQUEST_ID.pattern)]
@@ -34,32 +35,24 @@ Label = Annotated[str, StringConstraints(pattern=r"^[a-z0-9][a-z0-9._-]{0,31}$")
 Question = Annotated[str, StringConstraints(pattern=r"^Q[1-9][0-9]{0,5}$")]
 Gate = Literal["requirements", "plan", "code"]
 
+CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+
+def host_idem(token: str, ws: str, idem: str) -> str:
+    """The key the host sees: the browser's key bound to this session and workspace, in the host's shape. Another
+    session sending the same key gets another request (it is never handed this session's), and a retry from this
+    session, with the same key, gets the same one back."""
+    digest = hashlib.sha256(f"orch-dashboard/idem\0{token}\0{ws}\0{idem}".encode()).digest()
+    n = int.from_bytes(digest[:17], "big")
+    chars = [CROCKFORD[(n >> (5 * i)) & 31] for i in range(26)]
+    chars[0] = CROCKFORD[(n >> 125) & 7]
+    return "a_" + "".join(chars)
+
+
 HUMAN_OPS = ("human.prepare", "human.get", "human.pending", "human.cancel")  # never human.submit
 PER_SESSION = 8  # design section 3: pending sign requests per session
 TTL = 600
 REMEMBERED = 256
-LOST_KEPT = 900  # seconds a lost-call marker or an attempt record is kept (a request lives 600 s)
-SLACK = 2  # seconds either side of a window (host timestamps have whole-second resolution)
-UNKNOWN_CAP = 256
-
-
-@dataclass
-class Lost:
-    """A prepare whose answer was lost: the window in which the host may have made a request of ours."""
-
-    start: float
-    end: float
-    ids: set[str] = field(default_factory=set)  # the attempts that may have made it
-
-
-@dataclass
-class Attempt:
-    id: str
-    ws: str
-    op: str
-    key: str | None
-    start: float
-    end: float | None = None  # None while it runs
 
 
 class Action(BaseModel):
@@ -194,6 +187,134 @@ class WriteSection(Action):
     text: SectionText
 
 
+# ---- Workspace settings, members and grants (M4, #306) -------------------------------------------------------------
+# Closed and typed like the ticket actions above. `repos` is not an argument of `settings_set`: the Repos addon owns
+# repo editing, and `extra="forbid"` refuses it. `grant` (issuing) is not an action: the signer draws the secret.
+
+Person = Annotated[str, StringConstraints(pattern=r"^p_[0-9a-f]{32}$")]
+GrantId = Annotated[str, StringConstraints(pattern=r"^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
+Role = Literal["owner", "maintainer", "member", "viewer"]
+OneLine = AfterValidator(no_hidden)  # no control, bidi, zero-width or other hidden characters (by Unicode category)
+Token = Literal["owner", "maintainer", "member", "ticket_owner", "assignees", "reviewers", "watchers"]
+PolicyGate = Literal["requirements", "plan", "verify", "code"]
+TicketType = Literal["feature", "bug", "chore", "spike", "epic"]
+MAX_PK = 87  # base64url of a 65-byte public key, no padding
+MAX_CERT_BYTES = 16384  # a device certificate is a few hundred bytes; anything near this is not one
+PK_BYTES = 65
+
+
+class SettingsSet(Action):
+    """`settings.set {set:{grant_hours?, claim_ttl_min?, lease_ttl_min?}}`; `repos` is refused (the Repos addon)."""
+
+    action: Literal["settings_set"]
+    grant_hours: Annotated[int, Field(ge=1, le=24)] | None = None
+    claim_ttl_min: Annotated[int, Field(ge=15, le=1440)] | None = None
+    lease_ttl_min: Annotated[int, Field(ge=5, le=1440)] | None = None
+
+    @model_validator(mode="after")
+    def something(self):
+        if self.grant_hours is None and self.claim_ttl_min is None and self.lease_ttl_min is None:
+            raise ValueError("change at least one duration")
+        return self
+
+
+class PolicyBody(BaseModel):
+    """F1 5.7 `Policy`, exactly: five keys, tokens from the closed list."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, populate_by_name=False)
+    approvers: Annotated[list[Token], Field(min_length=1, max_length=8)]
+    count: Annotated[int, Field(ge=1, le=9)]
+    not_: Annotated[list[Token], Field(max_length=8, alias="not")]
+    applies: Literal["all", "off"] | Annotated[list[TicketType], Field(min_length=1, max_length=16)]
+    independent: bool
+
+    def canonical(self) -> dict:
+        """The policy in the canonical form F1 5.7 stores (lists sorted, repeats removed): what is sent and shown."""
+        return {
+            "approvers": sorted(set(self.approvers)),
+            "count": self.count,
+            "not": sorted(set(self.not_)),
+            "applies": self.applies if isinstance(self.applies, str) else sorted(set(self.applies)),
+            "independent": self.independent,
+        }
+
+
+class PolicySet(Action):
+    """`policy.set {gates:{Gate: Policy}}` for the workspace default of one gate (a ticket override is not offered)."""
+
+    action: Literal["policy_set"]
+    gate: PolicyGate
+    policy: PolicyBody
+
+    @model_validator(mode="after")
+    def code_rules(self):
+        # For `code`, `not` always includes `assignees` and `independent` is true (D59); the host refuses less.
+        if self.gate == "code" and ("assignees" not in self.policy.not_ or not self.policy.independent):
+            raise ValueError("the code review is never approved by the assignees and is always independent")
+        return self
+
+
+def _strict_json_object(text: str) -> dict:
+    """Strict JSON: an object, no duplicate keys, bounded depth and size, integers only (the host's `loads_strict`)."""
+    try:
+        value = json.loads(text, object_pairs_hook=_pairs, parse_float=_no_float, parse_constant=_no_float)
+        _valid(value)
+    except (ValueError, RecursionError):
+        raise ValueError("the certificate is not strict JSON") from None
+    if not isinstance(value, dict):
+        raise ValueError("the certificate is a JSON object")
+    return value
+
+
+def _no_float(_text):
+    raise ValueError("numbers in a certificate are integers")
+
+
+class MemberAdd(Action):
+    """`member.add`: the invitee made their own key and first device certificate; the owner signs the roster change.
+
+    The public key and the certificate are the invitee's own files, uploaded by the person (host contract R9: the
+    certificate goes through `human.prepare`'s `files`, the key is an argument). Nothing is read from a path."""
+
+    action: Literal["member_add"]
+    name: Annotated[str, StringConstraints(min_length=1, max_length=64), OneLine]
+    role: Role
+    pk: Annotated[str, StringConstraints(min_length=MAX_PK, max_length=MAX_PK, pattern=r"^[A-Za-z0-9_-]+$")]
+    cert: Annotated[str, StringConstraints(min_length=2, max_length=MAX_CERT_BYTES)]
+
+    @model_validator(mode="after")
+    def check_files(self):
+        if self.name != self.name.strip():
+            raise ValueError("the name has spaces at its ends")
+        try:
+            raw = base64.urlsafe_b64decode(self.pk + "=")
+        except ValueError:
+            raise ValueError("the public key is not base64url") from None
+        if len(raw) != PK_BYTES or base64.urlsafe_b64encode(raw).rstrip(b"=").decode() != self.pk:
+            raise ValueError("the public key is 65 bytes, base64url")
+        if len(self.cert.encode("utf-8", "strict")) > MAX_CERT_BYTES:
+            raise ValueError("the certificate is too large")
+        _strict_json_object(self.cert)
+        return self
+
+
+class MemberRole(Action):
+    action: Literal["member_role"]
+    person: Person
+    role: Role
+
+
+class MemberRemove(Action):
+    action: Literal["member_remove"]
+    person: Person
+
+
+class GrantRevoke(Action):
+    action: Literal["grant_revoke"]
+    grant: GrantId
+    reason: Annotated[str, StringConstraints(min_length=1, max_length=200), OneLine] | None = None
+
+
 PrepareBody = Annotated[
     Approve
     | RequestChanges
@@ -205,7 +326,13 @@ PrepareBody = Annotated[
     | Reopen
     | NewTicket
     | Details
-    | WriteSection,
+    | WriteSection
+    | SettingsSet
+    | PolicySet
+    | MemberAdd
+    | MemberRole
+    | MemberRemove
+    | GrantRevoke,
     Field(discriminator="action"),
 ]
 
@@ -246,12 +373,70 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             return "set", {"ref": action.key, "pairs": pairs}
         case WriteSection():
             return "section.set", {"ref": action.key, "section": action.section, "message": action.text}
+        case SettingsSet():
+            return "settings.set", {"set": action.model_dump(include=set(DURATIONS), exclude_none=True)}
+        case PolicySet():
+            return "policy.set", {"gates": {action.gate: action.policy.canonical()}}
+        case MemberAdd():
+            # `cert` names the file (`-`); its bytes travel in `files` (host_files). `pk` is a plain argument.
+            return "member.add", {"name": action.name, "role": action.role, "pk": action.pk, "cert": "-"}
+        case MemberRole():
+            return "member.role", {"person": action.person, "role": action.role}
+        case MemberRemove():
+            return "member.remove", {"person": action.person}
+        case GrantRevoke():
+            return "grant.revoke", {"grant": action.grant} | ({"reason": action.reason} if action.reason else {})
     raise AssertionError("closed allowlist")  # pragma: no cover
 
 
+DURATIONS = ("grant_hours", "claim_ttl_min", "lease_ttl_min")
+WORKSPACE_OPS = ("settings.set", "policy.set", "member.add", "member.role", "member.remove", "grant.revoke")
+
+
+def host_files(action: Action) -> dict | None:
+    """The inner op's files for `human.prepare` (R9): only a member's certificate, inline as `b64`."""
+    if isinstance(action, MemberAdd):
+        return {"cert": {"b64": base64.b64encode(action.cert.encode()).decode()}}
+    return None
+
+
+def expected(action: Action):
+    """What the host's prepared events must be, for the actions that are not about a ticket. A host that prepares
+    anything else (another type, another person, other values) is refused before the person sees it."""
+
+    def one(events: list, type_: str, **fields) -> bool:
+        if len(events) != 1 or events[0].get("type") != type_:
+            return False
+        return all(adapters.handoff.cj(events[0].get(k)) == adapters.handoff.cj(v) for k, v in fields.items())
+
+    match action:
+        case SettingsSet():
+            _, args = host_call(action)
+            return lambda ev: one(ev, "settings.changed", set=args["set"])
+        case PolicySet():
+            _, args = host_call(action)
+            return lambda ev: one(ev, "policy.changed", gates=args["gates"]) and "ref" not in ev[0]
+        case MemberRole():
+            return lambda ev: one(ev, "role.changed", person=action.person, role=action.role)
+        case MemberRemove():
+            return lambda ev: one(ev, "member.removed", person=action.person)
+        case GrantRevoke():
+            return lambda ev: one(ev, "grant.revoked", grant=action.grant) and ev[0].get("reason") == action.reason
+        case MemberAdd():
+            cert = _strict_json_object(action.cert)
+            return lambda ev: (
+                one(ev, "member.added", name=action.name, role=action.role, pk_pub=action.pk, device_cert=cert)
+                and isinstance(ev[0].get("person"), str)
+                and ev[0]["person"].startswith("p_")
+            )
+    return None
+
+
 class Handoffs:
-    """What this process remembers, **per session token**: the requests it prepared (kept to their expiry so a late poll
-    still works), the ones still open (the quota), and the idem records of its own clicks."""
+    """What this process remembers, **per session token**: the requests it prepared (kept to their expiry so a late
+    poll still works), the ones still open (the quota), and the idem records of its own clicks. A lost prepare answer
+    needs no bookkeeping here: the host honours `opts.idem`, so the same click retried returns the same request (host
+    contract 0.7), never a second one."""
 
     def __init__(self, clock=time.monotonic):
         self.clock = clock
@@ -259,47 +444,6 @@ class Handoffs:
         self.owned: dict[str, dict[str, tuple[str, float]]] = {}  # token -> request id -> (workspace, deadline)
         self.active: dict[str, set[str]] = {}
         self.by_idem: OrderedDict[tuple[str, str, str], tuple[str, dict | None]] = OrderedDict()  # None: in flight
-        self.unknown: dict[tuple[str, str, str], Lost] = {}  # (token, ws, binding) -> the lost call's window
-        self.attempts: list[Attempt] = []  # every prepare of this process, any session: who else could own an orphan
-        self.ever: OrderedDict[str, float] = OrderedDict()  # request ids this process has ever been handed
-        self.serial = 0
-
-    def begin(self, ws: str, op: str, key: str | None) -> Attempt:  # under the lock
-        self.serial += 1
-        mine = Attempt(f"p{self.serial}", ws, op, key, time.time())
-        self.attempts.append(mine)
-        self.forget()
-        return mine
-
-    def forget(self):  # under the lock: bounded, entries expire
-        now = time.time()
-        # Attempts still in flight are never dropped (crowded() must see them); finished ones are bounded.
-        done = [a for a in self.attempts if a.end is not None and a.end > now - LOST_KEPT][-512:]
-        self.attempts[:] = [a for a in self.attempts if a.end is None or a in done]
-        for slot in [k for k, v in self.unknown.items() if v.end < now - LOST_KEPT]:
-            del self.unknown[slot]
-        while len(self.unknown) > UNKNOWN_CAP:
-            del self.unknown[next(iter(self.unknown))]
-        while len(self.ever) > 1024:
-            self.ever.popitem(last=False)
-
-    def all_known(self) -> set[str]:
-        with self.lock:
-            return {rid for mine in self.owned.values() for rid in mine} | set(self.ever)
-
-    def crowded(self, lost: Lost, op: str, ws: str, key: str | None, me: str) -> bool:
-        """Was another prepare for the same op and ticket running in the lost call's window (any session or tab)?"""
-        with self.lock:
-            return any(
-                a.id != me
-                and a.id not in lost.ids
-                and (a.ws, a.op, a.key) == (ws, op, key)
-                # The host stamps created_at in whole seconds (rounded down), so a request it lists as created by
-                # lost.end + SLACK may come from an attempt that started up to a second later.
-                and a.start < lost.end + SLACK + 1
-                and (a.end is None or a.end >= lost.start - SLACK)
-                for a in self.attempts
-            )
 
     def binding(self, action: Action) -> str:
         body = action.model_dump(exclude={"idem"}, exclude_none=True)
@@ -331,54 +475,15 @@ class Handoffs:
 def register(app: FastAPI, gateway: Gateway):
     handoffs = app.state.handoffs = Handoffs()
 
-    def human(ws: str, op: str, args: dict, idem: str | None = None, dry_run: bool | None = None):
+    def human(
+        ws: str, op: str, args: dict, idem: str | None = None, dry_run: bool | None = None, files: dict | None = None
+    ):
         if op not in HUMAN_OPS:
             raise AssertionError("the dashboard calls prepare, get, pending and cancel only")  # never human.submit
         link = gateway.enabled(ws)
-        return link.call(op, args, write=idem is not None, idem=idem, dry_run=dry_run)
+        return link.call(op, args, write=idem is not None, idem=idem, dry_run=dry_run, files=files)
 
     app.state.human = human
-
-    def ours(origin) -> bool:
-        """The host states who made the request (kernel uid and pid, and the self-declared client): only ours counts."""
-        client = origin.get("client") if isinstance(origin, dict) else None
-        return (
-            isinstance(origin, dict)
-            and origin.get("pid") == os.getpid()
-            and origin.get("uid") == os.getuid()
-            and isinstance(client, str)
-            and (client == "orch-dashboard" or client.startswith("orch-dashboard/"))
-        )
-
-    def recover(ws: str, op: str, key: str | None, lost: Lost, me: str) -> list[str]:
-        """`human.prepare` ignores `opts.idem` (host 0.8.1): every call makes a request. After a lost answer this
-        only CANCELS orphans that are provably ours; it never adopts one. Provably ours: the same op and ticket,
-        created in the lost call's own window, unknown to every session of this process, and (the host states the
-        origin in `human.get`) made by this process as `orch-dashboard`. If another prepare for the same op and
-        ticket ran in the window, or the origin is missing or foreign, nothing is cancelled. A `HostError`
-        propagates and the caller keeps the marker. Returns the `expires_at` of the matching requests left open."""
-        rows = human(ws, "human.pending", {})["requests"]
-        known = handoffs.all_known()
-        crowded = handoffs.crowded(lost, op, ws, key, me)
-        left: list[str] = []
-        for row in rows:
-            if not (
-                row["state"] == "prepared"
-                and row["id"] not in known
-                and row["op"] == op
-                and (key is None or row.get("key") == key)
-                and lost.start - SLACK <= (_epoch(row["created_at"]) or 0) <= lost.end + SLACK
-            ):
-                continue
-            try:
-                if crowded or not ours(human(ws, "human.get", {"request_id": row["id"]}).get("origin")):
-                    left.append(row["expires_at"])
-                    continue
-                human(ws, "human.cancel", {"request_id": row["id"]})
-            except HostError as exc:
-                if exc.error["code"] not in ("not_found", "human.request_expired"):
-                    raise
-        return left
 
     @app.post("/api/w/{ws}/handoff")
     def prepare(body: PrepareBody, request: Request, ws: str = Depends(workspace)):
@@ -398,10 +503,6 @@ def register(app: FastAPI, gateway: Gateway):
             handoffs.by_idem[slot] = (binding, None)  # reserved: a concurrent twin is refused, not prepared again
             while len(handoffs.by_idem) > REMEMBERED:
                 handoffs.by_idem.popitem(last=False)
-            lost = handoffs.unknown.get((token, ws, binding))  # kept until a recovery has completed
-            op = host_call(body, [])[0]
-            me = handoffs.begin(ws, op, getattr(body, "key", None))
-        called = answered = False
         try:
             labels = (
                 list(gateway.call(ws, "ticket.get", {"ref": body.key})["doc"].get("labels", []))
@@ -409,39 +510,32 @@ def register(app: FastAPI, gateway: Gateway):
                 else None
             )
             op, args = host_call(body, labels)
-            left = recover(ws, op, me.key, lost, me.id) if lost is not None else None
-            called = True
-            prepared = human(ws, "human.prepare", {"op": op, "args": args, "handoff": True}, idem=body.idem)
-            answered = True  # a request may exist from here on, whatever happens to the answer
-            response = adapters.handoff.request(prepared, ws, expect_op=op, expect_key=me.key)
-            if lost is not None:
-                response["earlier_open"] = {"expires_at": max(left) if left else None}
-        except BaseException as exc:
+            key = getattr(body, "key", None)
+            if op in WORKSPACE_OPS and gateway.link(ws).welcome.get("ops", {}).get(op) != 1:
+                # policy.set and settings.set wait for F1 events on a real host (R5): never offered, never guessed.
+                raise fail("op.unsupported", f"This host does not serve {op} yet.", exit=1)
+            # The host honours `opts.idem` (contract 0.7): after a lost answer the same click, with the same key,
+            # returns the SAME request in its current state. It is provably ours: the host binds the key to the
+            # principal and the arguments. A key is used for one prepare only (the submit uses its own).
+            prepared = human(
+                ws,
+                "human.prepare",
+                {"op": op, "args": args, "handoff": True},
+                idem=host_idem(token, ws, body.idem),
+                files=host_files(body),
+            )
+            response = adapters.handoff.request(
+                prepared, ws, expect_op=op, expect_key=key, expect_events=expected(body)
+            )
+        except BaseException:
             with handoffs.lock:
-                handoffs.by_idem.pop(slot, None)
-                # The marker stays until a retry has completed. A second lost answer widens the window (earliest start),
-                # it never replaces it; any other failure leaves the marker exactly as it was.
-                if called and (
-                    answered or (isinstance(exc, HostError) and exc.error["code"] in ("outcome.unknown", "cancelled"))
-                ):
-                    now = time.time()
-                    handoffs.unknown[(token, ws, binding)] = (
-                        Lost(min(lost.start, me.start), now, lost.ids | {me.id})
-                        if lost
-                        else Lost(me.start, now, {me.id})
-                    )
+                handoffs.by_idem.pop(slot, None)  # a retry with the same key gets the same request back
             raise
-        finally:
-            with handoffs.lock:
-                me.end = time.time()
-                if not called and me in handoffs.attempts:
-                    handoffs.attempts.remove(me)  # it never reached the host's prepare: it made no request
         with handoffs.lock:
-            handoffs.unknown.pop((token, ws, binding), None)
             handoffs.by_idem[slot] = (binding, response)
-            handoffs.ever[response["id"]] = time.time()
             handoffs.prune(token)[response["id"]] = (ws, handoffs.clock() + TTL)
-            handoffs.active.setdefault(token, set()).add(response["id"])
+            if response["state"] in ("prepared", "bound"):
+                handoffs.active.setdefault(token, set()).add(response["id"])
         return response
 
     def owned_ws(request: Request, request_id: str, ws: str) -> str:
@@ -480,10 +574,3 @@ def register(app: FastAPI, gateway: Gateway):
             handoffs.settle(token, rid)
 
     app.state.cancel_session = cancel_session
-
-
-def _epoch(value: str) -> float | None:
-    try:
-        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC).timestamp()
-    except (TypeError, ValueError):
-        return None

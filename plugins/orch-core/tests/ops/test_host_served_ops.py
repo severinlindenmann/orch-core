@@ -18,6 +18,8 @@ SCRIPT = textwrap.dedent(
     import orch.host.ownership as own
     # direct-mode machinery (reads the agent pins outside the roots); the host has no use for it
     own.DirectGuard = lambda *a, **k: None
+    import orch.hostclient as hostclient
+    hostclient.locate = lambda *a, **k: None  # H4b mode lookup reads pins and the registry: a client's business
     host = Capabilities.host((spec["root"], spec["state"]))
     base.Capabilities.direct = classmethod(lambda cls, env=None, clock=time.time: host)  # H4 does this for real
     audit.install([spec["root"], spec["state"]])

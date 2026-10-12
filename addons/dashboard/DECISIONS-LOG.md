@@ -1342,3 +1342,62 @@ cached ticket data next to a signature would let the two differ. A silent re-pre
 
 **Revert:** Remove `handoff.py` routes and `Gateway.features["actions"]`; restore `SignDialog` to the simulated dialog
 only (delete `HandoffSignDialog`, `HandoffDialog`, `HandoffPanel`, `useHandoff`).
+
+## 2026-10-12 — P2 M4 reduced settings and the switcher by UUID (#306)
+
+**Decision:** (1) A real host gets reduced settings: General (the three durations; repositories read only, the Repos addon
+owns them), Members (roster with devices and scopes, add from the invitee's own files, role, remove), Gates (the four
+workspace default policies) and Grants (list, revoke). Every change is the M3 hand-off with a typed, closed action
+(`settings_set`, `policy_set`, `member_add`, `member_role`, `member_remove`, `grant_revoke`); `repos` is refused and `grant`
+(issuing) is not offered, because the signer draws the secret. (2) Reads forward only what the host gives this person:
+`workspace.settings` without `settings/1` is `available: false` and the page says so (no value is guessed); a repo's `path`
+is never forwarded and a `remote` only as a credential-free canonical identity; `grant.list` is the host's list (an owner:
+all, others: their own), `revoked.by` and `session_ids` only with `read_ext/2` (else unknown); no `last_seen` (the host
+serves none). (3) The server checks the host's prepared event is what was asked (type, person, role, settings, policy,
+grant, and for `member.add` the name, role, key and the certificate the person uploaded) before the person sees it. (4) A
+write is offered only if the host lists its inner op in `welcome.ops` (`do:<op>` features): `policy.set` and `settings.set`
+wait for the F1 events (R5), so on a real host today they are not offered and the control says why. (5) Policy forms send
+the canonical `Policy`; the code gate is locked to `not ∋ assignees` and `independent: true`. The page says a policy change
+ends the approvals already given at that gate (F1 5.7: `policy.changed` raises the gate generation), unlike the mockup's
+"stay valid". (6) Workspaces are told apart by `?ws=<first 8 hex of the UUID>` (design 5) when they share a prefix: links of
+the workspace you are in carry it, an address without it asks which workspace, a hint that fits no running workspace is not
+guessed away, and a ticket key resolves to the workspace you are in. (7) A host that is not running is a row "Host not
+running" (named by UUID only, nothing made up, not selectable); an address naming it says so; the others keep working. (8)
+Switching workspace with a hand-off open cancels that request at the host in the workspace it was prepared in, and the
+dialog closes.
+
+**Why:** The brief and design 5 settle the address rule, so no `~uuid8` path form was needed. Showing a form's text beside a
+signature would let the two differ, so the preview stays the host's `material`. The mockup's "approvals stay valid" would be
+false on a real host. A stopped host cannot give a name; inventing one would be a made-up title.
+
+**Revert:** Delete `src/app/pages/settings/host/`, the `HOST_TABS` branch in `settings/index.tsx` and `tabs.ts`, `server/src/
+orch_dashboard/settings.py`, `adapters/settings.py` and the six actions in `handoff.py`; drop the `settings`, `members`,
+`settings_read`, `grant_list`, `read_ext2` and `do:*` features in `gateway.py`; restore `workspace.tsx`, `urls.ts` and the
+switcher to single-prefix addresses.
+
+## 2026-10-12 — hand-off retries a lost prepare with the same idem (core #402)
+
+**Decision:** `human.prepare` honours `opts.idem`, so after `outcome.unknown` the next click retries with the same idem and adopts
+the request the host returns. The orphan-cancel recovery is removed. The server sends the host a key derived from session,
+workspace and browser idem. `idem.conflict` and `idem.expired` have their own panel states; a new idem only on the person's click.
+
+**Why:** The host now binds the idem to principal and arguments, so the returned request is provably ours; the old path could only
+cancel and guess. A session-bound key keeps one session from receiving another's request (M1).
+
+**Revert:** Restore `recover()`, the `Lost` window and the `earlier_open` note from commit 1283c1c9 and stop sending `idem` on prepare.
+
+## 2026-10-12 — M4 fix round 2: WS8 everywhere, hidden characters by category
+
+**Decision:** (1) The short workspace fragment is WS8, the LAST 8 characters of the workspace id (stream A, mirroring KEY/FRAG). It is
+what the switcher trigger and tooltip, the hand-off dialog line, the "Which workspace?" page, the `?ws=` address hint and the signer's
+confirmation word use. A link made with the first 8 characters (the older form) names nothing and asks which workspace. The
+confirmation words are `<PREFIX>~<WS8>/SETTINGS` and `<PREFIX>~<WS8>/POLICY`; the signer's header keeps the full id. (2) Workspace names
+are shown through `Raw`/`visible()`, isolated (`bdi`), with the id in its own element, so a name cannot reorder or pre-fake it; the
+server refuses a workspace name or prefix with hidden characters (the workspace is listed as unavailable, `workspace.name_invalid`,
+never repaired). (3) Hidden characters are decided by Unicode category (Cf, Cc, Zl, Zp, plus U+00AD, U+061C, U+180E, U+2060-2064, U+3164,
+U+FE0F and the tag characters) in `orch_dashboard/text.py`, for branch, remote, names and reasons. Host names in hand-off titles, labels
+and by-lines are escaped.
+
+**Why:** One fragment everywhere lets the person compare one thing. A fixed list missed U+061C and the tag characters.
+
+**Revert:** `uuid8` back to `slice(0, 8)`, the confirmation word back to `<PREFIX>/SETTINGS`, `text.py` back to the fixed `HIDDEN` list.

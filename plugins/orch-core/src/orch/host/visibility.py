@@ -13,6 +13,7 @@ the viewer the dispatcher passes in. The hooks below serve the reads that later 
 | :meth:`Viewer.ticket` | ``ticket.get``, ``diff``, ``artifact.get``, ``sub.open {ticket}`` | H6b, H3b1, H4a2, H6a |
 | :meth:`Viewer.linked_repo` | ``diff {repo}`` | H3b1 |
 | :meth:`Viewer.artifact` | ``artifact.get {name}`` | H4a2 |
+| :meth:`Viewer.ticket`, :meth:`Viewer.manager` | ``ticket.text``, ``workspace.settings``, ``activity.list`` | H6b |
 
 The deny-by-default rule: ``no-person`` sees ``workspace`` tickets only, is never an owner, reads no session and no
 other person's needs. ``tests/host/test_dispatch_reads.py`` walks every served read as no-person against a restricted
@@ -49,12 +50,21 @@ class Viewer:
     person: str | None
     #: a person-class owner (column P): may name another person in ``needs`` and sees every session and grant
     owner: bool = False
+    #: the viewer's member role now (``None`` for no-person): ``workspace.settings`` serves ``path`` and ``remote``
+    #: only to a person-class owner or maintainer (:attr:`manager`)
+    role: str | None = None
 
     @classmethod
     def of(cls, call: Call) -> Viewer:
         auth = call.service.auth
         owner = call.column.name == "P" and auth is not None and auth.owner(call.viewer)
-        return cls(call.column.name, call.viewer, owner)
+        role = auth.roles.get(call.viewer) if auth is not None and call.viewer is not None else None
+        return cls(call.column.name, call.viewer, owner, role)
+
+    @property
+    def manager(self) -> bool:
+        """A person-class owner or maintainer (column P with that role; a G caller acting for one is not)."""
+        return self.column == "P" and self.role in ("owner", "maintainer")
 
     def sees(self, view: Any) -> bool:
         return visible_to(self.person, view)  # the same test as the registry reads' Call.sees

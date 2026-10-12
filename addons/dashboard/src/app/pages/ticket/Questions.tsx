@@ -7,10 +7,9 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { canAnswer } from './actions'
-import { ago, Mono, Pill, RecommendedTag, shortHash, type TabProps, type Viewer } from './shared'
+import { ago, Mono, Pill, presenceLabel, RecommendedTag, shortHash, type TabProps, type Viewer } from './shared'
 
 const VIA: Record<string, string> = { cli: 'CLI', dashboard: 'dashboard', phone: 'phone' }
-const PRESENCE: Record<string, string> = { touchid: 'Touch ID', passkey: 'passkey', password: 'password' }
 
 function AnswerForm({ q, sign }: { q: QuestionStatus; sign: TabProps['sign'] }) {
   const [option, setOption] = useState<string | undefined>(undefined)
@@ -120,7 +119,7 @@ function QuestionCard({ q, viewer, sign }: { q: QuestionStatus; viewer: Viewer; 
             {viewer.name(answered.by)}{answered.at ? ` · ${ago(answered.at)}` : ''}
             {/* Only a host that says how it came in: nothing is made up for one that does not. */}
             {answered.via ? ` · via ${VIA[answered.via]}` : ''}
-            {answered.presence ? ` · ${PRESENCE[answered.presence]}` : ''}
+            {answered.presence ? ` · ${presenceLabel(answered.presence)}` : ''}
           </p>
         </div>
       )}

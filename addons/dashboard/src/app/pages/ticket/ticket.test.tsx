@@ -340,4 +340,20 @@ describe('rail details and gate details (G3 review)', () => {
     expect(within(pop).getByText(/via unknown · presence unknown/)).toBeInTheDocument()
     expect(within(pop).queryByText(/Touch ID|verified signature/)).toBeNull()
   })
+
+  it('shows a convenience signature as "convenience (no presence)", never as a password; an unknown kind keeps its name', async () => {
+    const doc = structuredClone((await import('@/api/client')).mockStore.ticket('DEMO-0043')!)
+    doc.gates.plan.approvals = [
+      { by: 'p_sev', at: '2026-10-08T09:44:00Z', via: 'dashboard', presence: 'convenience' },
+      { by: 'p_sev', at: '2026-10-08T09:45:00Z', via: 'cli', presence: 'hardware-key' },
+    ]
+    const viewer = { person: 'p_sev', role: 'owner' as const, members: [{ person: 'p_sev', name: 'Severin', role: 'owner' as const }], name: (id: string | null | undefined) => (id === 'p_sev' ? 'Severin' : String(id)), ready: true }
+    const user = (await import('@testing-library/user-event')).default.setup()
+    render(<GatesStrip ticket={doc} viewer={viewer as never} />)
+    await user.click(screen.getByTestId('gate-plan'))
+    const pop = await screen.findByRole('dialog', { name: /Plan/ })
+    expect(within(pop).getByText(/presence convenience \(no presence\)/)).toBeInTheDocument()
+    expect(within(pop).getByText(/presence hardware-key/)).toBeInTheDocument()
+    expect(within(pop).queryByText(/presence password/)).toBeNull()
+  })
 })

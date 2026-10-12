@@ -3,9 +3,9 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRouter } from '@tanstack/react-router'
 import { toast } from 'sonner'
 import { addonActive } from '@/api/addons'
-import { workspaceOfTicket } from '@/api/workspaces'
+import { addressHint, isRunning, preferWorkspace, uuid8, workspaceByAddress, workspaceOfTicket } from '@/api/workspaces'
 import type { Workspace } from '@/api/types'
-import { isWorkspacePath, setLinkWorkspace, splitWorkspacePath, ticketKeyOf, toPublicPath, type UrlState } from './urls'
+import { isWorkspacePath, prefixOfKey, setLinkWorkspace, splitWorkspacePath, ticketKeyOf, toPublicPath, type UrlState } from './urls'
 import { queries } from '@/api/queries'
 
 interface SwitchOptions {
@@ -18,6 +18,12 @@ interface SwitchOptions {
 interface WorkspaceCtx {
   workspace: Workspace | undefined
   workspaces: Workspace[]
+  /** The workspaces of the viewer whose host does not answer: listed as "host not running", with no pages. */
+  unavailable: Workspace[]
+  /** The address names a prefix that two or more workspaces share, and no `?ws=` picks one: the page asks which. */
+  ambiguous?: Workspace[]
+  /** The address names (by `?ws=`) a workspace whose host is not running. */
+  stopped?: Workspace
   /** The prefix of a `/w/<PREFIX>/…` address that names no workspace of the viewer's (the page shows "not found"). */
   missingPrefix?: string
   /** A `/w/<PREFIX>` address while the workspaces are still loading (the page shows a skeleton). */
@@ -32,7 +38,7 @@ interface WorkspaceCtx {
 }
 
 const noop = () => {}
-const Ctx = createContext<WorkspaceCtx>({ workspace: undefined, workspaces: [], setWorkspaceId: noop, switchWorkspace: noop })
+const Ctx = createContext<WorkspaceCtx>({ workspace: undefined, workspaces: [], unavailable: [], setWorkspaceId: noop, switchWorkspace: noop })
 
 /** The address-bar path of an href (with its `/w/<PREFIX>`). */
 const publicPathOf = (publicHref: string) => new URL(publicHref, 'http://x').pathname
@@ -79,7 +85,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const qc = useQueryClient()
   const router = useRouter()
   const urls = (router?.options.context as { urls?: UrlState } | undefined)?.urls ?? NO_URLS
-  const { data = [], isSuccess } = useQuery(queries.workspaces())
+  const { data: everything = [], isSuccess } = useQuery(queries.workspacesAll())
+  const data = useMemo(() => everything.filter(isRunning), [everything])
+  const unavailable = useMemo(() => everything.filter((w) => !isRunning(w)), [everything])
   const [id, setId] = useState<string | null>(readStored)
   const remember = useCallback((next: string) => {
     setId(next)
@@ -98,17 +106,33 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const split = ownsUrl ? splitWorkspacePath(publicPathOf(publicHref)) : { prefix: undefined, path: publicPathOf(publicHref) }
   const { prefix: urlPrefix, path: inAppPath } = split
   const scoped = isWorkspacePath(inAppPath)
+  // `?ws=<first 8 hex of the UUID>` tells two workspaces with one prefix apart (design 5).
+  const urlHint = ownsUrl && urlPrefix !== undefined ? new URL(publicHref, 'http://x').searchParams.get('ws') : null
   // Prefixes match regardless of case (`/w/demo/board`); the address is then corrected to the real one.
-  const fromUrl = scoped && urlPrefix !== undefined ? data.find((w) => w.prefix.toUpperCase() === urlPrefix.toUpperCase()) : undefined
-  const missingPrefix = scoped && urlPrefix !== undefined && isSuccess && !fromUrl ? urlPrefix : undefined
+  // A ticket address is the ticket key's workspace; it takes `?ws=` only where the key's prefix is shared (or a hint is given).
+  const ticketKey = ticketKeyOf(inAppPath)
+  const ticketPrefix = ticketKey === undefined ? undefined : prefixOfKey(ticketKey)
+  const sharedKey = ticketPrefix !== undefined && data.filter((w) => w.prefix.toUpperCase() === ticketPrefix.toUpperCase()).length > 1
+  const addressed = scoped ? urlPrefix : ownsUrl && urlPrefix !== undefined && (sharedKey || urlHint) ? ticketPrefix : undefined
+  const named = addressed !== undefined ? workspaceByAddress(data, addressed, urlHint) : undefined
+  const fromUrl = named && 'found' in named ? named.found : undefined
+  // An address that names (by `?ws=`) a workspace whose host is not running says so; nothing else is shown instead.
+  const stopped = !fromUrl && addressed !== undefined && urlHint ? unavailable.find((w) => uuid8(w.id) === urlHint.toLowerCase()) : undefined
+  const ambiguous = named && 'ambiguous' in named && !stopped ? named.ambiguous : undefined
+  const missingPrefix = addressed !== undefined && isSuccess && named && 'missing' in named && !stopped ? addressed : undefined
   /** A `/w/<PREFIX>` address whose workspace is not known yet: the page waits instead of showing another workspace. */
   const pendingPrefix = ownsUrl && scoped && urlPrefix !== undefined && !isSuccess
-  const workspace = fromUrl ?? data.find((w) => w.id === id) ?? data[0]
+  // While the address does not name one workspace (it asks which, or names a stopped host) none is current: nothing of
+  // another workspace is read or drawn in its place.
+  const workspace = ambiguous || stopped ? undefined : (fromUrl ?? data.find((w) => w.id === id) ?? data[0])
   // In-app links point into this workspace (the router's rewrite reads it when it builds an address).
   const linkPrefix = workspace?.prefix ?? null
+  const linkHint = workspace ? addressHint(workspace, data) : null
+  // A ticket key names a workspace by its prefix only: when two share it, the one the person is in wins.
+  preferWorkspace(workspace?.id ?? null)
   // After every render: an incoming address may have pointed the rewrite at its own prefix (an unknown one too).
   useLayoutEffect(() => {
-    if (router && ownsUrl) setLinkWorkspace(router, urls, linkPrefix)
+    if (router && ownsUrl) setLinkWorkspace(router, urls, linkPrefix, linkHint)
   })
 
   // An address for another workspace (pasted, Back/Forward) makes it the remembered one too.
@@ -119,10 +143,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   // Old and short addresses (`/board`, `/`) get the workspace; a ticket address gets (or is corrected to) the workspace
   // its key names (`/ticket/K`, `/w/OTHER/ticket/K` -> `/w/<K's workspace>/ticket/K`).
-  const ticketKey = ticketKeyOf(inAppPath)
   const keyHome = ticketKey === undefined ? undefined : workspaceOfTicket(ticketKey, data)
   useEffect(() => {
-    if (!workspace || missingPrefix) return
+    if (!workspace || missingPrefix || ambiguous || stopped) return
     let target: string | undefined
     if (ticketKey !== undefined) {
       if (keyHome && (keyHome.prefix !== urlPrefix || inAppPath.endsWith('/'))) target = keyHome.prefix
@@ -133,8 +156,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     if (!target || !router || !ownsUrl) return
     const l = router.latestLocation
     // The same page under its full address: not a navigation a page with unsaved work needs to ask about.
-    router.history.replace(`${toPublicPath(l.pathname, target)}${l.searchStr}${l.hash ? `#${l.hash}` : ''}`, l.state, { ignoreBlocker: true })
-  }, [workspace, fromUrl, missingPrefix, scoped, urlPrefix, router, ownsUrl, ticketKey, keyHome?.prefix, inAppPath])
+    // The hint goes with the address of the workspace the person is in (a key's own workspace: only if it is this one).
+    const mine = target === workspace.prefix ? addressHint(workspace, data) : null
+    const search = new URLSearchParams(l.searchStr)
+    if (mine) search.set('ws', mine)
+    const query = search.toString()
+    router.history.replace(`${toPublicPath(l.pathname, target)}${query ? `?${query}` : ''}${l.hash ? `#${l.hash}` : ''}`, l.state, { ignoreBlocker: true })
+  }, [workspace, fromUrl, missingPrefix, ambiguous, stopped, scoped, urlPrefix, router, ownsUrl, ticketKey, keyHome?.prefix, inAppPath])
 
   // Latest values for switchWorkspace, so its identity stays stable for key handlers.
   const latest = useRef({ data, workspace })
@@ -146,12 +174,18 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     (next: string, opts: { url?: 'push' | 'replace' | 'none' } = {}) => {
       const target = latest.current.data.find((w) => w.id === next)
       remember(next)
+      const hint = target ? addressHint(target, latest.current.data) : null
       // Links and the navigation that may follow point into the new workspace right away.
-      if (target && router && urls !== NO_URLS) setLinkWorkspace(router, urls, target.prefix)
+      if (target && router && urls !== NO_URLS) setLinkWorkspace(router, urls, target.prefix, hint)
       const l = router?.latestLocation
-      if (router && l && urls !== NO_URLS && target && opts.url !== 'none' && isWorkspacePath(l.pathname)) {
+      // A ticket page is left by the switch (a ticket lives in one workspace); only a choice at an ambiguous address stays on it.
+      const here = isWorkspacePath(l?.pathname ?? '/') || (opts.url === 'replace' && ticketKeyOf(l?.pathname ?? '') !== undefined)
+      if (router && l && urls !== NO_URLS && target && opts.url !== 'none' && here) {
         // The switch guards (useSwitchGuard) have already asked about unsaved work.
-        const href = `${toPublicPath(l.pathname, target.prefix)}${l.searchStr}${l.hash ? `#${l.hash}` : ''}`
+        const search = new URLSearchParams(l.searchStr)
+        if (hint) search.set('ws', hint)
+        const query = search.toString()
+        const href = `${toPublicPath(l.pathname, target.prefix)}${query ? `?${query}` : ''}${l.hash ? `#${l.hash}` : ''}`
         if (opts.url === 'replace') router.history.replace(href, l.state, { ignoreBlocker: true })
         else router.history.push(href, undefined, { ignoreBlocker: true })
       }
@@ -200,8 +234,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   )
 
   const value = useMemo<WorkspaceCtx>(
-    () => ({ workspaces: data, workspace, missingPrefix, pendingPrefix, setWorkspaceId, switchWorkspace }),
-    [data, workspace, missingPrefix, pendingPrefix, setWorkspaceId, switchWorkspace],
+    () => ({ workspaces: data, unavailable, ambiguous, stopped, workspace, missingPrefix, pendingPrefix, setWorkspaceId, switchWorkspace }),
+    [data, unavailable, ambiguous, stopped, workspace, missingPrefix, pendingPrefix, setWorkspaceId, switchWorkspace],
   )
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

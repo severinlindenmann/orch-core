@@ -217,20 +217,22 @@ The host owns the request (v1 §0.6): bound to `(workspace, mapped person, signe
 10 minutes, submit and cancel serialized, a tombstone with the result after completion, at most 20 pending per
 person. The dashboard adds:
 
-- **A request belongs to the session that prepared it.** A double click or a retry reuses the click's idem and is answered from
-  the server's own record. `human.prepare` ignores `opts.idem` (§0.7, "As built in H5a" 8a): every call creates a request, and
-  there is no `outcome.get` for it. After a lost answer (`outcome.unknown`) the server **never adopts** a request. On the person's
-  next click it may only **cancel** orphans that are provably its own: the same op and ticket, created inside the lost
-  call's own [start, end] window, unknown to every session of this process, and whose `origin` (from `human.get`; the
-  `human.pending` row has none) is this process (`pid`, `uid`) and client `orch-dashboard`. If another prepare for the same
-  op and ticket (any session or tab of this process) ran in that window, or the host states no origin, it cancels nothing.
-  The marker of the lost call is kept until a retry completed (a failure puts it back unchanged, a second lost answer widens
-  the window to the earliest start). In every case the panel says "An earlier attempt may still be open; it expires by itself
-  at <time>" (the host's `expires_at` when known, else "within 10 minutes"), and a new prepare happens only on that
-  explicit click. "Complete details" after a `new` targets only the ticket of the `new` request this dialog prepared and
-  watched (same request id, op `new`). When `human.prepare` honours `opts.idem` (stream A, later v1.5), the retry reuses the
-  idem and this cancel path goes away. Requests expire after 10 minutes (4 for
-  a grant); more than 20 pending per person is `quota.host`. Two tabs are two requests.
+- **A request belongs to the session that prepared it, and a lost answer is retried with the same idem.** `human.prepare`
+  honours `opts.idem` (host contract 0.7, stream A #402): the same principal, idem and arguments return the SAME request
+  (same id and code) in its current state while it is `prepared` or `bound`; other arguments are `idem.conflict`; once it
+  ended the same idem answers it in its terminal state while the record is kept (24 h), afterwards, or if the request is
+  gone, `idem.expired`; a failed commit or a host restart never produces a second request. So one click is one idem
+  (client-made, reused on a retry, new for the next click; the namespace is shared with `human.submit`, which the signer
+  fills with its own). The server sends the host a key derived from the session, the workspace and that idem, so another
+  session's identical key is another request and never hands over this session's (M1 ownership holds). After
+  `outcome.unknown` the next click retries with the same idem and **adopts** the request the host returns: it is provably
+  ours, because the host binds the idem to the principal and the arguments. There is no `outcome.get` for a prepare; a
+  prepared request is read with `human.pending {request_id}`. The panel shows what the retry returns: open (the command),
+  or already signed, cancelled or expired. `idem.conflict` is an honest error (a new key on the next click);
+  `idem.expired` says "This attempt is too old" and starts again only on the person's click, with a fresh idem. "Complete
+  details" after a `new` targets only the ticket of the `new` request this dialog prepared and watched (same request id,
+  op `new`). Requests expire after 10 minutes (4 for a grant); more than 20 pending per person is `quota.host`. Two tabs
+  are two requests.
 - **A refused submit stays open.** A refusal before any append (`gate.stale`, `members.stale`, `question.stale`,
   `sig.invalid`, `human.request_mismatch`) leaves the request `bound` until it expires, and `human.pending` shows
   `error:{code}`; the panel says "Refused: <text>. The request stays open until <time>". A failure after an event
@@ -393,9 +395,10 @@ retryable, retry_after_ms?}`. The server passes `code`, `message`, `hint`, `retr
 | `gate.already_approved`, `transition.refused` | 409 | "Already done", refetch (§4.3) |
 | `gate.stale`, `members.stale`, `question.stale`, `artifact.mismatch`, `observe.unavailable`, `source.missing` and the other §10.4a model refusals | 409 | "Changed since you started", refetch, "Prepare again" |
 | `human.request_expired` | 410 | "Expired", "Prepare again" |
-| `human.request_mismatch`, `idem.conflict` | 409 | shown as an internal error; never retried |
-| `idem.expired`, `outcome.unknown_idem` | 409 | "Unknown outcome": refetch, then offer "Prepare again" |
-| `outcome.unknown`, `cancelled` | 503 | recover with `outcome.get {idem}`; never a new idem |
+| `human.request_mismatch` | 409 | shown as an internal error; never retried |
+| `idem.conflict` (a prepare) | 409 | "Could not prepare"; the next click draws a new idem |
+| `idem.expired` (a prepare) | 409 | "This attempt is too old"; "Start again" on the click, with a new idem |
+| `outcome.unknown`, `cancelled` (a prepare) | 503 | "Unknown outcome"; "Try again" retries with the SAME idem and adopts the request returned |
 | `op.unsupported`, `host.version_mismatch` | 501 | "host too old for this feature", feature hidden |
 | `host.unavailable`, `host.restarting`, `host.busy` | 503 | "host not running" or "restarting" banner; reads retry with backoff |
 | `rate.limited`, `lock.busy` | 503 | reads retry after `retry_after_ms` |
@@ -403,8 +406,8 @@ retryable, retry_after_ms?}`. The server passes `code`, `message`, `hint`, `retr
 | `internal`, `not_implemented` | 500 | error boundary |
 | dashboard's own: `session.required` 401, `origin.bad` 403, `host.bad` 421, `addon.disabled` 409 | — | full-page states |
 
-- **Only reads retry automatically.** A `human.prepare` is retried only with the same `opts.idem`, and a lost result is
-  recovered with `outcome.get`; `human.cancel` is idempotent; nothing else is retried.
+- **Only reads retry automatically.** A `human.prepare` is retried only with the same `opts.idem` (the host returns the
+  same request); `human.cancel` is idempotent; nothing else is retried.
 - Host limits the dashboard respects (v1 §0.9): 8 requests in flight and 8 subscriptions per connection, 20 pending
   human requests per person, 32 connections per UID. The server uses one connection per workspace for requests and the
   subscription.

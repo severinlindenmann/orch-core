@@ -167,9 +167,38 @@ _SET_FIELDS = frozenset(
 )
 
 
+#: what the host person ops (H6b, §0.8) may change
+_MOVE_TO = frozenset({"backlog", "open"})
+_GATES = frozenset({"requirements", "plan", "verify", "code"})
+_SETTINGS_KEYS = frozenset({"grant_hours", "claim_ttl_min", "lease_ttl_min", "repos"})
+
+
+def _person_op(prepared: Mapping[str, Any]) -> None:
+    """``move``, ``policy.set``, ``settings.set``: each event may change only what its op names, on the log its scope
+    names (a ticket for ``move`` and a ticket ``policy.set``, the workspace log otherwise)."""
+    op, log, ticket = prepared["op"], prepared.get("log"), prepared["material"].get("ticket")
+    for e in prepared["events"]:
+        if op == "move":
+            ok = e["type"] == "ticket.moved" and e.get("to") in _MOVE_TO and log != "workspace" and ticket is not None
+        elif op == "policy.set":
+            gates = e.get("gates")
+            scope_ok = (log == "workspace") == (ticket is None)
+            ok = e["type"] == "policy.changed" and isinstance(gates, dict) and 1 <= len(gates) <= 4
+            ok = ok and set(gates) <= _GATES and scope_ok
+        elif op == "settings.set":
+            sets = e.get("set")
+            ok = e["type"] == "settings.changed" and log == "workspace" and isinstance(sets, dict) and bool(sets)
+            ok = ok and set(sets) <= _SETTINGS_KEYS
+        else:
+            return
+        if not ok:
+            _refuse(f"{op} cannot sign this {e.get('type')} on this log")
+
+
 def _touches(prepared: Mapping[str, Any]) -> None:
     """The op is bound: what each op's ``ticket.updated`` may change, so ``ac.add`` cannot carry a title change."""
     op = prepared["op"]
+    _person_op(prepared)
     for e in prepared["events"]:
         if e["type"] != "ticket.updated":
             continue
@@ -388,6 +417,9 @@ _PLAIN = {
     "addon.grant": "grant addon {name}",
     "addon.disable": "disable addon {name}",
     "addon.purge": "purge addon {name}",
+    "move": "move {ticket} to {to}",
+    "policy.set": "set the gate policies {gates} of {ticket}",
+    "settings.set": "change the workspace settings {set}",
 }
 
 
@@ -396,10 +428,19 @@ def _clean(value: Any) -> str:
     return canon.clean(text).replace("\n", "⟨U+000A⟩")
 
 
-def confirm_word(prepared: Mapping[str, Any]) -> str:
-    """The word the person types: the ticket key for decisions and ticket ops, ``GRANT`` for grants, the person id
-    for member ops, the addon name for addon ops, else the op name."""
+def confirm_word(prepared: Mapping[str, Any], workspace: Callable[[str], tuple[str, str] | None] | None = None) -> str:
+    """The word the person types: the ticket key for decisions and ticket ops (``move`` and a ticket ``policy.set``
+    included), ``GRANT`` for grants, the person id for member ops, the addon name for addon ops,
+    ``<PREFIX>~<WS8>/POLICY`` for a workspace ``policy.set`` and ``<PREFIX>~<WS8>/SETTINGS`` for ``settings.set`` (the
+    prefix and the workspace id's last eight from the signer's **own** registry, ``workspace``), else the op name."""
     op, ev, ticket = prepared["op"], prepared["events"][0], prepared["material"].get("ticket")
+    if op in ("policy.set", "settings.set") and ticket is None:
+        wid = prepared["workspace_id"]
+        known = workspace(wid) if workspace is not None else None
+        if known is None:
+            _refuse("this workspace is not in your own registry")
+        # the last 8 of the id the registry knows it by: two workspaces with one prefix never share a word
+        return f"{_clean(known[1])}~{_clean(wid)[-8:]}/{'POLICY' if op == 'policy.set' else 'SETTINGS'}"  # type: ignore[index]
     if op == "grant":
         return "GRANT"
     if op in _MEMBER_OPS:
@@ -702,7 +743,7 @@ def finish(
         if files is not None:
             check_uploads(prepared, files)
         text = prefix + render(prepared, workspace, artifacts=artifacts)
-        if not confirm(text, confirm_word(prepared)):
+        if not confirm(text, confirm_word(prepared, workspace)):
             _refuse("not confirmed")
         signed = sign(prepared, backend=backend, key_id=key_id, workspace_id=workspace_id)
     except BaseException:

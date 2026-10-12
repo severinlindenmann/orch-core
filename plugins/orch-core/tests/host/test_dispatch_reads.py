@@ -50,6 +50,26 @@ def world(tmp_path):
 READS = sorted(op for op in served_ops() if op_kind(op)[0] in {"read", "person_read"})
 
 
+#: the dashboard reads (§0.8, §0.8.5) and the arguments that aim each at the ticket ``ref`` (or at everything)
+DASHBOARD_READS = {
+    "ticket.query": lambda ref: {},
+    "ticket.get": lambda ref: {"ref": ref},
+    "needs": lambda ref: {},
+    "activity.list": lambda ref: {"ticket": ref},
+    "workspace.show": lambda ref: {},
+    "member.list": lambda ref: {},
+    "session.list": lambda ref: {},
+    "grant.list": lambda ref: {},
+    "workspace.settings": lambda ref: {},
+    "ticket.text": lambda ref: {"ref": ref, "seq": 1, "field": "text"},
+}
+
+
+def unserved(res: dict) -> bool:
+    """A dashboard read whose handler is still a placeholder (another implementer's file): ``unknown_command``."""
+    return not res.get("ok") and res.get("error", {}).get("code") == "unknown_command"
+
+
 def norm(res: dict, ref: str) -> str:
     """A response without its request id and the per-call fence nonces, with the echoed ref replaced."""
     import re
@@ -72,6 +92,8 @@ def args_for(op: str, ref: str) -> dict:
         return {"sub": "sub_0"}
     if op == "wait":  # parks on the bus: a short timeout for the owner's baseline
         return {"ref": ref, "timeout": 1}
+    if op in DASHBOARD_READS:  # H6b: not registry ops, so no registry schema to read the arguments from
+        return DASHBOARD_READS[op](ref)
     if op == "artifact.get":  # H4a2: through Viewer.ticket, then Viewer.artifact
         return {"ref": ref, "name": "proof.txt", "offset": 0}
     if op == "blob.put":  # H4a2: blobs are per principal and name no ticket
@@ -101,12 +123,33 @@ def test_no_person_learns_nothing_about_a_restricted_ticket(world, op):
     c = served.client()
     hidden = c.req(op, args_for(op, key), session=SESSION)
     missing = c.req(op, args_for(op, "DEMO-9999"), session=SESSION)
+    if op in DASHBOARD_READS and unserved(hidden):
+        pytest.skip(f"{op} has no handler yet (the assertion below runs once it is served)")
     body = json.dumps(hidden)
     assert TITLE not in body, (op, body[:400])
     # the answer about the restricted ticket is the answer about a ticket that does not exist (modulo the echoed ref)
     assert norm(hidden, key) == norm(missing, "DEMO-9999"), op
     if TITLE in baseline.get(op, ""):  # a read that shows the ticket to the owner shows nothing of it here
         assert key not in body or not hidden["ok"]
+
+
+def test_every_dashboard_read_is_covered_by_the_walk():
+    served = set(served_ops())
+    assert set(DASHBOARD_READS) <= served and set(DASHBOARD_READS) >= served & {
+        "ticket.query", "ticket.get", "needs", "activity.list", "workspace.show", "member.list", "session.list",
+        "grant.list", "workspace.settings", "ticket.text",
+    }  # fmt: skip
+    walked = {op for op in READS if op in DASHBOARD_READS}
+    assert {"ticket.query", "ticket.get", "needs", "activity.list", "workspace.show", "member.list"} <= walked
+
+
+def test_ticket_query_and_needs_show_the_visible_ticket_to_the_owner_and_nothing_to_no_person(world):
+    served, key, baseline = world
+    for op in ("ticket.query", "needs"):  # the owner sees the restricted ticket's row; no-person's answer has no trace
+        c = served.client()
+        res = c.req(op, args_for(op, key), session=SESSION)
+        assert res["ok"] and TITLE not in json.dumps(res) and key not in json.dumps(res), op
+    assert TITLE in baseline["ticket.query"]  # the precondition: the read does show the ticket to someone
 
 
 def test_list_and_search_count_only_visible_rows(world):

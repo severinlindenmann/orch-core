@@ -24,6 +24,16 @@ export type HandoffAction =
   /** One body section, replaced (the description follow-up, `section.set`). Spikes keep "findings" where other types have "verification". */
   | { action: 'section'; key: string; section: 'summary' | 'context' | 'requirements' | 'out_of_scope' | 'plan' | 'decisions' | 'verification' | 'findings' | 'current_state'; text: string }
 
+  /** Reduced workspace settings (M4). `repos` is not here: the Repos addon owns repo editing. */
+  | { action: 'settings_set'; grant_hours?: number; claim_ttl_min?: number; lease_ttl_min?: number }
+  /** The workspace default policy of one gate (F1 5.7 `Policy`, exactly). The code gate: `not` has `assignees`, `independent` is true. */
+  | { action: 'policy_set'; gate: 'requirements' | 'plan' | 'verify' | 'code'; policy: { approvers: string[]; count: number; not: string[]; applies: 'all' | 'off' | string[]; independent: boolean } }
+  /** The invitee's own public key (base64url, 65 bytes) and first device certificate (strict JSON text): their files, uploaded by the person. */
+  | { action: 'member_add'; name: string; role: 'owner' | 'maintainer' | 'member' | 'viewer'; pk: string; cert: string }
+  | { action: 'member_role'; person: string; role: 'owner' | 'maintainer' | 'member' | 'viewer' }
+  | { action: 'member_remove'; person: string }
+  | { action: 'grant_revoke'; grant: string; reason?: string }
+
 /** The hand-offs that follow a signed `new` for what it cannot carry. */
 export type FollowUpAction = Extract<HandoffAction, { action: 'details' | 'section' }>
 
@@ -71,8 +81,6 @@ export interface HandoffRequest {
   material: HandoffMaterial
   events: HandoffEvent[]
   origin?: { uid: number; pid: number; client: string; created_at: string } | null
-  /** Only on a retry after a lost answer: an earlier attempt may still be open (its host expiry when known). */
-  earlier_open?: { expires_at: string | null }
 }
 
 /** A written section is at most 64 KiB of UTF-8 (P1 and the host), counted in bytes like the server. */
@@ -158,6 +166,9 @@ export function expiryMs(expiresAt: string, now = Date.now()): number | null {
   return Number.isFinite(at) && at > now - 60_000 && at < now + 15 * 60_000 ? at : null
 }
 
+/** Only a request that has ended is excused the expiry window; anything else must still be live. */
+const isOpen = (state: HandoffStateName) => state !== 'submitted' && state !== 'cancelled' && state !== 'expired'
+
 /** True only when the digest, the fingerprint, the review and the expiry the server sent are what this browser computes. */
 export function requestIsConsistent(request: HandoffRequest): boolean {
   try {
@@ -167,7 +178,8 @@ export function requestIsConsistent(request: HandoffRequest): boolean {
       fingerprintOf(digest, request.events, request.op) === request.fingerprint &&
       materialKeysOk(request.material) &&
       reviewMatches(request.material, request.events) &&
-      expiryMs(request.expires_at) !== null
+      // A retry with the same key returns the request in its current state: an ended one keeps the time it had.
+      (isOpen(request.state) ? expiryMs(request.expires_at) !== null : /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(request.expires_at))
     )
   } catch {
     return false
@@ -179,6 +191,22 @@ export const confirmWord = (key: string, uid: string): string => `${key}/${uid.s
 
 /** The exact line the person runs. A code is 4+4 characters of the Crockford alphabet, so it is safe to put in a shell. */
 export const CODE = /^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/
+/**
+ * The word the signer asks for on a request that is not about a ticket: a member's person id for the member operations,
+ * `GRANT.REVOKE` for a revoke, and `<PREFIX>~<WS8>/SETTINGS` or `<PREFIX>~<WS8>/POLICY` for the workspace settings and policy (stream
+ * A's decision; WS8 = last 8 characters of the workspace id; the signer's header keeps the full id). `null` where this dashboard does not know the word.
+ */
+export function workspaceConfirmWord(request: Pick<HandoffRequest, 'op' | 'events' | 'material'>, workspace?: { prefix: string; id: string } | null): string | null {
+  if (request.material.ticket) return null
+  if (request.op === 'member.add' || request.op === 'member.role' || request.op === 'member.remove') {
+    const person = request.events[0]?.person
+    return typeof person === 'string' ? person : null
+  }
+  // Stream A: <PREFIX>~<WS8>/SETTINGS and <PREFIX>~<WS8>/POLICY, WS8 the last 8 characters of the workspace id.
+  if (request.op === 'settings.set' || request.op === 'policy.set') return workspace ? `${workspace.prefix}~${workspace.id.slice(-8)}/${request.op === 'settings.set' ? 'SETTINGS' : 'POLICY'}` : null
+  return request.op === 'grant.revoke' ? 'GRANT.REVOKE' : null
+}
+
 export const signCommand = (code: string): string => `orch sign ${code}`
 
 const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
@@ -193,5 +221,12 @@ export const IDEM = /^a_[0-7][0-9A-HJKMNP-TV-Z]{25}$/
 
 /** Codes of a refusal that mean the work is already done (design 4.3): no signature is needed. */
 export const ALREADY_DONE = new Set(['gate.already_approved', 'transition.refused'])
+/**
+ * Codes of the host about the KEY of a prepare (host contract 0.7): the same key with other arguments, and a key whose record
+ * is gone (kept 24 h after the request ended). Neither is retried: the person starts again, with a new key, on their click.
+ */
+export const KEY_REUSED = 'idem.conflict'
+export const KEY_TOO_OLD = 'idem.expired'
+
 /** Codes that mean the state moved between prepare and submit: refetch, then offer to prepare again. */
 export const CHANGED = new Set(['gate.stale', 'members.stale', 'question.stale', 'artifact.mismatch', 'observe.unavailable', 'source.missing', 'conflict.field', 'conflict.section'])

@@ -4,12 +4,12 @@ import { Shell } from './shell/Shell'
 import { RouteProblem } from './shell/RouteProblem'
 import { lazyPage } from './pages/lazyPage'
 import { AddonPageSkeleton, AgentsSkeleton, ArtifactsSkeleton, BoardSkeleton, GenericSkeleton, SettingsSkeleton, TicketSkeleton, TicketsSkeleton, TodaySkeleton } from './pages/skeletons'
-import { SETTINGS_TABS } from './pages/settings/tabs'
+import { knownSettingsTab } from './pages/settings/tabs'
 import { validateTicketsSearch } from './pages/tickets/search'
 import { addonPageData, agentsData, artifactsData, boardData, loadShell, pageLoader, settingsData, ticketData, ticketsData, todayData, type LoaderContext } from './routeData'
 import { validateAgentsSearch, validateArtifactsSearch, validateBoardSearch, validateTicketSearch } from './search'
 import { workspaceRewrite, type UrlState } from './urls'
-import { hasFeature } from '@/api/features'
+import { hasFeature, isRealHost } from '@/api/features'
 
 // Every page is its own chunk. The route loaders load it (and warm the page's data) before the router shows the page:
 // the old page stays until then, or until `PENDING_MS`, after which the page's skeleton shows (see routeData.ts).
@@ -116,7 +116,7 @@ const settingsTabRoute = createRoute({
   // An unknown tab (or /settings/addon without a name) would render only the sub-nav: go to General instead.
   beforeLoad: ({ params }) => {
     serves('settings')()
-    if (!SETTINGS_TABS.includes(params.tab)) throw redirect({ to: '/settings/$tab', params: { tab: 'general' } })
+    if (!knownSettingsTab(params.tab)) throw redirect({ to: '/settings/$tab', params: { tab: 'general' } })
   },
   loader: ({ context, params }) => pageLoader(settingsData(params.tab), [SettingsPage.preload])({ context }),
   pendingComponent: SettingsSkeleton,
@@ -128,7 +128,11 @@ const settingsTabRoute = createRoute({
 const settingsAddonRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'settings/addon/$name',
-  beforeLoad: serves('settings'),
+  beforeLoad: () => {
+    serves('settings')()
+    // An addon's own settings are not on a real host yet (the reduced settings have General, Members, Gates, Grants).
+    if (isRealHost()) throw redirect({ to: '/settings/$tab', params: { tab: 'general' } })
+  },
   loader: ({ context, params }) => pageLoader(settingsData('addons', params.name), [SettingsPage.preload, addonNodes])({ context }),
   pendingComponent: SettingsSkeleton,
   component: function SettingsAddonRoute() {

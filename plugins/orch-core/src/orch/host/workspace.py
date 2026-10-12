@@ -382,6 +382,9 @@ class WorkspaceService:
 
     def close(self) -> None:
         def shut() -> None:
+            rec = getattr(self, "session_records", None)
+            if rec is not None:
+                rec.flush()  # the throttled session records (host/sessions.py)
             if self.store is not None:
                 self.store.close()
                 self.store = None

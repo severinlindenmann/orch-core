@@ -284,6 +284,15 @@ _SPECS = [
         "A direct-mode call on a workspace the host has adopted (D-P2-18): there is no silent fallback.",
     ),
     _e(
+        "host.untrusted",
+        3,
+        False,
+        "the process behind the host socket is not the host the registry names",
+        "do not use this socket; check orch host list and who owns the run directory",
+        ["orch", "host", "list"],
+        "Raised only by the client (H4b, H5b): the socket's owner or welcome does not match the trusted pin.",
+    ),
+    _e(
         "host.busy",
         4,
         False,
@@ -477,6 +486,7 @@ GLOBAL_ERRORS = (
     "stop",
     "retry.later",
     "host.required",
+    "host.untrusted",
 )
 
 

@@ -402,8 +402,15 @@ def _bound_key(key: Any, ref: str | None) -> str:
     if not isinstance(key, str) or not _KEY.fullmatch(key):
         raise OrchError("invalid.input", "the host's answer names no ticket: nothing was run")
     if ref is not None:
-        number = key.rpartition("-")[2]
-        if ref != key and not (ref.isdigit() and int(ref) == int(number)):
+        prefix, _, number = key.rpartition("-")
+        asked_prefix, dash, asked_number = ref.rpartition("-")
+        same = (
+            dash == "-"
+            and asked_prefix.upper() == prefix
+            and asked_number.isdigit()
+            and int(asked_number) == int(number)
+        )
+        if not (same or (ref.isdigit() and int(ref) == int(number))):
             raise OrchError("invalid.input", "the host answered for another ticket than the one asked: nothing was run")
     return key
 
@@ -464,6 +471,10 @@ def _client_receipt(
     if task is None:
         raise OrchError("not_found", f"no task {tid} on this ticket")
     cmd = _checked_cmd(task.get("verify"), tid)
+    if ctx.progress is not None:  # the host's answer decides what runs on this machine: show it first, escaped
+        from orch.canon.text import clean
+
+        ctx.progress(f"running the verify command the host gave for {key}/{tid}: {clean(cmd)}")
     repo, path = _local_repo(ctx, list(data.get("repos") or []))
     if path is not None:
         from orch.store import observe

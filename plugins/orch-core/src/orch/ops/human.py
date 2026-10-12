@@ -319,9 +319,8 @@ class Human:
         for tid, r in (inp.get("receipts") or {}).items():
             body += [
                 f"receipt {tid}:",
-                *self._data(
-                    [f"exit {r.get('exit')} at {r.get('commit')} repo {r.get('repo')} (attested by the agent)"]
-                ),
+                *self._data([f"exit {r.get('exit')} at {r.get('commit')} repo {r.get('repo')}"]),
+                "   (orch's label: attested by the agent, not run by orch or the host)",
             ]
         summary = ", ".join([*counts, f"{len(acceptance)} criteria", f"{len(tasks)} tasks"])
         out += [f"summary: {summary}", "", *body]

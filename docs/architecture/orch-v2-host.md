@@ -617,6 +617,10 @@ parsed CLI arguments), its handler and its `Result`. The changes from P1:
   mode's trust: the person approved `verify.cmd` in the plan, and a host that lied could only make the client run a
   command of its own choosing, as any program the user's own host-side state could already name. The host re-checks
   that the receipt's `cmd` equals the signed `verify.cmd` byte for byte.
+  The CLI prints the exact command (escaped) before running it. **Trust direction (D-P2-19):** in host mode the command
+  reaches the agent's machine through the host's answer; a compromised host that passes the pin could make the CLI run an
+  arbitrary command as the agent user. That is accepted in tier A, where the host runs as the same UID. Phase 3 (tier B)
+  must revisit it, for example by verifying the command against the signed ticket log locally.
 - `import.v1` and `init` are not served (D-P2-9). `import.v1` runs in direct mode before registration. `init` is the
   `host.wsk_create` + `host.bootstrap` composite.
 - `help` and `describe` are answered by the client from its own registry. The host serves them too.

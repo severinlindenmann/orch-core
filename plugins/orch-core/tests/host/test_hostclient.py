@@ -611,3 +611,11 @@ def test_the_task_done_goes_to_the_ticket_the_command_was_read_from(lab, monkeyp
         assert [a["task"] for o, a in sent if o == "task.done"] == ["DEMO-0001/T1"]
     finally:
         served.close()
+
+
+def test_the_ticket_key_is_compared_canonically():
+    for ref in ("DEMO-1", "demo-0001", "DEMO-0001", "1", "0001"):
+        assert hostclient._bound_key("DEMO-0001", ref) == "DEMO-0001"
+    for ref in ("DEMO-2", "OTHER-1", "2"):
+        with pytest.raises(Exception, match="another ticket"):
+            hostclient._bound_key("DEMO-0001", ref)

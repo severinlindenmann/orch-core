@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRouter, useRouterState } from '@tanstack/react-router'
-import { Bot, Check, Link2, Clock, FileText, Files, LayoutDashboard, ListChecks, MessageSquare, MessageSquareReply, Plus, Save, Settings, SquareKanban, User, Zap, ArrowRightLeft, Building2 } from 'lucide-react'
+import { Bot, Check, Link2, Tag, Lock, LockOpen, Clock, FileText, Files, LayoutDashboard, ListChecks, MessageSquare, MessageSquareReply, Plus, Save, Settings, SquareKanban, User, Zap, ArrowRightLeft, Building2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { addonActive } from '@/api/addons'
 import { can } from '@/api/permissions'
+import { handoffMode } from '@/api/features'
+import type { HandoffAction } from '@/api/handoff'
+import { HandoffDialog } from '@/components/sign/HandoffDialog'
 import { api } from '@/api/client'
 import { STATUSES, type ActionRequest, type Status } from '@/api/types'
 import { useAddons, useSlot } from '@/addon-ui/slots'
@@ -28,7 +31,7 @@ import { toastApiError } from '@/app/toast'
 import { useCopyLink } from '../../copyLink'
 import { queries } from '@/api/queries'
 
-type Mode = null | 'comment' | 'move' | 'move-pick' | 'ask-to' | 'quick' | { ask: string }
+type Mode = null | 'comment' | 'label' | 'move' | 'move-pick' | 'ask-to' | 'quick' | { ask: string }
 
 function useDebounced<T>(value: T, ms: number): T {
   const [v, setV] = useState(value)
@@ -52,6 +55,9 @@ export function CommandPalette() {
   const [q, setQ] = useState('')
   const [mode, setMode] = useState<Mode>(null)
   const [signing, setSigning] = useState<HumanAction | null>(null)
+  // On a real host a comment, a label, a close or a reopen is a terminal hand-off (design 4), not a posted action.
+  const [handoff, setHandoff] = useState<{ title: string; action: HandoffAction } | null>(null)
+  const handoffOn = handoffMode(workspace?.id)
   // "Move ticket to…" on the board: the ticket chosen (or the focused card when ⌘K was pressed on one).
   const [moveTarget, setMoveTarget] = useState<{ key: string; status?: Status } | null>(null)
   const focusedCard = useRef<{ key: string; status: Status } | null>(null)
@@ -134,6 +140,7 @@ export function CommandPalette() {
 
   const post = async (req: ActionRequest, done: string, key = ticketKey!) => {
     close()
+    if (handoffOn && req.action === 'comment') return setHandoff({ title: 'Comment', action: { action: 'comment', key, message: req.text } })
     try {
       await api.postAction(key, req)
       await qc.invalidateQueries()
@@ -158,7 +165,7 @@ export function CommandPalette() {
     }),
   ]
 
-  const create: Entry[] = [
+  const create: Entry[] = ([
     can(role, 'ticket.create') || !role
       ? {
           id: 'new-ticket',
@@ -184,7 +191,9 @@ export function CommandPalette() {
           disabled: true,
           run: () => undefined,
         },
-    can(role, 'ticket.create') || !role
+    handoffOn
+      ? null
+      : can(role, 'ticket.create') || !role
       ? { id: 'quick-ticket', label: 'Quick ticket…', icon: <Zap />, hint: 'create new ticket one line', run: () => (setQ(''), setMode('quick')) }
       : {
           id: 'quick-ticket',
@@ -208,7 +217,7 @@ export function CommandPalette() {
         requestSaveView()
       },
     },
-  ]
+  ] as (Entry | null)[]).filter((e): e is Entry => e !== null)
 
   // Addon commands go through the one action hook: the installed manifest decides who may run each (a viewer gets the
   // viewer-level ones), and signed or agent-starting actions open core's dialog first.
@@ -262,7 +271,14 @@ export function CommandPalette() {
     const out: Entry[] = []
     // Claim and Release are for agents only (see the claim box on the ticket page): never offered to people.
     out.push({ id: 'comment', label: 'Comment', icon: <MessageSquare />, run: () => (setQ(''), setMode('comment')) })
-    out.push({ id: 'ask', label: 'Ask a question', icon: <MessageSquareReply />, run: () => (setQ(''), setMode('ask-to')) })
+    // Asking a question is not a hand-off action yet (the allowlist is approve, changes, verdict, answer, comment, label, close, reopen, new).
+    if (!handoffOn) out.push({ id: 'ask', label: 'Ask a question', icon: <MessageSquareReply />, run: () => (setQ(''), setMode('ask-to')) })
+    if (handoffOn) {
+      out.push({ id: 'label', label: 'Add label…', icon: <Tag />, run: () => (setQ(''), setMode('label')) })
+      const key = t.key
+      if (t.status === 'done' || t.status === 'closed') out.push({ id: 'reopen', label: 'Reopen ticket', icon: <LockOpen />, run: () => (close(), setHandoff({ title: `Reopen ${key}`, action: { action: 'reopen', key } })) })
+      else out.push({ id: 'close', label: 'Close ticket', icon: <Lock />, run: () => (close(), setHandoff({ title: `Close ${key}`, action: { action: 'close', key } })) })
+    }
     if (can(ticketRole, 'ticket.move')) out.push({ id: 'move', label: 'Move to…', icon: <ArrowRightLeft />, run: () => (setQ(''), setMode('move')) })
     for (const g of av.approve) out.push({ id: `approve-${g}`, label: `Approve ${gateActionName(g)}`, icon: <Check />, run: () => sign({ kind: 'approve', gate: g }) })
     if (av.verdict) out.push({ id: 'verdict', label: 'Give verdict', icon: <Check />, run: () => sign({ kind: 'verdict' }) })
@@ -332,6 +348,23 @@ export function CommandPalette() {
             icon: <MessageSquare />,
             disabled: !text.trim(),
             run: () => void post(ask ? { action: 'ask', to: ask, text: text.trim() } : { action: 'comment', text: text.trim() }, ask ? 'Question sent' : 'Comment posted'),
+          },
+        ]}
+      />
+    )
+  } else if (mode === 'label') {
+    const label = text.trim().toLowerCase()
+    const valid = /^[a-z0-9][a-z0-9._-]{0,31}$/.test(label)
+    body = (
+      <Group
+        heading="Add label"
+        entries={[
+          {
+            id: 'add-label',
+            label: valid || !label ? 'Add label' : 'Labels are lower-case words (a-z, 0-9, . _ -)',
+            icon: <Tag />,
+            disabled: !valid,
+            run: () => (close(), setHandoff({ title: 'Add label', action: { action: 'label', key: ticketKey!, label } })),
           },
         ]}
       />
@@ -414,7 +447,7 @@ export function CommandPalette() {
     )
   }
 
-  const placeholder = mode === 'quick' ? 'Quick ticket: describe it in one line, then Enter...' : mode === 'comment' ? 'Write a comment, then Enter...' : typeof mode === 'object' && mode ? 'Write the question, then Enter...' : mode === 'ask-to' ? 'Ask whom?' : mode === 'move' ? 'Move to which status?' : mode === 'move-pick' ? 'Search for the ticket to move...' : PLACEHOLDER
+  const placeholder = mode === 'quick' ? 'Quick ticket: describe it in one line, then Enter...' : mode === 'comment' ? 'Write a comment, then Enter...' : mode === 'label' ? 'Name the label, then Enter...' : typeof mode === 'object' && mode ? 'Write the question, then Enter...' : mode === 'ask-to' ? 'Ask whom?' : mode === 'move' ? 'Move to which status?' : mode === 'move-pick' ? 'Search for the ticket to move...' : PLACEHOLDER
 
   return (
     <>
@@ -436,6 +469,7 @@ export function CommandPalette() {
         </CommandList>
       </CommandDialog>
       {ticket.data && <SignDialog ticket={ticket.data} action={signing} onClose={() => setSigning(null)} />}
+      {handoff && workspace && <HandoffDialog title={handoff.title} ws={workspace.id} action={handoff.action} autoStart onClose={() => setHandoff(null)} />}
       {runAddon.dialog}
     </>
   )

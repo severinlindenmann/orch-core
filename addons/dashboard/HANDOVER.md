@@ -743,3 +743,66 @@ toast (the caches are purged as before). `artifact.get` is gated on `diff/1`, an
 but its transform did not match exactly once. **Known, harmless:** Radix's scroll lock (`react-style-singleton`) and
 xterm's DOM renderer still create `<style>` elements; the CSP (`style-src 'self'`) blocks them, the console logs the
 violation, Radix dialogs do not lock body scroll and the terminal keeps its own styling. The CSP is not loosened.
+
+## P2 server (M3 actions)
+
+Signed actions through the terminal hand-off (#305). **The dashboard never signs, holds no factor and never calls
+`human.submit`.** The person signs with `orch sign CODE` (H5b); the dashboard prepares, shows, follows and cancels.
+
+| Route | Host op | Notes |
+| --- | --- | --- |
+| `POST /api/w/<uuid>/handoff` | `human.prepare {op, args, handoff:true}` | body: `idem` (`a_` + 26 Crockford chars, client-made, one per click) and a typed action (`approve`, `request_changes`, `verdict`, `answer`, `comment` -> `log`, `label` -> `set labels=`, `close`, `reopen`, `new`, `details` -> `set`, `section` -> `section.set`). `extra=forbid`; `new` carries title and type only; the follow-ups are `details` (priority, size, labels, parent: one `set`) and `section` (one `section.set` per written section; id from the closed list, text 1..65536). `move`, `ask`, settings: 400. Requests belong to the session token that prepared them (other token: 404). The same idem from the same token = the recorded answer; two tabs = two requests; 8 open per session (`quota.host`). After a lost prepare answer the retry first cancels the person's open request for that action created since the lost call |
+| `GET /api/w/<uuid>/handoff/<request_id>` | `human.pending {request_id}` | `{state, event_ids, seq, error?}`; owner only |
+| `DELETE /api/w/<uuid>/handoff/<request_id>` | `human.cancel` | idempotent; logout cancels the session's open requests |
+
+The answer is a `HandoffRequest {id, code, expires_at, state, op, key, fingerprint, review_digest, gate_hash, material, events}`.
+The server recomputes `review_digest` and the fingerprint (`sha256(cj({review_digest, events without sig, actor.device,
+auth}))[:12]`, host contract 0.8.1) and refuses (`internal`) an answer that disagrees; the browser recomputes both again
+and shows nothing otherwise. The preview is only `material`. Feature `actions` is listed when the host serves
+`human.prepare/get/pending/cancel`; `move` is never listed (H6b), so `can(role, 'ticket.move')` is off on a real host.
+Gate `material.policy` and section `texts` are rendered when present (v1.5, optional).
+
+Dev stub: `devhost/humanops.py` (v1.4 `human.*` on the P1 store), `devhost/sign.py` (`python -m devhost sign CODE`).
+Both are dev only, never shipped, and excluded from the wheel (tested). Stub limits: `new` carries title and type only
+(P1 `ticket.created` has no other fields), no `observe` of git for code gates, requests are in memory.
+Known gaps: the fingerprint will also cover the op once H5a lands (the client check then needs that formula); the uid
+fragment is the last 8 characters of the log id in both the panel and the stub signer (confirm with stream A).
+
+M3 fix round 1: the server checks the host's answer is the op and ticket asked for, `state` is `prepared`, `expires_at` is
+well-formed and within 15 minutes, and each `material.review` block equals its event minus the envelope (the browser checks
+the same). Stub signer checks left out (no data in the stub): `material.policy` vs `policy_hash`, git state for a code
+gate, the op in the fingerprint. `human.prepare` ignoring `opts.idem` means there is no `outcome.get` for it (design 4.3
+corrected): the server keeps its own record per (token, workspace, idem).
+
+H5a answers (stream A, #391) applied: the fingerprint covers the op (`sha256(cj({op, review_digest, events:[V(e)]}))[:12]`;
+vectors `log` d8de03967462, `set` 37cf21ef169c are tests in the stub, server and browser); `gate_gen` leaves the review payload
+on the three decision types only; the confirmation word is `KEY/FRAG` (last 8 characters of the log's uid) and the panel and the
+stub signer print the same five header lines with the key labelled "ticket key per host, not proven"; a refused submit leaves the
+request `bound` with `error:{code}` in `human.pending`; after a lost prepare answer the server never adopts a request: on the next click it cancels only orphans provably its own (same op and ticket, inside the lost call's window, unknown to every session here, `human.get` origin = this pid and `orch-dashboard`, no other prepare for that op and ticket in the window); with no origin or any doubt it cancels nothing, and the panel says an earlier attempt may still be open and expires by itself at <time> (the host's `expires_at`, else within 10 minutes). The lost-call marker is kept until recovery completed and only widens (earliest start). `human.pending` rows carry no origin; `human.get` does. The server already sends `opts.idem` on prepare: when prepare honours `opts.idem`, retry with the same idem after `outcome.unknown` and remove the orphan-cancel path (`recover` in `handoff.py`). Known limits (Opus re-check 2, info): the panel's `earlier_open` time can be another request's expiry in the same window, and it still says "may still be open" after everything was cancelled; the dev stub stamps `origin.pid` with its own pid, so when it runs as a separate process recovery never cancels anything there (the path is covered by the in-process tests only). A whole-second `created_at` widens the crowding check by one second (R1).
+Not yet from H5a: gate `material.texts` is shown only if present; the signer's op-specific `ticket.updated` checks are not in the stub signer.
+
+M3 complete details (this round): after a signed `new` the page offers "Complete details" (`new-ticket/CompleteDetails.tsx`), one
+hand-off per step, in order: one `details` (`set`: priority, size, labels, parent epic) and one `section` per written section
+(`section.set`). Host contract 0.8.1 item 3 and "Person versions of agent ops" name `set` and `section.set` as person ops, so
+the stub now serves both (`parent=KEY|none` validated against visible tickets and not the ticket itself; `section.set` appends
+with `body=` so the P1 store checks the text against the signed hash; the stub signer checks that `section.set` changes one
+section and no field, `set` fields only, and that `base_rev` names exactly the touched paths). The list shown is the person's
+own input; the preview inside the dialog is the host's material only. Cancelling any step ends the offer (the rest stays
+unset). Still refused up front, with the reason in the form: restricted visibility, people, due date, acceptance criteria (the
+host has no person op that sets them). A spike's "verification" text travels as the host's `findings` section.
+
+H5b alignment (stream A, #398): the stub's `human.pending {code}` now matches contract 0.8.1 item 2 and 3: a code resolves only while the
+request is `prepared` or `bound`; a lookup that finds nothing (including the code of a submitted, cancelled or expired request) is a
+failed lookup; 5 failed lookups in 60 s **per connection** answer `rate.limited` (retryable, `retry_after_ms`), the right code
+included; another connection and `{request_id}` lookups are not counted (the stub has one person and one workspace, so the
+same-principal/person/workspace rules hold trivially). The dashboard server follows a request by `request_id` only and never sends a
+code (`human.pending {}` lists the session's own open requests; tested). M3 offers no artifact hand-off (`artifact.add/replace` would
+need `orch sign CODE --file NAME=PATH`).
+
+Real `orch sign` against the stub (smoke, 12 Oct): it works. With the same disposable `ORCH_STATE_DIR`/`ORCH_DEV=1` setup, core's
+`python -m orch sign CODE` (develop, H5b) found the stub's registry entry and socket, resolved the code, bound the device, ran its checks
+and signed `new`, `set` and `section.set` requests and a `log`, with the same fingerprint, the same header lines and the same
+`KEY/FRAG` word as the panel; the P1 store appended all of them. A declined confirm cancelled the request and the dashboard showed
+"Cancelled". The workspace line reads "workspace (None) <uuid>" because the stub's registry pin has no name or prefix. The stub signer
+(`python -m devhost sign`) stays for the dev loop and the tests.
+

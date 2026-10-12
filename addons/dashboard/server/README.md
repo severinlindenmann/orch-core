@@ -225,3 +225,19 @@ Tests use FastAPI TestClient and socketpair, including real signed P1 workspace 
 so no listener ports are needed. Full browser launch, real cross-origin browser enforcement,
 layout guard and S1/S2 against stream A's real host still need the dev-kit outside this
 sandbox. Stub-only success does not close #304–#306 or establish real-host acceptance.
+
+## M3: signed actions and the dev stub signer
+
+The stub also serves `human.prepare/get/pending/cancel/submit` (host contract v1.4, section 0.8.1) on the P1 store. The
+dashboard server only prepares, reads and cancels; the person signs with the **dev stub signer**, never shipped and
+excluded from the wheel:
+
+```sh
+cd addons/dashboard
+ORCH_DEV=1 ORCH_STATE_DIR=/path/to/dev-state server/.venv/bin/python -m devhost sign 7F3K-Q2MA
+```
+
+It resolves the code with `human.pending`, binds with `human.get`, recomputes the digest, the fingerprint and the review,
+renders it on the terminal, asks for the ticket key and then the passphrase (both on `/dev/tty`), signs with the dev
+workspace's device key (`<state>/hosts/<ws>/person/dk.key.json`) and submits. Routes: `POST /api/w/<uuid>/handoff`,
+`GET|DELETE /api/w/<uuid>/handoff/<request_id>`.

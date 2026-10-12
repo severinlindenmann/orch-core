@@ -1325,3 +1325,20 @@ library would weaken it for every page.
 **Revert:** Restore `ticket.closed` in `reads.py` and drop `ticket.closed`/`Status` `closed`; make the row
 counts non-null again in `adapters/tickets.py`; remove `activity.list` from `hostlink.py`, `reads.py` and the stub;
 delete the `sonner-no-inline-style` plugin and the stylesheet import (the CSP would then block sonner again).
+
+## 2026-10-11 — P2 M3 signed actions: the dashboard prepares, the terminal signs
+
+**Decision:** (1) Every person action is a terminal hand-off: one typed route prepares (`human.prepare`, `handoff:true`),
+one reads state, one cancels. The server has no code path to `human.submit` and no factor. (2) The panel renders only the
+host's `material`; the fingerprint is the host's `Prepared.fingerprint`, verified by the server and the browser with the
+0.8.1 formula (fail closed). (3) A click is one prepare: the idem is kept for a retry after a lost answer, an open request
+for the same action is reused, and nothing ever prepares again without a click. (4) Hand-off mode is on only for a real host
+listing `actions`; the mockup keeps its simulated Touch ID dialog. (5) Move stays hidden, quick ticket and "ask" are hidden
+on a real host, bulk status changes are off (one signature per change). (6) A new ticket refuses what one signed event
+cannot carry (restricted visibility, people, due, criteria, more than one section) instead of dropping it.
+
+**Why:** A browser that signs or holds a passphrase can be phished by any XSS; the terminal shows its own review. Showing
+cached ticket data next to a signature would let the two differ. A silent re-prepare would create requests nobody asked for.
+
+**Revert:** Remove `handoff.py` routes and `Gateway.features["actions"]`; restore `SignDialog` to the simulated dialog
+only (delete `HandoffSignDialog`, `HandoffDialog`, `HandoffPanel`, `useHandoff`).

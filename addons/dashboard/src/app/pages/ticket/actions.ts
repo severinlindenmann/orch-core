@@ -2,6 +2,7 @@ import { codeReviewWaits, policySentence } from '@/api/gates'
 import type { GateName, GateStatus, QuestionStatus, TicketDocument } from '@/api/types'
 import { roleMeets } from '@/api/roles'
 import { can } from '@/api/permissions'
+import { isRealHost } from '@/api/features'
 import type { Viewer } from './shared'
 
 /** Mirrors the gate policy the mock host enforces: who may approve a gate. */
@@ -11,6 +12,8 @@ export function canApproveGate(t: TicketDocument, gate: GateName, viewer: Viewer
   if (g.approvers === 'reviewers' ? !t.people.reviewers.includes(viewer.person) : !roleMeets(viewer.role, g.approvers)) return false
   if ((g.not === 'assignees' || gate === 'code') && t.people.assignees.includes(viewer.person)) return false
   if (g.approvals.some((a) => a.by === viewer.person)) return false
+  // On a real host an approval binds the gate hash; with none (it cannot be computed now) nothing is offered to sign.
+  if (isRealHost() && !g.hash) return false
   return true
 }
 

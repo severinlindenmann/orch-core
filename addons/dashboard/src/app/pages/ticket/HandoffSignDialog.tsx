@@ -1,0 +1,167 @@
+// A ticket's human action in hand-off mode (real host): approve, request changes, verdict, answer. The form holds only
+// what the person types or picks; once they press the verb, the host prepares the request and the dialog shows the
+// host's material, never this page's cached ticket. The old Touch ID simulation stays in SignDialog.tsx for the mock.
+import { useRef, useState } from 'react'
+import { useNavigate } from '@tanstack/react-router'
+import type { HandoffAction, HandoffRequest } from '@/api/handoff'
+import type { GateName, TicketDocument } from '@/api/types'
+import { HandoffDialog } from '@/components/sign/HandoffDialog'
+import { Prose, Raw } from '@/components/sign/visible'
+import { Button } from '@/components/ui/button'
+import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
+import { gateActionName } from './actions'
+import type { HumanAction } from './shared'
+
+function titleOf(a: HumanAction): string {
+  switch (a.kind) {
+    case 'answer':
+      return `Answer ${a.question}`
+    case 'approve':
+      return `Approve ${gateActionName(a.gate)}`
+    case 'verdict':
+      return 'Give verdict (Verify)'
+    case 'request_changes':
+      return `Request changes on ${gateActionName(a.gate)}`
+  }
+}
+
+/** The content the ticket had when the request was prepared, for the "changed since you started" warning only. */
+function liveHash(ticket: TicketDocument, a: HumanAction): string | null {
+  if (a.kind === 'answer') return ticket.questions_state.find((q) => q.id === a.question)?.hash ?? null
+  const gate: GateName = a.kind === 'verdict' ? 'verify' : a.gate
+  return ticket.gates[gate].hash ?? null
+}
+
+export function HandoffSignDialog({
+  ticket,
+  action,
+  ws,
+  onClose,
+  onOpenEvidence,
+  onOpenChanges,
+  onPending,
+}: {
+  ticket: TicketDocument
+  action: HumanAction | null
+  ws: string | undefined
+  onClose: () => void
+  onOpenEvidence?: () => void
+  onOpenChanges?: () => void
+  onPending?: (pending: boolean) => void
+}) {
+  const navigate = useNavigate()
+  const [text, setText] = useState('')
+  const [outcome, setOutcome] = useState<'pass' | 'fail' | null>(null)
+  const radio = useRef<HTMLInputElement>(null)
+  if (!action) return null
+
+  const title = titleOf(action)
+  const note = text.trim()
+  let request: HandoffAction | null = null
+  let hint: string | null = null
+  let confirmLabel = title
+  switch (action.kind) {
+    case 'approve':
+      request = { action: 'approve', key: ticket.key, gate: action.gate }
+      break
+    case 'request_changes':
+      confirmLabel = 'Request changes'
+      hint = note ? null : 'Say what should change to continue'
+      request = { action: 'request_changes', key: ticket.key, gate: action.gate, message: text }
+      break
+    case 'verdict':
+      confirmLabel = outcome === 'pass' ? 'Pass' : outcome === 'fail' ? 'Send back' : 'Give verdict'
+      hint = !outcome ? 'Choose Pass or Send back' : outcome === 'fail' && !note ? 'Say what should change to continue' : null
+      request = outcome ? { action: 'verdict', key: ticket.key, outcome, ...(note ? { message: text } : {}) } : null
+      break
+    case 'answer':
+      confirmLabel = 'Send answer'
+      request = {
+        action: 'answer',
+        key: ticket.key,
+        question: action.question,
+        ...(action.option ? { option: action.option } : {}),
+        ...(action.text?.trim() ? { message: action.text.trim() } : {}),
+      }
+      break
+  }
+
+  const leaveTo = (open?: () => void) => () => {
+    onClose()
+    if (open) open()
+    else void navigate({ to: '/ticket/$key', params: { key: ticket.key } })
+  }
+  // The request names the content it is bound to; if the page's ticket moved on since, say so (the signer refuses it).
+  const now = liveHash(ticket, action)
+  const warning = (r: HandoffRequest) => {
+    const bound = action.kind === 'answer' ? r.events[0]?.hash : r.gate_hash
+    // The page holds the short form of a hash (12 hex); the request the full `sha256:` form.
+    const bare = (h: string) => h.replace(/^sha256:/, '')
+    return typeof bound === 'string' && now && !bare(bound).startsWith(bare(now)) && !bare(now).startsWith(bare(bound))
+      ? 'This ticket changed after the request was prepared. Your terminal refuses what no longer matches. Cancel and prepare again to sign what is there now.'
+      : null
+  }
+
+  return (
+    <HandoffDialog
+      title={title}
+      ws={ws}
+      action={request}
+      autoStart={action.kind === 'approve'}
+      confirmLabel={confirmLabel}
+      hint={hint}
+      warning={warning}
+      onPending={onPending}
+      onClose={onClose}
+      initialFocus={() => (action.kind === 'verdict' ? radio.current : null)}
+      key={`${action.kind}-${action.kind === 'answer' ? action.question : 'gate' in action ? action.gate : ''}`}
+    >
+      {action.kind === 'verdict' && (
+        <>
+          <p className="flex flex-wrap items-center gap-x-3 text-[13px] text-text-muted">
+            <Button type="button" variant="link" size="sm" className="h-auto p-0 text-[13px]" onClick={leaveTo(onOpenEvidence)}>
+              Open evidence
+            </Button>
+            <Button type="button" variant="link" size="sm" className="h-auto p-0 text-[13px]" onClick={leaveTo(onOpenChanges)}>
+              Open changes
+            </Button>
+          </p>
+          <fieldset className="grid gap-2">
+            <legend className="sr-only">Verdict</legend>
+            {(
+              [
+                ['pass', 'Pass: the evidence is enough'],
+                ['fail', 'Send back · something must change'],
+              ] as const
+            ).map(([r, label], i) => (
+              <label key={r} className="flex cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-2 text-[13px] has-[:checked]:border-brand has-[:checked]:bg-brand-soft">
+                <input ref={i === 0 ? radio : undefined} type="radio" name="verdict" value={r} checked={outcome === r} onChange={() => setOutcome(r)} className="accent-[var(--brand)]" />
+                {label}
+              </label>
+            ))}
+          </fieldset>
+        </>
+      )}
+      {(action.kind === 'request_changes' || action.kind === 'verdict') && (
+        <div className="space-y-1.5">
+          <Label htmlFor="sign-text">{action.kind === 'request_changes' || outcome === 'fail' ? 'What should change? (required)' : 'Note (optional)'}</Label>
+          <Textarea id="sign-text" value={text} onChange={(e) => setText(e.target.value)} rows={3} />
+        </div>
+      )}
+      {action.kind === 'answer' && (
+        <section aria-label="Your answer" className="space-y-1 rounded-md border border-border bg-bg p-3 text-[13px]">
+          <p className="text-text-muted">
+            Question <Raw>{action.question}</Raw>
+          </p>
+          {action.option && (
+            <p>
+              Your answer: option <Raw>{action.option}</Raw>
+            </p>
+          )}
+          {action.text?.trim() && <Prose className="text-text">{action.text.trim()}</Prose>}
+        </section>
+      )}
+    </HandoffDialog>
+  )
+}

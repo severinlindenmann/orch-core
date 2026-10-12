@@ -155,6 +155,7 @@ def test_expiry_cancel_and_lookup_by_code(signing, rich, stub):
     assert link.call("human.cancel", {"request_id": rid}) == {"state": "cancelled"}
     assert link.call("human.cancel", {"request_id": rid}) == {"state": "cancelled"}
     assert pending(link, request_id=rid)[0]["state"] == "cancelled"
+    assert pending(link, code=code) == []  # the code expires with the request (H5b)
     device = {"device": signing.p1.owner.device, "auth": "passphrase"}
     with pytest.raises(HostError, match="human.request_state"):
         link.call("human.get", {"request_id": rid, "signer": device})
@@ -399,3 +400,24 @@ def test_our_review_maths_equals_the_cores_helpers(signing, rich):
         for event, block in zip(got["events"], got["material"]["review"], strict=True):
             assert core.of(event, got["material"]) == block
     assert core.fingerprint("sha256:" + "ab" * 32, [DOC_EVENT], "log") == "d8de03967462"
+
+
+def test_failed_code_lookups_are_limited_per_connection_and_terminal_codes_count_as_failed(signing, rich, stub):
+    now = [1_000_000.0]
+    stub.requests.clock = lambda: now[0]
+    first, second = signing.link(), signing.link()
+    got = prepare(first, "log", {"ref": "DEMO-0001", "message": "x"})
+    code, rid = got["request"]["code"], got["request"]["id"]
+    first.call("human.cancel", {"request_id": rid})
+    for _ in range(5):  # a cancelled request's code no longer resolves: each lookup fails
+        assert pending(first, code=code) == []
+    with pytest.raises(HostError, match="rate.limited") as limited:
+        pending(first, code=code)
+    assert limited.value.error["retryable"] is True and 0 < limited.value.error["retry_after_ms"] <= 60000
+    assert pending(first, request_id=rid)[0]["state"] == "cancelled"  # ids are not counted
+    open_ = prepare(second, "log", {"ref": "DEMO-0001", "message": "y"})
+    assert pending(second, code=open_["request"]["code"])[0]["id"] == open_["request"]["id"]  # another connection
+    with pytest.raises(HostError, match="rate.limited"):
+        pending(first, code=open_["request"]["code"])  # the right code included
+    now[0] += 61
+    assert pending(first, code=open_["request"]["code"])[0]["id"] == open_["request"]["id"]

@@ -425,8 +425,8 @@ def test_a_failed_submit_code_is_passed_on_when_the_host_sends_it(ready, monkeyp
     got = post(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "x", "idem": idem(67)}).json()
     original = signing.stub.requests.pending
 
-    def with_error(args):
-        out = original(args)
+    def with_error(args, lookups=None):
+        out = original(args, lookups)
         out["requests"][0]["error"] = {"code": "gate.stale", "message": "ignored"}
         return out
 
@@ -498,3 +498,13 @@ def test_a_section_the_ticket_type_does_not_have_is_refused_by_the_host(ready):
         client, token, stub, {"action": "section", "key": "DEMO-0003", "section": "plan", "text": "x", "idem": idem(8)}
     )  # DEMO-0003 is an epic: no plan
     assert res.status_code == 400 and signing.stub.requests.table == {}
+
+
+def test_the_dashboard_follows_a_request_by_its_id_and_never_looks_up_a_code(ready, host_calls):
+    client, token, stub, rich, signing = ready
+    got = post(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "x", "idem": idem(9)}).json()
+    assert client.get(f"{base(stub)}/{got['id']}", headers=auth(token)).status_code == 200
+    assert client.delete(f"{base(stub)}/{got['id']}", headers=auth_h(token, True)).status_code == 200
+    for op, args, _ in host_calls:
+        if op == "human.pending":
+            assert "code" not in args

@@ -109,7 +109,6 @@ class Requests:
         self.clock = clock
         self.table: dict[str, dict[str, Any]] = {}
         self.idems: dict[str, dict[str, Any]] = {}
-        self.lookups: list[float] = []
 
     # -- state -------------------------------------------------------------------------------------------------------
     def state(self, request: dict[str, Any]) -> str:
@@ -249,21 +248,28 @@ class Requests:
         request["events"], request["bound"], request["state"] = events, dict(signer), "bound"
         return self.view(request)
 
-    def pending(self, args: dict[str, Any]) -> dict[str, Any]:
+    def pending(self, args: dict[str, Any], lookups: list[float] | None = None) -> dict[str, Any]:
+        """A code resolves only while the request is prepared or bound, in this workspace, for this person (one stub
+        person). A lookup that finds nothing is a failed lookup; 5 within 60 s on one connection answer
+        `rate.limited` with `retry_after_ms`, the right code included (H5b). `request_id` lookups are not counted."""
         if set(args) - {"code", "request_id"} or len(args) > 1:
             raise invalid("human.pending takes code or request_id, not both")
         rows = list(self.table.values())
+        lookups = [] if lookups is None else lookups
         if "code" in args:
             now = self.clock()
-            self.lookups = [t for t in self.lookups if now - t < 60]
-            if len(self.lookups) >= 5:
-                raise fail("rate.limited", "too many lookups", exit=9)
+            lookups[:] = [t for t in lookups if now - t < 60]
+            if len(lookups) >= 5:
+                error = fail("rate.limited", "too many lookups", exit=9)
+                error.error["retryable"] = True
+                error.error["retry_after_ms"] = max(1, int((lookups[0] + 60 - now) * 1000))
+                raise error
             code = args["code"]
             if not isinstance(code, str) or not CODE.fullmatch(code):
                 raise invalid("a code looks like 7F3K-Q2MA")
-            rows = [r for r in rows if r["code"] == code]
+            rows = [r for r in rows if r["code"] == code and self.state(r) in ("prepared", "bound")]
             if not rows:
-                self.lookups.append(now)
+                lookups.append(now)
         elif "request_id" in args:
             rows = [self.find(args["request_id"])]
         return {

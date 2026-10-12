@@ -790,3 +790,19 @@ section and no field, `set` fields only, and that `base_rev` names exactly the t
 own input; the preview inside the dialog is the host's material only. Cancelling any step ends the offer (the rest stays
 unset). Still refused up front, with the reason in the form: restricted visibility, people, due date, acceptance criteria (the
 host has no person op that sets them). A spike's "verification" text travels as the host's `findings` section.
+
+H5b alignment (stream A, #398): the stub's `human.pending {code}` now matches contract 0.8.1 item 2 and 3: a code resolves only while the
+request is `prepared` or `bound`; a lookup that finds nothing (including the code of a submitted, cancelled or expired request) is a
+failed lookup; 5 failed lookups in 60 s **per connection** answer `rate.limited` (retryable, `retry_after_ms`), the right code
+included; another connection and `{request_id}` lookups are not counted (the stub has one person and one workspace, so the
+same-principal/person/workspace rules hold trivially). The dashboard server follows a request by `request_id` only and never sends a
+code (`human.pending {}` lists the session's own open requests; tested). M3 offers no artifact hand-off (`artifact.add/replace` would
+need `orch sign CODE --file NAME=PATH`).
+
+Real `orch sign` against the stub (smoke, 12 Oct): it works. With the same disposable `ORCH_STATE_DIR`/`ORCH_DEV=1` setup, core's
+`python -m orch sign CODE` (develop, H5b) found the stub's registry entry and socket, resolved the code, bound the device, ran its checks
+and signed `new`, `set` and `section.set` requests and a `log`, with the same fingerprint, the same header lines and the same
+`KEY/FRAG` word as the panel; the P1 store appended all of them. A declined confirm cancelled the request and the dashboard showed
+"Cancelled". The workspace line reads "workspace (None) <uuid>" because the stub's registry pin has no name or prefix. The stub signer
+(`python -m devhost sign`) stays for the dev loop and the tests.
+

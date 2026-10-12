@@ -12,6 +12,7 @@ MODULES = (
     "help",
     "show",
     "list",
+    "quick_list",
     "search",
     "next",
     "inbox",

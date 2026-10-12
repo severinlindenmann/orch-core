@@ -40,6 +40,13 @@
         "summary": "List tickets, newest first."
       },
       {
+        "name": "quick.list",
+        "cli": "quick list",
+        "group": "Read",
+        "who": "read",
+        "summary": "List quick tasks (tickets labelled quick) with their commit and file counts; the limits are display only."
+      },
+      {
         "name": "search",
         "cli": "search",
         "group": "Read",

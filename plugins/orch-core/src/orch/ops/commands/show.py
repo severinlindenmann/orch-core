@@ -167,7 +167,16 @@ def _events(c: Call, view: Any, head: int, args: dict[str, Any], *, diff: bool) 
     c.shown(view, seq=last)
     lines = [_header(c, view)]
     lines += fence("\n".join(rows), f"events after {since}") if rows else [f"no events after {since}"]
-    return lines, {"key": view.key, "since": since, "events": rows}
+    doc: dict[str, Any] = {"key": view.key, "since": since, "events": rows}
+    if args.get("since") == 0:  # the whole log asked for: say who created the ticket and when (H11f: `quick add`)
+        first = c.store.events(view.uid, after=0, limit=1)
+        if first:
+            actor = first[0]["actor"]
+            doc["created"] = {
+                "at": first[0]["at"],
+                "actor": {k: actor.get(k) for k in ("kind", "for", "grant", "session")},
+            }
+    return lines, doc
 
 
 def handle(ctx: Context, args: dict[str, Any]) -> Result:

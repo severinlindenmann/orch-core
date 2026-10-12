@@ -453,6 +453,16 @@ _SPECS = [
     ),
     # 9 retryable
     _e(
+        "quick.unlabelled",
+        9,
+        True,
+        "the quick task was created but not labelled",
+        "run the same orch quick add again: it labels that ticket instead of creating a second one",
+        ["orch", "quick", "list"],
+        "orch quick add: the ticket exists (its key is in the message) without the quick label; a retry with the same "
+        "title labels it.",
+    ),
+    _e(
         "retry.later",
         9,
         True,

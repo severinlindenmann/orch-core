@@ -265,6 +265,14 @@ def main(
         from orch.host.handoff import main as sign_main
 
         return sign_main(args[1:], env=env, out=out, err=err)
+    if args[:2] == ["quick", "add"]:
+        # H11f: the composite (new, then set labels=quick); `quick list` is a registry read like any other
+        def step(argv: list[str], step_out: TextIO, step_err: TextIO) -> int:
+            return main(argv, env=env, stdout=step_out, stderr=step_err, records=records, now=now, hooks=hooks)
+
+        from orch.cli.quick import main as quick_main
+
+        return quick_main(args[1:], env=env, out=out, err=err, run=step, now=now)
     from orch.ops.caps import Files
     from orch.ops.runtime import Workspace  # the workspace is found and opened only when something asks for it
 

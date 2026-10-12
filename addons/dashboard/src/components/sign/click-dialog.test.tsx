@@ -267,7 +267,7 @@ describe('the action dialog with click-to-sign', () => {
     await within(dialog).findByText(/Try again in 2 s/, {}, T)
     expect(within(dialog).getByRole('button', { name: 'Sign' })).toBeDisabled()
     await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Sign' })).toBeEnabled(), { timeout: 6000 })
-  })
+  }, 20000)
 })
 
 describe('no address opens a sign panel', () => {

@@ -31,6 +31,7 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/click/status",
         "/api/w/{ws}/click/prepare",
         "/api/w/{ws}/click/view",
+        "/api/w/{ws}/click/state",
         "/api/w/{ws}/click/sign",
         "/api/w/{ws}/click/cancel",
         "/api/w/{ws}/settings",

@@ -397,7 +397,7 @@ class RegistryBackend:
         if op == "sub.open":
             return self._register(call, result)
         if op == "run.sub":
-            return self._register_runs(call, result)
+            return await self._register_runs(call, result)
         if op == "sub.close":
             bus = call.service.bus
             closed = bus is not None and bus.close(call.session, call.frame["args"]["sub"])
@@ -482,14 +482,25 @@ class RegistryBackend:
         return ok_result({"sub": sub.id, "cursor": bus.cursor(sub)})
 
     @staticmethod
-    def _register_runs(call: Call, checked: dict[str, Any]) -> dict[str, Any]:
-        """``run.sub`` on the event loop (H11a): register it with the runs it may see now. A client subscribes first,
-        then lists, and keeps the higher per-run ``rev`` (§12.3.2), so it loses nothing."""
+    async def _register_runs(call: Call, checked: dict[str, Any]) -> dict[str, Any]:
+        """``run.sub`` on the event loop (H11a): register it first (changes queue from now on), then take the runs it
+        may see on the worker, then start delivery, so no change falls between the two (F6). The answer's ``rev`` is
+        the host's run revision at registration; a client lists after it and keeps the higher per-run ``rev``."""
+        from . import runners
+
         hub = getattr(call.service, "runners", None)
         if hub is None:
             raise HostError("runner.unavailable", "this host serves no runs", retry_after_ms=1000)
-        sub = hub.open_sub(call, set(checked["data"]["seen"]))
-        return ok_result({"sub": sub.id})
+        sub = hub.open_sub(call, set(), start=False)
+        rev = hub.store.rev
+        try:
+            now = await asyncio.wrap_future(call.service.submit(runners.serve, call))
+        except BaseException:
+            hub.end_sub(sub, "closed")
+            raise
+        sub.seen = set(now["data"]["seen"])
+        hub.start_sub(sub)
+        return ok_result({"sub": sub.id, "rev": rev})
 
     async def wait(self, call: Call) -> dict[str, Any]:
         """``wait`` on the bus: one look per worker job; between looks the request parks here until an entry of the

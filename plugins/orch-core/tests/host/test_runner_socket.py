@@ -509,7 +509,7 @@ def test_run_sub_then_list_with_rev_and_runner_state(w, rstate, tmp_path):
     hub = w.h.host.runners
     c = w.conn()
     sub = ok(c.call("run.sub", {}))["data"]
-    assert set(sub) == {"sub"}
+    assert set(sub) == {"sub", "rev"}
     listed = ok(c.call("run.list", {}))["data"]
     assert listed["runs"] == [] and listed["next_page"] is None
     assert listed["runner"] == {"connected": False, "enabled": False, "terminals": False, "gen": None, "grant": None}
@@ -639,3 +639,216 @@ def test_hello_must_name_the_connecting_pid_and_the_expected_term_socket(w):
         finally:
             sock.close()
         wait_for(lambda: not w.h.host.limits.runners)
+
+
+# -- Opus and Sonnet review of #432 -------------------------------------------------------------------------------
+
+
+def _recv_all(sock: socket.socket, dec: frames.Decoder) -> list:
+    got: list = []
+    while not got:
+        got = dec.feed(sock.recv(65536))
+    return got
+
+
+def test_f1_a_stale_spawn_never_runs_after_the_reconnect_hello(w, rstate, tmp_path):
+    """Opus F1 repro, now a regression test: a spawn queued on the old connection is dropped after the reconnect."""
+    import threading
+
+    hub = w.h.host.runners
+    hub.command_timeout = 1.0
+    r = Runner(w, rstate)
+    gate = threading.Event()
+    orig = r.link._command
+
+    def slow(item, tag):  # the pool is busy (e.g. 4 stops in their grace) when the spawn arrives
+        if item.get("op") == "spawn":
+            gate.wait(20)
+        orig(item, tag)
+
+    r.link._command = slow
+    try:
+        run = new_run_id()
+        with pytest.raises(HostError):
+            w.h.run(hub.spawn(w.wid, fields(w, run=run), payload(tmp_path, ["/bin/sh", "-c", "sleep 60"])))
+        r.link.disconnect()  # reconnect: the hello's table has no such run
+        wait_for(lambda: hub.store.records[run]["state"] == "lost")
+        gate.set()  # the old connection's spawn would run now
+        time.sleep(0.5)
+        assert [x for x in r.sup.runs() if x["run"] == run] == []  # never started
+        assert hub.store.records[run]["state"] == "lost"
+    finally:
+        gate.set()
+        r.close()
+
+
+def test_f2_a_new_generation_cannot_report_an_old_run_running(w):
+    hub = w.h.host.runners
+    run = _put(w, state="running")  # gen GEN1
+    sock, _ = _hello(w.h.host.runner_path)
+    dec = frames.Decoder()
+    try:
+        term = str(Path(w.lab.run) / "term" / str(UID) / "term.sock")
+        rep = {"run": run, "workspace_id": w.wid, "state": "running", "pid": 4242}
+        args = {"version": "t", "gen": GEN2, "pid": ME, "term_socket": term, "runs": [rep], "grants": []}
+        sock.sendall(frames.encode({"t": "req", "id": "h1", "op": "runner.hello", "args": args}))
+        res = _recv_all(sock, dec)[0]
+        assert res["ok"] and set(res["result"]["data"]) == {"sub", "epoch"}
+        rec = hub.store.records[run]
+        assert rec["state"] == "lost" and rec["exit"]["reason"] == "runner_restarted" and rec.get("pid") is None
+    finally:
+        sock.close()
+
+
+def test_f3_a_spawn_result_is_validated(w, tmp_path):
+    import asyncio
+
+    hub = w.h.host.runners
+    c = w.conn()
+    sock, _ = _hello(w.h.host.runner_path)
+    dec = frames.Decoder()
+    try:
+        term = str(Path(w.lab.run) / "term" / str(UID) / "term.sock")
+        args = {"version": "t", "gen": GEN1, "pid": ME, "term_socket": term, "runs": [], "grants": []}
+        sock.sendall(frames.encode({"t": "req", "id": "h1", "op": "runner.hello", "args": args}))
+        _recv_all(sock, dec)
+        run = new_run_id()
+        fut = asyncio.run_coroutine_threadsafe(
+            hub.spawn(w.wid, fields(w, run=run), payload(tmp_path, ["/bin/true"])), w.h.loop
+        )
+        evt = _recv_all(sock, dec)[0]
+        cid = evt["items"][0]["cmd"]
+        bad = {"pid": "x", "started_at": {"nested": ["a" * 1000] * 5}}
+        report = {"cmd": cid, "outcome": "ok", "result": bad}
+        sock.sendall(frames.encode({"t": "req", "id": "r1", "op": "runner.report", "args": report}))
+        fut.result(10)
+        got = ok(c.call("run.list", {}))["data"]["runs"][0]
+        assert isinstance(got["started_at"], str) and len(got["started_at"]) <= 30
+        assert hub.store.records[run].get("pid") is None
+    finally:
+        sock.close()
+
+
+def test_f4_an_allow_from_an_earlier_connection_never_registers(tmp_path):
+    from orch.runner.term import TicketError
+
+    term = TermListener(Path(tmp_path) / "t" / "term.sock", os.getuid(), gen=GEN1)
+    term.host_ready(2)
+    with pytest.raises(TicketError):
+        term.allow(_allow_args("r_x"), epoch=1)
+    term.allow(_allow_args("r_x"), epoch=2)
+
+
+def test_f5_a_revoked_grant_stops_receiving_run_items(w):
+    hub = w.h.host.runners
+    c = w.conn()
+    one, two = w.ticket()[1], w.ticket("another")[1]
+    _put(w, kind="agent", ticket=one)
+    sub = ok(c.call("run.sub", {}, grant=w.lab.ws.grant))["data"]
+    w.person_event("grant.revoked", grant=w.lab.ws.grant_id)
+    _put(w, kind="agent", ticket=two)
+    frame = c.evt(sub["sub"])
+    assert frame.get("end") in ("grant.expired", "person.removed", "reset") and frame["items"] == []
+    assert hub is w.h.host.runners
+
+
+def test_f6_a_change_between_registration_and_seen_is_not_lost(w, monkeypatch):
+    import asyncio
+
+    from orch.host import runners
+
+    hub = w.h.host.runners
+    c = w.conn()
+    real = runners.serve
+    made = []
+    calls = []
+
+    def serve(call):
+        calls.append(call.frame["op"])
+        if calls.count("run.sub") == 2 and not made:  # published while the worker takes `seen` (after registering)
+            rec = {**fields(w), "run": new_run_id(), "workspace_id": w.wid, "state": "running", "exit": None,
+                   "cleanup": None, "runner_uid": UID, "gen": GEN1}  # fmt: skip
+            asyncio.run_coroutine_threadsafe(hub._save(rec), w.h.loop).result(5)
+            made.append(rec["run"])
+        return real(call)
+
+    monkeypatch.setattr(runners, "serve", serve)
+    sub = ok(c.call("run.sub", {}))["data"]
+    frame = c.evt(sub["sub"])
+    assert [i["run"]["run"] for i in frame["items"]] == made
+
+
+def test_hello_lists_every_running_run_first(tmp_path):
+    """Sonnet B: more than 256 runs; every running one is reported, then the newest ended ones up to the cap."""
+    from orch.runner.link import HostLink
+
+    class FakeSup:
+        on_event = None
+
+        def __init__(self):
+            self.rows = [{"run": new_run_id(), "state": "exited", "started_at": f"2026-10-12T10:{i % 60:02d}:00Z",
+                          "workspace_id": "0" * 32} for i in range(300)]  # fmt: skip
+            self.rows += [{"run": new_run_id(), "state": "running", "started_at": "2026-01-01T00:00:00Z",
+                           "workspace_id": "0" * 32} for _ in range(5)]  # fmt: skip
+
+        def runs(self):
+            return list(self.rows)
+
+        class table:  # noqa: N801
+            @staticmethod
+            def get(run):
+                return {}
+
+    link = HostLink(FakeSup(), tmp_path / "x.sock", host_uid=UID, gen=GEN1)
+    runs = link._runs()
+    assert len(runs) == 256 and [r["state"] for r in runs[:5]] == ["running"] * 5
+
+
+def test_stop_failure_clears_stopping_and_late_exit_fills_the_code(w):
+    hub = w.h.host.runners
+    run = _put(w)
+
+    async def fail(cmd, args, timeout=None):
+        raise HostError("runner.unavailable", "gone", retry_after_ms=1000)
+
+    hub.command = fail
+    with pytest.raises(HostError):
+        w.h.run(hub.stop(run, 100))
+    assert not hub.store.records[run].get("stopping")
+
+    async def done(cmd, args, timeout=None):
+        return {"state": "exited", "cleanup": "complete"}
+
+    hub.command = done
+    assert w.h.run(hub.stop(run, 100)) == {"state": "exited", "cleanup": "complete"}
+    assert hub.store.records[run]["exit"]["code"] is None  # the stop answer came before the exit report
+    sock, _ = _hello(w.h.host.runner_path)
+    dec = frames.Decoder()
+    try:
+        term = str(Path(w.lab.run) / "term" / str(UID) / "term.sock")
+        args = {"version": "t", "gen": GEN1, "pid": ME, "term_socket": term, "runs": [], "grants": []}
+        sock.sendall(frames.encode({"t": "req", "id": "h1", "op": "runner.hello", "args": args}))
+        _recv_all(sock, dec)
+        ex = {"run": run, "code": None, "signal": "SIGTERM", "at": "2026-10-12T00:00:00Z", "cleanup": "complete"}
+        sock.sendall(frames.encode({"t": "req", "id": "e1", "op": "runner.exit", "args": ex}))
+        assert _recv_all(sock, dec)[0]["ok"]
+        exit_ = hub.store.records[run]["exit"]
+        assert exit_["signal"] == "SIGTERM" and exit_["reason"] == "stopped" and not exit_.get("pending")
+    finally:
+        sock.close()
+
+
+def test_evicted_runs_publish_gone(w, monkeypatch):
+    from orch.host import runners
+
+    monkeypatch.setattr(runners, "KEEP_ENDED", 1)
+    c = w.conn()
+    first = _put(w, state="exited", exit={"code": 0, "signal": None, "at": "x", "reason": "exited"},
+                 cleanup="complete")  # fmt: skip
+    sub = ok(c.call("run.sub", {}))["data"]
+    _put(w, state="exited", exit={"code": 0, "signal": None, "at": "x", "reason": "exited"}, cleanup="complete")
+    items = []
+    while not any(i["t"] == "gone" for i in items):
+        items += c.evt(sub["sub"])["items"]
+    assert {"t": "gone", "run": first} == {k: v for k, v in items[-1].items() if k != "id"}
+    assert first not in w.h.host.runners.store.records

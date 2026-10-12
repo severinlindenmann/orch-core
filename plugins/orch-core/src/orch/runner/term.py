@@ -9,7 +9,8 @@ The capability is consumed atomically and only once: the hash must match a pendi
 ``nonce`` and expiry hold (10 s unused at most, whatever the host's expiry says), in the current host epoch. A bad
 ticket closes the connection with ``{t:"end", reason:"ticket_invalid"}`` and nothing else. Only presentations of a hash
 the runner **has seen** (consumed or expired) count toward the lockout (10 per minute, then 60 s of refusals); an
-unknown hash closes without counting, so random tickets cannot lock terminals out.
+unknown hash closes without counting, so random tickets cannot lock terminals out. The lockout is per runner, not
+per client: one client replaying seen tickets locks every attachment out for 60 s (§12.6.2, by design).
 
 On success the runner answers ``{t:"ready", start, offset, cols, rows, writer, lease_gen, state}``. The write lease
 (§12.6.2): ``take:false`` is refused with ``{t:"end", reason:"writer_busy"}`` when the lease is held or its generation
@@ -47,6 +48,9 @@ ALLOW_SECONDS = 10.0
 LOCKOUT_COUNT = 10
 LOCKOUT_SECONDS = 60.0
 SEEN_KEEP = 1024
+TICKET_LEN = 43  # 32 bytes, base64url without padding
+#: connections handled at once; more are closed at once (any same-UID process could otherwise exhaust threads)
+MAX_CONNECTIONS = 32
 
 
 class TicketError(Exception):
@@ -114,12 +118,17 @@ class TermListener:
         self.sock: socket.socket | None = None
         self._thread: threading.Thread | None = None
         self._closing = False
+        self._slots = threading.BoundedSemaphore(MAX_CONNECTIONS)
 
     # -- the socket
     def open(self) -> None:
         directory = self.path.parent
         with contextlib.suppress(FileExistsError):
             os.mkdir(directory.parent, 0o711)  # <run>/term: only traversed
+        top = os.lstat(directory.parent)
+        if not stat.S_ISDIR(top.st_mode) or top.st_uid not in (0, self.uid) or stat.S_IMODE(top.st_mode) & 0o022:
+            why = f"{directory.parent}: expected a directory of root or UID {self.uid}, not writable by others"
+            raise OSError(errno.EPERM, why)
         with contextlib.suppress(FileExistsError):
             os.mkdir(directory, 0o700)
         info = os.lstat(directory)
@@ -183,14 +192,16 @@ class TermListener:
         for att in ended:
             _end(att.conn, reason)
 
-    def allow(self, args: dict[str, Any]) -> None:
+    def allow(self, args: dict[str, Any], *, epoch: int | None = None) -> None:
+        """Register a capability. ``epoch``: the host connection the command arrived on; one from an earlier
+        connection is refused (old-epoch capabilities never register, F4)."""
         now = self.clock()
         try:
             item = Allow(
                 str(args["att"]), str(args["ticket_hash"]), str(args["workspace_id"]), str(args["person"]),
                 str(args["run"]), args.get("session"), str(args["mode"]), bool(args.get("take")),
                 int(args.get("lease_gen") or 0), str(args["runner_gen"]), args.get("from"), str(args["nonce"]),
-                min(_parse_time(args["expires_at"]), now + ALLOW_SECONDS), self.epoch,
+                min(_parse_time(args["expires_at"]), now + ALLOW_SECONDS), self.epoch if epoch is None else epoch,
             )  # fmt: skip
         except (KeyError, TypeError, ValueError):
             raise TicketError("invalid attach.allow") from None
@@ -199,8 +210,8 @@ class TermListener:
         if item.runner_gen != self.gen:
             raise TicketError("attach.allow for another runner generation")
         with self.lock:
-            if not self.accepting:
-                raise TicketError("no host epoch")
+            if not self.accepting or item.epoch != self.epoch:
+                raise TicketError("no host epoch, or one that ended")
             self._expire(now)
             self.allows[item.ticket_hash] = item
 
@@ -290,7 +301,17 @@ class TermListener:
                     return
                 time.sleep(0.05)
                 continue
-            threading.Thread(target=self._handle, args=(conn,), daemon=True).start()
+            if not self._slots.acquire(blocking=False):
+                with contextlib.suppress(OSError):
+                    conn.close()
+                continue
+            threading.Thread(target=self._handle_slot, args=(conn,), daemon=True).start()
+
+    def _handle_slot(self, conn: socket.socket) -> None:
+        try:
+            self._handle(conn)
+        finally:
+            self._slots.release()
 
     def _handle(self, conn: socket.socket) -> None:
         att: Attachment | None = None
@@ -302,7 +323,7 @@ class TermListener:
             ok = isinstance(frame, dict) and frame.get("t") == "attach"
             ticket, nonce = (frame.get("ticket"), frame.get("nonce")) if ok else (None, None)
             item = None
-            if isinstance(ticket, str) and isinstance(nonce, str) and 0 < len(ticket) <= 64:
+            if isinstance(ticket, str) and isinstance(nonce, str) and len(ticket) == TICKET_LEN:
                 item = self.consume(ticket, nonce)
             info = self.info(item.run) if item is not None else None
             if item is None or info is None:

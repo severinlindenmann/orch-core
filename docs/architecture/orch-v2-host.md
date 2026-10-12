@@ -4173,7 +4173,15 @@ session | null, cwd:Pin, cols, rows, login_shell}` (deduped by `run`), `signal {
   stays supervised and is killed again on every scan; it is never reported ended or dropped).
 - **`runner.exit`** is sent once the clean-up has a result, and again when an `incomplete` clean-up completes; the host
   sets `exit.reason` (`stopped` after a `run.stop`, else `exited`).
-- **`runner.hello`** answers `{sub}`; `gen` is drawn at every runner start (not persisted). `grants` is accepted by the
+- **`runner.hello`** answers `{sub, epoch}`; `gen` is drawn at every runner start (not persisted). The runner tags every
+  command with the connection it arrived on and drops, unrun and unreported, any command of a lost connection (a
+  stale `spawn` never starts after the reconnect's hello; the check and the spawn are one step against the hello's
+  snapshot). Commands that arrive before the hello's answer are held until it. The hello lists every running run
+  first, then the newest ended ones, 256 in all. A runner of another `gen` can report an older generation's run only
+  as ended (`runner_restarted`), never `running`. A successful command result is validated before it is stored.
+- **`run.sub`** answers `{sub, rev}`: it is registered first, then the visible runs are taken, so no change falls
+  between them. `rev` is one counter for the whole host (persisted, so monotonic per workspace too). Every delivery
+  revalidates the principal on a fresh authentication snapshot. Evicted records (7 days, 1 000 ended) publish `gone`. `grants` is accepted by the
   schema and ignored until H11c. A spawn that is half-done while the hello is built cannot happen (the runner holds its
   spawn lock); a spawn that failed after the fork is in the table with its pid and birth time.
 - **Trampoline.** The runner starts `python -I <release>/orch/runner/exec.py SPEC_FD STATUS_FD`, not `-m`: under `-I`
@@ -4195,7 +4203,9 @@ session | null, cwd:Pin, cols, rows, login_shell}` (deduped by `run`), `signal {
 - **Logs.** The service manager writes the runner's output to `<state>/runner/runner.out` without rotation (the
   rotated `runner.log` of §12.5 comes with H11b). One runner per state directory (a lock file); `SIGTERM` is a
   controlled stop: every managed run is stopped and verified before the runner exits.
-- **Term socket.** The runner caps every capability at 10 s after `attach.allow` arrived, whatever `expires_at` says.
+- **Term socket.** The runner caps every capability at 10 s after `attach.allow` arrived, whatever `expires_at` says. The
+  ticket must be exactly 43 characters; at most 32 term-socket connections are handled at once; the lockout is per
+  runner, so one client replaying seen tickets locks every attachment out for 60 s.
   The byte path after `ready` (`out`, `in`, `ack`, `gap`, `throttle`) is H11b.
 
 ### 12.4 Start an agent (#307)

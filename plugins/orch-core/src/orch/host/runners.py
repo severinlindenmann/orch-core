@@ -9,23 +9,29 @@ same-UID separation is not containment; runner reports are untrusted and cannot 
 accepted only for runs assigned to that runner (its UID and service generation). The runner checks the host too: its
 connect refuses a socket whose peer UID is not the host UID (:func:`orch.host.client.connect_pinned`).
 
-**The protocol** (cap ``runner/1``). After ``welcome`` the runner sends ``runner.hello {version, generation, runs}``;
-the answer ``{sub, epoch}`` opens the host's command stream: ``evt`` items ``{id:"<n>.c", cmd, cid, args}``. The runner
-answers each with ``runner.report {cid, outcome, result|error}`` and reports exits with ``runner.exit``. Commands:
-``spawn``, ``stop``, ``attach.allow``, ``attach.end``. Every hello is a new **authorization epoch**: the runner ends all
-attachments and accepts no new ticket while it is disconnected, and only the hello's answer re-opens it.
+**The protocol** (cap ``runner/1``, §12.3.3). After ``welcome`` the runner sends ``runner.hello {version, gen, pid,
+term_socket, runs, grants}``; the answer ``{sub, epoch}`` opens the host's command stream: ``evt`` items ``{id:"<n>.c",
+cmd:ULID, op, args}``. The runner answers each with ``runner.report {cmd, outcome, result|error}`` (a successful
+result is validated before anything of it is stored) and reports exits with ``runner.exit {run, code, signal, at,
+cleanup}``. Commands: ``spawn``, ``stop``, ``attach.allow``, ``attach.end``. Every hello is a new **authorization
+epoch**: the runner ends all attachments, drops every command of the lost connection unrun (a stale ``spawn`` never
+starts after the reconnect), and accepts no new ticket until the hello's answer.
 
 **Run records** (D-P2-37): ``<state>/hosts/<ws>/runs/<run>.json`` (0600 in 0700). The launch intent (run id, its
 fields, the runner UID and generation) is written **before** the ``spawn`` command is sent; the runner dedupes
 ``spawn`` by run id, so a lost ack never starts a second process. ``runner.hello`` reconciles: a live record the runner
-does not report becomes ``lost`` (never spawned again); a run the runner reports as lost after a generation change is
-``runner_restarted``; a run the host does not know is ignored (hello is evidence only about runs the host knows). Each
-change takes the next host-wide ``rev``.
+does not report becomes ``lost`` (never spawned again); a runner of another generation can only report a run of an
+older generation ``lost`` or ``exited`` (as ``runner_restarted``), never ``running``; a run the host does not know is
+ignored (hello is evidence only about runs the host knows). Each change takes the next ``rev``: one counter for the
+whole host, persisted with the records, so it is monotonic per workspace too (§12.3.2). Ended records are kept 7 days,
+at most 1 000; one that is evicted publishes ``gone``.
 
 **Reads** (cap ``run/1``): ``run.list`` and ``run.sub`` for columns P and G (N: ``op.not_allowed``). P sees the
-caller person's runs; G sees only ``kind:"agent"`` runs of its grant's person on tickets the grant can see. A client
-subscribes first (``run.sub`` answers the current ``rev``), then lists, and keeps the higher ``rev`` per run. Items:
-``{id:"<rev>.r", t:"run", run}`` after every change and ``{t:"gone", run}`` when a run leaves the caller's view.
+caller person's runs; G sees only ``kind:"agent"`` runs of its grant's person on tickets that person can see; for both
+a run on a ticket the person cannot see is not shown. A client subscribes first (``run.sub`` answers ``{sub, rev}``),
+then lists, and keeps the higher ``rev`` per run. Items: ``{id:"<rev>.r", t:"run", run}`` after every change and
+``{t:"gone", run}`` when a run leaves the caller's view. Every delivery revalidates the principal on a fresh
+authentication snapshot (as the bus does).
 """
 
 from __future__ import annotations
@@ -133,6 +139,8 @@ _RUN = {"type": "string", "pattern": RUN_ID}
 _INT = {"type": "integer", "minimum": 0}
 _TIME = {"type": "string", "minLength": 1, "maxLength": 40}
 _NULLINT = {"type": ["integer", "null"]}
+#: a runner-reported time: what the runner writes (``now_iso``), never anything nested or long
+_TIME_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,6})?Z")
 _GEN = {"type": "string", "pattern": "^[0-9a-f]{32}$"}
 _ULID = {"type": "string", "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"}
 _CLEANUP = {"enum": ["complete", "incomplete", "unknown"]}
@@ -377,9 +385,23 @@ class RunnerHub:
                 rec["ended_ts"] = time.time()
             self.store.records[rec["run"]] = rec
             await asyncio.to_thread(self.store.save, dict(rec))
+            evicted = self._evict()
         if publish:
             self.publish(rec)
+        for old in evicted:
+            await asyncio.to_thread(self.store.remove, old)
+            self.publish({**old, "_gone": True})
         return rec
+
+    def _evict(self) -> list[dict[str, Any]]:
+        """Ended records past retention (7 days, at most 1 000): removed, each publishes ``gone``."""
+        ended = sorted(
+            (float(r.get("ended_ts") or 0), run) for run, r in self.store.records.items() if r.get("state") not in LIVE
+        )
+        cutoff = time.time() - KEEP_SECONDS
+        drop = [run for ts, run in ended if ts < cutoff]
+        drop += [run for _, run in ended[: max(0, len(ended) - KEEP_ENDED)] if run not in drop]
+        return [self.store.records.pop(run) for run in drop]
 
     # -- the runner socket gate
     def gate(self, session: Session, frame: dict[str, Any], request: frames.Request) -> Any:
@@ -465,7 +487,7 @@ class RunnerHub:
         LOG.info(
             "runner connected: uid %s gen %s epoch %s (previous gen %s)", uid, self.generation, self.epoch, previous
         )
-        return {"sub": self.sub_id}
+        return {"sub": self.sub_id, "epoch": f"{self.instance}.{self.epoch}"}
 
     def _after_hello(self) -> None:
         """After the hello's answer is queued: H11c revalidates the reported grants here (none in H11a)."""
@@ -477,6 +499,10 @@ class RunnerHub:
             return
         state = rep["state"]
         new = dict(rec)
+        if state == "running" and rec.get("gen") != self.generation:
+            # a runner of another generation cannot be running a run of an older one (its crash sweep ended it)
+            await self._save({**rec, "state": "lost", "cleanup": "unknown", "exit": _exit("runner_restarted")})
+            return
         if state == "running":
             new.update(state="running", pid=rep.get("pid"), out=rep.get("out", rec.get("out")),
                        started_at=rep.get("started_at") or rec.get("started_at"))  # fmt: skip
@@ -514,6 +540,8 @@ class RunnerHub:
         if rec is None or rec.get("runner_uid") != session.peer.uid or rec.get("gen") != self.generation:
             raise HostError("not_found", "no such run on this runner")
         new = dict(rec)
+        if (rec.get("exit") or {}).get("pending"):  # the stop answer came first: now the leader's real status
+            new["exit"] = {"code": args["code"], "signal": args["signal"], "at": args["at"], "reason": "stopped"}
         if rec.get("state") in LIVE:
             reason = "stopped" if rec.get("stopping") else "exited"
             new.update(state="exited", exit={"code": args["code"], "signal": args["signal"], "at": args["at"],
@@ -593,11 +621,13 @@ class RunnerHub:
             await self._save({**self.store.records[run], "state": "exited", "exit": _exit("spawn_failed", exc.code)})
             raise
         cur = self.store.records[run]
+        pid = res.get("pid") if isinstance(res.get("pid"), int) and not isinstance(res.get("pid"), bool) else None
+        pid = pid if pid is not None and pid >= 2 else None
+        started = res.get("started_at")
+        started = started if isinstance(started, str) and _TIME_RE.fullmatch(started) else _iso()
         if cur.get("state") == "starting":
             # running until the runner's exit report says otherwise (that report carries the exit itself)
-            await self._save(
-                {**cur, "state": "running", "pid": res.get("pid"), "started_at": res.get("started_at") or _iso()}
-            )
+            await self._save({**cur, "state": "running", "pid": pid, "started_at": started})
         return view(self.store.records[run])
 
     async def stop(self, run: str, grace_ms: int = 10_000) -> dict[str, Any]:
@@ -608,14 +638,20 @@ class RunnerHub:
             return {"state": rec.get("state"), "cleanup": rec.get("cleanup") or "unknown"}
         if not rec.get("stopping"):
             rec = await self._save({**rec, "stopping": True}, publish=False)  # the exit report then says "stopped"
-        res = await self.command("stop", {"run": run, "grace_ms": grace_ms}, timeout=grace_ms / 1000 + 10)
+        try:
+            res = await self.command("stop", {"run": run, "grace_ms": grace_ms}, timeout=grace_ms / 1000 + 10)
+        except HostError:
+            cur = self.store.records.get(run) or rec
+            if cur.get("stopping") and cur.get("state") in LIVE:  # nothing was stopped: a later exit is "exited"
+                await self._save({**cur, "stopping": False}, publish=False)
+            raise
         cur = self.store.records[run]
         cleanup = res.get("cleanup") if res.get("cleanup") in ("complete", "incomplete", "unknown") else "unknown"
         # the runner's word decides whether the leader ended: a leader that survived the stop stays running
         ended = res.get("state") in ("exited", "lost")
         new = {**cur, "cleanup": cleanup}
         if ended and cur.get("state") in LIVE:
-            new.update(state="exited", exit=cur.get("exit") or _exit("stopped"))
+            new.update(state="exited", exit=cur.get("exit") or {**_exit("stopped"), "pending": True})
         if new != cur:
             await self._save(new)
         state = new.get("state")
@@ -704,7 +740,7 @@ class RunnerHub:
         asyncio.get_running_loop().call_soon(self.end_sub, sub, "closed")
         return True
 
-    def open_sub(self, call: Call, seen: set[str]) -> RunSub:
+    def open_sub(self, call: Call, seen: set[str], *, start: bool = True) -> RunSub:
         session = call.session
         if self.host.draining:
             raise self.host.restarting()
@@ -719,8 +755,13 @@ class RunnerHub:
         self.subs[sub.id] = sub
         session.subscriptions += 1
         session.on_close.append(lambda: self.end_sub(sub, "closed"))
-        sub.task = asyncio.get_running_loop().create_task(self._deliver(sub))
+        if start:
+            self.start_sub(sub)
         return sub
+
+    def start_sub(self, sub: RunSub) -> None:
+        if not sub.ended and sub.task is None:
+            sub.task = asyncio.get_running_loop().create_task(self._deliver(sub))
 
     async def _deliver(self, sub: RunSub) -> None:
         """One subscription's items, in order: revalidate the principal, then the run's visibility, then send."""
@@ -729,14 +770,18 @@ class RunnerHub:
                 rec = await sub.queue.get()
                 service = self.host.services.get(sub.workspace_id)
                 auth = getattr(service, "auth", None)
-                if service is None or auth is None:
+                if service is not None and auth is not None and not auth.fresh(service.entry.root):
+                    # as the bus: never deliver on a snapshot older than the log (F5); the worker refreshes it
+                    await asyncio.wrap_future(service.submit(lambda s=service: (s.refresh(), s.sync(check=True))))
+                    auth = getattr(service, "auth", None)
+                if service is None or auth is None or auth.stamp is None or not auth.fresh(service.entry.root):
                     self.end_sub(sub, "reset")
                     return
                 reason = self.host.bus.principal_end(sub, auth, service.clock())  # type: ignore[arg-type]
                 if reason is not None:
                     self.end_sub(sub, reason)
                     return
-                shown = self.visible(rec, sub.column, sub.person)
+                shown = not rec.get("_gone") and self.visible(rec, sub.column, sub.person)
                 if shown and rec.get("ticket"):
                     shown = await asyncio.wrap_future(service.submit(_ticket_visible, service, sub, rec["ticket"]))
                 if shown:

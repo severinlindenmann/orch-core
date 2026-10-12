@@ -260,7 +260,7 @@ class Supervisor:
         self.on_event = on_event
         self.live: dict[str, Live] = {}
         self.lock = threading.RLock()
-        self._spawn_lock = threading.Lock()
+        self._spawn_lock = threading.RLock()  # re-entrant: the host link checks its epoch and spawns under it
         self._sel = selectors.DefaultSelector()
         self._wake_r, self._wake_w = os.pipe()
         os.set_blocking(self._wake_r, False)

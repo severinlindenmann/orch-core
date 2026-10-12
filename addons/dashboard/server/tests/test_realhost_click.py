@@ -227,11 +227,11 @@ def test_cancel_cancels_on_the_host(world, click):
     assert click.post("view", {"request_id": got["request_id"]}).status_code == 404
 
 
-def test_the_terminal_path_is_a_separate_handoff_request(world, click):
-    body = approve(world, "three")
-    res = world.client.post(f"/api/w/{world.ws.ws_id}/handoff", json=body, headers=click.headers())
-    assert res.status_code == 200 and re.fullmatch(r"[0-9A-Z]{4}-[0-9A-Z]{4}", res.json()["code"])
-    world.client.delete(f"/api/w/{world.ws.ws_id}/handoff/{res.json()['id']}", headers=click.headers())
+def test_a_click_workspace_prepares_no_terminal_handoff(world, click):
+    """ONE signing path per workspace (owner decision, 12 Oct 2026): with the flag on, /handoff is refused."""
+    res = world.client.post(f"/api/w/{world.ws.ws_id}/handoff", json=approve(world, "three"), headers=click.headers())
+    assert res.status_code == 409 and res.json()["error"]["code"] == "sign.click_only", res.text
+    assert world.ws.ws_id in res.json()["error"]["message"]
 
 
 def test_with_the_flag_off_the_host_refuses_and_the_card_says_so(world, click):
@@ -244,6 +244,12 @@ def test_with_the_flag_off_the_host_refuses_and_the_card_says_so(world, click):
         assert res.json()["error"]["reason"] == "disabled"
         card = click.workspace()
         assert "click" not in card["features"] and card["click"]["enabled"] is False
+        # Flag off: the terminal hand-off is the one path, and it works (the same action, the same intent function).
+        hand = world.client.post(
+            f"/api/w/{world.ws.ws_id}/handoff", json=approve(world, "three"), headers=click.headers()
+        )
+        assert hand.status_code == 200 and re.fullmatch(r"[0-9A-Z]{4}-[0-9A-Z]{4}", hand.json()["code"]), hand.text
+        world.client.delete(f"/api/w/{world.ws.ws_id}/handoff/{hand.json()['id']}", headers=click.headers())
     finally:
         run(ws, "host", "convenience", "on", "--workspace", ws.ws_id, "--state", str(ws.state))
     assert "click" in click.workspace()["features"]
@@ -340,19 +346,6 @@ def test_a_cancelled_attempt_is_ended_and_start_again_is_explicit(world, click):
     fresh = click.prepare({**body, "retry": 1}, fresh=False)
     assert fresh.status_code == 200 and fresh.json()["request_id"] != made["request_id"]
     click.post("cancel", {"request_id": fresh.json()["request_id"]})
-
-
-def test_the_terminal_path_for_the_same_intent_is_an_open_attempt_not_a_second_request(world, click):
-    """The host binds an idem to its signer and path: the hand-off of an action that has a click request is refused
-    with idem.conflict (reported as intent.open), never a second request. The terminal fallback is another intent."""
-    body = {"action": "comment", "key": world.keys["three"], "message": f"cross path {time.time()}"}
-    made = click.prepare(body, fresh=False).json()
-    hand = world.client.post(f"/api/w/{world.ws.ws_id}/handoff", json=body, headers=click.headers())
-    assert hand.status_code == 409 and hand.json()["error"]["code"] == "intent.open", hand.text
-    click.post("cancel", {"request_id": made["request_id"]})
-    fallback = world.client.post(f"/api/w/{world.ws.ws_id}/handoff", json={**body, "retry": 1}, headers=click.headers())
-    assert fallback.status_code == 200, fallback.text
-    world.client.delete(f"/api/w/{world.ws.ws_id}/handoff/{fallback.json()['id']}", headers=click.headers())
 
 
 # -- host idem and the signer's durable record, together (core #416 idem, #431 record) ---------------------------------

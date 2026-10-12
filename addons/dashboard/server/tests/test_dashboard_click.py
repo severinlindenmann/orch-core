@@ -127,6 +127,7 @@ class HostCheck:
     def __init__(self):
         self.reads, self.checks, self.cancelled, self.pending = [], [], [], {}
         self.mismatch = False
+        self.listing: list[dict] = []  # what `human.pending` without arguments lists (terminal hand-offs have a code)
 
     def human(self, ws, op, args):
         if op == "human.get":
@@ -136,6 +137,8 @@ class HostCheck:
             self.cancelled.append(args["request_id"])
             return {"state": "cancelled"}
         if op == "human.pending":
+            if "request_id" not in args:
+                return {"requests": list(self.listing)}
             return {"requests": [{"id": args["request_id"], "state": self.pending.get(args["request_id"], "bound")}]}
         raise AssertionError(op)
 
@@ -356,7 +359,6 @@ def test_logout_cancels_what_the_session_left_open(client, token, stub, script):
 @pytest.mark.parametrize(
     ("error", "http"),
     [
-        (ClickError("sign.convenience_unavailable", "disabled: off", reason="disabled"), 409),
         (ClickError("sign.convenience_unavailable", "other_member: x", reason="other_member"), 409),
         (ClickError("sign.convenience_readers", "update the readers: relay"), 409),
         (ClickError("rate.limited", "slow down", retry_after_ms=4200, retryable=True), 503),
@@ -522,6 +524,7 @@ def families(stub):
 
 @pytest.fixture(params=["handoff", "click"])
 def family(request, stub, script, rich):
+    script.enabled = request.param != "handoff"  # the terminal hand-off exists only where click-to-sign is off
     return request.param, families(stub)[request.param]
 
 
@@ -622,15 +625,12 @@ def test_a_view_for_another_op_than_the_one_asked_for_is_refused(client, token, 
 
 
 def test_concurrent_prepares_cannot_overshoot_the_one_quota(client, token, stub, script, rich):
-    """Click and hand-off requests share the session's quota; check and reserve are one step."""
+    """Check and reserve of the session's quota are one step."""
     script.delay = 0.05  # a wide window between "checked" and "committed"
     results = []
 
     def go(n):
-        if n % 2:
-            res = client.post(f"/api/w/{stub.ws}/handoff", json=comment(1000 + n), headers=hdr(token))
-        else:
-            res = client.post(url(stub, "prepare"), json=comment(1000 + n), headers=hdr(token))
+        res = client.post(url(stub, "prepare"), json=comment(1000 + n), headers=hdr(token))
         results.append((n % 2, res.status_code, res.json().get("error", {}).get("code")))
 
     threads = [threading.Thread(target=go, args=(n,)) for n in range(24)]
@@ -1137,3 +1137,54 @@ def test_already_signed_and_an_unreadable_record_never_cancel_or_forget_the_requ
     script.refuse.clear()
     host_check.pending[REQ] = "submitted"  # re-attach to its state
     assert client.post(url(stub, "state"), json={"request_id": REQ}, headers=hdr(token)).json()["state"] == "submitted"
+
+
+# -- ONE signing path per workspace (owner decision, 12 Oct 2026) -----------------------------------------------
+
+
+def test_a_click_workspace_prepares_no_terminal_handoff(client, token, stub, script, rich):
+    res = client.post(f"/api/w/{stub.ws}/handoff", json=comment(1), headers=hdr(token))
+    err = res.json()["error"]
+    assert res.status_code == 409 and err["code"] == "sign.click_only"
+    assert "convenience off" in err["message"] and "Sign" in err["message"]
+    assert client.app.state.handoffs.active == {}
+
+
+def test_an_enabled_but_unavailable_signer_is_still_click_only(client, token, stub, script, rich):
+    script.available = False  # e.g. no key right now: an honest error, never a hand-off
+    res = client.post(f"/api/w/{stub.ws}/handoff", json=comment(1), headers=hdr(token))
+    assert res.json()["error"]["code"] == "sign.click_only"
+
+
+def test_the_flag_flipped_off_ends_the_open_click_request(client, token, stub, script, host_check, rich):
+    prepare(client, token, stub, comment(1))
+    script.refuse["sign"] = ClickError("sign.convenience_unavailable", "disabled: off", reason="disabled")
+    res = sign_lost(client, token, stub)
+    assert res.json()["error"]["reason"] == "disabled"
+    assert client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token)).status_code == 404  # ended
+
+
+def test_flip_on_with_an_open_terminal_attempt_of_the_same_action_is_refused_with_its_expiry(
+    client, token, stub, script, host_check, rich
+):
+    host_check.listing = [
+        {
+            "id": "hr_" + "0" * 24 + "99",
+            "code": "7F3K-Q2MA",
+            "state": "prepared",
+            "op": "log",
+            "key": "DEMO-0001",
+            "expires_at": "2026-10-12T12:10:00Z",
+        },
+        {"id": REQ, "code": None, "state": "bound", "op": "log", "key": "DEMO-0001", "expires_at": "x"},  # a click one
+    ]
+    res = client.post(url(stub, "prepare"), json=comment(1), headers=hdr(token))
+    err = res.json()["error"]
+    assert res.status_code == 409 and err["code"] == "intent.open"
+    assert "terminal" in err["message"] and "2026-10-12T12:10:00Z" in err["message"]
+    assert script.prepared == 0
+    # Another action (or an ended attempt) is not blocked.
+    other = client.post(url(stub, "prepare"), json={**comment(1), "key": "DEMO-0002"}, headers=hdr(token))
+    assert other.status_code == 200
+    host_check.listing[0]["state"] = "expired"
+    assert client.post(url(stub, "prepare"), json=comment(1), headers=hdr(token)).status_code == 200

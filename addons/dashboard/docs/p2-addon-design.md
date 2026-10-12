@@ -237,11 +237,19 @@ person. The dashboard adds:
   again"** (also retry + 1); a lost answer is retried with the same `retry` and returns the same request. `idem.conflict`
   means the host holds an attempt of this intent bound to something else (the other path, the signer, or a session from
   before a dashboard restart) - safe, because it is not a second request - and is shown as "An attempt for this is
-  already open ... it settles or expires by itself" with nothing offered that prepares again; "Sign in the terminal
-  instead" is the one deliberate exception: the terminal path is another intent than the click path (retry 1 and up, the
-  click path starts at 0), because the host binds an idem to its path. So a click request and a terminal request of one
-  action can both exist when the person chooses the terminal while another window holds a click request; the click
-  request is cancelled first in the same dialog, and the gate/stale checks of the host refuse a duplicate decision. On
+  already open ... it settles or expires by itself" with nothing offered that prepares again.
+  **One signing path per workspace (owner decision, 12 Oct 2026, via orch-d6; coordination.md line 166; host side core
+  #434).** Where click-to-sign is ON (the signer's flag for that workspace), the dashboard offers only Sign: there is no
+  "Sign in the terminal instead", and `/handoff` prepares are refused with `sign.click_only` ("This workspace signs in the
+  dashboard"; the host refuses them too once #434 is in). If the signer cannot sign there (`record_unavailable`, no key,
+  helper down) the dialog says so honestly and names `orch host convenience off --workspace W`; it never falls back to a
+  hand-off. Where it is OFF, the terminal hand-off works as before and the click routes have nothing to do. The intent
+  function is the same on both workspace types (no path offset); `retry` advances only on "Do it again" / "Start again".
+  Flag flip: before a click prepare, `human.pending` (no arguments, our link) is read for an open (prepared or bound)
+  hand-off request that has a code, with the same op and key; if one exists the prepare is refused ("An attempt from the
+  terminal is still open; it expires at ..."), as defence in depth for the host's own refusal to flip the flag with hand-offs
+  pending. Flag flipped OFF: a click request can no longer be signed (the signer refuses, reason `disabled`); the server
+  cancels it and it reads as ended. On
   `idem.expired` (the host forgot the idem) the server moves to the next deterministic epoch of the same intent, so
   every tab converges on the same fresh request. There is no `outcome.get` for a prepare; a request is read with
   `human.pending {request_id}`. "Complete details" after a `new` targets only the ticket of the `new` request this dialog

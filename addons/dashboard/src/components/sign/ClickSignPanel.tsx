@@ -35,18 +35,17 @@ interface Props {
   signing: boolean
   onSign: (word?: string) => void
   onCancel: () => void
-  onTerminal: () => void
   /** Rate limit: the time (ms since epoch) before which Sign stays off. */
   waitUntil?: number
 }
 
-export function ClickSignPanel({ answer, problem, signing, onSign, onCancel, onTerminal, waitUntil = 0 }: Props) {
+export function ClickSignPanel({ answer, problem, signing, onSign, onCancel, waitUntil = 0 }: Props) {
   const { view, view_digest: digest } = answer
   // A new View (a new digest) is a new confirmation: the timer, the typed word and any half-begun press start over.
-  return <Presented key={digest} view={view} digest={digest} problem={problem} signing={signing} onSign={onSign} onCancel={onCancel} onTerminal={onTerminal} waitUntil={waitUntil} />
+  return <Presented key={digest} view={view} digest={digest} problem={problem} signing={signing} onSign={onSign} onCancel={onCancel} waitUntil={waitUntil} />
 }
 
-function Presented({ view, digest, problem, signing, onSign, onCancel, onTerminal, waitUntil }: Omit<Props, 'answer'> & { view: ClickViewAnswer['view']; digest: string; waitUntil: number }) {
+function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil }: Omit<Props, 'answer'> & { view: ClickViewAnswer['view']; digest: string; waitUntil: number }) {
   const armed = useArming(digest)
   const activation = useActivation(armed)
   const [word, setWord] = useState('')
@@ -139,10 +138,7 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, onTermina
           <p className="text-text-muted">{problem.body}</p>
         </div>
       )}
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <Button type="button" variant="link" size="sm" className="h-auto p-0 text-[13px]" onClick={onTerminal}>
-          Sign in the terminal instead
-        </Button>
+      <div className="flex flex-wrap items-center justify-end gap-2">
         <div className="flex items-center gap-2">
           <Button type="button" variant="ghost" onClick={onCancel} disabled={signing}>
             Cancel

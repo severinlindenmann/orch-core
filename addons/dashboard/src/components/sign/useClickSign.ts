@@ -48,8 +48,6 @@ export interface ClickRun {
   leftUnsettled: boolean
   /** While settling: what is known about the wait (set when it can no longer be followed). */
   settleNote: string | null
-  /** The retry counter of the current action (the terminal fallback starts one above it: another path, another intent). */
-  retryOf: () => number
 }
 
 const refetchKeys = ['ticket', 'tickets', 'board', 'today', 'workspaces', 'events', 'settings', 'members', 'settings-grants', 'identity']
@@ -319,7 +317,5 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
     }
   }, [])
 
-  const retryOf = useCallback(() => attempt.current?.retry ?? 0, [])
-
-  return { phase, prepared, view, problem, signed, start, review, sign, cancel, again, reset, switched, leftUnsettled, settleNote, retryOf }
+  return { phase, prepared, view, problem, signed, start, review, sign, cancel, again, reset, switched, leftUnsettled, settleNote }
 }

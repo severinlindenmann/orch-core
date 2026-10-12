@@ -65,16 +65,15 @@ it('click-to-sign end to end: Sign, the signer’s View only, 500 ms, Sign, Sign
   expect(state.host.clickCancelled).toEqual([])
 })
 
-it('"Sign in the terminal instead" is the separate hand-off, and the click request is cancelled first', async () => {
+it('a click workspace offers only Sign: no terminal path, and no hand-off is ever prepared', async () => {
   const user = userEvent.setup()
   show('/w/DEMO/settings/general')
   const dialog = await save(user)
+  expect(within(dialog).queryByRole('button', { name: 'Sign in the terminal instead' })).toBeNull()
   await user.click(await within(dialog).findByRole('button', { name: 'Sign' }, T))
   await within(dialog).findByTestId('click-panel', {}, T)
-  await user.click(within(dialog).getByRole('button', { name: 'Sign in the terminal instead' }))
-  await within(dialog).findByTestId('handoff-command', {}, T)
-  expect(state.host.clickCancelled).toEqual([`${A}:hr_${'1'.padStart(26, '0')}`])
-  expect(state.host.posts().length).toBe(1)
+  expect(within(dialog).queryByRole('button', { name: 'Sign in the terminal instead' })).toBeNull()
+  expect(state.host.posts().length).toBe(0)
 })
 
 it('each workspace has its own person and role: the second workspace draws its action buttons', async () => {

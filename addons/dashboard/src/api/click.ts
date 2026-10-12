@@ -93,18 +93,20 @@ const UNAVAILABLE: Record<string, string> = {
   reader_version: 'The host does not understand convenience signatures yet. Update orch-core.',
 }
 
+const OFF = ' Fix it, or turn convenience off from the terminal with `orch host convenience off --workspace <prefix>`.'
+
 const REFUSED: Record<string, ClickProblem> = {
-  terminal_only: { title: 'Terminal only', body: 'This one is signed in your terminal, not here.', next: 'terminal' },
-  not_prepared_here: { title: 'Not prepared by this dashboard', body: 'The signing helper does not know this request (it may have restarted). Sign it in the terminal instead.', next: 'terminal' },
+  terminal_only: { title: 'Terminal only', body: 'This one cannot be signed with one click.', next: 'terminal' },
+  not_prepared_here: { title: 'Not prepared by this dashboard', body: 'The signing helper does not know this request (it may have restarted). Prepare it again.', next: 'prepare' },
   expired: { title: 'Expired', body: 'The request ran out of time before it was signed. Prepare it again.', next: 'prepare' },
   view_changed: { title: 'The review changed', body: 'What you would sign is no longer what you were shown. Nothing was signed. Read the new review.', next: 'review' },
   too_soon: { title: 'Too soon', body: 'The review was on screen for less than a second. Nothing was signed. Press Sign again.', next: 'retry' },
   word: { title: 'Not the word shown', body: 'Type the word exactly as the review shows it. Nothing was signed.', next: 'retry' },
   custody_changed: { title: 'The key moved', body: 'The custody of your device key changed since the review. Nothing was signed. Prepare the request again.', next: 'prepare' },
   busy: { title: 'Busy', body: 'Another signature is in progress. Wait a moment, then press Sign again.', next: 'retry' },
-  check_failed: { title: 'A check failed', body: 'The signing helper refused what the host sent (it did not match). Nothing was signed. You can sign in the terminal instead.', next: 'terminal' },
+  check_failed: { title: 'A check failed', body: 'The signing helper refused what the host sent (it did not match). Nothing was signed.'+OFF, next: 'terminal' },
   already_signed: { title: 'Already signed from another window', body: 'This request was signed with a different review. Nothing more can be signed on it; this shows where it stands.', next: 'check' },
-  record_unavailable: { title: 'The signing record is unreadable', body: 'The signing helper cannot read its own record of what it signed, so it refuses to sign. Nothing was signed here. Use the terminal path instead: prepare a hand-off and run orch sign CODE.', next: 'terminal' },
+  record_unavailable: { title: 'The signing record is unreadable', body: 'The signing helper cannot read its own record of what it signed, so it refuses to sign. Nothing was signed here. Fix it, or turn convenience off from the terminal with `orch host convenience off --workspace <prefix>`; this workspace then signs in the terminal.', next: 'terminal' },
   uncertain: { title: 'The outcome is not certain yet', body: 'The signature may or may not have reached the host. It settles by itself; do not sign again until this says it is settled.', next: 'check' },
 }
 
@@ -116,32 +118,34 @@ export const unknownOutcome = (e: unknown): boolean => !(e instanceof ApiError) 
 
 /** Every code and reason of section 0.8.6 as one honest message and the one thing to do next. Unknown codes are shown as they are. */
 export function clickProblem(e: unknown): ClickProblem {
-  if (!(e instanceof ApiError)) return { title: 'Could not reach the dashboard server', body: 'Try again, or sign in the terminal instead.', next: 'retry' }
+  if (!(e instanceof ApiError)) return { title: 'Could not reach the dashboard server', body: 'Try again.', next: 'retry' }
   switch (e.code) {
     case 'human.click_refused':
       return REFUSED[e.reason ?? ''] ?? { title: 'Refused', body: `The signing helper refused this (${e.reason ?? 'no reason'}). Nothing was signed.`, next: 'terminal' }
     case 'sign.convenience_unavailable':
-      return { title: 'Click-to-sign is not available here', body: `${UNAVAILABLE[e.reason ?? ''] ?? 'The host does not allow it for this workspace.'} Sign in the terminal instead.`, next: 'terminal' }
+      return { title: 'Click-to-sign is not available here', body: `${UNAVAILABLE[e.reason ?? ''] ?? 'The host does not allow it for this workspace.'}${OFF}`, next: 'terminal' }
     case 'intent.done':
       return { title: 'Already done', body: 'A request for exactly this was already signed, so there is nothing to sign now. Do it again only if you mean to make it happen a second time.', next: 'again' }
     case 'intent.ended':
       return { title: 'The earlier attempt ended', body: `${e.message} Nothing was signed. Start again to make a new request.`, next: 'prepare' }
     case 'intent.open':
-      return { title: 'An attempt for this is already open', body: 'The host holds an earlier attempt of this action (in the terminal, or from before this dashboard restarted). It settles or expires by itself; nothing new was prepared.', next: 'open' }
+      return { title: 'An attempt for this is already open', body: e.message || 'The host holds an earlier attempt of this action (from the terminal, or from before this dashboard restarted). It settles or expires by itself; nothing new was prepared.', next: 'open' }
+    case 'sign.click_only':
+      return { title: 'This workspace signs in the dashboard', body: e.message, next: 'open' }
     case 'sign.convenience_readers':
       return { title: 'This would add a reader', body: e.message, next: 'terminal' }
     case 'rate.limited':
       return { title: 'Too many signatures', body: `The signing helper allows only so many signatures per minute and hour. Try again in ${Math.max(1, Math.ceil((e.retry_after_ms ?? 1000) / 1000))} s.`, next: 'retry', waitMs: e.retry_after_ms ?? 1000 }
     case 'custody.no_key':
-      return { title: 'No key on this computer', body: 'There is no device key for this workspace in convenience custody here. Sign in the terminal instead.', next: 'terminal' }
+      return { title: 'No key on this computer', body: 'There is no device key for this workspace in convenience custody here. '+OFF, next: 'terminal' }
     case 'custody.unavailable':
-      return { title: 'The key store is not available', body: 'The key store is locked or refused access. Unlock it, or sign in the terminal instead.', next: 'terminal' }
+      return { title: 'The key store is not available', body: 'The key store is locked or refused access. Unlock it.'+OFF, next: 'terminal' }
     case 'host.version_mismatch':
       return { title: 'Update orch-core', body: 'The signing helper and the host are different versions of orch-core. Update orch-core and restart the dashboard.', next: 'terminal' }
     case 'click.contract':
       return { title: 'Update orch-core', body: 'This dashboard and its signing helper do not speak the same version. Update orch-core and restart the dashboard.', next: 'terminal' }
     case 'click.unavailable':
-      return { title: 'The signing helper is not running', body: 'It stopped, so open sign requests are gone. Sign in the terminal instead, or start again.', next: 'terminal' }
+      return { title: 'The signing helper is not running', body: 'It stopped, so open sign requests are gone. Start again.', next: 'prepare' }
     case 'human.request_expired':
       return { title: 'Expired', body: 'The request ran out of time before it was signed. Prepare it again.', next: 'prepare' }
     case 'human.request_state':

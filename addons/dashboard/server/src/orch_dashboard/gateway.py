@@ -142,6 +142,12 @@ class Gateway:
                 features.append("move")  # the board's move action (H6b): backlog <-> open through a hand-off
         return features
 
+    def one_path_is_click(self, ws) -> bool:
+        """Is click-to-sign switched ON for this workspace (the signer's flag)? Then it is the ONE signing path: the
+        dashboard prepares no terminal hand-off there (owner decision, 12 Oct 2026)."""
+        card = self.click.status().get(ws)
+        return isinstance(card, dict) and card.get("enabled") is True
+
     def workspaces(self):
         with self.lock:
             pins = self._pins()

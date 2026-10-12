@@ -84,24 +84,13 @@ const press = (b: HTMLElement) => {
 }
 
 describe('the action dialog with click-to-sign', () => {
-  it('offers Sign and "Sign in the terminal instead" and prepares nothing until one is pressed', async () => {
+  it('offers only Sign (one signing path) and prepares nothing until it is pressed', async () => {
     const { dialog } = await open()
     expect(await within(dialog).findByRole('button', { name: 'Sign' }, T)).toBeEnabled()
-    expect(within(dialog).getByRole('button', { name: 'Sign in the terminal instead' })).toBeEnabled()
+    expect(within(dialog).queryByRole('button', { name: 'Sign in the terminal instead' })).toBeNull()
     expect(within(dialog).getByTestId('click-risk')).toHaveTextContent(CLICK_RISK)
     expect(c.prepare).not.toHaveBeenCalled()
     expect(s.prepare).not.toHaveBeenCalled() // an approve no longer starts the terminal request by itself
-  })
-
-  it('"Sign in the terminal instead" from the start is another intent than Sign (retry 1; the click path starts at 0)', async () => {
-    const request = fakeRequest()
-    s.prepare.mockResolvedValue(request)
-    s.get.mockResolvedValue(state(request))
-    const { dialog } = await open()
-    fireEvent.click(await within(dialog).findByRole('button', { name: 'Sign in the terminal instead' }, T))
-    await within(dialog).findByTestId('handoff-command', {}, T)
-    expect(s.prepare.mock.calls[0][2]).toBe(1)
-    expect(c.prepare).not.toHaveBeenCalled()
   })
 
   it('without the flag there is no Sign button and the hand-off starts as before', async () => {
@@ -116,14 +105,23 @@ describe('the action dialog with click-to-sign', () => {
     expect(c.prepare).not.toHaveBeenCalled()
   })
 
-  it('with the flag present but the signer unable (not available) there is no Sign button either', async () => {
+  it('with the flag on but the signer unable there is no Sign button and NO hand-off: an honest message', async () => {
     flag('unavailable')
-    s.prepare.mockResolvedValue(fakeRequest())
-    s.get.mockResolvedValue(state(fakeRequest()))
     await mount(PLAN)
     const dialog = await screen.findByRole('dialog', {}, T)
-    await within(dialog).findByTestId('handoff-command', {}, T)
-    expect(within(dialog).queryByRole('button', { name: 'Sign' })).toBeNull()
+    const note = await within(dialog).findByTestId('click-unavailable', {}, T)
+    expect(note).toHaveTextContent('orch host convenience off')
+    expect(within(dialog).queryByRole('button', { name: /^Sign$|terminal/ })).toBeNull()
+    expect(s.prepare).not.toHaveBeenCalled()
+    expect(c.prepare).not.toHaveBeenCalled()
+  })
+
+  it('a hand-off refused with sign.click_only (the flag was switched on) says the workspace signs in the dashboard', async () => {
+    flag(false)
+    s.prepare.mockRejectedValue(new ApiError(409, { code: 'sign.click_only', message: 'This workspace signs in the dashboard.', retryable: false }, 3))
+    await mount(PLAN)
+    const dialog = await screen.findByRole('dialog', {}, T)
+    expect(await within(dialog).findByText(/signs in the dashboard/, {}, T)).toBeInTheDocument()
   })
 
   it('Sign prepares once with one idem, reads the View and shows only it', async () => {
@@ -148,17 +146,6 @@ describe('the action dialog with click-to-sign', () => {
     await within(dialog).findByText('Signed', {}, T)
     expect(c.sign).toHaveBeenCalledWith(ws, REQ, DIGEST, undefined)
     expect(c.cancel.mock.calls).toEqual([])
-  })
-
-  it('"Sign in the terminal instead" from the panel cancels the click request and prepares the hand-off', async () => {
-    const request = fakeRequest()
-    s.prepare.mockResolvedValue(request)
-    s.get.mockResolvedValue(state(request))
-    const { ws, ticket, dialog } = await toPanel()
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Sign in the terminal instead' }))
-    await within(dialog).findByTestId('handoff-command', {}, T)
-    expect(c.cancel).toHaveBeenCalledWith(ws, REQ)
-    expect(s.prepare).toHaveBeenCalledWith(ws, { action: 'approve', key: ticket.key, gate: 'plan' }, 1) // the terminal path is another intent: the host binds an idem to its path
   })
 
   it('Cancel cancels the request; closing it by Escape does too', async () => {
@@ -205,13 +192,14 @@ describe('the action dialog with click-to-sign', () => {
     await waitFor(() => expect(c.sign).toHaveBeenCalledWith(ws, REQ, DIGEST, 'DEMO~aaaaaaaa/POLICY '))
   })
 
-  it('the prepare failing shows the honest message and the terminal path, and nothing is open', async () => {
+  it('the prepare failing shows the honest message and no terminal path, and nothing is open', async () => {
     c.prepare.mockRejectedValueOnce(new ApiError(409, { code: 'sign.convenience_unavailable', message: 'other_member: x', retryable: false, reason: 'other_member' }))
     const { dialog } = await open()
     fireEvent.click(await within(dialog).findByRole('button', { name: 'Sign' }, T))
     const problem = await within(dialog).findByTestId('click-problem', {}, T)
     expect(problem).toHaveTextContent('another member')
-    expect(within(dialog).getByRole('button', { name: 'Sign in the terminal instead' })).toBeInTheDocument()
+    expect(within(dialog).queryByRole('button', { name: 'Sign in the terminal instead' })).toBeNull()
+    expect(s.prepare).not.toHaveBeenCalled() // never a hand-off
     expect(c.cancel).not.toHaveBeenCalled()
   })
 
@@ -233,7 +221,7 @@ describe('the action dialog with click-to-sign', () => {
     expect(onClose).not.toHaveBeenCalled()
   }, 15000)
 
-  it('closing while the outcome is unknown does not cancel; an expired request then offers the terminal path', async () => {
+  it('closing while the outcome is unknown does not cancel; an expired request then offers no terminal path', async () => {
     const stateSpy = vi.spyOn(api, 'stateClick').mockResolvedValue({ id: REQ, state: 'bound' })
     const { dialog } = await toPanel()
     c.sign.mockRejectedValueOnce(new ApiError(409, { code: 'human.click_refused', message: 'x', retryable: false, reason: 'uncertain' }))
@@ -241,7 +229,7 @@ describe('the action dialog with click-to-sign', () => {
     await within(dialog).findByTestId('click-settling', {}, T)
     stateSpy.mockResolvedValue({ id: REQ, state: 'expired' })
     await within(dialog).findByText('Expired', {}, { timeout: 8000 })
-    expect(within(dialog).getByRole('button', { name: 'Sign in the terminal instead' })).toBeInTheDocument()
+    expect(within(dialog).queryByRole('button', { name: 'Sign in the terminal instead' })).toBeNull()
     expect(c.cancel.mock.calls).toEqual([])
   }, 15000)
 
@@ -374,8 +362,8 @@ describe('every error code and reason has an honest message', () => {
     ['reader_version', err('sign.convenience_unavailable', 'reader_version'), /Update orch-core/, 'terminal'],
     ['readers', err('sign.convenience_readers', undefined, { message: 'Update the readers first: relay' }), /Update the readers first/, 'terminal'],
     ['rate', err('rate.limited', undefined, { retry_after_ms: 4200 }), /Try again in 5 s/, 'retry'],
-    ['terminal_only', err('human.click_refused', 'terminal_only'), /terminal/, 'terminal'],
-    ['not_prepared_here', err('human.click_refused', 'not_prepared_here'), /does not know this request/, 'terminal'],
+    ['terminal_only', err('human.click_refused', 'terminal_only'), /one click/, 'terminal'],
+    ['not_prepared_here', err('human.click_refused', 'not_prepared_here'), /does not know this request/, 'prepare'],
     ['expired', err('human.click_refused', 'expired'), /ran out of time/, 'prepare'],
     ['view_changed', err('human.click_refused', 'view_changed'), /no longer what you were shown/, 'review'],
     ['too_soon', err('human.click_refused', 'too_soon'), /less than a second/, 'retry'],
@@ -388,7 +376,7 @@ describe('every error code and reason has an honest message', () => {
     ['custody_unavailable', err('custody.unavailable'), /locked or refused/, 'terminal'],
     ['version_mismatch', err('host.version_mismatch'), /different versions of orch-core/, 'terminal'],
     ['contract', err('click.contract'), /do not speak the same version/, 'terminal'],
-    ['signer stopped', err('click.unavailable'), /not running/, 'terminal'],
+    ['signer stopped', err('click.unavailable'), /not running/, 'prepare'],
     ['request_expired', err('human.request_expired'), /ran out of time/, 'prepare'],
     ['request_state', err('human.request_state'), /already signed, cancelled or expired/, 'prepare'],
     ['host down', err('host.unavailable'), /does not answer/, 'retry'],
@@ -409,7 +397,7 @@ describe('every error code and reason has an honest message', () => {
     expect(signed.next).toBe('check') // never Sign again: it re-attaches to the request's state
     const record = clickProblem(err('human.click_refused', 'record_unavailable'))
     expect(record.next).toBe('terminal')
-    expect(record.body).toMatch(/orch sign CODE/)
+    expect(record.body).toMatch(/orch host convenience off/)
   })
   it('intent answers: done offers Do it again, ended offers Start again, open offers nothing', () => {
     expect(clickProblem(err('intent.done')).next).toBe('again')

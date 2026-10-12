@@ -477,6 +477,12 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
     return Plan(op, args, host_files(body), base, link.welcome["peer"]["person"])
 
 
+CLICK_ONLY = (
+    "This workspace signs in the dashboard. Use Sign here, or turn convenience off from the terminal with "
+    "`orch host convenience off --workspace {ws}`."
+)
+
+
 def send_prepare(plan_: Plan, ws: str, retry: int, call):
     """`call(idem)` with the intent's idem. The host forgets an idem after its retention (`idem.expired`): the intent is
     then fresh, and the next epoch is as deterministic as the first, so every tab converges on the same new request.
@@ -638,6 +644,10 @@ def register(app: FastAPI, gateway: Gateway):
     def prepare(body: PrepareBody, request: Request, ws: str = Depends(workspace)):
         token = request.state.token
         gateway.enabled(ws)
+        if gateway.one_path_is_click(ws):
+            raise HostError(
+                {"code": "sign.click_only", "message": CLICK_ONLY.format(ws=ws), "retryable": False}, exit=3
+            )
         with handoffs.lock:
             handoffs.reserve(token)  # checks and takes a slot atomically: concurrent prepares cannot overshoot
         try:

@@ -24,7 +24,7 @@ const answer = (over: Partial<ClickViewAnswer['view']> = {}, digest = 'sha256:' 
 })
 
 function mount(a = answer(), props: Partial<React.ComponentProps<typeof ClickSignPanel>> = {}) {
-  const fns = { onSign: vi.fn(), onCancel: vi.fn(), onTerminal: vi.fn() }
+  const fns = { onSign: vi.fn(), onCancel: vi.fn() }
   const ui = (x: ClickViewAnswer) => <ClickSignPanel answer={x} problem={null} signing={false} {...fns} {...props} />
   const view = render(ui(a))
   return { ...fns, ...view, again: (x: ClickViewAnswer) => view.rerender(ui(x)) }
@@ -179,10 +179,10 @@ describe('Sign is armed by presentation', () => {
   })
 
   it('is off while signing and while a rate limit runs', () => {
-    const { rerender } = render(<ClickSignPanel answer={answer()} problem={null} signing onSign={vi.fn()} onCancel={vi.fn()} onTerminal={vi.fn()} />)
+    const { rerender } = render(<ClickSignPanel answer={answer()} problem={null} signing onSign={vi.fn()} onCancel={vi.fn()} />)
     arm()
     expect(screen.getByRole('button', { name: /Signing/ })).toBeDisabled()
-    rerender(<ClickSignPanel answer={answer()} problem={null} signing={false} onSign={vi.fn()} onCancel={vi.fn()} onTerminal={vi.fn()} waitUntil={Date.now() + 5000} />)
+    rerender(<ClickSignPanel answer={answer()} problem={null} signing={false} onSign={vi.fn()} onCancel={vi.fn()} waitUntil={Date.now() + 5000} />)
     expect(sign()).toBeDisabled()
     act(() => void vi.advanceTimersByTime(5300))
     expect(sign()).toBeEnabled()
@@ -203,12 +203,11 @@ describe('a word op', () => {
 })
 
 describe('the other buttons', () => {
-  it('Cancel and the terminal path are always there', async () => {
+  it('Cancel is always there, and there is no terminal path beside Sign', async () => {
     vi.useRealTimers()
-    const { onCancel, onTerminal } = mount()
+    const { onCancel } = mount()
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
-    await userEvent.click(screen.getByRole('button', { name: 'Sign in the terminal instead' }))
     expect(onCancel).toHaveBeenCalledTimes(1)
-    expect(onTerminal).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('button', { name: /terminal/ })).toBeNull()
   })
 })

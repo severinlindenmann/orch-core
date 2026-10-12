@@ -46,8 +46,7 @@ export interface HandoffRun {
   request: HandoffRequest | null
   state: HandoffState | null
   error: ApiError | null
-  /** `floor`: the terminal fallback after a click attempt starts above that attempt's counter (the host binds an idem to its path). */
-  prepare: (action: HandoffAction, floor?: number) => Promise<void>
+  prepare: (action: HandoffAction) => Promise<void>
   cancel: () => Promise<void>
   /** Back to the start (the person chose "Prepare again"). The previous request must already be settled or cancelled. */
   reset: (keepKey?: boolean) => void
@@ -86,14 +85,13 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
   }, [qc])
 
   const prepare = useCallback(
-    async (action: HandoffAction, floor = 0) => {
+    async (action: HandoffAction) => {
       if (!ws || busy.current || live.current.phase === 'waiting') return // a double click is one prepare
       busy.current = true
       setError(null)
       setPhase('preparing')
       const sig = JSON.stringify(action)
       if (attempt.current?.sig !== sig) attempt.current = { sig, retry: 0, lost: false }
-      if (attempt.current.retry < floor) attempt.current = { ...attempt.current, retry: floor }
       const { retry } = attempt.current
       try {
         const got = await api.prepareHandoff(ws, action, retry)

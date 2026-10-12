@@ -89,6 +89,8 @@ export function HandoffDialog(p: HandoffDialogProps) {
     p.onSettled?.('done', state, request)
   })
   const canClick = clickReady(here) && clickEligible(p.action)
+  // ONE signing path per workspace (owner decision, 12 Oct 2026): where click-to-sign is on, there is no terminal hand-off.
+  const clickOnly = !!here?.click?.enabled
   const clickOpen = click.phase !== 'idle'
   const [waitUntil, setWaitUntil] = useState(0)
   const shared = !!here && workspaces.some((o) => o.id !== here.id && sharesPrefix(o, here))
@@ -97,7 +99,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
 
   useEffect(() => {
     // Not before the list of workspaces is known: whether this one offers Sign decides how the dialog starts.
-    if (p.autoStart && p.action && !started.current && p.ws && !known.isPending && !canClick) {
+    if (p.autoStart && p.action && !started.current && p.ws && !known.isPending && !canClick && !clickOnly) {
       started.current = true
       void run.prepare(p.action)
     }
@@ -145,14 +147,6 @@ export function HandoffDialog(p: HandoffDialogProps) {
     if (click.prepared && click.problem?.next !== 'check' && !['done', 'cancelled', 'idle'].includes(click.phase)) await click.cancel()
     p.onClose()
   }
-  /** The terminal path is another intent than the click path (the host binds an idem to its path), so it never collides
-   *  with a click request of the same action: retry 1 and up, while the click path starts at 0. */
-  /** "Sign in the terminal instead": the click request is cancelled (the person chose), then the hand-off prepares. */
-  const terminal = async () => {
-    if (click.prepared && !['done', 'cancelled', 'idle'].includes(click.phase)) await click.cancel()
-    click.reset()
-    if (p.action) void run.prepare(p.action, Math.max(1, click.retryOf()))
-  }
   const prepareClickAgain = () => {
     if (p.action) void click.again(p.action) // cancels an open request first: no leaked slot
   }
@@ -194,14 +188,21 @@ export function HandoffDialog(p: HandoffDialogProps) {
               ? 'Signed with your key by core’s signing helper, only after you press Sign. An agent or an addon cannot prepare this request.'
               : phase === 'idle'
                 ? canClick
-                  ? 'Sign here with one click, or in your terminal. Either way core prepares the request.'
-                  : 'You sign in your terminal. This dashboard prepares the request and never signs.'
+                  ? 'Sign here with one click. Core prepares the request and its signing helper signs it.'
+                  : clickOnly
+                    ? 'This workspace signs in the dashboard.'
+                    : 'You sign in your terminal. This dashboard prepares the request and never signs.'
                 : 'Signed with your key in your terminal. Only core prepares this request; an agent or an addon cannot sign it.'}
           </DialogDescription>
         </DialogHeader>
 
         {phase === 'idle' && !clickOpen && p.children}
         {phase === 'idle' && !clickOpen && canClick && <ClickRisk />}
+        {phase === 'idle' && !clickOpen && clickOnly && !canClick && (
+          <p role="alert" data-testid="click-unavailable" className="rounded-md border border-warning/40 px-3 py-2 text-[13px] text-warning">
+            The signing helper cannot sign right now{here?.click?.problem ? ` (${here.click.problem})` : ''}. Fix that, or turn convenience off from the terminal with <code>orch host convenience off --workspace {here?.prefix ?? 'W'}</code>. Nothing was prepared.
+          </p>
+        )}
 
         {(click.phase === 'preparing' || click.phase === 'viewing') && (
           <p role="status" className="flex items-center gap-2 text-[13px] text-text-muted">
@@ -217,7 +218,6 @@ export function HandoffDialog(p: HandoffDialogProps) {
             signing={click.phase === 'signing'}
             onSign={(word) => void click.sign(word)}
             onCancel={() => void close()}
-            onTerminal={() => void terminal()}
             waitUntil={waitUntil}
           />
         )}
@@ -295,17 +295,14 @@ export function HandoffDialog(p: HandoffDialogProps) {
                 <Button ref={cancelRef} variant="ghost" onClick={() => void close()}>
                   Cancel
                 </Button>
-                {canClick && (
-                  <Button variant="outline" onClick={() => p.action && void run.prepare(p.action, 1)} disabled={!p.action || !p.ws || !!p.hint}>
-                    Sign in the terminal instead
+                {!clickOnly || canClick ? (
+                  <Button
+                    onClick={() => (canClick ? p.action && void click.start(p.action) : p.action && void run.prepare(p.action))}
+                    disabled={!p.action || !p.ws || !!p.hint}
+                  >
+                    {canClick ? 'Sign' : (p.confirmLabel ?? p.title)}
                   </Button>
-                )}
-                <Button
-                  onClick={() => (canClick ? p.action && void click.start(p.action) : p.action && void run.prepare(p.action))}
-                  disabled={!p.action || !p.ws || !!p.hint}
-                >
-                  {canClick ? 'Sign' : (p.confirmLabel ?? p.title)}
-                </Button>
+                ) : null}
               </>
             )}
             {click.phase === 'settling' && (
@@ -319,11 +316,6 @@ export function HandoffDialog(p: HandoffDialogProps) {
                 {click.problem.next === 'prepare' && p.action && <Button onClick={prepareClickAgain}>Start again</Button>}
                 {click.problem.next === 'again' && p.action && <Button onClick={prepareClickAgain}>Do it again</Button>}
                 {click.problem.next === 'retry' && p.action && <Button onClick={prepareClickAgain}>Try again</Button>}
-                {(click.problem.next === 'terminal' || click.problem.next === 'retry') && p.action && (
-                  <Button variant="outline" onClick={() => void terminal()}>
-                    Sign in the terminal instead
-                  </Button>
-                )}
                 <Button ref={cancelRef} variant="ghost" onClick={() => void close()}>
                   {click.prepared ? 'Cancel' : 'Close'}
                 </Button>

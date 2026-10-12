@@ -146,6 +146,26 @@ def register(app: FastAPI, gateway: Gateway):
 
     def _prepare(body, token, ws):
         planned = plan(gateway, ws, body)  # the only place an op name is chosen
+        # A terminal hand-off of this very action, prepared before the flag was switched on, is still open: nothing
+        # is prepared beside it (the host refuses to flip the flag with one pending; this is defence in depth).
+        key = getattr(body, "key", None)
+        for row in human(ws, "human.pending", {}).get("requests", []):
+            if (
+                isinstance(row, dict)
+                and row.get("code")
+                and row.get("state") in ("prepared", "bound")
+                and row.get("op") == planned.op
+                and row.get("key") == key
+            ):
+                raise HostError(
+                    {
+                        "code": "intent.open",
+                        "message": "An attempt from the terminal is still open; it expires at "
+                        + f"{row.get('expires_at')}.",
+                        "retryable": False,
+                    },
+                    exit=5,
+                )
         files = planned.files
 
         def call(idem: str):
@@ -276,7 +296,9 @@ def register(app: FastAPI, gateway: Gateway):
             if exc.error.get("reason") != "uncertain":
                 handoffs.settled(rid)  # a definite refusal: nothing is in flight; an uncertain one keeps its mark
             sweep()
-            if (exc.error.get("reason") or exc.error["code"]) in ENDED:
+            if exc.error.get("reason") == "disabled":
+                ended(ws, rid)  # the flag was switched off: this request can never be signed, it reads as ended
+            elif (exc.error.get("reason") or exc.error["code"]) in ENDED:
                 clicks.forget(rid)
                 handoffs.settle_all(rid)
                 handoffs.disown(rid)

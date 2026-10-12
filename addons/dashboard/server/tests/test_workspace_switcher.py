@@ -190,3 +190,33 @@ def test_a_workspace_name_with_hidden_characters_is_not_listed_as_that_name(two)
     got = {w["id"]: w for w in client.get("/api/workspaces", headers=headers).json()}
     assert got[stubs[1].ws]["host_state"] == "workspace.name_invalid" and got[stubs[1].ws]["name"] == stubs[1].ws
     assert got[stubs[0].ws]["host_state"] == "ok"
+
+
+@pytest.mark.parametrize("value", [None, 7, ["x"]])
+def test_a_non_string_name_is_name_invalid_not_a_crash(two, value):
+    client, headers, stubs, down, gateway = two
+    stubs[1].name = value
+    got = {w["id"]: w for w in client.get("/api/workspaces", headers=headers).json()}
+    assert got[stubs[1].ws]["host_state"] == "workspace.name_invalid"
+    assert got[stubs[0].ws]["host_state"] == "ok"
+
+
+def test_a_member_name_with_hidden_characters_is_shown_as_the_person_id_not_hidden_with_the_workspace(two):
+    """Opus RH review L1: one such member must not take the workspace (and the roster) down; the name is never shown
+    or repaired, the person id stands in for it, flagged so the page can say why."""
+    from orch_dashboard import adapters
+
+    ok = {"members": [{"person": "p_tom", "name": "Tom", "role": "member", "devices": []}]}
+    assert adapters.members(ok)[0].name == "Tom" and not adapters.members(ok)[0].name_hidden
+    for name in ("To\u202em", "T\u2800", "x\ue000", None):
+        bad = {
+            "members": [
+                {**ok["members"][0], "name": name},
+                {"person": "p_ana", "name": "Ana", "role": "owner", "devices": []},
+            ]
+        }
+        listed = adapters.members(bad)
+        assert (listed[0].name, listed[0].name_hidden) == ("p_tom", True)
+        assert (listed[1].name, listed[1].name_hidden) == ("Ana", False)
+        roster = adapters.settings.roster(bad)
+        assert (roster[0].name, roster[0].name_hidden) == ("p_tom", True) and roster[1].name == "Ana"

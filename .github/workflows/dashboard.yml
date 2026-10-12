@@ -53,4 +53,5 @@ jobs:
           cache-dependency-glob: addons/dashboard/server/uv.lock
       - run: uv sync --locked
       - run: uv run ruff check .
-      - run: uv run pytest -q
+      # The realhost module starts a real orch host and a pty-driven signer: run it locally (see server/README.md).
+      - run: uv run pytest -q -m "not realhost"

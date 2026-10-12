@@ -59,7 +59,7 @@ export function toPublicPath(path: string, prefix: string | null | undefined): s
 
 /**
  * Per-router URL state the rewrite reads: the workspace that in-app links point into. When two workspaces share a prefix
- * the links also carry `?ws=<first 8 hex of the UUID>` (design 5): `hint` is that value for `prefix`.
+ * the links also carry `?ws=<last 8 hex of the UUID (WS8)>` (design 5): `hint` is that value for `prefix`.
  */
 export interface UrlState {
   prefix: string | null

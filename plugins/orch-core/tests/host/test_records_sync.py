@@ -12,12 +12,13 @@ import os
 import subprocess
 from pathlib import Path
 
+import jsonschema
 import pytest
 
 from orch.host import convenience
 from orch.records import RecordsError
 from orch.records import tool as rtool
-from orch.records.cli import main
+from orch.records.cli import CHILD_SCHEMA, main
 from orch.records.git import open_repo
 from tests.host.live_helpers import world
 
@@ -69,7 +70,7 @@ class Env:
 
     def link(self, op, args):
         self.calls.append((op, dict(args)))
-        res = self.client.req(op, args, idem=op == "records.remote_private" or None)
+        res = self.client.req(op, args, idem=op in ("records.remote_private", "records.note") or None)
         if not res["ok"]:
             raise RecordsError(res["error"]["code"], res["error"]["message"], exit_=res["exit"])
         return res["result"]["data"]
@@ -95,9 +96,14 @@ class Env:
         out = io.StringIO()
         code = main(
             [*argv, "--json"], self.env, out, link=self.link, root=self.root, workspace_id=self.w.wid,
-            tips=self.tips, protocols=WS_FILES,
+            tips=self.tips, protocols=WS_FILES, confirm=lambda text: True,
         )  # fmt: skip
-        return code, json.loads(out.getvalue().splitlines()[-1])
+        lines = out.getvalue().splitlines()
+        assert len(lines) == 1, lines  # the child contract: exactly one JSON line
+        doc = json.loads(lines[0])
+        if argv[0] != "auto" or len(argv) > 1:
+            jsonschema.validate(doc, CHILD_SCHEMA)
+        return code, doc
 
 
 @pytest.fixture
@@ -185,7 +191,7 @@ def test_commit_never_carries_an_old_non_record_file_forward(r):
 def test_a_changed_snapshot_is_retried_once_then_refused(r, monkeypatch):
     r.init()
     calls = []
-    monkeypatch.setattr(rtool, "read_manifest_bytes", lambda root, m: calls.append(m) and None)
+    monkeypatch.setattr(rtool, "stream_blobs", lambda repo, m: calls.append(m) and None)
     with pytest.raises(RecordsError) as e:
         r.commit()
     assert e.value.code == "records.snapshot_changed" and len(calls) == 2
@@ -416,16 +422,16 @@ def test_push_with_convenience_needs_the_mark_for_the_exact_url(r):
     _convenience(r)
     code, out = r.cli("push", "--initial")
     assert code == 3, out
-    assert out["error"]["code"] == "sign.convenience_readers"
+    assert out["code"] == "sign.convenience_readers"
     assert git(r.tmp, "--git-dir", url_a[len("file://") :], "for-each-ref") == ""
     code, out = r.cli("remote-private", "--yes")
-    assert code == 0 and out["private_remote"]["url"] == url_a and "trusts your word" in out["text"]
+    assert code == 0 and out["detail"]["private_remote"]["url"] == url_a and "trusts your word" in out["detail"]["text"]
     code, out = r.cli("push", "--initial")
-    assert code == 0 and out["pushed"] and out["policy"] == "private_remote"
+    assert code == 0 and out["pushed"] and out["detail"]["policy"] == "private_remote"
     # the destination changes: the remote URL
     git(r.root, "remote", "set-url", "origin", url_b)
     code, out = r.cli("push", "--initial")
-    assert code == 3 and out["error"]["code"] == "sign.convenience_readers"
+    assert code == 3 and out["code"] == "sign.convenience_readers"
     assert git(r.tmp, "--git-dir", url_b[len("file://") :], "for-each-ref") == ""
 
 
@@ -443,13 +449,13 @@ def test_a_pushurl_or_insteadof_change_after_marking_is_refused(r):
     # a pushurl now sends the push elsewhere
     git(r.root, "config", "--local", "remote.origin.pushurl", url_b)
     code, out = r.cli("push", "--initial")
-    assert out["error"]["code"] == "sign.convenience_readers"
+    assert out["code"] == "sign.convenience_readers"
     git(r.root, "config", "--local", "--unset", "remote.origin.pushurl")
     # a global insteadOf rewrite (the person's own config) redirects the marked URL
     with open(r.home / ".gitconfig", "a") as fh:
         fh.write(f'[url "{url_b}"]\n\tpushInsteadOf = {url_a}\n')
     code, out = r.cli("push", "--initial")
-    assert out.get("error", {}).get("code") == "sign.convenience_readers", out
+    assert out.get("code") == "sign.convenience_readers", out
     assert git(r.tmp, "--git-dir", url_b[len("file://") :], "for-each-ref") == ""
     checks = [a["url"] for op, a in r.calls if op == "records.export_check"]
     assert checks[-2:] == [url_b, url_b]  # the export check saw the effective destination, not the configured one
@@ -460,7 +466,7 @@ def test_without_convenience_push_needs_no_mark(r):
     r.commit()
     git(r.root, "remote", "add", "origin", r.bare())
     code, out = r.cli("push", "--initial")
-    assert code == 0 and out["pushed"] and out["policy"] == "none"
+    assert code == 0 and out["pushed"] and out["detail"]["policy"] == "none"
 
 
 # --- the CLI ----------------------------------------------------------------------------------------------------------
@@ -469,11 +475,11 @@ def test_without_convenience_push_needs_no_mark(r):
 def test_cli_commit_and_init_and_agent_refusal(r):
     assert r.cli("init")[0] == 0
     code, out = r.cli("commit")
-    assert code == 0 and out["changed"]
+    assert code == 0 and out["detail"]["changed"]
     out_io = io.StringIO()
     code = main(["commit", "--json"], {**r.env, "ORCH_GRANT": "g.x"}, out_io, link=r.link, root=r.root,
                 workspace_id=r.w.wid, tips=r.tips, protocols=WS_FILES)  # fmt: skip
-    assert code == 3 and json.loads(out_io.getvalue())["error"]["code"] == "op.not_allowed"
+    assert code == 3 and json.loads(out_io.getvalue())["code"] == "op.not_allowed"
 
 
 def test_the_module_runs_isolated():
@@ -553,7 +559,7 @@ def test_finding2_a_url_with_a_password_is_refused_and_never_echoed(r):
     r.commit()
     git(r.root, "remote", "add", "origin", "https://me:s3cret-token@example.org/r.git")
     code, out = r.cli("push", "--initial")
-    assert out["error"]["code"] == "records.remote_invalid"
+    assert out["code"] == "records.remote_invalid"
     assert "s3cret" not in json.dumps(out)
     assert not any(op == "records.export_check" for op, _ in r.calls)
 
@@ -644,7 +650,7 @@ def test_finding5_a_token_bearing_url_appears_nowhere(r, url):
     _convenience(r)
     outputs = [r.cli("push", "--initial")[1], r.cli("remote-private", "--yes")[1]]
     for out in outputs:
-        assert out["error"]["code"] == "records.remote_invalid"
+        assert out["code"] == "records.remote_invalid"
     # the host refuses it too, without echoing it
     for op, args in (
         ("records.remote_private", {"url": url, "on": True}),
@@ -685,7 +691,7 @@ def test_opus1_a_remote_named_after_the_marked_url_never_redirects_the_push(r):
     assert r.cli("remote-private", "--yes")[0] == 0
     git(r.root, "config", "--local", f"remote.{url_a}.pushurl", url_b)
     code, out = r.cli("push", "--initial")
-    assert code == 3 and out["error"]["code"] == "records.unsafe_config"
+    assert code == 3 and out["code"] == "records.unsafe_config"
     for url in (url_a, url_b):
         assert git(r.tmp, "--git-dir", url[len("file://") :], "for-each-ref") == ""
 
@@ -795,7 +801,7 @@ def test_opus6_a_push_url_with_a_query_or_fragment_is_refused(r):
     r.commit()
     git(r.root, "remote", "add", "origin", "https://example.org/r.git?token=SECRET123")
     code, out = r.cli("push", "--initial")
-    assert out["error"]["code"] == "records.remote_invalid" and "SECRET123" not in json.dumps(out)
+    assert out["code"] == "records.remote_invalid" and "SECRET123" not in json.dumps(out)
 
 
 def test_opus6_open_root_errors_carry_no_path(tmp_path):

@@ -53,7 +53,7 @@ def test_a_subscription_delivers_ticket_events_with_ids_and_a_cursor(w):
 
 def test_sub_open_refuses_detail_and_bad_topics_and_close_ends_with_closed(w):
     c = w.conn()
-    assert err(c.call("sub.open", {"topics": ["tickets"], "detail": True})) == "invalid.input"  # no sub_ext/1
+    assert err(c.call("sub.open", {"topics": ["tickets"], "detail": "yes"})) == "invalid.input"  # sub_ext/1: a bool
     assert err(c.call("sub.open", {"topics": ["everything"]})) == "invalid.input"
     assert err(c.call("sub.open", {"topics": ["ticket:DEMO-9999"]})) == "not_found"
     assert err(c.call("sub.open", {"topics": ["tickets"], "after": "c1.bm9wZQ"})) == "sub.reset"

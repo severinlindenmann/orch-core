@@ -3,7 +3,8 @@
 ``ticket.text``.
 
 This module holds what every one of them shares: the argument schemas (§0.6 step 8: ``invalid.input``), the op table,
-and :class:`ReadCtx`, the one object a handler gets. The handlers live in :mod:`orch.host.reads_query` (``ticket.query``,
+and :class:`ReadCtx`, the one object a handler gets. The handlers live in :mod:`orch.host.reads_query`
+(``ticket.query``,
 ``needs``), :mod:`orch.host.reads_ticket` (``ticket.get``, ``ticket.text``), :mod:`orch.host.reads_feed`
 (``activity.list``) and :mod:`orch.host.reads_ws` (``workspace.show``, ``member.list``, ``session.list``,
 ``grant.list``, ``workspace.settings``).

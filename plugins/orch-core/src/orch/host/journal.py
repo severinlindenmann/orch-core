@@ -59,6 +59,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .readmodel import SummaryState, activity_item, data_of, summary
+
 __all__ = [
     "WINDOW",
     "Batch",
@@ -136,6 +138,9 @@ class Entry:
     grant_person: str | None = None
     #: a short hash of (log, seq, event id): binds a cursor to the event at its jpos
     ref: str = ""
+    #: H6b ``sub.open {detail}`` (§0.9): the viewer-independent ``ActivityItem`` of the event (``actor`` in full,
+    #: ``summary``, ``data``) with ``title`` ``None``; the bus sets the ticket's title at delivery
+    detail: Mapping[str, Any] | None = field(default=None, compare=False, repr=False)
 
     @property
     def uid(self) -> str | None:
@@ -168,6 +173,8 @@ class Batch:
     entries: tuple[Entry, ...]
     vis: Mapping[str, Vis]
     reset: bool = False
+    #: the current title of each ticket created or retitled by these entries (every ticket on a reset)
+    titles: Mapping[str, str] = field(default_factory=dict)
 
 
 # --- cursors ----------------------------------------------------------------------------------------------------------
@@ -313,6 +320,10 @@ class _Walk:
     vis: dict[str, Vis] = field(default_factory=dict)
     needs: dict[str, tuple] = field(default_factory=dict)
     ws_needs: tuple = ()
+    #: the criteria and tasks of each ticket before the event being summarised (``ticket.updated`` summaries)
+    summaries: Any = field(default_factory=SummaryState)
+    #: each ticket's current title
+    titles: dict[str, str] = field(default_factory=dict)
     #: H6b ``needs`` ``since``: per ticket, per need ``(kind, ref)``, the ``at`` of the event whose append made it hold
     #: (counted from the latest time it began to hold without a break)
     since: dict[str, dict[tuple[str, str | None], str]] = field(default_factory=dict)
@@ -337,6 +348,8 @@ class Journal(Window):
         self.unpublished: list[Entry] = []
         #: tickets whose visibility changed since the last :meth:`take`
         self.touched: set[str] = set()
+        #: tickets created or retitled since the last :meth:`take`
+        self.retitled: set[str] = set()
         #: the journal no longer matches the logs (a foreign append or a restore): rebuild before using it
         self.stale = False
         #: why it went stale (for the audit line)
@@ -380,14 +393,17 @@ class Journal(Window):
         self._store = store
         self._walk = _Walk(Core(), ctx)
         self.window = deque(maxlen=WINDOW)
-        self.head, self.unpublished, self.touched = 0, [], set()
+        self.head, self.unpublished, self.touched, self.retitled = 0, [], set(), set()
         self._genesis = self._restore = ""
         for log, event in events:
             self.window.append(self._step(log, event))
-        self.unpublished, self.touched = [], set()
+        self.unpublished, self.touched, self.retitled = [], set(), set()
         self.stale, self.cause = False, ""
         self._epoch()
-        return Batch(self.workspace_id, self.epoch, self.head, tuple(self.window), dict(self._walk.vis), reset=True)
+        return Batch(
+            self.workspace_id, self.epoch, self.head, tuple(self.window), dict(self._walk.vis), reset=True,
+            titles=dict(self._walk.titles),
+        )  # fmt: skip
 
     def _epoch(self) -> None:
         self.epoch = hashlib.sha256(f"{self._genesis}|{self._restore}".encode()).hexdigest()[:16]
@@ -475,9 +491,11 @@ class Journal(Window):
                         walk.vis[uid] = vis
                         self.touched.add(uid)
             seq = int(e["seq"])
+            data = data_of("workspace", e, grant_person=grant_person, devices=core.ws.devices)
+            detail = activity_item(self.head, "workspace", e, key=None, title=None, summary_text=summary(e), data=data)
             return Entry(
                 self.head, "workspace", None, seq, seq, typ, str(e["at"]), str(actor.get("kind")), actor_id,
-                needs=changed, grant_person=grant_person, ref=entry_ref(log, seq, e.get("id")),
+                needs=changed, grant_person=grant_person, ref=entry_ref(log, seq, e.get("id")), detail=detail,
             )  # fmt: skip
         before = walk.vis.get(log)
         old_needs = walk.needs.get(log, ())
@@ -493,10 +511,23 @@ class Journal(Window):
             walk.track(log, needs, str(e["at"]))
             if after != before:
                 self.touched.add(log)
+            title = str(t.fields.get("title", ""))
+            if walk.titles.get(log) != title:
+                walk.titles[log] = title
+                self.retitled.add(log)
         key = t.key if t is not None else (e.get("key") if isinstance(e.get("key"), str) else None)
+        detail = activity_item(
+            self.head,
+            log,
+            e,
+            key=key,
+            title=None,
+            summary_text=summary(e, walk.summaries.of(log)),
+            data=data_of(log, e),
+        )
         return Entry(
             self.head, log, key, int(e["seq"]), int(e["ws_seq"]), typ, str(e["at"]), str(actor.get("kind")),
-            actor_id, before, after, changed, ref=entry_ref(log, int(e["seq"]), e.get("id")),
+            actor_id, before, after, changed, ref=entry_ref(log, int(e["seq"]), e.get("id")), detail=detail,
         )  # fmt: skip
 
     # -- the store's hooks (worker thread, under the store lock)
@@ -546,18 +577,20 @@ class Journal(Window):
             self._tickets_mtime = self._tickets_stamp()
 
     def need_since(self, uid: str) -> dict[tuple[str, str | None], str]:
-        """H6b: ``{(kind, ref): at}`` for the model needs of ticket ``uid`` now (``needs`` ``since``, §0.8): the ``at`` of
+        """H6b: ``{(kind, ref): at}`` for the model needs of ticket ``uid`` now (``needs`` ``since``, §0.8): the ``at``
+        of
         the event (of either log) after which each began to hold without a break. Empty when unknown."""
         walk = self._walk
         return dict(walk.since.get(uid, {})) if walk is not None and not self.stale else {}
 
     def take(self) -> Batch | None:
         """The entries committed since the last call, as a batch for the bus (``None``: nothing new)."""
-        if not self.unpublished and not self.touched:
+        if not self.unpublished and not self.touched and not self.retitled:
             return None
         walk = self._walk
         assert walk is not None
         vis = {uid: walk.vis[uid] for uid in self.touched if uid in walk.vis}
-        batch = Batch(self.workspace_id, self.epoch, self.head, tuple(self.unpublished), vis)
-        self.unpublished, self.touched = [], set()
+        titles = {uid: walk.titles[uid] for uid in self.retitled if uid in walk.titles}
+        batch = Batch(self.workspace_id, self.epoch, self.head, tuple(self.unpublished), vis, titles=titles)
+        self.unpublished, self.touched, self.retitled = [], set(), set()
         return batch

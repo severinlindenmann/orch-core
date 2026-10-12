@@ -108,6 +108,10 @@ def classify(op: str) -> Category:
         return "control"
     if op in _HUMAN_WRITES:
         return "log"
+    from .review import HOST_PERSON_OPS
+
+    if op in HOST_PERSON_OPS:  # move, policy.set, settings.set: person log writes, served through human.* only
+        return "log"
     if op == "job.done":
         return "job"
     if op == "host.wsk_create":

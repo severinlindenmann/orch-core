@@ -96,7 +96,8 @@ _ACTOR_KEYS = ("for", "session", "device", "auth", "grant", "unattended")
 
 def actor(event: Mapping[str, Any]) -> dict[str, Any]:
     """The §0.1 ``Actor`` of a stored event: ``kind``, ``id`` (``None`` for the host) and the optional keys the event
-    carries. ``auth`` is the event's custody label (F1 §5.3: a top-level field, metadata). Never ``sig``/``host_sig``."""
+    carries. ``auth`` is the event's custody label (F1 §5.3: a top-level field, metadata). Never ``sig`` or
+    ``host_sig``."""
     a = event.get("actor") if isinstance(event.get("actor"), Mapping) else {}
     out: dict[str, Any] = {"kind": a.get("kind"), "id": a.get("id") if isinstance(a.get("id"), str) else None}
     for k in _ACTOR_KEYS:
@@ -127,9 +128,7 @@ def _receipt(r: Any) -> dict[str, Any] | None:
 
 def _sources(raw: Any) -> list[dict[str, Any]]:
     return [
-        {"repo": s.get("repo"), "ref": s.get("ref"), "sha": s.get("sha")}
-        for s in (raw or [])
-        if isinstance(s, Mapping)
+        {"repo": s.get("repo"), "ref": s.get("ref"), "sha": s.get("sha")} for s in (raw or []) if isinstance(s, Mapping)
     ]
 
 
@@ -276,7 +275,12 @@ def ws_data(e: Mapping[str, Any], *, grant_person: str | None = None, devices: M
         return {"keys": sorted(sets)}
     if t == "grant.issued":
         a = e.get("actor") if isinstance(e.get("actor"), Mapping) else {}
-        return {"grant": e.get("grant"), "person": a.get("id"), "scope": e.get("scope"), "expires_at": e.get("expires_at")}
+        return {
+            "grant": e.get("grant"),
+            "person": a.get("id"),
+            "scope": e.get("scope"),
+            "expires_at": e.get("expires_at"),
+        }
     if t == "grant.revoked":
         return {"grant": e.get("grant"), "person": grant_person}
     if t == "addon.granted":
@@ -346,7 +350,7 @@ def activity_item(
     summary_text: str,
     data: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """The §0.8 ``ActivityItem`` (= the §0.9 event ``Item`` plus ``actor`` in full, ``title``, ``summary``, ``data``)."""
+    """The §0.8 ``ActivityItem``: the §0.9 event ``Item`` plus ``actor`` in full, ``title``, ``summary``, ``data``."""
     seq = int(e["seq"])
     workspace = log == "workspace"
     return {

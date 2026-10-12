@@ -274,7 +274,12 @@ class HumanOps:
         store.refresh()
         if signer is not None:
             check_device(store, person, signer["device"], now, operate=_operate(sorted(types)))
-        operation = ops.get(name)
+        if name in review.HOST_PERSON_OPS:  # move, policy.set, settings.set: not registry (CLI) ops
+            from orch.ops import person_ops
+
+            operation = person_ops.get(name)
+        else:
+            operation = ops.get(name)
         inner = dict(args["args"])
         from orch.ops.inputs import check_input
 
@@ -446,8 +451,12 @@ class HumanOps:
         for ev in events:
             if ev["type"] == "settings.changed":
                 current = store.state.workspace
-                for key in ev.get("set") or {}:
-                    before.setdefault(key, thaw(getattr(current, key, None)))
+                for key, value in (ev.get("set") or {}).items():  # the host's current values, unsigned (§0.8.1)
+                    if key == "repos":
+                        now = {name: thaw(current.repos.get(name)) for name in value}
+                    else:
+                        now = current.settings.get(key)
+                    before.setdefault(key, now)
         if before:
             material["before"] = before
         return material

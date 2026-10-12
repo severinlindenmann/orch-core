@@ -71,6 +71,8 @@ def person_op_types(op: str) -> frozenset[str] | None:
     from orch.model.emits import EMITS_V1, HUMAN_ONLY
     from orch.ops.actors import allows
 
+    if op in HOST_PERSON_OPS:  # not in EMITS_V1 (a grant verb never covers a person event): the host's own table
+        return HOST_PERSON_OPS[op]
     types = EMITS_V1.get(op)
     if types is None or op in _NOT_PERSON:
         return None
@@ -82,14 +84,14 @@ def person_op_types(op: str) -> frozenset[str] | None:
 
 
 def events_fit(op: str, types: list[str]) -> bool:
-    """The number and order of a request's event types fit ``op``: one event for a human-only op, a ticket.created
-    first (and only first) for ``new``, 1 to 16 events otherwise, each of a type ``op`` emits."""
+    """The number and order of a request's event types fit ``op``: one event for a human-only op or a host person op,
+    a ticket.created first (and only first) for ``new``, 1 to 16 events otherwise, each of a type ``op`` emits."""
     from orch.model.emits import HUMAN_ONLY
 
     allowed = person_op_types(op)
     if allowed is None or not 1 <= len(types) <= 16 or any(t not in allowed for t in types):
         return False
-    if op in HUMAN_ONLY:
+    if op in HUMAN_ONLY or op in HOST_PERSON_OPS:
         return len(types) == 1
     if op == "new":
         return types == ["ticket.created"]

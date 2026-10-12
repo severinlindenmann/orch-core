@@ -1,0 +1,288 @@
+"""H6b, the host person operations ``move``, ``policy.set`` and ``settings.set`` (§0.8): served only through
+``human.prepare`` and ``human.submit`` (a plain request is ``human_only``), judged by the model, reviewed by the signer
+like every person event."""
+
+from __future__ import annotations
+
+import pytest
+
+from orch.host import review
+from orch.ops import person_ops
+from tests.host import human_helpers
+from tests.host.dispatch_helpers import SESSION, UID
+from tests.host.human_helpers import Human, err, ok
+from tests.host.live_helpers import world
+
+lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.human
+
+GATES = ("requirements", "plan", "verify", "code")
+
+
+def policy(**kw):
+    return {"approvers": ["owner"], "count": 1, "not": [], "applies": "all", "independent": False, **kw}
+
+
+def code_policy(**kw):
+    return {"approvers": ["owner"], "count": 1, "not": ["assignees"], "applies": "all", "independent": True, **kw}
+
+
+def events_of(served, log: str, typ: str) -> list[dict]:
+    store = served.lab.ws.other()
+    try:
+        if log == "workspace":
+            return [e for _, e in store.merged_events() if e["type"] == typ and _ == "workspace"]
+        return [e for e in store.events(log) if e["type"] == typ]
+    finally:
+        store.close()
+
+
+def status(served, key: str) -> str:
+    """The status the replayed log gives the ticket (read from a second store: no other read op is involved)."""
+    store = served.lab.ws.other()
+    try:
+        return store.ticket(key).status
+    finally:
+        store.close()
+
+
+@pytest.fixture
+def maint(tmp_path):
+    """A world whose test UID is mapped to ``quinn`` (a member), with quinn's own Human."""
+    w = world(tmp_path, map_to="quinn")
+    try:
+        yield w, Human(w, w.quinn)
+    finally:
+        w.close()
+        w.lab.close()
+
+
+# --- the ops are not registry ops ------------------------------------------------------------------------------------
+
+
+def test_the_three_ops_are_host_person_ops_not_registry_ops():
+    import orch.ops as ops
+    from orch.model.emits import EMITS_V1
+
+    assert set(person_ops.OPS) == set(review.HOST_PERSON_OPS) == {"move", "policy.set", "settings.set"}
+    for name in person_ops.OPS:
+        assert name not in {op.name for op in ops.all()} and name not in EMITS_V1  # the frozen table is untouched
+        assert review.person_op_types(name) == review.HOST_PERSON_OPS[name]
+        assert person_ops.get(name).who == "human"
+    assert review.events_fit("move", ["ticket.moved"]) and not review.events_fit("move", ["ticket.moved"] * 2)
+    assert not review.events_fit("move", ["policy.changed"])
+    assert not review.events_fit("settings.set", ["ticket.moved"])
+
+
+def test_a_plain_request_of_a_person_op_is_human_only(served):
+    uid, key = served.ticket()
+    c = served.client()
+    for op, args in (
+        ("move", {"ref": key, "to": "open"}),
+        ("policy.set", {"gates": {"plan": policy()}}),
+        ("settings.set", {"set": {"grant_hours": 4}}),
+    ):
+        assert err(c.req(op, args, idem=True)) == "human_only"  # the person's connection, no grant
+        assert err(c.req(op, args, grant=served.grant, session=SESSION, idem=True)) == "human_only"  # an agent grant
+    assert status(served, key) == "open"  # nothing ran
+
+
+# --- move ------------------------------------------------------------------------------------------------------------
+
+
+def test_move_goes_through_prepare_sign_submit(human, served):
+    uid, key = human.ticket()
+    human.run("move", {"ref": key, "to": "backlog"})  # a new ticket is open
+    prepared, done, signed = human.run("move", {"ref": key, "to": "open", "reason": "ready for work"})
+    (event,) = signed.events
+    assert event["type"] == "ticket.moved" and event["from"] == "backlog" and event["to"] == "open"
+    assert event["reason"] == "ready for work" and prepared["log"] == uid
+    (review_item,) = prepared["material"]["review"]
+    assert review_item["payload"] == {"from": "backlog", "to": "open", "reason": "ready for work"}
+    assert prepared["fingerprint"] and done["data"] == {"from": "backlog", "to": "open"}
+    assert status(served, key) == "open"
+    assert [e["to"] for e in events_of(served, uid, "ticket.moved")] == ["backlog", "open"]
+    assert "reason" not in events_of(served, uid, "ticket.moved")[0]
+
+
+def test_move_never_goes_into_another_status_or_takes_other_arguments(human, served):
+    _, key = human.ticket()
+    for to in ("in_progress", "testing", "done", "closed", "waiting"):
+        assert err(human.prepare_res("move", {"ref": key, "to": to})) == "invalid.input"
+    for bad in (
+        {"ref": key},
+        {"to": "open"},
+        {"ref": key, "to": "open", "extra": 1},
+        {"ref": key, "to": "open", "reason": ""},
+    ):
+        assert err(human.prepare_res("move", bad)) == "invalid.input"
+    assert err(human.prepare_res("move", {"ref": key, "to": "open", "reason": "x" * 501})) == "invalid.input"
+    human.prepare("move", {"ref": key, "to": "backlog", "reason": "x" * 500})
+    assert status(served, key) == "open"  # preparing signs and appends nothing
+
+
+def test_move_refuses_a_ticket_in_the_wrong_status_or_with_a_live_claim(human, served):
+    _, key = human.ticket()
+    ok(served.client().req("claim", {"ref": key}, grant=served.grant, session=SESSION, idem=True))
+    assert status(served, key) == "in_progress"
+    assert err(human.prepare_res("move", {"ref": key, "to": "open"})) == "transition.refused"  # a live claim
+    assert err(human.prepare_res("move", {"ref": "DEMO-9999", "to": "open"})) == "not_found"
+    served.lab.ws.clock[0] += 3 * 3600  # the claim lapses with its grant (1 h) and its idle time (2 h)
+    prepared, _, _ = human.run("move", {"ref": key, "to": "backlog"})  # in_progress without a live claim: allowed
+    assert prepared["material"]["review"][0]["payload"]["from"] == "in_progress"
+    assert status(served, key) == "backlog"
+
+
+def test_move_from_a_closed_ticket_is_refused(human, served):
+    _, key = human.ticket()
+    human.run("close", {"ref": key})
+    assert err(human.prepare_res("move", {"ref": key, "to": "open"})) == "transition.refused"
+
+
+def test_move_is_for_owners_and_maintainers_only(maint):
+    w, quinn = maint
+    uid, key = w.ticket()
+    assert err(quinn.prepare_res("move", {"ref": key, "to": "backlog"})) == "role.denied"  # a member
+    w.person_event("role.changed", person=w.quinn.ref, role="maintainer")
+    quinn.run("move", {"ref": key, "to": "backlog"})  # a maintainer
+    assert status(w, key) == "backlog"
+    w.person_event("role.changed", person=w.quinn.ref, role="viewer")
+    assert err(quinn.prepare_res("move", {"ref": key, "to": "open"})) == "role.denied"
+
+
+def test_move_of_a_ticket_the_person_cannot_see_is_not_found(maint):
+    w, quinn = maint
+    uid, key = w.ticket()
+    w.person_event("role.changed", person=w.quinn.ref, role="maintainer")
+    w.restrict(uid, [w.lab.owner])
+    assert err(quinn.prepare_res("move", {"ref": key, "to": "open"})) == "not_found"
+
+
+# --- policy.set ------------------------------------------------------------------------------------------------------
+
+
+def test_policy_set_changes_the_workspace_default_policy(human, served):
+    plan = policy(approvers=["owner", "maintainer"], count=2)
+    unsorted = policy(approvers=["owner", "maintainer", "owner"], count=2)  # the op sends the canonical form
+    prepared, done, signed = human.run("policy.set", {"gates": {"plan": unsorted}})
+    (event,) = signed.events
+    assert event["type"] == "policy.changed" and event["gates"] == {
+        "plan": {**plan, "approvers": ["maintainer", "owner"]}
+    }
+    assert prepared["log"] == "workspace" and done["data"] == {"gates": ["plan"]}
+    shown = ok(served.client().req("workspace.settings"))["data"]["gates"]
+    assert shown["plan"]["count"] == 2 and shown["plan"]["approvers"] == ["maintainer", "owner"]
+    assert [e["gates"] for e in events_of(served, "workspace", "policy.changed")] == [event["gates"]]
+
+
+def test_policy_set_with_a_ref_overrides_one_ticket(human, served):
+    uid, key = human.ticket()
+    override = {"verify": policy(approvers=["reviewers"], count=2, **{"not": ["assignees"]})}
+    prepared, _, signed = human.run("policy.set", {"ref": key, "gates": override})
+    assert prepared["log"] == uid and signed.events[0]["type"] == "policy.changed"
+    assert [e for e in events_of(served, uid, "policy.changed")][0]["gates"]["verify"]["count"] == 2
+    assert not events_of(served, "workspace", "policy.changed")
+
+
+def test_policy_set_checks_its_input_and_the_code_gate_rule(human):
+    assert err(human.prepare_res("policy.set", {"gates": {}})) == "invalid.input"
+    assert err(human.prepare_res("policy.set", {"gates": {"nope": policy()}})) == "invalid.input"
+    assert err(human.prepare_res("policy.set", {"gates": {g: policy() for g in (*GATES, "plan2")}})) == "invalid.input"
+    assert err(human.prepare_res("policy.set", {"gates": {"plan": {"approvers": ["owner"]}}})) == "invalid.input"
+    assert err(human.prepare_res("policy.set", {"gates": {"plan": policy(count=10)}})) == "invalid.input"
+    assert err(human.prepare_res("policy.set", {"gates": {"plan": policy(approvers=[])}})) == "invalid.input"
+    # the code gate always excludes assignees and is independent (D59): the model refuses anything else
+    assert human.prepare_res("policy.set", {"gates": {"code": policy()}})["ok"] is False
+    human.prepare("policy.set", {"gates": {"code": code_policy()}})
+
+
+def test_policy_set_and_settings_set_are_for_owners_only(maint):
+    w, quinn = maint
+    w.person_event("role.changed", person=w.quinn.ref, role="maintainer")
+    uid, key = w.ticket()
+    assert err(quinn.prepare_res("policy.set", {"gates": {"plan": policy()}})) == "role.denied"
+    assert err(quinn.prepare_res("policy.set", {"ref": key, "gates": {"plan": policy()}})) == "role.denied"
+    assert err(quinn.prepare_res("settings.set", {"set": {"grant_hours": 4}})) == "role.denied"
+    w.person_event("role.changed", person=w.quinn.ref, role="owner")
+    quinn.run("settings.set", {"set": {"grant_hours": 4}})
+    quinn.run("policy.set", {"gates": {"plan": policy()}})
+
+
+# --- settings.set ----------------------------------------------------------------------------------------------------
+
+
+def test_settings_set_changes_the_durations_and_repos(human, served):
+    changes = {
+        "grant_hours": 4,
+        "claim_ttl_min": 30,
+        "repos": {"proj": {"path": "/srv/proj", "default_branch": "main"}, "old": None},
+    }
+    prepared, done, signed = human.run("settings.set", {"set": changes})
+    (event,) = signed.events
+    assert event["type"] == "settings.changed" and event["set"] == changes
+    assert prepared["log"] == "workspace" and done["data"] == {"set": ["claim_ttl_min", "grant_hours", "repos"]}
+    got = ok(served.client().req("workspace.settings"))["data"]
+    assert got["settings"]["grant_hours"] == 4 and got["settings"]["claim_ttl_min"] == 30
+    assert got["settings"]["lease_ttl_min"] == 60 and got["defaults"] == ["lease_ttl_min"]
+    assert got["settings"]["repos"]["proj"]["default_branch"] == "main"
+
+
+def test_settings_set_shows_the_current_values_as_unsigned_before(human):
+    prepared = human.prepare("settings.set", {"set": {"grant_hours": 2, "repos": {"proj": {"path": "/p"}}}})
+    assert prepared["material"]["before"] == {"grant_hours": 8, "repos": {"proj": None}}  # the host's current values
+    review_item = prepared["material"]["review"][0]
+    assert review_item["type"] == "settings.changed" and review_item["payload"]["set"]["grant_hours"] == 2
+    human.sign(prepared)  # the signer accepts it: each before key is a key of `set`
+
+
+def test_settings_set_checks_its_input(human):
+    bad = [
+        {"set": {}},
+        {},
+        {"set": {"grant_hours": 0}},
+        {"set": {"grant_hours": 25}},
+        {"set": {"claim_ttl_min": 14}},
+        {"set": {"lease_ttl_min": 4}},
+        {"set": {"other": 1}},
+        {"set": {"repos": {}}},
+        {"set": {"repos": {"Bad": {"path": "/x"}}}},
+        {"set": {"repos": {"x": {"remote": "https://h/x"}}}},  # no path
+        {"set": {"repos": {f"r{i}": {"path": "/x"} for i in range(33)}}},
+    ]
+    for args in bad:
+        assert err(human.prepare_res("settings.set", args)) == "invalid.input", args
+    # the model's own rules: a remote is a canonical identity, a local one names its own repo
+    assert (
+        human.prepare_res("settings.set", {"set": {"repos": {"x": {"path": "/x", "remote": "ssh://h/x"}}}})["ok"]
+        is False
+    )
+    human.prepare("settings.set", {"set": {"repos": {"x": {"path": "/x", "remote": "https://example.org/x"}}}})
+
+
+# --- the whole path --------------------------------------------------------------------------------------------------
+
+
+def test_each_event_type_passes_the_signer_end_to_end(human, served):
+    """prepare -> signer.check -> sign -> submit for all three, then the replayed workspace shows the effect."""
+    _, key = human.ticket()
+    for op, args in (
+        ("move", {"ref": key, "to": "backlog"}),
+        ("policy.set", {"gates": {"requirements": policy(count=3)}}),
+        ("settings.set", {"set": {"lease_ttl_min": 10}}),
+    ):
+        prepared = human.prepare(op, args)
+        assert prepared["op"] == op and set(prepared["material"]) >= {"kind", "review"}
+        human.check(prepared)
+        signed = human.sign(prepared)
+        assert ok(human.submit_res(prepared["request"]["id"], signed.events))["data"]
+    shown = ok(served.client().req("workspace.settings"))["data"]
+    assert shown["settings"]["lease_ttl_min"] == 10 and shown["gates"]["requirements"]["count"] == 3
+    assert status(served, key) == "backlog"
+
+
+def test_the_signer_refuses_a_person_op_event_outside_its_table(human):
+    _, key = human.ticket()
+    prepared = human.prepare("move", {"ref": key, "to": "backlog"})
+    prepared["op"] = "settings.set"  # an event the op does not emit
+    with pytest.raises(Exception, match="do not fit|knows"):
+        human.check(prepared)
+    assert UID  # (the UID is the one the helpers map to the owner)

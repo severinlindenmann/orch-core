@@ -14,10 +14,10 @@ import orch.ops as ops
 from orch.host import frames
 from orch.host.columns import refusal, resolve
 from orch.host.dispatch import HOST_OPS, NOT_SERVED, PERSON_READS, op_kind, served_ops
-from orch.host.reads import READ_OPS
-from orch.host.review import HOST_PERSON_OPS
 from orch.host.errors import HostError, disposition
 from orch.host.human import HUMAN_OPS
+from orch.host.reads import READ_OPS
+from orch.host.review import HOST_PERSON_OPS
 from orch.ops.errors import ERRORS
 from tests.host.dispatch_helpers import SESSION, UID, Served, err, ok
 from tests.host.lifecycle_helpers import REPO, Lab

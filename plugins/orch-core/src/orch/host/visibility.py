@@ -13,7 +13,7 @@ the viewer the dispatcher passes in. The hooks below serve the reads that later 
 | :meth:`Viewer.ticket` | ``ticket.get``, ``diff``, ``artifact.get``, ``sub.open {ticket}`` | H6b, H3b1, H4a2, H6a |
 | :meth:`Viewer.linked_repo` | ``diff {repo}`` | H3b1 |
 | :meth:`Viewer.artifact` | ``artifact.get {name}`` | H4a2 |
-| :meth:`Viewer.visible`, :meth:`Viewer.ticket`, :meth:`Viewer.manager` | ``ticket.text``, ``workspace.settings``, ``activity.list`` (v1.5) | H6b |
+| :meth:`Viewer.ticket`, :meth:`Viewer.manager` | ``ticket.text``, ``workspace.settings``, ``activity.list`` | H6b |
 
 The deny-by-default rule: ``no-person`` sees ``workspace`` tickets only, is never an owner, reads no session and no
 other person's needs. ``tests/host/test_dispatch_reads.py`` walks every served read as no-person against a restricted

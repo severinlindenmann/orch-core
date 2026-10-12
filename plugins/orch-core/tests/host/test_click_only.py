@@ -126,5 +126,5 @@ def test_a_prepare_and_switching_on_at_the_same_time_have_exactly_one_winner(ser
             assert err(res["p"]) == CODE
         else:
             assert res["f"][0] == 3 and CODE in res["f"][1]
-            ok(human.c.req("human.cancel", {"request_id": res["p"]["data"]["request"]["id"]}))
+            ok(human.c.req("human.cancel", {"request_id": ok(res["p"])["data"]["request"]["id"]}))
         flag(served, False)

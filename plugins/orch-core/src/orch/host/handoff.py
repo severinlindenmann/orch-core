@@ -12,7 +12,12 @@ shows the person a code. ``orch sign CODE``, at the person's own terminal:
 4. runs the signer's checks (:func:`orch.host.signer.check`: shape, every hash, every review, the fingerprint), renders
    the review from ``material`` with the header first (the workspace from this person's **own** registry, the op, the
    origin, the fingerprint), asks for the confirmation word on ``/dev/tty``, signs (the passphrase prompt) and calls
-   ``human.submit``; a grant's secret is shown on the terminal only after the commit.
+   ``human.submit``; a grant's secret is shown on the terminal only after the commit (:func:`orch.host.signer.finish`,
+   the tail the composite shares). Artifact digests are labelled a signed commitment this signer has not seen, unless
+   ``--file NAME=PATH`` compares them with local files first.
+
+The search over the registry fails closed (:func:`_find`): a pin failure is ``host.untrusted``; one workspace's failure
+is reported, not fatal; nothing is signed unless exactly one workspace holds the code.
 
 :func:`sign_code` is the library function (one connection, injected backend and prompts); :func:`main` finds the
 workspace in the person's registry, opens the device key and connects. It talks to the workspace socket directly with
@@ -43,13 +48,32 @@ CODE = re.compile(r"[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}")
 
 
 def normalise_code(text: str) -> str:
-    """The code as the host stores it: upper case, with the dash (``7f3kq2ma`` → ``7F3K-Q2MA``). ``invalid.input``
-    for anything that is not 8 Crockford base32 characters."""
-    raw = text.strip().upper().replace("-", "")
-    code = f"{raw[:4]}-{raw[4:]}"
-    if len(raw) != 8 or not CODE.fullmatch(code):
+    """The code as the host stores it, upper case with its dash: ``7f3k-q2ma`` or ``7F3KQ2MA`` (surrounding spaces
+    trimmed) → ``7F3K-Q2MA``. Only that shape: 8 Crockford base32 characters with at most one dash, after the fourth.
+    ``invalid.input`` otherwise."""
+    raw = text.strip().upper()
+    if len(raw) == 8:
+        raw = f"{raw[:4]}-{raw[4:]}"
+    if not CODE.fullmatch(raw):
         raise HostError("invalid.input", "a hand-off code is 8 characters, like 7F3K-Q2MA")
-    return code
+    return raw
+
+
+def _local_files(prepared: Mapping[str, Any], files: Mapping[str, bytes]) -> None:
+    """``--file NAME=PATH``: every artifact event of the request has a local file of its name whose digest and size are
+    the signed ones, and every file names an artifact event. Anything else is refused before the review."""
+    from orch import canon
+
+    events = {e.get("name"): e for e in prepared["events"] if e.get("type") in signer.ARTIFACT_TYPES}
+    for name in files:
+        if name not in events:
+            signer._refuse(f"--file {name}: the request has no artifact of that name")
+    for name, ev in events.items():
+        if name not in files:
+            signer._refuse(f"{signer._clean(name)}: no --file for this artifact; the bytes cannot be compared")
+        data = files[name]
+        if (canon.artifact_digest(data), len(data)) != (ev.get("sha256"), ev.get("bytes")):
+            signer._refuse(f"{signer._clean(name)}: the artifact is not your local file")
 
 
 def sign_code(
@@ -66,36 +90,48 @@ def sign_code(
     show_secret: Callable[[str], None],
     idem: str,
     resolved: list[dict[str, Any]] | None = None,
+    files: Mapping[str, bytes] | None = None,
 ) -> dict[str, Any]:
     """Resolve ``code``, bind, check, review, confirm, sign and submit (see the module doc). ``call(op, args,
     idem=None)`` sends one request on the pinned workspace connection and returns its ``result``. ``resolved`` is the
-    ``human.pending {code}`` answer when the caller already has it (one lookup, not two). Returns ``human.submit``'s
-    result. Raises :class:`HostError` (the host's refusals, or ``not_found`` for a code naming nothing) or
-    :class:`orch.host.signer.SignerRefused` (nothing is signed)."""
+    ``human.pending {code}`` answer when the caller already has it (one lookup, not two). ``files`` (``--file``):
+    local bytes by artifact name; with them every artifact digest is compared and labelled checked, without them it is
+    labelled a signed commitment this signer has not seen. Returns ``human.submit``'s result. Raises
+    :class:`HostError` (the host's refusals, or ``not_found`` for a code naming nothing) or
+    :class:`orch.host.signer.SignerRefused` (nothing is signed; the request is cancelled)."""
+    import base64
+
     found = resolved if resolved is not None else call("human.pending", {"code": code})["data"]["requests"]
     if len(found) != 1:
         raise HostError("not_found", f"no pending request of yours has the code {code} in this workspace")
     request_id = found[0]["id"]
     prepared = call("human.get", {"request_id": request_id, "signer": {"device": device, "auth": backend.auth}})["data"]
-    try:
+
+    def before() -> None:
         req = prepared.get("request") or {}
         if req.get("id") != request_id or req.get("code") != code:
             signer._refuse("the host answered with another request than the code names")
-        signer.check(prepared, workspace_id=workspace_id, person=person, device=device, auth=backend.auth)
-        text = f"{NOTICE}\n\n{signer.render(prepared, workspace)}"
-        if not confirm(text, signer.confirm_word(prepared)):
-            signer._refuse("not confirmed")
-        signed = signer.sign(prepared, backend=backend, key_id=key_id, workspace_id=workspace_id)
-    except BaseException:
-        try:
-            call("human.cancel", {"request_id": request_id})  # the preparer learns it from human.pending
-        except Exception:  # noqa: BLE001 - it expires anyway
-            pass
-        raise
-    result = call("human.submit", {"request_id": request_id, "events": signed.events}, idem=idem)
-    if signed.secret is not None:
-        show_secret(f"\nORCH_GRANT={signed.secret}\n(shown once; orch keeps only its hash)\n")
-    return result
+        if files:
+            _local_files(prepared, files)
+
+    return signer.finish(
+        call,
+        prepared,
+        request_id,
+        backend=backend,
+        key_id=key_id,
+        workspace_id=workspace_id,
+        person=person,
+        device=device,
+        workspace=workspace,
+        confirm=confirm,
+        show_secret=show_secret,
+        idem=idem,
+        files={n: {"b64": base64.b64encode(b).decode()} for n, b in files.items()} if files else None,
+        artifacts="checked" if files else "unseen",
+        before=before,
+        prefix=f"{NOTICE}\n\n",
+    )
 
 
 # --- the command -------------------------------------------------------------------------------------------------
@@ -107,8 +143,95 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--workspace", help="the workspace id or prefix (default: every workspace in your registry)")
     p.add_argument("--state", type=Path)
     p.add_argument("--run", type=Path)
+    p.add_argument(
+        "--file",
+        action="append",
+        default=[],
+        metavar="NAME=PATH",
+        help="compare the request's artifact NAME with your local file PATH before you sign",
+    )
     p.add_argument("--json", action="store_true")
     return p
+
+
+def _read_files(items: list[str]) -> dict[str, bytes]:
+    files: dict[str, bytes] = {}
+    for item in items:
+        name, sep, path = item.partition("=")
+        if not sep or not name or not path:
+            raise HostError("invalid.input", "--file takes NAME=PATH")
+        if name in files:
+            raise HostError("invalid.input", f"--file {name} is given twice")
+        try:
+            files[name] = Path(path).expanduser().read_bytes()
+        except OSError as exc:
+            raise HostError("invalid.input", f"--file {name}: cannot read {path} ({exc.strerror})") from None
+    return files
+
+
+def _find(entries: list[dict[str, Any]], code: str, run: Path | None, state: Path, err: TextIO) -> tuple[Any, Any, Any]:
+    """Ask each workspace of the registry for ``code`` and return ``(entry, open connection, requests)`` of the one that
+    holds it. **Fails closed**: nothing is signed unless exactly one workspace answered with the request.
+
+    * A pin failure (the socket's process is not the registry's host UID, or the welcome names another workspace) is a
+      hard refusal, ``host.untrusted``, naming the socket: never "not served".
+    * A workspace that is not served (no socket, connection refused) is skipped.
+    * Any other failure of one workspace (a refusal, ``rate.limited``, ``workspace.unavailable``, a broken connection)
+      is collected and the search goes on; when no workspace holds the code, ``not_found`` names each of them.
+    * Several workspaces holding the code: ``invalid.input`` (use ``--workspace``).
+
+    Every connection but the returned one is closed, whatever happens."""
+    from orch.host import frames
+    from orch.host._unix import UnsafePath
+    from orch.host.client import Connection, Pin
+
+    matches: list[tuple[dict[str, Any], Any, list[dict[str, Any]]]] = []
+    errors: list[str] = []
+    try:
+        for entry in entries:
+            wid = entry["workspace_id"]
+            label = f"{entry.get('prefix')} ({wid})"
+            path = _socket(run, state, int(entry["host_uid"]), wid)
+            try:
+                c = Connection(Pin(int(entry["host_uid"]), wid, path), client="orch sign")
+            except UnsafePath as exc:
+                raise HostError("host.untrusted", f"{path}: {exc}; refusing to talk to it") from None
+            except (FileNotFoundError, ConnectionRefusedError):
+                continue  # not served now: the code cannot be there
+            except (OSError, ConnectionError, frames.FrameError) as exc:
+                errors.append(f"{label}: cannot connect ({exc})")
+                continue
+            try:
+                found = c.call("human.pending", {"code": code})["data"]["requests"]
+            except HostError as exc:
+                c.close()
+                errors.append(f"{label}: {exc.code}")
+                continue
+            except (OSError, ConnectionError, frames.FrameError) as exc:
+                c.close()
+                errors.append(f"{label}: {exc}")
+                continue
+            except BaseException:
+                c.close()
+                raise
+            if found:
+                matches.append((entry, c, found))
+            else:
+                c.close()
+    except BaseException:
+        for _, other, _ in matches:
+            other.close()
+        raise
+    if len(matches) == 1:
+        if errors:
+            err.write("orch sign: not asked: " + "; ".join(errors) + "\n")
+        return matches[0]
+    for _, c, _ in matches:
+        c.close()
+    if matches:
+        raise HostError("invalid.input", f"the code {code} names requests in several workspaces; use --workspace")
+    also = f" (not asked: {'; '.join(errors)})" if errors else ""
+    raise HostError("not_found", f"no pending request of yours has the code {code}{also}")
 
 
 def _socket(run: Path | None, state: Path, host_uid: int, workspace_id: str) -> Path:
@@ -155,7 +278,7 @@ def _backend(state: Path, workspace_id: str) -> Any:
 def main(
     argv: list[str], *, env: Mapping[str, str] | None = None, out: TextIO | None = None, err: TextIO | None = None
 ) -> int:
-    from orch.host.client import Connection, Pin
+    from orch.host.client import Connection
     from orch.host.control_client import new_idem
     from orch.identity import device_ref
     from orch.ops import human
@@ -171,37 +294,13 @@ def main(
         if env.get("ORCH_GRANT"):
             raise HostError("human_only", "orch sign is a person's command; an agent never signs")
         code = normalise_code(args.code)
+        files = _read_files(args.file)
         state = args.state.resolve() if args.state is not None else state_dir(env)
         uid = os.getuid()
         entries = _own_workspaces(state, uid, args.workspace)
         if not entries:
             raise HostError("not_found", "no workspace in your registry maps you to a person")
-        matches = []
-        for entry in entries:  # the code names a request in one workspace; ask each of yours (one lookup each)
-            wid = entry["workspace_id"]
-            pin = Pin(int(entry["host_uid"]), wid, _socket(args.run, state, int(entry["host_uid"]), wid))
-            try:
-                c = Connection(pin, client="orch sign")
-            except (OSError, ConnectionError, ValueError):
-                continue  # not served now: the code cannot be there
-            try:
-                found = c.call("human.pending", {"code": code})["data"]["requests"]
-            except BaseException:
-                c.close()
-                for _, other, _ in matches:
-                    other.close()
-                raise
-            if found:
-                matches.append((entry, c, found))
-            else:
-                c.close()
-        if len(matches) != 1:
-            for _, c, _ in matches:
-                c.close()
-            if not matches:
-                raise HostError("not_found", f"no pending request of yours has the code {code}")
-            raise HostError("invalid.input", f"the code {code} names requests in several workspaces; use --workspace")
-        entry, conn, found = matches[0]
+        entry, conn, found = _find(entries, code, args.run, state, err)
         wid = entry["workspace_id"]
         person = entry["peers"][str(uid)]["person"]
         backend = _backend(state, wid)
@@ -224,6 +323,7 @@ def main(
             show_secret=human.show_secret,
             idem=new_idem(),
             resolved=found,
+            files=files or None,
         )
     except signer.SignerRefused as exc:
         return _fail(out, args.json, HostError("invalid.input", f"{exc}; nothing was signed"))

@@ -92,18 +92,23 @@ def test_a_handoff_request_gets_a_code_and_a_signer_request_none(human):
 
 def test_a_code_is_never_issued_twice_in_a_workspace(human, served, monkeypatch):
     _, key = human.ticket()
-    first = human.prepare("log", {"ref": key, "text": "a"}, handoff=True)["request"]["code"]
-    ok(human.c.req("human.cancel", {"request_id": human.prepare("log", {"ref": key, "text": "b"})["request"]["id"]}))
-    drawn = iter([first, first, "ZZZZ-0000"])  # the CSPRNG repeats a code still stored: it draws again
+    live = human.prepare("log", {"ref": key, "text": "a"}, handoff=True)["request"]["code"]
+    ended = human.prepare("log", {"ref": key, "text": "b"}, handoff=True)["request"]
+    ok(human.c.req("human.cancel", {"request_id": ended["id"]}))  # terminal, still stored (24 h)
+    signed = human.prepare("log", {"ref": key, "text": "c"}, handoff=True)["request"]["code"]
+    sign(served, human, signed)  # submitted, still stored
+    drawn = iter([ended["code"], signed, live, "ZZZZ-0000"])  # the CSPRNG repeats stored codes: it draws again
     monkeypatch.setattr(host_human, "new_code", lambda: next(drawn))
-    assert human.prepare("log", {"ref": key, "text": "c"}, handoff=True)["request"]["code"] == "ZZZZ-0000"
+    assert human.prepare("log", {"ref": key, "text": "d"}, handoff=True)["request"]["code"] == "ZZZZ-0000"
 
 
 def test_the_code_alphabet_is_crockford_base32_with_40_bits():
     assert len(host_human.CODE_ALPHABET) == 32 and not set("ILOU") & set(host_human.CODE_ALPHABET)
     assert all(CODE.fullmatch(host_human.new_code()) for _ in range(200))
-    assert handoff.normalise_code(" 7f3k q2ma ".replace(" ", "")) == "7F3K-Q2MA"
-    for bad in ("7F3K-Q2M", "7F3K-Q2MAX", "7F3K-Q2MU", "ILOU-ILOU"):
+    for good in ("  7f3kq2ma ", "7F3K-Q2MA", " 7f3k-q2ma\n"):
+        assert handoff.normalise_code(good) == "7F3K-Q2MA"
+    bad_shapes = ("7-F3KQ2MA", "7F3KQ-2MA", "7F3K--Q2MA", "7F3K Q2MA", "7F3K-Q2MA-", "-7F3KQ2MA")
+    for bad in ("7F3K-Q2M", "7F3K-Q2MAX", "7F3K-Q2MU", "ILOU-ILOU", *bad_shapes):
         with pytest.raises(HostError):
             handoff.normalise_code(bad)
 
@@ -277,7 +282,7 @@ def test_failed_lookups_on_one_connection_do_not_lock_out_another(human, served)
     assert [r["id"] for r in by_code(other, code)] == [p["request"]["id"]]  # another connection is not locked out
     for guess in ("0000-0005", "0000-0006", "0000-0007", "0000-0008"):  # successes are not failures
         assert by_code(other, guess) == []
-    assert by_code(other, code) and by_code(other, code)
+    assert [r["id"] for r in by_code(other, code)] == [p["request"]["id"]]  # 4 failures and a success: not limited
     tick(served, 60)  # the window passes: the guesser may look up again
     assert [r["id"] for r in by_code(guesser, code)] == [p["request"]["id"]]
 
@@ -316,3 +321,308 @@ def test_pending_states_prepared_submitted_cancelled_expired(human, served):
     assert item["state"] == "expired" and item["seq"] is None
     assert by_id(c, prepared["request"]["id"])["state"] == "expired"
     assert by_id(c, submitted["request"]["id"])["state"] == "submitted"  # terminal states stay
+
+
+# --- the command's search, files and failures (review round) -------------------------------------------------------
+
+
+class Cli:
+    """``orch sign`` as the person runs it, with the test person's key and terminal."""
+
+    def __init__(self, human, served, monkeypatch, backend=None) -> None:
+        from orch.ops import human as ops_human
+
+        keys = ops_human.keys_dir(served.lab.state, served.wid)
+        keys.mkdir(parents=True, exist_ok=True)
+        (keys / ops_human.KEY_FILE).touch()  # the key file is only looked at; the backend is the test's
+        self.backend = backend or CliBackend(human.person)
+        self.shown = Shown()
+        monkeypatch.setattr(ops_human, "open_backend", lambda d: self.backend)
+        monkeypatch.setattr(ops_human, "review_prompt", self.shown.confirm)
+        monkeypatch.setattr(ops_human, "show_secret", self.shown.secret)
+        self.served = served
+
+    def entry(self) -> dict:
+        (entry,) = handoff._own_workspaces(self.served.lab.state, UID, None)
+        return entry
+
+    def __call__(self, code: str, *extra: str, state=None) -> tuple[int, dict, str]:
+        from orch.cli.main import main
+
+        out, errs = io.StringIO(), io.StringIO()
+        argv = ["sign", code, "--state", str(state or self.served.lab.state), "--run", str(self.served.lab.run)]
+        rc = main([*argv, *extra, "--json"], env={"HOME": str(self.served.lab.tmp)}, stdout=out, stderr=errs)
+        return rc, json.loads(out.getvalue()), errs.getvalue()
+
+
+class Track:
+    """Every ``Connection`` the command opens, and which of them it closed; ``fail(n)`` makes the n-th one's calls
+    raise ``workspace.unavailable``."""
+
+    def __init__(self, monkeypatch) -> None:
+        self.opened: list = []
+        self.closed: list = []
+        self.failing: set[int] = set()
+        real_init, real_call, real_close = Connection.__init__, Connection.call, Connection.close
+        track = self
+
+        def init(self, *a, **kw):
+            real_init(self, *a, **kw)
+            track.opened.append(self)
+
+        def call(self, op, args, **kw):
+            if track.opened.index(self) in track.failing:
+                raise HostError("workspace.unavailable", "down for the test")
+            return real_call(self, op, args, **kw)
+
+        def close(self):
+            track.closed.append(self)
+            real_close(self)
+
+        monkeypatch.setattr(Connection, "__init__", init)
+        monkeypatch.setattr(Connection, "call", call)
+        monkeypatch.setattr(Connection, "close", close)
+
+    def all_closed(self) -> bool:
+        return bool(self.opened) and all(c in self.closed for c in self.opened)
+
+
+def _artifact(human, **kw) -> tuple[str, dict, bytes]:
+    import base64
+
+    _, key = human.ticket()
+    data = b"the proof bytes\n"
+    p = human.prepare(
+        "artifact.add",
+        {"ref": key, "path": "proof.txt"},
+        files={"path": {"b64": base64.b64encode(data).decode()}},
+        **kw,
+    )
+    return key, p, data
+
+
+def _line(text: str, start: str) -> str:
+    return next(x for x in text.splitlines() if x.startswith(start))
+
+
+def test_a_handoff_review_labels_artifact_digests_it_has_not_seen(human, served):
+    key, p, _ = _artifact(human, handoff=True)
+    shown = Shown()
+    sign(served, human, p["request"]["code"], shown=shown)
+    text = shown.texts[0]
+    for field in ("sha256: ", "bytes: "):
+        assert _line(text, field).endswith(f"({signer.UNSEEN})"), _line(text, field)
+    assert "signed commitment: orch sign has not seen these bytes" in signer.UNSEEN
+    assert logged(served, key)[-1]["type"] == "artifact.added"
+
+
+def test_the_composite_review_of_an_artifact_is_unchanged(human, served):
+    import base64
+
+    _, key = human.ticket()
+    data = b"the proof bytes\n"
+    files = {"path": {"b64": base64.b64encode(data).decode()}}
+    shown = Shown()
+
+    def call(op, args, files=None, idem=None):
+        return ok(human.c.req(op, args, files=files, idem=idem))
+
+    signer.run(
+        call,
+        "artifact.add",
+        {"ref": key, "path": "proof.txt"},
+        backend=human.backend,
+        key_id="dk",
+        workspace_id=served.wid,
+        person=human.person.ref,
+        device=human.person.device,
+        workspace=lambda w: ("Acme", "DEMO"),
+        confirm=shown.confirm,
+        show_secret=shown.secret,
+        idem=new_idem(),
+        files=files,
+    )
+    text = shown.texts[0]
+    assert _line(text, "sha256: ").startswith("sha256: sha256:") and "(" not in _line(text, "sha256: ")
+    assert _line(text, "bytes: ") == f"bytes: {len(data)}"
+    assert signer.UNSEEN not in text and signer.SEEN not in text
+
+
+def test_orch_sign_file_checks_the_artifact_against_a_local_file(human, served, monkeypatch, tmp_path):
+    cli = Cli(human, served, monkeypatch)
+    key, p, data = _artifact(human, handoff=True)
+    good = tmp_path / "proof.txt"
+    good.write_bytes(data)
+    rc, doc, _ = cli(p["request"]["code"], "--file", f"proof.txt={good}")
+    assert rc == 0, doc
+    text = cli.shown.texts[0]
+    assert _line(text, "sha256: ").endswith(f"({signer.SEEN})") and signer.UNSEEN not in text
+    assert logged(served, key)[-1]["type"] == "artifact.added"
+
+
+def test_orch_sign_file_refuses_another_file_or_a_wrong_name_and_cancels(human, served, monkeypatch, tmp_path):
+    cli = Cli(human, served, monkeypatch)
+    bad = tmp_path / "other.txt"
+    bad.write_bytes(b"not the proof\n")
+    for extra, why in (
+        (("--file", f"proof.txt={bad}"), "not your local file"),
+        (("--file", f"nope.txt={bad}"), "no artifact of that name"),
+    ):
+        _, p, _ = _artifact(human, handoff=True)
+        rc, doc, _ = cli(p["request"]["code"], *extra)
+        assert rc != 0 and doc["error"]["code"] == "invalid.input" and why in doc["error"]["message"], doc
+        assert by_id(human.c, p["request"]["id"])["state"] == "cancelled"
+    assert cli.shown.texts == [] and cli.backend.payloads == []
+    rc, doc, _ = cli(p["request"]["code"], "--file", "proof.txt")
+    assert doc["error"]["code"] == "invalid.input" and "NAME=PATH" in doc["error"]["message"]
+
+
+def test_a_pin_failure_is_a_named_refusal_not_a_missing_workspace(human, served, monkeypatch):
+    cli = Cli(human, served, monkeypatch)
+    _, key = human.ticket()
+    p = human.prepare("log", {"ref": key, "text": "x"}, handoff=True)
+    wrong_uid = {**cli.entry(), "host_uid": UID + 1}  # the socket's process is not the registry's host UID
+    wrong_ws = {**cli.entry(), "workspace_id": "f" * 32}
+    for entry in (wrong_uid, wrong_ws):
+        if entry is wrong_ws:  # the same socket answers, but its welcome names another workspace
+            link = served.lab.run / ("f" * 32)
+            link.mkdir(exist_ok=True)
+            (link / "host.sock").symlink_to(served.lab.run / served.wid / "host.sock")
+        monkeypatch.setattr(handoff, "_own_workspaces", lambda *a, entry=entry: [entry])
+        rc, doc, _ = cli(p["request"]["code"])
+        assert rc != 0 and doc["error"]["code"] == "host.untrusted", doc
+    assert by_id(human.c, p["request"]["id"])["state"] == "prepared"  # nothing was asked of the untrusted socket
+
+
+def test_one_workspace_failing_does_not_stop_the_search(human, served, monkeypatch):
+    cli = Cli(human, served, monkeypatch)
+    _, key = human.ticket()
+    p = human.prepare("log", {"ref": key, "text": "x"}, handoff=True)
+    entry = cli.entry()
+    absent = {**entry, "workspace_id": "e" * 32}  # registered but not served: skipped
+    monkeypatch.setattr(handoff, "_own_workspaces", lambda *a: [absent, entry, entry])
+    track = Track(monkeypatch)
+    track.failing = {0}  # the first one asked answers workspace.unavailable
+    rc, doc, errs = cli(p["request"]["code"])
+    assert rc == 0, doc
+    assert "not asked:" in errs and "workspace.unavailable" in errs
+    assert track.all_closed() and len(track.opened) == 2  # the failing connection was closed (33625455)
+
+
+def test_when_no_workspace_holds_the_code_the_failures_are_reported(human, served, monkeypatch):
+    cli = Cli(human, served, monkeypatch)
+    _, key = human.ticket()
+    p = human.prepare("log", {"ref": key, "text": "x"}, handoff=True)
+    track = Track(monkeypatch)
+    track.failing = {0}
+    rc, doc, _ = cli(p["request"]["code"])
+    assert rc != 0 and doc["error"]["code"] == "not_found" and "workspace.unavailable" in doc["error"]["message"]
+    assert track.all_closed()
+    assert by_id(human.c, p["request"]["id"])["state"] == "prepared"  # fails closed: nothing bound or signed
+
+
+def test_a_code_in_several_workspaces_is_refused_and_every_connection_closed(human, served, monkeypatch):
+    cli = Cli(human, served, monkeypatch)
+    _, key = human.ticket()
+    p = human.prepare("log", {"ref": key, "text": "x"}, handoff=True)
+    entry = cli.entry()
+    monkeypatch.setattr(handoff, "_own_workspaces", lambda *a: [entry, {**entry}])
+    track = Track(monkeypatch)
+    rc, doc, _ = cli(p["request"]["code"])
+    assert doc["error"]["code"] == "invalid.input" and "--workspace" in doc["error"]["message"]
+    assert track.all_closed() and len(track.opened) == 2
+    assert by_id(human.c, p["request"]["id"])["state"] == "prepared" and cli.shown.texts == []
+
+
+def test_workspace_filter_and_no_person_mapping(human, served, monkeypatch, tmp_path):
+    from orch.host.custody import ensure_private_dir, write_private
+    from orch.host.registry import registry_path
+
+    cli = Cli(human, served, monkeypatch)
+    _, key = human.ticket()
+    p = human.prepare("log", {"ref": key, "text": "x"}, handoff=True)
+    prefix = served.service.entry.prefix
+    rc, doc, _ = cli(p["request"]["code"], "--workspace", "NOPE")
+    assert doc["error"]["code"] == "not_found" and "maps you to a person" in doc["error"]["message"]
+    rc, doc, _ = cli(p["request"]["code"], "--workspace", prefix)
+    assert rc == 0, doc
+    # a registry of the caller's own: only entries mapping this UID to a person count, filtered by id or prefix
+    state = tmp_path / "st"
+    ensure_private_dir(state, UID)
+    ensure_private_dir(state / "host", UID)
+
+    def ws(wid: str, prefix: str, peer: dict) -> dict:
+        return {
+            "workspace_id": wid,
+            "prefix": prefix,
+            "root": f"/x/{prefix}",
+            "host_uid": UID,
+            "peers": {str(UID): peer},
+        }
+
+    write_private(
+        registry_path(state),
+        {
+            "workspaces": [
+                ws("a" * 32, "AAA", {"class": "person", "person": "p_" + "1" * 32}),
+                ws("b" * 32, "BBB", {"class": "agent"}),
+                ws("c" * 32, "CCC", {"class": "person", "person": "p_" + "1" * 32}),
+                {**ws("d" * 32, "DDD", {}), "peers": {str(UID + 1): {"class": "person", "person": "p_" + "2" * 32}}},
+            ]
+        },
+    )
+    assert [e["prefix"] for e in handoff._own_workspaces(state, UID, None)] == ["AAA", "CCC"]
+    assert [e["prefix"] for e in handoff._own_workspaces(state, UID, "CCC")] == ["CCC"]
+    assert [e["prefix"] for e in handoff._own_workspaces(state, UID, "a" * 32)] == ["AAA"]
+    assert handoff._own_workspaces(state, UID, "BBB") == []  # mapped as an agent: not the person's
+    rc, doc, _ = cli(p["request"]["code"], "--workspace", "DDD", state=state)
+    assert doc["error"]["code"] == "not_found" and "maps you to a person" in doc["error"]["message"]
+
+
+def test_a_check_failing_after_the_bind_cancels(human, served):
+    from tests.identity.helpers import Person
+
+    _, key = human.ticket()
+    p = human.prepare("log", {"ref": key, "text": "x"}, handoff=True)
+
+    def call(op, args, idem=None, files=None):
+        res = ok(human.c.req(op, args, idem=idem, files=files))
+        if op == "human.get":
+            res["data"]["events"][0]["actor"]["id"] = Person().ref  # a host bug after the bind
+        return res
+
+    shown = Shown()
+    with pytest.raises(signer.SignerRefused, match="not for this signer's person"):
+        handoff.sign_code(
+            call,
+            p["request"]["code"],
+            backend=human.backend,
+            key_id="dk",
+            workspace_id=served.wid,
+            person=human.person.ref,
+            device=human.person.device,
+            workspace=lambda w: ("Acme", "DEMO"),
+            confirm=shown.confirm,
+            show_secret=shown.secret,
+            idem=new_idem(),
+        )
+    assert shown.texts == [] and human.backend.payloads == []
+    assert by_id(human.c, p["request"]["id"])["state"] == "cancelled"
+
+
+def test_a_failing_passphrase_cancels_and_signs_nothing(human, served):
+    from orch.custody.base import WrongPassphrase
+
+    class Wrong(KeyBackend):
+        def sign(self, key_id, payload, *, action):
+            raise WrongPassphrase("wrong passphrase")
+
+    _, key = human.ticket()
+    before = len(logged(served, key))
+    p = human.prepare("log", {"ref": key, "text": "x"}, handoff=True)
+    shown = Shown()
+    with pytest.raises(WrongPassphrase):
+        sign(served, human, p["request"]["code"], shown=shown, backend=Wrong(human.person))
+    assert len(shown.texts) == 1  # the review was shown, then the passphrase failed
+    assert by_id(human.c, p["request"]["id"])["state"] == "cancelled"
+    assert len(logged(served, key)) == before

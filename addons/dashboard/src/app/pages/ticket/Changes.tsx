@@ -21,12 +21,24 @@ export const HAS_CHANGES = new Set(['in-progress', 'waiting', 'testing', 'done']
  * sign, next to the evidence. The head commit is the one the verdict dialog names. Drawn by core with the diff
  * widget's renderer; nothing here comes from an addon.
  */
+const BUSY_RETRIES = 4
+const isBusy = (e: unknown): e is ApiError => e instanceof ApiError && e.code === 'quota.host'
+
 export function Changes({ ticket, viewer, jump }: TabProps) {
   const qc = useQueryClient()
   const ws = useWorkspace().workspace?.id
   // The key carries the workspace and (mock) the branch head: a new commit reads the diff again. A real host's diff
   // names its own head commits, shown below, and a log item of the ticket invalidates it with the ticket.
-  const changes = useQuery({ queryKey: ['changes', ws, ticket.key, ticket.branch.head], queryFn: () => api.getChanges(ticket.key, ws), enabled: !!ws })
+  const changes = useQuery({
+    queryKey: ['changes', ws, ticket.key, ticket.branch.head],
+    queryFn: () => api.getChanges(ticket.key, ws),
+    enabled: !!ws,
+    // A real host reads one diff per person at a time (two host-wide) and answers `quota.host` while busy: wait the
+    // time it names and try again, a bounded number of times, showing "busy" rather than an error.
+    retry: (count, e) => isBusy(e) && count < BUSY_RETRIES,
+    retryDelay: (count, e) => Math.min(isBusy(e) && e.retry_after_ms ? e.retry_after_ms : 1000 * 2 ** count, 8000),
+  })
+  const busy = changes.isFetching && isBusy(changes.failureReason)
   const push = useMutation({
     mutationFn: () => api.simulatePush(ticket.key),
     onSuccess: async (r) => {
@@ -105,8 +117,28 @@ export function Changes({ ticket, viewer, jump }: TabProps) {
           </div>
         )}
       </Section>
+      {busy && (
+        <p role="status" className="text-[13px] text-text-muted">
+          The host is busy reading other diffs; trying again…
+        </p>
+      )}
       {changes.isLoading && <Skeleton className="h-40" />}
-      {changes.error && <p role="alert" className="text-[13px] text-danger">{changes.error instanceof ApiError && changes.error.code === 'observe.unavailable' ? 'The host cannot show this branch right now: it moved since the host last looked, or has no observed head yet.' : 'Could not load the diff.'}</p>}
+      {changes.error && !changes.isFetching && (
+        <p role="alert" className="text-[13px] text-danger">
+          {isBusy(changes.error) ? (
+            <>
+              The host is still busy reading other diffs.{' '}
+              <Button type="button" variant="link" size="sm" className="h-auto p-0 text-[13px]" onClick={() => void changes.refetch()}>
+                Try again
+              </Button>
+            </>
+          ) : changes.error instanceof ApiError && changes.error.code === 'observe.unavailable' ? (
+            'The host cannot show this branch right now: it moved since the host last looked, or has no observed head yet.'
+          ) : (
+            'Could not load the diff.'
+          )}
+        </p>
+      )}
       {changes.data && (
         <div aria-label="Diff" className="space-y-3">
           {changes.data.files.map((f) => (

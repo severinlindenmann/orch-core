@@ -17,7 +17,10 @@ The host never runs git (D-P2-19). It names the bytes and decides the export pol
 * ``records.remote_private {url, on}`` sets or clears the workspace's one private-remote mark (owner decision 12 Oct
   2026): "only I read this remote". orch trusts the owner's word; it is not proof of the remote's ACLs. The mark is
   one exact URL: a changed ``pushurl``, ``insteadOf`` rewrite or remote URL resolves to another string and is not
-  marked. It relaxes an owner rule, so only an **owner** sets or clears it, and it is a **write** (Opus #430 finding
+  marked. The mark binds that URL string; the person's own settings (ssh config, credential helpers, DNS) decide how
+  it is reached.
+* ``records.note`` (a write, owners and maintainers) and ``records.status`` (a read): the tool's last commit, push,
+  repo state, resolved URL and auto setting, and the pending counts since that commit (H11e part 2). It relaxes an owner rule, so only an **owner** sets or clears it, and it is a **write** (Opus #430 finding
   4): ``opts.idem`` is required, the answer is an outcome record (a retry replays it), and every change is audited
   (``marks``: action, redacted URL, person, time). A URL with credentials, a query string or a fragment is refused.
 

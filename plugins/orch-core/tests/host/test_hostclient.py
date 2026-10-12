@@ -260,9 +260,12 @@ def test_a_person_command_runs_the_signer_composite_at_the_terminal(lab, monkeyp
         # an agent never gets there
         r = hcli(lab).j("close", "2")
         assert (r.code, r.err_code) == (3, "human_only")
-        # a dry run signs nothing
+        # a dry run signs nothing, and answers what direct mode's --dry-run answers (H7: the host sends the result)
+        before = lab.ws.read_events(lab.ws.uid("2"))
         r = hcli(lab, grant=False).j("close", "2", "--dry-run")
-        assert r.code == 0 and r.data["dry_run"] is True
+        assert r.code == 0 and r.doc["key"] == "DEMO-0002" and "dry_run" not in (r.data or {})
+        assert hcli(lab, grant=False)("close", "2", "--dry-run").out.splitlines()[1] == "dry-run: nothing was written"
+        assert lab.ws.read_events(lab.ws.uid("2")) == before
     finally:
         served.close()
 

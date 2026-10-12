@@ -245,7 +245,7 @@ def test_orch_host_register_waits_past_the_lock_and_prints_its_idem(lab, monkeyp
         return real(path, **kw)
 
     monkeypatch.setattr(control_client, "ControlClient", spy)
-    argv = ["host", "register", lab.root, "--peer", f"{UID}=person:{lab.owner}", "--run", str(lab.run)]
+    argv = ["host", "register", lab.root, "--peer", f"{UID}=person:{lab.owner}", "--run", str(lab.run), "--no-service"]
     env = {"ORCH_STATE_DIR": str(lab.state), "HOME": str(lab.tmp)}
     out = io.StringIO()
     assert main(argv, env=env, stdout=out) == 9  # no host yet
@@ -262,16 +262,24 @@ def test_orch_host_register_waits_past_the_lock_and_prints_its_idem(lab, monkeyp
         assert json.loads(out.getvalue())["result"]["data"]["state"] == "committed"
 
 
-def test_the_control_path_prefers_the_service_run_directory(monkeypatch, tmp_path):
-    from orch.host import cli, listener
+def test_a_planted_tier_b_run_directory_never_wins_over_the_tier_a_one(monkeypatch, tmp_path):
+    """H7 review: any local account can create /Users/Shared/orch/run/<uid>; in tier A only --run, ORCH_HOST_RUN_DIR
+    or <state>/run is used, by orch host, the thin CLI and orch sign alike."""
+    from orch import hostclient
+    from orch.host import cli, handoff, listener
 
     service = tmp_path / "svc"
     monkeypatch.setattr(listener, "default_run_directory", lambda uid: service)
-    assert cli._control_path(None, tmp_path / "state") == tmp_path / "state" / "run" / "control" / "host.sock"
-    (service / "control").mkdir(parents=True)
-    (service / "control" / "host.sock").touch()
-    assert cli._control_path(None, tmp_path / "state") == service / "control" / "host.sock"
-    assert cli._control_path(tmp_path / "r", tmp_path / "state") == tmp_path / "r" / "control" / "host.sock"
+    wid = "0" * 32
+    for d in ("control", wid):
+        (service / d).mkdir(parents=True)
+        (service / d / "host.sock").touch()
+    state = tmp_path / "state"
+    assert cli._control_path(None, state, {}) == state / "run" / "control" / "host.sock"
+    assert cli._control_path(tmp_path / "r", state, {}) == tmp_path / "r" / "control" / "host.sock"
+    assert cli._control_path(None, state, {"ORCH_HOST_RUN_DIR": "/x"}) == Path("/x/control/host.sock")
+    assert hostclient.workspace_socket({}, state, UID, wid) == state / "run" / wid / "host.sock"
+    assert handoff._socket(None, state, UID, wid) == state / "run" / wid / "host.sock"
 
 
 # --- 7: drain flushes queued answers --------------------------------------------------------------------------

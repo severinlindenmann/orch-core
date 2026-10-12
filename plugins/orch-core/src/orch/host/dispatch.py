@@ -105,6 +105,7 @@ if TYPE_CHECKING:
 __all__ = [
     "HOST_OPS",
     "NOT_SERVED",
+    "OP_VERSIONS",
     "PERSON_READS",
     "RegistryBackend",
     "ScopedRecords",
@@ -131,6 +132,8 @@ HOST_REFUSED_ARGS: dict[str, dict[str, str]] = {
         "repair": "doctor --repair is a control action of the host's owner, not a workspace op (a control op later)"
     },
 }
+#: registry ops served above contract version 1 (§0.4): a client that does not list the version gets ``op.unsupported``
+OP_VERSIONS: dict[str, int] = {"task.done": 2}
 HOST_OPS: dict[str, int] = {"whoami": 1, "host.status": 1, "outcome.get": 1, "sub.open": 1, "sub.close": 1}
 #: the files ops (H4a2, §0.10, §0.8): side-effect-free, columns P, G and N
 FILE_OPS: dict[str, int] = {"blob.put": 1, "blob.drop": 1, "artifact.get": 1}
@@ -189,7 +192,7 @@ def served_ops() -> dict[str, int]:
     from .reads import READ_OPS
     from .review import HOST_PERSON_OPS
 
-    out = {op.name: 1 for op in ops.all() if op.name not in NOT_SERVED}
+    out = {op.name: OP_VERSIONS.get(op.name, 1) for op in ops.all() if op.name not in NOT_SERVED}
     out.update(HOST_OPS)
     out.update(FILE_OPS)
     out.update(GIT_OPS)

@@ -231,6 +231,10 @@ def _person_operation(name: str) -> Any:
     return ops.get(name)
 
 
+#: the first line of a dry run's result in both modes (``orch.ops.runtime.Call.result``)
+DRY_RUN_NOTE = "dry-run: nothing was written"
+
+
 class HumanOps:
     """``human.*`` of one request, on the workspace worker thread (the dispatcher calls :meth:`serve`)."""
 
@@ -388,6 +392,7 @@ class HumanOps:
             signer["device"] if signer else None,
             signer["auth"] if signer else None,
             signer["device"] if signer else probe_device(store, person, now),
+            dry_run=dry_run,
         )
         capture.dry_run = dry_run
         ctx = self.backend._context(call, None, False, files, prepare=capture)
@@ -413,9 +418,13 @@ class HumanOps:
         if not dry_run:  # a dry run runs no tree.check job (section 0.8.1) and carries no checks
             require_checks(call, prepared)  # a decision that binds commits is never prepared without its checks
         result = result_dict(res)
-        template = {"data": result["data"], "key": result["key"], "hints": result["hints"]}
-        if dry_run:
-            return {"request": None, **prepared}
+        # H7: the lines too (a grant's "the secret was shown" line), so the committed result renders as direct mode's
+        template = {"data": result["data"], "key": result["key"], "hints": result["hints"], "lines": result["lines"]}
+        if dry_run:  # H7: the inner op's would-be result, as direct mode's --dry-run answers it (CLI parity)
+            would = {**result, "lines": list(result["lines"])}
+            if would["lines"][:1] != [DRY_RUN_NOTE]:
+                would["lines"].insert(0, DRY_RUN_NOTE)
+            return {"request": None, **prepared, "result": would}
         rid = new_request_id()
         requests = self._requests(service)
         if intent is not None:
@@ -1010,6 +1019,7 @@ def finish(service: WorkspaceService, requests: RequestStore, record: dict[str, 
     result = ok_result(template.get("data") or {}, seq=max(landed))
     result["key"] = view.key if view is not None else template.get("key")
     result["hints"] = list(template.get("hints") or [])[:8]
+    result["lines"] = [str(line) for line in template.get("lines") or []][:10000]  # a record before H7 has none
     outcome = {"state": "committed", "result": result, "exit": 0}
     requests.write({**record, "state": "submitted", "done_at": now, "outcome": outcome})
     return result

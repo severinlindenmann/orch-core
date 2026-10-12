@@ -8,7 +8,9 @@ import os
 import re
 import shutil
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -27,18 +29,22 @@ def norm(text: str) -> str:
     return re.sub(r"sha256:[0-9a-f]{64}", "sha256:HASH", text)
 
 
-def build(tmp: Path, mp: pytest.MonkeyPatch) -> HumanWs:
+def build(tmp: Path, mp: pytest.MonkeyPatch, mode: Any = None) -> HumanWs:
+    """The base workspace; ``mode`` (H7) runs its CLI steps through a host (see ``tests.ops.test_golden.build``)."""
+    from tests.ops.test_golden import _direct
+
     ws = HumanWs(tmp)
     ws.bootstrap()
     mp.setattr(human, "open_backend", ws.backend)
     mp.setattr(human, "review_prompt", lambda text, expect: True)
-    agent, me = Cli(ws), Cli(ws, grant=False, session=None)
-    first = make_ticket(agent, "Needs approval")  # DEMO-0001: filled, nothing approved yet
-    assert agent("ask", "Which export is the source of truth?", "--options", "csv,api", "--rec", "csv").code == 0
-    assert agent("release").code == 0
-    second = make_ticket(agent, "Ready for the verdict")  # DEMO-0002
-    to_testing(agent, me, ws.tmp, second)
-    assert first == "DEMO-0001" and second == "DEMO-0002"
+    with (mode or _direct)(ws) as extra:
+        agent, me = Cli(ws, **extra), Cli(ws, grant=False, session=None, **extra)
+        first = make_ticket(agent, "Needs approval")  # DEMO-0001: filled, nothing approved yet
+        assert agent("ask", "Which export is the source of truth?", "--options", "csv,api", "--rec", "csv").code == 0
+        assert agent("release").code == 0
+        second = make_ticket(agent, "Ready for the verdict")  # DEMO-0002
+        to_testing(agent, me, ws.tmp, second)
+        assert first == "DEMO-0001" and second == "DEMO-0002"
     p = Person()
     (ws.tmp / "invitee.cert.json").write_text(json.dumps(p.cert(created=ws.clock[0] * 1000)))
     (ws.tmp / "invitee.pk").write_text(crypto.b64u(p.pk_pub))
@@ -46,17 +52,21 @@ def build(tmp: Path, mp: pytest.MonkeyPatch) -> HumanWs:
     return ws
 
 
-@pytest.fixture(scope="module")
-def base():
-    root = Path(tempfile.mkdtemp(prefix="orch-golden-human-"))
+def make_base(mode: Any = None) -> Iterator[Path]:
+    root = Path(os.path.realpath(tempfile.mkdtemp(prefix="orch-golden-human-")))
     with pytest.MonkeyPatch.context() as mp:
-        ws = build(root, mp)
+        ws = build(root, mp, mode)
     (root / "grant.txt").write_text(ws.grant)
     ws.store.close()
     (root / "quinn.ref").write_text(ws.people["quinn"].ref)
     (root / "owner.ref").write_text(ws.owner.ref)
     yield root
     shutil.rmtree(root, ignore_errors=True)
+
+
+@pytest.fixture(scope="module")
+def base():
+    yield from make_base()
 
 
 class Fork(HumanWs):
@@ -101,9 +111,12 @@ CASES = {
 }
 
 
-def run(base: Path, name: str, as_json: bool, mp: pytest.MonkeyPatch) -> str:
+def run(base: Path, name: str, as_json: bool, mp: pytest.MonkeyPatch, mode: Any = None) -> str:
+    """One case on a fresh fork; ``mode`` serves it through a host (H7, see ``tests.ops.test_golden.run``)."""
+    from tests.ops.test_golden import _direct
+
     argv, who = CASES[name]
-    tmp = Path(tempfile.mkdtemp(prefix="orch-golden-human-run-"))
+    tmp = Path(os.path.realpath(tempfile.mkdtemp(prefix="orch-golden-human-run-")))
     try:
         ws = Fork(base, tmp / "w")
         owner_ref = (base / "owner.ref").read_text()
@@ -120,8 +133,9 @@ def run(base: Path, name: str, as_json: bool, mp: pytest.MonkeyPatch) -> str:
         mp.setattr(human, "open_backend", ws.backend)
         mp.setattr(human, "review_prompt", lambda text, expect: True)
         mp.setattr(human, "show_secret", lambda text: None)  # the secret goes to a terminal; a golden file is not one
-        cli = Cli(ws) if who == "agent" else Cli(ws, grant=False, session=None)
-        r = cli(*argv, *(["--json"] if as_json else []))
+        with (mode or _direct)(ws) as extra:
+            cli = Cli(ws, **extra) if who == "agent" else Cli(ws, grant=False, session=None, **extra)
+            r = cli(*argv, *(["--json"] if as_json else []))
         if as_json:
             doc = json.loads(r.out)
             return norm(json.dumps(doc, indent=2, ensure_ascii=False)) + f"\n# exit {r.code}\n"

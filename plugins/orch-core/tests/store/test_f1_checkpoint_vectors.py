@@ -189,15 +189,26 @@ def test_source_and_accumulator_transitions(case):
     assert cps.verify_object(WSK, case["offered"])
     got = cps.judge_offer(case_view(case), case["offered"]["o"], restore=bundle(case))
     expected_alarms = (case["restore"]["event"]["actor"]["device"],) if case.get("alarm") else ()
-    assert got == cps.Verdict(case["expect"], case["recorded"], expected_alarms, tuple(case["unpublished"]))
+    evidence = tuple(case["local_revocations"][i] for i in case["unpublished_evidence"])
+    pairs = tuple(tuple(x) for x in case["unpublished_pairs"])
+    want = cps.Verdict(case["expect"], case["recorded"], expected_alarms, tuple(case["unpublished"]), pairs, evidence)
+    assert got == want
     if case["learned_later_in_walk"]:  # only the receiver's order separates this case from a refusal
         for field in ("known_revocations", "local_revocations"):  # held when judging, in either collection
             earlier = replace(case_view(case), **{field: case["learned_later_in_walk"]}, learned_later=())
             got_earlier = cps.judge_offer(earlier, case["offered"]["o"], restore=bundle(case))
-            if case["name"] == "cross_person_compromised_learned_later_no_alarm":  # another person's: never refuses
-                assert got_earlier == cps.Verdict("ok", case["recorded"])
+            if case["name"] in OTHER_PERSON_LATER:  # another person's revocation of the signer's device id
+                # never refuses as a signer revocation; chain-learned, it is a workspace restore's completeness duty
+                duty = field == "known_revocations" and case["restore"]["log"] == WORKSPACE
+                assert got_earlier.code == ("chain.diverged" if duty else "ok")
             else:
                 assert got_earlier == cps.Verdict("chain.diverged")
+
+
+OTHER_PERSON_LATER = {
+    "cross_person_compromised_learned_later_no_alarm",
+    "known_signer_device_other_person_compromised_learned_later_no_alarm",
+}
 
 
 def case_view(case):

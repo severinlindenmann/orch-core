@@ -180,20 +180,24 @@ def device_revoked(core: Core, e: dict[str, Any], v: Verifier) -> Refusal | None
     ws = core.ws
     device = e["device"]
     dev = ws.devices.get(device)
-    known = ws.revocations.get(device)
-    if dev is None and known is None:
+    person = "p_" + e["revocation"]["o"]["person_id"]
+    known = ws.revocations.get(device, {}).get(person)
+    if dev is None and device not in ws.revocations:
         return Refusal(Code.DEVICE_UNKNOWN, device)
+    if dev is None and known is None:
+        # A tombstone holds evidence of other persons only: this person's revocation has no evidence to verify against.
+        return Refusal(Code.DEVICE_CERT, "the revocation is not for a device of this person")
     if dev is not None:
         holder = ws.members.get(dev.person) or ws.former.get(dev.person)
         if holder is None:
             return Refusal(Code.DEVICE_CERT, "the device has no person key")
-        cert, pk_pub, person, previous = dev.cert, holder.pk_pub, dev.person, dev.revoked
+        cert, pk_pub, previous = dev.cert, holder.pk_pub, dev.revoked
+        if person != dev.person:
+            return Refusal(Code.DEVICE_CERT, "the revocation is not for a device of this person")
     else:
         # A restore's tombstone supplies verification evidence, never membership or actor authority.
         cert, pk_pub = known["device_cert"], known["pk_pub"]
-        person, previous = "p_" + cert["o"]["person_id"], known["revocation"]["o"]["reason"]
-    if "p_" + e["revocation"]["o"]["person_id"] != person:
-        return Refusal(Code.DEVICE_CERT, "the revocation is not for a device of this person")
+        previous = known["revocation"]["o"]["reason"]
     if not v.verify_embedded(e, pk_pub=pk_pub, device_cert=cert):
         return Refusal(Code.DEVICE_CERT, "the revocation is not signed by the person key")
     if previous and not (previous != "compromised" and e["reason"] == "compromised"):
@@ -202,7 +206,7 @@ def device_revoked(core: Core, e: dict[str, Any], v: Verifier) -> Refusal | None
     def change() -> None:
         if dev is not None:
             dev.revoked = e["reason"]
-        ws.revocations[device] = {
+        ws.revocations.setdefault(device, {})[person] = {
             "revocation": copy.deepcopy(e["revocation"]),
             "device_cert": copy.deepcopy(cert),
             "pk_pub": pk_pub,
@@ -355,36 +359,38 @@ def restore(core: Core, lc: LogCore, e: dict[str, Any], v: Verifier) -> Refusal 
     if e["head"] != lc.head or e["from_seq"] != lc.seq:
         return Refusal(Code.RESTORE_BAD_HEAD, "from_seq/head must name the last event on disk")
     changes = []
+    # Entries are unique per (device, person) (§5.10). An entry for a known device must be of its person and key; an
+    # entry for a pair a tombstone already holds must be under the same key. A device without a live association
+    # (unknown, or tombstone only) may carry several persons' evidence: every pair is kept, none chosen over another.
     for entry in e["revocations"]:
         rev = entry["revocation"]
-        dev_id = "d_" + rev["o"]["device_id"]
+        dev_id, person = "d_" + rev["o"]["device_id"], "p_" + rev["o"]["person_id"]
         if not v.verify_embedded({"type": "restore.revocation", **entry}, pk_pub=entry["pk_pub"]):
             return Refusal(Code.DEVICE_CERT, "restore revocation evidence does not verify")
-        old = ws.revocations.get(dev_id)
         dev = ws.devices.get(dev_id)
         if dev is not None:
             holder = ws.members.get(dev.person) or ws.former.get(dev.person)
-            person, pk_pub = dev.person, holder.pk_pub if holder else None
-        elif old is not None:
-            person, pk_pub = "p_" + old["revocation"]["o"]["person_id"], old["pk_pub"]
+            known_person, pk_pub = dev.person, holder.pk_pub if holder else None
+        elif person in ws.revocations.get(dev_id, {}):
+            known_person, pk_pub = person, ws.revocations[dev_id][person]["pk_pub"]
         else:
-            continue
-        if "p_" + rev["o"]["person_id"] != person or entry["pk_pub"] != pk_pub:
+            continue  # a new pair: an unknown device, or a tombstone holding only other persons' evidence
+        if person != known_person or entry["pk_pub"] != pk_pub:
             return Refusal(Code.DEVICE_CERT, "the revocation is not for the device's known person key")
     for entry in e["revocations"]:
         rev = entry["revocation"]
-        dev_id = "d_" + rev["o"]["device_id"]
-        old = ws.revocations.get(dev_id)
+        dev_id, person = "d_" + rev["o"]["device_id"], "p_" + rev["o"]["person_id"]
+        old = ws.revocations.get(dev_id, {}).get(person)
         if old is not None:
             previous = old["revocation"]
             if previous == rev:
                 continue
             if previous["o"]["reason"] == "compromised" or rev["o"]["reason"] != "compromised":
                 return Refusal(Code.DEVICE_EXISTS, dev_id)
-        changes.append((dev_id, entry))
+        changes.append((dev_id, person, entry))
     cross(core, lambda: None, lambda t: generations.mark(t, *GATES))
-    for dev_id, entry in changes:
-        ws.revocations[dev_id] = copy.deepcopy(entry)
+    for dev_id, person, entry in changes:
+        ws.revocations.setdefault(dev_id, {})[person] = copy.deepcopy(entry)
         reason = entry["revocation"]["o"]["reason"]
         dev = ws.devices.get(dev_id)
         if dev is not None:

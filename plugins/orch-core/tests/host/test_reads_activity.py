@@ -687,3 +687,10 @@ def test_scan_finding_a_derivation_interleaved_with_a_rebuild_publishes_nothing(
     assert cache.cold == []  # nothing derived under the old generation was published
     monkeypatch.setattr(reads_feed, "derive", real)
     assert feed(c, {"order": "asc", "limit": 3})["items"]
+
+
+def test_human_1_is_in_welcome_caps_with_its_ops(w):
+    welcome = w.client().welcome
+    assert "human/1" in welcome["caps"]
+    for op in ("human.prepare", "human.get", "human.submit", "human.cancel", "human.pending"):
+        assert welcome["ops"][op] == 1

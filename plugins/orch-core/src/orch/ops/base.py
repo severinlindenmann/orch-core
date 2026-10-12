@@ -63,6 +63,9 @@ class Context:
     #: Host mode: registry ops the host does not serve (``task.done`` until H3b2...). No other op may reach them, so
     #: ``apply`` refuses a batch item naming one.
     unserved: frozenset[str] = field(default=frozenset(), repr=False)
+    #: Host mode (H6a): ``wait`` looks once per call and raises ``Parked`` instead of sleeping on the worker thread
+    #: (:class:`orch.ops.commands.wait.Step`); ``None``: the P1 loop.
+    wait_step: Any = field(default=None, repr=False)
     #: Host mode, ``human.prepare`` (H5a): a :class:`orch.ops.prepare.Capture`. The handler runs as the mapped person
     #: and **appends nothing**: each event it would sign or append is judged and recorded there instead, for the
     #: signing client to sign and ``human.submit`` to append. ``None`` everywhere else.

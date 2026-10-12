@@ -102,22 +102,32 @@ class Base:
             self.key, self.first, self.entries, self.bytes = ("", -1), 1, [], 0
             self.cold, self.cold_bytes = [], 0
 
-    def cold_at(self, jpos: int) -> Window | None:
+    def cold_at(self, jpos: int, key: tuple[str, int]) -> Window | None:
+        """A kept cold chunk holding ``jpos``, only while the cache is still of ``key`` (epoch, journal build): checked
+        at read time, under the lock that builds and invalidates it."""
+        if self.key != key:
+            return None
         for i, (lo, entries, _state) in enumerate(self.cold):
             if lo <= jpos < lo + len(entries):
                 self.cold.append(self.cold.pop(i))  # most recently used last
                 return Window(lo, entries)
         return None
 
-    def cold_state(self, jpos: int) -> Any:
+    def cold_state(self, jpos: int, key: tuple[str, int]) -> Any:
         """The summary state after the chunk ending right before ``jpos`` (a continuation skips re-summarising)."""
+        if self.key != key:
+            return None
         for lo, entries, state in self.cold:
             if lo + len(entries) == jpos:
                 return state
         return None
 
-    def keep_cold(self, lo: int, entries: list[Entry], state: Any) -> None:
+    def keep_cold(self, key: tuple[str, int], lo: int, entries: list[Entry], state: Any) -> None:
+        """Publish a derived chunk only into the generation it was derived under: a rebuild or restore that ran
+        meanwhile changed the key (or cleared the cache), and the chunk is dropped."""
         with self.lock:
+            if self.key != key:
+                return
             self.cold.append((lo, entries, state))
             self.cold_bytes += sum(en.size for en in entries)
             while self.cold and (len(self.cold) > COLD_CHUNKS or self.bytes + self.cold_bytes > MAX_BYTES):
@@ -286,8 +296,10 @@ def cold_window(ctx: ReadCtx, jpos: int, ahead: int, order_desc: bool, below: in
     """Entries older than the cache (positions ``< below``) for a scan at ``jpos`` that may still examine ``ahead``
     events, read from the logs for that range only and not kept."""
     cache = ctx.service.activity_base
+    journal = ctx.service.journal
+    key = (ctx.epoch, journal.generation if journal is not None else -1)  # the generation this request reads
     with cache.lock:
-        hit = cache.cold_at(jpos)
+        hit = cache.cold_at(jpos, key)
         if hit is not None:
             return hit
     if order_desc:
@@ -302,12 +314,14 @@ def cold_window(ctx: ReadCtx, jpos: int, ahead: int, order_desc: bool, below: in
     try:
         after: list[Any] = []
         with cache.lock:
-            state = cache.cold_state(lo)
+            state = cache.cold_state(lo, key)
         _, entries = derive(ctx, lo, hi, state=state, out_state=after)
     finally:
         with _COLD_LOCK:
             _COLD_BUSY.discard(who)
-    cache.keep_cold(lo, entries, after[0] if after else None)
+    if journal is not None and (ctx.epoch, journal.generation) != key:  # rebuilt while deriving: serve nothing stale
+        raise HostError("page.expired", "the history was rebuilt during the read: restart from the first page")
+    cache.keep_cold(key, lo, entries, after[0] if after else None)
     return Window(lo, entries)
 
 

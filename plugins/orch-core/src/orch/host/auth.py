@@ -186,15 +186,19 @@ def _secret_of(grant: Any) -> str | None:
 
 
 def secret_in_request(frame: Mapping[str, Any]) -> bool:
-    """§0.5: a grant-shaped string, or the presented grant's secret, anywhere in ``args``, ``opts`` or ``files``."""
+    """§0.5: a grant-shaped string, or the presented grant's secret, anywhere in ``args``, ``opts`` or ``files``, the
+    decoded bytes of inline files and of a ``blob.put`` chunk included. A secret split across two chunks is found
+    when the blob is used: the handler checks the bytes it reads (``check_secret``)."""
     grant = (frame.get("auth") or {}).get("grant")
     secret = _secret_of(grant)
     for part in (frame.get("args"), frame.get("opts"), frame.get("files")):
         for text in _strings(part):
             if GRANT_SHAPE.search(text) or (secret is not None and secret in text):
                 return True
-    for spec in (frame.get("files") or {}).values():
-        raw = spec.get("b64") if isinstance(spec, Mapping) else None
+    inline = [spec.get("b64") if isinstance(spec, Mapping) else None for spec in (frame.get("files") or {}).values()]
+    if frame.get("op") == "blob.put" and isinstance(frame.get("args"), Mapping):
+        inline.append(frame["args"].get("b64"))  # a chunk's bytes are file content too (§0.10)
+    for raw in inline:
         if not isinstance(raw, str):
             continue
         try:

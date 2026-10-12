@@ -94,6 +94,12 @@ def args_for(op: str, ref: str) -> dict:
         return {"ref": ref, "timeout": 1}
     if op in DASHBOARD_READS:  # H6b: not registry ops, so no registry schema to read the arguments from
         return DASHBOARD_READS[op](ref)
+    if op == "artifact.get":  # H4a2: through Viewer.ticket, then Viewer.artifact
+        return {"ref": ref, "name": "proof.txt", "offset": 0}
+    if op == "blob.put":  # H4a2: blobs are per principal and name no ticket
+        return {"offset": 0, "b64": "", "last": False, "size": 1, "upload_key": "a_01J9ZP0000000000000000000B"}
+    if op == "blob.drop":
+        return {"blob": "b_" + "A" * 26}
     schema = ops.get(op).input
     props = schema.get("properties", {})
     out: dict = {}

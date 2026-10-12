@@ -36,7 +36,8 @@
         "file": {
           "type": "string",
           "description": "read the text from PATH, or - for stdin",
-          "x-metavar": "PATH"
+          "x-metavar": "PATH",
+          "x-file": true
         },
         "ref": {
           "type": "string",

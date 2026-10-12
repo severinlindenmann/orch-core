@@ -1,8 +1,9 @@
 """The host's dispatcher (H4a1): the registry ops on a workspace socket, with §0.5 to §0.8 applied to each request.
 
 **The closed op list** (§0.4, §0.5). The host serves every registry op of :mod:`orch.ops` under its name at contract
-version 1, plus ``whoami``, ``host.status``, ``outcome.get``, ``sub.open`` and ``sub.close``, and nothing else
-(``unknown_command``). Left out:
+version 1, plus ``whoami``, ``host.status``, ``outcome.get``, ``sub.open``, ``sub.close`` and the files ops
+(``blob.put``, ``blob.drop``, ``artifact.get``: H4a2, :mod:`orch.host.blobs`, :mod:`orch.host.artifacts`), and nothing
+else (``unknown_command``). Left out:
 
 * ``init`` and ``import.v1`` (D-P2-9: ``init`` is ``host.wsk_create`` + ``host.bootstrap``; ``import v1`` runs in
   direct mode before registration);
@@ -26,8 +27,10 @@ to 11.
 **One request** runs on the workspace worker thread in one piece (:meth:`RegistryBackend.serve`), submitted before the
 coroutine awaits anything, so one connection's writes run in the order they were received (§0.2):
 
-8. ``args`` against the op's schema (``invalid.input``), ``files`` (``blob.invalid``: an argument the op does not
-   have, a ``{blob}`` until H4a2, a ``{digest}`` without a record), ``dry_run`` support (``invalid.input``);
+8. ``args`` against the op's schema (``invalid.input``), ``files`` (``blob.invalid``: an entry for an argument the
+   registry does not mark ``x-file``, an ``x-file`` argument without its entry, inline bytes over 512 KiB, a ``{blob}``
+   that is not a complete blob of this principal in this workspace, a ``{digest}`` without a record), ``dry_run``
+   support (``invalid.input``);
 9. idempotency for a write (H2b's :class:`~orch.host.outcomes.OutcomeStore`): ``idem.required``, then a replay,
    ``idem.conflict`` or ``idem.expired``;
 10. the workspace state: ``workspace.unavailable``, then ``workspace.degraded`` for a write;
@@ -45,6 +48,11 @@ list, so no event can land that reconciliation could not find (§0.7).
 ``uid:<n>``. The handler gets the grant only in column G: an unverified grant is no identity, so a read with one sees
 ``workspace`` tickets only (F1 §10.7). Session notes, dedup records and the stop rule are keyed by (principal,
 session), outcome records by principal.
+
+**Files** (§0.3, §0.10, H4a2). The handler gets a file's bytes only through ``ctx.files`` (inline ``{b64}`` or a
+``{blob}`` read here); the blob directory is never a handler's file root. The binding holds each file's digest (§0.7),
+and a write that commits consumes the blobs it used (also when the answer is a replay); a refusal or a dry run keeps
+them.
 
 **Redaction** (D-P2-10). Every result is passed through the request's :class:`~orch.host.auth.Redactor` before it is
 stored or sent, and so is every error.
@@ -70,7 +78,11 @@ from typing import TYPE_CHECKING, Any, Literal
 from jsonschema import Draft202012Validator
 
 from . import reads, sessions
+from .artifacts import VALIDATOR as ARTIFACT_VALIDATOR
+from .artifacts import artifact_get
 from .auth import Redactor
+from .blobs import INLINE_MAX, decoded_len
+from .blobs import VALIDATORS as BLOB_VALIDATORS
 from .bus import Subscription
 from .columns import OpKind
 from .errors import HostError
@@ -114,6 +126,8 @@ HOST_REFUSED_ARGS: dict[str, dict[str, str]] = {
     },
 }
 HOST_OPS: dict[str, int] = {"whoami": 1, "host.status": 1, "outcome.get": 1, "sub.open": 1, "sub.close": 1}
+#: the files ops (H4a2, §0.10, §0.8): side-effect-free, columns P, G and N
+FILE_OPS: dict[str, int] = {"blob.put": 1, "blob.drop": 1, "artifact.get": 1}
 #: registry ops served in the ``wait`` phase (parked on the bus, answered ``host.restarting`` by a drain)
 WAIT_OPS = frozenset({"wait"})
 _TOPIC = r"^(?:workspace|tickets|needs|ticket:(?:(?:[A-Z][A-Z0-9]{0,15}-)?[0-9]{1,9}|[0-7][0-9A-HJKMNP-TV-Z]{25}))$"
@@ -169,10 +183,17 @@ def served_ops() -> dict[str, int]:
 
     out = {op.name: 1 for op in ops.all() if op.name not in NOT_SERVED}
     out.update(HOST_OPS)
+    out.update(FILE_OPS)
     out.update(HUMAN_OPS)
     out.update(READ_OPS)
     out.update(dict.fromkeys(HOST_PERSON_OPS, 1))
     return out
+
+
+def file_args(operation: Operation) -> frozenset[str]:
+    """The arguments the registry marks ``x-file: true`` (§0.3): their bytes come only through ``files``."""
+    props = operation.input.get("properties") or {}
+    return frozenset(name for name, spec in props.items() if isinstance(spec, Mapping) and spec.get("x-file") is True)
 
 
 def op_kind(name: str) -> tuple[OpKind, Phase] | None:
@@ -183,7 +204,7 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
     from .reads import PERSON_GRANT_READS, READ_OPS
     from .review import HOST_PERSON_OPS
 
-    if name in HOST_OPS:
+    if name in HOST_OPS or name in FILE_OPS:
         return ("read", "read")
     if name in READ_OPS:  # H6b: session.list and grant.list are P and G only (§0.5)
         return ("pg_read" if name in PERSON_GRANT_READS else "read", "read")
@@ -308,9 +329,10 @@ class ScopedRecords:
 class RegistryBackend:
     """The :class:`~orch.host.workspace.OpBackend` of every workspace socket."""
 
+    #: ``diff/1`` is listed for ``artifact.get`` (H4a2); the H6b read caps; ``sub_ext/1`` while detail is served
     @property
     def caps(self) -> list[str]:
-        return ["ops/1", "outcome/1", "sub/1", *READ_CAPS, *(["sub_ext/1"] if SUB_EXT else [])]
+        return ["ops/1", "outcome/1", "sub/1", "blob/1", "diff/1", *READ_CAPS, *(["sub_ext/1"] if SUB_EXT else [])]
 
     #: §0.6 step 10 is checked here, after the args (8) and the replay (9)
     state_checks = True
@@ -426,6 +448,8 @@ class RegistryBackend:
                 result = self._host_op(call)
             elif op in READ_OPS:
                 result = reads.serve(call)
+            elif op in FILE_OPS:
+                result = self._file_op(call)
             elif op in self.human.ops:
                 result = self.human.serve(call, redactor)
             else:
@@ -470,6 +494,28 @@ class RegistryBackend:
         if op == "sub.open":
             return ok_result(self.sub_open(call, args))
         return ok_result(call.service.outcomes.lookup(call.principal, args["idem"]))
+
+    def _file_op(self, call: Call) -> dict[str, Any]:
+        """``blob.put``, ``blob.drop`` (§0.10) and ``artifact.get`` (§0.8): schema, no ``dry_run``, no ``files``, the
+        workspace state, then the op."""
+        op, frame = call.frame["op"], call.frame
+        args = frame["args"]
+        validator = ARTIFACT_VALIDATOR if op == "artifact.get" else BLOB_VALIDATORS[op]
+        errors = sorted(validator.iter_errors(args), key=lambda e: list(map(str, e.path)))
+        if errors:
+            where = ".".join(map(str, errors[0].absolute_path))
+            raise HostError("invalid.input", f"{op}: {where or 'args'} is not valid")
+        if frame.get("files"):
+            raise HostError("blob.invalid", f"{op} takes no files")
+        request_idem(op, frame.get("opts"))  # dry_run is invalid.input here; idem is ignored
+        service = call.service
+        self._state(service, False)
+        if op == "artifact.get":
+            return ok_result(artifact_get(call, args))
+        if op == "blob.drop":
+            service.blobs.drop(call.principal, args["blob"])
+            return ok_result({})
+        return ok_result(service.blobs.put(call.principal, call.peer.uid, call.peer.kind == "person", args))
 
     @staticmethod
     def sub_open(call: Call, args: dict[str, Any]) -> dict[str, Any]:
@@ -533,13 +579,25 @@ class RegistryBackend:
         opts = call.frame.get("opts") or {}
         dry_run = bool(opts.get("dry_run"))
         idem_given = opts.get("idem") if operation.is_write and not dry_run else None
-        digests, digest_args = call.service.outcomes.bind_files(call.principal, idem_given, specs)
+        digests, digest_args = self.bind_files(call, idem_given, specs)
         idem = request_idem(operation.name, opts)  # step 9 starts: idem.required (dry_run support was checked first)
-        ctx = self._context(call, session, dry_run, self._file_bytes(specs, args), step)
+        ctx = self._context(call, session, dry_run, self._file_bytes(call, specs, args), step)
         if idem is None:  # a read or a dry run: no outcome record, and the store's deny-all append check stays
             self._state(call.service, False)
-            return self._run(operation, args, ctx, call)
-        return self._write(call, operation, args, ctx, idem, digests, digest_args, redactor)
+            return self._run(operation, args, ctx, call)  # a dry run keeps its blobs
+        result = self._write(call, operation, args, ctx, idem, digests, digest_args, redactor)
+        # committed (or the replay of a commit): the blobs it used are consumed; a refusal raised above keeps them
+        call.service.blobs.consume(call.principal, [spec["blob"] for spec in specs.values() if "blob" in spec])
+        return result
+
+    @staticmethod
+    def bind_files(call: Call, idem: str | None, specs: Mapping[str, Any]) -> tuple[dict[str, str], frozenset[str]]:
+        """The binding's file digests (§0.7): a ``{blob}`` must be a complete blob of this principal in this
+        workspace (F9), else ``blob.invalid`` exactly as an unknown id."""
+        service = call.service
+        return service.outcomes.bind_files(
+            call.principal, idem, specs, blob_digest=lambda blob: service.blobs.digest(call.principal, blob)
+        )
 
     def _step8(self, call: Call, operation: Operation, redactor: Redactor) -> tuple[dict[str, Any], Any, dict]:
         """Step 8: the args against the schema, the host's own refusals, the session label, the ``files``."""
@@ -604,18 +662,26 @@ class RegistryBackend:
 
     @staticmethod
     def _file_specs(operation: Operation, frame: Mapping[str, Any], args: Mapping[str, Any]) -> dict[str, Any]:
-        """``files`` (§0.3): each entry names an argument of the op that carries the file's logical name in
-        ``args``; anything else is ``blob.invalid``."""
+        """``files`` (§0.3): each entry names an argument the registry marks ``x-file`` that carries the file's
+        logical name in ``args``; every ``x-file`` argument given comes with its entry (the host never reads a path a
+        client names); inline bytes are at most 512 KiB per request (§0.10). Anything else is ``blob.invalid``."""
         specs = dict(frame.get("files") or {})
-        props = operation.input.get("properties", {})
+        marked = file_args(operation)
         for arg in specs:
-            if arg not in props or not isinstance(args.get(arg), str):
+            if arg not in marked or not isinstance(args.get(arg), str):
                 raise HostError("blob.invalid", f"files.{arg} names no file argument of {operation.name}")
+        for arg in sorted(marked):
+            if args.get(arg) is not None and arg not in specs:
+                raise HostError("blob.invalid", f"{arg} is a file: send its bytes in files.{arg}")
+        inline = sum(decoded_len(spec["b64"]) for spec in specs.values() if isinstance(spec, Mapping) and "b64" in spec)
+        if inline > INLINE_MAX:
+            raise HostError("blob.invalid", f"inline files are at most {INLINE_MAX} bytes per request: upload a blob")
         return specs
 
     @staticmethod
-    def _file_bytes(specs: Mapping[str, Any], args: Mapping[str, Any]) -> dict[str, bytes]:
-        """The uploaded bytes by logical name (``-`` for stdin): what ``ctx.files`` gives the handler."""
+    def _file_bytes(call: Call, specs: Mapping[str, Any], args: Mapping[str, Any]) -> dict[str, bytes]:
+        """The uploaded bytes by logical name (``-`` for stdin): what ``ctx.files`` gives the handler. A ``{digest}``
+        has no bytes (M1): it only binds a replay, and an op that has to run again refuses it."""
         out = {}
         for arg, spec in specs.items():
             if "b64" in spec:
@@ -623,6 +689,8 @@ class RegistryBackend:
                     out[str(args[arg])] = base64.b64decode(spec["b64"], validate=True)
                 except (binascii.Error, ValueError):  # bind_files refused it already
                     raise HostError("blob.invalid", f"files.{arg} is not valid base64") from None
+            elif "blob" in spec:
+                out[str(args[arg])] = call.service.blobs.read(call.principal, spec["blob"])
         return out
 
     @staticmethod

@@ -46,7 +46,7 @@ OP = operation(
         "name": S("display name", **{"x-metavar": "NAME"}),
         "role": E("role", "owner", "maintainer", "member", "viewer", default="member"),
         "pk": S("their public key, b64u", **{"x-metavar": "KEY"}),
-        "cert": S("their device certificate: PATH or - for stdin", **{"x-metavar": "PATH"}),
+        "cert": S("their device certificate: PATH or - for stdin", **{"x-metavar": "PATH", "x-file": True}),
     },
     required=("name", "pk", "cert"),
     pre=("workspace_exists", "role_allows", "user_presence", "text_clean"),

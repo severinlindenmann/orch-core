@@ -643,3 +643,47 @@ def test_one_cold_derivation_per_principal_at_a_time(w, monkeypatch):
     finally:
         reads_feed._COLD_BUSY.discard(principal)
     assert feed(c, {"order": "asc", "limit": 5})["items"]
+
+
+# --- scan finding: the cold chunks never cross an epoch or a journal build ------------------------------------------
+
+
+def test_scan_finding_a_cold_chunk_is_never_served_after_a_rebuild(w, monkeypatch):
+    monkeypatch.setattr(reads_feed, "MAX_ENTRIES", 5)
+    uid, key = w.ticket("t0")
+    for i in range(10):
+        w.ticket(f"t{i + 1}")
+    c = w.client()
+    before = feed(c, {"order": "asc", "limit": 3})  # derives and keeps a cold chunk
+    cache = w.service.activity_base
+    assert cache.cold
+    w.append(lambda store: (store.ticket(uid), w.lab.ws.log(uid, "foreign")))  # another writer
+    w.check_journals()  # rebuild: a new journal generation
+    assert cache.cold_at(1, (cache.key[0], cache.key[1])) is None or cache.key[1] != w.service.journal.generation
+    after = feed(c, {"order": "asc", "limit": 50})
+    w.service.activity_base = None
+    assert after == feed(c, {"order": "asc", "limit": 50})  # equals a cold computation of the new generation
+    assert before["items"][0]["id"] == after["items"][0]["id"]
+
+
+def test_scan_finding_a_derivation_interleaved_with_a_rebuild_publishes_nothing(w, monkeypatch):
+    monkeypatch.setattr(reads_feed, "MAX_ENTRIES", 5)
+    for i in range(10):
+        w.ticket(f"t{i}")
+    c = w.client()
+    feed(c, {"limit": 5})
+    cache = w.service.activity_base
+    cache.cold, cache.cold_bytes = [], 0
+    real = reads_feed.derive
+
+    def racing(*a, **k):  # a rebuild lands while the cold chunk is being derived
+        out = real(*a, **k)
+        w.service.journal.generation += 1
+        return out
+
+    monkeypatch.setattr(reads_feed, "derive", racing)
+    res = c.req("activity.list", {"order": "asc", "limit": 3})
+    assert err(res) == "page.expired"
+    assert cache.cold == []  # nothing derived under the old generation was published
+    monkeypatch.setattr(reads_feed, "derive", real)
+    assert feed(c, {"order": "asc", "limit": 3})["items"]

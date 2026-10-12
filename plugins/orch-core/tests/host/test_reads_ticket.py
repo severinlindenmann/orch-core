@@ -245,7 +245,7 @@ def test_a_verdict_from_before_a_reopen_is_returned_with_current_false(w):
     assert r["verdict"]["gen"] < r["gates"]["verify"]["gen"] == verify.gen and r["gates"]["verify"]["state"] == "open"
 
 
-def test_evidence_digests_match_the_manifest_and_the_stored_bytes(w):
+def test_evidence_digests_match_the_manifest_and_artifact_get(w):
     h = Human(w)
     uid, key = w.ticket("evidence")
     h.agent("claim", {"ref": key})
@@ -279,6 +279,9 @@ def test_evidence_digests_match_the_manifest_and_the_stored_bytes(w):
     assert arts["a.txt"]["digest"] == digest(b"agent bytes") and arts["a.txt"]["bytes"] == len(b"agent bytes")
     assert arts["u.txt"]["evidence"] is False and arts["u.txt"]["by"]["unattended"] is True
     assert "unattended" not in arts["a.txt"]["by"] and arts["a.txt"]["evidence"] is True
+    for name, a in arts.items():  # H4a2 serves artifact.get: its digest equals ticket.get's
+        got = ok(h.c.req("artifact.get", {"ref": key, "name": name, "offset": 0}))["data"]
+        assert got["digest"] == a["digest"]
 
 
 def test_an_addon_artifact_has_no_digest_and_bytes_but_addon_and_ref():

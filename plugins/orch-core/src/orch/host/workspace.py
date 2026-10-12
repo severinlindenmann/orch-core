@@ -41,6 +41,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from . import frames
 from .auth import AuthView, Verified, build_auth, secret_in_request
+from .blobs import BlobStore
 from .columns import Column, OpKind, refusal, resolve
 from .custody import check_tree, check_workspace_files
 from .errors import HostError
@@ -134,6 +135,11 @@ class WorkspaceService:
         #: human requests (§0.8.1, H5a): ``<state>/hosts/<ws>/requests/``
         self.requests: RequestStore | None = RequestStore(self.state_dir, entry.workspace_id, host_uid, clock=clock)
         self.outcomes.roll_forward = self._roll_forward
+        self.outcomes.prepared = self._prepared
+        #: blobs (§0.10, H4a2): ``<state>/hosts/<ws>/blobs/``; the host shares one quota among its workspaces
+        self.blobs = BlobStore(self.state_dir, entry.workspace_id, host_uid, clock=clock)
+        if self.requests is not None:  # a request's file bytes are charged until it goes terminal (stripped)
+            self.requests.on_terminal = self.blobs.release_request
 
     @property
     def workspace_id(self) -> str:
@@ -194,6 +200,14 @@ class WorkspaceService:
 
                     self.requests.open()
                     recover(self)  # a crash between two appends of a human submission rolls forward (§0.8.1)
+                self.blobs.open()
+                if self.requests is not None:  # the stored requests' file bytes count again (F9)
+                    for rid, principal, size in self.requests.held():
+                        uid = principal_uid(principal)
+                        if uid is None:  # never the whole workspace: this one record is not charged
+                            LOG.error("request %s: unparseable principal; its file bytes are not charged", rid)
+                            continue
+                        self.blobs.hold_request(rid, principal, uid, size, force=True)
                 self.outcomes.reconcile_all()  # a crash between an append and its record (§0.7)
                 self.outcomes.sweep()
             except (HostError, OSError, ValueError) as exc:
@@ -285,6 +299,11 @@ class WorkspaceService:
         if self.publish is not None:
             self.publish(batch)
 
+    def _prepared(self, record: dict[str, Any]) -> dict[str, Any] | str:
+        from .human import outcome_prepared
+
+        return outcome_prepared(self, record)
+
     def _roll_forward(self, record: dict[str, Any]) -> dict[str, Any] | str:
         from .human import outcome_fields
 
@@ -369,6 +388,7 @@ class WorkspaceService:
             if self.store is not None:
                 self.store.close()
                 self.store = None
+            self.blobs.close()
             if self.caps is not None:
                 self.caps.close()
                 self.caps = None
@@ -420,6 +440,14 @@ class OpBackend(Protocol):
     def kind(self, op: str) -> tuple[OpKind, Phase] | None: ...
 
     async def run(self, call: Call) -> dict[str, Any]: ...
+
+
+def principal_uid(value: str) -> int | None:
+    """The UID of a principal (``uid:<n>`` or ``g:<grant id>@<n>``), or ``None`` for anything else."""
+    import re
+
+    m = re.fullmatch(r"(?:uid:|g:[^@\s]+@)([0-9]{1,10})", value) if isinstance(value, str) else None
+    return int(m.group(1)) if m else None
 
 
 def principal(uid: int, verified: Verified) -> str:

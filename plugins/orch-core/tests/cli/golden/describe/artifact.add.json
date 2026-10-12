@@ -26,7 +26,8 @@
         "path": {
           "type": "string",
           "description": "file to store",
-          "x-metavar": "PATH"
+          "x-metavar": "PATH",
+          "x-file": true
         },
         "ref": {
           "type": "string",

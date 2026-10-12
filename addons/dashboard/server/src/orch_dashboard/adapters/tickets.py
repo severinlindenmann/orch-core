@@ -5,6 +5,7 @@ Rules: unwrap the host data, never parse `lines`, spell statuses the UI's way, a
 empty and name it in `unavailable`, so the page can say "not available" instead of showing a made-up value.
 """
 
+import re
 from typing import Any
 
 # The statuses the UI can draw. `closed` is a state of its own (v1.4 section 0.8.4), never a board column.
@@ -27,7 +28,9 @@ NEEDS_READ_EXT = [
     "section history",
 ]
 NOT_SERVED = NEVER_SERVED + NEEDS_READ_EXT  # a host without read_ext/1
-PRESENCE = {"passphrase": "password", "secure-enclave": "touchid"}
+PRESENCE = {"passphrase": "password", "secure-enclave": "touchid", "convenience": "convenience"}
+# An auth value this adapter does not know is shown as it is (H5c: never relabelled as "password").
+AUTH_RAW = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
 
 
 def host_status(status: str) -> str:
@@ -224,7 +227,11 @@ def _approval(d: dict) -> dict:
     out = {"by": d["person"], "at": d.get("at") or ""}
     auth = d.get("auth")
     if auth:
-        out["presence"] = PRESENCE.get(auth, "password")  # passphrase | secure-enclave; custody metadata, not proof
+        # custody metadata, not proof; an unknown value keeps its own name, an unreadable one is "unknown"
+        if not isinstance(auth, str) or not AUTH_RAW.fullmatch(auth):
+            out["presence"] = "unknown"
+        else:
+            out["presence"] = PRESENCE.get(auth, auth)
     if d.get("source_sha"):
         out["source_sha"] = ", ".join(s["sha"][:12] for s in d["source_sha"])
     return out

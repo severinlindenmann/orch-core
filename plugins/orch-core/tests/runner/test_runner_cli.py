@@ -104,6 +104,8 @@ def test_enable_shows_the_risk_requires_the_prefix_and_records_the_switch(env, m
     assert unit.unit_path.read_bytes() == unit.content
     assert any("bootstrap" in argv or "enable" in argv for argv in manager.ran)
     assert (Path(env["HOME"]) / ".local/share/orch/releases/current/bin/orch-runner").is_file()
+    settings = json.loads((state / "runner" / "settings.json").read_text())
+    assert settings["umask"] == (lambda m: (os.umask(m), m)[1])(os.umask(0))  # the person's umask, captured
 
 
 def test_enable_with_the_wrong_prefix_changes_nothing(env, manager, monkeypatch):
@@ -111,7 +113,7 @@ def test_enable_with_the_wrong_prefix_changes_nothing(env, manager, monkeypatch)
     code, doc = _cli(["enable", "--workspace", WID, "--dev"], env)
     assert code == 5 and doc["error"]["code"] == "invalid.input"
     assert enablement.state_of(Path(env["ORCH_STATE_DIR"]), WID, os.getuid())["enabled"] is False
-    assert manager.ran == []
+    assert all(argv[1] == "print" or argv[2] == "is-enabled" for argv in manager.ran)  # only looked, never started
 
 
 def test_enable_without_a_terminal_is_refused(env, manager, monkeypatch):
@@ -169,7 +171,7 @@ def test_runner_units(tmp_path):
     assert doc["ProgramArguments"] == ["/py", "-I", "/rel/v/bin/orch-runner", "run", "--state", "/s", "--run", "/r"]
     unit = service.systemd_unit(Path("/py"), rel, st, run)
     assert 'ExecStart="/py" "-I" "/rel/v/bin/orch-runner" "run" "--state" "/s" "--run" "/r"' in unit
-    assert "Delegate=yes" in unit
+    assert "Delegate=yes" in unit and "UMask" not in unit and "Umask" not in doc
     with pytest.raises(ValueError):
         service.program_arguments(Path("/py"), rel, Path("/s\n[Service]"), run)
     with pytest.raises(svc.Unsupported):
@@ -188,3 +190,32 @@ def test_manager_uses_the_runner_labels(tmp_path):
     ran.clear()
     svc.Manager(p, run=lambda argv: ran.append(list(argv)) or subprocess.CompletedProcess(argv, 1, "", "")).loaded()
     assert ran == [["launchctl", "print", "gui/501/io.orch.runner"]]
+
+
+def test_enable_refuses_a_label_loaded_from_another_file(env, monkeypatch):
+    fake = FakeManager()
+
+    def loaded(unit):
+        def run(argv):
+            fake.ran.append(list(argv))
+            return subprocess.CompletedProcess(list(argv), 0, "state = running\n", "")
+
+        return svc.Manager(unit, run=run)
+
+    monkeypatch.setattr(host_cli, "SERVICE_MANAGER", loaded)
+    monkeypatch.setattr(runner_cli, "TERMINAL", Tty("ACME"))
+    code, doc = _cli(["enable", "--workspace", "ACME", "--dev"], env)
+    assert code == 4 and doc["error"]["code"] == "host.busy" and "loaded from another file" in doc["error"]["message"]
+
+
+def test_enable_passes_the_registered_roots_to_the_dev_check(env, manager, monkeypatch, tmp_path):
+    seen = {}
+
+    def dev_source(python, package, roots=()):
+        seen["roots"] = list(roots)
+        return "the interpreter is inside the workspace"
+
+    monkeypatch.setattr(svc, "dev_source", dev_source)
+    monkeypatch.setattr(runner_cli, "TERMINAL", Tty("ACME"))
+    code, doc = _cli(["enable", "--workspace", "ACME"], env)
+    assert code == 5 and seen["roots"] == [str(tmp_path / "ws")]

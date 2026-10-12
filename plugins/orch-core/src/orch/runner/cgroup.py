@@ -4,8 +4,10 @@ The runner unit has ``Delegate=yes``; the runner finds its own cgroup v2 directo
 ``0::<path>``) and uses it as the base only when it is writable and has ``cgroup.kill`` (Linux 5.14). Each run gets
 ``<base>/run-<run id>``; the trampoline writes its own PID to that directory's ``cgroup.procs`` before ``execve``
 (:mod:`orch.runner.exec`), so nothing of the run ever executes outside it. Stop writes ``1`` to ``cgroup.kill`` and
-checks ``cgroup.events`` for ``populated 0``: that is the only case the runner reports ``cleanup: "complete"`` without
-a doubt.
+checks ``cgroup.events`` for ``populated 0``. ``complete`` then means "nothing is left in the run's cgroup and the
+escape scan saw nothing leave it", not "nothing of the run is left": the delegated subtree is writable by the person's
+UID, so a same-UID run can move itself out of its cgroup (or start a ``systemd-run --user`` unit). The escape scan
+(:mod:`orch.runner.supervise`) checks parent links for cgroup runs too and reports such a run ``incomplete``.
 
 Without a usable base (no cgroup v2, no delegation, macOS) :func:`detect` returns ``None`` and the runner falls back to
 process-group and session sweeps, a best effort (:mod:`orch.runner.supervise`).

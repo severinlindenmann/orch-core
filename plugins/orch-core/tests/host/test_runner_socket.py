@@ -302,6 +302,8 @@ def test_runner_restart_marks_its_runs_runner_restarted(w, rstate, tmp_path):
     r.sup._closing = True
     r.sup._wake()
     r.sup._thread.join()
+    os.close(r.sup._lock_fd)  # a crash releases the runner lock
+    r.sup._lock_fd = None
     pid, birth = next((x["pid"], x["birth"]) for x in r.sup.runs() if x["run"] == run)
     r2 = Runner(w, rstate, gen=GEN2)
     try:

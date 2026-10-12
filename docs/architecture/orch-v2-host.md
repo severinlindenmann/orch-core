@@ -4184,6 +4184,17 @@ session | null, cwd:Pin, cols, rows, login_shell}` (deduped by `run`), `signal {
 - **macOS `cleanup:"complete"`** means: nothing of the run's group or session and no tracked descendant is left, and no
   descendant was ever seen outside the session. The escape scan runs every 2 s and right before a stop; a descendant
   that calls `setsid()` and whose parent exits between two scans cannot be seen. That is the stated best effort.
+- **Signals per member, never to a group.** The stop sequence signals each member by `(pid, birth)` (Linux through a
+  pidfd), never `kill(-pgid)`. Members are found over every UID; only the runner's UID is signalled, and a member of
+  another UID (`sudo`, a setuid helper) makes the clean-up `incomplete`. A session or group is matched only for a run
+  live in this runner's lifetime; an ended or crash-swept record matches exact identities only (the leader, the
+  escapees and the member set saved at each scan), and only on the boot it was recorded on (`boot_id`,
+  `kern.boottime`). With a cgroup, `complete` means nothing is left in the run's cgroup and nothing was seen leaving it.
+- **umask.** The units set none; runs start with the person's umask, captured by `orch runner enable` in
+  `<state>/runner/settings.json` (default 022). The runner's own files are written 0600 in 0700 directories.
+- **Logs.** The service manager writes the runner's output to `<state>/runner/runner.out` without rotation (the
+  rotated `runner.log` of §12.5 comes with H11b). One runner per state directory (a lock file); `SIGTERM` is a
+  controlled stop: every managed run is stopped and verified before the runner exits.
 - **Term socket.** The runner caps every capability at 10 s after `attach.allow` arrived, whatever `expires_at` says.
   The byte path after `ready` (`out`, `in`, `ack`, `gap`, `throttle`) is H11b.
 

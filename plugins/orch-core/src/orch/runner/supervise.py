@@ -9,18 +9,22 @@ run) and reaps the leader.
 ``SIGKILL`` to what is left, then a check. Members are found per platform:
 
 * Linux with a delegated cgroup (:mod:`orch.runner.cgroup`): the run's cgroup, joined by the trampoline before exec;
-  the kill is ``cgroup.kill`` and ``cleanup`` is ``complete`` exactly when ``cgroup.events`` says ``populated 0``.
-* macOS, and Linux without delegation: the processes of the runner's UID in the run's process group or session that
-  were born after the leader, plus every descendant the escape scan saw. This is **best-effort cleanup, not
-  containment**: a descendant that calls ``setsid()`` leaves the session. The scan (every ``scan_interval`` seconds and
-  right before a stop) follows parent links from the run's processes; a descendant found outside the session marks the
-  run ``escaped`` and is tracked by birth identity. A run that ever escaped reports ``cleanup: "incomplete"`` even when
-  every tracked process is gone, because a descendant that escaped between two scans cannot be seen.
+  the kill is ``cgroup.kill``; ``complete`` means nothing is left in the cgroup and nothing was seen leaving it (a
+  same-UID run can leave a writable delegated cgroup, so this too is not containment).
+* macOS, and Linux without delegation: the processes in the run's process group or session that were born after the
+  leader (only while the run is live in this runner's lifetime), plus every descendant the escape scan saw. This is
+  **best-effort cleanup, not containment**: a descendant that calls ``setsid()`` leaves the session. The scan (every
+  ``scan_interval`` seconds and right before a stop) follows parent links from the run's processes; a descendant found
+  outside the session marks the run ``escaped`` and is tracked by birth identity. A run that ever escaped reports
+  ``cleanup: "incomplete"`` even when every tracked process is gone, because a descendant that escaped between two
+  scans cannot be seen.
 
 **Never a reused PID.** Every signal goes through :func:`orch.runner.procs.signal_verified` with the recorded birth
 time; the session and group sweep is skipped when the session leader's PID now belongs to a process with another
-birth time (the PID was reused, so that session is not the run's). Never by name, never UID-wide, never a group
-signal.
+birth time. An ended or crash-swept record never matches a session or a group at all: only exact identities (the
+leader, the escapees and the members saved at the last scan), and only on the boot the record was made on. Never by
+name, never UID-wide, never a group signal. Processes of every UID count as members; only this runner's UID is
+signalled, and a member of another UID (``sudo``, a setuid helper) makes the clean-up ``incomplete``.
 
 **Persisted first.** The run record is written (state ``spawning``) before the process exists, and a ``spawn`` whose
 run id is already recorded never starts a second process: a lost ack, a host reconnect or a host restart between
@@ -33,6 +37,7 @@ which a background process holding the slave would delay forever); the remaining
 
 from __future__ import annotations
 
+import contextlib
 import errno
 import fcntl
 import json
@@ -56,7 +61,7 @@ from typing import Any, Literal
 from . import procs
 from .cgroup import CgroupTree, detect
 from .ring import RING_BYTES, Ring
-from .table import RUN_ID, RunTable, now_iso
+from .table import KEEP_SECONDS, RUN_ID, RunTable, now_iso
 
 __all__ = ["EXEC", "SpawnError", "SpawnSpec", "Supervisor"]
 
@@ -73,7 +78,41 @@ SCAN_SECONDS = 2.0
 KEEP_RING_SECONDS = 3600.0
 KEEP_RINGS = 64
 ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")
+#: never in a run's environment (§12.4.3 deny-list): loader, interpreter and shell start-up hooks
+ENV_DENY = re.compile(
+    r"(LD_|DYLD_|PYTHON|GIT_).*|BASH_ENV|ENV|ZDOTDIR|IFS|PS4|NODE_OPTIONS|PERL5OPT|RUBYOPT|BASH_FUNC_.*"
+)
+#: never in a shell's environment: a shell acts as the person, never as an agent (D-P2-27)
+SHELL_DENY = frozenset({"ORCH_GRANT", "ORCH_SESSION"})
+_CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+
+def run_time(run: str) -> float:
+    """The creation time a run id (``r_`` + ULID) carries, in seconds."""
+    ms = 0
+    for ch in run[2:12]:
+        ms = ms * 32 + _CROCKFORD.index(ch)
+    return ms / 1000
+
+
 Cleanup = Literal["complete", "incomplete", "unknown"]
+
+
+class RunnerBusy(Exception):
+    """Another runner serves this state directory."""
+
+
+def read_umask(directory: Path, uid: int) -> int:
+    """The umask ``orch runner enable`` captured (``<state>/runner/settings.json``), else 022."""
+    from orch.host.custody import read_json
+    from orch.host.errors import HostError
+
+    try:
+        doc = read_json(Path(directory) / "settings.json", uid) or {}
+    except HostError:
+        doc = {}
+    value = doc.get("umask") if isinstance(doc, dict) else None
+    return value if isinstance(value, int) and 0 <= value <= 0o777 else 0o022
 
 
 class SpawnError(Exception):
@@ -94,6 +133,8 @@ class SpawnSpec:
     cwd: dict[str, Any]
     cols: int = 120
     rows: int = 40
+    #: the member set saved at the last scan (exact identities for a later sweep)
+    saved: list[list[int]] = field(default_factory=list)
 
     def check(self) -> None:
         def bad(what: str) -> SpawnError:
@@ -113,6 +154,9 @@ class SpawnSpec:
             ENV_NAME.fullmatch(k) and isinstance(v, str) and "\0" not in v for k, v in self.env.items()
         ):
             raise bad("environment")
+        denied = [k for k in self.env if ENV_DENY.match(k) or (self.kind == "shell" and k in SHELL_DENY)]
+        if denied:  # defence in depth: the host's allow-list (H11a2, H11c) should never send these
+            raise bad(f"environment name {denied[0][:40]}")
         cwd = self.cwd
         if not (
             isinstance(cwd, dict)
@@ -149,6 +193,8 @@ class Live:
     lingering: bool = False
     cols: int = 120
     rows: int = 40
+    #: the member set saved at the last scan (exact identities for a later sweep)
+    saved: list[list[int]] = field(default_factory=list)
     done: threading.Event = field(default_factory=threading.Event)
     ended_at: float = 0.0
     stop_lock: threading.Lock = field(default_factory=threading.Lock)
@@ -178,15 +224,20 @@ class Supervisor:
         exit_grace: float = STOP_GRACE,
         ring_bytes: int = RING_BYTES,
         python: str | None = None,
+        umask: int | None = None,
         on_event: Callable[[str, str, dict[str, Any]], None] | None = None,
     ) -> None:
         self.uid = os.getuid() if uid is None else uid
         self.table = RunTable(Path(state_dir) / "runner", self.uid)
         self.cgroups = detect() if cgroups == "detect" else cgroups
+        self.boot = procs.boot_id()
         self.scan_interval = scan_interval
         self.exit_grace = exit_grace
         self.ring_bytes = ring_bytes
         self.python = python or sys.executable
+        #: the umask runs start with (§12.5: the person's, captured by ``orch runner enable``; else 022)
+        self.umask = umask
+        self._lock_fd: int | None = None
         self.on_event = on_event
         self.live: dict[str, Live] = {}
         self.lock = threading.RLock()
@@ -202,11 +253,37 @@ class Supervisor:
     # -- life cycle
     def open(self) -> list[dict[str, Any]]:
         """Load the run table, sweep what a crashed runner left (:meth:`crash_sweep`) and start the I/O thread."""
+        self._take_lock()
+        if self.umask is None:
+            self.umask = read_umask(self.table.directory, self.uid)
         self.table.load()
         swept = self.crash_sweep()
+        self._remove_stale_cgroups()
         self._thread = threading.Thread(target=self._loop, name="orch-runner-io", daemon=True)
         self._thread.start()
         return swept
+
+    def _take_lock(self) -> None:
+        """One runner per state directory: a second one refuses to start and never sweeps the first one's runs."""
+        from orch.host.custody import ensure_private_dir
+
+        ensure_private_dir(self.table.directory, self.uid)
+        fd = os.open(self.table.directory / "runner.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            os.close(fd)
+            raise RunnerBusy(f"another runner holds {self.table.directory}") from None
+        self._lock_fd = fd
+
+    def _remove_stale_cgroups(self) -> None:
+        if self.cgroups is None:
+            return
+        for run, rec in self.table.all():
+            if rec.get("state") not in ("spawning", "running") and rec.get("cleanup") == "complete":
+                cg = self._cgroup_of({**rec, "run": run})
+                if cg is not None:
+                    self.cgroups.remove(cg)
 
     def close(self, *, stop_runs: bool = False, grace: float = STOP_GRACE) -> None:
         if stop_runs:
@@ -225,6 +302,9 @@ class Supervisor:
                     except OSError:
                         pass
         self._sel.close()
+        if self._lock_fd is not None:
+            os.close(self._lock_fd)
+            self._lock_fd = None
         for fd in (self._wake_r, self._wake_w):
             try:
                 os.close(fd)
@@ -253,9 +333,17 @@ class Supervisor:
             have = self.table.get(spec.run)
             if have is not None:
                 return self._summary(spec.run, have) | {"duplicate": True}
+            if time.time() - run_time(spec.run) > KEEP_SECONDS:  # its record may be pruned: dedupe could not hold
+                raise SpawnError("invalid.input", "spawn: the run id is older than the run table keeps records")
             self.table.put(
                 spec.run,
-                {"workspace_id": spec.workspace_id, "kind": spec.kind, "state": "spawning", "created_at": now_iso()},
+                {
+                    "workspace_id": spec.workspace_id,
+                    "kind": spec.kind,
+                    "state": "spawning",
+                    "created_at": now_iso(),
+                    "boot": self.boot,
+                },  # fmt: skip
             )
             try:
                 live = self._start(spec)
@@ -268,7 +356,7 @@ class Supervisor:
                     )
                 )
                 # a process left by the failed spawn keeps its record (pid, birth): the crash sweep and
-                # cleanup_retry go on stopping it; the run is never dropped from the table
+                # the clean-up retry (_retry) go on stopping it; the run is never dropped from the table
                 self.table.update(
                     spec.run,
                     state="exited",
@@ -312,34 +400,52 @@ class Supervisor:
                     close_fds=True,
                     env={},
                     cwd="/",
+                    umask=self.umask,
                 )
+            except BaseException as exc:  # nothing was forked: nothing ran, nothing is left
+                for fd in (spec_w, status_r):
+                    with contextlib.suppress(OSError):
+                        os.close(fd)
+                if cg is not None:
+                    self.cgroups.remove(cg)  # type: ignore[union-attr]
+                raise SpawnError("run.spawn_failed", f"the trampoline could not be started: {type(exc).__name__}",
+                                 "complete") from None  # fmt: skip
             finally:
                 os.close(spec_r)
                 os.close(status_w)
                 os.close(slave)
                 slave = -1
-            # recorded before anything else can fail: no forked process is ever without a run-table entry
-            first = procs.info(proc.pid)
-            self.table.update(
-                spec.run, pid=proc.pid, birth=first.birth if first else None, pgid=proc.pid, sid=proc.pid,
-                cgroup=str(cg) if cg is not None else None,
-            )  # fmt: skip
+            pipes = {"spec": spec_w, "status": status_r}  # still ours to close
             try:
+                # recorded before anything else can fail: no forked process is ever without a run-table entry
+                first = procs.info(proc.pid)
+                self.table.update(
+                    spec.run, pid=proc.pid, birth=first.birth if first else None, pgid=proc.pid, sid=proc.pid,
+                    cgroup=str(cg) if cg is not None else None,
+                )  # fmt: skip
                 try:
                     try:
-                        with os.fdopen(spec_w, "wb") as f:
-                            f.write(json.dumps(payload).encode())
+                        handle = os.fdopen(pipes.pop("spec"), "wb")  # the file object owns the fd from here
+                        with handle:
+                            handle.write(json.dumps(payload).encode())
                     except BrokenPipeError:
                         pass
                     status = self._read_status(status_r)
                 finally:
-                    os.close(status_r)
+                    os.close(pipes.pop("status"))
                 if status is not None:
                     raise _spawn_error(status)
                 found = procs.info(proc.pid)
                 if found is None:
                     raise SpawnError("run.spawn_failed", "the run ended before it was recorded")
+                self.table.update(
+                    spec.run, state="running", pid=proc.pid, birth=found.birth, pgid=found.pgid, sid=found.sid,
+                    cgroup=str(cg) if cg is not None else None, started_at=now_iso(), escaped=False, escapees=[],
+                )  # fmt: skip
             except BaseException as exc:
+                for fd in pipes.values():  # never an fd the file object already closed (it could be reused)
+                    with contextlib.suppress(OSError):
+                        os.close(fd)
                 cleanup = self._abort(spec.run, proc, cg)
                 if isinstance(exc, SpawnError):
                     exc.cleanup = cleanup
@@ -350,18 +456,6 @@ class Supervisor:
             os.set_blocking(master, False)
             live = Live(spec.run, proc, master, Ring(self.ring_bytes), proc.pid, found.birth, found.pgid, found.sid, cg)
             live.cols, live.rows = spec.cols, spec.rows
-            self.table.update(
-                spec.run,
-                state="running",
-                pid=live.pid,
-                birth=live.birth,
-                pgid=live.pgid,
-                sid=live.sid,
-                cgroup=str(cg) if cg is not None else None,
-                started_at=now_iso(),
-                escaped=False,
-                escapees=[],
-            )
             return live
         except BaseException:
             if slave != -1:
@@ -380,9 +474,9 @@ class Supervisor:
                 proc.wait(timeout=KILL_WAIT)
             except subprocess.TimeoutExpired:
                 return "incomplete"
-        rec = self.table.get(run) or {}
-        if self._members(rec, {}):
-            return self._terminate(rec, {}, 0.5)
+        rec = {**(self.table.get(run) or {}), "run": run}
+        if self._members(rec, {}, live=True):
+            return self._terminate(rec, {}, 0.5, live=True)
         if cg is not None:
             self.cgroups.remove(cg)  # type: ignore[union-attr]
         return "complete"
@@ -432,13 +526,14 @@ class Supervisor:
         return None if live is None else live.ring
 
     def resize(self, run: str, cols: int, rows: int) -> None:
-        live = self.live.get(run)
-        if live is None or live.pty_closed:
-            raise SpawnError("not_found", "no such live run")
         if not (20 <= cols <= 500 and 5 <= rows <= 200):
             raise SpawnError("invalid.input", "size out of range")
-        fcntl.ioctl(live.master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
-        live.cols, live.rows = cols, rows
+        with self.lock:  # the master is never closed (and its fd reused) under a resize
+            live = self.live.get(run)
+            if live is None or live.pty_closed:
+                raise SpawnError("not_found", "no such live run")
+            fcntl.ioctl(live.master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+            live.cols, live.rows = cols, rows
 
     def attach_info(self, run: str) -> dict[str, Any] | None:
         """What an attachment's ``ready`` frame needs (§12.6.3), or ``None`` when the run's ring is not kept."""
@@ -449,47 +544,81 @@ class Supervisor:
                 "state": "running" if live.exit is None else "exited"}  # fmt: skip
 
     # -- membership
-    def _members(self, rec: dict[str, Any], tracked: dict[int, int], snap: dict[int, procs.ProcInfo] | None = None):
-        """``{pid: birth}`` of the run's live processes (zombies excluded, never PID ≤ 1, never this runner)."""
-        out: dict[int, int] = {}
+    def _cgroup_of(self, rec: dict[str, Any]) -> Path | None:
+        """The run's cgroup, only if it sits directly under the delegated base and is named ``run-<run id>`` (an
+        edited table can never point ``cgroup.kill`` elsewhere)."""
+        cg, run = rec.get("cgroup"), rec.get("run")
+        if not cg or self.cgroups is None or not isinstance(run, str):
+            return None
+        try:
+            want = self.cgroups.path(run)
+        except ValueError:
+            return None
+        return want if Path(cg) == want else None
+
+    def _members(
+        self, rec: dict[str, Any], tracked: dict[int, int], snap: dict[int, procs.ProcInfo] | None = None,
+        *, live: bool = False,
+    ) -> dict[int, tuple[int, int]]:  # fmt: skip
+        """``{pid: (birth, uid)}`` of the run's processes now, of **every** UID (only our own are ever signalled;
+        another UID's member makes the cleanup incomplete). Zombies, PID ≤ 1 and this runner are left out.
+
+        * Another boot than the record's: nothing (birth times do not compare across boots).
+        * A cgroup run: the processes in its cgroup, plus tracked escapees by exact identity.
+        * Otherwise, exact identities: the leader, the escapees and the members saved at the last scan; and only for
+          a ``live`` run of this runner's lifetime, also the session and group born after the leader (skipped when the
+          session's PID now names another process). An ended or crash-swept record never matches a session or a
+          group: a leaderless session whose id equals an old one belongs to someone else (a double-forked daemon)."""
+        out: dict[int, tuple[int, int]] = {}
         pid, birth, pgid, sid = rec.get("pid"), rec.get("birth"), rec.get("pgid"), rec.get("sid")
-        cgroup = rec.get("cgroup")
         if not isinstance(pid, int) or not isinstance(birth, int):
             return out
-        if cgroup and self.cgroups is not None:
-            for p in self.cgroups.procs(Path(cgroup)):
+        if rec.get("boot", self.boot) != self.boot:
+            return out
+        exact = dict(tracked)
+        exact[pid] = birth
+        for pair in rec.get("members") or []:
+            if isinstance(pair, list) and len(pair) == 2 and all(isinstance(x, int) for x in pair):
+                exact.setdefault(pair[0], pair[1])
+        cgroup = self._cgroup_of(rec)
+        if cgroup is not None:
+            for p in self.cgroups.procs(cgroup):  # type: ignore[union-attr]
                 found = procs.info(p)
-                if found is not None and found.uid == self.uid and not found.zombie:
-                    out[p] = found.birth
+                if found is not None and not found.zombie:
+                    out[p] = (found.birth, found.uid)
+            snap_e = {p: procs.info(p) for p in exact}
+            for p, b in exact.items():
+                found = snap_e.get(p)
+                if found is not None and found.birth == b and not found.zombie:
+                    out[p] = (b, found.uid)
         else:
-            snap = procs.snapshot(self.uid) if snap is None else snap
-            leader = snap.get(sid) if isinstance(sid, int) else None
-            reused = leader is not None and leader.birth != birth  # the session's PID now names another process
-            for p in snap.values():
-                if p.zombie:
-                    continue
-                if p.pid == pid and p.birth == birth:
-                    out[p.pid] = p.birth
-                elif not reused and (p.sid == sid or p.pgid == pgid) and p.birth >= birth:
-                    out[p.pid] = p.birth
-            for p, b in tracked.items():
+            snap = procs.snapshot(None) if snap is None else snap
+            for p, b in exact.items():
                 found = snap.get(p)
                 if found is not None and found.birth == b and not found.zombie:
-                    out[p] = b
+                    out[p] = (b, found.uid)
+            if live:
+                leader = snap.get(sid) if isinstance(sid, int) else None
+                reused = leader is not None and leader.birth != birth  # the session's PID now names another process
+                if not reused:
+                    for p in snap.values():
+                        if not p.zombie and (p.sid == sid or p.pgid == pgid) and p.birth >= birth:
+                            out[p.pid] = (p.birth, p.uid)
         out.pop(os.getpid(), None)
         for p in [p for p in out if p <= 1]:
             del out[p]
         return out
 
     def scan(self) -> None:
-        """The escape scan (macOS and Linux without a cgroup): follow parent links from every live run's processes and
-        track descendants outside the run's session by birth identity."""
+        """The escape scan: follow parent links (every UID) from every live run's processes, track descendants
+        outside the run's session (or, with a cgroup, outside its cgroup) by birth identity, and save the run's
+        member set, so a later sweep needs exact identities only."""
         with self.lock:
-            runs = [lv for lv in self.live.values() if lv.cgroup is None and lv.cleanup is None]
+            runs = [lv for lv in self.live.values() if lv.cleanup is None]
         if not runs:
             return
         try:
-            snap = procs.snapshot(self.uid)
+            snap = procs.snapshot(None)
         except OSError:
             return
         children: dict[int, list[procs.ProcInfo]] = {}
@@ -499,8 +628,9 @@ class Supervisor:
             self._scan_run(live, snap, children)
 
     def _scan_run(self, live: Live, snap: dict[int, procs.ProcInfo], children: dict[int, list[procs.ProcInfo]]):
-        rec = {"pid": live.pid, "birth": live.birth, "pgid": live.pgid, "sid": live.sid}
-        known = self._members(rec, live.tracked, snap)
+        rec = self._rec(live)
+        known = {p: bu[0] for p, bu in self._members(rec, live.tracked, snap, live=True).items()}
+        inside = set(known)
         queue = list(known)
         while queue:
             parent = queue.pop()
@@ -508,14 +638,27 @@ class Supervisor:
                 if child.pid not in known and not child.zombie and child.birth >= live.birth:
                     known[child.pid] = child.birth
                     queue.append(child.pid)
-        outside = {p: b for p, b in known.items() if snap.get(p) is not None and snap[p].sid != live.sid}
+        if live.cgroup is not None:
+            outside = {p: b for p, b in known.items() if p not in inside}
+        else:
+            outside = {
+                p: b for p, b in known.items()
+                if snap.get(p) is not None and snap[p].sid not in (live.sid, -1)  # -1: exited while read
+            }  # fmt: skip
         new = {p: b for p, b in outside.items() if live.tracked.get(p) != b}
+        fields: dict[str, Any] = {}
         if new:
             live.tracked.update(new)
             if not live.escaped:
-                LOG.warning("run %s: %d process(es) left the run's session", live.run, len(new))
+                LOG.warning("run %s: %d process(es) left the run's session or cgroup", live.run, len(new))
             live.escaped = True
-            self.table.update(live.run, escaped=True, escapees=[[p, b] for p, b in live.tracked.items()][:256])
+            fields.update(escaped=True, escapees=[[p, b] for p, b in live.tracked.items()][:256])
+        members = sorted([p, b] for p, b in known.items())[:256]
+        if members != live.saved:
+            live.saved = members
+            fields["members"] = members
+        if fields:
+            self.table.update(live.run, **fields)
 
     # -- stop
     def stop(self, run: str, *, grace: float = STOP_GRACE) -> dict[str, Any]:
@@ -543,47 +686,51 @@ class Supervisor:
             if live.cleanup != "incomplete":
                 return
             rec = self._rec(live)
-            members = self._members(rec, live.tracked)
-            if live.cgroup is not None and self.cgroups is not None:
-                self.cgroups.kill(live.cgroup)
-            for p, b in members.items():
-                procs.signal_verified(p, b, signal.SIGKILL)
+            members = self._members(rec, live.tracked, live=True)
+            if self._cgroup_of(rec) is not None:
+                self.cgroups.kill(live.cgroup)  # type: ignore[union-attr,arg-type]
+            for p, (b, u) in members.items():
+                if u == self.uid:
+                    procs.signal_verified(p, b, signal.SIGKILL)
             time.sleep(0.05)
             if live.proc.poll() is not None and live.exit is None:
                 self._leader_exit(live)
-            left = self._members(rec, live.tracked)
+            left = self._members(rec, live.tracked, live=True)
             live.lingering = bool(left) or live.proc.poll() is None
+            if not live.lingering and live.escaped and not live.done.is_set():
+                live.ended_at = time.monotonic()  # nothing seen is left: prunable, but it stays "incomplete"
+                live.done.set()
             if not live.lingering and not live.escaped and live.exit is not None:
                 live.cleanup = "complete"
+                if self._cgroup_of(rec) is not None:
+                    self.cgroups.remove(live.cgroup)  # type: ignore[union-attr,arg-type]
                 self.table.update(live.run, cleanup="complete")
                 live.ended_at = time.monotonic()
                 live.done.set()
                 self._emit("cleanup", live.run, {"cleanup": "complete"})
 
-    @staticmethod
-    def _rec(live: Live) -> dict[str, Any]:
-        return {"pid": live.pid, "birth": live.birth, "pgid": live.pgid, "sid": live.sid,
-                "cgroup": str(live.cgroup) if live.cgroup else None}  # fmt: skip
+    def _rec(self, live: Live) -> dict[str, Any]:
+        return {"run": live.run, "pid": live.pid, "birth": live.birth, "pgid": live.pgid, "sid": live.sid,
+                "cgroup": str(live.cgroup) if live.cgroup else None, "boot": self.boot,
+                "members": live.saved}  # fmt: skip
 
     def _finish(self, live: Live, grace: float) -> None:
         with live.stop_lock:
             if live.cleanup is not None:
                 return
-            if live.cgroup is None:
+            try:
                 self.scan()
-            cleanup = self._terminate(
-                {
-                    "pid": live.pid,
-                    "birth": live.birth,
-                    "pgid": live.pgid,
-                    "sid": live.sid,
-                    "cgroup": str(live.cgroup) if live.cgroup else None,
-                },  # fmt: skip
-                live.tracked,
-                grace,
-                escaped=lambda: live.escaped,
-                leader_done=lambda: live.proc.poll() is not None,
-            )
+                cleanup = self._terminate(
+                    self._rec(live),
+                    live.tracked,
+                    grace,
+                    escaped=lambda: live.escaped,
+                    leader_done=lambda: live.proc.poll() is not None,
+                    live=True,
+                )
+            except Exception:  # noqa: BLE001 - the clean-up never dies silently: unknown, and retried
+                LOG.exception("run %s: clean-up failed", live.run)
+                cleanup = "incomplete"
             try:
                 live.proc.wait(timeout=KILL_WAIT)
                 reaped = True
@@ -595,7 +742,7 @@ class Supervisor:
                 self.cgroups.remove(live.cgroup)  # type: ignore[union-attr]
             live.cleanup = cleanup
             live.lingering = cleanup == "incomplete" and (
-                not reaped or bool(self._members(self._rec(live), live.tracked))
+                not reaped or bool(self._members(self._rec(live), live.tracked, live=True)) or cleanup == "incomplete"
             )
             self.table.update(live.run, cleanup=cleanup)
             if cleanup != "incomplete" or not live.lingering:
@@ -611,31 +758,46 @@ class Supervisor:
         *,
         escaped: Callable[[], bool] = lambda: False,
         leader_done: Callable[[], bool] = lambda: True,
+        live: bool = False,
     ) -> Cleanup:
-        cgroup = Path(rec["cgroup"]) if rec.get("cgroup") and self.cgroups is not None else None
-        members = self._members(rec, tracked)
-        for p, b in members.items():
+        """The stop sequence against the run's members; signals go only to processes of this runner's UID. Any member
+        left at the end, of whatever UID, any escape, or a cgroup still populated makes it ``incomplete``.
+        ``complete`` with a cgroup means "nothing is left in the run's cgroup and nothing was seen leaving it": a
+        same-UID run can move itself out of a writable delegated cgroup between two scans."""
+        cgroup = self._cgroup_of(rec)
+
+        def members() -> dict[int, tuple[int, int]]:
+            return self._members(rec, tracked, live=live)
+
+        def own(m: dict[int, tuple[int, int]]) -> dict[int, int]:
+            return {p: b for p, (b, u) in m.items() if u == self.uid}
+
+        current = members()
+        for p, b in own(current).items():
             procs.signal_verified(p, b, signal.SIGHUP)
             procs.signal_verified(p, b, signal.SIGTERM)
         deadline = time.monotonic() + grace
-        while time.monotonic() < deadline and (members or not leader_done()):
+        while time.monotonic() < deadline and (own(current) or not leader_done()):
             time.sleep(0.05)
-            members = self._members(rec, tracked)
-        if members or (cgroup is not None and self.cgroups.populated(cgroup)):  # type: ignore[union-attr]
+            current = members()
+        if own(current) or (cgroup is not None and self.cgroups.populated(cgroup)):  # type: ignore[union-attr]
             if cgroup is not None:
                 self.cgroups.kill(cgroup)  # type: ignore[union-attr]
-            for p, b in members.items():
+            for p, b in own(current).items():
                 procs.signal_verified(p, b, signal.SIGKILL)
             deadline = time.monotonic() + KILL_WAIT
             while time.monotonic() < deadline:
-                members = self._members(rec, tracked)
-                if not members and (cgroup is None or self.cgroups.populated(cgroup) is False):  # type: ignore[union-attr]
+                current = members()
+                if not own(current) and (cgroup is None or self.cgroups.populated(cgroup) is False):  # type: ignore[union-attr]
                     break
                 time.sleep(0.05)
+        left = members()
         if cgroup is not None:
             state = self.cgroups.populated(cgroup)  # type: ignore[union-attr]
-            return "complete" if state is False else "unknown" if state is None else "incomplete"
-        if self._members(rec, tracked) or escaped():
+            if state is None:
+                return "unknown"
+            return "complete" if state is False and not left and not escaped() else "incomplete"
+        if left or escaped():
             return "incomplete"
         return "complete"
 
@@ -650,7 +812,8 @@ class Supervisor:
                     continue
                 pairs = rec.get("escapees") or []
                 tracked = {p: b for p, b in pairs if isinstance(p, int) and isinstance(b, int)}
-                members = self._members(rec, tracked)
+                rec = {**rec, "run": run}
+                members = self._members(rec, tracked)  # exact identities only (never a session match)
                 if members:  # left over by an incomplete cleanup or a failed spawn: stop it, still not "complete"
                     self._terminate(rec, tracked, grace)
                     self.table.update(run, cleanup="unknown", swept=len(members))
@@ -658,7 +821,8 @@ class Supervisor:
                 continue
             pairs = rec.get("escapees") or []
             tracked = {p: b for p, b in pairs if isinstance(p, int) and isinstance(b, int)}
-            members = self._members(rec, tracked)
+            rec = {**rec, "run": run}
+            members = self._members(rec, tracked)  # exact identities only (never a session match)
             if members:
                 self._terminate(rec, tracked, grace)
             self.table.update(
@@ -673,44 +837,63 @@ class Supervisor:
 
     # -- the I/O thread
     def _loop(self) -> None:
+        """The I/O thread. Every step is guarded: an unexpected error is logged, the run it concerns is recorded with
+        ``cleanup: "unknown"`` (when it has none yet), and supervision goes on. The thread never dies silently."""
         next_scan = time.monotonic() + self.scan_interval
         while not self._closing:
             try:
-                events = self._sel.select(timeout=0.1)
-            except (OSError, ValueError):
-                events = []
-            for key, _ in events:
-                if key.data is None:
-                    try:
-                        while os.read(self._wake_r, 4096):
-                            pass
-                    except BlockingIOError:
-                        pass
-                    continue
-                self._read(key.data)
-            now = time.monotonic()
-            with self.lock:
-                lives = list(self.live.values())
-            for live in lives:
-                if live.exit is None and live.proc.poll() is not None:
-                    self._leader_exit(live)
-                    if not live.stopping:
-                        threading.Thread(target=self._finish, args=(live, self.exit_grace), daemon=True).start()
-                if live.exit is not None and not live.pty_closed and now >= live.drain_until:
-                    self._close_pty(live)
-            self._prune(now)
-            if now >= next_scan:
-                next_scan = now + self.scan_interval
-                for live in lives:
-                    if live.lingering and live.cleanup == "incomplete":
-                        try:
-                            self._retry(live)
-                        except Exception:  # noqa: BLE001 - retried at the next scan
-                            LOG.exception("cleanup retry failed")
+                next_scan = self._step(next_scan)
+            except Exception:  # noqa: BLE001 - never a dead I/O thread
+                LOG.exception("runner I/O step failed")
+                time.sleep(0.1)
+
+    def _guard(self, live: Live, what: str, fn: Callable[[], Any]) -> None:
+        try:
+            fn()
+        except Exception:  # noqa: BLE001
+            LOG.exception("run %s: %s failed", live.run, what)
+            with contextlib.suppress(Exception):
+                if (self.table.get(live.run) or {}).get("cleanup") is None:
+                    self.table.update(live.run, cleanup="unknown")
+
+    def _step(self, next_scan: float) -> float:
+        try:
+            events = self._sel.select(timeout=0.1)
+        except (OSError, ValueError):
+            events = []
+        for key, _ in events:
+            if key.data is None:
                 try:
-                    self.scan()
-                except Exception:  # noqa: BLE001 - the scan is best effort; it never stops the I/O
-                    LOG.exception("escape scan failed")
+                    while os.read(self._wake_r, 4096):
+                        pass
+                except BlockingIOError:
+                    pass
+                continue
+            self._guard(key.data, "read", lambda lv=key.data: self._read(lv))
+        now = time.monotonic()
+        with self.lock:
+            lives = list(self.live.values())
+        for live in lives:
+            self._guard(live, "leader exit", lambda lv=live, n=now: self._watch(lv, n))
+        self._prune(now)
+        if now >= next_scan:
+            next_scan = now + self.scan_interval
+            for live in lives:
+                if live.lingering and live.cleanup == "incomplete":
+                    self._guard(live, "clean-up retry", lambda lv=live: self._retry(lv))
+            try:
+                self.scan()
+            except Exception:  # noqa: BLE001 - the scan is best effort; it never stops the I/O
+                LOG.exception("escape scan failed")
+        return next_scan
+
+    def _watch(self, live: Live, now: float) -> None:
+        if live.exit is None and live.proc.poll() is not None:
+            self._leader_exit(live)
+            if not live.stopping:
+                threading.Thread(target=self._finish, args=(live, self.exit_grace), daemon=True).start()
+        if live.exit is not None and not live.pty_closed and now >= live.drain_until:
+            self._close_pty(live)
 
     def _prune(self, now: float) -> None:
         with self.lock:
@@ -745,6 +928,9 @@ class Supervisor:
             if live.pty_closed:
                 return
             live.pty_closed = True
+            if live.exit is not None:  # the drained total, after the leader ended
+                with contextlib.suppress(Exception):
+                    self.table.update(live.run, out=live.ring.end)
             try:
                 self._sel.unregister(live.master)
             except (KeyError, ValueError):

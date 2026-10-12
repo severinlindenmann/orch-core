@@ -43,7 +43,16 @@ TERMINAL: Any = RunnerTerminal()
 def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="orch runner", description="the orch runner (dashboard execution)")
     sub = p.add_subparsers(dest="cmd", required=True)
-    en = sub.add_parser("enable", help="turn on dashboard execution for a workspace and start the runner service")
+    en = sub.add_parser(
+        "enable",
+        help="turn on dashboard execution for a workspace and start the runner service",
+        description=(
+            "Turns on dashboard execution for one workspace on this account: the dashboard may then start agents, "
+            "create worktrees and open terminals that run as you. The prompt on your terminal and the refusal under "
+            "ORCH_GRANT only stop accidents: in tier A an agent running as you can give itself a terminal (a pty) "
+            "and drop ORCH_GRANT, so it can turn this on too."
+        ),
+    )
     en.add_argument("--workspace", required=True, help="workspace id or prefix")
     en.add_argument("--no-terminals", action="store_true", help="hide terminals (does not make agents safe)")
     en.add_argument("--replace", action="store_true", help="replace a runner service installed for another setup")
@@ -115,7 +124,14 @@ def enable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> dic
     except ValueError as exc:
         return _fail("invalid.input", f"the unit cannot hold this path: {exc}", 5)
     if not args.dev:
-        why = svc.dev_source(Path(sys.executable), _package_dir())
+        from orch.host.custody import read_json
+        from orch.host.registry import registry_path
+
+        try:  # as orch host enable: an interpreter inside a registered workspace is dev code too
+            roots = [str(w.get("root")) for w in (read_json(registry_path(state), uid) or {}).get("workspaces") or []]
+        except HostError:
+            roots = []
+        why = svc.dev_source(Path(sys.executable), _package_dir(), roots)
         if why is not None:
             return _fail(
                 "invalid.input",
@@ -125,13 +141,15 @@ def enable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> dic
             )
     manager = host_cli.SERVICE_MANAGER(unit)
     differs = svc.differences(unit)
-    if not args.replace and differs:
+    if not args.replace and (differs or (differs is None and host_cli._loaded(manager))):
+        named = differs or ["unit"]  # no unit file here, but the label is loaded: from a unit file elsewhere
+        what = ", ".join(named) + " differ" if differs else "unit differs: the label is loaded from another file"
         return _fail(
             "host.busy",
-            f"a runner service ({unit.label}) is already installed for another setup ({', '.join(differs)} differ); "
-            "replacing it ends its runs. To do that on purpose: orch runner enable --replace",
+            f"a runner service ({unit.label}) is already installed for another setup ({what}); replacing it ends its "
+            "runs. To do that on purpose: orch runner enable --replace",
             4,
-            differs=differs,
+            differs=named,
         )
     terminals = not args.no_terminals
     text = enablement.risk_text(prefix or wid[:8], wid, terminals)
@@ -149,6 +167,11 @@ def enable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> dic
     try:
         ensure_private_dir(Path(state), uid)
         ensure_private_dir(Path(state) / "runner", uid)  # launchd opens runner.out there before exec
+        mask = os.umask(0)
+        os.umask(mask)
+        from orch.host.custody import write_private
+
+        write_private(Path(state) / "runner" / "settings.json", {"v": 1, "umask": mask})  # runs start with it
         changed = manager.install()
         ran = manager.start(changed=changed)
     except (OSError, HostError) as exc:
@@ -191,10 +214,13 @@ def _run(args: argparse.Namespace, env: Mapping[str, str]) -> int:
     try:
         stop.wait()
     finally:
-        link.stop()
-        if term is not None:
-            term.close()
-        sup.close()
+        link.stop()  # first: no new command while the runs are stopped
+        try:
+            # a controlled stop (D-P2-39): every managed run is stopped and verified before the runner exits
+            sup.close(stop_runs=True)
+        finally:
+            if term is not None:
+                term.close()
     return 0
 
 

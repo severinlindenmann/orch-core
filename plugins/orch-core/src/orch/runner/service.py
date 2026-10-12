@@ -5,7 +5,9 @@
   per run under its own (D-P2-29, :mod:`orch.runner.cgroup`).
 * Anything else (Windows): no runner, no terminals, no start-agent (D-P2-38).
 
-The unit runs ``<release>/current/bin/orch-runner run --state <state> --run <run>`` with ``python -I``. Installing goes
+The unit runs ``<release>/current/bin/orch-runner run --state <state> --run <run>`` with ``python -I``. The units set
+no umask: runs start with the person's umask, captured by ``orch runner enable`` (§12.5); the runner's own files are
+written with explicit private modes. Installing goes
 through :class:`orch.host.enable.Manager` and the same seam as the host (``orch.host.cli.SERVICE_MANAGER``): the
 default command runner refuses ``launchctl``/``systemctl`` under pytest or ``ORCH_NO_SERVICE_MANAGER=1``, and the test
 session's guard refuses unit files under the real home.
@@ -45,7 +47,6 @@ def launchd_plist(python: Path, release: Path, state_dir: Path, run_dir: Path) -
         "RunAtLoad": True,
         "KeepAlive": True,
         "ProcessType": "Interactive",  # it parents the person's agents and shells: never throttled as background
-        "Umask": 0o077,
         "StandardOutPath": log,
         "StandardErrorPath": log,
     }
@@ -65,7 +66,6 @@ def systemd_unit(python: Path, release: Path, state_dir: Path, run_dir: Path) ->
             f"ExecStart={exec_start}",
             "Restart=always",
             "RestartSec=1",
-            "UMask=0077",
             "Delegate=yes",
             "",
             "[Install]",

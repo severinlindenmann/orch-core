@@ -43,9 +43,10 @@ DESIGNED: dict[str, Any] = {
 
 
 @contextlib.contextmanager
-def served(ws: Ws, *, release: bool = False) -> Iterator[dict[str, str]]:
+def served(ws: Ws, *, release: bool = False, fake_git: bool = True) -> Iterator[dict[str, str]]:
     """``ws`` registered with a host (state dir = the fork's, run directory short enough for a socket path), mapped
     to its owner; yields the CLI environment that names the run directory (where to look, never a trust input).
+    ``fake_git`` gives the service the test git reader the golden cases expect; ``False`` keeps the host's own.
     ``release`` unregisters it at the end (a base that forks are copied from must not stay in the registry)."""
     from orch.host.control_client import new_idem
     from orch.ops.caps import Capabilities
@@ -70,7 +71,8 @@ def served(ws: Ws, *, release: bool = False) -> Iterator[dict[str, str]]:
                 service.caps.close()
             service.caps = Capabilities.host((service.entry.root,), env={}, clock=service.clock, git=FakeReader())
 
-        service.submit(reader).result(10)
+        if fake_git:
+            service.submit(reader).result(10)
         yield {"ORCH_HOST_RUN_DIR": str(short / "r")}
         if release:
             with host.client() as control:

@@ -268,6 +268,90 @@ def test_a_declared_remote_that_differs_is_repo_remote_mismatch(world):
     assert err(res) == "repo.remote_mismatch" and res["exit"] == 3
 
 
+@pytest.mark.parametrize("column", ["P", "G", "N"])
+def test_a_reader_failure_names_no_host_path_except_to_a_manager(world, column):
+    """§0.5/§0.8.5: a repo's path is shown only to a person-class owner or maintainer. The reader's reason names the
+    missing ``.git`` by its absolute path: P (the owner) gets it, G and N get ``repo proj: not readable``."""
+    import shutil
+
+    served, proj, tickets = world
+    shutil.rmtree(proj / ".git")
+    grant = served.grant if column == "G" else None
+    if column == "N":
+        as_agent_class(served)
+    res = diff(served, {"ref": tickets["open"][1]}, grant=grant)
+    assert err(res) == "observe.unavailable"
+    message = res["error"]["message"]
+    if column == "P":
+        assert str(proj) in message
+    else:
+        assert message == "repo proj: not readable"
+        assert str(served.lab.tmp) not in json.dumps(res) and "/" not in message
+
+
+def slow_reader(served, monkeypatch, seconds):
+    """Every reader ``diff`` takes ``seconds`` before it reads (in the reader phase, off the worker thread)."""
+    reader = served.service.capabilities().git.reader
+    real = type(reader).diff
+    started = threading.Event()
+
+    def slow(self, *a, **k):
+        started.set()
+        time.sleep(seconds)
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(type(reader), "diff", slow)
+    return started
+
+
+def test_a_slow_diff_does_not_hold_the_workspace(world, monkeypatch):
+    """The reader phase runs off the workspace's one worker thread: while a G caller's diff waits on its reader, the
+    owner's ``ticket.get`` and writes are answered at once, and a second diff of the same principal is
+    ``quota.host`` (one in flight per principal) while another principal's diff runs."""
+    served, _, tickets = world
+    key = tickets["open"][1]
+    started = slow_reader(served, monkeypatch, 3.0)
+    out = {}
+    slow = threading.Thread(target=lambda: out.setdefault("g", diff(served, {"ref": key}, grant=served.grant)))
+    slow.start()
+    try:
+        assert started.wait(10)
+        t0 = time.monotonic()
+        ok(served.client().req("ticket.get", {"ref": key}))
+        assert time.monotonic() - t0 < 1.0
+        second = diff(served, {"ref": key}, grant=served.grant)
+        assert err(second) == "quota.host" and second["error"]["retryable"] is True
+        assert ok(diff(served, {"ref": key}))["data"]["sources"]  # another principal (the owner) is not refused
+    finally:
+        slow.join(30)
+    assert ok(out["g"])["data"] == direct(served, tickets["open"][0])
+    monkeypatch.undo()
+    ok(diff(served, {"ref": key}, grant=served.grant))  # the slot is free again
+
+
+def test_one_request_has_one_budget_for_all_its_repos(world, monkeypatch):
+    """The reader call gets the request's remaining budget as its deadline (not the pool's own 30 s), and a
+    request over budget is ``observe.unavailable`` without its reason (G is not a manager)."""
+    from orch.host import diff as host_diff
+
+    served, _, tickets = world
+    monkeypatch.setattr(host_diff, "BUDGET_S", 1.0)
+    pool = served.service.git_pool
+    walls = []
+
+    def run(hello, req, deadline=None):
+        walls.append(deadline - time.monotonic())
+        time.sleep(max(0.0, deadline - time.monotonic()))
+        return {"error": {"code": "observe.unavailable", "message": "the reader child ran past its deadline"}}
+
+    monkeypatch.setattr(pool, "_run", run)
+    t0 = time.monotonic()
+    res = diff(served, {"ref": tickets["open"][1]}, grant=served.grant)
+    assert err(res) == "observe.unavailable" and res["error"]["message"] == "repo proj: not readable"
+    assert time.monotonic() - t0 < 5.0
+    assert len(walls) == 1 and 0 < walls[0] <= 1.0
+
+
 def test_an_unpinnable_or_missing_working_copy_is_observe_unavailable(world):
     served, proj, tickets = world
     import shutil

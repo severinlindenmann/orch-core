@@ -2,25 +2,34 @@
 viewer may see, read by the host's git reader under the caller's principal.
 
 ``diff {ref, repo?, context? = 3, max_bytes? = 262144}`` → ``{sources, files, unified, truncated}``, exactly the
-:func:`orch.ops.diff_core.diff_result` that direct mode computes (no field added or renamed):
+:func:`orch.ops.diff_core.diff_result` that direct mode computes (no field added or renamed). Two phases:
 
-* **Visibility first** (§0.5, F6). The ticket goes through :meth:`Viewer.ticket`, so a ticket the viewer may not see
-  is ``not_found`` exactly as one that does not exist; then ``repo`` through :meth:`Viewer.linked_repo`, so a repo
-  that is not in the ticket's ``links.repos`` (declared in ``settings.repos`` or not) is ``not_found`` as well. Nothing
-  is read from git before both passed.
-* **The reader** (H3b1, wired per workspace by H10a): the declared repos are pinned first (an existing pin is never
-  replaced, :meth:`WorkspaceService.sync_git`), then every read is a reader child under the request's principal
-  (``Capabilities.with_principal``: one child per principal, at most four per host, F10).
-* **Errors** (§0.6, §0.8): ``observe.unavailable`` (no branch, no working copy, an unpinned repo, git denied, a reader
-  failure), ``repo.remote_mismatch`` (F7), ``quota.host`` (the reader pool's queue bounds, §0.11; retryable).
-* **Not here:** ``since:"my_approval"`` and the ``host_pinned`` base (§9 Q9 follow-ups), and v1.5 ``head``/``base``
-  (``diff_ext/1``, H6c): each is an unknown key, so ``invalid.input`` (§0.3).
-* Subjects, paths and hunks are repository content (untrusted display strings, cleaned or raw as §0.8 says); the
-  dispatcher's redactor still runs over the result.
+1. **On the workspace worker thread** (:func:`prepare`): the ticket through :meth:`Viewer.ticket` (a ticket the
+   viewer may not see is ``not_found`` exactly as one that does not exist), ``repo`` through
+   :meth:`Viewer.linked_repo` (a repo not in the ticket's ``links.repos`` is ``not_found``, declared or not), then the
+   repos, branches and paths from the store (:func:`~orch.ops.diff_core.diff_plan`) and the request's capabilities
+   (:meth:`WorkspaceService.caps_for`: pins are the service's own business, git reads run under the caller). Nothing
+   is read from git here.
+2. **Off the worker thread** (:func:`run`, on :data:`EXECUTOR`): the reader children, so a slow diff never holds the
+   workspace's one worker (D-P2-1) and other principals' requests go on. At most one ``diff`` per principal is in
+   flight host-wide (:class:`InFlight`, else ``quota.host``), and one request has :data:`BUDGET_S` seconds for all
+   its repos together (each reader call gets what is left).
+
+**Errors** (§0.6, §0.8): ``observe.unavailable``, ``repo.remote_mismatch`` (F7), ``quota.host`` (retryable). A
+reader's reason can name a host path (``/Users/…/proj/.git does not exist``); §0.5 and §0.8.5 show a repo's path only
+to a person-class owner or maintainer (:attr:`Viewer.manager`), so every other caller gets ``repo <name>: not
+readable`` and the reason goes to the host log only.
+
+**Not here:** ``since:"my_approval"`` and the ``host_pinned`` base (§9 Q9 follow-ups), and v1.5 ``head``/``base``
+(``diff_ext/1``, H6c): each is an unknown key, so ``invalid.input`` (§0.3).
 """
 
 from __future__ import annotations
 
+import logging
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from jsonschema import Draft202012Validator
@@ -31,7 +40,13 @@ from .visibility import Viewer
 if TYPE_CHECKING:
     from .workspace import Call
 
-__all__ = ["SCHEMA", "VALIDATOR", "diff"]
+__all__ = ["BUDGET_S", "EXECUTOR", "IN_FLIGHT", "SCHEMA", "VALIDATOR", "Pending", "prepare", "run"]
+
+LOG = logging.getLogger(__name__)
+#: one request's time for every repo it diffs, reader queueing included (§0.11's 30 s wall, per request)
+BUDGET_S = 30.0
+#: where the reader phase waits for its children; the reader pool bounds the children themselves (F10)
+EXECUTOR = ThreadPoolExecutor(16, thread_name_prefix="orch-diff")
 
 SCHEMA = {
     "type": "object",
@@ -47,25 +62,69 @@ SCHEMA = {
 VALIDATOR = Draft202012Validator(SCHEMA)
 
 
-def diff(call: Call, args: dict[str, Any]) -> dict[str, Any]:
-    """The worker-thread part of ``diff`` (args already passed :data:`SCHEMA`)."""
-    from orch.ops.diff_core import diff_result
+class InFlight:
+    """At most one ``diff`` in flight per principal, host-wide: a second one is ``quota.host`` at once."""
+
+    def __init__(self) -> None:
+        self._mu = threading.Lock()
+        self._held: set[str] = set()
+
+    def take(self, principal: str) -> None:
+        with self._mu:
+            if principal in self._held:
+                raise HostError("quota.host", "a diff of this caller is still running; retry when it is done")
+            self._held.add(principal)
+
+    def give(self, principal: str) -> None:
+        with self._mu:
+            self._held.discard(principal)
+
+
+IN_FLIGHT = InFlight()
+
+
+@dataclass(frozen=True)
+class Pending:
+    """What the worker thread resolved: the reader phase needs neither the store nor the call."""
+
+    principal: str
+    caps: Any
+    jobs: list[Any]
+    context: int
+    max_bytes: int
+    #: may see repo paths in messages (person-class owner or maintainer, §0.8.5)
+    manager: bool
+
+
+def prepare(call: Call, args: dict[str, Any]) -> Pending:
+    """Phase 1, on the worker thread (args already passed :data:`SCHEMA`)."""
+    from orch.ops.diff_core import diff_plan
     from orch.ops.errors import OrchError
 
     service = call.service
     store = service.store
-    view = Viewer.of(call).ticket(store, args["ref"])  # not_found for a ticket the viewer may not see (F6)
+    viewer = Viewer.of(call)
+    view = viewer.ticket(store, args["ref"])  # not_found for a ticket the viewer may not see (F6)
     Viewer.linked_repo(view, args.get("repo"))  # not_found for a repo the ticket does not link
-    service.sync_git()  # pins a declared repo that first appears; never replaces a pin
-    caps = service.capabilities().with_principal(call.principal)  # reader children under the caller (F10)
+    caps = service.caps_for(call.principal)  # pins kept by the service; reader children under the caller (F10)
     try:
-        return diff_result(
-            caps,
-            store,
-            view,
-            repo=args.get("repo"),
-            context=args.get("context", 3),
-            max_bytes=args.get("max_bytes", 262144),
-        )
-    except OrchError as e:
+        jobs = diff_plan(store, view, caps, repo=args.get("repo"))
+    except OrchError as e:  # no branch, no working copy: path-free messages
         raise HostError(e.code, e.message) from None
+    context, max_bytes = args.get("context", 3), args.get("max_bytes", 262144)
+    return Pending(call.principal, caps, jobs, context, max_bytes, viewer.manager)
+
+
+def run(pending: Pending) -> dict[str, Any]:
+    """Phase 2, off the worker thread: the reader children, within :data:`BUDGET_S`."""
+    from orch.ops.diff_core import RepoReadError, diff_run
+
+    try:
+        return diff_run(
+            pending.caps, pending.jobs, context=pending.context, max_bytes=pending.max_bytes, budget=BUDGET_S
+        )
+    except RepoReadError as e:
+        if e.code != "observe.unavailable" or pending.manager:
+            raise HostError(e.code, e.message) from None
+        LOG.info("diff: %s: %s (%s)", e.repo, e.reason, pending.principal)
+        raise HostError(e.code, f"repo {e.repo}: not readable") from None

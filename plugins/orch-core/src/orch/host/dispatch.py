@@ -80,6 +80,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from jsonschema import Draft202012Validator
 
+from . import diff as git_diff
 from . import reads, sessions
 from .artifacts import VALIDATOR as ARTIFACT_VALIDATOR
 from .artifacts import artifact_get
@@ -88,8 +89,6 @@ from .blobs import INLINE_MAX, decoded_len
 from .blobs import VALIDATORS as BLOB_VALIDATORS
 from .bus import Subscription
 from .columns import OpKind
-from .diff import VALIDATOR as DIFF_VALIDATOR
-from .diff import diff as git_diff
 from .errors import HostError
 from .outcomes import BUILDERS, Planned, request_idem
 from .reads import CAPS as READ_CAPS
@@ -377,6 +376,8 @@ class RegistryBackend:
                     "outcome.unknown", f"{op} did not finish in time; ask outcome.get with its idem"
                 ) from None
             raise HostError("timeout", f"{op} did not finish within {timeout_ms} ms") from None
+        if op in GIT_OPS:
+            return await self._git_read(call, result)
         if op == "sub.open":
             return self._register(call, result)
         if op == "sub.close":
@@ -384,6 +385,28 @@ class RegistryBackend:
             if bus is not None:
                 bus.close(call.session, call.frame["args"]["sub"])
         return result
+
+    @staticmethod
+    async def _git_read(call: Call, pending: git_diff.Pending) -> dict[str, Any]:
+        """``diff``'s reader phase, off the workspace worker thread (the worker resolved visibility, links and
+        capabilities): one in flight per principal, :data:`~orch.host.diff.BUDGET_S` for the request."""
+        redactor = Redactor((call.frame.get("auth") or {}).get("grant"))
+        try:
+            git_diff.IN_FLIGHT.take(pending.principal)
+            try:
+                future = asyncio.get_running_loop().run_in_executor(git_diff.EXECUTOR, git_diff.run, pending)
+            except BaseException:
+                git_diff.IN_FLIGHT.give(pending.principal)
+                raise
+            # the slot is held until the reader work itself ends, also when this request stops waiting for it
+            future.add_done_callback(lambda _f: git_diff.IN_FLIGHT.give(pending.principal))
+            try:  # the reader's deadlines end the work within the budget; this only bounds a stuck thread
+                data = await asyncio.wait_for(asyncio.shield(future), git_diff.BUDGET_S + 5)
+            except TimeoutError:
+                raise HostError("observe.unavailable", f"the diff took longer than {git_diff.BUDGET_S:g} s") from None
+            return redactor.obj(ok_result(data))
+        except HostError as exc:
+            raise redactor.error(exc) from None
 
     def _register(self, call: Call, checked: dict[str, Any]) -> dict[str, Any]:
         """``sub.open`` on the event loop: register the subscription the worker checked, at the boundary it fixed."""
@@ -513,7 +536,7 @@ class RegistryBackend:
         op, frame = call.frame["op"], call.frame
         args = frame["args"]
         validator = (
-            ARTIFACT_VALIDATOR if op == "artifact.get" else DIFF_VALIDATOR if op == "diff" else BLOB_VALIDATORS[op]
+            ARTIFACT_VALIDATOR if op == "artifact.get" else git_diff.VALIDATOR if op == "diff" else BLOB_VALIDATORS[op]
         )
         errors = sorted(validator.iter_errors(args), key=lambda e: list(map(str, e.path)))
         if errors:
@@ -527,7 +550,7 @@ class RegistryBackend:
         if op == "artifact.get":
             return ok_result(artifact_get(call, args))
         if op == "diff":
-            return ok_result(git_diff(call, args))
+            return git_diff.prepare(call, args)  # type: ignore[return-value]  # the reader phase is run()'s
         if op == "blob.drop":
             service.blobs.drop(call.principal, args["blob"])
             return ok_result({})

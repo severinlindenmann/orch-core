@@ -526,9 +526,9 @@ state refusals are 3, input refusals 5 (as `invalid.input` and `idem.conflict`),
 | `diff` with `head`/`base` (v1.5) | as `diff`; a `head` or `base` the ticket does not allow is `not_found`; `since` with `head` or `base` is `invalid.input`; `invalid.input` for `head`/`base` without `repo`, and for either on a host without `diff_ext/1` (the §0.3 unknown-key rule) |
 | `session.refusals` (v1.5) | `page.expired`, `not_found` (`ticket`, or a `session` the viewer may not see), `invalid.input` (a `page` token with other arguments) |
 | `outcome.get`, `host.outcome` | `outcome.unknown_idem` (no record, or another principal's), `idem.expired` (only a tombstone is left) |
-| `human.prepare` | `device.unknown`, `device.invalid`, `device.scope`, `observe.unavailable`, the inner op's declared errors |
-| `human.get` | `not_found`, `human.request_expired`, `human.request_state`, `device.unknown`, `device.invalid`, `device.scope`, `observe.unavailable` (N3 re-check) |
-| `human.submit` | `not_found`, `human.request_expired`, `human.request_state`, `human.request_mismatch`, `sig.invalid`, `gate.stale`, `members.stale`, `question.stale`, `observe.unavailable`, the inner op's model codes |
+| `human.prepare` | `device.unknown`, `device.invalid`, `device.scope`, `observe.unavailable`, the inner op's declared errors, `sign.click_only` |
+| `human.get` | `not_found`, `human.request_expired`, `human.request_state`, `device.unknown`, `device.invalid`, `device.scope`, `observe.unavailable` (N3 re-check), `sign.click_only` |
+| `human.submit` | `not_found`, `human.request_expired`, `human.request_state`, `human.request_mismatch`, `sig.invalid`, `gate.stale`, `members.stale`, `question.stale`, `observe.unavailable`, the inner op's model codes, `sign.click_only` |
 | `human.pending` | none (an unknown code gives an empty list) |
 | `human.cancel` | `not_found` |
 | `sub.open` | `not_found` (`ticket:<ref>`), `sub.reset`; `invalid.input` for `detail` on a host without `sub_ext/1` (the §0.3 unknown-key rule) |

@@ -17,6 +17,7 @@ from orch.host.dispatch import FILE_OPS, GIT_OPS, HOST_OPS, NOT_SERVED, PERSON_R
 from orch.host.errors import HostError, disposition
 from orch.host.human import HUMAN_OPS
 from orch.host.reads import READ_OPS
+from orch.host.records import RECORDS_OPS
 from orch.host.review import HOST_PERSON_OPS
 from orch.host.runners import RUN_OPS
 from orch.ops.errors import ERRORS
@@ -70,6 +71,7 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
     welcome = served.client().welcome
     registry = {op.name for op in ops.all()}
     host = set(HOST_OPS) | set(FILE_OPS) | set(GIT_OPS) | set(HUMAN_OPS) | set(READ_OPS) | set(HOST_PERSON_OPS)
+    host |= set(RECORDS_OPS)
     host |= set(RUN_OPS)  # H11a
     assert set(welcome["ops"]) == (registry - set(NOT_SERVED)) | host
     assert set(READ_OPS) == {  # H6b
@@ -120,7 +122,7 @@ ROWS = {
     "N agent, unverified grant": ("agent", "unverified", False),
 }
 ALLOWED = {
-    "P": {"read", "person_read", "pg_read", "unattended"},
+    "P": {"read", "person_read", "pg_read", "person_write", "unattended"},
     "G": {"read", "pg_read", "agent", "unattended"},
     "N": {"read", "unattended"},
 }
@@ -157,6 +159,8 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
             assert kind == ("human", "write")
         elif op in HUMAN_OPS:
             assert kind == ("human_api", "write" if op == "human.submit" else "read")
+        elif op in RECORDS_OPS:
+            assert kind == (("person_write", "write") if op == "records.remote_private" else ("person_read", "read"))
         elif op in RUN_OPS:  # H11a: P and G only
             assert kind == ("pg_read", "read")
         else:
@@ -166,7 +170,8 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
         for row, (peer, grant, valid) in ROWS.items():
             assert refusal(resolve(peer, grant, valid), kind[0]) == expected(row, kind[0]), (op, row)
             seen.add((kind[0], expected(row, kind[0])))
-    assert {"read", "person_read", "pg_read", "agent", "unattended", "human", "human_api"} == {k for k, _ in seen}
+    kinds = {"read", "person_read", "pg_read", "person_write", "agent", "unattended", "human", "human_api"}
+    assert kinds == {k for k, _ in seen}
     for op in NOT_SERVED:
         assert op_kind(op) is None
 

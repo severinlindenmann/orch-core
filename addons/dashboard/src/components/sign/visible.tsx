@@ -7,9 +7,9 @@
  * Characters shown as `\u{…}`: control and format characters (C0/C1, bidi overrides and isolates, zero-width marks,
  * BOM), every default-ignorable code point (U+034F, U+115F, U+3164, variation selectors, tags …), line/paragraph
  * separators, every space other than U+0020 (no-break, ideographic …), private-use, unassigned and lone surrogate
- * code points, and core's own edge-space marker ␠ (so a literal one never reads as a space).
+ * code points, U+2800 (Braille blank, in core's F1 list), and core's own edge-space marker ␠ (so a literal one never reads as a space).
  */
-const HIDDEN = '\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}\\p{Default_Ignorable_Code_Point}\\p{Co}\\p{Cn}\\p{Cs}\\u2420'
+const HIDDEN = '\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}\\p{Default_Ignorable_Code_Point}\\p{Co}\\p{Cn}\\p{Cs}\\u2420\\u2800'
 const OTHER_SPACE = '(?! )\\p{Zs}'
 const escape = (c: string) => `\\u{${c.codePointAt(0)!.toString(16)}}`
 const pattern = (extra: string) => new RegExp(`\\\\|[${HIDDEN}]|${OTHER_SPACE}${extra}`, 'gu')

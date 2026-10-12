@@ -108,6 +108,16 @@ it('Members lists the roster with devices and no last-seen, and a role change is
   expect(dialog).toHaveTextContent(`In your terminal you type ${TOM} to continue.`)
 })
 
+it('a member whose host name has invisible characters shows by id with a note, and can still be removed', async () => {
+  // Opus RH review L1: one such name must not take the workspace or the roster down (the server sends the person id).
+  state.host.workspaces[0].roster = state.host.workspaces[0].roster.map((m) => (m.person === TOM ? { ...m, name: TOM, name_hidden: true } : m))
+  show('/w/DEMO/settings/members')
+  const table = await screen.findByRole('table', {}, T)
+  expect(within(table).getByText('Name not shown: it has invisible characters')).toBeInTheDocument()
+  expect(within(table).getByText('Mara')).toBeInTheDocument()
+  expect(screen.getByLabelText(`Remove ${TOM}`)).toBeInTheDocument()
+})
+
 it('removing a member is a hand-off; you cannot remove yourself or the last owner', async () => {
   const user = userEvent.setup()
   show('/w/DEMO/settings/members')

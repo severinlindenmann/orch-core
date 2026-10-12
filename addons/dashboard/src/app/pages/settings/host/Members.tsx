@@ -221,7 +221,11 @@ export function HostMembers({ workspace }: { workspace: Workspace }) {
                   <TableCell>
                     <span className="flex items-center gap-2">
                       <PersonAvatar id={m.person} name={m.name} />
-                      <Raw>{m.name}</Raw>
+                      {m.name_hidden ? (
+                        <span className="text-warning">Name not shown: it has invisible characters</span>
+                      ) : (
+                        <Raw>{m.name}</Raw>
+                      )}
                       <span className="font-mono text-[11px] text-text-faint"><Raw>{m.person}</Raw></span>
                     </span>
                   </TableCell>

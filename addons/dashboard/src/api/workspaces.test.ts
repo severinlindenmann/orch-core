@@ -21,7 +21,7 @@ describe('workspaceOfTicket', () => {
   })
 })
 
-describe('workspaces that share a prefix (design 5: ?ws=<first 8 hex of the UUID>)', () => {
+describe('workspaces that share a prefix (design 5: ?ws=<last 8 hex of the UUID>)', () => {
   const a = { id: 'aaaaaaaa-1111-2222-3333-444444444444', prefix: 'DEMO' }
   const b = { id: 'bbbbbbbbbbbbbbbbbbbbbbbbc0ffee00', prefix: 'Demo' }
   const other = { id: 'dddddddd' + '0'.repeat(24), prefix: 'INT' }

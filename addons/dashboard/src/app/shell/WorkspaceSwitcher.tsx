@@ -78,27 +78,31 @@ function WorkspaceRow({ w, index, current, viewer, shared, onPick, quietFocus }:
 function WorkspaceLine({ workspace, shared }: { workspace: Workspace; shared: boolean }) {
   return (
     <span>
-      {workspace.prefix} · <bdi>{visible(workspace.name)}</bdi>
+      {workspace.prefix}
       {shared && (
         <>
           {' '}
-          <span className="font-mono" data-ws-id>
+          <span className="rounded bg-surface-3 px-1 font-mono" data-ws-id>
             id {uuid8(workspace.id)}
           </span>
         </>
-      )}
+      )}{' '}
+      · <bdi>{visible(workspace.name)}</bdi>
     </span>
   )
 }
 
+export const NAME_UNSAFE = "This workspace's name can't be shown safely"
+
 /** A workspace whose host does not answer: named by its UUID only (nothing else is known), not selectable. */
 function StoppedRow({ w }: { w: Workspace }) {
+  const unsafe = w.host_state === 'workspace.name_invalid'
   return (
     <li data-ws-stopped={w.id}>
-      <div className="flex w-full min-w-0 items-center gap-2 rounded-md px-1.5 py-1.5 text-[13px] text-text-faint" title={`Workspace ${w.id}: the host does not answer. Start it and reload.`}>
+      <div className="flex w-full min-w-0 items-center gap-2 rounded-md px-1.5 py-1.5 text-[13px] text-text-faint" title={unsafe ? `Workspace ${w.id}: ${NAME_UNSAFE}` : `Workspace ${w.id}: the host does not answer. Start it and reload.`}>
         <ServerOff aria-hidden className="size-3.5 shrink-0" />
         <span className="rounded bg-surface-3 px-1 font-mono text-[10px] font-semibold">{uuid8(w.id)}</span>
-        <span className="min-w-0 flex-1 truncate">Host not running</span>
+        <span className="min-w-0 flex-1 truncate">{unsafe ? NAME_UNSAFE : 'Host not running'}</span>
       </div>
     </li>
   )
@@ -132,7 +136,7 @@ export function WorkspaceSwitcher({ collapsed, viewer }: { collapsed: boolean; v
       )}
     >
       <span className="rounded bg-surface-3 px-1 font-mono text-[10px] font-semibold text-text-muted">{workspace?.prefix ?? '…'}</span>
-      <span className={cn('min-w-0 flex-1 truncate', collapsed && 'hidden')}>{workspace?.name}</span>
+      <span className={cn('min-w-0 flex-1 truncate', collapsed && 'hidden')}>{workspace ? visible(workspace.name) : null}</span>
       {currentShared && workspace && (
         <span data-ws-uuid-current className={cn('font-mono text-[10px] text-text-faint', collapsed && 'hidden')}>
           {uuid8(workspace.id)}

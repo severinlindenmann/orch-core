@@ -132,12 +132,13 @@ export function HandoffDialog(p: HandoffDialogProps) {
           </DialogTitle>
           {shared && here && (
             <p data-testid="handoff-workspace" className="text-[12px] text-text-muted">
-              Workspace {here.prefix} · <bdi>
-                <Raw>{here.name}</Raw>
-              </bdi>{' '}
-              <span className="font-mono" data-ws-id>
+              Workspace {here.prefix}{' '}
+              <span className="rounded bg-surface-3 px-1 font-mono text-text" data-ws-id>
                 id {uuid8(here.id)}
-              </span>
+              </span>{' '}
+              · <bdi>
+                <Raw>{here.name}</Raw>
+              </bdi>
             </p>
           )}
           <DialogDescription>

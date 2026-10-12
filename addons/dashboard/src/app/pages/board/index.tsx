@@ -17,7 +17,9 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { toast } from 'sonner'
+import { handoffMode } from '@/api/features'
 import { can } from '@/api/permissions'
+import { HandoffDialog } from '@/components/sign/HandoffDialog'
 import { useRole } from '@/app/useRole'
 import { api } from '@/api/client'
 import { STATUSES, type Status, type TicketSummary } from '@/api/types'
@@ -170,6 +172,8 @@ export function BoardPage() {
   const wsId = workspace?.id
   const { view, setView, filters, setFilters } = useBoardUrlState()
   const [dragging, setDragging] = useState<TicketSummary | null>(null)
+  // On a real host a move is a hand-off signed in the terminal (backlog and open only), not an instant change.
+  const [handoffMove, setHandoffMove] = useState<{ key: string; to: 'backlog' | 'open' } | null>(null)
   const role = useRole()
   const canMove = can(role, 'ticket.move')
   const boardRef = useRef<HTMLDivElement>(null)
@@ -307,14 +311,23 @@ export function BoardPage() {
     const dropLane = e.over ? String(e.over.id).split('|')[0] : ''
     if (e.over && String(e.over.id).includes('|') && grouped && dropLane !== laneOf(current ?? t, epicKeys)) return settle(false)
     if ((current?.status ?? t.status) === to) return settle(false)
+    if (requestHandoffMove(t.key, to)) return settle(false)
     settle(true)
     move.mutate({ key: t.key, status: to, from: current?.status ?? t.status })
+  }
+  /** True when the move went to a hand-off (or was refused with a word): nothing moves in the page until it is signed. */
+  function requestHandoffMove(key: string, to: Status): boolean {
+    if (!handoffMode(wsId)) return false
+    if (to === 'backlog' || to === 'open') setHandoffMove({ key, to })
+    else toast('Only Backlog and Open can be set by hand. Agents move work on from there.')
+    return true
   }
   function moveFromMenu(key: string, to: Status) {
     const from = qc.getQueryData<TicketSummary[]>(ticketsKey)?.find((x) => x.key === key)?.status
     if (from && from !== to) {
       const at = boardRef.current?.querySelector<HTMLElement>(`[data-testid="card-${key}"]`)?.getBoundingClientRect()
       if (at) noteRect(key, at, 'mount')
+      if (requestHandoffMove(key, to)) return
       refocus.current = { key, status: to }
       move.mutate({ key, status: to, from })
     }
@@ -425,6 +438,19 @@ export function BoardPage() {
             ) : null}
           </DragOverlay>
         </DndContext>
+      )}
+      {handoffMove && (
+        <HandoffDialog
+          title={`Move ${handoffMove.key} to ${STATUS_LABEL[handoffMove.to]}`}
+          ws={wsId}
+          action={{ action: 'move', key: handoffMove.key, to: handoffMove.to }}
+          autoStart
+          onSettled={() => {
+            void qc.invalidateQueries({ queryKey: ['board'] })
+            void qc.invalidateQueries({ queryKey: ['ticket'] })
+          }}
+          onClose={() => setHandoffMove(null)}
+        />
       )}
     </div>
   )

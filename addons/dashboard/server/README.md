@@ -7,6 +7,14 @@ never signing keys, and connects to a host as the current UID's mapped person. M
 page (sections, tasks, questions, evidence, log) and the Changes tab. Everything is read only.
 Signing (hand-off), settings, artifacts, agents and addon pages belong to later milestones.
 
+## Real host (H6b and later)
+
+The server needs no stub: it connects to a real `orch host run` (control socket `<run>/control/host.sock`, workspace sockets
+`<run>/<uuid>/host.sock`) and the registry the host keeps in `<state>/host/workspaces.json`. Bring up a disposable one with
+`tests/realhost_kit.py up BASE` (see REVIEW "Try the dashboard on a REAL host"); run the integration suite with
+`uv run pytest -m realhost -q`. Keep the state directory short (unix socket paths are about 100 bytes) and outside /tmp.
+The real host lists `human.*` ops without the `human/1` cap and serves no `diff` yet; the server handles both (HANDOVER "P2 on the real host").
+
 ## Install and build
 
 From the checkout (Node 24, uv, Python 3.11+):
@@ -25,7 +33,7 @@ and copies `dist/` into `server/src/orch_dashboard/static/`. Build the frontend 
 wheel. The wheel includes that static tree and only `orch_dashboard`; neither `devhost` nor
 `orch-core` is a runtime dependency. Core is a uv path dependency in the dev group only.
 
-## Run with a dev stub
+## Run with a dev stub (CI and the mock app; differs from the real host, see HANDOVER)
 
 Use a disposable P1 workspace and its existing host state, not a production workspace.
 The stub uses the P1 signed store and registry; it does not seed mock tickets. Initialize a

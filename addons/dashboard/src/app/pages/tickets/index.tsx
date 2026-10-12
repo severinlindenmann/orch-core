@@ -5,7 +5,7 @@ import { ChevronDown, Tag, Terminal, X } from 'lucide-react'
 import { addonActive } from '@/api/addons'
 import { api } from '@/api/client'
 import { can } from '@/api/permissions'
-import { hasFeature, isRealHost } from '@/api/features'
+import { handoffMode, hasFeature, isRealHost } from '@/api/features'
 import { ApiError, STATUSES, type Status, type TicketSummary } from '@/api/types'
 import { useAddons } from '@/addon-ui'
 import { Button } from '@/components/ui/button'
@@ -124,7 +124,8 @@ export function TicketsPage() {
   const meQ = useQuery(queries.me())
   const me = meQ.data
   const role = useRole()
-  const canBulk = can(role, 'ticket.move')
+  // A real host moves one ticket at a time, each signed in the terminal: no bulk move there.
+  const canBulk = can(role, 'ticket.move') && !handoffMode(wsId)
 
   // Status is filtered here (not on the server) so the status chips can show counts for the other filters.
   const serverParams = useMemo(

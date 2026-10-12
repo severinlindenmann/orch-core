@@ -1,0 +1,3306 @@
+{
+ "grant.list": {
+  "grants": [
+   {
+    "expires_at": "2026-01-01T09:02:27Z",
+    "id": "gr_00000000000000000000000003",
+    "issued_at": "2026-01-01T09:00:00Z",
+    "person": "p_00000000000000000000000000000001",
+    "revoked_at": null,
+    "scope": "workable",
+    "session_ids": [],
+    "sessions": 0,
+    "verbs": "agent"
+   }
+  ]
+ },
+ "member.list": {
+  "members": [
+   {
+    "devices": [
+     {
+      "auth": "passphrase",
+      "id": "d_00000000000000000000000000000002",
+      "scopes": [
+       "look",
+       "decide",
+       "operate",
+       "type"
+      ],
+      "valid": true
+     }
+    ],
+    "name": "Demo Owner",
+    "person": "p_00000000000000000000000000000001",
+    "role": "owner"
+   }
+  ]
+ },
+ "needs": {
+  "items": [
+   {
+    "detail": "",
+    "key": "DEMO-0001",
+    "kind": "no_eligible",
+    "payload": {
+     "cause": "no_visible_person",
+     "gate": "verify"
+    },
+    "ref": "verify",
+    "since": "2026-01-01T09:00:42Z",
+    "status": "testing",
+    "uid": "00000000000000000000000079",
+    "who": [
+     "p_00000000000000000000000000000001"
+    ]
+   },
+   {
+    "detail": "",
+    "key": "DEMO-0002",
+    "kind": "no_eligible",
+    "payload": {
+     "cause": "no_visible_person",
+     "gate": "verify"
+    },
+    "ref": "verify",
+    "since": "2026-01-01T09:00:56Z",
+    "status": "testing",
+    "uid": "00000000000000000000000080",
+    "who": [
+     "p_00000000000000000000000000000001"
+    ]
+   },
+   {
+    "detail": "blocking",
+    "key": "DEMO-0003",
+    "kind": "question",
+    "payload": {
+     "blocking": true,
+     "options": [
+      {
+       "key": "yes",
+       "label": "yes"
+      },
+      {
+       "key": "no",
+       "label": "no"
+      }
+     ],
+     "question": "Q1",
+     "recommended": "no",
+     "to": "ticket_owner",
+     "why": "It changes the print stylesheet."
+    },
+    "ref": "Q1",
+    "since": "2026-01-01T09:01:31Z",
+    "status": "in_progress",
+    "text": "Should the dark theme also apply to the printed invoice?",
+    "uid": "00000000000000000000000081",
+    "who": [
+     "p_00000000000000000000000000000001"
+    ]
+   },
+   {
+    "detail": "",
+    "key": "DEMO-0004",
+    "kind": "approve",
+    "payload": {
+     "count": 1,
+     "gate": "requirements",
+     "gen": 4,
+     "have": 0
+    },
+    "ref": "requirements",
+    "since": "2026-01-01T09:01:38Z",
+    "status": "open",
+    "uid": "00000000000000000000000082",
+    "who": [
+     "p_00000000000000000000000000000001"
+    ]
+   },
+   {
+    "detail": "",
+    "key": "DEMO-0005",
+    "kind": "approve",
+    "payload": {
+     "count": 1,
+     "gate": "requirements",
+     "gen": 4,
+     "have": 0
+    },
+    "ref": "requirements",
+    "since": "2026-01-01T09:01:45Z",
+    "status": "open",
+    "uid": "00000000000000000000000083",
+    "who": [
+     "p_00000000000000000000000000000001"
+    ]
+   }
+  ],
+  "sub_cursor": "CURSOR"
+ },
+ "ticket.query": {
+  "as_of": "2026-01-01T09:02:06Z",
+  "next_page": null,
+  "rows": [
+   {
+    "assignees": [],
+    "blocking_questions": 0,
+    "claim": null,
+    "criteria": {
+     "done": 0,
+     "total": 0
+    },
+    "epic": null,
+    "gates": {
+     "code": "n/a",
+     "plan": "open",
+     "requirements": "open",
+     "verify": "open"
+    },
+    "head_seq": 4,
+    "key": "DEMO-0006",
+    "labels": [],
+    "needs": [],
+    "owner": "p_00000000000000000000000000000001",
+    "parent": null,
+    "priority": "low",
+    "restricted": false,
+    "size": null,
+    "status": "open",
+    "tasks": {
+     "done": 0,
+     "skipped": 0,
+     "total": 0
+    },
+    "title": "Cache the board query",
+    "type": "chore",
+    "uid": "00000000000000000000000084",
+    "updated_at": "2026-01-01T09:01:52Z"
+   },
+   {
+    "assignees": [],
+    "blocking_questions": 0,
+    "claim": null,
+    "criteria": {
+     "done": 0,
+     "total": 0
+    },
+    "epic": null,
+    "gates": {
+     "code": "n/a",
+     "plan": "open",
+     "requirements": "open",
+     "verify": "open"
+    },
+    "head_seq": 2,
+    "key": "DEMO-0007",
+    "labels": [],
+    "needs": [],
+    "owner": "p_00000000000000000000000000000001",
+    "parent": null,
+    "priority": "low",
+    "restricted": false,
+    "size": null,
+    "status": "open",
+    "tasks": {
+     "done": 0,
+     "skipped": 0,
+     "total": 0
+    },
+    "title": "Rename the export button",
+    "type": "chore",
+    "uid": "00000000000000000000000085",
+    "updated_at": "2026-01-01T09:01:52Z"
+   },
+   {
+    "assignees": [],
+    "blocking_questions": 0,
+    "claim": null,
+    "criteria": {
+     "done": 0,
+     "total": 1
+    },
+    "epic": null,
+    "gates": {
+     "code": "n/a",
+     "plan": "open",
+     "requirements": "open",
+     "verify": "open"
+    },
+    "head_seq": 6,
+    "key": "DEMO-0005",
+    "labels": [],
+    "needs": [
+     "approve"
+    ],
+    "owner": "p_00000000000000000000000000000001",
+    "parent": null,
+    "priority": "low",
+    "restricted": false,
+    "size": null,
+    "status": "open",
+    "tasks": {
+     "done": 0,
+     "skipped": 0,
+     "total": 0
+    },
+    "title": "Bulk invoice import",
+    "type": "feature",
+    "uid": "00000000000000000000000083",
+    "updated_at": "2026-01-01T09:01:45Z"
+   },
+   {
+    "assignees": [],
+    "blocking_questions": 0,
+    "claim": null,
+    "criteria": {
+     "done": 0,
+     "total": 1
+    },
+    "epic": null,
+    "gates": {
+     "code": "n/a",
+     "plan": "open",
+     "requirements": "open",
+     "verify": "open"
+    },
+    "head_seq": 5,
+    "key": "DEMO-0004",
+    "labels": [],
+    "needs": [
+     "approve"
+    ],
+    "owner": "p_00000000000000000000000000000001",
+    "parent": null,
+    "priority": "medium",
+    "restricted": false,
+    "size": null,
+    "status": "open",
+    "tasks": {
+     "done": 0,
+     "skipped": 0,
+     "total": 0
+    },
+    "title": "Audit log for member changes",
+    "type": "feature",
+    "uid": "00000000000000000000000082",
+    "updated_at": "2026-01-01T09:01:38Z"
+   },
+   {
+    "assignees": [],
+    "blocking_questions": 1,
+    "claim": {
+     "agent": "orch-cli",
+     "for": "p_00000000000000000000000000000001",
+     "live": true,
+     "session": "s_00000000000000000000000004",
+     "since": "2026-01-01T09:01:24Z"
+    },
+    "criteria": {
+     "done": 1,
+     "total": 2
+    },
+    "epic": null,
+    "gates": {
+     "code": "n/a",
+     "plan": "approved",
+     "requirements": "approved",
+     "verify": "open"
+    },
+    "head_seq": 19,
+    "key": "DEMO-0003",
+    "labels": [
+     "ui"
+    ],
+    "needs": [
+     "question"
+    ],
+    "owner": "p_00000000000000000000000000000001",
+    "parent": null,
+    "priority": "medium",
+    "restricted": false,
+    "size": null,
+    "status": "in_progress",
+    "tasks": {
+     "done": 1,
+     "skipped": 0,
+     "total": 2
+    },
+    "title": "Dark mode for the settings page",
+    "type": "feature",
+    "uid": "00000000000000000000000081",
+    "updated_at": "2026-01-01T09:01:31Z"
+   },
+   {
+    "assignees": [],
+    "blocking_questions": 0,
+    "claim": {
+     "agent": "orch-cli",
+     "for": "p_00000000000000000000000000000001",
+     "live": true,
+     "session": "s_00000000000000000000000005",
+     "since": "2026-01-01T09:00:49Z"
+    },
+    "criteria": {
+     "done": 1,
+     "total": 1
+    },
+    "epic": null,
+    "gates": {
+     "code": "n/a",
+     "plan": "approved",
+     "requirements": "approved",
+     "verify": "open"
+    },
+    "head_seq": 18,
+    "key": "DEMO-0002",
+    "labels": [
+     "webhooks"
+    ],
+    "needs": [
+     "no_eligible"
+    ],
+    "owner": "p_00000000000000000000000000000001",
+    "parent": null,
+    "priority": "urgent",
+    "restricted": false,
+    "size": null,
+    "status": "testing",
+    "tasks": {
+     "done": 1,
+     "skipped": 0,
+     "total": 1
+    },
+    "title": "Retry failed webhooks",
+    "type": "bug",
+    "uid": "00000000000000000000000080",
+    "updated_at": "2026-01-01T09:00:56Z"
+   },
+   {
+    "assignees": [],
+    "blocking_questions": 0,
+    "claim": {
+     "agent": "orch-cli",
+     "for": "p_00000000000000000000000000000001",
+     "live": true,
+     "session": "s_00000000000000000000000006",
+     "since": "2026-01-01T09:00:28Z"
+    },
+    "criteria": {
+     "done": 1,
+     "total": 1
+    },
+    "epic": null,
+    "gates": {
+     "code": "n/a",
+     "plan": "approved",
+     "requirements": "approved",
+     "verify": "open"
+    },
+    "head_seq": 18,
+    "key": "DEMO-0001",
+    "labels": [
+     "billing",
+     "export"
+    ],
+    "needs": [
+     "no_eligible"
+    ],
+    "owner": "p_00000000000000000000000000000001",
+    "parent": null,
+    "priority": "high",
+    "restricted": false,
+    "size": "m",
+    "status": "testing",
+    "tasks": {
+     "done": 1,
+     "skipped": 0,
+     "total": 1
+    },
+    "title": "Export billing CSV",
+    "type": "feature",
+    "uid": "00000000000000000000000079",
+    "updated_at": "2026-01-01T09:00:42Z"
+   }
+  ],
+  "sub_cursor": "CURSOR",
+  "total": 7
+ },
+ "tickets": {
+  "answered": {
+   "artifacts": [],
+   "claim": null,
+   "criteria": [],
+   "doc": {
+    "acceptance": [],
+    "addons": {},
+    "blocked_by": [],
+    "claim": null,
+    "current_state": "",
+    "due": null,
+    "key": "DEMO-0006",
+    "labels": [],
+    "links": {
+     "branches": {},
+     "external": [],
+     "prs": [],
+     "repos": []
+    },
+    "owner": "p_00000000000000000000000000000001",
+    "parent": null,
+    "people": {
+     "assignees": [],
+     "reviewers": [],
+     "watchers": []
+    },
+    "priority": "low",
+    "questions": [
+     {
+      "answered": true,
+      "blocking": true,
+      "id": "Q1",
+      "options": [
+       {
+        "key": "memory",
+        "label": "memory"
+       },
+       {
+        "key": "redis",
+        "label": "redis"
+       }
+      ],
+      "recommended": "memory",
+      "text": "Which cache backend should the board use?",
+      "to": "ticket_owner"
+     }
+    ],
+    "sections": {
+     "context": "",
+     "current_state": "",
+     "decisions": "",
+     "plan": "",
+     "requirements": "",
+     "summary": ""
+    },
+    "size": null,
+    "status": "open",
+    "tasks": [],
+    "title": "Cache the board query",
+    "type": "chore",
+    "uid": "00000000000000000000000084",
+    "visibility": "workspace",
+    "waiting": false
+   },
+   "gates": {
+    "code": {
+     "applies": false,
+     "approved_by": [],
+     "blocked": false,
+     "count": 1,
+     "decisions": [],
+     "eligible": [
+      "p_00000000000000000000000000000001"
+     ],
+     "gen": 0,
+     "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000008",
+     "hash12": "000000000037",
+     "missing": [],
+     "policy": {
+      "applies": "off",
+      "approvers": [
+       "maintainer",
+       "owner"
+      ],
+      "count": 1,
+      "independent": true,
+      "not": [
+       "assignees"
+      ]
+     },
+     "policy_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000009",
+     "revoked_decisions": [],
+     "state": "n/a",
+     "waiting": false
+    },
+    "plan": {
+     "applies": true,
+     "approved_by": [],
+     "blocked": false,
+     "count": 1,
+     "decisions": [],
+     "eligible": [
+      "p_00000000000000000000000000000001"
+     ],
+     "gen": 0,
+     "hash": "sha256:000000000000000000000000000000000000000000000000000000000000000a",
+     "hash12": "000000000038",
+     "missing": [
+      "plan",
+      "tasks"
+     ],
+     "policy": {
+      "applies": "all",
+      "approvers": [
+       "owner"
+      ],
+      "count": 1,
+      "independent": false,
+      "not": []
+     },
+     "policy_hash": "sha256:000000000000000000000000000000000000000000000000000000000000000b",
+     "revoked_decisions": [],
+     "state": "open",
+     "waiting": false
+    },
+    "requirements": {
+     "applies": true,
+     "approved_by": [],
+     "blocked": false,
+     "count": 1,
+     "decisions": [],
+     "eligible": [
+      "p_00000000000000000000000000000001"
+     ],
+     "gen": 0,
+     "hash": "sha256:000000000000000000000000000000000000000000000000000000000000000c",
+     "hash12": "000000000039",
+     "missing": [
+      "requirements",
+      "acceptance"
+     ],
+     "policy": {
+      "applies": "all",
+      "approvers": [
+       "owner"
+      ],
+      "count": 1,
+      "independent": false,
+      "not": []
+     },
+     "policy_hash": "sha256:000000000000000000000000000000000000000000000000000000000000000d",
+     "revoked_decisions": [],
+     "state": "open",
+     "waiting": false
+    },
+    "verify": {
+     "applies": true,
+     "approved_by": [],
+     "blocked": false,
+     "count": 1,
+     "decisions": [],
+     "eligible": [],
+     "gen": 0,
+     "hash": "sha256:000000000000000000000000000000000000000000000000000000000000000e",
+     "hash12": "00000000003a",
+     "missing": [],
+     "policy": {
+      "applies": "all",
+      "approvers": [
+       "reviewers"
+      ],
+      "count": 1,
+      "independent": false,
+      "not": [
+       "assignees"
+      ]
+     },
+     "policy_hash": "sha256:000000000000000000000000000000000000000000000000000000000000000f",
+     "revoked_decisions": [],
+     "state": "open",
+     "waiting": false
+    }
+   },
+   "log": [
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000004"
+     },
+     "at": "2026-01-01T09:01:45Z",
+     "data": {
+      "owner": "p_00000000000000000000000000000001",
+      "ticket_type": "chore",
+      "title": "Cache the board query"
+     },
+     "seq": 1,
+     "summary": "",
+     "type": "ticket.created"
+    },
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000004"
+     },
+     "at": "2026-01-01T09:01:45Z",
+     "data": {
+      "paths": [
+       "ticket.priority"
+      ],
+      "sections": []
+     },
+     "seq": 2,
+     "summary": "priority",
+     "type": "ticket.updated"
+    },
+    {
+     "actor": {
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000004",
+      "unattended": true
+     },
+     "at": "2026-01-01T09:01:45Z",
+     "data": {
+      "blocking": true,
+      "question": "Q1",
+      "to": "ticket_owner"
+     },
+     "seq": 3,
+     "summary": "Q1",
+     "type": "question.asked"
+    },
+    {
+     "actor": {
+      "auth": "passphrase",
+      "device": "d_00000000000000000000000000000002",
+      "id": "p_00000000000000000000000000000001",
+      "kind": "person"
+     },
+     "at": "2026-01-01T09:01:52Z",
+     "data": {
+      "option": "memory",
+      "question": "Q1"
+     },
+     "seq": 4,
+     "summary": "answered Q1 option=memory",
+     "type": "question.answered"
+    }
+   ],
+   "log_more": false,
+   "pushes": [],
+   "questions": [
+    {
+     "answer": {
+      "at": "2026-01-01T09:01:52Z",
+      "auth": "passphrase",
+      "by": "p_00000000000000000000000000000001",
+      "option": "memory",
+      "seq": 4,
+      "text": null
+     },
+     "answered_by": "p_00000000000000000000000000000001",
+     "answered_seq": 4,
+     "asked_at": "2026-01-01T09:01:45Z",
+     "asked_by": {
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000004",
+      "unattended": true
+     },
+     "asked_seq": 3,
+     "blocking": true,
+     "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000010",
+     "id": "Q1",
+     "options": [
+      {
+       "key": "memory",
+       "label": "memory"
+      },
+      {
+       "key": "redis",
+       "label": "redis"
+      }
+     ],
+     "qid": "00000000000000000000000000000033",
+     "recommended": "memory",
+     "state": "answered",
+     "text": "Which cache backend should the board use?",
+     "to": [
+      "p_00000000000000000000000000000001"
+     ],
+     "to_ref": "ticket_owner"
+    }
+   ],
+   "sections": {},
+   "settled": false,
+   "source": [],
+   "status": "open",
+   "sub_cursor": "CURSOR",
+   "tasks": [],
+   "verdict": null
+  },
+  "closed": {
+   "artifacts": [],
+   "claim": null,
+   "closed": {
+    "at": "2026-01-01T09:01:59Z",
+    "by": "p_00000000000000000000000000000001",
+    "duplicate_of": null,
+    "event_id": "00000000000000000000000086",
+    "resolution": "wont_do",
+    "seq": 2,
+    "text": "Finance uses the comma form."
+   },
+   "criteria": [],
+   "doc": {
+    "acceptance": [],
+    "addons": {},
+    "blocked_by": [],
+    "claim": null,
+    "current_state": "",
+    "due": null,
+    "key": "DEMO-0008",
+    "labels": [],
+    "links": {
+     "branches": {},
+     "external": [],
+     "prs": [],
+     "repos": []
+    },
+    "owner": "p_00000000000000000000000000000001",
+    "parent": null,
+    "people": {
+     "assignees": [],
+     "reviewers": [],
+     "watchers": []
+    },
+    "priority": "medium",
+    "questions": [],
+    "sections": {
+     "context": "",
+     "current_state": "",
+     "decisions": "",
+     "out_of_scope": "",
+     "plan": "",
+     "requirements": "",
+     "summary": "",
+     "verification": ""
+    },
+    "size": null,
+    "status": "closed",
+    "tasks": [],
+    "title": "Support CSV with semicolons",
+    "type": "feature",
+    "uid": "00000000000000000000000087",
+    "visibility": "workspace",
+    "waiting": false
+   },
+   "gates": {
+    "code": {
+     "applies": false,
+     "approved_by": [],
+     "blocked": false,
+     "count": 1,
+     "decisions": [],
+     "eligible": [
+      "p_00000000000000000000000000000001"
+     ],
+     "gen": 0,
+     "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000011",
+     "hash12": "00000000003b",
+     "missing": [],
+     "policy": {
+      "applies": "off",
+      "approvers": [
+       "maintainer",
+       "owner"
+      ],
+      "count": 1,
+      "independent": true,
+      "not": [
+       "assignees"
+      ]
+     },
+     "policy_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000009",
+     "revoked_decisions": [],
+     "state": "n/a",
+     "waiting": false
+    },
+    "plan": {
+     "applies": true,
+     "approved_by": [],
+     "blocked": false,
+     "count": 1,
+     "decisions": [],
+     "eligible": [
+      "p_00000000000000000000000000000001"
+     ],
+     "gen": 0,
+     "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000012",
+     "hash12": "00000000003c",
+     "missing": [
+      "plan",
+      "decisions",
+      "tasks"
+     ],
+     "policy": {
+      "applies": "all",
+      "approvers": [
+       "owner"
+      ],
+      "count": 1,
+      "independent": false,
+      "not": []
+     },
+     "policy_hash": "sha256:000000000000000000000000000000000000000000000000000000000000000b",
+     "revoked_decisions": [],
+     "state": "open",
+     "waiting": false
+    },
+    "requirements": {
+     "applies": true,
+     "approved_by": [],
+     "blocked": false,
+     "count": 1,
+     "decisions": [],
+     "eligible": [
+      "p_00000000000000000000000000000001"
+     ],
+     "gen": 0,
+     "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000013",
+     "hash12": "00000000003d",
+     "missing": [
+      "context",
+      "requirements",
+      "out_of_scope",
+      "acceptance"
+     ],
+     "policy": {
+      "applies": "all",
+      "approvers": [
+       "owner"
+      ],
+      "count": 1,
+      "independent": false,
+      "not": []
+     },
+     "policy_hash": "sha256:000000000000000000000000000000000000000000000000000000000000000d",
+     "revoked_decisions": [],
+     "state": "open",
+     "waiting": false
+    },
+    "verify": {
+     "applies": true,
+     "approved_by": [],
+     "blocked": false,
+     "count": 1,
+     "decisions": [],
+     "eligible": [],
+     "gen": 0,
+     "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000014",
+     "hash12": "00000000003e",
+     "missing": [],
+     "policy": {
+      "applies": "all",
+      "approvers": [
+       "reviewers"
+      ],
+      "count": 1,
+      "independent": false,
+      "not": [
+       "assignees"
+      ]
+     },
+     "policy_hash": "sha256:000000000000000000000000000000000000000000000000000000000000000f",
+     "revoked_decisions": [],
+     "state": "open",
+     "waiting": false
+    }
+   },
+   "log": [
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000004"
+     },
+     "at": "2026-01-01T09:01:52Z",
+     "data": {
+      "owner": "p_00000000000000000000000000000001",
+      "ticket_type": "feature",
+      "title": "Support CSV with semicolons"
+     },
+     "seq": 1,
+     "summary": "",
+     "type": "ticket.created"
+    },
+    {
+     "actor": {
+      "auth": "passphrase",
+      "device": "d_00000000000000000000000000000002",
+      "id": "p_00000000000000000000000000000001",
+      "kind": "person"
+     },
+     "at": "2026-01-01T09:01:59Z",
+     "data": {
+      "resolution": "wont_do",
+      "text": "Finance uses the comma form."
+     },
+     "seq": 2,
+     "summary": "",
+     "type": "ticket.closed"
+    }
+   ],
+   "log_more": false,
+   "pushes": [],
+   "questions": [],
+   "sections": {},
+   "settled": true,
+   "source": [],
+   "status": "closed",
+   "sub_cursor": "CURSOR",
+   "tasks": [],
+   "verdict": null
+  },
+  "gate": {
+   "artifacts": [],
+   "claim": null,
+   "criteria": [
+    {
+     "covered": false,
+     "evidence": [],
+     "id": "AC1",
+     "tasks": [],
+     "text": "Every member change is listed with who and when"
+    }
+   ],
+   "doc": {
+    "acceptance": [
+     {
+      "evidence": [],
+      "id": "AC1",
+      "text": "Every member change is listed with who and when"
+     }
+    ],
+    "addons": {},
+    "blocked_by": [],
+    "claim": null,
+    "current_state": "",
+    "due": null,
+    "key": "DEMO-0004",
+    "labels": [],
+    "links": {
+     "branches": {},
+     "external": [],
+     "prs": [],
+     "repos": []
+    },
+    "owner": "p_00000000000000000000000000000001",
+    "parent": null,
+    "people": {
+     "assignees": [],
+     "reviewers": [],
+     "watchers": []
+    },
+    "priority": "medium",
+    "questions": [],
+    "sections": {
+     "context": "Asked for by finance every month end.",
+     "current_state": "",
+     "decisions": "",
+     "out_of_scope": "PDF export.",
+     "plan": "",
+     "requirements": "Owners can see who changed which member.",
+     "summary": "",
+     "verification": ""
+    },
+    "size": null,
+    "status": "open",
+    "tasks": [],
+    "title": "Audit log for member changes",
+    "type": "feature",
+    "uid": "00000000000000000000000082",
+    "visibility": "workspace",
+    "waiting": true
+   },
+   "gates": {
+    "code": {
+     "applies": false,
+     "approved_by": [],
+     "blocked": false,
+     "count": 1,
+     "decisions": [],
+     "eligible": [
+      "p_00000000000000000000000000000001"
+     ],
+     "gen": 0,
+     "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000015",
+     "hash12": "00000000003f",
+     "missing": [],
+     "policy": {
+      "applies": "off",
+      "approvers": [
+       "maintainer",
+       "owner"
+      ],
+      "count": 1,
+      "independent": true,
+      "not": [
+       "assignees"
+      ]
+     },
+     "policy_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000009",
+     "revoked_decisions": [],
+     "state": "n/a",
+     "waiting": false
+    },
+    "plan": {
+     "applies": true,
+     "approved_by": [],
+     "blocked": false,
+     "count": 1,
+     "decisions": [],
+     "eligible": [
+      "p_00000000000000000000000000000001"
+     ],
+     "gen": 4,
+     "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000016",
+     "hash12": "000000000040",
+     "missing": [
+      "plan",
+      "decisions",
+      "tasks"
+     ],
+     "policy": {
+      "applies": "all",
+      "approvers": [
+       "owner"
+      ],
+      "count": 1,
+      "independent": false,
+      "not": []
+     },
+     "policy_hash": "sha256:000000000000000000000000000000000000000000000000000000000000000b",
+     "revoked_decisions": [],
+     "state": "open",
+     "waiting": false
+    },
+    "requirements": {
+     "applies": true,
+     "approved_by": [],
+     "blocked": false,
+     "count": 1,
+     "decisions": [],
+     "eligible": [
+      "p_00000000000000000000000000000001"
+     ],
+     "gen": 4,
+     "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000017",
+     "hash12": "000000000041",
+     "missing": [],
+     "policy": {
+      "applies": "all",
+      "approvers": [
+       "owner"
+      ],
+      "count": 1,
+      "independent": false,
+      "not": []
+     },
+     "policy_hash": "sha256:000000000000000000000000000000000000000000000000000000000000000d",
+     "revoked_decisions": [],
+     "state": "open",
+     "waiting": true
+    },
+    "verify": {
+     "applies": true,
+     "approved_by": [],
+     "blocked": false,
+     "count": 1,
+     "decisions": [],
+     "eligible": [],
+     "gen": 4,
+     "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000018",
+     "hash12": "000000000042",
+     "missing": [],
+     "policy": {
+      "applies": "all",
+      "approvers": [
+       "reviewers"
+      ],
+      "count": 1,
+      "independent": false,
+      "not": [
+       "assignees"
+      ]
+     },
+     "policy_hash": "sha256:000000000000000000000000000000000000000000000000000000000000000f",
+     "revoked_decisions": [],
+     "state": "open",
+     "waiting": false
+    }
+   },
+   "log": [
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000004"
+     },
+     "at": "2026-01-01T09:01:38Z",
+     "data": {
+      "owner": "p_00000000000000000000000000000001",
+      "ticket_type": "feature",
+      "title": "Audit log for member changes"
+     },
+     "seq": 1,
+     "summary": "",
+     "type": "ticket.created"
+    },
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000004"
+     },
+     "at": "2026-01-01T09:01:38Z",
+     "data": {
+      "paths": [
+       "ticket.acceptance"
+      ],
+      "sections": []
+     },
+     "seq": 2,
+     "summary": "AC1 added",
+     "type": "ticket.updated"
+    },
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000004"
+     },
+     "at": "2026-01-01T09:01:38Z",
+     "data": {
+      "paths": [],
+      "sections": [
+       "context"
+      ]
+     },
+     "seq": 3,
+     "summary": "section context",
+     "type": "ticket.updated"
+    },
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000004"
+     },
+     "at": "2026-01-01T09:01:38Z",
+     "data": {
+      "paths": [],
+      "sections": [
+       "out_of_scope"
+      ]
+     },
+     "seq": 4,
+     "summary": "section out_of_scope",
+     "type": "ticket.updated"
+    },
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000004"
+     },
+     "at": "2026-01-01T09:01:38Z",
+     "data": {
+      "paths": [],
+      "sections": [
+       "requirements"
+      ]
+     },
+     "seq": 5,
+     "summary": "section requirements",
+     "type": "ticket.updated"
+    }
+   ],
+   "log_more": false,
+   "pushes": [],
+   "questions": [],
+   "sections": {
+    "context": [
+     {
+      "actor": {
+       "for": "p_00000000000000000000000000000001",
+       "grant": "gr_00000000000000000000000003",
+       "id": "orch-cli",
+       "kind": "agent",
+       "session": "s_00000000000000000000000004"
+      },
+      "at": "2026-01-01T09:01:38Z",
+      "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000019",
+      "refs": [],
+      "seq": 3,
+      "via": "edit"
+     }
+    ],
+    "out_of_scope": [
+     {
+      "actor": {
+       "for": "p_00000000000000000000000000000001",
+       "grant": "gr_00000000000000000000000003",
+       "id": "orch-cli",
+       "kind": "agent",
+       "session": "s_00000000000000000000000004"
+      },
+      "at": "2026-01-01T09:01:38Z",
+      "hash": "sha256:000000000000000000000000000000000000000000000000000000000000001a",
+      "refs": [],
+      "seq": 4,
+      "via": "edit"
+     }
+    ],
+    "requirements": [
+     {
+      "actor": {
+       "for": "p_00000000000000000000000000000001",
+       "grant": "gr_00000000000000000000000003",
+       "id": "orch-cli",
+       "kind": "agent",
+       "session": "s_00000000000000000000000004"
+      },
+      "at": "2026-01-01T09:01:38Z",
+      "hash": "sha256:000000000000000000000000000000000000000000000000000000000000001b",
+      "refs": [],
+      "seq": 5,
+      "via": "edit"
+     }
+    ]
+   },
+   "settled": false,
+   "source": [],
+   "status": "open",
+   "sub_cursor": "CURSOR",
+   "tasks": [],
+   "verdict": null
+  },
+  "in_progress": {
+   "artifacts": [
+    {
+     "ac": null,
+     "at": "2026-01-01T09:01:31Z",
+     "by": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000004"
+     },
+     "bytes": 7,
+     "digest": "sha256:000000000000000000000000000000000000000000000000000000000000001c",
+     "evidence": true,
+     "kind": "receipt",
+     "label": null,
+     "name": "T1-receipt.log",
+     "replaced": 0,
+     "seq": 16,
+     "task": "T1"
+    },
+    {
+     "ac": "AC1",
+     "at": "2026-01-01T09:01:31Z",
+     "by": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000004"
+     },
+     "bytes": 22,
+     "digest": "sha256:000000000000000000000000000000000000000000000000000000000000001d",
+     "evidence": true,
+     "kind": "log",
+     "label": null,
+     "name": "report.txt",
+     "replaced": 0,
+     "seq": 17,
+     "task": "T1"
+    }
+   ],
+   "claim": {
+    "agent": "orch-cli",
+    "for": "p_00000000000000000000000000000001",
+    "grant": "gr_00000000000000000000000003",
+    "idle_until": "2026-01-01T09:02:20Z",
+    "lapsed": null,
+    "last_at": "2026-01-01T09:01:31Z",
+    "live": true,
+    "session": "s_00000000000000000000000004",
+    "since": "2026-01-01T09:01:24Z",
+    "takeovers": []
+   },
+   "criteria": [
+    {
+     "covered": true,
+     "evidence": [
+      {
+       "artifact": "report.txt",
+       "attested_by": "agent",
+       "digest": "sha256:000000000000000000000000000000000000000000000000000000000000001d",
+       "kind": "log"
+      }
+     ],
+     "id": "AC1",
+     "tasks": [
+      {
+       "evidence": true,
+       "id": "T1"
+      }
+     ],
+     "text": "The page follows the system theme"
+    },
+    {
+     "covered": false,
+     "evidence": [],
+     "id": "AC2",
+     "tasks": [
+      {
+       "evidence": false,
+       "id": "T2"
+      }
+     ],
+     "text": "The choice is remembered"
+    }
+   ],
+   "doc": {
+    "acceptance": [
+     {
+      "evidence": [
+       "artifact:report.txt",
+       "task:T1"
+      ],
+      "id": "AC1",
+      "text": "The page follows the system theme"
+     },
+     {
+      "evidence": [],
+      "id": "AC2",
+      "text": "The choice is remembered"
+     }
+    ],
+    "addons": {},
+    "blocked_by": [],
+    "claim": {
+     "live": true,
+     "session": "s_00000000000000000000000004"
+    },
+    "current_state": "",
+    "due": null,
+    "key": "DEMO-0003",
+    "labels": [
+     "ui"
+    ],
+    "links": {
+     "branches": {},
+     "external": [],
+     "prs": [],
+     "repos": []
+    },
+    "owner": "p_00000000000000000000000000000001",
+    "parent": null,
+    "people": {
+     "assignees": [],
+     "reviewers": [],
+     "watchers": []
+    },
+    "priority": "medium",
+    "questions": [
+     {
+      "answered": false,
+      "blocking": true,
+      "id": "Q1",
+      "options": [
+       {
+        "key": "yes",
+        "label": "yes"
+       },
+       {
+        "key": "no",
+        "label": "no"
+       }
+      ],
+      "recommended": "no",
+      "text": "Should the dark theme also apply to the printed invoice?",
+      "to": "ticket_owner",
+      "why": "It changes the print stylesheet."
+     }
+    ],
+    "sections": {
+     "context": "Asked for by finance every month end.",
+     "current_state": "",
+     "decisions": "UTF-8, comma separated.",
+     "out_of_scope": "PDF export.",
+     "plan": "One module, streamed output.",
+     "requirements": "The settings page supports a dark theme.",
+     "summary": "",
+     "verification": ""
+    },
+    "size": null,
+    "status": "in_progress",
+    "tasks": [
+     {
+      "id": "T1",
+      "proves": [
+       "AC1"
+      ],
+      "state": "done",
+      "text": "Theme tokens",
+      "verify": {
+       "cmd": "echo tokens"
+      }
+     },
+     {
+      "id": "T2",
+      "proves": [
+       "AC2"
+      ],
+      "state": "open",
+      "text": "Persist the choice",
+      "verify": {
+       "cmd": "echo saved"
+      }
+     }
+    ],
+    "title": "Dark mode for the settings page",
+    "type": "feature",
+    "uid": "00000000000000000000000081",
+    "visibility": "workspace",
+    "waiting": true
+   },
+   "gates": {
+    "code": {
+     "applies": false,
+     "approved_by": [],
+     "blocked": false,
+     "count": 1,
+     "decisions": [],
+     "eligible": [
+      "p_00000000000000000000000000000001"
+     ],
+     "gen": 0,
+     "hash": "sha256:000000000000000000000000000000000000000000000000000000000000001e",
+     "hash12": "000000000043",
+     "missing": [],
+     "policy": {
+      "applies": "off",
+      "approvers": [
+       "maintainer",
+       "owner"
+      ],
+      "count": 1,
+      "independent": true,
+      "not": [
+       "assignees"
+      ]
+     },
+     "policy_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000009",
+     "revoked_decisions": [],
+     "state": "n/a",
+     "waiting": false
+    },
+    "plan": {
+     "applies": true,
+     "approved_by": [
+      "p_00000000000000000000000000000001"
+     ],
+     "blocked": false,
+     "count": 1,
+     "decisions": [
+      {
+       "at": "2026-01-01T09:01:24Z",
+       "auth": "passphrase",
+       "counting": true,
+       "gen": 10,
+       "hash": "sha256:000000000000000000000000000000000000000000000000000000000000001f",
+       "id": "00000000000000000000000088",
+       "kind": "approved",
+       "person": "p_00000000000000000000000000000001",
+       "policy_hash": "sha256:000000000000000000000000000000000000000000000000000000000000000b",
+       "seq": 13,
+       "voided": false
+      }
+     ],
+     "eligible": [
+      "p_00000000000000000000000000000001"
+     ],
+     "gen": 10,
+     "hash": "sha256:000000000000000000000000000000000000000000000000000000000000001f",
+     "hash12": "000000000044",
+     "missing": [],
+     "policy": {
+      "applies": "all",
+      "approvers": [
+       "owner"
+      ],
+      "count": 1,
+      "independent": false,
+      "not": []
+     },
+     "policy_hash": "sha256:000000000000000000000000000000000000000000000000000000000000000b",
+     "revoked_decisions": [],
+     "state": "approved",
+     "waiting": false
+    },
+    "requirements": {
+     "applies": true,
+     "approved_by": [
+      "p_00000000000000000000000000000001"
+     ],
+     "blocked": false,
+     "count": 1,
+     "decisions": [
+      {
+       "at": "2026-01-01T09:01:17Z",
+       "auth": "passphrase",
+       "counting": true,
+       "gen": 5,
+       "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000020",
+       "id": "00000000000000000000000089",
+       "kind": "approved",
+       "person": "p_00000000000000000000000000000001",
+       "policy_hash": "sha256:000000000000000000000000000000000000000000000000000000000000000d",
+       "seq": 8,
+       "voided": false
+      }
+     ],
+     "eligible": [
+      "p_00000000000000000000000000000001"
+     ],
+     "gen": 5,
+     "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000020",
+     "hash12": "000000000045",
+     "missing": [],
+     "policy": {
+      "applies": "all",
+      "approvers": [
+       "owner"
+      ],
+      "count": 1,
+      "independent": false,
+      "not": []
+     },
+     "policy_hash": "sha256:000000000000000000000000000000000000000000000000000000000000000d",
+     "revoked_decisions": [],
+     "state": "approved",
+     "waiting": false
+    },
+    "verify": {
+     "applies": true,
+     "approved_by": [],
+     "blocked": false,
+     "count": 1,
+     "decisions": [],
+     "eligible": [],
+     "gen": 14,
+     "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000021",
+     "hash12": "000000000046",
+     "missing": [],
+     "policy": {
+      "applies": "all",
+      "approvers": [
+       "reviewers"
+      ],
+      "count": 1,
+      "independent": false,
+      "not": [
+       "assignees"
+      ]
+     },
+     "policy_hash": "sha256:000000000000000000000000000000000000000000000000000000000000000f",
+     "revoked_decisions": [],
+     "state": "open",
+     "waiting": false
+    }
+   },
+   "log": [
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000005"
+     },
+     "at": "2026-01-01T09:01:03Z",
+     "data": {
+      "owner": "p_00000000000000000000000000000001",
+      "ticket_type": "feature",
+      "title": "Dark mode for the settings page"
+     },
+     "seq": 1,
+     "summary": "",
+     "type": "ticket.created"
+    },
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000005"
+     },
+     "at": "2026-01-01T09:01:03Z",
+     "data": {
+      "paths": [
+       "ticket.labels"
+      ],
+      "sections": []
+     },
+     "seq": 2,
+     "summary": "labels",
+     "type": "ticket.updated"
+    },
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000005"
+     },
+     "at": "2026-01-01T09:01:03Z",
+     "data": {
+      "paths": [
+       "ticket.acceptance"
+      ],
+      "sections": []
+     },
+     "seq": 3,
+     "summary": "AC1 added",
+     "type": "ticket.updated"
+    },
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000005"
+     },
+     "at": "2026-01-01T09:01:03Z",
+     "data": {
+      "paths": [
+       "ticket.acceptance"
+      ],
+      "sections": []
+     },
+     "seq": 4,
+     "summary": "AC2 added",
+     "type": "ticket.updated"
+    },
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000005"
+     },
+     "at": "2026-01-01T09:01:03Z",
+     "data": {
+      "paths": [],
+      "sections": [
+       "context"
+      ]
+     },
+     "seq": 5,
+     "summary": "section context",
+     "type": "ticket.updated"
+    },
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000005"
+     },
+     "at": "2026-01-01T09:01:10Z",
+     "data": {
+      "paths": [],
+      "sections": [
+       "out_of_scope"
+      ]
+     },
+     "seq": 6,
+     "summary": "section out_of_scope",
+     "type": "ticket.updated"
+    },
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000005"
+     },
+     "at": "2026-01-01T09:01:10Z",
+     "data": {
+      "paths": [],
+      "sections": [
+       "requirements"
+      ]
+     },
+     "seq": 7,
+     "summary": "section requirements",
+     "type": "ticket.updated"
+    },
+    {
+     "actor": {
+      "auth": "passphrase",
+      "device": "d_00000000000000000000000000000002",
+      "id": "p_00000000000000000000000000000001",
+      "kind": "person"
+     },
+     "at": "2026-01-01T09:01:17Z",
+     "data": {
+      "gate": "requirements",
+      "gen": 5
+     },
+     "seq": 8,
+     "summary": "approved requirements",
+     "type": "gate.approved"
+    },
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000005"
+     },
+     "at": "2026-01-01T09:01:17Z",
+     "data": {
+      "paths": [],
+      "sections": [
+       "plan"
+      ]
+     },
+     "seq": 9,
+     "summary": "section plan",
+     "type": "ticket.updated"
+    },
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000005"
+     },
+     "at": "2026-01-01T09:01:17Z",
+     "data": {
+      "paths": [],
+      "sections": [
+       "decisions"
+      ]
+     },
+     "seq": 10,
+     "summary": "section decisions",
+     "type": "ticket.updated"
+    },
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000005"
+     },
+     "at": "2026-01-01T09:01:17Z",
+     "data": {
+      "paths": [
+       "ticket.tasks"
+      ],
+      "sections": []
+     },
+     "seq": 11,
+     "summary": "T1 added",
+     "type": "ticket.updated"
+    },
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000005"
+     },
+     "at": "2026-01-01T09:01:17Z",
+     "data": {
+      "paths": [
+       "ticket.tasks"
+      ],
+      "sections": []
+     },
+     "seq": 12,
+     "summary": "T2 added",
+     "type": "ticket.updated"
+    },
+    {
+     "actor": {
+      "auth": "passphrase",
+      "device": "d_00000000000000000000000000000002",
+      "id": "p_00000000000000000000000000000001",
+      "kind": "person"
+     },
+     "at": "2026-01-01T09:01:24Z",
+     "data": {
+      "gate": "plan",
+      "gen": 10
+     },
+     "seq": 13,
+     "summary": "approved plan",
+     "type": "gate.approved"
+    },
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000004"
+     },
+     "at": "2026-01-01T09:01:24Z",
+     "data": {},
+     "seq": 14,
+     "summary": "",
+     "type": "claim.taken"
+    },
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000004"
+     },
+     "at": "2026-01-01T09:01:31Z",
+     "data": {
+      "task": "T1"
+     },
+     "seq": 15,
+     "summary": "T1",
+     "type": "task.started"
+    },
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000004"
+     },
+     "at": "2026-01-01T09:01:31Z",
+     "data": {
+      "bytes": 7,
+      "digest": "sha256:000000000000000000000000000000000000000000000000000000000000001c",
+      "kind": "receipt",
+      "name": "T1-receipt.log",
+      "task": "T1"
+     },
+     "seq": 16,
+     "summary": "T1-receipt.log",
+     "type": "artifact.added"
+    },
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000004"
+     },
+     "at": "2026-01-01T09:01:31Z",
+     "data": {
+      "ac": "AC1",
+      "bytes": 22,
+      "digest": "sha256:000000000000000000000000000000000000000000000000000000000000001d",
+      "kind": "log",
+      "name": "report.txt",
+      "task": "T1"
+     },
+     "seq": 17,
+     "summary": "report.txt",
+     "type": "artifact.added"
+    },
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000004"
+     },
+     "at": "2026-01-01T09:01:31Z",
+     "data": {
+      "log": "T1-receipt.log",
+      "receipt": {
+       "cmd": "echo tokens",
+       "commit": null,
+       "exit": 0,
+       "ms": 7,
+       "repo": null
+      },
+      "task": "T1"
+     },
+     "seq": 18,
+     "summary": "T1",
+     "type": "task.done"
+    },
+    {
+     "actor": {
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000004",
+      "unattended": true
+     },
+     "at": "2026-01-01T09:01:31Z",
+     "data": {
+      "blocking": true,
+      "question": "Q1",
+      "to": "ticket_owner"
+     },
+     "seq": 19,
+     "summary": "Q1",
+     "type": "question.asked"
+    }
+   ],
+   "log_more": false,
+   "pushes": [],
+   "questions": [
+    {
+     "answered_by": null,
+     "answered_seq": null,
+     "asked_at": "2026-01-01T09:01:31Z",
+     "asked_by": {
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000004",
+      "unattended": true
+     },
+     "asked_seq": 19,
+     "blocking": true,
+     "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000022",
+     "id": "Q1",
+     "options": [
+      {
+       "key": "yes",
+       "label": "yes"
+      },
+      {
+       "key": "no",
+       "label": "no"
+      }
+     ],
+     "qid": "00000000000000000000000000000034",
+     "recommended": "no",
+     "state": "open",
+     "text": "Should the dark theme also apply to the printed invoice?",
+     "to": [
+      "p_00000000000000000000000000000001"
+     ],
+     "to_ref": "ticket_owner",
+     "why": "It changes the print stylesheet."
+    }
+   ],
+   "sections": {
+    "context": [
+     {
+      "actor": {
+       "for": "p_00000000000000000000000000000001",
+       "grant": "gr_00000000000000000000000003",
+       "id": "orch-cli",
+       "kind": "agent",
+       "session": "s_00000000000000000000000005"
+      },
+      "at": "2026-01-01T09:01:03Z",
+      "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000019",
+      "refs": [],
+      "seq": 5,
+      "via": "edit"
+     }
+    ],
+    "decisions": [
+     {
+      "actor": {
+       "for": "p_00000000000000000000000000000001",
+       "grant": "gr_00000000000000000000000003",
+       "id": "orch-cli",
+       "kind": "agent",
+       "session": "s_00000000000000000000000005"
+      },
+      "at": "2026-01-01T09:01:17Z",
+      "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000023",
+      "refs": [],
+      "seq": 10,
+      "via": "edit"
+     }
+    ],
+    "out_of_scope": [
+     {
+      "actor": {
+       "for": "p_00000000000000000000000000000001",
+       "grant": "gr_00000000000000000000000003",
+       "id": "orch-cli",
+       "kind": "agent",
+       "session": "s_00000000000000000000000005"
+      },
+      "at": "2026-01-01T09:01:10Z",
+      "hash": "sha256:000000000000000000000000000000000000000000000000000000000000001a",
+      "refs": [],
+      "seq": 6,
+      "via": "edit"
+     }
+    ],
+    "plan": [
+     {
+      "actor": {
+       "for": "p_00000000000000000000000000000001",
+       "grant": "gr_00000000000000000000000003",
+       "id": "orch-cli",
+       "kind": "agent",
+       "session": "s_00000000000000000000000005"
+      },
+      "at": "2026-01-01T09:01:17Z",
+      "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000024",
+      "refs": [],
+      "seq": 9,
+      "via": "edit"
+     }
+    ],
+    "requirements": [
+     {
+      "actor": {
+       "for": "p_00000000000000000000000000000001",
+       "grant": "gr_00000000000000000000000003",
+       "id": "orch-cli",
+       "kind": "agent",
+       "session": "s_00000000000000000000000005"
+      },
+      "at": "2026-01-01T09:01:10Z",
+      "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000025",
+      "refs": [],
+      "seq": 7,
+      "via": "edit"
+     }
+    ]
+   },
+   "settled": false,
+   "source": [],
+   "status": "in_progress",
+   "sub_cursor": "CURSOR",
+   "tasks": [
+    {
+     "at": "2026-01-01T09:01:31Z",
+     "by": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000004"
+     },
+     "id": "T1",
+     "leased_by": null,
+     "proves": [
+      "AC1"
+     ],
+     "reason": null,
+     "receipt": {
+      "at": "2026-01-01T09:01:31Z",
+      "cmd": "echo tokens",
+      "commit": null,
+      "evidence": true,
+      "exit": 0,
+      "log": "T1-receipt.log",
+      "ms": 7,
+      "repo": null,
+      "seq": 18
+     },
+     "state": "done",
+     "text": "Theme tokens"
+    },
+    {
+     "at": null,
+     "by": null,
+     "id": "T2",
+     "leased_by": null,
+     "proves": [
+      "AC2"
+     ],
+     "reason": null,
+     "receipt": null,
+     "state": "open",
+     "text": "Persist the choice"
+    }
+   ],
+   "verdict": null
+  },
+  "plain": {
+   "artifacts": [],
+   "claim": null,
+   "criteria": [],
+   "doc": {
+    "acceptance": [],
+    "addons": {},
+    "blocked_by": [],
+    "claim": null,
+    "current_state": "",
+    "due": null,
+    "key": "DEMO-0007",
+    "labels": [],
+    "links": {
+     "branches": {},
+     "external": [],
+     "prs": [],
+     "repos": []
+    },
+    "owner": "p_00000000000000000000000000000001",
+    "parent": null,
+    "people": {
+     "assignees": [],
+     "reviewers": [],
+     "watchers": []
+    },
+    "priority": "low",
+    "questions": [],
+    "sections": {
+     "context": "",
+     "current_state": "",
+     "decisions": "",
+     "plan": "",
+     "requirements": "",
+     "summary": ""
+    },
+    "size": null,
+    "status": "open",
+    "tasks": [],
+    "title": "Rename the export button",
+    "type": "chore",
+    "uid": "00000000000000000000000085",
+    "visibility": "workspace",
+    "waiting": false
+   },
+   "gates": {
+    "code": {
+     "applies": false,
+     "approved_by": [],
+     "blocked": false,
+     "count": 1,
+     "decisions": [],
+     "eligible": [
+      "p_00000000000000000000000000000001"
+     ],
+     "gen": 0,
+     "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000026",
+     "hash12": "000000000047",
+     "missing": [],
+     "policy": {
+      "applies": "off",
+      "approvers": [
+       "maintainer",
+       "owner"
+      ],
+      "count": 1,
+      "independent": true,
+      "not": [
+       "assignees"
+      ]
+     },
+     "policy_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000009",
+     "revoked_decisions": [],
+     "state": "n/a",
+     "waiting": false
+    },
+    "plan": {
+     "applies": true,
+     "approved_by": [],
+     "blocked": false,
+     "count": 1,
+     "decisions": [],
+     "eligible": [
+      "p_00000000000000000000000000000001"
+     ],
+     "gen": 0,
+     "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000027",
+     "hash12": "000000000048",
+     "missing": [
+      "plan",
+      "tasks"
+     ],
+     "policy": {
+      "applies": "all",
+      "approvers": [
+       "owner"
+      ],
+      "count": 1,
+      "independent": false,
+      "not": []
+     },
+     "policy_hash": "sha256:000000000000000000000000000000000000000000000000000000000000000b",
+     "revoked_decisions": [],
+     "state": "open",
+     "waiting": false
+    },
+    "requirements": {
+     "applies": true,
+     "approved_by": [],
+     "blocked": false,
+     "count": 1,
+     "decisions": [],
+     "eligible": [
+      "p_00000000000000000000000000000001"
+     ],
+     "gen": 0,
+     "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000028",
+     "hash12": "000000000049",
+     "missing": [
+      "requirements",
+      "acceptance"
+     ],
+     "policy": {
+      "applies": "all",
+      "approvers": [
+       "owner"
+      ],
+      "count": 1,
+      "independent": false,
+      "not": []
+     },
+     "policy_hash": "sha256:000000000000000000000000000000000000000000000000000000000000000d",
+     "revoked_decisions": [],
+     "state": "open",
+     "waiting": false
+    },
+    "verify": {
+     "applies": true,
+     "approved_by": [],
+     "blocked": false,
+     "count": 1,
+     "decisions": [],
+     "eligible": [],
+     "gen": 0,
+     "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000029",
+     "hash12": "00000000004a",
+     "missing": [],
+     "policy": {
+      "applies": "all",
+      "approvers": [
+       "reviewers"
+      ],
+      "count": 1,
+      "independent": false,
+      "not": [
+       "assignees"
+      ]
+     },
+     "policy_hash": "sha256:000000000000000000000000000000000000000000000000000000000000000f",
+     "revoked_decisions": [],
+     "state": "open",
+     "waiting": false
+    }
+   },
+   "log": [
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000004"
+     },
+     "at": "2026-01-01T09:01:52Z",
+     "data": {
+      "owner": "p_00000000000000000000000000000001",
+      "ticket_type": "chore",
+      "title": "Rename the export button"
+     },
+     "seq": 1,
+     "summary": "",
+     "type": "ticket.created"
+    },
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000004"
+     },
+     "at": "2026-01-01T09:01:52Z",
+     "data": {
+      "paths": [
+       "ticket.priority"
+      ],
+      "sections": []
+     },
+     "seq": 2,
+     "summary": "priority",
+     "type": "ticket.updated"
+    }
+   ],
+   "log_more": false,
+   "pushes": [],
+   "questions": [],
+   "sections": {},
+   "settled": false,
+   "source": [],
+   "status": "open",
+   "sub_cursor": "CURSOR",
+   "tasks": [],
+   "verdict": null
+  },
+  "verdict": {
+   "artifacts": [
+    {
+     "ac": null,
+     "at": "2026-01-01T09:00:35Z",
+     "by": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000006"
+     },
+     "bytes": 9,
+     "digest": "sha256:000000000000000000000000000000000000000000000000000000000000002a",
+     "evidence": true,
+     "kind": "receipt",
+     "label": null,
+     "name": "T1-receipt.log",
+     "replaced": 0,
+     "seq": 14,
+     "task": "T1"
+    },
+    {
+     "ac": "AC1",
+     "at": "2026-01-01T09:00:35Z",
+     "by": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000006"
+     },
+     "bytes": 22,
+     "digest": "sha256:000000000000000000000000000000000000000000000000000000000000001d",
+     "evidence": true,
+     "kind": "log",
+     "label": null,
+     "name": "report.txt",
+     "replaced": 0,
+     "seq": 15,
+     "task": "T1"
+    }
+   ],
+   "claim": {
+    "agent": "orch-cli",
+    "for": "p_00000000000000000000000000000001",
+    "grant": "gr_00000000000000000000000003",
+    "idle_until": "2026-01-01T09:02:13Z",
+    "lapsed": null,
+    "last_at": "2026-01-01T09:00:42Z",
+    "live": true,
+    "session": "s_00000000000000000000000006",
+    "since": "2026-01-01T09:00:28Z",
+    "takeovers": []
+   },
+   "criteria": [
+    {
+     "covered": true,
+     "evidence": [
+      {
+       "artifact": "report.txt",
+       "attested_by": "agent",
+       "digest": "sha256:000000000000000000000000000000000000000000000000000000000000001d",
+       "kind": "log"
+      }
+     ],
+     "id": "AC1",
+     "tasks": [
+      {
+       "evidence": true,
+       "id": "T1"
+      }
+     ],
+     "text": "CSV has one row per invoice"
+    }
+   ],
+   "doc": {
+    "acceptance": [
+     {
+      "evidence": [
+       "artifact:report.txt",
+       "task:T1"
+      ],
+      "id": "AC1",
+      "text": "CSV has one row per invoice"
+     }
+    ],
+    "addons": {},
+    "blocked_by": [],
+    "claim": {
+     "live": true,
+     "session": "s_00000000000000000000000006"
+    },
+    "current_state": "",
+    "due": null,
+    "key": "DEMO-0001",
+    "labels": [
+     "billing",
+     "export"
+    ],
+    "links": {
+     "branches": {},
+     "external": [],
+     "prs": [],
+     "repos": []
+    },
+    "owner": "p_00000000000000000000000000000001",
+    "parent": null,
+    "people": {
+     "assignees": [],
+     "reviewers": [],
+     "watchers": []
+    },
+    "priority": "high",
+    "questions": [],
+    "sections": {
+     "context": "Asked for by finance every month end.",
+     "current_state": "",
+     "decisions": "UTF-8, comma separated.",
+     "out_of_scope": "PDF export.",
+     "plan": "One module, streamed output.",
+     "requirements": "Finance can download the month's invoices as one CSV file.",
+     "summary": "",
+     "verification": "Ran the exporter on March data: 42 rows, one per invoice."
+    },
+    "size": "m",
+    "status": "testing",
+    "tasks": [
+     {
+      "id": "T1",
+      "proves": [
+       "AC1"
+      ],
+      "state": "done",
+      "text": "Write the exporter",
+      "verify": {
+       "cmd": "echo exported"
+      }
+     }
+    ],
+    "title": "Export billing CSV",
+    "type": "feature",
+    "uid": "00000000000000000000000079",
+    "visibility": "workspace",
+    "waiting": true
+   },
+   "gates": {
+    "code": {
+     "applies": false,
+     "approved_by": [],
+     "blocked": false,
+     "count": 1,
+     "decisions": [],
+     "eligible": [
+      "p_00000000000000000000000000000001"
+     ],
+     "gen": 0,
+     "hash": "sha256:000000000000000000000000000000000000000000000000000000000000002b",
+     "hash12": "00000000004b",
+     "missing": [],
+     "policy": {
+      "applies": "off",
+      "approvers": [
+       "maintainer",
+       "owner"
+      ],
+      "count": 1,
+      "independent": true,
+      "not": [
+       "assignees"
+      ]
+     },
+     "policy_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000009",
+     "revoked_decisions": [],
+     "state": "n/a",
+     "waiting": false
+    },
+    "plan": {
+     "applies": true,
+     "approved_by": [
+      "p_00000000000000000000000000000001"
+     ],
+     "blocked": false,
+     "count": 1,
+     "decisions": [
+      {
+       "at": "2026-01-01T09:00:28Z",
+       "auth": "passphrase",
+       "counting": true,
+       "gen": 9,
+       "hash": "sha256:000000000000000000000000000000000000000000000000000000000000002c",
+       "id": "00000000000000000000000090",
+       "kind": "approved",
+       "person": "p_00000000000000000000000000000001",
+       "policy_hash": "sha256:000000000000000000000000000000000000000000000000000000000000000b",
+       "seq": 11,
+       "voided": false
+      }
+     ],
+     "eligible": [
+      "p_00000000000000000000000000000001"
+     ],
+     "gen": 9,
+     "hash": "sha256:000000000000000000000000000000000000000000000000000000000000002c",
+     "hash12": "00000000004c",
+     "missing": [],
+     "policy": {
+      "applies": "all",
+      "approvers": [
+       "owner"
+      ],
+      "count": 1,
+      "independent": false,
+      "not": []
+     },
+     "policy_hash": "sha256:000000000000000000000000000000000000000000000000000000000000000b",
+     "revoked_decisions": [],
+     "state": "approved",
+     "waiting": false
+    },
+    "requirements": {
+     "applies": true,
+     "approved_by": [
+      "p_00000000000000000000000000000001"
+     ],
+     "blocked": false,
+     "count": 1,
+     "decisions": [
+      {
+       "at": "2026-01-01T09:00:21Z",
+       "auth": "passphrase",
+       "counting": true,
+       "gen": 5,
+       "hash": "sha256:000000000000000000000000000000000000000000000000000000000000002d",
+       "id": "00000000000000000000000091",
+       "kind": "approved",
+       "person": "p_00000000000000000000000000000001",
+       "policy_hash": "sha256:000000000000000000000000000000000000000000000000000000000000000d",
+       "seq": 7,
+       "voided": false
+      }
+     ],
+     "eligible": [
+      "p_00000000000000000000000000000001"
+     ],
+     "gen": 5,
+     "hash": "sha256:000000000000000000000000000000000000000000000000000000000000002d",
+     "hash12": "00000000004d",
+     "missing": [],
+     "policy": {
+      "applies": "all",
+      "approvers": [
+       "owner"
+      ],
+      "count": 1,
+      "independent": false,
+      "not": []
+     },
+     "policy_hash": "sha256:000000000000000000000000000000000000000000000000000000000000000d",
+     "revoked_decisions": [],
+     "state": "approved",
+     "waiting": false
+    },
+    "verify": {
+     "applies": true,
+     "approved_by": [],
+     "blocked": false,
+     "count": 1,
+     "decisions": [],
+     "eligible": [],
+     "gen": 14,
+     "hash": "sha256:000000000000000000000000000000000000000000000000000000000000002e",
+     "hash12": "00000000004e",
+     "missing": [],
+     "policy": {
+      "applies": "all",
+      "approvers": [
+       "reviewers"
+      ],
+      "count": 1,
+      "independent": false,
+      "not": [
+       "assignees"
+      ]
+     },
+     "policy_hash": "sha256:000000000000000000000000000000000000000000000000000000000000000f",
+     "revoked_decisions": [],
+     "state": "open",
+     "waiting": true
+    }
+   },
+   "log": [
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000007"
+     },
+     "at": "2026-01-01T09:00:07Z",
+     "data": {
+      "owner": "p_00000000000000000000000000000001",
+      "ticket_type": "feature",
+      "title": "Export billing CSV"
+     },
+     "seq": 1,
+     "summary": "",
+     "type": "ticket.created"
+    },
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000007"
+     },
+     "at": "2026-01-01T09:00:07Z",
+     "data": {
+      "paths": [
+       "ticket.labels",
+       "ticket.priority",
+       "ticket.size"
+      ],
+      "sections": []
+     },
+     "seq": 2,
+     "summary": "labels, priority, size",
+     "type": "ticket.updated"
+    },
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000007"
+     },
+     "at": "2026-01-01T09:00:07Z",
+     "data": {
+      "paths": [
+       "ticket.acceptance"
+      ],
+      "sections": []
+     },
+     "seq": 3,
+     "summary": "AC1 added",
+     "type": "ticket.updated"
+    },
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000007"
+     },
+     "at": "2026-01-01T09:00:14Z",
+     "data": {
+      "paths": [],
+      "sections": [
+       "context"
+      ]
+     },
+     "seq": 4,
+     "summary": "section context",
+     "type": "ticket.updated"
+    },
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000007"
+     },
+     "at": "2026-01-01T09:00:14Z",
+     "data": {
+      "paths": [],
+      "sections": [
+       "out_of_scope"
+      ]
+     },
+     "seq": 5,
+     "summary": "section out_of_scope",
+     "type": "ticket.updated"
+    },
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000007"
+     },
+     "at": "2026-01-01T09:00:14Z",
+     "data": {
+      "paths": [],
+      "sections": [
+       "requirements"
+      ]
+     },
+     "seq": 6,
+     "summary": "section requirements",
+     "type": "ticket.updated"
+    },
+    {
+     "actor": {
+      "auth": "passphrase",
+      "device": "d_00000000000000000000000000000002",
+      "id": "p_00000000000000000000000000000001",
+      "kind": "person"
+     },
+     "at": "2026-01-01T09:00:21Z",
+     "data": {
+      "gate": "requirements",
+      "gen": 5
+     },
+     "seq": 7,
+     "summary": "approved requirements",
+     "type": "gate.approved"
+    },
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000007"
+     },
+     "at": "2026-01-01T09:00:21Z",
+     "data": {
+      "paths": [],
+      "sections": [
+       "plan"
+      ]
+     },
+     "seq": 8,
+     "summary": "section plan",
+     "type": "ticket.updated"
+    },
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000007"
+     },
+     "at": "2026-01-01T09:00:21Z",
+     "data": {
+      "paths": [],
+      "sections": [
+       "decisions"
+      ]
+     },
+     "seq": 9,
+     "summary": "section decisions",
+     "type": "ticket.updated"
+    },
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000007"
+     },
+     "at": "2026-01-01T09:00:28Z",
+     "data": {
+      "paths": [
+       "ticket.tasks"
+      ],
+      "sections": []
+     },
+     "seq": 10,
+     "summary": "T1 added",
+     "type": "ticket.updated"
+    },
+    {
+     "actor": {
+      "auth": "passphrase",
+      "device": "d_00000000000000000000000000000002",
+      "id": "p_00000000000000000000000000000001",
+      "kind": "person"
+     },
+     "at": "2026-01-01T09:00:28Z",
+     "data": {
+      "gate": "plan",
+      "gen": 9
+     },
+     "seq": 11,
+     "summary": "approved plan",
+     "type": "gate.approved"
+    },
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000006"
+     },
+     "at": "2026-01-01T09:00:28Z",
+     "data": {},
+     "seq": 12,
+     "summary": "",
+     "type": "claim.taken"
+    },
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000006"
+     },
+     "at": "2026-01-01T09:00:35Z",
+     "data": {
+      "task": "T1"
+     },
+     "seq": 13,
+     "summary": "T1",
+     "type": "task.started"
+    },
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000006"
+     },
+     "at": "2026-01-01T09:00:35Z",
+     "data": {
+      "bytes": 9,
+      "digest": "sha256:000000000000000000000000000000000000000000000000000000000000002a",
+      "kind": "receipt",
+      "name": "T1-receipt.log",
+      "task": "T1"
+     },
+     "seq": 14,
+     "summary": "T1-receipt.log",
+     "type": "artifact.added"
+    },
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000006"
+     },
+     "at": "2026-01-01T09:00:35Z",
+     "data": {
+      "ac": "AC1",
+      "bytes": 22,
+      "digest": "sha256:000000000000000000000000000000000000000000000000000000000000001d",
+      "kind": "log",
+      "name": "report.txt",
+      "task": "T1"
+     },
+     "seq": 15,
+     "summary": "report.txt",
+     "type": "artifact.added"
+    },
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000006"
+     },
+     "at": "2026-01-01T09:00:35Z",
+     "data": {
+      "log": "T1-receipt.log",
+      "receipt": {
+       "cmd": "echo exported",
+       "commit": null,
+       "exit": 0,
+       "ms": 5,
+       "repo": null
+      },
+      "task": "T1"
+     },
+     "seq": 16,
+     "summary": "T1",
+     "type": "task.done"
+    },
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000006"
+     },
+     "at": "2026-01-01T09:00:35Z",
+     "data": {
+      "paths": [],
+      "sections": [
+       "verification"
+      ]
+     },
+     "seq": 17,
+     "summary": "section verification",
+     "type": "ticket.updated"
+    },
+    {
+     "actor": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000006"
+     },
+     "at": "2026-01-01T09:00:42Z",
+     "data": {},
+     "seq": 18,
+     "summary": "",
+     "type": "ticket.submitted"
+    }
+   ],
+   "log_more": false,
+   "pushes": [],
+   "questions": [],
+   "sections": {
+    "context": [
+     {
+      "actor": {
+       "for": "p_00000000000000000000000000000001",
+       "grant": "gr_00000000000000000000000003",
+       "id": "orch-cli",
+       "kind": "agent",
+       "session": "s_00000000000000000000000007"
+      },
+      "at": "2026-01-01T09:00:14Z",
+      "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000019",
+      "refs": [],
+      "seq": 4,
+      "via": "edit"
+     }
+    ],
+    "decisions": [
+     {
+      "actor": {
+       "for": "p_00000000000000000000000000000001",
+       "grant": "gr_00000000000000000000000003",
+       "id": "orch-cli",
+       "kind": "agent",
+       "session": "s_00000000000000000000000007"
+      },
+      "at": "2026-01-01T09:00:21Z",
+      "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000023",
+      "refs": [],
+      "seq": 9,
+      "via": "edit"
+     }
+    ],
+    "out_of_scope": [
+     {
+      "actor": {
+       "for": "p_00000000000000000000000000000001",
+       "grant": "gr_00000000000000000000000003",
+       "id": "orch-cli",
+       "kind": "agent",
+       "session": "s_00000000000000000000000007"
+      },
+      "at": "2026-01-01T09:00:14Z",
+      "hash": "sha256:000000000000000000000000000000000000000000000000000000000000001a",
+      "refs": [],
+      "seq": 5,
+      "via": "edit"
+     }
+    ],
+    "plan": [
+     {
+      "actor": {
+       "for": "p_00000000000000000000000000000001",
+       "grant": "gr_00000000000000000000000003",
+       "id": "orch-cli",
+       "kind": "agent",
+       "session": "s_00000000000000000000000007"
+      },
+      "at": "2026-01-01T09:00:21Z",
+      "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000024",
+      "refs": [],
+      "seq": 8,
+      "via": "edit"
+     }
+    ],
+    "requirements": [
+     {
+      "actor": {
+       "for": "p_00000000000000000000000000000001",
+       "grant": "gr_00000000000000000000000003",
+       "id": "orch-cli",
+       "kind": "agent",
+       "session": "s_00000000000000000000000007"
+      },
+      "at": "2026-01-01T09:00:14Z",
+      "hash": "sha256:000000000000000000000000000000000000000000000000000000000000002f",
+      "refs": [],
+      "seq": 6,
+      "via": "edit"
+     }
+    ],
+    "verification": [
+     {
+      "actor": {
+       "for": "p_00000000000000000000000000000001",
+       "grant": "gr_00000000000000000000000003",
+       "id": "orch-cli",
+       "kind": "agent",
+       "session": "s_00000000000000000000000006"
+      },
+      "at": "2026-01-01T09:00:35Z",
+      "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000030",
+      "refs": [],
+      "seq": 17,
+      "via": "edit"
+     }
+    ]
+   },
+   "settled": false,
+   "source": [],
+   "status": "testing",
+   "sub_cursor": "CURSOR",
+   "tasks": [
+    {
+     "at": "2026-01-01T09:00:35Z",
+     "by": {
+      "for": "p_00000000000000000000000000000001",
+      "grant": "gr_00000000000000000000000003",
+      "id": "orch-cli",
+      "kind": "agent",
+      "session": "s_00000000000000000000000006"
+     },
+     "id": "T1",
+     "leased_by": null,
+     "proves": [
+      "AC1"
+     ],
+     "reason": null,
+     "receipt": {
+      "at": "2026-01-01T09:00:35Z",
+      "cmd": "echo exported",
+      "commit": null,
+      "evidence": true,
+      "exit": 0,
+      "log": "T1-receipt.log",
+      "ms": 5,
+      "repo": null,
+      "seq": 16
+     },
+     "state": "done",
+     "text": "Write the exporter"
+    }
+   ],
+   "verdict": null
+  }
+ },
+ "welcome": {
+  "caps": [
+   "ops/1",
+   "outcome/1",
+   "sub/1",
+   "blob/1",
+   "diff/1",
+   "query/1",
+   "read_ext/1",
+   "read_ext/2",
+   "activity/1",
+   "settings/1",
+   "text/1",
+   "sub_ext/1"
+  ],
+  "ops": {
+   "ac.add": 1,
+   "ac.edit": 1,
+   "activity.list": 1,
+   "addon.disable": 1,
+   "addon.grant": 1,
+   "addon.list": 1,
+   "addon.purge": 1,
+   "answer": 1,
+   "apply": 1,
+   "approve": 1,
+   "artifact.add": 1,
+   "artifact.get": 1,
+   "artifact.list": 1,
+   "artifact.replace": 1,
+   "ask": 1,
+   "blob.drop": 1,
+   "blob.put": 1,
+   "check": 1,
+   "claim": 1,
+   "close": 1,
+   "describe": 1,
+   "doctor": 1,
+   "grant": 1,
+   "grant.list": 1,
+   "grant.revoke": 1,
+   "handoff": 1,
+   "help": 1,
+   "host.status": 1,
+   "human.cancel": 1,
+   "human.get": 1,
+   "human.pending": 1,
+   "human.prepare": 1,
+   "human.submit": 1,
+   "inbox": 1,
+   "instructions.hook": 1,
+   "instructions.sync": 1,
+   "list": 1,
+   "log": 1,
+   "member.add": 1,
+   "member.list": 1,
+   "member.remove": 1,
+   "member.role": 1,
+   "move": 1,
+   "needs": 1,
+   "new": 1,
+   "next": 1,
+   "outcome.get": 1,
+   "policy.set": 1,
+   "release": 1,
+   "reopen": 1,
+   "request_changes": 1,
+   "search": 1,
+   "section.set": 1,
+   "session.list": 1,
+   "set": 1,
+   "settings.set": 1,
+   "show": 1,
+   "status": 1,
+   "sub.close": 1,
+   "sub.open": 1,
+   "submit": 1,
+   "task.add": 1,
+   "task.block": 1,
+   "task.list": 1,
+   "task.next": 1,
+   "task.reopen": 1,
+   "task.skip": 1,
+   "task.start": 1,
+   "ticket.get": 1,
+   "ticket.query": 1,
+   "ticket.text": 1,
+   "verdict": 1,
+   "wait": 1,
+   "whoami": 1,
+   "workspace.settings": 1,
+   "workspace.show": 1
+  }
+ },
+ "whoami": {
+  "person": "p_00000000000000000000000000000001",
+  "workspace": "00000000000000000000000000000035"
+ },
+ "workspace.settings": {
+  "defaults": [
+   "grant_hours",
+   "claim_ttl_min",
+   "lease_ttl_min"
+  ],
+  "gates": {
+   "code": {
+    "applies": "off",
+    "approvers": [
+     "maintainer",
+     "owner"
+    ],
+    "count": 1,
+    "independent": true,
+    "not": [
+     "assignees"
+    ]
+   },
+   "plan": {
+    "applies": "all",
+    "approvers": [
+     "owner"
+    ],
+    "count": 1,
+    "independent": false,
+    "not": []
+   },
+   "requirements": {
+    "applies": "all",
+    "approvers": [
+     "owner"
+    ],
+    "count": 1,
+    "independent": false,
+    "not": []
+   },
+   "verify": {
+    "applies": "all",
+    "approvers": [
+     "reviewers"
+    ],
+    "count": 1,
+    "independent": false,
+    "not": [
+     "assignees"
+    ]
+   }
+  },
+  "next_page": null,
+  "policy_at": null,
+  "settings": {
+   "claim_ttl_min": 120,
+   "grant_hours": 8,
+   "lease_ttl_min": 60,
+   "repos": {}
+  },
+  "settings_at": null,
+  "sub_cursor": "CURSOR"
+ },
+ "workspace.show": {
+  "epoch": 0,
+  "genesis": "sha256:0000000000000000000000000000000000000000000000000000000000000031",
+  "id": "00000000000000000000000000000035",
+  "members_v": 1,
+  "name": "billing",
+  "prefix": "DEMO",
+  "state": "ok",
+  "wsk_fingerprint": "sha256:00000000000000000000000000000036"
+ }
+}

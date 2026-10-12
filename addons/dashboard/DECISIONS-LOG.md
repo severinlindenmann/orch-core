@@ -1401,3 +1401,21 @@ and by-lines are escaped.
 **Why:** One fragment everywhere lets the person compare one thing. A fixed list missed U+061C and the tag characters.
 
 **Revert:** `uuid8` back to `slice(0, 8)`, the confirmation word back to `<PREFIX>/SETTINGS`, `text.py` back to the fixed `HIDDEN` list.
+
+## 2026-10-12 — M5 click-to-sign in the dashboard (phase 1; D65 amended)
+
+**Decision:** (1) In phase 1 the dashboard signs with one click through core's separate signer child (H5c, host contract 0.8.6). This
+amends D65 (the passphrase prompt in a terminal) for phase 1 only, per the owner decision of 12 Oct 2026 (coordination log "OWNER RE-PLAN
+P2", #264 comment 6121460551, and core's D65 phase-1 exception D-P2-23). (2) The dashboard is trusted with signing authority; the key stays
+in the signer child. The card and every sign panel say: "Convenience signing: agents running as you, or anything that takes over this
+dashboard, could sign." (3) Sign is offered only where the signer reports the workspace flag on and itself able to sign; "Sign in the
+terminal instead" (a separate hand-off) stays in every dialog; `grant` and every op the signer does not list are terminal only. (4) The panel
+shows only the signer's View; Sign is armed after 500 ms of visible presentation. (5) The workspace "needs you" number counts only what Today
+counts (RH-6). (6) Identity is per workspace (`queries.me(ws)`): a person has a different id in each workspace. (7) A receipt without a
+host label says "attestation unknown"; a task's `verify` command is shown as untrusted text.
+
+**Why:** The owner wants one click for daily work on a single-person, single-machine workspace; the separate signer keeps the key out of the
+HTTP process against passive disclosure, while the accepted risk (same-UID agents, a taken-over dashboard) is stated where it matters.
+
+**Revert:** Switch the flag off per workspace (`orch host convenience off --workspace W`), or `ORCH_DASHBOARD_CLICK=off` for the server; remove
+`click.py`, `click_signer.py`, `HandoffDialog`'s click branch and `ClickSignPanel`. The terminal hand-off is unchanged underneath.

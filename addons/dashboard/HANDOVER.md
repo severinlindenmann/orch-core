@@ -920,3 +920,52 @@ workspace's git state and so shows a Changes tab; it has no `move`, no `workspac
 the real host cannot prepare with an idem (the stub accepts the idem), keeps requests in memory, signs with its own `devhost sign`, uses a
 registry that pins no name or prefix, and its `needs`/`ticket.query` snapshots are simulated. Treat the stub as a development adapter only:
 acceptance is the real-host suite and the Playwright scenarios in orch-dev-kit (`e2e/dashboard/`).
+
+## Click-to-sign (H5c, M5, 12 Oct)
+
+Owner decision of 12 Oct 2026 (coordination log "OWNER RE-PLAN P2", #264 comment 6121460551): in phase 1 the dashboard signs with one click.
+Source of truth is `docs/architecture/orch-v2-host.md` section 0.8.6; this is how the dashboard meets it.
+
+**Trust model.** The dashboard (this server and the browser) is trusted with signing authority; core's separate signer child holds the key
+(never this HTTP process, never the browser). Card text, also the first line of every sign panel, verbatim: "Convenience signing: agents
+running as you, or anything that takes over this dashboard, could sign."
+
+**Pieces.**
+- `server/src/orch_dashboard/click_signer.py`: one signer child per server (`orch.click.spawn.start()`), started on first use, restarted
+  if it exits (open approvals become terminal-only), stopped with the server (`ClickClient.close()`, which kills only that child's PID).
+  Refuses a signer whose `status.contract != 1` ("update orch-core"). The child gets our environment without `PYTHONPATH` and with
+  `ORCH_STATE_DIR` set to the registry this server reads. `ORCH_DASHBOARD_CLICK=off` never starts one (the tests use it).
+  Never run the dashboard with a `PYTHONPATH` pointing at another core: the child runs `python -I -m orch.click` from the dashboard
+  venv's own orch-core, and orch-core is a runtime dependency (`orch-core>=2.0.0.dev0`, editable path source).
+- `server/src/orch_dashboard/click.py`: the closed routes `POST /api/w/{ws}/click/{prepare,view,sign,cancel}` and `GET .../click/status`.
+  `prepare` takes the same typed actions as the hand-off (`PrepareBody`); the op is chosen server-side (`host_call`), one idem per click
+  (bound to the session and workspace, reused on retry), files for `member_add`. `view`, `sign` and `cancel` work only on requests THIS
+  session prepared (otherwise `not_found`). `view` passes the signer's View through unchanged (the server only checks that it names the
+  op it prepared). `sign` answers `{state, duplicate, key?, seq?}`, never the host's result. The open-request quota is one per session,
+  shared with the hand-off (reserve, commit, release under one lock). Views, words and credentials are never logged.
+  Only these handlers call the signer (a test greps for it); no addon path reaches `prepare`.
+- The per-workspace flag: `GET /api/workspaces` carries `click` (custody, enabled, available, problem) from the signer's `status`, and the
+  feature `click` when the flag is on and the signer can sign there. The UI offers Sign only then (`clickReady`).
+- UI: `HandoffDialog` (all signed actions) offers **Sign** and **Sign in the terminal instead** (a separate `human.prepare {handoff:true}`
+  request; the click request is cancelled first because the person chose). An action with nothing to fill in no longer starts the terminal
+  request by itself when Sign is offered. `ClickSignPanel` shows ONLY the View: the risk line first, op, WS8 badge, prefix and name through
+  `visible()`, fingerprint, `lines` as text, checks with their time, artifacts, expiry; word ops show the View's word and a field (sent
+  exactly as typed). Sign is armed after 500 ms of visible presentation (the timer restarts on blur and when the page is hidden); a
+  press that began before it was armed, an auto-repeat and a bare script click are ignored; a new View resets everything. No URL or query
+  opens a panel. `api/click.ts` maps every code and reason of 0.8.6 to one honest message and one next step; a refusal never cancels, only
+  Cancel does (and closing after `uncertain` does not cancel either). The workspace card (Settings, General) shows the risk line when
+  the custody is `convenience`.
+- HTTP (item 7): CSP with `object-src 'none'`, `form-action 'self'`, `frame-ancestors 'none'`, `base-uri 'none'`, `X-Frame-Options: DENY`,
+  `nosniff`, `Referrer-Policy: no-referrer`, `no-store` on `/api` and `/auth`; exact Host and Origin, `null`/missing Origin refused on
+  mutations; `Sec-Fetch-Site` enforced when present on API calls; every POST is `application/json` and bounded (16 KiB on view, sign and
+  cancel); no CORS; the bearer only in tab memory and `sessionStorage`.
+
+**Tests.** `tests/test_dashboard_click.py` (faked channel: lifecycle, routes, error mapping, parity with the hand-off gates, the quota under
+concurrency), `tests/test_dashboard_http.py`, and `tests/test_realhost_click.py`: a REAL host and the REAL signer child. On macOS core's
+convenience store is the login keychain, so `tests/click_child.py` swaps core's documented test seam (`orch.custody.convenience.open_store`)
+for the 0600 file store of the disposable state; the keychain is never opened. The key is moved with the real
+`orch keys custody convenience` in a pty. Frontend: `components/sign/click-*.test.tsx`, `production/click.test.tsx`.
+
+**Open points.** The rate limit (30 per minute) is mapped and unit tested, not provoked on the real signer. The server cannot show the
+prepared events of a click request (the signer holds them and validates them), so the hand-off's `expected()` event check is replaced by the
+signer's own checks and the op comparison on `view`.

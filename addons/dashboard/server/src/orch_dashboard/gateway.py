@@ -15,8 +15,17 @@ from .text import hidden
 WORKSPACE_ID = re.compile(r"^(?:[a-f0-9]{32}|[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})$")
 
 
-def state_dir():
-    return Path(os.environ.get("ORCH_STATE_DIR", str(Path.home() / ".config/orch")))
+def state_dir(env=None) -> Path:
+    """Core's resolution order exactly (orch.ops.runtime.state_dir; a test holds them equal): ORCH_STATE_DIR (made
+    absolute), else an absolute XDG_CONFIG_HOME/orch (a relative one is invalid per the XDG spec and ignored), else
+    HOME/.config/orch. The dashboard and the host must agree on it, or each looks in a different place."""
+    env = os.environ if env is None else env
+    if env.get("ORCH_STATE_DIR"):
+        return Path(os.path.abspath(env["ORCH_STATE_DIR"]))
+    if env.get("XDG_CONFIG_HOME", "").startswith("/"):
+        return Path(env["XDG_CONFIG_HOME"]) / "orch"
+    home = env.get("HOME") or str(Path.home())
+    return Path(home) / ".config" / "orch"
 
 
 def read_pins(path):

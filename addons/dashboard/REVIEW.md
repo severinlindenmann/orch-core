@@ -499,3 +499,16 @@ browser console shows no CSP error (sonner's styles are in the built CSS).
 2. Press "Approve requirements": the dialog shows the command `orch sign XXXX-XXXX`, a fingerprint, an expiry countdown and a preview from the host.
 3. In a terminal with the same `ORCH_DEV=1 ORCH_STATE_DIR=...` run `python -m devhost sign XXXX-XXXX` (from `addons/dashboard`). Compare the fingerprint, type the ticket key, then the passphrase. The dialog turns to "Signed".
 4. Try Cancel, waiting past 10 minutes (Expired), approving twice (Already done), changing the ticket while the code is open (the warning), Comment/Add label/Close/Reopen from the command palette, and New ticket (title and type). Move, Ask and the quick ticket are absent.
+
+## Try P2 M4 settings and the switcher (dev stub, own terminals)
+
+1. Start the stub with two workspaces that share the prefix DEMO (two disposable dev workspaces, each with its own person):
+   `python -m devhost WS1 WS2 --person p_one --person p_two` (same `ORCH_DEV=1`, `ORCH_STATE_DIR`, `.orch-dev` rules as before), then
+   `uv run python -m orch_dashboard open`.
+2. Open `/w/DEMO`: the page asks which workspace. Pick one; the address gains `?ws=<8 hex>`. Open the switcher: both rows show their short id.
+3. Settings: change the grant length (hand-off; sign with `python -m devhost sign CODE` or `python -m orch sign CODE`: the real signer refuses
+   `settings.set` until R5). Add a member from two files (a public key and a device certificate), change a role, revoke a grant, edit the code
+   review policy (the assignee and independence boxes are locked).
+4. With the stub's `ORCH_DEV_SETTINGS=0` the settings show "This host does not say..." and no value.
+5. `touch <run>/<uuid>/stopped` takes a workspace down: the switcher shows "Host not running", the other keeps working; remove the file to
+   bring it back. Open a hand-off and switch workspace (Back): it is cancelled.

@@ -818,3 +818,32 @@ the next click retries with the same idem and adopts the request the host return
 retry may come back `submitted`, `cancelled` or `expired` and says so; `idem.conflict` is an error, `idem.expired` says "This
 attempt is too old" and starts again only on the click with a new idem. The dev stub implements the same (records kept 24 h,
 written beside the dev state so a restart never makes a second request). A prepare has no `outcome.get`; the state is `human.pending {request_id}`.
+
+## P2 server (M4 settings)
+
+Reduced workspace settings and the switcher by UUID (#306), on host contract v1.5. Same hand-off machinery as M3; the dashboard
+signs nothing and never calls `human.submit`.
+
+| Route | Host op | Notes |
+| --- | --- | --- |
+| `GET /api/w/<uuid>/settings` | `workspace.settings` (cap `settings/1`) | durations, `defaults`, the four gate policies (canonical), repos as `{name, default_branch, remote}` (follows `next_page`, at most 8 pages, `repos_more`), `settings_at`/`policy_at`. Without the cap: `{available:false}` and every other field `null`. A repo `path` is never forwarded; a `remote` only as a canonical identity without userinfo |
+| `GET /api/w/<uuid>/members` | `member.list` | person, name, role, devices `{id, auth, scopes, valid}`; no `last_seen` |
+| `GET /api/w/<uuid>/grants?active=` | `grant.list` | what the host gives this person (owner: all; others: their own). `read_ext/2`: `revoked{by,at,seq}`, `session_ids` (cap 100), `sessions_more`; absent = `null` |
+| `POST /api/w/<uuid>/handoff` | `human.prepare` | new actions: `settings_set` (grant_hours 1..24, claim_ttl_min 15..1440, lease_ttl_min 5..1440; `repos` refused), `policy_set` (one gate, the F1 5.7 `Policy` in canonical form; code: `not` has `assignees`, `independent: true`), `member_add` (name, role, `pk` = base64url of 65 bytes, `cert` = strict JSON object <= 16 KiB; `pk` is an argument and the certificate goes in `files.cert.b64`, argument `cert: "-"`), `member_role`, `member_remove`, `grant_revoke` (optional reason) |
+
+The host's prepared events are checked against the ask before they are shown (`handoff.expected`): type, person, role, values,
+the certificate. Features: `settings`, `members`, `settings_read`, `grant_list`, `read_ext2`, and `do:<op>` for each inner op the host
+lists in `welcome.ops` (R5 pending for `policy.set`/`settings.set`). Cancel on switch and the per-session ownership are unchanged.
+
+Browser: `src/app/pages/settings/host/` (General, Members, Gates, Grants), a `?ws=<uuid8>` hint when workspaces share a prefix
+(`api/workspaces.ts`, `app/urls.ts`, `app/workspace.tsx`), switcher rows for stopped hosts, `useHandoff` cancels on a workspace
+change. Live: `settings.changed`, `policy.changed`, `grant.*` refetch the settings queries; the grants list also refetches on focus
+and every 30 s (a non-owner is not sent others' grant items).
+
+Dev stub: `devhost/settingsops.py` serves the reads and the six operations on the P1 model (the certificate is checked with
+`check_member_added`), serves several workspaces from one process (`python -m devhost WS1 WS2 --person P1 --person P2`; a file named
+`stopped` in `<run>/<uuid>/` takes that workspace down, "host not running"), and the stub signer signs the workspace operations.
+Real `orch sign`: signs `member.*` and `grant.revoke`; it refuses `settings.set` and `policy.set` (not in the signer's table until R5).
+
+Open for stream A: `member.add` takes the key as `pk` (argument) and only the certificate as a file today; confirm that is the R9 shape
+(the brief spoke of both as files). Confirmation word for `settings.set`/`policy.set`. `human.pending` carries no origin.

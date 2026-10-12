@@ -12,19 +12,16 @@ retry); a retry with the same key answers from this process's record instead of 
 import base64
 import hashlib
 import json
-import os
 import threading
 import time
 from collections import OrderedDict
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, Request
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from . import adapters
-from .errors import HostError, fail
+from .errors import fail
 from .gateway import Gateway
 from .hostlink import _pairs, _valid
 from .reads import Key, workspace
@@ -37,32 +34,24 @@ Label = Annotated[str, StringConstraints(pattern=r"^[a-z0-9][a-z0-9._-]{0,31}$")
 Question = Annotated[str, StringConstraints(pattern=r"^Q[1-9][0-9]{0,5}$")]
 Gate = Literal["requirements", "plan", "code"]
 
+CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+
+def host_idem(token: str, ws: str, idem: str) -> str:
+    """The key the host sees: the browser's key bound to this session and workspace, in the host's shape. Another
+    session sending the same key gets another request (it is never handed this session's), and a retry from this
+    session, with the same key, gets the same one back."""
+    digest = hashlib.sha256(f"orch-dashboard/idem\0{token}\0{ws}\0{idem}".encode()).digest()
+    n = int.from_bytes(digest[:17], "big")
+    chars = [CROCKFORD[(n >> (5 * i)) & 31] for i in range(26)]
+    chars[0] = CROCKFORD[(n >> 125) & 7]
+    return "a_" + "".join(chars)
+
+
 HUMAN_OPS = ("human.prepare", "human.get", "human.pending", "human.cancel")  # never human.submit
 PER_SESSION = 8  # design section 3: pending sign requests per session
 TTL = 600
 REMEMBERED = 256
-LOST_KEPT = 900  # seconds a lost-call marker or an attempt record is kept (a request lives 600 s)
-SLACK = 2  # seconds either side of a window (host timestamps have whole-second resolution)
-UNKNOWN_CAP = 256
-
-
-@dataclass
-class Lost:
-    """A prepare whose answer was lost: the window in which the host may have made a request of ours."""
-
-    start: float
-    end: float
-    ids: set[str] = field(default_factory=set)  # the attempts that may have made it
-
-
-@dataclass
-class Attempt:
-    id: str
-    ws: str
-    op: str
-    key: str | None
-    start: float
-    end: float | None = None  # None while it runs
 
 
 class Action(BaseModel):
@@ -443,8 +432,10 @@ def expected(action: Action):
 
 
 class Handoffs:
-    """What this process remembers, **per session token**: the requests it prepared (kept to their expiry so a late poll
-    still works), the ones still open (the quota), and the idem records of its own clicks."""
+    """What this process remembers, **per session token**: the requests it prepared (kept to their expiry so a late
+    poll still works), the ones still open (the quota), and the idem records of its own clicks. A lost prepare answer
+    needs no bookkeeping here: the host honours `opts.idem`, so the same click retried returns the same request (host
+    contract 0.7), never a second one."""
 
     def __init__(self, clock=time.monotonic):
         self.clock = clock
@@ -452,47 +443,6 @@ class Handoffs:
         self.owned: dict[str, dict[str, tuple[str, float]]] = {}  # token -> request id -> (workspace, deadline)
         self.active: dict[str, set[str]] = {}
         self.by_idem: OrderedDict[tuple[str, str, str], tuple[str, dict | None]] = OrderedDict()  # None: in flight
-        self.unknown: dict[tuple[str, str, str], Lost] = {}  # (token, ws, binding) -> the lost call's window
-        self.attempts: list[Attempt] = []  # every prepare of this process, any session: who else could own an orphan
-        self.ever: OrderedDict[str, float] = OrderedDict()  # request ids this process has ever been handed
-        self.serial = 0
-
-    def begin(self, ws: str, op: str, key: str | None) -> Attempt:  # under the lock
-        self.serial += 1
-        mine = Attempt(f"p{self.serial}", ws, op, key, time.time())
-        self.attempts.append(mine)
-        self.forget()
-        return mine
-
-    def forget(self):  # under the lock: bounded, entries expire
-        now = time.time()
-        # Attempts still in flight are never dropped (crowded() must see them); finished ones are bounded.
-        done = [a for a in self.attempts if a.end is not None and a.end > now - LOST_KEPT][-512:]
-        self.attempts[:] = [a for a in self.attempts if a.end is None or a in done]
-        for slot in [k for k, v in self.unknown.items() if v.end < now - LOST_KEPT]:
-            del self.unknown[slot]
-        while len(self.unknown) > UNKNOWN_CAP:
-            del self.unknown[next(iter(self.unknown))]
-        while len(self.ever) > 1024:
-            self.ever.popitem(last=False)
-
-    def all_known(self) -> set[str]:
-        with self.lock:
-            return {rid for mine in self.owned.values() for rid in mine} | set(self.ever)
-
-    def crowded(self, lost: Lost, op: str, ws: str, key: str | None, me: str) -> bool:
-        """Was another prepare for the same op and ticket running in the lost call's window (any session or tab)?"""
-        with self.lock:
-            return any(
-                a.id != me
-                and a.id not in lost.ids
-                and (a.ws, a.op, a.key) == (ws, op, key)
-                # The host stamps created_at in whole seconds (rounded down), so a request it lists as created by
-                # lost.end + SLACK may come from an attempt that started up to a second later.
-                and a.start < lost.end + SLACK + 1
-                and (a.end is None or a.end >= lost.start - SLACK)
-                for a in self.attempts
-            )
 
     def binding(self, action: Action) -> str:
         body = action.model_dump(exclude={"idem"}, exclude_none=True)
@@ -534,47 +484,6 @@ def register(app: FastAPI, gateway: Gateway):
 
     app.state.human = human
 
-    def ours(origin) -> bool:
-        """The host states who made the request (kernel uid and pid, and the self-declared client): only ours counts."""
-        client = origin.get("client") if isinstance(origin, dict) else None
-        return (
-            isinstance(origin, dict)
-            and origin.get("pid") == os.getpid()
-            and origin.get("uid") == os.getuid()
-            and isinstance(client, str)
-            and (client == "orch-dashboard" or client.startswith("orch-dashboard/"))
-        )
-
-    def recover(ws: str, op: str, key: str | None, lost: Lost, me: str) -> list[str]:
-        """`human.prepare` ignores `opts.idem` (host 0.8.1): every call makes a request. After a lost answer this
-        only CANCELS orphans that are provably ours; it never adopts one. Provably ours: the same op and ticket,
-        created in the lost call's own window, unknown to every session of this process, and (the host states the
-        origin in `human.get`) made by this process as `orch-dashboard`. If another prepare for the same op and
-        ticket ran in the window, or the origin is missing or foreign, nothing is cancelled. A `HostError`
-        propagates and the caller keeps the marker. Returns the `expires_at` of the matching requests left open."""
-        rows = human(ws, "human.pending", {})["requests"]
-        known = handoffs.all_known()
-        crowded = handoffs.crowded(lost, op, ws, key, me)
-        left: list[str] = []
-        for row in rows:
-            if not (
-                row["state"] == "prepared"
-                and row["id"] not in known
-                and row["op"] == op
-                and (key is None or row.get("key") == key)
-                and lost.start - SLACK <= (_epoch(row["created_at"]) or 0) <= lost.end + SLACK
-            ):
-                continue
-            try:
-                if crowded or not ours(human(ws, "human.get", {"request_id": row["id"]}).get("origin")):
-                    left.append(row["expires_at"])
-                    continue
-                human(ws, "human.cancel", {"request_id": row["id"]})
-            except HostError as exc:
-                if exc.error["code"] not in ("not_found", "human.request_expired"):
-                    raise
-        return left
-
     @app.post("/api/w/{ws}/handoff")
     def prepare(body: PrepareBody, request: Request, ws: str = Depends(workspace)):
         token, binding = request.state.token, handoffs.binding(body)
@@ -593,10 +502,6 @@ def register(app: FastAPI, gateway: Gateway):
             handoffs.by_idem[slot] = (binding, None)  # reserved: a concurrent twin is refused, not prepared again
             while len(handoffs.by_idem) > REMEMBERED:
                 handoffs.by_idem.popitem(last=False)
-            lost = handoffs.unknown.get((token, ws, binding))  # kept until a recovery has completed
-            op = host_call(body, [])[0]
-            me = handoffs.begin(ws, op, getattr(body, "key", None))
-        called = answered = False
         try:
             labels = (
                 list(gateway.call(ws, "ticket.get", {"ref": body.key})["doc"].get("labels", []))
@@ -604,46 +509,32 @@ def register(app: FastAPI, gateway: Gateway):
                 else None
             )
             op, args = host_call(body, labels)
+            key = getattr(body, "key", None)
             if op in WORKSPACE_OPS and gateway.link(ws).welcome.get("ops", {}).get(op) != 1:
                 # policy.set and settings.set wait for F1 events on a real host (R5): never offered, never guessed.
                 raise fail("op.unsupported", f"This host does not serve {op} yet.", exit=1)
-            left = recover(ws, op, me.key, lost, me.id) if lost is not None else None
-            called = True
+            # The host honours `opts.idem` (contract 0.7): after a lost answer the same click, with the same key,
+            # returns the SAME request in its current state. It is provably ours: the host binds the key to the
+            # principal and the arguments. A key is used for one prepare only (the submit uses its own).
             prepared = human(
-                ws, "human.prepare", {"op": op, "args": args, "handoff": True}, idem=body.idem, files=host_files(body)
+                ws,
+                "human.prepare",
+                {"op": op, "args": args, "handoff": True},
+                idem=host_idem(token, ws, body.idem),
+                files=host_files(body),
             )
-            answered = True  # a request may exist from here on, whatever happens to the answer
             response = adapters.handoff.request(
-                prepared, ws, expect_op=op, expect_key=me.key, expect_events=expected(body)
+                prepared, ws, expect_op=op, expect_key=key, expect_events=expected(body)
             )
-            if lost is not None:
-                response["earlier_open"] = {"expires_at": max(left) if left else None}
-        except BaseException as exc:
+        except BaseException:
             with handoffs.lock:
-                handoffs.by_idem.pop(slot, None)
-                # The marker stays until a retry has completed. A second lost answer widens the window (earliest start),
-                # it never replaces it; any other failure leaves the marker exactly as it was.
-                if called and (
-                    answered or (isinstance(exc, HostError) and exc.error["code"] in ("outcome.unknown", "cancelled"))
-                ):
-                    now = time.time()
-                    handoffs.unknown[(token, ws, binding)] = (
-                        Lost(min(lost.start, me.start), now, lost.ids | {me.id})
-                        if lost
-                        else Lost(me.start, now, {me.id})
-                    )
+                handoffs.by_idem.pop(slot, None)  # a retry with the same key gets the same request back
             raise
-        finally:
-            with handoffs.lock:
-                me.end = time.time()
-                if not called and me in handoffs.attempts:
-                    handoffs.attempts.remove(me)  # it never reached the host's prepare: it made no request
         with handoffs.lock:
-            handoffs.unknown.pop((token, ws, binding), None)
             handoffs.by_idem[slot] = (binding, response)
-            handoffs.ever[response["id"]] = time.time()
             handoffs.prune(token)[response["id"]] = (ws, handoffs.clock() + TTL)
-            handoffs.active.setdefault(token, set()).add(response["id"])
+            if response["state"] in ("prepared", "bound"):
+                handoffs.active.setdefault(token, set()).add(response["id"])
         return response
 
     def owned_ws(request: Request, request_id: str, ws: str) -> str:
@@ -682,10 +573,3 @@ def register(app: FastAPI, gateway: Gateway):
             handoffs.settle(token, rid)
 
     app.state.cancel_session = cancel_session
-
-
-def _epoch(value: str) -> float | None:
-    try:
-        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC).timestamp()
-    except (TypeError, ValueError):
-        return None

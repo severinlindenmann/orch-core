@@ -13,12 +13,15 @@ The stub holds no key and signs nothing. Requests live in memory and do not surv
 a person's own requests only (one peer, one person). `move` is not served (it waits for H6b).
 """
 
+import base64
 import copy
 import dataclasses
+import json
 import os
 import re
 import secrets
 import time
+from pathlib import Path
 from typing import Any
 
 from orch import canon
@@ -33,6 +36,7 @@ from orch_dashboard.errors import HostError, fail
 from . import review, settingsops
 
 TTL = 600
+KEPT = 24 * 3600  # an ended request and its idem record are kept this long
 MAX_PENDING = 20
 CODE_CHARS = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 REQUEST_ID = re.compile(r"^hr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")
@@ -116,6 +120,34 @@ class Requests:
         self.clock = clock
         self.table: dict[str, dict[str, Any]] = {}
         self.idems: dict[str, dict[str, Any]] = {}
+        # `human.prepare` honours `opts.idem` (host contract 0.7): idem -> {binding, request id, at}. Kept 24 h after
+        # the request ended; a host restart never forgets it (written next to the dev state).
+        self.prepares: dict[str, dict[str, Any]] = {}
+        self.path = Path(host.state) / f"dev-human-requests-{host.ws}.json"
+        self.load()
+
+    def load(self) -> None:
+        try:
+            data = json.loads(self.path.read_text())
+        except (OSError, ValueError):
+            return
+        self.table = {r["id"]: r for r in data.get("requests", [])}
+        for r in self.table.values():
+            if isinstance(r.get("signed"), str):
+                r["signed"] = base64.b64decode(r["signed"])  # the submitted bytes were stored as base64
+        self.prepares = data.get("prepares", {})
+
+    def save(self) -> None:
+        keep = ("appended",)  # store objects of a submit: not state a restart needs
+        rows = [{k: v for k, v in r.items() if k not in keep} for r in self.table.values()]
+        for r in rows:
+            if isinstance(r.get("signed"), bytes):
+                r["signed"] = base64.b64encode(r["signed"]).decode()
+        tmp = self.path.with_suffix(".tmp")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            json.dump({"requests": rows, "prepares": self.prepares}, f)
+        os.replace(tmp, self.path)
 
     # -- state -------------------------------------------------------------------------------------------------------
     def state(self, request: dict[str, Any]) -> str:
@@ -172,6 +204,25 @@ class Requests:
         if signer is not None:
             self.check_signer(store, signer)
         dry = opts.get("dry_run") is True
+        idem = None if dry else opts.get("idem")
+        binding = None
+        if idem is not None:
+            if not isinstance(idem, str) or not IDEM.fullmatch(idem):
+                raise invalid("idem is a_ and 26 characters")
+            binding = review.digest_of(
+                {"op": op, "args": op_args, "signer": signer, "handoff": handoff, "person": self.host.person,
+                 "files": {n: review.digest_of(base64.b64encode(d).decode()) for n, d in sorted((files or {}).items())}}
+            )  # fmt: skip
+            known = self.prepares.get(idem)
+            if known is not None:
+                if known["binding"] != binding:
+                    raise fail("idem.conflict", "this idem was used for other arguments", exit=5)
+                request = self.table.get(known["request"])
+                state = self.state(request) if request else None
+                ended = state not in ("prepared", "bound")
+                if request is None or (ended and self.clock() > known["at"] + TTL + KEPT):
+                    raise fail("idem.expired", "this idem is only a tombstone now", exit=2)
+                return self.view(request)  # the SAME request, in its current state (prepared, bound or ended)
         if not dry and self.pending_count() >= MAX_PENDING:
             raise fail("quota.host", "too many pending sign requests", exit=9)
         person = self.host.person
@@ -220,6 +271,9 @@ class Requests:
             out["request"] = None
             return out
         self.table[request["id"]] = request
+        if idem is not None:
+            self.prepares[idem] = {"binding": binding, "request": request["id"], "at": now}
+        self.save()
         return out
 
     def check_signer(self, store, signer: Any) -> None:
@@ -263,6 +317,7 @@ class Requests:
             event["actor"]["device"], event["auth"] = signer["device"], signer["auth"]
             judge(store, event, request["log"])
         request["events"], request["bound"], request["state"] = events, dict(signer), "bound"
+        self.save()
         return self.view(request)
 
     def pending(self, args: dict[str, Any], lookups: list[float] | None = None) -> dict[str, Any]:
@@ -314,6 +369,7 @@ class Requests:
         state = self.state(request)
         if state in ("prepared", "bound"):
             request["state"] = "cancelled"
+            self.save()
             return {"state": "cancelled"}
         return {"state": state if state in ("submitted", "cancelled") else "cancelled"}
 
@@ -353,6 +409,7 @@ class Requests:
         seq = appended[-1].event["seq"]
         answer = {"data": {"op": request["op"]}, "key": request["key"], "seq": seq}
         request.update(state="submitted", signed=canonical(events), result={"seq": seq}, answer=answer, error=None)
+        self.save()
         self.idems[idem] = {"binding": binding, "answer": answer}
         return self.replay(answer, duplicate=False)
 

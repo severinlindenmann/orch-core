@@ -81,8 +81,6 @@ export interface HandoffRequest {
   material: HandoffMaterial
   events: HandoffEvent[]
   origin?: { uid: number; pid: number; client: string; created_at: string } | null
-  /** Only on a retry after a lost answer: an earlier attempt may still be open (its host expiry when known). */
-  earlier_open?: { expires_at: string | null }
 }
 
 /** A written section is at most 64 KiB of UTF-8 (P1 and the host), counted in bytes like the server. */
@@ -168,6 +166,9 @@ export function expiryMs(expiresAt: string, now = Date.now()): number | null {
   return Number.isFinite(at) && at > now - 60_000 && at < now + 15 * 60_000 ? at : null
 }
 
+/** Only a request that has ended is excused the expiry window; anything else must still be live. */
+const isOpen = (state: HandoffStateName) => state !== 'submitted' && state !== 'cancelled' && state !== 'expired'
+
 /** True only when the digest, the fingerprint, the review and the expiry the server sent are what this browser computes. */
 export function requestIsConsistent(request: HandoffRequest): boolean {
   try {
@@ -177,7 +178,8 @@ export function requestIsConsistent(request: HandoffRequest): boolean {
       fingerprintOf(digest, request.events, request.op) === request.fingerprint &&
       materialKeysOk(request.material) &&
       reviewMatches(request.material, request.events) &&
-      expiryMs(request.expires_at) !== null
+      // A retry with the same key returns the request in its current state: an ended one keeps the time it had.
+      (isOpen(request.state) ? expiryMs(request.expires_at) !== null : /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(request.expires_at))
     )
   } catch {
     return false
@@ -217,5 +219,12 @@ export const IDEM = /^a_[0-7][0-9A-HJKMNP-TV-Z]{25}$/
 
 /** Codes of a refusal that mean the work is already done (design 4.3): no signature is needed. */
 export const ALREADY_DONE = new Set(['gate.already_approved', 'transition.refused'])
+/**
+ * Codes of the host about the KEY of a prepare (host contract 0.7): the same key with other arguments, and a key whose record
+ * is gone (kept 24 h after the request ended). Neither is retried: the person starts again, with a new key, on their click.
+ */
+export const KEY_REUSED = 'idem.conflict'
+export const KEY_TOO_OLD = 'idem.expired'
+
 /** Codes that mean the state moved between prepare and submit: refetch, then offer to prepare again. */
 export const CHANGED = new Set(['gate.stale', 'members.stale', 'question.stale', 'artifact.mismatch', 'observe.unavailable', 'source.missing', 'conflict.field', 'conflict.section'])

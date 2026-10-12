@@ -13,8 +13,15 @@ from orch_dashboard.errors import HostError
 PREPARE = "human.prepare"
 
 
+def fresh_idem():
+    """A new key for each prepare: the stub honours `opts.idem`, so a repeated key is the same request."""
+    import secrets
+
+    return "a_0" + "".join(secrets.choice("0123456789ABCDEFGHJKMNPQRSTVWXYZ") for _ in range(25))
+
+
 def prepare(link, op, args, **extra):
-    return link.call(PREPARE, {"op": op, "args": args, "handoff": True, **extra}, write=True, idem="a_" + "0" * 26)
+    return link.call(PREPARE, {"op": op, "args": args, "handoff": True, **extra}, write=True, idem=fresh_idem())
 
 
 def pending(link, **args):
@@ -189,9 +196,7 @@ def test_dry_run_stores_nothing_and_move_is_not_served(signing, rich):
     with pytest.raises(HostError, match="op.not_allowed"):
         prepare(link, "grant", {})
     with pytest.raises(HostError, match="invalid.input"):
-        link.call(
-            PREPARE, {"op": "log", "args": {"ref": "DEMO-0001", "message": "x"}}, write=True, idem="a_" + "0" * 26
-        )
+        link.call(PREPARE, {"op": "log", "args": {"ref": "DEMO-0001", "message": "x"}}, write=True, idem=fresh_idem())
 
 
 def test_every_person_operation_prepares_and_signs(signing, rich):

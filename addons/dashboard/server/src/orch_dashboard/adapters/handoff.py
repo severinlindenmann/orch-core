@@ -58,9 +58,11 @@ def inconsistent():
     return fail("internal", "The host's sign request does not match its own hashes.", exit=1)
 
 
-def expires_ok(value) -> bool:
+def expires_ok(value, open_request: bool = True) -> bool:
     if not isinstance(value, str) or not TIME.fullmatch(value):
         return False
+    if not open_request:
+        return True  # an ended request keeps the time it had; only its shape is checked
     end = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC).timestamp()
     return time.time() - 60 < end < time.time() + MAX_LIFE
 
@@ -103,8 +105,9 @@ def request(
             (expect_op is not None and prepared["op"] != expect_op)
             or (expect_key is not None and (material.get("ticket") or {}).get("key") != expect_key)
             or not isinstance(info, dict)
-            or info["state"] != "prepared"
-            or not expires_ok(info["expires_at"])
+            # A retry with the same idem returns the request in its CURRENT state (host contract 0.7): open, or ended.
+            or info["state"] not in STATES
+            or not expires_ok(info["expires_at"], info["state"] in ("prepared", "bound"))
             or not isinstance(events, list)
             or not all(isinstance(e, dict) for e in events)
             or not isinstance(material, dict)

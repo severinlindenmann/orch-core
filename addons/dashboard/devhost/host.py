@@ -306,7 +306,7 @@ class StubHost:
         if op != "human.prepare" and opts.get("dry_run") is not None:
             raise fail("invalid.input", exit=5)
         if op == "human.prepare":
-            return Result(data=self.requests.prepare(store, views, args, opts, files))
+            return Result(data=self.requests.prepare(store, views, args, opts, *([files] if files else [])))
         if op == "human.get":
             return Result(data=self.requests.get(store, views, args))
         if op == "human.pending":

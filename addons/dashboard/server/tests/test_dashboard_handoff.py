@@ -1,5 +1,7 @@
 """#305 (M3) server: prepare, look at and cancel a hand-off. The server never signs and never calls human.submit."""
 
+import time
+
 import pytest
 from conftest import ORIGIN
 
@@ -180,7 +182,12 @@ def test_a_retry_with_the_same_key_answers_from_the_record_and_prepares_once(rea
     assert len(signing.stub.requests.table) == 1
     assert [c[0] for c in host_calls].count("human.prepare") == 1
     prepare = next(c for c in host_calls if c[0] == "human.prepare")
-    assert prepare[2]["idem"] == idem(5) and prepare[1]["handoff"] is True and "signer" not in prepare[1]
+    assert (
+        prepare[2]["idem"] != idem(5)
+        and prepare[2]["idem"].startswith("a_")
+        and prepare[1]["handoff"] is True
+        and "signer" not in prepare[1]
+    )
     clash = post(client, token, stub, {**body, "message": "another"})
     assert clash.status_code == 409 and clash.json()["error"]["code"] == "idem.conflict"
 
@@ -381,7 +388,7 @@ def test_an_inconsistent_prepared_request_fails_closed(ready, monkeypatch, mutat
         elif mutate == "expires_bad":
             out["request"]["expires_at"] = "soon"
         else:
-            out["request"]["state"] = "bound"
+            out["request"]["state"] = "weird"  # (bound is a real state of a retried request now)
         # keep the hashes consistent so only the new check can refuse it
         digest = adapters.handoff.review_digest(out["material"])
         out["review_digest"], out["fingerprint"] = (
@@ -463,23 +470,17 @@ def test_the_dashboard_follows_a_request_by_its_id_and_never_looks_up_a_code(rea
             assert "code" not in args
 
 
-# --- orphan recovery after a lost prepare answer (M3 fix round 2): cancel what is provably ours, adopt nothing ---
+# --- a lost prepare answer: the host honours opts.idem (contract 0.7), so the same click returns the same request ---
 
 
-def lose(monkeypatch, *, drop=1, fail_pending=0, fail_get=0, code="outcome.unknown"):
-    """The host makes the request, then the answer is lost (`drop` times); reads can fail while recovering."""
+def lose(monkeypatch, *, drop=1, code="outcome.unknown"):
+    """The host makes the request, then the answer is lost (`drop` times)."""
     from orch_dashboard.errors import fail
 
     original = HostLink.call
-    plan = {"drop": drop, "pending": fail_pending, "get": fail_get}
+    plan = {"drop": drop}
 
     def flaky(self, op, args=None, **kw):
-        if op == "human.pending" and not args and plan["pending"]:
-            plan["pending"] -= 1
-            raise fail("host.unavailable")
-        if op == "human.get" and plan["get"]:
-            plan["get"] -= 1
-            raise fail(code)
         out = original(self, op, args, **kw)
         if op == "human.prepare" and plan["drop"]:
             plan["drop"] -= 1
@@ -501,143 +502,126 @@ def states(signing):
     return {rid: r["state"] for rid, r in signing.stub.requests.table.items()}
 
 
-def test_a_retry_cancels_its_own_orphan_and_prepares_a_fresh_request_on_the_click(ready, monkeypatch):
+def test_a_lost_answer_then_a_retry_returns_the_same_request_and_makes_no_second(ready, monkeypatch, host_calls):
     client, token, stub, rich, signing = ready
     lose(monkeypatch)
     body = {"action": "comment", "key": "DEMO-0001", "message": "hi", "idem": idem(63)}
     first = post(client, token, stub, body)
     assert first.status_code == 503 and first.json()["error"]["code"] == "outcome.unknown"
+    assert len(signing.stub.requests.table) == 1  # the host made it; the answer was lost
+    (made,) = signing.stub.requests.table
     second = post(client, token, stub, body)
-    assert second.status_code == 200
-    seen = states(signing)
-    assert sorted(seen.values()) == ["cancelled", "prepared"] and seen[second.json()["id"]] == "prepared"
-    assert second.json()["earlier_open"] == {"expires_at": None}  # the panel says "within 10 minutes"
+    assert second.status_code == 200 and second.json()["id"] == made and "earlier_open" not in second.json()
+    assert states(signing) == {made: "prepared"}
+    # Both calls carried the same key, and nothing was listed, fetched or cancelled to find an orphan.
+    prepares = [c for c in host_calls if c[0] == "human.prepare"]
+    hosted = [c[2]["idem"] for c in prepares]
+    assert hosted[0] == hosted[1] != idem(63) and hosted[0].startswith("a_")  # one key per click, bound to the session
+    assert {c[0] for c in host_calls} <= {"human.prepare", "addon.list", "ticket.get"}
 
 
-def test_a_retry_neither_adopts_nor_cancels_another_sessions_request(ready, auth, monkeypatch):
+def test_the_retried_request_is_the_one_the_signer_can_sign(ready, monkeypatch):
     client, token, stub, rich, signing = ready
     lose(monkeypatch)
-    a_body = {"action": "comment", "key": "DEMO-0001", "message": "A text", "idem": idem(1)}
-    assert post(client, token, stub, a_body).status_code == 503
+    body = {"action": "comment", "key": "DEMO-0001", "message": "hi", "idem": idem(64)}
+    assert post(client, token, stub, body).status_code == 503
+    got = post(client, token, stub, body).json()
+    status, shown = signing.sign(got["code"])
+    assert status == 0, shown
+    assert list(states(signing).values()) == ["submitted"]
+
+
+def test_other_arguments_with_the_same_idem_are_a_conflict(ready, monkeypatch):
+    client, token, stub, rich, signing = ready
+    lose(monkeypatch)
+    body = {"action": "comment", "key": "DEMO-0001", "message": "hi", "idem": idem(65)}
+    assert post(client, token, stub, body).status_code == 503
+    # The server's own record is gone with the failed call: the HOST answers the conflict.
+    res = post(client, token, stub, {**body, "message": "another text"})
+    assert res.status_code == 409 and res.json()["error"]["code"] == "idem.conflict"
+    assert len(signing.stub.requests.table) == 1
+
+
+def test_a_retry_after_the_request_ended_answers_its_terminal_state(ready, monkeypatch):
+    client, token, stub, rich, signing = ready
+    lose(monkeypatch)
+    body = {"action": "comment", "key": "DEMO-0001", "message": "hi", "idem": idem(66)}
+    assert post(client, token, stub, body).status_code == 503
+    (made,) = signing.stub.requests.table
+    signing.stub.requests.cancel({"request_id": made})
+    again = post(client, token, stub, body)
+    assert again.status_code == 200 and again.json()["id"] == made and again.json()["state"] == "cancelled"
+    assert len(signing.stub.requests.table) == 1
+
+
+def test_a_retry_after_a_signature_answers_submitted(ready, monkeypatch):
+    client, token, stub, rich, signing = ready
+    lose(monkeypatch)
+    body = {"action": "comment", "key": "DEMO-0001", "message": "hi", "idem": idem(67)}
+    assert post(client, token, stub, body).status_code == 503
+    (made,) = signing.stub.requests.table
+    status, shown = signing.sign(signing.stub.requests.table[made]["code"])
+    assert status == 0, shown
+    again = post(client, token, stub, body)
+    assert again.status_code == 200 and again.json()["state"] == "submitted" and again.json()["id"] == made
+    assert again.json()["code"] is None or isinstance(again.json()["code"], str)
+
+
+def test_after_the_record_is_kept_no_longer_the_same_idem_is_expired(ready, monkeypatch):
+    client, token, stub, rich, signing = ready
+    lose(monkeypatch)
+    body = {"action": "comment", "key": "DEMO-0001", "message": "hi", "idem": idem(68)}
+    assert post(client, token, stub, body).status_code == 503
+    (made,) = signing.stub.requests.table
+    signing.stub.requests.cancel({"request_id": made})
+    now = time.time()
+    monkeypatch.setattr(signing.stub.requests, "clock", lambda: now + 25 * 3600)
+    res = post(client, token, stub, body)
+    assert res.status_code == 409 and res.json()["error"]["code"] == "idem.expired"
+    assert len(signing.stub.requests.table) == 1  # never a second request: the person starts again with a new key
+
+
+def test_a_host_restart_never_produces_a_second_request(ready, monkeypatch):
+    from devhost.host import StubHost
+
+    client, token, stub, rich, signing = ready
+    lose(monkeypatch)
+    body = {"action": "comment", "key": "DEMO-0001", "message": "hi", "idem": idem(69)}
+    assert post(client, token, stub, body).status_code == 503
+    (made,) = signing.stub.requests.table
+    restarted = StubHost(stub.root, stub.state, stub.person)  # a new process: its tables are read from disk
+    assert list(restarted.requests.table) == [made]
+    (host_key,) = restarted.requests.prepares  # the key the host saw (the browser's, bound to its session)
+    assert restarted.requests.prepares[host_key]["request"] == made
+    res = restarted.call("human.prepare", body_args(body), {"idem": host_key})
+    assert res["data"]["request"]["id"] == made and len(restarted.requests.table) == 1
+
+
+def body_args(body):
+    return {"op": "log", "args": {"ref": body["key"], "message": body["message"]}, "handoff": True}
+
+
+def test_without_a_key_the_stub_makes_a_request_each_call(ready):
+    client, token, stub, rich, signing = ready
+    args = body_args({"key": "DEMO-0001", "message": "hi"})
+    one, two = (signing.stub.call("human.prepare", args, {}) for _ in range(2))
+    assert one["data"]["request"]["id"] != two["data"]["request"]["id"]
+    # A dry run neither stores nor looks anything up.
+    dry = signing.stub.call("human.prepare", args, {"dry_run": True, "idem": idem(70)})
+    assert dry["data"]["request"] is None and idem(70) not in signing.stub.requests.prepares
+
+
+def test_another_sessions_request_is_never_reachable_after_a_retry(ready, auth, monkeypatch):
+    client, token, stub, rich, signing = ready
     other = second_session(client, auth)
-    theirs = client.post(
-        base(stub),
-        json={"action": "comment", "key": "DEMO-0001", "message": "B text", "idem": idem(2)},
-        headers=auth_h(other, True),
-    ).json()
-    retry = post(client, token, stub, a_body).json()
-    assert retry["id"] != theirs["id"]
-    assert states(signing)[theirs["id"]] == "prepared"  # B's request is untouched, and A cannot reach it
-    assert client.delete(f"{base(stub)}/{theirs['id']}", headers=auth_h(token, True)).status_code == 404
-    assert states(signing)[theirs["id"]] == "prepared"
-
-
-def test_nothing_is_cancelled_when_another_prepare_ran_in_the_window(ready, monkeypatch):
-    client, token, stub, rich, signing = ready
-    import time
-
-    from orch_dashboard.handoff import Attempt
-
-    lose(monkeypatch)
-    body = {"action": "comment", "key": "DEMO-0001", "message": "hi", "idem": idem(5)}
-    assert post(client, token, stub, body).status_code == 503
-    handoffs = client.app.state.handoffs
-    handoffs.attempts.append(Attempt("tab2", stub.ws, "log", "DEMO-0001", time.time() - 0.5, None))  # still in flight
-    again = post(client, token, stub, body)
-    assert again.status_code == 200
-    assert sorted(states(signing).values()) == ["prepared", "prepared"]  # the orphan stays; it expires by itself
-    assert again.json()["earlier_open"]["expires_at"]  # the host's own time is shown
-
-
-def _origin_edited(monkeypatch, edit):
-    inner = HostLink.call
-
-    def edited(self, op, args=None, **kw):
-        out = inner(self, op, args, **kw)
-        if op == "human.get" and isinstance(out, dict):
-            out = edit(out)
-        return out
-
-    monkeypatch.setattr(HostLink, "call", edited)
-
-
-@pytest.mark.parametrize(
-    "edit",
-    [
-        lambda out: {k: v for k, v in out.items() if k != "origin"},  # the host states no origin
-        lambda out: out | {"origin": out["origin"] | {"pid": out["origin"]["pid"] + 1}},  # another process
-        lambda out: out | {"origin": out["origin"] | {"client": "orch-cli"}},  # another client
-    ],
-    ids=["no-origin", "other-pid", "other-client"],
-)
-def test_nothing_is_cancelled_unless_the_host_states_the_origin_is_this_process(ready, monkeypatch, edit):
-    client, token, stub, rich, signing = ready
-    lose(monkeypatch)
-    _origin_edited(monkeypatch, edit)
-    body = {"action": "comment", "key": "DEMO-0001", "message": "hi", "idem": idem(6)}
-    assert post(client, token, stub, body).status_code == 503
-    again = post(client, token, stub, body)
-    assert again.status_code == 200 and again.json()["earlier_open"]["expires_at"]
-    assert sorted(states(signing).values()) == ["prepared", "prepared"]  # the orphan expires by itself
-
-
-def test_host_unavailable_during_recovery_keeps_the_marker_and_opens_nothing_new(ready, monkeypatch):
-    client, token, stub, rich, signing = ready
-    lose(monkeypatch, fail_pending=1)
-    body = {"action": "comment", "key": "DEMO-0001", "message": "hi", "idem": idem(3)}
-    assert post(client, token, stub, body).status_code == 503  # lost
-    during = post(client, token, stub, body)
-    assert during.status_code == 503 and during.json()["error"]["code"] == "host.unavailable"
-    assert list(states(signing).values()) == ["prepared"]  # only the orphan: no second request without a click
-    assert len(client.app.state.handoffs.unknown) == 1
-    third = post(client, token, stub, body)
-    assert third.status_code == 200
-    assert sorted(states(signing).values()) == ["cancelled", "prepared"]
-    assert client.app.state.handoffs.unknown == {}
-
-
-def test_a_second_lost_answer_widens_the_window_and_keeps_the_earliest_start(ready, monkeypatch):
-    client, token, stub, rich, signing = ready
-    lose(monkeypatch, drop=2)
-    body = {"action": "comment", "key": "DEMO-0001", "message": "hi", "idem": idem(4)}
-    assert post(client, token, stub, body).status_code == 503
-    (first,) = client.app.state.handoffs.unknown.values()
-    start, end = first.start, first.end
-    assert post(client, token, stub, body).status_code == 503  # the retry's own prepare is lost too
-    (second,) = client.app.state.handoffs.unknown.values()
-    assert second.start == start and second.end >= end and len(second.ids) == 2
-    assert post(client, token, stub, body).status_code == 200
-    # both orphans are provably ours and in the window: both cancelled, one fresh request open
-    assert sorted(states(signing).values()) == ["cancelled", "cancelled", "prepared"]
-
-
-def test_a_lost_human_get_inside_recovery_keeps_the_marker_unchanged(ready, monkeypatch):
-    client, token, stub, rich, signing = ready
-    lose(monkeypatch, fail_get=1)
-    body = {"action": "comment", "key": "DEMO-0001", "message": "hi", "idem": idem(8)}
-    assert post(client, token, stub, body).status_code == 503
-    (before,) = client.app.state.handoffs.unknown.values()
-    assert post(client, token, stub, body).status_code == 503
-    (after,) = client.app.state.handoffs.unknown.values()
-    assert (after.start, after.end) == (before.start, before.end)
-    assert post(client, token, stub, body).status_code == 200
-    assert sorted(states(signing).values()) == ["cancelled", "prepared"]
-
-
-def test_the_lost_call_records_are_bounded_and_expire(ready):
-    import time
-
-    from orch_dashboard.handoff import UNKNOWN_CAP, Lost
-
-    client = ready[0]
-    h = client.app.state.handoffs
-    old = time.time() - 2000
-    with h.lock:
-        for n in range(UNKNOWN_CAP + 20):
-            h.unknown[("t", "w", str(n))] = Lost(old, old, set())
-        h.unknown[("t", "w", "fresh")] = Lost(time.time(), time.time(), set())
-        h.forget()
-    assert list(h.unknown) == [("t", "w", "fresh")]
+    body = {"action": "comment", "key": "DEMO-0001", "message": "A text", "idem": idem(71)}
+    made = post(client, token, stub, body).json()["id"]
+    assert client.get(f"{base(stub)}/{made}", headers=auth_h(other)).status_code == 404
+    assert client.delete(f"{base(stub)}/{made}", headers=auth_h(other, True)).status_code == 404
+    # The other session using the same key is its own record at the server; the host binds the key to the principal
+    # (here one person), so it returns the same request, yet this server still lists it for the preparing session only.
+    assert client.get(f"{base(stub)}/{made}", headers=auth_h(token)).status_code == 200
+    assert states(signing)[made] == "prepared"
 
 
 def test_a_section_limit_counts_bytes_not_characters(ready):
@@ -646,33 +630,6 @@ def test_a_section_limit_counts_bytes_not_characters(ready):
     body = {"action": "section", "key": "DEMO-0001", "section": "summary", "text": text, "idem": idem(9)}
     r = post(client, token, stub, body)
     assert r.status_code == 400
-
-
-def test_an_attempt_up_to_a_second_after_the_window_still_counts_as_crowding_it():
-    """Opus re-check R1: the host lists created_at in whole seconds (rounded down), so a request it shows as created by
-    lost.end + SLACK may come from another tab's attempt that started up to a second later; the retry must not
-    cancel it."""
-    from orch_dashboard.handoff import SLACK, Attempt, Handoffs, Lost
-
-    handoffs = Handoffs()
-    lost = Lost(1000.0, 1001.0, {"mine"})
-    handoffs.attempts.append(Attempt("tab2", "w", "log", "DEMO-0001", lost.end + SLACK + 0.7, None))
-    assert handoffs.crowded(lost, "log", "w", "DEMO-0001", "retry")
-    handoffs.attempts[0] = Attempt("tab2", "w", "log", "DEMO-0001", lost.end + SLACK + 1.0, None)
-    assert not handoffs.crowded(lost, "log", "w", "DEMO-0001", "retry")  # its request is listed after the window
-
-
-def test_attempts_in_flight_are_never_forgotten():
-    import time
-
-    from orch_dashboard.handoff import Attempt, Handoffs
-
-    handoffs = Handoffs()
-    now = time.time()
-    handoffs.attempts.append(Attempt("running", "w", "log", "DEMO-0001", now - 5000, None))
-    handoffs.attempts.extend(Attempt(f"done{i}", "w", "log", "DEMO-0001", now, now) for i in range(600))
-    handoffs.forget()
-    assert handoffs.attempts[0].id == "running" and len(handoffs.attempts) == 513
 
 
 def test_a_section_of_only_whitespace_is_refused(ready):

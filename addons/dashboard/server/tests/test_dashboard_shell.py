@@ -28,6 +28,9 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/tickets/{key}/artifacts/{name}",
         "/api/w/{ws}/handoff",
         "/api/w/{ws}/handoff/{request_id}",
+        "/api/w/{ws}/settings",
+        "/api/w/{ws}/members",
+        "/api/w/{ws}/grants",
         "/{path:path}",
     }
     assert {route.path for route in create_app(PORT).routes} == expected
@@ -48,7 +51,16 @@ def test_shell_p1_reads(client, token, stub):
         "evidence",
         "activity",
         "actions",
+        "settings",
+        "members",
+        "settings_read",
+        "grant_list",
         "read_ext",
+        "read_ext2",
+        *(
+            f"do:{op}"
+            for op in ("settings.set", "policy.set", "member.add", "member.role", "member.remove", "grant.revoke")
+        ),
     ]
     assert workspaces[0]["features"] == every
     assert client.get("/api/session", headers=headers).json()["features"] == sorted(every)
@@ -75,7 +87,17 @@ def test_shell_p1_reads(client, token, stub):
 
 @pytest.mark.parametrize(
     "path",
-    ["/w/DEMO", "/w/DEMO/today", "/w/DEMO/board", "/w/DEMO/tickets", "/w/DEMO/ticket/DEMO-0001", "/ticket/DEMO-0001"],
+    [
+        "/w/DEMO",
+        "/w/DEMO/today",
+        "/w/DEMO/board",
+        "/w/DEMO/tickets",
+        "/w/DEMO/settings",
+        "/w/DEMO/settings/general",
+        "/w/DEMO/settings/grants",
+        "/w/DEMO/ticket/DEMO-0001",
+        "/ticket/DEMO-0001",
+    ],
 )
 def test_app_addresses_open_the_app(client, path):
     res = client.get(path)
@@ -85,7 +107,7 @@ def test_app_addresses_open_the_app(client, path):
 @pytest.mark.parametrize(
     "path",
     [
-        "/w/DEMO/settings/general",
+        "/w/DEMO/settings/addons",
         "/w/DEMO/ticket/x",
         "/w/DEMO/ticket/DEMO-1/extra",
         "/ticket/DEMO-1/x",
@@ -107,8 +129,10 @@ def test_typed_route_inputs(client, token, stub, query):
 def test_caps_hide_unavailable(gateway, stub):
     link = gateway.link(stub.ws)
     link.welcome["caps"].remove("query/1")
-    assert gateway.features(stub.ws) == ["activity", "read_ext"]  # these two do not depend on query/1
-    link.welcome["caps"][:] = [c for c in link.welcome["caps"] if c not in ("read_ext/1", "activity/1")]
+    # these do not depend on query/1
+    assert gateway.features(stub.ws) == ["activity", "settings_read", "read_ext", "read_ext2"]
+    gone = ("read_ext/1", "read_ext/2", "activity/1", "settings/1")
+    link.welcome["caps"][:] = [c for c in link.welcome["caps"] if c not in gone]
     assert gateway.features(stub.ws) == []
     link.welcome["ops"]["whoami"] = 2
     assert gateway.features(stub.ws) == []

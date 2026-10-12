@@ -30,7 +30,9 @@ function words(phase: HandoffPhase, title: string, error: string | null, ofWorks
     case 'changed':
       return { title: 'Changed since you started', body: 'The ticket changed. The page now shows the current state. Prepare again to sign what is there now.', tone: 'warn' }
     case 'unknown':
-      return { title: 'Unknown outcome', body: 'The dashboard lost track of this request. An earlier attempt may still be open; it expires by itself within 10 minutes. The page now shows the current state. Prepare again only if the change is not there; that is a new request, and the earlier one is only cancelled when it is provably from this dashboard session.', tone: 'warn' }
+      return { title: 'Unknown outcome', body: 'The dashboard lost track of this request (an answer was lost). Try again asks the host for the same request with the same key: it returns the request it already made, in its current state, and never a second one. The page shows the current state.', tone: 'warn' }
+    case 'stale':
+      return { title: 'This attempt is too old', body: 'The host no longer keeps this attempt, so it cannot say what became of it. Check the page for the current state. Start again to make a new request with a new key.', tone: 'warn' }
     case 'invalid':
       return { title: 'Not shown', body: 'The host sent a request whose fingerprint does not match its content, so it is not shown and was cancelled. Nothing was signed.', tone: 'warn' }
     case 'error':
@@ -101,7 +103,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
   }
   const again = () => {
     if (!p.action) return
-    run.reset()
+    run.reset(phase === 'unknown' || phase === 'error') // the same key where the host may already have the request
     void run.prepare(p.action)
   }
   const end = words(phase, p.title, run.error?.message ?? null, !!run.request && !run.request.material.ticket)
@@ -147,11 +149,6 @@ export function HandoffDialog(p: HandoffDialogProps) {
                 Refused: {failedSubmit(run.state.error.code)} The request stays open until {new Date(run.request.expires_at).toLocaleTimeString()}.
               </p>
             )}
-            {run.request.earlier_open && (
-              <p role="status" data-testid="earlier-open" className="rounded-md border border-warning/40 px-3 py-2 text-[13px] text-warning">
-                An earlier attempt may still be open; it expires by itself {run.request.earlier_open.expires_at ? `at ${new Date(run.request.earlier_open.expires_at).toLocaleTimeString()}` : 'within 10 minutes'}. Sign only the code shown here.
-              </p>
-            )}
             <HandoffPanel request={run.request} />
           </>
         )}
@@ -190,8 +187,8 @@ export function HandoffDialog(p: HandoffDialogProps) {
                 Cancel
               </Button>
             )}
-            {(phase === 'expired' || phase === 'changed' || phase === 'unknown' || phase === 'error') && p.action && (
-              <Button onClick={again}>{phase === 'error' ? 'Try again' : 'Prepare again'}</Button>
+            {(phase === 'expired' || phase === 'changed' || phase === 'unknown' || phase === 'stale' || phase === 'error') && p.action && (
+              <Button onClick={again}>{phase === 'error' || phase === 'unknown' ? 'Try again' : phase === 'stale' ? 'Start again' : 'Prepare again'}</Button>
             )}
             {end && (
               <Button ref={cancelRef} variant={phase === 'done' ? 'default' : 'ghost'} onClick={() => void close()}>

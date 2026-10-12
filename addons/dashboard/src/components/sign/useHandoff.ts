@@ -4,7 +4,7 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '@/api/client'
-import { ALREADY_DONE, CHANGED, expiryMs, newIdem, requestIsConsistent, type HandoffAction, type HandoffRequest, type HandoffState } from '@/api/handoff'
+import { ALREADY_DONE, CHANGED, KEY_REUSED, KEY_TOO_OLD, expiryMs, newIdem, requestIsConsistent, type HandoffAction, type HandoffRequest, type HandoffState } from '@/api/handoff'
 import { ApiError } from '@/api/types'
 
 export type HandoffPhase =
@@ -20,8 +20,10 @@ export type HandoffPhase =
   | 'already'
   /** The ticket changed between prepare and sign: refetched; the person prepares again. */
   | 'changed'
-  /** The outcome of a call is not known (a lost answer): refetch, then the person decides. */
+  /** The answer to the prepare was lost: "Try again" asks the host for the same request with the same key (never a second). */
   | 'unknown'
+  /** The key of this attempt is too old for the host to answer for it: the person starts again, with a new key. */
+  | 'stale'
   /** The host's answer does not recompute to its own fingerprint: never shown as valid. */
   | 'invalid'
   | 'error'
@@ -46,7 +48,7 @@ export interface HandoffRun {
   prepare: (action: HandoffAction) => Promise<void>
   cancel: () => Promise<void>
   /** Back to the start (the person chose "Prepare again"). The previous request must already be settled or cancelled. */
-  reset: () => void
+  reset: (keepKey?: boolean) => void
   /** The person switched workspace while this request was open (or being prepared): it was cancelled, nothing was signed. */
   switched: boolean
 }
@@ -92,7 +94,7 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
       attempt.current = { sig, idem }
       try {
         const got = await api.prepareHandoff(ws, action, idem)
-        attempt.current = null
+        // The key stays: a retry after a lost poll returns this same request (host contract 0.7), never a second.
         if (!mounted.current) {
           void api.cancelHandoff(ws, got.id).catch(() => {}) // closed while preparing: nobody will see this code
           return
@@ -114,7 +116,16 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
         live.current.ws = ws
         setPinned(ws)
         setRequest(got)
-        setPhase('waiting')
+        // A retry returns the request in its current state: it may have been signed or ended while the answer was lost.
+        const ended = (next: HandoffPhase) => {
+          setPhase(next)
+          refetch()
+          settled.current?.(next, null, got)
+        }
+        if (got.state === 'submitted') ended('done')
+        else if (got.state === 'cancelled') ended('cancelled')
+        else if (got.state === 'expired') ended('expired')
+        else setPhase('waiting')
       } catch (e) {
         if (!mounted.current) return
         const err = e instanceof ApiError ? e : new ApiError(0, { code: 'host.unavailable', message: 'Could not reach the dashboard server.', retryable: true })
@@ -130,9 +141,14 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
         } else if (err.code === 'human.request_expired') {
           attempt.current = null
           setPhase('expired')
-        } else if (err.code === 'idem.expired' || err.code === 'outcome.unknown_idem' || err.code === 'outcome.unknown') {
-          setPhase('unknown')
-          refetch()
+        } else if (err.code === KEY_TOO_OLD) {
+          attempt.current = null // only the person's click starts again, and it draws a new key
+          setPhase('stale')
+        } else if (err.code === KEY_REUSED) {
+          attempt.current = null
+          setPhase('error')
+        } else if (err.code === 'outcome.unknown') {
+          setPhase('unknown') // the key is kept: "Try again" returns the same request if the host made one
         } else {
           if (!err.retryable) attempt.current = null // a retryable failure keeps its idem for "Try again"
           setPhase('error')
@@ -231,7 +247,8 @@ export function useHandoff(ws: string | undefined, onSettled?: (phase: HandoffPh
     setPhase('cancelled')
   }, [ws, setPhase])
 
-  const reset = useCallback(() => {
+  const reset = useCallback((keepKey = false) => {
+    if (!keepKey) attempt.current = null // a new request is a new click: a new key
     setSwitched(false)
     live.current.request = null
     setRequest(null)

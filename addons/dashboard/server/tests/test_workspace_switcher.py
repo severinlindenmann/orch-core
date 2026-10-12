@@ -9,9 +9,9 @@ from pathlib import Path
 
 import pytest
 from conftest import ORIGIN, PORT
+from devhost.host import StubHost
 from fastapi.testclient import TestClient
 
-from devhost.host import StubHost
 from orch_dashboard.app import create_app
 from orch_dashboard.auth import Auth
 from orch_dashboard.errors import fail
@@ -22,7 +22,7 @@ SECOND = "c0ffee00" + "abcdef0123456789abcdef01"  # the same prefix as the first
 
 
 def build(tmp: Path, monkeypatch, workspace_id: str, title: str):
-    """A dev workspace made with the store's own signed events under `workspace_id` (the helpers' constant is swapped)."""
+    """A dev workspace made with the store's own signed events under `workspace_id` (the helpers' WS is swapped)."""
     from orch.addons.install import grant_event, package_dir
     from orch.addons.manifest import load_manifest
     from orch.addons.package import read_package

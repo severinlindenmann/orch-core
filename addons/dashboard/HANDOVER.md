@@ -771,14 +771,13 @@ fragment is the last 8 characters of the log id in both the panel and the stub s
 M3 fix round 1: the server checks the host's answer is the op and ticket asked for, `state` is `prepared`, `expires_at` is
 well-formed and within 15 minutes, and each `material.review` block equals its event minus the envelope (the browser checks
 the same). Stub signer checks left out (no data in the stub): `material.policy` vs `policy_hash`, git state for a code
-gate, the op in the fingerprint. `human.prepare` ignoring `opts.idem` means there is no `outcome.get` for it (design 4.3
-corrected): the server keeps its own record per (token, workspace, idem).
+gate, the op in the fingerprint. (`human.prepare` once ignored `opts.idem`; since stream A #402 it honours it, see "M3 fix: idem retry" below.)
 
 H5a answers (stream A, #391) applied: the fingerprint covers the op (`sha256(cj({op, review_digest, events:[V(e)]}))[:12]`;
 vectors `log` d8de03967462, `set` 37cf21ef169c are tests in the stub, server and browser); `gate_gen` leaves the review payload
 on the three decision types only; the confirmation word is `KEY/FRAG` (last 8 characters of the log's uid) and the panel and the
 stub signer print the same five header lines with the key labelled "ticket key per host, not proven"; a refused submit leaves the
-request `bound` with `error:{code}` in `human.pending`; after a lost prepare answer the server never adopts a request: on the next click it cancels only orphans provably its own (same op and ticket, inside the lost call's window, unknown to every session here, `human.get` origin = this pid and `orch-dashboard`, no other prepare for that op and ticket in the window); with no origin or any doubt it cancels nothing, and the panel says an earlier attempt may still be open and expires by itself at <time> (the host's `expires_at`, else within 10 minutes). The lost-call marker is kept until recovery completed and only widens (earliest start). `human.pending` rows carry no origin; `human.get` does. The server already sends `opts.idem` on prepare: when prepare honours `opts.idem`, retry with the same idem after `outcome.unknown` and remove the orphan-cancel path (`recover` in `handoff.py`). Known limits (Opus re-check 2, info): the panel's `earlier_open` time can be another request's expiry in the same window, and it still says "may still be open" after everything was cancelled; the dev stub stamps `origin.pid` with its own pid, so when it runs as a separate process recovery never cancels anything there (the path is covered by the in-process tests only). A whole-second `created_at` widens the crowding check by one second (R1).
+request `bound` with `error:{code}` in `human.pending`. `human.pending` rows carry no origin; `human.get` does.
 Not yet from H5a: gate `material.texts` is shown only if present; the signer's op-specific `ticket.updated` checks are not in the stub signer.
 
 M3 complete details (this round): after a signed `new` the page offers "Complete details" (`new-ticket/CompleteDetails.tsx`), one
@@ -806,3 +805,16 @@ and signed `new`, `set` and `section.set` requests and a `log`, with the same fi
 "Cancelled". The workspace line reads "workspace (None) <uuid>" because the stub's registry pin has no name or prefix. The stub signer
 (`python -m devhost sign`) stays for the dev loop and the tests.
 
+
+### M3 fix: idem retry (stream A #402)
+
+`human.prepare` honours `opts.idem` (host contract 0.7/0.8.1): the same principal, idem and arguments return the same request
+in its current state; other arguments are `idem.conflict`; an ended request answers in its terminal state for 24 h, then
+`idem.expired`; a failed commit or host restart never makes a second request. The server's orphan-cancel recovery (`recover`,
+the `Lost` window, the attempts bookkeeping and the panel's "earlier attempt may still be open") is gone. After `outcome.unknown`
+the next click retries with the same idem and adopts the request the host returns. The server sends the host
+`a_` + a hash of (session token, workspace, browser idem), so another session's identical idem is another request and M1 holds
+(a request is reachable only by the session that prepared it). Per-session quota and the logout cancel are unchanged. Panel: a
+retry may come back `submitted`, `cancelled` or `expired` and says so; `idem.conflict` is an error, `idem.expired` says "This
+attempt is too old" and starts again only on the click with a new idem. The dev stub implements the same (records kept 24 h,
+written beside the dev state so a restart never makes a second request). A prepare has no `outcome.get`; the state is `human.pending {request_id}`.

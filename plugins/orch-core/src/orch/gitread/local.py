@@ -13,7 +13,7 @@ from . import ops
 from .pinning import pin_repo
 from .repo import Repo
 
-__all__ = ["diff", "observe"]
+__all__ = ["diff", "observe", "tree_check"]
 
 
 def _roots(path: str | os.PathLike[str], roots: list[str] | None) -> tuple[str, list[str] | None]:
@@ -44,3 +44,18 @@ def diff(
     real, rs = _roots(path, roots)
     with Repo(pin_repo(real, rs)) as repo:
         return ops.diff(repo, branch, default_branch, context, max_bytes)
+
+
+def tree_check(path: str | os.PathLike[str], roots: list[str] | None = None) -> dict[str, Any]:
+    """``TreeCheckResult`` in-process (tests and tools; P1's direct mode keeps ``git status``)."""
+    from . import treecheck, treejob
+    from .fs import open_pin
+
+    real, rs = _roots(path, roots)
+    pins = pin_repo(real, rs)
+    with Repo(pins) as repo:
+        worktree = open_pin(pins.worktree)
+        try:
+            return treejob.result_of(treecheck.check(repo, worktree))
+        finally:
+            worktree.close()

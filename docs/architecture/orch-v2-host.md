@@ -1129,6 +1129,7 @@ human.pending  {code?:Code, request_id?:ReqHr}                                  
                 error?:{code:str}}]}       // H5a: the catalog code of the last failed human.submit, never the message
 human.cancel   {request_id:ReqHr} → {state:"cancelled"|"submitted"}
 Prepared = {request:{id:ReqHr, code:Code | null, expires_at:Time, state:State} | null,      // null only for dry_run
+            result?:Result,                     // H7: dry_run only, the inner op's would-be Result (direct-mode parity)
             op:OpName, workspace_id:WsId, log:Uid | "workspace", events:[Event]{1..16}, material:Material,
             review_digest:Hash, fingerprint:str/[0-9a-f]{12}/,
             origin:{uid:int, pid:int, client:str{1..64}, created_at:Time},
@@ -1509,11 +1510,56 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
    review is `invalid.input` "not confirmed: nothing was signed", as in direct mode. A `human.submit` whose answer is lost
    is sent again with the same idem and identical events (three attempts); if still uncertain the error names the idem
    (never a silent new request) and says a grant's secret cannot be shown again. Files signed this way are inline
-   only (512 KiB). `--dry-run` calls `human.prepare` with `dry_run` and prints `ok <op> dry-run`, `dry-run: nothing was written` and
-   `would sign: <event types>`: a known divergence from direct mode (the prepared request carries no op result).
+   only (512 KiB). `--dry-run` calls `human.prepare` with `dry_run`. Since H7 the host answers it with the inner op's
+   would-be `result` and the CLI renders that as direct mode renders its dry run; against an older host (no `result`)
+   it prints `ok <op> dry-run`, `dry-run: nothing was written` and `would sign: <event types>`.
 6. **Run directory.** `ORCH_HOST_RUN_DIR` when set, else the service run directory when a host serves there, else
    `<state>/run`. It says only where to look and is not a trust input: the registry or the pin and the handshake decide
    whom the socket may belong to.
+
+**As built in H7** (host mode on by default for registered workspaces, phase 1, tier A):
+
+1. **The per-user service (`orch.host.enable`).** `orch host enable` installs the release (D-P2-4), writes the unit and
+   starts it through the person's own service manager: a LaunchAgent `~/Library/LaunchAgents/io.orch.host.plist`
+   (`launchctl bootstrap gui/<uid>`, `kickstart` when it is loaded and unchanged, `bootout` + `bootstrap` when it
+   changed) or a systemd user unit `$XDG_CONFIG_HOME/systemd/user/orch-host.service` (`daemon-reload`, `enable`,
+   `start`/`restart`). Windows and other platforms get no service: `mode: "direct"`, nothing installed. The unit runs
+   `python -I <release>/current/bin/orch-host run --state <state> --run <state>/run`: in tier A the run directory is
+   `<state>/run`, where the CLI, `orch sign` and the dashboard look; the root-owned tier-B directories come with H3c
+   (phase 3). The host's output goes to `<state>/host/host.log`. `enable` then waits up to 20 s for the control socket
+   and answers `host.unavailable` (naming the log) when nothing answers.
+2. **Registration turns host mode on.** `orch host register DIR` first checks the control socket; a host that answers
+   (the service, or a dev host from `orch host run --foreground`) is used as it is, otherwise the service is enabled as
+   above (`--no-service` never touches it). `--peer` is now optional: by default this UID maps to the person whose device
+   key for the workspace is on this machine (the key `orch init` made, matched against the workspace's devices); the
+   host checks the mapping again (F8). From then on the thin CLI (H4b) and the dashboard serve the workspace through the
+   host; `orch init` itself stays direct (see §3), and `orch init --host` remains for an empty directory.
+3. **`orch host status`** (alias `doctor`, `--json` for the document): the service (unit present, current, loaded,
+   running, or none on this platform), whether a host answers on the control socket, every registered workspace (the
+   host's state, whether its socket answers, the mapped person, click-to-sign on or off), the mode the CLI uses for the
+   current directory (exactly `hostclient.locate`), and the problems with their fix (`orch host enable`,
+   `orch host restart`, a socket path over 100 bytes). It changes nothing. Exit 0 without problems, else 1.
+   `orch host` commands read `ORCH_HOST_RUN_DIR` like the CLI.
+4. **Parity.** Every case of the agent and person golden suites (`tests/ops/golden`, `golden_human`, `wait` included)
+   runs in host mode on the same fixed workspace, built through a host from the start, and matches the same golden file
+   (`tests/host/test_golden_host.py`). The one designed difference: `task done --run` in host mode names on stderr the
+   command it runs and adds the "attested by you" note (H3b2). To get there: the request record keeps the inner op's
+   `lines` (a grant's "the secret was shown" line), a grant prepared through the host carries the direct-mode hint, the
+   CLI orders a person op's `data` by the op's output schema (the record is stored as canonical JSON), and a dry-run
+   `human.prepare` returns `result` (above). Parity that needs a group not merged yet is `xfail(strict)` with its PR
+   (`tests/host/test_parity_pending.py`: `verdict`/`show` on a linked repo needs #413, `diff` needs #417).
+5. **Op versions on the wire.** `welcome.ops` lists `task.done` at 2, as §0.4 says (it said 1 until H7), and the thin
+   CLI's hello sends `ops: {"task.done": 2}`. A client that does not list it (the v1.4 CLI) gets `op.unsupported` for
+   `task.done`, never a contract-1 run: see the fixtures (D-P2-14).
+6. **Cross-version fixtures (D-P2-14).** `tests/host/fixtures/cross_version/v1_4_clients.json` holds the hello and
+   request frames of the v1.4 clients (the H4b CLI, the dashboard's host link at 8873a4f8) and the rules each must meet
+   on the current host (`tests/host/test_cross_version.py`): no shared major is `fatal host.version_mismatch` before any
+   `welcome`; another op version is `op.unsupported` for that op only, nothing appended, the connection keeps working;
+   an unknown envelope key is `req.invalid`; every key an old client reads is still sent with the same JSON type.
+7. **Session notes do not migrate.** A workspace used in direct mode and then registered keeps its logs, but an agent
+   session's notes (cursor, claims) are keyed by session alone in direct mode and by (principal, session) in host mode
+   (F4); the host does not adopt the old ones, because a session label is public. A running agent session sees no
+   current claim after registration and claims again (`orch claim KEY`). Register before starting agents.
 
 #### 0.8.2 Job ops (worker socket, H10)
 
@@ -2668,6 +2714,9 @@ Additive: new ops under new caps, optional keys under `read_ext/2`, new argument
 12. **Fixes (RH-1, RH-3):** `welcome.caps` lists `human/1` (it was in §0.4's table but missing from the welcome), and
     `human.prepare {idem}` also works for the host person ops `move`, `policy.set` and `settings.set` (same binding
     and `idem.conflict` rules as for registry ops).
+13. **H7 (additive):** a dry-run `human.prepare` also returns `result`, the inner op's would-be `Result` (§0.8.1
+    `Prepared`); `welcome.ops` lists `task.done` at 2 as the table above always said (a client must list it in
+    `hello.ops`); a committed person request's `Result` keeps the inner op's `lines`.
 
 ---
 
@@ -2851,7 +2900,9 @@ audit hook before it reads anything.
   3. the client signs the delegation and `workspace.created` locally;
   4. `host.bootstrap` appends the genesis and registers the workspace.
 
-  `orch init --host` runs it (H3b3) until H7 makes host mode the default. The directory must be empty; the peers map
+  `orch init --host` runs it (H3b3). Since H7 host mode is the default for a registered workspace, and registration
+  starts the per-user service; `orch init` itself still creates the workspace in direct mode, then `orch host register`
+  hands it to the host (see "As built in H7"). The directory must be empty; the peers map
   is the caller's UID as the genesis owner (agents and the worker are added later by `unregister` + `register`). The
   device key is kept under `hosts/<ws>/person` as in direct mode. Once the genesis is in the log, a failure to finish
   the bootstrap is answered `outcome.unknown`, never a refusal. The client treats `outcome.unknown`, `host.restarting`
@@ -2901,7 +2952,8 @@ builds it.
 **D-P2-13. Limits** (§0.11). Audit lines record time, UID, class, op, principal, session, code and duration, never a
 secret.
 
-**D-P2-14. Versioning by capabilities** (§0.4). Older clients are kept honest by recorded fixtures (H7).
+**D-P2-14. Versioning by capabilities** (§0.4). Older clients are kept honest by recorded fixtures (H7:
+`tests/host/fixtures/cross_version/`, one file per previous contract version; a new version adds its clients there).
 
 ## 4. Human signing
 
@@ -3191,6 +3243,17 @@ dispatch is turned on.
 - **Cutover gate (D44):** H7, H9 and H10. **Phase-1 gate (owner re-plan, 12 Oct 2026; replaces this gate for phase 1):**
   H4b, H5c, H3b2, H10's `tree.check` and H7, with click-to-sign on only for workspaces that meet §0.8.6 item 1 and
   only after the item 4 readers are released (the relay deployed). H9 and H3c join the gate again in phase 3.
+- **Phase-1 gate state (H7, 12 Oct 2026):**
+  - [x] H4b thin CLI (#409), H5c click-to-sign custody (#407), H3b2 client receipts (#412): merged.
+  - [x] H7: host mode on for registered workspaces, the per-user service, `orch host status`, golden parity (agent and
+    person ops, `wait`) and the cross-version fixtures (this group's PR).
+  - [ ] H10's `tree.check` (#413, in review): until it lands, `verdict` and `approve code` on a ticket with a linked
+    repo answer `observe.unavailable` in host mode; `tests/host/test_parity_pending.py` flips when it merges.
+  - [ ] The host serves `diff` (#417, stacked on #413): the dashboard's Changes tab on a real host.
+  - [ ] Click-to-sign switched on for a workspace only once the §0.8.6 item 4 readers are released (the relay is not
+    deployed yet); the flag stays off by default.
+  - [ ] T2 in both modes: the golden suites run in both modes in every full run; the orch-dev-kit e2e scenarios
+    against a registered workspace are still to do.
 - **Stream B** uses a stub of §0 now and the real host from H4a1, with `orch host run --foreground` on a demo
   workspace.
 

@@ -461,6 +461,12 @@ drops. The host never sends it.
 | `term.writer_busy` | 3 | no | stays | a write attach while another attachment holds the lease and `take` is false (the term socket's `{t:"end", reason:"writer_busy"}` has the same meaning) | — |
 | `worktree.none` | 3 | no | stays | `worktree.remove` for a (ticket, repo) with no registered worktree | — |
 
+| `worktree.exists`, `worktree.no_branch`, `worktree.branch_in_use`, `worktree.dirty`, `worktree.in_use`, `worktree.unpinned` | 3 | no | stays | §12.7 | — |
+| `worktree.git_failed` | 1 | no | stays | git exited non-zero (stderr only in the runner log) | — |
+| `records.snapshot_changed` | 9 | yes | stays | a file changed after the snapshot (client-side, the records tool) | — |
+| `records.not_dedicated`, `records.git_state`, `records.unsafe_config`, `records.not_records_only`, `records.too_large`, `records.push_rejected` | 3 | no | stays | §12.8 (client-side, the records tool) | — |
+| `unsupported.platform` | 3 | no | stays | `orch worktree` or `orch records` on Windows (D-P2-38) | — |
+
 Other v1.6 refusals reuse existing codes: an unknown or invisible run (also `run.stop` on a run already gone),
 attachment or `deposit_id` is `not_found` (§0.5); the start rate (§0.11) is `rate.limited` with `retry_after_ms`;
 `grant.deposit` while the runner is not connected is `runner.unavailable`, and while this machine has not enabled
@@ -468,11 +474,6 @@ dashboard execution for the workspace `runner.disabled` (`detail.missing:"machin
 host restart shows as `RunnerInfo.connected:false` and, for ops that need it, `runner.unavailable`. Exit convention:
 state refusals are 3, input refusals 5 (as `invalid.input` and `idem.conflict`), transient conditions 9. Every
 `message` is host-authored and untrusted: clients render it as plain text.
-| `worktree.exists`, `worktree.no_branch`, `worktree.branch_in_use`, `worktree.dirty`, `worktree.in_use`, `worktree.unpinned` | 3 | no | stays | §12.7 | — |
-| `worktree.git_failed` | 1 | no | stays | git exited non-zero (stderr only in the runner log) | — |
-| `records.snapshot_changed` | 9 | yes | stays | a file changed after the snapshot (client-side, the records tool) | — |
-| `records.not_dedicated`, `records.git_state`, `records.unsafe_config`, `records.not_records_only`, `records.too_large`, `records.push_rejected` | 3 | no | stays | §12.8 (client-side, the records tool) | — |
-| `unsupported.platform` | 3 | no | stays | `orch worktree` or `orch records` on Windows (D-P2-38) | — |
 
 **Universal errors.** These may come from any op, beyond the op's own list:
 
@@ -3999,6 +4000,10 @@ term.open      {…the preview's arguments…, spec:Hash, cols?, rows?} + opts.i
                // a person-run harness or shell: kind "shell", as_person:true, session:null, ORCH_TICKET only
                // (no ORCH_GRANT, no ORCH_SESSION); no claim precheck, no runner grant; `ticket` is checked for
                // visibility only; `mode:"context"` needs a ticket. Same spec digest rules as agent.start.
+               // Without `mode` a harness starts with no prompt argument (`claude [--model M]`, `codex [--model M]`,
+               // interactive). Without `cwd` and `ticket` the cwd is the workspace root; with a ticket, §12.4.4.
+               // blocked.code: runner.disabled, runner.unavailable, harness.not_found, harness.shell_unsupported,
+               // launch.invalid, launch.cwd_changed, not_found (ticket), worktree.* (a named worktree cwd).
 run.stop       {run:RunId, grace_ms?:int 0..30000 = 10000}
                → {state:"exited"|"stopping", cleanup:"complete"|"incomplete"|"unknown"|null}
 grant.deposit  {deposit_id:ULID} + auth.grant → {deposit:"confirmed"|"rejected"|"unknown", grant:str, until:Time,
@@ -4287,18 +4292,19 @@ attach.allow  {att:AttId, ticket_hash:Hash,            // sha256 of the 32-byte 
 
 **WebSocket security.** The path is `/term` (outside `/api/**`, so the bearer rule there stays unconditional). The
 `Security` middleware handles the `websocket` scope and closes before `accept` unless: `Host` is exactly
-`127.0.0.1:<port>` (`localhost` refused), `Origin` is exactly `http://127.0.0.1:<port>` (missing and `null` refused), no
-`Sec-WebSocket-Protocol`, no cookies, `permessage-deflate` off, `max_size` 64 KiB. The first message must be text, at
+`127.0.0.1:<port>` (`localhost` refused; cookies, which other loopback apps may set, are ignored and never read), `Origin` is exactly `http://127.0.0.1:<port>` (missing and `null` refused), no
+`Sec-WebSocket-Protocol`, `permessage-deflate` off, `max_size` 64 KiB. The first message must be text, at
 most 4 KiB, within 5 s; any binary message before the attachment is bound closes the socket. The bearer session is
-rechecked at least every 250 ms (as `live.py`); after logout or expiry the socket closes within about a second and no
-server message follows. `connect-src` is `'self' ws://127.0.0.1:<port>` with the dashboard's own port only (no `ws:`
+rechecked at least every 250 ms (as `live.py`); after logout or expiry the socket closes within about a second with
+close code 4401 and no `end` message (`session.ended` is the close reason only). `connect-src` is `'self' ws://127.0.0.1:<port>` with the dashboard's own port only (no `ws:`
 wildcard, no `localhost`); `script-src 'self'` (no inline script); `style-src` is not loosened for xterm.
 
 **Messages, browser ↔ server.**
 
 ```
 browser → server:  text {"ticket":str} (first, once) | text {"t":"resize","cols":int,"rows":int}
-                   | binary: keystroke and paste bytes only (dropped on a read attachment)
+                   | binary: 1-byte tag, then bytes: tag 0 = from a key or paste event, tag 1 = a terminal reply
+                     the page allowed (CPR or DA1 only); dropped on a read attachment
 server → browser:  text {"t":"ready","start":int,"offset":int,"cols":int,"rows":int,"writer":bool,
                          "state":"running"|"exited"}                       (first message after the ticket)
                    | binary: 8-byte big-endian offset, then output bytes    (every output chunk carries its offset)
@@ -4307,21 +4313,35 @@ server → browser:  text {"t":"ready","start":int,"offset":int,"cols":int,"rows
                    | text {"t":"writer","writer":bool}
                    | text {"t":"input_lost"} | text {"t":"input_paused","retry_ms":int}
                    | text {"t":"exit","code":int|null,"signal":str|null}
-                   | text {"t":"end","reason":str}                           (last message; then the close below)
+                   | text {"t":"end","reason":str,"code"?:str,"message"?:str,"retry_after_ms"?:int}
+                                                                 (last message; then the close below)
 ```
 
 - **Replay versus live:** every output chunk carries its offset; chunks with an offset below `ready.offset` are
   replay. The browser drops all `onData` until the `write` callback of the last replay chunk has fired (completion is
-  counted in xterm's write callback, not at receipt).
+  counted in xterm's write callback, not at receipt). With no replay (`ready.offset` equals `start`, or `from` was the
+  current end) `onData` is enabled right after `ready`.
+- **`end` codes:** `code` is the catalog code behind the reason (for `host.error` the code `term.attach` answered,
+  for example `term.not_attachable`, `attach.limit`, `run.limit`, `rate.limited`, `runner.unavailable`); `message` is
+  untrusted plain text; `retry_after_ms` comes with retryable codes.
 - **End reasons the browser sees:** the runner's (`person.removed`, `not_visible`, `run.stopped`, `host.restarting`,
   `cancelled`, `runner.restarting`, `exited`, `writer_busy`, `ticket_invalid`) and those the server synthesizes:
   `runner.lost` (the runner socket closed without `end`), `runner.changed` (the §12.6.1 check failed: "the runner
   changed; try again"), `session.ended` (logout or bearer expiry), `overflow` (the browser did not read), `protocol`
   (a malformed message), `host.error` (`term.attach` refused; the message carries its code).
-- **Close codes:** 1000 after `end` (normal: `exited`, `run.stopped`, `cancelled`); 4401 ticket refused or
-  `session.ended`; 4403 not allowed (`person.removed`, `not_visible`, `ticket_invalid`, `host.error` with
-  `op.not_allowed`/`not_found`); 4409 `writer_busy`; 4503 `runner.lost`, `runner.changed`, `runner.restarting`,
-  `host.restarting`, `host.error` otherwise (retry later); 4400 `protocol`; 4429 `overflow` or rate limit.
+- **Close codes** (the page decides retry by the close code alone):
+
+  | Close | Retry | Reasons and codes |
+  |---|---|---|
+  | 1000 | no | `exited`, `run.stopped`, `cancelled` |
+  | 4400 | no | `protocol`, `invalid.input` |
+  | 4401 | new ticket | browser ticket refused, `session.ended` (no `end` message) |
+  | 4403 | no | `person.removed`, `not_visible`, `ticket_invalid`, `op.not_allowed`, `not_found`, `runner.disabled` |
+  | 4409 | no (offer "Take control") | `writer_busy`, `term.writer_busy` |
+  | 4422 | no | `term.not_attachable` |
+  | 4429 | after `retry_after_ms` | `overflow`, `rate.limited`, `run.limit`, `attach.limit`, `quota.host` |
+  | 4503 | later, with backoff | `runner.lost`, `runner.changed`, `runner.restarting`, `host.restarting`, `runner.unavailable`, `host.unavailable` |
+  | 4500 | no | `internal` and any other non-retryable code (a retryable code not listed maps to 4503) |
 - **Dashboard server hygiene:** it never logs, stores, echoes or returns terminal output, input, tickets or frame
   contents (also not in exceptions or validation errors), and no HTTP route reads them. WebSockets exist only for
   mounted terminals and count toward the 16 open streams per session; each attachment uses one host connection for
@@ -4337,18 +4357,20 @@ server → browser:  text {"t":"ready","start":int,"offset":int,"cols":int,"rows
 - **Replies are a property, not a hand list.** xterm answers queries by emitting `onData`: DA1, DA2 (`CSI > c`), DA3
   (`CSI = c`), DECRQM (`CSI Ps $ p`, `CSI ? Ps $ p`), DSR (`CSI 5 n`, CPR `CSI 6 n`, `CSI ? 6 n`, `CSI ? 15 n`,
   `CSI ? 25 n`, `CSI ? 26 n`), DECRQSS (`DCS $ q`), XTGETTCAP (`DCS + q`), OSC 4/10/11/12 colour queries,
-  `CSI > q`, and window reports (off). The page registers parser handlers that swallow the replies it can, **and the
-  dashboard server forwards no terminal-generated reply except an allow-list**: the property tested is "for every
-  sequence of the canary corpus plus a fuzz run, the bytes the server sends to the runner on a write attachment, other
-  than those caused by a key or paste event, are a subset of {CPR `ESC [ r ; c R`, DA1 `ESC [ ? … c`}", at most 4 such
-  replies per second (burst 8, the rest dropped). An xterm upgrade that adds a query type fails this test.
+  `CSI > q`, and window reports (off). **The filter lives in the page**, because the dashboard server sees only opaque
+  input bytes: the `onData` handler forwards bytes from a key or paste event with tag 0, forwards a terminal-generated
+  reply with tag 1 only when it is CPR or DA1, and swallows every other terminal-generated reply. The server never
+  interprets input; it only rate-limits (tag 1 at most 4 per second, burst 8, the rest dropped; all input per
+  §12.6.3). The property tested **against the page**: "for every sequence of the canary corpus plus a fuzz run, the
+  page sends nothing with tag 0 without a key or paste event, and everything it sends with tag 1 is a CPR
+  `ESC [ r ; c R` or a DA1 `ESC [ ? … c`". An xterm upgrade that adds a query type fails this test.
 - Read attachments: `disableStdin`, and every `onData` dropped at the sink. During replay: every `onData` dropped
   (§12.6.6).
 - On `gap` and at the ring start of a replay: `term.reset()` and a dimmed marker written by the page (never composed
   from host strings).
 - **Canary corpus:** OSC 52 read and write; OSC 8 with `javascript:` and `data:`; OSC 0/1/2 titles; DA/DSR/DECRQM
   floods; XTGETTCAP and DECRQSS floods; 1 MB of random bytes; split UTF-8. Asserted: clipboard untouched, no
-  `window.open`, no `document.title` change, forwarded replies within the allow-list.
+  `window.open`, no `document.title` change, the page's tagged replies within the CPR/DA1 allow-list.
 
 ### 12.7 Worktrees (#308) [SC]
 
@@ -4507,8 +4529,8 @@ enable`, `orch records remote private`, `orch records auto on`/`--push`, `orch r
   `terminals` says); the deposit line "The secret goes to your orch runner on this machine and is never shown"; the
   export warning "Push publishes every ticket in this workspace to <url>, restricted ones included."; the private
   remote line "orch trusts your word that only you read <url>."; "Output no longer kept"; "Some processes may still be
-  running"; "Another tab or device is controlling this terminal" with "Take control"; "Input paused"; "Input may not
-  have arrived".
+  running"; "Another tab or device is controlling this terminal" with "Take control"; "Take back"; "the runner changed; try
+  again"; "Input paused"; "Input may not have arrived".
 - **Idem:** the browser draws one idem per dialog opening (stable across retries), the server forwards it. After a
   timeout the dashboard reads `run.list` and retries with the same idem, never a new one. `launch.changed` reopens the
   dialog with a fresh preview; the dashboard posts exactly the preview's values plus `spec`.

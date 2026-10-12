@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { fmtDateTime } from '@/lib/time'
 import { queries } from '@/api/queries'
+import { Raw } from '@/components/sign/visible'
 import { Section } from '../../ticket/shared'
 import { OwnerNote } from '../OwnerNote'
 import { useViewerRole } from './useViewerRole'
@@ -145,7 +146,7 @@ export function HostGates({ workspace }: { workspace: Workspace }) {
         </p>
         {data.policy_at && (
           <p className="mt-1 text-[12px] text-text-faint">
-            Last changed {fmtDateTime(data.policy_at.at)} by {workspace.members.find((m) => m.person === data.policy_at?.by)?.name ?? data.policy_at.by}.
+            Last changed {fmtDateTime(data.policy_at.at)} by <Raw>{workspace.members.find((m) => m.person === data.policy_at?.by)?.name ?? data.policy_at.by}</Raw>.
           </p>
         )}
       </div>

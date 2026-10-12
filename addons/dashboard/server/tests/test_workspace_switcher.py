@@ -18,7 +18,7 @@ from orch_dashboard.errors import fail
 from orch_dashboard.gateway import Gateway
 from orch_dashboard.hostlink import HostLink
 
-SECOND = "c0ffee00" + "abcdef0123456789abcdef01"  # the same prefix as the first, a different UUID (32 hex)
+SECOND = "abcdef0123456789abcdef01" + "c0ffee00"  # the same prefix as the first, a different UUID (32 hex)
 
 
 def build(tmp: Path, monkeypatch, workspace_id: str, title: str):
@@ -102,7 +102,7 @@ def test_two_workspaces_with_one_prefix_stay_two_workspaces_keyed_by_uuid(two):
     assert [w["id"] for w in got] == [s.ws for s in stubs]
     assert {w["prefix"] for w in got} == {"DEMO"} and len({w["id"] for w in got}) == 2
     assert all(w["host_state"] == "ok" for w in got)
-    assert stubs[0].ws[:8] != stubs[1].ws[:8]  # the first 8 hex tell them apart in an address (`?ws=`)
+    assert stubs[0].ws[-8:] != stubs[1].ws[-8:]  # the last 8 hex tell them apart in an address (`?ws=`)
 
 
 def test_the_same_ticket_key_reads_each_workspaces_own_ticket(two):
@@ -182,3 +182,11 @@ def test_settings_are_per_workspace_too(two):
     made = client.post(f"/api/w/{a.ws}/handoff", json=body, headers={**headers, "Origin": ORIGIN})
     assert made.status_code == 200 and made.json()["events"][0]["set"] == {"grant_hours": 12}
     assert len(a.requests.table) == 1 and b.requests.table == {}
+
+
+def test_a_workspace_name_with_hidden_characters_is_not_listed_as_that_name(two):
+    client, headers, stubs, down, gateway = two
+    stubs[1].name = "Main\u202e"
+    got = {w["id"]: w for w in client.get("/api/workspaces", headers=headers).json()}
+    assert got[stubs[1].ws]["host_state"] == "workspace.name_invalid" and got[stubs[1].ws]["name"] == stubs[1].ws
+    assert got[stubs[0].ws]["host_state"] == "ok"

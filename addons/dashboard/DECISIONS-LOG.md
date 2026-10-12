@@ -1385,3 +1385,19 @@ workspace and browser idem. `idem.conflict` and `idem.expired` have their own pa
 cancel and guess. A session-bound key keeps one session from receiving another's request (M1).
 
 **Revert:** Restore `recover()`, the `Lost` window and the `earlier_open` note from commit 1283c1c9 and stop sending `idem` on prepare.
+
+## 2026-10-12 — M4 fix round 2: WS8 everywhere, hidden characters by category
+
+**Decision:** (1) The short workspace fragment is WS8, the LAST 8 characters of the workspace id (stream A, mirroring KEY/FRAG). It is
+what the switcher trigger and tooltip, the hand-off dialog line, the "Which workspace?" page, the `?ws=` address hint and the signer's
+confirmation word use. A link made with the first 8 characters (the older form) names nothing and asks which workspace. The
+confirmation words are `<PREFIX>~<WS8>/SETTINGS` and `<PREFIX>~<WS8>/POLICY`; the signer's header keeps the full id. (2) Workspace names
+are shown through `Raw`/`visible()`, isolated (`bdi`), with the id in its own element, so a name cannot reorder or pre-fake it; the
+server refuses a workspace name or prefix with hidden characters (the workspace is listed as unavailable, `workspace.name_invalid`,
+never repaired). (3) Hidden characters are decided by Unicode category (Cf, Cc, Zl, Zp, plus U+00AD, U+061C, U+180E, U+2060-2064, U+3164,
+U+FE0F and the tag characters) in `orch_dashboard/text.py`, for branch, remote, names and reasons. Host names in hand-off titles, labels
+and by-lines are escaped.
+
+**Why:** One fragment everywhere lets the person compare one thing. A fixed list missed U+061C and the tag characters.
+
+**Revert:** `uuid8` back to `slice(0, 8)`, the confirmation word back to `<PREFIX>/SETTINGS`, `text.py` back to the fixed `HIDDEN` list.

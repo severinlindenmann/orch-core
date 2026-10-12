@@ -53,7 +53,7 @@ it('changing the grant length opens the hand-off with the typed action, and show
   expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'settings_set', grant_hours: 12, idem: expect.stringMatching(/^a_/) }])
   expect(within(dialog).getByTestId('handoff-command')).toHaveTextContent('orch sign 7F3K-Q2MA')
   expect(dialog).toHaveTextContent('Change to the workspace settings')
-  expect(dialog).toHaveTextContent('In your terminal you type DEMO/SETTINGS to continue.')
+  expect(dialog).toHaveTextContent('In your terminal you type DEMO~aaaaaaaa/SETTINGS to continue.')
   expect(dialog).toHaveTextContent('HOST-BEFORE-VALUE') // the host's "current value, not signed", labelled as such
   expect(dialog).toHaveTextContent('Current values according to the host, not signed')
   expect(within(dialog).queryByLabelText(/passphrase/i)).toBeNull()
@@ -263,7 +263,7 @@ it('Grants: ended grants are shown on request, with who revoked them only when t
   expect(screen.queryByText(GRANT_B)).not.toBeInTheDocument()
   await user.click(screen.getByRole('checkbox', { name: 'Show ended grants' }))
   await screen.findByText(GRANT_B, {}, T)
-  expect(screen.getByText(/by Mara/)).toBeInTheDocument()
+  expect(screen.getByText(GRANT_B).closest('tr')).toHaveTextContent(/by\s*Mara/)
   // No `read_ext/2`: who revoked it is unknown, and nothing is made up.
   const unknown = screen.getByText('gr_' + '0'.repeat(25) + 'C').closest('tr')!
   expect(unknown).toHaveTextContent('Revoked')

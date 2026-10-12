@@ -11,7 +11,7 @@ import { Label } from '@/components/ui/label'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { fmtDateTime, nowMs } from '@/lib/time'
 import { queries } from '@/api/queries'
-import { Raw } from '@/components/sign/visible'
+import { Raw, visible } from '@/components/sign/visible'
 import { Mono, Pill } from '../../ticket/shared'
 import { OwnerNote } from '../OwnerNote'
 import { useViewerPerson, useViewerRole } from './useViewerRole'
@@ -25,7 +25,7 @@ function RevokeDialog({ ws, grant, name, onClose }: { ws: string; grant: HostGra
   const text = reason.trim()
   return (
     <HandoffDialog
-      title={`Revoke the grant of ${name}`}
+      title={`Revoke the grant of ${visible(name)}`}
       ws={ws}
       action={{ action: 'grant_revoke', grant: grant.id, ...(text ? { reason: text } : {}) }}
       confirmLabel="Revoke grant"
@@ -101,7 +101,7 @@ export function HostGrants({ workspace }: { workspace: Workspace }) {
                       {g.revoked ? (
                         <span className="text-text-muted">
                           Revoked {fmtDateTime(g.revoked.at)}
-                          {g.revoked.by ? ` by ${name(g.revoked.by)}` : ''}
+                          {g.revoked.by ? <> by <Raw>{name(g.revoked.by)}</Raw></> : ''}
                         </span>
                       ) : (
                         fmtDateTime(g.expires_at)
@@ -118,7 +118,7 @@ export function HostGrants({ workspace }: { workspace: Workspace }) {
                     </TableCell>
                     <TableCell className="text-right">
                       {s === 'active' && canRevokeHostGrant(role, g.person, viewer) && (
-                        <Button variant="outline" size="xs" className="text-danger hover:text-danger" disabled={!served} title={served ? undefined : 'This host cannot revoke grants yet.'} aria-label={`Revoke the grant of ${name(g.person)}`} onClick={() => setRevoking(g)}>
+                        <Button variant="outline" size="xs" className="text-danger hover:text-danger" disabled={!served} title={served ? undefined : 'This host cannot revoke grants yet.'} aria-label={`Revoke the grant of ${visible(name(g.person))}`} onClick={() => setRevoking(g)}>
                           Revoke
                         </Button>
                       )}

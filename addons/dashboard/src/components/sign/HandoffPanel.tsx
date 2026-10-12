@@ -193,7 +193,7 @@ export function CommandLine({ code }: { code: string }) {
 }
 
 /** The open request: command, fingerprint, content hash, countdown and the preview. Cancel lives in the dialog footer. */
-export function HandoffPanel({ request, prefix = null }: { request: HandoffRequest; prefix?: string | null }) {
+export function HandoffPanel({ request, workspace = null }: { request: HandoffRequest; workspace?: { prefix: string; id: string } | null }) {
   const remaining = useRemaining(request.expires_at)
   return (
     <div data-handoff-panel className="space-y-3">
@@ -236,7 +236,7 @@ export function HandoffPanel({ request, prefix = null }: { request: HandoffReque
           </span>
         </dd>
       </dl>
-      <MaterialPreview material={request.material} events={request.events} word={workspaceConfirmWord(request, prefix)} />
+      <MaterialPreview material={request.material} events={request.events} word={workspaceConfirmWord(request, workspace)} />
       <p className="text-[12px] text-text-muted">Only sign a code you created yourself. This page follows the request and shows when it is signed.</p>
     </div>
   )

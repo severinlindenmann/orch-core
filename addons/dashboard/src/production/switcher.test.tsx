@@ -9,8 +9,8 @@ vi.mock('@/api/bootstrap', () => ({ getToken: () => 'demo-not-a-real-token', cle
 vi.mock('@/api/useLiveUpdates', async (original) => ({ ...(await original<typeof import('@/api/useLiveUpdates')>()), useLiveUpdates: vi.fn(() => ({ ready: true, revoked: false })) }))
 
 const A = 'a'.repeat(32)
-const B = 'c0ffee00' + 'b'.repeat(24)
-const C = 'd1ce0000' + 'c'.repeat(24)
+const B = 'b'.repeat(24) + 'c0ffee00'
+const C = 'c'.repeat(24) + 'd1ce0000'
 const T = { timeout: 5000 }
 const state = useFakeHost(() => [
   workspace({ id: A, name: 'Billing', title: 'Billing export' }),
@@ -142,7 +142,7 @@ it('the trigger and the hand-off dialog say which workspace when the prefix is s
   expect(document.querySelector('[data-ws-uuid-current]')).toHaveTextContent(uuid8(B))
   await user.click(screen.getByRole('button', { name: 'Remove Tom' }))
   const dialog = await screen.findByRole('dialog', {}, T)
-  expect(within(dialog).getByTestId('handoff-workspace')).toHaveTextContent(`DEMO · Mobile (${uuid8(B)})`)
+  expect(within(dialog).getByTestId('handoff-workspace')).toHaveTextContent(`DEMO · Mobile id ${uuid8(B)}`)
 })
 
 it('a ticket address with a shared prefix and no matching hint reads no ticket', async () => {
@@ -158,4 +158,30 @@ it('a ticket address whose hint names a stopped host reads no ticket', async () 
   expect(await screen.findByRole('heading', { name: 'Host not running' }, T)).toBeInTheDocument()
   await new Promise((r) => setTimeout(r, 300))
   expect(state.host.calls.some((c) => c.path.includes('/tickets/DEMO-0001'))).toBe(false)
+})
+
+it('an older link with the FIRST 8 characters of the id names nothing: it asks which workspace', async () => {
+  show('/w/DEMO/tickets?ws=bbbbbbbb'.replace('bbbbbbbb', B.slice(0, 8)))
+  expect(await screen.findByRole('heading', { name: 'Which workspace?' }, T)).toBeInTheDocument()
+})
+
+it('a name with a bidi override is shown escaped and cannot fake or reorder the short id', async () => {
+  const user = userEvent.setup()
+  state.host.workspaces[1].name = 'Main\u202e (a1b2c3d4)'
+  show(`/w/DEMO/settings/members?ws=${uuid8(B)}`)
+  await screen.findByRole('table', {}, T)
+  await user.click(screen.getByRole('button', { name: 'Remove Tom' }))
+  const dialog = await screen.findByRole('dialog', {}, T)
+  const line = within(dialog).getByTestId('handoff-workspace')
+  expect(line.textContent).toContain('\\u{202e}')
+  expect(line.textContent).not.toContain('\u202e')
+  expect(line.querySelector('bdi')).not.toBeNull() // the name is isolated
+  expect(line.querySelector('[data-ws-id]')?.textContent).toBe(`id ${uuid8(B)}`) // the real id, in its own element
+  await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+  await user.click(screen.getByRole('button', { name: 'Switch workspace' }))
+  const row = await screen.findByRole('button', { name: new RegExp(`${uuid8(A)}`) })
+  expect(row).toBeInTheDocument()
+  const labels = screen.getAllByRole('button', { name: /^DEMO · / }).map((b) => b.getAttribute('aria-label'))
+  expect(labels.some((l) => l?.includes('\\u{202e}'))).toBe(true)
+  expect(labels.some((l) => l?.includes('\u202e'))).toBe(false)
 })

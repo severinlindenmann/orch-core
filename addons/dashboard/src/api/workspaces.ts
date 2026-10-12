@@ -7,8 +7,12 @@ export const isRunning = (w: Pick<Workspace, 'host_state'>): boolean => !w.host_
 /** The workspaces whose host answers: every page works on these. */
 export const running = <W extends Pick<Workspace, 'host_state'>>(workspaces: readonly W[]): W[] => workspaces.filter(isRunning)
 
-/** The first 8 hex of a workspace UUID: what an address adds (`?ws=ab12cd34`) when two workspaces share a prefix. */
-export const uuid8 = (id: string): string => id.replace(/-/g, '').slice(0, 8).toLowerCase()
+/**
+ * WS8: the LAST 8 hex of a workspace id (stream A's fragment, like KEY/FRAG). The one short form shown everywhere (switcher, hand-off
+ * line, the signer's confirmation word) and the `?ws=ab12cd34` hint an address adds when two workspaces share a prefix. A link made
+ * with the first 8 (an older form) names nothing here, so it asks which workspace.
+ */
+export const uuid8 = (id: string): string => id.replace(/-/g, '').slice(-8).toLowerCase()
 
 /** Do these workspaces share the prefix (compared the way addresses are: regardless of case)? */
 export const sharesPrefix = (a: Pick<Workspace, 'prefix'>, b: Pick<Workspace, 'prefix'>): boolean => !!a.prefix && a.prefix.toUpperCase() === b.prefix.toUpperCase()

@@ -5,6 +5,7 @@ import type { Workspace } from '@/api/types'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { sharesPrefix, uuid8 } from '@/api/workspaces'
+import { visible } from '@/components/sign/visible'
 import { cn } from '@/lib/utils'
 import { useAttention } from '../attention'
 import { useWorkspace } from '../workspace'
@@ -38,12 +39,14 @@ function WorkspaceRow({ w, index, current, viewer, shared, onPick, quietFocus }:
               e.preventDefault() // Radix opens a tooltip on focus unless the event is prevented
             }}
             // `aria-current` says which one is current; the label carries the name and the count once.
-            aria-label={`${w.prefix} · ${w.name}${shared ? ` (${uuid8(w.id)})` : ''}${needs > 0 ? `, ${needs} need you` : ''}`}
+            aria-label={`${w.prefix} · ${visible(w.name)}${shared ? ` (${uuid8(w.id)})` : ''}${needs > 0 ? `, ${needs} need you` : ''}`}
             aria-keyshortcuts={keys ? ariaKeys(keys) : undefined}
             className="group flex w-full min-w-0 items-center gap-2 rounded-md px-1.5 py-1.5 text-left text-[13px] outline-none hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:ring-2 focus-visible:ring-brand"
           >
             <span className="rounded bg-surface-3 px-1 font-mono text-[10px] font-semibold text-text-muted">{w.prefix}</span>
-            <span className="min-w-0 flex-1 truncate">{w.name}</span>
+            <span className="min-w-0 flex-1 truncate">
+              <bdi>{visible(w.name)}</bdi>
+            </span>
             {shared && (
               <span data-ws-uuid className="font-mono text-[10px] text-text-faint">
                 {uuid8(w.id)}
@@ -68,6 +71,23 @@ function WorkspaceRow({ w, index, current, viewer, shared, onPick, quietFocus }:
         </TooltipContent>
       </Tooltip>
     </li>
+  )
+}
+
+/** `PREFIX · name` with the name isolated and its invisible characters shown, then the short id in its own element. */
+function WorkspaceLine({ workspace, shared }: { workspace: Workspace; shared: boolean }) {
+  return (
+    <span>
+      {workspace.prefix} · <bdi>{visible(workspace.name)}</bdi>
+      {shared && (
+        <>
+          {' '}
+          <span className="font-mono" data-ws-id>
+            id {uuid8(workspace.id)}
+          </span>
+        </>
+      )}
+    </span>
   )
 }
 
@@ -128,14 +148,14 @@ export function WorkspaceSwitcher({ collapsed, viewer }: { collapsed: boolean; v
           <TooltipTrigger asChild>
             <PopoverTrigger asChild>{trigger}</PopoverTrigger>
           </TooltipTrigger>
-          <TooltipContent side="right">{workspace ? `${workspace.prefix} · ${workspace.name}${currentShared ? ` (${uuid8(workspace.id)})` : ''}` : 'Workspace'}</TooltipContent>
+          <TooltipContent side="right">{workspace ? <WorkspaceLine workspace={workspace} shared={currentShared} /> : 'Workspace'}</TooltipContent>
         </Tooltip>
       ) : (
         <Tooltip>
           <TooltipTrigger asChild>
             <PopoverTrigger asChild>{trigger}</PopoverTrigger>
           </TooltipTrigger>
-          <TooltipContent side="right">{workspace ? `${workspace.prefix} · ${workspace.name}${currentShared ? ` (${uuid8(workspace.id)})` : ''}` : 'Workspace'}</TooltipContent>
+          <TooltipContent side="right">{workspace ? <WorkspaceLine workspace={workspace} shared={currentShared} /> : 'Workspace'}</TooltipContent>
         </Tooltip>
       )}
       <PopoverContent

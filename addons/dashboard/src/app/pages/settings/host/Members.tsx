@@ -5,7 +5,7 @@ import { MAX_CERT_BYTES, MAX_KEY_FILE_BYTES, PUBLIC_KEY, canAddRole, canChangeRo
 import { hasFeature } from '@/api/features'
 import type { Role, Workspace } from '@/api/types'
 import { LoadFailed } from '@/components/LoadFailed'
-import { Raw } from '@/components/sign/visible'
+import { Raw, visible } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -201,13 +201,13 @@ export function HostMembers({ workspace }: { workspace: Workspace }) {
               const lastOwner = m.role === 'owner' && owners === 1
               const select = (
                 <select
-                  aria-label={`Role of ${m.name}`}
+                  aria-label={`Role of ${visible(m.name)}`}
                   value={m.role}
                   disabled={!mayRole || lastOwner}
                   title={lastOwner ? 'You cannot demote the last owner. Make someone else an owner first.' : undefined}
                   onChange={(e) => {
                     const next = e.target.value as Role
-                    ask({ title: `Make ${m.name} ${next === 'owner' ? 'an owner' : `a ${next}`}`, action: { action: 'member_role', person: m.person, role: next }, autoStart: true })
+                    ask({ title: `Make ${visible(m.name)} ${next === 'owner' ? 'an owner' : `a ${next}`}`, action: { action: 'member_role', person: m.person, role: next }, autoStart: true })
                   }}
                   className="h-8 w-full rounded-md border border-border bg-bg px-2 text-[13px] disabled:cursor-not-allowed disabled:opacity-60"
                 >
@@ -230,7 +230,7 @@ export function HostMembers({ workspace }: { workspace: Workspace }) {
                     {m.devices.length === 0 ? (
                       <span className="text-text-faint">none</span>
                     ) : (
-                      <ul aria-label={`Devices of ${m.name}`} className="space-y-0.5 text-[12px]">
+                      <ul aria-label={`Devices of ${visible(m.name)}`} className="space-y-0.5 text-[12px]">
                         {m.devices.map((d) => (
                           <li key={d.id} className="flex flex-wrap gap-x-2">
                             <span className="font-mono text-text-muted"><Raw>{d.id}</Raw></span>
@@ -246,10 +246,10 @@ export function HostMembers({ workspace }: { workspace: Workspace }) {
                       <Button
                         variant="ghost"
                         size="sm"
-                        aria-label={`Remove ${m.name}`}
+                        aria-label={`Remove ${visible(m.name)}`}
                         disabled={m.person === viewer || lastOwner}
                         title={m.person === viewer ? 'You cannot remove yourself.' : lastOwner ? 'The last owner cannot be removed.' : undefined}
-                        onClick={() => ask({ title: `Remove ${m.name}`, action: { action: 'member_remove', person: m.person }, autoStart: true })}
+                        onClick={() => ask({ title: `Remove ${visible(m.name)}`, action: { action: 'member_remove', person: m.person }, autoStart: true })}
                       >
                         <Trash2 />
                       </Button>
@@ -267,7 +267,7 @@ export function HostMembers({ workspace }: { workspace: Workspace }) {
           onClose={() => setAdding(false)}
           onSubmit={(v) => {
             setAdding(false)
-            ask({ title: `Add ${v.name}`, action: { action: 'member_add', ...v }, autoStart: true })
+            ask({ title: `Add ${visible(v.name)}`, action: { action: 'member_add', ...v }, autoStart: true })
           }}
         />
       )}

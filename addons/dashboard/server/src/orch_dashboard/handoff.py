@@ -25,6 +25,7 @@ from .errors import fail
 from .gateway import Gateway
 from .hostlink import _pairs, _valid
 from .reads import Key, workspace
+from .text import clean as no_hidden
 
 Idem = Annotated[str, StringConstraints(pattern=r"^a_[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
 RequestId = Annotated[str, StringConstraints(pattern=adapters.handoff.REQUEST_ID.pattern)]
@@ -193,7 +194,7 @@ class WriteSection(Action):
 Person = Annotated[str, StringConstraints(pattern=r"^p_[0-9a-f]{32}$")]
 GrantId = Annotated[str, StringConstraints(pattern=r"^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
 Role = Literal["owner", "maintainer", "member", "viewer"]
-OneLine = r"^[^\x00-\x1f\x7f\u2028\u2029\u202a-\u202e\u2066-\u2069\u200b-\u200f\ufeff]+$"
+OneLine = AfterValidator(no_hidden)  # no control, bidi, zero-width or other hidden characters (by Unicode category)
 Token = Literal["owner", "maintainer", "member", "ticket_owner", "assignees", "reviewers", "watchers"]
 PolicyGate = Literal["requirements", "plan", "verify", "code"]
 TicketType = Literal["feature", "bug", "chore", "spike", "epic"]
@@ -276,7 +277,7 @@ class MemberAdd(Action):
     certificate goes through `human.prepare`'s `files`, the key is an argument). Nothing is read from a path."""
 
     action: Literal["member_add"]
-    name: Annotated[str, StringConstraints(min_length=1, max_length=64, pattern=OneLine)]
+    name: Annotated[str, StringConstraints(min_length=1, max_length=64), OneLine]
     role: Role
     pk: Annotated[str, StringConstraints(min_length=MAX_PK, max_length=MAX_PK, pattern=r"^[A-Za-z0-9_-]+$")]
     cert: Annotated[str, StringConstraints(min_length=2, max_length=MAX_CERT_BYTES)]
@@ -311,7 +312,7 @@ class MemberRemove(Action):
 class GrantRevoke(Action):
     action: Literal["grant_revoke"]
     grant: GrantId
-    reason: Annotated[str, StringConstraints(min_length=1, max_length=200, pattern=OneLine)] | None = None
+    reason: Annotated[str, StringConstraints(min_length=1, max_length=200), OneLine] | None = None
 
 
 PrepareBody = Annotated[

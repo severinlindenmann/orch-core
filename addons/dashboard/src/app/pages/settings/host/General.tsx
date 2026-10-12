@@ -56,7 +56,7 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
       <Section title="Workspace">
         <dl className="divide-y divide-border">
           <Row label="Name">
-            <span>{workspace.name}</span>
+            <Raw>{workspace.name}</Raw>
           </Row>
           <Row label="Prefix">
             <Mono>{workspace.prefix}</Mono>

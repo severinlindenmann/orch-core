@@ -104,8 +104,9 @@ describe('workspace operations (M4)', () => {
   it('nothing is promised for operations whose signer word is not settled, or for a ticket', async () => {
     const { workspaceConfirmWord } = await import('./handoff')
     expect(workspaceConfirmWord({ op: 'settings.set', events: ev({}), material })).toBeNull() // no prefix known
-    expect(workspaceConfirmWord({ op: 'settings.set', events: ev({}), material }, 'DEMO')).toBe('DEMO/SETTINGS')
-    expect(workspaceConfirmWord({ op: 'policy.set', events: ev({}), material }, 'DEMO')).toBe('DEMO/POLICY')
+    const ws = { prefix: 'DEMO', id: 'b5c67894e3cf0cf3e4b0a64b4357e3f3' }
+    expect(workspaceConfirmWord({ op: 'settings.set', events: ev({}), material }, ws)).toBe('DEMO~4357e3f3/SETTINGS')
+    expect(workspaceConfirmWord({ op: 'policy.set', events: ev({}), material }, ws)).toBe('DEMO~4357e3f3/POLICY')
     expect(workspaceConfirmWord({ op: 'member.role', events: ev({ person: 'p_a' }), material: { ...material, ticket: { key: 'DEMO-1', uid: 'U' } } })).toBeNull()
     expect(workspaceConfirmWord({ op: 'member.role', events: ev({}), material })).toBeNull()
   })

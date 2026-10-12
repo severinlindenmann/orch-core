@@ -14,6 +14,7 @@ import re
 from pydantic import BaseModel
 
 from ..errors import fail
+from ..text import hidden
 
 GATES = ("requirements", "plan", "verify", "code")
 DURATIONS = {"grant_hours": (1, 24), "claim_ttl_min": (15, 1440), "lease_ttl_min": (5, 1440)}
@@ -22,13 +23,10 @@ TICKET_TYPES = ("feature", "bug", "chore", "spike", "epic")
 PERSON = re.compile(r"^p_[A-Za-z0-9]{1,64}$")
 REPO = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 # No control, bidi, zero-width or byte-order characters in anything shown from the host (they could reorder a line).
-HIDDEN = "\u2028\u2029\u202a-\u202e\u2066-\u2069\u200b-\u200f\ufeff"
-BRANCH = re.compile(rf"^[^\x00-\x1f\x7f{HIDDEN}]{{1,255}}$")
+BRANCH = re.compile(r"^.{1,255}$")
 WORD = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
 # F1 5.7: a canonical identity is `https://host[:port]/path` or `local:<name>`, and carries no userinfo.
-REMOTE = re.compile(
-    rf"^(?:https://[A-Za-z0-9.-]{{1,253}}(?::[0-9]{{1,5}})?/[^\s@?#{HIDDEN}\x00-\x1f\x7f]{{0,1000}}|local:[A-Za-z0-9._-]{{1,64}})$"
-)
+REMOTE = re.compile(r"^(?:https://[A-Za-z0-9.-]{1,253}(?::[0-9]{1,5})?/[^\s@?#]{0,1000}|local:[A-Za-z0-9._-]{1,64})$")
 USERINFO = re.compile(r"^(https://)[^/@\s]*@")
 GRANT_ID = re.compile(r"^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 SESSION = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
@@ -125,14 +123,14 @@ def remote(value) -> str | None:
     if not isinstance(value, str):
         return None
     value = USERINFO.sub(r"\1", value)
-    return value if REMOTE.fullmatch(value) else None
+    return value if REMOTE.fullmatch(value) and not hidden(value) else None
 
 
 def repo(name, entry) -> Repo:
     if not isinstance(name, str) or not REPO.fullmatch(name) or not isinstance(entry, dict):
         raise bad()
     branch = entry.get("default_branch")
-    if branch is not None and not (isinstance(branch, str) and BRANCH.fullmatch(branch)):
+    if branch is not None and not (isinstance(branch, str) and BRANCH.fullmatch(branch) and not hidden(branch)):
         raise bad()
     return Repo(name=name, default_branch=branch, remote=remote(entry.get("remote")))  # `path` is never forwarded
 

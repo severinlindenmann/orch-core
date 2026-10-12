@@ -168,7 +168,10 @@ def confirm_word(prepared: dict[str, Any], key_word: str | None, person: str, pr
     if prepared["op"] in MEMBER_OPS:
         return clean(prepared["events"][0].get("person"))
     if prepared["op"] in ("settings.set", "policy.set"):
-        return f"{prefix}/{'SETTINGS' if prepared['op'] == 'settings.set' else 'POLICY'}"  # stream A: <PREFIX>/SETTINGS
+        # stream A: <PREFIX>~<WS8>/SETTINGS, WS8 the last 8 characters of the workspace id (the header has the full one)
+        return (
+            f"{prefix}~{prepared['workspace_id'][-8:]}/{'SETTINGS' if prepared['op'] == 'settings.set' else 'POLICY'}"
+        )
     return prepared["op"].upper() if prepared["op"] in WORKSPACE_OPS else person
 
 

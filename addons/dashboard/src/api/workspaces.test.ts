@@ -23,12 +23,12 @@ describe('workspaceOfTicket', () => {
 
 describe('workspaces that share a prefix (design 5: ?ws=<first 8 hex of the UUID>)', () => {
   const a = { id: 'aaaaaaaa-1111-2222-3333-444444444444', prefix: 'DEMO' }
-  const b = { id: 'c0ffee00bbbbbbbbbbbbbbbbbbbbbbbb', prefix: 'Demo' }
+  const b = { id: 'bbbbbbbbbbbbbbbbbbbbbbbbc0ffee00', prefix: 'Demo' }
   const other = { id: 'dddddddd' + '0'.repeat(24), prefix: 'INT' }
   const all = [a, b, other]
 
-  it('uuid8 is the first 8 hex of the UUID, dashes ignored', () => {
-    expect(uuid8(a.id)).toBe('aaaaaaaa')
+  it('uuid8 (WS8) is the LAST 8 hex of the workspace id, dashes ignored', () => {
+    expect(uuid8(a.id)).toBe('44444444')
     expect(uuid8(b.id)).toBe('c0ffee00')
   })
 
@@ -39,18 +39,20 @@ describe('workspaces that share a prefix (design 5: ?ws=<first 8 hex of the UUID
 
   it('a shared prefix needs the hint; without it, or with one that fits neither, the page asks', () => {
     expect(workspaceByAddress(all, 'DEMO', 'c0ffee00')).toEqual({ found: b })
-    expect(workspaceByAddress(all, 'DEMO', 'AAAAAAAA')).toEqual({ found: a })
+    expect(workspaceByAddress(all, 'DEMO', '44444444')).toEqual({ found: a })
     expect(workspaceByAddress(all, 'DEMO')).toEqual({ ambiguous: [a, b] })
     expect(workspaceByAddress(all, 'DEMO', 'deadbeef')).toEqual({ ambiguous: [a, b] })
   })
 
   it('a hint that fits nothing is not guessed away when only one workspace has the prefix', () => {
     expect(workspaceByAddress(all, 'INT', 'deadbeef')).toEqual({ missing: true })
-    expect(workspaceByAddress(all, 'INT', 'dddddddd')).toEqual({ found: other })
+    expect(workspaceByAddress(all, 'INT', '00000000')).toEqual({ found: other })
   })
 
   it('only a shared prefix gets a hint in the links', () => {
-    expect(addressHint(a, all)).toBe('aaaaaaaa')
+    expect(addressHint(a, all)).toBe('44444444')
+    // A link made with the FIRST 8 (the older form) names nothing: the page asks which workspace.
+    expect(workspaceByAddress(all, 'DEMO', 'aaaaaaaa')).toEqual({ ambiguous: [a, b] })
     expect(addressHint(other, all)).toBeNull()
     expect(sharesPrefix(a, b)).toBe(true)
     expect(sharesPrefix(a, other)).toBe(false)

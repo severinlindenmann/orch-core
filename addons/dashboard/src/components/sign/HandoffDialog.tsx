@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { sharesPrefix, uuid8 } from '@/api/workspaces'
 import { useWorkspace } from '@/app/workspace'
 import { HandoffPanel } from './HandoffPanel'
+import { Raw } from './visible'
 import { failedSubmit, useHandoff, type HandoffPhase } from './useHandoff'
 
 interface Words {
@@ -127,11 +128,16 @@ export function HandoffDialog(p: HandoffDialogProps) {
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <ShieldCheck className="size-4 text-brand" />
-            {p.title}
+            <bdi>{p.title}</bdi>
           </DialogTitle>
           {shared && here && (
             <p data-testid="handoff-workspace" className="text-[12px] text-text-muted">
-              Workspace {here.prefix} · {here.name} ({uuid8(here.id)})
+              Workspace {here.prefix} · <bdi>
+                <Raw>{here.name}</Raw>
+              </bdi>{' '}
+              <span className="font-mono" data-ws-id>
+                id {uuid8(here.id)}
+              </span>
             </p>
           )}
           <DialogDescription>
@@ -165,7 +171,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
                 You signed in again after an answer was lost, so an earlier attempt may still be open; it expires by itself within 10 minutes (4 for a grant). Sign only the code shown here.
               </p>
             )}
-            <HandoffPanel request={run.request} prefix={here?.prefix ?? null} />
+            <HandoffPanel request={run.request} workspace={here ?? null} />
           </>
         )}
 

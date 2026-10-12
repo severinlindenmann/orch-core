@@ -193,16 +193,17 @@ export const confirmWord = (key: string, uid: string): string => `${key}/${uid.s
 export const CODE = /^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/
 /**
  * The word the signer asks for on a request that is not about a ticket: a member's person id for the member operations,
- * `GRANT.REVOKE` for a revoke, and `<PREFIX>/SETTINGS` or `<PREFIX>/POLICY` for the workspace settings and policy (stream A's
- * decision; real `orch sign` learns them with H6b). `null` where this dashboard does not know the word.
+ * `GRANT.REVOKE` for a revoke, and `<PREFIX>~<WS8>/SETTINGS` or `<PREFIX>~<WS8>/POLICY` for the workspace settings and policy (stream
+ * A's decision; WS8 = last 8 characters of the workspace id; the signer's header keeps the full id). `null` where this dashboard does not know the word.
  */
-export function workspaceConfirmWord(request: Pick<HandoffRequest, 'op' | 'events' | 'material'>, prefix?: string | null): string | null {
+export function workspaceConfirmWord(request: Pick<HandoffRequest, 'op' | 'events' | 'material'>, workspace?: { prefix: string; id: string } | null): string | null {
   if (request.material.ticket) return null
   if (request.op === 'member.add' || request.op === 'member.role' || request.op === 'member.remove') {
     const person = request.events[0]?.person
     return typeof person === 'string' ? person : null
   }
-  if (request.op === 'settings.set' || request.op === 'policy.set') return prefix ? `${prefix}/${request.op === 'settings.set' ? 'SETTINGS' : 'POLICY'}` : null // stream A: <PREFIX>/SETTINGS, <PREFIX>/POLICY (the prefix is the signer's own registry's)
+  // Stream A: <PREFIX>~<WS8>/SETTINGS and <PREFIX>~<WS8>/POLICY, WS8 the last 8 characters of the workspace id.
+  if (request.op === 'settings.set' || request.op === 'policy.set') return workspace ? `${workspace.prefix}~${workspace.id.slice(-8)}/${request.op === 'settings.set' ? 'SETTINGS' : 'POLICY'}` : null
   return request.op === 'grant.revoke' ? 'GRANT.REVOKE' : null
 }
 

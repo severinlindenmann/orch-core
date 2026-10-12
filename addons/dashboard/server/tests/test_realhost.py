@@ -82,7 +82,7 @@ def api(world, token):
             """prepare -> `orch sign CODE` in a pty -> follow to the end. Returns (prepared, final)."""
             body = {**body, "idem": new_idem()}
             res = self.post("/handoff", body)
-            assert res.status_code == 200, res.text
+            assert res.status_code == 200, res.text + world.ws.log.read_text()[-3000:]
             prepared = res.json()
             if not sign:
                 return prepared, None
@@ -292,3 +292,82 @@ def test_new_ticket_then_complete_the_details(world, api):
     doc = api.get(f"/tickets/{key}").json()
     assert doc["priority"] == "high" and doc["size"] == "s" and doc["labels"] == ["archive"]
     assert doc["body"]["summary"].startswith("Move invoices")
+
+
+HOST_PERSON_OPS_IDEM = pytest.mark.xfail(
+    strict=True,
+    reason="stream A RH-3: human.prepare with an idem for move/policy.set/settings.set raises KeyError in the host "
+    "(human.py _begin_idem looks the op up in the registry, which lacks the host person ops): 500 internal",
+)
+VERIFY_OWNER = {"approvers": ["owner"], "count": 1, "not": [], "applies": "all", "independent": False}
+
+
+def direct(world, op, args):
+    """Prepare WITHOUT an idem (what the dashboard cannot do, see RH-3), sign with the real signer, wait for the end."""
+    link = world.gateway.link(world.ws.ws_id)
+    prepared = link.call("human.prepare", {"op": op, "args": args, "handoff": True})
+    world.ws.sign(prepared["request"]["code"])
+    for _ in range(100):
+        rows = link.call("human.pending", {"request_id": prepared["request"]["id"]})["requests"]
+        if rows and rows[0]["state"] == "submitted":
+            return rows[0]
+        time.sleep(0.2)
+    raise AssertionError(rows)
+
+
+@HOST_PERSON_OPS_IDEM
+def test_settings_set_through_the_dashboard(world, api):
+    _, final = api.handoff({"action": "settings_set", "grant_hours": 12})
+    assert final["state"] == "submitted", final
+
+
+@HOST_PERSON_OPS_IDEM
+def test_policy_set_through_the_dashboard(world, api):
+    _, final = api.handoff({"action": "policy_set", "gate": "verify", "policy": VERIFY_OWNER})
+    assert final["state"] == "submitted", final
+
+
+def test_the_real_signer_signs_settings_set_and_policy_set(world, api):
+    """H6b taught `orch sign` these words (<PREFIX>~<WS8>/SETTINGS and /POLICY): proven with a prepare that has no idem."""
+    direct(world, "settings.set", {"set": {"grant_hours": 12, "claim_ttl_min": 90}})
+    st = api.get("/settings").json()
+    assert st["grant_hours"] == 12 and st["claim_ttl_min"] == 90 and st["settings_at"]["by"] == world.ws.person
+    direct(world, "policy.set", {"gates": {"verify": VERIFY_OWNER}})
+    st = api.get("/settings").json()
+    assert st["gates"]["verify"]["approvers"] == ["owner"] and st["gates"]["verify"]["not"] == []
+
+
+def test_verdicts_after_the_verify_policy_lets_the_owner_decide(world, api):
+    direct(world, "policy.set", {"gates": {"verify": VERIFY_OWNER}})
+    _, final = api.handoff({"action": "verdict", "key": world.keys["verdict"], "outcome": "pass", "message": "Matches the spec."})
+    assert final["state"] == "submitted", final
+    assert api.get(f"/tickets/{world.keys['verdict']}").json()["status"] == "done"
+    _, final = api.handoff({"action": "verdict", "key": world.keys["testing"], "outcome": "fail", "message": "Retries are not capped."})
+    assert final["state"] == "submitted", final
+
+
+def invitee():
+    import base64
+
+    from tests.identity.helpers import Person
+
+    person = Person()
+    pk = base64.urlsafe_b64encode(person.pk_pub).rstrip(b"=").decode()
+    return person, pk, json.dumps(person.cert(created=int(time.time() * 1000)))
+
+
+def test_add_a_member_from_a_certificate_file(world, api):
+    person, pk, cert = invitee()
+    _, final = api.handoff({"action": "member_add", "name": "Nia", "role": "member", "pk": pk, "cert": cert})
+    assert final["state"] == "submitted", final
+    members = {m["person"]: m for m in api.get("/members").json()}
+    assert members[person.ref]["name"] == "Nia" and members[person.ref]["role"] == "member"
+
+
+def test_revoke_a_grant(world, api):
+    grants = api.get("/grants").json()
+    gid = grants[0]["id"]
+    _, final = api.handoff({"action": "grant_revoke", "grant": gid, "reason": "done for today"})
+    assert final["state"] == "submitted", final
+    got = {g["id"]: g for g in api.get("/grants", params={"active": "false"}).json()}
+    assert got[gid]["revoked"]["by"] == world.ws.person

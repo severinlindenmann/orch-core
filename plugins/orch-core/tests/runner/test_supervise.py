@@ -557,3 +557,63 @@ def test_runs_start_with_the_captured_umask(state, tmp_path):
         assert wait_for(lambda: out.exists() and out.read_text().strip()) in ("0027", "027")
     finally:
         sup.close()
+
+
+# -- Opus delta on #428 -------------------------------------------------------------------------------------------
+
+
+def test_controlled_stop_never_matches_a_reused_session(state, tmp_path):
+    """D1, Opus's probe: an escaped, incomplete run whose leader was reaped; its sid/pgid now name a double-forked
+    daemon's exited middle (the state after PID reuse). ``close(stop_runs=True)`` uses exact identities only, so the
+    daemon survives."""
+    sup = Supervisor(state, cgroups=None, scan_interval=0.1, exit_grace=0.5)
+    sup.open()
+    mid, _mbirth, dpid, dbirth = _daemon(tmp_path)
+    try:
+        s = spec(tmp_path, ["/bin/sh", "-c", "exec sleep 60"])
+        sup.spawn(s)
+        assert sup.stop(s.run, grace=0.5)["cleanup"] == "complete"
+        live = sup.live[s.run]
+        assert live.reaped
+        live.cleanup, live.escaped, live.lingering = "incomplete", True, True  # as an escaped run
+        live.sid = live.pgid = mid  # the run's session id now names the daemon's (exited) middle process
+        sup.close(stop_runs=True, grace=0.3)
+        time.sleep(0.2)
+        assert procs.alive(dpid, dbirth)
+    finally:
+        kill_own(dpid, dbirth)
+
+
+def test_session_sweep_still_works_before_the_leader_is_reaped(sup, tmp_path):
+    """The other side of D1: while the leader is unreaped (seen with waitid WNOWAIT), the session sweep still finds
+    a member that stayed in the session after the leader exited."""
+    pidfile = tmp_path / "bg.pid"
+    s = spec(tmp_path, ["/bin/sh", "-c", f"sh -c 'echo $$ > {pidfile}; exec sleep 60' & sleep 0.3; exit 0"])
+    sup.spawn(s)
+    bg, birth = read_pid(pidfile)
+    try:
+        wait_for(lambda: sup.get(s.run)["cleanup"] is not None, timeout=10)
+        assert sup.get(s.run)["cleanup"] == "complete" and not procs.alive(bg, birth)
+    finally:
+        kill_own(bg, birth)
+
+
+def test_enumeration_sees_processes_of_other_uids():
+    """D2, unpatched: the all-UID snapshot really contains processes of another UID (root's launchd or init)."""
+    snap = procs.snapshot(None)
+    assert any(p.uid != os.getuid() for p in snap.values())
+    assert procs.info(1) is not None and procs.info(1).uid == 0
+    me = procs.info(os.getpid())
+    assert me is not None and me.uid == os.getuid() and me.ppid == os.getppid()
+
+
+def test_boot_id_is_stable():
+    assert procs.boot_id() == procs.boot_id() and len(procs.boot_id()) >= 8
+
+
+def test_env_deny_list_is_anchored(tmp_path):
+    for name in ("ENVIRONMENT", "IFS2", "PS4X", "MY_LD_PATH"):
+        spec(tmp_path, ["/bin/sh"], env={name: "x"}, kind="agent").check()  # exact names do not deny prefixes
+    for name in ("ENV", "IFS", "PS4", "LD_X", "PYTHONX"):
+        with pytest.raises(SpawnError):
+            spec(tmp_path, ["/bin/sh"], env={name: "x"}, kind="agent").check()

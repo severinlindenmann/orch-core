@@ -1,10 +1,10 @@
 """Process facts for the runner (D-P2-29): birth identity, enumeration and signals that never hit a reused PID.
 
 A process is named by its **birth identity** ``(pid, birth)``: ``birth`` is the kernel's start time of that process,
-an opaque integer comparable only on the same machine and boot (macOS: ``proc_pidinfo(PROC_PIDTBSDINFO)`` start time in
-microseconds since the epoch; Linux: ``/proc/<pid>/stat`` field 22, clock ticks since boot). Every signal the runner
-sends goes through :func:`signal_verified`, which re-reads the birth time right before ``kill`` and does nothing when
-it differs: a PID that was reused by another program is never signalled.
+an opaque integer comparable only on the same machine and boot (macOS: ``sysctl(KERN_PROC)`` ``p_starttime`` in
+microseconds since the epoch, readable for every UID; Linux: ``/proc/<pid>/stat`` field 22, clock ticks since boot).
+Every signal the runner sends goes through :func:`signal_verified`, which re-reads the birth time right before
+``kill`` and does nothing when it differs: a PID that was reused by another program is never signalled.
 
 * Linux: the check and the signal go through a pidfd (``pidfd_open``, then the birth time is re-read, then
   ``pidfd_send_signal``), so the PID cannot be reused between the check and the signal.
@@ -21,6 +21,7 @@ from __future__ import annotations
 import ctypes
 import os
 import signal
+import struct
 import sys
 from dataclasses import dataclass
 
@@ -38,61 +39,69 @@ class ProcInfo:
     zombie: bool = False
 
 
-# -- macOS: libproc --------------------------------------------------------------------------------------------------
+# -- macOS: sysctl KERN_PROC (what ps uses; it sees processes of every UID, unlike proc_pidinfo) -------------------
 
-_PROC_PIDTBSDINFO = 3
-_BSDINFO_SIZE = 136
+_CTL_KERN, _KERN_PROC, _KERN_PROC_ALL, _KERN_PROC_PID = 1, 14, 0, 1
+_KINFO_SIZE = 648  # struct kinfo_proc (LP64)
 _SZOMB = 5
-_lib = None
+_libc = None
 
 
-def _libproc():  # pragma: no cover - exercised on macOS only
-    global _lib
-    if _lib is None:
-        lib = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
-        lib.proc_listallpids.argtypes = [ctypes.c_void_p, ctypes.c_int]
-        lib.proc_listallpids.restype = ctypes.c_int
-        lib.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
-        lib.proc_pidinfo.restype = ctypes.c_int
-        _lib = lib
-    return _lib
+def _libsys():  # pragma: no cover - macOS
+    global _libc
+    if _libc is None:
+        _libc = ctypes.CDLL(None, use_errno=True)
+    return _libc
 
 
-def _darwin_info(pid: int) -> ProcInfo | None:  # pragma: no cover - macOS
-    lib = _libproc()
-    buf = ctypes.create_string_buffer(_BSDINFO_SIZE)
-    n = lib.proc_pidinfo(pid, _PROC_PIDTBSDINFO, 0, buf, _BSDINFO_SIZE)
-    if n != _BSDINFO_SIZE:
-        return None
-    raw = buf.raw
-    status, got_pid, ppid, uid = (int.from_bytes(raw[o : o + 4], sys.byteorder) for o in (4, 12, 16, 20))
-    pgid = int.from_bytes(raw[100:104], sys.byteorder)
-    sec = int.from_bytes(raw[120:128], sys.byteorder)
-    usec = int.from_bytes(raw[128:136], sys.byteorder)
-    if got_pid != pid:
+def _sysctl(mib: list[int]) -> bytes:  # pragma: no cover - macOS
+    lib = _libsys()
+    arr = (ctypes.c_int * len(mib))(*mib)
+    for _ in range(4):
+        size = ctypes.c_size_t(0)
+        if lib.sysctl(arr, len(mib), None, ctypes.byref(size), None, ctypes.c_size_t(0)) != 0:
+            raise OSError(ctypes.get_errno(), "sysctl KERN_PROC")
+        want = size.value + 64 * _KINFO_SIZE
+        buf = ctypes.create_string_buffer(want)
+        size = ctypes.c_size_t(want)
+        if lib.sysctl(arr, len(mib), buf, ctypes.byref(size), None, ctypes.c_size_t(0)) == 0:
+            return buf.raw[: size.value]
+        if ctypes.get_errno() != 12:  # ENOMEM: the table grew, try again
+            raise OSError(ctypes.get_errno(), "sysctl KERN_PROC")
+    raise OSError("the process table kept growing")
+
+
+def _kinfo(raw: bytes, off: int) -> ProcInfo | None:  # pragma: no cover - macOS
+    sec, usec = struct.unpack_from("=qi", raw, off)  # kp_proc.p_starttime
+    stat = raw[off + 36]  # kp_proc.p_stat
+    pid = struct.unpack_from("=i", raw, off + 40)[0]  # kp_proc.p_pid
+    ruid = struct.unpack_from("=I", raw, off + 392)[0]  # kp_eproc.e_pcred.p_ruid
+    ppid, pgid = struct.unpack_from("=ii", raw, off + 560)  # kp_eproc.e_ppid, e_pgid
+    if pid <= 0:
         return None
     try:
         sid = os.getsid(pid)
     except OSError:
         sid = -1
-    return ProcInfo(pid, ppid, pgid, sid, uid, sec * 1_000_000 + usec, status == _SZOMB)
+    return ProcInfo(pid, ppid, pgid, sid, ruid, sec * 1_000_000 + usec, stat == _SZOMB)
 
 
-def _darwin_pids() -> list[int]:  # pragma: no cover - macOS
-    lib = _libproc()
-    count = lib.proc_listallpids(None, 0)
-    if count <= 0:
-        raise OSError(ctypes.get_errno(), "proc_listallpids failed")
-    for _ in range(4):
-        size = count + 64
-        arr = (ctypes.c_int * size)()
-        got = lib.proc_listallpids(arr, ctypes.sizeof(arr))
-        if got < 0:
-            raise OSError(ctypes.get_errno(), "proc_listallpids failed")
-        if got < size:
-            return [p for p in arr[:got] if p > 0]
-        count = got * 2
-    raise OSError("the process table kept growing")
+def _darwin_info(pid: int) -> ProcInfo | None:  # pragma: no cover - macOS
+    raw = _sysctl([_CTL_KERN, _KERN_PROC, _KERN_PROC_PID, pid])
+    if len(raw) < _KINFO_SIZE:
+        return None
+    found = _kinfo(raw, 0)
+    return found if found is not None and found.pid == pid else None
+
+
+def _darwin_snapshot() -> dict[int, ProcInfo]:  # pragma: no cover - macOS
+    raw = _sysctl([_CTL_KERN, _KERN_PROC, _KERN_PROC_ALL, 0])
+    out = {}
+    for off in range(0, len(raw) - _KINFO_SIZE + 1, _KINFO_SIZE):
+        found = _kinfo(raw, off)
+        if found is not None:
+            out[found.pid] = found
+    return out
 
 
 # -- Linux: /proc ----------------------------------------------------------------------------------------------------
@@ -152,7 +161,10 @@ def birth(pid: int) -> int | None:
 
 def snapshot(uid: int | None = None) -> dict[int, ProcInfo]:
     """Every readable process (of ``uid`` when given), by PID. A process that ends while it is read is left out."""
-    pids = _darwin_pids() if sys.platform == "darwin" else _linux_pids()
+    if sys.platform == "darwin":
+        every = _darwin_snapshot()
+        return {p: i for p, i in every.items() if uid is None or i.uid == uid}
+    pids = _linux_pids()
     out: dict[int, ProcInfo] = {}
     for pid in pids:
         found = info(pid)
@@ -202,15 +214,13 @@ def boot_id() -> str:
         if sys.platform.startswith("linux"):
             with open("/proc/sys/kernel/random/boot_id") as f:
                 _BOOT = f.read().strip()
-        else:  # pragma: no cover - macOS
+        else:  # pragma: no cover - macOS: kern.bootsessionuuid (kern.boottime moves when the clock is stepped)
             lib = ctypes.CDLL(None, use_errno=True)
-            buf = ctypes.create_string_buffer(16)
-            size = ctypes.c_size_t(16)
-            if lib.sysctlbyname(b"kern.boottime", buf, ctypes.byref(size), None, ctypes.c_size_t(0)) != 0:
-                raise OSError(ctypes.get_errno(), "kern.boottime")
-            sec = int.from_bytes(buf.raw[0:8], sys.byteorder)
-            usec = int.from_bytes(buf.raw[8:12], sys.byteorder)
-            _BOOT = f"{sec}.{usec:06d}"
+            buf = ctypes.create_string_buffer(64)
+            size = ctypes.c_size_t(64)
+            if lib.sysctlbyname(b"kern.bootsessionuuid", buf, ctypes.byref(size), None, ctypes.c_size_t(0)) != 0:
+                raise OSError(ctypes.get_errno(), "kern.bootsessionuuid")
+            _BOOT = buf.value.decode()
     return _BOOT
 
 

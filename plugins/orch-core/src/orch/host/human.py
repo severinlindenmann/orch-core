@@ -581,8 +581,9 @@ class HumanOps:
             raise HostError("human.request_expired", _expired(record))
         if state in ("submitted", "cancelled"):
             raise HostError("human.request_state", f"the request is {state}")
+        call.service.store.refresh()
+        convenience.refuse_reader_op(call.service, record["op"], history=True)  # §0.8.6: fails early, before binding
         if signer["auth"] == "convenience":  # §0.8.6: before a convenience binding, and on every bound read
-            call.service.store.refresh()
             convenience.check(call.service, record["person"], signer["device"])
         if state == "bound":
             if record["signer"] != signer:
@@ -779,6 +780,9 @@ class HumanOps:
             if any(e.get("auth") == "convenience" for e in events):  # §0.8.6: the condition, again at submit
                 store.refresh()
                 convenience.check(service, record["person"], events[0]["actor"]["device"])
+            # §0.8.6: a reader is never added to a history with convenience signatures, nor while the flag is on,
+            # however long ago the request was prepared
+            convenience.refuse_reader_op(service, record["op"], history=True)
             git = service.capabilities().with_principal(call.principal).git
             self._judge(store, record, events, git)
             log = record["prepared"]["log"]

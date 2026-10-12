@@ -176,29 +176,28 @@ def main(argv: list[str], *, env: Mapping[str, str] | None = None, out: TextIO |
 def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> int:
     """``orch host convenience on|off|show [--workspace W]``: the per-workspace click-to-sign flag in the host state dir
     (host UID only). Switching it on is an operator decision: every reader of the workspace must know auth
-    convenience (orch-v2-host §0.8.6 item 4); the host still checks the readers condition at every prepare."""
+    convenience (orch-v2-host §0.8.6 item 4); the host still checks the readers condition at every prepare. Errors use
+    the CLI's catalog envelope."""
+    from orch.custody.cli import write_error
+
     from . import convenience
     from .registry import registry_path
 
     state = _state(args.state, env)
     uid = os.getuid()
     if env.get("ORCH_GRANT"):
-        out.write("orch host convenience: human_only: an agent never switches signing custody\n")
-        return 3
+        return write_error(out, False, "human_only", "an agent never switches signing custody")
     if args.switch == "show":
-        doc = convenience._doc(state, uid)
-        out.write(json.dumps(doc, sort_keys=True) + "\n")
+        out.write(json.dumps(convenience.read(state, uid), sort_keys=True) + "\n")
         return 0
     if not args.workspace:
-        out.write("orch host convenience: invalid.input: --workspace is required\n")
-        return 5
+        return write_error(out, False, "invalid.input", "--workspace is required")
     from .custody import read_json
 
     reg = read_json(registry_path(state), uid) or {"workspaces": []}
     match = [w for w in reg.get("workspaces") or [] if args.workspace in (w.get("workspace_id"), w.get("prefix"))]
     if len(match) != 1:
-        out.write(f"orch host convenience: not_found: no single registered workspace {args.workspace}\n")
-        return 2
+        return write_error(out, False, "not_found", f"no single registered workspace {args.workspace}")
     wid = match[0]["workspace_id"]
     convenience.set_enabled(state, wid, args.switch == "on", uid)
     word = "on" if args.switch == "on" else "off"

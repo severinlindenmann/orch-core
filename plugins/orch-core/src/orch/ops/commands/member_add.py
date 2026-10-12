@@ -15,7 +15,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     """The invitee made their own person key and first device certificate; the owner signs only the roster change."""
     h = Human(ctx, "member.add")
     h.who()
-    refuse_new_reader(h.store, "member.add")  # orch-v2-host §0.8.6: history with convenience signatures
+    refuse_new_reader(h.store, "member.add")  # READER_OPS; orch-v2-host §0.8.6
     try:
         pk = crypto.unb64u(args["pk"], crypto.PUB_LEN)
         crypto.validate_public_key(pk)

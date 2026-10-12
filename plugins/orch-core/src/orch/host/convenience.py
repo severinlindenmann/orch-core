@@ -19,15 +19,28 @@ import time
 from pathlib import Path
 from typing import Any
 
+from orch.ops.readers import READER_OPS, has_convenience_events  # one list for the host and the op handlers
+
 from .custody import ensure_private_dir, read_json, write_private
 from .errors import HostError
 from .registry import host_dir
 
-__all__ = ["AUTH", "READER_OPS", "check", "enabled", "flag_path", "reason", "refuse_reader_op", "set_enabled"]
+__all__ = [
+    "AUTH",
+    "READER_OPS",
+    "REASONS",
+    "check",
+    "enabled",
+    "flag_path",
+    "read",
+    "reason",
+    "refuse_reader_op",
+    "set_enabled",
+]
+
+REASONS = ("disabled", "relay_paired", "other_member", "phone_device", "reader_version")
 
 AUTH = "convenience"
-#: ops that add a reader of the workspace's log (P3 pairing and device ops join this list when they exist)
-READER_OPS = frozenset({"member.add"})
 
 
 def flag_path(state_dir: Path) -> Path:
@@ -41,6 +54,11 @@ def _doc(state_dir: Path, host_uid: int) -> dict[str, Any]:
     if not isinstance(doc, dict) or doc.get("v") != 1 or not isinstance(doc.get("workspaces"), dict):
         raise HostError("internal", "the convenience flag file is corrupt; refusing convenience signing")
     return doc
+
+
+def read(state_dir: Path, host_uid: int) -> dict[str, Any]:
+    """The flag file as stored (``{"v":1,"workspaces":{…}}``); refuses a corrupt one."""
+    return _doc(state_dir, host_uid)
 
 
 def enabled(state_dir: Path, workspace_id: str, host_uid: int) -> bool:
@@ -116,9 +134,18 @@ def check(service: Any, person: str, device: str) -> None:
         )
 
 
-def refuse_reader_op(service: Any, op: str) -> None:
-    """While the flag is on, an op that adds a reader is refused: switch convenience off first (owner decision)."""
-    if op in READER_OPS and enabled(service.state_dir, service.workspace_id, service.host_uid):
+def refuse_reader_op(service: Any, op: str, *, history: bool = False) -> None:
+    """While the flag is on, an op that adds a reader is refused: switch convenience off first (owner decision). With
+    ``history`` (at binding and at submit, under the store lock) a history holding convenience events refuses too."""
+    if op not in READER_OPS:
+        return
+    if history and has_convenience_events(service.store):
+        raise HostError(
+            "sign.convenience_readers",
+            f"{op} would add a reader to a workspace whose history has convenience signatures",
+            hint="the new reader must understand auth convenience first (orch-v2-host §0.8.6)",
+        )
+    if enabled(service.state_dir, service.workspace_id, service.host_uid):
         raise HostError(
             "sign.convenience_readers",
             f"{op} adds a reader while convenience signing is on for this workspace",

@@ -5,8 +5,10 @@
     orch keys custody passphrase --workspace W --in-place
     orch keys forget --workspace W                     # removes local convenience custody (not revocation)
 
-``ORCH_GRANT`` and a missing terminal refuse: they prevent accidental use through supported agent workflows, they do
-not authenticate a person against a same-UID process.
+``ORCH_GRANT`` refuses every subcommand but ``status``, and the changing subcommands also need the person's terminal
+(``/dev/tty``): they prevent accidental use through supported agent workflows, they do not authenticate a person
+against a same-UID process. Errors use the CLI's catalog envelope (``{ok:false, error:{code, message, hint?, fix?,
+retryable}}``), with the host's exit codes for host codes.
 """
 
 from __future__ import annotations
@@ -66,9 +68,25 @@ def _one(state: Path, pick: str | None) -> dict[str, Any]:
     return found[0]
 
 
+def has_terminal() -> bool:
+    """A controlling terminal (``/dev/tty``) can be opened. Tests replace this."""
+    from orch.ops.caps import open_tty
+
+    try:
+        fd = open_tty(os.O_RDWR)
+    except OSError:
+        return False
+    try:
+        return os.isatty(fd)
+    finally:
+        os.close(fd)
+
+
 def _need_terminal(env: Mapping[str, str]) -> None:
     if env.get("ORCH_GRANT"):
         raise _Fail("human_only", "orch keys is a person's command; an agent never changes key custody")
+    if not has_terminal():
+        raise _Fail("custody.no_prompt", "orch keys changes custody only at your own terminal (/dev/tty)")
 
 
 def _enabled(state: Path, entry: dict[str, Any]) -> bool:
@@ -142,9 +160,25 @@ def main(
     return 0
 
 
-def _fail(out: TextIO, as_json: bool, code: str, message: str, exit_code: int) -> int:
-    if as_json:
-        out.write(json.dumps({"ok": False, "error": {"code": code, "message": message}}, sort_keys=True) + "\n")
-    else:
-        out.write(f"orch keys: {code}: {message}\n")
+def envelope(code: str, message: str, *, hint: str | None = None) -> tuple[dict[str, Any], int]:
+    """The catalog error envelope and exit code (the P1 catalog, then the host's table)."""
+    from orch.cli.render import error_envelope
+    from orch.host.errors import disposition
+    from orch.ops.errors import OrchError
+
+    env = error_envelope(OrchError(code, message[:400], hint=hint))
+    exit_code, retryable = disposition(code)
+    env["error"]["retryable"] = bool(env["error"].get("retryable") or retryable)
+    return env, exit_code
+
+
+def write_error(out: TextIO, as_json: bool, code: str, message: str, *, hint: str | None = None) -> int:
+    from orch.cli.render import error_text
+
+    env, exit_code = envelope(code, message, hint=hint)
+    out.write((json.dumps(env, sort_keys=True) if as_json else error_text(env)) + "\n")
     return exit_code
+
+
+def _fail(out: TextIO, as_json: bool, code: str, message: str, exit_code: int) -> int:
+    return write_error(out, as_json, code, message)

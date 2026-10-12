@@ -223,3 +223,49 @@ def test_the_host_never_handles_person_custody(tmp_path):
         "load_security",
     ):
         assert r[refused] == "denied", (refused, r)
+
+
+WALKS = PRELUDE + textwrap.dedent(
+    """
+    ws = "0123456789abcdef0123456789abcdef"
+    dev = "d_" + "1" * 32
+    for d in ("/person/" + ws + "/devices", "/hosts/" + ws + "/person"):
+        os.makedirs(root + d, exist_ok=True)
+    with open(root + "/person/" + ws + "/devices/" + dev + ".key", "w") as f:
+        f.write("SECRET")
+    with open(root + "/hosts/" + ws + "/person/dk.key.json", "w") as f:
+        f.write("SECRET")
+    audit.warm()
+    audit.install([root])
+    flags = os.O_RDONLY | os.O_NOFOLLOW
+    def dir_fd_walk():
+        fd = os.open(root, flags)
+        for part in ("person", ws, "devices"):
+            fd = os.open(part, flags, dir_fd=fd)
+        os.close(os.open(dev + ".key", flags, dir_fd=fd))
+    def chdir_walk():
+        os.chdir(root)
+        for part in ("person", ws, "devices"):
+            os.chdir(part)
+        os.close(os.open(dev + ".key", flags))
+    t("dir_fd_walk", dir_fd_walk)
+    os.chdir(root)
+    t("chdir_walk", chdir_walk)
+    os.chdir(root)
+    t("legacy_abs", lambda: open(root + "/hosts/" + ws + "/person/dk.key.json").close())
+    def legacy_walk():
+        fd = os.open(root, flags)
+        for part in ("hosts", ws, "person"):
+            fd = os.open(part, flags, dir_fd=fd)
+        os.close(os.open("dk.key.json", flags, dir_fd=fd))
+    t("legacy_dir_fd_walk", legacy_walk)
+    print(json.dumps(out))
+    """
+)
+
+
+def test_the_host_cannot_walk_to_a_person_key_relatively(tmp_path):
+    root, outside = _setup(tmp_path)
+    r = _run(WALKS, root, outside, cwd=root)
+    for refused in ("dir_fd_walk", "chdir_walk", "legacy_abs", "legacy_dir_fd_walk"):
+        assert r[refused] == "denied", (refused, r)

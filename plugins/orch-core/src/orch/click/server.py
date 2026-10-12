@@ -14,7 +14,7 @@ from typing import Any
 
 from orch.host import frames
 
-from .protocol import OPS, ClickError
+from .protocol import FRAME_ID, OPS, ClickError
 
 __all__ = ["main", "serve"]
 
@@ -38,8 +38,8 @@ def serve(sock: socket.socket, signer: Any) -> None:
             if isinstance(req, frames.FrameError):
                 return
             rid = req.get("id") if isinstance(req, dict) else None
-            if not isinstance(rid, str) or not rid or len(rid) > 32:
-                return
+            if not isinstance(rid, str) or not FRAME_ID.fullmatch(rid):
+                return  # an unreadable request id closes the channel
             try:
                 if req.get("t") != "req" or req.get("op") not in OPS or not isinstance(req.get("args"), Mapping):
                     raise ClickError("invalid.input", "a request is {t:req, id, op, args}")
@@ -65,9 +65,12 @@ def _watch_parent(parent: int) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    parent = os.getppid()  # first: a parent that dies during start-up is still noticed
     p = argparse.ArgumentParser(prog="python -I -m orch.click")
     p.add_argument("--fd", type=int, required=True)
     args = p.parse_args(argv)
+    if parent == 1:  # orphaned before it started: the dashboard is gone already
+        return 0
     if os.name == "nt":  # pragma: no cover
         sys.stderr.write("orch.click: convenience custody is not supported on Windows in phase 1\n")
         return 3
@@ -88,7 +91,7 @@ def main(argv: list[str] | None = None) -> int:
     from .signer import ClickSigner
 
     _harden()  # no core dump, no debugger attach: defence in depth only
-    threading.Thread(target=_watch_parent, args=(os.getppid(),), daemon=True).start()
+    threading.Thread(target=_watch_parent, args=(parent,), daemon=True).start()
     state = state_dir(os.environ)
     signer = ClickSigner(state, log=ClickLog(state))
     try:

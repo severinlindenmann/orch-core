@@ -7,6 +7,9 @@ from typing import Any
 
 __all__ = [
     "CLICK_OPS",
+    "OPS",
+    "REASONS",
+    "REFUSALS",
     "CONTRACT",
     "ClickError",
     "RISK",
@@ -17,6 +20,22 @@ __all__ = [
 CONTRACT = 1
 RISK = "Convenience signing: agents running as you, or anything that takes over this dashboard, could sign."
 OPS = ("prepare", "view", "sign", "cancel", "status")
+#: the host's ``sign.convenience_unavailable`` reasons (orch-v2-host §0.8.6 item 1)
+REASONS = ("disabled", "relay_paired", "other_member", "phone_device", "reader_version")
+#: ``human.click_refused`` reasons (§0.8.6 item 5)
+REFUSALS = (
+    "terminal_only",
+    "not_prepared_here",
+    "expired",
+    "view_changed",
+    "too_soon",
+    "word",
+    "custody_changed",
+    "busy",
+    "check_failed",
+    "uncertain",
+)
+FRAME_ID = re.compile(r"[A-Za-z0-9_-]{1,32}")
 WS_ID = re.compile(r"[0-9a-f]{32}")
 REQ = re.compile(r"hr_[0-7][0-9A-HJKMNP-TV-Z]{25}")
 IDEM = re.compile(r"a_[0-7][0-9A-HJKMNP-TV-Z]{25}")
@@ -116,4 +135,5 @@ class ClickError(Exception):
 
 
 def refused(reason: str, message: str) -> ClickError:
+    assert reason in REFUSALS, reason
     return ClickError("human.click_refused", message, reason=reason)

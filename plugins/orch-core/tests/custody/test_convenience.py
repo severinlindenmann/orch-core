@@ -274,3 +274,11 @@ def test_the_keychain_adapter_round_trips_through_the_backend(tmp_path):
         assert not store.exists(WS, dev)
     finally:
         keychain.delete_keychain(path)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS keychain")
+def test_the_suite_guard_refuses_the_login_keychain():
+    from orch.custody.convenience import KeychainAdapter
+
+    with pytest.raises(AssertionError, match="login keychain"):
+        KeychainAdapter()

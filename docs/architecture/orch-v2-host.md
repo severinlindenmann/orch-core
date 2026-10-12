@@ -1859,9 +1859,12 @@ dashboard.** This is a separate exposure from the same-UID agent risk, which is 
 
   `orch sign CODE` with a passphrase key stays available whatever the reason.
 - **Adding a reader to a workspace that has convenience events is blocked** (owner decision): `member.add` (and, when
-  they exist, relay pairing and any op that adds a device) is refused with **`sign.convenience_readers`** (exit 3, not
-  retryable) and a fix text, in host and direct mode alike, while any event in the workspace's history carries
-  `auth: "convenience"`, until the corresponding readers understand the value. **Switching back to terminal signing
+  they exist, relay pairing and any op that adds a device: one list, `orch.ops.readers.READER_OPS`) is refused with
+  **`sign.convenience_readers`** (exit 3, not retryable) and a fix text, in host and direct mode alike, while any event
+  in the workspace's history carries `auth: "convenience"`, until the corresponding readers understand the value. The
+  host also refuses these ops **while the flag is on**, even before any convenience event exists. Both checks run at
+  prepare, again at every `human.get` binding, and again at `human.submit` under the store lock, so a request prepared
+  earlier cannot add a reader after convenience events landed. **Switching back to terminal signing
   does not make it safe**: the history already contains convenience events and the new reader must parse them. A
   workspace with convenience enabled but no convenience events yet may switch convenience off first and then add the
   reader. The check scans the merged history (`Store.merged_events`); it runs only for these rare ops.
@@ -1906,14 +1909,20 @@ imported by `orch.custody`'s package init, the host or the dashboard's HTTP proc
   existing keys and `orch sign` keep working). One resolver (`orch.custody.select.device_backend(state, ws)`) is used by
   `orch sign` (reconciling H5b's lookup), the click signer and `orch keys`. `gen` increases at every transition.
 - **The host boundary.** Host and HTTP code do not intentionally access person keys; import and audit tests enforce
-  this implementation invariant: in host mode the H3a audit hook refuses an open of a path with a
-  `person/<ws>/devices/` component or under `<state>/person/`, a `ctypes.dlopen` of `Security.framework`, and an
-  import of `orch.custody.convenience`, `orch.custody.keychain` or `orch.click`. In tier A this is not an OS security
+  this implementation invariant: in host mode the H3a audit hook refuses an open or path event of a path with a
+  `person/<ws>/devices/` or `hosts/<ws>/person/` component (the latter is H5b's passphrase device key) or under
+  `<state>/person/`, a relative name that is a person-custody file (`d_….key`, `custody.json`, `click.jsonl`,
+  `dk.key.json`; a `dir_fd` walk cannot be resolved from the audit event), a working directory inside those places, a
+  `ctypes.dlopen` of `Security.framework`, and an import of `orch.click`, `orch.custody.convenience`,
+  `orch.custody.keychain`, `orch.custody.select` or `orch.custody.cli`. In tier A this is not an OS security
   boundary. In tier B, permissions separate the host UID from person custody.
 
 **3. Lifecycle** (`orch keys`, terminal CLI only). Creation and custody changes are terminal CLI workflows and are not
-exposed through dashboard or host APIs. `ORCH_GRANT` and terminal checks prevent accidental use through supported
-agent workflows; they do not authenticate human presence against a same-UID process.
+exposed through dashboard or host APIs. `ORCH_GRANT` refuses every `orch keys` subcommand but `status`, and the changing
+ones (`custody convenience|passphrase`, `forget`) also need the person's terminal (`/dev/tty`, `custody.no_prompt`
+otherwise). These checks prevent accidental use through supported agent workflows; they do not authenticate human
+presence against a same-UID process. `orch keys` and `orch host convenience` report errors in the CLI's catalog
+envelope.
 
 - `orch keys custody convenience --workspace W` converts the existing passphrase key: one passphrase prompt on
   `/dev/tty`, then the destination is written durably, read back, its public key and a test signature are verified,
@@ -2050,7 +2059,7 @@ Idem = str/a_[0-7][0-9A-HJKMNP-TV-Z]{25}/                  // the dashboard's, o
 - **`prepare`** is the only way a request becomes click-eligible. The signer forwards it on its **own** host
   connection as `human.prepare {op, args, signer:{device, auth:"convenience"}}` with the dashboard's idem (#402: a
   retry returns the same request), so the host checks the flag and the readers condition there; it validates the
-  answer (all §0.8.1 checks, below) and records the request id, workspace and immutable binding in its local registry.
+  answer (all §0.8.1 checks, below, and that the host prepared the op it was asked for) and records the request id, workspace and immutable binding in its local registry.
   **`view` and `sign` refuse anything not in that set** (`human.click_refused`). Requests prepared elsewhere (the CLI,
   an agent, an older dashboard session) stay terminal-only: `orch sign CODE` for a hand-off request. `origin.uid` and
   `origin.pid` are host-attested provenance for display and diagnostics, not authorization evidence. This prevents
@@ -2069,10 +2078,13 @@ Idem = str/a_[0-7][0-9A-HJKMNP-TV-Z]{25}/                  // the dashboard's, o
   invariant reviewed content from freshness metadata: worker rechecks must succeed (`clean: true`), a changed
   substantive attestation (another repo set, `clean`, `attested_by`) requires a new review, and a timestamp-only update
   of `checks[].at` does not change the digest. The UI shows the time of the displayed attestation.
-- **`sign`**: the request must be in the registry and its approval unexpired; `view_digest` must equal the stored one;
+- **`sign`**: the request must be in the registry and its approval unexpired (the local deadline is the host's
+  `expires_at`, capped at 10 minutes); `view_digest` must equal the stored one;
   at least 1 s must have passed since the signer built that View (a misclick guard, not security); the custody `gen` is
   unchanged; `word` is checked when the View asks for one. The signer then calls `human.get` again, revalidates the host
-  answer and compares the full signing inputs and invariant fields byte for byte with the approval record; it signs
+  answer and compares the full signing inputs and invariant fields byte for byte with the approval record, rebuilds the
+  View from that answer and requires its digest to equal the one shown (a changed substantive check or registry name is
+  `view_changed`); it signs
   **the stored immutable inputs** (neither the View nor the 12-hex fingerprint substitutes for this comparison).
   **Retries:** before the first submit the signer retains the exact signed event array and a submit idem. An uncertain
   submit (a lost answer, a broken connection) is retried with those identical events and idem, without fetching a new
@@ -2089,7 +2101,10 @@ Idem = str/a_[0-7][0-9A-HJKMNP-TV-Z]{25}/                  // the dashboard's, o
   `orch sign XXXX-XXXX`), which `orch sign` binds with the custody the selection names (with a convenience selection,
   `orch sign` binds `convenience` and the readers condition applies).
 - **`status`** reads custody metadata (the selection and the flag) for validated registry workspaces without loading a
-  private key or prompting, and distinguishes unavailable custody from absent custody.
+  private key, prompting or connecting, and distinguishes unavailable custody from absent custody: `problem` is an
+  unfinished transition, `not_convenience`, `disabled`, or the last problem this signer met on that workspace
+  (`version_mismatch` at a connection, `custody_unavailable` when the keychain was locked or denied access). A problem
+  not met yet surfaces at the next `prepare`.
 - **Limits.** Limits reduce accidental repetition and abuse through one honest signer instance. They do not prevent
   unauthorized signing or bound a same-UID adversary. Budgets count actual event signatures: 30 per minute and 600 per
   hour **per signer instance** (they reset with the process; several dashboards have several budgets), reserved for the

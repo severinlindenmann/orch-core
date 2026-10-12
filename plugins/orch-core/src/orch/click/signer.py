@@ -19,7 +19,7 @@ from typing import Any
 from orch import canon
 
 from . import view as views
-from .protocol import CONTRACT, HASH, IDEM, OP_NAME, REQ, WS_ID, ClickError, op_class, refused
+from .protocol import CONTRACT, HASH, IDEM, OP_NAME, REASONS, REQ, WS_ID, ClickError, op_class, refused
 
 __all__ = ["Approval", "Budget", "ClickSigner"]
 
@@ -28,6 +28,7 @@ MAX_APPROVALS = 16
 DWELL_SECONDS = 1.0
 PER_MINUTE = 30
 PER_HOUR = 600
+REQUEST_LIFETIME = 600.0  # §0.8.1: a request lives 10 minutes
 HUMAN_OPS_V1 = ("human.prepare", "human.get", "human.submit", "human.pending", "human.cancel")
 
 
@@ -112,6 +113,8 @@ class ClickSigner:
         self.conns: dict[str, Any] = {}
         self.busy = False
         self.log = log
+        #: the last connection or custody problem per workspace, for ``status`` (it loads no key and connects nowhere)
+        self.problems: dict[str, str] = {}
 
     # -- seams ---------------------------------------------------------------------------------------------------------
     def _default_workspaces(self) -> list[dict[str, Any]]:
@@ -174,8 +177,11 @@ class ClickSigner:
                 self._check_welcome(conn.welcome)
             except ClickError:
                 conn.close()
+                self.problems[wid] = "version_mismatch"
                 raise
             self.conns[wid] = conn
+            if self.problems.get(wid) == "version_mismatch":
+                self.problems.pop(wid, None)
         return conn
 
     @staticmethod
@@ -202,7 +208,8 @@ class ClickSigner:
         except HostError as exc:
             reason = None
             if exc.code == "sign.convenience_unavailable":
-                reason = exc.message.split(":", 1)[0]
+                head = exc.message.split(":", 1)[0]
+                reason = head if head in REASONS else None
             raise ClickError(exc.code, exc.message, reason=reason, retryable=exc.retryable) from None
         except (OSError, ConnectionError) as exc:
             self.conns.pop(entry["workspace_id"], None)
@@ -220,8 +227,10 @@ class ClickSigner:
         except KeyNotFound as exc:
             raise ClickError("custody.no_key", str(exc)) from None
         except BackendUnavailable as exc:
+            self.problems[entry["workspace_id"]] = "custody_unavailable"
             raise ClickError("custody.unavailable", str(exc)) from None
         except CustodyError as exc:
+            self.problems[entry["workspace_id"]] = "custody_unavailable"
             raise ClickError("custody.unavailable", str(exc)) from None
         if getattr(backend, "auth", None) != "convenience" or sel is None:
             raise ClickError(
@@ -286,6 +295,8 @@ class ClickSigner:
         rid = request.get("id")
         if type(rid) is not str or not REQ.fullmatch(rid) or request.get("code") is not None:
             raise refused("check_failed", "the host's answer is not a request bound to this signer")
+        if prepared.get("op") != op:
+            raise refused("check_failed", "the host prepared another op than the one asked for")
         if request.get("state") != "bound":
             raise ClickError("human.request_state", f"the request is {request.get('state')}")
         kind = views.check_prepared(
@@ -294,7 +305,7 @@ class ClickSigner:
         key = (entry["workspace_id"], rid)
         if key not in self.approvals:  # an idem retry returns the same request: keep its record
             expires_at = str(request.get("expires_at"))
-            left = max(0.0, _epoch(expires_at) - self.wall())
+            left = min(max(0.0, _epoch(expires_at) - self.wall()), REQUEST_LIFETIME)  # never longer than §0.8.1's
             self.approvals[key] = Approval(
                 workspace_id=entry["workspace_id"],
                 request_id=rid,
@@ -321,20 +332,25 @@ class ClickSigner:
             self._drop(approval)
             raise refused("custody_changed", "the device key's custody changed; prepare the request again")
         prepared = self._fetch(entry, approval, sel["device"])
-        artifacts = None
-        if any(e.get("type") in ("artifact.added", "artifact.replaced") for e in prepared["events"]):
-            artifacts = "checked" if approval.files else "unseen"
-        v = views.build(
-            prepared,
-            self._names(entry),
-            kind=approval.kind,
-            device=sel["device"],
-            expires_at=approval.expires_at,
-            artifacts=artifacts,
-        )
+        v = self._build(entry, approval, prepared, sel["device"])
         approval.view_digest, approval.built_at = views.digest(v), self.mono()
         self._note("review", workspace=approval.workspace_id, request=approval.request_id, op=approval.op)
         return {"view": v, "view_digest": approval.view_digest}
+
+    def _build(
+        self, entry: dict[str, Any], approval: Approval, prepared: dict[str, Any], device: str
+    ) -> dict[str, Any]:
+        artifacts = None
+        if any(e.get("type") in ("artifact.added", "artifact.replaced") for e in prepared["events"]):
+            artifacts = "checked" if approval.files else "unseen"
+        return views.build(
+            prepared,
+            self._names(entry),
+            kind=approval.kind,
+            device=device,
+            expires_at=approval.expires_at,
+            artifacts=artifacts,
+        )
 
     def sign(self, args: Mapping[str, Any]) -> dict[str, Any]:
         if self.busy:
@@ -366,6 +382,8 @@ class ClickSigner:
             self._drop(approval)
             raise refused("custody_changed", "the device key's custody changed; prepare the request again")
         prepared = self._fetch(entry, approval, sel["device"])
+        if views.digest(self._build(entry, approval, prepared, sel["device"])) != approval.view_digest:
+            raise refused("view_changed", "the review changed since it was shown (a check or the registry); view again")
         if approval.kind == "word":
             expected = views.word(prepared, self._names(entry))
             if args.get("word") != expected:
@@ -399,7 +417,6 @@ class ClickSigner:
                     return self._done(approval, res)
             if exc.code in ("idem.conflict", "idem.expired", "outcome.unknown"):
                 return self._recover(entry, approval, exc)
-            self._note("refused", workspace=approval.workspace_id, request=approval.request_id, code=exc.code)
             raise  # the signed events stay: a retry resends them, the request is never signed twice
         return self._done(approval, res)
 
@@ -439,7 +456,7 @@ class ClickSigner:
                 "device": st["device"],
                 "enabled": bool(self._enabled(e)),
             }
-            problem = st.get("problem")
+            problem = st.get("problem") or self.problems.get(wid)
             if problem is None and st["custody"] != "convenience":
                 problem = "not_convenience"
             if problem is None and not row["enabled"]:
@@ -475,7 +492,17 @@ class ClickSigner:
             return self.status(args)
         if fn is None:
             raise ClickError("invalid.input", f"unknown op {op!r}")
-        return fn(args)
+        try:
+            return fn(args)
+        except ClickError as exc:  # every refusal leaves a line: the static code and the validated ids only
+            self._note(
+                "uncertain" if exc.reason == "uncertain" else "refused",
+                workspace=args.get("workspace_id"),
+                request=args.get("request_id"),
+                op=args.get("op"),
+                code=exc.code if exc.reason is None else f"{exc.code}.{exc.reason}",
+            )
+            raise
 
 
 def _epoch(stamp: str) -> float:

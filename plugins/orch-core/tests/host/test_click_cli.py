@@ -50,6 +50,14 @@ def test_orch_keys_converts_only_with_the_flag_and_moves_back_only_in_place(serv
     )
     store = FakeStore()
     monkeypatch.setattr(conv, "open_store", lambda s: store)
+    from orch.custody import cli as keys_cli
+
+    monkeypatch.setattr(keys_cli, "has_terminal", lambda: False)
+    base0 = ("--workspace", served.wid, "--state", str(state), "--json")
+    code, out, _ = run("keys", "custody", "convenience", *base0)
+    err0 = json.loads(out)["error"]
+    assert code == 3 and err0["code"] == "custody.no_prompt" and "retryable" in err0 and "hint" in err0
+    monkeypatch.setattr(keys_cli, "has_terminal", lambda: True)
     base = ("--workspace", served.wid, "--state", str(state), "--json")
     code, out, _ = run("keys", "custody", "convenience", *base)
     assert code == 3 and json.loads(out)["error"]["code"] == "sign.convenience_unavailable"

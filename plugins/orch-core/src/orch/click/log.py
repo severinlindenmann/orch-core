@@ -24,7 +24,7 @@ _SAFE = {
     "workspace": re.compile(r"[0-9a-f]{32}"),
     "request": re.compile(r"hr_[0-7][0-9A-HJKMNP-TV-Z]{25}"),
     "op": re.compile(r"[a-z][a-z_]*(\.[a-z_]+)*"),
-    "code": re.compile(r"[a-z][a-z0-9_.]{0,63}"),
+    "code": re.compile(r"[a-z][a-z0-9_.]{0,79}"),
 }
 
 
@@ -38,6 +38,7 @@ class ClickLog:
     def _dir(self) -> int:
         from orch.custody.convenience import secure_dir
 
+        self.root.parent.mkdir(mode=0o700, parents=True, exist_ok=True)  # the person's state directory
         return secure_dir(self.root, (), create=True)
 
     def write(self, what: str, **fields: Any) -> None:

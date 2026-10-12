@@ -4,6 +4,7 @@ keychain."""
 
 from __future__ import annotations
 
+import copy
 import json
 import subprocess
 import sys
@@ -69,8 +70,18 @@ class Click:
         if enable:
             convenience.set_enabled(served.lab.state, served.wid, True, UID)
 
+    #: ``tamper(op, args, result) -> result`` rewrites the host's answers (a lying or changing host)
+    tamper = None
+
     def _connect(self, entry):
         c = Connection(Pin(UID, entry["workspace_id"], self.served.lab.run / entry["workspace_id"] / "host.sock"))
+        real = c.call
+
+        def call(op, args, **kw):
+            res = real(op, args, **kw)
+            return self.tamper(op, args, copy.deepcopy(res)) if self.tamper is not None else res
+
+        c.call = call
         self.conns.append(c)
         return c
 
@@ -441,3 +452,323 @@ def test_an_agent_cannot_start_the_signer(tmp_path):
     finally:
         a.close()
         b.close()
+
+
+# --- review round (#407 implementation reviews) ---------------------------------------------------------------
+
+
+def _member_args():
+    import base64
+
+    from tests.identity.helpers import Person
+
+    q = Person()
+    args = {"name": "q", "pk": crypto.b64u(q.pk_pub), "cert": "cert.json"}
+    return args, {"cert": {"b64": base64.b64encode(json.dumps(q.cert()).encode()).decode()}}
+
+
+def _click_sign(click, key, text="via a click"):
+    p = click.prepare("log", {"ref": key, "text": text})
+    v = click.view(p["request_id"])
+    click.mono.t += 2
+    return click.sign(p["request_id"], v["view_digest"])
+
+
+def test_a_member_add_prepared_before_convenience_events_is_refused_at_binding(served, human):
+    c = Click(served, enable=False)
+    try:
+        args, files = _member_args()
+        h = human.prepare("member.add", args, handoff=True, files=files)  # flag off, no history: allowed
+        convenience.set_enabled(served.lab.state, served.wid, True, UID)
+        _, key = human.ticket()
+        _click_sign(c, key)  # a convenience event lands
+        res = human.get(h["request"]["id"], signer=human.signer)  # orch sign CODE binds with the passphrase key
+        assert err(res) == "sign.convenience_readers"
+    finally:
+        c.close()
+
+
+def test_a_member_add_signed_before_convenience_events_is_refused_at_submit(served, human):
+    c = Click(served, enable=False)
+    try:
+        args, files = _member_args()
+        prepared = human.prepare("member.add", args, files=files)  # bound at prepare, flag off
+        signed = human.sign(prepared)
+        convenience.set_enabled(served.lab.state, served.wid, True, UID)
+        _, key = human.ticket()
+        _click_sign(c, key)
+        assert err(human.submit_res(prepared["request"]["id"], signed.events)) == "sign.convenience_readers"
+        # switching off does not help: the history holds convenience events
+        convenience.set_enabled(served.lab.state, served.wid, False, UID)
+        assert err(human.submit_res(prepared["request"]["id"], signed.events)) == "sign.convenience_readers"
+    finally:
+        c.close()
+
+
+def test_the_typed_word_is_required_at_sign(click, served, human, monkeypatch):
+    monkeypatch.setattr(views, "op_class", lambda op, events=None: "word")  # log treated as a word op
+    _, key = human.ticket()
+    p = click.prepare("log", {"ref": key, "text": "x"})
+    v = click.view(p["request_id"])
+    assert v["view"]["confirm"]["kind"] == "word"
+    word = v["view"]["confirm"]["word"]
+    click.mono.t += 2
+    refused(lambda: click.sign(p["request_id"], v["view_digest"]), "human.click_refused", "word")
+    refused(lambda: click.sign(p["request_id"], v["view_digest"], word=word + "x"), "human.click_refused", "word")
+    assert click.signatures == 0
+    assert click.sign(p["request_id"], v["view_digest"], word=word)["result"]["key"] == key
+    assert click.signatures == 1
+
+
+def _sign_with_tamper(click, human, change):
+    _, key = human.ticket()
+    p = click.prepare("log", {"ref": key, "text": "x"})
+    v = click.view(p["request_id"])
+    click.mono.t += 2
+
+    def tamper(op, args, res):
+        if op == "human.get":
+            change(res["data"])
+        return res
+
+    click.tamper = tamper
+    return p, v
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda d: d["events"][0].update(text="something else"),
+        lambda d: d["material"].update(kind="payload", note="x"),
+        lambda d: d["origin"].update(pid=d["origin"]["pid"] + 1),
+        lambda d: d.update(
+            checks=[{"repo": "other", "clean": True, "attested_by": "worker", "at": "2026-10-12T00:00:00Z"}]
+        ),
+    ],
+    ids=["event", "material", "origin", "checks"],
+)
+def test_a_host_answer_that_changed_between_view_and_sign_is_refused(click, served, human, change):
+    p, v = _sign_with_tamper(click, human, change)
+    refused(lambda: click.sign(p["request_id"], v["view_digest"]), "human.click_refused", "view_changed")
+    assert click.signatures == 0
+
+
+def test_a_lying_host_at_prepare_is_refused_as_check_failed(click, served, human):
+    _, key = human.ticket()
+
+    def lie(op, args, res):
+        if op == "human.prepare":
+            res["data"]["review_digest"] = "sha256:" + "0" * 64
+        return res
+
+    click.tamper = lie
+    refused(lambda: click.prepare("log", {"ref": key, "text": "x"}), "human.click_refused", "check_failed")
+
+    def other_op(op, args, res):
+        if op == "human.prepare":
+            res["data"]["op"] = "set"
+        return res
+
+    click.tamper = other_op
+    refused(lambda: click.prepare("log", {"ref": key, "text": "x"}), "human.click_refused", "check_failed")
+
+
+def test_an_unclean_worker_check_is_refused(click, served, human):
+    def dirty(d):
+        d["checks"] = [{"repo": "r", "clean": False, "attested_by": "worker", "at": "2026-10-12T00:00:00Z"}]
+
+    _, key = human.ticket()
+    p = click.prepare("log", {"ref": key, "text": "x"})
+    click.tamper = lambda op, args, res: (dirty(res["data"]) or res) if op == "human.get" else res
+    refused(lambda: click.view(p["request_id"]), "human.click_refused", "check_failed")
+
+
+def test_busy_budget_and_caps(click, served, human, monkeypatch):
+    from orch.click import signer as click_signer
+
+    _, key = human.ticket()
+    p = click.prepare("log", {"ref": key, "text": "x"})
+    v = click.view(p["request_id"])
+    click.mono.t += 2
+    click.signer.busy = True
+    refused(lambda: click.sign(p["request_id"], v["view_digest"]), "human.click_refused", "busy")
+    click.signer.busy = False
+    click.signer.budget = Budget(click.mono, per_minute=0)
+    refused(lambda: click.sign(p["request_id"], v["view_digest"]), "rate.limited")
+    assert click.signatures == 0 and pending(served, p["request_id"])["state"] == "bound"
+    monkeypatch.setattr(click_signer, "MAX_APPROVALS", 1)
+    refused(lambda: click.prepare("log", {"ref": key, "text": "y"}), "rate.limited")
+
+
+def test_too_many_events_or_too_large_a_view_go_to_the_terminal(click, served, human, monkeypatch):
+    _, key = human.ticket()
+
+    def many(op, args, res):
+        if op == "human.prepare":
+            res["data"]["events"] = res["data"]["events"] * 17
+        return res
+
+    click.tamper = many
+    refused(lambda: click.prepare("log", {"ref": key, "text": "x"}), "human.click_refused", "terminal_only")
+    click.tamper = None
+    monkeypatch.setattr(views, "MAX_VIEW_BYTES", 100)
+    p = click.prepare("log", {"ref": key, "text": "x"})
+    refused(lambda: click.view(p["request_id"]), "human.click_refused", "terminal_only")
+
+
+def test_an_idem_conflict_at_submit_reads_the_request_state_and_signs_nothing_again(click, served, human):
+    from orch.host.errors import HostError
+
+    _, key = human.ticket()
+    p = click.prepare("log", {"ref": key, "text": "x"})
+    v = click.view(p["request_id"])
+    click.mono.t += 2
+
+    def conflict(op, args, res):
+        if op == "human.submit":
+            raise HostError("idem.conflict", "taken")
+        return res
+
+    click.tamper = conflict
+    e = refused(lambda: click.sign(p["request_id"], v["view_digest"]), "human.click_refused", "uncertain")
+    assert "idem.conflict" in e.message and "the request is" in e.message
+    assert click.signatures == 1  # signed once; a retry resends, never signs again
+    click.tamper = None
+    assert click.sign(p["request_id"], v["view_digest"])["result"]["key"] == key
+    assert click.signatures == 1
+
+
+def test_a_custody_change_after_prepare_is_refused_at_view(click, served, human):
+    _, key = human.ticket()
+    p = click.prepare("log", {"ref": key, "text": "x"})
+    click.gen += 1
+    refused(lambda: click.view(p["request_id"]), "human.click_refused", "custody_changed")
+
+
+def test_artifact_bytes_the_dashboard_uploaded_are_labelled_checked(click, served, human):
+    import base64
+
+    _, key = human.ticket()
+    files = {"path": {"b64": base64.b64encode(b"the proof\n").decode()}}
+    p = click.prepare("artifact.add", {"ref": key, "path": "proof.txt"}, files=files)
+    v = click.view(p["request_id"])
+    assert v["view"]["artifacts"] == "checked"
+
+
+def test_a_request_cancelled_at_the_host_is_reported_not_signed(click, served, human):
+    _, key = human.ticket()
+    p = click.prepare("log", {"ref": key, "text": "x"})
+    v = click.view(p["request_id"])
+    click.mono.t += 2
+    ok(served.client().req("human.cancel", {"request_id": p["request_id"]}))
+    refused(lambda: click.sign(p["request_id"], v["view_digest"]), "human.request_state")
+    assert click.signatures == 0
+
+
+def test_status_reports_version_mismatch_and_locked_custody(click, served, human):
+    from orch.custody.base import BackendUnavailable
+
+    _, key = human.ticket()
+    welcome_check = ClickSigner.__dict__["_check_welcome"]  # the staticmethod object itself
+    try:
+        ClickSigner._check_welcome = staticmethod(lambda w: (_ for _ in ()).throw(ClickError("host.version_mismatch")))
+        click.signer.close()
+        refused(lambda: click.prepare("log", {"ref": key, "text": "x"}), "host.version_mismatch")
+    finally:
+        ClickSigner._check_welcome = welcome_check
+    (row,) = click.signer.status({})["workspaces"]
+    assert row["available"] is False and row["problem"] == "version_mismatch"
+    click.signer._custody = lambda s, w: (_ for _ in ()).throw(BackendUnavailable("locked"))
+    refused(lambda: click.prepare("log", {"ref": key, "text": "x"}), "custody.unavailable")
+    (row,) = click.signer.status({})["workspaces"]
+    assert row["problem"] in ("custody_unavailable", "version_mismatch")
+
+
+def test_the_unavailable_reason_is_one_of_the_known_five(click, served, human):
+    from orch.host.errors import HostError
+
+    _, key = human.ticket()
+
+    def odd(op, args, res):
+        raise HostError("sign.convenience_unavailable", "something new: text")
+
+    click.tamper = odd
+    e = refused(lambda: click.prepare("log", {"ref": key, "text": "x"}), "sign.convenience_unavailable")
+    assert e.reason is None
+
+
+def _spawn_raw(tmp_path):
+    import os
+    import socket
+
+    a, b = socket.socketpair()
+    env = {"ORCH_STATE_DIR": str(tmp_path / "state"), "HOME": str(tmp_path), "PATH": os.environ.get("PATH", "")}
+    p = subprocess.Popen(
+        [sys.executable, "-I", "-m", "orch.click", "--fd", str(b.fileno())], pass_fds=(b.fileno(),), env=env
+    )
+    b.close()
+    return a, p
+
+
+def test_a_framing_error_or_a_bad_request_id_closes_the_channel(tmp_path):
+    for junk in (b"\x00\x00\x00\x05nope!", b'\x00\x00\x00\x32{"t":"req","id":"bad id!","op":"status","args":{}}'):
+        a, p = _spawn_raw(tmp_path)
+        try:
+            a.settimeout(30)
+            a.sendall(junk)
+            assert a.recv(100) == b""
+            assert p.wait(30) == 0
+        finally:
+            a.close()
+            if p.poll() is None:
+                p.kill()
+
+
+def test_the_signer_exits_when_its_parent_goes(tmp_path):
+    import os
+    import socket
+    import time
+
+    from orch.click.client import ClickClient
+
+    a, b = socket.socketpair()
+    n = b.fileno()
+    middle = textwrap.dedent(
+        f"""
+        import subprocess, sys
+        p = subprocess.Popen(
+            [sys.executable, "-I", "-m", "orch.click", "--fd", "{n}"],
+            pass_fds=({n},), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        print(p.pid, flush=True)
+        sys.stdin.readline()   # stay the parent until the test says so
+        """
+    )
+    env = {"ORCH_STATE_DIR": str(tmp_path / "state"), "HOME": str(tmp_path), "PATH": os.environ.get("PATH", "")}
+    mid = subprocess.Popen(
+        [sys.executable, "-c", middle], pass_fds=(n,), env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True
+    )
+    b.close()
+    pid = int(mid.stdout.readline().strip())
+    try:
+        assert ClickClient(a).call("status", {}, timeout=60)["contract"] == 1  # running, its parent watch started
+        mid.stdin.write("go\n")
+        mid.stdin.flush()
+        mid.wait(30)
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:  # the channel stays open (we hold `a`): only the parent watch ends it
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.1)
+        else:
+            pytest.fail("the signer outlived its parent")
+    finally:
+        a.close()
+        if mid.poll() is None:
+            mid.kill()
+        try:
+            os.kill(pid, 9)  # our own grandchild's PID only, if it is still there
+        except ProcessLookupError:
+            pass

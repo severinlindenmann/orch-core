@@ -70,6 +70,10 @@ def _never(module: str) -> bool:
 
 
 _WS = re.compile(r"[0-9a-f]{32}")
+#: file names of person custody, refused as relative names whatever directory fd they are opened from (a ``dir_fd``
+#: walk cannot be resolved from the audit event): convenience keys, the selection, the click log, the H5b passphrase
+#: device key
+_PERSON_NAMES = re.compile(r"d_[0-9A-Za-z_]{1,64}\.key|custody\.json|click\.jsonl(\.[0-9])?|dk\.key\.json")
 #: event -> indices of its path arguments (a link's text and a dir_fd are not paths)
 _PATH_EVENTS: dict[str, tuple[int, ...]] = {
     "os.chdir": (0,),
@@ -244,17 +248,23 @@ def make_hook(roots: Iterable[str | os.PathLike[str]]):
             parts = _lexical(os.getcwd())
         except OSError:
             return False
-        return parts is not None and _under(parts, root_parts)
+        return parts is not None and _under(parts, root_parts) and not person_key(parts)
 
     person_parts = [(*r, "person") for r in root_parts]
 
     def person_key(parts: list[str]) -> bool:
         if _under(parts, person_parts):
             return True
-        return any(
-            parts[i] == "person" and _WS.fullmatch(parts[i + 1]) is not None and parts[i + 2] == "devices"
-            for i in range(len(parts) - 2)
-        )
+        if parts and _PERSON_NAMES.fullmatch(parts[-1]):
+            return True
+        for i in range(len(parts) - 2):
+            if not _WS.fullmatch(parts[i + 1]):
+                continue
+            if parts[i] == "person" and parts[i + 2] == "devices":
+                return True  # <person state>/person/<ws>/devices/…
+            if parts[i] == "hosts" and parts[i + 2] == "person":
+                return True  # <state>/hosts/<ws>/person/… (H5b's passphrase device key)
+        return False
 
     def allowed(p: Any, open_flags: int | None = None) -> bool:
         if p is None or isinstance(p, int):
@@ -269,7 +279,7 @@ def make_hook(roots: Iterable[str | os.PathLike[str]]):
             parts = _lexical(s)
             return parts is not None and _under(parts, root_parts) and not person_key(parts)
         # relative: one component, never a link (for open), and only while the cwd is inside a root
-        if "/" in s or "\0" in s or s in ("", ".."):
+        if "/" in s or "\0" in s or s in ("", "..") or _PERSON_NAMES.fullmatch(s):
             return False
         if open_flags is not None and not open_flags & nofollow:
             return False

@@ -97,6 +97,14 @@ class Gateway:
             "changes": [("ticket.get", "query/1"), ("diff", "diff/1")],
             "evidence": [("ticket.get", "query/1"), ("artifact.get", "diff/1")],
             "activity": [("activity.list", "activity/1")],
+            # The signed actions (M3): prepare, look at and cancel a hand-off. The dashboard never submits.
+            "actions": [
+                ("human.prepare", "human/1"),
+                ("human.get", "human/1"),
+                ("human.pending", "human/1"),
+                ("human.cancel", "human/1"),
+                ("ticket.get", "query/1"),
+            ],
         }
         for feature, ops in requirements.items():
             if all(link.supports(op, cap) for op, cap in ops):

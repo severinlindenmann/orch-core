@@ -492,3 +492,10 @@ opens (no error) with a Closed notice, `DEMO-0001` as plain text; the Tickets li
 Closed chip. A task leased by an agent reads as "doing". History › Changes lists who edited a section and the hash
 (no diff). A long log note (over 1 KiB) reads "(shortened by the host)", with no "…" and no "more" button. The
 browser console shows no CSP error (sonner's styles are in the built CSS).
+
+## Try P2 M3 actions via the terminal hand-off (dev stub, own terminals)
+
+1. Prepare a disposable dev workspace whose person key is in the passphrase backend (`<state>/hosts/<ws>/person`), the dashboard addon granted, `.orch-dev` in workspace and state, and the WSK under `<state>/hosts/<ws>/keys`. Start the stub and the server as in `server/README.md` and open a ticket with a waiting gate.
+2. Press "Approve requirements": the dialog shows the command `orch sign XXXX-XXXX`, a fingerprint, an expiry countdown and a preview from the host.
+3. In a terminal with the same `ORCH_DEV=1 ORCH_STATE_DIR=...` run `python -m devhost sign XXXX-XXXX` (from `addons/dashboard`). Compare the fingerprint, type the ticket key, then the passphrase. The dialog turns to "Signed".
+4. Try Cancel, waiting past 10 minutes (Expired), approving twice (Already done), changing the ticket while the code is open (the warning), Comment/Add label/Close/Reopen from the command palette, and New ticket (title and type). Move, Ask and the quick ticket are absent.

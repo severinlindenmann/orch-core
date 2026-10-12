@@ -19,7 +19,8 @@ from orch_dashboard.errors import HostError, fail
 from orch_dashboard.hostlink import check_uid, encode, receive
 
 from . import reads
-from .reserved import OPS
+from .humanops import Requests
+from .reserved import HUMAN_OPS, OPS
 
 # Registry reads that do not accept filesystem paths or need a P1 agent grant.
 READS = ("addon.list", "list")
@@ -69,7 +70,8 @@ class StubHost:
         self.lock = threading.RLock()
         # Person is an explicit local UID mapping, never inferred from a key.
         self.env = {"ORCH_WORKSPACE": str(root), "ORCH_STATE_DIR": str(state)}
-        self.versions = {name: 1 for name in (*OPS, *READS)}
+        self.versions = {name: 1 for name in (*OPS, *READS, *HUMAN_OPS)}
+        self.requests = Requests(self)
         self.cursor = secrets.token_urlsafe(24)
 
         self.history = []
@@ -166,7 +168,14 @@ class StubHost:
             "host_uid": os.getuid(),
             "workspace": {"id": self.ws, "prefix": data["prefix"]},
             "peer": {"uid": os.getuid(), "class": "person", "person": self.person},
-            "caps": ["ops/1", "query/1", "sub/1", "diff/1", *(["read_ext/1", "activity/1"] if self.ext else [])],
+            "caps": [
+                "ops/1",
+                "query/1",
+                "sub/1",
+                "human/1",
+                "diff/1",
+                *(["read_ext/1", "activity/1"] if self.ext else []),
+            ],
             "ops": self.versions,
             "registry": "sha256:" + hashlib.sha256(json.dumps(self.versions, sort_keys=True).encode()).hexdigest(),
             "tier": "A",
@@ -179,7 +188,7 @@ class StubHost:
             },
         }
 
-    def call(self, op, args):
+    def call(self, op, args, opts=None, lookups=None):
         with self.lock:
             # Direct-mode files (core #375): a same-user dev process. Files.host belongs to the real host.
             runtime = HostWorkspace(self.env, files=Files.direct())
@@ -205,6 +214,8 @@ class StubHost:
                     except ValidationError:
                         raise fail("invalid.input", exit=5) from None
                     return asdict(decl.handler(ctx, args))
+                if op in HUMAN_OPS:
+                    return asdict(self.human(op, store, views, args, opts or {}, lookups))
                 if op not in OPS:
                     raise fail("unknown_command", exit=2)
                 if args and op not in reads.TAKES_ARGS:
@@ -289,8 +300,24 @@ class StubHost:
                 if runtime._store:
                     runtime.store.close()
 
+    def human(self, op, store, views, args, opts, lookups=None):
+        """`human.*` (v1.4 section 0.8.1): the stub plays the host and holds no key, so a signer submits."""
+        if op != "human.prepare" and opts.get("dry_run") is not None:
+            raise fail("invalid.input", exit=5)
+        if op == "human.prepare":
+            return Result(data=self.requests.prepare(store, views, args, opts))
+        if op == "human.get":
+            return Result(data=self.requests.get(store, views, args))
+        if op == "human.pending":
+            return Result(data=self.requests.pending(args, lookups))
+        if op == "human.cancel":
+            return Result(data=self.requests.cancel(args))
+        done = self.requests.submit(store, args, opts)
+        return Result(data=done["data"], key=done["key"], seq=done["seq"], duplicate=done["duplicate"])
+
     def serve_connection(self, sock, control=False):
         subscriptions = {}
+        lookups: list[float] = []  # failed code lookups of this connection (host contract 0.8.1, H5b)
         try:
             check_uid(sock, os.getuid())
             sock.settimeout(2)
@@ -382,7 +409,7 @@ class StubHost:
                         raise fail("unknown_command", exit=2)
                     if hello.get("ops", {}).get(op, 1) != 1:
                         raise fail("op.unsupported", exit=1)
-                    if req.get("opts", {}).get("dry_run") is not None:
+                    if opts.get("dry_run") is not None and op != "human.prepare":
                         raise fail("invalid.input", exit=5)
                     if op == "sub.open":
                         if (
@@ -413,7 +440,7 @@ class StubHost:
                         subscriptions.pop(args["sub"], None)
                         result = asdict(Result(data={}))
                     else:
-                        result = self.call(op, args)
+                        result = self.call(op, args, opts, lookups)
                     sock.sendall(encode({"t": "res", "id": rid, "ok": True, "result": result}))
                     if op == "sub.close":
                         sock.sendall(

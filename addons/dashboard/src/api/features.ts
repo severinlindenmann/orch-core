@@ -31,3 +31,9 @@ export const isRealHost = () => enabled !== null
  * production page is read only, and controls that would sign or mutate are not drawn.
  */
 export const canAct = (workspace?: string) => hasFeature('actions', workspace)
+
+/**
+ * Does signing go through the terminal hand-off? True on a real host that serves `human.*` (feature `actions`). The mock
+ * keeps its simulated Touch ID dialog, so the mockup and its tests are unchanged.
+ */
+export const handoffMode = (workspace?: string): boolean => isRealHost() && canAct(workspace)

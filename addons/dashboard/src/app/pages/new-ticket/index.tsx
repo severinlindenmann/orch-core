@@ -5,7 +5,10 @@ import { RadioGroup as RadioGroupPrimitive } from 'radix-ui'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { api } from '@/api/client'
+import { handoffMode } from '@/api/features'
+import { MAX_SECTION_BYTES, type FollowUpAction, type HandoffAction, type HandoffRequest, type HandoffState } from '@/api/handoff'
 import { can, roleOf } from '@/api/permissions'
+import { HandoffDialog } from '@/components/sign/HandoffDialog'
 import { SECTIONS_BY_TYPE, requiredAtCreation, sectionLabel, type SectionName } from '@/api/sections'
 import { ApiError, type BodySections, type Me, type NewTicketRequest, type Priority, type Size, type TicketDocument, type TicketType, type Visibility, type Workspace } from '@/api/types'
 import { Button } from '@/components/ui/button'
@@ -19,11 +22,47 @@ import { usePageHeader } from '../../shell/ShellUi'
 import { PRIORITY_RANK, TYPE_ICON } from '../board/lib'
 import { PeoplePicker, fieldCls, type PeopleValue } from './PeoplePicker'
 import { SectionsEditor } from './SectionsEditor'
+import { CompleteDetails } from './CompleteDetails'
 import { queries } from '@/api/queries'
 
 const TYPES: TicketType[] = ['feature', 'bug', 'chore', 'spike', 'epic']
 const PRIORITIES = (Object.keys(PRIORITY_RANK) as Priority[]).sort((a, b) => PRIORITY_RANK[b] - PRIORITY_RANK[a])
 const SIZES: Size[] = ['xs', 's', 'm', 'l', 'xl']
+/**
+ * A new ticket through the terminal hand-off is one signed event with the title and type (host: key, type, title,
+ * owner). What `new` cannot carry follows as further hand-offs ("Complete details", host contract 0.8.1 item 3): one
+ * `set` for priority, size, labels and the parent epic, and one `section.set` per written section. What the host has no
+ * person op for is said instead of dropped: restricted visibility, people, a due date and acceptance criteria.
+ */
+/**
+ * The key "Complete details" may target: the one of the `new` request THIS dialog prepared and watched, and no other.
+ * The state must be that request's own (same id, op `new`); anything else gives no key and no follow-up.
+ */
+export function ownKey(state: HandoffState | null, request: HandoffRequest | null): string | null {
+  return state && request && state.id === request.id && request.op === 'new' && state.op === 'new' ? state.key : null
+}
+
+export function handoffNewTicket(d: Draft): { action: HandoffAction; details: FollowUpAction[] } | { problem: string } {
+  const written = (Object.entries(d.sections) as [SectionName, string | undefined][]).filter(([n, t]) => SECTIONS_BY_TYPE[d.type][n] !== 'absent' && t?.trim())
+  const later = [
+    d.visibility !== 'workspace' && 'restricted visibility',
+    (d.people.owner || d.people.assignees.length || d.people.reviewers.length) && 'people',
+    d.due && 'a due date',
+    d.acceptance.length > 0 && 'acceptance criteria',
+  ].filter(Boolean)
+  const big = written.find(([, t]) => new TextEncoder().encode((t as string).trim()).length > MAX_SECTION_BYTES)
+  if (big) return { problem: `${sectionLabel(d.type, big[0])} is longer than ${MAX_SECTION_BYTES / 1024} KiB (counted in UTF-8 bytes). Shorten it before the ticket is created.` }
+  if (later.length) return { problem: `A signed new ticket cannot carry ${later.join(', ')} yet: the host has no signed operation for it. Create the ticket first, then add these.` }
+  const fields = { ...(d.priority !== 'medium' ? { priority: d.priority } : {}), ...(d.size ? { size: d.size } : {}), ...(d.labels.length ? { labels: d.labels } : {}), ...(d.parent && d.type !== 'epic' ? { parent: d.parent } : {}) }
+  const details: FollowUpAction[] = Object.keys(fields).length ? [{ action: 'details', key: '', ...fields }] : []
+  for (const [name, text] of written) {
+    // A spike keeps its findings where other types have verification (the form's label says "Findings").
+    const section = d.type === 'spike' && name === 'verification' ? 'findings' : name
+    details.push({ action: 'section', key: '', section, text: (text as string).trim() })
+  }
+  return { action: { action: 'new', title: d.title.trim(), type: d.type }, details }
+}
+
 const isMac = typeof navigator !== 'undefined' && /mac|iphone|ipad/i.test(navigator.platform || navigator.userAgent)
 
 export interface Draft {
@@ -259,6 +298,10 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
   // The page guards its own route; the overlay's sheet guards for the overlay (it also counts the quick ticket line).
   const blocker = useBlocker({ shouldBlockFn: () => !overlay && dirty && !leaving.current, withResolver: true, enableBeforeUnload: () => !overlay && dirty && !leaving.current })
 
+  const [handoffNew, setHandoffNew] = useState<{ action: HandoffAction; details: FollowUpAction[]; another: boolean } | null>(null)
+  const [followUp, setFollowUp] = useState<{ key: string; steps: FollowUpAction[]; another: boolean } | null>(null)
+  const handoffOn = handoffMode(workspace.id)
+
   const create = useMutation({
     mutationFn: (req: NewTicketRequest) => api.createTicket(workspace.id, req),
     onError: (e) => setServerError(e instanceof ApiError ? e.message : 'Could not create the ticket.'),
@@ -273,6 +316,12 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
     if (check.count) {
       setRefused((n) => n + 1) // the effect below moves the focus to the first field that explains itself
       return
+    }
+    if (handoffOn) {
+      // On a real host the ticket is created by a signed event: prepare it and sign in the terminal (design 4.5).
+      const made = handoffNewTicket(draft)
+      if ('problem' in made) return setServerError(made.problem)
+      return setHandoffNew({ action: made.action, details: made.details, another })
     }
     submitting.current = true
     const needs = SECTIONS_BY_TYPE[draft.type]
@@ -315,6 +364,32 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
     }
   }
 
+  /** The signer's event is in the log: the ticket exists. */
+  const handoffDone = (another: boolean, ticketKey: string | null, details: FollowUpAction[] = []) => {
+    void qc.invalidateQueries()
+    writeDraft(key, null)
+    setShowRestored(false)
+    setHandoffNew(null)
+    if (details.length && ticketKey) {
+      // The new ticket exists; what `new` could not carry is further signatures, offered not forced.
+      setFollowUp({ key: ticketKey, steps: details, another })
+      return
+    }
+    afterCreate(another, ticketKey)
+  }
+  const afterCreate = (another: boolean, ticketKey: string | null) => {
+    if (another) {
+      setDraft({ ...EMPTY, type: draft.type, priority: draft.priority })
+      setAttempted(false)
+      toast.success(`Created ${ticketKey ?? 'the ticket'}`)
+      titleRef.current?.focus()
+      return
+    }
+    leaving.current = true
+    setDraft(EMPTY)
+    if (overlay) onCancel?.()
+    if (ticketKey) void navigate({ to: '/ticket/$key', params: { key: ticketKey } })
+  }
   // A refused submit: focus the first invalid field (title, then the sections in page order).
   useEffect(() => {
     if (refused) root.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus()
@@ -443,7 +518,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
           </div>
         )}
         <div className="flex items-center gap-2">
-          <Button type="button" aria-label="Create" aria-keyshortcuts="Meta+Enter Control+Enter" onClick={() => void submit(false)} disabled={!canCreate || create.isPending}>
+          <Button type="button" aria-label="Create" aria-keyshortcuts="Meta+Enter Control+Enter" onClick={() => void submit(false)} disabled={!canCreate || create.isPending || !!handoffNew}>
             Create
             <kbd className="ml-1 rounded border border-border/40 px-1 font-mono text-[10px] opacity-70">{isMac ? '⌘↵' : 'Ctrl ↵'}</kbd>
           </Button>
@@ -456,6 +531,31 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
           </Button>
         </div>
       </div>
+
+      {handoffNew && (
+        <HandoffDialog
+          title="New ticket"
+          ws={workspace.id}
+          action={handoffNew.action}
+          autoStart
+          onClose={() => setHandoffNew(null)}
+          onSettled={(phase, state, request) => phase === 'done' && handoffDone(handoffNew.another, ownKey(state, request), handoffNew.details)}
+        />
+      )}
+
+      {followUp && (
+        <CompleteDetails
+          ws={workspace.id}
+          ticketKey={followUp.key}
+          steps={followUp.steps}
+          onFinish={() => {
+            const f = followUp
+            setFollowUp(null)
+            void qc.invalidateQueries()
+            afterCreate(f.another, f.key)
+          }}
+        />
+      )}
 
       <Dialog open={blocker.status === 'blocked'} onOpenChange={(o) => !o && blocker.reset?.()}>
         <DialogContent>

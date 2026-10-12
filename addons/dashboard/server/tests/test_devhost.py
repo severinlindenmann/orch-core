@@ -21,7 +21,7 @@ def test_dev_only(p1, monkeypatch):
 def test_p1_registry_reads_no_writes(stub):
     assert stub.call("list", {})["data"]["tickets"][0]["title"] == "Real P1 ticket"
     assert stub.call("addon.list", {})["data"]["addons"][0]["enabled"]
-    for op in ["human.prepare", "human.submit", "new", "set", "doctor"]:
+    for op in ["new", "set", "doctor"]:
         with pytest.raises(HostError, match="unknown_command"):
             stub.call(op, {})
 

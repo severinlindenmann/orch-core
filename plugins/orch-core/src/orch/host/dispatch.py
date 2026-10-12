@@ -73,7 +73,10 @@ from .auth import Redactor
 from .bus import Subscription
 from .columns import OpKind
 from .errors import HostError
+from . import reads
 from .outcomes import BUILDERS, Planned, request_idem
+from .reads import CAPS as READ_CAPS
+from .reads import READ_OPS
 from .visibility import Viewer
 from .workspace import deny_append, ok_result
 
@@ -153,9 +156,14 @@ def served_ops() -> dict[str, int]:
 
     from .human import HUMAN_OPS
 
+    from .reads import READ_OPS
+    from .review import HOST_PERSON_OPS
+
     out = {op.name: 1 for op in ops.all() if op.name not in NOT_SERVED}
     out.update(HOST_OPS)
     out.update(HUMAN_OPS)
+    out.update(READ_OPS)
+    out.update(dict.fromkeys(HOST_PERSON_OPS, 1))
     return out
 
 
@@ -164,9 +172,15 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
     import orch.ops as ops
 
     from .human import HUMAN_OPS, PHASES
+    from .reads import PERSON_GRANT_READS, READ_OPS
+    from .review import HOST_PERSON_OPS
 
     if name in HOST_OPS:
         return ("read", "read")
+    if name in READ_OPS:  # H6b: session.list and grant.list are P and G only (§0.5)
+        return ("pg_read" if name in PERSON_GRANT_READS else "read", "read")
+    if name in HOST_PERSON_OPS:  # move, policy.set, settings.set: through human.* only; a plain req is human_only
+        return ("human", "write")
     if name in WAIT_OPS:
         return ("read", "wait")
     if name in HUMAN_OPS:
@@ -286,7 +300,7 @@ class ScopedRecords:
 class RegistryBackend:
     """The :class:`~orch.host.workspace.OpBackend` of every workspace socket."""
 
-    caps = ["ops/1", "outcome/1", "sub/1"]
+    caps = ["ops/1", "outcome/1", "sub/1", *READ_CAPS]
     #: §0.6 step 10 is checked here, after the args (8) and the replay (9)
     state_checks = True
 
@@ -397,6 +411,8 @@ class RegistryBackend:
             op = call.frame["op"]
             if op in HOST_OPS:
                 result = self._host_op(call)
+            elif op in READ_OPS:
+                result = reads.serve(call)
             elif op in self.human.ops:
                 result = self.human.serve(call, redactor)
             else:

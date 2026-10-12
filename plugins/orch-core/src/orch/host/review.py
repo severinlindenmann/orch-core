@@ -54,6 +54,14 @@ _SECTIONS = frozenset({"ticket.updated", "ticket.created", "question.asked"})
 PERSON_AGENT_OPS = frozenset(
     {"new", "set", "section.set", "ac.add", "ac.edit", "log", "ask", "artifact.add", "artifact.replace"}
 )
+#: person ops of the host contract (§0.8 ``move``, ``policy.set``, ``settings.set``; H0 records them as ops). Each emits
+#: one existing person-only F1 event; they are not registry (CLI) ops and not in the frozen grant-verb table
+#: ``EMITS_V1``: a person event is never covered by a grant verb, so no table version changes (H6b).
+HOST_PERSON_OPS: dict[str, frozenset[str]] = {
+    "move": frozenset({"ticket.moved"}),
+    "policy.set": frozenset({"policy.changed"}),
+    "settings.set": frozenset({"settings.changed"}),
+}
 _NOT_PERSON = frozenset({"init", "import.v1"})  # init is host.wsk_create + host.bootstrap; import v1 is direct mode
 
 

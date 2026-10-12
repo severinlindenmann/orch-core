@@ -91,6 +91,7 @@ _READS = frozenset(
         "host.list", "host.status", "host.restart", "whoami",
         "ticket.query", "ticket.get", "needs", "diff", "artifact.get",
         "workspace.show", "member.list", "session.list", "grant.list",
+        "activity.list", "workspace.settings", "ticket.text",
     }
 )  # fmt: skip
 #: a multi-event write that is never ``partial``: it rolls forward (§0.8.1, H5a)

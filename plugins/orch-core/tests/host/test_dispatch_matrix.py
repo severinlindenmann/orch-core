@@ -14,6 +14,8 @@ import orch.ops as ops
 from orch.host import frames
 from orch.host.columns import refusal, resolve
 from orch.host.dispatch import HOST_OPS, NOT_SERVED, PERSON_READS, op_kind, served_ops
+from orch.host.reads import READ_OPS
+from orch.host.review import HOST_PERSON_OPS
 from orch.host.errors import HostError, disposition
 from orch.host.human import HUMAN_OPS
 from orch.ops.errors import ERRORS
@@ -66,12 +68,20 @@ def as_agent_class(served: Served) -> None:
 def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
     welcome = served.client().welcome
     registry = {op.name for op in ops.all()}
-    assert set(welcome["ops"]) == (registry - set(NOT_SERVED)) | set(HOST_OPS) | set(HUMAN_OPS)
+    host = set(HOST_OPS) | set(HUMAN_OPS) | set(READ_OPS) | set(HOST_PERSON_OPS)
+    assert set(welcome["ops"]) == (registry - set(NOT_SERVED)) | host
+    assert set(READ_OPS) == {  # H6b
+        "ticket.query", "ticket.get", "needs", "activity.list", "workspace.show", "member.list", "session.list",
+        "grant.list", "workspace.settings", "ticket.text",
+    }  # fmt: skip
+    assert set(HOST_PERSON_OPS) == {"move", "policy.set", "settings.set"}
     assert set(HUMAN_OPS) == {"human.prepare", "human.get", "human.submit", "human.cancel", "human.pending"}
     assert set(NOT_SERVED) == {"init", "import.v1", "task.done"}
     assert {"wait", "sub.open", "sub.close"} <= set(welcome["ops"])  # H6a: served on the bus
     assert all(v == 1 for v in welcome["ops"].values())
     assert {"ops/1", "outcome/1", "sub/1"} <= set(welcome["caps"])
+    # H6b: the read caps; read_ext/2 also lists read_ext/1 (§0.4)
+    assert {"query/1", "read_ext/1", "read_ext/2", "activity/1", "settings/1", "text/1"} <= set(welcome["caps"])
     assert welcome["peer"] == {"uid": UID, "class": "person", "person": served.lab.owner}
 
 
@@ -105,8 +115,8 @@ ROWS = {
     "N agent, unverified grant": ("agent", "unverified", False),
 }
 ALLOWED = {
-    "P": {"read", "person_read", "unattended"},
-    "G": {"read", "agent", "unattended"},
+    "P": {"read", "person_read", "pg_read", "unattended"},
+    "G": {"read", "pg_read", "agent", "unattended"},
     "N": {"read", "unattended"},
 }
 
@@ -136,6 +146,10 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
         assert kind is not None
         if op in HOST_OPS:
             assert kind == ("read", "read")
+        elif op in READ_OPS:
+            assert kind == ("pg_read" if op in {"session.list", "grant.list"} else "read", "read")
+        elif op in HOST_PERSON_OPS:
+            assert kind == ("human", "write")
         elif op in HUMAN_OPS:
             assert kind == ("human_api", "write" if op == "human.submit" else "read")
         else:
@@ -145,7 +159,7 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
         for row, (peer, grant, valid) in ROWS.items():
             assert refusal(resolve(peer, grant, valid), kind[0]) == expected(row, kind[0]), (op, row)
             seen.add((kind[0], expected(row, kind[0])))
-    assert {"read", "person_read", "agent", "unattended", "human", "human_api"} == {k for k, _ in seen}
+    assert {"read", "person_read", "pg_read", "agent", "unattended", "human", "human_api"} == {k for k, _ in seen}
     for op in NOT_SERVED:
         assert op_kind(op) is None
 

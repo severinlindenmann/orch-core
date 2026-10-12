@@ -1,6 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
-import { mockStore } from '@/api/client'
+import { describe, expect, it, vi } from 'vitest'
+import { api, mockStore } from '@/api/client'
+import { ApiError } from '@/api/types'
 import { renderApp } from '@/test/renderApp'
 import { installAndGrant } from '@/test/installAddon'
 import type { MockStore } from '@/mocks/store'
@@ -65,5 +66,48 @@ describe('ticket: the changes the verdict signs', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Pass' }))
     expect(await within(dialog).findByRole('alert', {}, T)).toHaveTextContent(/New commits since you opened the verdict: the branch head is [0-9a-f]{7}, not c90e7a1/)
     expect(mockStore.ticket('DEMO-0041')!.verdict).toBeNull()
+  })
+})
+
+// A real host reads one diff per person at a time and answers `quota.host` while busy (core #417): the tab says the
+// host is busy and tries again; only after a few tries does it stop, still saying "busy", with a Try again button.
+describe('ticket: Changes while the host is busy', () => {
+  const busy = () => new ApiError(503, { code: 'quota.host', message: 'busy', retryable: true, retry_after_ms: 20 })
+
+  it('says "busy, trying again" and then shows the diff', async () => {
+    const real = api.getChanges.bind(api)
+    let calls = 0
+    const spy = vi.spyOn(api, 'getChanges').mockImplementation((...args) => (++calls <= 2 ? Promise.reject(busy()) : real(...args)))
+    try {
+      const { user } = renderApp('/ticket/DEMO-0042')
+      await user.click(await screen.findByRole('tab', { name: /Changes/ }, T))
+      expect(await screen.findByRole('status', {}, T)).toHaveTextContent('The host is busy reading other diffs; trying again')
+      expect(await screen.findByLabelText('Diff', {}, T)).toBeInTheDocument()
+      expect(screen.queryByText(/Could not load the diff/)).toBeNull()
+      expect(calls).toBe(3)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('stops after a few tries, still saying busy (not "could not load"), and Try again reads it again', async () => {
+    let calls = 0
+    const spy = vi.spyOn(api, 'getChanges').mockImplementation(() => {
+      calls++
+      return Promise.reject(busy())
+    })
+    try {
+      const { user } = renderApp('/ticket/DEMO-0042')
+      await user.click(await screen.findByRole('tab', { name: /Changes/ }, T))
+      const alert = await screen.findByRole('alert', {}, T)
+      expect(alert).toHaveTextContent('The host is still busy reading other diffs.')
+      expect(alert).not.toHaveTextContent('Could not load')
+      const before = calls
+      expect(before).toBe(5) // the first read and four tries
+      await user.click(within(alert).getByRole('button', { name: 'Try again' }))
+      await waitFor(() => expect(calls).toBeGreaterThan(before), T)
+    } finally {
+      spy.mockRestore()
+    }
   })
 })

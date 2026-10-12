@@ -163,15 +163,15 @@ def test_register_refuses_a_workspace_without_or_with_another_genesis_pin(lab):
 # --- adoption: the ownership lock and the direct CLI -----------------------------------------------------------
 
 
-def test_direct_cli_gets_host_required_after_adoption_and_unregister_restores_direct_mode(lab):
+def test_the_cli_is_a_host_client_after_adoption_and_unregister_restores_direct_mode(lab):
     code, doc = lab.cli("status")
     assert code == 0, doc
     with lab.host() as h, h.client() as c:
         wid = ok(lab.register(c))["data"]["workspace_id"]
-        code, doc = lab.cli("status")
-        assert (code, doc["error"]["code"]) == (3, "host.required")
-        code, doc = lab.cli("new", "A ticket", grant=True)
-        assert (code, doc["error"]["code"]) == (3, "host.required")
+        code, doc = lab.cli("status", run=True)  # registered and served: a request to the host (H4b)
+        assert code == 0, doc
+        code, doc = lab.cli("list", run=True)
+        assert code == 0, doc
         ok(c.call("host.unregister", {"workspace_id": wid}, idem=new_idem()))
         assert ok(c.call("host.list"))["data"]["workspaces"] == []
         assert not (lab.run / wid / "host.sock").exists()
@@ -179,11 +179,11 @@ def test_direct_cli_gets_host_required_after_adoption_and_unregister_restores_di
     assert code == 0, doc
 
 
-def test_host_required_holds_with_the_host_down(lab):
+def test_a_registered_workspace_with_the_host_down_is_host_unavailable_never_direct(lab):
     with lab.host() as h, h.client() as c:
         ok(lab.register(c))
-    code, doc = lab.cli("status")  # never a silent fallback to direct mode (D-P2-18)
-    assert (code, doc["error"]["code"]) == (3, "host.required")
+    code, doc = lab.cli("status", run=True)  # never a silent fallback to direct mode (D-P2-18)
+    assert (code, doc["error"]["code"]) == (9, "host.unavailable")
 
 
 def test_direct_guard_waits_for_adoption_then_answers_host_required(lab):

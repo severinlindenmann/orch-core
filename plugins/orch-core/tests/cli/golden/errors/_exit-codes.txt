@@ -34,6 +34,7 @@ lease.held 4 retry:false
 lease.required 4 retry:false
 lock.busy 4 retry:true
 host.required 3 retry:false
+host.untrusted 3 retry:false
 host.busy 4 retry:false
 custody.unsafe_mode 3 retry:false
 host.unavailable 9 retry:true

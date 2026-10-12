@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "host.untrusted",
+    "message": "the process behind the host socket is not the host the registry names",
+    "hint": "do not use this socket; check orch host list and who owns the run directory",
+    "fix": {
+      "argv": [
+        "orch",
+        "host",
+        "list"
+      ]
+    },
+    "retryable": false
+  }
+}

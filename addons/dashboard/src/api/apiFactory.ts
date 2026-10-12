@@ -38,6 +38,7 @@ import {
 } from './types'
 import type { MandatesPreviewRequest, MandatesPreviewState } from './mandatesPreview'
 import type { HandoffAction, HandoffRequest, HandoffState } from './handoff'
+import type { HostGrant, HostSettings, RosterMember } from './settings'
 import { connectionInfo, connectionList, doctorReport, secretsFileInfo, skillInfo, skillList, type SkillGrantRequest } from './connections'
 
 export interface ListTicketsParams {
@@ -123,6 +124,11 @@ export function createApi(transport: Transport) {
     prepareHandoff: (ws: string, action: HandoffAction, idem: string) => call<HandoffRequest>('POST', `/api/w/${ws}/handoff`, { ...action, idem }),
     getHandoff: (ws: string, id: string) => call<HandoffState>('GET', `/api/w/${ws}/handoff/${id}`),
     cancelHandoff: (ws: string, id: string) => call<{ id: string; state: string }>('DELETE', `/api/w/${ws}/handoff/${id}`),
+    /** Reduced settings of a real host (M4): what the host says, `available: false` without `settings/1`. */
+    getHostSettings: (ws: string) => call<HostSettings>('GET', `/api/w/${ws}/settings`),
+    getRoster: (ws: string) => call<RosterMember[]>('GET', `/api/w/${ws}/members`),
+    /** `active: false` adds the grants that ended. An owner is given every entry, anyone else their own. */
+    listHostGrants: (ws: string, active = true) => call<HostGrant[]>('GET', `/api/w/${ws}/grants?active=${active}`),
     /** Dry run of a code review policy: the tickets it would move back to testing or to done (owners). */
     previewCodeReview: (ws: string, req: { count: number; applies: CodeReviewApplies }) =>
       call<{ back: { keys: string[]; hidden: number }; done: { keys: string[]; hidden: number } }>('POST', `/api/workspaces/${ws}/code-review-preview`, req),

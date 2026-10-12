@@ -282,10 +282,10 @@ def test_cli_init_host_runs_the_composite_and_the_host_never_sees_the_person_key
         assert recording.received[0]["result"]["data"]["wsk_pub"] == genesis["wsk_pub"]
         assert _scan(lab.state, wsk, skip=(lab.state / "hosts" / wid / "keys",)) == []
         assert _scan(root, wsk) == []
-        # the workspace is the host's now: a direct-mode call answers host.required
+        # the workspace is the host's now: the CLI is a host client; no host here is host.unavailable, never direct
         out = io.StringIO()
-        assert main(["status", "--json"], env=env, stdout=out, stderr=io.StringIO()) == 3
-        assert json.loads(out.getvalue())["error"]["code"] == "host.required"
+        assert main(["status", "--json"], env=env, stdout=out, stderr=io.StringIO()) == 9
+        assert json.loads(out.getvalue())["error"]["code"] == "host.unavailable"
 
 
 def test_cli_init_host_refuses_a_non_empty_directory_before_calling_the_host(

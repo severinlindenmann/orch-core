@@ -9,7 +9,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import adapters, handoff, reads
+from . import adapters, handoff, reads, settings
 from .auth import Auth
 from .errors import HostError, fail, host_response, response
 from .gateway import Gateway
@@ -24,7 +24,8 @@ class LaunchCode(BaseModel):
 
 # The browser app's own addresses (permanent URLs, G2): served index.html so a reload or pasted link opens the page.
 SPA_PATH = re.compile(
-    r"w/[A-Za-z0-9_-]+(?:/(?:today|board|tickets|identity)|/ticket/[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9})?"
+    r"w/[A-Za-z0-9_-]+(?:/(?:today|board|tickets|identity)|/settings(?:/(?:general|members|gates|grants))?"
+    r"|/ticket/[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9})?"
     r"|ticket/[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9}"
 )
 
@@ -123,6 +124,7 @@ def create_app(port: int, gateway=None, auth=None, static=None):
 
     reads.register(app, gateway)
     handoff.register(app, gateway)
+    settings.register(app, gateway)
 
     @app.get("/{path:path}")
     def spa(path: str):

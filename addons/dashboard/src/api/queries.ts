@@ -5,6 +5,8 @@
 import { queryOptions } from '@tanstack/react-query'
 import { api, type ListTicketsParams } from '@/api/client'
 import type { ArtifactQuery } from './types'
+import { running } from './workspaces'
+import type { HostGrant } from './settings'
 
 /** Query key of an addon's state; per-ticket requests sit under the addon's key, so invalidating it covers them. */
 export function addonStateKey(ws: string | undefined, name: string, ticket?: string): unknown[] {
@@ -13,7 +15,9 @@ export function addonStateKey(ws: string | undefined, name: string, ticket?: str
 
 export const queries = {
   me: () => queryOptions({ queryKey: ['me'], queryFn: api.getMe }),
-  workspaces: () => queryOptions({ queryKey: ['workspaces'], queryFn: api.getWorkspaces }),
+  /** The workspaces whose host answers. One cache entry: `workspacesAll` reads the same one and keeps the others. */
+  workspaces: () => queryOptions({ queryKey: ['workspaces'], queryFn: api.getWorkspaces, select: running }),
+  workspacesAll: () => queryOptions({ queryKey: ['workspaces'], queryFn: api.getWorkspaces }),
   addons: () => queryOptions({ queryKey: ['addons'], queryFn: api.getAddons, staleTime: 30_000 }),
   devDataset: () => queryOptions({ queryKey: ['dev-dataset'], queryFn: () => api.getDataset() }),
   today: (ws: string) => queryOptions({ queryKey: ['today', ws], queryFn: () => api.getToday(ws) }),
@@ -34,6 +38,16 @@ export const queries = {
   ticket: (ws: string, key: string) => queryOptions({ queryKey: ['ticket', ws, key], queryFn: () => api.getTicket(key, ws), retry: false }),
   connections: (ws: string) => queryOptions({ queryKey: ['connections', ws], queryFn: () => api.getConnections(ws) }),
   skills: (ws: string) => queryOptions({ queryKey: ['skills', ws], queryFn: () => api.getSkills(ws) }),
+  /** Reduced workspace settings of a real host (M4). */
+  hostSettings: (ws: string) => queryOptions({ queryKey: ['settings', ws], queryFn: () => api.getHostSettings(ws) }),
+  roster: (ws: string) => queryOptions({ queryKey: ['members', ws], queryFn: () => api.getRoster(ws) }),
+  /**
+   * Grants as the host gives this person (an owner: all; anyone else: their own). A non-owner is not told when someone
+   * else's grant changes (the live stream does not carry others' `grant.*` items), so the list is read again on focus
+   * and every 30 seconds.
+   */
+  hostGrants: (ws: string, active: boolean) =>
+    queryOptions<HostGrant[]>({ queryKey: ['settings-grants', ws, active], queryFn: () => api.listHostGrants(ws, active), refetchInterval: 30_000, refetchOnWindowFocus: true }),
   identity: (ws: string) => queryOptions({ queryKey: ['identity', ws], queryFn: () => api.getIdentity(ws) }),
   people: (ws: string) => queryOptions({ queryKey: ['people', ws], queryFn: () => api.listPeople(ws) }),
   /** The relay state with the time it was read (the page polls while something moves). */

@@ -14,6 +14,11 @@ from ._unix import UnsafePath
 from .listener import check_socket_path
 
 
+class PinMismatch(UnsafePath):
+    """The process behind the socket is not the one the trusted registry or pin names (a hard refusal, never a
+    retry): ``host.untrusted``."""
+
+
 @dataclass(frozen=True)
 class Pin:
     """Trusted registry entry, NOT values read from workspace config.json.
@@ -32,7 +37,7 @@ class Pin:
         workspace = welcome.get("workspace")
         actual = workspace.get("id") if isinstance(workspace, dict) else None
         if welcome.get("t") != "welcome" or welcome.get("host_uid") != self.host_uid or actual != self.workspace_id:
-            raise UnsafePath("Server welcome does not match the trusted pin")
+            raise PinMismatch("Server welcome does not match the trusted pin")
 
 
 def connect_pinned(pin: Pin, *, timeout: float = 2) -> socket.socket:
@@ -47,7 +52,7 @@ def connect_pinned(pin: Pin, *, timeout: float = 2) -> socket.socket:
         sock.settimeout(timeout)
         sock.connect(str(pin.socket_path))
         if peer_credentials(sock).uid != pin.host_uid:
-            raise UnsafePath("Server UID does not match the trusted pin")
+            raise PinMismatch("Server UID does not match the trusted pin")
         return sock
     except BaseException:
         sock.close()
@@ -95,33 +100,51 @@ def handshake_pinned(pin: Pin, hello: dict[str, Any], *, timeout: float = 2) -> 
 
 
 class Connection:
-    """A blocking person-class client of one workspace socket: the pinned handshake, then one request at a time.
+    """A blocking client of one workspace socket: the pinned handshake, then one request at a time.
 
-    The minimal client ``orch sign`` needs (H5b) without the host-mode CLI (H4b): ``call`` sends one ``req`` and returns
-    its ``result``, raising the host's error as :class:`~orch.host.errors.HostError`. Frames that are not the answer
-    (subscription items) are skipped. It never sends a grant: ``human.*`` is column P only.
+    ``orch sign`` (H5b) and the thin CLI (H4b, :mod:`orch.hostclient`) share it. ``call`` sends one ``req`` and returns
+    its ``result``, raising the host's error as :class:`~orch.host.errors.HostError`. ``auth`` carries the grant and the
+    session (never in ``args``), ``dry_run`` goes in ``opts``, and ``timeout`` is the seconds this one
+    call waits for its answer on the socket (a ``wait`` outlasts the default). Frames that are not the answer
+    (``evt`` items of a subscription) are skipped: nothing in the CLI subscribes, ``wait`` is one request the host
+    parks on its bus. After a timeout or a broken connection the object is unusable: open another.
     """
 
     def __init__(self, pin: Pin, *, client: str = "orch", timeout: float = 120) -> None:
         hello = {"t": "hello", "proto": [1], "client": client, "caps": []}
         self.sock, self.welcome = handshake_pinned(pin, hello)
+        self.timeout = timeout
         self.sock.settimeout(timeout)
         self._decoder = frames.Decoder()
         self._frames: list[Any] = []
         self._n = 0
 
     def call(
-        self, op: str, args: dict[str, Any], *, idem: str | None = None, files: dict[str, Any] | None = None
+        self,
+        op: str,
+        args: dict[str, Any],
+        *,
+        idem: str | None = None,
+        files: dict[str, Any] | None = None,
+        auth: dict[str, str] | None = None,
+        dry_run: bool = False,
+        timeout: float | None = None,
     ) -> dict[str, Any]:
+        """The ``result`` of the request. Raises ``HostError`` for the host's refusal; ``TimeoutError``,
+        ``ConnectionError`` or ``FrameError`` when no answer arrives."""
         from .errors import HostError
 
         self._n += 1
         rid = f"c{self._n}"
         frame: dict[str, Any] = {"t": "req", "id": rid, "op": op, "args": args}
-        if idem is not None:
-            frame["opts"] = {"idem": idem}
+        if auth:
+            frame["auth"] = auth
+        opts = {k: v for k, v in (("idem", idem), ("dry_run", True if dry_run else None)) if v}
+        if opts:
+            frame["opts"] = opts
         if files:
             frame["files"] = files
+        self.sock.settimeout(self.timeout if timeout is None else timeout)
         self.sock.sendall(frames.encode(frame))
         while True:
             while not self._frames:
@@ -132,6 +155,8 @@ class Connection:
             got = self._frames.pop(0)
             if isinstance(got, frames.FrameError):
                 raise got
+            if got.get("t") == "fatal":
+                raise HostError.stored(got.get("error") or {"code": "internal"})
             if got.get("t") != "res" or got.get("id") != rid:
                 continue
             if got.get("ok"):

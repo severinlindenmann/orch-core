@@ -62,6 +62,10 @@ export function invalidateLive(client: QueryClient, ws: string, event: string, i
     } else if (item.type?.startsWith('member.') || item.type === 'role.changed' || item.type?.startsWith('device.')) {
       void client.invalidateQueries(scoped); void client.invalidateQueries({ queryKey: ['me'] })
       void client.invalidateQueries({ queryKey: ['workspaces'] })
+    } else if (item.type === 'settings.changed' || item.type === 'policy.changed' || item.type?.startsWith('grant.')) {
+      // Settings, gate policies and grants (M4). A non-owner is not sent others' grant items, so the grants list is also
+      // read again on focus and on a timer; an item that does arrive makes it current at once.
+      for (const name of ['settings', 'members', 'settings-grants', 'identity']) invalidate(name)
     } else if (item.type === 'visibility.changed' || item.type === 'people.changed' || item.type === 'ticket.closed' || item.type === 'ticket.reopened') {
       // Who may see a ticket (or whether it is listed) changed. Today's activity and a closed list carry titles and rows
       // that were visible a moment ago: drop them, not only mark them stale, then read again as the new viewer.

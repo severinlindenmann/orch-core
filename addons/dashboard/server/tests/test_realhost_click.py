@@ -275,7 +275,7 @@ def test_a_view_is_refused_when_the_hosts_record_is_not_what_was_asked_for(world
     app = world.client.app
     token = click.headers()["Authorization"].split()[1]
     op, body, epoch = app.state.clicks.ops[(token, got["request_id"])]
-    app.state.clicks.ops[(token, got["request_id"])] = (op, body.model_copy(update={"key": world.keys["two"]}), epoch)
+    app.state.clicks.ops[(token, got["request_id"])] = (op, body.model_copy(update={"gate": "plan"}), epoch)
     res = click.post("view", {"request_id": got["request_id"]})
     assert res.status_code == 409 and res.json()["error"]["reason"] == "check_failed"
     assert click.post("view", {"request_id": got["request_id"]}).status_code == 404  # cancelled and forgotten

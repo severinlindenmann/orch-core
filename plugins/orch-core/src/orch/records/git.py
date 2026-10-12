@@ -281,9 +281,12 @@ def git_dir_of(root: Path) -> Path:
         if text.startswith("gitdir:"):
             target = Path(text[len("gitdir:") :].strip())
             target = (root / target) if not target.is_absolute() else target
-            real, base = os.path.realpath(target), os.path.realpath(root)
-            if os.path.commonpath([real, base]) == base and Path(real).is_dir():
-                return Path(real)
+            try:  # a name too long or otherwise unusable is no git dir (Python 3.11 raises here)
+                real, base = os.path.realpath(target), os.path.realpath(root)
+                if os.path.commonpath([real, base]) == base and Path(real).is_dir():
+                    return Path(real)
+            except (OSError, ValueError):
+                pass
         raise RecordsError("records.not_dedicated", "the record root's .git file names a git dir outside it")
     raise RecordsError(
         "records.not_dedicated",

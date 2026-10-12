@@ -1,0 +1,1 @@
+err quick.unlabelled the quick task was created but not labelled · retry:true · next: run the same orch quick add again: it labels that ticket instead of creating a second one · fix: orch quick list

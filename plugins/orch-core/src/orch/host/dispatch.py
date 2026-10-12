@@ -81,6 +81,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from jsonschema import Draft202012Validator
 
 from . import diff as git_diff
+from . import quick as quick_list
 from . import reads, sessions
 from . import records as records_ops
 from .artifacts import VALIDATOR as ARTIFACT_VALIDATOR
@@ -140,6 +141,9 @@ HOST_OPS: dict[str, int] = {"whoami": 1, "host.status": 1, "outcome.get": 1, "su
 FILE_OPS: dict[str, int] = {"blob.put": 1, "blob.drop": 1, "artifact.get": 1}
 #: the git reads (§0.8, H3b1 follow-up): ``diff`` v1 (v1.4), columns P, G and N, through the host's reader
 GIT_OPS: dict[str, int] = {"diff": 1}
+#: ``quick/1`` (H11f, #308): ``quick.list``, a registry read that the host answers itself in the three phases of a git
+#: read (:mod:`orch.host.quick`); columns P, G and N like ``ticket.query``
+QUICK_OPS: dict[str, int] = {"quick.list": 1}
 #: registry ops served in the ``wait`` phase (parked on the bus, answered ``host.restarting`` by a drain)
 WAIT_OPS = frozenset({"wait"})
 _TOPIC = r"^(?:workspace|tickets|needs|ticket:(?:(?:[A-Z][A-Z0-9]{0,15}-)?[0-9]{1,9}|[0-7][0-9A-HJKMNP-TV-Z]{25}))$"
@@ -350,7 +354,7 @@ class RegistryBackend:
     #: detail is served
     @property
     def caps(self) -> list[str]:
-        base = ["ops/1", "outcome/1", "sub/1", "blob/1", "diff/1", "diff_ext/1", "human/1"]
+        base = ["ops/1", "outcome/1", "sub/1", "blob/1", "diff/1", "diff_ext/1", "quick/1", "human/1"]
         return [*base, *READ_CAPS, *records_ops.CAPS, *(["sub_ext/1"] if SUB_EXT else [])]
 
     #: §0.6 step 10 is checked here, after the args (8) and the replay (9)
@@ -384,7 +388,7 @@ class RegistryBackend:
                     "outcome.unknown", f"{op} did not finish in time; ask outcome.get with its idem"
                 ) from None
             raise HostError("timeout", f"{op} did not finish within {timeout_ms} ms") from None
-        if op in GIT_OPS:
+        if op in GIT_OPS or op in QUICK_OPS:
             return await self._git_read(call, result)
         if op == "sub.open":
             return self._register(call, result)
@@ -395,9 +399,13 @@ class RegistryBackend:
         return result
 
     @staticmethod
-    async def _git_read(call: Call, pending: git_diff.Pending) -> dict[str, Any]:
+    async def _git_read(call: Call, pending: Any) -> dict[str, Any]:
         """``diff``'s reader phase, off the workspace worker thread (the worker resolved visibility, links and
-        capabilities): one in flight per principal, :data:`~orch.host.diff.BUDGET_S` for the request."""
+        capabilities): one in flight per principal, :data:`~orch.host.diff.BUDGET_S` for the request. ``quick.list``
+        (H11f) goes through the same phases with its own reader loop and its own phase 3."""
+        is_quick = call.frame["op"] == "quick.list"
+        run_phase = quick_list.run if is_quick else git_diff.run
+        budget = quick_list.BUDGET_S if is_quick else git_diff.BUDGET_S
         redactor = Redactor((call.frame.get("auth") or {}).get("grant"))
         principal = pending.principal
 
@@ -405,7 +413,7 @@ class RegistryBackend:
             # the slot is held until the reader work itself ends (also when the request stops waiting for it), and
             # given back on this thread, so it never outlives the work even when the event loop stops first
             try:
-                return git_diff.run(pending)
+                return run_phase(pending)
             finally:
                 git_diff.IN_FLIGHT.give(principal)
 
@@ -419,13 +427,19 @@ class RegistryBackend:
             failure: HostError | None = None
             data: dict[str, Any] = {}
             try:  # the reader's deadlines end the work within the budget; this only bounds a stuck thread
-                data = await asyncio.wait_for(asyncio.shield(future), git_diff.BUDGET_S + 5)
+                data = await asyncio.wait_for(asyncio.shield(future), budget + 5)
             except TimeoutError:
-                failure = HostError("observe.unavailable", f"the diff took longer than {git_diff.BUDGET_S:g} s")
+                failure = HostError("observe.unavailable", f"the read took longer than {budget:g} s")
             except HostError as exc:
                 failure = exc
             # visibility again before the answer or the error: a ticket restricted while the reader ran is
             # not_found, never the reader's error (F6, F8)
+            if is_quick:
+                if failure is not None:
+                    await asyncio.wrap_future(call.service.submit(call.authorize))
+                    raise failure from None
+                done = await asyncio.wrap_future(call.service.submit(quick_list.finish, call, data))
+                return redactor.obj({**ok_result(done["data"]), "lines": done["lines"], "hints": done["hints"]})
             await asyncio.wrap_future(call.service.submit(git_diff.recheck, call, pending))
             if failure is not None:
                 raise failure from None
@@ -433,7 +447,7 @@ class RegistryBackend:
         except HostError as exc:
             raise redactor.error(exc) from None
         except Exception:  # the transport answers internal without a cause: keep it in the host's log, redacted
-            LOG.error("diff failed: %s", redactor.text(traceback.format_exc()))
+            LOG.error("%s failed: %s", call.frame.get("op"), redactor.text(traceback.format_exc()))
             raise
 
     def _register(self, call: Call, checked: dict[str, Any]) -> dict[str, Any]:
@@ -513,7 +527,7 @@ class RegistryBackend:
                 result = reads.serve(call)
             elif op in records_ops.RECORDS_OPS:
                 result = records_ops.serve(call)
-            elif op in FILE_OPS or op in GIT_OPS:
+            elif op in FILE_OPS or op in GIT_OPS or op in QUICK_OPS:
                 result = self._file_op(call)
             elif op in self.human.ops:
                 result = self.human.serve(call, redactor)
@@ -566,7 +580,13 @@ class RegistryBackend:
         op, frame = call.frame["op"], call.frame
         args = frame["args"]
         validator = (
-            ARTIFACT_VALIDATOR if op == "artifact.get" else git_diff.VALIDATOR if op == "diff" else BLOB_VALIDATORS[op]
+            ARTIFACT_VALIDATOR
+            if op == "artifact.get"
+            else git_diff.VALIDATOR
+            if op == "diff"
+            else quick_list.VALIDATOR
+            if op == "quick.list"
+            else BLOB_VALIDATORS[op]
         )
         errors = sorted(validator.iter_errors(args), key=lambda e: list(map(str, e.path)))
         if errors:
@@ -581,6 +601,8 @@ class RegistryBackend:
             return ok_result(artifact_get(call, args))
         if op == "diff":
             return git_diff.prepare(call, args)  # type: ignore[return-value]  # the reader phase is run()'s
+        if op == "quick.list":
+            return quick_list.prepare(call, args)  # type: ignore[return-value]  # likewise
         if op == "blob.drop":
             service.blobs.drop(call.principal, args["blob"])
             return ok_result({})

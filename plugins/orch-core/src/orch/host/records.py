@@ -33,6 +33,8 @@ import json
 import os
 import time
 from collections import OrderedDict
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -49,12 +51,22 @@ from .visibility import Viewer
 if TYPE_CHECKING:
     from .workspace import Call
 
-__all__ = ["CAPS", "RECORDS_OPS", "TRUST_TEXT", "serve"]
+__all__ = ["CAPS", "RECORDS_OPS", "TRUST_TEXT", "Ctx", "run_op", "serve"]
 
 CAPS = ["records/1"]
-RECORDS_OPS: dict[str, int] = {"records.snapshot": 1, "records.export_check": 1, "records.remote_private": 1}
-#: the writes among them (an idem, an outcome record, an audit entry; owners only)
-WRITE_OPS = frozenset({"records.remote_private"})
+RECORDS_OPS: dict[str, int] = {
+    "records.snapshot": 1,
+    "records.export_check": 1,
+    "records.remote_private": 1,
+    "records.status": 1,
+    "records.note": 1,
+}
+#: the writes among them (an idem, an outcome record): the mark (owners only, audited) and the note (a host record)
+WRITE_OPS = frozenset({"records.remote_private", "records.note"})
+#: the writes only an owner makes (the mark relaxes an owner rule)
+OWNER_OPS = frozenset({"records.remote_private"})
+#: visible tickets listed in ``records.status`` ``pending.tickets``
+STATUS_TICKETS = 200
 #: mark changes kept in the audit list
 MAX_MARKS = 50
 #: manifests kept per workspace (the oldest goes first)
@@ -67,6 +79,8 @@ TRUST_TEXT = (
 )
 
 _URL = {"type": "string", "minLength": 1, "maxLength": 2048, "pattern": r"^[^\x00-\x1f\x7f]+$"}
+_SHA = {"type": "string", "pattern": r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$"}
+REPO_STATES = ("ok", "missing", "not_dedicated", "unsafe", "index_differs")
 _SCHEMAS = {
     "records.snapshot": {
         "type": "object",
@@ -76,7 +90,7 @@ _SCHEMAS = {
     "records.export_check": {
         "type": "object",
         "properties": {
-            "sha": {"type": "string", "pattern": r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
+            "sha": _SHA,
             "url": _URL,
             "ref": {"type": "string", "pattern": r"^refs/heads/[A-Za-z0-9._/-]{1,200}$"},
         },
@@ -89,6 +103,42 @@ _SCHEMAS = {
         "required": ["on"],
         "additionalProperties": False,
     },
+    "records.status": {"type": "object", "additionalProperties": False},
+    "records.note": {
+        "type": "object",
+        "properties": {
+            "manifest": {"type": "string", "pattern": r"^m_[0-9a-f]{64}$"},
+            "commit": _SHA,
+            "pushed": {"type": "boolean"},
+            "url": _URL,
+            "repo": {
+                "type": "object",
+                "properties": {
+                    "state": {"enum": list(REPO_STATES)},
+                    "problem": {"type": "string", "minLength": 1, "maxLength": 300},
+                },
+                "required": ["state"],
+                "additionalProperties": False,
+            },
+            "auto": {
+                "oneOf": [
+                    {"type": "null"},
+                    {
+                        "type": "object",
+                        "properties": {
+                            "on": {"type": "boolean"},
+                            "every_min": {"type": "integer", "minimum": 5, "maximum": 1440},
+                            "push": {"type": "boolean"},
+                        },
+                        "required": ["on", "every_min", "push"],
+                        "additionalProperties": False,
+                    },
+                ]
+            },
+        },
+        "required": ["pushed"],
+        "additionalProperties": False,
+    },
 }
 _VALIDATORS = {op: Draft202012Validator(s) for op, s in _SCHEMAS.items()}
 
@@ -98,7 +148,8 @@ def _validate(op: str, args: Any) -> None:
     if errors:
         where = ".".join(map(str, errors[0].absolute_path))
         raise HostError("invalid.input", f"{op}: {where or 'args'} is not valid")
-    for name in ("url", "ref", "sha", "page"):  # a schema ``$`` also matches before a final newline
+    # a schema ``$`` also matches before a final newline
+    for name in ("url", "ref", "sha", "page", "commit", "manifest"):
         value = args.get(name)
         if isinstance(value, str) and any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in value):
             raise HostError("invalid.input", f"{op}: {name} is not valid")
@@ -111,6 +162,10 @@ def _validate(op: str, args: Any) -> None:
             raise HostError("invalid.input", f"{op}: url is refused: {problem}")
     if op == "records.remote_private" and args["on"] and "url" not in args:
         raise HostError("invalid.input", "records.remote_private: url is required to set the mark")
+    if op == "records.note" and "manifest" in args and "commit" not in args:
+        raise HostError("invalid.input", "records.note: a manifest needs its commit")
+    if op == "records.note" and args.get("pushed") and "commit" not in args:
+        raise HostError("invalid.input", "records.note: a push needs its commit")
 
 
 def _host_error(exc: rec.RecordsError) -> HostError:
@@ -145,6 +200,41 @@ def _stamp(now: float) -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(now)))
 
 
+# --- the context: the host's request, or the direct-mode tool (D-P2-38) -------------------------------------------
+
+
+@dataclass
+class Ctx:
+    """What a records op needs, from the host's request or from the direct-mode tool (same rules, same files)."""
+
+    store: Any
+    state_dir: Path
+    workspace_id: str
+    host_uid: int
+    clock: Callable[[], float]
+    principal: str
+    person: str | None
+    #: a ticket view the caller may see (``records.status`` lists visible tickets only)
+    sees: Callable[[Any], bool]
+    #: where the manifests and the hash cache live (the workspace service; a plain object in direct mode)
+    holder: Any = field(default=None)
+
+
+def ctx_of(call: Call, viewer: Viewer) -> Ctx:
+    service = call.service
+    return Ctx(
+        store=service.store,
+        state_dir=Path(service.state_dir),
+        workspace_id=service.workspace_id,
+        host_uid=service.host_uid,
+        clock=service.clock,
+        principal=call.principal,
+        person=viewer.person,
+        sees=viewer.sees,
+        holder=service,
+    )
+
+
 # --- serving ------------------------------------------------------------------------------------------------------
 
 
@@ -156,7 +246,7 @@ def serve(call: Call) -> dict[str, Any]:
     op = call.frame["op"]
     args = dict(call.frame["args"])
     _validate(op, args)
-    idem = request_idem(op, call.frame.get("opts"))  # reads: dry_run is invalid.input, idem ignored; the mark: required
+    idem = request_idem(op, call.frame.get("opts"))  # reads: dry_run is invalid.input, idem ignored; writes: required
     if call.frame.get("files"):
         raise HostError("blob.invalid", f"{op} takes no files")
     service = call.service
@@ -165,32 +255,66 @@ def serve(call: Call) -> dict[str, Any]:
     viewer = Viewer.of(call)
     if not viewer.manager:
         raise HostError("op.not_allowed", f"{op} is for a workspace owner or maintainer at the terminal or dashboard")
-    if op in WRITE_OPS and viewer.role != "owner":
+    if op in OWNER_OPS and viewer.role != "owner":
         raise HostError("op.not_allowed", f"{op} relaxes an owner rule: only a workspace owner sets or clears the mark")
+    ctx = ctx_of(call, viewer)
     try:
-        if op == "records.snapshot":
-            return ok_result(_snapshot(call, args))
-        if op == "records.export_check":
-            return ok_result(_export_check(call, viewer, args))
-        return _mark_write(call, viewer, args, str(idem))
+        if op not in WRITE_OPS:
+            return ok_result(run_op(ctx, op, args))
+        return _write(call, ctx, op, args, str(idem))
     except rec.RecordsError as exc:
         raise _host_error(exc) from None
 
 
-def _state(service: Any) -> dict[str, Any]:
-    st = getattr(service, "records_state", None)
+def run_op(ctx: Ctx, op: str, args: dict[str, Any]) -> dict[str, Any]:
+    """The op itself (the host after its checks, or the direct-mode tool)."""
+    if op == "records.snapshot":
+        return _snapshot(ctx, args)
+    if op == "records.export_check":
+        return _export_check(ctx, args)
+    if op == "records.remote_private":
+        return _remote_private(ctx, args)
+    if op == "records.note":
+        return _note(ctx, args)
+    if op == "records.status":
+        return _status(ctx)
+    raise HostError("unknown_command", f"{op} is not served")
+
+
+def _write(call: Call, ctx: Ctx, op: str, args: dict[str, Any], idem: str) -> dict[str, Any]:
+    """A records write: an outcome record under the caller's idem (a retry replays the stored answer)."""
+    from .auth import Redactor
+    from .workspace import ok_result
+
+    def apply(_intent: Any) -> dict[str, Any]:
+        return ok_result(run_op(ctx, op, args))
+
+    return call.service.outcomes.execute(
+        call.principal,
+        idem,
+        op,
+        dict(args),
+        apply,
+        planned=None,
+        session=(call.frame.get("auth") or {}).get("session"),
+        redactor=Redactor((call.frame.get("auth") or {}).get("grant")),
+    )
+
+
+def _state(holder: Any) -> dict[str, Any]:
+    st = getattr(holder, "records_state", None)
     if st is None:
         st = {"manifests": OrderedDict(), "hashes": {}}
-        service.records_state = st
+        holder.records_state = st
     return st
 
 
-def _take(service: Any) -> dict[str, Any]:
+def _take(ctx: Ctx) -> dict[str, Any]:
     """A new manifest of the record files, under the store lock."""
     from orch.model import WORKSPACE
 
-    store = service.store
-    st = _state(service)
+    store = ctx.store
+    st = _state(ctx.holder)
     with store.locked():
         store.load_all()  # the chain heads of every ticket log, verified
         root_fd = rec.open_root(Path(store.root))
@@ -201,37 +325,51 @@ def _take(service: Any) -> dict[str, Any]:
             os.close(root_fd)
         ws_seq = int(store.head_seq(WORKSPACE))
         heads: dict[str, str | None] = {"workspace": store.log_head(WORKSPACE)}
+        seqs: dict[str, int] = {"workspace": ws_seq}
         for p in paths:
             if p.startswith("tickets/") and p.endswith("/events.jsonl"):
                 uid = p.split("/")[1]
                 heads[uid] = store.log_head(uid)
+                seqs[uid] = int(store.head_seq(uid))
     live = {(e.path, e.size) for e in entries}
     st["hashes"] = {k: v for k, v in st["hashes"].items() if (k[0], k[1]) in live}  # keep the cache bounded
-    mid = rec.manifest_id(service.workspace_id, ws_seq, heads, entries)
-    return {"id": mid, "ws_seq": ws_seq, "heads": heads, "files": [e.as_dict() for e in entries]}
+    mid = rec.manifest_id(ctx.workspace_id, ws_seq, heads, entries)
+    return {"id": mid, "ws_seq": ws_seq, "heads": heads, "seqs": seqs, "files": [e.as_dict() for e in entries]}
 
 
-def _snapshot(call: Call, args: dict[str, Any]) -> dict[str, Any]:
-    service = call.service
-    now = float(service.clock())
-    manifests: OrderedDict[str, dict[str, Any]] = _state(service)["manifests"]
+def _manifests(ctx: Ctx) -> OrderedDict[str, dict[str, Any]]:
+    now = float(ctx.clock())
+    manifests: OrderedDict[str, dict[str, Any]] = _state(ctx.holder)["manifests"]
     for mid in [m for m, v in manifests.items() if v["expires"] <= now]:
         manifests.pop(mid, None)
+    return manifests
+
+
+def _held(ctx: Ctx, mid: str) -> dict[str, Any]:
+    held = _manifests(ctx).get(mid)
+    if held is None:
+        raise HostError("page.expired", "the records manifest expired or is unknown: take a new snapshot")
+    if held["principal"] != ctx.principal:
+        raise HostError("page.expired", "the records manifest belongs to another caller")
+    return held
+
+
+def _snapshot(ctx: Ctx, args: dict[str, Any]) -> dict[str, Any]:
+    now = float(ctx.clock())
+    manifests = _manifests(ctx)
     if "page" in args:
         mid, _, pos = args["page"].partition(".")
-        held = manifests.get(mid)
-        if held is None or not pos.isdigit():
+        if not pos.isdigit():
             raise HostError("page.expired", "the records manifest expired or is unknown: take a new snapshot")
-        if held["principal"] != call.principal:
-            raise HostError("page.expired", "the records manifest belongs to another caller")
+        held = _held(ctx, mid)
         offset = int(pos)
         manifest = held["manifest"]
         taken_at = held["taken_at"]
     else:
-        manifest = _take(service)
+        manifest = _take(ctx)
         taken_at = _stamp(now)
         manifests[manifest["id"]] = {
-            "principal": call.principal,
+            "principal": ctx.principal,
             "expires": now + rec.TTL_SECONDS,
             "manifest": manifest,
             "taken_at": taken_at,
@@ -244,7 +382,7 @@ def _snapshot(call: Call, args: dict[str, Any]) -> dict[str, Any]:
     end = min(offset + rec.PAGE_FILES, len(files))
     nxt = f"{manifest['id']}.{end}" if end < len(files) else None
     return {
-        "workspace": service.workspace_id,
+        "workspace": ctx.workspace_id,
         "manifest": manifest["id"],
         "ws_seq": manifest["ws_seq"],
         "heads": manifest["heads"],
@@ -256,28 +394,27 @@ def _snapshot(call: Call, args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def convenience_on(service: Any) -> bool:
+def convenience_on(ctx: Ctx) -> bool:
     """The convenience-readers condition (§0.8.6): the flag is on, or the history holds convenience events."""
-    if convenience.enabled(service.state_dir, service.workspace_id, service.host_uid):
+    if convenience.enabled(ctx.state_dir, ctx.workspace_id, ctx.host_uid):
         return True
-    store = service.store
+    store = ctx.store
     with store.locked():
         return has_convenience_events(store)
 
 
-def _export_check(call: Call, viewer: Viewer, args: dict[str, Any]) -> dict[str, Any]:
-    service = call.service
-    now = float(service.clock())
-    doc = read_record(service.state_dir, service.workspace_id, service.host_uid)
-    conv = convenience_on(service)
+def _export_check(ctx: Ctx, args: dict[str, Any]) -> dict[str, Any]:
+    now = float(ctx.clock())
+    doc = read_record(ctx.state_dir, ctx.workspace_id, ctx.host_uid)
+    conv = convenience_on(ctx)
     mark = doc.get("private_remote")
     marked = isinstance(mark, dict) and mark.get("url") == args["url"]
     policy = "none"
     if conv:
         if not marked:
-            entry = {**args, "policy": "refused", "at": _stamp(now), "by": viewer.person}
+            entry = {**args, "policy": "refused", "at": _stamp(now), "by": ctx.person}
             doc["exports"] = [*doc["exports"], entry][-MAX_EXPORTS:]
-            _write_record(service.state_dir, service.workspace_id, service.host_uid, doc)
+            _write_record(ctx.state_dir, ctx.workspace_id, ctx.host_uid, doc)
             why = (
                 "the private-remote mark names another URL; the push destination changed since it was marked"
                 if isinstance(mark, dict)
@@ -289,49 +426,105 @@ def _export_check(call: Call, viewer: Viewer, args: dict[str, Any]) -> dict[str,
                 hint="mark this exact push URL private (orch records remote-private), or keep the records local",
             )
         policy = "private_remote"
-    body = {"workspace": service.workspace_id, **args, "policy": policy, "convenience": conv}
+    body = {"workspace": ctx.workspace_id, **args, "policy": policy, "convenience": conv}
     check = "x_" + hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-    doc["exports"] = [*doc["exports"], {**args, "policy": policy, "at": _stamp(now), "by": viewer.person}][
-        -MAX_EXPORTS:
-    ]
-    _write_record(service.state_dir, service.workspace_id, service.host_uid, doc)
+    doc["exports"] = [*doc["exports"], {**args, "policy": policy, "at": _stamp(now), "by": ctx.person}][-MAX_EXPORTS:]
+    _write_record(ctx.state_dir, ctx.workspace_id, ctx.host_uid, doc)
     return {**body, "check": check}
 
 
-def _mark_write(call: Call, viewer: Viewer, args: dict[str, Any], idem: str) -> dict[str, Any]:
-    """``records.remote_private`` as a write: an outcome record under the caller's idem (a retry replays the stored
-    answer), then the mark and an audit entry (redacted URL, actor, time)."""
-    from .auth import Redactor
-    from .workspace import ok_result
-
-    def apply(_intent: Any) -> dict[str, Any]:
-        return ok_result(_remote_private(call, viewer, args))
-
-    return call.service.outcomes.execute(
-        call.principal,
-        idem,
-        call.frame["op"],
-        dict(args),
-        apply,
-        planned=None,
-        session=(call.frame.get("auth") or {}).get("session"),
-        redactor=Redactor((call.frame.get("auth") or {}).get("grant")),
-    )
-
-
-def _remote_private(call: Call, viewer: Viewer, args: dict[str, Any]) -> dict[str, Any]:
+def _remote_private(ctx: Ctx, args: dict[str, Any]) -> dict[str, Any]:
     from orch.records.git import redact
 
-    service = call.service
-    now = float(service.clock())
-    doc = read_record(service.state_dir, service.workspace_id, service.host_uid)
+    now = float(ctx.clock())
+    doc = read_record(ctx.state_dir, ctx.workspace_id, ctx.host_uid)
     if args["on"]:
-        doc["private_remote"] = {"url": args["url"], "at": _stamp(now), "by": viewer.person}
+        doc["private_remote"] = {"url": args["url"], "at": _stamp(now), "by": ctx.person}
     else:
         doc["private_remote"] = None
-    entry = {"action": "set" if args["on"] else "clear", "at": _stamp(now), "by": viewer.person}
+    entry = {"action": "set" if args["on"] else "clear", "at": _stamp(now), "by": ctx.person}
     if args.get("url"):
         entry["url"] = redact(args["url"])
     doc["marks"] = [*(doc.get("marks") or []), entry][-MAX_MARKS:]
-    _write_record(service.state_dir, service.workspace_id, service.host_uid, doc)
+    _write_record(ctx.state_dir, ctx.workspace_id, ctx.host_uid, doc)
     return {"private_remote": doc["private_remote"], "text": TRUST_TEXT}
+
+
+# --- the note and the status (a display, never a decision) ----------------------------------------------------------
+
+
+def _note(ctx: Ctx, args: dict[str, Any]) -> dict[str, Any]:
+    """What the tool committed or pushed, its repo state, the URL git resolves and the auto setting: an unsigned host
+    record in ``records.json`` (``last``). A manifest must be one this caller took and the host still holds (its
+    per-log sequence numbers make ``pending`` exact). A manual git commit makes it stale: status is a display."""
+    now = float(ctx.clock())
+    doc = read_record(ctx.state_dir, ctx.workspace_id, ctx.host_uid)
+    last = dict(doc.get("last") or {})
+    if "manifest" in args:
+        manifest = _held(ctx, args["manifest"])["manifest"]
+        last.update(
+            commit=args["commit"],
+            at=_stamp(now),
+            by=ctx.person,
+            ws_seq=manifest["ws_seq"],
+            seqs=dict(manifest["seqs"]),
+        )
+    if args.get("pushed"):
+        last.update(pushed_at=_stamp(now), pushed_commit=args["commit"])
+    for name in ("url", "repo"):
+        if name in args:
+            last[name] = args[name]
+    if "auto" in args:
+        last["auto"] = args["auto"]
+    doc["last"] = last
+    _write_record(ctx.state_dir, ctx.workspace_id, ctx.host_uid, doc)
+    return {}
+
+
+def _status(ctx: Ctx) -> dict[str, Any]:
+    from orch.model import WORKSPACE
+
+    doc = read_record(ctx.state_dir, ctx.workspace_id, ctx.host_uid)
+    last = doc.get("last") or {}
+    seqs = last.get("seqs") or {}
+    store = ctx.store
+    tickets: list[dict[str, Any]] = []
+    events = 0
+    more = False
+    with store.locked():
+        store.load_all()
+        ws_events = max(0, int(store.head_seq(WORKSPACE)) - int(seqs.get("workspace", 0)))
+        for uid, view in sorted(store.state.tickets.items()):
+            n = max(0, int(store.head_seq(uid)) - int(seqs.get(uid, 0)))
+            if not n:
+                continue
+            events += n  # an aggregate: invisible tickets count, but are never named
+            if ctx.sees(view):
+                if len(tickets) < STATUS_TICKETS:
+                    tickets.append({"key": view.key, "events": n})
+                else:
+                    more = True
+    remote = None
+    url = last.get("url")
+    if isinstance(url, str):
+        mark = doc.get("private_remote")
+        private = isinstance(mark, dict) and mark.get("url") == url
+        blocked = convenience_on(ctx) and not private
+        remote = {"url": url, "private": private, "export": "blocked_convenience" if blocked else "ok"}
+    out_last = None
+    if last.get("commit"):
+        out_last = {
+            "commit": last["commit"],
+            "at": last.get("at"),
+            "by": last.get("by"),
+            "ws_seq": last.get("ws_seq"),
+            "pushed_at": last.get("pushed_at") if last.get("pushed_commit") == last["commit"] else None,
+        }
+    return {
+        "configured": bool(last),
+        "repo": last.get("repo"),
+        "pending": {"events": events + ws_events, "tickets": tickets, "more": more, "workspace_events": ws_events},
+        "last": out_last,
+        "auto": last.get("auto"),
+        "remote": remote,
+    }

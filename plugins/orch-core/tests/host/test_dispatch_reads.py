@@ -54,6 +54,8 @@ RECORDS_ARGS = {
     "records.snapshot": {},
     "records.export_check": {"sha": "a" * 40, "url": "https://example.org/r.git", "ref": "refs/heads/main"},
     "records.remote_private": {"on": False},
+    "records.status": {},
+    "records.note": {"pushed": False},
 }
 
 #: the dashboard reads (§0.8, §0.8.5) and the arguments that aim each at the ticket ``ref`` (or at everything)

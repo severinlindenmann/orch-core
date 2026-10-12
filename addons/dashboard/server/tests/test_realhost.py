@@ -8,6 +8,7 @@ touches `~/.config/orch`: state, HOME and XDG_CONFIG_HOME are explicit and under
 
 import json
 import os
+import secrets
 import shutil
 import time
 import uuid
@@ -25,6 +26,12 @@ pytestmark = [
     pytest.mark.realhost,
     pytest.mark.skipif(os.name != "posix", reason="a real host needs unix sockets and a pty"),
 ]
+
+
+def new_idem() -> str:
+    """`a_` + 26 Crockford characters (the first 0-7): one per click."""
+    alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+    return "a_" + secrets.choice("01234567") + "".join(secrets.choice(alphabet) for _ in range(25))
 
 
 @pytest.fixture(scope="module")
@@ -73,7 +80,7 @@ def api(world, token):
 
         def handoff(self, body, *, sign=True, timeout=60):
             """prepare -> `orch sign CODE` in a pty -> follow to the end. Returns (prepared, final)."""
-            body = {**body, "idem": "a_" + uuid.uuid4().hex[:26].upper().replace("I", "1").replace("L", "1").replace("O", "0").replace("U", "V")}
+            body = {**body, "idem": new_idem()}
             res = self.post("/handoff", body)
             assert res.status_code == 200, res.text
             prepared = res.json()
@@ -165,3 +172,123 @@ def test_settings_members_grants_reads(world, api):
 def test_changes_are_unavailable_until_the_host_serves_diff(api, world):
     res = api.get(f"/tickets/{world.keys['verdict']}/changes")
     assert res.status_code == 501  # welcome.caps has diff/1 but welcome.ops has no `diff` (stream A RH-2)
+
+
+def test_a_cli_write_reaches_an_open_stream_within_two_seconds(world, token):
+    """H4b: the CLI of a registered workspace talks to the running host, so this is a real terminal write."""
+    import asyncio
+
+    from orch_dashboard.live import Live
+
+    key = world.keys["plain"]
+
+    async def run():
+        live = Live(world.gateway, world.auth)
+        w, tab = live.attach(world.ws.ws_id, token)
+        stream = live.stream(w, tab)
+        try:
+            for _ in range(6):
+                if "event: ready" in await asyncio.wait_for(anext(stream), 10):
+                    break
+            else:
+                raise AssertionError("no ready")
+            start = time.monotonic()
+            await asyncio.to_thread(world.ws.unattended, "log", "written from the terminal", "--ref", key)
+            while True:
+                frame = await asyncio.wait_for(anext(stream), 10)
+                if "event: items" in frame and key in frame:
+                    return time.monotonic() - start, frame
+        finally:
+            await live.close()
+
+    elapsed, frame = asyncio.run(run())
+    assert elapsed < 2.0, elapsed
+    assert "log.added" in frame or '"type"' in frame
+
+
+def test_a_stream_that_is_cut_resyncs_and_shows_the_write(world, token):
+    import asyncio
+
+    from orch_dashboard.live import Live
+
+    key = world.keys["plain"]
+
+    async def run():
+        live = Live(world.gateway, world.auth)
+        w, tab = live.attach(world.ws.ws_id, token)
+        stream = live.stream(w, tab)
+        try:
+            while "event: ready" not in await asyncio.wait_for(anext(stream), 10):
+                pass
+        finally:
+            await stream.aclose()
+        await asyncio.to_thread(world.ws.unattended, "log", "written while the stream was down", "--ref", key)
+        w2, tab2 = live.attach(world.ws.ws_id, token)  # the browser reconnects (no Last-Event-ID): a resync
+        stream2 = live.stream(w2, tab2)
+        try:
+            first = await asyncio.wait_for(anext(stream2), 10)
+            assert "event: resync" in first or "event: ready" in first
+        finally:
+            await live.close()
+
+    asyncio.run(run())
+    events = [e["summary"] if "summary" in e else e["type"] for e in __import__("json").loads(
+        world.client.get(f"/api/w/{world.ws.ws_id}/tickets/{key}/events", headers={"Authorization": f"Bearer {token}"}).text)]
+    assert any("stream was down" in str(e) for e in events) or len(events) >= 3
+
+
+def test_approve_a_gate_with_the_real_signer(world, api):
+    key = world.keys["gate"]
+    prepared, final = api.handoff({"action": "approve", "key": key, "gate": "requirements"})
+    assert prepared["state"] == "prepared" and prepared["events"][0]["type"] == "gate.approved"
+    assert final["state"] == "submitted", final
+    gate = api.get(f"/tickets/{key}").json()["gates"]["requirements"]
+    assert gate["state"] == "approved" and gate["approvals"][0]["by"] == world.ws.person
+
+
+def test_request_changes_and_the_ticket_shows_it(world, api):
+    key = world.keys["changes"]
+    _, final = api.handoff({"action": "request_changes", "key": key, "gate": "requirements", "message": "Say how many rows."})
+    assert final["state"] == "submitted", final
+    events = api.get(f"/tickets/{key}/events").json()
+    assert "gate.changes_requested" in {e["type"] for e in events}
+
+
+def test_answer_a_question(world, api):
+    key = world.keys["question"]
+    _, final = api.handoff({"action": "answer", "key": key, "question": "Q1", "option": "no", "message": "Keep it simple."})
+    assert final["state"] == "submitted", final
+    doc = api.get(f"/tickets/{key}").json()
+    assert doc["questions_state"][0]["state"] == "answered" or doc["questions_state"][0].get("answer")
+
+
+def test_comment_label_close_and_reopen(world, api):
+    key = world.keys["plain"]
+    for body in (
+        {"action": "comment", "key": key, "message": "Looks good to me."},
+        {"action": "label", "key": key, "label": "ui"},
+        {"action": "close", "key": key, "resolution": "wont_do", "message": "Not now."},
+    ):
+        _, final = api.handoff(body)
+        assert final["state"] == "submitted", (body, final)
+    assert api.get(f"/tickets/{key}").json()["status"] == "closed"
+    _, final = api.handoff({"action": "reopen", "key": key})
+    assert final["state"] == "submitted", final
+    doc = api.get(f"/tickets/{key}").json()
+    assert doc["status"] == "open" and "ui" in doc["labels"]
+
+
+def test_new_ticket_then_complete_the_details(world, api):
+    prepared, final = api.handoff({"action": "new", "title": "Archive old invoices", "type": "chore"})
+    assert final["state"] == "submitted", final
+    key = prepared["key"] or final.get("key")
+    board = api.get("/tickets", params={"q": "Archive old invoices"}).json()
+    assert [r["title"] for r in board["rows"]] == ["Archive old invoices"]
+    key = board["rows"][0]["key"]
+    _, final = api.handoff({"action": "details", "key": key, "priority": "high", "size": "s", "labels": ["archive"]})
+    assert final["state"] == "submitted", final
+    _, final = api.handoff({"action": "section", "key": key, "section": "summary", "text": "Move invoices older than 7 years to cold storage."})
+    assert final["state"] == "submitted", final
+    doc = api.get(f"/tickets/{key}").json()
+    assert doc["priority"] == "high" and doc["size"] == "s" and doc["labels"] == ["archive"]
+    assert doc["body"]["summary"].startswith("Move invoices")

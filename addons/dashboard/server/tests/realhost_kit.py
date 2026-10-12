@@ -358,6 +358,11 @@ def seed(ws: Workspace) -> dict[str, str]:
     ws.agent("ac", "add", "Every member change is listed with who and when", "--ref", k)
     ready_requirements(ws, k, "Owners can see who changed which member.")
 
+    # open, requirements complete too: the person requests changes on this one
+    k = keys["changes"] = key_of(ws.agent("new", "Bulk invoice import", "--type", "feature", "--priority", "low"))
+    ws.agent("ac", "add", "Imports a CSV of 1000 invoices", "--ref", k)
+    ready_requirements(ws, k, "Finance can import invoices in bulk.")
+
     # open, a question answered by the person
     k = keys["answered"] = key_of(ws.agent("new", "Cache the board query", "--type", "chore", "--priority", "low"))
     ws.unattended("ask", "Which cache backend should the board use?", "--ref", k, "--options", "memory,redis", "--rec", "memory")

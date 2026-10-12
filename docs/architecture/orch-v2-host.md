@@ -186,7 +186,7 @@ OpName  = str/[a-z][a-z_]*(\.[a-z_]+)*/      ReqId = str/[A-Za-z0-9_-]{1,32}/
 | `text/1` | `ticket.text` (1) (v1.5) | workspace |
 | `sub_ext/1` | no ops of its own (v1.5): `sub.open` accepts `detail` (§0.9) | workspace |
 | `artifact_query/1` | `artifact.query` (1) (v1.5, later than H6b) | workspace |
-| `diff_ext/1` | `commit.list` (1); `diff` accepts `head` and `base` (v1.5, later than H6b) | workspace |
+| `diff_ext/1` | `commit.list` (1); `diff` accepts `since`, `head` and `base` (v1.5, later than H6b). H6c lists the cap and serves the `diff` arguments only: a client checks `welcome.ops` for `commit.list` | workspace |
 | `refusals/1` | `session.refusals` (1) (v1.5, later than H6b) | workspace |
 | `activity/1` | `activity.list` (1) | workspace |
 | `diff/1` | `diff`, `artifact.get` (1) | workspace |
@@ -1015,13 +1015,13 @@ head?:Sha, base?:Sha}` (read; `head` and `base` are v1.5, cap `diff_ext/1`, §0.
      is a head with no parent.
   An optional `since:"my_approval"` argument instead diffs from the newest **code-gate approve** decision by the
   caller whose signed `source_sha` names this repo identity and is an ancestor of head (`base_source:"approved"`);
-  without such a decision it is `not_found`. A verdict's `source_sha` is never a base.
+  without such a decision it is `not_found`. A verdict's `source_sha` is never a base. (As built in H6c: see below.)
 - `sources[]` also carries `commits:[{sha, subject}]` for `base..head` (newest first, at most 50, `commits_more:int`),
   as display only; subjects are cleaned of control and bidi characters.
 - A client that prompts for a code approval shows, per repo, `base_sha`, `base_source`, `base_moved` when non-zero,
   and the commit list. The approval itself still signs only the head `source_sha` (D58); the diff is a display.
 - **H3b1 implements** `local_ref` and `first_parent` (`base_moved` is always 0) and the commit list. `host_pinned`
-  and `since:"my_approval"` are follow-ups (§9 Q9). A base the caller chose (`declared`, a later option) is never the
+  and `since:"my_approval"` were follow-ups (§9 Q9), built in H6c ("As built in H6c" below). A base the caller chose (`declared`, a later option) is never the
   approval screen's default: the approving client shows it with its sha and whether it is an ancestor of head, and
   the signing path never takes a base from the agent's side.
 - **Served** on the workspace socket since the H3b1 follow-up (`orch.host.diff`, after H10a wired the reader): the
@@ -1030,7 +1030,43 @@ head?:Sha, base?:Sha}` (read; `head` and `base` are v1.5, cap `diff_ext/1`, §0.
   children stay free for `show`, observe and the tree checks (else `quota.host`), 30 s for all repos of one request,
   and the ticket's visibility checked again before the answer. A reader's reason (it may name a host path) reaches only a person-class owner or maintainer;
   everyone else gets `repo <name>: not readable`. Until `since` lands it is an unknown key there (`invalid.input`,
-  §0.3).
+  §0.3). Since H6c `since`, `head` and `base` are served as well.
+- **As built in H6c** (`diff` only; additive, the result shape is unchanged; `commit.list`, `session.refusals` and
+  `artifact.query` of the H6c row are separate work):
+  1. **`host_pinned`.** Only a call of column P (a person) records a pin; G and N never do. The host keeps `{ticket uid: {repo identity: sha}}` in `hosts/<workspace>/diff-bases.json`
+     (0600, atomic replace, at most 20 000 entries). A served `diff` records the local merge base of the observed head
+     the first time it sees a (ticket, identity); a recorded base is never replaced. While it is an ancestor of the head
+     **and of the current tip of the default branch** (else it is ignored: an agent that moved the default branch, got a
+     pin recorded and moved it back must not hide its commits) it is the base (`base_source:"host_pinned"`), and `base_moved` is the number of commits between it and the current
+     local merge base (0 when there is none). A pin that is gone from the repo or is no ancestor is ignored (the
+     rules fall through to `local_ref`). Because the first diff pins the then-current merge base, a later diff of a host
+     answers `host_pinned` where direct mode, which keeps no host state, answers `local_ref`. P3 replaces first
+     observation with a base pinned at claim.
+  2. **`since:"my_approval"`.** The plan phase (worker thread) lists the source entries of the caller's own `code`
+     approvals, newest first (`approvals_of`); the reader keeps those whose repo identity is the observed one and takes
+     the newest that is an ancestor of the head (`base_source:"approved"`, `base_moved` 0). Only the caller's person
+     counts: a grant (G) acts for its grant's person, N (no-person) has none, and another person's approval is never
+     read. An approval is used only while its person is still a member, its decision is not voided, and its signing
+     device is that person's own, present and not revoked (nor flagged on a settled ticket). The newest approval that
+     fails this ends the search: an older approval never replaces it. A push or a change request that raised the gate's
+     generation does **not** disqualify an approval (that is exactly the "what changed since I approved" case).
+     Answer without a usable approval, or none that is an ancestor of the head: `not_found`, "no approval of yours covers
+     this repo's history". A verdict's `source_sha` is never read.
+  3. **`head`, `base`** (cap `diff_ext/1`, listed since H6c; `welcome.ops` lists `diff` only, `commit.list` is not
+     served). 40 or 64 lowercase hex only; `repo` required; `since` with either is `invalid.input`. The plan phase
+     passes the ticket's last 100 `branch.pushed` events of the repo name; the reader keeps those with the observed
+     identity (a `before` also needs its own identity and the push's ref). Root heads are the observed head and at most
+     20 qualifying pushed heads that exist; each root's range is `default base..root` by the section 0.8 rule
+     (including `host_pinned`). A `head` must lie in a range (at most 10 000 commits in all, else refused). A `base`
+     must be an ancestor of the selected head and one of: the base of a range holding the head (labelled by that
+     rule), the head's first parent (`first_parent`), a qualifying pushed `sha` or `before.sha` (`pushed`). Everything
+     else, existing or not, is `not_found` with one fixed message ("<repo>: not found for this ticket").
+  4. **Limits and rechecks are unchanged and shared**: one diff per principal, `MAX_CHILDREN - 2` host-wide, 30 s for the
+     request, and the phase-3 recheck on success and on error. For `since` the recheck resolves the approvals again
+     from the refreshed store and refuses (`not_found`, the "no approval" text) when they differ from the ones used;
+     an exception while rechecking refuses too (the transport answers `internal`, never the diff).
+  5. **Left out of H6c**: `commit.list` and `diff` combining several bases in one call, the P3 base pinned at claim,
+     rename detection, and a `host_pinned` base in direct mode (no host state there).
 - **Too large to diff.** A file whose side is over 8 MiB or 200 000 lines, or that would take the request past
   1 000 000 diffed lines (both sides of every file), is not diffed as text: its `files` entry has `too_large:true`,
   `binary:true`, `add` and `del` 0, and `unified` carries `diff --git a/<p> b/<p>` followed by
@@ -2773,6 +2809,10 @@ Additive: new ops under new caps, optional keys under `read_ext/2`, new argument
     **Release note:** an older CLI (H4b, before H7) does not list `task.done` in its hello, so this host refuses its
     `orch task done` with `op.unsupported` ("served at version 2, not 1"); update the CLI. Every other op still works.
 
+15. **H6c (additive, `diff` only):** `diff` serves `since:"my_approval"` and, under `diff_ext/1` (now listed in
+    `welcome.caps`), `head` and `base`; `sources[].base_source` may be `host_pinned`, `approved` and `pushed`. No new
+    error code: an unusable approval or an unauthorized `head`/`base` is `not_found`. See "As built in H6c" in §0.8.
+
 ---
 
 ## 1. Process model
@@ -3430,7 +3470,7 @@ dispatch is turned on.
      nothing from the workspace log for `no-person`).
    - `diff` with several heads or bases per repo, and commits (F1 stores only `branch.pushed`).
 9. **H3b1 follow-ups (#381 reviews).**
-   - **`host_pinned` base** (§10 entry 6, hole 4): the host keeps the first-seen merge base per (ticket uid, repo
+   - **`host_pinned` base** (built in H6c, §0.8) (§10 entry 6, hole 4): the host keeps the first-seen merge base per (ticket uid, repo
      identity) in its state dir (0600, never moved forward automatically) and reports `base_moved`. P3 replaces
      first observation with a base pinned at claim.
    - **`since:"my_approval"`** (holes 1, 2): only the caller's own code-gate approve decisions, in the dispatcher

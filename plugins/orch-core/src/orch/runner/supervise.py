@@ -37,6 +37,7 @@ which a background process holding the slave would delay forever); the remaining
 
 from __future__ import annotations
 
+import contextlib
 import errno
 import fcntl
 import json
@@ -95,6 +96,23 @@ def run_time(run: str) -> float:
 
 
 Cleanup = Literal["complete", "incomplete", "unknown"]
+
+
+class RunnerBusy(Exception):
+    """Another runner serves this state directory."""
+
+
+def read_umask(directory: Path, uid: int) -> int:
+    """The umask ``orch runner enable`` captured (``<state>/runner/settings.json``), else 022."""
+    from orch.host.custody import read_json
+    from orch.host.errors import HostError
+
+    try:
+        doc = read_json(Path(directory) / "settings.json", uid) or {}
+    except HostError:
+        doc = {}
+    value = doc.get("umask") if isinstance(doc, dict) else None
+    return value if isinstance(value, int) and 0 <= value <= 0o777 else 0o022
 
 
 class SpawnError(Exception):
@@ -204,6 +222,7 @@ class Supervisor:
         exit_grace: float = STOP_GRACE,
         ring_bytes: int = RING_BYTES,
         python: str | None = None,
+        umask: int | None = None,
         on_event: Callable[[str, str, dict[str, Any]], None] | None = None,
     ) -> None:
         self.uid = os.getuid() if uid is None else uid
@@ -214,6 +233,9 @@ class Supervisor:
         self.exit_grace = exit_grace
         self.ring_bytes = ring_bytes
         self.python = python or sys.executable
+        #: the umask runs start with (§12.5: the person's, captured by ``orch runner enable``; else 022)
+        self.umask = umask
+        self._lock_fd: int | None = None
         self.on_event = on_event
         self.live: dict[str, Live] = {}
         self.lock = threading.RLock()
@@ -229,11 +251,37 @@ class Supervisor:
     # -- life cycle
     def open(self) -> list[dict[str, Any]]:
         """Load the run table, sweep what a crashed runner left (:meth:`crash_sweep`) and start the I/O thread."""
+        self._take_lock()
+        if self.umask is None:
+            self.umask = read_umask(self.table.directory, self.uid)
         self.table.load()
         swept = self.crash_sweep()
+        self._remove_stale_cgroups()
         self._thread = threading.Thread(target=self._loop, name="orch-runner-io", daemon=True)
         self._thread.start()
         return swept
+
+    def _take_lock(self) -> None:
+        """One runner per state directory: a second one refuses to start and never sweeps the first one's runs."""
+        from orch.host.custody import ensure_private_dir
+
+        ensure_private_dir(self.table.directory, self.uid)
+        fd = os.open(self.table.directory / "runner.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            os.close(fd)
+            raise RunnerBusy(f"another runner holds {self.table.directory}") from None
+        self._lock_fd = fd
+
+    def _remove_stale_cgroups(self) -> None:
+        if self.cgroups is None:
+            return
+        for run, rec in self.table.all():
+            if rec.get("state") not in ("spawning", "running") and rec.get("cleanup") == "complete":
+                cg = self._cgroup_of({**rec, "run": run})
+                if cg is not None:
+                    self.cgroups.remove(cg)
 
     def close(self, *, stop_runs: bool = False, grace: float = STOP_GRACE) -> None:
         if stop_runs:
@@ -252,6 +300,9 @@ class Supervisor:
                     except OSError:
                         pass
         self._sel.close()
+        if self._lock_fd is not None:
+            os.close(self._lock_fd)
+            self._lock_fd = None
         for fd in (self._wake_r, self._wake_w):
             try:
                 os.close(fd)
@@ -303,7 +354,7 @@ class Supervisor:
                     )
                 )
                 # a process left by the failed spawn keeps its record (pid, birth): the crash sweep and
-                # cleanup_retry go on stopping it; the run is never dropped from the table
+                # the clean-up retry (_retry) go on stopping it; the run is never dropped from the table
                 self.table.update(
                     spec.run,
                     state="exited",
@@ -347,34 +398,52 @@ class Supervisor:
                     close_fds=True,
                     env={},
                     cwd="/",
+                    umask=self.umask,
                 )
+            except BaseException as exc:  # nothing was forked: nothing ran, nothing is left
+                for fd in (spec_w, status_r):
+                    with contextlib.suppress(OSError):
+                        os.close(fd)
+                if cg is not None:
+                    self.cgroups.remove(cg)  # type: ignore[union-attr]
+                raise SpawnError("run.spawn_failed", f"the trampoline could not be started: {type(exc).__name__}",
+                                 "complete") from None  # fmt: skip
             finally:
                 os.close(spec_r)
                 os.close(status_w)
                 os.close(slave)
                 slave = -1
-            # recorded before anything else can fail: no forked process is ever without a run-table entry
-            first = procs.info(proc.pid)
-            self.table.update(
-                spec.run, pid=proc.pid, birth=first.birth if first else None, pgid=proc.pid, sid=proc.pid,
-                cgroup=str(cg) if cg is not None else None,
-            )  # fmt: skip
+            pipes = {"spec": spec_w, "status": status_r}  # still ours to close
             try:
+                # recorded before anything else can fail: no forked process is ever without a run-table entry
+                first = procs.info(proc.pid)
+                self.table.update(
+                    spec.run, pid=proc.pid, birth=first.birth if first else None, pgid=proc.pid, sid=proc.pid,
+                    cgroup=str(cg) if cg is not None else None,
+                )  # fmt: skip
                 try:
                     try:
-                        with os.fdopen(spec_w, "wb") as f:
-                            f.write(json.dumps(payload).encode())
+                        handle = os.fdopen(pipes.pop("spec"), "wb")  # the file object owns the fd from here
+                        with handle:
+                            handle.write(json.dumps(payload).encode())
                     except BrokenPipeError:
                         pass
                     status = self._read_status(status_r)
                 finally:
-                    os.close(status_r)
+                    os.close(pipes.pop("status"))
                 if status is not None:
                     raise _spawn_error(status)
                 found = procs.info(proc.pid)
                 if found is None:
                     raise SpawnError("run.spawn_failed", "the run ended before it was recorded")
+                self.table.update(
+                    spec.run, state="running", pid=proc.pid, birth=found.birth, pgid=found.pgid, sid=found.sid,
+                    cgroup=str(cg) if cg is not None else None, started_at=now_iso(), escaped=False, escapees=[],
+                )  # fmt: skip
             except BaseException as exc:
+                for fd in pipes.values():  # never an fd the file object already closed (it could be reused)
+                    with contextlib.suppress(OSError):
+                        os.close(fd)
                 cleanup = self._abort(spec.run, proc, cg)
                 if isinstance(exc, SpawnError):
                     exc.cleanup = cleanup
@@ -383,20 +452,7 @@ class Supervisor:
                     "run.spawn_failed", f"the run could not be started: {type(exc).__name__}", cleanup
                 ) from None
             os.set_blocking(master, False)
-            live = Live(spec.run, proc, master, Ring(self.ring_bytes), proc.pid, found.birth, found.pgid, found.sid, cg)
-            self.table.update(
-                spec.run,
-                state="running",
-                pid=live.pid,
-                birth=live.birth,
-                pgid=live.pgid,
-                sid=live.sid,
-                cgroup=str(cg) if cg is not None else None,
-                started_at=now_iso(),
-                escaped=False,
-                escapees=[],
-            )
-            return live
+            return Live(spec.run, proc, master, Ring(self.ring_bytes), proc.pid, found.birth, found.pgid, found.sid, cg)
         except BaseException:
             if slave != -1:
                 os.close(slave)
@@ -466,12 +522,13 @@ class Supervisor:
         return None if live is None else live.ring
 
     def resize(self, run: str, cols: int, rows: int) -> None:
-        live = self.live.get(run)
-        if live is None or live.pty_closed:
-            raise SpawnError("not_found", "no such live run")
         if not (20 <= cols <= 500 and 5 <= rows <= 200):
             raise SpawnError("invalid.input", "size out of range")
-        fcntl.ioctl(live.master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+        with self.lock:  # the master is never closed (and its fd reused) under a resize
+            live = self.live.get(run)
+            if live is None or live.pty_closed:
+                raise SpawnError("not_found", "no such live run")
+            fcntl.ioctl(live.master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
 
     # -- membership
     def _cgroup_of(self, rec: dict[str, Any]) -> Path | None:
@@ -571,7 +628,10 @@ class Supervisor:
         if live.cgroup is not None:
             outside = {p: b for p, b in known.items() if p not in inside}
         else:
-            outside = {p: b for p, b in known.items() if snap.get(p) is not None and snap[p].sid != live.sid}
+            outside = {
+                p: b for p, b in known.items()
+                if snap.get(p) is not None and snap[p].sid not in (live.sid, -1)  # -1: exited while read
+            }  # fmt: skip
         new = {p: b for p, b in outside.items() if live.tracked.get(p) != b}
         fields: dict[str, Any] = {}
         if new:
@@ -624,8 +684,13 @@ class Supervisor:
                 self._leader_exit(live)
             left = self._members(rec, live.tracked, live=True)
             live.lingering = bool(left) or live.proc.poll() is None
+            if not live.lingering and live.escaped and not live.done.is_set():
+                live.ended_at = time.monotonic()  # nothing seen is left: prunable, but it stays "incomplete"
+                live.done.set()
             if not live.lingering and not live.escaped and live.exit is not None:
                 live.cleanup = "complete"
+                if self._cgroup_of(rec) is not None:
+                    self.cgroups.remove(live.cgroup)  # type: ignore[union-attr,arg-type]
                 self.table.update(live.run, cleanup="complete")
                 live.ended_at = time.monotonic()
                 live.done.set()
@@ -759,44 +824,63 @@ class Supervisor:
 
     # -- the I/O thread
     def _loop(self) -> None:
+        """The I/O thread. Every step is guarded: an unexpected error is logged, the run it concerns is recorded with
+        ``cleanup: "unknown"`` (when it has none yet), and supervision goes on. The thread never dies silently."""
         next_scan = time.monotonic() + self.scan_interval
         while not self._closing:
             try:
-                events = self._sel.select(timeout=0.1)
-            except (OSError, ValueError):
-                events = []
-            for key, _ in events:
-                if key.data is None:
-                    try:
-                        while os.read(self._wake_r, 4096):
-                            pass
-                    except BlockingIOError:
-                        pass
-                    continue
-                self._read(key.data)
-            now = time.monotonic()
-            with self.lock:
-                lives = list(self.live.values())
-            for live in lives:
-                if live.exit is None and live.proc.poll() is not None:
-                    self._leader_exit(live)
-                    if not live.stopping:
-                        threading.Thread(target=self._finish, args=(live, self.exit_grace), daemon=True).start()
-                if live.exit is not None and not live.pty_closed and now >= live.drain_until:
-                    self._close_pty(live)
-            self._prune(now)
-            if now >= next_scan:
-                next_scan = now + self.scan_interval
-                for live in lives:
-                    if live.lingering and live.cleanup == "incomplete":
-                        try:
-                            self._retry(live)
-                        except Exception:  # noqa: BLE001 - retried at the next scan
-                            LOG.exception("cleanup retry failed")
+                next_scan = self._step(next_scan)
+            except Exception:  # noqa: BLE001 - never a dead I/O thread
+                LOG.exception("runner I/O step failed")
+                time.sleep(0.1)
+
+    def _guard(self, live: Live, what: str, fn: Callable[[], Any]) -> None:
+        try:
+            fn()
+        except Exception:  # noqa: BLE001
+            LOG.exception("run %s: %s failed", live.run, what)
+            with contextlib.suppress(Exception):
+                if (self.table.get(live.run) or {}).get("cleanup") is None:
+                    self.table.update(live.run, cleanup="unknown")
+
+    def _step(self, next_scan: float) -> float:
+        try:
+            events = self._sel.select(timeout=0.1)
+        except (OSError, ValueError):
+            events = []
+        for key, _ in events:
+            if key.data is None:
                 try:
-                    self.scan()
-                except Exception:  # noqa: BLE001 - the scan is best effort; it never stops the I/O
-                    LOG.exception("escape scan failed")
+                    while os.read(self._wake_r, 4096):
+                        pass
+                except BlockingIOError:
+                    pass
+                continue
+            self._guard(key.data, "read", lambda lv=key.data: self._read(lv))
+        now = time.monotonic()
+        with self.lock:
+            lives = list(self.live.values())
+        for live in lives:
+            self._guard(live, "leader exit", lambda lv=live, n=now: self._watch(lv, n))
+        self._prune(now)
+        if now >= next_scan:
+            next_scan = now + self.scan_interval
+            for live in lives:
+                if live.lingering and live.cleanup == "incomplete":
+                    self._guard(live, "clean-up retry", lambda lv=live: self._retry(lv))
+            try:
+                self.scan()
+            except Exception:  # noqa: BLE001 - the scan is best effort; it never stops the I/O
+                LOG.exception("escape scan failed")
+        return next_scan
+
+    def _watch(self, live: Live, now: float) -> None:
+        if live.exit is None and live.proc.poll() is not None:
+            self._leader_exit(live)
+            if not live.stopping:
+                threading.Thread(target=self._finish, args=(live, self.exit_grace), daemon=True).start()
+        if live.exit is not None and not live.pty_closed and now >= live.drain_until:
+            self._close_pty(live)
 
     def _prune(self, now: float) -> None:
         with self.lock:
@@ -831,6 +915,9 @@ class Supervisor:
             if live.pty_closed:
                 return
             live.pty_closed = True
+            if live.exit is not None:  # the drained total, after the leader ended
+                with contextlib.suppress(Exception):
+                    self.table.update(live.run, out=live.ring.end)
             try:
                 self._sel.unregister(live.master)
             except (KeyError, ValueError):

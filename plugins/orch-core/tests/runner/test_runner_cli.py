@@ -104,6 +104,8 @@ def test_enable_shows_the_risk_requires_the_prefix_and_records_the_switch(env, m
     assert unit.unit_path.read_bytes() == unit.content
     assert any("bootstrap" in argv or "enable" in argv for argv in manager.ran)
     assert (Path(env["HOME"]) / ".local/share/orch/releases/current/bin/orch-runner").is_file()
+    settings = json.loads((state / "runner" / "settings.json").read_text())
+    assert settings["umask"] == (lambda m: (os.umask(m), m)[1])(os.umask(0))  # the person's umask, captured
 
 
 def test_enable_with_the_wrong_prefix_changes_nothing(env, manager, monkeypatch):
@@ -169,7 +171,7 @@ def test_runner_units(tmp_path):
     assert doc["ProgramArguments"] == ["/py", "-I", "/rel/v/bin/orch-runner", "run", "--state", "/s", "--run", "/r"]
     unit = service.systemd_unit(Path("/py"), rel, st, run)
     assert 'ExecStart="/py" "-I" "/rel/v/bin/orch-runner" "run" "--state" "/s" "--run" "/r"' in unit
-    assert "Delegate=yes" in unit
+    assert "Delegate=yes" in unit and "UMask" not in unit and "Umask" not in doc
     with pytest.raises(ValueError):
         service.program_arguments(Path("/py"), rel, Path("/s\n[Service]"), run)
     with pytest.raises(svc.Unsupported):

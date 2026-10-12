@@ -144,9 +144,7 @@ def test_crash_sweep_stops_recorded_processes_that_match(state, tmp_path):
     s = spec(tmp_path, ["/bin/sh", "-c", "exec sleep 60"])  # one process (dash forks a last command, zsh execs it)
     first = one.spawn(s)
     # a crash: no stop, the I/O thread just ends (the process keeps running, as after a runner SIGKILL)
-    one._closing = True
-    one._wake()
-    one._thread.join()
+    crash(one)
     pid, birth = first["pid"], first["birth"]
     assert procs.alive(pid, birth)
     two = Supervisor(state, cgroups=None, scan_interval=0.1)
@@ -159,6 +157,16 @@ def test_crash_sweep_stops_recorded_processes_that_match(state, tmp_path):
     finally:
         kill_own(pid, birth)
         two.close()
+        one.close()
+
+
+def crash(sup: Supervisor) -> None:
+    """A runner crash, simulated: the I/O thread stops, the lock is released, the runs keep running."""
+    sup._closing = True
+    sup._wake()
+    sup._thread.join()
+    os.close(sup._lock_fd)
+    sup._lock_fd = None
 
 
 def test_process_outside_the_run_is_never_signalled(sup, tmp_path, sleeper):
@@ -269,9 +277,10 @@ def test_hanging_trampoline_is_killed_and_stays_recorded(state, tmp_path, monkey
 
 
 def test_leader_ignoring_term_is_killed(sup, tmp_path):
-    s = spec(tmp_path, ["/bin/sh", "-c", "trap '' TERM HUP; exec sleep 60"])
+    ready = tmp_path / "ready"
+    s = spec(tmp_path, ["/bin/sh", "-c", f"trap '' TERM HUP; touch {ready}; exec sleep 60"])
     res = sup.spawn(s)
-    time.sleep(0.2)
+    wait_for(ready.exists)
     assert sup.stop(s.run, grace=0.3) == {"state": "exited", "cleanup": "complete"}
     assert not procs.alive(res["pid"], res["birth"])
 
@@ -286,9 +295,10 @@ def test_a_survivor_keeps_the_run_running_incomplete_and_supervised(sup, tmp_pat
     def no_kill(pid, birth, sig):
         return False if sig == signal.SIGKILL else real(pid, birth, sig)
 
-    s = spec(tmp_path, ["/bin/sh", "-c", "trap '' TERM HUP; exec sleep 60"])
+    ready = tmp_path / "ready"
+    s = spec(tmp_path, ["/bin/sh", "-c", f"trap '' TERM HUP; touch {ready}; exec sleep 60"])
     res = sup.spawn(s)
-    time.sleep(0.2)
+    wait_for(ready.exists)
     monkeypatch.setattr(supervise.procs, "signal_verified", no_kill)
     monkeypatch.setattr(supervise, "KILL_WAIT", 0.3)
     out = sup.stop(s.run, grace=0.2)
@@ -460,3 +470,90 @@ def test_spawn_of_a_run_id_older_than_retention_is_refused(sup, tmp_path):
     with pytest.raises(SpawnError) as err:
         sup.spawn(spec(tmp_path, ["/bin/sh", "-c", "exit 0"], run="r_0" + "1" * 25))
     assert err.value.code == "invalid.input" and "older" in err.value.message
+
+
+# -- Sonnet review of #428 ----------------------------------------------------------------------------------------
+
+
+def _open_fds() -> set[int]:
+    return {int(n) for n in os.listdir("/dev/fd" if sys.platform == "darwin" else "/proc/self/fd")}
+
+
+def test_a_spawn_that_never_forks_leaks_nothing_and_ran_nothing(sup, tmp_path, monkeypatch):
+    from orch.runner import supervise
+
+    def no_fork(*a, **k):
+        raise OSError(11, "Resource temporarily unavailable")
+
+    monkeypatch.setattr(supervise.subprocess, "Popen", no_fork)
+    before = _open_fds()
+    s = spec(tmp_path, ["/bin/sh", "-c", "exit 0"])
+    with pytest.raises(SpawnError) as err:
+        sup.spawn(s)
+    assert err.value.code == "run.spawn_failed" and err.value.cleanup == "complete"
+    assert _open_fds() <= before  # pty and both pipes closed
+    rec = sup.table.get(s.run)
+    assert rec["cleanup"] == "complete" and rec["exit"]["reason"] == "spawn_failed"
+
+
+def test_a_table_failure_after_the_fork_kills_the_child(sup, tmp_path, monkeypatch):
+    real = sup.table.update
+    calls = []
+
+    def failing(run, **fields):
+        calls.append(fields)
+        if "pid" in fields and len(calls) == 1:
+            raise OSError(28, "No space left on device")
+        return real(run, **fields)
+
+    monkeypatch.setattr(sup.table, "update", failing)
+    marker = tmp_path / "ran"
+    with pytest.raises(SpawnError) as err:
+        sup.spawn(spec(tmp_path, ["/bin/sh", "-c", f"touch {marker}; exec sleep 60"]))
+    assert err.value.code == "run.spawn_failed" and err.value.cleanup in ("complete", "incomplete")
+    time.sleep(0.3)
+    assert not marker.exists()  # the trampoline was stopped before it ran the program
+
+
+def test_the_io_thread_survives_an_unexpected_error(sup, tmp_path, monkeypatch):
+    real = sup._read
+    hit = []
+
+    def broken(live):
+        if not hit:
+            hit.append(live.run)
+            raise RuntimeError("boom")
+        return real(live)
+
+    monkeypatch.setattr(sup, "_read", broken)
+    s = spec(tmp_path, ["/bin/sh", "-c", "echo hello; exit 2"])
+    sup.spawn(s)
+    wait_for(lambda: sup.get(s.run)["exit"] is not None, timeout=10)
+    assert hit and sup._thread.is_alive()
+    assert sup.get(s.run)["exit"]["code"] == 2
+
+
+def test_a_second_runner_on_the_same_state_refuses_and_sweeps_nothing(sup, state, tmp_path):
+    from orch.runner.supervise import RunnerBusy
+
+    s = spec(tmp_path, ["/bin/sh", "-c", "exec sleep 60"])
+    res = sup.spawn(s)
+    other = Supervisor(state, cgroups=None)
+    with pytest.raises(RunnerBusy):
+        other.open()
+    assert procs.alive(res["pid"], res["birth"]) and sup.get(s.run)["state"] == "running"
+
+
+def test_runs_start_with_the_captured_umask(state, tmp_path):
+    from orch.host.custody import ensure_private_dir, write_private
+
+    ensure_private_dir(state / "runner", os.getuid())
+    write_private(state / "runner" / "settings.json", {"v": 1, "umask": 0o027})
+    sup = Supervisor(state, cgroups=None, scan_interval=0.1)
+    sup.open()
+    try:
+        out = tmp_path / "umask.txt"
+        sup.spawn(spec(tmp_path, ["/bin/sh", "-c", f"umask > {out}"]))
+        assert wait_for(lambda: out.exists() and out.read_text().strip()) in ("0027", "027")
+    finally:
+        sup.close()

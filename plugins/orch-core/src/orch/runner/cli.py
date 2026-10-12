@@ -167,6 +167,11 @@ def enable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> dic
     try:
         ensure_private_dir(Path(state), uid)
         ensure_private_dir(Path(state) / "runner", uid)  # launchd opens runner.out there before exec
+        mask = os.umask(0)
+        os.umask(mask)
+        from orch.host.custody import write_private
+
+        write_private(Path(state) / "runner" / "settings.json", {"v": 1, "umask": mask})  # runs start with it
         changed = manager.install()
         ran = manager.start(changed=changed)
     except (OSError, HostError) as exc:
@@ -196,7 +201,8 @@ def _run(args: argparse.Namespace, env: Mapping[str, str]) -> int:
     try:
         stop.wait()
     finally:
-        sup.close()
+        # a controlled stop (D-P2-39): every managed run is stopped and verified before the runner exits
+        sup.close(stop_runs=True)
     return 0
 
 

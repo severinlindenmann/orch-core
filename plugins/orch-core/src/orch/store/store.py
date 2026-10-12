@@ -222,6 +222,9 @@ class Store:
         #: subscription journal). ``None``: no hook (direct mode).
         self.before_append: Callable[[], None] | None = None
         self.on_commit: Callable[[str, dict[str, Any]], None] | None = None
+        #: how often a lock found a log changed on disk that this store did not write (or a crashed append to
+        #: finish): the host's cheap foreign-append signal (F11)
+        self.outside_changes = 0
         self.workspace_id = workspace_id
         self._expected_genesis = expected_genesis
         self._host = host
@@ -380,6 +383,16 @@ class Store:
                 return []
             last = info.seq if limit is None else min(info.seq, after + limit)
             return self._read_events(uid, max(after, 0) + 1, last)
+
+    def replay_context(self) -> Any:
+        """The model context this store replays with (its verifier and both pins), for a caller that replays the same
+        events itself (the host's subscription journal)."""
+        return self.state._ctx
+
+    def log_size(self, log: str) -> int | None:
+        """The bytes of ``log`` this store has read or written (``None``: a log it does not know)."""
+        info = self._logs.get(log)
+        return info.offset if info is not None else None
 
     def merged_events(self) -> list[tuple[str, dict[str, Any]]]:
         """Every event of every log, as read and chain-checked, in the merged order of §5.5: ``(log, event)`` pairs,
@@ -910,7 +923,10 @@ class Store:
             self._load_transition_logs()
             pend = self._recover_pending()
             self._loaded |= {m["log"] for _, m in pend if m["log"] != WORKSPACE}
-            reloaded = bool(pend) or self._needs_reload or not self._fresh()
+            outside = bool(pend) or not self._fresh()
+            if outside:
+                self.outside_changes += 1  # a log changed on disk since this store last read or wrote it
+            reloaded = outside or self._needs_reload
             if reloaded:
                 self._load()
             self._finish_pending(pend)

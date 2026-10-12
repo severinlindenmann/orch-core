@@ -10,23 +10,27 @@ and delivers it to every subscription; it never touches a store.
 2. **the principal is revalidated** against the workspace's current authentication snapshot: a grant that no longer
    verifies (expired, revoked, its person gone) ends it with ``grant.expired`` (``person.removed`` when the person is no
    longer a member), a person-class mapping that no longer holds with ``person.removed``. Queued items are dropped with
-   it. A snapshot older than the workspace log is not trusted: the worker is asked to refresh it first;
+   it. A snapshot older than the workspace log is not trusted: the worker is asked to refresh it first (at most once a
+   second per workspace); a workspace with no snapshot or no journal ends its subscriptions with ``reset``;
 3. nothing is sent while the connection has a write in flight whose ``res`` is not queued yet, so a write's ``res``
    precedes every ``evt`` with its events;
 4. each pending entry is turned into items **for the viewer, now** (:meth:`Bus.items`): the workspace-log per-type
-   rule with the viewer's current role, the ticket's visibility at the entry and now, ``gone`` and ``needs.changed``;
+   rule with the viewer's current role; an event item only when its ticket is visible after the event **and** now;
+   ``gone`` (exempt from the filter) when the viewer saw the ticket at the previous ``jpos`` and not after it, never
+   together with the event that hid it; ``needs.changed``;
 5. items go out in ``id`` order, at most 64 per ``evt``, never splitting one ``jpos``; ``evt.cursor`` is after the
    last ``jpos`` the frame completes, filtered positions included;
-6. a slow reader: while the connection's write queue is more than half full nothing is sent; a backlog over
-   :attr:`Bus.max_items` items or :attr:`Bus.max_bytes`, or blocked longer than :attr:`Bus.max_lag`, ends the
-   subscription with ``overflow``.
+6. a slow reader: while the connection's write queue is more than half full nothing is sent. The backlog is counted
+   incrementally (each pending entry is rendered once while blocked), and a backlog over :attr:`Bus.max_items` items
+   or :attr:`Bus.max_bytes`, or blocked longer than :attr:`Bus.max_lag`, ends the subscription with ``overflow``.
 
 **Ends.** ``closed`` (``sub.close``), ``grant.expired``, ``person.removed``, ``overflow``, ``reset`` (a journal rebuild:
 a foreign append or a restore) and ``host.restarting`` (drain). An ended subscription sends one last
 ``evt {items: [], end}`` and is gone.
 
-**``wait``** parks on the bus (:meth:`Bus.watch`): an entry of the ticket's log (or a rebuild) wakes it, and the
-dispatcher looks again on the worker thread. Nothing sleeps on a worker thread.
+**``wait``** parks on the bus (:meth:`Bus.watch`): only an entry of its ticket whose type can answer it, a workspace
+entry that can refuse it (a revoke, a removal, a role change) or a rebuild wakes it, and the dispatcher then looks again
+on the worker thread. Nothing sleeps on a worker thread.
 """
 
 from __future__ import annotations
@@ -36,21 +40,20 @@ import json
 import logging
 import secrets
 import time
-from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from . import frames
 from .errors import HostError
-from .journal import WINDOW, Batch, Entry, Vis, encode_cursor, sees
+from .journal import Batch, Cursors, Entry, Vis, Window, sees
 from .transport import WRITE_QUEUE_BYTES, WRITE_QUEUE_FRAMES
 
 if TYPE_CHECKING:
     from .service import Host
     from .transport import Session
 
-__all__ = ["GRANT_TYPES", "PERSON_TYPES", "Bus", "Feed", "Subscription"]
+__all__ = ["GRANT_TYPES", "PERSON_TYPES", "WAKE_TICKET", "WAKE_WORKSPACE", "Bus", "Feed", "Subscription", "Watch"]
 
 LOG = logging.getLogger(__name__)
 
@@ -75,6 +78,22 @@ PERSON_TYPES = frozenset(
 )
 #: only to a person-class owner and to the grant's own person (the ``grant.list`` rule)
 GRANT_TYPES = frozenset({"grant.issued", "grant.revoked"})
+#: ticket events that can answer a parked ``wait`` (``orch.ops.decisions.decision``) or end it (``not_found``)
+WAKE_TICKET = frozenset(
+    {
+        "question.answered",
+        "gate.approved",
+        "gate.changes_requested",
+        "verdict.given",
+        "gate.invalidated",
+        "visibility.changed",
+        "restore",
+    }
+)
+#: workspace events after which a parked ``wait``'s next look may be refused (its grant or person no longer holds)
+WAKE_WORKSPACE = frozenset(
+    {"grant.revoked", "member.removed", "role.changed", "device.revoked", "device.removed", "restore"}
+)
 
 MAX_ITEMS = 256
 MAX_BYTES = 256 * 1024
@@ -83,29 +102,18 @@ EVT_ITEMS = 64
 PER_CONNECTION = 8
 PER_UID = 64
 TICK_SECONDS = 0.1
+REFRESH_SECONDS = 1.0
 
 
-@dataclass
-class Feed:
+class Feed(Window):
     """The bus's mirror of one workspace's journal window."""
 
-    workspace_id: str
-    epoch: str = ""
-    head: int = 0
-    window: deque[Entry] = field(default_factory=lambda: deque(maxlen=WINDOW))
-    #: each ticket's visibility now (as of the last batch)
-    vis: dict[str, Vis] = field(default_factory=dict)
-
-    @property
-    def floor(self) -> int:
-        return self.window[0].jpos - 1 if self.window else self.head
-
-    def after(self, jpos: int) -> list[Entry]:
-        """The entries after ``jpos`` (``jpos`` at least :attr:`floor`). ``jpos`` is contiguous in the window."""
-        if not self.window or jpos >= self.head:
-            return []
-        start = max(0, jpos - self.window[0].jpos + 1)
-        return [self.window[i] for i in range(start, len(self.window))]
+    def __init__(self, workspace_id: str) -> None:
+        super().__init__()
+        self.workspace_id = workspace_id
+        self.epoch = ""
+        #: each ticket's visibility now (as of the last batch)
+        self.vis: dict[str, Vis] = {}
 
 
 @dataclass(eq=False)
@@ -124,14 +132,43 @@ class Subscription:
     uid: int
     pos: int  # the last jpos delivered or passed
     blocked_since: float | None = None
+    #: the backlog counted so far while blocked: entries up to ``counted`` yield ``count`` items of ``size`` bytes
+    counted: int = 0
+    count: int = 0
+    size: int = 0
     ended: bool = False
 
     @property
     def live(self) -> bool:
         return self.request.answered or self.request in self.session.answering
 
-    def cursor(self, epoch: str) -> str:
-        return encode_cursor(self.workspace_id, self.principal, epoch, self.pos)
+
+@dataclass(eq=False)
+class Watch:
+    """A parked ``wait``: the entries that may concern it since it was registered (``uid`` and ``"workspace"``)."""
+
+    workspace_id: str
+    event: asyncio.Event = field(default_factory=asyncio.Event)
+    uid: str | None = None  # the ticket, once the first look fixed it (before that: every entry is kept)
+    hits: list[Entry] = field(default_factory=list)
+    reset: bool = False
+
+    def relevant(self) -> bool:
+        """Does anything since the last look justify another one?"""
+        if self.reset:
+            return True
+        for entry in self.hits:
+            if entry.log == "workspace":
+                if entry.type in WAKE_WORKSPACE:
+                    return True
+            elif entry.log == self.uid and entry.type in WAKE_TICKET:
+                return True
+        return False
+
+    def clear(self) -> None:
+        self.hits.clear()
+        self.reset = False
+        self.event.clear()
 
 
 class Bus:
@@ -140,13 +177,19 @@ class Bus:
         self.clock = clock
         self.feeds: dict[str, Feed] = {}
         self.subs: dict[str, Subscription] = {}
-        self.watchers: dict[tuple[str, str | None], set[asyncio.Event]] = {}
+        self.watches: dict[str, set[Watch]] = {}
         self.max_items, self.max_bytes, self.max_lag = MAX_ITEMS, MAX_BYTES, MAX_LAG_SECONDS
         #: test seam: while set, nothing is delivered (items queue; revalidation and overflow still apply)
         self.hold = False
         self._kicked = False
         self._ticker: asyncio.Task[None] | None = None
         self._refreshing: set[str] = set()
+        self._refreshed: dict[str, float] = {}
+        self._emptied: list[asyncio.Future[None]] = []
+
+    @property
+    def cursors(self) -> Cursors:
+        return self.host.cursors
 
     # -- lifecycle
     def start(self) -> None:
@@ -160,12 +203,11 @@ class Bus:
             self._ticker = None
 
     async def _tick(self) -> None:
+        """The slow path: a reader whose write queue drained, a lag deadline. Batches and answers kick directly."""
         while True:
             await asyncio.sleep(TICK_SECONDS)
             try:
-                for sub in [s for s in self.subs.values() if s.session.closed]:
-                    self.end(sub, "closed")  # its connection is gone: free its quota slot
-                if any(not s.ended and s.pos < self._head(s) for s in self.subs.values()) or self._kicked:
+                if any(not s.ended and s.pos < self._head(s) for s in self.subs.values()):
                     self.flush()
             except Exception:  # noqa: BLE001 - the bus must keep running
                 LOG.exception("subscription delivery failed")
@@ -184,6 +226,20 @@ class Bus:
         except RuntimeError:
             self._kicked = False
 
+    def reap(self, session: Session) -> None:
+        """A connection closed (its close hook): end its subscriptions and free their quota slots."""
+        for sub in list(self.subs.values()):
+            if sub.session is session:
+                self.end(sub, "closed")
+
+    async def emptied(self) -> None:
+        """Wait until no subscription is left (a test hook)."""
+        if not self.subs:
+            return
+        future = asyncio.get_running_loop().create_future()
+        self._emptied.append(future)
+        await future
+
     # -- from the workers
     def publisher(self, workspace_id: str) -> Callable[[Batch], None]:
         """The ``publish`` callback a workspace worker uses: hands the batch to the loop."""
@@ -198,39 +254,42 @@ class Bus:
         return publish
 
     def ingest(self, batch: Batch) -> None:
-        feed = self.feeds.get(batch.workspace_id)
+        wid = batch.workspace_id
+        feed = self.feeds.get(wid)
         if batch.reset:
-            self.end_all("reset", batch.workspace_id)  # a rebuilt journal: every subscription takes a snapshot
+            self.end_all("reset", wid)  # a rebuilt (or failed) journal: every subscription takes a snapshot
         if feed is None or batch.reset:
-            feed = Feed(batch.workspace_id)
-            self.feeds[batch.workspace_id] = feed
-        if batch.reset:
+            feed = Feed(wid)
+            self.feeds[wid] = feed
             feed.vis = dict(batch.vis)
-            feed.window = deque(batch.entries, maxlen=WINDOW)
         else:
             feed.vis.update(batch.vis)
-            feed.window.extend(batch.entries)
+        feed.window.extend(batch.entries)
         feed.epoch, feed.head = batch.epoch, batch.head
-        logs = {e.log for e in batch.entries}
-        for (wid, log), events in list(self.watchers.items()):
-            if wid == batch.workspace_id and (batch.reset or log is None or log in logs):
-                for event in events:
-                    event.set()
+        for watch in self.watches.get(wid, ()):
+            if batch.reset:
+                watch.reset = True
+            else:
+                watch.hits.extend(
+                    e for e in batch.entries if watch.uid is None or e.log == watch.uid or e.log == "workspace"
+                )
+            if watch.relevant():
+                watch.event.set()
         self.kick()
 
     # -- wait
-    def watch(self, workspace_id: str, log: str | None) -> asyncio.Event:
-        """An event set when the next batch for ``log`` (``None``: any log) of the workspace arrives."""
-        event = asyncio.Event()
-        self.watchers.setdefault((workspace_id, log), set()).add(event)
-        return event
+    def watch(self, workspace_id: str) -> Watch:
+        """Register a parked wait: it keeps the entries that may concern it until :meth:`unwatch`."""
+        watch = Watch(workspace_id)
+        self.watches.setdefault(workspace_id, set()).add(watch)
+        return watch
 
-    def unwatch(self, workspace_id: str, log: str | None, event: asyncio.Event) -> None:
-        events = self.watchers.get((workspace_id, log))
-        if events is not None:
-            events.discard(event)
-            if not events:
-                del self.watchers[(workspace_id, log)]
+    def unwatch(self, watch: Watch) -> None:
+        watches = self.watches.get(watch.workspace_id)
+        if watches is not None:
+            watches.discard(watch)
+            if not watches:
+                del self.watches[watch.workspace_id]
 
     # -- sub.open / sub.close
     def open(
@@ -251,8 +310,8 @@ class Bus:
         """Register a subscription whose live boundary the worker fixed at ``pos`` (§0.11 quotas apply)."""
         if self.host.draining:
             raise self.host.restarting()
-        for old in [s for s in self.subs.values() if s.session.closed]:
-            self.end(old, "closed")
+        if session.closed:
+            raise HostError("cancelled", "the connection is closed")
         mine = [s for s in self.subs.values() if s.session is session]
         if len(mine) >= PER_CONNECTION:
             raise HostError("quota.host", f"at most {PER_CONNECTION} subscriptions per connection")
@@ -267,10 +326,12 @@ class Bus:
                 break
         sub = Subscription(
             sid, session, request, workspace_id, topics, tickets, principal, column, person, grant, grant_id,
-            session.peer.uid, pos,
+            session.peer.uid, pos, counted=pos,
         )  # fmt: skip
         self.subs[sid] = sub
         session.subscriptions += 1
+        if not mine:
+            session.on_close.append(lambda: self.reap(session))
         return sub
 
     def close(self, session: Session, sid: str) -> bool:
@@ -282,9 +343,11 @@ class Bus:
         asyncio.get_running_loop().call_soon(self.end, sub, "closed")
         return True
 
-    def cursor(self, sub: Subscription) -> str:
+    def cursor(self, sub: Subscription, jpos: int | None = None) -> str:
         feed = self.feeds.get(sub.workspace_id)
-        return sub.cursor(feed.epoch if feed is not None else "")
+        jpos = sub.pos if jpos is None else jpos
+        epoch, ref = (feed.epoch, feed.ref_at(jpos)) if feed is not None else ("", "")
+        return self.cursors.encode(sub.workspace_id, sub.principal, epoch, jpos, ref)
 
     def end(self, sub: Subscription, reason: str) -> None:
         if sub.ended:
@@ -292,6 +355,11 @@ class Bus:
         sub.ended = True
         self.subs.pop(sub.id, None)
         sub.session.subscriptions = max(0, sub.session.subscriptions - 1)
+        if not self.subs:
+            for future in self._emptied:
+                if not future.done():
+                    future.set_result(None)
+            self._emptied.clear()
         if sub.session.closed:
             return
         frame = {"t": "evt", "sub": sub.id, "cursor": self.cursor(sub), "items": [], "end": reason}
@@ -308,9 +376,10 @@ class Bus:
     # -- delivery
     def flush(self) -> None:
         self._kicked = False
+        fresh: dict[str, bool] = {}  # one freshness stat per workspace per flush
         for sub in list(self.subs.values()):
             if not sub.ended:
-                self._flush(sub)
+                self._flush(sub, fresh)
 
     def _service(self, workspace_id: str) -> Any:
         return self.host.services.get(workspace_id)
@@ -330,19 +399,25 @@ class Bus:
             return "person.removed"
         return None
 
-    def _flush(self, sub: Subscription) -> None:
+    def _flush(self, sub: Subscription, fresh: dict[str, bool]) -> None:
         session = sub.session
         if session.closed:
             self.end(sub, "closed")
             return
         if not sub.live:
             return
-        feed = self.feeds.get(sub.workspace_id)
-        service = self._service(sub.workspace_id)
-        if feed is None or service is None or (sub.pos >= feed.head and sub.pos >= feed.floor):
+        wid = sub.workspace_id
+        feed = self.feeds.get(wid)
+        service = self._service(wid)
+        if feed is None or service is None or sub.pos >= feed.head:
             return  # nothing to deliver: the next entry revalidates
         auth = service.auth
-        if auth is None or not auth.fresh(service.entry.root):
+        if auth is None or auth.stamp is None or service.state == "unavailable" or service.journal is None:
+            self.end(sub, "reset")  # nothing can be revalidated or delivered (no refresh spin): snapshot later
+            return
+        if wid not in fresh:
+            fresh[wid] = auth.fresh(service.entry.root)
+        if not fresh[wid]:
             self._refresh(service)  # never deliver on a snapshot older than the log: the worker refreshes it
             return
         reason = self.principal_end(sub, auth, service.clock())
@@ -352,28 +427,29 @@ class Bus:
         if sub.pos < feed.floor:
             self.end(sub, "reset")
             return
-        pending = feed.after(sub.pos)
-        if not pending:
-            return
         owner = sub.column == "P" and auth.owner(sub.person)
         transport_full = not self._room(session)
         if self.hold or transport_full or self._write_in_flight(session):
             if transport_full and sub.blocked_since is None:
                 sub.blocked_since = self.clock()
-            if self._overflowing(sub, feed, pending, owner):
+            if self._overflowing(sub, feed, owner):
                 self.end(sub, "overflow")
             return
         sub.blocked_since = None
-        self._deliver(sub, feed, pending, owner)
+        self._deliver(sub, feed, feed.after(sub.pos), owner)
+        sub.counted, sub.count, sub.size = sub.pos, 0, 0
 
     def _refresh(self, service: Any) -> None:
         wid = service.entry.workspace_id
-        if wid in self._refreshing:
+        now = self.clock()
+        if wid in self._refreshing or now - self._refreshed.get(wid, now - REFRESH_SECONDS) < REFRESH_SECONDS:
             return
         self._refreshing.add(wid)
+        self._refreshed[wid] = now
 
         def done(_: Any) -> None:
-            self._refreshing.discard(wid)  # the next batch or tick delivers
+            self._refreshing.discard(wid)
+            self.kick()
 
         try:
             future = service.submit(lambda: (service.refresh(), service.sync(check=True)))
@@ -399,14 +475,12 @@ class Bus:
                 out.append(entry.item())
         elif "tickets" in sub.topics or entry.log in sub.tickets:
             before, after = sees(person, entry.before), sees(person, entry.after)
-            now = sees(person, feed.vis.get(entry.log))
-            hidden = before and not after  # the ticket became invisible to this viewer at this jpos
-            if (after and now) or hidden:
+            if after and sees(person, feed.vis.get(entry.log)):
                 item = entry.item()
-                if after and not before and entry.before is not None:
+                if not before and entry.before is not None:
                     item["type"] = "visibility.changed"
                 out.append(item)
-            if hidden:  # the one item exempt from the filter: the uid the viewer already knew
+            elif before and not after:  # hidden at this jpos: only the uid the viewer knew, never the event
                 out.append({"id": f"{entry.jpos}.g", "jpos": entry.jpos, "uid": entry.log, "gone": True})
         if entry.needs and "needs" in sub.topics:
             out.append({"id": f"{entry.jpos}.n", "jpos": entry.jpos, "type": "needs.changed"})
@@ -421,16 +495,21 @@ class Bus:
             return owner or (entry.grant_person is not None and entry.grant_person == sub.person)
         return entry.type in PERSON_TYPES
 
-    def _overflowing(self, sub: Subscription, feed: Feed, pending: list[Entry], owner: bool) -> bool:
+    def _overflowing(self, sub: Subscription, feed: Feed, owner: bool) -> bool:
+        """Count the backlog incrementally: only entries not counted yet are rendered (each once while blocked). The
+        count is an estimate for the limit only: what is delivered is rendered again at delivery, for the viewer then,
+        so a role change while blocked still counts (no position is passed here)."""
         if sub.blocked_since is not None and self.clock() - sub.blocked_since > self.max_lag:
             return True
-        count = size = 0
-        for entry in pending:
-            for item in self.items(sub, feed, entry, owner):
-                count += 1
-                size += len(json.dumps(item, separators=(",", ":")))
-                if count > self.max_items or size > self.max_bytes:
-                    return True
+        for entry in feed.after(max(sub.counted, sub.pos)):
+            items = self.items(sub, feed, entry, owner)
+            sub.counted = entry.jpos
+            if not items:
+                continue
+            sub.count += len(items)
+            sub.size += sum(len(json.dumps(item, separators=(",", ":"))) for item in items)
+            if sub.count > self.max_items or sub.size > self.max_bytes:
+                return True
         return False
 
     def _deliver(self, sub: Subscription, feed: Feed, pending: list[Entry], owner: bool) -> None:
@@ -452,12 +531,7 @@ class Bus:
     def _send(self, sub: Subscription, feed: Feed, items: list[dict[str, Any]], upto: int) -> bool:
         if not self._room(sub.session):
             return False
-        frame = {
-            "t": "evt",
-            "sub": sub.id,
-            "cursor": encode_cursor(sub.workspace_id, sub.principal, feed.epoch, upto),
-            "items": items,
-        }
+        frame = {"t": "evt", "sub": sub.id, "cursor": self.cursor(sub, upto), "items": items}
         try:
             sub.session.send(frame)
         except frames.FrameError as exc:

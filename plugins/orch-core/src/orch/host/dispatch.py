@@ -363,22 +363,26 @@ class RegistryBackend:
             timeout = 540  # the first look refuses it (invalid.input)
         deadline = loop.time() + timeout
         step = Step()
-        while True:
-            log = step.log
-            woken = bus.watch(service.workspace_id, log)  # before the look: nothing committed after it is missed
-            try:
+        watch = bus.watch(service.workspace_id)  # before the first look: nothing committed after it is missed
+        try:
+            while True:
                 try:
                     return await asyncio.wrap_future(service.submit(self.serve, call, step))
                 except Parked:
                     pass
-                remaining = deadline - loop.time()
-                if remaining <= 0:
-                    step.expired = True
-                    continue
-                with contextlib.suppress(TimeoutError):
-                    await asyncio.wait_for(woken.wait(), remaining)
-            finally:
-                bus.unwatch(service.workspace_id, log, woken)
+                watch.uid = step.log
+                # look again only for an entry that can answer (or refuse) this wait, a rebuild, or the timeout
+                while not watch.relevant():
+                    watch.clear()
+                    remaining = deadline - loop.time()
+                    if remaining <= 0:
+                        step.expired = True
+                        break
+                    with contextlib.suppress(TimeoutError):
+                        await asyncio.wait_for(watch.event.wait(), remaining)
+                watch.clear()
+        finally:
+            bus.unwatch(watch)
 
     # -- on the worker thread
     def serve(self, call: Call, step: Any = None) -> dict[str, Any]:

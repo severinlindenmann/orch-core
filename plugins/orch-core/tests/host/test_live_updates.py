@@ -3,8 +3,11 @@ bus. Each acceptance item of the H6a row in §8 has a test here that fails witho
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
+from orch.host.journal import peek_cursor
 from tests.host.dispatch_helpers import err
 from tests.host.live_helpers import SESSION, World, jpos_of, ok, principal_of, world
 from tests.host.test_dispatch_matrix import as_agent_class
@@ -230,21 +233,72 @@ def test_a_foreign_append_is_found_before_the_next_append(w):
 # --- item identity: one jpos, three items -----------------------------------------------------------------------------
 
 
-def test_one_jpos_yields_an_event_gone_and_needs_changed_with_three_ids_in_one_evt(w):
-    uid, key = w.ticket()
-    ok(w.client().req("ask", {"ref": key, "text": "which one?"}, grant=w.grant, session=SESSION, idem=True))
+def test_one_jpos_yields_up_to_three_ids_event_and_needs_or_gone_and_needs(q):
+    """§0.9 (amended): one jpos gives ``.e``+``.n`` to a viewer who still sees the ticket and ``.g``+``.n`` to one who
+    lost it, never ``.e`` and ``.g`` together. Two subscriptions on the same jpos, one evt each."""
+    uid, key = q.ticket()
+    ok(q.client().req("ask", {"ref": key, "text": "which one?"}, grant=q.grant, session=SESSION, idem=True))
+    stays, loses = q.conn(), q.conn()
+    a = stays.open(["tickets", "needs"])  # P: quinn, who stays on the list
+    b = loses.open(["tickets", "needs"], grant=q.grant)  # G: the owner, who is taken off it
+    q.restrict(uid, [q.quinn.ref])  # the ticket has an open question: its needs change who may see them
+    fa, fb = stays.evt(a["sub"]), loses.evt(b["sub"])
+    j = fa["items"][0]["jpos"]
+    assert [i["id"] for i in fa["items"]] == [f"{j}.e", f"{j}.n"]
+    assert fa["items"][0]["type"] == "visibility.changed" and fa["items"][0]["uid"] == uid
+    assert fb["items"] == [
+        {"id": f"{j}.g", "jpos": j, "uid": uid, "gone": True},  # only the uid it knew: not the event that hid it
+        {"id": f"{j}.n", "jpos": j, "type": "needs.changed"},
+    ]
+    q.restrict(uid, [q.quinn.ref])  # a later event on it
+    assert [i["id"] for i in stays.evt(a["sub"])["items"]] == [f"{j + 1}.e"]
+    loses.quiet(b["sub"])  # every later item about it is filtered, and no second gone
+
+
+def test_a_replay_never_shows_the_event_that_hid_a_ticket(w):
+    uid, _ = w.ticket()
+    w.restrict(uid, [w.quinn.ref])  # hidden from the owner before any subscription
     c = w.conn()
-    sub = c.open(["tickets", "needs"], grant=w.grant)  # G: the owner's grant, so the viewer is the owner
-    w.restrict(uid, [w.quinn.ref])  # hidden from the owner; the open question's needs are no longer the owner's to see
-    frame = c.evt(sub["sub"])
-    ids = [i["id"] for i in frame["items"]]
-    j = frame["items"][0]["jpos"]
-    assert ids == [f"{j}.e", f"{j}.g", f"{j}.n"]
-    assert frame["items"][0]["type"] == "visibility.changed"
-    assert frame["items"][1] == {"id": f"{j}.g", "jpos": j, "uid": uid, "gone": True}
-    assert frame["items"][2] == {"id": f"{j}.n", "jpos": j, "type": "needs.changed"}
-    w.restrict(uid, [w.quinn.ref])  # a later event on it (by the owner, who manages it)
-    c.quiet(sub["sub"])  # every later item about it is filtered, and no second gone
+    sub = c.open(["tickets"], grant=w.grant)
+    start = w.h.run(
+        w.service.call(lambda: w.service.journal.cursor(principal_of(grant=w.grant), w.service.journal.floor))
+    )
+    again = c.open(["tickets"], after=start, grant=w.grant)
+    items, _ = c.items_until(again["sub"], jpos_of(sub["cursor"]))
+    assert [i for i in items if i.get("uid") == uid and "gone" not in i] == []  # at most a gone, never the event
+
+
+def test_a_cursor_the_host_did_not_issue_is_sub_reset(w):
+    from orch.host.journal import Cursors
+
+    c = w.conn()
+    real = c.open(["tickets"])["cursor"]
+    assert ok(c.call("sub.open", {"topics": ["tickets"], "after": real}))  # the host's own: accepted
+    body = peek_cursor(real)  # readable, so a client could make one for itself ...
+    forged = Cursors(b"k" * 32).encode(body["w"], principal_of(), body["e"], body["j"], body["r"])
+    assert peek_cursor(forged) == body
+    assert err(c.call("sub.open", {"topics": ["tickets"], "after": forged})) == "sub.reset"  # ... but not forge it
+    head, _, mac = real.rpartition(".")
+    flipped = head + "." + ("A" if mac[0] != "A" else "B") + mac[1:]
+    assert err(c.call("sub.open", {"topics": ["tickets"], "after": flipped})) == "sub.reset"
+
+
+def test_a_cursor_whose_entry_moved_after_a_rebuild_is_sub_reset(w):
+    import dataclasses
+
+    _, key = w.ticket()
+    w.write(key, "one")
+    c = w.conn()
+    stored = c.open(["tickets"])["cursor"]
+    j = jpos_of(stored)
+
+    def shift() -> None:  # as if a rebuild found another event at that position (a foreign event sorting before)
+        journal = w.service.journal
+        i = j - journal.window[0].jpos
+        journal.window[i] = dataclasses.replace(journal.window[i], ref="000000000000")
+
+    w.h.run(w.service.call(shift))
+    assert err(c.call("sub.open", {"topics": ["tickets"], "after": stored})) == "sub.reset"
 
 
 # --- a fully filtered jpos still advances the cursor ------------------------------------------------------------------
@@ -287,11 +341,9 @@ def test_gone_is_sent_only_to_a_viewer_who_saw_the_ticket(w):
     items, _ = c.items_until(sub["sub"], jpos_of(w.snapshot_cursor(principal_of(grant=w.grant))))
     got = [(i["uid"], i.get("type"), i.get("gone", False)) for i in items]
     assert got == [
-        (seen_uid, "visibility.changed", False),
-        (seen_uid, None, True),
-        # the event that showed it is dropped at delivery (the ticket is invisible now); the one that hid it comes
-        # with its gone, because the viewer saw the ticket at the previous jpos
-        (never_uid, "visibility.changed", False),
+        (seen_uid, None, True),  # only the gone, never the event that hid it
+        # the event that showed it is dropped at delivery (the ticket is invisible now); the one that hid it gives a
+        # gone, because the viewer saw the ticket at the previous jpos
         (never_uid, None, True),
         (w.lab.ws.uid(open_key), "log.added", False),
     ]
@@ -402,19 +454,63 @@ def answer(s, uid):
     return s.host_append(make)
 
 
-def test_wait_parks_on_the_bus_without_holding_the_worker_and_wakes_on_the_decision(w):
+def wait_looks(s, monkeypatch):
+    """Count the worker jobs (looks) of ``wait`` requests and the git observes they run."""
+    backend = s.h.host.servers[s.wid][0].handler.backend
+    git = s.h.run(s.service.call(s.service.capabilities)).git
+    looks, observes = [], []
+    serve, observe = backend.serve, type(git).observe
+
+    def counting_serve(call, step=None):
+        if call.frame["op"] == "wait":
+            looks.append(step)
+        return serve(call, step)
+
+    def counting_observe(self, *a, **k):
+        observes.append(a)
+        return observe(self, *a, **k)
+
+    backend.serve = counting_serve
+    monkeypatch.setattr(type(git), "observe", counting_observe)
+    return looks, observes
+
+
+def test_wait_parks_on_the_bus_without_holding_the_worker_and_wakes_on_the_decision(w, monkeypatch):
     uid, key = w.ticket()
     ok(w.client().req("ask", {"ref": key, "text": "which?"}, grant=w.grant, session=SESSION, idem=True))
+    looks, observes = wait_looks(w, monkeypatch)
     c = w.conn()
     rid = c.send("wait", {"ref": key, "timeout": 60}, grant=w.grant, session=SESSION)
     other = w.conn()
     for _ in range(3):  # the workspace worker is free while the wait is parked
         assert ok(other.call("list"))["exit"] == 0
-    w.write(key, "not a decision")  # wakes the wait, which looks and parks again
+    for n in range(3):
+        w.write(key, f"not a decision {n}")  # entries that cannot answer a wait: no new look
+    other_uid, _ = w.ticket("another ticket")  # nor entries of another ticket
     assert ok(other.call("status"))["exit"] == 0
+    assert len(looks) == 1
     answer(w, uid)
     res = ok(c.answer(rid))
     assert res["data"]["kind"] == "answered" and res["key"] == key
+    assert len(looks) == 2 and len(observes) == 1  # one look per answerable entry; git observed on the first only
+
+
+def test_a_parked_wait_wakes_on_a_workspace_revoke(q, monkeypatch):
+    """quinn waits through quinn's own grant; revoking it wakes the wait at once, and the next look re-authorizes it
+    (here as no-person, which may still wait on a workspace ticket)."""
+    _, key = q.ticket()
+    grant = q.grant_for(q.quinn)
+    looks, _ = wait_looks(q, monkeypatch)
+    c = q.conn()
+    c.send("wait", {"ref": key, "timeout": 60}, grant=grant, session=SESSION)
+    c.quiet(wait=0.3)
+    assert len(looks) == 1
+    q.person_event("settings.changed", set={"claim_ttl_min": 90})  # a workspace entry that cannot refuse it
+    c.quiet(wait=0.3)
+    assert len(looks) == 1
+    q.person_event("grant.revoked", who=q.quinn, grant=grant.partition(".")[0])
+    c.quiet(wait=0.5)
+    assert len(looks) == 2
 
 
 def test_wait_times_out_by_its_own_timeout(w):
@@ -437,13 +533,96 @@ def test_a_drain_answers_a_parked_wait_and_ends_subscriptions_with_host_restarti
 
 
 def test_a_closed_connection_frees_its_subscriptions(w):
-    import time
+    import asyncio
 
     c = w.conn()
     c.open(["tickets"])
     assert len(w.bus.subs) == 1
-    c.client.close()
-    deadline = time.monotonic() + 5
-    while w.bus.subs and time.monotonic() < deadline:
-        time.sleep(0.05)
+    c.client.close()  # the session's close hook ends them
+    w.h.run(asyncio.wait_for(w.bus.emptied(), 5))
     assert not w.bus.subs
+
+
+# --- review round: bounded work on the loop and the worker ------------------------------------------------------------
+
+
+def test_a_blocked_subscription_renders_each_pending_entry_once(w, monkeypatch):
+    """The overflow check counts the backlog incrementally: flushes while blocked do not re-render it (DoS bound)."""
+    _, key = w.ticket()
+    c = w.conn()
+    sub = c.open(["tickets"])
+    rendered = []
+    items = w.bus.items
+    monkeypatch.setattr(w.bus, "items", lambda s, f, e, o: rendered.append(e.jpos) or items(s, f, e, o))
+    held(w)
+    for n in range(3):
+        w.write(key, f"queued {n}")
+    for _ in range(5):  # many flushes while blocked
+        w.h.run(asyncio.sleep(0))
+        w.h.loop.call_soon_threadsafe(w.bus.flush)
+    w.h.run(asyncio.sleep(0.05))
+    assert len(rendered) == len(set(rendered)) == 3
+    released(w)
+    got, _ = c.items_until(sub["sub"], max(rendered))
+    assert len(got) == 3
+
+
+def test_bytes_beyond_what_the_store_wrote_make_the_journal_stale(w, monkeypatch):
+    """An append landing between the store's write and its hook is not counted as the host's (F11)."""
+    _, key = w.ticket()
+    c = w.conn()
+    sub = c.open(["tickets"])
+    store = w.service.store
+    real = store.log_size
+    monkeypatch.setattr(store, "log_size", lambda log: (real(log) or 0) - 1)  # the file holds one byte more
+    w.write(key, "raced")
+    monkeypatch.setattr(store, "log_size", real)
+    assert c.evt(sub["sub"])["end"] == "reset"  # rebuilt from the logs after that op
+
+
+def test_a_failed_rebuild_resets_subscriptions_and_keeps_the_workspace_degraded(w, monkeypatch, caplog):
+    from orch.host.journal import Journal
+
+    uid, key = w.ticket()
+    c = w.conn()
+    sub = c.open(["tickets"])
+    builds = []
+    real = Journal.build
+
+    def broken(self, store):
+        builds.append(1)
+        raise TypeError("a model bug")
+
+    monkeypatch.setattr(Journal, "build", broken)
+    w.lab.ws.tick()
+    w.append(lambda store: (store.ticket(uid), w.lab.ws.log(uid, "foreign")))
+    w.check_journals()
+    assert c.evt(sub["sub"])["end"] == "reset"
+    assert w.service.state == "degraded" and w.service.journal is None
+    assert err(c.call("sub.open", {"topics": ["tickets"]})) == "workspace.unavailable"
+    assert err(c.call("log", {"ref": key, "text": "x"}, grant=w.grant, session=SESSION, idem=True)) == (
+        "workspace.degraded"
+    )
+    ok(c.call("list"))
+    ok(c.call("status"))
+    assert len(builds) == 1  # no retry on every op
+    monkeypatch.setattr(Journal, "build", real)
+    w.check_journals()  # the 60 s check tries again
+    assert w.service.state == "ok" and w.service.journal is not None
+    assert ok(c.call("sub.open", {"topics": ["tickets"]}))
+
+
+def test_no_refresh_spin_when_the_snapshot_cannot_be_trusted(w):
+    _, key = w.ticket()
+    c = w.conn()
+    sub = c.open(["tickets"])
+    held(w)
+    w.write(key, "pending")
+    w.h.run(w.service.call(lambda: setattr(w.service, "auth", None)))
+    jobs = []
+    submit = w.service.submit
+    w.service.submit = lambda fn, *a: jobs.append(fn) or submit(fn, *a)
+    released(w)
+    assert c.evt(sub["sub"])["end"] == "reset"
+    w.h.run(asyncio.sleep(0.3))
+    assert jobs == []  # ended, not refreshed over and over

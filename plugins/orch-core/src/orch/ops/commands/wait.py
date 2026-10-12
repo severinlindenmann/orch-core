@@ -1,7 +1,7 @@
 """orch wait: wait for a decision"""
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from orch.ops._dsl import REF_PATTERN, B, I, S, err, operation
@@ -35,6 +35,7 @@ class Step:
     after: int | None = None
     log: str | None = None
     expired: bool = False
+    notes: list[str] = field(default_factory=list)  # the first look's observe notes, for the answer
 
 
 def handle(ctx: Context, args: dict[str, Any]) -> Result:
@@ -44,11 +45,16 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     loops, or in ``wait.timeout`` (exit 7) with ``--strict-timeout``."""
     c = Call.of(ctx, "wait")
     view = c.resolve(args.get("ref"), live_only=False)  # a done ticket ended the claim, not the wait
-    problems: list[str] = []
-    c.ctx.caps.git.observe(c.store, view.uid, problems)
-    notes_ = [f"observe: {x}" for x in problems]
-    note = c.notes.get(view.uid)
     step: Step | None = getattr(ctx, "wait_step", None)
+    if step is None or step.after is None:  # hosted: the first look only (git reader work), as P1 does once per call
+        problems: list[str] = []
+        c.ctx.caps.git.observe(c.store, view.uid, problems)
+        notes_ = [f"observe: {x}" for x in problems]
+        if step is not None:
+            step.notes = notes_
+    else:
+        notes_ = list(step.notes)
+    note = c.notes.get(view.uid)
     if step is not None and step.after is not None:
         after = step.after  # a later look of one hosted wait
     else:

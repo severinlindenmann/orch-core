@@ -46,6 +46,7 @@ from .custody import check_tree, ensure_private_dir, root_key
 from .errors import HostError
 from .intents import IntentStore
 from .jobs import CompletionStore
+from .journal import Cursors, cursor_key
 from .listener import Listener, default_run_directory
 from .ownership import LOCK_WAIT_SECONDS
 from .pins import AgentPins
@@ -105,6 +106,8 @@ class Host:
         self.draining = False
         self.started_at = time.monotonic()
         self.bus = Bus(self)
+        #: cursor authentication (§0.9): its key is read from the state directory at start (cursors survive a restart)
+        self.cursors: Cursors = Cursors(secrets.token_bytes(32))
         self.subscriptions_end: Callable[[str], None] = self.bus.end_all
         self.loop: asyncio.AbstractEventLoop | None = None
         self._lock_fd: int | None = None
@@ -191,6 +194,7 @@ class Host:
         ensure_private_dir(self.state_dir / "hosts", self.host_uid)
         self._take_host_lock()
         try:
+            self.cursors = Cursors(cursor_key(host_dir(self.state_dir)))
             self.registry.load()
             self.intents.open()
             self.jobs.open()
@@ -253,6 +257,7 @@ class Host:
         """Open the workspace on its worker thread and start its socket. A failure leaves it ``unavailable``."""
         service = WorkspaceService(entry, self.state_dir, self.host_uid, clock=self.clock)
         service.bus, service.publish = self.bus, self.bus.publisher(entry.workspace_id)
+        service.cursors = self.cursors
         await service.call(service.open)
         self.services[entry.workspace_id] = service  # an unavailable workspace is still bound: ops name the cause
         try:
@@ -377,7 +382,7 @@ class Host:
         for service in list(self.services.values()):
             if service.state != "unavailable" and not service.closing:
                 try:
-                    await service.call(lambda s=service: s.sync(check=True))
+                    await service.call(lambda s=service: s.sync(check=True, retry=True))
                 except Exception:  # noqa: BLE001 - the check must never stop the host
                     LOG.exception("journal check failed")
 

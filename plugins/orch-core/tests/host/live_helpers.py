@@ -12,7 +12,7 @@ import pytest
 
 from orch import canon, crypto
 from orch.host.control_client import new_idem
-from orch.host.journal import decode_cursor
+from orch.host.journal import peek_cursor
 from orch.identity import new_ulid
 from tests.host.dispatch_helpers import SESSION, Served, ok
 from tests.host.lifecycle_helpers import UID, Lab
@@ -22,7 +22,7 @@ __all__ = ["SESSION", "Conn", "World", "jpos_of", "ok"]
 
 
 def jpos_of(cursor: str) -> int:
-    body = decode_cursor(cursor)
+    body = peek_cursor(cursor)
     assert body is not None, cursor
     return body["j"]
 

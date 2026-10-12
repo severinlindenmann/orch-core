@@ -21,12 +21,26 @@ yields exactly what the live path yielded.
 :meth:`check` (``before_append``) under its lock; :meth:`take` hands the entries not yet published to the event loop's
 bus (:mod:`orch.host.bus`) as one immutable :class:`Batch`.
 
-**Foreign appends (F11).** The journal keeps the file signature (size, inode, times) of every log as of what it read
-or saw committed. :meth:`check` compares them with the files now: a log that changed without a commit through this
-store, or a new ticket log, was appended by someone else (tier A: an older CLI or a script holding the file-tier WSK).
-The journal then marks itself stale; the worker rebuilds it after the current op
-(:meth:`orch.host.workspace.WorkspaceService.sync`), which ends every subscription with ``reset``. A committed
-``restore`` rewrites history, so it rebuilds the journal in the same way (a new epoch).
+**Foreign appends (F11).** Someone else appending (tier A: an older CLI or a script holding the file-tier WSK) is
+found three ways. Before every append and after every op, :meth:`check` compares the store's own count of logs it found
+changed on disk (``Store.outside_changes``, kept by the freshness check every lock already does) and the ``tickets/``
+directory's mtime (a new ticket log) with what the journal saw: O(1) per append. The 60 s check and ``sub.open`` run
+:meth:`check` with ``full``: the signature (size, inode, times) of every log against what the journal read or saw
+committed. And :meth:`committed` compares the size of a log on disk with the size the store wrote, so an append that
+lands between the store's write and the hook is not counted as ours. The journal then marks itself stale; the worker
+rebuilds it after the current op (:meth:`orch.host.workspace.WorkspaceService.sync`), which ends every subscription
+with ``reset``. A committed ``restore`` rewrites history, so it rebuilds the journal in the same way (a new epoch).
+
+A foreign append to a **ticket** log changes no authentication snapshot, so until one of these checks runs (at most
+60 s, or the next append) the bus may still deliver that ticket's pending items with its old visibility. This is tier A
+only and within F11's threat model.
+
+**Cursors** are authenticated with a host key (:class:`Cursors`, kept in the host's state directory so cursors survive a
+restart) and bound to the entry they point at (a short hash of its log, ``seq`` and event id). A cursor the host did not
+issue is ``sub.reset``, and so is one whose entry is no longer at its ``jpos`` after a rebuild (a foreign writer whose
+event sorts before existing positions shifts them). The principal binding inside a cursor is a scope check, not an
+access check: every item is filtered for the viewer at delivery whatever the cursor says. Page tokens must not reuse
+this encoding.
 """
 
 from __future__ import annotations
@@ -34,6 +48,8 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import hmac
+import itertools
 import json
 import os
 import re
@@ -49,17 +65,32 @@ __all__ = [
     "Entry",
     "Journal",
     "Vis",
-    "decode_cursor",
-    "encode_cursor",
+    "Cursors",
+    "Window",
+    "cursor_key",
+    "entry_ref",
+    "peek_cursor",
     "principal_hash",
     "sees",
 ]
 
 #: entries kept in memory (§0.9: a cursor older than these answers ``sub.reset``)
 WINDOW = 10_000
-#: workspace events that cannot change a ticket view (``orch.model.state``): no ticket needs are recomputed for them
-_NO_TICKET_EFFECT = frozenset(
-    {"device.added", "device.removed", "grant.issued", "projection.repaired", "invalid.acknowledged"}
+#: workspace events that can change a ticket's ``needs`` (addressees, eligible persons, policies, addon rules): only
+#: these recompute every ticket's needs (an allow-list: O(tickets) for the rare ones, O(1) for the rest)
+NEEDS_WORKSPACE_TYPES = frozenset(
+    {
+        "member.added",
+        "member.removed",
+        "role.changed",
+        "device.revoked",
+        "policy.changed",
+        "settings.changed",
+        "addon.granted",
+        "addon.disabled",
+        "addon.purged",
+        "restore",
+    }
 )
 _ULID = re.compile(r"[0-7][0-9A-HJKMNP-TV-Z]{25}")
 CURSOR_PREFIX = "c1."
@@ -103,6 +134,8 @@ class Entry:
     needs: bool = False
     #: ``grant.issued`` / ``grant.revoked``: the person of the grant
     grant_person: str | None = None
+    #: a short hash of (log, seq, event id): binds a cursor to the event at its jpos
+    ref: str = ""
 
     @property
     def uid(self) -> str | None:
@@ -144,32 +177,122 @@ def principal_hash(principal: str) -> str:
     return hashlib.sha256(b"orch/v2/sub-principal|" + principal.encode()).hexdigest()[:16]
 
 
-def encode_cursor(workspace_id: str, principal: str, epoch: str, jpos: int) -> str:
-    """An opaque cursor (§0.9, at most 256 bytes): ``{workspace, principal hash, history epoch, jpos}``."""
-    body = json.dumps(
-        {"e": epoch, "j": int(jpos), "p": principal_hash(principal), "w": workspace_id},
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode()
-    return CURSOR_PREFIX + base64.urlsafe_b64encode(body).decode().rstrip("=")
+def entry_ref(log: str, seq: int, event_id: Any) -> str:
+    return hashlib.sha256(f"orch/v2/sub-entry|{log}|{seq}|{event_id}".encode()).hexdigest()[:12]
 
 
-def decode_cursor(cursor: Any) -> dict[str, Any] | None:
-    """The fields of a cursor, or ``None`` for anything that is not one."""
+def _b64(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode().rstrip("=")
+
+
+def _unb64(text: str) -> bytes:
+    return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+
+
+def peek_cursor(cursor: Any) -> dict[str, Any] | None:
+    """The fields of a cursor's body, **unauthenticated** (tests and diagnostics; :meth:`Cursors.verify` checks)."""
     if not isinstance(cursor, str) or len(cursor) > 256 or not cursor.startswith(CURSOR_PREFIX):
         return None
-    raw = cursor[len(CURSOR_PREFIX) :]
+    body, _, _mac = cursor[len(CURSOR_PREFIX) :].partition(".")
     try:
-        body = json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
+        out = json.loads(_unb64(body))
     except (binascii.Error, ValueError, UnicodeDecodeError):
         return None
-    if not isinstance(body, dict) or set(body) != {"e", "j", "p", "w"}:
+    if not isinstance(out, dict) or set(out) != {"e", "j", "p", "r", "w"}:
         return None
-    if not isinstance(body["j"], int) or isinstance(body["j"], bool) or body["j"] < 0:
+    if not isinstance(out["j"], int) or isinstance(out["j"], bool) or out["j"] < 0:
         return None
-    if not all(isinstance(body[k], str) for k in ("e", "p", "w")):
+    if not all(isinstance(out[k], str) for k in ("e", "p", "r", "w")):
         return None
-    return body
+    return out
+
+
+class Cursors:
+    """Opaque cursors (§0.9, at most 256 bytes): ``c1.<body>.<mac>``, the body ``{workspace, principal hash, epoch,
+    jpos, entry ref}``, the MAC an HMAC-SHA256 under the host's cursor key (128 bits kept)."""
+
+    def __init__(self, key: bytes) -> None:
+        if len(key) < 32:
+            raise ValueError("a cursor key has at least 32 bytes")
+        self._key = key
+
+    def _mac(self, body: str) -> str:
+        return _b64(hmac.new(self._key, b"orch/v2/sub-cursor|" + body.encode(), hashlib.sha256).digest()[:16])
+
+    def encode(self, workspace_id: str, principal: str, epoch: str, jpos: int, ref: str) -> str:
+        body = _b64(
+            json.dumps(
+                {"e": epoch, "j": int(jpos), "p": principal_hash(principal), "r": ref, "w": workspace_id},
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode()
+        )
+        return f"{CURSOR_PREFIX}{body}.{self._mac(body)}"
+
+    def verify(self, cursor: Any) -> dict[str, Any] | None:
+        """The body of a cursor this host issued, or ``None``."""
+        out = peek_cursor(cursor)
+        if out is None:
+            return None
+        body, _, mac = cursor[len(CURSOR_PREFIX) :].partition(".")
+        return out if hmac.compare_digest(mac, self._mac(body)) else None
+
+
+def cursor_key(directory: Path) -> bytes:
+    """The host's cursor key: 32 random bytes in ``<state>/host/sub-cursor.key`` (0600), made once. Kept across
+    restarts, so a client resumes with the cursor it stored; deleting it only makes every cursor ``sub.reset``."""
+    path = Path(directory) / "sub-cursor.key"
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    except FileExistsError:
+        pass
+    else:
+        try:
+            os.write(fd, os.urandom(32))
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    fd = os.open(path, flags)
+    try:
+        st = os.fstat(fd)
+        if st.st_uid != os.getuid() or st.st_mode & 0o077:
+            raise ValueError(f"{path} must be the host's own and private (0600)")
+        key = os.read(fd, 64)
+    finally:
+        os.close(fd)
+    if len(key) != 32:
+        raise ValueError(f"{path} is not a cursor key")
+    return key
+
+
+class Window:
+    """The last :data:`WINDOW` entries and the head; ``jpos`` is contiguous in the window."""
+
+    def __init__(self) -> None:
+        self.window: deque[Entry] = deque(maxlen=WINDOW)
+        self.head = 0
+
+    @property
+    def floor(self) -> int:
+        """The oldest position a cursor may name: its entry must be in the window (to check its ref)."""
+        return self.window[0].jpos if self.window else self.head
+
+    def entry_at(self, jpos: int) -> Entry | None:
+        if not self.window or not self.window[0].jpos <= jpos <= self.window[-1].jpos:
+            return None
+        return self.window[jpos - self.window[0].jpos]
+
+    def ref_at(self, jpos: int) -> str:
+        entry = self.entry_at(jpos)
+        return entry.ref if entry is not None else ""
+
+    def after(self, jpos: int) -> list[Entry]:
+        """The entries after ``jpos``, in order."""
+        if not self.window or jpos >= self.head:
+            return []
+        start = max(0, jpos - self.window[0].jpos + 1)
+        return list(itertools.islice(self.window, start, None))
 
 
 # --- the journal ------------------------------------------------------------------------------------------------------
@@ -192,12 +315,12 @@ class _Walk:
     ws_needs: tuple = ()
 
 
-class Journal:
-    def __init__(self, workspace_id: str, root: str | os.PathLike[str]) -> None:
+class Journal(Window):
+    def __init__(self, workspace_id: str, root: str | os.PathLike[str], cursors: Cursors) -> None:
+        super().__init__()
         self.workspace_id = workspace_id
         self.root = Path(root)
-        self.window: deque[Entry] = deque(maxlen=WINDOW)
-        self.head = 0
+        self.cursors = cursors
         self.epoch = ""
         #: entries committed since the last :meth:`take`
         self.unpublished: list[Entry] = []
@@ -208,26 +331,27 @@ class Journal:
         #: why it went stale (for the audit line)
         self.cause = ""
         self.sigs: dict[str, tuple[int, int, int, int] | None] = {}
+        self._store: Any = None
+        self._seen_changes = 0
+        self._tickets_mtime: int | None = None
         self._walk: _Walk | None = None
         self._genesis = ""
         self._restore = ""
 
     # -- positions
-    @property
-    def floor(self) -> int:
-        """The oldest cursor position whose following entries are all in the window."""
-        return self.window[0].jpos - 1 if self.window else self.head
-
     def cursor(self, principal: str, jpos: int | None = None) -> str:
-        return encode_cursor(self.workspace_id, principal, self.epoch, self.head if jpos is None else jpos)
+        jpos = self.head if jpos is None else jpos
+        return self.cursors.encode(self.workspace_id, principal, self.epoch, jpos, self.ref_at(jpos))
 
     def position(self, cursor: Any, principal: str) -> int | None:
-        """The ``jpos`` a client cursor stands for, or ``None`` (``sub.reset``): not a cursor, another workspace,
-        principal or epoch, older than the window, or beyond the head."""
-        body = decode_cursor(cursor)
+        """The ``jpos`` a client cursor stands for, or ``None`` (``sub.reset``): not a cursor this host issued, another
+        workspace, principal or epoch, outside the window, or no longer pointing at the same event."""
+        body = self.cursors.verify(cursor)
         if body is None or body["w"] != self.workspace_id or body["p"] != principal_hash(principal):
             return None
         if body["e"] != self.epoch or not self.floor <= body["j"] <= self.head:
+            return None
+        if body["r"] != self.ref_at(body["j"]):
             return None
         return int(body["j"])
 
@@ -239,7 +363,10 @@ class Journal:
         with store.locked():
             events = store.merged_events()
             self.sigs = self._scan()
-            ctx = store.state._ctx  # the store's own replay context: verifier and both pins
+            self._tickets_mtime = self._tickets_stamp()
+            self._seen_changes = store.outside_changes
+            ctx = store.replay_context()  # the store's own: verifier and both pins
+        self._store = store
         self._walk = _Walk(Core(), ctx)
         self.window = deque(maxlen=WINDOW)
         self.head, self.unpublished, self.touched = 0, [], set()
@@ -267,6 +394,12 @@ class Journal:
                 if sig is not None:
                     out[name] = sig
         return out
+
+    def _tickets_stamp(self) -> int | None:
+        try:
+            return os.stat(self.root / "tickets").st_mtime_ns
+        except OSError:
+            return None
 
     def _path(self, log: str) -> Path:
         if log == "workspace":
@@ -320,7 +453,7 @@ class Journal:
             ws_needs = self._workspace_needs()
             if ws_needs != walk.ws_needs:
                 walk.ws_needs, changed = ws_needs, True
-            if typ not in _NO_TICKET_EFFECT:
+            if typ in NEEDS_WORKSPACE_TYPES:
                 for uid in list(core.tickets):
                     needs = self._ticket_needs(uid)
                     if needs != walk.needs.get(uid, ()):
@@ -332,7 +465,7 @@ class Journal:
             seq = int(e["seq"])
             return Entry(
                 self.head, "workspace", None, seq, seq, typ, str(e["at"]), str(actor.get("kind")), actor_id,
-                needs=changed, grant_person=grant_person,
+                needs=changed, grant_person=grant_person, ref=entry_ref(log, seq, e.get("id")),
             )  # fmt: skip
         before = walk.vis.get(log)
         old_needs = walk.needs.get(log, ())
@@ -350,13 +483,23 @@ class Journal:
         key = t.key if t is not None else (e.get("key") if isinstance(e.get("key"), str) else None)
         return Entry(
             self.head, log, key, int(e["seq"]), int(e["ws_seq"]), typ, str(e["at"]), str(actor.get("kind")),
-            actor_id, before, after, changed,
+            actor_id, before, after, changed, ref=entry_ref(log, int(e["seq"]), e.get("id")),
         )  # fmt: skip
 
     # -- the store's hooks (worker thread, under the store lock)
-    def check(self) -> None:
-        """``before_append``: a log that changed since the journal last read it, or a new one, is a foreign append."""
+    def check(self, full: bool = False) -> None:
+        """``before_append`` (and after every op): has someone else appended? Cheap by default (the store's own count
+        of logs it found changed, one ``stat`` of ``tickets/``); ``full`` compares every log's signature."""
         if self.stale or self._walk is None:
+            return
+        store = self._store
+        if store is not None and store.outside_changes != self._seen_changes:
+            self.stale, self.cause = True, "a log changed outside the host"
+            return
+        if self._tickets_stamp() != self._tickets_mtime:
+            self.stale, self.cause = True, "a ticket log appeared outside the host"
+            return
+        if not full:
             return
         now = self._scan()
         for log, sig in now.items():
@@ -380,7 +523,14 @@ class Journal:
             return
         self.window.append(entry)
         self.unpublished.append(entry)
-        self.sigs[log] = _sig(self._path(log))
+        sig = _sig(self._path(log))
+        written = self._store.log_size(log) if self._store is not None else None
+        if sig is None or written is None or sig[0] != written:  # bytes beyond what the store wrote: not ours
+            self.stale, self.cause = True, f"{log} holds more than the host wrote"
+        new = log not in self.sigs
+        self.sigs[log] = sig
+        if new:
+            self._tickets_mtime = self._tickets_stamp()
 
     def take(self) -> Batch | None:
         """The entries committed since the last call, as a batch for the bus (``None``: nothing new)."""

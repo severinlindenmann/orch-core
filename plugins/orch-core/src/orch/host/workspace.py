@@ -44,7 +44,7 @@ from .auth import AuthView, Verified, build_auth, secret_in_request
 from .columns import Column, OpKind, refusal, resolve
 from .custody import check_tree, check_workspace_files
 from .errors import HostError
-from .journal import Batch, Journal
+from .journal import Batch, Cursors, Journal
 from .outcomes import OutcomeStore, StoreReconciler
 from .registry import Entry
 from .requests import RequestStore
@@ -127,6 +127,10 @@ class WorkspaceService:
         self.publish: Callable[[Batch], None] | None = None
         #: the host's bus (:class:`orch.host.bus.Bus`): subscriptions and parked waits; set by the host
         self.bus: Any = None
+        #: cursor authentication, the host's (set by the host; a private key otherwise)
+        self.cursors = Cursors(os.urandom(32))
+        #: why the journal could not be built ("" while it is fine): the workspace stays degraded
+        self.journal_failed = ""
         #: human requests (§0.8.1, H5a): ``<state>/hosts/<ws>/requests/``
         self.requests: RequestStore | None = RequestStore(self.state_dir, entry.workspace_id, host_uid, clock=clock)
         self.outcomes.roll_forward = self._roll_forward
@@ -201,60 +205,75 @@ class WorkspaceService:
     def _build_journal(self, *, audit: bool) -> None:
         """(Re)build the journal from the logs and hook it into the store. A rebuild after a foreign append or a
         restore marks the workspace ``degraded`` while it runs, writes one audit line, and its batch ends every
-        subscription with ``reset`` (the bus does that on a reset batch)."""
-        from orch.store import StoreError
+        subscription with ``reset`` (the bus does that on a reset batch).
 
+        A build that fails leaves no journal: the workspace stays ``degraded`` (:attr:`journal_failed`), every
+        subscription ends with ``reset``, ``sub.open`` answers ``workspace.unavailable``, and the next try is the 60 s
+        check (no retry on every op)."""
         store = self.store
         if store is None:
             return
-        journal = self.journal or Journal(self.entry.workspace_id, self.entry.root)
-        cause = journal.cause
+        journal = self.journal or Journal(self.entry.workspace_id, self.entry.root, self.cursors)
         if audit:
             self.state, self.cause = "degraded", "the subscription journal is being rebuilt"
             LOG.warning(
                 "audit: workspace %s: foreign append or restore (%s); rebuilding the journal, ending subscriptions",
                 self.entry.workspace_id,
-                cause,
+                journal.cause or self.journal_failed or "start",
             )
         store.before_append, store.on_commit = None, None
         try:
             batch = journal.build(store)
-        except (StoreError, OSError, ValueError, KeyError) as exc:
-            self._unavailable(f"journal: {getattr(exc, 'code', type(exc).__name__)}: {exc}")
+        except Exception as exc:  # noqa: BLE001 - whatever failed, there is no journal to serve from
             self.journal = None
-            return
-        finally:
-            if audit and self.store is not None:
+            self.journal_failed = f"journal: {getattr(exc, 'code', type(exc).__name__)}: {exc}"[:300]
+            LOG.error("audit: workspace %s: the journal cannot be built: %s", self.entry.workspace_id, exc)
+            if self.publish is not None:  # end every subscription on the old feed
+                self.publish(Batch(self.entry.workspace_id, "", 0, (), {}, reset=True))
+            if self.store is not None:
                 self._judge()
-        self.journal = journal
+            return
+        self.journal, self.journal_failed = journal, ""
         store.before_append, store.on_commit = journal.check, journal.committed
+        if self.store is not None:
+            self._judge()
         if self.publish is not None:
             self.publish(batch)
 
     def sub_cursor(self, principal: str) -> str:
         """The ``sub_cursor`` of a snapshot read (§0.9), on the worker thread right where the read takes its state:
-        the journal head, which every committed event the state shows has reached. ``ticket.query``, ``ticket.get``
-        and ``needs`` (H6b) return it; ``sub.open {after}`` with it loses and repeats nothing."""
-        self.sync()
+        the journal head after a foreign-append check, so every event the state shows is in the journal.
+        ``ticket.query``, ``ticket.get`` and ``needs`` (H6b) return it; ``sub.open {after}`` with it loses and repeats
+        nothing."""
+        self.sync(check=True)
         if self.journal is None:
             raise HostError("workspace.unavailable", "the subscription journal is not available")
         return self.journal.cursor(principal)
 
-    def sync(self, *, check: bool = False) -> None:
-        """After an op (worker thread): rebuild a stale journal, else hand its new entries to the bus with a fresh
-        authentication snapshot. ``check``: look for a foreign append first (the 60 s check, F11)."""
-        journal, store = self.journal, self.store
-        if journal is None or store is None:
+    def sync(self, *, check: bool = False, retry: bool = False) -> None:
+        """After an op (worker thread): look for a foreign append (cheaply; every log with ``check``, the 60 s check
+        and ``sub.open``), rebuild a stale journal, else hand its new entries to the bus with a fresh authentication
+        snapshot. A journal that failed to build is retried only with ``retry`` (the 60 s check)."""
+        store = self.store
+        if store is None:
             return
-        if check:
-            from orch.store import StoreError
+        if self.journal is None:
+            if retry and self.journal_failed and self.state != "unavailable":
+                self._build_journal(audit=True)
+                self._snapshot()
+            return
+        journal = self.journal
+        from orch.store import StoreError
 
-            try:
-                with store.locked():
-                    journal.check()
-            except (StoreError, OSError) as exc:
-                LOG.warning("journal check of %s failed: %s", self.entry.workspace_id, exc)
-                return
+        try:
+            if check:
+                with store.locked():  # every log's signature, against the files as the lock finds them
+                    journal.check(full=True)
+            else:
+                journal.check()  # O(1): the store's own counter and one stat
+        except (StoreError, OSError) as exc:
+            LOG.warning("journal check of %s failed: %s", self.entry.workspace_id, exc)
+            return
         if journal.stale:
             self._build_journal(audit=True)
             self._snapshot()
@@ -277,6 +296,8 @@ class WorkspaceService:
             self._unavailable("the chain is broken at the genesis")
         elif ws.frozen or any(not item.acknowledged for item in ws.invalid):
             self.state, self.cause = "degraded", "an unacknowledged invalid event"
+        elif self.journal_failed:
+            self.state, self.cause = "degraded", self.journal_failed
         else:
             self.state, self.cause = "ok", ""
 

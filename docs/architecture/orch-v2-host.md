@@ -2253,9 +2253,10 @@ the allowed member, policy or addon operations.
   Untrusted artifacts are downloads or use an isolated origin. Send `Content-Security-Policy: default-src 'self';
   script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`,
   `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, and `Referrer-Policy: no-referrer`. No URL or query
-  parameter opens a sign panel or prepares a request. Each new View resets confirmation state. Sign is enabled only
-  after 500 ms of visible presentation (the timer restarts on blur or when `visibilityState` is not `visible`), and
-  activation begun before presentation is ignored for pointer and keyboard input. This reduces accidental activation;
+  parameter opens a sign panel or prepares a request. Each new View resets confirmation state. Sign is armed after
+  1 s of visible presentation (the timer restarts on blur or when `visibilityState` is not `visible`); the signer's own
+  1 s dwell since it built the View is the authority (a sign earlier is refused with `too_soon`), and the dashboard arms
+  no earlier. Activation begun before presentation is ignored for pointer and keyboard input. This reduces accidental activation;
   it proves neither review nor human presence and does not constrain a compromised client.
 
 **8. Threats.**
@@ -2692,6 +2693,9 @@ Additive: new ops under new caps, optional keys under `read_ext/2`, new argument
 12. **Fixes (RH-1, RH-3):** `welcome.caps` lists `human/1` (it was in §0.4's table but missing from the welcome), and
     `human.prepare {idem}` also works for the host person ops `move`, `policy.set` and `settings.set` (same binding
     and `idem.conflict` rules as for registry ops).
+13. **Sign dwell (§0.8.6 item 7, decided with the dashboard stream):** Sign is armed after 1 s of visible presentation
+    instead of 500 ms; the signer's own 1 s dwell since it built the View is the authority (`too_soon` before it) and
+    the dashboard arms no earlier.
 
 ---
 

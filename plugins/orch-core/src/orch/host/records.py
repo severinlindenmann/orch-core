@@ -18,15 +18,17 @@ The host never runs git (D-P2-19). It names the bytes and decides the export pol
   2026): "only I read this remote". orch trusts the owner's word; it is not proof of the remote's ACLs. The mark is
   one exact URL: a changed ``pushurl``, ``insteadOf`` rewrite or remote URL resolves to another string and is not
   marked. The mark binds that URL string; the person's own settings (ssh config, credential helpers, DNS) decide how
-  it is reached.
+  it is reached. It relaxes an owner rule, so only an **owner** sets or clears it, and it is a **write** (Opus #430
+  finding 4): ``opts.idem`` is required, the answer is an outcome record (a retry replays it), and every change is
+  audited (``marks``: action, redacted URL, person, time). A URL with credentials, a query string or a fragment is
+  refused.
 * ``records.note`` (a write, owners and maintainers) and ``records.status`` (a read): the tool's last commit, push,
-  repo state, resolved URL and auto setting, and the pending counts since that commit (H11e part 2). It relaxes an owner rule, so only an **owner** sets or clears it, and it is a **write** (Opus #430 finding
-  4): ``opts.idem`` is required, the answer is an outcome record (a retry replays it), and every change is audited
-  (``marks``: action, redacted URL, person, time). A URL with credentials, a query string or a fragment is refused.
+  repo state, resolved URL and auto setting, and the pending counts since that commit (H11e part 2).
 
-All three are column P only (``person_read``, and ``person_write`` for the mark: G and N get ``op.not_allowed``);
-the two reads are for an owner or maintainer now (a push exports every ticket, restricted ones included). This is a
-policy orch enforces on its own export paths, not information-flow control: manual git can still push.
+All five are column P only (``person_read``, and ``person_write`` for the mark and the note: G and N get
+``op.not_allowed``); all but the mark are for an owner or maintainer now (a push exports every ticket, restricted
+ones included). This is a policy orch enforces on its own export paths, not information-flow control: manual git
+can still push.
 """
 
 from __future__ import annotations

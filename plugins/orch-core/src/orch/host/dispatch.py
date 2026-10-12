@@ -73,7 +73,7 @@ from .auth import Redactor
 from .bus import Subscription
 from .columns import OpKind
 from .errors import HostError
-from . import reads
+from . import reads, sessions
 from .outcomes import BUILDERS, Planned, request_idem
 from .reads import CAPS as READ_CAPS
 from .reads import READ_OPS
@@ -405,6 +405,7 @@ class RegistryBackend:
         redactor = Redactor((call.frame.get("auth") or {}).get("grant"))
         try:
             call.authorize()  # the authoritative column, from the refreshed store, before anything else (F8)
+            sessions.record(call)  # H6b: the host session records session.list and grant.list read (never raises)
             store = call.service.store
             if store is not None and store.append_check is None:
                 store.append_check = deny_append  # outside a write's apply no caller event may land (§0.7)

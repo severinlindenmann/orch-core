@@ -313,6 +313,17 @@ class _Walk:
     vis: dict[str, Vis] = field(default_factory=dict)
     needs: dict[str, tuple] = field(default_factory=dict)
     ws_needs: tuple = ()
+    #: H6b ``needs`` ``since``: per ticket, per need ``(kind, ref)``, the ``at`` of the event whose append made it hold
+    #: (counted from the latest time it began to hold without a break)
+    since: dict[str, dict[tuple[str, str | None], str]] = field(default_factory=dict)
+
+    def track(self, uid: str, needs: tuple, at: str) -> None:
+        old = self.since.get(uid, {})
+        new = {(n.kind, n.ref): old.get((n.kind, n.ref), at) for n in needs}
+        if new:
+            self.since[uid] = new
+        else:
+            self.since.pop(uid, None)
 
 
 class Journal(Window):
@@ -458,6 +469,7 @@ class Journal(Window):
                     needs = self._ticket_needs(uid)
                     if needs != walk.needs.get(uid, ()):
                         walk.needs[uid], changed = needs, True
+                        walk.track(uid, needs, str(e["at"]))
                     vis = vis_of(core.tickets[uid].fields.get("visibility"))
                     if vis != walk.vis.get(uid):
                         walk.vis[uid] = vis
@@ -478,6 +490,7 @@ class Journal(Window):
         changed = needs != old_needs or (before != after and bool(needs or old_needs))
         if t is not None:
             walk.vis[log], walk.needs[log] = after, needs  # type: ignore[assignment]
+            walk.track(log, needs, str(e["at"]))
             if after != before:
                 self.touched.add(log)
         key = t.key if t is not None else (e.get("key") if isinstance(e.get("key"), str) else None)
@@ -531,6 +544,12 @@ class Journal(Window):
         self.sigs[log] = sig
         if new:
             self._tickets_mtime = self._tickets_stamp()
+
+    def need_since(self, uid: str) -> dict[tuple[str, str | None], str]:
+        """H6b: ``{(kind, ref): at}`` for the model needs of ticket ``uid`` now (``needs`` ``since``, §0.8): the ``at`` of
+        the event (of either log) after which each began to hold without a break. Empty when unknown."""
+        walk = self._walk
+        return dict(walk.since.get(uid, {})) if walk is not None and not self.stale else {}
 
     def take(self) -> Batch | None:
         """The entries committed since the last call, as a batch for the bus (``None``: nothing new)."""

@@ -41,6 +41,7 @@ def test_spawn_dedupe_survives_a_runner_restart(state, tmp_path):
     one = Supervisor(state, cgroups=None, scan_interval=0.1, exit_grace=0.5)
     one.open()
     first = one.spawn(s)
+    wait_for(lambda: marker.exists())  # the run has really started before it is stopped
     one.close(stop_runs=True, grace=0.5)
     two = Supervisor(state, cgroups=None, scan_interval=0.1, exit_grace=0.5)
     two.open()

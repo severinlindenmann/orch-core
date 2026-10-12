@@ -8,12 +8,14 @@ from orch.ops._dsl import STR, E, S, err, obj, operation
 from orch.ops.base import Context, Result
 from orch.ops.errors import OrchError
 from orch.ops.human import Human
+from orch.ops.readers import refuse_new_reader
 
 
 def handle(ctx: Context, args: dict[str, Any]) -> Result:
     """The invitee made their own person key and first device certificate; the owner signs only the roster change."""
     h = Human(ctx, "member.add")
     h.who()
+    refuse_new_reader(h.store, "member.add")  # orch-v2-host §0.8.6: history with convenience signatures
     try:
         pk = crypto.unb64u(args["pk"], crypto.PUB_LEN)
         crypto.validate_public_key(pk)
@@ -53,6 +55,6 @@ OP = operation(
     emits=("member.added",),
     text="ok member.added {person} {role} seq={seq}\nnext: {next}",
     data=obj({"person": STR, "role": STR}),
-    errors=(err("role.denied"), err("parse.json"), err("parse.text")),
+    errors=(err("role.denied"), err("parse.json"), err("parse.text"), err("sign.convenience_readers")),
     handler=handle,
 )

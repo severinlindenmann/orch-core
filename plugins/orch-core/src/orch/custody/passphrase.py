@@ -151,6 +151,12 @@ def render_prompt(request: PassphraseRequest) -> str:
         if request.action:
             lines.append(f'note (caller text, not signed): "{_value(request.action)}"')
         return "\n".join(lines) + "\n"
+    if request.kind == "convert":
+        lines = ["", "=== orch: passphrase to change this key's custody ===", f"key: {_value(request.key_id, 64)}"]
+        for name, value in request.fields:
+            lines += _field_lines(name, value)
+        lines.append("this unlocks the key once to move it; nothing is signed")
+        return "\n".join(lines) + "\n"
     lines = ["", "=== orch: passphrase ===", f"sha256: {digest}", f"key: {_value(request.key_id, 64)}"]
     if request.kind == "create":
         lines.append("action: create this key")
@@ -491,6 +497,33 @@ class PassphraseBackend:
                 key = None  # noqa: F841
         finally:
             restore()
+
+    def export_for_custody_change(self, key_id: str, *, fields: tuple[tuple[str, str], ...]) -> bytearray:
+        """The device key's 32-byte scalar, for one custody change (``orch keys custody convenience``,
+        orch-v2-host §0.8.6): one passphrase prompt (kind ``convert``, ``fields`` say where the key goes), with core
+        dumps off and no debugger attach until the process ends. The caller zeroises the returned buffer. Only
+        :mod:`orch.custody.select` calls it (a test checks). Device keys only: a person key is never exported."""
+        check_key_id(key_id)
+        doc, header, params, salt, nonce, ct = self._read(key_id)
+        if doc["role"] != "device":
+            raise CustodyError("only a device key changes custody")
+        _harden()  # stays on for the rest of this short-lived command
+        pw = _passphrase_bytes(self._provider(PassphraseRequest("convert", key_id, "", "", fields)))
+        if not pw:
+            raise WrongPassphrase("empty passphrase")
+        derived = bytearray(_derive(pw, salt, params))
+        try:
+            try:
+                scalar = bytearray(crypto.aes_gcm_open(bytes(derived), nonce, ct, self._aad(header)))
+            except InvalidTag:
+                raise WrongPassphrase("wrong passphrase") from None
+        finally:
+            _zeroise(derived)
+        key = crypto.private_key_from_scalar(int.from_bytes(scalar, "big"))
+        if crypto.public_bytes(key) != crypto.unb64u(doc["pub"], crypto.PUB_LEN):
+            _zeroise(scalar)
+            raise CustodyError("key file does not match its public key")
+        return scalar
 
     def presence(self) -> str:
         return self.auth or "none"

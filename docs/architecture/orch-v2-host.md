@@ -1919,11 +1919,13 @@ agent workflows; they do not authenticate human presence against a same-UID proc
   `/dev/tty`, then the destination is written durably, read back, its public key and a test signature are verified,
   the selection is updated recoverably (`transition` records the step), and only then the passphrase file is removed.
   The device id and certificate do not change (custody is per event, F1 O1). It refuses unless the workspace's flag is
-  on and the readers condition holds. Creating a convenience key at `orch init`/`join`/pairing is not offered in phase 1:
+  on; the host checks the readers condition at every convenience signature. Creating a convenience key at `orch init`/`join`/pairing is not offered in phase 1:
   a workspace is registered (and its flag set) after `init`.
 - `orch keys custody passphrase --workspace W --in-place` moves the same key back under a new passphrase (14+
   characters, the strength check). It warns: "Later signatures will say passphrase, but anyone who copied the key can
   still sign with any label; use --rotate for a clean break." Without `--in-place` it refuses and names `--rotate`.
+- Direct-mode human ops (an unregistered workspace, P1's CLI) keep signing with the passphrase key only: a registered
+  workspace answers `host.required` to them anyway (D-P2-18), and a converted key is used through the host.
 - Interrupted transitions report their state (`orch keys custody status`) and are resumable by running the command
   again. Click signers re-read the selection before every `view` and `sign` and refuse when `gen` changed, so pending
   approvals are invalidated before a transition can be used.
@@ -1984,6 +1986,18 @@ agent workflows; they do not authenticate human presence against a same-UID proc
   `ClickClient.close()` closes the parent's end, which makes the child exit (EOF), waits up to 2 s and then kills that
   child's own PID (never anything else). The child also exits when its parent PID changes. One child per dashboard
   server; restart it on exit (the registry is lost: open approvals become terminal-only, which is safe).
+- **Packaging and versions (normative).** The dashboard depends on orch-core at **runtime** (`orch-core>=2.0.0.dev0`
+  in `[project].dependencies`, from the repo path source while it is a dev version; once published, at least the first
+  release with `orch/click/`). No extra is needed: `orch.click.spawn` and `orch.click.client` import only the standard
+  library and `orch.host.frames`; the signer needs `cryptography` (a core dependency) and, on macOS, only ctypes.
+  `spawn.start()` runs `sys.executable`, so the child uses the dashboard venv's own orch-core; `-I` ignores
+  `PYTHONPATH` and the user site, so nothing outside the venv can shadow `orch`. On each workspace connection the
+  signer requires `welcome.proto` to hold 1, `welcome.ops` to name `human.prepare`, `human.get`, `human.submit`,
+  `human.pending` and `human.cancel` at version 1, and `welcome.registry` to equal its own registry digest
+  (`sha256(cj(sorted served_ops()))`); a mismatch refuses that workspace with `host.version_mismatch` ("the signer's
+  orch-core differs from the host's") and `status` shows `available:false, problem:"version_mismatch"`. Algorithm
+  drift the registry digest does not see still fails closed in the signer's checks (`check_failed`). `status` also
+  answers `core` (the orch-core version) and `contract: 1`; the dashboard refuses a signer with another contract.
 - **Frames (normative)** on the socketpair: §0.2's codec (`orch.host.frames.encode` and `Decoder`: a 4-byte big-endian
   length, then strict JSON, at most 2 MiB; parsing and nesting limits before any validation), one request at a time:
   - request: `{"t":"req", "id":str/[A-Za-z0-9_-]{1,32}/, "op":"prepare"|"view"|"sign"|"cancel"|"status", "args":{…}}`;
@@ -1999,8 +2013,9 @@ view    {workspace_id:WsId, request_id:ReqHr} → {view:View, view_digest:Hash}
 sign    {workspace_id:WsId, request_id:ReqHr, view_digest:Hash, word?:str{1..128}}
   → {result:<human.submit's result: {data, key, hints, seq, …}>, duplicate:bool}      // never a secret
 cancel  {workspace_id:WsId, request_id:ReqHr} → {state:"cancelled"|"submitted"|"expired"}
-status  {} → {workspaces:[{workspace_id:WsId, prefix:str, custody:"convenience"|"passphrase"|"none",
-                           device:Device|null, enabled:bool, available:bool, problem?:str}]}
+status  {} → {core:str, contract:1, workspaces:[{workspace_id:WsId, prefix:str,
+                           custody:"convenience"|"passphrase"|"none", device:Device|null, enabled:bool,
+                           available:bool, problem?:str}]}
 View = {risk:"Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.",
         op:OpName, workspace:{id:WsId, name:str, prefix:str}, fingerprint:str/[0-9a-f]{12}/,
         lines:[str],                                       // the terminal review of orch sign, line for line, escaped
@@ -2096,7 +2111,7 @@ bearer secret are refused before signing, irrespective of the secret field's ini
 | Class | Ops |
 |---|---|
 | **Click** | `approve`, `request_changes`, `verdict`, `answer`, `close`, `reopen`, `new`, `set`, `section.set`, `ac.add`, `ac.edit`, `task.add`, `task.block`, `task.done`, `task.reopen`, `task.skip`, `task.start`, `log`, `ask`, `claim`, `release`, `handoff`, `submit`, `move`, `artifact.add`, `artifact.replace`, `apply`, `grant.revoke`, `addon.disable`, `settings.set` without `repos` |
-| **Click + typed word** | `member.add`, `member.role`, `member.remove` (word: the person id), `addon.grant`, `addon.purge` (the addon name), `policy.set` (`POLICY.SET`), `settings.set` with `repos` (`SETTINGS.SET`: it changes the repo path and remote that D58's source checks read) |
+| **Click + typed word** | `member.add`, `member.role`, `member.remove` (word: the person id, unique already), `addon.grant`, `addon.purge` (`<name>~<WS8>`: addon names repeat across workspaces), workspace `policy.set` (`<PREFIX>~<WS8>/POLICY`), `settings.set` with `repos` (`<PREFIX>~<WS8>/SETTINGS`: it changes the repo path and remote that D58's source checks read); a ticket-scope op keeps `KEY/FRAG`. `WS8` is the last 8 characters of the workspace id and `PREFIX` the prefix, both from the signer's own registry (orch-52 decision, 12 Oct 2026, shared with #404's terminal signer) |
 | **Terminal only** | `grant` and every op not listed above |
 
 Daily operations use click confirmation as a phase-1 usability decision. A later event may supersede their recorded

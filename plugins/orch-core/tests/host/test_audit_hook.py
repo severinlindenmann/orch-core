@@ -183,3 +183,43 @@ def test_relative_open_from_a_cwd_outside_the_roots_is_refused(tmp_path):
     root, outside = _setup(tmp_path)
     r = _run(OUTSIDE_CWD, root, outside, cwd=outside)
     assert r["relative_open_from_outside_cwd"] == "denied"
+
+
+PERSON = PRELUDE + textwrap.dedent(
+    """
+    ws = "0123456789abcdef0123456789abcdef"
+    os.makedirs(root + "/person/" + ws + "/devices", exist_ok=True)
+    os.makedirs(root + "/hosts/" + ws + "/keys", exist_ok=True)
+    open(root + "/person/" + ws + "/devices/d.key", "w").close()
+    open(root + "/hosts/" + ws + "/keys/wsk", "w").close()
+    audit.warm()
+    out["warm_skipped_never"] = sorted(m for m in sys.modules if audit._never(m))
+    audit.install([root])
+    t("open_person_key", lambda: open(root + "/person/" + ws + "/devices/d.key").close())
+    t("open_person_dir_file", lambda: open(root + "/person/click.jsonl", "a").close())
+    t("listdir_person", lambda: os.listdir(root + "/person"))
+    t("open_host_key", lambda: open(root + "/hosts/" + ws + "/keys/wsk").close())
+    t("import_click", lambda: __import__("orch.click.signer"))
+    t("import_convenience", lambda: __import__("orch.custody.convenience"))
+    t("import_keychain", lambda: __import__("orch.custody.keychain"))
+    t("load_security", lambda: __import__("ctypes").CDLL("/System/Library/Frameworks/Security.framework/Security"))
+    print(json.dumps(out))
+    """
+)
+
+
+def test_the_host_never_handles_person_custody(tmp_path):
+    root, outside = _setup(tmp_path)
+    r = _run(PERSON, root, outside, cwd=root)
+    assert r["warm_skipped_never"] == []  # warm imports every orch module except the custody and signer ones
+    assert r["open_host_key"] == "ok"
+    for refused in (
+        "open_person_key",
+        "open_person_dir_file",
+        "listdir_person",
+        "import_click",
+        "import_convenience",
+        "import_keychain",
+        "load_security",
+    ):
+        assert r[refused] == "denied", (refused, r)

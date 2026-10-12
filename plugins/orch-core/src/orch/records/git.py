@@ -22,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import stat
 import subprocess
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -29,7 +30,7 @@ from pathlib import Path
 
 from . import RecordsError
 
-__all__ = ["ALLOWED_PROTOCOLS", "EMPTY_TREE", "Git", "check_local", "open_repo"]
+__all__ = ["ALLOWED_PROTOCOLS", "EMPTY_TREE", "Git", "check_local", "open_repo", "redact"]
 
 ALLOWED_PROTOCOLS = "https:ssh"
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
@@ -57,9 +58,24 @@ _REMOTE_OK = frozenset(
         "promisor", "partialclonefilter",
     }
 )  # fmt: skip
-_SCP = re.compile(r"^[A-Za-z0-9._~+-]+@[A-Za-z0-9.-]+:[^:].*$|^[A-Za-z0-9.-]+:[^:/].*$")
+_SCP = re.compile(r"^[A-Za-z0-9._~+-]+@[A-Za-z0-9.-]+:[^:].*$|^[A-Za-z0-9.-]+:[^:].*$")
 _STATE_FILES = ("MERGE_HEAD", "REBASE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "BISECT_LOG", "rebase-merge",
                 "rebase-apply")  # fmt: skip
+
+
+_USERINFO = re.compile(r"(?i)([a-z][a-z0-9+.-]*://)[^/@\s]*@")
+
+
+def redact(text: str) -> str:
+    """Text for an error or the output: no ``user:password@`` of a URL, no control characters."""
+    text = _USERINFO.sub(r"\1***@", text)
+    return "".join(ch if ch.isprintable() else "?" for ch in text)
+
+
+def has_credentials(url: str) -> bool:
+    """A URL carrying a password (``scheme://user:secret@host``): refused, it would reach the host's audit list."""
+    m = re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://([^/@]*)@", url)
+    return bool(m and ":" in m.group(1))
 
 
 def _split_key(key: str) -> tuple[str, str | None, str]:
@@ -156,7 +172,7 @@ class Git:
             raise RecordsError("records.git_failed", f"git {args[0]} timed out") from None
         if check and res.returncode != 0:
             err = res.stderr.decode(errors="replace").strip().splitlines()
-            raise RecordsError("records.git_failed", f"git {args[0]} failed: {(err or ['?'])[-1][:300]}")
+            raise RecordsError("records.git_failed", f"git {args[0]} failed: {redact((err or ['?'])[-1][:300])}")
         return res
 
     def out(self, *args: str, **kw: object) -> str:
@@ -228,26 +244,46 @@ def _base_env(env: Mapping[str, str], protocols: str) -> dict[str, str]:
     return base
 
 
+def pinned_root(root: Path) -> Path:
+    """The record root as given, absolute, with no symlinked component anywhere on its path (checked component by
+    component with ``lstat``): every later path under it is the one that was checked."""
+    path = Path(os.path.abspath(root))
+    cur = Path(path.anchor)
+    for part in path.parts[1:]:
+        cur = cur / part
+        try:
+            st = os.lstat(cur)
+        except FileNotFoundError:
+            raise RecordsError("records.not_dedicated", "the record root does not exist") from None
+        if stat.S_ISLNK(st.st_mode):
+            raise RecordsError("records.unsafe_tree", "the record root's path passes through a symlink")
+    return path
+
+
 def git_dir_of(root: Path) -> Path:
     """The records repo's git dir: ``<root>/.git`` as a directory, or a ``.git`` file naming a git dir inside the root.
     Anything else is ``records.not_dedicated``."""
     dot = root / ".git"
     if os.path.islink(dot):
-        raise RecordsError("records.not_dedicated", f"{dot} is a symlink")
+        raise RecordsError("records.not_dedicated", "the record root's .git is a symlink")
     if dot.is_dir():
         return dot
     if dot.is_file():
-        text = dot.read_text(errors="replace").strip()
+        fd = os.open(dot, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            text = os.read(fd, 4096).decode(errors="replace").strip()
+        finally:
+            os.close(fd)
         if text.startswith("gitdir:"):
             target = Path(text[len("gitdir:") :].strip())
             target = (root / target) if not target.is_absolute() else target
             real, base = os.path.realpath(target), os.path.realpath(root)
             if os.path.commonpath([real, base]) == base and Path(real).is_dir():
                 return Path(real)
-        raise RecordsError("records.not_dedicated", f"{dot} names a git dir outside the record root")
+        raise RecordsError("records.not_dedicated", "the record root's .git file names a git dir outside it")
     raise RecordsError(
         "records.not_dedicated",
-        f"{root} is not the top of its own git repo",
+        "the record root is not the top of its own git repo",
         hint="orch records init creates a dedicated records repo there",
     )
 
@@ -256,7 +292,7 @@ def open_repo(
     root: Path, *, env: Mapping[str, str] | None = None, protocols: str = ALLOWED_PROTOCOLS, remote: str | None = None
 ) -> Git:
     """The dedicated records repo at ``root`` with its configuration frozen and checked."""
-    root = Path(os.path.realpath(root))
+    root = pinned_root(root)
     git_dir = git_dir_of(root)
     base = _base_env(os.environ if env is None else env, protocols)
     repo = Git(root, git_dir, protocols, base, [])
@@ -280,7 +316,7 @@ def open_repo(
     ]
     top = repo.out("rev-parse", "--show-toplevel")
     if os.path.realpath(top) != str(root):
-        raise RecordsError("records.not_dedicated", f"{root} is not the top of its records repo")
+        raise RecordsError("records.not_dedicated", "the record root is not the top of its records repo")
     fmt = repo.run("rev-parse", "--show-object-format", check=False).stdout.decode().strip() or "sha1"
     if fmt != "sha1":
         raise RecordsError("records.unsupported", f"object format {fmt} is not supported by the records tool")

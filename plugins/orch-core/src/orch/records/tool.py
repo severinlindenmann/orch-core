@@ -36,13 +36,14 @@ import contextlib
 import hashlib
 import json
 import os
+import stat
 import tempfile
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from . import FILE_MAX, TOTAL_MAX, Entry, RecordsError, is_record_path, manifest_id, open_root, read_exact
+from . import FILE_MAX, FILES_MAX, TOTAL_MAX, Entry, RecordsError, is_record_path, manifest_id, open_root, read_exact
 from .git import EMPTY_TREE, Git
 
 __all__ = [
@@ -88,6 +89,8 @@ def fetch_manifest(link: Link, workspace_id: str) -> Manifest:
         if data["manifest"] != mid:
             raise RecordsError("records.snapshot_invalid", "a snapshot page belongs to another manifest")
         files += data["files"]
+        if len(files) > FILES_MAX:
+            raise RecordsError("records.too_large", f"the manifest names more than {FILES_MAX} files")
     entries, seen, total = [], set(), 0
     for f in files:
         path, size, digest = f.get("path"), f.get("size"), f.get("sha256")
@@ -206,8 +209,28 @@ def _message(manifest: Manifest) -> bytes:
     ).encode()
 
 
-def _index_path(repo: Git) -> Path:
-    return repo.git_dir / "index"
+_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
+
+
+@contextlib.contextmanager
+def _git_dir_fd(repo: Git) -> Iterator[int]:
+    """The git dir as a directory fd (no symlink): the real index and its lock are only reached beneath it."""
+    try:
+        fd = os.open(repo.git_dir, os.O_RDONLY | _DIRECTORY | _NOFOLLOW)
+    except OSError:
+        raise RecordsError("records.unsafe_tree", "the records repo's git dir cannot be opened safely") from None
+    try:
+        yield fd
+    finally:
+        os.close(fd)
+
+
+def _write_new(path: Path, data: bytes) -> None:
+    """A new file in a private temporary directory: created exclusively, never through a symlink."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW, 0o600)
+    with os.fdopen(fd, "wb") as fh:
+        fh.write(data)
 
 
 def _index_tree(repo: Git, raw: bytes | None) -> str | None:
@@ -216,46 +239,57 @@ def _index_tree(repo: Git, raw: bytes | None) -> str | None:
     if raw is None:
         return EMPTY_TREE
     with _temp_index() as index:
-        index.write_bytes(raw)
+        _write_new(index, raw)
         res = repo.run("write-tree", index=index, check=False)
     return res.stdout.decode().strip() if res.returncode == 0 else None
 
 
-def _read_index(repo: Git) -> bytes | None:
+def _read_at(dir_fd: int, name: str) -> bytes | None:
     try:
-        return _index_path(repo).read_bytes()
+        fd = os.open(name, os.O_RDONLY | _NOFOLLOW, dir_fd=dir_fd)
     except FileNotFoundError:
         return None
+    except OSError:
+        raise RecordsError("records.unsafe_tree", f"the records repo's {name} is not a regular file") from None
+    with os.fdopen(fd, "rb") as fh:
+        if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
+            raise RecordsError("records.unsafe_tree", f"the records repo's {name} is not a regular file")
+        return fh.read()
+
+
+def _read_index(repo: Git) -> bytes | None:
+    with _git_dir_fd(repo) as gfd:
+        return _read_at(gfd, "index")
 
 
 def _refresh_index(repo: Git, compared: bytes | None, new_commit: str) -> bool:
-    """Compare and swap the real index to ``new_commit``'s tree: under ``index.lock`` (git's own lock), only if its
-    bytes are still the ones compared."""
-    lock = repo.git_dir / "index.lock"
-    try:
-        fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o644)
-    except FileExistsError:
-        return False
-    done = False
-    try:
-        with _temp_index() as index:
-            repo.run("read-tree", new_commit, index=index)
-            data = index.read_bytes()
-        if _read_index(repo) != compared:
+    """Compare and swap the real index to ``new_commit``'s tree: under ``index.lock`` (git's own lock, created
+    exclusively beneath the pinned git dir fd), only if its bytes are still the ones compared."""
+    with _temp_index() as index:
+        repo.run("read-tree", new_commit, index=index)
+        data = index.read_bytes()
+    with _git_dir_fd(repo) as gfd:
+        try:
+            fd = os.open("index.lock", os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW, 0o644, dir_fd=gfd)
+        except FileExistsError:
             return False
-        os.write(fd, data)
-        os.fsync(fd)
-        os.close(fd)
-        fd = -1
-        os.replace(lock, _index_path(repo))
-        done = True
-        return True
-    finally:
-        if fd >= 0:
+        done = False
+        try:
+            if _read_at(gfd, "index") != compared:
+                return False
+            os.write(fd, data)
+            os.fsync(fd)
             os.close(fd)
-        if not done:
-            with contextlib.suppress(FileNotFoundError):
-                os.unlink(lock)
+            fd = -1
+            os.replace("index.lock", "index", src_dir_fd=gfd, dst_dir_fd=gfd)
+            done = True
+            return True
+        finally:
+            if fd >= 0:
+                os.close(fd)
+            if not done:
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink("index.lock", dir_fd=gfd)
 
 
 def commit(repo: Git, link: Link, workspace_id: str, *, fresh: bool = False) -> dict[str, Any]:
@@ -391,13 +425,15 @@ class ValidatedTips:
 
     def _doc(self) -> dict[str, Any]:
         try:
-            fd = os.open(self.path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            fd = os.open(self.path, os.O_RDONLY | _NOFOLLOW)
         except FileNotFoundError:
             return {"v": 1, "validated": {}}
+        except OSError:
+            raise RecordsError("records.unsafe_config", "the records state file is not a regular file") from None
         with os.fdopen(fd, "rb") as fh:
             st = os.fstat(fh.fileno())
             if st.st_uid != os.getuid() or st.st_mode & 0o077:
-                raise RecordsError("records.unsafe_config", f"{self.path} is not private to you")
+                raise RecordsError("records.unsafe_config", "the records state file is not private to you")
             doc = json.loads(fh.read(1 << 20) or b"{}")
         if not isinstance(doc, dict) or doc.get("v") != 1 or not isinstance(doc.get("validated"), dict):
             return {"v": 1, "validated": {}}
@@ -411,8 +447,10 @@ class ValidatedTips:
         doc = self._doc()
         doc["validated"].setdefault(workspace_id, {})[branch] = sha
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if os.path.islink(self.path.parent):
+            raise RecordsError("records.unsafe_config", "the records state directory is a symlink")
         tmp = self.path.with_name(self.path.name + f".{os.getpid()}.tmp")
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW, 0o600)
         with os.fdopen(fd, "w") as fh:
             json.dump(doc, fh, sort_keys=True)
             fh.flush()
@@ -427,7 +465,7 @@ def push_url(repo: Git, remote: str) -> str:
     """The one effective push URL of ``remote`` as git resolves it under the frozen configuration (``pushurl``, else
     ``url``; ``insteadOf``/``pushInsteadOf`` applied). Not exactly one URL, or a transport outside the allow-list, is
     refused."""
-    from .git import check_local, url_allowed
+    from .git import check_local, has_credentials, redact, url_allowed
 
     check_local(repo.local, remote)
     res = repo.run("remote", "get-url", "--push", "--all", remote, check=False)
@@ -439,7 +477,13 @@ def push_url(repo: Git, remote: str) -> str:
         raise RecordsError("records.remote_invalid", f"remote {remote!r} has {n} push URLs; exactly one is needed")
     url = urls[0]
     if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in url) or not url_allowed(url, repo.protocols):
-        raise RecordsError("records.remote_invalid", f"remote {remote!r}: transport not allowed ({url[:80]})")
+        raise RecordsError("records.remote_invalid", f"remote {remote!r}: transport not allowed ({redact(url[:80])})")
+    if has_credentials(url):
+        raise RecordsError("records.remote_invalid", "the push URL carries a password: use a credential helper")
+    # the literal URL as git itself resolves it for the network calls (every url.* rewrite removed): the same string
+    seen = repo.out("ls-remote", "--get-url", url, rewrites=False)
+    if seen != url:
+        raise RecordsError("records.remote_invalid", "git would rewrite the push URL again; refusing")
     return url
 
 
@@ -495,6 +539,8 @@ def push(
     if check.get("sha") != source or check.get("url") != url or check.get("ref") != ref:
         raise RecordsError("records.push_rejected", "the export check answered for another push")
     repo.recheck_local()
+    if push_url(repo, remote) != url:  # the destination is the one checked, right before the push
+        raise RecordsError("records.push_rejected", "the push destination changed during this run")
     lease = f"--force-with-lease={ref}:{target or ''}"
     res = repo.run(
         "-c", "push.followTags=false", "-c", "push.gpgSign=false", "-c", "push.recurseSubmodules=no",
@@ -503,7 +549,9 @@ def push(
         network=True, rewrites=False, check=False,
     )  # fmt: skip
     if res.returncode != 0:
-        why = (res.stderr.decode(errors="replace").strip().splitlines() or ["?"])[-1][:300]
+        from .git import redact
+
+        why = redact((res.stderr.decode(errors="replace").strip().splitlines() or ["?"])[-1][:300])
         raise RecordsError("records.push_rejected", f"the remote refused the push (no rebase, no force): {why}")
     return {"pushed": True, "commit": source, "from": target, "url": url, "ref": ref, "checked": checked,
             "policy": check.get("policy"), "check": check.get("check")}  # fmt: skip
@@ -518,9 +566,9 @@ def init_repo(root: Path, *, branch: str = "main", env: Mapping[str, str] | None
     records only)."""
     import subprocess
 
-    from .git import LOCAL_TIMEOUT, _base_env
+    from .git import LOCAL_TIMEOUT, _base_env, pinned_root
 
-    root = Path(os.path.realpath(root))
+    root = pinned_root(root)
     created = False
     if not os.path.lexists(root / ".git"):
         subprocess.run(
@@ -535,11 +583,24 @@ def init_repo(root: Path, *, branch: str = "main", env: Mapping[str, str] | None
     from .git import git_dir_of
 
     git_dir = git_dir_of(root)
-    info = git_dir / "info"
-    info.mkdir(exist_ok=True)
-    exclude = info / "exclude"
     lines = ["# orch records: only the store's record files are tracked", ".state/", "addons/"]
-    have = exclude.read_text().splitlines() if exclude.exists() else []
-    if not all(line in have for line in lines):
-        exclude.write_text("\n".join(have + [line for line in lines if line not in have]) + "\n")
-    return {"root": str(root), "created": created}
+    gfd = os.open(git_dir, os.O_RDONLY | _DIRECTORY | _NOFOLLOW)
+    try:
+        with contextlib.suppress(FileExistsError):
+            os.mkdir("info", 0o755, dir_fd=gfd)
+        ifd = os.open("info", os.O_RDONLY | _DIRECTORY | _NOFOLLOW, dir_fd=gfd)
+        try:
+            raw = _read_at(ifd, "exclude")
+            have = (raw or b"").decode(errors="replace").splitlines()
+            if not all(line in have for line in lines):
+                data = ("\n".join(have + [line for line in lines if line not in have]) + "\n").encode()
+                tmp = f"exclude.orch.{os.getpid()}"
+                fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW, 0o644, dir_fd=ifd)
+                with os.fdopen(fd, "wb") as fh:
+                    fh.write(data)
+                os.replace(tmp, "exclude", src_dir_fd=ifd, dst_dir_fd=ifd)
+        finally:
+            os.close(ifd)
+    finally:
+        os.close(gfd)
+    return {"created": created}

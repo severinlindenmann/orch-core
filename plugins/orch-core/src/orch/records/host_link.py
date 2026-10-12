@@ -32,10 +32,6 @@ class Resolved:
     tips: ValidatedTips
 
 
-def _record_root(root: Path) -> Path:
-    return root if (root / "config.json").is_file() else root / "orchestrator"
-
-
 def resolve(env: Mapping[str, str], workspace: str | None) -> Resolved:
     from orch import hostclient
     from orch.host.custody import read_json
@@ -70,4 +66,4 @@ def resolve(env: Mapping[str, str], workspace: str | None) -> Resolved:
     def link(op: str, args: dict[str, Any]) -> dict[str, Any]:
         return hostclient._request(target, op, args, auth=None)["data"]  # noqa: SLF001 - the CLI's one request path
 
-    return Resolved(wid, _record_root(Path(str(entry.get("root")))), link, ValidatedTips(state / "records.json"))
+    return Resolved(wid, Path(str(entry.get("root"))), link, ValidatedTips(state / "records.json"))

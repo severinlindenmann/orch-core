@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 __all__ = [
+    "FILES_MAX",
     "FILE_MAX",
     "PAGE_FILES",
     "RECORD_PATH",
@@ -43,6 +44,8 @@ __all__ = [
 FILE_MAX = 64 * 1024 * 1024
 #: one snapshot at most, all files together
 TOTAL_MAX = 1024 * 1024 * 1024
+#: files in one snapshot at most (bounds the host's work under the lock and the tool's memory)
+FILES_MAX = 200_000
 #: files per ``records.snapshot`` page
 PAGE_FILES = 2000
 #: a manifest is served this long after it was taken
@@ -241,6 +244,8 @@ def list_records(root_fd: int) -> list[str]:
                 raise RecordsError("records.unsafe_tree", f"tickets/{uid} is not a directory")
             tfd = _open_dir(tickets, uid)
             try:
+                if len(out) > FILES_MAX:
+                    raise RecordsError("records.too_large", f"more than {FILES_MAX} record files")
                 for name in _TICKET_FILES:
                     if regular(tfd, name, f"tickets/{uid}/{name}"):
                         out.append(f"tickets/{uid}/{name}")
@@ -254,6 +259,8 @@ def list_records(root_fd: int) -> list[str]:
                     for art in sorted(os.listdir(afd)):
                         if _ART_RE.fullmatch(art) and regular(afd, art, f"tickets/{uid}/artifacts/{art}"):
                             out.append(f"tickets/{uid}/artifacts/{art}")
+                            if len(out) > FILES_MAX:
+                                raise RecordsError("records.too_large", f"more than {FILES_MAX} record files")
                 finally:
                     os.close(afd)
             finally:

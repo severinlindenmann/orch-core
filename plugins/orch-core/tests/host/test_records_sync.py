@@ -474,3 +474,152 @@ def test_the_module_runs_isolated():
         [os.sys.executable, "-I", "-m", "orch.records", "--help"], capture_output=True, check=False, timeout=60
     )
     assert res.returncode == 0 and b"commit" in res.stdout
+
+
+@pytest.mark.parametrize(
+    ("url", "ok"),
+    [
+        ("https://example.org/me/r.git", True),
+        ("ssh://git@example.org/me/r.git", True),
+        ("git@example.org:me/r.git", True),
+        ("example.org:/srv/r.git", True),
+        ("ext::sh -c x", False),
+        ("fd::3", False),
+        ("file:///tmp/r.git", False),
+        ("/tmp/r.git", False),
+        ("http://example.org/r.git", False),
+        ("git://example.org/r.git", False),
+    ],
+)
+def test_transport_allow_list(url, ok):
+    from orch.records.git import ALLOWED_PROTOCOLS, url_allowed
+
+    assert url_allowed(url, ALLOWED_PROTOCOLS) is ok
+
+
+# --- security scan findings (H11e commit scan) ---------------------------------------------------------------------
+
+
+def test_finding1_caller_git_config_env_never_reaches_git(r):
+    """GIT_CONFIG_* (or GIT_SSH_COMMAND, GIT_DIR) in the caller's environment cannot redirect the push."""
+    r.init()
+    r.commit()
+    url_a, url_b = r.bare("a"), r.bare("b")
+    git(r.root, "remote", "add", "origin", url_a)
+    evil = {
+        **r.env,
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": f"url.{url_b}.pushInsteadOf",
+        "GIT_CONFIG_VALUE_0": url_a,
+        "GIT_CONFIG_PARAMETERS": f"'url.{url_b}.insteadof'='{url_a}'",
+        "GIT_SSH_COMMAND": "touch /nonexistent/pwned",
+        "GIT_DIR": str(r.tmp / "elsewhere"),
+    }
+    repo = open_repo(r.root, env=evil, protocols=WS_FILES, remote="origin")
+    res = rtool.push(repo, r.link, r.w.wid, r.tips, initial=True)
+    assert res["url"] == url_a
+    assert git(r.tmp, "--git-dir", url_b[len("file://") :], "for-each-ref") == ""
+    assert git(r.tmp, "--git-dir", url_a[len("file://") :], "rev-parse", "refs/heads/main") == res["commit"]
+
+
+def test_finding1_global_config_is_frozen_between_check_and_push(r):
+    """A ~/.gitconfig rewrite added after the repo was opened changes neither the checked nor the pushed URL."""
+    r.init()
+    r.commit()
+    url_a, url_b = r.bare("a"), r.bare("b")
+    git(r.root, "remote", "add", "origin", url_a)
+    repo = r.repo()
+
+    def link(op, args):
+        if op == "records.export_check":
+            with open(r.home / ".gitconfig", "a") as fh:
+                fh.write(f'[url "{url_b}"]\n\tpushInsteadOf = {url_a}\n\tinsteadOf = {url_a}\n')
+        return r.link(op, args)
+
+    res = rtool.push(repo, link, r.w.wid, r.tips, initial=True)
+    assert res["url"] == url_a and res["pushed"]
+    assert git(r.tmp, "--git-dir", url_b[len("file://") :], "for-each-ref") == ""
+
+
+def test_finding2_a_url_with_a_password_is_refused_and_never_echoed(r):
+    r.init()
+    r.commit()
+    git(r.root, "remote", "add", "origin", "https://me:s3cret-token@example.org/r.git")
+    code, out = r.cli("push", "--initial")
+    assert out["error"]["code"] == "records.remote_invalid"
+    assert "s3cret" not in json.dumps(out)
+    assert not any(op == "records.export_check" for op, _ in r.calls)
+
+
+def test_finding2_git_errors_are_redacted():
+    from orch.records.git import redact
+
+    assert redact("fatal: unable to access 'https://me:tok@example.org/r.git/'") == (
+        "fatal: unable to access 'https://***@example.org/r.git/'"
+    )
+    assert redact("a\x1b[31mred") == "a?[31mred"
+
+
+def test_finding3_a_symlinked_record_root_path_is_refused(r, tmp_path):
+    r.init()
+    link_path = tmp_path / "ws-link"
+    os.symlink(r.root, link_path)
+    with pytest.raises(RecordsError) as e:
+        open_repo(link_path, env=r.env)
+    assert e.value.code == "records.unsafe_tree"
+
+
+def test_finding3_the_real_index_is_never_written_through_a_symlink(r, tmp_path):
+    r.init()
+    r.commit()
+    target = tmp_path / "victim"
+    target.write_bytes(b"do not touch\n")
+    index = r.root / ".git" / "index"
+    os.unlink(index)
+    os.symlink(target, index)
+    r.w.ticket("one")
+    with pytest.raises(RecordsError) as e:
+        r.commit()
+    assert e.value.code == "records.unsafe_tree"
+    assert target.read_bytes() == b"do not touch\n"
+
+
+def test_finding3_a_planted_index_lock_symlink_is_never_followed(r, tmp_path):
+    r.init()
+    r.commit()
+    target = tmp_path / "victim"
+    target.write_bytes(b"do not touch\n")
+    os.symlink(target, r.root / ".git" / "index.lock")
+    r.w.ticket("one")
+    res = r.commit()
+    assert res["changed"] and res["index"] == "differs"
+    assert target.read_bytes() == b"do not touch\n"
+    assert os.path.islink(r.root / ".git" / "index.lock")
+
+
+def test_finding3_init_never_writes_exclude_through_a_symlink(r, tmp_path):
+    r.init()
+    target = tmp_path / "victim"
+    target.write_bytes(b"do not touch\n")
+    exclude = r.root / ".git" / "info" / "exclude"
+    os.unlink(exclude)
+    os.symlink(target, exclude)
+    with pytest.raises(RecordsError):
+        r.init()
+    assert target.read_bytes() == b"do not touch\n"
+
+
+def test_finding4_file_count_and_gitfile_reads_are_bounded(r, w, monkeypatch, tmp_path):
+    from orch import records as rec
+    from orch.records.git import git_dir_of
+
+    monkeypatch.setattr(rec, "FILES_MAX", 1)
+    w.ticket("one")
+    res = w.client().req("records.snapshot", {})
+    assert res["ok"] is False and res["error"]["code"] == "records.too_large"
+    d = tmp_path / "gitfile"
+    d.mkdir()
+    (d / ".git").write_bytes(b"gitdir: " + b"x" * (1 << 20))
+    with pytest.raises(RecordsError) as e:
+        git_dir_of(d)
+    assert e.value.code == "records.not_dedicated"

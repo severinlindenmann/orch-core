@@ -105,7 +105,7 @@ def main(
         if args.cmd == "init":
             res = init_repo(root, env=env)
             open_repo(root, env=env, protocols=protos)  # the result must be a usable dedicated repo
-            emit(True, res, f"records repo ready at {res['root']}")
+            emit(True, res, "records repo ready" + (" (created)" if res["created"] else ""))
             return 0
         if args.cmd == "commit":
             repo = open_repo(root, env=env, protocols=protos)

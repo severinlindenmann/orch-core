@@ -5,7 +5,9 @@ from __future__ import annotations
 from orch.host.control_client import new_idem
 from orch.host.requests import MAX_PENDING
 from tests.host import human_helpers
+from tests.host.dispatch_helpers import UID
 from tests.host.human_helpers import err, ok
+from tests.host.test_human import requests_dir
 
 lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.human
 
@@ -42,23 +44,98 @@ def test_other_arguments_are_idem_conflict(human, served):
     assert err(human.prepare_res("log", {"ref": key, "text": "x"}, handoff=True, idem=idem)) == "idem.conflict"
 
 
-def test_another_principal_with_the_same_idem_gets_its_own_request(human, served):
-    _, key = human.ticket()
-    idem = new_idem()
-    a = human.prepare("log", {"ref": key, "text": "x"}, idem=idem)
-    # a record of another principal under the same idem (same arguments) is no answer for this one
-    foreign = {"op": "log", "args": {"ref": key, "text": "x"}, "signer": human.signer, "handoff": False}
+def _plant(served, principal, idem, args, namespace_store=None):
+    """An outcome record of another principal (or workspace) under ``idem``, written through the store itself."""
 
-    def other():
-        out = served.service.outcomes
-        intent = out.begin("uid:99999", idem, "human.prepare", foreign, planned=(), deferred=True)
+    def run():
+        out = namespace_store or served.service.outcomes
+        intent = out.begin(principal, idem, "human.prepare", args, planned=(), deferred=True)
         out.commit(intent, {"request": {"id": "hr_foreign"}})
 
-    served.service.submit(other).result(10)
-    b = human.prepare("log", {"ref": key, "text": "x"}, idem=idem)
-    assert b["request"]["id"] == a["request"]["id"]
-    c = human.prepare("log", {"ref": key, "text": "q"}, idem=new_idem())
-    assert c["request"]["id"] != a["request"]["id"]
+    served.service.submit(run).result(10)
+
+
+def test_another_principal_who_used_the_idem_first_does_not_answer_this_one(human, served):
+    _, key = human.ticket()
+    idem = new_idem()
+    foreign = {"op": "log", "args": {"ref": key, "text": "x"}, "signer": human.signer, "handoff": False}
+    _plant(served, "uid:99999", idem, foreign)
+    a = human.prepare("log", {"ref": key, "text": "x"}, idem=idem)
+    assert a["request"]["id"] != "hr_foreign"
+    assert human.prepare("log", {"ref": key, "text": "x"}, idem=idem)["request"]["id"] == a["request"]["id"]
+    # the other principal's record is untouched and still its own
+    assert served.service.outcomes.lookup("uid:99999", idem)["result"]["request"]["id"] == "hr_foreign"
+
+
+def test_a_grant_principal_is_no_uid_principal(human, served):
+    _, key = human.ticket()
+    idem = new_idem()
+    body = {"op": "log", "args": {"ref": key, "text": "x"}, "signer": human.signer}
+    assert err(human.c.req("human.prepare", body, grant=served.grant, idem=idem)) == "human_only"
+    a = human.prepare("log", {"ref": key, "text": "x"}, idem=idem)  # the refused grant call stored nothing under it
+    assert a["request"]["id"]
+    principal = f"g:{served.grant}@{UID}"
+    foreign = {"op": "log", "args": {"ref": key, "text": "x"}, "signer": human.signer, "handoff": False}
+    _plant(served, principal, idem, foreign)
+    assert human.prepare("log", {"ref": key, "text": "x"}, idem=idem)["request"]["id"] == a["request"]["id"]
+
+
+def test_another_workspace_has_its_own_outcome_namespace(human, served, tmp_path):
+    from orch.host.outcomes import OutcomeStore
+
+    _, key = human.ticket()
+    idem = new_idem()
+    other = OutcomeStore(tmp_path / "other", "ws_other", served.service.outcomes.host_uid, clock=served.service.clock)
+    (tmp_path / "other").mkdir()
+    other.open()
+    foreign = {"op": "log", "args": {"ref": key, "text": "x"}, "signer": human.signer, "handoff": False}
+    _plant(served, f"uid:{UID}", idem, foreign, namespace_store=other)
+    a = human.prepare("log", {"ref": key, "text": "x"}, idem=idem)
+    assert a["request"]["id"] != "hr_foreign"
+    assert other.key("ws_other", f"uid:{UID}", idem) != served.service.outcomes.key(served.wid, f"uid:{UID}", idem)
+
+
+def test_a_request_that_is_no_longer_stored_answers_idem_expired(human, served):
+    _, key = human.ticket()
+    idem = new_idem()
+    a = human.prepare("log", {"ref": key, "text": "x"}, handoff=True, idem=idem)
+    ok(human.c.req("human.cancel", {"request_id": a["request"]["id"]}))
+    (requests_dir(served) / a["request"]["id"]).unlink()
+    assert err(human.prepare_res("log", {"ref": key, "text": "x"}, handoff=True, idem=idem)) == "idem.expired"
+
+
+def test_the_person_is_part_of_the_binding(human, served):
+    _, key = human.ticket()
+    idem = new_idem()
+    human.prepare("log", {"ref": key, "text": "x"}, idem=idem)
+    out = served.service.outcomes
+    rec = out.read(out.key(served.wid, f"uid:{UID}", idem))
+    assert rec["args_normalised"]["person"] == human.person.ref
+    assert rec["binding"].startswith("sha256:")
+
+
+def test_a_failed_answer_does_not_leave_an_orphan_that_a_retry_duplicates(human, served, monkeypatch):
+    _, key = human.ticket()
+    idem = new_idem()
+    out = served.service.outcomes
+    real = out.commit
+    boom = []
+
+    def commit(intent, result):
+        if not boom:
+            boom.append(1)
+            raise OSError("disk full")
+        return real(intent, result)
+
+    monkeypatch.setattr(out, "commit", commit)
+    assert err(human.prepare_res("log", {"ref": key, "text": "x"}, idem=idem)) in {"internal", "host.unavailable"}
+    assert len(list(requests_dir(served).iterdir())) == 1
+    a = human.prepare("log", {"ref": key, "text": "x"}, idem=idem)
+    assert (
+        len(list(requests_dir(served).iterdir())) == 1
+        and a["request"]["id"] == next(requests_dir(served).iterdir()).name
+    )
+    assert human.prepare("log", {"ref": key, "text": "x"}, idem=idem)["request"]["id"] == a["request"]["id"]
 
 
 def test_after_cancel_or_submit_the_same_idem_answers_the_outcome(human, served):

@@ -488,6 +488,16 @@ class OutcomeStore(IntentStore):
             self._write(intent.key, record)
             intent.record = record
 
+    def note(self, intent: Intent, **fields: Any) -> None:
+        """Add fields to a running ``pending`` record (fsynced), e.g. the id of the request a prepare is about to
+        store."""
+        record = {**intent.record, **fields}
+        with self._lock:
+            if self._running.get(intent.key) is None:
+                raise HostError("internal", "the outcome record is no longer running")
+            self._write(intent.key, record)
+            intent.record = record
+
     def commit(self, intent: Intent, result: dict[str, Any]) -> dict[str, Any]:
         """The change landed: store the (redacted) ``result``; the record is ``committed``."""
         return self._finish(intent, {"step": "committed", "result": result, "exit": 0})

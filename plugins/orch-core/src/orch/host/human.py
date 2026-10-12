@@ -46,6 +46,7 @@ from orch import canon
 
 from . import review
 from .errors import HostError
+from .intents import binding_of
 from .outcomes import Planned, request_idem
 from .requests import EXPIRE_SECONDS, GRANT_EXPIRE_SECONDS, PENDING, RequestStore, new_request_id
 from .workspace import ok_result
@@ -273,7 +274,13 @@ class HumanOps:
             return self._prepare(call, args, dry_run, intent)
         except BaseException:
             if intent is not None:
-                service.outcomes.abandon(intent)  # nothing was created: a retry runs again
+                rid = intent.record.get("request_id")
+                if rid and self._requests(service).read(rid) is not None:
+                    # the request is stored but the answer was not: keep the record (with the request id), so the
+                    # retry finds this request instead of creating a second one
+                    service.outcomes.release(intent)
+                else:
+                    service.outcomes.abandon(intent)  # nothing was created: a retry runs again
             raise
 
     def _begin_idem(self, call: Call, idem: str, args: dict[str, Any]) -> tuple[dict[str, Any] | None, Any]:
@@ -291,25 +298,46 @@ class HumanOps:
             if set(spec) != {"b64"}:
                 raise HostError("blob.invalid", f"files.{arg}: human.prepare takes the bytes inline (b64)")
         digests, _ = service.outcomes.bind_files(call.principal, None, specs)
-        bound = {"op": name, "args": inner, "signer": args.get("signer"), "handoff": bool(args.get("handoff", False))}
-        begun = service.outcomes.begin(
-            call.principal,
-            idem,
-            "human.prepare",
-            bound,
-            planned=(),
-            files=digests,
-            session=(call.frame.get("auth") or {}).get("session"),
-            deferred=True,
+        # the inner args as given (not normalised: a REF and its uid are two bindings, which only ever errs towards
+        # idem.conflict), the person and the signer or hand-off; the session and file digests are added by binding_of
+        bound = {
+            "op": name,
+            "args": inner,
+            "signer": args.get("signer"),
+            "handoff": bool(args.get("handoff", False)),
+            "person": call.viewer,
+        }
+        session = (call.frame.get("auth") or {}).get("session")
+        outcomes = service.outcomes
+        # a record left ``pending`` with its request id (the answer could not be stored): that request is the answer
+        stuck = outcomes.read(outcomes.key(outcomes.namespace, call.principal, idem))
+        if (
+            stuck is not None
+            and stuck.get("step") == outcomes.START
+            and stuck.get("request_id")
+            and stuck.get("binding") == binding_of("human.prepare", bound, session, digests)
+        ):
+            record = self._requests(service).read(stuck["request_id"])
+            if record is not None and record.get("principal") == call.principal:
+                view = self._view(self._requests(service).expire(record))
+                outcomes.settle(outcomes.key(outcomes.namespace, call.principal, idem), self._stored(record))
+                return view, None
+        begun = outcomes.begin(
+            call.principal, idem, "human.prepare", bound, planned=(), files=digests, session=session, deferred=True
         )
         if isinstance(begun, dict):  # a stored answer: the prepare result of the first call
             begun = {k: v for k, v in begun.items() if k != "duplicate"}
             requests = self._requests(service)
             record = requests.read(begun["request"]["id"])
             if record is None or record.get("principal") != call.principal:
-                return begun, None  # the request file is gone (swept); the stored answer is all that is left
+                raise HostError("idem.expired", "the request this idem prepared is no longer kept; use a new idem")
             return self._view(requests.expire(record)), None
         return None, begun
+
+    @staticmethod
+    def _stored(record: dict[str, Any]) -> dict[str, Any]:
+        """The outcome-store answer of a prepare: the first view of its request."""
+        return {"state": "committed", "exit": 0, "result": HumanOps._view({**record, "state": "prepared"})}
 
     def _prepare(self, call: Call, args: dict[str, Any], dry_run: bool, intent: Any) -> dict[str, Any]:
         import orch.ops as ops
@@ -376,6 +404,8 @@ class HumanOps:
             return {"request": None, **prepared}
         rid = new_request_id()
         requests = self._requests(service)
+        if intent is not None:
+            service.outcomes.note(intent, request_id=rid)  # before the request file: no orphan if the answer fails
         record = {
             "v": 1,
             "id": rid,

@@ -20,6 +20,7 @@ SECTION_10_3 = [
     "grant", "grant revoke", "member add", "member remove", "member role",
     "init", "doctor", "check", "instructions sync", "instructions hook", "import v1",
     *(f"addon {v}" for v in "list grant disable purge".split()),
+    "quick list",  # H11f; `quick add` is a CLI composite (new, then set), not an operation
 ]  # fmt: skip
 
 
@@ -151,7 +152,9 @@ def test_operation_errors_are_declared_once_known_and_complete():
             assert "grant.required" in codes
         if op.is_write:
             assert "lock.busy" in codes
-    unused = set(ERRORS) - used - set(GLOBAL_ERRORS) - {"wait.timeout"}
+    unused = (
+        set(ERRORS) - used - set(GLOBAL_ERRORS) - {"wait.timeout", "quick.unlabelled"}
+    )  # the latter: the CLI composite `quick add` (H11f)
     assert not unused, f"documented but no operation can return them: {sorted(unused)}"
 
 

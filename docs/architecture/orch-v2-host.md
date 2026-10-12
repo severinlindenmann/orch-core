@@ -190,6 +190,7 @@ OpName  = str/[a-z][a-z_]*(\.[a-z_]+)*/      ReqId = str/[A-Za-z0-9_-]{1,32}/
 | `refusals/1` | `session.refusals` (1) (v1.5, later than H6b) | workspace |
 | `activity/1` | `activity.list` (1) | workspace |
 | `diff/1` | `diff`, `artifact.get` (1) | workspace |
+| `quick/1` | `quick.list` (1) (H11f) | workspace |
 | `human/1` | `human.prepare`, `human.get`, `human.submit`, `human.pending`, `human.cancel` (1) | workspace |
 | `sub/1` | `sub.open`, `sub.close` (1) | workspace |
 | `blob/1` | `blob.put`, `blob.drop` (1) | workspace |
@@ -459,6 +460,7 @@ drops. The host never sends it.
 | `activity.list` | `page.expired`, `not_found` (`ticket`), `invalid.input` (a `page` token used with other arguments than the first page's; `ticket` with `scope:"workspace"`; `since` after `until`) |
 | `diff` | `not_found`, `observe.unavailable`, `repo.remote_mismatch` |
 | `artifact.get` | `not_found` |
+| `quick.list` (H11f) | `invalid.input` (a `page` token that is not this op's, any other key, `dry_run`), `blob.invalid` (`files`); never `observe.unavailable`: counts the reader cannot give are `null` |
 | `workspace.settings` (v1.5) | `page.expired`, `invalid.input` (a `page` token with other arguments) |
 | `ticket.text` (v1.5) | `not_found` (ref, `seq`, a field the event does not have, or an `event_id` that is not the event at `seq`), `ambiguous_ref`, `invalid.input` (`offset` past the text or not on a scalar-value boundary; `offset > 0` without `event_id`) |
 | `artifact.query` (v1.5) | `page.expired`, `not_found` (`ticket`), `invalid.input` (a `page` token with other arguments, including `counts`) |
@@ -1541,6 +1543,44 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
 6. **Run directory.** `ORCH_HOST_RUN_DIR` when set, else the service run directory when a host serves there, else
    `<state>/run`. It says only where to look and is not a trust input: the registry or the pin and the handshake decide
    whom the socket may belong to.
+
+**As built in H11f** (quick tasks, addon #308, D-P2-35; additive, cap `quick/1`, no new event type and no new store):
+
+1. **A quick task is a ticket** with `type: chore` and the label `quick`. Nothing records "quick" except that label, so
+   claims, grants, evidence, visibility, approval gates and the log work unchanged, and a task that outgrows the idea is
+   made an ordinary ticket by removing the label (`orch set KEY labels=…`).
+2. **`quick.list`** (read; columns P, G and N, like `ticket.query`: N sees `workspace` tickets only; registry op in the
+   CLI, so `orch describe quick.list` documents it) takes `{status?:[Status], limit?:int 1..200 = 100, page?:str,
+   max_commits?:int 1..100 = 1, max_files?:int 1..1000 = 3}` and answers `{rows, next_page, total}`. The limits are
+   flat arguments instead of the draft's `limits{}` object so the CLI can spell them (`--max-commits`, `--max-files`).
+   - On the host the rows are `ticket.query {label:["quick"], sort:"key", order:"desc"}` for the same viewer (one
+     code path: restricted tickets are never listed or counted, a later page rebuilds from the current state, closed
+     tickets only when `status` asks) and each carries `quick: {commits, files, over}`. Direct mode returns the same
+     fields minus the ones only the host's `ticket.query` rows have (`gates`, `needs`, `claim`, ...); its `page` token
+     is an offset (`o:<n>`), the host's is the opaque `ticket.query` token. Text and `--json` of the CLI are the same
+     in both modes except for the token and those extra row fields.
+   - `commits` and `files` come from the ticket's linked branches (the `diff` plan and reader, `context 0`: every
+     commit of `base..head` per linked repo including `commits_more`, and the changed files). `null` for all three
+     (`over` too) when the ticket links no repo, has no branch or working copy, or the reader fails or is out of time:
+     the numbers are a display and never an error. `over` is `commits > max_commits or files > max_files`; **the limits
+     are display only**, nothing refuses a quick task that is over them.
+   - The host answers in the three phases of `diff` (worker thread: rows and plans; reader executor: at most 20 s for
+     all rows together, one in flight per principal with `diff`, so `quota.host` when a diff or list of the same caller
+     is running; worker thread again: column and visibility re-checked, a row hidden meanwhile is dropped and not
+     counted). `welcome.ops` lists `quick.list` at 1 and `welcome.caps` lists `quick/1`.
+3. **`orch quick add "TITLE"`** is a CLI composite, not an operation: `new TITLE --type chore`, then `set KEY
+   labels=quick`, each an ordinary call in direct or host mode (one title, one line, 1 to 120 characters, else
+   `invalid.input`). It prints `ok KEY quick.add created|labelled seq=N` (or the `--json` envelope with `{key, title,
+   type, labels, created}`). The draft's single-request person click flow (host spec §9 Q8) stays open: the dashboard
+   signs `new` and then `set`.
+4. **A failure between the two steps** leaves an ordinary chore ticket and answers the new catalog code
+   **`quick.unlabelled`** (exit 9, retryable; the message names the key and the step's own code). Running the same
+   `quick add` again labels that ticket instead of creating a second one: it looks at the 50 newest tickets for an
+   exact title match that is a `chore`, has no label and no claim and has exactly one event (`ticket.created`), and
+   labels it (`created:false`). A ticket anyone touched since is never taken. `quick.unlabelled` is raised by the CLI
+   only (no operation declares it).
+5. **Not built:** the quick-tasks addon manifest and its owner `needs` rule (manifest-only addons are D-P2-36 and
+   belong to the addon runner work) and the dashboard UI.
 
 **As built in H7** (host mode on by default for registered workspaces, phase 1, tier A):
 
@@ -2767,6 +2807,8 @@ Additive: new ops under new caps, optional keys under `read_ext/2`, new argument
     `hello.ops`); a committed person request's `Result` keeps the inner op's `lines`.
     **Release note:** an older CLI (H4b, before H7) does not list `task.done` in its hello, so this host refuses its
     `orch task done` with `op.unsupported` ("served at version 2, not 1"); update the CLI. Every other op still works.
+15. **H11f (additive):** cap `quick/1` and op `quick.list` (read, columns P, G and N); no new event type, no new store
+    (see "As built in H11f"). Catalog code `quick.unlabelled` (CLI only).
 
 ---
 

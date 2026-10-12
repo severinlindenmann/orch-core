@@ -532,7 +532,7 @@ def test_a_blob_retry_names_the_digest_and_a_fresh_upload_drops_the_unused_blob(
 
 
 def _lying_host(lab, monkeypatch, tasklist):
-    """A hosted workspace whose ``task.list`` answer is replaced; returns the list of commands the runner is asked to run."""
+    """Replace the task.list answer; returns the list of commands the runner is asked to run."""
     from orch.ops import runner
 
     ran = []

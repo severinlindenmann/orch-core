@@ -16,7 +16,10 @@ def test_move_is_a_typed_action_with_a_closed_target():
     action = parse({"action": "move", "key": "DEMO-0001", "to": "backlog"})
     assert isinstance(action, Move)
     assert host_call(action) == ("move", {"ref": "DEMO-0001", "to": "backlog"})
-    assert host_call(parse({"action": "move", "key": "DEMO-0001", "to": "open", "reason": "ready"}))[1]["reason"] == "ready"
+    assert (
+        host_call(parse({"action": "move", "key": "DEMO-0001", "to": "open", "reason": "ready"}))[1]["reason"]
+        == "ready"
+    )
     for bad in ({"to": "done"}, {"to": "in-progress"}, {"to": "open", "reason": "a‮b"}, {"to": "open", "extra": 1}):
         with pytest.raises(ValidationError):
             parse({"action": "move", "key": "DEMO-0001", **bad})

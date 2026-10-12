@@ -867,3 +867,56 @@ Confirmation words (stream A decision): workspace `settings.set` = `<PREFIX>/SET
 the signer's own registry); the panel shows them and the stub signer asks for them. Real `orch sign` learns them with H6b. `member.add`:
 `pk` is a plain argument and the certificate travels only in `files.cert` (the argument carries `-`); a test checks it is never an inline
 argument, and the stub refuses an inline certificate with `blob.invalid`.
+
+
+## P2 on the real host (stream B, milestone RH, 12 Oct)
+
+The dashboard now runs against core's real host (H6b #404, H4b #409) with the real `orch init`, CLI and signer. Everything here was done
+on disposable workspaces (explicit `ORCH_STATE_DIR`, `HOME` and `XDG_CONFIG_HOME`, `.orch-dev` markers, never `~/.config/orch`).
+
+**How it is driven.** `server/tests/realhost_kit.py` creates a workspace with `orch init` in a pty (it types the passphrase, the three
+recovery words and the "Type KEY and Enter" confirmations like a person), grants the dashboard addon, seeds tickets in every status with the
+real CLI (an agent grant, questions, gates, tasks with receipts, evidence, a closed ticket), registers the workspace and starts
+`orch host run --foreground` as a subprocess it stops by its own PID. `python tests/realhost_kit.py up|open|down` does the same for a person.
+The base directory must be short and outside /tmp (sockets are about 100 bytes; the host refuses a run directory under a sticky ancestor), so
+it lives in `~/.cache/orch-rh/` (or `$XDG_RUNTIME_DIR/orch-rh/`). `server/tests/test_realhost.py` (marker `realhost`, skipped when the host
+cannot start) is the integration suite: `cd server && uv run pytest -m realhost -q` (about 1 minute). It is NOT in CI (`dashboard.yml` runs
+`-m "not realhost"`): it needs a pty, unix sockets and a state directory in the home folder. Offline, `test_realhost_goldens.py` replays
+scrubbed real answers (`src/test/fixtures/real-host/raw.json`, re-record with `UPDATE_REALHOST_GOLDEN=1 uv run pytest -m realhost -k record`).
+
+**Verified on the real host (checks in the suite).** Launch and session; workspaces, `me`, identity; Today (question, approval, `no_eligible`
+as a notice); board and backlog with paging (`next_page`), closed never on the board; ticket page (sections, tasks with receipts, acceptance
+proven, artifacts with digest and bytes, the log; a closed ticket reads like any other); an evidence file read and digest-checked; settings,
+members and grants reads (`read_ext/2` revoked fields); a CLI write through the running host reaches an open stream within 2 s; a cut stream
+resyncs; every hand-off signed with the REAL `orch sign CODE` in a pty: approve, request changes, answer, comment, label, close, reopen, new ticket,
+Complete details (`set`) and a section (`section.set`), verdict pass and fail, member add (certificate file), grant revoke; `settings.set`,
+`policy.set` and `move` signed with the real signer (`<PREFIX>~<WS8>/SETTINGS|POLICY`, H6b knows them); two workspaces with the same prefix and the
+same ticket key; a workspace whose addon is disabled is listed unavailable while the other works; with the host stopped nothing is available.
+
+**What changed in our code because of the real host.** (1) The host serves the `human.*` ops and lists them in `welcome.ops`, but `welcome.caps`
+has no `human/1`: `HostLink.supports` accepts a listed human op (RH-1). (2) The host lists `diff/1` (for `artifact.get`) but serves no `diff`
+op: the `changes` feature is off and the ticket page has no Changes tab (it used to draw one by status and then fail with "Could not load the
+diff") (RH-2). (3) `move` is offered when `welcome.ops` lists it (features `move`, `do:move`): a typed `move` action (`backlog` or `open`,
+optional reason), the prepared event must be `ticket.moved` to that target; on the board a drag or the card menu opens the hand-off dialog
+for Backlog or Open (other columns say so), and nothing moves in the page until it is signed. The palette move and the bulk move are off in
+hand-off mode. (4) `needs` on a real host: a `no_eligible` notice counts in the workspace's `needs_you` number but not in Today's "N need you".
+Not changed, noted below (RH-6).
+
+**Gaps for stream A (nothing in core was touched).**
+
+| # | Gap | Effect here |
+|---|---|---|
+| RH-1 | `welcome.caps` lacks `human/1` although `human.prepare/get/submit/cancel/pending` are in `welcome.ops` (contract section 0.3 lists the cap) | Worked around (a listed human op counts); remove the exception when the cap is listed |
+| RH-2 | `diff/1` is listed but `diff` is not served (known: "H4a2 lists diff/1 for artifact.get before diff is served") | No Changes tab; 501 on `/changes`. The tab returns with the op |
+| RH-3 | `human.prepare` with an `idem` for `move`, `policy.set` and `settings.set` raises `KeyError: unknown operation` in the host (`human.py _begin_idem` looks the op up in the ops registry, which does not hold the three host person ops): the caller sees 500 `internal` "Request handler failed". Without an idem the same prepare works and the real signer signs it | The dashboard always sends an idem, so Settings (grant length, policy) and Move cannot be prepared from the browser on this host. Strict xfails in `test_realhost.py` (`HOST_PERSON_OPS_IDEM`) flip when it is fixed. Direct prepares without an idem prove the rest |
+| RH-4 | No op changes a ticket's visibility (`visibility.changed` is a person event with no CLI or host op) | A hiding that purges a tab cannot be produced from a single person on a real host; covered with fakes in `test_live_updates.py` |
+| RH-5 | A host cannot stop one workspace: there is no per-workspace "stopped" state; a disabled addon is the nearest (`addon.disabled`), a stopped host takes everything | S13's "one host stopped" is exercised as addon disabled plus the whole host stopped |
+| RH-6 | `member.list` carries the same names the dashboard shows; the workspace `needs_you` count includes `no_eligible` notices | The switcher badge can differ from Today's count; counting only actionable kinds needs the kind list from the host |
+| RH-7 | `orch task done` in host mode answers not_implemented (H3b2 #412) | Seeding done tasks happens before the host starts |
+| RH-8 | `workspace.show` has no `created_at`; the workspace name is the directory name | Shown empty |
+
+**Dev stub vs the real host** (the stub still serves CI and the mock app): it lists `human/1` and `diff`, serves `diff` against the dev
+workspace's git state and so shows a Changes tab; it has no `move`, no `workspace.settings` write path for `settings.set` and `policy.set` that
+the real host cannot prepare with an idem (the stub accepts the idem), keeps requests in memory, signs with its own `devhost sign`, uses a
+registry that pins no name or prefix, and its `needs`/`ticket.query` snapshots are simulated. Treat the stub as a development adapter only:
+acceptance is the real-host suite and the Playwright scenarios in orch-dev-kit (`e2e/dashboard/`).

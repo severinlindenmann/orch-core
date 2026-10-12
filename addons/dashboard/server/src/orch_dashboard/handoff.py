@@ -126,16 +126,6 @@ class Reopen(Action):
     message: Text | None = None
 
 
-class Move(Action):
-    """`move`: a workspace owner or maintainer returns unclaimed work to `backlog` or `open` (host contract 0.8, H6b).
-    Served only through `human.prepare`; the host refuses a claimed ticket and any other target."""
-
-    action: Literal["move"]
-    key: Key
-    to: Literal["backlog", "open"]
-    reason: Annotated[str, StringConstraints(min_length=1, max_length=200), OneLine] | None = None
-
-
 class NewTicket(Action):
     """A person's `new` carries the key, type, title and owner only (stream A, 11 Oct); the rest is `Details`."""
 
@@ -322,6 +312,16 @@ class MemberRemove(Action):
 class GrantRevoke(Action):
     action: Literal["grant_revoke"]
     grant: GrantId
+    reason: Annotated[str, StringConstraints(min_length=1, max_length=200), OneLine] | None = None
+
+
+class Move(Action):
+    """`move`: a workspace owner or maintainer returns unclaimed work to `backlog` or `open` (host contract 0.8, H6b).
+    Served only through `human.prepare`; the host refuses a claimed ticket and any other target."""
+
+    action: Literal["move"]
+    key: Key
+    to: Literal["backlog", "open"]
     reason: Annotated[str, StringConstraints(min_length=1, max_length=200), OneLine] | None = None
 
 

@@ -51,7 +51,9 @@ def world(tmp_path_factory):
     gateway = Gateway(ws.state)
     auth = Auth()
     with TestClient(create_app(PORT, gateway, auth, static), base_url=ORIGIN) as client:
-        yield type("World", (), {"ws": ws, "keys": keys, "gateway": gateway, "auth": auth, "client": client, "root": root})
+        yield type(
+            "World", (), {"ws": ws, "keys": keys, "gateway": gateway, "auth": auth, "client": client, "root": root}
+        )
     gateway.close()
     ws.stop_host()
     shutil.rmtree(root, ignore_errors=True)
@@ -150,7 +152,11 @@ def test_ticket_page_sections_tasks_evidence_log(world, api):
     assert [t["state"] for t in doc["tasks_state"]] == ["done"] and doc["tasks_state"][0]["receipt"]
     assert [a["state"] for a in doc["acceptance_state"]] == ["proven"]
     names = {a["name"]: a for a in doc["artifacts"]}
-    assert {"report.txt", "T1-receipt.log"} <= set(names) and names["report.txt"]["sha256"] and names["report.txt"]["bytes"] == 22
+    assert (
+        {"report.txt", "T1-receipt.log"} <= set(names)
+        and names["report.txt"]["sha256"]
+        and names["report.txt"]["bytes"] == 22
+    )
     body = api.get(f"/tickets/{k}/artifacts/report.txt").json()
     assert "invoices exported: 42" in json.dumps(body)
     events = api.get(f"/tickets/{k}/events").json()
@@ -232,8 +238,14 @@ def test_a_stream_that_is_cut_resyncs_and_shows_the_write(world, token):
             await live.close()
 
     asyncio.run(run())
-    events = [e["summary"] if "summary" in e else e["type"] for e in __import__("json").loads(
-        world.client.get(f"/api/w/{world.ws.ws_id}/tickets/{key}/events", headers={"Authorization": f"Bearer {token}"}).text)]
+    events = [
+        e["summary"] if "summary" in e else e["type"]
+        for e in __import__("json").loads(
+            world.client.get(
+                f"/api/w/{world.ws.ws_id}/tickets/{key}/events", headers={"Authorization": f"Bearer {token}"}
+            ).text
+        )
+    ]
     assert any("stream was down" in str(e) for e in events) or len(events) >= 3
 
 
@@ -248,7 +260,9 @@ def test_approve_a_gate_with_the_real_signer(world, api):
 
 def test_request_changes_and_the_ticket_shows_it(world, api):
     key = world.keys["changes"]
-    _, final = api.handoff({"action": "request_changes", "key": key, "gate": "requirements", "message": "Say how many rows."})
+    _, final = api.handoff(
+        {"action": "request_changes", "key": key, "gate": "requirements", "message": "Say how many rows."}
+    )
     assert final["state"] == "submitted", final
     events = api.get(f"/tickets/{key}/events").json()
     assert "gate.changes_requested" in {e["type"] for e in events}
@@ -256,7 +270,9 @@ def test_request_changes_and_the_ticket_shows_it(world, api):
 
 def test_answer_a_question(world, api):
     key = world.keys["question"]
-    _, final = api.handoff({"action": "answer", "key": key, "question": "Q1", "option": "no", "message": "Keep it simple."})
+    _, final = api.handoff(
+        {"action": "answer", "key": key, "question": "Q1", "option": "no", "message": "Keep it simple."}
+    )
     assert final["state"] == "submitted", final
     doc = api.get(f"/tickets/{key}").json()
     assert doc["questions_state"][0]["state"] == "answered" or doc["questions_state"][0].get("answer")
@@ -287,7 +303,14 @@ def test_new_ticket_then_complete_the_details(world, api):
     key = board["rows"][0]["key"]
     _, final = api.handoff({"action": "details", "key": key, "priority": "high", "size": "s", "labels": ["archive"]})
     assert final["state"] == "submitted", final
-    _, final = api.handoff({"action": "section", "key": key, "section": "summary", "text": "Move invoices older than 7 years to cold storage."})
+    _, final = api.handoff(
+        {
+            "action": "section",
+            "key": key,
+            "section": "summary",
+            "text": "Move invoices older than 7 years to cold storage.",
+        }
+    )
     assert final["state"] == "submitted", final
     doc = api.get(f"/tickets/{key}").json()
     assert doc["priority"] == "high" and doc["size"] == "s" and doc["labels"] == ["archive"]
@@ -339,10 +362,14 @@ def test_the_real_signer_signs_settings_set_and_policy_set(world, api):
 
 def test_verdicts_after_the_verify_policy_lets_the_owner_decide(world, api):
     direct(world, "policy.set", {"gates": {"verify": VERIFY_OWNER}})
-    _, final = api.handoff({"action": "verdict", "key": world.keys["verdict"], "outcome": "pass", "message": "Matches the spec."})
+    _, final = api.handoff(
+        {"action": "verdict", "key": world.keys["verdict"], "outcome": "pass", "message": "Matches the spec."}
+    )
     assert final["state"] == "submitted", final
     assert api.get(f"/tickets/{world.keys['verdict']}").json()["status"] == "done"
-    _, final = api.handoff({"action": "verdict", "key": world.keys["testing"], "outcome": "fail", "message": "Retries are not capped."})
+    _, final = api.handoff(
+        {"action": "verdict", "key": world.keys["testing"], "outcome": "fail", "message": "Retries are not capped."}
+    )
     assert final["state"] == "submitted", final
 
 
@@ -374,7 +401,9 @@ def test_revoke_a_grant(world, api):
 
 
 def test_move_is_offered_and_prepares_ticket_moved_on_the_real_host(world, api, token):
-    features = world.client.get("/api/session", headers={"Authorization": f"Bearer {token}"}).json()["workspaces"][world.ws.ws_id]
+    features = world.client.get("/api/session", headers={"Authorization": f"Bearer {token}"}).json()["workspaces"][
+        world.ws.ws_id
+    ]
     assert "move" in features and "do:move" in features
     key = world.keys["changes"]
     # prepare (with the dashboard's idem) is refused by the host today: stream A RH-3
@@ -466,7 +495,9 @@ def test_with_the_host_stopped_every_workspace_is_unavailable(pair):
         assert all(w["host_state"] != "ok" for w in res.json())
 
 
-@pytest.mark.skip(reason="stream A RH-4: no host or CLI op changes a ticket's visibility (visibility.changed is a person event with no op), so a ticket cannot be hidden from the only person; the purge on `gone` is covered by test_live_updates")
+@pytest.mark.skip(
+    reason="stream A RH-4: no host or CLI op changes a ticket's visibility (visibility.changed is a person event with no op), so a ticket cannot be hidden from the only person; the purge on `gone` is covered by test_live_updates"
+)
 def test_hiding_a_ticket_purges_it_from_an_open_tab():
     raise AssertionError("unreachable")
 
@@ -477,9 +508,9 @@ def test_record_real_host_goldens(world):
     if not os.environ.get("UPDATE_REALHOST_GOLDEN"):
         pytest.skip("set UPDATE_REALHOST_GOLDEN=1 to record")
     from realhost_goldens import DIRECTORY, adapt
+    from realhost_scrub import Scrubber
 
     from orch_dashboard.reads import TicketsQuery, host_args
-    from realhost_scrub import Scrubber
 
     g, ws, k = world.gateway, world.ws.ws_id, world.keys
     raw = {
@@ -490,7 +521,10 @@ def test_record_real_host_goldens(world):
         "grant.list": g.call(ws, "grant.list", {"active": True}),
         "workspace.show": g.call(ws, "workspace.show"),
         "welcome": {k2: v for k2, v in g.link(ws).welcome.items() if k2 in ("caps", "ops")},
-        "tickets": {role: g.call(ws, "ticket.get", {"ref": k[role]}) for role in ("verdict", "in_progress", "gate", "answered", "closed", "plain")},
+        "tickets": {
+            role: g.call(ws, "ticket.get", {"ref": k[role]})
+            for role in ("verdict", "in_progress", "gate", "answered", "closed", "plain")
+        },
         "whoami": {"person": g.link(ws).welcome["peer"]["person"], "workspace": ws},
     }
     scrubbed = Scrubber()(raw)

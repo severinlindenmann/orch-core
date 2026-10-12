@@ -7,7 +7,7 @@ test data, and the scrub removes the ids anyway.
 
 import json
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 PATTERNS = [
     ("p_", re.compile(r"\bp_[0-9a-f]{32}\b")),
@@ -22,7 +22,7 @@ PATTERNS = [
     ("u", re.compile(r"\b[0-7][0-9A-HJKMNP-TV-Z]{25}\b")),
 ]
 TIME = re.compile(r"\b20\d\d-\d\d-\d\dT\d\d:\d\d:\d\dZ\b")
-BASE = datetime(2026, 1, 1, 9, 0, 0, tzinfo=timezone.utc)
+BASE = datetime(2026, 1, 1, 9, 0, 0, tzinfo=UTC)
 
 
 class Scrubber:

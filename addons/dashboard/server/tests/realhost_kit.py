@@ -23,7 +23,6 @@ import signal
 import socket
 import subprocess
 import sys
-import tempfile
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -135,7 +134,9 @@ class Workspace:
             "XDG_CONFIG_HOME": str(self.home / ".config"),
             "ORCH_STATE_DIR": str(self.state),
             "ORCH_DEV": "1",
-            "ORCH_HOST_RUN_DIR": str(self.run),  # H4b: a registered workspace's CLI talks to the host on this socket dir
+            "ORCH_HOST_RUN_DIR": str(
+                self.run
+            ),  # H4b: a registered workspace's CLI talks to the host on this socket dir
             "TERM": "xterm",
             "PYTHONWARNINGS": "ignore",
         }
@@ -168,7 +169,14 @@ class Workspace:
         return done.stdout + done.stderr
 
     def unattended(self, *args: str, ok: bool = True) -> str:
-        done = subprocess.run(self.orch(*args), env=self.env(ORCH_SESSION=self.session), cwd=self.root, capture_output=True, text=True, timeout=90)
+        done = subprocess.run(
+            self.orch(*args),
+            env=self.env(ORCH_SESSION=self.session),
+            cwd=self.root,
+            capture_output=True,
+            text=True,
+            timeout=90,
+        )
         if ok and done.returncode != 0:
             raise RuntimeError(f"orch {' '.join(args)} exited {done.returncode}:\n{done.stdout}{done.stderr}")
         return done.stdout + done.stderr
@@ -189,7 +197,9 @@ class Workspace:
             return code[int(m.group(1)) - 1]
 
         rules = [(r"Press Enter[^\n]*: $", lambda m, t: ""), (r"Word (\d+): $", word), *confirm_rules()]
-        run = Pty(self.orch("init", "--prefix", self.prefix, "--name", self.owner), self.env(), self.root, rules, 120).run()
+        run = Pty(
+            self.orch("init", "--prefix", self.prefix, "--name", self.owner), self.env(), self.root, rules, 120
+        ).run()
         if run.code != 0:
             raise RuntimeError(f"orch init failed:\n{run.output[-1500:]}")
 
@@ -221,7 +231,11 @@ class Workspace:
         log = open(self.log, "ab")
         self.host = subprocess.Popen(
             self.orch("host", "run", "--foreground", "--state", str(self.state), "--run", str(self.run)),
-            env=self.env(), stdout=log, stderr=log, stdin=subprocess.DEVNULL, start_new_session=True,
+            env=self.env(),
+            stdout=log,
+            stderr=log,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
         )
         control = self.run / "control" / "host.sock"
         for _ in range(150):
@@ -252,8 +266,21 @@ class Workspace:
     def register(self) -> None:
         """Pin the workspace and this UID's person in the running host (it must be running: the host owns the registry)."""
         done = subprocess.run(
-            self.orch("host", "register", str(self.root), "--peer", f"{os.getuid()}=person:{self.person}", "--run", str(self.run), "--state", str(self.state)),
-            env=self.env(), capture_output=True, text=True, timeout=60,
+            self.orch(
+                "host",
+                "register",
+                str(self.root),
+                "--peer",
+                f"{os.getuid()}=person:{self.person}",
+                "--run",
+                str(self.run),
+                "--state",
+                str(self.state),
+            ),
+            env=self.env(),
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
         if done.returncode != 0 or '"ok": true' not in done.stdout:
             raise RuntimeError(f"host register failed: {done.stdout}{done.stderr}")
@@ -261,8 +288,10 @@ class Workspace:
     def bring_up(self, seeding: Callable[[Workspace], object] | None = None) -> object:
         """init, grant, dashboard addon, then `seeding` through the direct CLI, then the host serves it.
 
-        Order matters: once a workspace is registered the CLI refuses direct mode (`host.required`) until core H4b
-        (#409) lets it talk to the host, so everything the CLI writes happens before `register`. Leaves the host running.
+        Seeding runs before `register` on purpose: since core H4b (#409) the CLI of a registered workspace talks to the
+        host, but `orch task done` still answers not_implemented there (H3b2, #412), and seeding done tasks needs it.
+        After `register` the same CLI writes through the running host (used for the live-update checks).
+        Leaves the host running.
         """
         self.init()
         self.grant()
@@ -288,7 +317,13 @@ def sections(ws: Workspace, key: str, **texts: str) -> None:
 
 
 def ready_requirements(ws: Workspace, key: str, summary: str = "") -> None:
-    sections(ws, key, context="Asked for by finance every month end.", out_of_scope="PDF export.", requirements=summary or "Do the thing described by the title.")
+    sections(
+        ws,
+        key,
+        context="Asked for by finance every month end.",
+        out_of_scope="PDF export.",
+        requirements=summary or "Do the thing described by the title.",
+    )
 
 
 def ready_plan(ws: Workspace, key: str) -> None:
@@ -307,7 +342,20 @@ def seed(ws: Workspace) -> dict[str, str]:
 
     # testing (A): both gates approved, a task with its receipt and evidence, submitted. The verify gate needs a reviewer who
     # is not the worker, and this workspace has one person: the live phase gives it a policy (hand-off) and then a verdict.
-    k = keys["verdict"] = key_of(ws.agent("new", "Export billing CSV", "--type", "feature", "--priority", "high", "--label", "billing,export", "--size", "m"))
+    k = keys["verdict"] = key_of(
+        ws.agent(
+            "new",
+            "Export billing CSV",
+            "--type",
+            "feature",
+            "--priority",
+            "high",
+            "--label",
+            "billing,export",
+            "--size",
+            "m",
+        )
+    )
     ws.agent("ac", "add", "CSV has one row per invoice", "--ref", k)
     ready_requirements(ws, k, "Finance can download the month's invoices as one CSV file.")
     ws.human("approve", k, "requirements")
@@ -322,7 +370,9 @@ def seed(ws: Workspace) -> dict[str, str]:
     ws.agent("submit")
 
     # testing (B): submitted, waiting for the person's verdict
-    k = keys["testing"] = key_of(ws.agent("new", "Retry failed webhooks", "--type", "bug", "--priority", "urgent", "--label", "webhooks"))
+    k = keys["testing"] = key_of(
+        ws.agent("new", "Retry failed webhooks", "--type", "bug", "--priority", "urgent", "--label", "webhooks")
+    )
     ws.agent("ac", "add", "A failed delivery is retried three times", "--ref", k)
     ready_requirements(ws, k, "Webhook deliveries that fail are retried with backoff.")
     ws.human("approve", k, "requirements")
@@ -337,7 +387,9 @@ def seed(ws: Workspace) -> dict[str, str]:
     ws.agent("submit")
 
     # in progress: claimed, one task done, one open, a blocking question to the person
-    k = keys["in_progress"] = key_of(ws.agent("new", "Dark mode for the settings page", "--type", "feature", "--priority", "medium", "--label", "ui"))
+    k = keys["in_progress"] = key_of(
+        ws.agent("new", "Dark mode for the settings page", "--type", "feature", "--priority", "medium", "--label", "ui")
+    )
     ws.agent("ac", "add", "The page follows the system theme", "--ref", k)
     ws.agent("ac", "add", "The choice is remembered", "--ref", k)
     ready_requirements(ws, k, "The settings page supports a dark theme.")
@@ -350,11 +402,24 @@ def seed(ws: Workspace) -> dict[str, str]:
     ws.agent("claim", k)
     ws.agent("task", "start", "T1")
     ws.agent("task", "done", "T1", "--run", "--artifact", str(evidence), "--ac", "AC1")
-    ws.unattended("ask", "Should the dark theme also apply to the printed invoice?", "--ref", k, "--options", "yes,no", "--rec", "no", "--why", "It changes the print stylesheet.")
+    ws.unattended(
+        "ask",
+        "Should the dark theme also apply to the printed invoice?",
+        "--ref",
+        k,
+        "--options",
+        "yes,no",
+        "--rec",
+        "no",
+        "--why",
+        "It changes the print stylesheet.",
+    )
     keys["question"] = k
 
     # open, requirements complete: the requirements gate waits for the person (Today: needs you)
-    k = keys["gate"] = key_of(ws.agent("new", "Audit log for member changes", "--type", "feature", "--priority", "medium"))
+    k = keys["gate"] = key_of(
+        ws.agent("new", "Audit log for member changes", "--type", "feature", "--priority", "medium")
+    )
     ws.agent("ac", "add", "Every member change is listed with who and when", "--ref", k)
     ready_requirements(ws, k, "Owners can see who changed which member.")
 
@@ -365,7 +430,9 @@ def seed(ws: Workspace) -> dict[str, str]:
 
     # open, a question answered by the person
     k = keys["answered"] = key_of(ws.agent("new", "Cache the board query", "--type", "chore", "--priority", "low"))
-    ws.unattended("ask", "Which cache backend should the board use?", "--ref", k, "--options", "memory,redis", "--rec", "memory")
+    ws.unattended(
+        "ask", "Which cache backend should the board use?", "--ref", k, "--options", "memory,redis", "--rec", "memory"
+    )
     ws.human("answer", "Q1", "--option", "memory", "--ref", k)
 
     # open, plain (a ticket to move to backlog on the real host)
@@ -375,3 +442,52 @@ def seed(ws: Workspace) -> dict[str, str]:
     k = keys["closed"] = key_of(ws.agent("new", "Support CSV with semicolons", "--type", "feature"))
     ws.human("close", k, "--resolution", "wont_do", "--message", "Finance uses the comma form.")
     return keys
+
+
+# -- a demo for a person: `python tests/realhost_kit.py up|open|down [BASE]` --------------------------------------------
+
+
+def _demo(argv: list[str]) -> int:
+    command = argv[0] if argv else "up"
+    base = Path(argv[1]) if len(argv) > 1 else Path.home() / "orch-rh-demo"
+    ws = Workspace(base)
+    pidfile = base / "host.pid"
+    if command == "up":
+        if base.exists():
+            print(f"{base} exists: run `down` and remove it first", file=sys.stderr)
+            return 1
+        keys = ws.bring_up(seed)
+        pidfile.write_text(str(ws.host.pid))
+        (base / "keys.json").write_text(json.dumps(keys, indent=1))
+        print(f"host pid {ws.host.pid}, workspace {ws.ws_id}, tickets {keys}")
+        print(f"state {ws.state} (ORCH_STATE_DIR), passphrase '{PASSPHRASE}'")
+        print(f"next: {sys.executable} {__file__} open {base}")
+        return 0
+    if command == "open":
+        env = ws.env()
+        env["PYTHONPATH"] = str(ADDON / "server" / "src")
+        run = Pty([sys.executable, "-m", "orch_dashboard", "open", "--print-url"], env, ws.root, [], 40).run()
+        print(run.output)
+        return run.code or 0
+    if command == "down":
+        if pidfile.exists():
+            pid = int(pidfile.read_text())
+            try:
+                cmd = subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True).stdout
+                if "orch" in cmd and "host" in cmd:
+                    os.kill(pid, signal.SIGTERM)
+                    print(f"stopped host {pid}")
+            except ProcessLookupError:
+                pass
+        subprocess.run(
+            [sys.executable, "-m", "orch_dashboard", "stop"],
+            env={**ws.env(), "PYTHONPATH": str(ADDON / "server" / "src")},
+            capture_output=True,
+        )
+        return 0
+    print("usage: realhost_kit.py up|open|down [BASE]", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(_demo(sys.argv[1:]))

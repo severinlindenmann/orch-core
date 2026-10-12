@@ -26,7 +26,13 @@ def adapt(raw: dict) -> dict:
         "grants": [g.model_dump(mode="json") for g in adapters.settings.grants(raw["grant.list"], True)],
         "members": [m.model_dump(mode="json") for m in adapters.members(raw["member.list"])],
         "today": adapters.today(
-            needs, raw["ticket.query"]["rows"], raw["whoami"]["workspace"], raw["ticket.query"].get("as_of") or "",
-            who, role, [], [],
+            needs,
+            raw["ticket.query"]["rows"],
+            raw["whoami"]["workspace"],
+            raw["ticket.query"].get("as_of") or "",
+            who,
+            role,
+            [],
+            [],
         ),
     }

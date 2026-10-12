@@ -98,6 +98,43 @@ def click_start(script, monkeypatch):
     return script.start
 
 
+class HostCheck:
+    """The host's own record of a click request, as the server reads it with `human.get` through its own link, and
+    what `adapters.handoff.request` was asked to verify (the hand-off's gate). The faked signer's request ids do not
+    exist on the stub host, so the record is scripted; the real-host tests read the real one."""
+
+    def __init__(self):
+        self.reads, self.checks, self.cancelled, self.pending = [], [], [], {}
+        self.mismatch = False
+
+    def human(self, ws, op, args):
+        if op == "human.get":
+            self.reads.append(args)
+            return {"op": "x"}
+        if op == "human.cancel":
+            self.cancelled.append(args["request_id"])
+            return {"state": "cancelled"}
+        if op == "human.pending":
+            return {"requests": [{"id": args["request_id"], "state": self.pending.get(args["request_id"], "bound")}]}
+        raise AssertionError(op)
+
+    def request(self, prepared, ws, **kw):
+        self.checks.append(kw)
+        if self.mismatch:
+            from orch_dashboard.errors import fail
+
+            raise fail("internal", "x")
+        return {}
+
+
+@pytest.fixture(autouse=True)
+def host_check(client, monkeypatch):
+    check = HostCheck()
+    monkeypatch.setattr(client.app.state, "human", check.human)
+    monkeypatch.setattr("orch_dashboard.click.verify", check.request)
+    return check
+
+
 def hdr(token, write=True):
     return {"Authorization": f"Bearer {token}", **({"Origin": ORIGIN} if write else {})}
 
@@ -305,8 +342,17 @@ def test_every_refusal_keeps_its_code_reason_and_wait(client, token, stub, scrip
     got = res.json()["error"]
     assert got["code"] == error.code and got.get("reason") == error.reason
     assert got.get("retry_after_ms") == error.retry_after_ms
-    # A refusal never cancels: the request stays this session's, to try again or to cancel itself.
-    assert client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token)).status_code == 200
+    # A refusal never cancels: the request stays this session's, to try again or to cancel itself. (One that can
+    # never be signed again, because it ended, is forgotten and frees its quota slot.)
+    ended = (error.reason or error.code) in {
+        "expired",
+        "not_prepared_here",
+        "custody_changed",
+        "human.request_expired",
+        "human.request_state",
+    }
+    seen = client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token)).status_code
+    assert seen == (404 if ended else 200)
     assert [c for c in script.clients[0].calls if c[0] == "cancel"] == []
 
 
@@ -571,3 +617,167 @@ def test_a_failed_prepare_gives_its_slot_back(client, token, stub, script):
         assert client.post(url(stub, "prepare"), json=comment(3000 + n), headers=hdr(token)).status_code == 409
     script.refuse.clear()
     assert client.post(url(stub, "prepare"), json=comment(3100), headers=hdr(token)).status_code == 200
+
+
+# -- Opus review round (M1, M2, L3, L4, L5) ------------------------------------------------------------------------
+
+
+class Alive:
+    def poll(self):
+        return None
+
+
+def test_m1_a_lost_channel_during_sign_is_an_unknown_outcome_not_a_gone_helper(client, token, stub, script, host_check):
+    prepare(client, token, stub)
+
+    def timeout(op, args):
+        if op == "sign":
+            raise TimeoutError
+        return script.handler(op, args)
+
+    script.clients[0].handler = timeout
+    script.clients[0].proc = Alive()
+    res = client.post(url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH}, headers=hdr(token))
+    err = res.json()["error"]
+    assert (err["code"], err["reason"]) == ("human.click_refused", "uncertain")
+    assert "terminal" not in err["message"].lower() and "gone" not in err["message"].lower()
+    assert not script.clients[0].closed  # a live signer is not killed while a submit may be finishing
+    # The request and its slot stay: it settles at the host, and the server reports where it stands (our own link).
+    host_check.pending[REQ] = "bound"
+    assert client.post(url(stub, "state"), json={"request_id": REQ}, headers=hdr(token)).json()["state"] == "bound"
+    host_check.pending[REQ] = "submitted"
+    assert client.post(url(stub, "state"), json={"request_id": REQ}, headers=hdr(token)).json()["state"] == "submitted"
+    assert (
+        client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token)).status_code == 404
+    )  # settled: forgotten
+
+
+def test_m1_a_signer_that_really_exited_is_dropped_and_restarted(client, token, stub, script, gateway):
+    clock = [100.0]
+    gateway.click.clock = lambda: clock[0]
+    prepare(client, token, stub)
+
+    script.clients[0].proc = Alive()  # a broken pipe is a lost channel whatever the process says
+
+    def broken(op, args):
+        raise BrokenPipeError
+
+    script.clients[0].handler = broken
+    res = client.post(url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH}, headers=hdr(token))
+    assert res.json()["error"]["reason"] == "uncertain"  # still never "sign in the terminal" for a sign
+    assert script.clients[0].closed
+    clock[0] += 5
+    assert prepare(client, token, stub, approve(7)).status_code == 200 and len(script.started) == 2
+
+
+def test_m2_the_view_is_checked_against_the_hosts_own_record(client, token, stub, script, host_check):
+    prepare(client, token, stub)
+    res = client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
+    assert res.status_code == 200
+    assert host_check.reads == [{"request_id": REQ}]
+    kw = host_check.checks[0]
+    assert kw["expect_op"] == "approve" and kw["expect_key"] == "DEMO-0001" and kw["expect_events"] is None
+    # A settings change carries the exact event it must prepare.
+    from orch_dashboard.handoff import SettingsSet
+
+    body = {"action": "settings_set", "grant_hours": 12, "idem": idem(5)}
+    assert SettingsSet(**body)
+    script.view = {"view": {**script.view["view"], "op": "settings.set"}, "view_digest": HASH}
+
+
+def test_m2_a_host_that_prepared_something_else_is_refused_cancelled_and_never_shown(
+    client, token, stub, script, host_check
+):
+    prepare(client, token, stub)
+    host_check.mismatch = True
+    res = client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
+    assert res.status_code == 409 and res.json()["error"]["reason"] == "check_failed"
+    assert [c for c in script.clients[0].calls if c[0] == "view"] == []  # the signer's View was never asked for
+    assert [c for c in script.clients[0].calls if c[0] == "cancel"]  # cancelled, fail closed
+    assert client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token)).status_code == 404
+
+
+def test_l3_a_view_without_the_verbatim_risk_line_is_not_shown(client, token, stub, script):
+    prepare(client, token, stub)
+    script.view = {"view": {**script.view["view"], "risk": "Convenience signing is fine."}, "view_digest": HASH}
+    res = client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
+    assert res.status_code == 409 and res.json()["error"]["reason"] == "check_failed"
+
+
+def test_the_risk_constant_is_core_s(script):
+    from orch.click.protocol import RISK
+
+    from orch_dashboard import click
+
+    assert click.RISK == RISK
+
+
+def test_l4_a_slow_sign_does_not_block_the_workspace_list(client, token, stub, script):
+    prepare(client, token, stub)
+    assert client.get("/api/workspaces", headers=hdr(token, False)).json()[0]["click"]  # fills the last-known answer
+    gate, entered = threading.Event(), threading.Event()
+
+    def slow(op, args):
+        if op == "sign":
+            entered.set()
+            gate.wait(10)
+        return script.handler(op, args)
+
+    script.clients[0].handler = slow
+    out = []
+    t = threading.Thread(
+        target=lambda: out.append(
+            client.post(url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH}, headers=hdr(token))
+        )
+    )
+    t.start()
+    assert entered.wait(5)
+    t0 = time.monotonic()
+    listing = client.get("/api/workspaces", headers=hdr(token, False))
+    card = client.get(url(stub, "status"), headers=hdr(token, False))
+    assert listing.status_code == 200 and card.status_code == 200 and time.monotonic() - t0 < 3
+    assert listing.json()[0]["click"]["custody"] == "convenience"  # the last known answer
+    gate.set()
+    t.join(10)
+    assert out and out[0].status_code == 200
+
+
+def test_l5_after_a_restart_the_orphaned_requests_are_cancelled_and_free_their_slots(
+    client, token, stub, script, gateway, host_check
+):
+    clock = [100.0]
+    gateway.click.clock = lambda: clock[0]
+    for n in range(8):
+        assert client.post(url(stub, "prepare"), json=comment(4000 + n), headers=hdr(token)).status_code == 200
+    assert client.post(url(stub, "prepare"), json=comment(4100), headers=hdr(token)).status_code == 503  # the quota
+    first = script.clients[0]
+
+    class Dead:
+        def poll(self):
+            return 1
+
+    first.proc = Dead()
+    clock[0] += 5
+    script.refuse["view"] = ClickError("human.click_refused", "unknown", reason="not_prepared_here")
+    res = client.post(url(stub, "view"), json={"request_id": f"hr_{1:026d}"}, headers=hdr(token))
+    assert res.json()["error"]["reason"] == "not_prepared_here"
+    assert sorted(host_check.cancelled) == [f"hr_{n:026d}" for n in range(1, 9)]  # cancelled at the host, by us
+    script.refuse.clear()
+    assert client.post(url(stub, "prepare"), json=comment(4101), headers=hdr(token)).status_code == 200  # slots free
+
+
+def test_l5_cancel_of_a_request_the_signer_forgot_still_frees_it(client, token, stub, script, host_check):
+    prepare(client, token, stub)
+    script.refuse["cancel"] = ClickError("human.click_refused", "unknown", reason="not_prepared_here")
+    res = client.post(url(stub, "cancel"), json={"request_id": REQ}, headers=hdr(token))
+    assert res.status_code == 409
+    assert REQ in host_check.cancelled  # cancelled through our own link
+    assert client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token)).status_code == 404
+
+
+def test_info_attested_by_is_a_plain_word_or_unknown():
+    from orch_dashboard.adapters.tickets import _attested
+
+    assert [_attested(v) for v in ("agent", "person", "Agent X", "a" * 40, 7, None, "")] == ["agent", "person"] + [
+        "unknown"
+    ] * 5

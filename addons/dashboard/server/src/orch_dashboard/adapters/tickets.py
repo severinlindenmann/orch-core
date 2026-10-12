@@ -288,6 +288,11 @@ def _verify(v) -> dict | None:
     return {"cmd": cmd} if isinstance(cmd, str) and cmd else None
 
 
+def _attested(value) -> str:
+    """Who vouches for a receipt: a plain lowercase word the host sent, else "unknown" (never free text)."""
+    return value if isinstance(value, str) and re.fullmatch(r"[a-z]{1,16}", value) else "unknown"
+
+
 def _task(t: dict, host: dict | None, ext: bool) -> dict:
     """A task as the UI draws it. "doing" is `leased_by` (v1.4 tasks have no started state)."""
     state = TASK_STATE.get(t["state"], "todo")
@@ -310,7 +315,7 @@ def _task(t: dict, host: dict | None, ext: bool) -> dict:
             **({"commit": receipt["commit"]} if receipt.get("commit") else {}),
             # H3b2: a client receipt is labelled; shown as the host stores it, never as host-verified. A receipt
             # the host did not label (older than H3b2) says so: "unknown", not "verified".
-            "attested_by": receipt.get("attested_by") or "unknown",
+            "attested_by": _attested(receipt.get("attested_by")),
         }
         if receipt
         else None,

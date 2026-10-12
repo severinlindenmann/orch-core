@@ -47,7 +47,9 @@ class Signer:
     def __init__(self, state: Path, start: Callable | None = None, clock: Callable[[], float] = time.monotonic):
         self.state = Path(state)
         self._start, self.clock = start, clock
-        self.lock = threading.RLock()
+        self.lock = threading.RLock()  # the lifecycle (start, restart, stop): short
+        self.chan = threading.Lock()  # the channel: one request at a time, held through a slow sign
+        self._last: dict[str, dict] = {}
         self.client = None
         self.core: str | None = None
         self.last_spawn = -1e9
@@ -124,32 +126,49 @@ class Signer:
             self._drop()
 
     # -- calls -----------------------------------------------------------------------------------------------------
-    def call(self, op: str, args: dict) -> dict:
-        """One request. A refusal of the signer becomes a `HostError` with its code, reason and wait; a lost
-        channel drops the child (the next call starts a new one) and says so."""
+    def call(self, op: str, args: dict, lost: "HostError | None" = None) -> dict:
+        """One request. A refusal of the signer becomes a `HostError` with its code, reason and wait.
+
+        The channel carries one request at a time (`chan`); `lock` only guards the lifecycle, so a slow `sign` never
+        blocks `status` or the workspace list. A lost channel drops the child **only if it actually exited**: a timeout
+        leaves a live signer alone (it may be finishing a submit, and killing it would lose its retained events and
+        idem). `lost` is what the caller says for a lost answer (`sign`: the outcome is unknown, never "gone")."""
         from orch.click.protocol import ClickError
 
-        with self.lock:
-            client = self._ensure()
+        with self.chan:
+            with self.lock:
+                client = self._ensure()
             try:
-                return client.call(op, args, timeout=TIMEOUT[op])
+                result = client.call(op, args, timeout=TIMEOUT[op])
             except ClickError as exc:
                 raise refusal(exc) from None
-            except Exception:  # noqa: BLE001 - channel loss, a frame error, a timeout: the signer is not trusted on
-                self._drop()
-                raise unavailable(
+            except Exception as exc:  # noqa: BLE001 - channel loss, a frame error, a timeout
+                with self.lock:
+                    proc = getattr(client, "proc", None)
+                    exited = proc is None or proc.poll() is not None or not isinstance(exc, TimeoutError)
+                    if exited and self.client is client:
+                        self._drop()
+                raise lost or unavailable(
                     "The signing helper stopped. Open sign requests are gone; sign in the terminal."
                 ) from None
+        return result
 
     def status(self) -> dict[str, dict]:
-        """Per workspace: custody, enabled, available, problem. Empty when no signer can run (never raises)."""
+        """Per workspace: custody, enabled, available, problem. Empty when no signer can run (never raises). While a
+        request is in flight the last answer is returned instead of waiting for it."""
         if self.off:
             return {}
+        if not self.chan.acquire(blocking=False):
+            return self._last
+        self.chan.release()
         try:
             got = self.call("status", {})
         except HostError:
             return {}
-        return {w["workspace_id"]: w for w in got.get("workspaces", []) if isinstance(w, dict) and "workspace_id" in w}
+        self._last = {
+            w["workspace_id"]: w for w in got.get("workspaces", []) if isinstance(w, dict) and "workspace_id" in w
+        }
+        return self._last
 
 
 def refusal(exc) -> HostError:
@@ -161,3 +180,16 @@ def refusal(exc) -> HostError:
     if exc.retry_after_ms is not None:
         error["retry_after_ms"] = int(exc.retry_after_ms)
     return HostError(error, exit=3)
+
+
+#: The outcome of a `sign` whose answer was lost is unknown, not "the helper is gone": the person must not sign again.
+def lost_sign() -> HostError:
+    return HostError(
+        {
+            "code": "human.click_refused",
+            "reason": "uncertain",
+            "message": "The signing helper did not answer. The signature may or may not have reached the host.",
+            "retryable": False,
+        },
+        exit=3,
+    )

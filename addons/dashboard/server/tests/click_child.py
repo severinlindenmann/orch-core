@@ -4,18 +4,33 @@ macOS login keychain. That function is the documented test seam (core: "Tests re
 differs, and the keychain is never opened.
 Usage: `python -I click_child.py signer --fd N`, `... cli ARGS` or `... dashboard serve`."""
 
+import os
 import sys
-
-from orch.custody import convenience
-
-
-def _file_store(state_dir):
-    return convenience.FileStore(convenience.person_root(state_dir))
+from pathlib import Path
 
 
-convenience.open_store = _file_store
+def _refuse_unless_disposable() -> None:
+    """The file store must never write under the person's real state: an explicit ORCH_STATE_DIR with the kit's
+    `.orch-dev` marker, not under ~/.config/orch."""
+    state = os.environ.get("ORCH_STATE_DIR", "")
+    real = Path.home() / ".config" / "orch"
+    path = Path(state).resolve() if state else None
+    if not path or path == real or real in path.parents or not (path / ".orch-dev").exists():
+        sys.stderr.write("click_child.py: needs an explicit disposable ORCH_STATE_DIR with a .orch-dev marker\n")
+        raise SystemExit(2)
+
+
+def _use_file_store() -> None:
+    from orch.custody import convenience
+
+    def file_store(state_dir):
+        return convenience.FileStore(convenience.person_root(state_dir))
+
+    convenience.open_store = file_store
+
 
 if __name__ == "__main__":
+    _refuse_unless_disposable()
     mode, rest = sys.argv[1], sys.argv[2:]
     if mode == "dashboard":
         # The dashboard server itself, with ONE seam: the signer child it starts is this launcher's `signer` mode (file
@@ -26,6 +41,9 @@ if __name__ == "__main__":
         from orch.click import spawn
         from orch.click.client import ClickClient
 
+        # Test-only. The dashboard server process loads NO custody here (only the signer child it spawns, running this
+        # same file in `signer` mode, swaps the store); the invariant "no custody in the HTTP process" is still
+        # covered by the real-host pytest (tests/test_realhost_click.py).
         def start(env=None):
             import os
 
@@ -47,6 +65,8 @@ if __name__ == "__main__":
 
         sys.argv = ["orch_dashboard", *rest]
         sys.exit(dashboard_main())
+    if mode in ("signer", "cli"):
+        _use_file_store()  # only the processes that need custody load it; the dashboard server does not
     if mode == "signer":
         from orch.click.server import main as signer_main
 

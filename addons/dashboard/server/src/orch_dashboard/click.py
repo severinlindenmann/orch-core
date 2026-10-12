@@ -19,6 +19,7 @@ from fastapi import Depends, FastAPI, Request
 from pydantic import BaseModel, ConfigDict, StringConstraints
 
 from . import adapters
+from .click_signer import lost_sign
 from .errors import HostError, fail
 from .gateway import Gateway
 from .handoff import (
@@ -26,12 +27,15 @@ from .handoff import (
     AddLabel,
     PrepareBody,
     RequestId,
+    expected,
     host_call,
     host_files,
     host_idem,
 )
 from .reads import workspace
 
+# The card text, verbatim (owner decision, 12 Oct 2026). A View that carries anything else is not shown.
+RISK = "Convenience signing: agents running as you, or anything that takes over this dashboard, could sign."
 ViewDigest = Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
 Word = Annotated[str, StringConstraints(min_length=1, max_length=128)]
 TTL = 660  # a request lives 10 minutes at most (the signer caps it); the session forgets it a minute later
@@ -56,7 +60,9 @@ class Clicks:
     def __init__(self, clock=time.monotonic):
         self.clock, self.lock = clock, threading.Lock()
         self.owned: dict[str, dict[str, tuple[str, float]]] = {}
-        self.ops: dict[tuple[str, str], str] = {}  # (token, request id) -> the op this server chose at prepare
+        self.ops: dict[
+            tuple[str, str], tuple[str, object, int]
+        ] = {}  # -> (op chosen at prepare, typed body, signer epoch)
         self.by_idem: OrderedDict[tuple[str, str, str], str] = OrderedDict()  # (token, ws, idem) -> binding
 
     def prune(self, token: str) -> dict[str, tuple[str, float]]:  # under the lock
@@ -67,11 +73,11 @@ class Clicks:
             self.ops.pop((token, rid), None)
         return mine
 
-    def add(self, token: str, ws: str, request_id: str, op: str = "") -> None:
+    def add(self, token: str, ws: str, request_id: str, op: str = "", body: object = None, epoch: int = 0) -> None:
         with self.lock:
             mine = self.prune(token)
             mine[request_id] = (ws, self.clock() + TTL)
-            self.ops[(token, request_id)] = op
+            self.ops[(token, request_id)] = (op, body, epoch)
             while len(mine) > REMEMBERED:
                 self.ops.pop((token, next(iter(mine))), None)
                 del mine[next(iter(mine))]
@@ -83,7 +89,20 @@ class Clicks:
 
     def op_of(self, token: str, request_id: str) -> str:
         with self.lock:
-            return self.ops.get((token, request_id), "")
+            return self.ops.get((token, request_id), ("", None, 0))[0]
+
+    def body_of(self, token: str, request_id: str):
+        with self.lock:
+            return self.ops.get((token, request_id), ("", None, 0))[1]
+
+    def stale(self, epoch: int) -> list[tuple[str, str, str]]:
+        """(token, workspace, request id) of every open click request a signer of an earlier life prepared."""
+        with self.lock:
+            return [
+                (tok, self.owned[tok][rid][0], rid)
+                for (tok, rid), (_, _, e) in self.ops.items()
+                if e != epoch and rid in self.owned.get(tok, {})
+            ]
 
     def forget(self, token: str, request_id: str) -> None:
         with self.lock:
@@ -93,6 +112,11 @@ class Clicks:
     def open(self, token: str) -> list[tuple[str, str]]:
         with self.lock:
             return [(rid, ws) for rid, (ws, _) in self.owned.get(token, {}).items()]
+
+
+def verify(prepared: dict, ws: str, **expect) -> dict:
+    """The hand-off's checks on the host's own record (`adapters.handoff.request`): op, ticket key, exact events."""
+    return adapters.handoff.request(prepared, ws, **expect)
 
 
 def refusal_check(message: str):
@@ -108,8 +132,23 @@ def register(app: FastAPI, gateway: Gateway):
     handoffs = app.state.handoffs  # the quota of open requests is one per session, shared with the hand-off
     signer = gateway.click
 
+    def human(ws: str, op: str, args: dict):
+        return app.state.human(ws, op, args)
+
+    def sweep() -> None:
+        """After a signer restart its approvals are gone: cancel the orphaned click requests at the host through OUR
+        link and give their quota slots back, so they cannot hold the session's limit for 11 minutes."""
+        for token, ws, rid in clicks.stale(signer.restarts):
+            try:
+                human(ws, "human.cancel", {"request_id": rid})
+            except Exception:  # noqa: BLE001 - already settled, or the host is away: the host expires it anyway
+                pass
+            clicks.forget(token, rid)
+            handoffs.settle(token, rid)
+
     def mine(request: Request, ws: str, request_id: str) -> None:
         gateway.enabled(ws)  # the workspace is pinned and the dashboard addon is enabled in it, like the hand-off
+        sweep()
         if not clicks.has(request.state.token, ws, request_id):
             raise fail("not_found", exit=2)  # another session's request and one that never existed look the same
 
@@ -165,7 +204,7 @@ def register(app: FastAPI, gateway: Gateway):
         if files:
             sent["files"] = files
         got = signer.call("prepare", sent)
-        clicks.add(token, ws, got["request_id"], op)
+        clicks.add(token, ws, got["request_id"], op, body, signer.restarts)
         if reserved:
             handoffs.commit(token, got["request_id"], until=handoffs.clock() + TTL)
         with clicks.lock:
@@ -177,28 +216,83 @@ def register(app: FastAPI, gateway: Gateway):
     @app.post("/api/w/{ws}/click/view")
     def view(body: Step, request: Request, ws: str = Depends(workspace)):
         mine(request, ws, body.request_id)
+        token, rid = request.state.token, body.request_id
+        # The hand-off's gate on the host's own record: it must be the action that was asked for (the ticket, the exact
+        # events and values), read through OUR link. A host that prepared anything else is refused before it is shown.
+        wanted = clicks.body_of(token, rid)
+        try:
+            prepared = human(ws, "human.get", {"request_id": rid})
+            verify(
+                prepared,
+                ws,
+                expect_op=clicks.op_of(token, rid),
+                expect_key=getattr(wanted, "key", None),
+                expect_events=expected(wanted) if wanted is not None else None,
+            )
+        except HostError as exc:
+            if exc.error.get("code") != "internal":
+                raise
+            ended(ws, token, rid)
+            raise refusal_check(
+                "The host prepared something other than what was asked for. Nothing was shown."
+            ) from None
+        got = _signer_call("view", ws, rid)
         # The signer's View and digest, unchanged: nothing is added, hidden or re-rendered here.
-        got = signer.call("view", {"workspace_id": ws, "request_id": body.request_id})
-        # Stricter than the signer alone: the View must be for the op this server chose when it prepared the request.
         shown = got.get("view") if isinstance(got, dict) else None
-        if not isinstance(shown, dict) or shown.get("op") != clicks.op_of(request.state.token, body.request_id):
-            raise refusal_check("The review is not for the action that was asked for. Cancel it.")
+        if not isinstance(shown, dict) or shown.get("op") != clicks.op_of(token, rid) or shown.get("risk") != RISK:
+            raise refusal_check("The review is not what was asked for, or lacks the risk line. Cancel it.")
         return got
+
+    def ended(ws: str, token: str, rid: str) -> None:
+        """Nothing more can be signed on this request: cancel it at the host (best effort), free its slot."""
+        for call in (
+            lambda: signer.call("cancel", {"workspace_id": ws, "request_id": rid}),
+            lambda: human(ws, "human.cancel", {"request_id": rid}),
+        ):
+            try:
+                call()
+                break
+            except Exception:  # noqa: BLE001
+                continue
+        clicks.forget(token, rid)
+        handoffs.settle(token, rid)
+
+    def _signer_call(op: str, ws: str, rid: str, **extra):
+        try:
+            return signer.call(op, {"workspace_id": ws, "request_id": rid, **extra})
+        except HostError:
+            sweep()  # a restart may have happened inside this call
+            raise
+
+    @app.post("/api/w/{ws}/click/state")
+    def state(body: Step, request: Request, ws: str = Depends(workspace)):
+        """Where a request stands at the host (read through our own link): the answer to an unknown outcome."""
+        mine(request, ws, body.request_id)
+        rows = human(ws, "human.pending", {"request_id": body.request_id})["requests"]
+        if len(rows) != 1 or rows[0].get("id") != body.request_id:
+            raise fail("not_found", exit=2)
+        if rows[0]["state"] not in ("prepared", "bound"):
+            clicks.forget(request.state.token, body.request_id)
+            handoffs.settle(request.state.token, body.request_id)
+        return {"id": body.request_id, "state": rows[0]["state"]}
 
     @app.post("/api/w/{ws}/click/sign")
     def sign(body: Sign, request: Request, ws: str = Depends(workspace)):
         mine(request, ws, body.request_id)
-        args = {"workspace_id": ws, "request_id": body.request_id, "view_digest": body.view_digest}
+        token = request.state.token
+        args = {"view_digest": body.view_digest}
         if body.word is not None:
             args["word"] = body.word  # exactly as typed
         try:
-            got = signer.call("sign", args)
+            got = signer.call("sign", {"workspace_id": ws, "request_id": body.request_id, **args}, lost=lost_sign())
         except HostError as exc:
+            sweep()
             if (exc.error.get("reason") or exc.error["code"]) in ENDED:
-                handoffs.settle(request.state.token, body.request_id)
-            raise
-        clicks.forget(request.state.token, body.request_id)
-        handoffs.settle(request.state.token, body.request_id)
+                clicks.forget(token, body.request_id)
+                handoffs.settle(token, body.request_id)
+            raise  # an uncertain outcome keeps its slot and its request: it settles at the host
+        clicks.forget(token, body.request_id)
+        handoffs.settle(token, body.request_id)
         result = got.get("result") if isinstance(got.get("result"), dict) else {}
         out = {"state": "submitted", "duplicate": bool(got.get("duplicate"))}
         if isinstance(result.get("key"), str):
@@ -210,9 +304,15 @@ def register(app: FastAPI, gateway: Gateway):
     @app.post("/api/w/{ws}/click/cancel")
     def cancel(body: Step, request: Request, ws: str = Depends(workspace)):
         mine(request, ws, body.request_id)
-        got = signer.call("cancel", {"workspace_id": ws, "request_id": body.request_id})
-        clicks.forget(request.state.token, body.request_id)
-        handoffs.settle(request.state.token, body.request_id)
+        token = request.state.token
+        try:
+            got = _signer_call("cancel", ws, body.request_id)
+        except HostError as exc:
+            if (exc.error.get("reason") or exc.error["code"]) in ENDED | {"not_found"}:
+                ended(ws, token, body.request_id)  # the signer forgot it: cancel it at the host ourselves
+            raise
+        clicks.forget(token, body.request_id)
+        handoffs.settle(token, body.request_id)
         return {"id": body.request_id, "state": got.get("state")}
 
     def cancel_session(token: str):

@@ -267,3 +267,15 @@ def test_the_signer_holds_no_inherited_descriptors_of_ours(world, click):
     pid = world.gateway.click.client.proc.pid
     out = subprocess.run(["lsof", "-p", str(pid), "-Fn", "-Ft"], capture_output=True, text=True).stdout
     assert str(PORT) not in out
+
+
+def test_a_view_is_refused_when_the_hosts_record_is_not_what_was_asked_for(world, click):
+    """The hand-off's gate on the host's own record (read with human.get through our link): another ticket is refused."""
+    got = click.prepare(approve(world, "three")).json()
+    app = world.client.app
+    token = click.headers()["Authorization"].split()[1]
+    op, body, epoch = app.state.clicks.ops[(token, got["request_id"])]
+    app.state.clicks.ops[(token, got["request_id"])] = (op, body.model_copy(update={"key": world.keys["two"]}), epoch)
+    res = click.post("view", {"request_id": got["request_id"]})
+    assert res.status_code == 409 and res.json()["error"]["reason"] == "check_failed"
+    assert click.post("view", {"request_id": got["request_id"]}).status_code == 404  # cancelled and forgotten

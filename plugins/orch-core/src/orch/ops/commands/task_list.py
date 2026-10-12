@@ -17,12 +17,12 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     # and whether the caller may run it (F1 "Receipts": an approved plan's command or its own person's), with who wrote
     # it: the client runs nothing before it knows
     cmds = {x["id"]: x["verify"]["cmd"] for x in view.fields["tasks"] if x["verify"] is not None}
-    person = verify_trust.caller_person(c)
+    person, grants = verify_trust.caller_person(c), verify_trust.grants(c)
 
     def verify_of(tid: str) -> dict[str, Any]:
         return {
             "verify": cmds[tid],
-            "verify_runnable": verify_trust.trust(view, tid, person) is not None,
+            "verify_runnable": verify_trust.trust(view, tid, person, grants) is not None,
             "verify_author": verify_trust.author(view, tid) or "unknown",
         }
 

@@ -58,6 +58,40 @@ def second_person(ws: Ws, name: str = "bob") -> str:
     return f"{gid}.{crypto.b64u(GRANT_SECRET)}"
 
 
+def grants(ws: Ws):
+    s = ws.other()
+    try:
+        return s.state.workspace.grants
+    finally:
+        s.close()
+
+
+def rewrite_verify(ws: Ws, grant: str, session: str, person: str, cmd: str, tid: str = "T1") -> None:
+    """No CLI command rewrites an existing task's verify: an agent's own ``ticket.updated`` of ``ticket.tasks`` does."""
+    actor = {"kind": "agent", "id": "x", "session": session, "for": person, "grant": grant.partition(".")[0]}
+    old, ws.store = ws.store, ws.other()
+    try:
+        uid = ws.store.uid_of("1")
+        ws.store.ticket(uid)
+        tasks = [
+            {**dict(t), "verify": {"cmd": cmd}} if t["id"] == tid else dict(t)
+            for t in thaw(ws.store.state.tickets[uid].fields["tasks"])
+        ]
+        ws.tick()
+        ws.store.append(
+            {
+                "type": "ticket.updated",
+                "actor": actor,
+                "set": {"ticket.tasks": tasks},
+                "base_rev": ws.base_rev(uid, {"ticket.tasks": None}, {}),
+            },
+            log=uid,
+        )
+    finally:
+        ws.store.close()
+        ws.store = old
+
+
 def touch(marker: Path) -> str:
     """A verify command that leaves ``marker`` behind when it runs."""
     return py(f"open({str(marker)!r}, 'w').close()")
@@ -127,8 +161,8 @@ def test_an_unattended_session_never_runs_a_command_by_its_own_person_rule(ws, t
     assert cli("new", "A ticket").code == 0 and cli("claim", "1").code == 0
     assert cli("task", "add", "do it", "--verify", touch(marker)).code == 0
     view = ws.view("1")
-    assert verify_trust.trust(view, "T1", None) is None
-    assert verify_trust.trust(view, "T1", ws.owner.ref) == "own"
+    assert verify_trust.trust(view, "T1", None, grants(ws)) is None
+    assert verify_trust.trust(view, "T1", ws.owner.ref, grants(ws)) == "own"
 
 
 def test_an_approved_plan_runs_a_foreign_command(ws, cli, tmp_path):
@@ -173,37 +207,10 @@ def test_a_command_changed_by_its_author_after_the_owner_wrote_it_is_the_authors
     grant = second_person(ws)
     bob = Cli(ws, session=BOB_SESSION, ORCH_GRANT=grant)
     assert bob("claim", "1").code == 0
-    # no CLI command rewrites a task's verify: Bob's agent edits ticket.tasks with a ticket.updated of its own
-    actor = {
-        "kind": "agent",
-        "id": "x",
-        "session": BOB_SESSION,
-        "for": ws.people["bob"].ref,
-        "grant": grant.partition(".")[0],
-    }
-    old, ws.store = ws.store, ws.other()
-    try:
-        uid = ws.store.uid_of("1")
-        ws.store.ticket(uid)
-        tasks = [
-            {**dict(t), "verify": {"cmd": touch(marker)}} for t in thaw(ws.store.state.tickets[uid].fields["tasks"])
-        ]
-        ws.tick()
-        ws.store.append(
-            {
-                "type": "ticket.updated",
-                "actor": actor,
-                "set": {"ticket.tasks": tasks},
-                "base_rev": ws.base_rev(uid, {"ticket.tasks": None}, {}),
-            },
-            log=uid,
-        )
-    finally:
-        ws.store.close()
-        ws.store = old
+    rewrite_verify(ws, grant, BOB_SESSION, ws.people["bob"].ref, touch(marker))
     view = ws.view("1")
     assert view.tasks[0].verify_by["person"] == ws.people["bob"].ref
-    assert verify_trust.trust(view, "T1", ws.owner.ref) is None
+    assert verify_trust.trust(view, "T1", ws.owner.ref, grants(ws)) is None
 
 
 def test_a_session_without_the_claim_runs_nothing(ws, cli, tmp_path):
@@ -214,3 +221,103 @@ def test_a_session_without_the_claim_runs_nothing(ws, cli, tmp_path):
     r = other.j("task", "done", "1/T1", "--run")
     assert (r.code, r.err_code) == (4, "claim.required"), r.out
     assert not marker.exists() and done_events(ws) == []
+
+
+def owner_grant(ws: Ws) -> str:
+    """A second grant of the owner; returns its ``ORCH_GRANT`` value."""
+    gid, issued = "gr_" + new_ulid(), ws.clock[0]
+    old, ws.store = ws.store, ws.other()
+    try:
+        ws.store.append(
+            ws.person_event(
+                ws.owner,
+                "workspace",
+                "grant.issued",
+                grant=gid,
+                scope="all",
+                verbs="agent",
+                issued_at=ts(issued),
+                hours=8,
+                expires_at=ts(issued + 3600 * 8),
+                secret_hash=canon.grant_secret_hash(GRANT_SECRET),
+                label="second",
+            ),
+            log="workspace",
+        )
+    finally:
+        ws.store.close()
+        ws.store = old
+    return f"{gid}.{crypto.b64u(GRANT_SECRET)}"
+
+
+def test_a_command_written_under_a_since_revoked_grant_is_foreign_even_to_the_same_person(ws, cli, tmp_path):
+    """#420 review finding 1: G1 writes, G1 is revoked (say it leaked), G2 of the same person must not run it."""
+    marker = tmp_path / "M"
+    assert cli("new", "A").code == 0 and cli("claim", "1").code == 0
+    assert cli("task", "add", "x", "--verify", touch(marker)).code == 0  # written under G1
+    assert cli("release").code == 0
+    g2 = owner_grant(ws)
+    old, ws.store = ws.store, ws.other()
+    try:
+        ws.store.append(ws.person_event(ws.owner, "workspace", "grant.revoked", grant=ws.grant_id), log="workspace")
+    finally:
+        ws.store.close()
+        ws.store = old
+    a2 = Cli(ws, session=OTHER, ORCH_GRANT=g2)
+    assert a2("claim", "1").code == 0 and a2("task", "start", "T1").code == 0
+    r = a2.j("task", "done", "T1", "--run")
+    assert (r.code, r.err_code) == (3, "verify.unapproved"), r.out
+    assert "revoked" in r.doc["error"]["message"]
+    assert a2.j("task", "list").data["tasks"][0]["verify_runnable"] is False
+    assert not marker.exists() and done_events(ws) == []
+
+
+def test_an_expired_authors_grant_stays_trusted(ws, tmp_path):
+    from orch.ops import verify_trust
+
+    cli = Cli(ws)
+    assert cli("new", "A").code == 0 and cli("claim", "1").code == 0
+    assert cli("task", "add", "x", "--verify", "true").code == 0
+    ws.tick(9 * 3600)  # the bootstrap grant (8 h) has expired
+    assert verify_trust.trust(ws.view("1"), "T1", ws.owner.ref, grants(ws)) == "own"
+
+
+def test_changing_an_existing_tasks_verify_after_the_approval_does_not_run(ws, cli, tmp_path):
+    first, changed = tmp_path / "M1", tmp_path / "M2"
+    bob = bob_writes(ws, first, filled=True)
+    ws.human("approve", ws.uid("1"), "requirements")
+    ws.human("approve", ws.uid("1"), "plan")
+    assert bob("claim", "1").code == 0
+    rewrite_verify(ws, bob.env_kw["ORCH_GRANT"], BOB_SESSION, ws.people["bob"].ref, touch(changed))
+    assert bob("release").code == 0
+    assert cli("claim", "1").code == 0 and cli("task", "start", "T1").code == 0
+    r = cli.j("task", "done", "T1", "--run")
+    assert (r.code, r.err_code) == (3, "verify.unapproved"), r.out
+    assert "approval is outdated" in r.doc["error"]["message"]
+    assert not first.exists() and not changed.exists() and done_events(ws) == []
+
+
+def test_an_unattended_caller_never_runs_an_unapproved_command(ws, cli, tmp_path):
+    """End to end: the same session without a grant (no person) under the claim, the command its person wrote."""
+    marker = tmp_path / "M"
+    assert cli("new", "A").code == 0 and cli("claim", "1").code == 0
+    assert cli("task", "add", "x", "--verify", touch(marker)).code == 0
+    assert cli("task", "start", "T1").code == 0
+    r = Cli(ws, grant=False).j("task", "done", "T1", "--run")
+    assert (r.code, r.err_code) == (3, "grant.required"), r.out  # the CLI stops it first; the host case: test_*_host
+    assert not marker.exists() and done_events(ws) == []
+
+
+def test_an_unchanged_verify_without_a_recorded_author_stays_authorless():
+    """Fail closed: an edit that leaves such a command as it is never makes its editor the author."""
+    from types import SimpleNamespace
+
+    from orch.model.edits import _verify_authors
+
+    tasks = [{"id": "T1", "text": "x", "verify": {"cmd": "evil"}, "proves": []}]
+    t = SimpleNamespace(fields={"tasks": tasks}, verify_by={})
+    agent = {"kind": "agent", "id": "a", "session": "s", "for": "p_me", "grant": "gr_1"}
+    _verify_authors(t, [dict(x) for x in tasks], agent)
+    assert t.verify_by == {}
+    _verify_authors(t, [{**tasks[0], "verify": {"cmd": "mine"}}], agent)
+    assert t.verify_by["T1"]["person"] == "p_me" and t.verify_by["T1"]["grant"] == "gr_1"

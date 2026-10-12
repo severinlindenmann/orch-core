@@ -63,7 +63,7 @@ def _client_receipt(
     if rc["cmd"] != verify["cmd"]:
         raise OrchError("invalid.input", "receipt.cmd must equal the task's verify.cmd")
     # F1 "Receipts": only an approved plan's command or the caller's own is run, so only such a receipt is taken
-    verify_trust.require(view, tid, verify_trust.caller_person(c))
+    verify_trust.require(view, tid, verify_trust.caller_person(c), verify_trust.grants(c))
     if rc["exit"] != 0:
         raise OrchError("verify.failed", "the receipt's exit code was not 0, nothing was appended")
     repo, commit = rc.get("repo"), rc.get("commit")
@@ -134,7 +134,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         if task["verify"] is None:
             raise OrchError("invalid.input", f"{tid} has no verify command; add one with task add --verify")
         # F1 "Receipts": never run a command no person approved in the plan and the caller's person did not write
-        verify_trust.require(view, tid, verify_trust.caller_person(c))
+        verify_trust.require(view, tid, verify_trust.caller_person(c), verify_trust.grants(c))
         if ctx.dry_run:
             notes.append(f"dry-run: would run: {views.short(task['verify']['cmd'], 100)}")
         else:  # the command runs before the lock is taken: it may take minutes
@@ -146,7 +146,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         view = c.resolve(ref or None)
         c.require_claim(view)
         if receipt is not None:  # the trust may have moved since it was checked (a plan change raised the generation)
-            verify_trust.require(view, tid, verify_trust.caller_person(c))
+            verify_trust.require(view, tid, verify_trust.caller_person(c), verify_trust.grants(c))
         p = c.projection(view)
         extras = []
         log_name = None

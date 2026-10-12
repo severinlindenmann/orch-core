@@ -1902,21 +1902,24 @@ Where this chapter was silent, `orch.ops` does the following. Each is a rule the
   **Before any `EMITS_V2` exists** (a rule of §10.1 too): the table version a grant is judged by must be readable from the
   log (a field on `grant.issued`, or the workspace format version at the time it was issued), never from the running
   release; replay that picked `CURRENT` would change the meaning of old logs.
-- **Receipts.** A receipt means "this command exited 0 in the agent's environment, in this working copy, at this commit": it
-  is **attested by the agent's environment**, not independent verification (the agent controls `PATH`, may pick among the
-  linked repositories by its working directory, and a ticket with no linked repository gives `repo: null`, which counts as
-  evidence; `verify.cmd = "sh -c '...'"` runs a shell, orch adds none). Any agent holding the claim can write `verify` (`task add
-  --verify`, a batch item) and no person signs it, so `task done --run` **runs a task's `verify.cmd` only if** (a) the
-  plan gate applies and is approved at its current generation (its hash binds `tasks[].verify` and every `ticket.tasks`
-  change raises the generation, so an approval never covers a command changed after it), or (b) the caller's own person
-  made the last change to that task's `verify` (the person of the caller's grant; an unattended agent has none and never
-  qualifies). **Without an applicable plan gate only the caller's own command runs.** Otherwise nothing runs and the
-  answer is `verify.unapproved` (exit 3), naming who wrote the command: a person approves the plan, or the caller adds
-  its own verify command. The model keeps the author of each task's last `verify` change from the log. In P2 the client
-  still runs it and sends the receipt; the host checks `cmd` against the task's `verify.cmd` and the same rule again. H3b2 (client receipts) adds `attested_by: "agent"`; the current `task.done` receipt
-  has no such field. This proves an authenticated agent claimed a result,
-  not that the command ran, its exit code, output or commit. The host never executes workspace-controlled code. `task done --run` runs the ticket's `verify.cmd` split into arguments, in
-  its own process group with a hard timeout (a process that leaves the group with `setsid` survives: without a separate
+- **Receipts.** A receipt means "this command exited 0 in the agent's environment, in this working copy, at this
+  commit": it is **attested by the agent's environment**, not independent verification (the agent controls `PATH`, may
+  pick among the linked repositories by its working directory, and a ticket with no linked repository gives `repo:
+  null`, which counts as evidence; `verify.cmd = "sh -c '...'"` runs a shell, orch adds none). Any agent holding the
+  claim can write `verify` (`task add --verify`, a batch item) and no person signs it, so `task done --run` **runs a
+  task's `verify.cmd` only if** (a) the plan gate applies and is approved at its current generation (its hash binds
+  `tasks[].verify` and every `ticket.tasks` change raises the generation, so an approval never covers a command changed
+  after it), or (b) the caller's own person made the last change to that task's `verify` (the person of the caller's
+  grant; an unattended agent has none and never qualifies; an agent author whose grant is now revoked counts as foreign,
+  an expired one does not). **Without an applicable plan gate only the caller's own command runs.** Otherwise nothing
+  runs and the answer is `verify.unapproved` (exit 3), naming who wrote the command: a person approves the plan, or the
+  caller adds its own verify command. The model keeps the author (person and grant) of each task's last `verify` change
+  from the log. The approval binds the **command string only**, not the repository content it runs: an approved `make
+  test` executes whatever the working copy holds. In P2 the client still runs it and sends the receipt; the host checks
+  `cmd` against the task's `verify.cmd` and the same rule again. H3b2 (client receipts) adds `attested_by: "agent"`;
+  the current `task.done` receipt has no such field. This proves an authenticated agent claimed a result, not that the
+  command ran, its exit code, output or commit. The host never executes workspace-controlled code. `task done --run`
+  runs the ticket's `verify.cmd` split into arguments, in its own process group with a hard timeout (a process that leaves the group with `setsid` survives: without a separate
   user or job object nothing stops it), stdin closed, 1 MiB of output kept and the rest dropped, an **allow-list**
   environment (`PATH`, `HOME`, `LANG`, `LC_*`, `TMPDIR`, `TERM`, plus the names the ticket's skills declare, D56, none yet),
   so no grant, token, `ORCH_*` or `GIT_*` variable reaches it. git is asked with a scrubbed environment and

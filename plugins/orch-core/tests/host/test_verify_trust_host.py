@@ -193,3 +193,51 @@ def test_the_host_refuses_a_receipt_after_the_plan_moved(lab, tmp_path):
         assert done_events(lab) == []
     finally:
         served.close()
+
+
+def test_an_older_host_without_verify_runnable_runs_nothing(lab, tmp_path, monkeypatch):
+    from orch import hostclient
+
+    marker = tmp_path / "M"
+    served = hosted(lab)
+    try:
+        c = hcli(lab)
+        assert c("new", "A").code == 0 and c("claim", "1").code == 0
+        assert c("task", "add", "x", "--verify", touch(marker)).code == 0
+        assert c("task", "start", "T1").code == 0
+        orig = hostclient._request
+
+        def older(target, op, args, **kw):
+            doc = orig(target, op, args, **kw)
+            if op == "task.list":
+                for t in doc["data"]["tasks"]:
+                    t.pop("verify_runnable", None)
+                    t.pop("verify_author", None)
+            return doc
+
+        monkeypatch.setattr(hostclient, "_request", older)
+        r = c.j("task", "done", "T1", "--run")
+        assert (r.code, r.err_code) == (3, "verify.unapproved"), r.out
+        assert not marker.exists() and done_events(lab) == []
+    finally:
+        served.close()
+
+
+def test_an_unattended_caller_gets_no_receipt_taken_for_an_unapproved_command(lab, tmp_path):
+    """End to end on the host: a request without a grant (no person) under the claim's session."""
+    from tests.host.dispatch_helpers import Served
+
+    served = Served(lab)
+    try:
+        cmd = touch(tmp_path / "M")
+        c, g, key = served.client(), served.grant, "DEMO-0001"
+        ok(c.req("new", {"title": "A"}, grant=g, session=SESSION, idem=True))
+        ok(c.req("claim", {"ref": key}, grant=g, session=SESSION, idem=True))
+        ok(c.req("task.add", {"ref": key, "text": "x", "verify": cmd}, grant=g, session=SESSION, idem=True))
+        ok(c.req("task.start", {"task": f"{key}/T1"}, grant=g, session=SESSION, idem=True))
+        rows = ok(c.req("task.list", {"ref": key}, session=SESSION))["data"]["tasks"]
+        assert rows[0]["verify_runnable"] is False
+        assert err(send(c, None, key, cmd)) == "op.not_allowed"  # no person: column N writes no task.done
+        assert done_events(lab) == []
+    finally:
+        served.close()

@@ -86,21 +86,26 @@ def actor_person(a: dict[str, Any]) -> str | None:
 
 def _verify_authors(t: TCore, new_tasks: list[dict[str, Any]], actor: dict[str, Any]) -> None:
     """Who made the last change to each task's ``verify`` (F1 "Receipts"): a task whose ``verify`` this edit sets or
-    changes gets the edit's actor; an unchanged one keeps its author; a task without ``verify`` has none."""
+    changes gets the edit's actor and, for an agent, its grant; an unchanged one keeps its author (never the editor:
+    an unchanged command without a recorded author stays without one); a task without ``verify`` has none."""
     old = {x["id"]: x.get("verify") for x in t.fields["tasks"]}
     by = {
         "kind": actor["kind"],
         "id": actor["id"],
         "session": actor.get("session"),
         "person": actor_person(actor),
+        "grant": actor.get("grant") if actor["kind"] == "agent" else None,
     }
     authors: dict[str, dict[str, Any]] = {}
     for x in new_tasks:
         tid, v = x["id"], x.get("verify")
         if v is None:
             continue
-        same = tid in old and old[tid] == v and tid in t.verify_by
-        authors[tid] = t.verify_by[tid] if same else dict(by)
+        if tid in old and old[tid] == v:  # unchanged: keep its author; one without stays authorless (fails closed)
+            if tid in t.verify_by:
+                authors[tid] = t.verify_by[tid]
+            continue
+        authors[tid] = dict(by)
     t.verify_by = authors
 
 

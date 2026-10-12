@@ -467,9 +467,9 @@ def _preflight(
 
         raise OrchError(
             "verify.unapproved",
-            f"{tid}'s verify command was written by {clean(who)} and no person approved it in the plan: nothing was "
-            f"run. Approve the plan (a person: orch approve {key} plan) or add your own verify command "
-            "(orch task add TEXT --verify CMD)",
+            f"{tid}'s verify command was written by {clean(who)} and is not approved in the current plan, or the plan "
+            f"gate does not apply: nothing was run. Approve the plan (a person: orch approve {key} plan) or add your "
+            "own verify command (orch task add TEXT --verify CMD)",
         )
     dry = {"task": f"{key}/{tid}", **{k: args[k] for k in ("message",) if args.get(k)}}
     _request(target, "task.done", dry, auth=auth, dry_run=True)

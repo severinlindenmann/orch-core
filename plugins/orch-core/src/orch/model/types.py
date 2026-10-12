@@ -248,7 +248,8 @@ class TCore:
     leases: dict[str, Lease] = field(default_factory=dict)
     tasks: dict[str, TaskCore] = field(default_factory=dict)
     # task id -> who made the last change to its ``verify`` (``kind``, ``id``, ``session``, ``person``: the person an
-    # agent works for, ``None`` for an unattended one); ``task done --run`` trusts only an approved plan or its own
+    # agent works for, ``None`` for an unattended one; ``grant``: an agent's grant); ``task done --run`` trusts only an
+    # approved plan or its own
     verify_by: dict[str, dict[str, Any]] = field(default_factory=dict)
     questions: dict[str, QuestionCore] = field(default_factory=dict)
     artifacts: dict[str, ArtifactCore] = field(default_factory=dict)

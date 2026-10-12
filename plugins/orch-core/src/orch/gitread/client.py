@@ -30,7 +30,7 @@ from typing import Any
 from orch import canon
 
 from . import limits
-from .errors import Busy, RemoteMismatch, Unavailable
+from .errors import Busy, NotFound, RemoteMismatch, Unavailable
 from .fs import RepoPins
 
 __all__ = ["HostGitReader", "PinStore", "ReaderPool"]
@@ -183,6 +183,8 @@ class ReaderPool:
         message = str(err.get("message") or "the reader failed")[:300]
         if err.get("code") == RemoteMismatch.code:
             raise RemoteMismatch(message)
+        if err.get("code") == NotFound.code:
+            raise NotFound(message)
         raise Unavailable(message)
 
     def _run(self, hello: dict[str, Any], req: dict[str, Any], deadline: float | None = None) -> dict[str, Any]:
@@ -391,8 +393,11 @@ class HostGitReader:
         max_bytes: int = 262144,
         principal: str | None = None,
         wall: float | None = None,
+        ext: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         args = {"branch": branch, "default_branch": default_branch, "context": context, "max_bytes": max_bytes}
+        if ext:
+            args["ext"] = ext
         return _check_diff(self._call(path, "diff", args, principal, wall), max_bytes)
 
     def tree_check(self, path: str | os.PathLike[str], name: str, principal: str | None = None) -> dict[str, Any]:
@@ -464,6 +469,7 @@ def _check_observe(got: Any, refs: list[str]) -> dict[str, Any]:
     return got
 
 
+_BASE_SOURCES = ("local_ref", "first_parent", "host_pinned", "approved", "pushed")
 _FILE_KEYS = {"path": str, "old_path": type(None), "status": str, "add": int, "del": int, "binary": bool}
 
 
@@ -476,8 +482,9 @@ def _check_diff(got: Any, max_bytes: int) -> dict[str, Any]:
     n = _HEX[got["object_format"]]
     _sha(got.get("base_sha"), n)
     _sha(got.get("head_sha"), n)
-    if got.get("base_source") not in ("local_ref", "first_parent") or type(got.get("base_moved")) is not int:
+    if got.get("base_source") not in _BASE_SOURCES or type(got.get("base_moved")) is not int:
         raise Unavailable("the reader answered nonsense")
+    _sha(got.get("observed_base"), n, null=True)
     commits = got.get("commits")
     if not isinstance(commits, list) or len(commits) > limits.COMMITS_SHOWN or type(got.get("commits_more")) is not int:
         raise Unavailable("the reader answered nonsense")

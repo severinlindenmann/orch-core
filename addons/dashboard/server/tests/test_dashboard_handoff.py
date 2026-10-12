@@ -646,3 +646,37 @@ def test_a_section_limit_counts_bytes_not_characters(ready):
     body = {"action": "section", "key": "DEMO-0001", "section": "summary", "text": text, "idem": idem(9)}
     r = post(client, token, stub, body)
     assert r.status_code == 400
+
+
+def test_an_attempt_up_to_a_second_after_the_window_still_counts_as_crowding_it():
+    """Opus re-check R1: the host lists created_at in whole seconds (rounded down), so a request it shows as created by
+    lost.end + SLACK may come from another tab's attempt that started up to a second later; the retry must not
+    cancel it."""
+    from orch_dashboard.handoff import SLACK, Attempt, Handoffs, Lost
+
+    handoffs = Handoffs()
+    lost = Lost(1000.0, 1001.0, {"mine"})
+    handoffs.attempts.append(Attempt("tab2", "w", "log", "DEMO-0001", lost.end + SLACK + 0.7, None))
+    assert handoffs.crowded(lost, "log", "w", "DEMO-0001", "retry")
+    handoffs.attempts[0] = Attempt("tab2", "w", "log", "DEMO-0001", lost.end + SLACK + 1.0, None)
+    assert not handoffs.crowded(lost, "log", "w", "DEMO-0001", "retry")  # its request is listed after the window
+
+
+def test_attempts_in_flight_are_never_forgotten():
+    import time
+
+    from orch_dashboard.handoff import Attempt, Handoffs
+
+    handoffs = Handoffs()
+    now = time.time()
+    handoffs.attempts.append(Attempt("running", "w", "log", "DEMO-0001", now - 5000, None))
+    handoffs.attempts.extend(Attempt(f"done{i}", "w", "log", "DEMO-0001", now, now) for i in range(600))
+    handoffs.forget()
+    assert handoffs.attempts[0].id == "running" and len(handoffs.attempts) == 513
+
+
+def test_a_section_of_only_whitespace_is_refused(ready):
+    client, token, stub, rich, signing = ready
+    body = {"action": "section", "key": "DEMO-0001", "section": "summary", "text": " \n\t ", "idem": idem(11)}
+    assert post(client, token, stub, body).status_code == 400
+    assert states(signing) == {}  # nothing was prepared

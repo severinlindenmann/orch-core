@@ -173,6 +173,8 @@ MAX_SECTION_BYTES = 65536  # P1 and the host: 64 KiB of UTF-8, not characters
 
 
 def _section_bytes(text: str) -> str:
+    if not text.strip():
+        raise ValueError("a section needs some text")
     if len(text.encode()) > MAX_SECTION_BYTES:
         raise ValueError(f"a section is at most {MAX_SECTION_BYTES} bytes of UTF-8")
     return text
@@ -271,7 +273,9 @@ class Handoffs:
 
     def forget(self):  # under the lock: bounded, entries expire
         now = time.time()
-        self.attempts[:] = [a for a in self.attempts if a.end is None or a.end > now - LOST_KEPT][-512:]
+        # Attempts still in flight are never dropped (crowded() must see them); finished ones are bounded.
+        done = [a for a in self.attempts if a.end is not None and a.end > now - LOST_KEPT][-512:]
+        self.attempts[:] = [a for a in self.attempts if a.end is None or a in done]
         for slot in [k for k, v in self.unknown.items() if v.end < now - LOST_KEPT]:
             del self.unknown[slot]
         while len(self.unknown) > UNKNOWN_CAP:
@@ -290,7 +294,9 @@ class Handoffs:
                 a.id != me
                 and a.id not in lost.ids
                 and (a.ws, a.op, a.key) == (ws, op, key)
-                and a.start <= lost.end + SLACK
+                # The host stamps created_at in whole seconds (rounded down), so a request it lists as created by
+                # lost.end + SLACK may come from an attempt that started up to a second later.
+                and a.start < lost.end + SLACK + 1
                 and (a.end is None or a.end >= lost.start - SLACK)
                 for a in self.attempts
             )

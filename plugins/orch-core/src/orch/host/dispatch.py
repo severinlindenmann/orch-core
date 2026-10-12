@@ -77,6 +77,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from jsonschema import Draft202012Validator
 
+from . import reads, sessions
 from .artifacts import VALIDATOR as ARTIFACT_VALIDATOR
 from .artifacts import artifact_get
 from .auth import Redactor
@@ -86,6 +87,8 @@ from .bus import Subscription
 from .columns import OpKind
 from .errors import HostError
 from .outcomes import BUILDERS, Planned, request_idem
+from .reads import CAPS as READ_CAPS
+from .reads import READ_OPS
 from .visibility import Viewer
 from .workspace import deny_append, ok_result
 
@@ -141,7 +144,8 @@ _HOST_SCHEMAS = {
         "required": ["idem"],
         "additionalProperties": False,
     },
-    # detail (v1.5) is not here: without sub_ext/1 it is an unknown key, so invalid.input (§0.3, §0.9)
+    # detail (v1.5) is not here: without sub_ext/1 it is an unknown key, so invalid.input (§0.3, §0.9);
+    # _SUB_OPEN_EXT is the schema of a host listing sub_ext/1
     "sub.open": {
         "type": "object",
         "properties": {
@@ -159,6 +163,14 @@ _HOST_SCHEMAS = {
     },
 }
 _HOST_VALIDATORS = {op: Draft202012Validator(schema) for op, schema in _HOST_SCHEMAS.items()}
+_SUB_OPEN_EXT = {
+    **_HOST_SCHEMAS["sub.open"],
+    "properties": {**_HOST_SCHEMAS["sub.open"]["properties"], "detail": {"type": "boolean"}},
+}
+_SUB_OPEN_EXT_VALIDATOR = Draft202012Validator(_SUB_OPEN_EXT)
+#: the host lists ``sub_ext/1`` and accepts ``sub.open {detail}`` (v1.5, §0.9); a test turns it off to show §0.3's
+#: unknown-key refusal and the cap's absence from ``welcome.caps``
+SUB_EXT = True
 
 
 def served_ops() -> dict[str, int]:
@@ -166,11 +178,15 @@ def served_ops() -> dict[str, int]:
     import orch.ops as ops
 
     from .human import HUMAN_OPS
+    from .reads import READ_OPS
+    from .review import HOST_PERSON_OPS
 
     out = {op.name: 1 for op in ops.all() if op.name not in NOT_SERVED}
     out.update(HOST_OPS)
     out.update(FILE_OPS)
     out.update(HUMAN_OPS)
+    out.update(READ_OPS)
+    out.update(dict.fromkeys(HOST_PERSON_OPS, 1))
     return out
 
 
@@ -185,9 +201,15 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
     import orch.ops as ops
 
     from .human import HUMAN_OPS, PHASES
+    from .reads import PERSON_GRANT_READS, READ_OPS
+    from .review import HOST_PERSON_OPS
 
     if name in HOST_OPS or name in FILE_OPS:
         return ("read", "read")
+    if name in READ_OPS:  # H6b: session.list and grant.list are P and G only (§0.5)
+        return ("pg_read" if name in PERSON_GRANT_READS else "read", "read")
+    if name in HOST_PERSON_OPS:  # move, policy.set, settings.set: through human.* only; a plain req is human_only
+        return ("human", "write")
     if name in WAIT_OPS:
         return ("read", "wait")
     if name in HUMAN_OPS:
@@ -307,8 +329,11 @@ class ScopedRecords:
 class RegistryBackend:
     """The :class:`~orch.host.workspace.OpBackend` of every workspace socket."""
 
-    #: ``diff/1`` is listed for ``artifact.get``; ``diff`` itself is in ``welcome.ops`` once it is served
-    caps = ["ops/1", "outcome/1", "sub/1", "blob/1", "diff/1"]
+    #: ``diff/1`` is listed for ``artifact.get`` (H4a2); the H6b read caps; ``sub_ext/1`` while detail is served
+    @property
+    def caps(self) -> list[str]:
+        return ["ops/1", "outcome/1", "sub/1", "blob/1", "diff/1", *READ_CAPS, *(["sub_ext/1"] if SUB_EXT else [])]
+
     #: §0.6 step 10 is checked here, after the args (8) and the replay (9)
     state_checks = True
 
@@ -367,6 +392,7 @@ class RegistryBackend:
             grant=grant,
             grant_id=call.verified.grant.id if call.verified.grant is not None else None,
             pos=int(data["pos"]),
+            detail=bool(data.get("detail")),
         )
         return ok_result({"sub": sub.id, "cursor": bus.cursor(sub)})
 
@@ -413,12 +439,15 @@ class RegistryBackend:
         redactor = Redactor((call.frame.get("auth") or {}).get("grant"))
         try:
             call.authorize()  # the authoritative column, from the refreshed store, before anything else (F8)
+            sessions.record(call)  # H6b: the host session records session.list and grant.list read (never raises)
             store = call.service.store
             if store is not None and store.append_check is None:
                 store.append_check = deny_append  # outside a write's apply no caller event may land (§0.7)
             op = call.frame["op"]
             if op in HOST_OPS:
                 result = self._host_op(call)
+            elif op in READ_OPS:
+                result = reads.serve(call)
             elif op in FILE_OPS:
                 result = self._file_op(call)
             elif op in self.human.ops:
@@ -449,7 +478,8 @@ class RegistryBackend:
     def _host_op(self, call: Call) -> dict[str, Any]:
         op, frame = call.frame["op"], call.frame
         args = frame["args"]
-        errors = sorted(_HOST_VALIDATORS[op].iter_errors(args), key=lambda e: list(map(str, e.path)))
+        validator = _SUB_OPEN_EXT_VALIDATOR if op == "sub.open" and SUB_EXT else _HOST_VALIDATORS[op]
+        errors = sorted(validator.iter_errors(args), key=lambda e: list(map(str, e.path)))
         if errors:
             where = ".".join(map(str, errors[0].absolute_path))
             raise HostError("invalid.input", f"{op}: {where or 'args'} is not valid")
@@ -509,7 +539,7 @@ class RegistryBackend:
                 raise HostError("sub.reset", "the cursor is too old, of another scope or epoch: take a snapshot")
         else:
             pos = journal.head
-        return {"topics": sorted(topics), "tickets": sorted(tickets), "pos": pos}
+        return {"topics": sorted(topics), "tickets": sorted(tickets), "pos": pos, "detail": bool(args.get("detail"))}
 
     def whoami(self, call: Call) -> dict[str, Any]:
         grant = call.verified.grant

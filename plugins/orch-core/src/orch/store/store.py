@@ -66,7 +66,7 @@ from .index import Index
 from .lock import FileLock
 from .logs import MAX_LINE, LogInfo, first_line, info_sig, last_line, read_new_lines, stat_sig
 from .paths import check_artifact, check_state_dirs, check_uid, safe_join, target_ok
-from .pins import HostPins
+from .pins import HostPins, is_forwarded, pair
 
 __all__ = ["Appended", "BackendSigner", "HostSigner", "Report", "Store"]
 
@@ -791,7 +791,7 @@ class Store:
             self._sizes_now(), self.workspace_id, ws.genesis
         )
         if self._pins is not None and self._host is not None:
-            for dev, evidence in self._state.revocation_evidence().items():
+            for (dev, _person), evidence in self._state.revocation_evidence().items():
                 rev = evidence["revocation"]
                 self._pins.note_revocation(
                     dev, rev["o"]["reason"], rev, self._now(), evidence["device_cert"], evidence["pk_pub"]
@@ -1473,7 +1473,8 @@ class Store:
         if e.get("source") != facts["source"]:
             raise StoreError("chain.diverged", "restore source is not the held workspace checkpoint")
         signer = e["actor"]["device"]
-        if self._pins and any(r["device"] == signer for r in self._pins.revocations()):
+        signer_pair = (signer, e["actor"]["id"])  # the restore is person-signed: actor id is the signer's person
+        if self._pins and any(pair(r) == signer_pair for r in self._pins.revocations()):
             # Replay authorizes against the kept chain, which lacks a revocation from the given-up part; the host's
             # durable evidence still has it, and every receiver refuses a revoked signer (§5.10, C3).
             raise StoreError("device.invalid", f"{signer} is revoked in the host's durable revocation evidence")
@@ -1482,10 +1483,14 @@ class Store:
             # keeps pre-event authorization). Sign from an eligible replacement device, or recover by person key.
             raise StoreError("validation.restore", f"the restore revokes its own signer {signer}")
         if log == WORKSPACE:
-            supplied = {"d_" + r["revocation"]["o"]["device_id"]: r for r in e.get("revocations", [])}
+            # Completeness per (device, person) pair: another person's entry for the same device never satisfies it.
+            supplied = {
+                (r["revocation"]["o"]["device_id"], r["revocation"]["o"]["person_id"]): r
+                for r in e.get("revocations", [])
+            }
             for entry in facts["revocations"]:
                 rev = entry["revocation"]
-                got = supplied.get("d_" + rev["o"]["device_id"])
+                got = supplied.get((rev["o"]["device_id"], rev["o"]["person_id"]))
                 if got is None or (
                     got["revocation"] != rev
                     and (rev["o"]["reason"] == "compromised" or got["revocation"]["o"]["reason"] != "compromised")
@@ -1836,7 +1841,9 @@ class Store:
         if self._pins is not None:
             info = self._logs[log]
             self._pins.note_head(info.seq, info.head, ev["prev"])
-            for device, entry in new.revocation_evidence().items() if typ in ("restore", "device.revoked") else []:
+            for (device, _person), entry in (
+                new.revocation_evidence().items() if typ in ("restore", "device.revoked") else []
+            ):
                 rev = entry["revocation"]
                 self._pins.note_revocation(
                     device, rev["o"]["reason"], rev, ev["at"], entry["device_cert"], entry["pk_pub"]
@@ -2375,11 +2382,24 @@ class Store:
             "abandoned_decisions": sorted(set(decisions)),
             "source": {"n": held["o"]["n"], "hash": canon.checkpoint_hash(held["o"])} if held else None,
             "revocations": [
-                {k: r[k] for k in ("revocation", "device_cert", "pk_pub")} for r in self._pins.revocations()
+                {k: r[k] for k in ("revocation", "device_cert", "pk_pub")}
+                for r in self._pins.revocations()
+                if self._carries(r)
             ]
             if log == WORKSPACE and self._pins
             else [],
         }
+
+    def _carries(self, rec: dict[str, Any]) -> bool:
+        """Whether a restore carries this held pair: all chain evidence; forwarded evidence only for a live device
+        the workspace associates with the same person. Forwarded evidence for an unknown or tombstone-only device, or
+        one associated with another person, stays pending (§5.10): it still refuses its signer pair."""
+        if not is_forwarded(rec):
+            return True
+        if self._state is None:
+            return False
+        device, person = pair(rec)
+        return self._state.device_person(device) == person
 
     def abandon_tail(self, log: str, from_seq: int) -> int:
         """Cut ``log`` back to ``from_seq`` on disk, keeping the cut lines in ``.state/abandoned/`` (never deleted).
@@ -2410,7 +2430,9 @@ class Store:
             return
         accepted = self._state.revocation_evidence()
         for rec in self._pins.revocations():
-            entry = accepted.get(rec["device"])
+            if is_forwarded(rec):
+                continue  # forwarded evidence: enforced as signer refusal, never claimed by accepted history
+            entry = accepted.get(pair(rec))
             if entry is None or entry["revocation"] != rec["revocation"]:
                 self._diverged.setdefault(
                     WORKSPACE,

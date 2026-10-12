@@ -146,7 +146,9 @@ class WsCore:
     former: dict[str, Member] = field(default_factory=dict)
     roster_v: int = 0
     devices: dict[str, Device] = field(default_factory=dict)
-    revocations: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Effective revocation evidence and tombstones: device id -> person id -> {revocation, device_cert, pk_pub}.
+    # Keyed by (device, person) (§5.10): another person's evidence for one device id is kept, never merged or replaced.
+    revocations: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
     grants: dict[str, Grant] = field(default_factory=dict)
     policies: dict[str, dict[str, Any]] = field(default_factory=default_policies)
     settings: dict[str, Any] = field(default_factory=lambda: dict(DEFAULT_SETTINGS))

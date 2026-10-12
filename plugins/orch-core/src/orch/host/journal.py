@@ -329,6 +329,8 @@ class _Walk:
     #: H6b ``needs`` ``since``: per ticket, per need ``(kind, ref)``, the ``at`` of the event whose append made it hold
     #: (counted from the latest time it began to hold without a break)
     since: dict[str, dict[tuple[str, str | None], str]] = field(default_factory=dict)
+    #: H6b ``ticket.query`` ``updated_at``/``head_seq``: per ticket, ``(at, seq)`` of its last event
+    last: dict[str, tuple[str, int]] = field(default_factory=dict)
 
     def track(self, uid: str, needs: tuple, at: str) -> None:
         old = self.since.get(uid, {})
@@ -513,6 +515,7 @@ class Journal(Window):
             )  # fmt: skip
         before = walk.vis.get(log)
         old_needs = walk.needs.get(log, ())
+        walk.last[log] = (str(e["at"]), int(e["seq"]))
         apply_event(core, log, e, walk.ctx, commit=True)
         if typ == "restore":
             self._restore = canon.event_head(e)
@@ -589,6 +592,11 @@ class Journal(Window):
         self.sigs[log] = sig
         if new:
             self._tickets_mtime = self._tickets_stamp()
+
+    def last_event(self, uid: str) -> tuple[str, int] | None:
+        """H6b: ``(at, seq)`` of ticket ``uid``'s last event, or ``None`` (unknown, or the journal is stale)."""
+        walk = self._walk
+        return walk.last.get(uid) if walk is not None and not self.stale else None
 
     def need_since(self, uid: str) -> dict[tuple[str, str | None], str]:
         """H6b: ``{(kind, ref): at}`` for the model needs of ticket ``uid`` now (``needs`` ``since``, §0.8): the ``at``

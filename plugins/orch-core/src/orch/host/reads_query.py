@@ -216,9 +216,24 @@ def _fold(text: str) -> str:
 
 
 def _last_event(ctx: ReadCtx, uid: str) -> dict[str, Any]:
+    """``at`` and ``seq`` of the ticket's last event: from the journal (O(1), no store lock per ticket), else the
+    store (a stale journal, or a ticket it does not know)."""
+    journal = ctx.service.journal
+    last = journal.last_event(uid) if journal is not None else None
+    if last is not None:
+        return {"at": last[0], "seq": last[1]}
     head = ctx.store.head_seq(uid)
     evs = ctx.store.events(uid, after=head - 1)
     return evs[-1] if evs else {"at": "", "seq": head}
+
+
+def _by_key(ctx: ReadCtx) -> dict[str, Any]:
+    """Every loaded ticket view by key, built once per request (no store lock per parent lookup)."""
+    cached = getattr(ctx, "_by_key_cache", None)
+    if cached is None:
+        cached = {v.key: v for v in ctx.store.state.tickets.values()}
+        ctx._by_key_cache = cached  # type: ignore[attr-defined]
+    return cached
 
 
 def _epic(ctx: ReadCtx, view: Any) -> str | None:
@@ -228,7 +243,7 @@ def _epic(ctx: ReadCtx, view: Any) -> str | None:
     for _ in range(EPIC_LEVELS):
         if not key:
             return None
-        parent = ctx.store.ticket(key, heal=False)
+        parent = _by_key(ctx).get(key)
         if parent is None or not ctx.viewer.sees(parent):
             return None
         if parent.type == "epic":

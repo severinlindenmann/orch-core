@@ -89,7 +89,7 @@ def test_read_costs_at_1000_tickets(tmp_path, capsys, monkeypatch):
                 f"({walk_ms / (later // 50):.1f} ms/page); needs {needs_ms:.0f} ms; activity.list warm {warm_ms:.0f} ms"
                 f" (first call {warm_first:.0f} ms), cold {cold_ms:.0f} ms, capped-cache asc page {deep_ms:.0f} ms"
             )
-        assert first_ms < 20_000 * SLACK
+        assert first_ms < 2_000 * SLACK
         assert walk_ms / (later // 50) < 3_000 * SLACK
         assert needs_ms < 5_000 * SLACK
         assert warm_ms < 500 * SLACK

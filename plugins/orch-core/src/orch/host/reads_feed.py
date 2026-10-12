@@ -51,6 +51,11 @@ SCAN_BUDGET = 10_000
 #: the base cache keeps the newest entries only: at most this many, and at most this many (estimated) bytes
 MAX_ENTRIES = 50_000
 MAX_BYTES = 64 * 1024 * 1024
+#: cold chunks kept (within :data:`MAX_BYTES`)
+COLD_CHUNKS = 4
+#: principals deriving a cold chunk now (host-wide): at most one cold derivation per principal at a time
+_COLD_BUSY: set[str] = set()
+_COLD_LOCK = threading.Lock()
 #: a cache not used for this long (seconds) is dropped
 IDLE_SECONDS = 600
 SWEEP_SECONDS = 60
@@ -86,11 +91,38 @@ class Base:
         self.entries: list[Entry] = []
         self.bytes = 0
         self.used = time.monotonic()
+        #: cold chunks older than the cache, newest use last: ``(lo, entries, summary state after the chunk)``; they
+        #: count toward :data:`MAX_BYTES`, so repeated deep or ``asc`` pages do not rescan the logs
+        self.cold: list[tuple[int, list[Entry], Any]] = []
+        self.cold_bytes = 0
         _CACHES.add(self)
 
     def clear(self) -> None:
         with self.lock:
             self.key, self.first, self.entries, self.bytes = ("", -1), 1, [], 0
+            self.cold, self.cold_bytes = [], 0
+
+    def cold_at(self, jpos: int) -> Window | None:
+        for i, (lo, entries, _state) in enumerate(self.cold):
+            if lo <= jpos < lo + len(entries):
+                self.cold.append(self.cold.pop(i))  # most recently used last
+                return Window(lo, entries)
+        return None
+
+    def cold_state(self, jpos: int) -> Any:
+        """The summary state after the chunk ending right before ``jpos`` (a continuation skips re-summarising)."""
+        for lo, entries, state in self.cold:
+            if lo + len(entries) == jpos:
+                return state
+        return None
+
+    def keep_cold(self, lo: int, entries: list[Entry], state: Any) -> None:
+        with self.lock:
+            self.cold.append((lo, entries, state))
+            self.cold_bytes += sum(en.size for en in entries)
+            while self.cold and (len(self.cold) > COLD_CHUNKS or self.bytes + self.cold_bytes > MAX_BYTES):
+                _lo, old, _st = self.cold.pop(0)
+                self.cold_bytes -= sum(en.size for en in old)
 
     @property
     def end(self) -> int:
@@ -177,18 +209,23 @@ def _from_journal(entry: Any) -> Entry | None:
     return Entry(entry.log, entry.type, entry.at, detail["actor"], entry.grant_person, detail, _size(detail))
 
 
-def derive(ctx: ReadCtx, lo: int, hi: int | None = None, *, keep: int | None = None) -> tuple[int, list[Entry]]:
+def derive(
+    ctx: ReadCtx, lo: int, hi: int | None = None, *, keep: int | None = None, state: Any = None, out_state: Any = None
+) -> tuple[int, list[Entry]]:
     """``(total, entries)`` from the verified logs: the entries of jpos ``lo..hi`` (all from ``lo`` when ``hi`` is
     ``None``), only the newest ``keep`` of them when set. Every event is summarised in order (the summary state needs
     them), but items are built for the range only (the expensive path: reads every log)."""
     ws = ctx.workspace
-    state = readmodel.SummaryState()
+    resumed = state is not None  # the summary state right before ``lo``: earlier events need no summary
+    state = copy.deepcopy(state) if resumed else readmodel.SummaryState()
     out: list[Entry] = []
     jpos = 0
     for jpos, (log, e) in enumerate(ctx.store.merged_events(), 1):
         if hi is not None and jpos > hi:
             jpos -= 1
             break
+        if resumed and jpos < lo:
+            continue
         typ = str(e.get("type"))
         text = readmodel.summary(e, state.of(log)) if log != "workspace" else readmodel.summary(e)
         if jpos < lo:
@@ -204,6 +241,8 @@ def derive(ctx: ReadCtx, lo: int, hi: int | None = None, *, keep: int | None = N
             del out[: len(out) - keep]
     if keep is not None and len(out) > keep:
         del out[: len(out) - keep]
+    if out_state is not None:
+        out_state.append(state)
     return jpos, out
 
 
@@ -246,11 +285,29 @@ def base_entries(ctx: ReadCtx, upto: int) -> Window:
 def cold_window(ctx: ReadCtx, jpos: int, ahead: int, order_desc: bool, below: int) -> Window:
     """Entries older than the cache (positions ``< below``) for a scan at ``jpos`` that may still examine ``ahead``
     events, read from the logs for that range only and not kept."""
+    cache = ctx.service.activity_base
+    with cache.lock:
+        hit = cache.cold_at(jpos)
+        if hit is not None:
+            return hit
     if order_desc:
         lo, hi = max(1, jpos - ahead + 1), jpos
     else:
         lo, hi = jpos, min(below - 1, jpos + ahead - 1)
-    _, entries = derive(ctx, lo, hi)
+    who = ctx.principal
+    with _COLD_LOCK:
+        if who in _COLD_BUSY:
+            raise HostError("quota.host", "another deep activity.list read of yours is running: retry shortly")
+        _COLD_BUSY.add(who)
+    try:
+        after: list[Any] = []
+        with cache.lock:
+            state = cache.cold_state(lo)
+        _, entries = derive(ctx, lo, hi, state=state, out_state=after)
+    finally:
+        with _COLD_LOCK:
+            _COLD_BUSY.discard(who)
+    cache.keep_cold(lo, entries, after[0] if after else None)
     return Window(lo, entries)
 
 

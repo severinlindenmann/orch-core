@@ -598,3 +598,48 @@ def test_a_mutated_response_item_never_changes_a_later_response(w):
             if isinstance(v, (dict, list)):
                 v.clear()
     assert json.dumps(feed(c, {"limit": 200}), sort_keys=True) == snapshot
+
+
+# --- Opus delta: the cold path of the capped cache ------------------------------------------------------------------
+
+
+def test_five_asc_first_pages_beyond_the_cache_derive_the_logs_once(w, monkeypatch):
+    monkeypatch.setattr(reads_feed, "MAX_ENTRIES", 5)
+    for i in range(20):
+        w.ticket(f"t{i}")
+    calls = []
+    real = reads_feed.derive
+
+    def spy(*a, **k):
+        calls.append(1)
+        return real(*a, **k)
+
+    monkeypatch.setattr(reads_feed, "derive", spy)
+    c = w.client()
+    first = feed(c, {"order": "asc", "limit": 5})
+    calls.clear()
+    pages_seen = [feed(c, {"order": "asc", "limit": 5}) for _ in range(5)]
+    assert all(p["items"] == first["items"] for p in pages_seen)
+    assert len(calls) == 0  # every repeat is served from the kept cold chunk
+    monkeypatch.setattr(reads_feed, "MAX_ENTRIES", 50_000)
+    w.service.activity_base = None
+    assert feed(c, {"order": "asc", "limit": 5})["items"] == first["items"]  # cold equals warm
+
+
+def test_one_cold_derivation_per_principal_at_a_time(w, monkeypatch):
+    from tests.host.live_helpers import principal_of
+
+    monkeypatch.setattr(reads_feed, "MAX_ENTRIES", 5)
+    for i in range(12):
+        w.ticket(f"t{i}")
+    c = w.client()
+    feed(c, {"limit": 5})  # warm the (tiny) cache
+    w.service.activity_base.cold, w.service.activity_base.cold_bytes = [], 0  # the next asc page must derive
+    principal = principal_of()  # this connection's principal (uid:<n>)
+    reads_feed._COLD_BUSY.add(principal)
+    try:
+        res = c.req("activity.list", {"order": "asc", "limit": 5})
+        assert err(res) == "quota.host"
+    finally:
+        reads_feed._COLD_BUSY.discard(principal)
+    assert feed(c, {"order": "asc", "limit": 5})["items"]

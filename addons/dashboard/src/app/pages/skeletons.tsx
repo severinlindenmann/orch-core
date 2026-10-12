@@ -6,7 +6,7 @@
 import type { ReactNode } from 'react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { usePageHeader } from '../shell/ShellUi'
-import { TABS } from './settings/tabs'
+import { settingsTabs } from './settings/tabs'
 import { useTodayWide } from './today/shared'
 
 /** As the router's pending component the skeleton sets the topbar title; inside a page (`inPage`) the page does. */
@@ -212,7 +212,7 @@ export function SettingsSkeleton({ inPage }: Placement = {}) {
           <H1>Settings</H1>
         </div>
         {/* The section names are known up front: the sub-nav is drawn for real, only the content waits. */}
-        {TABS.map((t) => (
+        {settingsTabs().map((t) => (
           <div key={t.id} className="flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] text-text-muted">
             <span className="flex-1">{t.label}</span>
           </div>

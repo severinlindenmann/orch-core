@@ -70,6 +70,11 @@ export interface Workspace {
   needs_you: number
   /** Whether the owner turned the (simulated) relay link on: folded from relay.connected / relay.stopped. */
   relay?: 'on' | 'off'
+  /**
+   * A real host only. Absent or `ok`: the host answers. Anything else is the host's error code: that workspace is listed
+   * as "host not running" and has no name, members or pages (nothing is made up for a host that cannot answer).
+   */
+  host_state?: string
   /** Default agent grant length in hours (absent: 8); also the longest grant a member may sign for themselves. */
   grant_hours?: number
   /**

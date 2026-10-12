@@ -176,8 +176,8 @@ def test_signal_cleanup_without_binding(p1, monkeypatch, sig_name):
     sockets = []
     previous = signal.getsignal(getattr(signal, sig_name))
 
-    def serve(host, run, opened, stopped):
-        for name in ("control", host.ws):
+    def serve(hosts, run, opened, stopped):
+        for name in ("control", hosts[0].ws):
             path = run / name / "host.sock"
             path.parent.mkdir(parents=True)
             path.touch()

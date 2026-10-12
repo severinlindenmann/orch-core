@@ -2131,6 +2131,7 @@
   {
    "devices": 1,
    "name": "Demo Owner",
+   "name_hidden": false,
    "person": "p_00000000000000000000000000000001",
    "role": "owner"
   }
@@ -2405,6 +2406,7 @@
     }
    ],
    "name": "Demo Owner",
+   "name_hidden": false,
    "person": "p_00000000000000000000000000000001",
    "role": "owner"
   }

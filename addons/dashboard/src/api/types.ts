@@ -41,6 +41,8 @@ export interface Member {
   role: Role
   devices?: number
   last_seen?: string | null
+  /** Real host: the name had invisible characters, so `name` is the person id (never the hidden name). */
+  name_hidden?: boolean
 }
 
 /** Per-workspace state of an installed addon (folded from addon.* workspace events). */

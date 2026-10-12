@@ -201,14 +201,22 @@ def test_a_non_string_name_is_name_invalid_not_a_crash(two, value):
     assert got[stubs[0].ws]["host_state"] == "ok"
 
 
-def test_a_member_name_with_hidden_characters_is_refused(two):
+def test_a_member_name_with_hidden_characters_is_shown_as_the_person_id_not_hidden_with_the_workspace(two):
+    """Opus RH review L1: one such member must not take the workspace (and the roster) down; the name is never shown
+    or repaired, the person id stands in for it, flagged so the page can say why."""
     from orch_dashboard import adapters
-    from orch_dashboard.errors import HostError
 
-    ok = {"members": [{"person": "p", "name": "Tom", "role": "member", "devices": []}]}
-    assert adapters.members(ok)[0].name == "Tom"
+    ok = {"members": [{"person": "p_tom", "name": "Tom", "role": "member", "devices": []}]}
+    assert adapters.members(ok)[0].name == "Tom" and not adapters.members(ok)[0].name_hidden
     for name in ("To\u202em", "T\u2800", "x\ue000", None):
-        with pytest.raises(HostError):
-            adapters.members({"members": [{**ok["members"][0], "name": name}]})
-        with pytest.raises(HostError):
-            adapters.settings.roster({"members": [{**ok["members"][0], "name": name}]})
+        bad = {
+            "members": [
+                {**ok["members"][0], "name": name},
+                {"person": "p_ana", "name": "Ana", "role": "owner", "devices": []},
+            ]
+        }
+        listed = adapters.members(bad)
+        assert (listed[0].name, listed[0].name_hidden) == ("p_tom", True)
+        assert (listed[1].name, listed[1].name_hidden) == ("Ana", False)
+        roster = adapters.settings.roster(bad)
+        assert (roster[0].name, roster[0].name_hidden) == ("p_tom", True) and roster[1].name == "Ana"

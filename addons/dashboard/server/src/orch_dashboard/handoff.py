@@ -403,7 +403,7 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
 
 
 DURATIONS = ("grant_hours", "claim_ttl_min", "lease_ttl_min")
-WORKSPACE_OPS = ("settings.set", "policy.set", "member.add", "member.role", "member.remove", "grant.revoke")
+WORKSPACE_OPS = ("settings.set", "policy.set", "member.add", "member.role", "member.remove", "grant.revoke", "move")
 
 
 def host_files(action: Action) -> dict | None:

@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from ..errors import fail
 from ..text import hidden
+from .shell import safe_name
 
 GATES = ("requirements", "plan", "verify", "code")
 DURATIONS = {"grant_hours": (1, 24), "claim_ttl_min": (15, 1440), "lease_ttl_min": (5, 1440)}
@@ -179,6 +180,7 @@ class RosterMember(BaseModel):
     name: str
     role: str
     devices: list[Device]
+    name_hidden: bool = False  # see adapters.shell.safe_name
     # `last_seen` is not served by the host (v1.5): there is no such field to fill.
 
 
@@ -201,9 +203,10 @@ def roster(data) -> list[RosterMember]:
                 )
                 for d in m["devices"]
             ]
-            if not isinstance(m["name"], str) or hidden(m["name"]):
-                raise fail("member.name_invalid", "A member's name has invisible characters.", exit=3)
-            out.append(RosterMember(person=m["person"], name=m["name"], role=m["role"], devices=devices))
+            name, name_hidden = safe_name(m)
+            out.append(
+                RosterMember(person=m["person"], name=name, role=m["role"], devices=devices, name_hidden=name_hidden)
+            )
         return out
     except (KeyError, TypeError, AttributeError, ValueError):
         raise bad() from None

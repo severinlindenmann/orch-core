@@ -1440,6 +1440,32 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
    host registry read as the caller (owner-checked, no symlinks); once the host runs under its own service UID that
    file is the host's, and `orch sign` needs a person-side registry (follow-up).
 
+**As built in H4b** (the thin CLI, `orch.hostclient`; no wire schema changes):
+
+1. **Mode by registration.** Per call, for the workspace the CLI found: in the person's own registry or in this agent
+   UID's root-owned pin means host mode, otherwise direct mode. An unreadable registry or pin counts as registered. A
+   registered workspace whose host is down answers `host.unavailable` (exit 9, retryable, the catalog entry that already
+   existed for `init`), never a direct write. `help`, `describe`, `init` and `import v1` are always local (the host does
+   not serve them; the direct-mode guard still answers `host.required` for the last two on a registered workspace).
+2. **Rendering.** A registry op is sent with its parsed arguments; `result` is rebuilt as `orch.ops.Result` and rendered
+   by the unchanged renderer, so text and `--json` are byte-identical to direct mode for every non-human op, `wait`
+   included. A refusal keeps the exit the socket sent (so `lock.busy` is 9). Input, `human_only` and grant-shape checks run
+   locally first (same errors, no round trip); the stop rule and session dedup are the host's.
+3. **Idempotency.** Every write carries a fresh `opts.idem` (`a_<ULID>`). A lost answer (timeout, dropped connection,
+   `outcome.unknown`) is retried up to three times with the same key on a new connection; a blob-sourced file is then
+   named by `{digest}` and falls back to the blob when the host has no record. `Connection.call` gained `auth`, `dry_run`,
+   `timeout_ms` and a per-call socket `timeout`; `wait` uses its `--timeout` plus 30 s. It still skips `evt` frames: nothing
+   in the CLI subscribes.
+4. **Files.** `x-file` arguments are read by the CLI (path or `-`); the argument keeps what the user typed as its logical
+   name. Up to 512 KiB in all they go inline, else one blob each (`blob.put` in 768 KiB chunks, with the call's `auth`).
+5. **Person commands** run `orch.host.signer.run` with the terminal signer (the person's registry entry, the device key
+   in `<state>/hosts/<ws>/person/`, the review on `/dev/tty`); an agent UID or `ORCH_GRANT` gets `human_only`. A declined
+   review is `invalid.input` "not confirmed: nothing was signed", as in direct mode. Files signed this way are inline
+   only (512 KiB). `--dry-run` calls `human.prepare` with `dry_run` and prints what would be signed (the prepared request
+   carries no op result).
+6. **Run directory.** `ORCH_RUN_DIR` when set, else the service run directory when a host serves there, else
+   `<state>/run`.
+
 #### 0.8.2 Job ops (worker socket, H10)
 
 ```

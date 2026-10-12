@@ -95,48 +95,79 @@ def handshake_pinned(pin: Pin, hello: dict[str, Any], *, timeout: float = 2) -> 
 
 
 class Connection:
-    """A blocking person-class client of one workspace socket: the pinned handshake, then one request at a time.
+    """A blocking client of one workspace socket: the pinned handshake, then one request at a time.
 
-    The minimal client ``orch sign`` needs (H5b) without the host-mode CLI (H4b): ``call`` sends one ``req`` and returns
-    its ``result``, raising the host's error as :class:`~orch.host.errors.HostError`. Frames that are not the answer
-    (subscription items) are skipped. It never sends a grant: ``human.*`` is column P only.
+    ``orch sign`` (H5b) and the thin CLI (H4b, :mod:`orch.hostclient`) share it. ``call`` sends one ``req`` and returns
+    its ``result``, raising the host's error as :class:`~orch.host.errors.HostError`. ``auth`` carries the grant and the
+    session (never in ``args``), ``dry_run`` and ``timeout_ms`` go in ``opts``, and ``timeout`` is the seconds this one
+    call waits for its answer on the socket (a ``wait`` outlasts the default). Frames that are not the answer
+    (``evt`` items of a subscription) are skipped: nothing in the CLI subscribes, ``wait`` is one request the host
+    parks on its bus. After a timeout or a broken connection the object is unusable (``broken``): open another.
     """
 
     def __init__(self, pin: Pin, *, client: str = "orch", timeout: float = 120) -> None:
         hello = {"t": "hello", "proto": [1], "client": client, "caps": []}
         self.sock, self.welcome = handshake_pinned(pin, hello)
+        self.timeout = timeout
         self.sock.settimeout(timeout)
         self._decoder = frames.Decoder()
         self._frames: list[Any] = []
         self._n = 0
+        self.broken = False
 
     def call(
-        self, op: str, args: dict[str, Any], *, idem: str | None = None, files: dict[str, Any] | None = None
+        self,
+        op: str,
+        args: dict[str, Any],
+        *,
+        idem: str | None = None,
+        files: dict[str, Any] | None = None,
+        auth: dict[str, str] | None = None,
+        dry_run: bool = False,
+        timeout_ms: int | None = None,
+        timeout: float | None = None,
     ) -> dict[str, Any]:
+        """The ``result`` of the request. Raises ``HostError`` for the host's refusal; ``TimeoutError``,
+        ``ConnectionError`` or ``FrameError`` (and marks the connection ``broken``) when no answer arrives."""
         from .errors import HostError
 
         self._n += 1
         rid = f"c{self._n}"
         frame: dict[str, Any] = {"t": "req", "id": rid, "op": op, "args": args}
-        if idem is not None:
-            frame["opts"] = {"idem": idem}
+        if auth:
+            frame["auth"] = auth
+        opts = {
+            k: v for k, v in (("idem", idem), ("dry_run", True if dry_run else None), ("timeout_ms", timeout_ms)) if v
+        }
+        if opts:
+            frame["opts"] = opts
         if files:
             frame["files"] = files
-        self.sock.sendall(frames.encode(frame))
-        while True:
-            while not self._frames:
-                data = recv(self.sock)
-                if not data:
-                    raise ConnectionError("the host closed the connection")
-                self._frames.extend(self._decoder.feed(data))
-            got = self._frames.pop(0)
-            if isinstance(got, frames.FrameError):
-                raise got
-            if got.get("t") != "res" or got.get("id") != rid:
-                continue
-            if got.get("ok"):
-                return got["result"]
-            raise HostError.stored(got.get("error") or {"code": "internal"})
+        self.sock.settimeout(self.timeout if timeout is None else timeout)
+        try:
+            self.sock.sendall(frames.encode(frame))
+            while True:
+                while not self._frames:
+                    data = recv(self.sock)
+                    if not data:
+                        raise ConnectionError("the host closed the connection")
+                    self._frames.extend(self._decoder.feed(data))
+                got = self._frames.pop(0)
+                if isinstance(got, frames.FrameError):
+                    raise got
+                if got.get("t") == "fatal":
+                    self.broken = True
+                    raise HostError.stored(got.get("error") or {"code": "internal"})
+                if got.get("t") != "res" or got.get("id") != rid:
+                    continue
+                if got.get("ok"):
+                    return got["result"]
+                raise HostError.stored(got.get("error") or {"code": "internal"})
+        except HostError:
+            raise
+        except BaseException:
+            self.broken = True
+            raise
 
     def close(self) -> None:
         self.sock.close()

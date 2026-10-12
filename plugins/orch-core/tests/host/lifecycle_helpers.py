@@ -165,8 +165,9 @@ class Lab:
         args = {"root": kw.pop("root", self.root), "peers": kw.pop("peers", None) or self.peers()}
         return client.call("host.register", args, idem=idem or new_idem(), **kw)
 
-    def cli(self, *argv: str, grant: bool = False) -> tuple[int, dict[str, Any]]:
-        """The direct-mode CLI (P1) on this workspace, as a person at the terminal."""
+    def cli(self, *argv: str, grant: bool = False, run: bool = False) -> tuple[int, dict[str, Any]]:
+        """The CLI on this workspace, as a person at the terminal: direct mode while unregistered; ``run`` names the
+        host run directory, so a registered workspace is reached as a host client (H4b)."""
         import io
 
         from orch.cli.main import main
@@ -174,7 +175,7 @@ class Lab:
         out, err = io.StringIO(), io.StringIO()
         code = main(
             [*argv, "--json"],
-            env=self.ws.env(session=None, grant=grant),
+            env=self.ws.env(session=None, grant=grant, **({"ORCH_RUN_DIR": str(self.run)} if run else {})),
             stdout=out,
             stderr=err,
             now=lambda: self.ws.clock[0],

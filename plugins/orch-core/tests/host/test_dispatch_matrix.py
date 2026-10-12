@@ -13,7 +13,7 @@ import pytest
 import orch.ops as ops
 from orch.host import frames
 from orch.host.columns import refusal, resolve
-from orch.host.dispatch import FILE_OPS, HOST_OPS, NOT_SERVED, PERSON_READS, op_kind, served_ops
+from orch.host.dispatch import FILE_OPS, GIT_OPS, HOST_OPS, NOT_SERVED, PERSON_READS, op_kind, served_ops
 from orch.host.errors import HostError, disposition
 from orch.host.human import HUMAN_OPS
 from orch.host.reads import READ_OPS
@@ -68,7 +68,7 @@ def as_agent_class(served: Served) -> None:
 def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
     welcome = served.client().welcome
     registry = {op.name for op in ops.all()}
-    host = set(HOST_OPS) | set(FILE_OPS) | set(HUMAN_OPS) | set(READ_OPS) | set(HOST_PERSON_OPS)
+    host = set(HOST_OPS) | set(FILE_OPS) | set(GIT_OPS) | set(HUMAN_OPS) | set(READ_OPS) | set(HOST_PERSON_OPS)
     assert set(welcome["ops"]) == (registry - set(NOT_SERVED)) | host
     assert set(READ_OPS) == {  # H6b
         "ticket.query", "ticket.get", "needs", "activity.list", "workspace.show", "member.list", "session.list",
@@ -81,6 +81,7 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
     assert all(v == 1 for v in welcome["ops"].values())
     assert {"ops/1", "outcome/1", "sub/1", "blob/1", "diff/1"} <= set(welcome["caps"])
     assert set(FILE_OPS) == {"blob.put", "blob.drop", "artifact.get"}
+    assert GIT_OPS == {"diff": 1} and welcome["ops"]["diff"] == 1  # diff/1 lists both diff and artifact.get
     # H6b: the read caps; read_ext/2 also lists read_ext/1 (§0.4)
     assert {"query/1", "read_ext/1", "read_ext/2", "activity/1", "settings/1", "text/1"} <= set(welcome["caps"])
     assert welcome["peer"] == {"uid": UID, "class": "person", "person": served.lab.owner}
@@ -145,7 +146,7 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
     for op in served_ops():
         kind = op_kind(op)
         assert kind is not None
-        if op in HOST_OPS or op in FILE_OPS:
+        if op in HOST_OPS or op in FILE_OPS or op in GIT_OPS:
             assert kind == ("read", "read")
         elif op in READ_OPS:
             assert kind == ("pg_read" if op in {"session.list", "grant.list"} else "read", "read")

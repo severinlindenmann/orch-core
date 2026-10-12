@@ -5,6 +5,8 @@
   ``remote.origin.url`` values.
 * ``diff {branch, default_branch, context, max_bytes}`` (profile ``gitdir``): base and head per section 0.8 and the
   patch text of ``git diff --no-ext-diff --no-textconv --no-renames base head``.
+* ``tree_check {}`` (profile ``worktree`` only): is the working copy clean relative to ``HEAD``
+  (:mod:`orch.gitread.treecheck`; H10, F2, N3).
 
 Every request first opens the repository under its pins and reads all its refs, so a config, extension or ref store
 the reader refuses makes **every** request unavailable, not just the ones that would touch the bad part.
@@ -15,9 +17,9 @@ from __future__ import annotations
 import base64
 from typing import Any
 
-from . import limits
+from . import limits, treecheck
 from .errors import Unavailable
-from .fs import RepoPins
+from .fs import RepoPins, open_pin
 from .patchtext import Change, diff_trees, quote_path, render
 from .pinning import pin_repo
 from .repo import Repo
@@ -25,7 +27,12 @@ from .repo import Repo
 __all__ = ["PROFILES", "allowed_paths", "run"]
 
 PROFILES = ("gitdir", "worktree", "pin")
-_OPS = {"pin": ("pin",), "observe": ("gitdir", "worktree"), "diff": ("gitdir", "worktree")}
+_OPS = {
+    "pin": ("pin",),
+    "observe": ("gitdir", "worktree"),
+    "diff": ("gitdir", "worktree"),
+    "tree_check": ("worktree",),
+}
 
 
 def _str(args: dict[str, Any], key: str, *, optional: bool = False) -> str | None:
@@ -198,7 +205,16 @@ def run(profile: str, hello: dict[str, Any], req: dict[str, Any]) -> dict[str, A
         path = _str(args, "path")
         assert path is not None
         return {"pins": pin_repo(path, list(hello["roots"])).to_json()}
-    with Repo(RepoPins.from_json(hello.get("pins"))) as repo:
+    pins = RepoPins.from_json(hello.get("pins"))
+    with Repo(pins) as repo:
+        if op == "tree_check":
+            if args:
+                raise Unavailable("bad request: tree_check takes no arguments")
+            worktree = open_pin(pins.worktree)  # device and inode checked: still the pinned working copy
+            try:
+                return treecheck.check(repo, worktree)
+            finally:
+                worktree.close()
         if op == "observe":
             refs = args.get("refs") or []
             if not isinstance(refs, list) or len(refs) > 64 or not all(isinstance(r, str) for r in refs):

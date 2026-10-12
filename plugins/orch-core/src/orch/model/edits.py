@@ -74,6 +74,41 @@ def _check_fields(core: Core, t: TCore, f: dict[str, Any], touched: set[str], e:
     return None
 
 
+def actor_person(a: dict[str, Any]) -> str | None:
+    """The person behind an event's actor: a person, or the person an agent's grant is ``for``; ``None`` for an
+    unattended agent (it works for nobody)."""
+    if a["kind"] == "person":
+        return a["id"]
+    if a["kind"] == "agent" and a.get("unattended") is not True:
+        return a.get("for")
+    return None
+
+
+def _verify_authors(t: TCore, new_tasks: list[dict[str, Any]], actor: dict[str, Any]) -> None:
+    """Who made the last change to each task's ``verify`` (F1 "Receipts"): a task whose ``verify`` this edit sets or
+    changes gets the edit's actor and, for an agent, its grant; an unchanged one keeps its author (never the editor:
+    an unchanged command without a recorded author stays without one); a task without ``verify`` has none."""
+    old = {x["id"]: x.get("verify") for x in t.fields["tasks"]}
+    by = {
+        "kind": actor["kind"],
+        "id": actor["id"],
+        "session": actor.get("session"),
+        "person": actor_person(actor),
+        "grant": actor.get("grant") if actor["kind"] == "agent" else None,
+    }
+    authors: dict[str, dict[str, Any]] = {}
+    for x in new_tasks:
+        tid, v = x["id"], x.get("verify")
+        if v is None:
+            continue
+        if tid in old and old[tid] == v:  # unchanged: keep its author; one without stays authorless (fails closed)
+            if tid in t.verify_by:
+                authors[tid] = t.verify_by[tid]
+            continue
+        authors[tid] = dict(by)
+    t.verify_by = authors
+
+
 def updated(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
     ws, sets, secs = core.ws, e.get("set", {}), e.get("sections", {})
     paths = set(sets) | {"body." + s for s in secs}
@@ -115,6 +150,8 @@ def updated(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
             fields[key] = copy.deepcopy(v)
     if (r := _check_fields(core, t, fields, set(sets), e)) is not None:
         return r
+    if "ticket.tasks" in sets:
+        _verify_authors(t, fields["tasks"], e["actor"])
     t.fields = fields
     for sid, v in secs.items():
         if v is None:

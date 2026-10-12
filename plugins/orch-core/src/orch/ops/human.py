@@ -218,6 +218,7 @@ class Human:
         had exactly that commit in front of them (D58, security review R2). ``signed`` is the source list bound."""
         out: list[str] = []
         links = view.fields["links"]
+        checked: set[str] = set()  # identities of the working copies looked at, each against the signed list
         for name in links["repos"]:
             branch = links["branches"].get(name)
             if not branch:
@@ -228,19 +229,50 @@ class Human:
                 continue
             ref = f"refs/heads/{branch}"
             git = self.ctx.caps.git
+            if not git.enabled:  # git denied (an unreadable pin file in host mode): refused, never an internal error
+                out.append(f"{name}: git cannot be read here")
+                continue
             head = git.head(path)
             on = git.symbolic_head(path)
-            entry = next((e for e in signed if e["repo"] == git.identity(path, name)), None)
+            identity = git.identity(path, name)
+            checked.add(identity)
+            entry = next((e for e in signed if e["repo"] == identity), None)
             if head is None or entry is None or entry["ref"] != ref or entry["sha"] != head:
                 out.append(f"{name}: {ref} is not recorded at the commit checked out; look again with orch show")
             elif on != ref:
                 out.append(f"{name}: the working tree is on {on or 'a detached commit'}, the decision binds {ref}")
-            dirty = git.dirty(path)
-            if dirty is None:
-                out.append(f"{name}: git cannot be asked about the working tree")
-            elif dirty:
-                out.append(f"{name}: the working tree has uncommitted changes; the decision binds a commit")
+            if git.reader is None:  # direct mode: P1's git status (the person's own terminal)
+                dirty = git.dirty(path, name)
+                if dirty is None:
+                    out.append(f"{name}: git cannot be asked about the working tree")
+                elif dirty:
+                    out.append(f"{name}: the working tree has uncommitted changes; the decision binds a commit")
+                continue
+            out += self._tree_check(git, path, name, entry, ref)
+        for e in signed:  # every repo the decision binds must have been checked, not only the linked ones
+            if e["repo"] not in checked:
+                out.append(f"{e['repo']}: in the source list but no working copy of it was checked")
         return out
+
+    def _tree_check(self, git: Any, path: Any, name: str, entry: dict[str, str] | None, ref: str) -> list[str]:
+        """Host mode: the ``tree.check`` job (N3). Clean only at the commit being signed: the child reads ``HEAD`` and
+        the tree in one call, and its ``head`` and ``head_ref`` must equal the signed entry. A dry run runs no
+        ``tree.check`` job (section 0.8.1) and records no ``checks``."""
+        capture = self.ctx.prepare
+        if capture is not None and capture.dry_run:
+            return []
+        got = git.tree_check(path, name)
+        if got is None:
+            return [f"{name}: git cannot be asked about the working tree"]
+        if entry is None or got["head"] != entry["sha"] or got["head_ref"] != ref:
+            return [f"{name}: the working tree is not at the commit the decision binds; look again with orch show"]
+        if got["changed"] or got["more"]:
+            return [f"{name}: the working tree has uncommitted changes; the decision binds a commit"]
+        if capture is not None:  # human.prepare: the unsigned checks of N3
+            from orch.gitread.treejob import check_entry
+
+            capture.checks.append(check_entry(name, self.ctx.caps.clock()))
+        return []
 
     def observe(self, view: Any) -> Any:
         """D58: read git now and append the ``branch.pushed`` the ticket is owed (never under ``--dry-run``, which

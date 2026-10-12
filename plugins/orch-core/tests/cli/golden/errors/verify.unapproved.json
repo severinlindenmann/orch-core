@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "code": "verify.unapproved",
+    "message": "the task's verify command is neither approved nor yours",
+    "hint": "a person approves the plan, or add your own verify command",
+    "fix": {
+      "argv": [
+        "orch",
+        "show"
+      ]
+    },
+    "retryable": false
+  }
+}

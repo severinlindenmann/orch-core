@@ -134,6 +134,16 @@
         ]
       },
       {
+        "code": "verify.unapproved",
+        "exit": 3,
+        "retryable": false,
+        "hint": "a person approves the plan, or add your own verify command",
+        "fix": [
+          "orch",
+          "show"
+        ]
+      },
+      {
         "code": "claim.required",
         "exit": 4,
         "retryable": false,

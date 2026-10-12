@@ -132,11 +132,14 @@ class ReaderPool:
         self.peak = 0
         self.started = 0
 
-    def call(self, principal: str, hello: dict[str, Any], req: dict[str, Any]) -> dict[str, Any]:
-        """One request in a fresh child. Raises :class:`Unavailable`, :class:`RemoteMismatch` or :class:`Busy`."""
+    def call(
+        self, principal: str, hello: dict[str, Any], req: dict[str, Any], *, wall: float | None = None
+    ) -> dict[str, Any]:
+        """One request in a fresh child. Raises :class:`Unavailable`, :class:`RemoteMismatch` or :class:`Busy`.
+        ``wall``: a shorter deadline than the pool's (a caller's remaining budget), counted from now."""
         if not isinstance(principal, str) or not principal:
             raise Unavailable("a reader request without a principal")
-        deadline = time.monotonic() + self._wall
+        deadline = time.monotonic() + (self._wall if wall is None else max(0.0, min(self._wall, wall)))
         with self._mu:
             entry = self._principals.get(principal)
             if (entry is not None and entry[1] >= self._queue_per_principal) or self.waiting >= self._queue_max:
@@ -271,28 +274,45 @@ class PinStore:
             return sorted(self._pins)
 
     def update(self, put: dict[str, RepoPins], drop: Iterable[str]) -> None:
+        """Add and drop pins: the file first (a fresh 0600 temporary file, fsynced, renamed over it), then memory, so
+        a pin that could not be written is never held in memory only (it would be taken afresh after a restart).
+        Raises ``OSError`` when the file cannot be written; nothing changes then."""
         with self._mu:
-            for k in drop:
-                self._pins.pop(k, None)
-            self._pins.update(put)
+            pins = {k: v for k, v in self._pins.items() if k not in set(drop)}
+            pins.update(put)
             if self.path is not None:
-                doc = {"v": 1, "repos": {k: v.to_json() for k, v in sorted(self._pins.items())}}
+                doc = {"v": 1, "repos": {k: v.to_json() for k, v in sorted(pins.items())}}
                 tmp = self.path.with_name(self.path.name + ".tmp")
-                fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
-                with os.fdopen(fd, "w", encoding="utf-8") as f:
-                    f.write(json.dumps(doc, sort_keys=True))
-                    f.flush()
-                    os.fsync(f.fileno())
-                os.replace(tmp, self.path)
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(tmp)  # a leftover is never reused (its mode or owner could be another)
+                fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+                try:
+                    with os.fdopen(fd, "w", encoding="utf-8") as f:
+                        f.write(json.dumps(doc, sort_keys=True))
+                        f.flush()
+                        os.fsync(f.fileno())
+                    os.replace(tmp, self.path)
+                except BaseException:
+                    with contextlib.suppress(OSError):
+                        os.unlink(tmp)
+                    raise
+            self._pins = pins
 
 
 class HostGitReader:
-    """The host-mode backend of ``Capabilities.git``: every read is a fresh child under the ``gitdir`` profile."""
+    """The host-mode backend of ``Capabilities.git``: every read is a fresh child under the ``gitdir`` profile.
 
-    def __init__(self, pool: ReaderPool, pins: PinStore | None = None, *, principal: str = "host") -> None:
+    ``tree_checks``: whether :meth:`tree_check` runs here. Tier A (phase 1, same UID, no worker): ``True``, the host
+    runs the ``tree.check`` job in a ``worktree``-profile child itself (:mod:`orch.gitread.treejob`). Tier B: ``False``
+    until the phase-3 worker takes the job over, so the check is unknown and its callers fail closed."""
+
+    def __init__(
+        self, pool: ReaderPool, pins: PinStore | None = None, *, principal: str = "host", tree_checks: bool = False
+    ) -> None:
         self.pool = pool
         self.pins = pins if pins is not None else PinStore()
         self.principal = principal
+        self.tree_checks = tree_checks
 
     # -- pins
     def sync(self, declared: Iterable[str | os.PathLike[str]]) -> dict[str, str | None]:
@@ -343,9 +363,18 @@ class HostGitReader:
             raise Unavailable("the repository was not pinned at registration")
         return pins
 
-    def _call(self, path: str | os.PathLike[str], op: str, args: dict[str, Any], principal: str | None) -> Any:
+    def _call(
+        self,
+        path: str | os.PathLike[str],
+        op: str,
+        args: dict[str, Any],
+        principal: str | None,
+        wall: float | None = None,
+    ) -> Any:
         hello = {"profile": "gitdir", "pins": self._pins(path).to_json()}
-        return self.pool.call(principal or self.principal, hello, {"op": op, "args": args})
+        if wall is None:
+            return self.pool.call(principal or self.principal, hello, {"op": op, "args": args})
+        return self.pool.call(principal or self.principal, hello, {"op": op, "args": args}, wall=wall)
 
     # -- reads
     def observe(self, path: str | os.PathLike[str], refs: Iterable[str] = (), principal: str | None = None) -> Any:
@@ -361,9 +390,20 @@ class HostGitReader:
         context: int = 3,
         max_bytes: int = 262144,
         principal: str | None = None,
+        wall: float | None = None,
     ) -> dict[str, Any]:
         args = {"branch": branch, "default_branch": default_branch, "context": context, "max_bytes": max_bytes}
-        return _check_diff(self._call(path, "diff", args, principal), max_bytes)
+        return _check_diff(self._call(path, "diff", args, principal, wall), max_bytes)
+
+    def tree_check(self, path: str | os.PathLike[str], name: str, principal: str | None = None) -> dict[str, Any]:
+        """``TreeCheckResult`` for the declared working copy at ``path`` (repo ``name``). Raises
+        :class:`Unavailable` when no clean answer can be established (callers fail closed)."""
+        from . import treejob
+
+        if not self.tree_checks:
+            raise Unavailable("the clean-tree check needs the worker, which this workspace does not have yet")
+        job = treejob.job_input(name, self._pins(path))
+        return treejob.run_child(self.pool, principal or self.principal, job)
 
 
 def _id(pin: Any) -> tuple[int, int]:

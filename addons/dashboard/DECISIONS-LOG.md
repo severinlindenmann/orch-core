@@ -1427,3 +1427,11 @@ HTTP process against passive disclosure, while the accepted risk (same-UID agent
 **Why:** Three Opus rounds each found another way to obtain a second, different request for one action (another tab, a reopened dialog, a lost answer, logout, a race between prepare and sign). Patching paths in this process cannot close the class; the host's idem record can, once every path sends the same idem.
 
 **Revert:** Derive the idem from a browser key again (`host_idem` of the earlier commits); the per-path blocks (`refuse_if_unsettled`, `recent`) return with it.
+
+## 2026-10-12 — M5: one signing path per workspace (owner decision, ~19:45, via orch-d6)
+
+**Decision:** (1) Where click-to-sign is ON for a workspace the dashboard offers only Sign: no "Sign in the terminal instead", and `/handoff` prepares are refused (`sign.click_only`, "This workspace signs in the dashboard"; the host refuses them too, core #434). A signer that cannot sign there (`record_unavailable`, no key, helper down) is an honest error naming `orch host convenience off --workspace W`, never a hand-off. (2) Where it is OFF: the terminal hand-off as before, no click routes. (3) One intent function on both; the earlier "terminal path = retry >= 1" offset is dropped. (4) Flag flip: a click prepare is refused while a terminal hand-off (code) of the same op and key is open (`intent.open`, with its expiry); a flip OFF ends open click requests. Recorded in ~/orch-dev/state/coordination.md line 166 (20:38).
+
+**Why:** A click request and a terminal request of one action could coexist, which the one-intent invariant is meant to rule out; one path per workspace removes the case instead of managing it.
+
+**Revert:** Remove `Gateway.one_path_is_click` and its refusal in the `/handoff` route, restore the terminal button and the retry floor in `HandoffDialog`/`useHandoff`.

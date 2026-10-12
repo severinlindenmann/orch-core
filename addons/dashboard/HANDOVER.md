@@ -946,8 +946,7 @@ running as you, or anything that takes over this dashboard, could sign."
   Only these handlers call the signer (a test greps for it); no addon path reaches `prepare`.
 - The per-workspace flag: `GET /api/workspaces` carries `click` (custody, enabled, available, problem) from the signer's `status`, and the
   feature `click` when the flag is on and the signer can sign there. The UI offers Sign only then (`clickReady`).
-- UI: `HandoffDialog` (all signed actions) offers **Sign** and **Sign in the terminal instead** (a separate `human.prepare {handoff:true}`
-  request; the click request is cancelled first because the person chose). An action with nothing to fill in no longer starts the terminal
+- UI: `HandoffDialog` (all signed actions) offers **Sign** only where click is on (no terminal button; flag on but the signer unable: an honest message, nothing prepared). An action with nothing to fill in no longer starts the terminal
   request by itself when Sign is offered. `ClickSignPanel` shows ONLY the View: the risk line first, op, WS8 badge, prefix and name through
   `visible()`, fingerprint, `lines` as text, checks with their time, artifacts, expiry; word ops show the View's word and a field (sent
   exactly as typed). Sign is armed after 500 ms of visible presentation (the timer restarts on blur and when the page is hidden); a
@@ -982,8 +981,13 @@ stops this process from cancelling the request or replacing the signer under it 
 the host through our link). A sign whose answer is lost is retried through the signer (identical events, never a new signature);
 `already_signed` (signed with another View) and `record_unavailable` (the signer's record is unreadable, fail closed: use the terminal path)
 are mapped. A dashboard restart loses the in-memory parts and the session binding of the host's idem: a repeat prepare is then `intent.open`
-until the old request settles (at most about 10 minutes); the ticket's activity shows a submit that landed. The terminal path ("Sign in
-the terminal instead") is deliberately another intent (retry >= 1; the click path starts at 0), since the host binds an idem to its path.
+until the old request settles (at most about 10 minutes); the ticket's activity shows a submit that landed. **One signing path per workspace** (owner decision
+12 Oct ~19:45 via orch-d6, coordination.md line 166, host side core #434): with the signer's flag ON the dashboard offers only Sign; `/handoff`
+prepares are refused (`sign.click_only`, `Gateway.one_path_is_click`), the dialog has no terminal button, and a signer that cannot sign
+(record_unavailable, no key) is an honest error naming `orch host convenience off --workspace W`, never a hand-off. Flag OFF: the terminal
+hand-off as before. The intent function is identical on both (no path offset). A click prepare first lists `human.pending` and refuses if a
+terminal hand-off (it has a code) of the same op and key is still open (`intent.open`, with its expiry); a flag flipped off ends open click
+requests (the signer refuses with `disabled`; the server cancels them).
 
 **Open points.** The rate limit (30 per minute) is mapped and unit tested, not provoked on the real signer. The server cannot show the
 prepared events of a click request (the signer holds them and validates them), so the hand-off's `expected()` event check is replaced by the

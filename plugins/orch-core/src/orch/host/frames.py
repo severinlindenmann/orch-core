@@ -328,6 +328,22 @@ _ITEM = {
         ),
         _object(_ITEM_BASE | {"uid": _str(ULID), "gone": _const(True)}, host=True),
         _object(_ITEM_BASE | {"type": _const("needs.changed")}, host=True),
+        # H11a: a host->runner command on the runner's command stream (D-P2-25), and run lifecycle items (run.sub,
+        # D-P2-37): no journal position, their own id letters
+        _object(
+            {
+                "id": _str(r"[0-9]{1,15}\.c"),
+                "cmd": _str(r"[a-z][a-z.]{0,31}"),
+                "cid": _str(r"c_[0-9a-f]{16}"),
+                "args": {"type": "object"},
+            },
+            host=True,
+        ),
+        _object({"id": _str(r"[0-9]{1,15}\.r"), "t": _const("run"), "run": {"type": "object"}}, host=True),
+        _object(
+            {"id": _str(r"[0-9]{1,15}\.r"), "t": _const("gone"), "run": _str(r"r_[0-7][0-9A-HJKMNP-TV-Z]{25}")},
+            host=True,
+        ),
     ]
 }
 _SCHEMAS = {
@@ -350,7 +366,7 @@ _SCHEMAS = {
             "peer": _object(
                 {
                     "uid": _int(),
-                    "class": {"enum": ["person", "agent", "worker", "control"]},
+                    "class": {"enum": ["person", "agent", "worker", "control", "runner"]},
                     "person": _nullable(_str(r"p_[0-9a-f]{32}")),
                 },
                 host=True,

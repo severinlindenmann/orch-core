@@ -93,6 +93,7 @@ from .errors import HostError
 from .outcomes import BUILDERS, Planned, request_idem
 from .reads import CAPS as READ_CAPS
 from .reads import READ_OPS
+from .runners import RUN_CAPS, RUN_OPS
 from .visibility import Viewer
 from .workspace import deny_append, ok_result
 
@@ -199,6 +200,7 @@ def served_ops() -> dict[str, int]:
     out.update(HUMAN_OPS)
     out.update(READ_OPS)
     out.update(dict.fromkeys(HOST_PERSON_OPS, 1))
+    out.update(RUN_OPS)  # H11a: run.list, run.sub
     return out
 
 
@@ -218,6 +220,8 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
 
     if name in HOST_OPS or name in FILE_OPS or name in GIT_OPS:
         return ("read", "read")
+    if name in RUN_OPS:  # H11a: P and G only (§0.5, D-P2-26)
+        return ("pg_read", "read")
     if name in READ_OPS:  # H6b: session.list and grant.list are P and G only (§0.5)
         return ("pg_read" if name in PERSON_GRANT_READS else "read", "read")
     if name in HOST_PERSON_OPS:  # move, policy.set, settings.set: through human.* only; a plain req is human_only
@@ -346,7 +350,7 @@ class RegistryBackend:
     @property
     def caps(self) -> list[str]:
         base = ["ops/1", "outcome/1", "sub/1", "blob/1", "diff/1", "human/1"]
-        return [*base, *READ_CAPS, *(["sub_ext/1"] if SUB_EXT else [])]
+        return [*base, *READ_CAPS, *(["sub_ext/1"] if SUB_EXT else []), *RUN_CAPS]
 
     #: §0.6 step 10 is checked here, after the args (8) and the replay (9)
     state_checks = True
@@ -383,10 +387,14 @@ class RegistryBackend:
             return await self._git_read(call, result)
         if op == "sub.open":
             return self._register(call, result)
+        if op == "run.sub":
+            return self._register_runs(call, result)
         if op == "sub.close":
             bus = call.service.bus
-            if bus is not None:
-                bus.close(call.session, call.frame["args"]["sub"])
+            closed = bus is not None and bus.close(call.session, call.frame["args"]["sub"])
+            hub = getattr(call.service, "runners", None)
+            if not closed and hub is not None:
+                hub.close_sub(call.session, call.frame["args"]["sub"])
         return result
 
     @staticmethod
@@ -454,6 +462,16 @@ class RegistryBackend:
         )
         return ok_result({"sub": sub.id, "cursor": bus.cursor(sub)})
 
+    @staticmethod
+    def _register_runs(call: Call, checked: dict[str, Any]) -> dict[str, Any]:
+        """``run.sub`` on the event loop (H11a): register it with the runs it may see now; the answer's ``rev`` is the
+        host's run revision, so a client that lists after it loses nothing (subscribe, then list)."""
+        hub = getattr(call.service, "runners", None)
+        if hub is None:
+            raise HostError("runner.unavailable", "this host serves no runs", retry_after_ms=1000)
+        sub = hub.open_sub(call, set(checked["data"]["seen"]))
+        return ok_result({"sub": sub.id, "rev": hub.store.rev})
+
     async def wait(self, call: Call) -> dict[str, Any]:
         """``wait`` on the bus: one look per worker job; between looks the request parks here until an entry of the
         ticket's log arrives or its ``timeout`` passes (then one last look gives the timeout answer)."""
@@ -506,6 +524,10 @@ class RegistryBackend:
                 result = self._host_op(call)
             elif op in READ_OPS:
                 result = reads.serve(call)
+            elif op in RUN_OPS:
+                from . import runners
+
+                result = runners.serve(call)
             elif op in FILE_OPS or op in GIT_OPS:
                 result = self._file_op(call)
             elif op in self.human.ops:

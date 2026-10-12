@@ -85,6 +85,7 @@ class Host:
         limits: HostLimits | None = None,
         sweep_interval: float = SWEEP_SECONDS,
         journal_check_interval: float = JOURNAL_CHECK_SECONDS,
+        runner_identity: Callable[[Any], bool] | None = None,
     ) -> None:
         self.state_dir = Path(state_dir)
         self.host_uid = os.getuid() if host_uid is None else host_uid
@@ -124,6 +125,12 @@ class Host:
         self._bootstrapping_roots: set[tuple[int, int] | str] = set()
         self._guard = threading.Lock()
         self.recovered: list[tuple[str, str]] = []
+        #: H11a: the runner connection, its command stream and the run records (``<run>/runner/host.sock``)
+        from .runners import RunnerHub
+        from .runners import runner_identity as default_identity
+
+        self.runners = RunnerHub(self)
+        self.runner_identity = runner_identity or default_identity
 
     # -- identity and sockets
     def new_workspace_id(self) -> str:
@@ -135,6 +142,10 @@ class Host:
     @property
     def control_path(self) -> Path:
         return self.run_dir / "control" / "host.sock"
+
+    @property
+    def runner_path(self) -> Path:
+        return self.run_dir / "runner" / "host.sock"
 
     def restarting(self) -> HostError:
         return HostError("host.restarting", "the host is restarting", retry_after_ms=RETRY_AFTER_MS)
@@ -205,6 +216,7 @@ class Host:
             self.registry.load()
             self.intents.open()
             self.jobs.open()
+            self.runners.load()
             self.recovered = self.control.recover()
             self.control.sweep_keys()
             self.intents.sweep()
@@ -243,11 +255,37 @@ class Host:
         }
         server = Server(listener, self.registry, self.limits, ControlGate(self), welcome)
         self.servers["control"] = (server, asyncio.create_task(server.serve()))
+        await self._serve_runner()
         self.bus.start()
         for entry in self.registry.entries():
             await self.serve(entry)
         self._sweeper = asyncio.create_task(self._sweep_loop())
         self._checker = asyncio.create_task(self._check_loop())
+
+    async def _serve_runner(self) -> None:
+        """The runner socket (H11a). A failure leaves the host without a runner (``runner.unavailable``), never down."""
+        from .runners import RUNNER_CAPS, RUNNER_OPS
+
+        try:
+            listener = await asyncio.to_thread(
+                Listener, self.run_dir, "runner", host_uid=self.host_uid, gid=os.getgid(), kind="runner"
+            )
+        except (OSError, ValueError) as exc:
+            LOG.warning("the runner socket is not served: %s", exc)
+            return
+        welcome = {
+            "host": HOST_NAME,
+            "workspace": None,
+            "tier": self._tier(),
+            "caps": list(RUNNER_CAPS),
+            "ops": dict(RUNNER_OPS),
+            "registry": _digest(RUNNER_OPS),
+            "limits": self._limits(),
+        }
+        server = Server(
+            listener, self.registry, self.limits, self.runners.gate, welcome, runner_identity=self.runner_identity
+        )
+        self.servers["runner"] = (server, asyncio.create_task(server.serve()))
 
     def _gid(self, entry: Entry) -> int:
         try:
@@ -267,6 +305,7 @@ class Host:
         service.cursors = self.cursors
         service.blobs.quota = self.blob_quota  # §0.10: per UID across workspaces, and per host
         service.git_pool = self.git_pool
+        service.runners = self.runners  # H11a: run.list / run.sub
         await service.call(service.open)
         self.services[entry.workspace_id] = service  # an unavailable workspace is still bound: ops name the cause
         try:
@@ -363,6 +402,7 @@ class Host:
         """Answer parked waits with ``host.restarting``, let every other request in flight finish, then stop."""
         self.draining = True
         self.subscriptions_end("host.restarting")
+        self.runners.end_all("host.restarting")
         await self._settle(None, self.restarting)
         await self._flush()
         assert self._stopped is not None

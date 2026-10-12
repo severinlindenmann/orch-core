@@ -17,8 +17,10 @@ from __future__ import annotations
 import base64
 from typing import Any
 
+from orch import canon  # imported here, before the sandbox hook: the request must not import anything later
+
 from . import limits, treecheck
-from .errors import Unavailable
+from .errors import NotFound, Unavailable
 from .fs import RepoPins, open_pin
 from .patchtext import Change, diff_trees, quote_path, render
 from .pinning import pin_repo
@@ -119,12 +121,137 @@ def _marker(ch: Change, why: str) -> bytes:
     return b"diff --git " + a + b" " + b + b"\n" + b"Too large to diff: " + why.encode() + b"\n"
 
 
-def diff(repo: Repo, branch: str, default_branch: str | None, context: int, max_bytes: int) -> dict[str, Any]:
+_HEXDIGITS = frozenset("0123456789abcdef")
+#: qualifying pushed heads that become roots of the authorized ranges, and commits the ranges may hold together (§0.8.5)
+ROOTS_MAX = 21
+RANGE_COMMITS_MAX = 10_000
+
+
+def _sha_arg(v: Any, repo: Repo, what: str) -> str:
+    if not isinstance(v, str) or len(v) != repo.hexlen or not set(v) <= _HEXDIGITS:
+        raise Unavailable(f"bad request: {what}")
+    return v
+
+
+def _entries(v: Any, repo: Repo, what: str, limit: int) -> list[dict[str, Any]]:
+    if not isinstance(v, list) or len(v) > limit or not all(isinstance(e, dict) for e in v):
+        raise Unavailable(f"bad request: {what}")
+    out = []
+    for e in v:
+        r = e.get("repo")
+        if not isinstance(r, str) or not r or len(r) > 512:
+            raise Unavailable(f"bad request: {what}")
+        out.append({**e, "repo": r, "sha": _sha_arg(e.get("sha"), repo, what)})
+    return out
+
+
+def _same(a: str, b: str) -> bool:
+    try:
+        return canon.same_repo_identity(a, b)
+    except Exception:  # noqa: BLE001 - an identity that does not parse names no repo
+        return False
+
+
+def _default_base(repo: Repo, head: str, tip: str | None, pinned: str | None) -> tuple[str, str, int, str | None]:
+    """Section 0.8's base choice for ``head``: ``(base, base_source, base_moved, local merge base)``. The host-pinned
+    base while it is an ancestor of ``head`` and of the default branch's tip; else the merge base with that tip; else
+    the first parent."""
+    mb = repo.merge_base(head, tip) if tip is not None else None
+    # a pin counts only while it lies below both the head and the CURRENT default-branch tip: an agent that moved
+    # the default branch forward, got a pin recorded and moved it back must not hide its commits behind that pin
+    if pinned is not None and tip is not None and pinned in repo.ancestors(head) and pinned in repo.ancestors(tip):
+        moved = 0
+        if mb is not None and mb != pinned and pinned in repo.ancestors(mb):
+            moved = len(repo.range_commits(pinned, mb))
+        return pinned, "host_pinned", moved, mb
+    if mb is not None:
+        return mb, "local_ref", 0, mb
+    parents = repo.commit(head).parents
+    if not parents:
+        raise Unavailable("no merge base with the default branch and no parent commit")
+    return parents[0], "first_parent", 0, mb
+
+
+def _usable(repo: Repo, sha: str) -> bool:
+    try:
+        repo.commit(sha)
+        return True
+    except Unavailable:
+        return False
+
+
+def _authorize(
+    repo: Repo, ext: dict[str, Any], ident: str, head0: str, tip: str | None, pinned: str | None
+) -> tuple[str, str | None, str | None, int]:
+    """``head`` and ``base`` of the request (§0.8.5): ``(head, base, base_source, base_moved)`` with ``base`` ``None``
+    when the section 0.8 rule picks it. Anything outside the ranges the host derives itself is ``NotFound``."""
+    head = ext.get("head")
+    base = ext.get("base")
+    nope = NotFound("not found for this ticket")
+    for v in (head, base):  # a wrong length or alphabet for this repo's object format reads as any other unknown id
+        if v is not None and (not isinstance(v, str) or len(v) != repo.hexlen or not set(v) <= _HEXDIGITS):
+            raise nope
+    pushes = ext.get("pushes") or []
+    if not isinstance(pushes, list) or len(pushes) > 128:
+        raise Unavailable("bad request: pushes")
+    pushed_heads: list[str] = []  # qualifying pushed ``sha``, newest first
+    pushed_bases: set[str] = set()  # those and the qualifying ``before.sha``
+    for p in pushes:
+        if not isinstance(p, dict) or not isinstance(p.get("repo"), str) or not isinstance(p.get("ref"), str):
+            raise Unavailable("bad request: pushes")
+        if not _same(p["repo"], ident):
+            continue  # an old push with another repo identity authorizes nothing
+        sha = _sha_arg(p.get("sha"), repo, "pushes")
+        pushed_heads.append(sha)
+        pushed_bases.add(sha)
+        b = p.get("before")
+        if (
+            isinstance(b, dict)
+            and isinstance(b.get("repo"), str)
+            and _same(b["repo"], ident)
+            and b.get("ref") == p["ref"]
+        ):
+            pushed_bases.add(_sha_arg(b.get("sha"), repo, "pushes"))
+    roots = [head0]
+    for sha in pushed_heads:
+        if sha not in roots and len(roots) < ROOTS_MAX and _usable(repo, sha):
+            roots.append(sha)
+    ranges: list[tuple[str, str, str, int, set[str]]] = []  # (root, default base, its source, its moved, members)
+    total = 0
+    for r in roots:
+        try:
+            rb, rsrc, rmoved, _ = _default_base(repo, r, tip, pinned)
+        except Unavailable:
+            continue  # a root without a derivable base authorizes nothing
+        members = {c.oid for c in repo.range_commits(rb, r)} | {r}
+        total += len(members)
+        if total > RANGE_COMMITS_MAX:
+            raise nope  # a membership that cannot be established within the budget is refused
+        ranges.append((r, rb, rsrc, rmoved, members))
+    chosen = head if head is not None else head0
+    if head is not None and not any(chosen in rng[-1] for rng in ranges):
+        raise nope
+    if base is None:
+        return chosen, None, None, 0
+    if base not in repo.ancestors(chosen):
+        raise nope
+    for _, rb, rsrc, rmoved, members in ranges:
+        if chosen in members and base == rb:
+            return chosen, base, rsrc, rmoved
+    if base in repo.commit(chosen).parents[:1]:
+        return chosen, base, "first_parent", 0
+    if base in pushed_bases:
+        return chosen, base, "pushed", 0
+    raise nope
+
+
+def diff(
+    repo: Repo, branch: str, default_branch: str | None, context: int, max_bytes: int, ext: dict[str, Any] | None = None
+) -> dict[str, Any]:
     repo.refs  # noqa: B018 (the ref store is checked as a whole first)
     head = repo.resolve_commit(_branch_ref(branch))
     if head is None:
         raise Unavailable(f"the branch {branch!r} does not exist")
-    base = None
     tip = None
     if default_branch:
         tip = repo.resolve_commit(_branch_ref(default_branch))
@@ -135,14 +262,46 @@ def diff(repo: Repo, branch: str, default_branch: str | None, context: int, max_
             tip = repo.resolve_commit(_branch_ref(name))
             if tip is not None:
                 break
-    if tip is not None:
-        base = repo.merge_base(head, tip)
-    source = "local_ref"
-    if base is None:
-        parents = repo.commit(head).parents
-        if not parents:
-            raise Unavailable("no merge base with the default branch and no parent commit")
-        base, source = parents[0], "first_parent"
+    if ext is not None and not isinstance(ext, dict):
+        raise Unavailable("bad request: ext")
+    ext = ext or {}
+    ident = None
+    if ext:
+        name_ = _str(ext, "name")
+        assert name_ is not None
+        urls = repo.config.origin_urls
+        ident = canon.canonical_repo_identity(urls[0] if len(urls) == 1 else "", name_)  # F1 5.7, as client.identity_of
+    pinned = None
+    for p in _entries(ext.get("pins") or [], repo, "pins", 16):
+        if ident is not None and _same(p["repo"], ident) and _usable(repo, p["sha"]):
+            pinned = p["sha"]
+            break
+    head0 = head
+    observed_base = repo.merge_base(head0, tip) if ext and tip is not None else None  # for the host to pin
+    base_pick: str | None = None
+    source, moved = "", 0
+    if ext.get("since") is True:
+        assert ident is not None
+        anc = repo.ancestors(head)
+        base_pick = next(
+            (
+                a["sha"]
+                for a in _entries(ext.get("approvals") or [], repo, "approvals", 64)
+                if _same(a["repo"], ident) and a["sha"] in anc
+            ),
+            None,
+        )
+        if base_pick is None:
+            raise NotFound("no approval of yours covers this repo's history")
+        source = "approved"
+    elif ext.get("head") is not None or ext.get("base") is not None:
+        assert ident is not None
+        head, base_pick, src, moved = _authorize(repo, ext, ident, head, tip, pinned)
+        source = src or ""
+    if base_pick is not None:
+        base = base_pick
+    else:
+        base, source, moved, _ = _default_base(repo, head, tip, pinned)
     rng = repo.range_commits(base, head)
     commits = [{"sha": c.oid, "subject": clean_line(c.subject)} for c in rng[: limits.COMMITS_SHOWN]]
     changes, files_cut = diff_trees(repo, repo.commit(base).tree, repo.commit(head).tree, limits.DIFF_FILES_MAX)
@@ -184,7 +343,8 @@ def diff(repo: Repo, branch: str, default_branch: str | None, context: int, max_
         "branch": branch,
         "base_sha": base,
         "base_source": source,
-        "base_moved": 0,
+        "base_moved": moved,
+        "observed_base": observed_base,
         "head_sha": head,
         "commits": commits,
         "commits_more": max(0, len(rng) - limits.COMMITS_SHOWN),
@@ -228,4 +388,7 @@ def run(profile: str, hello: dict[str, Any], req: dict[str, Any]) -> dict[str, A
             raise Unavailable("bad request: max_bytes")
         branch = _str(args, "branch")
         assert branch is not None
-        return diff(repo, branch, _str(args, "default_branch", optional=True), context, max_bytes)
+        ext = args.get("ext")
+        if ext is not None and not isinstance(ext, dict):
+            raise Unavailable("bad request: ext")
+        return diff(repo, branch, _str(args, "default_branch", optional=True), context, max_bytes, ext)

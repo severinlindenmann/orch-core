@@ -19,7 +19,20 @@ __all__ = ["ClickLog", "WHAT"]
 NAME = "click.jsonl"
 MAX_BYTES = 1024 * 1024
 KEEP = 4
-WHAT = frozenset({"prepared", "review", "signed", "submit", "committed", "refused", "uncertain", "cancelled"})
+WHAT = frozenset(
+    {
+        "prepared",
+        "review",
+        "signed",
+        "submit",
+        "committed",
+        "refused",
+        "uncertain",
+        "cancelled",
+        "adopted",
+        "record_failed",
+    }
+)
 _SAFE = {
     "workspace": re.compile(r"[0-9a-f]{32}"),
     "request": re.compile(r"hr_[0-7][0-9A-HJKMNP-TV-Z]{25}"),

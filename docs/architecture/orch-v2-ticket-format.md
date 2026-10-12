@@ -1667,8 +1667,8 @@ claim"**, if the session holds exactly one; otherwise `ambiguous_ref` comes back
 | Group | Commands |
 |---|---|
 | Context | `status` (also shows who the agent is, its grant and its cursor), `describe [cmd]`, `help <workflow>` |
-| Read | `show [REF] [--section A,B \| --full \| --log --since N \| --diff --since N]`, `list`, `search`, `next`, `inbox` |
-| Lifecycle | `new`, `claim [REF \| --next \| --takeover --reason]`, `release`, `handoff -m`, `submit`, `ask "…" --options a,b --rec a [--to p]`, `wait` |
+| Read | `show [REF] [--section A,B \| --full \| --log --since N \| --diff --since N]`, `list`, `search`, `next`, `inbox`, `quick list` (H11f) |
+| Lifecycle | `new`, `quick add "TITLE"` (H11f: `new --type chore`, then `set labels=quick`), `claim [REF \| --next \| --takeover --reason]`, `release`, `handoff -m`, `submit`, `ask "…" --options a,b --rec a [--to p]`, `wait` |
 | Edit | `set REF key=value` (keys: title, priority, size, labels, due, links, parent, blocked_by; person-only fields have their own operations), `section set`, `ac add\|edit`, `task list\|next\|add\|start\|done\|skip\|block\|reopen`, `artifact add\|replace\|list`, `log`, `apply --file -` (an atomic batch) |
 | Human only | `approve [REF] GATE`, `request-changes [REF] GATE`, `verdict [REF] pass\|fail` (the `REF` comes first, `--ref` still works), `answer`, `close`, `reopen`, `grant`, `member`. Agents get `human_only`, `retry:false`. |
 | Admin | `init`, `doctor`, `check`, `instructions sync`, `instructions hook`, `import v1`, `addon …` |

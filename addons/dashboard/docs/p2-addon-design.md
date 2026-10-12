@@ -192,7 +192,7 @@ comment, label, move, new ticket, settings, member changes and grant revoke. **T
    - "Sign in your terminal: `orch sign 7F3K-Q2MA`" with a copy button, and "Sign with Touch ID" once H9 is there;
    - an **informational preview rendered from `material`**, never from the dashboard's cached ticket view, through
      `visible.tsx` (every value as data), under the heading "Preview. Your terminal shows what you sign.";
-   - the request fingerprint (first 12 hex of `review_digest`, which `orch sign` also prints, §13 R8) and, where a gate
+   - the request fingerprint (`Prepared.fingerprint`, shown as the host returns it: the first 12 hex of sha256(cj({review_digest, events without sig, actor.device, auth})), which `orch sign` also prints, §13 R8; the dashboard verifies it with exactly this formula and fails closed on a mismatch) and, where a gate
      is involved, the gate hash from `event`, labelled "content hash".
 3. **The person signs in a trusted place.** `orch sign CODE` finds the request with `human.pending`, recomputes the
    hashes from `material`, renders its own review on `/dev/tty`, asks for the confirmation word and the passphrase,
@@ -217,9 +217,24 @@ The host owns the request (v1 §0.6): bound to `(workspace, mapped person, signe
 10 minutes, submit and cancel serialized, a tombstone with the result after completion, at most 20 pending per
 person. The dashboard adds:
 
-- **One pending request per (workspace UUID, ticket, action).** Reopening the panel reuses an unexpired request
-  instead of preparing a new one. A double click or a retry reuses `opts.idem`; a lost response is recovered with
-  `outcome.get {idem}` (never a second prepare).
+- **A request belongs to the session that prepared it.** A double click or a retry reuses the click's idem and is answered from
+  the server's own record. `human.prepare` ignores `opts.idem` (§0.7, "As built in H5a" 8a): every call creates a request, and
+  there is no `outcome.get` for it. After a lost answer (`outcome.unknown`) the server **never adopts** a request. On the person's
+  next click it may only **cancel** orphans that are provably its own: the same op and ticket, created inside the lost
+  call's own [start, end] window, unknown to every session of this process, and whose `origin` (from `human.get`; the
+  `human.pending` row has none) is this process (`pid`, `uid`) and client `orch-dashboard`. If another prepare for the same
+  op and ticket (any session or tab of this process) ran in that window, or the host states no origin, it cancels nothing.
+  The marker of the lost call is kept until a retry completed (a failure puts it back unchanged, a second lost answer widens
+  the window to the earliest start). In every case the panel says "An earlier attempt may still be open; it expires by itself
+  at <time>" (the host's `expires_at` when known, else "within 10 minutes"), and a new prepare happens only on that
+  explicit click. "Complete details" after a `new` targets only the ticket of the `new` request this dialog prepared and
+  watched (same request id, op `new`). When `human.prepare` honours `opts.idem` (stream A, later v1.5), the retry reuses the
+  idem and this cancel path goes away. Requests expire after 10 minutes (4 for
+  a grant); more than 20 pending per person is `quota.host`. Two tabs are two requests.
+- **A refused submit stays open.** A refusal before any append (`gate.stale`, `members.stale`, `question.stale`,
+  `sig.invalid`, `human.request_mismatch`) leaves the request `bound` until it expires, and `human.pending` shows
+  `error:{code}`; the panel says "Refused: <text>. The request stays open until <time>". A failure after an event
+  landed ends it `submitted` with a failed outcome.
 - **Cancel.** Closing the panel, logout, session expiry, a ticket that goes `gone` (§6), or switching workspace while
   the panel is open calls `human.cancel`. An in-flight socket request is stopped with a `cancel` frame.
 - **Ambiguous completion.** On return after a drop, the server checks `human.pending` and the ticket. Event present:
@@ -508,7 +523,7 @@ Deferred beyond these milestones: batches, restricted creation, a stream replay 
 | R5 | F1 events for the reserved **`policy.set`** and **`settings.set`**, then serve them | M4 |
 | R6 | A **per-request state lookup**: `human.pending {request_id}` (own person) returning `prepared`, `submitted` (from the tombstone, with event id and seq), `cancelled` or `expired` | M3 (heuristic in §4.3 until then) |
 | R7 | **Signer choice in a hand-off**: `human.prepare` needs `signer:{device, auth}`, but the dashboard does not know which device will sign. Either `whoami` lists this machine's devices of the person with their `auth`, or `handoff:true` lets the signer bind its device when it fetches the request | M3 |
-| R8 | `orch sign` and H9 **print the request fingerprint** (first 12 hex of `review_digest`) so the person can match it with the panel | M3 |
+| R8 | `orch sign` and H9 **print the request fingerprint** (`Prepared.fingerprint`: first 12 hex of sha256(cj({review_digest, events stripped of sig/device/auth}))) so the person can match it with the panel | M3 |
 | R9 | Confirm that `human.prepare` takes **`files`** for the inner op (the `member.add` certificate as a blob) | M4 |
 | R10 | Amend **D-P2-7's HTTP rules**: bearer header instead of cookie; `Host` exactly `127.0.0.1:<port>` (no `localhost`) | M0 |
 | R11 | Confirm that **control-socket `host.list`** may be called by the dashboard (host UID) and lists, per workspace, the id and whether the caller's UID is mapped to a person there | M0 |
@@ -542,7 +557,7 @@ signer with its own native review (D-P2-22), `opts.idem` and outcome recovery.
 | 1 (Critical) | browser passphrase entry | **Removed.** No factor ever enters the browser; terminal hand-off is the baseline, Touch ID helper before cutover (§4). The zeroisation claim is gone |
 | 2 | localhost cookie exposed to other ports | **No cookies**: bearer token in memory/`sessionStorage`, sent in a header, fetch-streamed SSE (§3) |
 | 3 | dashboard-rendered review is not trusted | Stated plainly: the dashboard is not a trusted display; the signer recomputes hashes from `material` and renders its own review (§2, §4.1, §4.2) |
-| 4 | short hash conflates gate content and request | The panel shows a request fingerprint (from `review_digest`) and labels the gate hash "content hash"; the signer prints the same fingerprint (R8) and builds the signing bytes itself (§4.1) |
+| 4 | short hash conflates gate content and request | The panel shows the request fingerprint (`Prepared.fingerprint`, the §0.8.1 formula over `review_digest` and the events) and labels the gate hash "content hash"; the signer prints the same fingerprint (R8) and builds the signing bytes itself (§4.1) |
 | 5 | immutable signing object | Contract v1: `human.prepare` freezes the event and `material`; `human.submit` compares canonical JSON; the signer recomputes hashes (H5a, D-P2-21). The dashboard never signs or rebuilds |
 | 6 | external-state checks at commit | Stream A's prepared `precommit` (git re-read under the lock) runs at submit; the residual git race is stream A's to state (H5a) |
 | 7 | request ownership, replay, ambiguous completion | §4.3: host-owned request with tombstones (v1), one request per action, required `opts.idem` + `outcome.get`, cancel on close/logout/switch/`gone`, "Already signed/done", no auto re-prepare; R6 |
@@ -603,7 +618,7 @@ signer with its own native review (D-P2-22), `opts.idem` and outcome recovery.
 | `whoami` + `member.list` | `Me`, `Member[]` | person, name, role per workspace; devices without keys |
 | control `host.list`, `workspace.show`, `host.status` | `Workspace`, `WorkspaceIdentity` | UUID primary key, prefix as label, tier |
 | `needs` items | `TodayDocument`, `NeedsYouItem` | kinds `question`, `approve`, `no_eligible`, `acknowledge`, `addon` mapped to the UI's kinds |
-| `human.prepare` result | new `HandoffRequest` | `{id, code, expires_at, fingerprint (from review_digest), material, gate_hash?}`; the preview renders `material` per op |
+| `human.prepare` result | new `HandoffRequest` | `{id, code, expires_at, fingerprint (the host's Prepared.fingerprint), material, events, gate_hash?}`; the preview renders `material` per op |
 | `human.pending` | new `HandoffState` | pending or not (R6 adds the final state) |
 | `res err` | `ApiError` | `{code, message, hint, retryable, exit}` |
 

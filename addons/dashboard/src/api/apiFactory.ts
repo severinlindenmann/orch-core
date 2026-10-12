@@ -37,6 +37,7 @@ import {
   type RelayState,
 } from './types'
 import type { MandatesPreviewRequest, MandatesPreviewState } from './mandatesPreview'
+import type { HandoffAction, HandoffRequest, HandoffState } from './handoff'
 import { connectionInfo, connectionList, doctorReport, secretsFileInfo, skillInfo, skillList, type SkillGrantRequest } from './connections'
 
 export interface ListTicketsParams {
@@ -56,7 +57,7 @@ export interface ListTicketsParams {
 }
 
 export function createApi(transport: Transport) {
-  async function call<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
+  async function call<T>(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown): Promise<T> {
     const res = await transport.request(method, path, body)
     if (res.status >= 400) {
       const err = (res.json as ApiErrorBody | null)?.error ?? {
@@ -115,6 +116,13 @@ export function createApi(transport: Transport) {
     getTicket: (key: string, _ws?: string) => call<TicketDocument>('GET', `/api/tickets/${key}`),
     getEvents: (key: string, since = 0, _ws?: string) => call<OrchEvent[]>('GET', `/api/tickets/${key}/events${qs({ since: String(since) })}`),
     postAction: (key: string, action: ActionRequest) => call<ActionResult>('POST', `/api/tickets/${key}/actions`, action),
+    /**
+     * The terminal hand-off (M3, real host only): `idem` is one id per click, reused on a retry. The server prepares the
+     * sign request; the person signs in a terminal. Nothing here signs.
+     */
+    prepareHandoff: (ws: string, action: HandoffAction, idem: string) => call<HandoffRequest>('POST', `/api/w/${ws}/handoff`, { ...action, idem }),
+    getHandoff: (ws: string, id: string) => call<HandoffState>('GET', `/api/w/${ws}/handoff/${id}`),
+    cancelHandoff: (ws: string, id: string) => call<{ id: string; state: string }>('DELETE', `/api/w/${ws}/handoff/${id}`),
     /** Dry run of a code review policy: the tickets it would move back to testing or to done (owners). */
     previewCodeReview: (ws: string, req: { count: number; applies: CodeReviewApplies }) =>
       call<{ back: { keys: string[]; hidden: number }; done: { keys: string[]; hidden: number } }>('POST', `/api/workspaces/${ws}/code-review-preview`, req),

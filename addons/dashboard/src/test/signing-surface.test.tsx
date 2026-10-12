@@ -706,3 +706,25 @@ describe('signing surface: these dialogs show exactly what is signed, in core\'s
     }
   }, 40_000)
 })
+
+// The terminal hand-off (M3, real host): core's dialog does not sign. It shows the host's material, the fingerprint, the
+// code and the command; the title and buttons keep core's words; nothing is posted through the signing methods.
+describe('hand-off dialog', () => {
+  it('shows only the host material, core words in the title, and signs nothing itself', async () => {
+    const { fakeRequest, mount, spies, state } = await import('./handoffHarness')
+    const { setFeatures } = await import('@/api/features')
+    const s = spies()
+    const request = fakeRequest()
+    s.prepare.mockResolvedValue(request)
+    s.get.mockResolvedValue(state(request))
+    const { ticket } = await mount({ kind: 'approve', gate: 'plan' })
+    const dialog = await screen.findByRole('dialog', {}, T)
+    await within(dialog).findByTestId('handoff-command', {}, T)
+    expect(within(dialog).getByRole('heading', { name: 'Approve plan' })).toBeInTheDocument()
+    expect(dialog.textContent).toContain('HOST-MATERIAL task text')
+    expect(dialog.textContent).not.toContain(ticket.tasks[0].text)
+    expect(within(dialog).getByTestId('handoff-fingerprint')).toHaveTextContent(request.fingerprint)
+    for (const method of ['postAction', 'runAddonAction', 'issueGrant', 'revokeGrant', 'postAddonOp', 'postSettings'] as const) expect(vi.spyOn(api, method)).not.toHaveBeenCalled()
+    setFeatures(null)
+  })
+})

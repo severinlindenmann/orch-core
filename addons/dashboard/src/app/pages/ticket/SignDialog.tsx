@@ -16,6 +16,8 @@ import { Inline, Prose, Raw, visible } from '@/components/sign/visible'
 import { gateActionName, policyText } from './actions'
 import type { HumanAction } from './shared'
 import { queries } from '@/api/queries'
+import { handoffMode } from '@/api/features'
+import { HandoffSignDialog } from './HandoffSignDialog'
 
 type Described = { title: string; gate?: GateName; hash: string; covers: string[]; policy?: string }
 
@@ -141,7 +143,7 @@ function Answer({ ticket, question, option, text }: { ticket: TicketDocument; qu
  * button, keeps the hash in a closed Details, and starts with focus on Cancel (the first radio for a verdict).
  * `onOpenEvidence` lets the ticket page jump to the evidence; without it the dialog closes and opens the ticket.
  */
-export function SignDialog({ ticket, action, onClose, onOpenEvidence, onOpenChanges, onPending }: { onPending?: (pending: boolean) => void; ticket: TicketDocument; action: HumanAction | null; onClose: () => void; onOpenEvidence?: () => void; onOpenChanges?: () => void }) {
+function SimulatedSignDialog({ ticket, action, onClose, onOpenEvidence, onOpenChanges, onPending }: { onPending?: (pending: boolean) => void; ticket: TicketDocument; action: HumanAction | null; onClose: () => void; onOpenEvidence?: () => void; onOpenChanges?: () => void }) {
   const qc = useQueryClient()
   const navigate = useNavigate()
   const [phase, setPhase] = useState<'confirm' | 'touch' | 'sending'>('confirm')
@@ -365,4 +367,16 @@ export function SignDialog({ ticket, action, onClose, onOpenEvidence, onOpenChan
       </DialogContent>
     </Dialog>
   )
+}
+
+type Props = Parameters<typeof SimulatedSignDialog>[0]
+
+/**
+ * A ticket's human action. On a real host it is the terminal hand-off (HandoffSignDialog: the dashboard prepares the
+ * request and the person signs with `orch sign CODE`); the mockup keeps its simulated Touch ID dialog above.
+ */
+export function SignDialog(props: Props) {
+  const workspaces = useQuery(queries.workspaces())
+  const ws = workspaceOfTicket(props.ticket.key, workspaces.data ?? [])
+  return handoffMode(ws?.id) ? <HandoffSignDialog {...props} ws={ws?.id} /> : <SimulatedSignDialog {...props} />
 }

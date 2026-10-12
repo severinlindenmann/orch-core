@@ -2267,6 +2267,9 @@ Additive: new ops under new caps, optional keys under `read_ext/2`, new argument
     `human.prepare` from "side-effect free, idem ignored" to "optional idem": a retry returns the same request, other
     arguments are `idem.conflict`, a terminal request answers as for other idems, no idem is unchanged and `dry_run`
     never stores (§0.8.1 item 8a).
+11. **Fixes (RH-1, RH-3):** `welcome.caps` lists `human/1` (it was in §0.4's table but missing from the welcome), and
+    `human.prepare {idem}` also works for the host person ops `move`, `policy.set` and `settings.set` (same binding
+    and `idem.conflict` rules as for registry ops).
 
 ---
 

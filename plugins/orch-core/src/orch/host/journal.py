@@ -235,7 +235,8 @@ class Cursors:
         if out is None:
             return None
         body, _, mac = cursor[len(CURSOR_PREFIX) :].partition(".")
-        return out if hmac.compare_digest(mac, self._mac(body)) else None
+        given = mac.encode("utf-8", "surrogatepass")  # bytes: a non-ASCII MAC is a mismatch, not an error
+        return out if hmac.compare_digest(given, self._mac(body).encode("ascii")) else None
 
 
 def cursor_key(directory: Path) -> bytes:

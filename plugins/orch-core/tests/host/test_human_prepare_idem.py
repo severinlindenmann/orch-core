@@ -254,3 +254,38 @@ def test_an_unreadable_request_does_not_hide_the_error_or_leave_the_key_running(
     assert err(human.prepare_res("log", {"ref": key, "text": "x"}, idem=idem)) != "outcome.unknown"
     monkeypatch.setattr(store, "read", real)
     assert not served.service.outcomes._running
+
+
+def _person_cases(key):
+    pol = {"approvers": ["owner"], "count": 1, "not": [], "applies": "all", "independent": False}
+    return (
+        ("move", {"ref": key, "to": "backlog"}, {"ref": key, "to": "open"}),
+        ("policy.set", {"gates": {"plan": pol}}, {"gates": {"plan": {**pol, "count": 2}}}),
+        ("settings.set", {"set": {"grant_hours": 4}}, {"set": {"grant_hours": 5}}),
+    )
+
+
+def test_prepare_idem_for_the_host_person_ops(human, served):
+    _, key = human.ticket()
+    for op, args, other in _person_cases(key):
+        idem = new_idem()
+        a = human.prepare(op, args, idem=idem)
+        b = human.prepare(op, args, idem=idem)
+        assert a["request"]["id"] == b["request"]["id"], op
+        assert err(human.prepare_res(op, other, idem=idem)) == "idem.conflict", op
+
+
+def test_every_op_prepare_accepts_also_works_with_an_idem(human, served):
+    from orch.host import review
+    from orch.host.dispatch import NOT_SERVED
+    from orch.model.emits import EMITS_V1
+
+    accepted = sorted(
+        n for n in {*EMITS_V1, *review.HOST_PERSON_OPS} if review.person_op_types(n) and n not in NOT_SERVED
+    )
+    assert {"move", "policy.set", "settings.set", "log"} <= set(accepted)
+    for op in accepted:
+        # empty args are refused by the op's input check, but the idem step must not fail on an unknown operation first
+        res = human.prepare_res(op, {}, idem=new_idem())
+        if not res["ok"]:  # some ops prepare fine with no args; the rest are refused, never an internal error
+            assert err(res) != "internal", op

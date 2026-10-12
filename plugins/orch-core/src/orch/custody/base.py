@@ -9,8 +9,9 @@ bytes or into signing under the wrong role.
 Tiers (ticket-format §5.3: "a device key that can sign without the factor its ``auth`` names is a ``file``-tier key
 and never signs person events"):
 
-* a backend with ``person_capable = True`` signs only behind its human factor and records ``auth`` (one of
-  :data:`AUTH_VALUES`) in every person event;
+* a backend with ``person_capable = True`` signs person events and records ``auth`` (one of :data:`AUTH_VALUES`) in
+  every one: behind its human factor, except ``convenience`` (orch-v2-host §0.8.6, D-P2-23), which asks for none and
+  declares that in ``auth``;
 * a backend with ``person_capable = False`` (the ``file`` tier) signs without a factor, holds only the ``workspace``
   role and can never sign a person event, a certificate, a revocation or a delegation.
 
@@ -45,7 +46,15 @@ __all__ = [
     "label_allowed",
 ]
 
-AUTH_VALUES = ("passphrase", "secure-enclave", "secure-enclave-unlocked", "webauthn", "tpm", "windows-hello")
+AUTH_VALUES = (
+    "passphrase",
+    "secure-enclave",
+    "secure-enclave-unlocked",
+    "convenience",
+    "webauthn",
+    "tpm",
+    "windows-hello",
+)
 """Ticket-format §11.4 ``auth`` values (custody metadata, signed, not a proof)."""
 
 

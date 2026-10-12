@@ -337,7 +337,8 @@ class RegistryBackend:
     #: ``diff/1`` is listed for ``artifact.get`` (H4a2); the H6b read caps; ``sub_ext/1`` while detail is served
     @property
     def caps(self) -> list[str]:
-        return ["ops/1", "outcome/1", "sub/1", "blob/1", "diff/1", *READ_CAPS, *(["sub_ext/1"] if SUB_EXT else [])]
+        base = ["ops/1", "outcome/1", "sub/1", "blob/1", "diff/1", "human/1"]
+        return [*base, *READ_CAPS, *(["sub_ext/1"] if SUB_EXT else [])]
 
     #: §0.6 step 10 is checked here, after the args (8) and the replay (9)
     state_checks = True

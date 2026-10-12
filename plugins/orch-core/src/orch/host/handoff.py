@@ -267,12 +267,21 @@ def _own_workspaces(state: Path, uid: int, pick: str | None) -> list[dict[str, A
 
 
 def _backend(state: Path, workspace_id: str) -> Any:
-    from orch.ops import human
+    """The device key's custody from the person's selection (H5c, orch-v2-host §0.8.6): the convenience backend when
+    selected, else the passphrase key at ``<state>/hosts/<ws>/person/`` (H5b's location). The binding is the signer
+    tuple, so a convenience selection binds ``auth: "convenience"`` and the host's readers condition applies."""
+    from orch.custody.base import BackendUnavailable, CustodyError, KeyNotFound
+    from orch.custody.select import device_backend
 
-    directory = human.keys_dir(state, workspace_id)
-    if not (directory / human.KEY_FILE).is_file():
-        raise HostError("custody.no_key", "this machine holds no device key of yours for this workspace")
-    return human.open_backend(directory)
+    try:
+        backend, _ = device_backend(state, workspace_id)
+    except KeyNotFound:
+        raise HostError("custody.no_key", "this machine holds no device key of yours for this workspace") from None
+    except BackendUnavailable as exc:
+        raise HostError("custody.unavailable", str(exc)[:400]) from None
+    except CustodyError as exc:
+        raise HostError("custody.unavailable", str(exc)[:400]) from None
+    return backend
 
 
 def main(

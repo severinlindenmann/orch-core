@@ -1647,6 +1647,22 @@ def transition_vectors() -> list[dict[str, Any]]:
         ],
         unpublished_pairs=[[lena, pid("lena")]],
     )
+    # The reported evidence of a pair is its strongest held entry, not the first or the weakest.
+    variant(
+        "out_of_band_strongest_held_entry_is_reported",
+        "ok",
+        local_revocations=[*held_rev("lena", "lena1", "lost"), *held_rev("lena", "lena1", "compromised")],
+        unpublished_pairs=[[lena, pid("lena")]],
+        note="unpublished_evidence points at the compromised entry (index 1)",
+    )
+    # Self-revocation is by device id: another person's pair for the signer's device in the carried list refuses too.
+    variant(
+        "bundle_carries_another_persons_pair_for_its_signer_device",
+        "chain.diverged",
+        over={"revocations": [rev_entry("mara", "sev1", "lost")]},
+        note="the host refuses this earlier (device.cert: sev1 is sev's live device); a log-free receiver refuses it "
+        "by the self-revocation rule, which matches the signer's device id whatever the person",
+    )
 
     # --- ticket-log restores: the same workspace checkpoint, ws_seq <= T's workspace seq, revocations [] -------
     tw = World("ticket_transition", "ticket-log restore at a receiver")
@@ -1925,6 +1941,12 @@ def restore_scenarios() -> list[dict[str, Any]]:
     # One restore may carry two persons' evidence for one device id, sorted by (device_id, person_id): both retained.
     w = setup("two_persons_evidence_for_one_unknown_device")
     restore(w, [evidence("zed", "zed1"), evidence("mara", "zed1", "compromised")])
+    out.append(w.scenario())
+    # The strength rule compares a pair with its own earlier evidence only: a tombstone's compromised (zed1, zed) does
+    # not make another person's weaker (zed1, mara, lost) a "weaker entry" (device.exists).
+    w = setup("tombstone_compromised_then_other_person_lost_is_a_new_pair")
+    restore(w, [evidence("zed", "zed1", "compromised")])
+    restore(w, [evidence("zed", "zed1", "compromised"), evidence("mara", "zed1", "lost")])
     out.append(w.scenario())
 
     w = setup("all_evidence_precedes_any_B1_comparison")

@@ -212,3 +212,62 @@ def test_forwarded_evidence_needs_the_current_roster(tmp_path):
     with pytest.raises(TypeError):
         HostPins(tmp_path, WS).note_revocation("d_" + "ab" * 32, "lost", *_evidence(Person(), _key())[:1],
                                                _at(0), {}, "x", chain=False)  # fmt: skip
+
+
+def test_the_pinned_owner_is_exempt_from_the_per_person_cap(tmp_path):
+    """Genuine owner revocations are never dropped: the per-person cap does not apply to the pinned card owner."""
+    pins = HostPins(tmp_path, WS)
+    owner = Person()
+    for i in range(MAX_FORWARDED_PER_PERSON + 3):
+        rev, cert = _evidence(owner, _key())
+        assert pins.note_revocation(
+            "d_" + rev["o"]["device_id"], "lost", rev, _at(i), cert, crypto.b64u(owner.pk_pub), chain=False,
+            is_member={_pid(owner)}.__contains__, owner=_pid(owner),
+        )  # fmt: skip
+    assert len(pins.revocations()) == MAX_FORWARDED_PER_PERSON + 3
+
+
+# --- host completeness and rollback detection per pair (Opus #397 R1, R2) --------------------------------------------
+
+
+def _entry(person: Person, sig_pub: bytes, reason: str = "lost") -> dict:
+    rev, cert = _evidence(person, sig_pub, reason)
+    return {"revocation": rev, "device_cert": cert, "pk_pub": crypto.b64u(person.pk_pub)}
+
+
+def test_host_completeness_another_persons_pair_never_satisfies_an_obligation(tmp_path):
+    """R1: restore 1 carries (U, zed, lost); restore 2 omits it and carries (U, mara, compromised) instead. The
+    obligation is `lost`: a `compromised` one would also fail on its different bytes and hide a device-only check."""
+    env = Env(tmp_path)
+    store = env.bootstrap()
+    zed, mara, laptop = Person(), Person(), _key()
+    facts = store.restore_facts("workspace")
+    facts["revocations"] = [_entry(zed, laptop, "lost")]
+    store.append(env.person_event(env.owner, "workspace", "restore", **facts, reason="other"), log="workspace")
+    facts = store.restore_facts("workspace")
+    facts["revocations"] = [_entry(mara, laptop, "compromised")]  # zed's obligation omitted, mara's pair instead
+    with pytest.raises(StoreError) as exc:
+        store.append(env.person_event(env.owner, "workspace", "restore", **facts, reason="other"), log="workspace")
+    assert exc.value.code == "validation.restore"
+
+
+def test_rollback_detection_is_per_pair(tmp_path):
+    """R2: chain pairs of several persons on one tombstoned device. Both pairs in accepted history: nothing flagged
+    (a device-only match would compare one pair's evidence with the other's). A pair accepted history lacks (its
+    restore was rolled back) is flagged, although the device id still has other pairs in history."""
+    env = Env(tmp_path)
+    store = env.bootstrap()
+    zed, mara, kim, laptop = Person(), Person(), Person(), _key()
+    both = sorted([_entry(zed, laptop), _entry(kim, laptop)], key=lambda e: e["revocation"]["o"]["person_id"])
+    facts = store.restore_facts("workspace")
+    facts["revocations"] = both
+    store.append(env.person_event(env.owner, "workspace", "restore", **facts, reason="other"), log="workspace")
+    store.close()
+    store = env.open()
+    assert store.diverged == {}  # control: two pairs of one device, both in accepted history, neither is flagged
+    gone = _entry(mara, laptop, "compromised")  # noted from a restore that a rollback then removed from the log
+    device = "d_" + gone["revocation"]["o"]["device_id"]
+    store._pins.note_revocation(device, "compromised", gone["revocation"], _at(0), gone["device_cert"], gone["pk_pub"])
+    store.close()
+    store = env.open()
+    assert "workspace" in store.diverged and device in store.diverged["workspace"].detail

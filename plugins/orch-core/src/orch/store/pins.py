@@ -141,6 +141,7 @@ class HostPins:
         *,
         chain: bool = True,
         is_member: Callable[[str], bool] | None = None,
+        owner: str | None = None,
     ) -> bool:
         """Durably retain the earliest evidence of the highest reason per ``(device, person)`` pair. Returns whether
         this evidence is held afterwards (as the record, or as a chain pair's ``upgrade``).
@@ -150,7 +151,8 @@ class HostPins:
         replaces or demotes a chain record: a stronger forwarded reason is kept under the record's ``upgrade``.
         A new forwarded record needs ``is_member(p_person)`` (the current roster, current or past members), evaluated
         at eviction time for every candidate. Caps: :data:`MAX_FORWARDED_PER_PERSON` per person (members included; a
-        new record over it is dropped), then :data:`MAX_FORWARDED_PER_DEVICE` per device and
+        new record over it is dropped; the pinned card owner ``owner`` is exempt, so a genuine owner revocation is
+        never dropped), then :data:`MAX_FORWARDED_PER_DEVICE` per device and
         :data:`MAX_FORWARDED_TOTAL` in total: a new non-member record never evicts anything (dropped when full); a
         member's record evicts the oldest non-member record, or is kept over the cap when there is none."""
         key = (device, "p_" + revocation["o"]["person_id"])
@@ -185,7 +187,7 @@ class HostPins:
             if old is None:
                 if is_member is None:
                     raise TypeError("forwarded evidence needs is_member (the current roster)")
-                room = self._make_room(records, device, key[1], is_member)
+                room = self._make_room(records, device, key[1], is_member, owner)
                 if room is None:
                     return False
                 records = room
@@ -200,12 +202,16 @@ class HostPins:
 
     @staticmethod
     def _make_room(
-        records: list[dict[str, Any]], device: str, person: str, is_member: Callable[[str], bool]
+        records: list[dict[str, Any]],
+        device: str,
+        person: str,
+        is_member: Callable[[str], bool],
+        owner: str | None = None,
     ) -> list[dict[str, Any]] | None:
         """``records`` with room for one more forwarded record of ``(device, person)``, or None to drop it."""
         forwarded = [r for r in records if is_forwarded(r)]
-        if sum(pair(r)[1] == person for r in forwarded) >= MAX_FORWARDED_PER_PERSON:
-            return None
+        if person != owner and sum(pair(r)[1] == person for r in forwarded) >= MAX_FORWARDED_PER_PERSON:
+            return None  # the per-person cap; the pinned owner is exempt
         member = is_member(person)
         for scope, cap in (
             ([r for r in forwarded if r["device"] == device], MAX_FORWARDED_PER_DEVICE),

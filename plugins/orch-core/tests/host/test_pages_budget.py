@@ -64,14 +64,6 @@ def test_scan_finding_one_oversized_snapshot_evicts_nobody_else(monkeypatch):
     assert all(s.id in pages._snaps for s in others)
 
 
-@pytest.fixture(autouse=True)
-def _fresh_snapshot_store(monkeypatch):
-    """Each test gets its own host-wide snapshot store (pages.STORE is process-wide)."""
-    from orch.host import pages as _pages
-
-    monkeypatch.setattr(_pages, "STORE", _pages.SnapshotStore())
-
-
 # --- scan finding (resource-cap bypass): one choke point, every scope ---------------------------------------------
 
 

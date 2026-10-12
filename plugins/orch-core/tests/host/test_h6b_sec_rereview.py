@@ -76,11 +76,3 @@ def test_the_workspace_byte_cap_holds_against_oversize_snapshots_of_several_prin
             assert exc.code == "quota.host"
     held = sum(s.size for s in pages._snaps.values())
     assert held <= pages_mod.MAX_BYTES + 6_100, f"{held} bytes held against a {pages_mod.MAX_BYTES} byte cap"
-
-
-@pytest.fixture(autouse=True)
-def _fresh_snapshot_store(monkeypatch):
-    """Each test gets its own host-wide snapshot store (pages.STORE is process-wide)."""
-    from orch.host import pages as _pages
-
-    monkeypatch.setattr(_pages, "STORE", _pages.SnapshotStore())

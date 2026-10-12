@@ -41,7 +41,16 @@ def test_read_costs_at_1000_tickets(tmp_path, capsys):
         lab.ws.store = None
     w = World(lab)
     try:
-        c = w.client()
+        client = w.client()
+        ids = iter(range(10**6))
+
+        class C:  # a slow CI runner: wait up to 2 min for each answer (the host's own timeout_ms raised to match)
+            @staticmethod
+            def req(op, args):
+                client.ws.send(f"p{next(ids)}", op, args, opts={"timeout_ms": 120_000})
+                return client.ws.read(timeout=120)
+
+        c = C()
         first, first_ms = timed(lambda: ok(c.req("ticket.query", {"limit": 50, "sort": "key", "order": "asc"}))["data"])
         assert first["total"] == N and first["next_page"]
 

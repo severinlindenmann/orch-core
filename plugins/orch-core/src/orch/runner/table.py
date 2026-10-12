@@ -61,7 +61,12 @@ class RunTable:
             write_private(self.path, {"v": 1, "runs": self.runs})
 
     def _prune(self) -> None:
-        ended = [(r.get("ended_ts") or 0, k) for k, r in self.runs.items() if r.get("state") not in LIVE]
+        # a run whose processes may still be there (cleanup not known complete) is never pruned: it stays supervised
+        ended = [
+            (r.get("ended_ts") or 0, k)
+            for k, r in self.runs.items()
+            if r.get("state") not in LIVE and (r.get("cleanup") == "complete" or not isinstance(r.get("pid"), int))
+        ]
         cutoff = time.time() - KEEP_SECONDS
         ended.sort()
         drop = {k for ts, k in ended if ts < cutoff}
@@ -81,6 +86,8 @@ class RunTable:
             raise ValueError("invalid run id")
         with self.lock:
             self.runs[run] = dict(record)
+            if record.get("state") not in LIVE:
+                self.runs[run].setdefault("ended_ts", time.time())
             self.save()
 
     def update(self, run: str, **fields: Any) -> dict[str, Any]:

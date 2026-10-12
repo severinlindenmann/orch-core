@@ -83,7 +83,8 @@
         "file": {
           "type": "string",
           "description": "read the text from PATH, or - for stdin",
-          "x-metavar": "PATH"
+          "x-metavar": "PATH",
+          "x-file": true
         }
       },
       "x-positional": [
